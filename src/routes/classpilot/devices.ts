@@ -733,13 +733,15 @@ const deviceLastHeartbeat = new Map<string, number>();
 const HEARTBEAT_MIN_INTERVAL_MS = 5_000; // 5 seconds minimum between heartbeats
 const RATE_LIMIT_CLEANUP_INTERVAL_MS = 60_000; // clean stale entries every 60s
 
-// Periodic cleanup of stale rate-limit entries
-setInterval(() => {
+// Periodic cleanup of stale rate-limit entries. The API listener owns process
+// lifetime; this maintenance timer should not strand migration/test workers.
+const heartbeatRateLimitCleanupTimer = setInterval(() => {
   const cutoff = Date.now() - 120_000; // remove entries older than 2 min
   for (const [key, ts] of deviceLastHeartbeat) {
     if (ts < cutoff) deviceLastHeartbeat.delete(key);
   }
 }, RATE_LIMIT_CLEANUP_INTERVAL_MS);
+heartbeatRateLimitCleanupTimer.unref?.();
 
 // ============================================================================
 // Per-school auto-creation throttle — anti-spam guard

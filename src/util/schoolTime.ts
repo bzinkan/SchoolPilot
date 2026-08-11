@@ -116,13 +116,40 @@ function zonedParts(date: Date, timeZone: string) {
   };
 }
 
-export function localDateStartUtc(localDate: string, timeZone?: string | null): Date {
+/**
+ * Resolve a school-local wall-clock date and time to its UTC instant.
+ *
+ * This intentionally resolves the requested wall clock directly instead of
+ * adding elapsed minutes to local midnight. The latter is wrong on daylight
+ * saving transition days because those days are not always 24 hours long.
+ * Ambiguous fall-back times select the earlier matching instant. A nonexistent
+ * spring-forward time follows the platform-compatible behavior of advancing
+ * by the size of the gap.
+ */
+export function localDateTimeUtc(
+  localDate: string,
+  localTime: string,
+  timeZone?: string | null
+): Date {
   const tz = safeTimeZone(timeZone);
   const [year = 1970, month = 1, day = 1] = localDate.split("-").map(Number);
-  const targetUtc = Date.UTC(year, (month || 1) - 1, day || 1, 0, 0, 0, 0);
+  const [hour = 0, minute = 0, second = 0] = localTime.split(":").map(Number);
+  const targetUtc = Date.UTC(
+    year,
+    (month || 1) - 1,
+    day || 1,
+    hour || 0,
+    minute || 0,
+    second || 0,
+    0
+  );
   let guess = targetUtc;
+  const seen = new Set<number>();
+  const candidates: Array<{ instant: number; rendered: number }> = [];
 
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 8; i++) {
+    if (seen.has(guess)) break;
+    seen.add(guess);
     const parts = zonedParts(new Date(guess), tz);
     const renderedAsUtc = Date.UTC(
       parts.year,
@@ -133,10 +160,22 @@ export function localDateStartUtc(localDate: string, timeZone?: string | null): 
       parts.second,
       0
     );
+    candidates.push({ instant: guess, rendered: renderedAsUtc });
+    if (renderedAsUtc === targetUtc) return new Date(guess);
     guess -= renderedAsUtc - targetUtc;
   }
 
-  return new Date(guess);
+  // A DST spring-forward gap has no exact wall-clock match. Choose the closest
+  // later local time, which advances by the transition gap (Temporal's
+  // "compatible" disambiguation semantics).
+  const compatible = candidates
+    .filter((candidate) => candidate.rendered > targetUtc)
+    .sort((a, b) => (a.rendered - targetUtc) - (b.rendered - targetUtc) || a.instant - b.instant)[0];
+  return new Date(compatible?.instant ?? guess);
+}
+
+export function localDateStartUtc(localDate: string, timeZone?: string | null): Date {
+  return localDateTimeUtc(localDate, "00:00", timeZone);
 }
 
 export function resolveSchoolLocalPeriod(

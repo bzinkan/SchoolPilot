@@ -33,6 +33,7 @@ import {
   validateStaffEmailDomainForSchool,
 } from "../../services/storage.js";
 import { recordImportRun } from "../../services/importLog.js";
+import { freezeScheduledOccurrenceIfDue } from "../../services/classpilotScheduledStart.js";
 import {
   checkStudentEmail,
   studentEmailRules,
@@ -563,6 +564,9 @@ router.post("/classroom/import", ...auth, async (req, res, next) => {
           blockEndTime: existingClass?.blockEndTime,
           excludeGroupId: existingClass?.id,
         });
+        if (existingClass) {
+          await freezeScheduledOccurrenceIfDue({ group: existingClass });
+        }
         const { group, roster } = await upsertAdminClassroomClass({
           schoolId,
           existingGroupId: existingClass?.id || null,
@@ -736,6 +740,7 @@ router.patch("/:id", ...auth, async (req, res, next) => {
     if (!group || group.groupType !== "admin_class") {
       return res.status(404).json({ error: "Class not found" });
     }
+    await freezeScheduledOccurrenceIfDue({ group });
     const name = req.body.name === undefined ? group.name : String(req.body.name || "").trim();
     if (!name) throw routeError("Class name is required", 400, "NAME_REQUIRED");
     const primaryTeacherId = String(req.body.primaryTeacherId || req.body.teacherId || group.teacherId);
@@ -822,6 +827,7 @@ router.post("/:id/students", ...auth, async (req, res, next) => {
     if (!group || group.groupType !== "admin_class") {
       return res.status(404).json({ error: "Class not found" });
     }
+    await freezeScheduledOccurrenceIfDue({ group });
     if (!Array.isArray(req.body.studentIds)) {
       return res.status(400).json({ error: "studentIds array required" });
     }
@@ -861,6 +867,7 @@ router.delete("/:id/students/:studentId", ...auth, async (req, res, next) => {
     if (!group || group.groupType !== "admin_class") {
       return res.status(404).json({ error: "Class not found" });
     }
+    await freezeScheduledOccurrenceIfDue({ group });
     await removeGroupStudent(group.id, param(req, "studentId"));
     await logAudit({
       ...actor(req, res),
@@ -883,6 +890,7 @@ router.post("/:id/archive", ...auth, async (req, res, next) => {
     if (!group || group.groupType !== "admin_class") {
       return res.status(404).json({ error: "Class not found" });
     }
+    await freezeScheduledOccurrenceIfDue({ group });
     const archived = await archiveGroup(group.id);
     if (!archived) {
       return res.status(404).json({ error: "Class not found" });
@@ -907,6 +915,13 @@ router.delete("/:id", ...auth, async (req, res, next) => {
     const group = await getGroupByIdAndSchool(param(req, "id"), schoolId);
     if (!group || group.groupType !== "admin_class") {
       return res.status(404).json({ error: "Class not found" });
+    }
+    const frozenOccurrence = await freezeScheduledOccurrenceIfDue({ group });
+    if (frozenOccurrence) {
+      return res.status(409).json({
+        error: "This scheduled class is currently active. End or archive it instead of deleting it.",
+        code: "ACTIVE_SCHEDULED_OCCURRENCE",
+      });
     }
     if (await groupHasTeachingHistory(group.id)) {
       return res.status(409).json({

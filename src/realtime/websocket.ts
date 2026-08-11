@@ -1,5 +1,6 @@
 import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
+import { randomUUID } from "crypto";
 import {
   InvalidTokenError,
   TokenExpiredError,
@@ -45,8 +46,17 @@ import {
   studentAuthenticationServiceError,
 } from "../services/classpilotStudentAuth.js";
 import { buildStudentFabState } from "../services/classpilotFab.js";
-import { startActiveScheduledClassesForTeacher } from "../services/classpilotScheduledStart.js";
+import {
+  broadcastScheduledClassUpdate,
+  startActiveScheduledClassesForTeacher,
+} from "../services/classpilotScheduledStart.js";
 import { isClassPilotWebSocketPath, isGoPilotSocketIoPath } from "./websocketPaths.js";
+import {
+  classpilotStaffPresenceStore,
+  removeClasspilotStaffPresence,
+  touchClasspilotStaffPresence,
+  type ClasspilotStaffPresenceStore,
+} from "./classpilotStaffPresence.js";
 
 // Ping/pong keepalive constants
 const WS_PING_INTERVAL_MS = 30_000; // 30 seconds
@@ -69,8 +79,12 @@ function emitWebSocketMetric(metricName: "WebSocketDisconnect" | "WebSocketError
   }));
 }
 
-export function setupWebSocket(httpServer: Server): WebSocketServer {
+export function setupWebSocket(
+  httpServer: Server,
+  options: { presenceStore?: ClasspilotStaffPresenceStore } = {}
+): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
+  const presenceStore = options.presenceStore ?? classpilotStaffPresenceStore;
 
   let activity = { connected: 0, studentAuthenticated: 0, staffAuthenticated: 0 };
   const activityTimer = setInterval(() => {
@@ -391,6 +405,61 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
   // --- Connection handler ---
   wss.on("connection", (ws) => {
     const client = registerWsClient(ws);
+    const presenceConnectionId = randomUUID();
+    let recordedPresence: { schoolId: string; userId: string } | null = null;
+    let presenceMutation = Promise.resolve();
+    const queuePresenceMutation = (mutation: () => Promise<unknown>): Promise<void> => {
+      presenceMutation = presenceMutation
+        .then(mutation, mutation)
+        .then(() => undefined)
+        .catch(() => {
+          // Presence is advisory but safety-sensitive. Redis-backed methods
+          // already return false on infrastructure errors; injected stores may
+          // throw, so keep the socket healthy and let the scheduler fail closed.
+          console.warn("[WebSocket] ClassPilot staff presence update failed");
+        });
+      return presenceMutation;
+    };
+    const recordStaffPresence = async (schoolId: string, userId: string): Promise<void> => {
+      const previous = recordedPresence;
+      recordedPresence = { schoolId, userId };
+      await queuePresenceMutation(async () => {
+        if (previous && (previous.schoolId !== schoolId || previous.userId !== userId)) {
+          await removeClasspilotStaffPresence(
+            presenceStore,
+            previous.schoolId,
+            previous.userId,
+            presenceConnectionId
+          );
+        }
+        await touchClasspilotStaffPresence(presenceStore, schoolId, userId, presenceConnectionId);
+      });
+    };
+    const refreshStaffPresence = (): void => {
+      const current = recordedPresence;
+      if (!current) return;
+      void queuePresenceMutation(() =>
+        touchClasspilotStaffPresence(
+          presenceStore,
+          current.schoolId,
+          current.userId,
+          presenceConnectionId
+        )
+      );
+    };
+    const clearStaffPresence = (): void => {
+      const current = recordedPresence;
+      if (!current) return;
+      recordedPresence = null;
+      void queuePresenceMutation(() =>
+        removeClasspilotStaffPresence(
+          presenceStore,
+          current.schoolId,
+          current.userId,
+          presenceConnectionId
+        )
+      );
+    };
     activity.connected += 1;
 
     // Start ping/pong keepalive
@@ -399,6 +468,7 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
     // Handle pong responses
     ws.on("pong", () => {
       clientPongPending.set(ws, false);
+      refreshStaffPresence();
     });
 
     ws.on("message", async (data) => {
@@ -453,6 +523,7 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
                   return;
                 }
 
+                clearStaffPresence();
                 authenticateWsClient(ws, {
                   role: "student",
                   deviceId,
@@ -530,17 +601,24 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
                 schoolId,
               });
 
+              // Authentication is never gated on Redis. The presence write is
+              // strictly bounded and the post-write pickup closes the bell-time
+              // race where a scheduler worker may have created a conflict just
+              // before this API task made the socket visible across processes.
+              const presenceRecorded = recordStaffPresence(schoolId, userId);
               ws.send(JSON.stringify({ type: "auth-success", role }));
               activity.staffAuthenticated += 1;
-              void runWithTenantContext({ schoolId }, async () => {
-                const started = await startActiveScheduledClassesForTeacher({ schoolId, teacherId: userId });
-                if (started.length > 0) {
-                  broadcastToTeachersLocal(schoolId, {
-                    type: "scheduled-class-conflict-updated",
-                    startedSessionIds: started.map((session) => session.id),
-                  });
-                }
-              }).catch((error) => {
+              void presenceRecorded.then(() =>
+                runWithTenantContext({ schoolId }, async () => {
+                  const started = await startActiveScheduledClassesForTeacher({ schoolId, teacherId: userId });
+                  if (started.length > 0) {
+                    broadcastScheduledClassUpdate(schoolId, {
+                      type: "scheduled-class-conflict-updated",
+                      startedSessionIds: started.map((session) => session.id),
+                    });
+                  }
+                })
+              ).catch((error) => {
                 console.error("[WebSocket] Scheduled class pickup on staff login failed:", error);
                 errorMonitor.trackError("scheduler_failure", error as Error, {
                   job: "scheduledClassLoginPickup",
@@ -559,6 +637,7 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
 
         // --- Heartbeat handling ---
         if (message.type === "heartbeat" || message.type === "ping") {
+          refreshStaffPresence();
           ws.send(JSON.stringify({ type: "pong" }));
           return;
         }
@@ -775,6 +854,7 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
 
     ws.on("close", () => {
       stopPingInterval(ws);
+      clearStaffPresence();
       removeWsClient(ws);
       emitWebSocketMetric("WebSocketDisconnect");
       console.log("[WebSocket] Client disconnected");
@@ -785,6 +865,7 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
       emitWebSocketMetric("WebSocketError");
       errorMonitor.trackError("websocket_error", error);
       stopPingInterval(ws);
+      clearStaffPresence();
       removeWsClient(ws);
     });
   });

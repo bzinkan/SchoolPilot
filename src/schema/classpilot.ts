@@ -9,6 +9,7 @@ import {
   index,
   unique,
   uniqueIndex,
+  check,
   jsonb,
 } from "drizzle-orm/pg-core";
 
@@ -296,6 +297,23 @@ export const teachingSessions = pgTable(
     controlUpdatedAt: timestamp("control_updated_at"),
     sessionMode: text("session_mode").notNull().default("live"),
     scheduledConflictId: text("scheduled_conflict_id"),
+    // Frozen occurrence metadata. These fields are populated together for an
+    // automatically scheduled class and remain NULL for manual sessions.
+    scheduledDate: text("scheduled_date"), // YYYY-MM-DD in scheduledTimezone
+    scheduledTimezone: text("scheduled_timezone"),
+    scheduledStartAt: timestamp("scheduled_start_at", { withTimezone: true }),
+    scheduledEndAt: timestamp("scheduled_end_at", { withTimezone: true }),
+    scheduledTeacherEmail: text("scheduled_teacher_email"),
+    scheduledTeacherName: text("scheduled_teacher_name"),
+    // Frozen display label used by durable summary delivery. A class can be
+    // renamed or archived while a delivery is retrying, so rendering must not
+    // depend on the mutable groups row.
+    classNameSnapshot: text("class_name_snapshot"),
+    // Marks that the immutable session roster snapshot was completed, even
+    // when the class legitimately had zero students at the time it started.
+    rosterSnapshotCompletedAt: timestamp("roster_snapshot_completed_at", { withTimezone: true }),
+    scheduledState: text("scheduled_state"), // active | finalized | skipped
+    scheduledFinalizationReason: text("scheduled_finalization_reason"),
     endTime: timestamp("end_time"),
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
   },
@@ -304,11 +322,101 @@ export const teachingSessions = pgTable(
     index("teaching_sessions_teacher_id_idx").on(table.teacherId),
     index("teaching_sessions_session_mode_idx").on(table.sessionMode),
     index("teaching_sessions_scheduled_conflict_idx").on(table.scheduledConflictId),
+    uniqueIndex("teaching_sessions_scheduled_occurrence_unique")
+      .on(table.schoolId, table.groupId, table.scheduledDate)
+      .where(sql`${table.scheduledDate} IS NOT NULL`),
+    index("teaching_sessions_scheduled_due_idx").on(
+      table.scheduledState,
+      table.scheduledEndAt
+    ),
+    check(
+      "teaching_sessions_scheduled_state_check",
+      sql`${table.scheduledState} IS NULL OR ${table.scheduledState} IN ('active', 'finalized', 'skipped')`
+    ),
+    check(
+      "teaching_sessions_scheduled_window_check",
+      sql`${table.scheduledStartAt} IS NULL OR ${table.scheduledEndAt} IS NULL OR ${table.scheduledEndAt} > ${table.scheduledStartAt}`
+    ),
+    check(
+      "teaching_sessions_scheduled_metadata_check",
+      sql`(
+        ${table.scheduledDate} IS NULL
+        AND ${table.scheduledTimezone} IS NULL
+        AND ${table.scheduledStartAt} IS NULL
+        AND ${table.scheduledEndAt} IS NULL
+        AND ${table.scheduledState} IS NULL
+      ) OR (
+        ${table.scheduledDate} IS NOT NULL
+        AND ${table.scheduledTimezone} IS NOT NULL
+        AND ${table.scheduledStartAt} IS NOT NULL
+        AND ${table.scheduledEndAt} IS NOT NULL
+        AND ${table.scheduledState} IS NOT NULL
+      )`
+    ),
   ]
 );
 
 export type TeachingSession = typeof teachingSessions.$inferSelect;
 export type InsertTeachingSession = typeof teachingSessions.$inferInsert;
+
+// ============================================================================
+// Session Summary Deliveries - durable, idempotent per-recipient outbox
+// ============================================================================
+export const classpilotSessionSummaryDeliveries = pgTable(
+  "classpilot_session_summary_deliveries",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    teachingSessionId: varchar("teaching_session_id").notNull(),
+    recipientKind: text("recipient_kind").notNull(), // teacher | central
+    recipientEmail: text("recipient_email").notNull(),
+    recipientName: text("recipient_name"),
+    state: text("state").notNull().default("queued"), // queued | leased | retry | sent | failed | unknown
+    attemptCount: integer("attempt_count").notNull().default(0),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    submissionStartedAt: timestamp("submission_started_at", { withTimezone: true }),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    providerMessageId: text("provider_message_id"),
+    lastError: text("last_error"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`now()`),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`now()`),
+  },
+  (table) => [
+    uniqueIndex("cp_summary_delivery_session_kind_unique").on(
+      table.teachingSessionId,
+      table.recipientKind
+    ),
+    uniqueIndex("cp_summary_delivery_session_email_unique").on(
+      table.teachingSessionId,
+      sql`lower(btrim(${table.recipientEmail}))`
+    ),
+    index("cp_summary_delivery_school_session_idx").on(
+      table.schoolId,
+      table.teachingSessionId
+    ),
+    index("cp_summary_delivery_due_idx").on(table.state, table.nextAttemptAt),
+    index("cp_summary_delivery_lease_idx").on(table.state, table.leaseExpiresAt),
+    check(
+      "cp_summary_delivery_recipient_kind_check",
+      sql`${table.recipientKind} IN ('teacher', 'central')`
+    ),
+    check(
+      "cp_summary_delivery_state_check",
+      sql`${table.state} IN ('queued', 'leased', 'retry', 'sent', 'failed', 'unknown')`
+    ),
+    check("cp_summary_delivery_attempt_count_check", sql`${table.attemptCount} >= 0`),
+    check("cp_summary_delivery_email_check", sql`btrim(${table.recipientEmail}) <> ''`),
+  ]
+);
+
+export type ClasspilotSessionSummaryDelivery =
+  typeof classpilotSessionSummaryDeliveries.$inferSelect;
+export type InsertClasspilotSessionSummaryDelivery =
+  typeof classpilotSessionSummaryDeliveries.$inferInsert;
 
 // ============================================================================
 // Scheduled Class Conflicts - coverage needed for unattended scheduled starts

@@ -1,0 +1,216 @@
+#!/usr/bin/env node
+
+import { readFileSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+
+export const REVIEWED_RLS_TABLE_ENABLEMENTS = Object.freeze([
+  "classpilot_session_summary_deliveries",
+]);
+
+function parseAllowlist(raw) {
+  if (typeof raw !== "string" || raw.trim() === "") {
+    throw new Error("RLS_ENABLED_TABLES must be a non-empty comma-separated allowlist");
+  }
+  const tables = raw.split(",").map((value) => value.trim());
+  if (tables.some((value) => !/^[a-z][a-z0-9_]*$/.test(value))) {
+    throw new Error("RLS_ENABLED_TABLES contains an empty or malformed table name");
+  }
+  if (new Set(tables).size !== tables.length) {
+    throw new Error("RLS_ENABLED_TABLES contains duplicate table names");
+  }
+  return tables;
+}
+
+function singleEnvironmentEntry(container, name) {
+  const environment = Array.isArray(container.environment)
+    ? container.environment
+    : [];
+  const matches = environment.filter((entry) => entry?.name === name);
+  if (matches.length !== 1) {
+    throw new Error(
+      `${container.name} environment must contain exactly one ${name} entry; found ${matches.length}`
+    );
+  }
+  if ((container.secrets || []).some((entry) => entry?.name === name)) {
+    throw new Error(`${name} must be inspectable and must not also be a secret`);
+  }
+  return matches[0];
+}
+
+function inspectedRlsEnvironment(taskDefinition, containerName) {
+  const containers = (taskDefinition?.containerDefinitions || []).filter(
+    (container) => container?.name === containerName
+  );
+  if (containers.length !== 1) {
+    throw new Error(
+      `Task definition must contain exactly one ${containerName} container; found ${containers.length}`
+    );
+  }
+  const container = containers[0];
+  const gucEntry = singleEnvironmentEntry(container, "RLS_GUC_ENABLED");
+  if (gucEntry.value !== "true" && gucEntry.value !== "false") {
+    throw new Error("RLS_GUC_ENABLED must be exactly true or false");
+  }
+  const allowlistEntry = singleEnvironmentEntry(container, "RLS_ENABLED_TABLES");
+  return {
+    container,
+    gucEnabled: gucEntry.value,
+    allowlistEntry,
+    tables: parseAllowlist(allowlistEntry.value),
+  };
+}
+
+function requireReviewedTable(table) {
+  if (!REVIEWED_RLS_TABLE_ENABLEMENTS.includes(table)) {
+    throw new Error(`RLS table enablement is not reviewed for: ${table}`);
+  }
+}
+
+export function verifyLiveRlsEnablementSources({
+  apiTaskDefinition,
+  workerTaskDefinition,
+  table,
+}) {
+  requireReviewedTable(table);
+  const api = inspectedRlsEnvironment(apiTaskDefinition, "api");
+  const worker = inspectedRlsEnvironment(workerTaskDefinition, "scheduler-worker");
+  if (api.gucEnabled !== "true" || worker.gucEnabled !== "true") {
+    throw new Error(
+      "Explicit table enablement requires RLS_GUC_ENABLED=true on both live services"
+    );
+  }
+  const apiSet = [...api.tables].sort();
+  const workerSet = [...worker.tables].sort();
+  if (JSON.stringify(apiSet) !== JSON.stringify(workerSet)) {
+    throw new Error("Live API and scheduler-worker RLS allowlists must match exactly");
+  }
+  if (api.tables.includes(table)) {
+    throw new Error(
+      `${table} is already enabled; omit the one-time --enable-rls-table flag`
+    );
+  }
+  return { previousTables: api.tables, addedTable: table };
+}
+
+export function addReviewedRlsTable(taskDefinition, { containerName, table }) {
+  requireReviewedTable(table);
+  const inspected = inspectedRlsEnvironment(taskDefinition, containerName);
+  if (inspected.gucEnabled !== "true") {
+    throw new Error("Explicit table enablement requires RLS_GUC_ENABLED=true");
+  }
+  if (inspected.tables.includes(table)) {
+    throw new Error(`${table} is already present in ${containerName} RLS_ENABLED_TABLES`);
+  }
+  inspected.allowlistEntry.value = [...inspected.tables, table].join(",");
+  return taskDefinition;
+}
+
+export function verifyEnabledRlsCandidates({
+  taskDefinitions,
+  table,
+  expectedPreviousTables,
+}) {
+  requireReviewedTable(table);
+  const inspected = taskDefinitions.map(({ taskDefinition, containerName }) => ({
+    containerName,
+    ...inspectedRlsEnvironment(taskDefinition, containerName),
+  }));
+  for (const candidate of inspected) {
+    if (candidate.gucEnabled !== "true" || !candidate.tables.includes(table)) {
+      throw new Error(
+        `${candidate.containerName} does not enforce the explicitly enabled RLS table ${table}`
+      );
+    }
+  }
+  const expectedTables = expectedPreviousTables
+    ? [...expectedPreviousTables, table]
+    : inspected[0].tables;
+  const expected = JSON.stringify([...expectedTables].sort());
+  if (inspected.some((candidate) => JSON.stringify([...candidate.tables].sort()) !== expected)) {
+    throw new Error("Rendered RLS allowlists drifted between deployment candidates");
+  }
+}
+
+function argumentValue(args, name) {
+  const index = args.indexOf(name);
+  if (index < 0 || index + 1 >= args.length) {
+    throw new Error(`${name} is required`);
+  }
+  return args[index + 1];
+}
+
+function main() {
+  const [mode, ...args] = process.argv.slice(2);
+  const table = argumentValue(args, "--table");
+  if (mode === "add") {
+    const path = argumentValue(args, "--task-definition");
+    const containerName = argumentValue(args, "--container");
+    const taskDefinition = JSON.parse(readFileSync(path, "utf8"));
+    addReviewedRlsTable(taskDefinition, { containerName, table });
+    writeFileSync(path, JSON.stringify(taskDefinition));
+    return;
+  }
+  if (mode === "preflight") {
+    const apiTaskDefinition = JSON.parse(
+      readFileSync(argumentValue(args, "--api-task-definition"), "utf8")
+    );
+    const workerTaskDefinition = JSON.parse(
+      readFileSync(argumentValue(args, "--worker-task-definition"), "utf8")
+    );
+    const result = verifyLiveRlsEnablementSources({
+      apiTaskDefinition,
+      workerTaskDefinition,
+      table,
+    });
+    process.stdout.write(
+      JSON.stringify({ addedTable: result.addedTable, previousCount: result.previousTables.length })
+    );
+    return;
+  }
+  if (mode === "verify-candidates") {
+    const source = verifyLiveRlsEnablementSources({
+      apiTaskDefinition: JSON.parse(
+        readFileSync(argumentValue(args, "--api-source-task-definition"), "utf8")
+      ),
+      workerTaskDefinition: JSON.parse(
+        readFileSync(argumentValue(args, "--worker-source-task-definition"), "utf8")
+      ),
+      table,
+    });
+    verifyEnabledRlsCandidates({
+      taskDefinitions: [
+        {
+          taskDefinition: JSON.parse(
+            readFileSync(argumentValue(args, "--api-task-definition"), "utf8")
+          ),
+          containerName: "api",
+        },
+        {
+          taskDefinition: JSON.parse(
+            readFileSync(argumentValue(args, "--emergency-task-definition"), "utf8")
+          ),
+          containerName: "api",
+        },
+        {
+          taskDefinition: JSON.parse(
+            readFileSync(argumentValue(args, "--worker-task-definition"), "utf8")
+          ),
+          containerName: "scheduler-worker",
+        },
+      ],
+      table,
+      expectedPreviousTables: source.previousTables,
+    });
+    return;
+  }
+  throw new Error("Expected add, preflight, or verify-candidates mode");
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  try {
+    main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
+}

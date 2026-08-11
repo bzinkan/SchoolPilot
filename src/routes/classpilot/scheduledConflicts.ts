@@ -5,14 +5,21 @@ import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
 import {
   getGroupTeachers,
+  getGroupByIdAndSchool,
   getScheduledClassConflictByIdAndSchool,
+  getSchoolById,
   getUserById,
   listActiveScheduledClassConflicts,
   resolveScheduledClassConflict,
-  setScheduleSkippedDate,
 } from "../../services/storage.js";
-import { broadcastToTeachersLocal, isStaffUserConnectedLocal } from "../../realtime/ws-broadcast.js";
-import { closeScheduledConflictReporting, startScheduledClassFromConflict } from "../../services/classpilotScheduledStart.js";
+import { isClasspilotStaffUserConnected } from "../../realtime/classpilotStaffPresence.js";
+import {
+  broadcastScheduledConflictUpdate,
+  closeScheduledConflictReporting,
+  skipScheduledClassBeforeStart,
+  startScheduledClassFromConflict,
+} from "../../services/classpilotScheduledStart.js";
+import { serializeClasspilotSession } from "../../services/classpilotSessionLifecycle.js";
 
 const router = Router();
 
@@ -70,11 +77,10 @@ async function viewContext(conflict: any, userId: string, admin: boolean) {
   return { visible: false, audience: "none", canAct: false };
 }
 
-function conflictMessage(conflict: any, teacherName: string, audience: string): string {
+function conflictMessage(conflict: any, teacherName: string, audience: string, connected: boolean): string {
   const data = payload(conflict);
   const className = data.selectedClass?.name || "Scheduled class";
   const count = data.claimableCount ?? data.totalOverlapCount ?? 0;
-  const connected = conflict.scheduledTeacherConnected === true || isStaffUserConnectedLocal(conflict.schoolId, conflict.teacherId);
   if (audience === "scheduled_teacher") {
     return `${className} started while you were not logged in. Reporting is active, and ${count} student${count === 1 ? "" : "s"} may be waiting under Available until you open ClassPilot.`;
   }
@@ -93,6 +99,8 @@ function conflictMessage(conflict: any, teacherName: string, audience: string): 
 async function serializeConflict(conflict: any, context: { audience: string; canAct: boolean }) {
   const teacher = await getUserById(conflict.teacherId);
   const teacherName = displayName(teacher);
+  const connected = conflict.scheduledTeacherConnected === true
+    || await isClasspilotStaffUserConnected(conflict.schoolId, conflict.teacherId);
   return {
     id: conflict.id,
     schoolId: conflict.schoolId,
@@ -103,11 +111,13 @@ async function serializeConflict(conflict: any, context: { audience: string; can
     blockStartTime: conflict.blockStartTime,
     blockEndTime: conflict.blockEndTime,
     status: conflict.status,
-    scheduledTeacherConnected: conflict.scheduledTeacherConnected === true || isStaffUserConnectedLocal(conflict.schoolId, conflict.teacherId),
+    scheduledTeacherConnected: connected,
     audience: context.audience,
     canStartAnyway: context.canAct,
-    canSkip: context.canAct,
-    message: conflictMessage(conflict, teacherName, context.audience),
+    // Once a conflict exists the scheduled occurrence has already started;
+    // End Class, not Skip Today, is the only terminal action.
+    canSkip: false,
+    message: conflictMessage(conflict, teacherName, context.audience, connected),
     overlap: payload(conflict),
     lastCheckedAt: conflict.lastCheckedAt,
     createdAt: conflict.createdAt,
@@ -115,10 +125,7 @@ async function serializeConflict(conflict: any, context: { audience: string; can
 }
 
 function broadcastConflictUpdate(schoolId: string, conflictId: string) {
-  broadcastToTeachersLocal(schoolId, {
-    type: "scheduled-class-conflict-updated",
-    conflictId,
-  });
+  broadcastScheduledConflictUpdate(schoolId, conflictId);
 }
 
 function expiredScheduledConflictResponse(res: any) {
@@ -145,6 +152,39 @@ router.get("/scheduled-conflicts", ...auth, async (req, res, next) => {
   }
 });
 
+// POST /api/classpilot/scheduled-classes/:groupId/skip-today
+// This is intentionally group/date based because a conflict does not exist
+// until the occurrence has begun, at which point skipping is no longer valid.
+router.post("/scheduled-classes/:groupId/skip-today", ...auth, async (req, res, next) => {
+  try {
+    const schoolId = res.locals.schoolId!;
+    const group = await getGroupByIdAndSchool(param(req, "groupId"), schoolId);
+    if (!group || !group.scheduleEnabled || !group.blockStartTime || !group.blockEndTime) {
+      return res.status(404).json({ error: "Scheduled class not found" });
+    }
+    if (!isAdmin(req, res) && group.teacherId !== req.authUser!.id) {
+      return res.status(403).json({ error: "Only an admin or the scheduled teacher can skip this class" });
+    }
+    const school = await getSchoolById(schoolId);
+    const timeZone = school?.schoolTimezone || "America/New_York";
+    const now = new Date();
+    const scheduledDate = now.toLocaleDateString("en-CA", { timeZone });
+    const result = await skipScheduledClassBeforeStart({ group, scheduledDate, now });
+    if (!result.skipped) {
+      return res.status(409).json({
+        code: "SCHEDULED_OCCURRENCE_ALREADY_STARTED",
+        error: "This scheduled class has already started. Use End Class to finalize it and send its Session Summary.",
+      });
+    }
+    return res.json({
+      skipped: true,
+      occurrence: result.session ? serializeClasspilotSession(result.session) : null,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post("/scheduled-conflicts/:id/start-anyway", ...auth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
@@ -156,7 +196,7 @@ router.post("/scheduled-conflicts/:id/start-anyway", ...auth, async (req, res, n
       return res.status(403).json({ error: "Only an admin or the scheduled teacher can start this class" });
     }
     const session = await startScheduledClassFromConflict({ conflict, actorId: req.authUser!.id });
-    return res.status(201).json({ session });
+    return res.status(201).json({ session: serializeClasspilotSession(session) });
   } catch (err) {
     if ((err as any)?.code === "SCHEDULED_CONFLICT_EXPIRED") return expiredScheduledConflictResponse(res);
     if ((err as any)?.code === "SCHEDULED_CONFLICT_NOT_ACTIVE") {
@@ -177,7 +217,18 @@ router.post("/scheduled-conflicts/:id/skip", ...auth, async (req, res, next) => 
     if (!isAdmin(req, res) && conflict.teacherId !== req.authUser!.id) {
       return res.status(403).json({ error: "Only an admin or the scheduled teacher can skip this class" });
     }
-    await setScheduleSkippedDate(conflict.groupId, conflict.scheduledDate);
+    const group = await getGroupByIdAndSchool(conflict.groupId, schoolId);
+    if (!group) return res.status(404).json({ error: "Scheduled class not found" });
+    const skipped = await skipScheduledClassBeforeStart({
+      group,
+      scheduledDate: conflict.scheduledDate,
+    });
+    if (!skipped.skipped) {
+      return res.status(409).json({
+        code: "SCHEDULED_OCCURRENCE_ALREADY_STARTED",
+        error: "This scheduled class has already started. Use End Class to finalize it and send its Session Summary.",
+      });
+    }
     await closeScheduledConflictReporting({
       conflict,
       releaseReason: "scheduled_skipped",

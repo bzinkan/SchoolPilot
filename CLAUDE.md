@@ -145,6 +145,7 @@ SchoolPilot is multi-tenant. Beyond the app-code rule of filtering every query b
 - **Background / cross-school work**: `schedulerDb` / `schedulerPool` (`src/services/schedulerDb.ts`) set `app.is_super='on'` on every connection → bypass RLS. Use them for scheduler jobs and cross-school boot migrations.
 - **Out-of-request DB access**: for code that runs OUTSIDE an Express request — WebSocket/Socket.IO handlers, unauthenticated routes (kiosk, device register), detached `.then()`/`.catch()` callbacks that outlive the response — wrap the DB work in **`runWithTenantContext({ schoolId }, fn)`** (or `{ isSuper: true }` for genuinely cross-school reads), from `src/middleware/tenantContext.ts`. It establishes the same tenant ALS scope on a fresh connection.
 - **Kill-switch / rollout**: gated by env on the ECS task def — `RLS_GUC_ENABLED` (master on/off) and `RLS_ENABLED_TABLES` (comma-list of enforced tables). Dropping a table from the list (or `RLS_GUC_ENABLED=false`) disables enforcement on the next deploy — no code change.
+- **Deploy-time allowlist additions**: ordinary backend deploys preserve the live task definition's RLS master switch and per-table allowlist exactly. A reviewed release may use the one-shot `--enable-rls-table <reviewed-table>` flag. That path requires matching live API/worker allowlists with `RLS_GUC_ENABLED=true`, adds only the named table to the rendered API/emergency/worker definitions, verifies the registered definitions, and makes the migration task fail unless PostgreSQL reports enabled + forced RLS and the `tenant_isolation` policy. Omit the flag on later deploys; a deliberate per-table kill-switch removal then remains removed. This path does not require a Terraform apply.
 - **Teacher command/state tables are tenant tables**: keep `classpilot_commands`, `classpilot_command_targets`, and `classpilot_classroom_states` in `RLS_ENABLED_TABLES` anywhere teacher command safety is enabled. These tables store per-school command history, target outcomes, and active classroom restrictions, so they must remain school-scoped in production and tests.
 
 **THE RULE when you add or change DB code:** any path that reads or writes a tenant table MUST run under a tenant context — a GUC-bound request, `schedulerDb` (is_super), or `runWithTenantContext`. A new unauthenticated route, WebSocket handler, detached callback, or boot migration that touches a tenant table on the bare `db`/`pool` will **silently return 0 rows or fail `WITH CHECK`** once that table is enforced. New `INSERT`s must set `school_id` (derive it from the parent/owner — never trust the request body). The cross-tenant regression suite (`tests/cross-tenant-isolation.test.ts`) wraps calls in `inSchool()` / `asSystem()` helpers around `runWithTenantContext` — extend it when you add school-scoped storage functions.
@@ -682,6 +683,15 @@ MiB API posture, use the reviewed backend-only mode instead:
 
 ```bash
 ./scripts/deploy.sh production --backend --activate-emergency
+```
+
+For the single release that first enforces the ClassPilot session-summary
+delivery outbox, use the explicitly reviewed additive RLS flag. Do not retain
+the flag on later releases:
+
+```bash
+./scripts/deploy.sh production --backend --activate-emergency \
+  --enable-rls-table classpilot_session_summary_deliveries
 ```
 
 That mode keeps the prior 2048 MiB API serving while the deploy script builds

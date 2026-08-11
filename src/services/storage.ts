@@ -8,7 +8,7 @@ import {
   publishCacheInvalidation,
   registerCacheInvalidationHandler,
 } from "../realtime/cacheInvalidation.js";
-import { createLocalDateFormatter } from "../util/schoolTime.js";
+import { createLocalDateFormatter, localDateInTimeZone, localDateTimeUtc } from "../util/schoolTime.js";
 import {
   assertClasspilotHistoryFallbackPiStatementDiscoverable,
   createClasspilotHistoryFallbackSqlShapeIdentity,
@@ -106,6 +106,7 @@ import {
   classpilotCommandTargets,
   classpilotClassroomStates,
   classpilotScheduledConflicts,
+  classpilotSessionSummaryDeliveries,
   classpilotSessionStudents,
   classpilotSessionUsage,
   classpilotCoverageAssignments,
@@ -157,6 +158,8 @@ import {
   type InsertClasspilotClassroomState,
   type ClasspilotScheduledConflict,
   type InsertClasspilotScheduledConflict,
+  type ClasspilotSessionSummaryDelivery,
+  type InsertClasspilotSessionSummaryDelivery,
   type ClasspilotSessionStudent,
   type ClasspilotSessionUsage,
   type ClasspilotCoverageAssignment,
@@ -242,8 +245,11 @@ import {
 // User operations
 // ============================================================================
 
-export async function getUserById(id: string): Promise<User | undefined> {
-  const [user] = await db.select().from(users).where(eq(users.id, id)).limit(1);
+export async function getUserById(
+  id: string,
+  dbInstance: typeof db = db
+): Promise<User | undefined> {
+  const [user] = await dbInstance.select().from(users).where(eq(users.id, id)).limit(1);
   return user;
 }
 
@@ -3869,6 +3875,7 @@ export async function getHeartbeatsByStudent(
 }
 
 export async function getHeartbeatsForStudentsInRange(
+  schoolId: string,
   studentIds: string[],
   startTime: Date,
   endTime: Date,
@@ -3880,9 +3887,17 @@ export async function getHeartbeatsForStudentsInRange(
     .from(heartbeats)
     .where(
       and(
+        eq(heartbeats.schoolId, schoolId),
         inArray(heartbeats.studentId, studentIds),
-        sql`${heartbeats.timestamp} >= ${startTime}`,
-        sql`${heartbeats.timestamp} <= ${endTime}`
+        // `heartbeats.timestamp` is a legacy timestamp-without-time-zone
+        // column. Passing a JavaScript Date through node-postgres serializes
+        // it in the process-local timezone on Windows, which shifts the
+        // requested UTC window. An explicit ISO string keeps the comparison
+        // stable across worker hosts while PostgreSQL parses it in UTC.
+        sql`${heartbeats.timestamp} >= ${startTime.toISOString()}`,
+        // Session windows are half-open so a heartbeat exactly on a bell
+        // boundary can only belong to the following class period.
+        sql`${heartbeats.timestamp} < ${endTime.toISOString()}`
       )
     )
     .orderBy(heartbeats.studentId, heartbeats.timestamp);
@@ -4176,7 +4191,8 @@ export type ClasspilotSessionRosterSyncSummary = {
 
 export async function resyncClasspilotSessionStudents(
   session: TeachingSession,
-  dbInstance: typeof db = db
+  dbInstance: typeof db = db,
+  options: { strict?: boolean } = {}
 ): Promise<ClasspilotSessionRosterSyncSummary> {
   try {
     const [group] = await dbInstance
@@ -4190,7 +4206,7 @@ export async function resyncClasspilotSessionStudents(
       .where(eq(groups.id, session.groupId))
       .limit(1);
 
-    if (!group || group.groupType !== "admin_class" || group.status !== "active") {
+    if (!group || group.status !== "active") {
       return { rosterCount: 0, alreadyInSession: 0, addedToSession: 0 };
     }
 
@@ -4234,11 +4250,73 @@ export async function resyncClasspilotSessionStudents(
       addedToSession: inserted.length,
     };
   } catch (err) {
-    if (isUndefinedTableError(err)) {
+    if (isUndefinedTableError(err) && !options.strict) {
       return { rosterCount: 0, alreadyInSession: 0, addedToSession: 0 };
     }
     throw err;
   }
+}
+
+/**
+ * Rollout bridge for sessions opened before immutable roster snapshots existed
+ * (including teacher-created groups that the legacy helper skipped). Only open
+ * rows with no snapshot are touched; ended history is never backfilled.
+ */
+export async function backfillOpenTeachingSessionRosterSnapshots(
+  dbInstance: typeof db = db,
+  schoolId?: string
+): Promise<number> {
+  const conditions: SQL[] = [
+    isNull(teachingSessions.endTime),
+    or(
+      isNull(teachingSessions.rosterSnapshotCompletedAt),
+      isNull(teachingSessions.classNameSnapshot)
+    )!,
+  ];
+  if (schoolId) conditions.push(eq(teachingSessions.schoolId, schoolId));
+  const openWithoutSnapshot = await dbInstance
+    .select({ session: teachingSessions })
+    .from(teachingSessions)
+    .where(and(...conditions));
+
+  let backfilled = 0;
+  for (const { session } of openWithoutSnapshot) {
+    await dbInstance.transaction(async (tx) => {
+      const transactionDb = tx as unknown as typeof db;
+      const [locked] = await tx
+        .select()
+        .from(teachingSessions)
+        .where(and(
+          eq(teachingSessions.id, session.id),
+          isNull(teachingSessions.endTime),
+          or(
+            isNull(teachingSessions.rosterSnapshotCompletedAt),
+            isNull(teachingSessions.classNameSnapshot)
+          )
+        ))
+        .limit(1)
+        .for("update");
+      if (!locked) return;
+      const [group] = await tx
+        .select({ name: groups.name })
+        .from(groups)
+        .where(and(eq(groups.id, locked.groupId), eq(groups.schoolId, locked.schoolId!)))
+        .limit(1);
+      if (!group) throw new Error(`Open teaching session ${locked.id} has no parent group`);
+      if (!locked.rosterSnapshotCompletedAt) {
+        await resyncClasspilotSessionStudents(locked, transactionDb, { strict: true });
+      }
+      await tx
+        .update(teachingSessions)
+        .set({
+          rosterSnapshotCompletedAt: locked.rosterSnapshotCompletedAt || new Date(),
+          classNameSnapshot: locked.classNameSnapshot || group.name,
+        })
+        .where(eq(teachingSessions.id, locked.id));
+      backfilled += 1;
+    });
+  }
+  return backfilled;
 }
 
 export async function getClasspilotSessionStudents(
@@ -4249,6 +4327,36 @@ export async function getClasspilotSessionStudents(
     .select()
     .from(classpilotSessionStudents)
     .where(eq(classpilotSessionStudents.teachingSessionId, teachingSessionId))
+    .orderBy(classpilotSessionStudents.studentId);
+}
+
+/**
+ * Return the roster frozen onto a teaching session. Summary generation must
+ * use this snapshot rather than the group's current roster: administrators
+ * can edit a class after its scheduled occurrence has already begun.
+ */
+export async function getClasspilotSessionStudentRoster(
+  schoolId: string,
+  teachingSessionId: string,
+  dbInstance: typeof db = db
+): Promise<Array<{ studentId: string; student: Student }>> {
+  return dbInstance
+    .select({
+      studentId: classpilotSessionStudents.studentId,
+      student: students,
+    })
+    .from(classpilotSessionStudents)
+    .innerJoin(
+      students,
+      and(
+        eq(students.id, classpilotSessionStudents.studentId),
+        eq(students.schoolId, schoolId)
+      )
+    )
+    .where(and(
+      eq(classpilotSessionStudents.schoolId, schoolId),
+      eq(classpilotSessionStudents.teachingSessionId, teachingSessionId)
+    ))
     .orderBy(classpilotSessionStudents.studentId);
 }
 
@@ -4401,20 +4509,34 @@ export async function createTeachingSession(
   // caller, so it can never be omitted or mismatched. Under a request GUC the
   // group lookup only resolves the caller's own school; the scheduler passes
   // schedulerDb (is_super) so it resolves across schools.
-  const [group] = await dbInstance
-    .select({ schoolId: groups.schoolId })
-    .from(groups)
-    .where(eq(groups.id, data.groupId))
-    .limit(1);
-  if (!group) {
-    throw new Error(`createTeachingSession: group ${data.groupId} not found`);
-  }
-  const [session] = await dbInstance
-    .insert(teachingSessions)
-    .values({ ...data, schoolId: group.schoolId })
-    .returning();
-  if (session) await resyncClasspilotSessionStudents(session, dbInstance);
-  return session!;
+  return dbInstance.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    const [group] = await tx
+      .select({ schoolId: groups.schoolId, name: groups.name })
+      .from(groups)
+      .where(eq(groups.id, data.groupId))
+      .limit(1)
+      .for("share");
+    if (!group) {
+      throw new Error(`createTeachingSession: group ${data.groupId} not found`);
+    }
+    const [session] = await tx
+      .insert(teachingSessions)
+      .values({
+        ...data,
+        schoolId: group.schoolId,
+        classNameSnapshot: data.classNameSnapshot || group.name,
+      })
+      .returning();
+    if (!session) throw new Error("createTeachingSession: insert did not return a session");
+    await resyncClasspilotSessionStudents(session, transactionDb, { strict: true });
+    const [snapshotted] = await tx
+      .update(teachingSessions)
+      .set({ rosterSnapshotCompletedAt: new Date() })
+      .where(eq(teachingSessions.id, session.id))
+      .returning();
+    return snapshotted || session;
+  });
 }
 
 export async function getActiveScheduledReportSessionForConflict(
@@ -4436,41 +4558,202 @@ export async function getActiveScheduledReportSessionForConflict(
   return row?.session;
 }
 
+export async function getScheduledTeachingSessionOccurrence(
+  schoolId: string,
+  groupId: string,
+  scheduledDate: string,
+  dbInstance: typeof db = db
+): Promise<TeachingSession | undefined> {
+  const [session] = await dbInstance
+    .select()
+    .from(teachingSessions)
+    .where(and(
+      eq(teachingSessions.schoolId, schoolId),
+      eq(teachingSessions.groupId, groupId),
+      eq(teachingSessions.scheduledDate, scheduledDate)
+    ))
+    .limit(1);
+  return session;
+}
+
 export async function createOrReuseScheduledReportSession(
   data: {
     schoolId: string;
     groupId: string;
     teacherId: string;
-    scheduledConflictId: string;
-    startTime?: Date;
+    scheduledDate: string;
+    scheduledTimezone: string;
+    scheduledStartAt: Date;
+    scheduledEndAt: Date;
+    scheduledTeacherEmail?: string | null;
+    scheduledTeacherName?: string | null;
+    scheduledConflictId?: string | null;
   },
   dbInstance: typeof db = db
 ): Promise<TeachingSession> {
-  const existing = await getActiveScheduledReportSessionForConflict(
-    data.schoolId,
-    data.scheduledConflictId,
-    dbInstance
-  );
-  if (existing) {
-    await resyncClasspilotSessionStudents(existing, dbInstance);
-    return existing;
-  }
-  return createTeachingSession({
-    groupId: data.groupId,
-    teacherId: data.teacherId,
-    startTime: data.startTime,
-    sessionMode: SCHEDULED_REPORT_SESSION_MODE,
-    scheduledConflictId: data.scheduledConflictId,
-  } as InsertTeachingSession & { groupId: string; teacherId: string }, dbInstance);
+  return dbInstance.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    const [groupSnapshot] = await tx
+      .select({ name: groups.name })
+      .from(groups)
+      .where(and(eq(groups.id, data.groupId), eq(groups.schoolId, data.schoolId)))
+      .limit(1)
+      // Canonical creation and Skip Today use the same group-row lock. Besides
+      // keeping hard deletion out, the exclusive lock makes the occurrence
+      // tombstone and canonical creation linearizable.
+      .for("update");
+    if (!groupSnapshot) throw new Error(`Scheduled occurrence group ${data.groupId} was not found`);
+    const existing = await getScheduledTeachingSessionOccurrence(
+      data.schoolId,
+      data.groupId,
+      data.scheduledDate,
+      transactionDb
+    );
+    if (existing) {
+      if (data.scheduledConflictId && !existing.scheduledConflictId && !existing.endTime) {
+        const [updated] = await tx
+          .update(teachingSessions)
+          .set({ scheduledConflictId: data.scheduledConflictId })
+          .where(and(
+            eq(teachingSessions.id, existing.id),
+            isNull(teachingSessions.scheduledConflictId),
+            isNull(teachingSessions.endTime)
+          ))
+          .returning();
+        return updated || existing;
+      }
+      return existing;
+    }
+
+    const [created] = await tx
+      .insert(teachingSessions)
+      .values({
+        schoolId: data.schoolId,
+        groupId: data.groupId,
+        teacherId: data.teacherId,
+        startTime: data.scheduledStartAt,
+        sessionMode: SCHEDULED_REPORT_SESSION_MODE,
+        scheduledConflictId: data.scheduledConflictId || null,
+        scheduledDate: data.scheduledDate,
+        scheduledTimezone: data.scheduledTimezone,
+        scheduledStartAt: data.scheduledStartAt,
+        scheduledEndAt: data.scheduledEndAt,
+        scheduledState: "active",
+        scheduledTeacherEmail: data.scheduledTeacherEmail || null,
+        scheduledTeacherName: data.scheduledTeacherName || null,
+        classNameSnapshot: groupSnapshot.name,
+      })
+      // The partial occurrence unique index is the concurrency authority. A
+      // second scheduler/API racer simply reads the winner below.
+      .onConflictDoNothing()
+      .returning();
+    if (created) {
+      // The occurrence and immutable roster snapshot commit atomically; a
+      // worker crash can never strand a canonical row with an empty snapshot.
+      await resyncClasspilotSessionStudents(created, transactionDb, { strict: true });
+      const [snapshotted] = await tx
+        .update(teachingSessions)
+        .set({ rosterSnapshotCompletedAt: new Date() })
+        .where(eq(teachingSessions.id, created.id))
+        .returning();
+      return snapshotted || created;
+    }
+
+    const raced = await getScheduledTeachingSessionOccurrence(
+      data.schoolId,
+      data.groupId,
+      data.scheduledDate,
+      transactionDb
+    );
+    if (!raced) throw new Error("Scheduled occurrence conflict did not produce a session row");
+    return raced;
+  });
+}
+
+export async function skipScheduledTeachingSessionOccurrence(
+  data: {
+    schoolId: string;
+    groupId: string;
+    teacherId: string;
+    scheduledDate: string;
+    scheduledTimezone: string;
+    scheduledStartAt: Date;
+    scheduledEndAt: Date;
+    scheduledTeacherEmail?: string | null;
+    scheduledTeacherName?: string | null;
+    now?: Date;
+  },
+  dbInstance: typeof db = db
+): Promise<{ skipped: boolean; session?: TeachingSession }> {
+  const now = data.now || new Date();
+  return dbInstance.transaction(async (tx) => {
+    const [groupSnapshot] = await tx
+      .select({ name: groups.name })
+      .from(groups)
+      .where(and(eq(groups.id, data.groupId), eq(groups.schoolId, data.schoolId)))
+      .limit(1)
+      .for("update");
+    if (!groupSnapshot) throw new Error(`Scheduled occurrence group ${data.groupId} was not found`);
+    const existing = await getScheduledTeachingSessionOccurrence(
+      data.schoolId,
+      data.groupId,
+      data.scheduledDate,
+      tx as unknown as typeof db
+    );
+    if (existing) return { skipped: existing.scheduledState === "skipped", session: existing };
+    if (now >= data.scheduledStartAt) return { skipped: false };
+
+    const [skipped] = await tx
+      .insert(teachingSessions)
+      .values({
+        schoolId: data.schoolId,
+        groupId: data.groupId,
+        teacherId: data.teacherId,
+        startTime: data.scheduledStartAt,
+        endTime: data.scheduledStartAt,
+        sessionMode: SCHEDULED_REPORT_SESSION_MODE,
+        scheduledDate: data.scheduledDate,
+        scheduledTimezone: data.scheduledTimezone,
+        scheduledStartAt: data.scheduledStartAt,
+        scheduledEndAt: data.scheduledEndAt,
+        scheduledState: "skipped",
+        scheduledFinalizationReason: "scheduled_skipped",
+        scheduledTeacherEmail: data.scheduledTeacherEmail || null,
+        scheduledTeacherName: data.scheduledTeacherName || null,
+        classNameSnapshot: groupSnapshot.name,
+      })
+      .onConflictDoNothing()
+      .returning();
+    if (!skipped) {
+      const raced = await getScheduledTeachingSessionOccurrence(
+        data.schoolId,
+        data.groupId,
+        data.scheduledDate,
+        tx as unknown as typeof db
+      );
+      return { skipped: raced?.scheduledState === "skipped", session: raced };
+    }
+    await tx
+      .update(groups)
+      .set({ scheduleSkippedDate: data.scheduledDate })
+      .where(and(eq(groups.id, data.groupId), eq(groups.schoolId, data.schoolId)));
+    return { skipped: true, session: skipped };
+  });
 }
 
 export async function promoteScheduledReportSessionToLive(
   data: {
     schoolId: string;
-    scheduledConflictId: string;
+    sessionId?: string;
+    scheduledConflictId?: string;
   },
   dbInstance: typeof db = db
 ): Promise<TeachingSession | undefined> {
+  const identity = data.sessionId
+    ? eq(teachingSessions.id, data.sessionId)
+    : data.scheduledConflictId
+      ? eq(teachingSessions.scheduledConflictId, data.scheduledConflictId)
+      : sql`false`;
   const [session] = await dbInstance
     .update(teachingSessions)
     .set({
@@ -4478,13 +4761,13 @@ export async function promoteScheduledReportSessionToLive(
       controlUpdatedAt: new Date(),
     })
     .where(and(
-      eq(teachingSessions.scheduledConflictId, data.scheduledConflictId),
+      identity,
       eq(teachingSessions.schoolId, data.schoolId),
       eq(teachingSessions.sessionMode, SCHEDULED_REPORT_SESSION_MODE),
+      eq(teachingSessions.scheduledState, "active"),
       isNull(teachingSessions.endTime)
     ))
     .returning();
-  if (session) await resyncClasspilotSessionStudents(session, dbInstance);
   return session;
 }
 
@@ -4504,13 +4787,598 @@ export async function endTeachingSession(
   sessionId: string,
   dbInstance: typeof db = db
 ): Promise<TeachingSession | undefined> {
-  const [session] = await dbInstance
-    .update(teachingSessions)
-    .set({ endTime: new Date() })
+  // Legacy storage/test compatibility wrapper. Runtime routes and workers use
+  // finalizeClasspilotSession so recipients and post-commit side effects are
+  // included, but even this low-level helper must not bypass the canonical
+  // transactional cleanup path.
+  const [existing] = await dbInstance
+    .select()
+    .from(teachingSessions)
     .where(eq(teachingSessions.id, sessionId))
+    .limit(1);
+  if (!existing?.schoolId) return undefined;
+  const result = await finalizeTeachingSession({
+    schoolId: existing.schoolId,
+    sessionId,
+    reason: existing.scheduledDate ? "teacher_end" : "manual_end",
+    recipients: [],
+  }, dbInstance);
+  if (result?.finalized) await aggregateClasspilotSessionUsage(sessionId, dbInstance);
+  return result?.session;
+}
+
+export type TeachingSessionFinalizationReason =
+  | "manual_end"
+  | "teacher_end"
+  | "admin_end"
+  | "scheduled_end"
+  | "safety_timeout"
+  | "replacement_start";
+
+export type SessionSummaryRecipientSnapshot = {
+  kind: "teacher" | "central";
+  email: string;
+  name?: string | null;
+};
+
+export async function withTeachingSessionStartLock<T>(
+  schoolId: string,
+  teacherId: string,
+  callback: (dbInstance: typeof db) => Promise<T>,
+  dbInstance: typeof db = db
+): Promise<T> {
+  return dbInstance.transaction(async (tx) => {
+    const lockKey = `classpilot:teaching-session-start:${schoolId}:${teacherId}`;
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${lockKey}))`);
+    return callback(tx as unknown as typeof db);
+  });
+}
+
+export type FinalizeTeachingSessionResult = {
+  session: TeachingSession;
+  finalized: boolean;
+  summaryDisposition: "queued" | "already_queued" | "not_applicable";
+  deliveryCount: number;
+  resolvedConflictIds: string[];
+};
+
+/**
+ * The single database authority for ending a ClassPilot teaching session.
+ * The row lock makes teacher, scheduler and safety-timeout races idempotent;
+ * lifecycle state, classroom cleanup and outbox creation commit together.
+ */
+export async function finalizeTeachingSession(
+  options: {
+    schoolId: string;
+    sessionId: string;
+    reason: TeachingSessionFinalizationReason;
+    finalizedAt?: Date;
+    recipients?: SessionSummaryRecipientSnapshot[];
+  },
+  dbInstance: typeof db = db
+): Promise<FinalizeTeachingSessionResult | undefined> {
+  const now = options.finalizedAt || new Date();
+  const result = await dbInstance.transaction(async (tx) => {
+    const [session] = await tx
+      .select()
+      .from(teachingSessions)
+      .where(and(
+        eq(teachingSessions.id, options.sessionId),
+        eq(teachingSessions.schoolId, options.schoolId)
+      ))
+      .limit(1)
+      .for("update");
+    if (!session) return undefined;
+
+    const existingDeliveries = await tx
+      .select({ id: classpilotSessionSummaryDeliveries.id })
+      .from(classpilotSessionSummaryDeliveries)
+      .where(and(
+        eq(classpilotSessionSummaryDeliveries.schoolId, options.schoolId),
+        eq(classpilotSessionSummaryDeliveries.teachingSessionId, session.id)
+      ));
+
+    if (session.endTime) {
+      return {
+        session,
+        finalized: false,
+        summaryDisposition: existingDeliveries.length > 0 ? "already_queued" as const : "not_applicable" as const,
+        deliveryCount: existingDeliveries.length,
+        resolvedConflictIds: [],
+      };
+    }
+
+    const isScheduled = !!session.scheduledDate;
+    const endTime = isScheduled && options.reason === "scheduled_end" && session.scheduledEndAt
+      ? session.scheduledEndAt
+      : isScheduled && session.scheduledEndAt && now > session.scheduledEndAt
+        ? session.scheduledEndAt
+        : now;
+
+    const [ended] = await tx
+      .update(teachingSessions)
+      .set({
+        endTime,
+        scheduledState: isScheduled ? "finalized" : session.scheduledState,
+        // Despite the legacy column name, this is the unified lifecycle audit
+        // reason for both manual and scheduled sessions.
+        scheduledFinalizationReason: options.reason,
+      })
+      .where(and(eq(teachingSessions.id, session.id), isNull(teachingSessions.endTime)))
+      .returning();
+    if (!ended) throw new Error("Teaching session finalization lost its row lock");
+
+    await tx
+      .update(classpilotClassroomStates)
+      .set({ clearedAt: endTime, updatedAt: endTime })
+      .where(and(
+        eq(classpilotClassroomStates.schoolId, options.schoolId),
+        eq(classpilotClassroomStates.teachingSessionId, session.id),
+        isNull(classpilotClassroomStates.clearedAt)
+      ));
+    await tx
+      .update(classpilotActiveHands)
+      .set({ clearedAt: endTime, updatedAt: endTime })
+      .where(and(
+        eq(classpilotActiveHands.schoolId, options.schoolId),
+        eq(classpilotActiveHands.teachingSessionId, session.id),
+        isNull(classpilotActiveHands.clearedAt)
+      ));
+
+    const frozenBlockStartTime = session.scheduledStartAt && session.scheduledTimezone
+      ? session.scheduledStartAt.toLocaleString("en-US", {
+          timeZone: session.scheduledTimezone,
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        }).replace(/^24:/, "00:")
+      : null;
+    const conflictIdentities: SQL[] = [];
+    if (session.scheduledConflictId) {
+      conflictIdentities.push(eq(classpilotScheduledConflicts.id, session.scheduledConflictId));
+    }
+    if (session.scheduledDate && frozenBlockStartTime) {
+      conflictIdentities.push(and(
+        eq(classpilotScheduledConflicts.groupId, session.groupId),
+        eq(classpilotScheduledConflicts.scheduledDate, session.scheduledDate),
+        eq(classpilotScheduledConflicts.blockStartTime, frozenBlockStartTime)
+      )!);
+    }
+    const matchingConflicts = conflictIdentities.length > 0
+      ? await tx
+          .select({ id: classpilotScheduledConflicts.id })
+          .from(classpilotScheduledConflicts)
+          .where(and(
+            eq(classpilotScheduledConflicts.schoolId, options.schoolId),
+            inArray(classpilotScheduledConflicts.status, ACTIVE_SCHEDULED_COVERAGE_STATUSES),
+            or(...conflictIdentities)
+          ))
+          .for("update")
+      : [];
+    const conflictIds = matchingConflicts.map((conflict) => conflict.id);
+
+    if (conflictIds.length > 0) {
+      const contexts = await tx
+        .select({ id: classpilotSupervisionContexts.id })
+        .from(classpilotSupervisionContexts)
+        .where(and(
+          eq(classpilotSupervisionContexts.schoolId, options.schoolId),
+          inArray(classpilotSupervisionContexts.scheduledConflictId, conflictIds),
+          eq(classpilotSupervisionContexts.status, "active")
+        ));
+      const contextIds = contexts.map((context) => context.id);
+      if (contextIds.length > 0) {
+        await tx
+          .update(classpilotSupervisionStudents)
+          .set({ releasedAt: endTime, releaseReason: options.reason })
+          .where(and(
+            eq(classpilotSupervisionStudents.schoolId, options.schoolId),
+            inArray(classpilotSupervisionStudents.contextId, contextIds),
+            isNull(classpilotSupervisionStudents.releasedAt)
+          ));
+        await tx
+          .update(classpilotSupervisionContexts)
+          .set({ status: "ended", endedAt: endTime, updatedAt: endTime })
+          .where(and(
+            eq(classpilotSupervisionContexts.schoolId, options.schoolId),
+            inArray(classpilotSupervisionContexts.id, contextIds)
+          ));
+      }
+      await tx
+        .update(classpilotScheduledConflicts)
+        .set({
+          status: "ended",
+          resolution: options.reason,
+          resolvedAt: endTime,
+          updatedAt: endTime,
+        })
+        .where(and(
+          inArray(classpilotScheduledConflicts.id, conflictIds),
+          eq(classpilotScheduledConflicts.schoolId, options.schoolId),
+          inArray(classpilotScheduledConflicts.status, ACTIVE_SCHEDULED_COVERAGE_STATUSES)
+        ));
+    }
+
+    // Any finalized scheduled occurrence is terminal for that local day. This
+    // is especially important for an early teacher/admin End Class action.
+    if (session.scheduledDate) {
+      await tx
+        .update(groups)
+        .set({ scheduleSkippedDate: session.scheduledDate })
+        .where(and(eq(groups.id, session.groupId), eq(groups.schoolId, options.schoolId)));
+    }
+
+    const uniqueRecipients = new Map<string, SessionSummaryRecipientSnapshot>();
+    for (const recipient of options.recipients || []) {
+      const email = recipient.email.trim();
+      if (!email) continue;
+      const normalized = email.toLowerCase();
+      if (!uniqueRecipients.has(normalized)) uniqueRecipients.set(normalized, { ...recipient, email });
+    }
+    const inserted = uniqueRecipients.size > 0
+      ? await tx
+          .insert(classpilotSessionSummaryDeliveries)
+          .values(Array.from(uniqueRecipients.values()).map((recipient) => ({
+            schoolId: options.schoolId,
+            teachingSessionId: session.id,
+            recipientKind: recipient.kind,
+            recipientEmail: recipient.email,
+            recipientName: recipient.name || null,
+            state: "queued",
+            nextAttemptAt: now,
+          } as InsertClasspilotSessionSummaryDelivery)))
+          .onConflictDoNothing()
+          .returning({ id: classpilotSessionSummaryDeliveries.id })
+      : [];
+
+    const deliveryCount = existingDeliveries.length + inserted.length;
+    return {
+      session: ended,
+      finalized: true,
+      summaryDisposition: inserted.length > 0
+        ? "queued" as const
+        : deliveryCount > 0
+          ? "already_queued" as const
+          : "not_applicable" as const,
+      deliveryCount,
+      resolvedConflictIds: conflictIds,
+    };
+  });
+
+  return result;
+}
+
+export async function listScheduledSessionsReadyToFinalize(
+  now = new Date(),
+  dbInstance: typeof db = db,
+  schoolId?: string
+): Promise<TeachingSession[]> {
+  const conditions: SQL[] = [
+    eq(teachingSessions.scheduledState, "active"),
+    isNull(teachingSessions.endTime),
+    isNotNull(teachingSessions.scheduledEndAt),
+    sql`${teachingSessions.scheduledEndAt} <= ${now}`,
+  ];
+  if (schoolId) conditions.push(eq(teachingSessions.schoolId, schoolId));
+  return dbInstance
+    .select()
+    .from(teachingSessions)
+    .where(and(...conditions))
+    .orderBy(teachingSessions.scheduledEndAt);
+}
+
+export async function listScheduledReportSessionsDueNow(
+  now = new Date(),
+  dbInstance: typeof db = db,
+  schoolId?: string
+): Promise<TeachingSession[]> {
+  const conditions: SQL[] = [
+    eq(teachingSessions.sessionMode, SCHEDULED_REPORT_SESSION_MODE),
+    eq(teachingSessions.scheduledState, "active"),
+    isNull(teachingSessions.endTime),
+    isNotNull(teachingSessions.scheduledStartAt),
+    isNotNull(teachingSessions.scheduledEndAt),
+    sql`${teachingSessions.scheduledStartAt} <= ${now}`,
+    sql`${teachingSessions.scheduledEndAt} > ${now}`,
+  ];
+  if (schoolId) conditions.push(eq(teachingSessions.schoolId, schoolId));
+  return dbInstance
+    .select()
+    .from(teachingSessions)
+    .where(and(...conditions))
+    .orderBy(teachingSessions.scheduledStartAt, teachingSessions.id);
+}
+
+/**
+ * Adopt only still-open pre-lifecycle scheduled-report rows. Ended historical
+ * rows are deliberately excluded so rollout can never create retroactive mail.
+ */
+export async function reconcileLegacyOpenScheduledSessions(
+  now = new Date(),
+  dbInstance: typeof db = db,
+  schoolId?: string
+): Promise<TeachingSession[]> {
+  const legacy = await dbInstance
+    .select({
+      session: teachingSessions,
+      conflict: classpilotScheduledConflicts,
+      group: groups,
+      schoolTimezone: schools.schoolTimezone,
+      teacherEmail: users.email,
+      teacherFirstName: users.firstName,
+      teacherLastName: users.lastName,
+      teacherDisplayName: users.displayName,
+    })
+    .from(teachingSessions)
+    .innerJoin(groups, eq(teachingSessions.groupId, groups.id))
+    .innerJoin(schools, eq(groups.schoolId, schools.id))
+    .leftJoin(
+      classpilotScheduledConflicts,
+      eq(teachingSessions.scheduledConflictId, classpilotScheduledConflicts.id)
+    )
+    .leftJoin(users, eq(teachingSessions.teacherId, users.id))
+    .where(and(
+      isNull(teachingSessions.endTime),
+      isNull(teachingSessions.scheduledDate),
+      schoolId ? eq(groups.schoolId, schoolId) : sql`true`,
+      or(
+        isNotNull(teachingSessions.scheduledConflictId),
+        and(
+          eq(teachingSessions.sessionMode, LIVE_TEACHING_SESSION_MODE),
+          eq(groups.scheduleEnabled, true),
+          isNotNull(groups.blockStartTime),
+          isNotNull(groups.blockEndTime)
+        )
+      )
+    ));
+
+  const adopted: TeachingSession[] = [];
+  for (const row of legacy) {
+    let inferredEndAt = now;
+    try {
+      const timeZone = row.schoolTimezone || "America/New_York";
+      const scheduledDate = row.conflict?.scheduledDate
+        || localDateInTimeZone(row.session.startTime, timeZone);
+      const blockStartTime = row.conflict?.blockStartTime || row.group.blockStartTime;
+      const blockEndTime = row.conflict?.blockEndTime || row.group.blockEndTime;
+      if (!blockStartTime || !blockEndTime) continue;
+      const startAt = localDateTimeUtc(scheduledDate, blockStartTime, timeZone);
+      const endAt = localDateTimeUtc(scheduledDate, blockEndTime, timeZone);
+      inferredEndAt = endAt;
+      if (!(endAt > startAt)) continue;
+      if (!row.conflict && (row.session.startTime < startAt || row.session.startTime >= endAt)) {
+        // No historical conflict snapshot exists. Infer only a live session
+        // that actually began inside today's configured scheduled block.
+        continue;
+      }
+      const teacherName = row.teacherDisplayName
+        || [row.teacherFirstName, row.teacherLastName].filter(Boolean).join(" ").trim()
+        || row.teacherEmail
+        || "Teacher";
+      const canonical = await getScheduledTeachingSessionOccurrence(
+        row.group.schoolId,
+        row.session.groupId,
+        scheduledDate,
+        dbInstance
+      );
+      if (canonical && canonical.id !== row.session.id) {
+        await finalizeTeachingSession({
+          schoolId: row.group.schoolId,
+          sessionId: row.session.id,
+          reason: "scheduled_end",
+          // A duplicate legacy row is cleanup, not a future scheduled
+          // occurrence. Never leave it open with a future end timestamp.
+          finalizedAt: inferredEndAt < now ? inferredEndAt : now,
+          recipients: [],
+        }, dbInstance);
+        continue;
+      }
+      const [updated] = await dbInstance
+        .update(teachingSessions)
+        .set({
+          startTime: startAt,
+          schoolId: row.group.schoolId,
+          scheduledDate,
+          scheduledTimezone: timeZone,
+          scheduledStartAt: startAt,
+          scheduledEndAt: endAt,
+          scheduledState: "active",
+          scheduledTeacherEmail: row.teacherEmail || null,
+          scheduledTeacherName: teacherName,
+          classNameSnapshot: row.group.name,
+        })
+        .where(and(
+          eq(teachingSessions.id, row.session.id),
+          isNull(teachingSessions.endTime),
+          isNull(teachingSessions.scheduledDate)
+        ))
+        .returning();
+      if (updated) adopted.push(updated);
+    } catch (error) {
+      if ((error as any)?.code === "23505") {
+        await finalizeTeachingSession({
+          schoolId: row.group.schoolId,
+          sessionId: row.session.id,
+          reason: "scheduled_end",
+          finalizedAt: inferredEndAt < now ? inferredEndAt : now,
+          recipients: [],
+        }, dbInstance);
+      } else {
+        console.warn(`[ClassPilot] Legacy scheduled occurrence ${row.session.id} could not be adopted:`, error);
+      }
+    }
+  }
+  return adopted;
+}
+
+export async function recoverExpiredSessionSummaryLeases(
+  now = new Date(),
+  dbInstance: typeof db = db,
+  schoolId?: string
+): Promise<{ retried: number; quarantined: number }> {
+  const schoolCondition = schoolId
+    ? eq(classpilotSessionSummaryDeliveries.schoolId, schoolId)
+    : sql`true`;
+  const safe = await dbInstance
+    .update(classpilotSessionSummaryDeliveries)
+    .set({
+      state: "retry",
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      nextAttemptAt: now,
+      lastError: "Delivery worker lease expired before provider submission",
+      updatedAt: now,
+    })
+    .where(and(
+      eq(classpilotSessionSummaryDeliveries.state, "leased"),
+      schoolCondition,
+      sql`${classpilotSessionSummaryDeliveries.leaseExpiresAt} < ${now}`,
+      isNull(classpilotSessionSummaryDeliveries.submissionStartedAt)
+    ))
+    .returning({ id: classpilotSessionSummaryDeliveries.id });
+
+  const ambiguous = await dbInstance
+    .update(classpilotSessionSummaryDeliveries)
+    .set({
+      state: "unknown",
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      lastError: "Delivery worker lease expired after provider submission began",
+      updatedAt: now,
+    })
+    .where(and(
+      eq(classpilotSessionSummaryDeliveries.state, "leased"),
+      schoolCondition,
+      sql`${classpilotSessionSummaryDeliveries.leaseExpiresAt} < ${now}`,
+      isNotNull(classpilotSessionSummaryDeliveries.submissionStartedAt)
+    ))
+    .returning({ id: classpilotSessionSummaryDeliveries.id });
+  return { retried: safe.length, quarantined: ambiguous.length };
+}
+
+export async function claimDueSessionSummaryDeliveries(
+  options: {
+    leaseOwner: string;
+    now?: Date;
+    leaseMs?: number;
+    limit?: number;
+    schoolId?: string;
+    teachingSessionId?: string;
+  },
+  dbInstance: typeof db = db
+): Promise<ClasspilotSessionSummaryDelivery[]> {
+  const now = options.now || new Date();
+  const conditions: SQL[] = [
+    inArray(classpilotSessionSummaryDeliveries.state, ["queued", "retry"]),
+    sql`${classpilotSessionSummaryDeliveries.nextAttemptAt} <= ${now}`,
+  ];
+  if (options.schoolId) conditions.push(eq(classpilotSessionSummaryDeliveries.schoolId, options.schoolId));
+  if (options.teachingSessionId) conditions.push(eq(classpilotSessionSummaryDeliveries.teachingSessionId, options.teachingSessionId));
+  const leaseExpiresAt = new Date(now.getTime() + (options.leaseMs || 5 * 60 * 1000));
+  const limit = Math.max(1, Math.min(options.limit || 25, 100));
+  return dbInstance.transaction(async (tx) => {
+    const candidates = await tx
+      .select({ id: classpilotSessionSummaryDeliveries.id })
+      .from(classpilotSessionSummaryDeliveries)
+      .where(and(...conditions))
+      .orderBy(classpilotSessionSummaryDeliveries.nextAttemptAt, classpilotSessionSummaryDeliveries.createdAt)
+      .limit(limit)
+      .for("update", { skipLocked: true });
+    if (candidates.length === 0) return [];
+    return tx
+      .update(classpilotSessionSummaryDeliveries)
+      .set({
+        state: "leased",
+        leaseOwner: options.leaseOwner,
+        leaseExpiresAt,
+        submissionStartedAt: null,
+        updatedAt: now,
+      })
+      .where(and(
+        inArray(classpilotSessionSummaryDeliveries.id, candidates.map((candidate) => candidate.id)),
+        inArray(classpilotSessionSummaryDeliveries.state, ["queued", "retry"]),
+        sql`${classpilotSessionSummaryDeliveries.nextAttemptAt} <= ${now}`
+      ))
+      .returning();
+  });
+}
+
+export async function markSessionSummarySubmissionStarted(
+  deliveryId: string,
+  leaseOwner: string,
+  startedAt = new Date(),
+  dbInstance: typeof db = db
+): Promise<ClasspilotSessionSummaryDelivery | undefined> {
+  const [delivery] = await dbInstance
+    .update(classpilotSessionSummaryDeliveries)
+    .set({
+      submissionStartedAt: startedAt,
+      attemptCount: sql`${classpilotSessionSummaryDeliveries.attemptCount} + 1`,
+      updatedAt: startedAt,
+    })
+    .where(and(
+      eq(classpilotSessionSummaryDeliveries.id, deliveryId),
+      eq(classpilotSessionSummaryDeliveries.state, "leased"),
+      eq(classpilotSessionSummaryDeliveries.leaseOwner, leaseOwner),
+      isNull(classpilotSessionSummaryDeliveries.submissionStartedAt)
+    ))
     .returning();
-  if (session) await aggregateClasspilotSessionUsage(session.id, dbInstance);
-  return session;
+  return delivery;
+}
+
+export async function completeSessionSummaryDelivery(
+  options: {
+    deliveryId: string;
+    leaseOwner: string;
+    state: "sent" | "retry" | "failed" | "unknown";
+    providerMessageId?: string | null;
+    error?: string | null;
+    nextAttemptAt?: Date | null;
+    completedAt?: Date;
+    incrementAttempt?: boolean;
+  },
+  dbInstance: typeof db = db
+): Promise<ClasspilotSessionSummaryDelivery | undefined> {
+  const completedAt = options.completedAt || new Date();
+  const update: Partial<InsertClasspilotSessionSummaryDelivery> = {
+    state: options.state,
+    leaseOwner: null,
+    leaseExpiresAt: null,
+    nextAttemptAt: options.nextAttemptAt || completedAt,
+    providerMessageId: options.providerMessageId || null,
+    lastError: options.error?.slice(0, 500) || null,
+    sentAt: options.state === "sent" ? completedAt : null,
+    updatedAt: completedAt,
+  };
+  if (options.incrementAttempt) {
+    update.attemptCount = sql`${classpilotSessionSummaryDeliveries.attemptCount} + 1` as any;
+  }
+  const [delivery] = await dbInstance
+    .update(classpilotSessionSummaryDeliveries)
+    .set(update)
+    .where(and(
+      eq(classpilotSessionSummaryDeliveries.id, options.deliveryId),
+      eq(classpilotSessionSummaryDeliveries.state, "leased"),
+      eq(classpilotSessionSummaryDeliveries.leaseOwner, options.leaseOwner)
+    ))
+    .returning();
+  return delivery;
+}
+
+export async function countOverdueSessionSummaryDeliveries(
+  cutoff: Date,
+  dbInstance: typeof db = db,
+  schoolId?: string
+): Promise<number> {
+  const [row] = await dbInstance
+    .select({ count: sql<number>`count(*)::int` })
+    .from(classpilotSessionSummaryDeliveries)
+    .where(and(
+      inArray(classpilotSessionSummaryDeliveries.state, ["queued", "retry"]),
+      schoolId ? eq(classpilotSessionSummaryDeliveries.schoolId, schoolId) : sql`true`,
+      sql`${classpilotSessionSummaryDeliveries.createdAt} < ${cutoff}`
+    ));
+  return Number(row?.count || 0);
 }
 
 export async function upsertScheduledClassConflict(
@@ -4526,6 +5394,7 @@ export async function upsertScheduledClassConflict(
 ): Promise<ClasspilotScheduledConflict> {
   const now = new Date();
   const status = data.status || "coverage_needed";
+  const terminal = ["ended", "expired", "skipped", "started"].includes(status);
   const [row] = await dbInstance
     .insert(classpilotScheduledConflicts)
     .values({
@@ -4548,14 +5417,98 @@ export async function upsertScheduledClassConflict(
         conflictPayload: data.conflictPayload as any,
         scheduledTeacherConnected: data.scheduledTeacherConnected || false,
         lastCheckedAt: now,
-        resolvedAt: null,
-        resolvedBy: null,
-        resolution: null,
+        resolvedAt: terminal ? data.resolvedAt || now : null,
+        resolvedBy: terminal ? data.resolvedBy || null : null,
+        resolution: terminal ? data.resolution || status : null,
         updatedAt: now,
       },
     })
     .returning();
   return row!;
+}
+
+/**
+ * Create/update a coverage conflict and attach it to its canonical occurrence
+ * under the same occurrence row lock. If finalization won the race, the
+ * conflict is persisted as terminal and can never become an actionable card.
+ */
+export async function upsertScheduledClassConflictForOccurrence(
+  data: InsertClasspilotScheduledConflict & {
+    teachingSessionId: string;
+    schoolId: string;
+    groupId: string;
+    teacherId: string;
+    scheduledDate: string;
+    blockStartTime: string;
+    conflictPayload: unknown;
+  },
+  dbInstance: typeof db = db
+): Promise<{ conflict: ClasspilotScheduledConflict; occurrenceActive: boolean }> {
+  return dbInstance.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    const [occurrence] = await tx
+      .select()
+      .from(teachingSessions)
+      .where(and(
+        eq(teachingSessions.id, data.teachingSessionId),
+        eq(teachingSessions.schoolId, data.schoolId)
+      ))
+      .limit(1)
+      .for("update");
+    if (!occurrence) throw new Error("Scheduled occurrence was not found while creating coverage");
+
+    const occurrenceActive = !occurrence.endTime
+      && occurrence.scheduledState === "active"
+      && occurrence.sessionMode === SCHEDULED_REPORT_SESSION_MODE;
+    const { teachingSessionId: _teachingSessionId, ...conflictData } = data;
+    const conflict = await upsertScheduledClassConflict({
+      ...conflictData,
+      status: occurrenceActive ? data.status : "ended",
+      resolvedAt: occurrenceActive ? null : occurrence.endTime || new Date(),
+      resolution: occurrenceActive
+        ? null
+        : occurrence.scheduledFinalizationReason || "scheduled_end",
+    }, transactionDb);
+
+    if (occurrenceActive) {
+      await tx
+        .update(teachingSessions)
+        .set({ scheduledConflictId: conflict.id })
+        .where(and(
+          eq(teachingSessions.id, occurrence.id),
+          isNull(teachingSessions.endTime),
+          eq(teachingSessions.scheduledState, "active")
+        ));
+    } else {
+      const contexts = await tx
+        .select({ id: classpilotSupervisionContexts.id })
+        .from(classpilotSupervisionContexts)
+        .where(and(
+          eq(classpilotSupervisionContexts.schoolId, data.schoolId),
+          eq(classpilotSupervisionContexts.scheduledConflictId, conflict.id),
+          eq(classpilotSupervisionContexts.status, "active")
+        ));
+      const contextIds = contexts.map((context) => context.id);
+      if (contextIds.length > 0) {
+        await tx
+          .update(classpilotSupervisionStudents)
+          .set({ releasedAt: occurrence.endTime || new Date(), releaseReason: "scheduled_occurrence_finalized" })
+          .where(and(
+            eq(classpilotSupervisionStudents.schoolId, data.schoolId),
+            inArray(classpilotSupervisionStudents.contextId, contextIds),
+            isNull(classpilotSupervisionStudents.releasedAt)
+          ));
+        await tx
+          .update(classpilotSupervisionContexts)
+          .set({ status: "ended", endedAt: occurrence.endTime || new Date(), updatedAt: new Date() })
+          .where(and(
+            eq(classpilotSupervisionContexts.schoolId, data.schoolId),
+            inArray(classpilotSupervisionContexts.id, contextIds)
+          ));
+      }
+    }
+    return { conflict, occurrenceActive };
+  });
 }
 
 const ACTIVE_SCHEDULED_COVERAGE_STATUSES = ["coverage_needed", "claimed", "pending"];
@@ -4638,10 +5591,15 @@ export async function listActiveScheduledClassConflictsReadyToExpire(
     .from(classpilotScheduledConflicts)
     .where(and(
       eq(classpilotScheduledConflicts.schoolId, schoolId),
-      eq(classpilotScheduledConflicts.scheduledDate, scheduledDate),
       inArray(classpilotScheduledConflicts.status, ACTIVE_SCHEDULED_COVERAGE_STATUSES),
       sql`${classpilotScheduledConflicts.blockEndTime} IS NOT NULL`,
-      sql`${classpilotScheduledConflicts.blockEndTime} <= ${currentTimeHHMM}`
+      sql`(
+        ${classpilotScheduledConflicts.scheduledDate} < ${scheduledDate}
+        OR (
+          ${classpilotScheduledConflicts.scheduledDate} = ${scheduledDate}
+          AND ${classpilotScheduledConflicts.blockEndTime} <= ${currentTimeHHMM}
+        )
+      )`
     ))
     .orderBy(desc(classpilotScheduledConflicts.lastCheckedAt), desc(classpilotScheduledConflicts.createdAt));
 }
@@ -4667,6 +5625,92 @@ export async function resolveScheduledClassConflict(
   return row;
 }
 
+/** Resolve coverage as started only while its canonical occurrence is live. */
+export async function resolveScheduledConflictForStartedOccurrence(
+  options: {
+    schoolId: string;
+    teachingSessionId: string;
+    scheduledConflictId: string;
+    actorId?: string | null;
+  },
+  dbInstance: typeof db = db
+): Promise<ClasspilotScheduledConflict | undefined> {
+  return dbInstance.transaction(async (tx) => {
+    const [occurrence] = await tx
+      .select()
+      .from(teachingSessions)
+      .where(and(
+        eq(teachingSessions.id, options.teachingSessionId),
+        eq(teachingSessions.schoolId, options.schoolId)
+      ))
+      .limit(1)
+      .for("update");
+    if (
+      !occurrence
+      || occurrence.endTime
+      || occurrence.scheduledState !== "active"
+      || occurrence.sessionMode !== LIVE_TEACHING_SESSION_MODE
+    ) return undefined;
+
+    const [conflict] = await tx
+      .select()
+      .from(classpilotScheduledConflicts)
+      .where(and(
+        eq(classpilotScheduledConflicts.id, options.scheduledConflictId),
+        eq(classpilotScheduledConflicts.schoolId, options.schoolId),
+        inArray(classpilotScheduledConflicts.status, ACTIVE_SCHEDULED_COVERAGE_STATUSES)
+      ))
+      .limit(1)
+      .for("update");
+    if (!conflict) return undefined;
+
+    const endedAt = new Date();
+    const contexts = await tx
+      .select({ id: classpilotSupervisionContexts.id })
+      .from(classpilotSupervisionContexts)
+      .where(and(
+        eq(classpilotSupervisionContexts.schoolId, options.schoolId),
+        eq(classpilotSupervisionContexts.scheduledConflictId, conflict.id),
+        eq(classpilotSupervisionContexts.status, "active")
+      ));
+    const contextIds = contexts.map((context) => context.id);
+    if (contextIds.length > 0) {
+      await tx
+        .update(classpilotSupervisionStudents)
+        .set({ releasedAt: endedAt, releaseReason: "scheduled_teacher_started" })
+        .where(and(
+          eq(classpilotSupervisionStudents.schoolId, options.schoolId),
+          inArray(classpilotSupervisionStudents.contextId, contextIds),
+          isNull(classpilotSupervisionStudents.releasedAt)
+        ));
+      await tx
+        .update(classpilotSupervisionContexts)
+        .set({ status: "ended", endedAt, updatedAt: endedAt })
+        .where(and(
+          eq(classpilotSupervisionContexts.schoolId, options.schoolId),
+          inArray(classpilotSupervisionContexts.id, contextIds)
+        ));
+    }
+
+    const [resolved] = await tx
+      .update(classpilotScheduledConflicts)
+      .set({
+        status: "started",
+        resolution: "started",
+        resolvedBy: options.actorId || null,
+        resolvedAt: endedAt,
+        updatedAt: endedAt,
+      })
+      .where(and(
+        eq(classpilotScheduledConflicts.id, conflict.id),
+        eq(classpilotScheduledConflicts.schoolId, options.schoolId),
+        inArray(classpilotScheduledConflicts.status, ACTIVE_SCHEDULED_COVERAGE_STATUSES)
+      ))
+      .returning();
+    return resolved;
+  });
+}
+
 export async function updateScheduledClassConflictStatus(
   id: string,
   schoolId: string,
@@ -4683,7 +5727,13 @@ export async function updateScheduledClassConflictStatus(
   const [row] = await dbInstance
     .update(classpilotScheduledConflicts)
     .set(data)
-    .where(and(eq(classpilotScheduledConflicts.id, id), eq(classpilotScheduledConflicts.schoolId, schoolId)))
+    .where(and(
+      eq(classpilotScheduledConflicts.id, id),
+      eq(classpilotScheduledConflicts.schoolId, schoolId),
+      status === "claimed"
+        ? inArray(classpilotScheduledConflicts.status, ACTIVE_SCHEDULED_COVERAGE_STATUSES)
+        : sql`true`
+    ))
     .returning();
   return row;
 }
@@ -4701,6 +5751,16 @@ export async function getActiveTeachingSessions(
       controlUpdatedAt: teachingSessions.controlUpdatedAt,
       sessionMode: teachingSessions.sessionMode,
       scheduledConflictId: teachingSessions.scheduledConflictId,
+      scheduledDate: teachingSessions.scheduledDate,
+      scheduledTimezone: teachingSessions.scheduledTimezone,
+      scheduledStartAt: teachingSessions.scheduledStartAt,
+      scheduledEndAt: teachingSessions.scheduledEndAt,
+      scheduledState: teachingSessions.scheduledState,
+      scheduledFinalizationReason: teachingSessions.scheduledFinalizationReason,
+      scheduledTeacherEmail: teachingSessions.scheduledTeacherEmail,
+      scheduledTeacherName: teachingSessions.scheduledTeacherName,
+      classNameSnapshot: teachingSessions.classNameSnapshot,
+      rosterSnapshotCompletedAt: teachingSessions.rosterSnapshotCompletedAt,
       endTime: teachingSessions.endTime,
       createdAt: teachingSessions.createdAt,
     })
@@ -4709,7 +5769,10 @@ export async function getActiveTeachingSessions(
     .where(
       and(
         eq(groups.schoolId, schoolId),
-        eq(teachingSessions.sessionMode, LIVE_TEACHING_SESSION_MODE),
+        or(
+          eq(teachingSessions.sessionMode, LIVE_TEACHING_SESSION_MODE),
+          eq(teachingSessions.scheduledState, "active")
+        ),
         isNull(teachingSessions.endTime)
       )
     );
@@ -4755,10 +5818,32 @@ export async function getActiveTeachingSessionForSchool(
   return row?.session;
 }
 
+export async function listOtherActiveTeachingSessionsForSchool(
+  teacherId: string,
+  schoolId: string,
+  excludeSessionId: string,
+  dbInstance: typeof db = db
+): Promise<TeachingSession[]> {
+  const rows = await dbInstance
+    .select({ session: teachingSessions })
+    .from(teachingSessions)
+    .innerJoin(groups, eq(teachingSessions.groupId, groups.id))
+    .where(and(
+      eq(teachingSessions.teacherId, teacherId),
+      eq(groups.schoolId, schoolId),
+      eq(teachingSessions.sessionMode, LIVE_TEACHING_SESSION_MODE),
+      isNull(teachingSessions.endTime),
+      ne(teachingSessions.id, excludeSessionId)
+    ))
+    .orderBy(teachingSessions.startTime, teachingSessions.id);
+  return rows.map((row) => row.session);
+}
+
 export async function getTeachingSessionById(
-  sessionId: string
+  sessionId: string,
+  dbInstance: typeof db = db
 ): Promise<TeachingSession | undefined> {
-  const [session] = await db
+  const [session] = await dbInstance
     .select()
     .from(teachingSessions)
     .where(eq(teachingSessions.id, sessionId))
@@ -4769,15 +5854,18 @@ export async function getTeachingSessionById(
 // Returns the session only if it belongs to the given school.
 export async function getTeachingSessionByIdAndSchool(
   sessionId: string,
-  schoolId: string
+  schoolId: string,
+  dbInstance: typeof db = db
 ): Promise<TeachingSession | undefined> {
-  const [row] = await db
-    .select({ session: teachingSessions })
+  const [session] = await dbInstance
+    .select()
     .from(teachingSessions)
-    .innerJoin(groups, eq(teachingSessions.groupId, groups.id))
-    .where(and(eq(teachingSessions.id, sessionId), eq(groups.schoolId, schoolId)))
+    .where(and(
+      eq(teachingSessions.id, sessionId),
+      eq(teachingSessions.schoolId, schoolId)
+    ))
     .limit(1);
-  return row?.session;
+  return session;
 }
 
 export async function getActiveTeachingSessionsForStudent(
@@ -4803,7 +5891,35 @@ export async function getActiveClassOwnersForStudents(
   const uniqueStudentIds = [...new Set(studentIds.map(String).filter(Boolean))];
   if (uniqueStudentIds.length === 0) return [];
 
-  const rows = await dbInstance
+  const snapshotRows = await dbInstance
+    .select({
+      studentId: classpilotSessionStudents.studentId,
+      groupId: groups.id,
+      groupName: groups.name,
+      session: teachingSessions,
+    })
+    .from(classpilotSessionStudents)
+    .innerJoin(
+      teachingSessions,
+      and(
+        eq(teachingSessions.id, classpilotSessionStudents.teachingSessionId),
+        eq(teachingSessions.sessionMode, LIVE_TEACHING_SESSION_MODE),
+        isNotNull(teachingSessions.rosterSnapshotCompletedAt),
+        isNull(teachingSessions.endTime)
+      )
+    )
+    .innerJoin(groups, eq(groups.id, teachingSessions.groupId))
+    .where(
+      and(
+        eq(classpilotSessionStudents.schoolId, schoolId),
+        eq(groups.schoolId, schoolId),
+        inArray(classpilotSessionStudents.studentId, uniqueStudentIds)
+      )
+    );
+
+  // Rollout fallback only: pre-snapshot open sessions continue to use the
+  // mutable group roster until the startup bridge marks their snapshot done.
+  const legacyRows = await dbInstance
     .select({
       studentId: groupStudents.studentId,
       groupId: groups.id,
@@ -4812,27 +5928,25 @@ export async function getActiveClassOwnersForStudents(
     })
     .from(groupStudents)
     .innerJoin(groups, eq(groups.id, groupStudents.groupId))
-    .innerJoin(
-      teachingSessions,
-      and(
-        eq(teachingSessions.groupId, groups.id),
-        eq(teachingSessions.sessionMode, LIVE_TEACHING_SESSION_MODE),
-        isNull(teachingSessions.endTime)
-      )
-    )
-    .where(
-      and(
-        eq(groups.schoolId, schoolId),
-        inArray(groupStudents.studentId, uniqueStudentIds)
-      )
-    )
-    .orderBy(
-      groupStudents.studentId,
-      desc(sql`COALESCE(${teachingSessions.controlUpdatedAt}, ${teachingSessions.startTime})`),
-      desc(teachingSessions.startTime),
-      desc(teachingSessions.createdAt),
-      desc(teachingSessions.id)
-    );
+    .innerJoin(teachingSessions, and(
+      eq(teachingSessions.groupId, groups.id),
+      eq(teachingSessions.sessionMode, LIVE_TEACHING_SESSION_MODE),
+      isNull(teachingSessions.rosterSnapshotCompletedAt),
+      isNull(teachingSessions.endTime)
+    ))
+    .where(and(
+      eq(groups.schoolId, schoolId),
+      inArray(groupStudents.studentId, uniqueStudentIds)
+    ));
+
+  const rows = [...snapshotRows, ...legacyRows].sort((a, b) => {
+    const aControl = (a.session.controlUpdatedAt || a.session.startTime).getTime();
+    const bControl = (b.session.controlUpdatedAt || b.session.startTime).getTime();
+    return bControl - aControl
+      || b.session.startTime.getTime() - a.session.startTime.getTime()
+      || b.session.createdAt.getTime() - a.session.createdAt.getTime()
+      || b.session.id.localeCompare(a.session.id);
+  });
 
   const owners = new Map<string, ActiveClassOwner>();
   for (const row of rows) {
@@ -4937,7 +6051,8 @@ export async function getScheduledGroupsReadyToStart(
           ne(groups.scheduleSkippedDate, todayDate)
         )
       )
-    );
+    )
+    .orderBy(groups.blockStartTime, groups.id);
 }
 
 export async function getScheduledGroupsReadyToEnd(
@@ -5331,9 +6446,10 @@ export async function getGroupById(
 // can never read/mutate another school's group by guessing an id.
 export async function getGroupByIdAndSchool(
   groupId: string,
-  schoolId: string
+  schoolId: string,
+  dbInstance: typeof db = db
 ): Promise<Group | undefined> {
-  const [group] = await db
+  const [group] = await dbInstance
     .select()
     .from(groups)
     .where(and(eq(groups.id, groupId), eq(groups.schoolId, schoolId)))
@@ -5555,7 +6671,24 @@ export async function groupHasTeachingHistory(groupId: string): Promise<boolean>
 }
 
 export async function hardDeleteGroupWithCleanup(groupId: string): Promise<boolean> {
-  await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
+    const [lockedGroup] = await tx
+      .select({ id: groups.id })
+      .from(groups)
+      .where(eq(groups.id, groupId))
+      .limit(1)
+      .for("update");
+    if (!lockedGroup) return false;
+    const [history] = await tx
+      .select({ value: sql<number>`COUNT(*)::int` })
+      .from(teachingSessions)
+      .where(eq(teachingSessions.groupId, groupId));
+    if ((history?.value ?? 0) > 0) {
+      throw Object.assign(new Error("Classes with teaching history cannot be deleted. Archive the class instead."), {
+        status: 409,
+        code: "CLASS_HAS_HISTORY",
+      });
+    }
     const subgroupRows = await tx
       .select({ id: subgroups.id })
       .from(subgroups)
@@ -5570,8 +6703,8 @@ export async function hardDeleteGroupWithCleanup(groupId: string): Promise<boole
     await tx.delete(groupTeachers).where(eq(groupTeachers.groupId, groupId));
     await tx.delete(groupStudents).where(eq(groupStudents.groupId, groupId));
     await tx.delete(groups).where(eq(groups.id, groupId));
+    return true;
   });
-  return true;
 }
 
 export async function getGroupStudents(
@@ -6889,10 +8022,11 @@ export async function updateCoverageAssignment(
 
 export async function getActiveSupervisionForStudents(
   schoolId: string,
-  studentIds: string[]
+  studentIds: string[],
+  dbInstance: typeof db = db
 ): Promise<ActiveStudentSupervision[]> {
   if (studentIds.length === 0) return [];
-  const rows = await db
+  const rows = await dbInstance
     .select({
       assignment: classpilotSupervisionStudents,
       context: classpilotSupervisionContexts,
@@ -7005,6 +8139,194 @@ export async function getActiveSupervisionContextForStaffScheduledConflict(
     .orderBy(desc(classpilotSupervisionContexts.createdAt))
     .limit(1);
   return context;
+}
+
+/**
+ * Claim scheduled coverage under the canonical occurrence→conflict lock order.
+ * Finalization that wins first makes this a side-effect-free 409; a successful
+ * claim cannot later resurrect a terminal conflict.
+ */
+export async function claimScheduledCoverageStudents(options: {
+  schoolId: string;
+  scheduledConflictId: string;
+  className: string;
+  assignedStaffId: string;
+  actorId: string;
+  studentIds: string[];
+  endsAt: Date;
+  note?: string | null;
+}, dbInstance: typeof db = db): Promise<{
+  context: ClasspilotSupervisionContext;
+  assignments: ClasspilotSupervisionStudent[];
+}> {
+  const uniqueStudentIds = Array.from(new Set(options.studentIds.filter(Boolean)));
+  return dbInstance.transaction(async (tx) => {
+    const [occurrence] = await tx
+      .select()
+      .from(teachingSessions)
+      .where(and(
+        eq(teachingSessions.schoolId, options.schoolId),
+        eq(teachingSessions.scheduledConflictId, options.scheduledConflictId),
+        eq(teachingSessions.scheduledState, "active"),
+        isNull(teachingSessions.endTime)
+      ))
+      .limit(1)
+      .for("update");
+    if (!occurrence) {
+      throw Object.assign(new Error("This scheduled block has ended."), {
+        status: 409,
+        code: "SCHEDULED_CONFLICT_EXPIRED",
+      });
+    }
+
+    const [conflict] = await tx
+      .select()
+      .from(classpilotScheduledConflicts)
+      .where(and(
+        eq(classpilotScheduledConflicts.id, options.scheduledConflictId),
+        eq(classpilotScheduledConflicts.schoolId, options.schoolId),
+        inArray(classpilotScheduledConflicts.status, ACTIVE_SCHEDULED_COVERAGE_STATUSES)
+      ))
+      .limit(1)
+      .for("update");
+    if (!conflict) {
+      throw Object.assign(new Error("This scheduled block has ended."), {
+        status: 409,
+        code: "SCHEDULED_CONFLICT_EXPIRED",
+      });
+    }
+
+    if (uniqueStudentIds.length > 0) {
+      // Student rows provide a stable lock even when no current supervision
+      // assignment exists, so two staff cannot both observe "claimable" and
+      // let the second steal the first claim.
+      await tx
+        .select({ id: students.id })
+        .from(students)
+        .where(and(
+          eq(students.schoolId, options.schoolId),
+          inArray(students.id, uniqueStudentIds)
+        ))
+        .orderBy(students.id)
+        .for("update");
+    }
+
+    const [existing] = await tx
+      .select()
+      .from(classpilotSupervisionContexts)
+      .where(and(
+        eq(classpilotSupervisionContexts.schoolId, options.schoolId),
+        eq(classpilotSupervisionContexts.assignedStaffId, options.assignedStaffId),
+        eq(classpilotSupervisionContexts.scheduledConflictId, conflict.id),
+        eq(classpilotSupervisionContexts.status, "active")
+      ))
+      .orderBy(desc(classpilotSupervisionContexts.createdAt))
+      .limit(1)
+      .for("update");
+
+    const activeAssignments = uniqueStudentIds.length > 0
+      ? await tx
+          .select({
+            studentId: classpilotSupervisionStudents.studentId,
+            contextId: classpilotSupervisionStudents.contextId,
+          })
+          .from(classpilotSupervisionStudents)
+          .innerJoin(
+            classpilotSupervisionContexts,
+            eq(classpilotSupervisionContexts.id, classpilotSupervisionStudents.contextId)
+          )
+          .where(and(
+            eq(classpilotSupervisionStudents.schoolId, options.schoolId),
+            inArray(classpilotSupervisionStudents.studentId, uniqueStudentIds),
+            isNull(classpilotSupervisionStudents.releasedAt),
+            eq(classpilotSupervisionContexts.status, "active"),
+            sql`${classpilotSupervisionContexts.endsAt} > now()`
+          ))
+      : [];
+    if (activeAssignments.some((assignment) => assignment.contextId !== existing?.id)) {
+      throw Object.assign(new Error("One or more students are no longer available for scheduled coverage"), {
+        status: 409,
+        code: "SCHEDULED_COVERAGE_STUDENT_UNAVAILABLE",
+      });
+    }
+    const activeOwners = await getActiveClassOwnersForStudents(
+      options.schoolId,
+      uniqueStudentIds,
+      tx as unknown as typeof db
+    );
+    if (activeOwners.length > 0) {
+      throw Object.assign(new Error("One or more students are already active in another class"), {
+        status: 409,
+        code: "SCHEDULED_COVERAGE_STUDENT_UNAVAILABLE",
+      });
+    }
+
+    const now = new Date();
+    let context: ClasspilotSupervisionContext;
+    if (existing) {
+      const [updated] = await tx
+        .update(classpilotSupervisionContexts)
+        .set({
+          endsAt: existing.endsAt < options.endsAt ? options.endsAt : existing.endsAt,
+          note: options.note || existing.note || null,
+          updatedAt: now,
+        })
+        .where(eq(classpilotSupervisionContexts.id, existing.id))
+        .returning();
+      context = updated || existing;
+    } else {
+      const [created] = await tx
+        .insert(classpilotSupervisionContexts)
+        .values({
+          schoolId: options.schoolId,
+          contextType: "scheduled_coverage",
+          name: `Scheduled Supervision: ${options.className}`,
+          status: "active",
+          assignedStaffId: options.assignedStaffId,
+          coverageGroupId: null,
+          scheduledConflictId: conflict.id,
+          createdBy: options.actorId,
+          note: options.note || null,
+          endsAt: options.endsAt,
+        })
+        .returning();
+      if (!created) throw new Error("Failed to create scheduled supervision context");
+      context = created;
+    }
+
+    if (uniqueStudentIds.length > 0) {
+      await tx
+        .update(classpilotSupervisionStudents)
+        .set({ releasedAt: now, releaseReason: "reassigned" })
+        .where(and(
+          eq(classpilotSupervisionStudents.schoolId, options.schoolId),
+          inArray(classpilotSupervisionStudents.studentId, uniqueStudentIds),
+          isNull(classpilotSupervisionStudents.releasedAt)
+        ));
+    }
+    const assignments = uniqueStudentIds.length > 0
+      ? await tx
+          .insert(classpilotSupervisionStudents)
+          .values(uniqueStudentIds.map((studentId) => ({
+            schoolId: options.schoolId,
+            contextId: context.id,
+            studentId,
+            source: "scheduled_coverage_claim",
+            assignedBy: options.actorId,
+          })))
+          .returning()
+      : [];
+
+    await tx
+      .update(classpilotScheduledConflicts)
+      .set({ status: "claimed", lastCheckedAt: now, updatedAt: now })
+      .where(and(
+        eq(classpilotScheduledConflicts.id, conflict.id),
+        eq(classpilotScheduledConflicts.schoolId, options.schoolId),
+        inArray(classpilotScheduledConflicts.status, ACTIVE_SCHEDULED_COVERAGE_STATUSES)
+      ));
+    return { context, assignments };
+  });
 }
 
 export async function listActiveSupervisionContextsForScheduledConflict(

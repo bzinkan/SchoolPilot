@@ -75,9 +75,63 @@ function resyncSummaryText(data) {
   return parts.length > 0 ? `Class resynced: ${parts.join(", ")}` : "Class resynced: roster is already up to date";
 }
 
+function isScheduledTeachingSession(session) {
+  return session?.lifecycle?.kind === "scheduled"
+    || session?.lifecycleKind === "scheduled"
+    || session?.summaryTrigger === "scheduled_end"
+    || session?.lifecycle?.summaryTrigger === "scheduled_end"
+    || Boolean(
+      (session?.scheduledStartAt || session?.lifecycle?.scheduledStartAt)
+      && (session?.scheduledEndAt || session?.lifecycle?.scheduledEndAt),
+    );
+}
+
+function formatScheduledSessionEnd(session, fallbackTimezone) {
+  const scheduledEndAt = session?.scheduledEndAt || session?.lifecycle?.scheduledEndAt;
+  if (!scheduledEndAt) return null;
+
+  const endTime = new Date(scheduledEndAt);
+  if (Number.isNaN(endTime.getTime())) return null;
+
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone: session.scheduledTimezone
+        || session.scheduleTimezone
+        || session.timezone
+        || session.lifecycle?.scheduledTimezone
+        || fallbackTimezone,
+    }).format(endTime);
+  } catch {
+    return new Intl.DateTimeFormat("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(endTime);
+  }
+}
+
+function sessionEndToastDescription(data, wasScheduled) {
+  const result = data?.result ?? data;
+  const disposition = result?.summaryDisposition;
+
+  if (disposition === "queued") {
+    return wasScheduled
+      ? "Scheduled class ended early. The Session Summary is queued for email."
+      : "Class ended. The Session Summary is queued for email.";
+  }
+  if (disposition === "already_queued") {
+    return "Class ended. The Session Summary was already queued for email.";
+  }
+  if (disposition === "not_applicable") {
+    return "Class ended. No Session Summary is required for this session.";
+  }
+  return "Class session has been ended.";
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { currentUser, isAdmin, isTeacher, token, logout } = useClassPilotAuth();
+  const { currentUser, school, isAdmin, isTeacher, token, logout } = useClassPilotAuth();
   const { hasPassPilot, hasGoPilot } = useLicenses();
   const { absentIds } = useAbsentStudents();
   const [sidebarOpen, setSidebarOpen] = useState(() => {
@@ -156,6 +210,10 @@ export default function Dashboard() {
   const [adminStartGroupId, setAdminStartGroupId] = useState("");
   const [classStartOverlap, setClassStartOverlap] = useState(null);
   const [classResyncOverlap, setClassResyncOverlap] = useState(null);
+  const [endClassTarget, setEndClassTarget] = useState(null);
+  const [showLogoutDialog, setShowLogoutDialog] = useState(false);
+  const [skipTodayGroup, setSkipTodayGroup] = useState(null);
+  const [logoutPending, setLogoutPending] = useState(false);
   const [quickClaimStudentId, setQuickClaimStudentId] = useState(null);
   const dismissedMessageIds = useRef(new Set());
   const dismissedMessagesInitialized = useRef(false);
@@ -337,6 +395,13 @@ export default function Dashboard() {
     (observedSession && observedSession.teacherId === currentUser?.id)
   );
   const effectiveSession = isAdmin ? (observedSession || activeSession) : activeSession;
+  const activeSessionIsScheduled = isScheduledTeachingSession(activeSession);
+  const activeSessionScheduledEnd = formatScheduledSessionEnd(
+    activeSession,
+    school?.schoolTimezone || school?.timezone,
+  );
+  const selectedTeacherStartGroup = groups.find((group) => group.id === startGroupId);
+  const selectedAdminStartGroup = adminTeachingGroups.find((group) => group.id === adminStartGroupId);
 
   useEffect(() => {
     effectiveSessionIdRef.current = effectiveSession?.id || null;
@@ -655,6 +720,28 @@ export default function Dashboard() {
                   : old
               );
               queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
+            }
+            if (message.type === 'session-ended') {
+              const endedOwnSession = Boolean(
+                message.sessionId
+                && effectiveSessionIdRef.current
+                && message.sessionId === effectiveSessionIdRef.current,
+              );
+              queryClient.invalidateQueries({ queryKey: ['/api/sessions/active'], exact: false });
+              queryClient.invalidateQueries({ queryKey: ['/api/sessions/all'], exact: false });
+              queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
+              queryClient.invalidateQueries({ queryKey: ['/api/groups'], exact: false });
+              queryClient.invalidateQueries({ queryKey: ['/api/teacher/groups'], exact: false });
+              if (endedOwnSession) {
+                const description = message.summaryDisposition === 'already_queued'
+                  ? "The class ended. Its Session Summary was already queued for email."
+                  : message.summaryDisposition === 'not_applicable'
+                    ? "The class ended. No Session Summary was required."
+                    : message.reason === 'scheduled_end'
+                      ? "The scheduled class ended. Its Session Summary is queued for email."
+                      : "The class ended. Its Session Summary is queued for email.";
+                toast({ title: "Class Ended", description });
+              }
             }
             if (message.type === 'scheduled-class-conflict-updated') {
               queryClient.invalidateQueries({ queryKey: ['/api/classpilot/scheduled-conflicts'] });
@@ -1280,7 +1367,19 @@ export default function Dashboard() {
     }
   }, [activeClassroomStates]);
 
-  const handleLogout = () => { logout(); navigate("/login"); };
+  const performLogout = async () => {
+    setLogoutPending(true);
+    await logout();
+    window.location.replace("/login");
+  };
+
+  const requestLogout = () => {
+    if (activeSession) {
+      setShowLogoutDialog(true);
+      return;
+    }
+    void performLogout();
+  };
 
   const updateGradesMutation = useMutation({
     mutationFn: async (gradeLevels) => {
@@ -1342,15 +1441,32 @@ export default function Dashboard() {
   });
 
   const endSessionMutation = useMutation({
-    mutationFn: async () => apiRequest('POST', '/sessions/end', {}),
-    onSuccess: () => {
+    mutationFn: async ({ session }) => {
+      if (!session?.id) throw new Error("No active class session was found.");
+      return apiRequest(
+        'POST',
+        `/classpilot/teaching-sessions/${encodeURIComponent(session.id)}/end`,
+        {},
+      );
+    },
+    onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['/api/sessions/active'], exact: false });
       queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
       queryClient.invalidateQueries({ queryKey: ['/api/groups'], exact: false });
       queryClient.invalidateQueries({ queryKey: ['/api/teacher/groups'], exact: false });
-      toast({ title: "Class Ended", description: "Class session has been ended" });
+      setEndClassTarget(null);
+      toast({
+        title: "Class Ended",
+        description: sessionEndToastDescription(data, isScheduledTeachingSession(variables?.session)),
+      });
     },
-    onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: "Could not end class",
+        description: error.response?.data?.error || error.message,
+      });
+    },
   });
 
   const resyncSessionMutation = useMutation({
@@ -1413,6 +1529,30 @@ export default function Dashboard() {
     },
     onError: (error) => {
       toast({ variant: "destructive", title: "Could not skip scheduled class", description: error.response?.data?.error || error.message });
+    },
+  });
+
+  const skipScheduledClassMutation = useMutation({
+    mutationFn: async (groupId) => (
+      apiRequest('POST', `/classpilot/scheduled-classes/${encodeURIComponent(groupId)}/skip-today`, {})
+    ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/groups'], exact: false });
+      queryClient.invalidateQueries({ queryKey: ['/api/teacher/groups'], exact: false });
+      queryClient.invalidateQueries({ queryKey: ['/api/classpilot/scheduled-conflicts'] });
+      setSkipTodayGroup(null);
+      toast({
+        title: "Scheduled Class Skipped",
+        description: "Today’s automatic class was canceled. No Session Summary will be sent.",
+      });
+    },
+    onError: (error) => {
+      setSkipTodayGroup(null);
+      toast({
+        variant: "destructive",
+        title: "Could not skip scheduled class",
+        description: error.response?.data?.error || error.message,
+      });
     },
   });
 
@@ -2137,20 +2277,28 @@ export default function Dashboard() {
                   {groups.find(g => g.id === activeSession.groupId)?.name || 'Active Class'}
                 </div>
               )}
+              {isTeacher && activeSessionIsScheduled && (
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-sky-400/15 border border-sky-400/30 text-sky-300" data-testid="badge-automatic-session">
+                  <Clock className="h-3.5 w-3.5" />
+                  Automatic{activeSessionScheduledEnd ? ` · Ends ${activeSessionScheduledEnd}` : ""}
+                </div>
+              )}
               {isTeacher && (
                 <>
                   {activeSession ? (
                     <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => resyncSessionMutation.mutate({ sessionId: activeSession.id })}
-                        disabled={resyncSessionMutation.isPending}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-slate-600 bg-slate-900 text-slate-100 hover:bg-slate-800 transition-colors disabled:opacity-50"
-                        data-testid="button-resync-session"
-                      >
-                        <RefreshCw className={`h-3.5 w-3.5 ${resyncSessionMutation.isPending ? "animate-spin" : ""}`} /> Resync Class
-                      </button>
-                      <button onClick={() => endSessionMutation.mutate()} disabled={endSessionMutation.isPending} className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50" data-testid="button-end-session">
+                      {!activeSessionIsScheduled && (
+                        <button
+                          type="button"
+                          onClick={() => resyncSessionMutation.mutate({ sessionId: activeSession.id })}
+                          disabled={resyncSessionMutation.isPending}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-slate-600 bg-slate-900 text-slate-100 hover:bg-slate-800 transition-colors disabled:opacity-50"
+                          data-testid="button-resync-session"
+                        >
+                          <RefreshCw className={`h-3.5 w-3.5 ${resyncSessionMutation.isPending ? "animate-spin" : ""}`} /> Resync Class
+                        </button>
+                      )}
+                      <button onClick={() => setEndClassTarget(activeSession)} disabled={endSessionMutation.isPending} className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50" data-testid="button-end-session">
                         <X className="h-3.5 w-3.5" /> End Class
                       </button>
                     </div>
@@ -2183,6 +2331,18 @@ export default function Dashboard() {
                       >
                         <Plus className="h-4 w-4 mr-2" />Start Class
                       </button>
+                      {selectedTeacherStartGroup?.scheduleEnabled
+                        && selectedTeacherStartGroup.teacherId === currentUser?.id && (
+                        <button
+                          type="button"
+                          onClick={() => setSkipTodayGroup(selectedTeacherStartGroup)}
+                          disabled={skipScheduledClassMutation.isPending}
+                          data-testid="button-skip-scheduled-class-today"
+                          className="inline-flex h-8 items-center justify-center whitespace-nowrap rounded-md border border-slate-600 bg-slate-900 px-3 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-800 disabled:pointer-events-none disabled:opacity-50"
+                        >
+                          Skip Today
+                        </button>
+                      )}
                     </div>
                   )}
                 </>
@@ -2196,16 +2356,24 @@ export default function Dashboard() {
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
                         Teaching: {groups.find(g => g.id === activeSession.groupId)?.name || 'Active Class'}
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => resyncSessionMutation.mutate({ sessionId: activeSession.id })}
-                        disabled={resyncSessionMutation.isPending}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-slate-600 bg-slate-900 text-slate-100 hover:bg-slate-800 transition-colors disabled:opacity-50"
-                        data-testid="button-admin-resync-session"
-                      >
-                        <RefreshCw className={`h-3.5 w-3.5 ${resyncSessionMutation.isPending ? "animate-spin" : ""}`} /> Resync Class
-                      </button>
-                      <button onClick={() => endSessionMutation.mutate()} disabled={endSessionMutation.isPending} className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50" data-testid="button-admin-end-session">
+                      {activeSessionIsScheduled && (
+                        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-sky-400/15 border border-sky-400/30 text-sky-300" data-testid="badge-admin-automatic-session">
+                          <Clock className="h-3.5 w-3.5" />
+                          Automatic{activeSessionScheduledEnd ? ` · Ends ${activeSessionScheduledEnd}` : ""}
+                        </div>
+                      )}
+                      {!activeSessionIsScheduled && (
+                        <button
+                          type="button"
+                          onClick={() => resyncSessionMutation.mutate({ sessionId: activeSession.id })}
+                          disabled={resyncSessionMutation.isPending}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-slate-600 bg-slate-900 text-slate-100 hover:bg-slate-800 transition-colors disabled:opacity-50"
+                          data-testid="button-admin-resync-session"
+                        >
+                          <RefreshCw className={`h-3.5 w-3.5 ${resyncSessionMutation.isPending ? "animate-spin" : ""}`} /> Resync Class
+                        </button>
+                      )}
+                      <button onClick={() => setEndClassTarget(activeSession)} disabled={endSessionMutation.isPending} className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50" data-testid="button-admin-end-session">
                         <X className="h-3.5 w-3.5" /> End Class
                       </button>
                     </>
@@ -2244,6 +2412,17 @@ export default function Dashboard() {
                         <Plus className="h-4 w-4 mr-2" />
                         Teach Class
                       </button>
+                      {selectedAdminStartGroup?.scheduleEnabled && (
+                        <button
+                          type="button"
+                          onClick={() => setSkipTodayGroup(selectedAdminStartGroup)}
+                          disabled={skipScheduledClassMutation.isPending}
+                          data-testid="button-admin-skip-scheduled-class-today"
+                          className="inline-flex h-8 items-center justify-center whitespace-nowrap rounded-md border border-slate-600 bg-slate-900 px-3 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-800 disabled:pointer-events-none disabled:opacity-50"
+                        >
+                          Skip Today
+                        </button>
+                      )}
                     </div>
                   )}
                   <div className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 transition-colors ${observedSession ? 'bg-slate-700 border-slate-600 text-slate-200' : 'bg-transparent border-slate-600 text-slate-400'}`}>
@@ -2297,7 +2476,7 @@ export default function Dashboard() {
                   </button>
                 </>
               )}
-              <button onClick={handleLogout} className="w-9 h-9 flex items-center justify-center rounded-lg bg-slate-700 text-slate-400 hover:bg-slate-600 transition-colors" data-testid="button-logout">
+              <button onClick={requestLogout} disabled={logoutPending} className="w-9 h-9 flex items-center justify-center rounded-lg bg-slate-700 text-slate-400 hover:bg-slate-600 transition-colors disabled:opacity-50" data-testid="button-logout" title="Log out">
                 <LogOut className="h-[18px] w-[18px]" />
               </button>
             </div>
@@ -2384,15 +2563,17 @@ export default function Dashboard() {
                     </p>
                   ) : conflict.canStartAnyway && (
                     <div className="flex shrink-0 items-center gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => skipScheduledConflictMutation.mutate(conflict.id)}
-                        disabled={skipScheduledConflictMutation.isPending || startScheduledConflictMutation.isPending}
-                        data-testid={`button-skip-scheduled-conflict-${conflict.id}`}
-                      >
-                        Skip
-                      </Button>
+                      {conflict.canSkip && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => skipScheduledConflictMutation.mutate(conflict.id)}
+                          disabled={skipScheduledConflictMutation.isPending || startScheduledConflictMutation.isPending}
+                          data-testid={`button-skip-scheduled-conflict-${conflict.id}`}
+                        >
+                          Skip Today
+                        </Button>
+                      )}
                       <Button
                         size="sm"
                         onClick={() => startScheduledConflictMutation.mutate(conflict.id)}
@@ -2794,6 +2975,116 @@ export default function Dashboard() {
           activeClassName={effectiveSession ? groups.find(g => g.id === effectiveSession.groupId)?.name : null}
         />
       )}
+
+      <Dialog
+        open={!!endClassTarget}
+        onOpenChange={(open) => {
+          if (!open && !endSessionMutation.isPending) setEndClassTarget(null);
+        }}
+      >
+        <DialogContent className="max-w-md" data-testid="dialog-end-class">
+          <DialogHeader>
+            <DialogTitle>
+              {isScheduledTeachingSession(endClassTarget) ? "End scheduled class early?" : "End class?"}
+            </DialogTitle>
+            <DialogDescription data-testid="text-end-class-consequence">
+              {isScheduledTeachingSession(endClassTarget)
+                ? "Monitoring and classroom controls will stop now. The Session Summary will cover the scheduled start through now, be emailed immediately, and today’s block will not restart."
+                : "Monitoring and classroom controls will stop now, and the Session Summary will be emailed."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setEndClassTarget(null)}
+              disabled={endSessionMutation.isPending}
+              data-testid="button-cancel-end-class"
+            >
+              Keep Class Running
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => endSessionMutation.mutate({ session: endClassTarget })}
+              disabled={!endClassTarget?.id || endSessionMutation.isPending}
+              data-testid="button-confirm-end-class"
+            >
+              {endSessionMutation.isPending ? "Ending Class..." : isScheduledTeachingSession(endClassTarget) ? "End Early & Email Summary" : "End Class & Email Summary"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={showLogoutDialog}
+        onOpenChange={(open) => {
+          if (!logoutPending) setShowLogoutDialog(open);
+        }}
+      >
+        <DialogContent className="max-w-md" data-testid="dialog-logout-active-session">
+          <DialogHeader>
+            <DialogTitle>Log out with an active class?</DialogTitle>
+            <DialogDescription data-testid="text-logout-consequence">
+              {activeSessionIsScheduled
+                ? `Logging out will not end this scheduled class. The class and active controls will continue until ${activeSessionScheduledEnd || "the scheduled end"}, and the Session Summary will then be emailed automatically.`
+                : "Logging out will not end this class or send its Session Summary. Choose End Class first if the class is finished."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowLogoutDialog(false)}
+              disabled={logoutPending}
+              data-testid="button-cancel-logout"
+            >
+              Stay Signed In
+            </Button>
+            <Button
+              onClick={() => {
+                setShowLogoutDialog(false);
+                void performLogout();
+              }}
+              disabled={logoutPending}
+              data-testid="button-confirm-logout"
+            >
+              {logoutPending ? "Logging Out..." : "Log Out Anyway"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!skipTodayGroup}
+        onOpenChange={(open) => {
+          if (!open && !skipScheduledClassMutation.isPending) setSkipTodayGroup(null);
+        }}
+      >
+        <DialogContent className="max-w-md" data-testid="dialog-skip-scheduled-class-today">
+          <DialogHeader>
+            <DialogTitle>Skip {skipTodayGroup?.name || "this scheduled class"} today?</DialogTitle>
+            <DialogDescription data-testid="text-skip-scheduled-class-consequence">
+              This prevents today’s automatic class from starting. No Session Summary will be sent, and the regular weekday schedule resumes on the next school day.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setSkipTodayGroup(null)}
+              disabled={skipScheduledClassMutation.isPending}
+              data-testid="button-cancel-skip-scheduled-class-today"
+            >
+              Keep Scheduled Class
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => skipTodayGroup?.id && skipScheduledClassMutation.mutate(skipTodayGroup.id)}
+              disabled={!skipTodayGroup?.id || skipScheduledClassMutation.isPending}
+              data-testid="button-confirm-skip-scheduled-class-today"
+            >
+              {skipScheduledClassMutation.isPending ? "Skipping..." : "Skip Today"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!classStartOverlap} onOpenChange={(open) => { if (!open) setClassStartOverlap(null); }}>
         <DialogContent className="max-w-lg" data-testid="dialog-class-start-overlap">

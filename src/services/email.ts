@@ -18,15 +18,36 @@ if (SENDGRID_API_KEY) {
   sgMail.setApiKey(SENDGRID_API_KEY);
 }
 
-export async function sendEmail(options: {
+export type EmailSendOptions = {
   to: string;
   subject: string;
   text?: string;
   html?: string;
-}): Promise<boolean> {
+  customArgs?: Record<string, string>;
+};
+
+export type EmailSendResult =
+  | { status: "sent"; providerMessageId?: string }
+  | { status: "transient_failure" | "permanent_failure" | "unknown"; error: string; providerStatus?: number; providerCode?: string };
+
+function safeProviderError(error: any): { message: string; status?: number; code?: string } {
+  const status = Number(error?.code || error?.response?.statusCode || error?.response?.status);
+  const code = typeof error?.code === "string" ? error.code.slice(0, 64) : undefined;
+  return {
+    message: status
+      ? `Email provider returned HTTP ${status}`
+      : code
+        ? `Email provider transport failed (${code})`
+        : "Email provider transport failed",
+    status: Number.isFinite(status) ? status : undefined,
+    code,
+  };
+}
+
+export async function sendEmailWithResult(options: EmailSendOptions): Promise<EmailSendResult> {
   if (!SENDGRID_API_KEY) {
-    console.log(`[Email] Would send to ${options.to}: ${options.subject}`);
-    return true;
+    console.log(`[Email] Development delivery accepted: ${options.subject}`);
+    return { status: "sent", providerMessageId: "development-noop" };
   }
 
   try {
@@ -37,25 +58,45 @@ export async function sendEmail(options: {
     };
     if (options.html) msg.html = options.html;
     if (options.text) msg.text = options.text;
+    if (options.customArgs) msg.customArgs = options.customArgs;
     if (!msg.html && !msg.text) msg.text = options.subject;
-    await sgMail.send(msg);
-    return true;
+    const [response] = await sgMail.send(msg);
+    const rawMessageId = response?.headers?.["x-message-id"];
+    const providerMessageId = Array.isArray(rawMessageId) ? rawMessageId[0] : rawMessageId;
+    return { status: "sent", providerMessageId: providerMessageId ? String(providerMessageId) : undefined };
   } catch (error: any) {
-    console.error("[Email] Send failed:", error?.message || error);
-    if (error?.response?.body) {
-      console.error("[Email] SendGrid response:", JSON.stringify(error.response.body));
-    }
+    const safe = safeProviderError(error);
+    console.error("[Email] Send failed:", safe.message);
     // Track in error monitor (skip if this IS an alert email to avoid recursion)
     if (!options.subject.startsWith("[SchoolPilot ALERT]")) {
       try {
         const monitor = await getErrorMonitor();
-        // Do NOT pass the recipient address — it's PII and not needed to debug
-        // a send failure. The error message itself carries the actionable cause.
-        monitor.trackError("email_failure", error);
+        // Pass only a synthesized provider classification. Raw SendGrid
+        // errors can contain recipient addresses and must not enter monitoring.
+        monitor.trackError("email_failure", new Error(safe.message), {
+          errorCode: safe.code || (safe.status ? String(safe.status) : "EMAIL_TRANSPORT"),
+          messageType: "email_provider_delivery",
+        });
       } catch { /* avoid recursion */ }
     }
-    return false;
+
+    if (safe.status) {
+      if (safe.status >= 400 && safe.status < 500 && safe.status !== 429) {
+        return { status: "permanent_failure", error: safe.message, providerStatus: safe.status, providerCode: safe.code };
+      }
+      return { status: "transient_failure", error: safe.message, providerStatus: safe.status, providerCode: safe.code };
+    }
+
+    const ambiguousCodes = new Set(["ETIMEDOUT", "ESOCKETTIMEDOUT", "ECONNRESET", "EPIPE"]);
+    if (safe.code && !ambiguousCodes.has(safe.code)) {
+      return { status: "transient_failure", error: safe.message, providerCode: safe.code };
+    }
+    return { status: "unknown", error: safe.message, providerCode: safe.code };
   }
+}
+
+export async function sendEmail(options: EmailSendOptions): Promise<boolean> {
+  return (await sendEmailWithResult(options)).status === "sent";
 }
 
 export async function sendWelcomeEmail(to: string, schoolName: string, tempPassword: string): Promise<boolean> {
@@ -308,7 +349,7 @@ export async function sendChatEscalationEmail(options: {
 }
 
 function escapeEmailHtml(value: string): string {
-  return value
+  return String(value)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
@@ -316,7 +357,11 @@ function escapeEmailHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
-export async function sendSessionSummaryEmail(options: {
+function sanitizeEmailSubject(value: string): string {
+  return String(value).replace(/[\r\n]+/g, " ").replace(/\s{2,}/g, " ").trim();
+}
+
+export type SessionSummaryEmailOptions = {
   to: string;
   teacherName: string;
   className: string;
@@ -334,8 +379,17 @@ export async function sendSessionSummaryEmail(options: {
     safetyUrls?: string[];
   }>;
   copyNotice?: string;
-}): Promise<boolean> {
-  const { to, teacherName, className, date, startTime, endTime, duration, studentCount, students, copyNotice } = options;
+  deliveryId?: string;
+};
+
+function buildSessionSummaryEmail(options: SessionSummaryEmailOptions): { subject: string; html: string } {
+  const { teacherName, className, date, startTime, endTime, duration, studentCount, students, copyNotice } = options;
+  const safeTeacherName = escapeEmailHtml(teacherName);
+  const safeClassName = escapeEmailHtml(className);
+  const safeDate = escapeEmailHtml(date);
+  const safeStartTime = escapeEmailHtml(startTime);
+  const safeEndTime = escapeEmailHtml(endTime);
+  const safeDuration = escapeEmailHtml(duration);
   const copyNoticeHtml = copyNotice
     ? `<p style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px 12px; color: #475569; font-size: 13px;">${escapeEmailHtml(copyNotice)}</p>`
     : "";
@@ -343,7 +397,7 @@ export async function sendSessionSummaryEmail(options: {
   // Build safety incidents section if any exist
   const safetyIncidents = students
     .filter(s => s.safetyAlerts && s.safetyAlerts.length > 0)
-    .map(s => `<tr><td style="padding: 6px 8px; border-bottom: 1px solid #fecaca;">${s.name}</td><td style="padding: 6px 8px; border-bottom: 1px solid #fecaca; color: #dc2626; font-weight: bold;">${s.safetyAlerts!.join(", ")}</td><td style="padding: 6px 8px; border-bottom: 1px solid #fecaca; font-size: 13px;">${s.safetyUrls?.join(", ") || ""}</td></tr>`)
+    .map(s => `<tr><td style="padding: 6px 8px; border-bottom: 1px solid #fecaca;">${escapeEmailHtml(s.name)}</td><td style="padding: 6px 8px; border-bottom: 1px solid #fecaca; color: #dc2626; font-weight: bold;">${s.safetyAlerts!.map(escapeEmailHtml).join(", ")}</td><td style="padding: 6px 8px; border-bottom: 1px solid #fecaca; font-size: 13px;">${s.safetyUrls?.map(escapeEmailHtml).join(", ") || ""}</td></tr>`)
     .join("");
   const safetySection = safetyIncidents ? `
     <div style="margin: 20px 0; padding: 16px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px;">
@@ -359,18 +413,18 @@ export async function sendSessionSummaryEmail(options: {
     .map((s) => {
       const domains = s.topDomains
         .slice(0, 5)
-        .map((d) => `${d.domain} (${d.minutes}m)`)
+        .map((d) => `${escapeEmailHtml(d.domain)} (${Number(d.minutes) || 0}m)`)
         .join(", ");
       const offTaskMinutes = Math.round(((s.offTaskCount || 0) * 10) / 60);
       const offTaskCell = offTaskMinutes > 0
         ? `<span style="color: #dc2626; font-weight: bold;">${offTaskMinutes}m</span>`
         : `<span style="color: #16a34a;">0m</span>`;
       const safetyCell = s.safetyAlerts && s.safetyAlerts.length > 0
-        ? `<span style="color: #dc2626; font-weight: bold;">${s.safetyAlerts.join(", ")}</span>`
+        ? `<span style="color: #dc2626; font-weight: bold;">${s.safetyAlerts.map(escapeEmailHtml).join(", ")}</span>`
         : "";
       return `
         <tr>
-          <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${s.name}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${escapeEmailHtml(s.name)}</td>
           <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: center;">${s.totalMinutes}m</td>
           <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: center;">${offTaskCell}${safetyCell ? ` ${safetyCell}` : ""}</td>
           <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; font-size: 13px; color: #6b7280;">${domains || "No activity"}</td>
@@ -382,13 +436,13 @@ export async function sendSessionSummaryEmail(options: {
     <div style="font-family: sans-serif; max-width: 700px; margin: 0 auto;">
       <h2 style="color: #1e293b;">📋 ClassPilot Session Summary</h2>
       ${copyNoticeHtml}
-      <p>Hi ${teacherName},</p>
-      <p>Here's your session summary for <strong>${className}</strong>.</p>
+      <p>Hi ${safeTeacherName},</p>
+      <p>Here's your session summary for <strong>${safeClassName}</strong>.</p>
       ${safetySection}
       <table style="width: 100%; border-collapse: collapse; margin: 16px 0; background: #f8fafc; border-radius: 6px;">
-        <tr><td style="padding: 8px 12px; font-weight: bold;">Date</td><td style="padding: 8px 12px;">${date}</td></tr>
-        <tr><td style="padding: 8px 12px; font-weight: bold;">Time</td><td style="padding: 8px 12px;">${startTime} — ${endTime} (${duration})</td></tr>
-        <tr><td style="padding: 8px 12px; font-weight: bold;">Students</td><td style="padding: 8px 12px;">${studentCount}</td></tr>
+        <tr><td style="padding: 8px 12px; font-weight: bold;">Date</td><td style="padding: 8px 12px;">${safeDate}</td></tr>
+        <tr><td style="padding: 8px 12px; font-weight: bold;">Time</td><td style="padding: 8px 12px;">${safeStartTime} — ${safeEndTime} (${safeDuration})</td></tr>
+        <tr><td style="padding: 8px 12px; font-weight: bold;">Students</td><td style="padding: 8px 12px;">${Number(studentCount) || 0}</td></tr>
       </table>
       <h3 style="margin-top: 24px; color: #1e293b;">Student Activity</h3>
       <table style="width: 100%; border-collapse: collapse;">
@@ -406,9 +460,25 @@ export async function sendSessionSummaryEmail(options: {
     </div>
   `;
 
-  return sendEmail({
-    to,
-    subject: `ClassPilot Session Summary — ${className} (${date})`,
+  return {
+    subject: sanitizeEmailSubject(`ClassPilot Session Summary — ${className} (${date})`),
     html,
+  };
+}
+
+export async function sendSessionSummaryEmailWithResult(
+  options: SessionSummaryEmailOptions
+): Promise<EmailSendResult> {
+  const message = buildSessionSummaryEmail(options);
+  return sendEmailWithResult({
+    to: options.to,
+    ...message,
+    customArgs: options.deliveryId
+      ? { classpilot_summary_delivery_id: options.deliveryId }
+      : undefined,
   });
+}
+
+export async function sendSessionSummaryEmail(options: SessionSummaryEmailOptions): Promise<boolean> {
+  return (await sendSessionSummaryEmailWithResult(options)).status === "sent";
 }

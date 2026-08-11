@@ -30,13 +30,15 @@ interface CodeRecord {
 const CODE_TTL_MS = 60 * 1000; // 60 seconds — long enough for a network round-trip, short enough to limit damage if logged
 const codeStore = new Map<string, CodeRecord>();
 
-// Periodic cleanup of expired codes
-setInterval(() => {
+// Periodic cleanup of expired codes. Do not make this maintenance timer the
+// reason a migration/test process remains alive after all servers are closed.
+const authCodeCleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [code, record] of codeStore) {
     if (record.expiresAt < now) codeStore.delete(code);
   }
 }, 30 * 1000);
+authCodeCleanupTimer.unref?.();
 
 /**
  * Stash a JWT under a fresh one-time code. Returns the code (URL-safe random).

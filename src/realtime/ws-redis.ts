@@ -267,6 +267,46 @@ export function getRedisPublisher(): RedisClientType | null {
   return redisPublisher;
 }
 
+/**
+ * Run a small realtime coordination command on the shared Redis publisher.
+ * `undefined` means Redis is not configured/ready or the command failed; Redis
+ * replies such as `0` remain authoritative values. Callers must fail closed
+ * when this returns `undefined`.
+ */
+export async function executeRealtimeRedisCommand<T = unknown>(
+  command: string[],
+  options: { timeoutMs?: number } = {}
+): Promise<T | undefined> {
+  if (!redisUrl) return undefined;
+  const timeoutMs = Math.max(50, options.timeoutMs ?? 500);
+  let readyTimer: NodeJS.Timeout | undefined;
+  const ready = await Promise.race([
+    ensureRedisReady().then(() => true, () => false),
+    new Promise<boolean>((resolve) => {
+      readyTimer = setTimeout(() => resolve(false), timeoutMs);
+      readyTimer.unref?.();
+    }),
+  ]);
+  if (readyTimer) clearTimeout(readyTimer);
+  if (!ready) return undefined;
+  if (!redisEnabled || !redisPublisher?.isReady) return undefined;
+  const controller = new AbortController();
+  const commandTimer = setTimeout(() => controller.abort(), timeoutMs);
+  commandTimer.unref?.();
+  try {
+    return await redisPublisher.sendCommand<T>(command, { signal: controller.signal });
+  } catch (error) {
+    // Do not log the command because coordination keys can contain scoped
+    // identifiers. The shared Redis warning already reports infrastructure
+    // health without exposing tenant or user data.
+    console.warn("[WebSocket] Redis coordination command failed");
+    warnRedis(error);
+    return undefined;
+  } finally {
+    clearTimeout(commandTimer);
+  }
+}
+
 export async function subscribeWS(
   onMessage: (target: WsRedisTarget, message: unknown) => void
 ): Promise<void> {

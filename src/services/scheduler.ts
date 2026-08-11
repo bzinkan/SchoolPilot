@@ -2,18 +2,21 @@ import type { Server as SocketServer } from "socket.io";
 import errorMonitor from "./errorMonitor.js";
 import {
   getSchoolById,
+  getGroupByIdAndSchool,
   getOrCreateSession,
   updateSessionStatus,
   getSettingsForSchool,
   getScheduledGroupsReadyToStart,
-  getScheduledGroupsReadyToEnd,
-  hasActiveSessionForGroup,
-  endTeachingSession,
-  getUserById,
-  clearClasspilotActiveHandsForSession,
+  backfillOpenTeachingSessionRosterSnapshots,
+  listScheduledSessionsReadyToFinalize,
+  listScheduledReportSessionsDueNow,
+  reconcileLegacyOpenScheduledSessions,
 } from "./storage.js";
 import { expireScheduledClassConflictsForSchool, processScheduledClassAutoStart } from "./classpilotScheduledStart.js";
-import { buildAndSendSessionSummary } from "../routes/classpilot/sessions.js";
+import {
+  drainDueClasspilotSessionSummaries,
+  finalizeClasspilotSession,
+} from "./classpilotSessionLifecycle.js";
 import { broadcastToTeachersLocal } from "../realtime/ws-broadcast.js";
 import { publishWS } from "../realtime/ws-redis.js";
 import { publishSocketIoRedis } from "../realtime/socketio-redis.js";
@@ -133,8 +136,7 @@ export function startScheduler(socketIo: SocketServer | null = null) {
     scheduleLockedJob("checkDismissalTimes", checkDismissalTimes);
     scheduleLockedJob("autoCompleteStaleGoPilotSessions", autoCompleteStaleGoPilotSessions);
     scheduleLockedJob("autoEndStaleClassPilotSessions", autoEndStaleClassPilotSessions);
-    scheduleLockedJob("autoStartClassBlocks", autoStartClassBlocks);
-    scheduleLockedJob("autoEndClassBlocks", autoEndClassBlocks);
+    scheduleLockedJob("reconcileClasspilotScheduledSessions", reconcileClasspilotScheduledSessions);
     // Security monitor: run every 5 minutes (every 5th tick) — rule-based breach detection
     if (tickCount % 5 === 0) {
       scheduleLockedJob("runSecurityChecks", async () => {
@@ -146,8 +148,7 @@ export function startScheduler(socketIo: SocketServer | null = null) {
   }, 60 * 1000);
   scheduleLockedJob("checkDismissalTimes", checkDismissalTimes);
   scheduleLockedJob("autoCompleteStaleGoPilotSessions", autoCompleteStaleGoPilotSessions);
-  scheduleLockedJob("autoStartClassBlocks", autoStartClassBlocks);
-  scheduleLockedJob("autoEndClassBlocks", autoEndClassBlocks);
+  scheduleLockedJob("reconcileClasspilotScheduledSessions", reconcileClasspilotScheduledSessions);
   // Run heavy jobs immediately so a worker restart after 02:00 local time
   // catches up yesterday's usage without waiting for the next hourly boundary.
   scheduleLockedJob("runHeavyJobsSerially", runHeavyJobsSerially);
@@ -276,8 +277,11 @@ async function autoEndStaleClassPilotSessions() {
         groupId: teachingSessions.groupId,
         startTime: teachingSessions.startTime,
         sessionMode: teachingSessions.sessionMode,
+        scheduledState: teachingSessions.scheduledState,
+        scheduledConflictId: teachingSessions.scheduledConflictId,
         schoolId: schools.id,
         schoolTimezone: schools.schoolTimezone,
+        scheduleEnabled: groups.scheduleEnabled,
       })
       .from(teachingSessions)
       .innerJoin(groups, eq(teachingSessions.groupId, groups.id))
@@ -300,6 +304,14 @@ async function autoEndStaleClassPilotSessions() {
         shouldEnd = true;
         reason = `exceeded ${MAX_SESSION_HOURS}-hour maximum`;
       } else if (ageHours >= MIN_AGE_FOR_AFTER_HOURS_END) {
+        // A scheduled occurrence owns its frozen end timestamp. Generic
+        // after-hours cleanup must not truncate it; only the hard safety cap
+        // above may intervene, through the same finalizer.
+        if (
+          s.sessionMode === "scheduled_report"
+          || s.scheduledState === "active"
+          || !!s.scheduledConflictId
+        ) continue;
         // After school hours check
         try {
           const settings = await getSettingsForSchool(s.schoolId, schedulerDb);
@@ -320,29 +332,21 @@ async function autoEndStaleClassPilotSessions() {
       }
 
       if (shouldEnd) {
-        const session = await endTeachingSession(s.sessionId, schedulerDb);
-        await clearClasspilotActiveHandsForSession(s.schoolId, s.sessionId, schedulerDb);
+        const result = await finalizeClasspilotSession({
+          schoolId: s.schoolId,
+          sessionId: s.sessionId,
+          reason: "safety_timeout",
+          dbInstance: schedulerDb,
+        });
+        if (!result?.finalized) continue;
         console.log(`[ClassPilot] Auto-ended stale session ${s.sessionId} for teacher ${s.teacherId} (${reason}, age: ${ageHours.toFixed(1)}h)`);
-
-        // Send session summary email (same as manual/scheduled end)
-        if (session?.startTime && session?.endTime && s.sessionMode !== "scheduled_report") {
-          const teacher = await getUserById(s.teacherId);
-          if (teacher) {
-            buildAndSendSessionSummary(session, {
-              email: teacher.email,
-              firstName: (teacher as any).firstName,
-              lastName: (teacher as any).lastName,
-            }, schedulerDb).catch((err) =>
-              console.error("[ClassPilot] Stale session summary email failed:", err)
-            );
-          }
-        }
 
         // Notify teacher dashboard
         const update = {
           type: "session-ended",
           sessionId: s.sessionId,
-          reason: "auto-ended",
+          reason: "safety_timeout",
+          summaryDisposition: result.summaryDisposition,
         };
         broadcastToTeachersLocal(s.schoolId, update);
         void publishWS({ kind: "staff", schoolId: s.schoolId }, update);
@@ -727,86 +731,49 @@ async function purgeExpiredHeartbeats() {
 // ClassPilot - Automatic class block scheduling
 // ============================================================================
 
-async function autoStartClassBlocks() {
+export async function reconcileClasspilotScheduledSessions(now = new Date(), schoolId?: string) {
   try {
-    const activeSchools = await schedulerDb
-      .select({
-        id: schools.id,
-        schoolTimezone: schools.schoolTimezone,
-      })
-      .from(schools)
-      .innerJoin(
-        productLicenses,
-        and(
-          eq(productLicenses.schoolId, schools.id),
-          eq(productLicenses.product, "CLASSPILOT"),
-          eq(productLicenses.status, "active")
-        )
-      )
-      .where(eq(schools.status, "active"));
-
-    for (const school of activeSchools) {
-      const tz = school.schoolTimezone || "America/New_York";
-      const now = new Date();
-
-      // Skip weekends (Saturday, Sunday)
-      const localDayStr = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" }).format(now);
-      if (localDayStr === "Sat" || localDayStr === "Sun") continue;
-
-      const currentTimeHHMM = now.toLocaleString("en-US", {
-        timeZone: tz,
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      }).replace(/^24:/, "00:");
-      const todayDate = now.toLocaleDateString("en-CA", { timeZone: tz });
-
-      // Debug: log every scheduled group check to diagnose auto-start failures
-      const allScheduledGroups = await schedulerDb
-        .select({ id: groups.id, name: groups.name, blockStartTime: groups.blockStartTime, blockEndTime: groups.blockEndTime, scheduleSkippedDate: groups.scheduleSkippedDate })
-        .from(groups)
-        .where(and(eq(groups.schoolId, school.id), eq(groups.scheduleEnabled, true)));
-      if (allScheduledGroups.length > 0) {
-        console.log(`[ClassPilot] Schedule tick: school=${school.id.slice(0,8)}, time=${currentTimeHHMM} ${tz}, date=${todayDate}, groups=${JSON.stringify(allScheduledGroups.map(g => ({ name: g.name, start: g.blockStartTime, end: g.blockEndTime, skipped: g.scheduleSkippedDate })))}`);
-      }
-
-      const readyGroups = await getScheduledGroupsReadyToStart(school.id, currentTimeHHMM, todayDate, schedulerDb);
-      if (readyGroups.length > 0) {
-        console.log(`[ClassPilot] Auto-start: ${readyGroups.length} group(s) ready`);
-      }
-
-      for (const group of readyGroups) {
-        // Check if session already exists for this group
-        const alreadyActive = await hasActiveSessionForGroup(group.id, schedulerDb);
-        if (alreadyActive) {
-          console.log(`[ClassPilot] Skipping "${group.name}" — session already active`);
-          continue;
-        }
-
-        const result = await processScheduledClassAutoStart({
-          group,
-          scheduledDate: todayDate,
+    const backfilledSnapshots = await backfillOpenTeachingSessionRosterSnapshots(schedulerDb, schoolId);
+    if (backfilledSnapshots > 0) {
+      console.log(`[ClassPilot] Backfilled immutable rosters for ${backfilledSnapshots} open session(s)`);
+    }
+    await reconcileLegacyOpenScheduledSessions(now, schedulerDb, schoolId);
+    // 1. Finalize frozen occurrences first. This catches delayed ticks and
+    // prior-date rows after worker restarts without consulting mutable groups.
+    const dueSessions = await listScheduledSessionsReadyToFinalize(now, schedulerDb, schoolId);
+    const finalizationConcurrency = 10;
+    for (let offset = 0; offset < dueSessions.length; offset += finalizationConcurrency) {
+      await Promise.all(dueSessions.slice(offset, offset + finalizationConcurrency).map(async (session) => {
+        try {
+        const result = await finalizeClasspilotSession({
+          schoolId: session.schoolId!,
+          sessionId: session.id,
+          reason: "scheduled_end",
+          finalizedAt: session.scheduledEndAt || now,
           dbInstance: schedulerDb,
         });
-        if (result.status === "started") {
-          console.log(`[ClassPilot] Auto-started session for "${group.name}" (teacher ${group.teacherId}, school ${school.id})`);
-        } else if (result.status === "coverage_needed") {
-          console.log(`[ClassPilot] Scheduled coverage needed for "${group.name}" (request ${result.conflictId})`);
-        } else if (result.status === "claimed") {
-          console.log(`[ClassPilot] Scheduled coverage already claimed for "${group.name}" (request ${result.conflictId})`);
-        } else {
-          console.log(`[ClassPilot] Skipped scheduled start for "${group.name}" (${result.reason})`);
+        if (result?.finalized) {
+          const update = {
+            type: "session-ended",
+            sessionId: session.id,
+            reason: "scheduled_end",
+            summaryDisposition: result.summaryDisposition,
+          };
+          broadcastToTeachersLocal(session.schoolId!, update);
+          void publishWS({ kind: "staff", schoolId: session.schoolId! }, update);
         }
-      }
+        } catch (error) {
+          console.error(`[ClassPilot] Failed to finalize scheduled occurrence ${session.id}:`, error);
+          errorMonitor.trackError("scheduler_failure", error as Error, {
+            job: "reconcileClasspilotScheduledSessions",
+            errorCode: "OCCURRENCE_FINALIZE_FAILED",
+          });
+        }
+      }));
     }
-  } catch (err) {
-    console.error("[ClassPilot] Auto-start class blocks error:", err);
-    errorMonitor.trackError("scheduler_failure", err as Error, { job: "autoStartClassBlocks" });
-  }
-}
 
-async function autoEndClassBlocks() {
-  try {
+    const activeSchoolConditions = [eq(schools.status, "active")];
+    if (schoolId) activeSchoolConditions.push(eq(schools.id, schoolId));
     const activeSchools = await schedulerDb
       .select({
         id: schools.id,
@@ -821,11 +788,11 @@ async function autoEndClassBlocks() {
           eq(productLicenses.status, "active")
         )
       )
-      .where(eq(schools.status, "active"));
+      .where(and(...activeSchoolConditions));
 
     for (const school of activeSchools) {
-      const tz = school.schoolTimezone || "America/New_York";
-      const now = new Date();
+      try {
+        const tz = school.schoolTimezone || "America/New_York";
       const currentTimeHHMM = now.toLocaleString("en-US", {
         timeZone: tz,
         hour: "2-digit",
@@ -834,6 +801,7 @@ async function autoEndClassBlocks() {
       }).replace(/^24:/, "00:");
       const todayDate = now.toLocaleDateString("en-CA", { timeZone: tz });
 
+      // 2. Release/resolve due coverage after occurrences have finalized.
       const expiredConflicts = await expireScheduledClassConflictsForSchool({
         schoolId: school.id,
         scheduledDate: todayDate,
@@ -844,31 +812,118 @@ async function autoEndClassBlocks() {
         console.log(`[ClassPilot] Expired ${expiredConflicts.length} scheduled coverage request(s) for school ${school.id}`);
       }
 
-      const readyGroups = await getScheduledGroupsReadyToEnd(school.id, currentTimeHHMM, schedulerDb);
+      // Automatic schedules remain weekday-only. Finalization above is not
+      // weekday-gated so persisted overdue rows always recover.
+      const localDayStr = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" }).format(now);
+      if (localDayStr === "Sat" || localDayStr === "Sun") continue;
 
-      for (const group of readyGroups) {
-        const session = await endTeachingSession(group.sessionId, schedulerDb);
-        await clearClasspilotActiveHandsForSession(school.id, group.sessionId, schedulerDb);
-        console.log(`[ClassPilot] Auto-ended session for "${group.name}" (teacher ${group.teacherId}, school ${school.id})`);
-
-        // Send session summary email (same as manual end)
-        if (session?.startTime && session?.endTime && group.sessionMode !== "scheduled_report") {
-          const teacher = await getUserById(group.teacherId);
-          if (teacher) {
-            buildAndSendSessionSummary(session, {
-              email: teacher.email,
-              firstName: (teacher as any).firstName,
-              lastName: (teacher as any).lastName,
-            }, schedulerDb).catch((err) =>
-              console.error("[ClassPilot] Auto-end session summary email failed:", err)
-            );
-          }
+      // A canonical occurrence frozen at the bell remains authoritative even
+      // if an administrator edits the group's future schedule before this
+      // worker tick.
+      const frozenDueSessions = await listScheduledReportSessionsDueNow(
+        now,
+        schedulerDb,
+        school.id
+      );
+      const frozenGroupIds = new Set<string>();
+      for (const frozenSession of frozenDueSessions) {
+        frozenGroupIds.add(frozenSession.groupId);
+        const frozenGroup = await getGroupByIdAndSchool(
+          frozenSession.groupId,
+          school.id,
+          schedulerDb
+        );
+        if (!frozenGroup || !frozenSession.scheduledDate) continue;
+        try {
+          await processScheduledClassAutoStart({
+            group: frozenGroup,
+            scheduledDate: frozenSession.scheduledDate,
+            dbInstance: schedulerDb,
+            now,
+          });
+        } catch (error) {
+          console.error(`[ClassPilot] Failed to reconcile frozen occurrence ${frozenSession.id}:`, error);
+          errorMonitor.trackError("scheduler_failure", error as Error, {
+            job: "reconcileClasspilotScheduledSessions",
+            errorCode: "FROZEN_OCCURRENCE_RECONCILE_FAILED",
+          });
         }
       }
+
+      // Debug: log every scheduled group check to diagnose auto-start failures
+      const allScheduledGroups = await schedulerDb
+        .select({ id: groups.id, name: groups.name, blockStartTime: groups.blockStartTime, blockEndTime: groups.blockEndTime, scheduleSkippedDate: groups.scheduleSkippedDate })
+        .from(groups)
+        .where(and(eq(groups.schoolId, school.id), eq(groups.scheduleEnabled, true)));
+      if (allScheduledGroups.length > 0) {
+        console.log(`[ClassPilot] Schedule tick: school=${school.id.slice(0,8)}, time=${currentTimeHHMM} ${tz}, date=${todayDate}, groups=${JSON.stringify(allScheduledGroups.map(g => ({ name: g.name, start: g.blockStartTime, end: g.blockEndTime, skipped: g.scheduleSkippedDate })))}`);
+      }
+
+      // 3. Create/promote each currently due canonical occurrence.
+      const readyGroups = (await getScheduledGroupsReadyToStart(
+        school.id,
+        currentTimeHHMM,
+        todayDate,
+        schedulerDb
+      )).filter((group) => !frozenGroupIds.has(group.id));
+      if (readyGroups.length > 0) {
+        console.log(`[ClassPilot] Auto-start: ${readyGroups.length} group(s) ready`);
+      }
+
+        for (const group of readyGroups) {
+        try {
+          const result = await processScheduledClassAutoStart({
+            group,
+            scheduledDate: todayDate,
+            dbInstance: schedulerDb,
+            now,
+          });
+          if (result.status === "started") {
+            console.log(`[ClassPilot] Auto-started session for "${group.name}" (teacher ${group.teacherId}, school ${school.id})`);
+          } else if (result.status === "coverage_needed") {
+            console.log(`[ClassPilot] Scheduled coverage needed for "${group.name}" (request ${result.conflictId})`);
+          } else if (result.status === "claimed") {
+            console.log(`[ClassPilot] Scheduled coverage already claimed for "${group.name}" (request ${result.conflictId})`);
+          } else {
+            console.log(`[ClassPilot] Skipped scheduled start for "${group.name}" (${result.reason})`);
+          }
+        } catch (error) {
+          console.error(`[ClassPilot] Failed to reconcile scheduled group ${group.id}:`, error);
+          errorMonitor.trackError("scheduler_failure", error as Error, {
+            job: "reconcileClasspilotScheduledSessions",
+            errorCode: "GROUP_RECONCILE_FAILED",
+          });
+        }
+        }
+      } catch (error) {
+        console.error(`[ClassPilot] Failed to reconcile scheduled school ${school.id}:`, error);
+        errorMonitor.trackError("scheduler_failure", error as Error, {
+          job: "reconcileClasspilotScheduledSessions",
+          errorCode: "SCHOOL_RECONCILE_FAILED",
+        });
+      }
     }
+
   } catch (err) {
-    console.error("[ClassPilot] Auto-end class blocks error:", err);
-    errorMonitor.trackError("scheduler_failure", err as Error, { job: "autoEndClassBlocks" });
+    console.error("[ClassPilot] Scheduled session reconciliation error:", err);
+    errorMonitor.trackError("scheduler_failure", err as Error, { job: "reconcileClasspilotScheduledSessions" });
+  } finally {
+    // 4. Dispatch even when one malformed occurrence/school failed above; a
+    // poison scheduling row must not hold unrelated queued summaries hostage.
+    await drainDueClasspilotSessionSummaries({
+      dbInstance: schedulerDb,
+      now,
+      schoolId,
+      batchLimit: 100,
+      maxBatches: 5,
+      maxDurationMs: 45_000,
+    }).catch((error) => {
+      console.error("[ClassPilot] Scheduled summary dispatch error:", error);
+      errorMonitor.trackError("scheduler_failure", error as Error, {
+        job: "reconcileClasspilotScheduledSessions",
+        errorCode: "SUMMARY_DISPATCH_FAILED",
+      });
+    });
   }
 }
 
