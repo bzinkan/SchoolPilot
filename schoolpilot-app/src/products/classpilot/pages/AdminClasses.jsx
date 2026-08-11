@@ -3,6 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
   Archive,
+  CalendarDays,
   Check,
   ChevronDown,
   ChevronRight,
@@ -18,7 +19,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 import {
   AlertDialog,
@@ -393,6 +394,15 @@ function ClassFormDialog({
             <div className="flex items-center justify-between gap-3">
               <Label htmlFor="schedule-enabled">Automatic Scheduling</Label>
               <Switch id="schedule-enabled" checked={scheduleEnabled} onCheckedChange={setScheduleEnabled} />
+            </div>
+            <div className="flex flex-col gap-2 rounded-md bg-muted/60 p-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+              <p>Automatic classes pause on dates marked closed in the school calendar.</p>
+              <Button type="button" variant="link" size="sm" className="h-auto justify-start p-0" asChild>
+                <Link to="/classpilot/admin?tab=calendar" data-testid="link-school-calendar">
+                  <CalendarDays className="h-4 w-4" />
+                  Manage School Calendar
+                </Link>
+              </Button>
             </div>
             <div className={`grid gap-3 md:grid-cols-2 ${scheduleEnabled ? "" : "opacity-50"}`}>
               <div className="grid gap-2">

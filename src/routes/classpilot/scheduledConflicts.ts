@@ -171,6 +171,14 @@ router.post("/scheduled-classes/:groupId/skip-today", ...auth, async (req, res, 
     const scheduledDate = now.toLocaleDateString("en-CA", { timeZone });
     const result = await skipScheduledClassBeforeStart({ group, scheduledDate, now });
     if (!result.skipped) {
+      if (result.reason === "non_instructional_day") {
+        return res.json({
+          skipped: false,
+          reason: "non_instructional_day",
+          code: "NON_INSTRUCTIONAL_DAY",
+          message: "This date is already non-instructional. No scheduled occurrence was created.",
+        });
+      }
       return res.status(409).json({
         code: "SCHEDULED_OCCURRENCE_ALREADY_STARTED",
         error: "This scheduled class has already started. Use End Class to finalize it and send its Session Summary.",
@@ -224,6 +232,14 @@ router.post("/scheduled-conflicts/:id/skip", ...auth, async (req, res, next) => 
       scheduledDate: conflict.scheduledDate,
     });
     if (!skipped.skipped) {
+      if (skipped.reason === "non_instructional_day") {
+        return res.json({
+          skipped: false,
+          reason: "non_instructional_day",
+          code: "NON_INSTRUCTIONAL_DAY",
+          message: "This date is already non-instructional. No scheduled occurrence was created.",
+        });
+      }
       return res.status(409).json({
         code: "SCHEDULED_OCCURRENCE_ALREADY_STARTED",
         error: "This scheduled class has already started. Use End Class to finalize it and send its Session Summary.",

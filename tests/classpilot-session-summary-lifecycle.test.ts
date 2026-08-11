@@ -96,6 +96,26 @@ async function setCentralRecipient(userId: string | null): Promise<void> {
   );
 }
 
+async function saveInstructionalMonth(
+  month: string,
+  nonInstructionalDates: string[],
+  now = new Date("2026-08-11T16:00:00.000Z")
+): Promise<any> {
+  return inSchool(school.id, async () => {
+    const current = await storage.getInstructionalCalendarMonth(school.id, month);
+    const result = await storage.replaceInstructionalCalendarMonth({
+      schoolId: school.id,
+      month,
+      expectedRevision: current.revision,
+      nonInstructionalDates,
+      updatedBy: centralRecipient.id,
+      now,
+    });
+    assert.equal(result.status, "saved");
+    return result;
+  });
+}
+
 async function createClass(options: {
   name: string;
   teacherId?: string;
@@ -318,6 +338,293 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
       schoolTime.localDateTimeUtc("2031-11-02", "02:30", "America/New_York").toISOString(),
       "2031-11-02T07:30:00.000Z"
     );
+  });
+
+  it("blocks automatic occurrences, coverage, and email on a closed weekday even with teacher presence and a home heartbeat", async () => {
+    await setCentralRecipient(centralRecipient.id);
+    const scheduledDate = "2031-07-01";
+    await saveInstructionalMonth("2031-07", [scheduledDate]);
+    const group = await createClass({ name: "calendar_closed_home_activity", scheduled: true });
+    await inSchool(school.id, () => db.execute(sql`
+      INSERT INTO heartbeats (
+        device_id, student_id, student_email, school_id,
+        active_tab_title, active_tab_url, timestamp
+      ) VALUES (
+        ${`${TAG}-closed-home-device`}, ${studentOne.id}, ${studentOne.email}, ${school.id},
+        'Home Chromebook activity', 'https://home.example.edu', '2031-07-01 13:05:00'
+      )
+    `));
+
+    const schedulerLogs: string[] = [];
+    const consoleLogMock = mock.method(console, "log", (...args: unknown[]) => {
+      schedulerLogs.push(args.map(String).join(" "));
+    });
+    try {
+      await scheduler.reconcileClasspilotScheduledSessions(
+        new Date("2031-07-01T13:05:00.000Z"),
+        school.id
+      );
+    } finally {
+      consoleLogMock.mock.restore();
+    }
+    const skipMetric = schedulerLogs
+      .map((line) => {
+        try { return JSON.parse(line); } catch { return null; }
+      })
+      .find((entry) => entry?.AutomaticScheduleSkipped === 1);
+    assert.equal(skipMetric?.Reason, "non_instructional_day");
+    assert.ok(schedulerLogs.some((line) => line.includes("non_instructional_day")));
+    const direct = await inSchool(school.id, () => scheduled.processScheduledClassAutoStart({
+      group,
+      scheduledDate,
+      scheduledTeacherConnectedOverride: true,
+      now: new Date("2031-07-01T13:10:00.000Z"),
+    }));
+    assert.deepEqual(direct, { status: "skipped", reason: "non_instructional_day" });
+
+    const skipped = await inSchool(school.id, () => scheduled.skipScheduledClassBeforeStart({
+      group,
+      scheduledDate,
+      now: new Date("2031-07-01T12:55:00.000Z"),
+    }));
+    assert.deepEqual(skipped, { skipped: false, reason: "non_instructional_day" });
+    assert.equal(await occurrenceCount(group.id, scheduledDate), 0);
+
+    const sideEffects = await inSchool(school.id, () => db.execute(sql`
+      SELECT
+        (SELECT count(*)::int FROM classpilot_scheduled_conflicts
+         WHERE school_id = ${school.id} AND group_id = ${group.id}) AS conflict_count,
+        (SELECT count(*)::int FROM classpilot_supervision_contexts
+         WHERE school_id = ${school.id} AND scheduled_conflict_id IN (
+           SELECT id FROM classpilot_scheduled_conflicts WHERE group_id = ${group.id}
+         )) AS coverage_count,
+        (SELECT count(*)::int FROM classpilot_session_summary_deliveries delivery
+         JOIN teaching_sessions session ON session.id = delivery.teaching_session_id
+         WHERE session.school_id = ${school.id} AND session.group_id = ${group.id}) AS delivery_count
+    `));
+    assert.deepEqual(sideEffects.rows, [{ conflict_count: 0, coverage_count: 0, delivery_count: 0 }]);
+  });
+
+  it("keeps unmarked weekdays authoritative, including a zero-activity scheduled summary and a manual class on a closed date", async () => {
+    await setCentralRecipient(null);
+    const scheduledDate = "2031-07-02";
+    const group = await createClass({ name: "calendar_open_zero_activity", scheduled: true });
+    const started = await inSchool(school.id, () => scheduled.processScheduledClassAutoStart({
+      group,
+      scheduledDate,
+      scheduledTeacherConnectedOverride: false,
+      now: new Date("2031-07-02T13:30:00.000Z"),
+    }));
+    assert.equal(started.status, "coverage_needed");
+    const occurrence = await inSchool(school.id, () =>
+      storage.getScheduledTeachingSessionOccurrence(school.id, group.id, scheduledDate)
+    );
+    assert.ok(occurrence);
+    const messageStart = sentMessages.length;
+
+    await scheduler.reconcileClasspilotScheduledSessions(
+      new Date("2031-07-02T14:00:00.000Z"),
+      school.id
+    );
+    await waitFor(async () => {
+      const rows = await deliveryRows(occurrence.id);
+      return rows.length === 1 && rows[0].state === "sent";
+    }, "unmarked instructional weekday did not dispatch its zero-activity summary");
+    assert.match(sentMessages.slice(messageStart).at(-1).html, /No student activity was recorded/);
+
+    const manualGroup = await createClass({ name: "manual_on_calendar_closed" });
+    const manualSession = await inSchool(school.id, () => storage.createTeachingSession({
+      groupId: manualGroup.id,
+      teacherId: teacher.id,
+      startTime: new Date("2031-07-01T13:10:00.000Z"),
+    } as any));
+    const finalized = await inSchool(school.id, () => lifecycle.finalizeClasspilotSession({
+      schoolId: school.id,
+      sessionId: manualSession.id,
+      reason: "manual_end",
+      finalizedAt: new Date("2031-07-01T13:20:00.000Z"),
+    }));
+    assert.equal(finalized.summaryDisposition, "queued");
+    const manualDispatch = await inSchool(school.id, () =>
+      lifecycle.dispatchDueClasspilotSessionSummaries({
+        schoolId: school.id,
+        teachingSessionId: manualSession.id,
+        now: new Date("2031-07-01T13:20:00.000Z"),
+      })
+    );
+    assert.equal(manualDispatch.sent, 1);
+    assert.equal((await deliveryRows(manualSession.id))[0].state, "sent");
+  });
+
+  it("keeps an already-frozen occurrence after a same-day closure while suppressing later blocks", async () => {
+    await setCentralRecipient(null);
+    const scheduledDate = "2031-07-03";
+    const activeGroup = await createClass({
+      name: "calendar_active_before_closure",
+      scheduled: true,
+      start: "09:00",
+      end: "10:00",
+    });
+    const laterGroup = await createClass({
+      name: "calendar_later_after_closure",
+      teacherId: secondTeacher.id,
+      scheduled: true,
+      start: "11:00",
+      end: "12:00",
+    });
+    const activeStart = await inSchool(school.id, () => scheduled.processScheduledClassAutoStart({
+      group: activeGroup,
+      scheduledDate,
+      scheduledTeacherConnectedOverride: false,
+      now: new Date("2031-07-03T13:05:00.000Z"),
+    }));
+    assert.equal(activeStart.status, "coverage_needed");
+    const activeOccurrence = await inSchool(school.id, () =>
+      storage.getScheduledTeachingSessionOccurrence(school.id, activeGroup.id, scheduledDate)
+    );
+    assert.ok(activeOccurrence);
+
+    await saveInstructionalMonth(
+      "2031-07",
+      ["2031-07-01", scheduledDate],
+      new Date("2031-07-03T13:10:00.000Z")
+    );
+    const existing = await inSchool(school.id, () => scheduled.processScheduledClassAutoStart({
+      group: activeGroup,
+      scheduledDate,
+      scheduledTeacherConnectedOverride: false,
+      now: new Date("2031-07-03T13:15:00.000Z"),
+    }));
+    assert.equal(existing.status, "coverage_needed");
+    assert.equal(await occurrenceCount(activeGroup.id, scheduledDate), 1);
+
+    const later = await inSchool(school.id, () => scheduled.processScheduledClassAutoStart({
+      group: laterGroup,
+      scheduledDate,
+      scheduledTeacherConnectedOverride: true,
+      now: new Date("2031-07-03T15:05:00.000Z"),
+    }));
+    assert.deepEqual(later, { status: "skipped", reason: "non_instructional_day" });
+    assert.equal(await occurrenceCount(laterGroup.id, scheduledDate), 0);
+
+    await scheduler.reconcileClasspilotScheduledSessions(
+      new Date("2031-07-03T14:00:00.000Z"),
+      school.id
+    );
+    const finalized = await inSchool(school.id, () => storage.getTeachingSessionById(activeOccurrence.id));
+    assert.equal(finalized.scheduledState, "finalized");
+    assert.equal(finalized.endTime.toISOString(), "2031-07-03T14:00:00.000Z");
+    assert.equal((await deliveryRows(activeOccurrence.id)).length, 1);
+  });
+
+  it("serializes a calendar closure racing the bell with canonical occurrence creation", async () => {
+    await setCentralRecipient(null);
+    const scheduledDate = "2031-07-07";
+    const group = await createClass({ name: "calendar_save_bell_race", scheduled: true });
+    const current = await inSchool(school.id, () =>
+      storage.getInstructionalCalendarMonth(school.id, "2031-07")
+    );
+    const [save, start] = await Promise.all([
+      inSchool(school.id, () => storage.replaceInstructionalCalendarMonth({
+        schoolId: school.id,
+        month: "2031-07",
+        expectedRevision: current.revision,
+        nonInstructionalDates: [...current.nonInstructionalDates, scheduledDate],
+        updatedBy: centralRecipient.id,
+        now: new Date("2031-07-07T13:00:00.000Z"),
+      })),
+      inSchool(school.id, () => scheduled.processScheduledClassAutoStart({
+        group,
+        scheduledDate,
+        scheduledTeacherConnectedOverride: false,
+        now: new Date("2031-07-07T13:00:00.000Z"),
+      })),
+    ]);
+    assert.equal(save.status, "saved");
+    const occurrence = await inSchool(school.id, () =>
+      storage.getScheduledTeachingSessionOccurrence(school.id, group.id, scheduledDate)
+    );
+    if (occurrence) {
+      assert.equal(start.status, "coverage_needed", "occurrence winner must continue after the closure commits");
+      await inSchool(school.id, () => lifecycle.finalizeClasspilotSession({
+        schoolId: school.id,
+        sessionId: occurrence.id,
+        reason: "teacher_end",
+        finalizedAt: new Date("2031-07-07T13:05:00.000Z"),
+      }));
+    } else {
+      assert.deepEqual(start, { status: "skipped", reason: "non_instructional_day" });
+    }
+    assert.ok((await inSchool(school.id, () =>
+      storage.getInstructionalCalendarMonth(school.id, "2031-07")
+    )).nonInstructionalDates.includes(scheduledDate));
+  });
+
+  it("uses the school-local calendar date across a UTC date boundary", async () => {
+    const scheduledDate = "2031-07-08";
+    await saveInstructionalMonth(
+      "2031-07",
+      ["2031-07-01", "2031-07-03", "2031-07-07", scheduledDate],
+      new Date("2031-07-08T12:00:00.000Z")
+    );
+    const group = await createClass({
+      name: "calendar_school_local_boundary",
+      scheduled: true,
+      start: "23:00",
+      end: "23:59",
+    });
+    await scheduler.reconcileClasspilotScheduledSessions(
+      new Date("2031-07-09T03:30:00.000Z"),
+      school.id
+    );
+    assert.equal(await occurrenceCount(group.id, scheduledDate), 0);
+    assert.equal(await occurrenceCount(group.id, "2031-07-09"), 0);
+  });
+
+  it("fails closed without creating an occurrence when calendar settings cannot be read", async () => {
+    const missingSettingsSchool = await storage.createSchool({
+      name: `${TAG}_Missing_Calendar_Settings`,
+      domain: `missing-calendar.${TAG}.example.edu`,
+      slug: `${TAG}-missing-calendar-settings`,
+      schoolTimezone: "America/New_York",
+    } as any);
+    try {
+      const group = await inSchool(missingSettingsSchool.id, () => storage.createGroup({
+        schoolId: missingSettingsSchool.id,
+        teacherId: teacher.id,
+        name: `${TAG}_missing_calendar_settings_group`,
+        groupType: "admin_class",
+        status: "active",
+        scheduleEnabled: true,
+        blockStartTime: "09:00",
+        blockEndTime: "10:00",
+      } as any));
+      await assert.rejects(
+        inSchool(missingSettingsSchool.id, () => scheduled.processScheduledClassAutoStart({
+          group,
+          scheduledDate: "2031-07-09",
+          scheduledTeacherConnectedOverride: true,
+          now: new Date("2031-07-09T13:05:00.000Z"),
+        })),
+        (error: any) => error?.code === "INSTRUCTIONAL_CALENDAR_SETTINGS_UNAVAILABLE"
+      );
+      const rows = await asSystem(() => db.execute(sql`
+        SELECT count(*)::int AS count
+        FROM teaching_sessions
+        WHERE school_id = ${missingSettingsSchool.id}
+      `));
+      assert.equal(Number(rows.rows[0]?.count || 0), 0);
+    } finally {
+      await asSystem(async () => {
+        await db.execute(sql`DELETE FROM classpilot_session_students WHERE school_id = ${missingSettingsSchool.id}`);
+        await db.execute(sql`DELETE FROM teaching_sessions WHERE school_id = ${missingSettingsSchool.id}`);
+        await db.execute(sql`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id = ${missingSettingsSchool.id})`);
+        await db.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id = ${missingSettingsSchool.id})`);
+        await db.execute(sql`DELETE FROM groups WHERE school_id = ${missingSettingsSchool.id}`);
+        await db.execute(sql`DELETE FROM settings WHERE school_id = ${missingSettingsSchool.id}`);
+        await db.execute(sql`DELETE FROM schools WHERE id = ${missingSettingsSchool.id}`);
+      });
+    }
   });
 
   it("keeps logout authentication-only and queues one teacher plus one distinct central delivery on manual End Class", async () => {

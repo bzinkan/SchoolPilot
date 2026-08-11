@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
 import { useForm } from "react-hook-form";
@@ -9,8 +9,8 @@ import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
 import { Label } from "../../../components/ui/label";
 import { useToast } from "../../../hooks/use-toast";
-import { Trash2, UserPlus, Users, ArrowLeft, AlertTriangle, Clock, Settings as SettingsIcon, Key, FileText, ChevronLeft, ChevronRight, BarChart3, LogOut, Upload, Search, Plus, Building2, Loader2, AlertCircle, RefreshCw, ClipboardCheck, ShieldAlert } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { Trash2, UserPlus, Users, ArrowLeft, AlertTriangle, Clock, Settings as SettingsIcon, Key, FileText, ChevronLeft, ChevronRight, BarChart3, LogOut, Upload, Search, Plus, Building2, Loader2, AlertCircle, RefreshCw, ClipboardCheck, ShieldAlert, CalendarDays } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -35,6 +35,32 @@ import { Badge } from "../../../components/ui/badge";
 import { useClassPilotAuth } from "../../../hooks/useClassPilotAuth";
 import { ThemeToggle } from "../../../components/ThemeToggle";
 import GoogleRosterConnectorPanel from "../../../shared/components/GoogleRosterConnectorPanel";
+import {
+  continueCalendarHistoryNavigation,
+  disableCalendarHistoryGuard,
+  updateCalendarHistoryGuard,
+} from "../calendarHistoryGuard";
+import SchoolCalendarMonth from "../components/SchoolCalendarMonth";
+
+const ADMIN_TAB_VALUES = new Set(["staff", "calendar", "audit"]);
+const MONTH_PATTERN = /^(\d{4})-(0[1-9]|1[0-2])$/;
+
+function currentMonthInTimeZone(timeZone) {
+  const formatMonth = (zone) => {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone,
+      year: "numeric",
+      month: "2-digit",
+    }).formatToParts(new Date());
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return `${values.year}-${values.month}`;
+  };
+  try {
+    return formatMonth(timeZone);
+  } catch {
+    return formatMonth("America/New_York");
+  }
+}
 
 const createStaffSchema = z.object({
   name: z.string().optional(),
@@ -45,7 +71,7 @@ const createStaffSchema = z.object({
 
 export default function Admin() {
   const navigate = useNavigate();
-  const { currentUser, isLoading } = useClassPilotAuth();
+  const { currentUser, school, isLoading } = useClassPilotAuth();
   const isAdmin = currentUser?.isSuperAdmin || currentUser?.role === "admin" || currentUser?.role === "school_admin";
 
   if (isLoading) {
@@ -75,11 +101,12 @@ export default function Admin() {
     );
   }
 
-  return <AdminPanel currentUser={currentUser} />;
+  return <AdminPanel currentUser={currentUser} schoolTimezone={school?.timezone || "America/New_York"} />;
 }
 
-function AdminPanel({ currentUser }) {
+function AdminPanel({ currentUser, schoolTimezone }) {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { toast } = useToast();
 
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -92,7 +119,10 @@ function AdminPanel({ currentUser }) {
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [staffToResetPassword, setStaffToResetPassword] = useState(null);
   const [newPassword, setNewPassword] = useState("");
-  const [activeTab, setActiveTab] = useState("staff");
+  const [calendarDirty, setCalendarDirty] = useState(false);
+  const [calendarDraftEpoch, setCalendarDraftEpoch] = useState(0);
+  const [pendingAdminNavigation, setPendingAdminNavigation] = useState(null);
+  const historyGuardOwnerRef = useRef(Symbol("school-calendar-history-guard"));
   const [auditPage, setAuditPage] = useState(0);
   const [auditActionFilter, setAuditActionFilter] = useState("");
   const [addStaffDialogOpen, setAddStaffDialogOpen] = useState(false);
@@ -108,6 +138,91 @@ function AdminPanel({ currentUser }) {
   const [importPreview, setImportPreview] = useState([]);
   const [importError, setImportError] = useState("");
   const STAFF_PER_PAGE = 10;
+  const requestedTab = searchParams.get("tab");
+  const activeTab = ADMIN_TAB_VALUES.has(requestedTab) ? requestedTab : "staff";
+  const requestedMonth = searchParams.get("month");
+  const calendarMonth = MONTH_PATTERN.test(requestedMonth || "")
+    ? requestedMonth
+    : currentMonthInTimeZone(schoolTimezone);
+
+  useEffect(() => {
+    if (activeTab !== "calendar" || MONTH_PATTERN.test(requestedMonth || "")) return;
+    const next = new URLSearchParams(searchParams);
+    next.set("tab", "calendar");
+    next.set("month", calendarMonth);
+    setSearchParams(next, { replace: true });
+  }, [activeTab, calendarMonth, requestedMonth, searchParams, setSearchParams]);
+
+  useLayoutEffect(() => {
+    const owner = historyGuardOwnerRef.current;
+    updateCalendarHistoryGuard({
+      owner,
+      enabled: activeTab === "calendar" && calendarDirty,
+      currentEntry: {
+        index: window.history.state?.idx,
+        state: window.history.state,
+        href: window.location.href,
+      },
+      onBlocked: setPendingAdminNavigation,
+      onRestored: () => setPendingAdminNavigation((pending) => (
+        pending?.kind === "history" ? { ...pending, restored: true } : pending
+      )),
+    });
+    return () => disableCalendarHistoryGuard(owner);
+  }, [activeTab, calendarDirty, calendarMonth]);
+
+  const commitTabChange = (tab) => {
+    const next = new URLSearchParams(searchParams);
+    next.set("tab", tab);
+    if (tab === "calendar") next.set("month", calendarMonth);
+    setSearchParams(next);
+  };
+
+  const requestTabChange = (tab) => {
+    if (tab === activeTab) return;
+    if (activeTab === "calendar" && calendarDirty) {
+      setPendingAdminNavigation({ kind: "tab", value: tab });
+      return;
+    }
+    commitTabChange(tab);
+  };
+
+  const requestRouteChange = (path) => {
+    if (activeTab === "calendar" && calendarDirty) {
+      setPendingAdminNavigation({ kind: "route", value: path });
+      return;
+    }
+    navigate(path);
+  };
+
+  const updateCalendarMonth = (month) => {
+    const next = new URLSearchParams(searchParams);
+    next.set("tab", "calendar");
+    next.set("month", month);
+    setSearchParams(next);
+  };
+
+  const confirmAdminNavigation = () => {
+    const pending = pendingAdminNavigation;
+    setPendingAdminNavigation(null);
+    if (!pending) return;
+    setCalendarDirty(false);
+    setCalendarDraftEpoch((epoch) => epoch + 1);
+    if (pending.kind === "history") {
+      if (pending.delta === null) {
+        disableCalendarHistoryGuard(historyGuardOwnerRef.current);
+        navigate(pending.targetPath);
+      } else {
+        continueCalendarHistoryNavigation(pending);
+      }
+      return;
+    }
+    if (pending.kind === "tab") commitTabChange(pending.value);
+    else {
+      disableCalendarHistoryGuard(historyGuardOwnerRef.current);
+      navigate(pending.value);
+    }
+  };
 
   const form = useForm({
     resolver: zodResolver(createStaffSchema),
@@ -511,8 +626,8 @@ function AdminPanel({ currentUser }) {
   const staff = staffData?.users || [];
 
   return (
-    <div className="container mx-auto p-6 max-w-6xl space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="container mx-auto max-w-7xl space-y-6 p-4 sm:p-6">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-center gap-3">
           <div className="h-12 w-12 rounded-lg bg-primary flex items-center justify-center">
             <Users className="h-6 w-6 text-primary-foreground" />
@@ -522,22 +637,22 @@ function AdminPanel({ currentUser }) {
             <p className="text-muted-foreground">
               {currentUser?.schoolName && <span className="font-medium">{currentUser.schoolName}</span>}
               {currentUser?.schoolName && ' \u2022 '}
-              Manage staff accounts for your school
+              Manage staff, schedules, and school operations
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <ThemeToggle />
           <Button
             variant="outline"
-            onClick={() => navigate("/classpilot/admin/attendance")}
+            onClick={() => requestRouteChange("/classpilot/admin/attendance")}
           >
             <ClipboardCheck className="h-4 w-4 mr-2" />
             Attendance
           </Button>
           <Button
             variant="outline"
-            onClick={() => navigate("/classpilot/admin/analytics")}
+            onClick={() => requestRouteChange("/classpilot/admin/analytics")}
           >
             <BarChart3 className="h-4 w-4 mr-2" />
             Analytics
@@ -545,7 +660,7 @@ function AdminPanel({ currentUser }) {
           {currentUser?.mailpilotEntitled && (
             <Button
               variant="outline"
-              onClick={() => navigate("/classpilot/admin/email-monitoring")}
+              onClick={() => requestRouteChange("/classpilot/admin/email-monitoring")}
             >
               <ShieldAlert className="h-4 w-4 mr-2" />
               Email Monitor
@@ -553,7 +668,7 @@ function AdminPanel({ currentUser }) {
           )}
           <Button
             variant="outline"
-            onClick={() => navigate("/classpilot")}
+            onClick={() => requestRouteChange("/classpilot")}
             data-testid="button-back-dashboard"
           >
             <ArrowLeft className="h-4 w-4 mr-2" />
@@ -562,7 +677,7 @@ function AdminPanel({ currentUser }) {
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => navigate("/login")}
+            onClick={() => requestRouteChange("/login")}
             data-testid="button-logout"
             title="Log out"
           >
@@ -571,11 +686,15 @@ function AdminPanel({ currentUser }) {
         </div>
       </div>
 
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v)} className="space-y-4">
-        <TabsList>
+      <Tabs value={activeTab} onValueChange={requestTabChange} className="space-y-4">
+        <TabsList className="h-auto flex-wrap justify-start">
           <TabsTrigger value="staff" className="flex items-center gap-2">
             <Users className="h-4 w-4" />
             Staff & Settings
+          </TabsTrigger>
+          <TabsTrigger value="calendar" className="flex items-center gap-2" data-testid="tab-school-calendar">
+            <CalendarDays className="h-4 w-4" />
+            School Calendar
           </TabsTrigger>
           <TabsTrigger value="audit" className="flex items-center gap-2">
             <FileText className="h-4 w-4" />
@@ -814,7 +933,7 @@ function AdminPanel({ currentUser }) {
           <Button
             variant="default"
             data-testid="button-manage-students"
-            onClick={() => navigate("/classpilot/students")}
+            onClick={() => requestRouteChange("/classpilot/students")}
           >
             Manage Students
           </Button>
@@ -846,7 +965,7 @@ function AdminPanel({ currentUser }) {
           <Button
             variant="default"
             data-testid="button-manage-classes"
-            onClick={() => navigate("/classpilot/admin/classes")}
+            onClick={() => requestRouteChange("/classpilot/admin/classes")}
           >
             Manage Classes
           </Button>
@@ -911,7 +1030,7 @@ function AdminPanel({ currentUser }) {
           <Button
             variant="default"
             data-testid="button-manage-coverage"
-            onClick={() => navigate("/classpilot/coverage")}
+            onClick={() => requestRouteChange("/classpilot/coverage")}
           >
             Open Coverage
           </Button>
@@ -952,6 +1071,15 @@ function AdminPanel({ currentUser }) {
           </Button>
         </CardContent>
       </Card>
+        </TabsContent>
+
+        <TabsContent value="calendar" className="space-y-4">
+          <SchoolCalendarMonth
+            key={`${calendarMonth}:${calendarDraftEpoch}`}
+            month={calendarMonth}
+            onDirtyChange={setCalendarDirty}
+            onMonthChange={updateCalendarMonth}
+          />
         </TabsContent>
 
         <TabsContent value="audit" className="space-y-4">
@@ -1079,6 +1207,38 @@ function AdminPanel({ currentUser }) {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <AlertDialog
+        open={Boolean(pendingAdminNavigation)}
+        onOpenChange={(open) => {
+          if (!open && (pendingAdminNavigation?.kind !== "history" || pendingAdminNavigation.restored)) {
+            setPendingAdminNavigation(null);
+          }
+        }}
+      >
+        <AlertDialogContent data-testid="dialog-calendar-navigation-guard">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Discard unsaved calendar changes?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingAdminNavigation?.kind === "history"
+                ? "Using Back or Forward will discard this month’s draft. Saved dates will not be affected."
+                : "Leaving the School Calendar will discard this month’s draft. Saved dates will not be affected."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={pendingAdminNavigation?.kind === "history" && !pendingAdminNavigation.restored}>
+              Keep editing
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmAdminNavigation}
+              disabled={pendingAdminNavigation?.kind === "history" && !pendingAdminNavigation.restored}
+              data-testid="button-discard-calendar-navigation"
+            >
+              Discard and leave
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog
         open={editDialogOpen}

@@ -9,6 +9,7 @@ import { SocketProvider } from './contexts/SocketContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import Spinner from './shared/components/Spinner';
 import { Toaster } from './components/ui/toaster';
+import './products/classpilot/calendarHistoryGuard';
 // import { AIChatButton } from './components/chat/AIChatButton'; // AI Chat FAB — disabled, using backend-only monitoring
 import Login from './pages/Login';
 import Landing from './pages/Landing';

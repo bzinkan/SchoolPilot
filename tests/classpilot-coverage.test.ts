@@ -51,6 +51,7 @@ import {
   updateClasspilotCommandTargetAck,
   updateClasspilotCommandSummary,
   updateEnrollmentSettings,
+  upsertSettings,
   withClasspilotCommandBroadcastLock,
 } from "../dist/services/storage.js";
 import {
@@ -335,6 +336,10 @@ before(async () => {
     domain: `${TAG}.example.edu`,
     slug: TAG,
   } as any);
+  await inSchool(school.id, () => upsertSettings(school.id, {
+    schoolName: school.name,
+    wsSharedKey: `${TAG}-shared-key`,
+  }));
   await createProductLicense({ schoolId: school.id, product: "CLASSPILOT", status: "active" } as any);
   admin = await createUser({ email: `admin@${TAG}.example.edu`, firstName: "Ada", lastName: "Admin" } as any);
   teacher = await createUser({ email: `teacher@${TAG}.example.edu`, firstName: "Tara", lastName: "Teacher" } as any);
