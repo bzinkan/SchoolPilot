@@ -479,7 +479,7 @@ runtime_securestring_preflight
     const renderMarkerIndex = deploySource.indexOf(renderMarker);
     const renderScriptStart = renderMarkerIndex + renderMarker.length;
     const renderScriptEnd = deploySource.indexOf(
-      "\n  '\n\n  STANDARD_API_CANDIDATE_TASK_DEFINITION_ARN=",
+      "\n  '\n",
       renderScriptStart
     );
     assert.ok(renderMarkerIndex > 0 && renderScriptEnd > renderScriptStart);
