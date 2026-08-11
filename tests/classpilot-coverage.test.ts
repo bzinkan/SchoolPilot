@@ -1487,9 +1487,30 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       centralEmailRecipientUserId: coverageStaff.id,
     }, adminAuth);
     assert.equal(update.status, 200);
+    assert.equal(update.body.centralEmailRecipientUserId, coverageStaff.id);
+    assert.equal(Object.hasOwn(update.body, "wsSharedKey"), false);
+    assert.equal(Object.hasOwn(update.body, "enrollmentKey"), false);
 
     const saved = await inSchool(school.id, () => getSettingsForSchool(school.id));
     assert.equal(saved?.centralEmailRecipientUserId, coverageStaff.id);
+
+    const adminRead = await requestJson("GET", "/settings", undefined, adminAuth);
+    assert.equal(adminRead.status, 200);
+    assert.equal(adminRead.body.centralEmailRecipientUserId, coverageStaff.id);
+    assert.equal(Object.hasOwn(adminRead.body, "wsSharedKey"), false);
+    assert.equal(Object.hasOwn(adminRead.body, "enrollmentKey"), false);
+
+    const teacherRead = await requestJson("GET", "/settings", undefined, teacherAuth);
+    assert.equal(teacherRead.status, 200);
+    assert.equal(teacherRead.body.centralEmailRecipientUserId, null);
+
+    const blank = await requestJson("POST", "/settings", {
+      centralEmailRecipientUserId: "   ",
+    }, adminAuth);
+    assert.equal(blank.status, 400);
+    assert.match(blank.body.error, /cannot be blank/);
+    const unchangedAfterBlank = await inSchool(school.id, () => getSettingsForSchool(school.id));
+    assert.equal(unchangedAfterBlank?.centralEmailRecipientUserId, coverageStaff.id);
 
     const resolved = await inSchool(school.id, () => getCentralEmailRecipientForSchool(school.id));
     assert.equal(resolved?.email, coverageStaff.email);
@@ -1510,9 +1531,14 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       centralEmailRecipientUserId: null,
     }, adminAuth);
     assert.equal(clear.status, 200);
+    assert.equal(clear.body.centralEmailRecipientUserId, null);
 
     const cleared = await inSchool(school.id, () => getSettingsForSchool(school.id));
     assert.equal(cleared?.centralEmailRecipientUserId, null);
+
+    const clearedRead = await requestJson("GET", "/settings", undefined, adminAuth);
+    assert.equal(clearedRead.status, 200);
+    assert.equal(clearedRead.body.centralEmailRecipientUserId, null);
   });
 
   it("tracks coverage assignments and blocks direct device targeting during temporary coverage", async () => {
