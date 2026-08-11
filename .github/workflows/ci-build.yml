@@ -307,6 +307,9 @@ jobs:
       - name: Private load-artifact Windows ACL tests
         run: node --test tests/private-load-artifact-acl.test.mjs
 
+      - name: Rollout owned-process lifecycle tests
+        run: pwsh -NoProfile -File tests/aws-rollout-process-lifecycle.test.ps1
+
       - name: Rollout monitor and rollback tests
         run: pwsh -NoProfile -File tests/aws-rollout-automation.test.ps1
 
