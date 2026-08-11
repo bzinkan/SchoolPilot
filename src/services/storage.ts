@@ -209,6 +209,8 @@ import {
   evidenceArtifacts,
   type Settings,
   type InsertSettings,
+  type InstructionalCalendarSettings,
+  type InstructionalCalendarMonthSettings,
   type GoogleOAuthToken,
   type InsertGoogleOAuthToken,
   type GoogleRosterConnector,
@@ -9162,6 +9164,403 @@ export async function getSettingsForSchool(
     .where(eq(settings.schoolId, schoolId))
     .limit(1);
   return row;
+}
+
+export type InstructionalCalendarMonthState = {
+  month: string;
+  revision: number;
+  nonInstructionalDates: string[];
+  updatedAt: string | null;
+  updatedBy: string | null;
+};
+
+export type InstructionalDateStatus = {
+  instructional: boolean;
+  reason: "instructional_day" | "non_instructional_day" | "weekend";
+};
+
+export type ReplaceInstructionalCalendarMonthResult =
+  | {
+      status: "saved";
+      current: InstructionalCalendarMonthState;
+      schoolTimezone: string;
+      schoolLocalToday: string;
+      addedDates: string[];
+      removedDates: string[];
+    }
+  | {
+      status: "conflict";
+      current: InstructionalCalendarMonthState;
+      schoolTimezone: string;
+      schoolLocalToday: string;
+    };
+
+const INSTRUCTIONAL_CALENDAR_MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+const INSTRUCTIONAL_CALENDAR_DATE_PATTERN = /^\d{4}-(0[1-9]|1[0-2])-([0-2]\d|3[01])$/;
+
+function instructionalCalendarError(
+  code: string,
+  message: string,
+  status = 400
+): Error & { code: string; status: number; expose: true } {
+  return Object.assign(new Error(message), { code, status, expose: true as const });
+}
+
+export function isValidInstructionalCalendarMonth(month: string): boolean {
+  return INSTRUCTIONAL_CALENDAR_MONTH_PATTERN.test(month);
+}
+
+export function isValidInstructionalCalendarDate(localDate: string): boolean {
+  if (!INSTRUCTIONAL_CALENDAR_DATE_PATTERN.test(localDate)) return false;
+  const parsed = new Date(`${localDate}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === localDate;
+}
+
+export function isInstructionalCalendarWeekend(localDate: string): boolean {
+  if (!isValidInstructionalCalendarDate(localDate)) {
+    throw instructionalCalendarError(
+      "INVALID_INSTRUCTIONAL_CALENDAR_DATE",
+      "Date must be a real calendar date in YYYY-MM-DD format."
+    );
+  }
+  const day = new Date(`${localDate}T12:00:00.000Z`).getUTCDay();
+  return day === 0 || day === 6;
+}
+
+export function instructionalCalendarWeekdaysInMonth(month: string): string[] {
+  if (!isValidInstructionalCalendarMonth(month)) {
+    throw instructionalCalendarError(
+      "INVALID_INSTRUCTIONAL_CALENDAR_MONTH",
+      "Month must use YYYY-MM format."
+    );
+  }
+  const dates: string[] = [];
+  for (let day = 1; day <= 31; day++) {
+    const localDate = `${month}-${String(day).padStart(2, "0")}`;
+    if (!isValidInstructionalCalendarDate(localDate)) continue;
+    if (!isInstructionalCalendarWeekend(localDate)) dates.push(localDate);
+  }
+  return dates;
+}
+
+function canonicalInstructionalCalendarDates(month: string, dates: unknown): string[] {
+  if (!Array.isArray(dates)) {
+    throw instructionalCalendarError(
+      "INVALID_NON_INSTRUCTIONAL_DATES",
+      "nonInstructionalDates must be an array."
+    );
+  }
+  if (dates.length > 31) {
+    throw instructionalCalendarError(
+      "TOO_MANY_NON_INSTRUCTIONAL_DATES",
+      "A calendar month cannot contain more than 31 submitted dates."
+    );
+  }
+  const canonical = dates.map((value) => {
+    if (typeof value !== "string" || !isValidInstructionalCalendarDate(value)) {
+      throw instructionalCalendarError(
+        "INVALID_INSTRUCTIONAL_CALENDAR_DATE",
+        "Each non-instructional date must be a real date in YYYY-MM-DD format."
+      );
+    }
+    if (!value.startsWith(`${month}-`)) {
+      throw instructionalCalendarError(
+        "INSTRUCTIONAL_CALENDAR_DATE_OUT_OF_MONTH",
+        "Every non-instructional date must be in the requested month."
+      );
+    }
+    if (isInstructionalCalendarWeekend(value)) {
+      throw instructionalCalendarError(
+        "INSTRUCTIONAL_CALENDAR_WEEKEND_LOCKED",
+        "Weekends are always non-instructional and cannot be edited."
+      );
+    }
+    return value;
+  });
+  if (new Set(canonical).size !== canonical.length) {
+    throw instructionalCalendarError(
+      "DUPLICATE_INSTRUCTIONAL_CALENDAR_DATE",
+      "Non-instructional dates must be unique."
+    );
+  }
+  return canonical.sort();
+}
+
+function normalizeStoredInstructionalCalendarMonth(
+  month: string,
+  value: unknown
+): InstructionalCalendarMonthState {
+  if (value === undefined) {
+    return {
+      month,
+      revision: 0,
+      nonInstructionalDates: [],
+      updatedAt: null,
+      updatedBy: null,
+    };
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw instructionalCalendarError(
+      "INSTRUCTIONAL_CALENDAR_CORRUPT",
+      "The saved instructional calendar is invalid.",
+      500
+    );
+  }
+  const stored = value as Partial<InstructionalCalendarMonthSettings>;
+  const parsedUpdatedAt = typeof stored.updatedAt === "string"
+    ? new Date(stored.updatedAt)
+    : null;
+  if (
+    !Number.isSafeInteger(stored.revision) ||
+    Number(stored.revision) < 1 ||
+    !parsedUpdatedAt ||
+    Number.isNaN(parsedUpdatedAt.getTime()) ||
+    parsedUpdatedAt.toISOString() !== stored.updatedAt ||
+    !(
+      stored.updatedBy === null ||
+      (typeof stored.updatedBy === "string" && stored.updatedBy.length > 0)
+    )
+  ) {
+    throw instructionalCalendarError(
+      "INSTRUCTIONAL_CALENDAR_CORRUPT",
+      "The saved instructional calendar is invalid.",
+      500
+    );
+  }
+  let nonInstructionalDates: string[];
+  try {
+    nonInstructionalDates = canonicalInstructionalCalendarDates(
+      month,
+      stored.nonInstructionalDates
+    );
+  } catch {
+    throw instructionalCalendarError(
+      "INSTRUCTIONAL_CALENDAR_CORRUPT",
+      "The saved instructional calendar is invalid.",
+      500
+    );
+  }
+  return {
+    month,
+    revision: Number(stored.revision),
+    nonInstructionalDates,
+    updatedAt: stored.updatedAt,
+    updatedBy: stored.updatedBy ?? null,
+  };
+}
+
+function normalizeStoredInstructionalCalendar(
+  value: unknown
+): InstructionalCalendarSettings {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw instructionalCalendarError(
+      "INSTRUCTIONAL_CALENDAR_CORRUPT",
+      "The saved instructional calendar is invalid.",
+      500
+    );
+  }
+  return value as InstructionalCalendarSettings;
+}
+
+export async function getInstructionalCalendarMonth(
+  schoolId: string,
+  month: string,
+  dbInstance: typeof db = db
+): Promise<InstructionalCalendarMonthState> {
+  if (!isValidInstructionalCalendarMonth(month)) {
+    throw instructionalCalendarError(
+      "INVALID_INSTRUCTIONAL_CALENDAR_MONTH",
+      "Month must use YYYY-MM format."
+    );
+  }
+  const [row] = await dbInstance
+    .select({ instructionalCalendar: settings.instructionalCalendar })
+    .from(settings)
+    .where(eq(settings.schoolId, schoolId))
+    .limit(1);
+  if (!row) {
+    throw instructionalCalendarError(
+      "INSTRUCTIONAL_CALENDAR_SETTINGS_UNAVAILABLE",
+      "School calendar settings are unavailable.",
+      500
+    );
+  }
+  const calendar = normalizeStoredInstructionalCalendar(row.instructionalCalendar);
+  return normalizeStoredInstructionalCalendarMonth(month, calendar[month]);
+}
+
+export async function getInstructionalDateStatus(
+  schoolId: string,
+  localDate: string,
+  dbInstance: typeof db = db
+): Promise<InstructionalDateStatus> {
+  if (!isValidInstructionalCalendarDate(localDate)) {
+    throw instructionalCalendarError(
+      "INVALID_INSTRUCTIONAL_CALENDAR_DATE",
+      "Date must be a real calendar date in YYYY-MM-DD format."
+    );
+  }
+  if (isInstructionalCalendarWeekend(localDate)) {
+    return { instructional: false, reason: "weekend" };
+  }
+  const month = await getInstructionalCalendarMonth(schoolId, localDate.slice(0, 7), dbInstance);
+  const instructional = !month.nonInstructionalDates.includes(localDate);
+  return {
+    instructional,
+    reason: instructional ? "instructional_day" : "non_instructional_day",
+  };
+}
+
+/**
+ * Acquire the shared school/date transaction lock used by both calendar saves
+ * and automatic scheduled-occurrence creation. The caller must already be in
+ * a transaction; use withInstructionalCalendarDateLock for the common case.
+ */
+export async function lockInstructionalCalendarDate(
+  schoolId: string,
+  localDate: string,
+  dbInstance: typeof db
+): Promise<void> {
+  if (!isValidInstructionalCalendarDate(localDate)) {
+    throw instructionalCalendarError(
+      "INVALID_INSTRUCTIONAL_CALENDAR_DATE",
+      "Date must be a real calendar date in YYYY-MM-DD format."
+    );
+  }
+  const lockKey = `classpilot:instructional-calendar:${schoolId}:${localDate}`;
+  await dbInstance.execute(
+    sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`
+  );
+}
+
+export async function withInstructionalCalendarDateLock<T>(
+  schoolId: string,
+  localDate: string,
+  callback: (dbInstance: typeof db) => Promise<T>,
+  dbInstance: typeof db = db
+): Promise<T> {
+  return dbInstance.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    await lockInstructionalCalendarDate(schoolId, localDate, transactionDb);
+    return callback(transactionDb);
+  });
+}
+
+export async function replaceInstructionalCalendarMonth(
+  options: {
+    schoolId: string;
+    month: string;
+    expectedRevision: number;
+    nonInstructionalDates: string[];
+    updatedBy: string | null;
+    now?: Date;
+  },
+  dbInstance: typeof db = db
+): Promise<ReplaceInstructionalCalendarMonthResult> {
+  const month = options.month;
+  if (!isValidInstructionalCalendarMonth(month)) {
+    throw instructionalCalendarError(
+      "INVALID_INSTRUCTIONAL_CALENDAR_MONTH",
+      "Month must use YYYY-MM format."
+    );
+  }
+  if (!Number.isSafeInteger(options.expectedRevision) || options.expectedRevision < 0) {
+    throw instructionalCalendarError(
+      "INVALID_INSTRUCTIONAL_CALENDAR_REVISION",
+      "expectedRevision must be a non-negative integer."
+    );
+  }
+  const nextDates = canonicalInstructionalCalendarDates(month, options.nonInstructionalDates);
+  const now = options.now || new Date();
+
+  return dbInstance.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    // Date locks are always taken first and in stable order. Scheduler-created
+    // occurrences use the same lock for their single local date, so either the
+    // closure save or occurrence creation wins deterministically.
+    for (const localDate of instructionalCalendarWeekdaysInMonth(month)) {
+      await lockInstructionalCalendarDate(options.schoolId, localDate, transactionDb);
+    }
+
+    const [school] = await tx
+      .select({ schoolTimezone: schools.schoolTimezone })
+      .from(schools)
+      .where(eq(schools.id, options.schoolId))
+      .limit(1);
+    if (!school) {
+      throw instructionalCalendarError("SCHOOL_NOT_FOUND", "School not found.", 404);
+    }
+    const schoolTimezone = school.schoolTimezone || "America/New_York";
+    const schoolLocalToday = localDateInTimeZone(now, schoolTimezone);
+
+    const [row] = await tx
+      .select({ instructionalCalendar: settings.instructionalCalendar })
+      .from(settings)
+      .where(eq(settings.schoolId, options.schoolId))
+      .limit(1)
+      .for("update");
+    if (!row) {
+      throw instructionalCalendarError(
+        "INSTRUCTIONAL_CALENDAR_SETTINGS_UNAVAILABLE",
+        "School calendar settings are unavailable.",
+        500
+      );
+    }
+
+    const calendar = normalizeStoredInstructionalCalendar(row.instructionalCalendar);
+    const current = normalizeStoredInstructionalCalendarMonth(month, calendar[month]);
+    if (current.revision !== options.expectedRevision) {
+      return {
+        status: "conflict" as const,
+        current,
+        schoolTimezone,
+        schoolLocalToday,
+      };
+    }
+
+    const currentSet = new Set(current.nonInstructionalDates);
+    const nextSet = new Set(nextDates);
+    const pastDates = new Set(
+      [...currentSet, ...nextSet].filter((localDate) => localDate < schoolLocalToday)
+    );
+    for (const localDate of pastDates) {
+      if (currentSet.has(localDate) !== nextSet.has(localDate)) {
+        throw instructionalCalendarError(
+          "INSTRUCTIONAL_CALENDAR_PAST_DATE_IMMUTABLE",
+          "Past instructional-calendar dates cannot be changed."
+        );
+      }
+    }
+
+    const updatedAt = now.toISOString();
+    const savedMonth: InstructionalCalendarMonthSettings = {
+      revision: current.revision + 1,
+      nonInstructionalDates: nextDates,
+      updatedAt,
+      updatedBy: options.updatedBy,
+    };
+    const nextCalendar: InstructionalCalendarSettings = {
+      ...calendar,
+      [month]: savedMonth,
+    };
+    await tx
+      .update(settings)
+      .set({ instructionalCalendar: nextCalendar })
+      .where(eq(settings.schoolId, options.schoolId));
+
+    const addedDates = nextDates.filter((localDate) => !currentSet.has(localDate));
+    const removedDates = current.nonInstructionalDates.filter(
+      (localDate) => !nextSet.has(localDate)
+    );
+    return {
+      status: "saved" as const,
+      current: normalizeStoredInstructionalCalendarMonth(month, savedMonth),
+      schoolTimezone,
+      schoolLocalToday,
+      addedDates,
+      removedDates,
+    };
+  });
 }
 
 // Heartbeats only need the tracking-window fields. Cache that deliberately

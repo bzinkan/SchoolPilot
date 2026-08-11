@@ -400,6 +400,40 @@ export async function runStartupMigrations(): Promise<void> {
     console.warn("[migration] auto_enroll_students migration skipped:", (err as Error).message);
   }
 
+  // The ClassPilot automatic scheduler must have an authoritative school-day
+  // calendar before API/worker rollout. This is required runtime infrastructure,
+  // so a DDL failure aborts the one-off migration task instead of silently
+  // treating configured closures as instructional days.
+  await pool.query(`
+    ALTER TABLE settings
+    ADD COLUMN IF NOT EXISTS instructional_calendar JSONB NOT NULL DEFAULT '{}'::jsonb
+  `);
+  await schedulerPool.query(`
+    UPDATE settings
+    SET instructional_calendar = '{}'::jsonb
+    WHERE instructional_calendar IS NULL
+  `);
+  await pool.query(`
+    ALTER TABLE settings
+      ALTER COLUMN instructional_calendar SET DEFAULT '{}'::jsonb,
+      ALTER COLUMN instructional_calendar SET NOT NULL
+  `);
+  const missingInstructionalCalendarSettings = await schedulerPool.query(`
+    SELECT count(*)::integer AS missing_count
+    FROM schools AS school
+    LEFT JOIN settings AS school_settings ON school_settings.school_id = school.id
+    WHERE school_settings.school_id IS NULL
+  `);
+  const missingInstructionalCalendarSettingsCount = Number(
+    missingInstructionalCalendarSettings.rows[0]?.missing_count ?? 0
+  );
+  if (missingInstructionalCalendarSettingsCount > 0) {
+    throw new Error(
+      `ClassPilot instructional calendar settings integrity check failed (${missingInstructionalCalendarSettingsCount} schools missing settings)`
+    );
+  }
+  console.log("[migration] ClassPilot instructional calendar settings ready");
+
   // RLS Phase 1: add school_id to derived tables + backfill from parents.
   // Idempotent; nullable legacy/ambiguous rows stay NULL by design and are hidden
   // once table RLS is enabled. dashboard_tabs/messages can only infer teacher

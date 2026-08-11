@@ -24,6 +24,7 @@ import {
   getClasspilotSessionStudentRoster,
   getGroupByIdAndSchool,
   getGroupStudents,
+  getInstructionalDateStatus,
   getScheduledClassConflictByIdAndSchool,
   getScheduledClassConflictForSlot,
   getScheduledTeachingSessionOccurrence,
@@ -39,6 +40,7 @@ import {
   resolveScheduledConflictForStartedOccurrence,
   skipScheduledTeachingSessionOccurrence,
   upsertScheduledClassConflictForOccurrence,
+  withInstructionalCalendarDateLock,
   withTeachingSessionStartLock,
   type FinalizeTeachingSessionResult,
 } from "./storage.js";
@@ -48,6 +50,10 @@ export type ScheduledClassAutoStartResult =
   | { status: "coverage_needed"; conflictId: string }
   | { status: "claimed"; conflictId: string }
   | { status: "skipped"; reason: string };
+
+type ScheduledOccurrencePreparation =
+  | { occurrence: TeachingSession }
+  | { reason: "non_instructional_day" };
 
 export type ScheduledCoverageStudentPayload = {
   studentId: string;
@@ -115,6 +121,62 @@ function conflictBroadcast(conflictId: string) {
 
 function scheduledBlockStartUtc(scheduledDate: string, blockStartTime: string, timeZone: string): Date {
   return localDateTimeUtc(scheduledDate, blockStartTime, timeZone);
+}
+
+/**
+ * Linearize the instructional-calendar decision with canonical occurrence
+ * creation. Calendar saves use the same school/date advisory transaction lock,
+ * so whichever transaction wins becomes authoritative for this block:
+ * an existing occurrence remains frozen, while a newly closed date cannot
+ * acquire an occurrence, coverage request, or summary outbox row.
+ */
+async function prepareScheduledOccurrence(options: {
+  group: Group;
+  scheduledDate: string;
+  scheduledTimezone: string;
+  scheduledStartAt: Date;
+  scheduledEndAt: Date;
+  dbInstance?: typeof db;
+}): Promise<ScheduledOccurrencePreparation> {
+  return withInstructionalCalendarDateLock(
+    options.group.schoolId,
+    options.scheduledDate,
+    async (lockedDb) => {
+      const existing = await getScheduledTeachingSessionOccurrence(
+        options.group.schoolId,
+        options.group.id,
+        options.scheduledDate,
+        lockedDb
+      );
+      if (existing) return { occurrence: existing };
+
+      // This read deliberately happens only after the shared advisory lock is
+      // held and in the same outer transaction as the canonical insert.
+      const calendarStatus = await getInstructionalDateStatus(
+        options.group.schoolId,
+        options.scheduledDate,
+        lockedDb
+      );
+      if (!calendarStatus.instructional) {
+        return { reason: "non_instructional_day" as const };
+      }
+
+      const scheduledTeacher = await getUserById(options.group.teacherId, lockedDb);
+      const occurrence = await createOrReuseScheduledReportSession({
+        schoolId: options.group.schoolId,
+        groupId: options.group.id,
+        teacherId: options.group.teacherId,
+        scheduledDate: options.scheduledDate,
+        scheduledTimezone: options.scheduledTimezone,
+        scheduledStartAt: options.scheduledStartAt,
+        scheduledEndAt: options.scheduledEndAt,
+        scheduledTeacherEmail: scheduledTeacher?.email || null,
+        scheduledTeacherName: displayName(scheduledTeacher),
+      }, lockedDb);
+      return { occurrence };
+    },
+    options.dbInstance
+  );
 }
 
 export function broadcastScheduledClassUpdate(
@@ -516,18 +578,18 @@ export async function processScheduledClassAutoStart(options: {
     if (now < scheduledStartAt || now >= scheduledEndAt) {
       return { status: "skipped", reason: "outside_schedule_window" };
     }
-    const scheduledTeacher = await getUserById(group.teacherId, dbInstance);
-    occurrence = await createOrReuseScheduledReportSession({
-      schoolId: group.schoolId,
-      groupId: group.id,
-      teacherId: group.teacherId,
+    const prepared = await prepareScheduledOccurrence({
+      group,
       scheduledDate: options.scheduledDate,
       scheduledTimezone: timeZone,
       scheduledStartAt,
       scheduledEndAt,
-      scheduledTeacherEmail: scheduledTeacher?.email || null,
-      scheduledTeacherName: displayName(scheduledTeacher),
-    }, dbInstance);
+      dbInstance,
+    });
+    if ("reason" in prepared) {
+      return { status: "skipped", reason: prepared.reason };
+    }
+    occurrence = prepared.occurrence;
   } else if (occurrence.scheduledStartAt && occurrence.scheduledEndAt) {
     const occurrenceTimeZone = occurrence.scheduledTimezone || timeZone;
     blockStartTime = occurrence.scheduledStartAt.toLocaleString("en-US", {
@@ -747,24 +809,19 @@ export async function freezeScheduledOccurrenceIfDue(options: {
   const dbInstance = options.dbInstance;
   const school = await getSchoolById(group.schoolId, dbInstance);
   const timeZone = school?.schoolTimezone || "America/New_York";
-  const weekday = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short" }).format(now);
-  if (weekday === "Sat" || weekday === "Sun") return undefined;
   const scheduledDate = localDateInTimeZone(now, timeZone);
   const scheduledStartAt = scheduledBlockStartUtc(scheduledDate, group.blockStartTime, timeZone);
   const scheduledEndAt = scheduledBlockStartUtc(scheduledDate, group.blockEndTime, timeZone);
   if (now < scheduledStartAt || now >= scheduledEndAt) return undefined;
-  const teacher = await getUserById(group.teacherId, dbInstance);
-  return createOrReuseScheduledReportSession({
-    schoolId: group.schoolId,
-    groupId: group.id,
-    teacherId: group.teacherId,
+  const prepared = await prepareScheduledOccurrence({
+    group,
     scheduledDate,
     scheduledTimezone: timeZone,
     scheduledStartAt,
     scheduledEndAt,
-    scheduledTeacherEmail: teacher?.email || null,
-    scheduledTeacherName: displayName(teacher),
-  }, dbInstance);
+    dbInstance,
+  });
+  return "occurrence" in prepared ? prepared.occurrence : undefined;
 }
 
 export async function skipScheduledClassBeforeStart(options: {
@@ -772,23 +829,51 @@ export async function skipScheduledClassBeforeStart(options: {
   scheduledDate: string;
   now?: Date;
   dbInstance?: typeof db;
-}): Promise<{ skipped: boolean; session?: TeachingSession }> {
+}): Promise<{
+  skipped: boolean;
+  session?: TeachingSession;
+  reason?: "non_instructional_day";
+}> {
   if (!options.group.blockStartTime || !options.group.blockEndTime) return { skipped: false };
-  const school = await getSchoolById(options.group.schoolId);
+  const school = await getSchoolById(options.group.schoolId, options.dbInstance);
   const timeZone = school?.schoolTimezone || "America/New_York";
-  const teacher = await getUserById(options.group.teacherId);
-  return skipScheduledTeachingSessionOccurrence({
-    schoolId: options.group.schoolId,
-    groupId: options.group.id,
-    teacherId: options.group.teacherId,
-    scheduledDate: options.scheduledDate,
-    scheduledTimezone: timeZone,
-    scheduledStartAt: scheduledBlockStartUtc(options.scheduledDate, options.group.blockStartTime, timeZone),
-    scheduledEndAt: scheduledBlockStartUtc(options.scheduledDate, options.group.blockEndTime, timeZone),
-    scheduledTeacherEmail: teacher?.email || null,
-    scheduledTeacherName: displayName(teacher),
-    now: options.now,
-  }, options.dbInstance);
+  return withInstructionalCalendarDateLock(
+    options.group.schoolId,
+    options.scheduledDate,
+    async (lockedDb) => {
+      const existing = await getScheduledTeachingSessionOccurrence(
+        options.group.schoolId,
+        options.group.id,
+        options.scheduledDate,
+        lockedDb
+      );
+      if (existing) {
+        return { skipped: existing.scheduledState === "skipped", session: existing };
+      }
+      const calendarStatus = await getInstructionalDateStatus(
+        options.group.schoolId,
+        options.scheduledDate,
+        lockedDb
+      );
+      if (!calendarStatus.instructional) {
+        return { skipped: false, reason: "non_instructional_day" as const };
+      }
+      const teacher = await getUserById(options.group.teacherId, lockedDb);
+      return skipScheduledTeachingSessionOccurrence({
+        schoolId: options.group.schoolId,
+        groupId: options.group.id,
+        teacherId: options.group.teacherId,
+        scheduledDate: options.scheduledDate,
+        scheduledTimezone: timeZone,
+        scheduledStartAt: scheduledBlockStartUtc(options.scheduledDate, options.group.blockStartTime!, timeZone),
+        scheduledEndAt: scheduledBlockStartUtc(options.scheduledDate, options.group.blockEndTime!, timeZone),
+        scheduledTeacherEmail: teacher?.email || null,
+        scheduledTeacherName: displayName(teacher),
+        now: options.now,
+      }, lockedDb);
+    },
+    options.dbInstance
+  );
 }
 
 export async function expireScheduledClassConflictsForSchool(options: {

@@ -6,6 +6,7 @@ import {
   getOrCreateSession,
   updateSessionStatus,
   getSettingsForSchool,
+  getInstructionalDateStatus,
   getScheduledGroupsReadyToStart,
   backfillOpenTeachingSessionRosterSnapshots,
   listScheduledSessionsReadyToFinalize,
@@ -51,6 +52,45 @@ let lastRollupHour = -1;
 let lastPurgeHour = -1;
 let heavyJobRunning = false; // Mutex: prevent rollup and purge from running concurrently
 const dailyUsageRollupMarkers = new DailyUsageRollupMarkers();
+const reportedAutomaticScheduleSkips = new Map<string, number>();
+const AUTOMATIC_SCHEDULE_SKIP_DEDUPE_MS = 36 * 60 * 60 * 1000;
+
+function recordAutomaticScheduleSkips(options: {
+  schoolId: string;
+  scheduledDate: string;
+  groupIds: string[];
+  now: Date;
+}) {
+  const nowMs = options.now.getTime();
+  for (const [key, reportedAt] of reportedAutomaticScheduleSkips) {
+    if (nowMs - reportedAt > AUTOMATIC_SCHEDULE_SKIP_DEDUPE_MS) {
+      reportedAutomaticScheduleSkips.delete(key);
+    }
+  }
+
+  let newlySkipped = 0;
+  for (const groupId of options.groupIds) {
+    const key = `${options.schoolId}:${options.scheduledDate}:${groupId}`;
+    if (reportedAutomaticScheduleSkips.has(key)) continue;
+    reportedAutomaticScheduleSkips.set(key, nowMs);
+    newlySkipped += 1;
+  }
+  if (newlySkipped === 0) return;
+
+  console.log(JSON.stringify({
+    _aws: {
+      Timestamp: nowMs,
+      CloudWatchMetrics: [{
+        Namespace: "SchoolPilot/ClassPilot",
+        Dimensions: [["Environment", "Reason"]],
+        Metrics: [{ Name: "AutomaticScheduleSkipped", Unit: "Count" }],
+      }],
+    },
+    Environment: process.env.APP_ENV || process.env.NODE_ENV || "development",
+    Reason: "non_instructional_day",
+    AutomaticScheduleSkipped: newlySkipped,
+  }));
+}
 
 export type SchedulerLockResult<T> =
   | { acquired: true; result: T }
@@ -812,14 +852,10 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
         console.log(`[ClassPilot] Expired ${expiredConflicts.length} scheduled coverage request(s) for school ${school.id}`);
       }
 
-      // Automatic schedules remain weekday-only. Finalization above is not
-      // weekday-gated so persisted overdue rows always recover.
-      const localDayStr = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" }).format(now);
-      if (localDayStr === "Sat" || localDayStr === "Sun") continue;
-
       // A canonical occurrence frozen at the bell remains authoritative even
-      // if an administrator edits the group's future schedule before this
-      // worker tick.
+      // if an administrator closes the instructional date or edits the group's
+      // future schedule before this worker tick. Reconcile these before the
+      // new-occurrence calendar gate.
       const frozenDueSessions = await listScheduledReportSessionsDueNow(
         now,
         schedulerDb,
@@ -868,6 +904,30 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
       )).filter((group) => !frozenGroupIds.has(group.id));
       if (readyGroups.length > 0) {
         console.log(`[ClassPilot] Auto-start: ${readyGroups.length} group(s) ready`);
+      }
+
+      // This is the school-level fail-fast gate. The create path repeats the
+      // authoritative read under the shared school/date transaction lock, so a
+      // calendar save racing this tick still has one deterministic winner.
+      if (readyGroups.length > 0) {
+        const calendarStatus = await getInstructionalDateStatus(
+          school.id,
+          todayDate,
+          schedulerDb
+        );
+        if (!calendarStatus.instructional) {
+          recordAutomaticScheduleSkips({
+            schoolId: school.id,
+            scheduledDate: todayDate,
+            groupIds: readyGroups.map((group) => group.id),
+            now,
+          });
+          console.log(
+            `[ClassPilot] Skipped ${readyGroups.length} automatic class start(s) for school ${school.id} `
+            + `(non_instructional_day)`
+          );
+          continue;
+        }
       }
 
         for (const group of readyGroups) {

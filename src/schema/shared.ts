@@ -16,6 +16,18 @@ import {
 // ============================================================================
 // Settings - School-wide settings (from ClassPilot, extended for all products)
 // ============================================================================
+export type InstructionalCalendarMonthSettings = {
+  revision: number;
+  nonInstructionalDates: string[];
+  updatedAt: string;
+  updatedBy: string | null;
+};
+
+export type InstructionalCalendarSettings = Record<
+  string,
+  InstructionalCalendarMonthSettings
+>;
+
 export const settings = pgTable("settings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   schoolId: text("school_id").notNull().unique(),
@@ -78,6 +90,10 @@ export const settings = pgTable("settings", {
   // admin has already imported — an unknown email is rejected, never auto-created.
   // A school can opt into zero-touch auto-enrollment by setting this true.
   autoEnrollStudents: boolean("auto_enroll_students").notNull().default(false),
+  instructionalCalendar: jsonb("instructional_calendar")
+    .notNull()
+    .default(sql`'{}'::jsonb`)
+    .$type<InstructionalCalendarSettings>(),
 });
 
 export type Settings = typeof settings.$inferSelect;
