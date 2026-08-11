@@ -52,6 +52,26 @@ function isAdminRole(req: any, res: any): boolean {
   return req.authUser?.isSuperAdmin || role === "admin" || role === "school_admin";
 }
 
+function safeSchoolSettingsResponse(
+  schoolSettings: Awaited<ReturnType<typeof getSettingsForSchool>>,
+  canReadSchoolAdminSettings: boolean
+) {
+  return {
+    schoolName: schoolSettings?.schoolName || "",
+    retentionHours: schoolSettings?.retentionHours || "720",
+    ipAllowlist: schoolSettings?.ipAllowlist || [],
+    blockedDomains: schoolSettings?.blockedDomains || [],
+    maxTabsPerStudent: schoolSettings?.maxTabsPerStudent || null,
+    aiSafetyEmailsEnabled: schoolSettings?.aiSafetyEmailsEnabled ?? true,
+    centralEmailRecipientUserId: canReadSchoolAdminSettings
+      ? schoolSettings?.centralEmailRecipientUserId || null
+      : null,
+    sharedChromebookSignInEnabled: !!schoolSettings?.sharedChromebookSignInEnabled,
+    sharedChromebookLoginMethod: effectiveSharedChromebookLoginMethod(schoolSettings),
+    sharedChromebookPinLoginEnabled: effectiveSharedChromebookLoginMethod(schoolSettings) === "name_pin",
+  };
+}
+
 const auth = [
   authenticate,
   requireSchoolContext,
@@ -151,16 +171,7 @@ router.get("/settings", ...auth, async (req, res, next) => {
       schoolStudentMessagingEnabled: fabToggles.schoolMessagingEnabled,
       activeSessionId: activeSession?.id || null,
       // School-wide settings (from settings table)
-      schoolName: schoolSettings?.schoolName || "",
-      retentionHours: schoolSettings?.retentionHours || "720",
-      ipAllowlist: schoolSettings?.ipAllowlist || [],
-      blockedDomains: schoolSettings?.blockedDomains || [],
-      maxTabsPerStudent: schoolSettings?.maxTabsPerStudent || null,
-      aiSafetyEmailsEnabled: schoolSettings?.aiSafetyEmailsEnabled ?? true,
-      centralEmailRecipientUserId: canReadSchoolAdminSettings ? schoolSettings?.centralEmailRecipientUserId || null : null,
-      sharedChromebookSignInEnabled: !!schoolSettings?.sharedChromebookSignInEnabled,
-      sharedChromebookLoginMethod: effectiveSharedChromebookLoginMethod(schoolSettings),
-      sharedChromebookPinLoginEnabled: effectiveSharedChromebookLoginMethod(schoolSettings) === "name_pin",
+      ...safeSchoolSettingsResponse(schoolSettings, canReadSchoolAdminSettings),
       // Teacher's own blocked domains (for MySettings editable field)
       teacherBlockedDomains: (teacherSettings as any)?.blockedDomains || [],
       // School-wide blocked domains (for MySettings read-only display)
@@ -205,27 +216,38 @@ router.post("/settings", ...auth, async (req, res, next) => {
       }
 
       if (centralEmailRecipientUserId !== undefined) {
-        const rawRecipientId = String(centralEmailRecipientUserId || "").trim();
-        if (!rawRecipientId || rawRecipientId === "none" || rawRecipientId === "__none__") {
+        if (centralEmailRecipientUserId === null) {
           normalizedCentralEmailRecipientUserId = null;
         } else {
-          const schoolId = res.locals.schoolId!;
-          const membership = await getMembershipByUserAndSchool(rawRecipientId, schoolId);
-          const allowedRoles = new Set(["admin", "school_admin", "teacher", "office_staff"]);
-          if (!membership || !allowedRoles.has(membership.role)) {
-            return res.status(400).json({ error: "Central email recipient must be active staff at this school" });
+          if (typeof centralEmailRecipientUserId !== "string") {
+            return res.status(400).json({ error: "Central email recipient must be a staff user ID or an explicit clear value" });
           }
-          const user = await getUserById(rawRecipientId);
-          if (!user?.email) {
-            return res.status(400).json({ error: "Central email recipient must have an email address" });
+          const rawRecipientId = centralEmailRecipientUserId.trim();
+          if (!rawRecipientId) {
+            return res.status(400).json({ error: "Central email recipient cannot be blank; use null to clear it" });
           }
-          normalizedCentralEmailRecipientUserId = rawRecipientId;
+          if (rawRecipientId === "none" || rawRecipientId === "__none__") {
+            normalizedCentralEmailRecipientUserId = null;
+          } else {
+            const schoolId = res.locals.schoolId!;
+            const membership = await getMembershipByUserAndSchool(rawRecipientId, schoolId);
+            const allowedRoles = new Set(["admin", "school_admin", "teacher", "office_staff"]);
+            if (!membership || !allowedRoles.has(membership.role)) {
+              return res.status(400).json({ error: "Central email recipient must be active staff at this school" });
+            }
+            const user = await getUserById(rawRecipientId);
+            if (!user?.email?.trim()) {
+              return res.status(400).json({ error: "Central email recipient must have an email address" });
+            }
+            normalizedCentralEmailRecipientUserId = rawRecipientId;
+          }
         }
       }
     }
 
     const settings = await upsertTeacherSettings(req.authUser!.id, data);
 
+    let savedSchoolSettings: Awaited<ReturnType<typeof getSettingsForSchool>> = undefined;
     if (isAdminSettingsRequest) {
       const schoolId = res.locals.schoolId!;
       const schoolData: Record<string, unknown> = {};
@@ -257,7 +279,9 @@ router.post("/settings", ...auth, async (req, res, next) => {
       }
 
       if (Object.keys(schoolData).length > 0) {
-        await upsertSettings(schoolId, schoolData);
+        savedSchoolSettings = await upsertSettings(schoolId, schoolData);
+      } else {
+        savedSchoolSettings = await getSettingsForSchool(schoolId);
       }
 
       // Broadcast updated global blacklist to all connected students
@@ -284,7 +308,18 @@ router.post("/settings", ...auth, async (req, res, next) => {
       void publishWS({ kind: "students", schoolId: sid }, limitMsg);
     }
 
-    return res.json(settings);
+    if (!isAdminSettingsRequest) {
+      return res.json(settings);
+    }
+
+    if (savedSchoolSettings === undefined) {
+      savedSchoolSettings = await getSettingsForSchool(res.locals.schoolId!);
+    }
+
+    return res.json({
+      ...(settings || {}),
+      ...safeSchoolSettingsResponse(savedSchoolSettings, isAdminRole(req, res)),
+    });
   } catch (err) {
     next(err);
   }

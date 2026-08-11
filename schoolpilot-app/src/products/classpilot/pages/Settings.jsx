@@ -68,6 +68,38 @@ function displayStaffName(member) {
     || "Staff";
 }
 
+function buildCentralRecipientOptions(staffOptions, selectedUserId, staffOptionsLoading) {
+  const selectableStaff = staffOptions.filter((member) =>
+    typeof member.userId === "string" && member.userId.length > 0
+  );
+
+  if (selectedUserId === "none") {
+    return selectableStaff.map((member) => ({
+      userId: member.userId,
+      member,
+      status: "available",
+    }));
+  }
+
+  const selectedStaff = selectableStaff.find((member) => member.userId === selectedUserId);
+  return [
+    {
+      userId: selectedUserId,
+      member: selectedStaff || null,
+      status: selectedStaff
+        ? "available"
+        : (staffOptionsLoading ? "loading" : "unavailable"),
+    },
+    ...selectableStaff
+      .filter((member) => member.userId !== selectedUserId)
+      .map((member) => ({
+        userId: member.userId,
+        member,
+        status: "available",
+      })),
+  ];
+}
+
 const settingsSchema = z.object({
   schoolName: z.string().min(1, "School name is required"),
   retentionDays: z.string().min(1, "Retention period is required"),
@@ -116,7 +148,7 @@ export default function Settings() {
     queryFn: () => apiRequest("GET", "/classpilot/enrollment-key"),
   });
 
-  const { data: staffOptions = [] } = useQuery({
+  const { data: staffOptions = [], isLoading: staffOptionsLoading } = useQuery({
     queryKey: ["/api/admin/users"],
     queryFn: () => apiRequest("GET", "/admin/users"),
     select: (data) => [...(data?.users ?? [])].sort((a, b) =>
@@ -173,7 +205,7 @@ export default function Settings() {
   }, [settings, form]);
 
   const updateSettingsMutation = useMutation({
-    mutationFn: async (data) => {
+    mutationFn: async ({ formData: data, submittedCentralRecipientUserId }) => {
       // Convert days to hours for storage
       const retentionHours = String(parseInt(data.retentionDays) * 24);
 
@@ -196,8 +228,10 @@ export default function Settings() {
         aiSafetyEmailsEnabled: data.aiSafetyEmailsEnabled !== false,
         autoBlockUnsafeUrls: data.autoBlockUnsafeUrls !== false,
         sharedChromebookSignInEnabled: data.sharedChromebookSignInEnabled === true,
-        ...(canManageSchoolSettings ? {
-          centralEmailRecipientUserId: centralRecipientUserId === "none" ? null : centralRecipientUserId,
+        ...(submittedCentralRecipientUserId !== undefined ? {
+          centralEmailRecipientUserId: submittedCentralRecipientUserId === "none"
+            ? null
+            : submittedCentralRecipientUserId,
         } : {}),
       };
       return await apiRequest("POST", "/settings", payload);
@@ -354,15 +388,30 @@ export default function Settings() {
     }
   };
 
-  const onSubmit = (data) => {
-    updateSettingsMutation.mutate(data);
+  const onSubmit = (formData) => {
+    updateSettingsMutation.mutate({
+      formData,
+      submittedCentralRecipientUserId: canManageSchoolSettings
+        ? centralRecipientUserId
+        : undefined,
+    });
   };
 
   const sharedSignInEnabled = form.watch("sharedChromebookSignInEnabled");
   const managedPolicy = buildManagedPolicy(enrollmentKeySettings);
   const setupKey = enrollmentKeySettings?.key || "";
-  const selectedCentralRecipientAvailable = centralRecipientUserId === "none"
-    || staffOptions.some((member) => member.userId === centralRecipientUserId);
+  const centralRecipientOptions = buildCentralRecipientOptions(
+    staffOptions,
+    centralRecipientUserId,
+    staffOptionsLoading
+  );
+
+  const handleCentralRecipientChange = (nextUserId) => {
+    setCentralRecipientUserId((currentUserId) => {
+      const normalizedUserId = typeof nextUserId === "string" ? nextUserId.trim() : "";
+      return normalizedUserId || currentUserId;
+    });
+  };
 
   const copyText = async (text, label) => {
     try {
@@ -550,21 +599,29 @@ export default function Settings() {
                     <Label htmlFor="central-email-recipient">Copy recipient</Label>
                     <Select
                       value={centralRecipientUserId}
-                      onValueChange={setCentralRecipientUserId}
+                      onValueChange={handleCentralRecipientChange}
+                      disabled={staffOptionsLoading}
                     >
-                      <SelectTrigger id="central-email-recipient" data-testid="select-central-email-recipient">
+                      <SelectTrigger
+                        id="central-email-recipient"
+                        data-testid="select-central-email-recipient"
+                        aria-busy={staffOptionsLoading}
+                      >
                         <SelectValue placeholder="No central copy" />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="none">No central copy</SelectItem>
-                        {!selectedCentralRecipientAvailable && (
-                          <SelectItem value={centralRecipientUserId} disabled>
-                            Previously selected staff unavailable
-                          </SelectItem>
-                        )}
-                        {staffOptions.map((member) => (
-                          <SelectItem key={member.userId} value={member.userId}>
-                            {displayStaffName(member)} - {member.user?.email || member.email}
+                        {centralRecipientOptions.map((option) => (
+                          <SelectItem
+                            key={option.userId}
+                            value={option.userId}
+                            disabled={option.status === "unavailable"}
+                          >
+                            {option.member
+                              ? `${displayStaffName(option.member)} - ${option.member.user?.email || option.member.email}`
+                              : (option.status === "loading"
+                                ? "Loading selected staff..."
+                                : "Previously selected staff unavailable")}
                           </SelectItem>
                         ))}
                       </SelectContent>
