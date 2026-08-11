@@ -11,7 +11,7 @@ import {
   getSubgroupByIdAndSchool,
   createGroup,
   updateGroup,
-  deleteGroup,
+  hardDeleteGroupWithCleanup,
   getGroupStudents,
   addGroupStudents,
   removeGroupStudent,
@@ -29,9 +29,11 @@ import {
   removeGroupTeacher,
   getUserById,
   validateStaffEmailDomainForSchool,
+  groupHasTeachingHistory,
 } from "../../services/storage.js";
 import { userBelongsToSchool } from "../../services/passpilotAccess.js";
 import { safeStudent } from "../../util/safeStudent.js";
+import { freezeScheduledOccurrenceIfDue } from "../../services/classpilotScheduledStart.js";
 
 const router = Router();
 
@@ -176,6 +178,7 @@ router.patch("/:id", ...auth, async (req, res, next) => {
       return res.status(404).json({ error: "Group not found" });
     }
     if (rejectOfficialClassMutation(req, res, existing.groupType)) return;
+    await freezeScheduledOccurrenceIfDue({ group: existing });
     const { name, description, periodLabel, gradeLevel, studentIds,
             scheduleEnabled, blockStartTime, blockEndTime } = req.body;
 
@@ -231,7 +234,20 @@ router.delete("/:id", ...auth, async (req, res, next) => {
       return res.status(404).json({ error: "Group not found" });
     }
     if (rejectOfficialClassMutation(req, res, existing.groupType)) return;
-    await deleteGroup(param(req, "id"));
+    const frozenOccurrence = await freezeScheduledOccurrenceIfDue({ group: existing });
+    if (frozenOccurrence) {
+      return res.status(409).json({
+        error: "This scheduled class is currently active. End it before deleting the class.",
+        code: "ACTIVE_SCHEDULED_OCCURRENCE",
+      });
+    }
+    if (await groupHasTeachingHistory(existing.id)) {
+      return res.status(409).json({
+        error: "Classes with teaching history cannot be deleted. Archive the class instead.",
+        code: "CLASS_HAS_HISTORY",
+      });
+    }
+    await hardDeleteGroupWithCleanup(param(req, "id"));
     return res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -273,6 +289,7 @@ router.post("/:id/students", ...auth, async (req, res, next) => {
       return res.status(404).json({ error: "Group not found" });
     }
     if (rejectOfficialClassMutation(req, res, group.groupType)) return;
+    await freezeScheduledOccurrenceIfDue({ group });
     await addGroupStudents(group.id, await studentsInSchool(studentIds, res.locals.schoolId!));
     return res.json({ ok: true });
   } catch (err) {
@@ -288,6 +305,7 @@ router.post("/:id/students/:studentId", ...auth, async (req, res, next) => {
       return res.status(404).json({ error: "Group not found" });
     }
     if (rejectOfficialClassMutation(req, res, group.groupType)) return;
+    await freezeScheduledOccurrenceIfDue({ group });
     const valid = await studentsInSchool([param(req, "studentId")], res.locals.schoolId!);
     if (valid.length === 0) {
       return res.status(404).json({ error: "Student not found" });
@@ -307,6 +325,7 @@ router.delete("/:groupId/students/:studentId", ...auth, async (req, res, next) =
       return res.status(404).json({ error: "Group not found" });
     }
     if (rejectOfficialClassMutation(req, res, group.groupType)) return;
+    await freezeScheduledOccurrenceIfDue({ group });
     await removeGroupStudent(group.id, param(req, "studentId"));
     return res.json({ ok: true });
   } catch (err) {

@@ -37,6 +37,7 @@ import {
   randomFourDigitClassPilotPin,
   type GeneratedClassPilotPin,
 } from "../../services/classpilotPins.js";
+import { serializeClasspilotSession } from "../../services/classpilotSessionLifecycle.js";
 
 const router = Router();
 
@@ -369,10 +370,10 @@ router.get("/sessions/active/:deviceId", ...auth, async (req, res, next) => {
 });
 
 // GET /api/classpilot/sessions/all - All active teaching sessions (for admin observe)
-router.get("/sessions/all", ...auth, async (req, res, next) => {
+router.get("/sessions/all", ...auth, requireRole("admin", "school_admin"), async (req, res, next) => {
   try {
     const sessions = await getActiveTeachingSessions(res.locals.schoolId!);
-    return res.json({ sessions });
+    return res.json({ sessions: sessions.map(serializeClasspilotSession) });
   } catch (err) {
     next(err);
   }

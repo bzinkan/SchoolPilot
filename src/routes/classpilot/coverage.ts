@@ -9,9 +9,9 @@ import {
   createCoverageAssignment,
   createCoverageScopeGroup,
   createSupervisionContextWithStudents,
+  claimScheduledCoverageStudents,
   getActiveCoverageAssignmentsForScopeGroup,
   getActiveDirectSupervisionContextForStaff,
-  getActiveSupervisionContextForStaffScheduledConflict,
   getActiveSessionByStudent,
   getActiveSupervisionForStudents,
   getActiveSupervisionContextForStaffGroup,
@@ -46,8 +46,10 @@ import {
   updateCoverageScopeGroup,
   type OnlineUnassignedStudent,
 } from "../../services/storage.js";
-import { buildScheduledCoveragePayload } from "../../services/classpilotScheduledStart.js";
-import { broadcastToTeachersLocal } from "../../realtime/ws-broadcast.js";
+import {
+  broadcastScheduledConflictUpdate,
+  buildScheduledCoveragePayload,
+} from "../../services/classpilotScheduledStart.js";
 import { getAuditLogs, logAudit } from "../../services/audit.js";
 import {
   COVERAGE_COMMAND_TYPES,
@@ -1596,60 +1598,6 @@ async function assignStudentsToDirectSupervision(options: {
   return { context, assignments: [] };
 }
 
-async function assignStudentsToScheduledCoverage(options: {
-  schoolId: string;
-  scheduledConflictId: string;
-  className: string;
-  assignedStaffId: string;
-  actorId: string;
-  studentIds: string[];
-  note?: string;
-}) {
-  const endsAt = await defaultClaimEndsAt(options.schoolId);
-  const existing = await getActiveSupervisionContextForStaffScheduledConflict(
-    options.schoolId,
-    options.assignedStaffId,
-    options.scheduledConflictId
-  );
-  if (existing) {
-    const context = await extendSupervisionContext({
-      schoolId: options.schoolId,
-      contextId: existing.id,
-      endsAt: existing.endsAt < endsAt ? endsAt : existing.endsAt,
-      note: options.note || existing.note || null,
-      coverageGroupId: null,
-      scheduledConflictId: options.scheduledConflictId,
-    });
-    const assignments = await assignStudentsToSupervisionContext({
-      schoolId: options.schoolId,
-      contextId: existing.id,
-      studentIds: options.studentIds,
-      assignedBy: options.actorId,
-      source: "scheduled_coverage_claim",
-    });
-    return { context: context || existing, assignments };
-  }
-
-  const context = await createSupervisionContextWithStudents({
-    context: {
-      schoolId: options.schoolId,
-      contextType: "scheduled_coverage",
-      name: `Scheduled Supervision: ${options.className}`,
-      status: "active",
-      assignedStaffId: options.assignedStaffId,
-      coverageGroupId: null,
-      scheduledConflictId: options.scheduledConflictId,
-      createdBy: options.actorId,
-      note: options.note || null,
-      endsAt,
-    },
-    studentIds: options.studentIds,
-    assignedBy: options.actorId,
-    source: "scheduled_coverage_claim",
-  });
-  return { context, assignments: [] };
-}
-
 router.post("/coverage/claim", ...auth, async (req, res, next) => {
   try {
     if (!requireStaffRole(req, res)) return res.status(403).json({ error: "Staff access required" });
@@ -1700,13 +1648,14 @@ router.post("/coverage/claim", ...auth, async (req, res, next) => {
           }
         }
       }
-      result = await assignStudentsToScheduledCoverage({
+      result = await claimScheduledCoverageStudents({
         schoolId,
         scheduledConflictId: conflict.id,
-        className: group.name,
+        className: scheduledPayload.selectedClass.name,
         assignedStaffId,
         actorId: req.authUser!.id,
         studentIds,
+        endsAt: await defaultClaimEndsAt(schoolId),
         note: req.body.note ? String(req.body.note) : undefined,
       });
       const refreshedPayload = await buildScheduledCoveragePayload({
@@ -1715,10 +1664,7 @@ router.post("/coverage/claim", ...auth, async (req, res, next) => {
         scheduledConflictId: conflict.id,
       });
       await updateScheduledClassConflictStatus(conflict.id, schoolId, "claimed", refreshedPayload);
-      broadcastToTeachersLocal(schoolId, {
-        type: "scheduled-class-conflict-updated",
-        conflictId: conflict.id,
-      });
+      broadcastScheduledConflictUpdate(schoolId, conflict.id);
     } else if (groupId) {
       const unassignedRows = await getOnlineUnassignedStudents(schoolId);
       const unassignedIds = new Set(unassignedRows.map((row) => row.student.id));

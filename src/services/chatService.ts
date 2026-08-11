@@ -79,8 +79,10 @@ async function auditAiEvent(
   });
 }
 
-// Cleanup expired conversations every 5 minutes
-setInterval(() => {
+// Cleanup expired conversations every 5 minutes. The HTTP server keeps the
+// process alive in production; this housekeeping timer must not keep one-off
+// migration commands or test workers alive after their real work is done.
+const conversationCleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [id, conv] of conversations) {
     if (now - conv.lastActivity.getTime() > CONVERSATION_TTL_MS) {
@@ -88,6 +90,7 @@ setInterval(() => {
     }
   }
 }, 5 * 60 * 1000);
+conversationCleanupTimer.unref?.();
 
 function getOrCreateConversation(
   conversationId: string,

@@ -4,8 +4,6 @@ import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
 import {
-  createTeachingSession,
-  endTeachingSession,
   getActiveClassOwnersForStudents,
   getActiveSessionByStudent,
   getActiveSupervisionForStudents,
@@ -14,25 +12,25 @@ import {
   getTeachingSessionByIdAndSchool,
   getSessionSettings,
   upsertSessionSettings,
-  getGroupById,
   getGroupByIdAndSchool,
+  getScheduledTeachingSessionOccurrence,
   getGroupTeachers,
   getGroupStudents,
-  getHeartbeatsForStudentsInRange,
   resyncClasspilotSessionStudents,
-  setScheduleSkippedDate,
   getSchoolById,
-  getCentralEmailRecipientForSchool,
-  clearClasspilotClassroomStates,
-  clearClasspilotActiveHandsForSession,
   getUserById,
   updateTeachingSessionControlTimestamp,
 } from "../../services/storage.js";
-import { sendSessionSummaryEmail } from "../../services/email.js";
 import { logAudit } from "../../services/audit.js";
-import db from "../../db.js";
 import { runWithTenantContext } from "../../middleware/tenantContext.js";
 import { buildClassStartOverlapPayload } from "../../services/classpilotStartOverlap.js";
+import {
+  dispatchDueClasspilotSessionSummaries,
+  finalizeClasspilotSession,
+  startManualClasspilotSession,
+  serializeClasspilotSession,
+} from "../../services/classpilotSessionLifecycle.js";
+import { processScheduledClassAutoStart } from "../../services/classpilotScheduledStart.js";
 
 const router = Router();
 
@@ -73,10 +71,24 @@ async function assertManualStartWindow(group: any) {
   const currentTimeHHMM = now.toLocaleString("en-US", {
     timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false,
   }).replace(/^24:/, "00:");
+  const todayDate = now.toLocaleDateString("en-CA", { timeZone: tz });
+  if ((group as any).scheduleSkippedDate === todayDate) {
+    throw Object.assign(new Error("Today's scheduled class occurrence has already ended or was skipped."), { status: 409 });
+  }
   const isOutsideWindow = currentTimeHHMM < (group as any).blockStartTime || currentTimeHHMM >= (group as any).blockEndTime;
   if (isOutsideWindow) {
     throw Object.assign(new Error(`Class is scheduled for ${formatTime((group as any).blockStartTime)} - ${formatTime((group as any).blockEndTime)}. Cannot start outside the scheduled window.`), { status: 403 });
   }
+}
+
+function kickSummaryDispatch(schoolId: string, teachingSessionId: string) {
+  void runWithTenantContext({ schoolId }, () =>
+    dispatchDueClasspilotSessionSummaries({ schoolId, teachingSessionId, limit: 2 })
+  ).catch((error) => {
+    // The durable scheduler outbox remains authoritative if the immediate kick
+    // cannot run; never fail or duplicate an already committed End response.
+    console.warn(`[SessionSummary] Immediate dispatch deferred for ${teachingSessionId}:`, error);
+  });
 }
 
 async function assertCanManageTeachingSession(req: any, res: any, session: any): Promise<void> {
@@ -215,7 +227,50 @@ async function startTeachingSessionWithOverlapGuard(req: any, res: any) {
     return res.status(404).json({ error: "Group not found" });
   }
 
-  await assertManualStartWindow(group);
+  const school = await getSchoolById(schoolId);
+  const timeZone = school?.schoolTimezone || "America/New_York";
+  const now = new Date();
+  const scheduledDate = now.toLocaleDateString("en-CA", { timeZone });
+  const occurrence = await getScheduledTeachingSessionOccurrence(schoolId, group.id, scheduledDate);
+  const scheduledPath = !!occurrence || (group.scheduleEnabled && !!group.blockStartTime && !!group.blockEndTime);
+  if (occurrence) {
+    if (
+      occurrence.scheduledState !== "active"
+      || occurrence.endTime
+      || !occurrence.scheduledStartAt
+      || !occurrence.scheduledEndAt
+      || now < occurrence.scheduledStartAt
+      || now >= occurrence.scheduledEndAt
+    ) {
+      throw Object.assign(new Error("Today's scheduled class occurrence is not active."), { status: 409 });
+    }
+  } else {
+    await assertManualStartWindow(group);
+  }
+
+  const role = res.locals.membershipRole as string | undefined;
+  const admin = req.authUser?.isSuperAdmin || role === "admin" || role === "school_admin";
+  const scheduledTeacherId = occurrence?.teacherId || group.teacherId;
+  const coTeachers = await getGroupTeachers(group.id);
+  const assignedToActor = scheduledPath
+    ? scheduledTeacherId === teacherId
+    : scheduledTeacherId === teacherId || coTeachers.some((teacher) => teacher.teacherId === teacherId);
+  if (!admin && !assignedToActor) {
+    return res.status(403).json({ error: "This class is not assigned to you" });
+  }
+
+  if (occurrence?.sessionMode === "live") {
+    const result = await processScheduledClassAutoStart({
+      group,
+      scheduledDate,
+      scheduledTeacherConnectedOverride: true,
+      now,
+    });
+    if (result.status !== "started") {
+      throw Object.assign(new Error("Today's scheduled class occurrence cannot be restarted."), { status: 409 });
+    }
+    return res.status(200).json({ session: serializeClasspilotSession(result.session) });
+  }
 
   if (acknowledgeOverlap !== true) {
     const overlap = await buildClassStartOverlapPayload({ schoolId, teacherId, group });
@@ -227,15 +282,31 @@ async function startTeachingSessionWithOverlapGuard(req: any, res: any) {
     }
   }
 
-  const existing = await getActiveTeachingSessionForSchool(teacherId, schoolId);
-  if (existing) {
-    await endTeachingSession(existing.id);
-    await clearClasspilotClassroomStates({ schoolId, teachingSessionId: existing.id });
-    await clearClasspilotActiveHandsForSession(schoolId, existing.id);
+  if (scheduledPath) {
+    const result = await processScheduledClassAutoStart({
+      group,
+      scheduledDate,
+      scheduledTeacherConnectedOverride: true,
+      now,
+    });
+    if (result.status !== "started") {
+      throw Object.assign(new Error("Today's scheduled class occurrence cannot be restarted."), { status: 409 });
+    }
+    return res.status(201).json({ session: serializeClasspilotSession(result.session) });
   }
 
-  const session = await createTeachingSession({ groupId, teacherId });
-  return res.status(201).json({ session });
+  const manualStart = await startManualClasspilotSession({
+    schoolId,
+    teacherId,
+    groupId,
+  });
+  if (manualStart.replacementFinalization) {
+    if (manualStart.replacementFinalization.deliveryCount && manualStart.replacedSessionId) {
+      kickSummaryDispatch(schoolId, manualStart.replacedSessionId);
+    }
+  }
+  const session = manualStart.session;
+  return res.status(201).json({ session: serializeClasspilotSession(session) });
 }
 
 // POST /api/classpilot/teaching-sessions/start - Alias for creating a session
@@ -265,42 +336,19 @@ router.post("/end", ...auth, async (req, res, next) => {
       return res.status(404).json({ error: "No active session" });
     }
 
-    const session = await endTeachingSession(existing.id);
-    await clearClasspilotClassroomStates({ schoolId: res.locals.schoolId!, teachingSessionId: existing.id });
-    await clearClasspilotActiveHandsForSession(res.locals.schoolId!, existing.id);
-    res.json({ session });
-
-    // If this was a scheduled class and we're PAST the scheduled end time,
-    // mark as skipped so the scheduler doesn't restart it today.
-    // If ended DURING the window, don't skip — teacher might restart (accidental end).
-    if ((group as any).scheduleEnabled && (group as any).blockEndTime) {
-      try {
-        const school = await getSchoolById(group.schoolId);
-        const tz = school?.schoolTimezone || "America/New_York";
-        const now = new Date();
-        const currentTimeHHMM = now.toLocaleString("en-US", {
-          timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false,
-        }).replace(/^24:/, "00:");
-        // Only skip if we're past the scheduled end time (class ran its full window)
-        if (currentTimeHHMM >= (group as any).blockEndTime) {
-          const todayDate = now.toLocaleDateString("en-CA", { timeZone: tz });
-          await setScheduleSkippedDate(group.id, todayDate);
-        }
-      } catch (err) {
-        console.warn("[Sessions] Failed to set scheduleSkippedDate:", err);
-      }
-    }
-
-    // Fire-and-forget: send session summary email to teacher. This runs AFTER
-    // res.json above, so the request's tenant connection is already released —
-    // re-establish the school's context for the students/heartbeats reads inside
-    // the summary (otherwise RLS deny-by-default empties them).
-    if (session?.startTime && session?.endTime) {
-      const summarySchoolId = res.locals.schoolId!;
-      void runWithTenantContext({ schoolId: summarySchoolId }, () =>
-        buildAndSendSessionSummary(session, req.authUser!)
-      ).catch((err) => console.error("[SessionSummary] Failed to send:", err));
-    }
+    const finalizationReason = existing.scheduledDate ? "teacher_end" as const : "manual_end" as const;
+    const result = await finalizeClasspilotSession({
+      schoolId: res.locals.schoolId!,
+      sessionId: existing.id,
+      reason: finalizationReason,
+    });
+    if (!result) return res.status(404).json({ error: "No active session" });
+    res.json({
+      session: serializeClasspilotSession(result.session),
+      summaryDisposition: result.summaryDisposition,
+      finalizationReason: result.session.scheduledFinalizationReason || finalizationReason,
+    });
+    if (result.deliveryCount > 0) kickSummaryDispatch(res.locals.schoolId!, existing.id);
   } catch (err) {
     next(err);
   }
@@ -333,7 +381,7 @@ router.get("/active", ...auth, async (req, res, next) => {
     }
 
     const settings = await getSessionSettings(session.id);
-    return res.json({ session, settings });
+    return res.json({ session: serializeClasspilotSession(session), settings });
   } catch (err) {
     next(err);
   }
@@ -346,9 +394,10 @@ router.get("/:id", ...auth, async (req, res, next) => {
     if (!session) {
       return res.status(404).json({ error: "Session not found" });
     }
+    await assertCanManageTeachingSession(req, res, session);
 
     const settings = await getSessionSettings(session.id);
-    return res.json({ session, settings });
+    return res.json({ session: serializeClasspilotSession(session), settings });
   } catch (err) {
     next(err);
   }
@@ -365,6 +414,12 @@ router.post("/:id/resync", ...auth, async (req, res, next) => {
     }
     if ((session as any).sessionMode && (session as any).sessionMode !== "live") {
       return res.status(403).json({ error: "This scheduled reporting block is not a live class session" });
+    }
+    if (session.scheduledDate) {
+      return res.status(409).json({
+        code: "SCHEDULED_ROSTER_SNAPSHOT_FROZEN",
+        error: "A scheduled class roster is frozen when the occurrence starts and cannot be resynced mid-block.",
+      });
     }
 
     const group = await getGroupByIdAndSchool(session.groupId, schoolId);
@@ -434,7 +489,7 @@ router.post("/:id/resync", ...auth, async (req, res, next) => {
     });
 
     return res.json({
-      session: updatedSession || session,
+      session: serializeClasspilotSession(updatedSession || session),
       ...summary,
     });
   } catch (err: any) {
@@ -451,10 +506,24 @@ router.post("/:id/end", ...auth, async (req, res, next) => {
     if (!owned) {
       return res.status(404).json({ error: "Session not found" });
     }
-    const session = await endTeachingSession(sessionId);
-    await clearClasspilotClassroomStates({ schoolId: res.locals.schoolId!, teachingSessionId: sessionId });
-    await clearClasspilotActiveHandsForSession(res.locals.schoolId!, sessionId);
-    return res.json({ session });
+    await assertCanManageTeachingSession(req, res, owned);
+    const role = res.locals.membershipRole as string | undefined;
+    const adminEnd = req.authUser?.isSuperAdmin || role === "admin" || role === "school_admin";
+    const finalizationReason = owned.scheduledDate
+      ? adminEnd && owned.teacherId !== req.authUser!.id ? "admin_end" as const : "teacher_end" as const
+      : "manual_end" as const;
+    const result = await finalizeClasspilotSession({
+      schoolId: res.locals.schoolId!,
+      sessionId,
+      reason: finalizationReason,
+    });
+    if (!result) return res.status(404).json({ error: "Session not found" });
+    if (result.deliveryCount > 0) kickSummaryDispatch(res.locals.schoolId!, sessionId);
+    return res.json({
+      session: serializeClasspilotSession(result.session),
+      summaryDisposition: result.summaryDisposition,
+      finalizationReason: result.session.scheduledFinalizationReason || finalizationReason,
+    });
   } catch (err) {
     next(err);
   }
@@ -468,6 +537,13 @@ router.put("/:id/settings", ...auth, async (req, res, next) => {
     if (!owned) {
       return res.status(404).json({ error: "Session not found" });
     }
+    await assertCanManageTeachingSession(req, res, owned);
+    if (owned.endTime || owned.sessionMode !== "live") {
+      return res.status(409).json({
+        error: "Settings can only be changed for an active live class session",
+        code: "SESSION_NOT_LIVE",
+      });
+    }
     const { chatEnabled, raiseHandEnabled } = req.body;
 
     const data: Record<string, unknown> = {};
@@ -480,188 +556,5 @@ router.put("/:id/settings", ...auth, async (req, res, next) => {
     next(err);
   }
 });
-
-type SessionSummarySession = { id: string; groupId: string; startTime: Date; endTime: Date | null };
-type SessionSummaryRecipient = { email: string; firstName?: string | null; lastName?: string | null };
-
-function recipientName(user: { email?: string; firstName?: string | null; lastName?: string | null } | undefined, fallback = "Teacher") {
-  return [user?.firstName, user?.lastName].filter(Boolean).join(" ") || user?.email || fallback;
-}
-
-async function buildSessionSummaryData(
-  session: SessionSummarySession,
-  dbInstance: typeof db,
-  options: { endTimeOverride?: Date } = {}
-) {
-  const endTime = options.endTimeOverride ?? session.endTime ?? new Date();
-  // Threads dbInstance through every tenant-table read so the scheduler's
-  // fire-and-forget callers (which run outside any request tenant context) can
-  // pass schedulerDb (app.is_super) and not hit RLS deny-by-default on the
-  // groups/students/heartbeats reads. Request callers use the default GUC db.
-  const group = await getGroupById(session.groupId, dbInstance);
-  const className = (group as any)?.name || "Class";
-
-  // Use school timezone for formatting (instead of hardcoded America/New_York).
-  // schools is a global (non-RLS) table, so it needs no dbInstance override.
-  const school = await getSchoolById(group?.schoolId || "");
-  const tz = school?.schoolTimezone || "America/New_York";
-
-  const groupStudentRows = await getGroupStudents(session.groupId, dbInstance);
-  const studentIds = groupStudentRows.map((gs) => gs.studentId);
-
-  const hbs = await getHeartbeatsForStudentsInRange(studentIds, session.startTime, endTime, dbInstance);
-
-  // Build per-student domain summaries
-  const studentMap = new Map<string, { name: string; domainSeconds: Map<string, number>; count: number; offTaskCount: number; safetyAlerts: string[]; safetyUrls: string[] }>();
-  for (const gs of groupStudentRows) {
-    const name = [gs.student.firstName, gs.student.lastName].filter(Boolean).join(" ") || gs.student.email || "Unknown";
-    studentMap.set(gs.studentId, { name, domainSeconds: new Map(), count: 0, offTaskCount: 0, safetyAlerts: [], safetyUrls: [] });
-  }
-
-  for (const hb of hbs) {
-    if (!hb.studentId) continue;
-    const entry = studentMap.get(hb.studentId);
-    if (!entry) continue;
-    entry.count++;
-    if ((hb as any).aiCategory === "non-educational") entry.offTaskCount++;
-    if ((hb as any).safetyAlert) {
-      entry.safetyAlerts.push((hb as any).safetyAlert);
-      if (hb.activeTabUrl) {
-        try { entry.safetyUrls.push(new URL(hb.activeTabUrl).hostname.replace(/^www\./, "")); } catch {}
-      }
-    }
-    if (hb.activeTabUrl) {
-      try {
-        const domain = new URL(hb.activeTabUrl).hostname.replace(/^www\./, "");
-        entry.domainSeconds.set(domain, (entry.domainSeconds.get(domain) || 0) + 10);
-      } catch { /* skip invalid URLs */ }
-    }
-  }
-
-  const students = Array.from(studentMap.values()).map((s) => {
-    const topDomains = Array.from(s.domainSeconds.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5)
-      .map(([domain, seconds]) => ({ domain, minutes: Math.round(seconds / 60) }));
-    const uniqueSafetyAlerts = [...new Set(s.safetyAlerts)];
-    const uniqueSafetyUrls = [...new Set(s.safetyUrls)];
-    return { name: s.name, totalMinutes: Math.round((s.count * 10) / 60), topDomains, offTaskCount: s.offTaskCount, safetyAlerts: uniqueSafetyAlerts, safetyUrls: uniqueSafetyUrls };
-  });
-
-  const durationMs = endTime.getTime() - session.startTime.getTime();
-  const durationMin = Math.round(durationMs / 60000);
-  const fmt = (d: Date) =>
-    d.toLocaleString("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit", hour12: true });
-  const fmtDate = (d: Date) =>
-    d.toLocaleDateString("en-US", { timeZone: tz, weekday: "long", month: "long", day: "numeric", year: "numeric" });
-
-  return {
-    className,
-    date: fmtDate(session.startTime),
-    startTime: fmt(session.startTime),
-    endTime: fmt(endTime),
-    duration: `${durationMin} min`,
-    studentCount: studentIds.length,
-    students,
-    group,
-    rawStartTime: session.startTime,
-    rawEndTime: endTime,
-  };
-}
-
-async function sendSessionSummaryTo(
-  summary: Awaited<ReturnType<typeof buildSessionSummaryData>>,
-  to: string,
-  teacherName: string,
-  copyNotice?: string
-) {
-  return sendSessionSummaryEmail({
-    to,
-    teacherName,
-    className: summary.className,
-    date: summary.date,
-    startTime: summary.startTime,
-    endTime: summary.endTime,
-    duration: summary.duration,
-    studentCount: summary.studentCount,
-    students: summary.students,
-    copyNotice,
-  });
-}
-
-// Build and send session summary email (called async after response, or by scheduler)
-export async function buildAndSendSessionSummary(
-  session: SessionSummarySession,
-  teacher: SessionSummaryRecipient,
-  dbInstance: typeof db = db,
-  options: { endTimeOverride?: Date } = {}
-) {
-  const summary = await buildSessionSummaryData(session, dbInstance, options);
-  const teacherName = recipientName(teacher);
-
-  await sendSessionSummaryTo(summary, teacher.email, teacherName);
-  console.log(`[SessionSummary] Sent to ${teacher.email} for "${summary.className}"`);
-
-  const centralRecipient = summary.group?.schoolId
-    ? await getCentralEmailRecipientForSchool(summary.group.schoolId, dbInstance)
-    : undefined;
-  const centralEmail = centralRecipient?.email?.trim();
-  if (centralEmail && centralEmail.toLowerCase() !== teacher.email.trim().toLowerCase()) {
-    await sendSessionSummaryTo(
-      summary,
-      centralEmail,
-      teacherName,
-      `Central school copy of the session summary sent to ${teacher.email}.`
-    );
-    console.log(`[SessionSummary] Central copy sent to ${centralEmail} for "${summary.className}"`);
-  }
-}
-
-export async function buildAndSendScheduledReportSummary(
-  session: SessionSummarySession,
-  dbInstance: typeof db = db,
-  options: { endTimeOverride?: Date; copyNotice?: string } = {}
-): Promise<{ teacherSent: boolean; centralSent: boolean }> {
-  const summary = await buildSessionSummaryData(session, dbInstance, options);
-  if (!summary.group?.schoolId) {
-    console.log(`[SessionSummary] Scheduled report skipped for "${summary.className}" - missing school`);
-    return { teacherSent: false, centralSent: false };
-  }
-
-  const scheduledTeacher = await getUserById(summary.group.teacherId);
-  const scheduledTeacherEmail = scheduledTeacher?.email?.trim();
-  const scheduledTeacherName = recipientName(scheduledTeacher, "scheduled teacher");
-  const copyNotice = options.copyNotice
-    || `Unattended scheduled reporting block. The scheduled teacher (${scheduledTeacherName}) did not have a live ClassPilot session for this block.`;
-
-  let teacherSent = false;
-  if (scheduledTeacherEmail) {
-    await sendSessionSummaryTo(summary, scheduledTeacherEmail, scheduledTeacherName, copyNotice);
-    teacherSent = true;
-    console.log(
-      `[SessionSummary] Scheduled report sent to primary teacher ${scheduledTeacherEmail} for "${summary.className}" (${summary.rawStartTime.toISOString()} - ${summary.rawEndTime.toISOString()})`
-    );
-  } else {
-    console.log(`[SessionSummary] Scheduled report teacher copy skipped for "${summary.className}" - missing scheduled teacher email`);
-  }
-
-  const centralRecipient = await getCentralEmailRecipientForSchool(summary.group.schoolId, dbInstance);
-  const centralEmail = centralRecipient?.email?.trim();
-  if (!centralEmail) {
-    console.log(`[SessionSummary] Scheduled report central copy skipped for "${summary.className}" - no central recipient configured`);
-    return { teacherSent, centralSent: false };
-  }
-
-  if (scheduledTeacherEmail && scheduledTeacherEmail.toLowerCase() === centralEmail.toLowerCase()) {
-    console.log(`[SessionSummary] Scheduled report central copy skipped for "${summary.className}" - central recipient is the scheduled teacher`);
-    return { teacherSent, centralSent: false };
-  }
-
-  await sendSessionSummaryTo(summary, centralEmail, recipientName(centralRecipient, "School Team"), copyNotice);
-  console.log(
-    `[SessionSummary] Central scheduled report sent to ${centralEmail} for "${summary.className}" (${summary.rawStartTime.toISOString()} - ${summary.rawEndTime.toISOString()})`
-  );
-  return { teacherSent, centralSent: true };
-}
 
 export default router;

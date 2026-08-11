@@ -476,6 +476,76 @@ export async function runStartupMigrations(): Promise<void> {
     console.warn("[migration] derived-table school_id migration skipped:", (err as Error).message);
   }
 
+  // Scheduled occurrence metadata is required by both the API finalizer and
+  // the scheduler reconciler. Keep it outside best-effort legacy migrations so
+  // a missing column/index fails the one-off migration task before rollout.
+  await pool.query(`ALTER TABLE teaching_sessions ADD COLUMN IF NOT EXISTS scheduled_date TEXT`);
+  await pool.query(`ALTER TABLE teaching_sessions ADD COLUMN IF NOT EXISTS scheduled_timezone TEXT`);
+  await pool.query(`ALTER TABLE teaching_sessions ADD COLUMN IF NOT EXISTS scheduled_start_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE teaching_sessions ADD COLUMN IF NOT EXISTS scheduled_end_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE teaching_sessions ADD COLUMN IF NOT EXISTS scheduled_teacher_email TEXT`);
+  await pool.query(`ALTER TABLE teaching_sessions ADD COLUMN IF NOT EXISTS scheduled_teacher_name TEXT`);
+  await pool.query(`ALTER TABLE teaching_sessions ADD COLUMN IF NOT EXISTS class_name_snapshot TEXT`);
+  await pool.query(`ALTER TABLE teaching_sessions ADD COLUMN IF NOT EXISTS roster_snapshot_completed_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE teaching_sessions ADD COLUMN IF NOT EXISTS scheduled_state TEXT`);
+  await pool.query(`ALTER TABLE teaching_sessions ADD COLUMN IF NOT EXISTS scheduled_finalization_reason TEXT`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS teaching_sessions_scheduled_occurrence_unique ON teaching_sessions (school_id, group_id, scheduled_date) WHERE scheduled_date IS NOT NULL`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS teaching_sessions_scheduled_due_idx ON teaching_sessions (scheduled_state, scheduled_end_at)`);
+  await pool.query(`
+    DO $$ BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'teaching_sessions_scheduled_state_check'
+          AND conrelid = 'teaching_sessions'::regclass
+      ) THEN
+        ALTER TABLE teaching_sessions
+          ADD CONSTRAINT teaching_sessions_scheduled_state_check
+          CHECK (scheduled_state IS NULL OR scheduled_state IN ('active', 'finalized', 'skipped'));
+      END IF;
+    END $$
+  `);
+  await pool.query(`
+    DO $$ BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'teaching_sessions_scheduled_window_check'
+          AND conrelid = 'teaching_sessions'::regclass
+      ) THEN
+        ALTER TABLE teaching_sessions
+          ADD CONSTRAINT teaching_sessions_scheduled_window_check
+          CHECK (scheduled_start_at IS NULL OR scheduled_end_at IS NULL OR scheduled_end_at > scheduled_start_at);
+      END IF;
+    END $$
+  `);
+  await pool.query(`
+    DO $$ BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'teaching_sessions_scheduled_metadata_check'
+          AND conrelid = 'teaching_sessions'::regclass
+      ) THEN
+        ALTER TABLE teaching_sessions
+          ADD CONSTRAINT teaching_sessions_scheduled_metadata_check
+          CHECK (
+            (
+              scheduled_date IS NULL
+              AND scheduled_timezone IS NULL
+              AND scheduled_start_at IS NULL
+              AND scheduled_end_at IS NULL
+              AND scheduled_state IS NULL
+            ) OR (
+              scheduled_date IS NOT NULL
+              AND scheduled_timezone IS NOT NULL
+              AND scheduled_start_at IS NOT NULL
+              AND scheduled_end_at IS NOT NULL
+              AND scheduled_state IS NOT NULL
+            )
+          );
+      END IF;
+    END $$
+  `);
+  console.log("[migration] teaching session scheduled occurrence metadata ready");
+
   // The tile authorization plan relies on teaching_sessions.school_id as both
   // an indexed tenant predicate and an RLS boundary. Do not repair bad rows in
   // place here: a migration/deploy must fail before a new release can serve if
@@ -499,6 +569,47 @@ export async function runStartupMigrations(): Promise<void> {
     );
   }
   console.log("[migration] teaching_sessions.school_id integrity check passed");
+
+  // Durable ClassPilot session-summary delivery outbox. Recipient identity is
+  // snapshotted at finalization; report content remains derived from the
+  // teaching session so student activity is not duplicated here. Two unique
+  // indexes make both recipient role and normalized email idempotent. This is
+  // required runtime infrastructure, so any DDL failure must fail the migration
+  // task rather than starting the API/worker without durable delivery support.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS classpilot_session_summary_deliveries (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      school_id TEXT NOT NULL,
+      teaching_session_id VARCHAR NOT NULL,
+      recipient_kind TEXT NOT NULL,
+      recipient_email TEXT NOT NULL,
+      recipient_name TEXT,
+      state TEXT NOT NULL DEFAULT 'queued',
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      lease_owner TEXT,
+      lease_expires_at TIMESTAMPTZ,
+      submission_started_at TIMESTAMPTZ,
+      next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      provider_message_id TEXT,
+      last_error TEXT,
+      sent_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      CONSTRAINT cp_summary_delivery_recipient_kind_check
+        CHECK (recipient_kind IN ('teacher', 'central')),
+      CONSTRAINT cp_summary_delivery_state_check
+        CHECK (state IN ('queued', 'leased', 'retry', 'sent', 'failed', 'unknown')),
+      CONSTRAINT cp_summary_delivery_attempt_count_check CHECK (attempt_count >= 0),
+      CONSTRAINT cp_summary_delivery_email_check CHECK (btrim(recipient_email) <> '')
+    )
+  `);
+  await pool.query(`ALTER TABLE classpilot_session_summary_deliveries ADD COLUMN IF NOT EXISTS submission_started_at TIMESTAMPTZ`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS cp_summary_delivery_session_kind_unique ON classpilot_session_summary_deliveries (teaching_session_id, recipient_kind)`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS cp_summary_delivery_session_email_unique ON classpilot_session_summary_deliveries (teaching_session_id, lower(btrim(recipient_email)))`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS cp_summary_delivery_school_session_idx ON classpilot_session_summary_deliveries (school_id, teaching_session_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS cp_summary_delivery_due_idx ON classpilot_session_summary_deliveries (state, next_attempt_at)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS cp_summary_delivery_lease_idx ON classpilot_session_summary_deliveries (state, lease_expires_at)`);
+  console.log("[migration] ClassPilot session summary delivery outbox ready");
 
   // ClassPilot teacher command tracking. These tables are school-scoped and
   // participate in the generic RLS policy authoring block below.
@@ -796,19 +907,27 @@ export async function runStartupMigrations(): Promise<void> {
     console.warn("[migration] ClassPilot scheduled conflict migration skipped:", (err as Error).message);
   }
 
+  // Session roster snapshots are now required runtime infrastructure for every
+  // ClassPilot summary. Fail startup migration if this table or its indexes
+  // cannot be created; otherwise class starts would fail later at runtime.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS classpilot_session_students (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      school_id TEXT NOT NULL,
+      teaching_session_id VARCHAR NOT NULL,
+      group_id TEXT NOT NULL,
+      student_id TEXT NOT NULL,
+      captured_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      CONSTRAINT classpilot_session_students_session_student_unique UNIQUE (teaching_session_id, student_id)
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_session_students_school_session_idx ON classpilot_session_students (school_id, teaching_session_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_session_students_school_group_idx ON classpilot_session_students (school_id, group_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_session_students_school_student_idx ON classpilot_session_students (school_id, student_id)`);
+  console.log("[migration] ClassPilot session roster snapshot table ready");
+
   // ClassPilot admin analytics: forward-only session-attributed class usage.
   try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS classpilot_session_students (
-        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
-        school_id TEXT NOT NULL,
-        teaching_session_id VARCHAR NOT NULL,
-        group_id TEXT NOT NULL,
-        student_id TEXT NOT NULL,
-        captured_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-        CONSTRAINT classpilot_session_students_session_student_unique UNIQUE (teaching_session_id, student_id)
-      )
-    `);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS classpilot_session_usage (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -826,13 +945,10 @@ export async function runStartupMigrations(): Promise<void> {
         CONSTRAINT classpilot_session_usage_session_student_date_unique UNIQUE (teaching_session_id, student_id, local_date)
       )
     `);
-    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_session_students_school_session_idx ON classpilot_session_students (school_id, teaching_session_id)`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_session_students_school_group_idx ON classpilot_session_students (school_id, group_id)`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_session_students_school_student_idx ON classpilot_session_students (school_id, student_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_session_usage_school_date_idx ON classpilot_session_usage (school_id, local_date)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_session_usage_school_group_date_idx ON classpilot_session_usage (school_id, group_id, local_date)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_session_usage_school_session_idx ON classpilot_session_usage (school_id, teaching_session_id)`);
-    console.log("[migration] ClassPilot session-attributed analytics tables ready");
+    console.log("[migration] ClassPilot session-attributed usage table ready");
   } catch (err) {
     console.warn("[migration] ClassPilot session analytics migration skipped:", (err as Error).message);
   }
@@ -926,6 +1042,56 @@ export async function runStartupMigrations(): Promise<void> {
     );
   } catch (err) {
     console.warn("[migration] RLS policy migration skipped:", (err as Error).message);
+  }
+
+  // A reviewed deploy can request a fail-closed catalog assertion for one new
+  // tenant table. This runs outside the best-effort policy block above so a
+  // swallowed DDL error cannot let the migration task report success. The
+  // deploy flag is intentionally one-shot; normal startup never sets it.
+  const requiredRlsTable = process.env.REQUIRE_RLS_TABLE_ENFORCEMENT?.trim();
+  if (requiredRlsTable) {
+    if (requiredRlsTable !== "classpilot_session_summary_deliveries") {
+      throw new Error(`Unsupported required RLS enforcement table: ${requiredRlsTable}`);
+    }
+    if (process.env.RLS_GUC_ENABLED !== "true") {
+      throw new Error(`Required RLS enforcement failed for ${requiredRlsTable}`);
+    }
+    if (!parseRlsEnabledTables().has(requiredRlsTable)) {
+      throw new Error(`Required RLS enforcement failed for ${requiredRlsTable}`);
+    }
+    const { rows: rlsCatalogRows } = await pool.query<{
+      relrowsecurity: boolean;
+      relforcerowsecurity: boolean;
+      has_tenant_isolation_policy: boolean;
+    }>(
+      `
+        SELECT
+          relation.relrowsecurity,
+          relation.relforcerowsecurity,
+          EXISTS (
+            SELECT 1
+            FROM pg_policy policy
+            WHERE policy.polrelid = relation.oid
+              AND policy.polname = 'tenant_isolation'
+          ) AS has_tenant_isolation_policy
+        FROM pg_class relation
+        INNER JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
+        WHERE namespace.nspname = 'public'
+          AND relation.relkind = 'r'
+          AND relation.relname = $1
+      `,
+      [requiredRlsTable],
+    );
+    const catalog = rlsCatalogRows[0];
+    if (
+      rlsCatalogRows.length !== 1 ||
+      !catalog?.relrowsecurity ||
+      !catalog.relforcerowsecurity ||
+      !catalog.has_tenant_isolation_policy
+    ) {
+      throw new Error(`Required RLS enforcement failed for ${requiredRlsTable}`);
+    }
+    console.log(`[migration] Required RLS enforcement verified for ${requiredRlsTable}`);
   }
 
   // Add gopilot_role column for per-product role overrides

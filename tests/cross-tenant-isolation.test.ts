@@ -91,6 +91,8 @@ after(async () => {
       await db.execute(sql`DELETE FROM dashboard_tabs WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
       await db.execute(sql`DELETE FROM flight_paths WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
       await db.execute(sql`DELETE FROM block_lists WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
+      await db.execute(sql`DELETE FROM classpilot_session_summary_deliveries WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
+      await db.execute(sql`DELETE FROM classpilot_session_students WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
       await db.execute(sql`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`}))`);
       await db.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`}))`);
       await db.execute(sql`DELETE FROM subgroups WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
@@ -116,6 +118,53 @@ after(async () => {
 });
 
 describe("cross-school isolation", () => {
+  it("RLS partitions ClassPilot summary delivery and roster snapshot rows by tenant context", {
+    skip: process.env.RLS_GUC_ENABLED !== "true",
+  }, async () => {
+    const sessionA = `${TAG}-summary-session-a`;
+    const sessionB = `${TAG}-summary-session-b`;
+    await asSystem(() => db.execute(sql`
+      INSERT INTO classpilot_session_summary_deliveries (
+        school_id, teaching_session_id, recipient_kind, recipient_email
+      ) VALUES
+        (${schoolA.id}, ${sessionA}, 'teacher', ${`${TAG}-summary-a@example.edu`}),
+        (${schoolB.id}, ${sessionB}, 'teacher', ${`${TAG}-summary-b@example.edu`})
+    `).then(() => undefined));
+    await asSystem(() => db.execute(sql`
+      INSERT INTO classpilot_session_students (
+        school_id, teaching_session_id, group_id, student_id
+      ) VALUES
+        (${schoolA.id}, ${sessionA}, ${`${TAG}-summary-group-a`}, ${`${TAG}-summary-student-a`}),
+        (${schoolB.id}, ${sessionB}, ${`${TAG}-summary-group-b`}, ${`${TAG}-summary-student-b`})
+    `).then(() => undefined));
+
+    const rowsInA = await inSchool(schoolA.id, () => db.execute(sql`
+      SELECT school_id, teaching_session_id
+      FROM classpilot_session_summary_deliveries
+      WHERE teaching_session_id IN (${sessionA}, ${sessionB})
+    `));
+    const rowsInB = await inSchool(schoolB.id, () => db.execute(sql`
+      SELECT school_id, teaching_session_id
+      FROM classpilot_session_summary_deliveries
+      WHERE teaching_session_id IN (${sessionA}, ${sessionB})
+    `));
+    const rosterInA = await inSchool(schoolA.id, () => db.execute(sql`
+      SELECT school_id, teaching_session_id
+      FROM classpilot_session_students
+      WHERE teaching_session_id IN (${sessionA}, ${sessionB})
+    `));
+    const rosterInB = await inSchool(schoolB.id, () => db.execute(sql`
+      SELECT school_id, teaching_session_id
+      FROM classpilot_session_students
+      WHERE teaching_session_id IN (${sessionA}, ${sessionB})
+    `));
+
+    assert.deepEqual(rowsInA.rows, [{ school_id: schoolA.id, teaching_session_id: sessionA }]);
+    assert.deepEqual(rowsInB.rows, [{ school_id: schoolB.id, teaching_session_id: sessionB }]);
+    assert.deepEqual(rosterInA.rows, [{ school_id: schoolA.id, teaching_session_id: sessionA }]);
+    assert.deepEqual(rosterInB.rows, [{ school_id: schoolB.id, teaching_session_id: sessionB }]);
+  });
+
   it("getGroupByIdAndSchool: own school yes, other school no", async () => {
     const g = await inSchool(schoolA.id, () =>
       createGroup({ schoolId: schoolA.id, teacherId: teacher.id, name: `${TAG}_grpA` } as any)

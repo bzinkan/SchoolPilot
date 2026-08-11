@@ -10,6 +10,9 @@
 #   ./scripts/deploy.sh production --backend --activate-emergency
 #                                       # Backend only; activate the newly registered 512/2048 API revision
 #   ./scripts/deploy.sh production --backend --activate-emergency \
+#     --enable-rls-table classpilot_session_summary_deliveries
+#                                       # One reviewed release only; add one tenant table without changing the master switch or existing entries
+#   ./scripts/deploy.sh production --backend --activate-emergency \
 #     --classpilot-tile-auth-plan-gate --classpilot-tile-auth-plan-rehearsal
 #                                       # Build/register inactive exact candidates and run the preflight/full gate only
 #   ./scripts/deploy.sh production --backend --activate-emergency \
@@ -48,6 +51,7 @@ DEPLOY_BACKEND=true
 DEPLOY_FRONTEND=true
 SKIP_WAIT=false
 ACTIVATE_EMERGENCY=false
+ENABLE_RLS_TABLE=""
 RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=false
@@ -92,6 +96,12 @@ while [[ $# -gt 0 ]]; do
     --backend)  DEPLOY_FRONTEND=false; shift ;;
     --frontend) DEPLOY_BACKEND=false; shift ;;
     --activate-emergency) ACTIVATE_EMERGENCY=true; shift ;;
+    --enable-rls-table)
+      [[ $# -ge 2 ]] || { echo "--enable-rls-table requires a reviewed table name"; exit 1; }
+      [[ -z "$ENABLE_RLS_TABLE" ]] || { echo "--enable-rls-table may be specified only once"; exit 1; }
+      ENABLE_RLS_TABLE="$2"
+      shift 2
+      ;;
     --classpilot-tile-auth-plan-gate) RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=true; shift ;;
     --classpilot-tile-auth-plan-rehearsal)
       RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=true
@@ -935,6 +945,11 @@ TEMP_FILES=(
   .taskdef-new.json
   .taskdef-emergency.json
   .taskdef-emergency-registered.json
+  .rls-api-source.json
+  .rls-worker-source.json
+  .rls-standard-api-registered.json
+  .rls-emergency-api-registered.json
+  .rls-worker-registered.json
   .ecs-network.json
   .tile-auth-plan-task.json
   .tile-auth-plan-result.json
@@ -1144,6 +1159,26 @@ validate_emergency_activation_mode() {
 
   if [[ "$ENV" != "production" || "$DEPLOY_BACKEND" != true || "$DEPLOY_FRONTEND" != false ]]; then
     error "--activate-emergency is allowed only with production --backend so no frontend or staging rollout can share the 2048 MiB cutover."
+    return 1
+  fi
+}
+
+validate_rls_table_enablement_mode() {
+  if [[ -z "$ENABLE_RLS_TABLE" ]]; then
+    return 0
+  fi
+  if [[ "$ENABLE_RLS_TABLE" != "classpilot_session_summary_deliveries" ]]; then
+    error "--enable-rls-table is not reviewed for: ${ENABLE_RLS_TABLE}"
+    return 1
+  fi
+  if [[ "$ENV" != "production" || "$DEPLOY_BACKEND" != true ||
+        "$DEPLOY_FRONTEND" != false || -n "$SAME_IMAGE_NETWORKING_STAGE" ||
+        "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" == true ||
+        "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" == true ||
+        "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true ||
+        -n "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ||
+        "$CAPACITY_ACCEPTANCE_RELEASE" == true ]]; then
+    error "--enable-rls-table is a one-release production --backend migration flag and cannot be combined with frontend, same-image, capacity, observation, or rehearsal modes."
     return 1
   fi
 }
@@ -2927,6 +2962,29 @@ describe_exact_classpilot_candidate_task_definition() {
     --no-cli-pager > "$output_path"
 }
 
+preflight_rls_table_enablement_sources() {
+  if [[ -z "$ENABLE_RLS_TABLE" ]]; then
+    return 0
+  fi
+  if ! describe_exact_classpilot_candidate_task_definition \
+      "$API_CANDIDATE_SOURCE_TASK_DEFINITION_ARN" \
+      .rls-api-source.json ||
+    ! describe_exact_classpilot_candidate_task_definition \
+      "$WORKER_CANDIDATE_SOURCE_TASK_DEFINITION_ARN" \
+      .rls-worker-source.json; then
+    error "Could not read both exact live task definitions for RLS table enablement."
+    return 1
+  fi
+  if ! node "$SCRIPT_DIR/enforce-deploy-rls-allowlist.mjs" preflight \
+      --api-task-definition .rls-api-source.json \
+      --worker-task-definition .rls-worker-source.json \
+      --table "$ENABLE_RLS_TABLE" > /dev/null; then
+    error "The live API/worker RLS contract is not eligible for the reviewed table enablement."
+    return 1
+  fi
+  success "Reviewed RLS allowlist delta: +${ENABLE_RLS_TABLE} (master remains true; no existing table changes)"
+}
+
 register_classpilot_candidate_worker_task_definition() {
   info "Rendering scheduler worker task definition for the inactive candidate..."
   if ! describe_exact_classpilot_candidate_task_definition \
@@ -2938,7 +2996,6 @@ register_classpilot_candidate_worker_task_definition() {
     error "Could not read the source task definitions for the scheduler-worker candidate."
     return 1
   fi
-
   if ! IMAGE_REF="${ECR_REPO}@${DIGEST}" \
     EXPECTED_WORKER_SOURCE_ARN="$WORKER_CANDIDATE_SOURCE_TASK_DEFINITION_ARN" \
     EXPECTED_API_SOURCE_ARN="$STANDARD_API_CANDIDATE_TASK_DEFINITION_ARN" node -e '
@@ -2993,6 +3050,15 @@ register_classpilot_candidate_worker_task_definition() {
     error "The scheduler-worker candidate task definition could not be rendered safely."
     return 1
   fi
+  if [[ -n "$ENABLE_RLS_TABLE" ]]; then
+    if ! node "$SCRIPT_DIR/enforce-deploy-rls-allowlist.mjs" add \
+        --task-definition .worker-taskdef-new.json \
+        --container scheduler-worker \
+        --table "$ENABLE_RLS_TABLE"; then
+      error "The scheduler-worker candidate could not apply the reviewed RLS allowlist delta."
+      return 1
+    fi
+  fi
 
   local worker_arn
   if ! worker_arn=$(aws ecs register-task-definition \
@@ -3012,6 +3078,35 @@ register_classpilot_candidate_worker_task_definition() {
   WORKER_CANDIDATE_TASK_DEF="$worker_arn"
   WORKER_NEW_REV="${BASH_REMATCH[1]}"
   success "Registered inactive scheduler-worker candidate ${WORKER_CANDIDATE_TASK_DEF} (image pinned by digest)"
+}
+
+verify_registered_rls_table_enablement_candidates() {
+  if [[ -z "$ENABLE_RLS_TABLE" ]]; then
+    return 0
+  fi
+  if ! describe_exact_classpilot_candidate_task_definition \
+      "$STANDARD_API_CANDIDATE_TASK_DEFINITION_ARN" \
+      .rls-standard-api-registered.json ||
+    ! describe_exact_classpilot_candidate_task_definition \
+      "$EMERGENCY_TASK_DEF_ARN" \
+      .rls-emergency-api-registered.json ||
+    ! describe_exact_classpilot_candidate_task_definition \
+      "$WORKER_CANDIDATE_TASK_DEF" \
+      .rls-worker-registered.json; then
+    error "Could not read all exact registered candidates for RLS verification."
+    return 1
+  fi
+  if ! node "$SCRIPT_DIR/enforce-deploy-rls-allowlist.mjs" verify-candidates \
+      --api-source-task-definition .rls-api-source.json \
+      --worker-source-task-definition .rls-worker-source.json \
+      --api-task-definition .rls-standard-api-registered.json \
+      --emergency-task-definition .rls-emergency-api-registered.json \
+      --worker-task-definition .rls-worker-registered.json \
+      --table "$ENABLE_RLS_TABLE"; then
+    error "Registered API, emergency API, and scheduler-worker candidates did not retain the exact reviewed RLS allowlist delta."
+    return 1
+  fi
+  success "Registered RLS allowlists verified: +${ENABLE_RLS_TABLE} on API, emergency API, and scheduler worker"
 }
 
 verify_classpilot_rehearsed_candidates() {
@@ -4782,6 +4877,7 @@ info "CloudFront: $CF_DIST_ID"
 info "Backend:    $DEPLOY_BACKEND"
 info "Frontend:   $DEPLOY_FRONTEND"
 info "2048 API:   $ACTIVATE_EMERGENCY"
+info "RLS table:  ${ENABLE_RLS_TABLE:-unchanged}"
 info "Tile plans: $RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE"
 info "Plan rehearse: $RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL"
 info "Plan observe:  $RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION"
@@ -4794,6 +4890,9 @@ if ! validate_capacity_acceptance_authorization_mode; then
   exit 1
 fi
 if ! validate_emergency_activation_mode; then
+  exit 1
+fi
+if ! validate_rls_table_enablement_mode; then
   exit 1
 fi
 if ! validate_capacity_acceptance_frontend_mode; then
@@ -4961,6 +5060,7 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     local_rehearsal_network_sha="$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256"
   else
   resolve_classpilot_candidate_source_task_definitions
+  preflight_rls_table_enablement_sources
 
   # Step 1: Build Docker image
   info "Building Docker image..."
@@ -5081,6 +5181,16 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     fs.writeFileSync(".taskdef-new.json", JSON.stringify(td));
   '
 
+  if [[ -n "$ENABLE_RLS_TABLE" ]]; then
+    if ! node "$SCRIPT_DIR/enforce-deploy-rls-allowlist.mjs" add \
+        --task-definition .taskdef-new.json \
+        --container api \
+        --table "$ENABLE_RLS_TABLE"; then
+      error "The API candidate could not apply the reviewed RLS allowlist delta."
+      exit 1
+    fi
+  fi
+
   STANDARD_API_CANDIDATE_TASK_DEFINITION_ARN=$(aws ecs register-task-definition \
     --cli-input-json file://.taskdef-new.json \
     --query 'taskDefinition.taskDefinitionArn' \
@@ -5163,6 +5273,7 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     success "Launch-safe API rollout selected: ${API_ROLLOUT_TASK_DEF} (512 CPU / 2048 MiB)"
   fi
   register_classpilot_candidate_worker_task_definition
+  verify_registered_rls_table_enablement_candidates
   if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" == true ||
         "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true ]]; then
     verify_classpilot_rehearsed_candidates
@@ -5283,13 +5394,28 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   acquire_production_scaling_hold
   launch_safe_active_api_preflight
 
+  MIGRATION_OVERRIDES=$(ENABLE_RLS_TABLE="$ENABLE_RLS_TABLE" node -e '
+    const environment = [
+      { name: "RUN_MIGRATIONS_ONLY", value: "true" },
+      { name: "SCHEDULER_ENABLED", value: "false" },
+    ];
+    if (process.env.ENABLE_RLS_TABLE) {
+      environment.push({
+        name: "REQUIRE_RLS_TABLE_ENFORCEMENT",
+        value: process.env.ENABLE_RLS_TABLE,
+      });
+    }
+    process.stdout.write(JSON.stringify({
+      containerOverrides: [{ name: "api", environment }],
+    }));
+  ')
   info "Running startup migrations with ${API_ROLLOUT_TASK_DEF}..."
   aws ecs run-task \
     --cluster "$CLUSTER" \
     --launch-type FARGATE \
     --task-definition "$API_ROLLOUT_TASK_DEF" \
     --network-configuration "$NETWORK_CONFIG" \
-    --overrides '{"containerOverrides":[{"name":"api","environment":[{"name":"RUN_MIGRATIONS_ONLY","value":"true"},{"name":"SCHEDULER_ENABLED","value":"false"}]}]}' \
+    --overrides "$MIGRATION_OVERRIDES" \
     --region "$REGION" > .migration-task.json
 
   MIGRATION_TASK_ARN=$(node -e '
