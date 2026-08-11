@@ -1,7 +1,11 @@
 #requires -Version 7.5
 
 [CmdletBinding()]
-param([switch]$AtomicJsonRaceOnly)
+param(
+    [switch]$AtomicJsonRaceOnly,
+    [ValidateRange(1, 20)]
+    [int]$FiveMinuteTelemetryRepeatCount = 1
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -11,8 +15,12 @@ $script:AssertionCount = 0
 # short-lived PowerShell/AWS-mock children used by this suite. Keep one
 # test-only startup bound that matches the existing slow-sample allowance.
 $script:MonitorStartupDeadlineSeconds = 60
+$script:MonitorCompletionWatchdogMilliseconds = 90000
 $previousRolloutTestSentinel = $env:SCHOOLPILOT_ROLLOUT_TEST_MODE
 $env:SCHOOLPILOT_ROLLOUT_TEST_MODE = "I_UNDERSTAND_TEST_ONLY"
+
+. (Join-Path $PSScriptRoot "helpers/owned-test-process.ps1")
+$ownedTestProcesses = [ordered]@{}
 
 function Assert-Condition {
     param([bool]$Condition, [string]$Message)
@@ -20,119 +28,42 @@ function Assert-Condition {
     if (-not $Condition) { throw $Message }
 }
 
-function Stop-AndDrainTestProcess {
+function Close-OwnedTestProcessForDiagnostics {
     param(
-        [Diagnostics.Process]$Process,
         [Parameter(Mandatory = $true)]
-        [string]$Name
+        [Collections.IDictionary]$Registry,
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+        [Parameter(Mandatory = $true)]
+        [string]$StandardOutputPath,
+        [Parameter(Mandatory = $true)]
+        [string]$StandardErrorPath,
+        [ValidateRange(1, 300000)]
+        [int]$TimeoutMilliseconds = 10000
     )
-    if ($null -eq $Process) { return }
-    $drained = $false
-    $rebound = $null
+
+    $state = Get-OwnedTestProcessSnapshot -Registry $Registry -Name $Name
+    $completion = $null
+    $cleanupFailure = $null
     try {
-        $processId = $Process.Id
-        $processStartedAtUtc = $Process.StartTime.ToUniversalTime()
-        $Process.Refresh()
-        if (-not $Process.HasExited) {
-            try {
-                $Process.Kill($true)
-            }
-            catch [InvalidOperationException] {
-                $Process.Refresh()
-                if (-not $Process.HasExited) { throw }
-            }
+        if ($state.hasExited) {
+            $completion = Complete-OwnedTestProcess -Registry $Registry -Name $Name `
+                -TimeoutMilliseconds $TimeoutMilliseconds
         }
-        if ($Process.WaitForExit(10000)) {
-            # Complete asynchronous redirected-stream delivery before disposal.
-            $Process.WaitForExit()
-            $drained = $true
-            return
+        else {
+            Stop-OwnedTestProcess -Registry $Registry -Name $Name
         }
+    }
+    catch {
+        $cleanupFailure = $_.Exception
+    }
 
-        # A tree kill can leave the original Process handle unsignaled on a
-        # busy Windows runner. Rebind the exact PID creation identity and issue
-        # one direct-root kill before declaring cleanup failure.
-        $rebound = Get-Process -Id $processId -ErrorAction SilentlyContinue
-        if ($null -eq $rebound) {
-            $Process.WaitForExit()
-            $drained = $true
-            return
-        }
-        if ($rebound.StartTime.ToUniversalTime() -ne $processStartedAtUtc) {
-            throw "PID creation identity changed while draining test process '$Name'."
-        }
-        $rebound.Refresh()
-        if (-not $rebound.HasExited) {
-            try {
-                $rebound.Kill()
-            }
-            catch [InvalidOperationException] {
-                $rebound.Refresh()
-                if (-not $rebound.HasExited) { throw }
-            }
-        }
-        if (-not $rebound.WaitForExit(20000)) {
-            throw "Timed out draining test process '$Name' after direct-root fallback."
-        }
-        $rebound.WaitForExit()
-        $drained = $true
-    }
-    finally {
-        # Never dispose the last owned handle on a failed drain. The caller can
-        # retain it in an outer registry and retry before evidence cleanup.
-        if ($drained) {
-            $Process.Dispose()
-        }
-        # A rebound handle is internal to this helper and must never leak, even
-        # when identity validation or the fallback drain fails.
-        if ($null -ne $rebound -and -not [object]::ReferenceEquals($rebound, $Process)) {
-            $rebound.Dispose()
-        }
-    }
-}
-
-function Release-AndDrainTestProcess {
-    param(
-        [Diagnostics.Process]$Process,
-        [Parameter(Mandatory = $true)]
-        [string]$SignalPath,
-        [Parameter(Mandatory = $true)]
-        [string]$Name
-    )
-    $Process.Refresh()
-    $wasRunningBeforeSignal = -not $Process.HasExited
-    [IO.File]::WriteAllText($SignalPath, "release", [Text.UTF8Encoding]::new($false))
-    if ($Process.WaitForExit(10000)) {
-        $Process.WaitForExit()
-        $exitCode = $Process.ExitCode
-        $Process.Dispose()
-        return [pscustomobject]@{
-            wasRunningBeforeSignal = $wasRunningBeforeSignal
-            exitedAfterSignal = $true
-            exitCode = $exitCode
-        }
-    }
-    Stop-AndDrainTestProcess -Process $Process -Name $Name
     return [pscustomobject]@{
-        wasRunningBeforeSignal = $wasRunningBeforeSignal
-        exitedAfterSignal = $false
-        exitCode = $null
-    }
-}
-
-function Stop-AndDrainTestProcesses {
-    param([Collections.IDictionary]$Processes)
-    $failures = [System.Collections.Generic.List[string]]::new()
-    foreach ($entry in $Processes.GetEnumerator()) {
-        try {
-            Stop-AndDrainTestProcess -Process $entry.Value -Name ([string]$entry.Key)
-        }
-        catch {
-            $failures.Add("$($entry.Key): $($_.Exception.Message)")
-        }
-    }
-    if ($failures.Count -gt 0) {
-        throw "Could not drain all test processes: $($failures -join '; ')"
+        state = $state
+        completion = $completion
+        cleanupFailure = $cleanupFailure
+        standardOutput = Get-Content -LiteralPath $StandardOutputPath -Raw -ErrorAction SilentlyContinue
+        standardError = Get-Content -LiteralPath $StandardErrorPath -Raw -ErrorAction SilentlyContinue
     }
 }
 
@@ -260,21 +191,32 @@ for($iteration=1;$iteration -le $Iterations;$iteration++){
         [IO.File]::WriteAllText($readerPath, $readerSource, [Text.UTF8Encoding]::new($false))
 
         $pwshPath = (Get-Process -Id $PID).Path
-        $readers = @()
+        $readerProcessNames = @()
         for ($readerId=1; $readerId -le $readerCount; $readerId++) {
-            $readers += Start-Process -FilePath $pwshPath -ArgumentList @("-NoProfile","-File",$readerPath,$destination,$caseRoot,[string]$readerId,[string]$iterations) `
-                -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $caseRoot "reader-$readerId.out") -RedirectStandardError (Join-Path $caseRoot "reader-$readerId.err")
+            $readerProcessName = "atomic-json:$caseName`:reader:$readerId"
+            Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $readerProcessName `
+                -FilePath $pwshPath `
+                -ArgumentList @("-NoProfile","-File",$readerPath,$destination,$caseRoot,[string]$readerId,[string]$iterations) `
+                -StandardOutputPath (Join-Path $caseRoot "reader-$readerId.out") `
+                -StandardErrorPath (Join-Path $caseRoot "reader-$readerId.err")
+            $readerProcessNames += $readerProcessName
         }
-        $writer = Start-Process -FilePath $pwshPath -ArgumentList @("-NoProfile","-File",$writerPath,$destination,$caseRoot,$auditPath,[string]$iterations,[string]$readerCount) `
-            -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $caseRoot "writer.out") -RedirectStandardError (Join-Path $caseRoot "writer.err")
-        Assert-Condition ($writer.WaitForExit(60000)) "$caseName atomic writer timed out."
-        foreach ($reader in $readers) { Assert-Condition ($reader.WaitForExit(60000)) "$caseName atomic reader timed out." }
+        $writerProcessName = "atomic-json:$caseName`:writer"
+        Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $writerProcessName `
+            -FilePath $pwshPath `
+            -ArgumentList @("-NoProfile","-File",$writerPath,$destination,$caseRoot,$auditPath,[string]$iterations,[string]$readerCount) `
+            -StandardOutputPath (Join-Path $caseRoot "writer.out") `
+            -StandardErrorPath (Join-Path $caseRoot "writer.err")
+        $writerResult = Complete-OwnedTestProcess -Registry $ownedTestProcesses -Name $writerProcessName -TimeoutMilliseconds 60000
+        $readerResults = @()
+        foreach ($readerProcessName in $readerProcessNames) {
+            $readerResults += Complete-OwnedTestProcess -Registry $ownedTestProcesses -Name $readerProcessName -TimeoutMilliseconds 60000
+        }
         $writerError = Get-Content -LiteralPath (Join-Path $caseRoot "writer.err") -Raw -ErrorAction SilentlyContinue
-        Assert-Condition ($writer.ExitCode -eq 0) "$caseName atomic writer failed: $writerError"
-        for ($readerIndex=0; $readerIndex -lt $readers.Count; $readerIndex++) {
-            $reader = $readers[$readerIndex]
+        Assert-Condition ($writerResult.exitCode -eq 0) "$caseName atomic writer failed: $writerError"
+        for ($readerIndex=0; $readerIndex -lt $readerResults.Count; $readerIndex++) {
             $readerError = Get-Content -LiteralPath (Join-Path $caseRoot "reader-$($readerIndex + 1).err") -Raw -ErrorAction SilentlyContinue
-            Assert-Condition ($reader.ExitCode -eq 0) "$caseName concurrent atomic reader failed: $readerError"
+            Assert-Condition ($readerResults[$readerIndex].exitCode -eq 0) "$caseName concurrent atomic reader failed: $readerError"
         }
         $final = Get-Content -LiteralPath $destination -Raw | ConvertFrom-Json -Depth 10
         $audit = @(Get-Content -LiteralPath $auditPath)
@@ -317,7 +259,7 @@ foreach ($functionName in @("Get-AtomicJsonMutexName", "Invoke-WithAtomicJsonMut
 }
 $monitorJsonBoundaryPath = Join-Path ([IO.Path]::GetTempPath()) "schoolpilot-monitor-datekind-$([Guid]::NewGuid().ToString('N')).json"
 $topLevelFailure = $null
-$topLevelCleanupFailure = $null
+$topLevelCleanupFailures = [System.Collections.Generic.List[Exception]]::new()
 try {
     [IO.File]::WriteAllText($monitorJsonBoundaryPath,
         '{"timestamp":"2026-07-22T15:58:03.1234567Z","nested":{"expiresAtUtc":"2026-07-22T15:58:03.7654321+00:00","operatorOffset":"2026-07-22T11:58:03.1111111-04:00"}}',
@@ -1885,8 +1827,12 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
     $childSummary = Join-Path $childRoot "summary.json"
     $childRollbackConfigPath = Join-Path $childRoot "rollback.json"
     $childRunId = "fatal-waf-test"
-    $sleepProcess = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @("-NoProfile", "-Command", "Start-Sleep -Seconds 60") -PassThru -NoNewWindow
+    $sleepProcess = "sleep-harness"
+    Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $sleepProcess `
+        -FilePath (Get-Process -Id $PID).Path `
+        -ArgumentList @("-NoProfile", "-Command", "Start-Sleep -Seconds 60")
     Start-Sleep -Milliseconds 200
+    $sleepProcessIdentity = Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $sleepProcess
     $childRollback = @{
         schemaVersion=1;testMode=$true;testEnvironmentSentinel="SCHOOLPILOT_ROLLOUT_TEST_ONLY";testAccountId="000000000000";
         runId=$childRunId;region="us-east-1";cluster="cluster";apiService="api";workerService="worker";
@@ -1909,8 +1855,8 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         loadProgressPath=$childProgress;loadSummaryPath=$childSummary;
         artifactsNotBeforeUtc=$childStartedAt.ToString("o");automaticRollback=$true;rollbackConfigPath=$childRollbackConfigPath;
         notificationTopicArn="arn:aws:sns:us-east-1:000000000000:test";pollSeconds=1;testMode=$true;maxIterations=10;
-        minimumWallClockSeconds=0;deadlineUtc=[DateTimeOffset]::UtcNow.AddMinutes(1).ToString("o");harnessProcessId=$sleepProcess.Id;
-        harnessProcessStartedAtUtc=([DateTimeOffset]$sleepProcess.StartTime).ToUniversalTime().ToString("o");harnessProcessPath=$sleepProcess.Path;
+        minimumWallClockSeconds=0;deadlineUtc=[DateTimeOffset]::UtcNow.AddMinutes(1).ToString("o");harnessProcessId=$sleepProcessIdentity.id;
+        harnessProcessStartedAtUtc=([DateTimeOffset]$sleepProcessIdentity.startedAtUtc).ToUniversalTime().ToString("o");harnessProcessPath=$sleepProcessIdentity.path;
         requireLoadAcceptance=$true;workload=@{stage="fatal-stage";devices=1;durationSeconds=1;screenshotBytes=1024;canaryDevices=0};
         resources=@{region="us-east-1";cluster="cluster";apiService="api";workerService="worker";targetGroupArn="target";rdsInstanceId="db";
           redisCacheClusterId="redis-001";redisReplicationGroupId="redis";vpcId="vpc";wafWebAclName="acl";wafDeviceRuleMetricName="device";
@@ -1918,17 +1864,63 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
           expectedEcsAssignPublicIp=$false;ecsTaskSubnetIds=@("private-a","private-b");expectedRedisNodeType="cache.t4g.small"}
     }
     [IO.File]::WriteAllText($childConfigPath, ($childConfig|ConvertTo-Json -Depth 15), [Text.UTF8Encoding]::new($false))
-    $oldPath = $env:PATH
-    $oldFlag = $env:SCHOOLPILOT_TEST_WAF_FLAG
-    $oldOomFlag = $env:SCHOOLPILOT_TEST_OOM_FLAG
+    $childEnvironmentNames = @(
+        "PATH",
+        "SCHOOLPILOT_TEST_API_TASK_FLAG",
+        "SCHOOLPILOT_TEST_AUTOSCALING_FLAG",
+        "SCHOOLPILOT_TEST_AUX_BREACH",
+        "SCHOOLPILOT_TEST_FAST_METRIC_AGE_SECONDS",
+        "SCHOOLPILOT_TEST_FATAL_OBSERVED_PATH",
+        "SCHOOLPILOT_TEST_FATAL_REASON",
+        "SCHOOLPILOT_TEST_FINAL_WRITTEN_PATH",
+        "SCHOOLPILOT_TEST_FIVE_MINUTE_METRIC_AGE_SECONDS",
+        "SCHOOLPILOT_TEST_METRIC_STEP_FILE",
+        "SCHOOLPILOT_TEST_METRIC_STEP_SECONDS",
+        "SCHOOLPILOT_TEST_METRIC_STEP_START",
+        "SCHOOLPILOT_TEST_METRIC_TIMESTAMP",
+        "SCHOOLPILOT_TEST_NAT_ZERO",
+        "SCHOOLPILOT_TEST_OOM_FLAG",
+        "SCHOOLPILOT_TEST_PENDING",
+        "SCHOOLPILOT_TEST_PUBLIC_IP",
+        "SCHOOLPILOT_TEST_RDS_CPU_BACKFILL",
+        "SCHOOLPILOT_TEST_RDS_CPU_BACKFILL_SPIKE",
+        "SCHOOLPILOT_TEST_RDS_CPU_BOUNDARY_STEP_FILE",
+        "SCHOOLPILOT_TEST_RDS_CPU_LOAD_WINDOW_START",
+        "SCHOOLPILOT_TEST_RDS_CPU_METRIC_AGE_SECONDS",
+        "SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_BASE",
+        "SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_PATTERN",
+        "SCHOOLPILOT_TEST_REDIS_TYPE",
+        "SCHOOLPILOT_TEST_SAMPLE_BARRIER_ARM",
+        "SCHOOLPILOT_TEST_SAMPLE_BARRIER_CONSUMED",
+        "SCHOOLPILOT_TEST_SAMPLE_BARRIER_READY",
+        "SCHOOLPILOT_TEST_SAMPLE_BARRIER_RELEASE",
+        "SCHOOLPILOT_TEST_SNAPSHOT_TIME",
+        "SCHOOLPILOT_TEST_SNAPSHOT_TIME_FILE",
+        "SCHOOLPILOT_TEST_SUMMARY_DELAY_MS",
+        "SCHOOLPILOT_TEST_SWAP_COUNTER",
+        "SCHOOLPILOT_TEST_UPDATE_LOG",
+        "SCHOOLPILOT_TEST_WAF_API_BLOCK",
+        "SCHOOLPILOT_TEST_WAF_DELAY",
+        "SCHOOLPILOT_TEST_WAF_DEVICE_BLOCK",
+        "SCHOOLPILOT_TEST_WAF_DEVICE_BLOCK_FILE",
+        "SCHOOLPILOT_TEST_WAF_FLAG",
+        "SCHOOLPILOT_TEST_WAF_PARTIAL_EMPTY",
+        "SCHOOLPILOT_TEST_WAF_READY_PATH",
+        "SCHOOLPILOT_TEST_WAF_RELEASE_PATH",
+        "SCHOOLPILOT_TEST_WAF_SPARSE_ZERO",
+        "SCHOOLPILOT_TEST_WAF_ZERO",
+        "SCHOOLPILOT_TEST_WORKER_TASK_FLAG"
+    )
+    $childEnvironmentSnapshot = [ordered]@{}
+    foreach ($childEnvironmentName in $childEnvironmentNames) {
+        $childEnvironmentSnapshot[$childEnvironmentName] =
+            [Environment]::GetEnvironmentVariable($childEnvironmentName, "Process")
+    }
+    $oldPath = [string]$childEnvironmentSnapshot["PATH"]
     $oomFlag = Join-Path $childRoot "oom.flag"
-    $oldApiTaskFlag = $env:SCHOOLPILOT_TEST_API_TASK_FLAG
     $apiTaskFlag = Join-Path $childRoot "api-task.flag"
-    $oldWorkerTaskFlag = $env:SCHOOLPILOT_TEST_WORKER_TASK_FLAG
     $workerTaskFlag = Join-Path $childRoot "worker-task.flag"
-    $oldUpdateLog = $env:SCHOOLPILOT_TEST_UPDATE_LOG
     $updateLog = Join-Path $childRoot "ecs-update.log"
-    $oldAutoscalingFlag = $env:SCHOOLPILOT_TEST_AUTOSCALING_FLAG
     $autoscalingFlag = Join-Path $childRoot "autoscaling-held.flag"
     $env:PATH = "$childRoot$([IO.Path]::PathSeparator)$oldPath"
     $env:SCHOOLPILOT_TEST_WAF_FLAG = $wafFlag
@@ -1948,18 +1940,50 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
     $completedWaitMonitor = $null
     $completedWaitHarness = $null
     $slowRollbackProcess = $null
-    $strictDurationMonitors = [ordered]@{}
-    $strictDurationHarnesses = [ordered]@{}
     $childBlockFailure = $null
-    $childBlockCleanupFailures = [System.Collections.Generic.List[string]]::new()
+    $childBlockCleanupFailures = [System.Collections.Generic.List[Exception]]::new()
     try {
-        $childMonitor = Start-Process -FilePath (Get-Process -Id $PID).Path `
+        $childMonitor = "child-monitor"
+        Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $childMonitor `
+            -FilePath (Get-Process -Id $PID).Path `
             -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$childConfigPath,"-Mode","Monitor") `
-            -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "monitor.out") -RedirectStandardError (Join-Path $childRoot "monitor.err")
+            -StandardOutputPath (Join-Path $childRoot "monitor.out") `
+            -StandardErrorPath (Join-Path $childRoot "monitor.err")
         $evidencePath = Join-Path $childEvidence "$childRunId-aws-monitor.jsonl"
         $waitDeadline = [DateTimeOffset]::UtcNow.AddSeconds($script:MonitorStartupDeadlineSeconds)
         while (-not (Test-Path -LiteralPath $evidencePath) -and [DateTimeOffset]::UtcNow -lt $waitDeadline) { Start-Sleep -Milliseconds 100 }
-        Assert-Condition (Test-Path -LiteralPath $evidencePath) "Child monitor did not begin sampling."
+        if (-not (Test-Path -LiteralPath $evidencePath)) {
+            $childStartupState = Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $childMonitor
+            $childStartupCompletion = $null
+            $childStartupCleanupFailure = $null
+            try {
+                if ($childStartupState.hasExited) {
+                    $childStartupCompletion = Complete-OwnedTestProcess -Registry $ownedTestProcesses `
+                        -Name $childMonitor -TimeoutMilliseconds 10000
+                }
+                else {
+                    Stop-OwnedTestProcess -Registry $ownedTestProcesses -Name $childMonitor
+                }
+            }
+            catch {
+                $childStartupCleanupFailure = $_
+            }
+            if (-not $ownedTestProcesses.Contains($childMonitor)) { $childMonitor = $null }
+            $childStartupOutput = Get-Content -LiteralPath (Join-Path $childRoot "monitor.out") -Raw -ErrorAction SilentlyContinue
+            $childStartupError = Get-Content -LiteralPath (Join-Path $childRoot "monitor.err") -Raw -ErrorAction SilentlyContinue
+            $childStartupCleanupMessage = if ($null -eq $childStartupCleanupFailure) {
+                "<none>"
+            }
+            else {
+                $childStartupCleanupFailure.Exception.Message
+            }
+            throw (
+                "Child monitor did not begin sampling. state=$($childStartupState|ConvertTo-Json -Compress); " +
+                "completion=$($childStartupCompletion|ConvertTo-Json -Compress); " +
+                "cleanup=$childStartupCleanupMessage; " +
+                "stdout=$childStartupOutput; stderr=$childStartupError"
+            )
+        }
         $fatal = @{reasonCodes=@("valid-http-403","cross-school-http-response","tenant-isolation-probe-unavailable","command-target-scope","invalid-teacher-response");observedAt=[DateTimeOffset]::UtcNow.ToString("o")}
         $summary = @{runId=$childRunId;stage="fatal-stage";devices=1;declaredSecondSchoolCanaryDevices=0;
           run=@{plannedTrafficSeconds=1;actualTrafficSeconds=1;completedConfiguredDuration=$true};screenshotFixture=@{decodedBytes=1024};
@@ -1968,16 +1992,20 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $progress = @{schemaVersion=1;type="progress";event="final";runId=$childRunId;stage="fatal-stage";timestamp=[DateTimeOffset]::UtcNow.ToString("o");fatalGate=$fatal}
         [IO.File]::WriteAllText($childProgress, ($progress|ConvertTo-Json -Compress -Depth 12)+[Environment]::NewLine, [Text.UTF8Encoding]::new($false))
         [IO.File]::WriteAllText($oomFlag, "oom")
-        Assert-Condition ($childMonitor.WaitForExit(30000)) "Child monitor did not fail fast."
+        $childMonitorCompletion = Complete-OwnedTestProcess -Registry $ownedTestProcesses `
+            -Name $childMonitor -TimeoutMilliseconds $script:MonitorCompletionWatchdogMilliseconds
+        $childMonitor = $null
         $childErrorText = Get-Content -LiteralPath (Join-Path $childRoot "monitor.err") -Raw -ErrorAction SilentlyContinue
         $childResult = Get-Content -LiteralPath (Join-Path $childEvidence "$childRunId-monitor-result.json") -Raw | ConvertFrom-Json -Depth 20
-        Assert-Condition ($childMonitor.ExitCode -eq 2) "Hard-gate monitor should exit 2 after a successful rollback (exit=$($childMonitor.ExitCode), stderr=$childErrorText, result=$($childResult|ConvertTo-Json -Compress -Depth 20))."
+        Assert-Condition ($childMonitorCompletion.exitCode -eq 2) "Hard-gate monitor should exit 2 after a successful rollback (exit=$($childMonitorCompletion.exitCode), stderr=$childErrorText, result=$($childResult|ConvertTo-Json -Compress -Depth 20))."
         $childEvidenceTail = Get-Content -LiteralPath $evidencePath -Tail 1 -ErrorAction SilentlyContinue
         Assert-Condition ($childResult.failures -contains "load:valid-http-403" -and $childResult.failures -contains "load:cross-school-http-response" -and $childResult.failures -contains "load:tenant-isolation-probe-unavailable" -and $childResult.failures -contains "load:command-target-scope" -and $childResult.failures -contains "load:invalid-teacher-response") "Final summary fatal reason codes must be preserved (actual: $($childResult|ConvertTo-Json -Compress -Depth 20); sample: $childEvidenceTail; stderr: $childErrorText)."
         Assert-Condition (@($childResult.failures | Where-Object { $_ -like "ecs_api_oom:*" }).Count -gt 0) "Priority test must observe the simultaneous API OOM."
         Assert-Condition ($childResult.rollback.attempted -and $childResult.rollback.action -eq "Application" -and $childResult.rollback.exitCode -eq 0) "Tenant-isolation regression must outrank a simultaneous OOM and restore the previous API/worker revisions."
-        $sleepProcess.Refresh()
-        Assert-Condition $sleepProcess.HasExited "Hard gate must terminate the bound harness process."
+        $sleepProcessState = Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $sleepProcess
+        Assert-Condition $sleepProcessState.hasExited "Hard gate must terminate the bound harness process."
+        [void](Complete-OwnedTestProcess -Registry $ownedTestProcesses -Name $sleepProcess -TimeoutMilliseconds 10000)
+        $sleepProcess = $null
 
         $oomOnlyRunId = "oom-already-emergency-monitor"
         $oomOnlyEvidence = Join-Path $childRoot "$oomOnlyRunId-evidence"
@@ -1989,8 +2017,12 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $oomOnlyRollback.runId = $oomOnlyRunId
         $oomOnlyRollback.evidenceDirectory = $oomOnlyEvidence
         [IO.File]::WriteAllText($oomOnlyRollbackPath, ($oomOnlyRollback | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
-        $oomOnlyHarness = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @("-NoProfile", "-Command", "Start-Sleep -Seconds 60") -PassThru -NoNewWindow
+        $oomOnlyHarness = "oom-only-harness"
+        Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $oomOnlyHarness `
+            -FilePath (Get-Process -Id $PID).Path `
+            -ArgumentList @("-NoProfile", "-Command", "Start-Sleep -Seconds 60")
         Start-Sleep -Milliseconds 200
+        $oomOnlyHarnessIdentity = Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $oomOnlyHarness
         $oomOnlyConfig = $childConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $oomOnlyConfig.runId = $oomOnlyRunId
         $oomOnlyConfig.evidenceDirectory = $oomOnlyEvidence
@@ -1999,27 +2031,42 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $oomOnlyConfig.rollbackConfigPath = $oomOnlyRollbackPath
         $oomOnlyConfig.artifactsNotBeforeUtc = [DateTimeOffset]::UtcNow.AddSeconds(-1).ToString("o")
         $oomOnlyConfig.deadlineUtc = [DateTimeOffset]::UtcNow.AddMinutes(1).ToString("o")
-        $oomOnlyConfig.harnessProcessId = $oomOnlyHarness.Id
-        $oomOnlyConfig.harnessProcessStartedAtUtc = ([DateTimeOffset]$oomOnlyHarness.StartTime).ToUniversalTime().ToString("o")
-        $oomOnlyConfig.harnessProcessPath = $oomOnlyHarness.Path
+        $oomOnlyConfig.harnessProcessId = $oomOnlyHarnessIdentity.id
+        $oomOnlyConfig.harnessProcessStartedAtUtc = ([DateTimeOffset]$oomOnlyHarnessIdentity.startedAtUtc).ToUniversalTime().ToString("o")
+        $oomOnlyConfig.harnessProcessPath = $oomOnlyHarnessIdentity.path
         $oomOnlyConfigPath = Join-Path $childRoot "$oomOnlyRunId-monitor.json"
         [IO.File]::WriteAllText($oomOnlyConfigPath, ($oomOnlyConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
         [IO.File]::WriteAllText($apiTaskFlag, [string]$childRollback.emergencyApiTaskDefinition, [Text.UTF8Encoding]::new($false))
         [IO.File]::WriteAllText($oomFlag, "oom", [Text.UTF8Encoding]::new($false))
         $updatesBeforeOomOnly = @(Get-Content -LiteralPath $updateLog -ErrorAction SilentlyContinue).Count
-        $oomOnlyMonitor = Start-Process -FilePath (Get-Process -Id $PID).Path `
+        $oomOnlyMonitor = "oom-only-monitor"
+        Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $oomOnlyMonitor `
+            -FilePath (Get-Process -Id $PID).Path `
             -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$oomOnlyConfigPath,"-Mode","Monitor") `
-            -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "$oomOnlyRunId.out") -RedirectStandardError (Join-Path $childRoot "$oomOnlyRunId.err")
-        Assert-Condition ($oomOnlyMonitor.WaitForExit(30000)) "Emergency-active OOM monitor did not fail fast."
+            -StandardOutputPath (Join-Path $childRoot "$oomOnlyRunId.out") `
+            -StandardErrorPath (Join-Path $childRoot "$oomOnlyRunId.err")
+        $oomOnlyMonitorCompletion = Complete-OwnedTestProcess -Registry $ownedTestProcesses `
+            -Name $oomOnlyMonitor -TimeoutMilliseconds $script:MonitorCompletionWatchdogMilliseconds
+        $oomOnlyMonitor = $null
         $oomOnlyResult = Get-Content -LiteralPath (Join-Path $oomOnlyEvidence "$oomOnlyRunId-monitor-result.json") -Raw | ConvertFrom-Json -Depth 20
         $updatesAfterOomOnly = @(Get-Content -LiteralPath $updateLog -ErrorAction SilentlyContinue).Count
-        $oomOnlyHarness.Refresh()
-        Assert-Condition ($oomOnlyMonitor.ExitCode -eq 3 -and $oomOnlyResult.status -eq "failed" -and
-            @($oomOnlyResult.failures | Where-Object { $_ -like "ecs_api_oom:*" }).Count -gt 0 -and
-            $oomOnlyResult.rollback.attempted -and $oomOnlyResult.rollback.action -eq "Oom" -and $oomOnlyResult.rollback.exitCode -eq 1 -and
-            $oomOnlyResult.rollback.error -match "already uses the reviewed emergency revision" -and
-            $updatesAfterOomOnly -eq $updatesBeforeOomOnly -and $oomOnlyHarness.HasExited) `
-            "An OOM on the active emergency revision must stop traffic and block progression without an ECS update."
+        $oomOnlyHarnessState = Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $oomOnlyHarness
+        Assert-Condition ($oomOnlyMonitorCompletion.exitCode -eq 3) `
+            "An OOM on the active emergency revision must return monitor exit code 3 (actual=$($oomOnlyMonitorCompletion.exitCode))."
+        Assert-Condition ($oomOnlyResult.status -eq "failed" -and
+            @($oomOnlyResult.failures | Where-Object { $_ -like "ecs_api_oom:*" }).Count -gt 0) `
+            "The emergency-active OOM result must preserve the OOM failure evidence (actual=$($oomOnlyResult|ConvertTo-Json -Compress -Depth 20))."
+        Assert-Condition ($oomOnlyResult.rollback.attempted -and
+            $oomOnlyResult.rollback.action -eq "Oom" -and
+            $oomOnlyResult.rollback.exitCode -eq 1 -and
+            $oomOnlyResult.rollback.error -match "already uses the reviewed emergency revision") `
+            "The emergency-active OOM rollback result must explain why no replacement revision was selected (actual=$($oomOnlyResult.rollback|ConvertTo-Json -Compress -Depth 20))."
+        Assert-Condition ($updatesAfterOomOnly -eq $updatesBeforeOomOnly) `
+            "An emergency-active OOM must not issue an ECS service update (before=$updatesBeforeOomOnly, after=$updatesAfterOomOnly)."
+        Assert-Condition $oomOnlyHarnessState.hasExited `
+            "An emergency-active OOM must stop its bound traffic harness."
+        [void](Complete-OwnedTestProcess -Registry $ownedTestProcesses -Name $oomOnlyHarness -TimeoutMilliseconds 10000)
+        $oomOnlyHarness = $null
 
         # The supervisor must arm the real monitor before releasing even the
         # first synthetic request. Exercise both immediate tenant exposure and
@@ -2097,34 +2144,65 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
                         $barrierEnvironment[$entry.Key] = [Environment]::GetEnvironmentVariable($entry.Key, "Process")
                         [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, "Process")
                     }
-                    $barrierCoordinatorProcess = Start-Process -FilePath (Get-Process -Id $PID).Path `
+                    $barrierCoordinatorProcess = "barrier-coordinator:$caseRunId"
+                    Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $barrierCoordinatorProcess `
+                        -FilePath (Get-Process -Id $PID).Path `
                         -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$sampleBarrierCoordinator,
                             "-MonitorHeartbeatPath",$caseMonitorHeartbeat,"-ArmPath",$barrierArm,"-ReadyPath",$barrierReady,
                             "-ReleasePath",$barrierRelease,"-TerminalProgressPath",$terminalProgressWritten,"-CompletedPath",$barrierCompleted) `
-                        -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "$caseRunId-barrier.out") `
-                        -RedirectStandardError (Join-Path $childRoot "$caseRunId-barrier.err")
+                        -StandardOutputPath (Join-Path $childRoot "$caseRunId-barrier.out") `
+                        -StandardErrorPath (Join-Path $childRoot "$caseRunId-barrier.err")
                 }
                 $supervisorRejected = $false
                 $supervisorFailure = ""
+                $supervisorError = $null
+                $barrierCoordinatorCleanupFailures = [System.Collections.Generic.List[Exception]]::new()
                 try { & $supervisorScript -ConfigPath $caseConfigPath -Mode Run | Out-Null }
                 catch {
+                    $supervisorError = $_
                     $supervisorFailure = $_.Exception.Message
                     $supervisorRejected = $supervisorFailure -match "AWS monitor exited with code 2"
                 }
                 finally {
                     if ($null -ne $barrierCoordinatorProcess) {
-                        [void]$barrierCoordinatorProcess.WaitForExit(5000)
-                        $barrierCoordinatorProcess.Refresh()
-                        if ($barrierCoordinatorProcess.HasExited) {
-                            $barrierCoordinatorExitCode = $barrierCoordinatorProcess.ExitCode
+                        try {
+                            $barrierCoordinatorCompletion = Complete-OwnedTestProcess `
+                                -Registry $ownedTestProcesses -Name $barrierCoordinatorProcess `
+                                -TimeoutMilliseconds 10000
+                            $barrierCoordinatorExitCode = $barrierCoordinatorCompletion.exitCode
                         }
-                        Stop-AndDrainTestProcess -Process $barrierCoordinatorProcess `
-                            -Name "$caseRunId barrier coordinator"
-                        $barrierCoordinatorProcess = $null
+                        catch {
+                            $barrierCoordinatorCleanupFailures.Add([InvalidOperationException]::new(
+                                "$caseRunId barrier coordinator cleanup failed.",
+                                $_.Exception
+                            ))
+                        }
+                        if (-not $ownedTestProcesses.Contains($barrierCoordinatorProcess)) {
+                            $barrierCoordinatorProcess = $null
+                        }
                     }
-                    foreach ($entry in $barrierEnvironment.GetEnumerator()) {
-                        [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, "Process")
+                    try {
+                        foreach ($entry in $barrierEnvironment.GetEnumerator()) {
+                            [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, "Process")
+                        }
                     }
+                    catch {
+                        $barrierCoordinatorCleanupFailures.Add([InvalidOperationException]::new(
+                            "$caseRunId barrier environment restoration failed.",
+                            $_.Exception
+                        ))
+                    }
+                }
+                if ($barrierCoordinatorCleanupFailures.Count -gt 0) {
+                    if ($null -ne $supervisorError -and -not $supervisorRejected) {
+                        Add-OwnedTestProcessCleanupFailures -Exception $supervisorError.Exception `
+                            -CleanupFailures ([Exception[]]$barrierCoordinatorCleanupFailures.ToArray())
+                        throw $supervisorError
+                    }
+                    throw [AggregateException]::new(
+                        "$caseRunId barrier coordinator cleanup failed.",
+                        [Exception[]]$barrierCoordinatorCleanupFailures.ToArray()
+                    )
                 }
                 Assert-Condition $supervisorRejected "$caseRunId must fail through the armed monitor, not before monitor startup (actual: $supervisorFailure)."
                 Assert-Condition (Test-Path -LiteralPath $caseObserved) "$caseRunId harness never observed the released start gate."
@@ -2178,35 +2256,48 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $env:SCHOOLPILOT_TEST_WAF_RELEASE_PATH = $slowWafReleasePath
         $slowRollbackExitCode = $null
         $slowRollbackFailure = $null
-        $slowRollbackCleanupFailures = [System.Collections.Generic.List[string]]::new()
-        $slowRollbackProcessId = $null
-        $slowRollbackProcessStartedAtUtc = $null
+        $slowRollbackCleanupFailures = [System.Collections.Generic.List[Exception]]::new()
         try {
-            $slowRollbackProcess = Start-Process -FilePath (Get-Process -Id $PID).Path `
+            $slowRollbackProcess = "slow-waf-rollback"
+            Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $slowRollbackProcess `
+                -FilePath (Get-Process -Id $PID).Path `
                 -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$rollbackScript,"-ConfigPath",$childRollbackConfigPath,"-Action","Waf","-Mode","Execute") `
-                -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "slow-rollback.out") -RedirectStandardError (Join-Path $childRoot "slow-rollback.err")
-            $slowRollbackProcessId = $slowRollbackProcess.Id
-            $slowRollbackProcessStartedAtUtc = $slowRollbackProcess.StartTime.ToUniversalTime()
+                -StandardOutputPath (Join-Path $childRoot "slow-rollback.out") `
+                -StandardErrorPath (Join-Path $childRoot "slow-rollback.err")
             $slowWafReadyDeadline = [DateTimeOffset]::UtcNow.AddSeconds(30)
             while (-not (Test-Path -LiteralPath $slowWafReadyPath) -and [DateTimeOffset]::UtcNow -lt $slowWafReadyDeadline) {
                 Start-Sleep -Milliseconds 100
-                $slowRollbackProcess.Refresh()
-                if ($slowRollbackProcess.HasExited) { break }
+                if ((Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $slowRollbackProcess).hasExited) { break }
             }
             $slowHeartbeatPath = Join-Path $slowEvidence "slow-waf-rollback-heartbeat-rollback-heartbeat.json"
             $slowHeartbeatDeadline = [DateTimeOffset]::UtcNow.AddSeconds(10)
             while (-not (Test-Path -LiteralPath $slowHeartbeatPath) -and [DateTimeOffset]::UtcNow -lt $slowHeartbeatDeadline) {
                 Start-Sleep -Milliseconds 100
-                $slowRollbackProcess.Refresh()
-                if ($slowRollbackProcess.HasExited) { break }
+                if ((Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $slowRollbackProcess).hasExited) { break }
             }
-            $slowRollbackError = Get-Content -LiteralPath (Join-Path $childRoot "slow-rollback.err") -Raw -ErrorAction SilentlyContinue
-            $slowRollbackOut = Get-Content -LiteralPath (Join-Path $childRoot "slow-rollback.out") -Raw -ErrorAction SilentlyContinue
             $slowStateDebugPath = Join-Path $slowEvidence "slow-waf-rollback-heartbeat-rollback-state.json"
             $slowStateDebug = Get-Content -LiteralPath $slowStateDebugPath -Raw -ErrorAction SilentlyContinue
-            $slowRollbackProcess.Refresh()
-            Assert-Condition (Test-Path -LiteralPath $slowWafReadyPath) "Slow rollback did not reach the deterministic WAF mutation barrier (exited=$($slowRollbackProcess.HasExited); state=$slowStateDebug; stdout=$slowRollbackOut; stderr=$slowRollbackError)."
-            Assert-Condition (Test-Path -LiteralPath $slowHeartbeatPath) "Slow rollback did not create its independent heartbeat (exited=$($slowRollbackProcess.HasExited); state=$slowStateDebug; stdout=$slowRollbackOut; stderr=$slowRollbackError)."
+            if (-not (Test-Path -LiteralPath $slowWafReadyPath) -or
+                -not (Test-Path -LiteralPath $slowHeartbeatPath)) {
+                $slowFailureDiagnostics = Close-OwnedTestProcessForDiagnostics `
+                    -Registry $ownedTestProcesses `
+                    -Name $slowRollbackProcess `
+                    -StandardOutputPath (Join-Path $childRoot "slow-rollback.out") `
+                    -StandardErrorPath (Join-Path $childRoot "slow-rollback.err")
+                if (-not $ownedTestProcesses.Contains($slowRollbackProcess)) { $slowRollbackProcess = $null }
+                $missingSlowArtifact = if (-not (Test-Path -LiteralPath $slowWafReadyPath)) {
+                    "the deterministic WAF mutation barrier"
+                }
+                else {
+                    "its independent heartbeat"
+                }
+                throw (
+                    "Slow rollback did not reach $missingSlowArtifact " +
+                    "(state=$($slowFailureDiagnostics.state|ConvertTo-Json -Compress); " +
+                    "rollbackState=$slowStateDebug; cleanup=$($slowFailureDiagnostics.cleanupFailure); " +
+                    "stdout=$($slowFailureDiagnostics.standardOutput); stderr=$($slowFailureDiagnostics.standardError))."
+                )
+            }
             $firstSlowHeartbeatWrite = (Get-Item -LiteralPath $slowHeartbeatPath).LastWriteTimeUtc
             $secondSlowHeartbeatWrite = $firstSlowHeartbeatWrite
             $slowHeartbeatAdvanceDeadline = [DateTimeOffset]::UtcNow.AddSeconds(10)
@@ -2214,20 +2305,15 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
                 [DateTimeOffset]::UtcNow -lt $slowHeartbeatAdvanceDeadline) {
                 Start-Sleep -Milliseconds 100
                 $secondSlowHeartbeatWrite = (Get-Item -LiteralPath $slowHeartbeatPath).LastWriteTimeUtc
-                $slowRollbackProcess.Refresh()
-                if ($slowRollbackProcess.HasExited) { break }
+                if ((Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $slowRollbackProcess).hasExited) { break }
             }
             Assert-Condition ($secondSlowHeartbeatWrite -gt $firstSlowHeartbeatWrite) "Rollback heartbeat must keep advancing while a slow AWS mutation blocks the monitor process."
             [IO.File]::WriteAllText($slowWafReleasePath, "release", [Text.UTF8Encoding]::new($false))
-            $slowRollbackExited = $slowRollbackProcess.WaitForExit(15000)
-            if ($slowRollbackExited) {
-                # A timed wait can return before Start-Process finishes draining
-                # redirected streams on Windows. Drain once before disposal.
-                $slowRollbackProcess.WaitForExit()
-                $slowRollbackProcess.Refresh()
-                $slowRollbackExitCode = $slowRollbackProcess.ExitCode
-            }
-            Assert-Condition ($slowRollbackExited -and $slowRollbackExitCode -eq 0) "Slow WAF rollback must complete within its bounded action deadline."
+            $slowRollbackCompletion = Complete-OwnedTestProcess -Registry $ownedTestProcesses `
+                -Name $slowRollbackProcess -TimeoutMilliseconds 15000
+            $slowRollbackExitCode = $slowRollbackCompletion.exitCode
+            $slowRollbackProcess = $null
+            Assert-Condition ($slowRollbackExitCode -eq 0) "Slow WAF rollback must complete within its bounded action deadline."
         }
         catch {
             $slowRollbackFailure = $_
@@ -2238,52 +2324,55 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
                     [IO.File]::WriteAllText($slowWafReleasePath, "release", [Text.UTF8Encoding]::new($false))
                 }
                 catch {
-                    $slowRollbackCleanupFailures.Add("release barrier: $($_.Exception.Message)")
+                    $slowRollbackCleanupFailures.Add([InvalidOperationException]::new(
+                        "Slow WAF rollback release-barrier cleanup failed.",
+                        $_.Exception
+                    ))
                 }
             }
             if ($null -ne $slowRollbackProcess) {
-                $slowRollbackProcessToDrain = $slowRollbackProcess
                 try {
-                    $slowRollbackProcessToDrain.Refresh()
-                    if (-not $slowRollbackProcessToDrain.HasExited) {
-                        [void]$slowRollbackProcessToDrain.WaitForExit(5000)
-                    }
-                    Stop-AndDrainTestProcess -Process $slowRollbackProcessToDrain -Name "slow WAF rollback"
+                    Stop-OwnedTestProcess -Registry $ownedTestProcesses -Name $slowRollbackProcess
                 }
                 catch {
-                    $slowRollbackCleanupFailures.Add("owned process drain: $($_.Exception.Message)")
-                    $fallbackSlowRollbackProcess = if ($null -ne $slowRollbackProcessId) {
-                        Get-Process -Id $slowRollbackProcessId -ErrorAction SilentlyContinue
-                    } else {
-                        $null
-                    }
-                    if ($null -ne $fallbackSlowRollbackProcess) {
-                        try {
-                            if ($fallbackSlowRollbackProcess.StartTime.ToUniversalTime() -ne $slowRollbackProcessStartedAtUtc) {
-                                throw "PID creation identity changed before fallback drain."
-                            }
-                            Stop-AndDrainTestProcess -Process $fallbackSlowRollbackProcess -Name "slow WAF rollback fallback"
-                        }
-                        catch {
-                            $slowRollbackCleanupFailures.Add("fallback process drain: $($_.Exception.Message)")
-                        }
-                    }
+                    $slowRollbackCleanupFailures.Add([InvalidOperationException]::new(
+                        "Slow WAF rollback owned-process cleanup failed.",
+                        $_.Exception
+                    ))
                 }
-                $slowRollbackProcess = $null
+                if (-not $ownedTestProcesses.Contains($slowRollbackProcess)) { $slowRollbackProcess = $null }
             }
             try {
-                Remove-Item Env:SCHOOLPILOT_TEST_WAF_READY_PATH,Env:SCHOOLPILOT_TEST_WAF_RELEASE_PATH -ErrorAction SilentlyContinue
+                foreach ($slowEnvironmentName in @(
+                    "SCHOOLPILOT_TEST_WAF_READY_PATH",
+                    "SCHOOLPILOT_TEST_WAF_RELEASE_PATH"
+                )) {
+                    [Environment]::SetEnvironmentVariable(
+                        $slowEnvironmentName,
+                        $childEnvironmentSnapshot[$slowEnvironmentName],
+                        "Process"
+                    )
+                }
             }
             catch {
-                $slowRollbackCleanupFailures.Add("environment restore: $($_.Exception.Message)")
+                $slowRollbackCleanupFailures.Add([InvalidOperationException]::new(
+                    "Slow WAF rollback environment restoration failed.",
+                    $_.Exception
+                ))
             }
         }
-        $slowRollbackCleanupFailureText = $slowRollbackCleanupFailures -join "; "
         if ($null -ne $slowRollbackFailure -and $slowRollbackCleanupFailures.Count -gt 0) {
-            throw "Slow WAF rollback assertion failed: $($slowRollbackFailure.Exception.Message) Cleanup also failed: $slowRollbackCleanupFailureText"
+            Add-OwnedTestProcessCleanupFailures -Exception $slowRollbackFailure.Exception `
+                -CleanupFailures ([Exception[]]$slowRollbackCleanupFailures.ToArray())
+            throw $slowRollbackFailure
         }
         if ($null -ne $slowRollbackFailure) { throw $slowRollbackFailure }
-        if ($slowRollbackCleanupFailures.Count -gt 0) { throw "Slow WAF rollback cleanup failed: $slowRollbackCleanupFailureText" }
+        if ($slowRollbackCleanupFailures.Count -gt 0) {
+            throw [AggregateException]::new(
+                "Slow WAF rollback cleanup failed.",
+                [Exception[]]$slowRollbackCleanupFailures.ToArray()
+            )
+        }
         foreach ($redirectedPath in @(
             (Join-Path $childRoot "slow-rollback.out"),
             (Join-Path $childRoot "slow-rollback.err")
@@ -2312,7 +2401,11 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
 
         Remove-Item -LiteralPath $oomFlag -ErrorAction SilentlyContinue
         $uncorrelatedRunId = "uncorrelated-valid-403"
-        $uncorrelatedHarness = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 30") -PassThru -NoNewWindow
+        $uncorrelatedHarness = "uncorrelated-harness"
+        Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $uncorrelatedHarness `
+            -FilePath (Get-Process -Id $PID).Path `
+            -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 30")
+        $uncorrelatedHarnessIdentity = Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $uncorrelatedHarness
         $uncorrelatedRollback = $childRollback | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $uncorrelatedRollback.runId = $uncorrelatedRunId
         [IO.File]::WriteAllText($childRollbackConfigPath, ($uncorrelatedRollback|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
@@ -2326,14 +2419,17 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $uncorrelatedConfig.loadSummaryPath = $uncorrelatedSummary
         $uncorrelatedConfig.rollbackConfigPath = $childRollbackConfigPath
         $uncorrelatedConfig.artifactsNotBeforeUtc = $uncorrelatedStarted.ToString("o")
-        $uncorrelatedConfig.harnessProcessId = $uncorrelatedHarness.Id
-        $uncorrelatedConfig.harnessProcessStartedAtUtc = ([DateTimeOffset]$uncorrelatedHarness.StartTime).ToUniversalTime().ToString("o")
-        $uncorrelatedConfig.harnessProcessPath = $uncorrelatedHarness.Path
+        $uncorrelatedConfig.harnessProcessId = $uncorrelatedHarnessIdentity.id
+        $uncorrelatedConfig.harnessProcessStartedAtUtc = ([DateTimeOffset]$uncorrelatedHarnessIdentity.startedAtUtc).ToUniversalTime().ToString("o")
+        $uncorrelatedConfig.harnessProcessPath = $uncorrelatedHarnessIdentity.path
         $uncorrelatedConfigPath = Join-Path $childRoot "uncorrelated-monitor.json"
         [IO.File]::WriteAllText($uncorrelatedConfigPath, ($uncorrelatedConfig|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
-        $uncorrelatedMonitor = Start-Process -FilePath (Get-Process -Id $PID).Path `
+        $uncorrelatedMonitor = "uncorrelated-monitor"
+        Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $uncorrelatedMonitor `
+            -FilePath (Get-Process -Id $PID).Path `
             -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$uncorrelatedConfigPath,"-Mode","Monitor") `
-            -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "uncorrelated.out") -RedirectStandardError (Join-Path $childRoot "uncorrelated.err")
+            -StandardOutputPath (Join-Path $childRoot "uncorrelated.out") `
+            -StandardErrorPath (Join-Path $childRoot "uncorrelated.err")
         $uncorrelatedEvidencePath = Join-Path $childEvidence "$uncorrelatedRunId-aws-monitor.jsonl"
         $uncorrelatedStartDeadline = [DateTimeOffset]::UtcNow.AddSeconds($script:MonitorStartupDeadlineSeconds)
         while (-not (Test-Path -LiteralPath $uncorrelatedEvidencePath) -and [DateTimeOffset]::UtcNow -lt $uncorrelatedStartDeadline) { Start-Sleep -Milliseconds 100 }
@@ -2344,12 +2440,20 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         [IO.File]::WriteAllText($uncorrelatedSummary, ($uncorrelatedSummaryValue|ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
         $uncorrelatedProgressValue = @{schemaVersion=1;type="progress";event="final";runId=$uncorrelatedRunId;stage="fatal-stage";timestamp=[DateTimeOffset]::UtcNow.ToString("o");fatalGate=$uncorrelatedFatal}
         [IO.File]::WriteAllText($uncorrelatedProgress, ($uncorrelatedProgressValue|ConvertTo-Json -Compress -Depth 12)+[Environment]::NewLine, [Text.UTF8Encoding]::new($false))
-        Assert-Condition ($uncorrelatedMonitor.WaitForExit(30000)) "Uncorrelated valid-403 monitor timed out."
+        [void](Complete-OwnedTestProcess -Registry $ownedTestProcesses -Name $uncorrelatedMonitor `
+            -TimeoutMilliseconds $script:MonitorCompletionWatchdogMilliseconds)
+        $uncorrelatedMonitor = $null
         $uncorrelatedResult = Get-Content -LiteralPath (Join-Path $childEvidence "$uncorrelatedRunId-monitor-result.json") -Raw | ConvertFrom-Json -Depth 20
         Assert-Condition ($uncorrelatedResult.rollback.action -eq "Application" -and $uncorrelatedResult.rollback.exitCode -eq 0) "A valid synthetic 403 without a fresh rate-rule BlockedRequests datapoint must restore the application, not weaken WAF."
+        Stop-OwnedTestProcess -Registry $ownedTestProcesses -Name $uncorrelatedHarness
+        $uncorrelatedHarness = $null
 
         $genericRejectedRunId = "generic-valid-401"
-        $genericRejectedHarness = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 30") -PassThru -NoNewWindow
+        $genericRejectedHarness = "generic-rejected-harness"
+        Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $genericRejectedHarness `
+            -FilePath (Get-Process -Id $PID).Path `
+            -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 30")
+        $genericRejectedHarnessIdentity = Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $genericRejectedHarness
         $genericRejectedRollback = $childRollback | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $genericRejectedRollback.runId = $genericRejectedRunId
         [IO.File]::WriteAllText($childRollbackConfigPath, ($genericRejectedRollback|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
@@ -2363,14 +2467,17 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $genericRejectedConfig.loadSummaryPath = $genericRejectedSummary
         $genericRejectedConfig.rollbackConfigPath = $childRollbackConfigPath
         $genericRejectedConfig.artifactsNotBeforeUtc = $genericRejectedStarted.ToString("o")
-        $genericRejectedConfig.harnessProcessId = $genericRejectedHarness.Id
-        $genericRejectedConfig.harnessProcessStartedAtUtc = ([DateTimeOffset]$genericRejectedHarness.StartTime).ToUniversalTime().ToString("o")
-        $genericRejectedConfig.harnessProcessPath = $genericRejectedHarness.Path
+        $genericRejectedConfig.harnessProcessId = $genericRejectedHarnessIdentity.id
+        $genericRejectedConfig.harnessProcessStartedAtUtc = ([DateTimeOffset]$genericRejectedHarnessIdentity.startedAtUtc).ToUniversalTime().ToString("o")
+        $genericRejectedConfig.harnessProcessPath = $genericRejectedHarnessIdentity.path
         $genericRejectedConfigPath = Join-Path $childRoot "generic-rejected-monitor.json"
         [IO.File]::WriteAllText($genericRejectedConfigPath, ($genericRejectedConfig|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
-        $genericRejectedMonitor = Start-Process -FilePath (Get-Process -Id $PID).Path `
+        $genericRejectedMonitor = "generic-rejected-monitor"
+        Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $genericRejectedMonitor `
+            -FilePath (Get-Process -Id $PID).Path `
             -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$genericRejectedConfigPath,"-Mode","Monitor") `
-            -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "generic-rejected.out") -RedirectStandardError (Join-Path $childRoot "generic-rejected.err")
+            -StandardOutputPath (Join-Path $childRoot "generic-rejected.out") `
+            -StandardErrorPath (Join-Path $childRoot "generic-rejected.err")
         $genericRejectedEvidencePath = Join-Path $childEvidence "$genericRejectedRunId-aws-monitor.jsonl"
         $genericRejectedStartDeadline = [DateTimeOffset]::UtcNow.AddSeconds($script:MonitorStartupDeadlineSeconds)
         while (-not (Test-Path -LiteralPath $genericRejectedEvidencePath) -and [DateTimeOffset]::UtcNow -lt $genericRejectedStartDeadline) { Start-Sleep -Milliseconds 100 }
@@ -2381,12 +2488,20 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         [IO.File]::WriteAllText($genericRejectedSummary, ($genericRejectedSummaryValue|ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
         $genericRejectedProgressValue = @{schemaVersion=1;type="progress";event="final";runId=$genericRejectedRunId;stage="fatal-stage";timestamp=[DateTimeOffset]::UtcNow.ToString("o");fatalGate=$genericRejectedFatal}
         [IO.File]::WriteAllText($genericRejectedProgress, ($genericRejectedProgressValue|ConvertTo-Json -Compress -Depth 12)+[Environment]::NewLine, [Text.UTF8Encoding]::new($false))
-        Assert-Condition ($genericRejectedMonitor.WaitForExit(30000)) "Generic valid-401 monitor timed out."
+        [void](Complete-OwnedTestProcess -Registry $ownedTestProcesses -Name $genericRejectedMonitor `
+            -TimeoutMilliseconds $script:MonitorCompletionWatchdogMilliseconds)
+        $genericRejectedMonitor = $null
         $genericRejectedResult = Get-Content -LiteralPath (Join-Path $childEvidence "$genericRejectedRunId-monitor-result.json") -Raw | ConvertFrom-Json -Depth 20
         Assert-Condition ($genericRejectedResult.rollback.action -eq "Application" -and $genericRejectedResult.rollback.exitCode -eq 0) "Any valid workload 401 must invoke the reviewed application rollback."
+        Stop-OwnedTestProcess -Registry $ownedTestProcesses -Name $genericRejectedHarness
+        $genericRejectedHarness = $null
 
         $combinedRunId = "combined-valid-401-rds-cpu"
-        $combinedHarness = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 30") -PassThru -NoNewWindow
+        $combinedHarness = "combined-valid-401-rds-harness"
+        Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $combinedHarness `
+            -FilePath (Get-Process -Id $PID).Path `
+            -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 30")
+        $combinedHarnessIdentity = Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $combinedHarness
         $combinedRollbackPath = Join-Path $childRoot "combined-valid-401-rds-rollback.json"
         $combinedRollback = $childRollback | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $combinedRollback.runId = $combinedRunId
@@ -2406,9 +2521,9 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $combinedConfig.loadSummaryPath = $combinedSummary
         $combinedConfig.rollbackConfigPath = $combinedRollbackPath
         $combinedConfig.artifactsNotBeforeUtc = $combinedStarted.ToString("o")
-        $combinedConfig.harnessProcessId = $combinedHarness.Id
-        $combinedConfig.harnessProcessStartedAtUtc = ([DateTimeOffset]$combinedHarness.StartTime).ToUniversalTime().ToString("o")
-        $combinedConfig.harnessProcessPath = $combinedHarness.Path
+        $combinedConfig.harnessProcessId = $combinedHarnessIdentity.id
+        $combinedConfig.harnessProcessStartedAtUtc = ([DateTimeOffset]$combinedHarnessIdentity.startedAtUtc).ToUniversalTime().ToString("o")
+        $combinedConfig.harnessProcessPath = $combinedHarnessIdentity.path
         $combinedConfig.maxIterations = 1
         $combinedConfig.deadlineUtc = [DateTimeOffset]::UtcNow.AddMinutes(5).ToString("o")
         $combinedNow = [DateTimeOffset]::UtcNow.ToUniversalTime()
@@ -2431,10 +2546,15 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_BASE = $combinedRuntimeBase.ToString("o")
         $env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_PATTERN = "three"
         try {
-            $combinedMonitor = Start-Process -FilePath (Get-Process -Id $PID).Path `
+            $combinedMonitor = "combined-valid-401-rds-monitor"
+            Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $combinedMonitor `
+                -FilePath (Get-Process -Id $PID).Path `
                 -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$combinedConfigPath,"-Mode","Monitor") `
-                -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "combined-valid-401-rds.out") -RedirectStandardError (Join-Path $childRoot "combined-valid-401-rds.err")
-            Assert-Condition ($combinedMonitor.WaitForExit(30000)) "Combined valid-401/RDS monitor timed out."
+                -StandardOutputPath (Join-Path $childRoot "combined-valid-401-rds.out") `
+                -StandardErrorPath (Join-Path $childRoot "combined-valid-401-rds.err")
+            [void](Complete-OwnedTestProcess -Registry $ownedTestProcesses -Name $combinedMonitor `
+                -TimeoutMilliseconds $script:MonitorCompletionWatchdogMilliseconds)
+            $combinedMonitor = $null
         }
         finally {
             if ($null -eq $oldCombinedRuntimeBase) { Remove-Item Env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_BASE -ErrorAction SilentlyContinue }
@@ -2448,11 +2568,17 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $combinedResult = Get-Content -LiteralPath $combinedResultPath -Raw | ConvertFrom-Json -Depth 20
         Assert-Condition ($combinedResult.failures -contains "load:valid-http-401" -and $combinedResult.failures -contains "rds_cpu") "Combined regression must observe both the valid workload 401 and three consecutive RDS CPU breaches."
         Assert-Condition ($combinedResult.rollback.attempted -and $combinedResult.rollback.action -eq "Application" -and $combinedResult.rollback.exitCode -eq 0) "RDS capacity evidence must not select an unrelated PublicEcs mutation; the simultaneous valid-traffic 401 may invoke only its corresponding Application recovery (actual=$($combinedResult.rollback|ConvertTo-Json -Compress -Depth 20); stderr=$combinedError)."
+        Stop-OwnedTestProcess -Registry $ownedTestProcesses -Name $combinedHarness
+        $combinedHarness = $null
 
         $correlatedWafBlockFlag = Join-Path $childRoot "correlated-waf-block.flag"
         $env:SCHOOLPILOT_TEST_WAF_DEVICE_BLOCK_FILE = $correlatedWafBlockFlag
         $correlatedRunId = "correlated-valid-403"
-        $correlatedHarness = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 30") -PassThru -NoNewWindow
+        $correlatedHarness = "correlated-valid-403-harness"
+        Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $correlatedHarness `
+            -FilePath (Get-Process -Id $PID).Path `
+            -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 30")
+        $correlatedHarnessIdentity = Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $correlatedHarness
         $correlatedRollback = $childRollback | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $correlatedRollback.runId = $correlatedRunId
         [IO.File]::WriteAllText($childRollbackConfigPath, ($correlatedRollback|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
@@ -2465,14 +2591,17 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $correlatedConfig.loadSummaryPath = $correlatedSummary
         $correlatedConfig.rollbackConfigPath = $childRollbackConfigPath
         $correlatedConfig.artifactsNotBeforeUtc = [DateTimeOffset]::UtcNow.AddSeconds(-1).ToString("o")
-        $correlatedConfig.harnessProcessId = $correlatedHarness.Id
-        $correlatedConfig.harnessProcessStartedAtUtc = ([DateTimeOffset]$correlatedHarness.StartTime).ToUniversalTime().ToString("o")
-        $correlatedConfig.harnessProcessPath = $correlatedHarness.Path
+        $correlatedConfig.harnessProcessId = $correlatedHarnessIdentity.id
+        $correlatedConfig.harnessProcessStartedAtUtc = ([DateTimeOffset]$correlatedHarnessIdentity.startedAtUtc).ToUniversalTime().ToString("o")
+        $correlatedConfig.harnessProcessPath = $correlatedHarnessIdentity.path
         $correlatedConfigPath = Join-Path $childRoot "correlated-monitor.json"
         [IO.File]::WriteAllText($correlatedConfigPath, ($correlatedConfig|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
-        $correlatedMonitor = Start-Process -FilePath (Get-Process -Id $PID).Path `
+        $correlatedMonitor = "correlated-valid-403-monitor"
+        Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $correlatedMonitor `
+            -FilePath (Get-Process -Id $PID).Path `
             -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$correlatedConfigPath,"-Mode","Monitor") `
-            -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "correlated.out") -RedirectStandardError (Join-Path $childRoot "correlated.err")
+            -StandardOutputPath (Join-Path $childRoot "correlated.out") `
+            -StandardErrorPath (Join-Path $childRoot "correlated.err")
         $correlatedEvidencePath = Join-Path $childEvidence "$correlatedRunId-aws-monitor.jsonl"
         $correlatedStartDeadline = [DateTimeOffset]::UtcNow.AddSeconds($script:MonitorStartupDeadlineSeconds)
         while (-not (Test-Path -LiteralPath $correlatedEvidencePath) -and [DateTimeOffset]::UtcNow -lt $correlatedStartDeadline) { Start-Sleep -Milliseconds 100 }
@@ -2484,16 +2613,23 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         [IO.File]::WriteAllText($correlatedSummary, ($correlatedSummaryValue|ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
         $correlatedProgressValue = @{schemaVersion=1;type="progress";event="final";runId=$correlatedRunId;stage="fatal-stage";timestamp=[DateTimeOffset]::UtcNow.ToString("o");fatalGate=$correlatedFatal}
         [IO.File]::WriteAllText($correlatedProgress, ($correlatedProgressValue|ConvertTo-Json -Compress -Depth 12)+[Environment]::NewLine, [Text.UTF8Encoding]::new($false))
-        Assert-Condition ($correlatedMonitor.WaitForExit(30000)) "Correlated valid-403 monitor timed out."
+        [void](Complete-OwnedTestProcess -Registry $ownedTestProcesses -Name $correlatedMonitor `
+            -TimeoutMilliseconds $script:MonitorCompletionWatchdogMilliseconds)
+        $correlatedMonitor = $null
         $correlatedResult = Get-Content -LiteralPath (Join-Path $childEvidence "$correlatedRunId-monitor-result.json") -Raw | ConvertFrom-Json -Depth 20
         Assert-Condition ($correlatedResult.rollback.action -eq "Waf" -and $correlatedResult.rollback.exitCode -eq 0) "A valid synthetic 403 corroborated by fresh device-rate BlockedRequests must switch only the reviewed WAF rate rules to COUNT."
+        Stop-OwnedTestProcess -Registry $ownedTestProcesses -Name $correlatedHarness
+        $correlatedHarness = $null
         Remove-Item Env:SCHOOLPILOT_TEST_WAF_DEVICE_BLOCK_FILE -ErrorAction SilentlyContinue
 
         foreach ($raceKind in @("summary-pending", "partial-tail")) {
             $raceRunId = "load-$raceKind-race"
-            $raceHarness = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 60") -PassThru -NoNewWindow
+            $raceHarness = "race-harness:$raceKind"
+            Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $raceHarness `
+                -FilePath (Get-Process -Id $PID).Path `
+                -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 60")
             Start-Sleep -Milliseconds 200
-            $raceHarness.Refresh()
+            $raceHarnessIdentity = Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $raceHarness
             $raceConfig = $childConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
             $raceConfig.runId = $raceRunId
             $raceConfig.automaticRollback = $false
@@ -2503,20 +2639,33 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
             $raceConfig.loadProgressPath = Join-Path $childRoot "$raceRunId-progress.jsonl"
             $raceConfig.loadSummaryPath = Join-Path $childRoot "$raceRunId-summary.json"
             $raceConfig.artifactsNotBeforeUtc = [DateTimeOffset]::UtcNow.AddSeconds(-1).ToString("o")
-            $raceConfig.harnessProcessId = $raceHarness.Id
-            $raceConfig.harnessProcessStartedAtUtc = ([DateTimeOffset]$raceHarness.StartTime).ToUniversalTime().ToString("o")
+            $raceConfig.harnessProcessId = $raceHarnessIdentity.id
+            $raceConfig.harnessProcessStartedAtUtc = ([DateTimeOffset]$raceHarnessIdentity.startedAtUtc).ToUniversalTime().ToString("o")
             $raceConfig.harnessProcessPath = (Get-Process -Id $PID).Path
             $raceConfigPath = Join-Path $childRoot "$raceRunId-monitor.json"
             [IO.File]::WriteAllText($raceConfigPath, ($raceConfig|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
-            $raceMonitor = Start-Process -FilePath (Get-Process -Id $PID).Path `
+            $raceMonitor = "race-monitor:$raceKind"
+            Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $raceMonitor `
+                -FilePath (Get-Process -Id $PID).Path `
                 -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$raceConfigPath,"-Mode","Monitor") `
-                -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "$raceRunId.out") -RedirectStandardError (Join-Path $childRoot "$raceRunId.err")
+                -StandardOutputPath (Join-Path $childRoot "$raceRunId.out") `
+                -StandardErrorPath (Join-Path $childRoot "$raceRunId.err")
             $raceEvidencePath = Join-Path $childEvidence "$raceRunId-aws-monitor.jsonl"
-            $raceStartDeadline = [DateTimeOffset]::UtcNow.AddSeconds(30)
+            $raceStartDeadline = [DateTimeOffset]::UtcNow.AddSeconds($script:MonitorStartupDeadlineSeconds)
             while (-not (Test-Path -LiteralPath $raceEvidencePath) -and [DateTimeOffset]::UtcNow -lt $raceStartDeadline) { Start-Sleep -Milliseconds 100 }
-            $raceMonitor.Refresh()
-            $raceStartError = Get-Content -LiteralPath (Join-Path $childRoot "$raceRunId.err") -Raw -ErrorAction SilentlyContinue
-            Assert-Condition (Test-Path -LiteralPath $raceEvidencePath) "$raceKind race monitor did not start (exited=$($raceMonitor.HasExited); exit=$($raceMonitor.ExitCode); stderr=$raceStartError)."
+            if (-not (Test-Path -LiteralPath $raceEvidencePath)) {
+                $raceStartDiagnostics = Close-OwnedTestProcessForDiagnostics `
+                    -Registry $ownedTestProcesses `
+                    -Name $raceMonitor `
+                    -StandardOutputPath (Join-Path $childRoot "$raceRunId.out") `
+                    -StandardErrorPath (Join-Path $childRoot "$raceRunId.err")
+                if (-not $ownedTestProcesses.Contains($raceMonitor)) { $raceMonitor = $null }
+                throw (
+                    "$raceKind race monitor did not start " +
+                    "(state=$($raceStartDiagnostics.state|ConvertTo-Json -Compress); " +
+                    "cleanup=$($raceStartDiagnostics.cleanupFailure); stderr=$($raceStartDiagnostics.standardError))."
+                )
+            }
             if ($raceKind -eq "summary-pending") {
                 $raceEvent = @{schemaVersion=1;type="progress";event="final";runId=$raceRunId;stage="fatal-stage";timestamp=[DateTimeOffset]::UtcNow.ToString("o")}
                 [IO.File]::WriteAllText($raceConfig.loadProgressPath, ($raceEvent|ConvertTo-Json -Compress -Depth 10)+[Environment]::NewLine, [Text.UTF8Encoding]::new($false))
@@ -2525,12 +2674,14 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
                 $completeEvent = @{schemaVersion=1;type="progress";event="progress";runId=$raceRunId;stage="fatal-stage";timestamp=[DateTimeOffset]::UtcNow.ToString("o")}
                 [IO.File]::WriteAllText($raceConfig.loadProgressPath, ($completeEvent|ConvertTo-Json -Compress -Depth 10)+[Environment]::NewLine+'{"event":"final"', [Text.UTF8Encoding]::new($false))
             }
-            Assert-Condition ($raceMonitor.WaitForExit(30000)) "$raceKind race monitor timed out."
+            [void](Complete-OwnedTestProcess -Registry $ownedTestProcesses -Name $raceMonitor `
+                -TimeoutMilliseconds $script:MonitorCompletionWatchdogMilliseconds)
+            $raceMonitor = $null
             $raceResult = Get-Content -LiteralPath (Join-Path $childEvidence "$raceRunId-monitor-result.json") -Raw | ConvertFrom-Json -Depth 20
             Assert-Condition ($raceResult.failures -contains "monitor_iteration_limit_reached_before_acceptance" -and
                 $raceResult.failures -notcontains "load_progress_parse_error" -and $raceResult.failures -notcontains "load_summary_invalid" -and
                 $raceResult.failures -notcontains "load_generator_process_lost") "$raceKind commit window must be retried within grace instead of invalidating the run."
-            Stop-AndDrainTestProcess -Process $raceHarness -Name "$raceKind race harness"
+            Stop-OwnedTestProcess -Registry $ownedTestProcesses -Name $raceHarness
             $raceHarness = $null
         }
 
@@ -2546,12 +2697,17 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
               expectedEcsAssignPublicIp=$false;ecsTaskSubnetIds=@("private-a","private-b");expectedRedisNodeType="cache.t4g.small"}
         }
         [IO.File]::WriteAllText($limitConfigPath, ($limitConfig|ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
-        $limitMonitor = Start-Process -FilePath (Get-Process -Id $PID).Path `
+        $limitMonitor = "iteration-limit-monitor"
+        Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $limitMonitor `
+            -FilePath (Get-Process -Id $PID).Path `
             -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$limitConfigPath,"-Mode","Monitor") `
-            -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "limit.out") -RedirectStandardError (Join-Path $childRoot "limit.err")
-        Assert-Condition ($limitMonitor.WaitForExit(30000)) "Iteration-limit monitor did not fail closed."
+            -StandardOutputPath (Join-Path $childRoot "limit.out") `
+            -StandardErrorPath (Join-Path $childRoot "limit.err")
+        $limitMonitorCompletion = Complete-OwnedTestProcess -Registry $ownedTestProcesses -Name $limitMonitor `
+            -TimeoutMilliseconds $script:MonitorCompletionWatchdogMilliseconds
+        $limitMonitor = $null
         $limitResult = Get-Content -LiteralPath (Join-Path $childEvidence "$limitRunId-monitor-result.json") -Raw | ConvertFrom-Json -Depth 20
-        Assert-Condition ($limitMonitor.ExitCode -eq 2 -and $limitResult.failures -contains "monitor_iteration_limit_reached_before_acceptance") "maxIterations must be a fail-closed ceiling, never a success condition."
+        Assert-Condition ($limitMonitorCompletion.exitCode -eq 2 -and $limitResult.failures -contains "monitor_iteration_limit_reached_before_acceptance") "maxIterations must be a fail-closed ceiling, never a success condition."
         Assert-Condition (-not $limitResult.rollback.attempted) "Monitoring completeness failures must not mutate infrastructure."
 
         function Invoke-ChildMonitorCase {
@@ -2559,17 +2715,46 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
             $CaseConfig.deadlineUtc = [DateTimeOffset]::UtcNow.AddMinutes(5).ToString("o")
             $casePath = Join-Path $childRoot "$CaseId.json"
             [IO.File]::WriteAllText($casePath, ($CaseConfig|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
-            $process = Start-Process -FilePath (Get-Process -Id $PID).Path `
-                -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$casePath,"-Mode","Monitor") `
-                -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "$CaseId.out") -RedirectStandardError (Join-Path $childRoot "$CaseId.err")
-            Assert-Condition ($process.WaitForExit(30000)) "$CaseId monitor timed out."
             $resultPath = Join-Path $childEvidence "$CaseId-monitor-result.json"
-            $caseError = Get-Content -LiteralPath (Join-Path $childRoot "$CaseId.err") -Raw -ErrorAction SilentlyContinue
-            $caseOutput = Get-Content -LiteralPath (Join-Path $childRoot "$CaseId.out") -Raw -ErrorAction SilentlyContinue
-            Assert-Condition (Test-Path -LiteralPath $resultPath -PathType Leaf) "$CaseId monitor did not write a result (exit=$($process.ExitCode); stdout=$caseOutput; stderr=$caseError)."
+            $caseEvidencePath = Join-Path $childEvidence "$CaseId-aws-monitor.jsonl"
+            $caseOutputPath = Join-Path $childRoot "$CaseId.out"
+            $caseErrorPath = Join-Path $childRoot "$CaseId.err"
+            $processName = "child-monitor:$CaseId"
+            $ownedResult = $null
+            $primaryFailure = $null
+            try {
+                $ownedResult = Invoke-OwnedTestProcessWithResult `
+                    -Registry $ownedTestProcesses `
+                    -Name $processName `
+                    -FilePath (Get-Process -Id $PID).Path `
+                    -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$casePath,"-Mode","Monitor") `
+                    -StandardOutputPath $caseOutputPath `
+                    -StandardErrorPath $caseErrorPath `
+                    -ResultPath $resultPath `
+                    -WatchdogMilliseconds $script:MonitorCompletionWatchdogMilliseconds
+            }
+            catch {
+                $primaryFailure = $_
+            }
+            $caseError = Get-Content -LiteralPath $caseErrorPath -Raw -ErrorAction SilentlyContinue
+            $caseOutput = Get-Content -LiteralPath $caseOutputPath -Raw -ErrorAction SilentlyContinue
+            $lastEvidence = Get-Content -LiteralPath $caseEvidencePath -Tail 1 -ErrorAction SilentlyContinue
+            $partialResult = Get-Content -LiteralPath $resultPath -Raw -ErrorAction SilentlyContinue
+            if ($null -ne $primaryFailure) {
+                $primaryFailure.Exception.Data["MonitorCaseId"] = $CaseId
+                $primaryFailure.Exception.Data["StandardOutput"] = $caseOutput
+                $primaryFailure.Exception.Data["StandardError"] = $caseError
+                $primaryFailure.Exception.Data["LastEvidence"] = $lastEvidence
+                $primaryFailure.Exception.Data["PartialResult"] = $partialResult
+                throw $primaryFailure
+            }
             $result = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json -Depth 30
-            $lastEvidence = Get-Content -LiteralPath (Join-Path $childEvidence "$CaseId-aws-monitor.jsonl") -Tail 1 -ErrorAction SilentlyContinue
-            return [pscustomobject]@{ process=$process; result=$result; lastEvidence=$lastEvidence }
+            return [pscustomobject]@{
+                exitCode = [int]$ownedResult.exitCode
+                result = $result
+                lastEvidence = $lastEvidence
+                durationMs = [long]$ownedResult.durationMs
+            }
         }
 
         function New-StrictDurationSummary {
@@ -2674,11 +2859,19 @@ exit 0
             )) {
                 [void]$caseHarnessStartInfo.ArgumentList.Add([string]$argument)
             }
-            $caseHarness = [Diagnostics.Process]::Start($caseHarnessStartInfo)
-            $strictDurationHarnesses[$CaseId] = $caseHarness
+            $caseHarnessProcessName = "strict-duration-harness:$CaseId"
+            $caseMonitorProcessName = "strict-duration-monitor:$CaseId"
+            Start-OwnedTestProcessFromStartInfo -Registry $ownedTestProcesses `
+                -Name $caseHarnessProcessName -StartInfo $caseHarnessStartInfo
+            $caseHarness = $caseHarnessProcessName
+            $caseHarnessIdentity = Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $caseHarness
             $caseMonitor = $null
             $caseMonitorExitCode = $null
+            $caseMonitorDurationMs = $null
             $caseBarrierRelease = $null
+            $caseResultValue = $null
+            $caseFailure = $null
+            $caseCleanupFailures = [System.Collections.Generic.List[Exception]]::new()
             try {
                 Start-Sleep -Milliseconds 200
                 $caseStartedAt = [DateTimeOffset]::UtcNow
@@ -2693,9 +2886,9 @@ exit 0
                 $caseConfig | Add-Member -NotePropertyName loadProgressPath -NotePropertyValue $caseProgress -Force
                 $caseConfig | Add-Member -NotePropertyName loadSummaryPath -NotePropertyValue $caseSummary -Force
                 $caseConfig | Add-Member -NotePropertyName artifactsNotBeforeUtc -NotePropertyValue $caseStartedAt.AddSeconds(-1).ToString("o") -Force
-                $caseConfig | Add-Member -NotePropertyName harnessProcessId -NotePropertyValue $caseHarness.Id -Force
-                $caseConfig | Add-Member -NotePropertyName harnessProcessStartedAtUtc -NotePropertyValue ([DateTimeOffset]$caseHarness.StartTime).ToUniversalTime().ToString("o") -Force
-                $caseConfig | Add-Member -NotePropertyName harnessProcessPath -NotePropertyValue $caseHarness.Path -Force
+                $caseConfig | Add-Member -NotePropertyName harnessProcessId -NotePropertyValue $caseHarnessIdentity.id -Force
+                $caseConfig | Add-Member -NotePropertyName harnessProcessStartedAtUtc -NotePropertyValue ([DateTimeOffset]$caseHarnessIdentity.startedAtUtc).ToUniversalTime().ToString("o") -Force
+                $caseConfig | Add-Member -NotePropertyName harnessProcessPath -NotePropertyValue $caseHarnessIdentity.path -Force
                 $caseConfig | Add-Member -NotePropertyName requireLoadAcceptance -NotePropertyValue $true -Force
                 $caseConfig | Add-Member -NotePropertyName testTelemetryExpectedSeconds -NotePropertyValue 1 -Force
                 $caseConfig | Add-Member -NotePropertyName workload -NotePropertyValue @{
@@ -2730,10 +2923,12 @@ exit 0
                 }
                 $env:SCHOOLPILOT_TEST_METRIC_TIMESTAMP = $caseStartedAt.ToString("o")
                 try {
-                    $caseMonitor = Start-Process -FilePath $caseHarnessStartInfo.FileName `
+                    Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $caseMonitorProcessName `
+                        -FilePath $caseHarnessStartInfo.FileName `
                         -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$casePath,"-Mode","Monitor") `
-                        -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "$CaseId.out") -RedirectStandardError (Join-Path $childRoot "$CaseId.err")
-                    $strictDurationMonitors[$CaseId] = $caseMonitor
+                        -StandardOutputPath (Join-Path $childRoot "$CaseId.out") `
+                        -StandardErrorPath (Join-Path $childRoot "$CaseId.err")
+                    $caseMonitor = $caseMonitorProcessName
                 }
                 finally {
                     if ($null -eq $oldCaseMetricTimestamp) {
@@ -2748,94 +2943,172 @@ exit 0
                 }
                 $evidencePath = Join-Path $childEvidence "$CaseId-aws-monitor.jsonl"
                 $startDeadline = [DateTimeOffset]::UtcNow.AddSeconds($script:MonitorStartupDeadlineSeconds)
-                $startError = Get-Content -LiteralPath (Join-Path $childRoot "$CaseId.err") -Raw -ErrorAction SilentlyContinue
                 if ($StopHarnessAfterFinal) {
                     while (-not (Test-Path -LiteralPath $caseBarrierReady) -and
-                        -not $caseMonitor.HasExited -and [DateTimeOffset]::UtcNow -lt $startDeadline) {
+                        -not (Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $caseMonitor).hasExited -and
+                        [DateTimeOffset]::UtcNow -lt $startDeadline) {
                         Start-Sleep -Milliseconds 100
                     }
-                    $startError = Get-Content -LiteralPath (Join-Path $childRoot "$CaseId.err") -Raw -ErrorAction SilentlyContinue
-                    Assert-Condition (Test-Path -LiteralPath $caseBarrierReady) `
-                        "$CaseId strict duration monitor did not reach its first sample barrier (stderr: $startError)."
+                    if (-not (Test-Path -LiteralPath $caseBarrierReady)) {
+                        $caseStartDiagnostics = Close-OwnedTestProcessForDiagnostics `
+                            -Registry $ownedTestProcesses `
+                            -Name $caseMonitor `
+                            -StandardOutputPath (Join-Path $childRoot "$CaseId.out") `
+                            -StandardErrorPath (Join-Path $childRoot "$CaseId.err")
+                        if (-not $ownedTestProcesses.Contains($caseMonitor)) { $caseMonitor = $null }
+                        throw (
+                            "$CaseId strict duration monitor did not reach its first sample barrier " +
+                            "(state=$($caseStartDiagnostics.state|ConvertTo-Json -Compress); " +
+                            "cleanup=$($caseStartDiagnostics.cleanupFailure); stderr=$($caseStartDiagnostics.standardError))."
+                        )
+                    }
                 }
                 else {
                     while (-not (Test-Path -LiteralPath $evidencePath) -and
-                        -not $caseMonitor.HasExited -and [DateTimeOffset]::UtcNow -lt $startDeadline) {
+                        -not (Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $caseMonitor).hasExited -and
+                        [DateTimeOffset]::UtcNow -lt $startDeadline) {
                         Start-Sleep -Milliseconds 100
                     }
-                    $startError = Get-Content -LiteralPath (Join-Path $childRoot "$CaseId.err") -Raw -ErrorAction SilentlyContinue
-                    Assert-Condition (Test-Path -LiteralPath $evidencePath) `
-                        "$CaseId strict duration monitor did not start (stderr: $startError)."
+                    if (-not (Test-Path -LiteralPath $evidencePath)) {
+                        $caseStartDiagnostics = Close-OwnedTestProcessForDiagnostics `
+                            -Registry $ownedTestProcesses `
+                            -Name $caseMonitor `
+                            -StandardOutputPath (Join-Path $childRoot "$CaseId.out") `
+                            -StandardErrorPath (Join-Path $childRoot "$CaseId.err")
+                        if (-not $ownedTestProcesses.Contains($caseMonitor)) { $caseMonitor = $null }
+                        throw (
+                            "$CaseId strict duration monitor did not start " +
+                            "(state=$($caseStartDiagnostics.state|ConvertTo-Json -Compress); " +
+                            "cleanup=$($caseStartDiagnostics.cleanupFailure); stderr=$($caseStartDiagnostics.standardError))."
+                        )
+                    }
                 }
                 [IO.File]::WriteAllText($caseSummary, ($Summary|ConvertTo-Json -Depth 15), [Text.UTF8Encoding]::new($false))
                 $finalEvent = @{schemaVersion=1;type="progress";event="final";runId=$CaseId;stage="800";timestamp=[DateTimeOffset]::UtcNow.AddSeconds($FinalWallClockOffsetSeconds).ToString("o")}
                 if ($null -ne $Summary.fatalGate) { $finalEvent.fatalGate = $Summary.fatalGate }
                 [IO.File]::AppendAllText($caseProgress, ($finalEvent|ConvertTo-Json -Compress -Depth 12)+[Environment]::NewLine, [Text.UTF8Encoding]::new($false))
                 if ($StopHarnessAfterFinal) {
-                    $release = Release-AndDrainTestProcess `
-                        -Process $caseHarness `
+                    $release = Release-OwnedTestProcess `
+                        -Registry $ownedTestProcesses `
+                        -Name $caseHarness `
                         -SignalPath $caseHarnessSignal `
-                        -Name "$CaseId strict-duration harness"
-                    [void]$strictDurationHarnesses.Remove($CaseId)
+                        -TimeoutMilliseconds 10000
                     $caseHarness = $null
                     Assert-Condition ($release.wasRunningBeforeSignal -and
                         $release.exitedAfterSignal -and $release.exitCode -eq 0) `
                         "$CaseId strict-duration harness did not exit normally after coherent terminal evidence."
                     [IO.File]::WriteAllText($caseBarrierRelease, "1", [Text.UTF8Encoding]::new($false))
                 }
-                Assert-Condition ($caseMonitor.WaitForExit(30000)) "$CaseId strict duration monitor did not finish."
-                $caseMonitor.WaitForExit()
-                $caseMonitorExitCode = $caseMonitor.ExitCode
-                $caseMonitor.Dispose()
-                [void]$strictDurationMonitors.Remove($CaseId)
+                $caseResultPath = Join-Path $childEvidence "$CaseId-monitor-result.json"
+                $caseCompletionWatch = [Diagnostics.Stopwatch]::StartNew()
+                while ($caseCompletionWatch.ElapsedMilliseconds -lt $script:MonitorCompletionWatchdogMilliseconds) {
+                    $caseMonitorState = Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $caseMonitor
+                    if ($caseMonitorState.hasExited -and (Test-Path -LiteralPath $caseResultPath -PathType Leaf)) { break }
+                    Start-Sleep -Milliseconds 100
+                }
+                $caseMonitorState = Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $caseMonitor
+                Assert-Condition ($caseMonitorState.hasExited -and (Test-Path -LiteralPath $caseResultPath -PathType Leaf)) `
+                    "$CaseId strict duration monitor did not publish a result and exit inside the 90-second watchdog."
+                $caseDrainBudgetMilliseconds = $script:MonitorCompletionWatchdogMilliseconds - [int]$caseCompletionWatch.ElapsedMilliseconds
+                Assert-Condition ($caseDrainBudgetMilliseconds -gt 0) `
+                    "$CaseId strict duration monitor exhausted its 90-second budget before redirect drain."
+                $caseMonitorCompletion = Complete-OwnedTestProcess -Registry $ownedTestProcesses `
+                    -Name $caseMonitor -TimeoutMilliseconds $caseDrainBudgetMilliseconds
+                $caseMonitorExitCode = $caseMonitorCompletion.exitCode
+                $caseCompletionWatch.Stop()
+                $caseMonitorDurationMs = [long]$caseCompletionWatch.ElapsedMilliseconds
                 $caseMonitor = $null
                 Assert-Condition (Test-Path -LiteralPath $evidencePath) `
                     "$CaseId strict duration monitor produced no evidence."
-                $result = Get-Content -LiteralPath (Join-Path $childEvidence "$CaseId-monitor-result.json") -Raw | ConvertFrom-Json -Depth 30
+                $result = Get-Content -LiteralPath $caseResultPath -Raw | ConvertFrom-Json -Depth 30
                 $lastEvidence = Get-Content -LiteralPath $evidencePath -Tail 1 -ErrorAction SilentlyContinue
-                return [pscustomobject]@{
-                    process = [pscustomobject]@{ ExitCode = $caseMonitorExitCode }
+                $caseResultValue = [pscustomobject]@{
+                    exitCode = [int]$caseMonitorExitCode
                     result = $result
                     lastEvidence = $lastEvidence
+                    durationMs = [long]$caseMonitorDurationMs
                 }
+            }
+            catch {
+                $caseFailure = $_
             }
             finally {
-                try {
-                    if ($StopHarnessAfterFinal -and
-                        $null -ne $caseBarrierRelease -and
-                        -not (Test-Path -LiteralPath $caseBarrierRelease)) {
+                if ($StopHarnessAfterFinal -and
+                    $null -ne $caseBarrierRelease -and
+                    -not (Test-Path -LiteralPath $caseBarrierRelease)) {
+                    try {
                         [IO.File]::WriteAllText($caseBarrierRelease, "1", [Text.UTF8Encoding]::new($false))
                     }
-                    if ($null -ne $caseMonitor) {
-                        Stop-AndDrainTestProcess -Process $caseMonitor -Name "$CaseId strict-duration monitor"
-                        [void]$strictDurationMonitors.Remove($CaseId)
-                        $caseMonitor = $null
-                    }
-                    if ($null -ne $caseHarness) {
-                        [void](Release-AndDrainTestProcess `
-                            -Process $caseHarness `
-                            -SignalPath $caseHarnessSignal `
-                            -Name "$CaseId strict-duration harness")
-                        [void]$strictDurationHarnesses.Remove($CaseId)
-                        $caseHarness = $null
+                    catch {
+                        $caseCleanupFailures.Add([InvalidOperationException]::new(
+                            "$CaseId sample-barrier release cleanup failed.",
+                            $_.Exception
+                        ))
                     }
                 }
-                finally {
+                if ($null -ne $caseMonitor) {
+                    try {
+                        Stop-OwnedTestProcess -Registry $ownedTestProcesses -Name $caseMonitor
+                    }
+                    catch {
+                        $caseCleanupFailures.Add([InvalidOperationException]::new(
+                            "$CaseId strict-duration monitor cleanup failed.",
+                            $_.Exception
+                        ))
+                    }
+                    if (-not $ownedTestProcesses.Contains($caseMonitor)) { $caseMonitor = $null }
+                }
+                if ($null -ne $caseHarness) {
+                    try {
+                        [void](Release-OwnedTestProcess `
+                            -Registry $ownedTestProcesses `
+                            -Name $caseHarness `
+                            -SignalPath $caseHarnessSignal `
+                            -TimeoutMilliseconds 10000)
+                    }
+                    catch {
+                        $caseCleanupFailures.Add([InvalidOperationException]::new(
+                            "$CaseId strict-duration harness cleanup failed.",
+                            $_.Exception
+                        ))
+                    }
+                    if (-not $ownedTestProcesses.Contains($caseHarness)) { $caseHarness = $null }
+                }
+                try {
                     Remove-Item -LiteralPath $caseHarnessSignal -ErrorAction SilentlyContinue
                 }
+                catch {
+                    $caseCleanupFailures.Add([InvalidOperationException]::new(
+                        "$CaseId strict-duration signal cleanup failed.",
+                        $_.Exception
+                    ))
+                }
             }
+            if ($null -ne $caseFailure -and $caseCleanupFailures.Count -gt 0) {
+                Add-OwnedTestProcessCleanupFailures -Exception $caseFailure.Exception `
+                    -CleanupFailures ([Exception[]]$caseCleanupFailures.ToArray())
+                throw $caseFailure
+            }
+            if ($null -ne $caseFailure) { throw $caseFailure }
+            if ($caseCleanupFailures.Count -gt 0) {
+                throw [AggregateException]::new(
+                    "$CaseId strict-duration cleanup failed.",
+                    [Exception[]]$caseCleanupFailures.ToArray()
+                )
+            }
+            return $caseResultValue
         }
 
         $durationExactId = "duration-monotonic-exact"
         $durationExact = Invoke-StrictDurationSummaryCase $durationExactId `
             (New-StrictDurationSummary -RunId $durationExactId -ActualTrafficSeconds 1 -ActualTrafficMilliseconds 1000 -CompletedConfiguredDuration $true) -FinalWallClockOffsetSeconds -30
-        Assert-Condition ($durationExact.process.ExitCode -eq 0 -and $durationExact.result.status -eq "completed") `
+        Assert-Condition ($durationExact.exitCode -eq 0 -and $durationExact.result.status -eq "completed") `
             "An exact monotonic millisecond duration must satisfy the reviewed tile-batch contract even when the final wall-clock label moves backward (actual: $($durationExact.result|ConvertTo-Json -Compress -Depth 30))."
 
         $durationRoundedShortId = "duration-rounded-seconds-short-ms"
         $durationRoundedShort = Invoke-StrictDurationSummaryCase $durationRoundedShortId `
             (New-StrictDurationSummary -RunId $durationRoundedShortId -ActualTrafficSeconds 1 -ActualTrafficMilliseconds 999 -CompletedConfiguredDuration $true)
-        Assert-Condition ($durationRoundedShort.process.ExitCode -eq 2 -and
+        Assert-Condition ($durationRoundedShort.exitCode -eq 2 -and
             $durationRoundedShort.result.failures -contains "load_workload_contract_mismatch") `
             "Rounded display seconds must not hide a raw monotonic duration below the configured target."
 
@@ -2844,7 +3117,7 @@ exit 0
             (New-StrictDurationSummary -RunId $durationCommittedRejectId -ActualTrafficSeconds 1 -ActualTrafficMilliseconds 999 -CompletedConfiguredDuration $true) `
             -StopHarnessAfterFinal
         $durationCommittedRejectEvidence = $durationCommittedReject.lastEvidence | ConvertFrom-Json -Depth 30
-        Assert-Condition ($durationCommittedReject.process.ExitCode -eq 2 -and
+        Assert-Condition ($durationCommittedReject.exitCode -eq 2 -and
             $durationCommittedReject.result.failures -contains "load_workload_contract_mismatch" -and
             $durationCommittedReject.result.failures -notcontains "load_generator_process_lost" -and
             $durationCommittedRejectEvidence.terminalEvidenceCommitted -eq $true) `
@@ -2853,14 +3126,14 @@ exit 0
         $durationActualMismatchId = "duration-actual-seconds-ms-mismatch"
         $durationActualMismatch = Invoke-StrictDurationSummaryCase $durationActualMismatchId `
             (New-StrictDurationSummary -RunId $durationActualMismatchId -ActualTrafficSeconds 1.001 -ActualTrafficMilliseconds 1000 -CompletedConfiguredDuration $true)
-        Assert-Condition ($durationActualMismatch.process.ExitCode -eq 2 -and
+        Assert-Condition ($durationActualMismatch.exitCode -eq 2 -and
             $durationActualMismatch.result.failures -contains "load_workload_contract_mismatch") `
             "Displayed actual seconds must equal the three-decimal value derived from raw monotonic milliseconds."
 
         $durationPlannedMismatchId = "duration-planned-seconds-ms-mismatch"
         $durationPlannedMismatch = Invoke-StrictDurationSummaryCase $durationPlannedMismatchId `
             (New-StrictDurationSummary -RunId $durationPlannedMismatchId -ActualTrafficSeconds 1 -ActualTrafficMilliseconds 1000 -CompletedConfiguredDuration $true -PlannedTrafficSeconds 1.001)
-        Assert-Condition ($durationPlannedMismatch.process.ExitCode -eq 2 -and
+        Assert-Condition ($durationPlannedMismatch.exitCode -eq 2 -and
             $durationPlannedMismatch.result.failures -contains "load_workload_contract_mismatch") `
             "Displayed planned seconds must equal the value derived from planned monotonic milliseconds."
 
@@ -2868,21 +3141,21 @@ exit 0
         $fractionalMilliseconds = 1000.5
         $durationFractionalMilliseconds = Invoke-StrictDurationSummaryCase $durationFractionalMillisecondsId `
             (New-StrictDurationSummary -RunId $durationFractionalMillisecondsId -ActualTrafficSeconds ([math]::Round($fractionalMilliseconds / 1000, 3)) -ActualTrafficMilliseconds $fractionalMilliseconds -CompletedConfiguredDuration $true)
-        Assert-Condition ($durationFractionalMilliseconds.process.ExitCode -eq 2 -and
+        Assert-Condition ($durationFractionalMilliseconds.exitCode -eq 2 -and
             $durationFractionalMilliseconds.result.failures -contains "load_workload_contract_mismatch") `
             "Raw actual traffic milliseconds must be an integer produced by the monotonic harness clock."
 
         $durationShutdownMismatchId = "duration-nonduration-shutdown-completed"
         $durationShutdownMismatch = Invoke-StrictDurationSummaryCase $durationShutdownMismatchId `
             (New-StrictDurationSummary -RunId $durationShutdownMismatchId -ActualTrafficSeconds 1 -ActualTrafficMilliseconds 1000 -CompletedConfiguredDuration $true -ShutdownReason "SIGTERM")
-        Assert-Condition ($durationShutdownMismatch.process.ExitCode -eq 2 -and
+        Assert-Condition ($durationShutdownMismatch.exitCode -eq 2 -and
             $durationShutdownMismatch.result.failures -contains "load_workload_contract_mismatch") `
             "completedConfiguredDuration=true must not make a non-duration shutdown certification-eligible."
 
         $durationLegacyId = "duration-missing-monotonic-fields"
         $durationLegacy = Invoke-StrictDurationSummaryCase $durationLegacyId `
             (New-StrictDurationSummary -RunId $durationLegacyId -ActualTrafficSeconds 1 -ActualTrafficMilliseconds 1000 -CompletedConfiguredDuration $true -LegacyTiming)
-        Assert-Condition ($durationLegacy.process.ExitCode -eq 2 -and
+        Assert-Condition ($durationLegacy.exitCode -eq 2 -and
             $durationLegacy.result.failures -contains "load_workload_contract_mismatch") `
             "A tile-batch diagnostic/certification summary missing the monotonic clock fields must fail closed."
 
@@ -2895,7 +3168,7 @@ exit 0
         $durationStringTimingSummary.run.plannedTrafficMilliseconds = "1000"
         $durationStringTimingSummary.run.actualTrafficMilliseconds = "1000"
         $durationStringTiming = Invoke-StrictDurationSummaryCase $durationStringTimingId $durationStringTimingSummary
-        Assert-Condition ($durationStringTiming.process.ExitCode -eq 2 -and
+        Assert-Condition ($durationStringTiming.exitCode -eq 2 -and
             $durationStringTiming.result.failures -contains "load_workload_contract_mismatch") `
             "String-encoded timing fields must not satisfy the strict JSON numeric timing contract."
 
@@ -2903,7 +3176,7 @@ exit 0
         $durationFatalGate = @{reasonCodes=@("tenant-isolation-probe-unavailable");observedAt=[DateTimeOffset]::UtcNow.ToString("o")}
         $durationFatal = Invoke-StrictDurationSummaryCase $durationFatalId `
             (New-StrictDurationSummary -RunId $durationFatalId -ActualTrafficSeconds 0.25 -ActualTrafficMilliseconds 250 -CompletedConfiguredDuration $false -ShutdownReason "fatal-tenant-isolation-probe-unavailable" -FatalGate $durationFatalGate)
-        Assert-Condition ($durationFatal.process.ExitCode -eq 2 -and
+        Assert-Condition ($durationFatal.exitCode -eq 2 -and
             $durationFatal.result.failures -contains "load_workload_contract_mismatch" -and
             $durationFatal.result.failures -contains "load:tenant-isolation-probe-unavailable") `
             "An early fatal run must retain its fatal reason while remaining ineligible for duration acceptance."
@@ -2916,7 +3189,7 @@ exit 0
         $sparseWafCase = Invoke-ChildMonitorCase "sparse-waf-zero" $sparseWafConfig
         Remove-Item Env:SCHOOLPILOT_TEST_WAF_SPARSE_ZERO -ErrorAction SilentlyContinue
         $sparseWafSample = $sparseWafCase.lastEvidence | ConvertFrom-Json -Depth 30
-        Assert-Condition ($sparseWafCase.process.ExitCode -eq 0 -and $sparseWafCase.result.status -eq "completed") "Sparse zero-event WAF counters must not invalidate a healthy monitor sample."
+        Assert-Condition ($sparseWafCase.exitCode -eq 0 -and $sparseWafCase.result.status -eq "completed") "Sparse zero-event WAF counters must not invalidate a healthy monitor sample."
         Assert-Condition ($sparseWafSample.waf.deviceBlockedSparseZero -eq $true -and $sparseWafSample.waf.apiBlockedSparseZero -eq $true) "Sparse WAF zero substitution must remain explicit in monitor evidence."
 
         $partialWafConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
@@ -2926,7 +3199,7 @@ exit 0
         $env:SCHOOLPILOT_TEST_WAF_PARTIAL_EMPTY = "1"
         $partialWafCase = Invoke-ChildMonitorCase "partial-waf-unavailable" $partialWafConfig
         Remove-Item Env:SCHOOLPILOT_TEST_WAF_PARTIAL_EMPTY -ErrorAction SilentlyContinue
-        Assert-Condition ($partialWafCase.process.ExitCode -eq 2 -and
+        Assert-Condition ($partialWafCase.exitCode -eq 2 -and
             $partialWafCase.result.failures -contains "missing_metric:waf_device_blocked" -and
             $partialWafCase.result.failures -contains "missing_metric:waf_api_blocked") "Partial WAF telemetry must remain fail-closed instead of being converted to a sparse zero."
 
@@ -2937,7 +3210,7 @@ exit 0
         $env:SCHOOLPILOT_TEST_FIVE_MINUTE_METRIC_AGE_SECONDS = "600"
         $slowFreshCase = Invoke-ChildMonitorCase "five-minute-runtime-freshness" $slowFreshConfig
         Remove-Item Env:SCHOOLPILOT_TEST_FIVE_MINUTE_METRIC_AGE_SECONDS -ErrorAction SilentlyContinue
-        Assert-Condition ($slowFreshCase.process.ExitCode -eq 0 -and $slowFreshCase.result.status -eq "completed") "A healthy five-minute credit datapoint 600 seconds old must remain fresh while one-minute metrics stay current."
+        Assert-Condition ($slowFreshCase.exitCode -eq 0 -and $slowFreshCase.result.status -eq "completed") "A healthy five-minute credit datapoint 600 seconds old must remain fresh while one-minute metrics stay current."
 
         $slowStaleConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $slowStaleConfig.runId = "five-minute-runtime-stale"
@@ -2957,7 +3230,7 @@ exit 0
         $env:SCHOOLPILOT_TEST_RDS_CPU_METRIC_AGE_SECONDS = "210"
         $rdsCpuLagCase = Invoke-ChildMonitorCase "rds-cpu-publication-lag" $rdsCpuLagConfig
         Remove-Item Env:SCHOOLPILOT_TEST_RDS_CPU_METRIC_AGE_SECONDS -ErrorAction SilentlyContinue
-        Assert-Condition ($rdsCpuLagCase.process.ExitCode -eq 2 -and
+        Assert-Condition ($rdsCpuLagCase.exitCode -eq 2 -and
             $rdsCpuLagCase.result.failures -contains "monitor_iteration_limit_reached_before_acceptance" -and
             $rdsCpuLagCase.result.failures -notcontains "stale_metric:rds_cpu") "A live RDS CPU series with one additional period of publication lag must remain runtime-valid without padding cumulative in-run evidence."
 
@@ -2969,7 +3242,7 @@ exit 0
         $rdsCpuStaleCase = Invoke-ChildMonitorCase "rds-cpu-truly-stale" $rdsCpuStaleConfig
         Remove-Item Env:SCHOOLPILOT_TEST_RDS_CPU_METRIC_AGE_SECONDS -ErrorAction SilentlyContinue
         $rdsCpuStaleFailures = @($rdsCpuStaleCase.result.failures | Where-Object { $_ -like "stale_metric:*" })
-        Assert-Condition ($rdsCpuStaleCase.process.ExitCode -eq 2 -and
+        Assert-Condition ($rdsCpuStaleCase.exitCode -eq 2 -and
             $rdsCpuStaleFailures.Count -eq 1 -and
             $rdsCpuStaleFailures[0] -eq "stale_metric:rds_cpu") "An RDS CPU series older than four raw minutes must still fail closed without implicating current metrics."
 
@@ -3022,7 +3295,7 @@ exit 0
         $publicContract.minimumWallClockSeconds = 0
         $publicContract.resources.expectedEcsAssignPublicIp = $true
         $publicIpCase = Invoke-ChildMonitorCase "public-ip-contract" $publicContract
-        Assert-Condition ($publicIpCase.process.ExitCode -eq 2 -and $publicIpCase.result.failures -contains "ecs_network_contract_mismatch") "Public-ECS gate must reject services/tasks without the expected public IPv4 contract."
+        Assert-Condition ($publicIpCase.exitCode -eq 2 -and $publicIpCase.result.failures -contains "ecs_network_contract_mismatch") "Public-ECS gate must reject services/tasks without the expected public IPv4 contract."
 
         $pendingConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $pendingConfig.runId = "pending-modification-gate"
@@ -3040,7 +3313,7 @@ exit 0
         $natZero.resources.expectedNatGatewayCount = 0
         $natZeroCase = Invoke-ChildMonitorCase "nat-zero-contract" $natZero
         $natZeroEvidence = Get-Content -LiteralPath (Join-Path $childEvidence "nat-zero-contract-aws-monitor.jsonl") -Tail 1 -ErrorAction SilentlyContinue
-        Assert-Condition ($natZeroCase.process.ExitCode -eq 0 -and $natZeroCase.result.status -eq "completed") "Post-removal gate must accept exactly zero NAT gateways (actual: $($natZeroCase.result|ConvertTo-Json -Compress -Depth 20); sample: $natZeroEvidence)."
+        Assert-Condition ($natZeroCase.exitCode -eq 0 -and $natZeroCase.result.status -eq "completed") "Post-removal gate must accept exactly zero NAT gateways (actual: $($natZeroCase.result|ConvertTo-Json -Compress -Depth 20); sample: $natZeroEvidence)."
         Remove-Item Env:SCHOOLPILOT_TEST_NAT_ZERO -ErrorAction SilentlyContinue
 
         $cadenceConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
@@ -3048,7 +3321,7 @@ exit 0
         $cadenceConfig.minimumWallClockSeconds = 0
         $cadenceConfig | Add-Member -NotePropertyName testTelemetryExpectedSeconds -NotePropertyValue 180 -Force
         $cadenceCase = Invoke-ChildMonitorCase "telemetry-cadence-contract" $cadenceConfig
-        Assert-Condition ($cadenceCase.process.ExitCode -eq 2 -and $cadenceCase.result.acceptance.violations -contains "telemetry_coverage:ecs_api_cpu" -and
+        Assert-Condition ($cadenceCase.exitCode -eq 2 -and $cadenceCase.result.acceptance.violations -contains "telemetry_coverage:ecs_api_cpu" -and
             $cadenceCase.result.acceptance.violations -contains "telemetry_cadence:ecs_api_cpu") "Acceptance must reject sparse/repeated telemetry that lacks unique 60-second coverage and span."
 
         $rdsBackfillConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
@@ -3059,7 +3332,7 @@ exit 0
         $rdsBackfillConfig | Add-Member -NotePropertyName testTelemetryMetricNames -NotePropertyValue @("rds_cpu") -Force
         $env:SCHOOLPILOT_TEST_RDS_CPU_BACKFILL = "1"
         $rdsBackfillCase = Invoke-ChildMonitorCase "rds-cpu-publication-backfill" $rdsBackfillConfig
-        Assert-Condition ($rdsBackfillCase.process.ExitCode -eq 0 -and $rdsBackfillCase.result.status -eq "completed" -and
+        Assert-Condition ($rdsBackfillCase.exitCode -eq 0 -and $rdsBackfillCase.result.status -eq "completed" -and
             $rdsBackfillCase.result.acceptance.metrics.rds_cpu.count -eq 2 -and
             $rdsBackfillCase.result.acceptance.metrics.rds_cpu.maximum -eq 12) (
                 "Delayed RDS CPU datapoints returned in one poll must backfill strict one-minute acceptance coverage. " +
@@ -3071,7 +3344,7 @@ exit 0
         $env:SCHOOLPILOT_TEST_RDS_CPU_BACKFILL_SPIKE = "1"
         $rdsSpikeCase = Invoke-ChildMonitorCase "rds-cpu-publication-backfill-spike" $rdsSpikeConfig
         $rdsSpikeSample = $rdsSpikeCase.lastEvidence | ConvertFrom-Json -Depth 30
-        Assert-Condition ($rdsSpikeCase.process.ExitCode -eq 2 -and
+        Assert-Condition ($rdsSpikeCase.exitCode -eq 2 -and
             $rdsSpikeCase.result.acceptance.violations -contains "rds_cpu_peak" -and
             $rdsSpikeCase.result.acceptance.metrics.rds_cpu.maximum -eq 70 -and
             $rdsSpikeSample.metrics.rdsCpuPercent -eq 10 -and
@@ -3099,7 +3372,7 @@ exit 0
         $runtimeSeriesConfig.runId = "rds-cpu-delayed-three-runtime"
         $env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_PATTERN = "three"
         $threeRuntimeCase = Invoke-ChildMonitorCase "rds-cpu-delayed-three-runtime" $runtimeSeriesConfig
-        Assert-Condition ($threeRuntimeCase.process.ExitCode -eq 2 -and
+        Assert-Condition ($threeRuntimeCase.exitCode -eq 2 -and
             $threeRuntimeCase.result.failures -contains "rds_cpu") "Three consecutive delayed RDS CPU breach datapoints returned together must trigger the runtime gate."
 
         $runtimeSeriesConfig.runId = "rds-cpu-delayed-gap-runtime"
@@ -3135,7 +3408,7 @@ exit 0
         $boundaryRuntimeConfig.runId = "rds-cpu-boundary-three-post-start"
         $boundaryRuntimeConfig.maxIterations = 4
         $boundaryThreeCase = Invoke-ChildMonitorCase "rds-cpu-boundary-three-post-start" $boundaryRuntimeConfig
-        Assert-Condition ($boundaryThreeCase.process.ExitCode -eq 2 -and
+        Assert-Condition ($boundaryThreeCase.exitCode -eq 2 -and
             $boundaryThreeCase.result.failures -contains "rds_cpu") "The third consecutive post-start RDS breach must trigger even when an earlier pre-monitor breach was ignored."
         Remove-Item Env:SCHOOLPILOT_TEST_RDS_CPU_BOUNDARY_STEP_FILE -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $boundaryStepFile -ErrorAction SilentlyContinue
@@ -3152,8 +3425,12 @@ exit 0
         $loadWindowStartEvent = @{schemaVersion=1;type="progress";event="start";runId=$loadWindowRunId;stage="window";timestamp=$loadWindowStart.ToString("o")}
         [IO.File]::WriteAllText($loadWindowProgress, ($loadWindowStartEvent|ConvertTo-Json -Compress -Depth 10)+[Environment]::NewLine, [Text.UTF8Encoding]::new($false))
         Remove-Item -LiteralPath $loadWindowSummary -ErrorAction SilentlyContinue
-        $loadWindowHarness = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 60") -PassThru -NoNewWindow
+        $loadWindowHarness = "load-window-harness"
+        Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $loadWindowHarness `
+            -FilePath (Get-Process -Id $PID).Path `
+            -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 60")
         Start-Sleep -Milliseconds 200
+        $loadWindowHarnessIdentity = Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $loadWindowHarness
         $loadWindowConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $loadWindowConfig.runId = $loadWindowRunId
         $loadWindowConfig.phase = "Waf"
@@ -3163,38 +3440,51 @@ exit 0
         $loadWindowConfig | Add-Member -NotePropertyName loadProgressPath -NotePropertyValue $loadWindowProgress -Force
         $loadWindowConfig | Add-Member -NotePropertyName loadSummaryPath -NotePropertyValue $loadWindowSummary -Force
         $loadWindowConfig | Add-Member -NotePropertyName artifactsNotBeforeUtc -NotePropertyValue $loadWindowStart.AddSeconds(-1).ToString("o") -Force
-        $loadWindowConfig | Add-Member -NotePropertyName harnessProcessId -NotePropertyValue $loadWindowHarness.Id -Force
-        $loadWindowConfig | Add-Member -NotePropertyName harnessProcessStartedAtUtc -NotePropertyValue ([DateTimeOffset]$loadWindowHarness.StartTime).ToUniversalTime().ToString("o") -Force
-        $loadWindowConfig | Add-Member -NotePropertyName harnessProcessPath -NotePropertyValue $loadWindowHarness.Path -Force
+        $loadWindowConfig | Add-Member -NotePropertyName harnessProcessId -NotePropertyValue $loadWindowHarnessIdentity.id -Force
+        $loadWindowConfig | Add-Member -NotePropertyName harnessProcessStartedAtUtc -NotePropertyValue ([DateTimeOffset]$loadWindowHarnessIdentity.startedAtUtc).ToUniversalTime().ToString("o") -Force
+        $loadWindowConfig | Add-Member -NotePropertyName harnessProcessPath -NotePropertyValue $loadWindowHarnessIdentity.path -Force
         $loadWindowConfig | Add-Member -NotePropertyName requireLoadAcceptance -NotePropertyValue $true -Force
         $loadWindowConfig | Add-Member -NotePropertyName workload -NotePropertyValue @{stage="window";devices=1;durationSeconds=180;screenshotBytes=1024;canaryDevices=0} -Force
         $loadWindowConfig | Add-Member -NotePropertyName testTelemetryMetricNames -NotePropertyValue @("rds_cpu") -Force
         $loadWindowConfigPath = Join-Path $childRoot "$loadWindowRunId-monitor.json"
         [IO.File]::WriteAllText($loadWindowConfigPath, ($loadWindowConfig|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
         $env:SCHOOLPILOT_TEST_RDS_CPU_LOAD_WINDOW_START = $loadWindowStart.ToString("o")
-        $loadWindowMonitor = Start-Process -FilePath (Get-Process -Id $PID).Path `
+        $loadWindowMonitor = "load-window-monitor"
+        Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $loadWindowMonitor `
+            -FilePath (Get-Process -Id $PID).Path `
             -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$loadWindowConfigPath,"-Mode","Monitor") `
-            -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "$loadWindowRunId.out") -RedirectStandardError (Join-Path $childRoot "$loadWindowRunId.err")
+            -StandardOutputPath (Join-Path $childRoot "$loadWindowRunId.out") `
+            -StandardErrorPath (Join-Path $childRoot "$loadWindowRunId.err")
         $loadWindowEvidencePath = Join-Path $childEvidence "$loadWindowRunId-aws-monitor.jsonl"
         $loadWindowStartDeadline = [DateTimeOffset]::UtcNow.AddSeconds(60)
-        while (-not (Test-Path -LiteralPath $loadWindowEvidencePath) -and -not $loadWindowMonitor.HasExited -and [DateTimeOffset]::UtcNow -lt $loadWindowStartDeadline) { Start-Sleep -Milliseconds 100 }
-        $loadWindowStartError = Get-Content -LiteralPath (Join-Path $childRoot "$loadWindowRunId.err") -Raw -ErrorAction SilentlyContinue
-        Assert-Condition (Test-Path -LiteralPath $loadWindowEvidencePath) "Load-window boundary monitor did not start (exited=$($loadWindowMonitor.HasExited); stderr=$loadWindowStartError)."
+        while (-not (Test-Path -LiteralPath $loadWindowEvidencePath) -and
+            -not (Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $loadWindowMonitor).hasExited -and
+            [DateTimeOffset]::UtcNow -lt $loadWindowStartDeadline) { Start-Sleep -Milliseconds 100 }
+        if (-not (Test-Path -LiteralPath $loadWindowEvidencePath)) {
+            $loadWindowDiagnostic = Close-OwnedTestProcessForDiagnostics `
+                -Registry $ownedTestProcesses -Name $loadWindowMonitor `
+                -StandardOutputPath (Join-Path $childRoot "$loadWindowRunId.out") `
+                -StandardErrorPath (Join-Path $childRoot "$loadWindowRunId.err")
+            if (-not $ownedTestProcesses.Contains($loadWindowMonitor)) { $loadWindowMonitor = $null }
+            throw "Load-window boundary monitor did not start (exited=$($loadWindowDiagnostic.state.hasExited); cleanup=$($loadWindowDiagnostic.cleanupFailure); stdout=$($loadWindowDiagnostic.standardOutput); stderr=$($loadWindowDiagnostic.standardError))."
+        }
         $loadWindowSummaryValue = @{runId=$loadWindowRunId;stage="window";devices=1;declaredSecondSchoolCanaryDevices=0;
           run=@{plannedTrafficSeconds=180;actualTrafficSeconds=181;completedConfiguredDuration=$true};screenshotFixture=@{decodedBytes=1024};thresholds=@{passed=$true};fatalGate=$null}
         [IO.File]::WriteAllText($loadWindowSummary, ($loadWindowSummaryValue|ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
         $loadWindowFinalEvent = @{schemaVersion=1;type="progress";event="final";runId=$loadWindowRunId;stage="window";timestamp=[DateTimeOffset]::UtcNow.ToString("o")}
         [IO.File]::AppendAllText($loadWindowProgress, ($loadWindowFinalEvent|ConvertTo-Json -Compress -Depth 10)+[Environment]::NewLine, [Text.UTF8Encoding]::new($false))
-        Assert-Condition ($loadWindowMonitor.WaitForExit(90000)) "Load-window boundary monitor did not finish."
+        $loadWindowMonitorCompletion = Complete-OwnedTestProcess -Registry $ownedTestProcesses `
+            -Name $loadWindowMonitor -TimeoutMilliseconds $script:MonitorCompletionWatchdogMilliseconds
+        $loadWindowMonitor = $null
         $loadWindowResult = Get-Content -LiteralPath (Join-Path $childEvidence "$loadWindowRunId-monitor-result.json") -Raw | ConvertFrom-Json -Depth 30
-        Assert-Condition ($loadWindowMonitor.ExitCode -eq 2 -and
+        Assert-Condition ($loadWindowMonitorCompletion.exitCode -eq 2 -and
             $loadWindowResult.failures -contains "run_acceptance_failed" -and
             $loadWindowResult.failures -notcontains "rds_cpu" -and
             $loadWindowResult.acceptance.violations -contains "rds_cpu_peak" -and
             $loadWindowResult.acceptance.metrics.rds_cpu.count -eq 4 -and
             $loadWindowResult.acceptance.metrics.rds_cpu.maximum -eq 70) "Load telemetry must use the full actual traffic window, retain its delayed tail spike, and exclude pre-start, post-stop, and future RDS points across later polls."
         Remove-Item Env:SCHOOLPILOT_TEST_RDS_CPU_LOAD_WINDOW_START -ErrorAction SilentlyContinue
-        Stop-AndDrainTestProcess -Process $loadWindowHarness -Name "load-window harness"
+        Stop-OwnedTestProcess -Registry $ownedTestProcesses -Name $loadWindowHarness
         $loadWindowHarness = $null
 
         $futureFinalRunId = "load-future-final-rejected"
@@ -3204,8 +3494,12 @@ exit 0
         $futureFinalStartEvent = @{schemaVersion=1;type="progress";event="start";runId=$futureFinalRunId;stage="future";timestamp=$futureFinalStartedAt.ToString("o")}
         [IO.File]::WriteAllText($futureFinalProgress, ($futureFinalStartEvent|ConvertTo-Json -Compress -Depth 10)+[Environment]::NewLine, [Text.UTF8Encoding]::new($false))
         Remove-Item -LiteralPath $futureFinalSummary -ErrorAction SilentlyContinue
-        $futureFinalHarness = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 60") -PassThru -NoNewWindow
+        $futureFinalHarness = "future-final-harness"
+        Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $futureFinalHarness `
+            -FilePath (Get-Process -Id $PID).Path `
+            -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 60")
         Start-Sleep -Milliseconds 200
+        $futureFinalHarnessIdentity = Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $futureFinalHarness
         $futureFinalConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $futureFinalConfig.runId = $futureFinalRunId
         $futureFinalConfig.phase = "Waf"
@@ -3215,54 +3509,72 @@ exit 0
         $futureFinalConfig | Add-Member -NotePropertyName loadProgressPath -NotePropertyValue $futureFinalProgress -Force
         $futureFinalConfig | Add-Member -NotePropertyName loadSummaryPath -NotePropertyValue $futureFinalSummary -Force
         $futureFinalConfig | Add-Member -NotePropertyName artifactsNotBeforeUtc -NotePropertyValue $futureFinalStartedAt.AddSeconds(-1).ToString("o") -Force
-        $futureFinalConfig | Add-Member -NotePropertyName harnessProcessId -NotePropertyValue $futureFinalHarness.Id -Force
-        $futureFinalConfig | Add-Member -NotePropertyName harnessProcessStartedAtUtc -NotePropertyValue ([DateTimeOffset]$futureFinalHarness.StartTime).ToUniversalTime().ToString("o") -Force
-        $futureFinalConfig | Add-Member -NotePropertyName harnessProcessPath -NotePropertyValue $futureFinalHarness.Path -Force
+        $futureFinalConfig | Add-Member -NotePropertyName harnessProcessId -NotePropertyValue $futureFinalHarnessIdentity.id -Force
+        $futureFinalConfig | Add-Member -NotePropertyName harnessProcessStartedAtUtc -NotePropertyValue ([DateTimeOffset]$futureFinalHarnessIdentity.startedAtUtc).ToUniversalTime().ToString("o") -Force
+        $futureFinalConfig | Add-Member -NotePropertyName harnessProcessPath -NotePropertyValue $futureFinalHarnessIdentity.path -Force
         $futureFinalConfig | Add-Member -NotePropertyName requireLoadAcceptance -NotePropertyValue $true -Force
         $futureFinalConfig | Add-Member -NotePropertyName workload -NotePropertyValue @{stage="future";devices=1;durationSeconds=1;screenshotBytes=1024;canaryDevices=0} -Force
         $futureFinalConfigPath = Join-Path $childRoot "$futureFinalRunId-monitor.json"
         [IO.File]::WriteAllText($futureFinalConfigPath, ($futureFinalConfig|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
-        $futureFinalMonitor = Start-Process -FilePath (Get-Process -Id $PID).Path `
+        $futureFinalMonitor = "future-final-monitor"
+        Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $futureFinalMonitor `
+            -FilePath (Get-Process -Id $PID).Path `
             -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$futureFinalConfigPath,"-Mode","Monitor") `
-            -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "$futureFinalRunId.out") -RedirectStandardError (Join-Path $childRoot "$futureFinalRunId.err")
+            -StandardOutputPath (Join-Path $childRoot "$futureFinalRunId.out") `
+            -StandardErrorPath (Join-Path $childRoot "$futureFinalRunId.err")
         $futureFinalEvidencePath = Join-Path $childEvidence "$futureFinalRunId-aws-monitor.jsonl"
         $futureFinalStartDeadline = [DateTimeOffset]::UtcNow.AddSeconds(60)
-        while (-not (Test-Path -LiteralPath $futureFinalEvidencePath) -and -not $futureFinalMonitor.HasExited -and [DateTimeOffset]::UtcNow -lt $futureFinalStartDeadline) { Start-Sleep -Milliseconds 100 }
-        $futureFinalStartError = Get-Content -LiteralPath (Join-Path $childRoot "$futureFinalRunId.err") -Raw -ErrorAction SilentlyContinue
-        Assert-Condition (Test-Path -LiteralPath $futureFinalEvidencePath) "Future-final rejection monitor did not start (exited=$($futureFinalMonitor.HasExited); stderr=$futureFinalStartError)."
+        while (-not (Test-Path -LiteralPath $futureFinalEvidencePath) -and
+            -not (Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $futureFinalMonitor).hasExited -and
+            [DateTimeOffset]::UtcNow -lt $futureFinalStartDeadline) { Start-Sleep -Milliseconds 100 }
+        if (-not (Test-Path -LiteralPath $futureFinalEvidencePath)) {
+            $futureFinalDiagnostic = Close-OwnedTestProcessForDiagnostics `
+                -Registry $ownedTestProcesses -Name $futureFinalMonitor `
+                -StandardOutputPath (Join-Path $childRoot "$futureFinalRunId.out") `
+                -StandardErrorPath (Join-Path $childRoot "$futureFinalRunId.err")
+            if (-not $ownedTestProcesses.Contains($futureFinalMonitor)) { $futureFinalMonitor = $null }
+            throw "Future-final rejection monitor did not start (exited=$($futureFinalDiagnostic.state.hasExited); cleanup=$($futureFinalDiagnostic.cleanupFailure); stdout=$($futureFinalDiagnostic.standardOutput); stderr=$($futureFinalDiagnostic.standardError))."
+        }
         $futureFinalSummaryValue = @{runId=$futureFinalRunId;stage="future";devices=1;declaredSecondSchoolCanaryDevices=0;
           run=@{plannedTrafficSeconds=1;actualTrafficSeconds=1;completedConfiguredDuration=$true};screenshotFixture=@{decodedBytes=1024};thresholds=@{passed=$true};fatalGate=$null}
         [IO.File]::WriteAllText($futureFinalSummary, ($futureFinalSummaryValue|ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
         $futureFinalEvent = @{schemaVersion=1;type="progress";event="final";runId=$futureFinalRunId;stage="future";timestamp=[DateTimeOffset]::UtcNow.AddMinutes(10).ToString("o")}
         [IO.File]::AppendAllText($futureFinalProgress, ($futureFinalEvent|ConvertTo-Json -Compress -Depth 10)+[Environment]::NewLine, [Text.UTF8Encoding]::new($false))
-        Assert-Condition ($futureFinalMonitor.WaitForExit(90000)) "Future-final rejection monitor did not finish."
+        $futureFinalMonitorCompletion = Complete-OwnedTestProcess -Registry $ownedTestProcesses `
+            -Name $futureFinalMonitor -TimeoutMilliseconds $script:MonitorCompletionWatchdogMilliseconds
+        $futureFinalMonitor = $null
         $futureFinalResult = Get-Content -LiteralPath (Join-Path $childEvidence "$futureFinalRunId-monitor-result.json") -Raw | ConvertFrom-Json -Depth 30
-        Assert-Condition ($futureFinalMonitor.ExitCode -eq 2 -and
+        Assert-Condition ($futureFinalMonitorCompletion.exitCode -eq 2 -and
             $futureFinalResult.failures -contains "load_workload_contract_mismatch" -and
             -not $futureFinalResult.rollback.attempted) "A future-dated final progress record must fail closed without extending telemetry or guessing at rollback."
-        Stop-AndDrainTestProcess -Process $futureFinalHarness -Name "future-final harness"
+        Stop-OwnedTestProcess -Registry $ownedTestProcesses -Name $futureFinalHarness
         $futureFinalHarness = $null
 
-        $fiveMinuteConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
-        $fiveMinuteConfig.runId = "five-minute-telemetry-complete"
-        $fiveMinuteConfig.minimumWallClockSeconds = 2
-        $fiveMinuteConfig.maxIterations = 5
-        $fiveMinuteConfig | Add-Member -NotePropertyName testMinimumIterationsBeforeAcceptance -NotePropertyValue 2 -Force
-        $fiveMinuteConfig | Add-Member -NotePropertyName testTelemetryExpectedSeconds -NotePropertyValue 600 -Force
-        $fiveMinuteConfig | Add-Member -NotePropertyName testTelemetryMetricNames -NotePropertyValue @("rds_cpu_credit","rds_surplus_charged","redis_cpu_credit") -Force
-        $env:SCHOOLPILOT_TEST_METRIC_STEP_FILE = Join-Path $childRoot "five-minute-complete-counter.txt"
-        $env:SCHOOLPILOT_TEST_METRIC_STEP_START = [DateTimeOffset]::UtcNow.AddSeconds(-600).ToString("o")
-        $env:SCHOOLPILOT_TEST_METRIC_STEP_SECONDS = "300"
-        $fiveMinuteCase = Invoke-ChildMonitorCase "five-minute-telemetry-complete" $fiveMinuteConfig
-        Assert-Condition ($fiveMinuteCase.process.ExitCode -eq 0) "Healthy five-minute credit/surplus telemetry must use proportional coverage and a bounded 360-second gap (actual: $($fiveMinuteCase.result|ConvertTo-Json -Compress -Depth 30))."
+        for ($fiveMinuteIteration = 1; $fiveMinuteIteration -le $FiveMinuteTelemetryRepeatCount; $fiveMinuteIteration++) {
+            $fiveMinuteSuffix = if ($FiveMinuteTelemetryRepeatCount -eq 1) { "" } else { "-$fiveMinuteIteration" }
+            $fiveMinuteCompleteCaseId = "five-minute-telemetry-complete$fiveMinuteSuffix"
+            $fiveMinuteGappedCaseId = "five-minute-telemetry-gapped$fiveMinuteSuffix"
+            $fiveMinuteConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+            $fiveMinuteConfig.runId = $fiveMinuteCompleteCaseId
+            $fiveMinuteConfig.minimumWallClockSeconds = 2
+            $fiveMinuteConfig.maxIterations = 5
+            $fiveMinuteConfig | Add-Member -NotePropertyName testMinimumIterationsBeforeAcceptance -NotePropertyValue 2 -Force
+            $fiveMinuteConfig | Add-Member -NotePropertyName testTelemetryExpectedSeconds -NotePropertyValue 600 -Force
+            $fiveMinuteConfig | Add-Member -NotePropertyName testTelemetryMetricNames -NotePropertyValue @("rds_cpu_credit","rds_surplus_charged","redis_cpu_credit") -Force
+            $env:SCHOOLPILOT_TEST_METRIC_STEP_FILE = Join-Path $childRoot "$fiveMinuteCompleteCaseId-counter.txt"
+            $env:SCHOOLPILOT_TEST_METRIC_STEP_START = [DateTimeOffset]::UtcNow.AddSeconds(-600).ToString("o")
+            $env:SCHOOLPILOT_TEST_METRIC_STEP_SECONDS = "300"
+            $fiveMinuteCase = Invoke-ChildMonitorCase $fiveMinuteCompleteCaseId $fiveMinuteConfig
+            Assert-Condition ($fiveMinuteCase.exitCode -eq 0) "Healthy five-minute credit/surplus telemetry must use proportional coverage and a bounded 360-second gap (iteration=$fiveMinuteIteration, actual: $($fiveMinuteCase.result|ConvertTo-Json -Compress -Depth 30))."
 
-        $gappedFiveMinute = $fiveMinuteConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
-        $gappedFiveMinute.runId = "five-minute-telemetry-gapped"
-        $env:SCHOOLPILOT_TEST_METRIC_STEP_FILE = Join-Path $childRoot "five-minute-gapped-counter.txt"
-        $env:SCHOOLPILOT_TEST_METRIC_STEP_START = [DateTimeOffset]::UtcNow.AddSeconds(-800).ToString("o")
-        $env:SCHOOLPILOT_TEST_METRIC_STEP_SECONDS = "400"
-        $gappedFiveMinuteCase = Invoke-ChildMonitorCase "five-minute-telemetry-gapped" $gappedFiveMinute
-        Assert-Condition ($gappedFiveMinuteCase.result.acceptance.violations -contains "telemetry_cadence:rds_cpu_credit") "A >360-second gap in five-minute credit telemetry must fail acceptance."
+            $gappedFiveMinute = $fiveMinuteConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+            $gappedFiveMinute.runId = $fiveMinuteGappedCaseId
+            $env:SCHOOLPILOT_TEST_METRIC_STEP_FILE = Join-Path $childRoot "$fiveMinuteGappedCaseId-counter.txt"
+            $env:SCHOOLPILOT_TEST_METRIC_STEP_START = [DateTimeOffset]::UtcNow.AddSeconds(-800).ToString("o")
+            $env:SCHOOLPILOT_TEST_METRIC_STEP_SECONDS = "400"
+            $gappedFiveMinuteCase = Invoke-ChildMonitorCase $fiveMinuteGappedCaseId $gappedFiveMinute
+            Assert-Condition ($gappedFiveMinuteCase.result.acceptance.violations -contains "telemetry_cadence:rds_cpu_credit") "A >360-second gap in five-minute credit telemetry must fail acceptance (iteration=$fiveMinuteIteration)."
+        }
         Remove-Item Env:SCHOOLPILOT_TEST_METRIC_STEP_FILE,Env:SCHOOLPILOT_TEST_METRIC_STEP_START,Env:SCHOOLPILOT_TEST_METRIC_STEP_SECONDS -ErrorAction SilentlyContinue
 
         $auxConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
@@ -3298,21 +3610,9 @@ exit 0
         Remove-Item Env:SCHOOLPILOT_TEST_WAF_ZERO -ErrorAction SilentlyContinue
         Remove-Item Env:SCHOOLPILOT_TEST_WAF_DEVICE_BLOCK,Env:SCHOOLPILOT_TEST_WAF_API_BLOCK -ErrorAction SilentlyContinue
         Remove-Item Env:SCHOOLPILOT_TEST_METRIC_STEP_FILE,Env:SCHOOLPILOT_TEST_METRIC_STEP_START,Env:SCHOOLPILOT_TEST_METRIC_STEP_SECONDS -ErrorAction SilentlyContinue
-        $preRollbackProcesses = [ordered]@{}
-        foreach ($processVariable in @(
-            "slowRollbackProcess",
-            "uncorrelatedMonitor", "uncorrelatedHarness",
-            "genericRejectedMonitor", "genericRejectedHarness",
-            "combinedMonitor", "combinedHarness",
-            "correlatedMonitor", "correlatedHarness",
-            "raceMonitor", "raceHarness"
-        )) {
-            $candidate = Get-Variable $processVariable -ErrorAction SilentlyContinue
-            if ($null -ne $candidate -and $null -ne $candidate.Value) {
-                $preRollbackProcesses[$processVariable] = $candidate.Value
-            }
-        }
-        Stop-AndDrainTestProcesses -Processes $preRollbackProcesses
+        # All earlier cases should have released their entries. Drain any
+        # unexpected survivor before final-stage fixtures reuse rollback state.
+        Stop-AllOwnedTestProcesses -Registry $ownedTestProcesses
 
         $env:SCHOOLPILOT_TEST_REDIS_TYPE = "cache.t4g.micro"
         $env:SCHOOLPILOT_TEST_SNAPSHOT_TIME = [DateTimeOffset]::UtcNow.ToString("o")
@@ -3323,13 +3623,13 @@ exit 0
         $finalSnapshot.resources.expectedRedisNodeType = "cache.t4g.micro"
         $finalSnapshot | Add-Member -NotePropertyName redisResizeCompletedAtUtc -NotePropertyValue ([DateTimeOffset]::UtcNow.AddHours(-1).ToString("o")) -Force
         $finalSnapshotCase = Invoke-ChildMonitorCase "final-automated-snapshot" $finalSnapshot
-        Assert-Condition ($finalSnapshotCase.process.ExitCode -eq 0 -and $finalSnapshotCase.result.automatedRedisSnapshot.accepted) "Final gate must verify cache.t4g.micro and a later available automated snapshot."
+        Assert-Condition ($finalSnapshotCase.exitCode -eq 0 -and $finalSnapshotCase.result.automatedRedisSnapshot.accepted) "Final gate must verify cache.t4g.micro and a later available automated snapshot."
 
         Remove-Item Env:SCHOOLPILOT_TEST_SNAPSHOT_TIME -ErrorAction SilentlyContinue
         $missingSnapshot = $finalSnapshot | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $missingSnapshot.runId = "final-missing-snapshot"
         $missingSnapshotCase = Invoke-ChildMonitorCase "final-missing-snapshot" $missingSnapshot
-        Assert-Condition ($missingSnapshotCase.process.ExitCode -eq 2 -and $missingSnapshotCase.result.failures -contains "monitor_iteration_limit_reached_before_acceptance") "Final acceptance must wait for an available automated snapshot created after resize (actual: $($missingSnapshotCase.result|ConvertTo-Json -Compress -Depth 30); evidence: $($missingSnapshotCase.lastEvidence))."
+        Assert-Condition ($missingSnapshotCase.exitCode -eq 2 -and $missingSnapshotCase.result.failures -contains "monitor_iteration_limit_reached_before_acceptance") "Final acceptance must wait for an available automated snapshot created after resize (actual: $($missingSnapshotCase.result|ConvertTo-Json -Compress -Depth 30); evidence: $($missingSnapshotCase.lastEvidence))."
 
         $completedWaitRunId = "final-completed-awaits-snapshot"
         $completedWaitProgress = Join-Path $childRoot "$completedWaitRunId-progress.jsonl"
@@ -3339,8 +3639,12 @@ exit 0
         Remove-Item -LiteralPath $completedWaitSummary,$completedWaitSnapshotFile,$completedWaitRollbackEvidence -ErrorAction SilentlyContinue
         # Keep the bound dummy generator alive beyond every observation wait;
         # the test stops it explicitly after snapshot acceptance.
-        $completedWaitHarness = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 180") -PassThru -NoNewWindow
+        $completedWaitHarness = "completed-wait-harness"
+        Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $completedWaitHarness `
+            -FilePath (Get-Process -Id $PID).Path `
+            -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 180")
         Start-Sleep -Milliseconds 200
+        $completedWaitHarnessIdentity = Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $completedWaitHarness
         $completedWaitStarted = [DateTimeOffset]::UtcNow.AddSeconds(-1)
         $completedWaitMetricTimestamp = [DateTimeOffset]::UtcNow
         $initialCompletedWaitProgress = @{schemaVersion=1;type="progress";event="start";runId=$completedWaitRunId;stage="endurance";timestamp=$completedWaitMetricTimestamp.ToString("o")}
@@ -3360,9 +3664,9 @@ exit 0
         $completedWaitConfig.minimumWallClockSeconds = 0
         $completedWaitConfig.maxIterations = 15
         $completedWaitConfig.deadlineUtc = [DateTimeOffset]::UtcNow.AddMinutes(5).ToString("o")
-        $completedWaitConfig.harnessProcessId = $completedWaitHarness.Id
-        $completedWaitConfig.harnessProcessStartedAtUtc = ([DateTimeOffset]$completedWaitHarness.StartTime).ToUniversalTime().ToString("o")
-        $completedWaitConfig.harnessProcessPath = $completedWaitHarness.Path
+        $completedWaitConfig.harnessProcessId = $completedWaitHarnessIdentity.id
+        $completedWaitConfig.harnessProcessStartedAtUtc = ([DateTimeOffset]$completedWaitHarnessIdentity.startedAtUtc).ToUniversalTime().ToString("o")
+        $completedWaitConfig.harnessProcessPath = $completedWaitHarnessIdentity.path
         $completedWaitConfig.workload = @{
             stage="endurance";devices=810;durationSeconds=1;screenshotBytes=40960;canaryDevices=10
             workloadSchemaVersion="classpilot-tile-batch-v1"
@@ -3394,17 +3698,27 @@ exit 0
         $env:SCHOOLPILOT_TEST_METRIC_TIMESTAMP = $completedWaitMetricTimestamp.ToString("o")
         $env:SCHOOLPILOT_TEST_SNAPSHOT_TIME_FILE = $completedWaitSnapshotFile
         try {
-            $completedWaitMonitor = Start-Process -FilePath (Get-Process -Id $PID).Path `
+            $completedWaitMonitor = "completed-wait-monitor"
+            Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $completedWaitMonitor `
+                -FilePath (Get-Process -Id $PID).Path `
                 -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$completedWaitConfigPath,"-Mode","Monitor") `
-                -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "$completedWaitRunId.out") -RedirectStandardError (Join-Path $childRoot "$completedWaitRunId.err")
+                -StandardOutputPath (Join-Path $childRoot "$completedWaitRunId.out") `
+                -StandardErrorPath (Join-Path $childRoot "$completedWaitRunId.err")
             Remove-Item Env:SCHOOLPILOT_TEST_METRIC_TIMESTAMP -ErrorAction SilentlyContinue
             $completedWaitBarrierDeadline = [DateTimeOffset]::UtcNow.AddSeconds($script:MonitorStartupDeadlineSeconds)
             while (-not (Test-Path -LiteralPath $completedWaitBarrierReady) -and
-                -not $completedWaitMonitor.HasExited -and [DateTimeOffset]::UtcNow -lt $completedWaitBarrierDeadline) {
+                -not (Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $completedWaitMonitor).hasExited -and
+                [DateTimeOffset]::UtcNow -lt $completedWaitBarrierDeadline) {
                 Start-Sleep -Milliseconds 100
             }
-            $completedWaitBarrierError = Get-Content -LiteralPath (Join-Path $childRoot "$completedWaitRunId.err") -Raw -ErrorAction SilentlyContinue
-            Assert-Condition (Test-Path -LiteralPath $completedWaitBarrierReady) "Completed-final snapshot-wait monitor did not reach its first sample barrier (stderr: $completedWaitBarrierError)."
+            if (-not (Test-Path -LiteralPath $completedWaitBarrierReady)) {
+                $completedWaitBarrierDiagnostic = Close-OwnedTestProcessForDiagnostics `
+                    -Registry $ownedTestProcesses -Name $completedWaitMonitor `
+                    -StandardOutputPath (Join-Path $childRoot "$completedWaitRunId.out") `
+                    -StandardErrorPath (Join-Path $childRoot "$completedWaitRunId.err")
+                if (-not $ownedTestProcesses.Contains($completedWaitMonitor)) { $completedWaitMonitor = $null }
+                throw "Completed-final snapshot-wait monitor did not reach its first sample barrier (exited=$($completedWaitBarrierDiagnostic.state.hasExited); cleanup=$($completedWaitBarrierDiagnostic.cleanupFailure); stdout=$($completedWaitBarrierDiagnostic.standardOutput); stderr=$($completedWaitBarrierDiagnostic.standardError))."
+            }
 
             $completedWaitSummaryValue = @{
               runId=$completedWaitRunId;stage="endurance";devices=810;declaredSecondSchoolCanaryDevices=10
@@ -3445,8 +3759,14 @@ exit 0
         $completedWaitEvidencePath = Join-Path $childEvidence "$completedWaitRunId-aws-monitor.jsonl"
         $completedWaitStartDeadline = [DateTimeOffset]::UtcNow.AddSeconds($script:MonitorStartupDeadlineSeconds)
         while (-not (Test-Path -LiteralPath $completedWaitEvidencePath) -and [DateTimeOffset]::UtcNow -lt $completedWaitStartDeadline) { Start-Sleep -Milliseconds 100 }
-        $completedWaitStartError = Get-Content -LiteralPath (Join-Path $childRoot "$completedWaitRunId.err") -Raw -ErrorAction SilentlyContinue
-        Assert-Condition (Test-Path -LiteralPath $completedWaitEvidencePath) "Completed-final snapshot-wait monitor did not start (stderr: $completedWaitStartError)."
+        if (-not (Test-Path -LiteralPath $completedWaitEvidencePath)) {
+            $completedWaitStartDiagnostic = Close-OwnedTestProcessForDiagnostics `
+                -Registry $ownedTestProcesses -Name $completedWaitMonitor `
+                -StandardOutputPath (Join-Path $childRoot "$completedWaitRunId.out") `
+                -StandardErrorPath (Join-Path $childRoot "$completedWaitRunId.err")
+            if (-not $ownedTestProcesses.Contains($completedWaitMonitor)) { $completedWaitMonitor = $null }
+            throw "Completed-final snapshot-wait monitor did not start (exited=$($completedWaitStartDiagnostic.state.hasExited); cleanup=$($completedWaitStartDiagnostic.cleanupFailure); stdout=$($completedWaitStartDiagnostic.standardOutput); stderr=$($completedWaitStartDiagnostic.standardError))."
+        }
 
         $completedWaitSample = $null
         # A Windows mock-AWS sweep launches enough short-lived pwsh processes
@@ -3455,7 +3775,7 @@ exit 0
         $completedWaitSampleDeadline = [DateTimeOffset]::UtcNow.AddSeconds(60)
         while (
             $null -eq $completedWaitSample -and
-            -not $completedWaitMonitor.HasExited -and
+            -not (Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $completedWaitMonitor).hasExited -and
             [DateTimeOffset]::UtcNow -lt $completedWaitSampleDeadline
         ) {
             foreach ($line in @(Get-Content -LiteralPath $completedWaitEvidencePath -ErrorAction SilentlyContinue)) {
@@ -3467,28 +3787,38 @@ exit 0
             }
             if ($null -eq $completedWaitSample) { Start-Sleep -Milliseconds 100 }
         }
-        $completedWaitMonitor.Refresh()
-        $completedWaitExitCode = if ($completedWaitMonitor.HasExited) { $completedWaitMonitor.ExitCode } else { $null }
+        $completedWaitMonitorState = Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $completedWaitMonitor
+        $completedWaitExitCode = $completedWaitMonitorState.exitCode
         $completedWaitDiagnosticResult = Get-Content -LiteralPath (Join-Path $childEvidence "$completedWaitRunId-monitor-result.json") -Raw -ErrorAction SilentlyContinue
-        $completedWaitDiagnosticError = Get-Content -LiteralPath (Join-Path $childRoot "$completedWaitRunId.err") -Raw -ErrorAction SilentlyContinue
         $completedWaitDiagnosticEvidence = @(Get-Content -LiteralPath $completedWaitEvidencePath -Tail 3 -ErrorAction SilentlyContinue)
-        Assert-Condition (
-            $null -ne $completedWaitSample -and
-            $completedWaitSample.immediateFailures -notcontains "load_progress_stale"
-        ) "A valid completed final workload must remain accepted after its progress artifact becomes old while the automated snapshot is pending (monitorExited=$($completedWaitMonitor.HasExited); exitCode=$completedWaitExitCode; sample=$($completedWaitSample|ConvertTo-Json -Compress -Depth 20); result=$completedWaitDiagnosticResult; stderr=$completedWaitDiagnosticError; evidence=$($completedWaitDiagnosticEvidence -join ' || '))."
+        if ($null -eq $completedWaitSample -or
+            $completedWaitSample.immediateFailures -contains "load_progress_stale") {
+            $completedWaitSampleDiagnostic = Close-OwnedTestProcessForDiagnostics `
+                -Registry $ownedTestProcesses -Name $completedWaitMonitor `
+                -StandardOutputPath (Join-Path $childRoot "$completedWaitRunId.out") `
+                -StandardErrorPath (Join-Path $childRoot "$completedWaitRunId.err")
+            if (-not $ownedTestProcesses.Contains($completedWaitMonitor)) { $completedWaitMonitor = $null }
+            throw "A valid completed final workload must remain accepted after its progress artifact becomes old while the automated snapshot is pending (monitorExited=$($completedWaitMonitorState.hasExited); exitCode=$completedWaitExitCode; sample=$($completedWaitSample|ConvertTo-Json -Compress -Depth 20); result=$completedWaitDiagnosticResult; cleanup=$($completedWaitSampleDiagnostic.cleanupFailure); stdout=$($completedWaitSampleDiagnostic.standardOutput); stderr=$($completedWaitSampleDiagnostic.standardError); evidence=$($completedWaitDiagnosticEvidence -join ' || '))."
+        }
         Start-Sleep -Milliseconds 1200
-        $completedWaitMonitor.Refresh()
+        $completedWaitMonitorState = Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $completedWaitMonitor
         $earlyCompletedWaitResult = Get-Content -LiteralPath (Join-Path $childEvidence "$completedWaitRunId-monitor-result.json") -Raw -ErrorAction SilentlyContinue
-        Assert-Condition (-not $completedWaitMonitor.HasExited -and -not (Test-Path -LiteralPath $completedWaitRollbackEvidence)) "The final monitor must keep waiting without Redis rollback after traffic completes and before the post-resize automated snapshot appears (result: $earlyCompletedWaitResult)."
+        if ($completedWaitMonitorState.hasExited -or (Test-Path -LiteralPath $completedWaitRollbackEvidence)) {
+            $completedWaitEarlyExitDiagnostic = Close-OwnedTestProcessForDiagnostics `
+                -Registry $ownedTestProcesses -Name $completedWaitMonitor `
+                -StandardOutputPath (Join-Path $childRoot "$completedWaitRunId.out") `
+                -StandardErrorPath (Join-Path $childRoot "$completedWaitRunId.err")
+            if (-not $ownedTestProcesses.Contains($completedWaitMonitor)) { $completedWaitMonitor = $null }
+            throw "The final monitor must keep waiting without Redis rollback after traffic completes and before the post-resize automated snapshot appears (result=$earlyCompletedWaitResult; cleanup=$($completedWaitEarlyExitDiagnostic.cleanupFailure); stdout=$($completedWaitEarlyExitDiagnostic.standardOutput); stderr=$($completedWaitEarlyExitDiagnostic.standardError))."
+        }
 
         [IO.File]::WriteAllText($completedWaitSnapshotFile, [DateTimeOffset]::UtcNow.ToString("o"), [Text.UTF8Encoding]::new($false))
-        Assert-Condition ($completedWaitMonitor.WaitForExit(60000)) "Completed-final monitor did not accept the later automated snapshot."
-        # Timed WaitForExit can leave redirected-stream completion and the native
-        # exit code stale on Windows. Drain once, then refresh before asserting.
-        $completedWaitMonitor.WaitForExit()
-        $completedWaitMonitor.Refresh()
-        $completedWaitFinalExitCode = $completedWaitMonitor.ExitCode
+        $completedWaitMonitorCompletion = Complete-OwnedTestProcess -Registry $ownedTestProcesses `
+            -Name $completedWaitMonitor -TimeoutMilliseconds $script:MonitorCompletionWatchdogMilliseconds
+        $completedWaitFinalExitCode = $completedWaitMonitorCompletion.exitCode
+        $completedWaitMonitor = $null
         $completedWaitResult = Get-Content -LiteralPath (Join-Path $childEvidence "$completedWaitRunId-monitor-result.json") -Raw | ConvertFrom-Json -Depth 30
+        $completedWaitDiagnosticError = Get-Content -LiteralPath (Join-Path $childRoot "$completedWaitRunId.err") -Raw -ErrorAction SilentlyContinue
         Assert-Condition ($completedWaitFinalExitCode -eq 0 -and $completedWaitResult.status -eq "completed" -and $completedWaitResult.automatedRedisSnapshot.accepted -and
             -not (Test-Path -LiteralPath $completedWaitRollbackEvidence)) "An old, valid completed progress artifact must remain accepted until a qualifying post-resize automated snapshot arrives, with no Redis rollback (exit=$completedWaitFinalExitCode; result=$($completedWaitResult|ConvertTo-Json -Compress -Depth 30); stderr=$completedWaitDiagnosticError)."
         Assert-Condition (
@@ -3502,7 +3832,7 @@ exit 0
             $completedWaitResult.workload.tileBatch.screenshotLogicalOperations -eq 800 -and
             $completedWaitResult.workload.tileBatch.screenshotAttempts -eq 800
         ) "The actual monitor writer must seal the schema, endpoint shape, 20x40 cohort contract, and per-tile logical accounting for supervisor continuity."
-        Stop-AndDrainTestProcess -Process $completedWaitHarness -Name "completed-wait harness"
+        Stop-OwnedTestProcess -Registry $ownedTestProcesses -Name $completedWaitHarness
         $completedWaitHarness = $null
         Remove-Item Env:SCHOOLPILOT_TEST_SNAPSHOT_TIME_FILE -ErrorAction SilentlyContinue
         Remove-Item Env:SCHOOLPILOT_TEST_REDIS_TYPE -ErrorAction SilentlyContinue
@@ -3531,70 +3861,44 @@ exit 0
         $childBlockFailure = $_
     }
     finally {
-        if ($strictDurationMonitors.Count -gt 0) {
+        if ($ownedTestProcesses.Count -gt 0) {
             try {
-                Stop-AndDrainTestProcesses -Processes $strictDurationMonitors
-                $strictDurationMonitors.Clear()
+                Stop-AllOwnedTestProcesses -Registry $ownedTestProcesses
             }
             catch {
-                $childBlockCleanupFailures.Add("strict-duration monitor drain: $($_.Exception.Message)")
-            }
-        }
-        if ($strictDurationHarnesses.Count -gt 0) {
-            try {
-                Stop-AndDrainTestProcesses -Processes $strictDurationHarnesses
-                $strictDurationHarnesses.Clear()
-            }
-            catch {
-                $childBlockCleanupFailures.Add("strict-duration process drain: $($_.Exception.Message)")
+                $childBlockCleanupFailures.Add([InvalidOperationException]::new(
+                    "Owned process drain failed in the child rollout block.",
+                    $_.Exception
+                ))
             }
         }
         try {
-            Stop-AndDrainTestProcesses -Processes ([ordered]@{
-                "child monitor" = $childMonitor
-                "OOM-only monitor" = $oomOnlyMonitor
-                "OOM-only harness" = $oomOnlyHarness
-                "limit monitor" = $limitMonitor
-                "load-window monitor" = $loadWindowMonitor
-                "load-window harness" = $loadWindowHarness
-                "future-final monitor" = $futureFinalMonitor
-                "future-final harness" = $futureFinalHarness
-                "completed-wait monitor" = $completedWaitMonitor
-                "completed-wait harness" = $completedWaitHarness
-                "slow WAF rollback" = $slowRollbackProcess
-                "sleep harness" = $sleepProcess
-            })
+            foreach ($childEnvironmentName in $childEnvironmentNames) {
+                [Environment]::SetEnvironmentVariable(
+                    $childEnvironmentName,
+                    $childEnvironmentSnapshot[$childEnvironmentName],
+                    "Process"
+                )
+            }
         }
         catch {
-            $childBlockCleanupFailures.Add("process drain: $($_.Exception.Message)")
+            $childBlockCleanupFailures.Add([InvalidOperationException]::new(
+                "Environment restore failed in the child rollout block.",
+                $_.Exception
+            ))
         }
-        try {
-            $env:PATH = $oldPath
-            $env:SCHOOLPILOT_TEST_WAF_FLAG = $oldFlag
-            $env:SCHOOLPILOT_TEST_OOM_FLAG = $oldOomFlag
-            $env:SCHOOLPILOT_TEST_API_TASK_FLAG = $oldApiTaskFlag
-            $env:SCHOOLPILOT_TEST_WORKER_TASK_FLAG = $oldWorkerTaskFlag
-            $env:SCHOOLPILOT_TEST_UPDATE_LOG = $oldUpdateLog
-            $env:SCHOOLPILOT_TEST_AUTOSCALING_FLAG = $oldAutoscalingFlag
-            Remove-Item Env:SCHOOLPILOT_TEST_NAT_ZERO -ErrorAction SilentlyContinue
-            Remove-Item Env:SCHOOLPILOT_TEST_REDIS_TYPE -ErrorAction SilentlyContinue
-            Remove-Item Env:SCHOOLPILOT_TEST_SNAPSHOT_TIME -ErrorAction SilentlyContinue
-            Remove-Item Env:SCHOOLPILOT_TEST_SNAPSHOT_TIME_FILE -ErrorAction SilentlyContinue
-            Remove-Item Env:SCHOOLPILOT_TEST_PUBLIC_IP -ErrorAction SilentlyContinue
-            Remove-Item Env:SCHOOLPILOT_TEST_AUX_BREACH -ErrorAction SilentlyContinue
-            Remove-Item Env:SCHOOLPILOT_TEST_SWAP_COUNTER -ErrorAction SilentlyContinue
-            Remove-Item Env:SCHOOLPILOT_TEST_METRIC_TIMESTAMP -ErrorAction SilentlyContinue
-            Remove-Item Env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_BASE,Env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_PATTERN,Env:SCHOOLPILOT_TEST_RDS_CPU_BOUNDARY_STEP_FILE,Env:SCHOOLPILOT_TEST_RDS_CPU_LOAD_WINDOW_START -ErrorAction SilentlyContinue
-        }
-        catch {
-            $childBlockCleanupFailures.Add("environment restore: $($_.Exception.Message)")
-        }
-        $childBlockCleanupFailureText = $childBlockCleanupFailures -join "; "
         if ($null -ne $childBlockFailure -and $childBlockCleanupFailures.Count -gt 0) {
-            throw "Child rollout regression failed: $($childBlockFailure.Exception.Message) Child cleanup also failed: $childBlockCleanupFailureText"
+            Add-OwnedTestProcessCleanupFailures -Exception $childBlockFailure.Exception `
+                -CleanupFailures ([Exception[]]$childBlockCleanupFailures.ToArray())
+            throw $childBlockFailure
         }
         if ($null -ne $childBlockFailure) { throw $childBlockFailure }
-        if ($childBlockCleanupFailures.Count -gt 0) { throw "Child rollout regression cleanup failed: $childBlockCleanupFailureText" }
+        if ($childBlockCleanupFailures.Count -gt 0) {
+            throw [AggregateException]::new(
+                "Child rollout regression cleanup failed.",
+                [Exception[]]$childBlockCleanupFailures.ToArray()
+            )
+        }
     }
 
     $exactGitSha = ([string](@(& git -C $repositoryRoot rev-parse --verify HEAD) | Select-Object -First 1)).Trim().ToLowerInvariant()
@@ -5022,14 +5326,43 @@ exit 0
     $alreadyEmergencyConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
     $alreadyEmergencyConfig.runId = "oom-already-emergency"
     [IO.File]::WriteAllText($rollbackConfigPath, ($alreadyEmergencyConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
-    $global:SchoolPilotTestServiceState.api.taskDefinition = $alreadyEmergencyConfig.emergencyApiTaskDefinition
-    $updateCallsBeforeEmergencyBlock = @($global:SchoolPilotTestAwsCalls | Where-Object { $_ -like "ecs update-service*" }).Count
-    $alreadyEmergencyRejected = $false
-    try { & $rollbackScript -ConfigPath $rollbackConfigPath -Action Oom -Mode Execute | Out-Null }
-    catch { $alreadyEmergencyRejected = $_.Exception.Message -match "already uses the reviewed emergency revision" }
-    $updateCallsAfterEmergencyBlock = @($global:SchoolPilotTestAwsCalls | Where-Object { $_ -like "ecs update-service*" }).Count
-    Assert-Condition ($alreadyEmergencyRejected -and $updateCallsAfterEmergencyBlock -eq $updateCallsBeforeEmergencyBlock) "OOM rollback must block without an ECS mutation when the API already runs the emergency revision."
-    $global:SchoolPilotTestServiceState.api.taskDefinition = "api-current"
+    $expectedAlreadyEmergencyError = "OOM rollback is unavailable because the API already uses the reviewed emergency revision; progression is blocked without an AWS mutation."
+    $priorApiTaskDefinition = [string]$global:SchoolPilotTestServiceState.api.taskDefinition
+    $updateCallsBeforeEmergencyBlock = $null
+    $alreadyEmergencyError = $null
+    $alreadyEmergencyObservedTaskDefinition = $null
+    $updateCallsAfterEmergencyBlock = $null
+    try {
+        $global:SchoolPilotTestServiceState.api.taskDefinition = $alreadyEmergencyConfig.emergencyApiTaskDefinition
+        $updateCallsBeforeEmergencyBlock = @(
+            $global:SchoolPilotTestAwsCalls | Where-Object { $_ -like "ecs update-service*" }
+        ).Count
+        & $rollbackScript -ConfigPath $rollbackConfigPath -Action Oom -Mode Execute | Out-Null
+    }
+    catch {
+        $alreadyEmergencyError = $_
+    }
+    finally {
+        $alreadyEmergencyObservedTaskDefinition = [string]$global:SchoolPilotTestServiceState.api.taskDefinition
+        $updateCallsAfterEmergencyBlock = @(
+            $global:SchoolPilotTestAwsCalls | Where-Object { $_ -like "ecs update-service*" }
+        ).Count
+        $global:SchoolPilotTestServiceState.api.taskDefinition = $priorApiTaskDefinition
+    }
+    $alreadyEmergencyDiagnostic = [ordered]@{
+        error = if ($null -eq $alreadyEmergencyError) { "<none>" } else { [string]$alreadyEmergencyError.Exception.Message }
+        expectedTaskDefinition = [string]$alreadyEmergencyConfig.emergencyApiTaskDefinition
+        observedTaskDefinition = $alreadyEmergencyObservedTaskDefinition
+        updateCallsBefore = $updateCallsBeforeEmergencyBlock
+        updateCallsAfter = $updateCallsAfterEmergencyBlock
+    } | ConvertTo-Json -Compress -Depth 5
+    Assert-Condition ($null -ne $alreadyEmergencyError -and
+        $alreadyEmergencyError.Exception.Message -ceq $expectedAlreadyEmergencyError) `
+        "OOM rollback must report that the API already runs the reviewed emergency revision. Observed: $alreadyEmergencyDiagnostic"
+    Assert-Condition ($alreadyEmergencyObservedTaskDefinition -eq $alreadyEmergencyConfig.emergencyApiTaskDefinition) `
+        "OOM rollback must preserve the already-active emergency revision. Observed: $alreadyEmergencyDiagnostic"
+    Assert-Condition ($updateCallsAfterEmergencyBlock -eq $updateCallsBeforeEmergencyBlock) `
+        "OOM rollback must block without an ECS mutation when the API already runs the emergency revision. Observed: $alreadyEmergencyDiagnostic"
 
     $badLineageConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
     $badLineageConfig.runId = "bad-state-lineage"
@@ -5130,6 +5463,17 @@ catch {
     $topLevelFailure = $_
 }
 finally {
+    # Process ownership is the first outer cleanup operation. Evidence/temp
+    # deletion must never race a surviving child or inherited redirect handle.
+    if ($ownedTestProcesses.Count -gt 0) {
+        try { Stop-AllOwnedTestProcesses -Registry $ownedTestProcesses }
+        catch {
+            $topLevelCleanupFailures.Add([InvalidOperationException]::new(
+                "Final owned process drain failed.",
+                $_.Exception
+            ))
+        }
+    }
     if ($null -ne $previousRolloutTestSentinel) { $env:SCHOOLPILOT_ROLLOUT_TEST_MODE = $previousRolloutTestSentinel } else { Remove-Item Env:SCHOOLPILOT_ROLLOUT_TEST_MODE -ErrorAction SilentlyContinue }
     if (Get-Variable oldOneDrive -ErrorAction SilentlyContinue) { $env:OneDrive = $oldOneDrive }
     Remove-Item Function:\global:aws -ErrorAction SilentlyContinue
@@ -5157,17 +5501,32 @@ finally {
     Remove-Variable SchoolPilotTestMetricQueryPeriods -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestMetricLookbackSeconds -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestRouteLatency -Scope Global -ErrorAction SilentlyContinue
-    if (Test-Path -LiteralPath $tempRoot) {
+    if ($ownedTestProcesses.Count -eq 0 -and (Test-Path -LiteralPath $tempRoot)) {
         try {
             Remove-TestDirectoryWithRetry -Path $tempRoot
         }
         catch {
-            $topLevelCleanupFailure = $_
+            $topLevelCleanupFailures.Add([InvalidOperationException]::new(
+                "Final temporary-directory removal failed.",
+                $_.Exception
+            ))
         }
     }
-    if ($null -ne $topLevelFailure -and $null -ne $topLevelCleanupFailure) {
-        throw "Rollout automation test failed: $($topLevelFailure.Exception.Message) Final cleanup also failed: $($topLevelCleanupFailure.Exception.Message)"
+    elseif ($ownedTestProcesses.Count -gt 0 -and (Test-Path -LiteralPath $tempRoot)) {
+        $topLevelCleanupFailures.Add([InvalidOperationException]::new(
+            "Temporary evidence was retained because $($ownedTestProcesses.Count) owned process entries could not be drained."
+        ))
+    }
+    if ($null -ne $topLevelFailure -and $topLevelCleanupFailures.Count -gt 0) {
+        Add-OwnedTestProcessCleanupFailures -Exception $topLevelFailure.Exception `
+            -CleanupFailures ([Exception[]]$topLevelCleanupFailures.ToArray())
+        throw $topLevelFailure
     }
     if ($null -ne $topLevelFailure) { throw $topLevelFailure }
-    if ($null -ne $topLevelCleanupFailure) { throw $topLevelCleanupFailure }
+    if ($topLevelCleanupFailures.Count -gt 0) {
+        throw [AggregateException]::new(
+            "Rollout automation final cleanup failed.",
+            [Exception[]]$topLevelCleanupFailures.ToArray()
+        )
+    }
 }
