@@ -1370,8 +1370,7 @@ export default function Dashboard() {
   const performLogout = async () => {
     setLogoutPending(true);
     await logout();
-    setLogoutPending(false);
-    navigate("/login");
+    window.location.replace("/login");
   };
 
   const requestLogout = () => {
