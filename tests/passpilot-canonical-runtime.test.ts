@@ -2,6 +2,7 @@ import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
+import pg from "pg";
 import {
   addGroupTeacher,
   addGroupStudents,
@@ -929,7 +930,7 @@ describe("PassPilot canonical ClassPilot classes", () => {
   });
 
   runtimeIt("serializes official roster mutation on the PassPilot class lock", async () => {
-    await inSchool(schoolA.id, async () => {
+    const { group, student } = await inSchool(schoolA.id, async () => {
       const group = await createGroup({
         schoolId: schoolA.id,
         teacherId: teacher.id,
@@ -944,27 +945,61 @@ describe("PassPilot canonical ClassPilot classes", () => {
         status: "active",
       } as any);
       await db.execute(sql`INSERT INTO group_students (group_id, student_id) VALUES (${group.id}, ${student.id})`);
+      return { group, student };
+    });
 
-      let releaseLock!: () => void;
-      let reportLocked!: () => void;
-      const locked = new Promise<void>((resolve) => { reportLocked = resolve; });
-      const release = new Promise<void>((resolve) => { releaseLock = resolve; });
-      const blocker = db.transaction(async (tx) => {
+    const lockObserver = new pg.Client({
+      connectionString: process.env.ADMIN_DATABASE_URL ?? process.env.DATABASE_URL,
+    });
+    await lockObserver.connect();
+    let releaseLock!: () => void;
+    let reportLocked!: () => void;
+    const locked = new Promise<void>((resolve) => { reportLocked = resolve; });
+    const release = new Promise<void>((resolve) => { releaseLock = resolve; });
+    const blocker = inSchool(schoolA.id, () =>
+      db.transaction(async (tx) => {
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`passpilot-class-source:${schoolA.id}`}))`);
         reportLocked();
         await release;
-      });
-      await locked;
-      let mutationSettled = false;
-      const mutation = removeGroupStudent(group.id, student.id).finally(() => {
+      })
+    );
+    await locked;
+    let mutationSettled = false;
+    const mutation = inSchool(schoolA.id, () =>
+      removeGroupStudent(group.id, student.id)
+    ).finally(() => {
         mutationSettled = true;
-      });
-      await new Promise((resolve) => setTimeout(resolve, 25));
-      assert.equal(mutationSettled, false);
-      releaseLock();
-      await blocker;
-      await mutation;
     });
+
+    const waitDeadline = Date.now() + 2_000;
+    let mutationWaitingOnAdvisoryLock = false;
+    let mutationSettledBeforeRelease = true;
+    let blockerOutcome: PromiseSettledResult<void>;
+    let mutationOutcome: PromiseSettledResult<void>;
+    try {
+      while (!mutationSettled && Date.now() < waitDeadline) {
+        const waitingLocks = await lockObserver.query<{ waiting: boolean }>(
+          `SELECT EXISTS (
+             SELECT 1
+             FROM pg_locks
+             WHERE locktype = 'advisory'
+               AND granted = false
+           ) AS waiting`
+        );
+        mutationWaitingOnAdvisoryLock = waitingLocks.rows[0]?.waiting === true;
+        if (mutationWaitingOnAdvisoryLock) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      mutationSettledBeforeRelease = mutationSettled;
+    } finally {
+      releaseLock();
+      [blockerOutcome, mutationOutcome] = await Promise.allSettled([blocker, mutation]);
+      await lockObserver.end();
+    }
+    assert.equal(blockerOutcome.status, "fulfilled");
+    assert.equal(mutationOutcome.status, "fulfilled");
+    assert.equal(mutationSettledBeforeRelease, false);
+    assert.equal(mutationWaitingOnAdvisoryLock, true);
   });
 
   runtimeIt("serializes legacy issuance against cutover", async () => {
