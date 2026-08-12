@@ -143,7 +143,7 @@ before(async () => {
         expiresAt: new Date(Date.now() + 300_000),
         returnedAt: new Date(),
         issuedVia: "teacher",
-      } as any);
+      } as any, { actorUserId: teacher.id, manager: false });
       await upsertSettings(dirtySchool.id, {
         schoolName: dirtySchool.name,
         passpilotClassSource: "legacy_grades",
@@ -223,7 +223,7 @@ describe("PassPilot clean-school cutover storage guard", () => {
         expiresAt: new Date(Date.now() + 300_000),
         returnedAt: new Date(),
         issuedVia: "teacher",
-      } as any);
+      } as any, { manager: true });
       await assert.rejects(
         completePasspilotClassMigration(
           cleanSchool.id,

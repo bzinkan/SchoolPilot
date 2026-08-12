@@ -55,7 +55,7 @@ function reportPass(id, firstName, destination) {
   };
 }
 
-function authResponse(role = "admin") {
+function authResponse(role = "admin", school = {}) {
   return {
     user: {
       id: role === "teacher" ? "teacher-two" : "admin-one",
@@ -71,67 +71,10 @@ function authResponse(role = "admin") {
       id: `${role}-membership`,
       schoolId: SCHOOL_ID,
       role,
-      schoolName: "Browser Test School",
-      schoolTimezone: "America/New_York",
+      schoolName: school.name || "Browser Test School",
+      schoolTimezone: school.schoolTimezone || "America/New_York",
     }],
   };
-}
-
-function migrationInventory(source = "legacy_grades", revision = 7, secondState = "pending") {
-  return {
-    source,
-    revision,
-    legacyGrades: [
-      {
-        id: "legacy-auto",
-        legacyGradeId: "legacy-auto",
-        name: "Legacy Grade 3",
-        migrationState: "auto_linked",
-        classpilotGroupId: "class-one",
-        studentCount: 15,
-        teacherCount: 1,
-        historicalPassCount: 10,
-        activePassCount: 0,
-      },
-      {
-        id: "legacy-review",
-        legacyGradeId: "legacy-review",
-        name: "Legacy Grade 4",
-        migrationState: secondState,
-        classpilotGroupId: secondState === "confirmed" ? "class-two" : null,
-        suggestedClasspilotGroupId: "class-two",
-        studentCount: 2,
-        teacherCount: 1,
-        historicalPassCount: 4,
-        activePassCount: 0,
-        conflictReasons: ["roster_mismatch", "teacher_mismatch"],
-        rosterDifferenceCount: 3,
-        teacherDifferenceCount: 1,
-        comparisons: [{
-          classpilotGroupId: "class-two",
-          rosterAddedCount: 2,
-          rosterRemovedCount: 1,
-          teacherAddedCount: 1,
-          teacherRemovedCount: 0,
-          rosterAdded: [
-            { id: "student-new-one", name: "Jordan New", detail: "3001" },
-            { id: "student-new-two", name: "Riley New", detail: "3002" },
-          ],
-          rosterRemoved: [{ id: "student-legacy", name: "Morgan Legacy", detail: "1999" }],
-          teacherAdded: [{ id: "teacher-three", name: "Casey Helper", detail: "casey@example.edu" }],
-          teacherRemoved: [],
-        }],
-      },
-    ],
-    canonicalClasses: officialClasses,
-  };
-}
-
-function migrationInventoryForState(state, source = state.source) {
-  const inventory = migrationInventory(source, state.migrationRevision, state.secondMigrationState);
-  inventory.legacyGrades[0].migrationState = state.firstMigrationState;
-  inventory.legacyGrades[0].classpilotGroupId = state.firstClassId;
-  return inventory;
 }
 
 async function installApiMocks(page, state) {
@@ -159,12 +102,62 @@ async function installApiMocks(page, state) {
     }
 
     if (pathname === "/api/auth/me") {
-      await route.fulfill({ json: authResponse(state.role) });
+      await route.fulfill({ json: authResponse(state.role, state.settings) });
       return;
     }
     if (pathname === "/api/auth/csrf") {
       await route.fulfill({ json: { csrfToken: "browser-test-csrf" } });
       return;
+    }
+    if (pathname === "/api/passpilot/admin/settings") {
+      if (request.method() === "GET") {
+        state.settingsGetCount += 1;
+        if (state.settingsVerificationFailuresRemaining > 0 && state.settingsWrites.length > 0) {
+          state.settingsVerificationFailuresRemaining -= 1;
+          await route.fulfill({
+            status: 500,
+            json: { error: "Saved settings could not be verified." },
+          });
+          return;
+        }
+        await route.fulfill({ json: state.settings });
+        return;
+      }
+      if (request.method() === "PATCH") {
+        const payload = request.postDataJSON();
+        state.settingsWrites.push(payload);
+        if (state.settingsSaveFailuresRemaining > 0) {
+          state.settingsSaveFailuresRemaining -= 1;
+          await route.fulfill({
+            status: 500,
+            json: { error: "School settings could not be saved." },
+          });
+          return;
+        }
+        if (payload.expectedRevision !== state.settings.revision) {
+          await route.fulfill({
+            status: 409,
+            json: {
+              error: "Settings were changed by another administrator. Load the latest settings and try again.",
+              code: "PASSPILOT_SETTINGS_REVISION_CONFLICT",
+              current: state.settings,
+            },
+          });
+          return;
+        }
+        const updates = { ...payload };
+        delete updates.expectedRevision;
+        delete updates.kioskPin;
+        state.settings = {
+          ...state.settings,
+          ...updates,
+          ...(payload.kioskPin ? { kioskPinConfigured: true } : {}),
+          revision: state.settings.revision + 1,
+        };
+        await new Promise((resolve) => setTimeout(resolve, 75));
+        await route.fulfill({ json: state.settings });
+        return;
+      }
     }
     if (pathname === "/api/passpilot/classes") {
       if (url.searchParams.get("scope") === "history") {
@@ -208,9 +201,7 @@ async function installApiMocks(page, state) {
         ? (state.emptyCanonical
           ? []
           : (state.role === "teacher" ? [officialClasses[1]] : officialClasses))
-        : (state.cleanMigration
-          ? []
-          : [{ id: "legacy-grade", classId: "legacy-grade", name: "Legacy Advisory", studentCount: 1 }]);
+        : [{ id: "legacy-grade", classId: "legacy-grade", name: "Legacy Advisory", studentCount: 1 }];
       await route.fulfill({ json: { source: state.source, classes } });
       return;
     }
@@ -231,55 +222,6 @@ async function installApiMocks(page, state) {
           students: [{ id: "student-two", firstName: "Taylor", lastName: "Student", studentIdNumber: "2002" }],
         },
       });
-      return;
-    }
-    if (pathname === "/api/passpilot/admin/class-migration" && request.method() === "GET") {
-      await route.fulfill({
-        json: state.cleanMigration
-          ? {
-              source: state.source,
-              revision: state.migrationRevision,
-              legacyGrades: [],
-              canonicalClasses: officialClasses,
-            }
-          : migrationInventoryForState(state),
-      });
-      return;
-    }
-    if (pathname === "/api/passpilot/admin/class-migration/legacy-auto" && request.method() === "PUT") {
-      const payload = request.postDataJSON();
-      state.migrationWrites.push({ pathname, payload });
-      state.migrationRevision += 1;
-      state.firstMigrationState = payload.action === "history_only" ? "history_only" : "confirmed";
-      state.firstClassId = payload.action === "link" ? payload.classpilotGroupId : null;
-      await route.fulfill({ json: migrationInventoryForState(state, "legacy_grades") });
-      return;
-    }
-    if (pathname === "/api/passpilot/admin/class-migration/legacy-review" && request.method() === "PUT") {
-      const payload = request.postDataJSON();
-      state.migrationWrites.push({ pathname, payload });
-      state.migrationRevision += 1;
-      state.secondMigrationState = "confirmed";
-      await route.fulfill({ json: migrationInventoryForState(state, "legacy_grades") });
-      return;
-    }
-    if (pathname === "/api/passpilot/admin/class-migration/complete" && request.method() === "POST") {
-      if (state.completeBlocker) {
-        state.completeBlocker = false;
-        await route.fulfill({
-          status: 409,
-          json: {
-            code: "PASSPILOT_ACTIVE_LEGACY_PASSES",
-            error: "Return every active legacy pass before completing class migration.",
-          },
-        });
-        return;
-      }
-      const payload = request.postDataJSON();
-      state.migrationWrites.push({ pathname, payload });
-      state.migrationRevision += 1;
-      state.source = "classpilot_groups";
-      await route.fulfill({ json: migrationInventoryForState(state, "classpilot_groups") });
       return;
     }
     if (pathname === "/api/passes" && request.method() === "POST") {
@@ -366,13 +308,6 @@ function freshState(overrides = {}) {
     source: "classpilot_groups",
     rosterRequests: [],
     passWrites: [],
-    migrationWrites: [],
-    migrationRevision: 7,
-    secondMigrationState: "pending",
-    firstMigrationState: "auto_linked",
-    firstClassId: "class-one",
-    cleanMigration: false,
-    completeBlocker: false,
     classModelHeaders: [],
     passHistoryRequests: [],
     kioskClassId: "class-two",
@@ -381,6 +316,18 @@ function freshState(overrides = {}) {
     rosterFailuresRemaining: 0,
     historyFailuresRemaining: 0,
     historyPages: null,
+    settings: {
+      name: "Browser Test School",
+      schoolTimezone: "America/New_York",
+      kioskEnabled: true,
+      kioskRequiresApproval: false,
+      kioskPinConfigured: true,
+      revision: 4,
+    },
+    settingsGetCount: 0,
+    settingsWrites: [],
+    settingsSaveFailuresRemaining: 0,
+    settingsVerificationFailuresRemaining: 0,
     ...overrides,
   };
 }
@@ -578,81 +525,217 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
     await legacyPage.getByText("Legacy Advisory", { exact: true }).waitFor();
     assert.equal(await legacyPage.getByTestId("canonical-passpilot-classes").count(), 0);
 
-    const migrationPage = await browser.newPage();
-    const migrationState = freshState({ source: "legacy_grades" });
-    await installApiMocks(migrationPage, migrationState);
-    await migrationPage.goto(`${baseUrl}/passpilot/setup?section=class-source`);
-    await migrationPage.getByTestId("passpilot-class-source-setup").waitFor();
-    await migrationPage.getByText("Automatically linked", { exact: true }).waitFor();
-    const autoLinkedSection = migrationPage.locator("section").filter({ hasText: "Legacy Grade 3" });
-    await autoLinkedSection.getByRole("button", { name: "Change decision" }).click();
-    const autoMappingSelect = autoLinkedSection.getByLabel("Official ClassPilot Class");
-    await autoMappingSelect.click();
-    await migrationPage.getByRole("option", { name: "Grade 4 Homeroom" }).click();
-    await autoLinkedSection.getByText("Compare before linking", { exact: true }).waitFor();
-    await autoLinkedSection.getByRole("button", { name: "Link to ClassPilot Class" }).click();
-    await migrationPage.getByRole("button", { name: "Confirm Link" }).click();
-    await autoLinkedSection.getByText("Linked to ClassPilot", { exact: true }).waitFor();
-    assert.deepEqual(migrationState.migrationWrites[0], {
-      pathname: "/api/passpilot/admin/class-migration/legacy-auto",
-      payload: { expectedRevision: 7, action: "link", classpilotGroupId: "class-two" },
-    });
+    for (const source of ["legacy_grades", "classpilot_groups"]) {
+      const removedClassSourcePage = await browser.newPage();
+      const removedClassSourceState = freshState({ source });
+      await installApiMocks(removedClassSourcePage, removedClassSourceState);
+      await removedClassSourcePage.goto(`${baseUrl}/passpilot/setup?section=class-source`);
+      await removedClassSourcePage.waitForFunction(() => {
+        const current = new URL(window.location.href);
+        return current.pathname === "/passpilot/setup" && !current.searchParams.has("section");
+      });
+      const teachersTab = removedClassSourcePage.getByRole("tab", { name: "Teachers", exact: true });
+      await teachersTab.waitFor();
+      assert.equal(await teachersTab.getAttribute("aria-selected"), "true");
+      assert.equal(
+        await removedClassSourcePage.getByRole("tab", { name: "Class Source", exact: true }).count(),
+        0,
+      );
+      assert.equal(await removedClassSourcePage.getByTestId("passpilot-class-source-setup").count(), 0);
+      assert.equal(
+        removedClassSourceState.classModelHeaders.filter(
+          (entry) => entry.pathname.startsWith("/api/passpilot/admin/class-migration"),
+        ).length,
+        0,
+        "the removed Class Source surface must not call migration APIs",
+      );
+      assert.equal(
+        await removedClassSourcePage.getByRole("tab", { name: "Classes", exact: true }).count(),
+        source === "legacy_grades" ? 1 : 0,
+      );
+      assert.equal(
+        await removedClassSourcePage.getByRole("tab", { name: "Class Assignments", exact: true }).count(),
+        source === "legacy_grades" ? 1 : 0,
+      );
+      await removedClassSourcePage.close();
+    }
 
-    const reviewSection = migrationPage.locator("section").filter({ hasText: "Legacy Grade 4" });
-    await reviewSection.getByText("Student rosters differ.", { exact: true }).waitFor();
-    await reviewSection.getByText("Teacher assignments differ.", { exact: true }).waitFor();
-    await reviewSection.getByText("3 roster differences · 1 teacher difference", { exact: true }).waitFor();
-    await reviewSection.getByText("Jordan New — 3001", { exact: true }).waitFor();
-    await reviewSection.getByText("Morgan Legacy — 1999", { exact: true }).waitFor();
-    await reviewSection.getByText("Casey Helper — casey@example.edu", { exact: true }).waitFor();
-    await reviewSection.getByText(/Make roster corrections in ClassPilot/).waitFor();
-    const mappingSelect = reviewSection.getByLabel("Official ClassPilot Class");
-    await mappingSelect.click();
-    await migrationPage.getByRole("option", { name: "Grade 4 Homeroom" }).waitFor();
-    assert.equal(await migrationPage.getByRole("option", { name: "Legacy Advisory" }).count(), 0);
-    await migrationPage.keyboard.press("Escape");
-    await reviewSection.getByRole("button", { name: "Link to ClassPilot Class" }).click();
-    await migrationPage.getByRole("button", { name: "Confirm Link" }).click();
-    await migrationPage.getByText("Linked to ClassPilot", { exact: true }).last().waitFor();
-    assert.deepEqual(migrationState.migrationWrites[1], {
-      pathname: "/api/passpilot/admin/class-migration/legacy-review",
-      payload: { expectedRevision: 8, action: "link", classpilotGroupId: "class-two" },
+    const legacyClassSourceHashPage = await browser.newPage();
+    const legacyClassSourceHashState = freshState({ source: "legacy_grades" });
+    await installApiMocks(legacyClassSourceHashPage, legacyClassSourceHashState);
+    await legacyClassSourceHashPage.goto(`${baseUrl}/passpilot#setup/class-source`);
+    await legacyClassSourceHashPage.waitForFunction(() => {
+      const current = new URL(window.location.href);
+      return current.pathname === "/passpilot/setup"
+        && !current.searchParams.has("section")
+        && current.hash === "";
     });
-    await migrationPage.getByRole("button", { name: "Complete Class Review" }).click();
-    await migrationPage.getByRole("button", { name: "Confirm and Switch" }).click();
-    await migrationPage.getByText("All PassPilot classes now use ClassPilot", { exact: true }).waitFor();
-    assert.deepEqual(migrationState.migrationWrites[2], {
-      pathname: "/api/passpilot/admin/class-migration/complete",
-      payload: { expectedRevision: 9, classModelAcknowledged: true },
-    });
-    assert.ok(
-      migrationState.classModelHeaders
-        .filter((entry) => entry.pathname.startsWith("/api/passpilot/admin/class-migration"))
-        .every((entry) => entry.value === "classpilot-groups-v1"),
-      "migration requests must advertise the canonical class model capability",
+    assert.equal(
+      await legacyClassSourceHashPage.getByRole("tab", { name: "Class Source", exact: true }).count(),
+      0,
+    );
+    assert.equal(
+      legacyClassSourceHashState.classModelHeaders.filter(
+        (entry) => entry.pathname.startsWith("/api/passpilot/admin/class-migration"),
+      ).length,
+      0,
     );
 
-    const cleanCutoverPage = await browser.newPage();
-    const cleanCutoverState = freshState({ source: "legacy_grades", cleanMigration: true });
-    await installApiMocks(cleanCutoverPage, cleanCutoverState);
-    await cleanCutoverPage.goto(`${baseUrl}/passpilot/setup?section=class-source`);
-    await cleanCutoverPage.getByText("Every existing class has a decision.", { exact: true }).waitFor();
-    await cleanCutoverPage.getByRole("button", { name: "Complete Class Review" }).click();
-    await cleanCutoverPage.getByRole("button", { name: "Confirm and Switch" }).click();
-    await cleanCutoverPage.getByText("All PassPilot classes now use ClassPilot", { exact: true }).waitFor();
-    assert.deepEqual(cleanCutoverState.migrationWrites, [{
-      pathname: "/api/passpilot/admin/class-migration/complete",
-      payload: { expectedRevision: 7, classModelAcknowledged: true },
-    }]);
+    const settingsPage = await browser.newPage();
+    const settingsState = freshState({ source: "legacy_grades" });
+    await installApiMocks(settingsPage, settingsState);
+    await settingsPage.goto(`${baseUrl}/passpilot/setup?section=settings`);
+    const kioskSwitch = settingsPage.getByRole("switch", { name: "Kiosk Mode Enabled", exact: true });
+    await kioskSwitch.waitFor();
+    assert.equal(await kioskSwitch.getAttribute("aria-checked"), "true");
+    assert.equal(
+      await settingsPage.getByRole("switch", { name: "Kiosk Requires Approval", exact: true }).count(),
+      0,
+      "the unenforced approval setting must not be presented as an operational control",
+    );
 
-    const blockerPage = await browser.newPage();
-    const blockerState = freshState({ source: "legacy_grades", cleanMigration: true, completeBlocker: true });
-    await installApiMocks(blockerPage, blockerState);
-    await blockerPage.goto(`${baseUrl}/passpilot/setup?section=class-source`);
-    await blockerPage.getByRole("button", { name: "Complete Class Review" }).click();
-    await blockerPage.getByRole("button", { name: "Confirm and Switch" }).click();
-    await blockerPage.getByText("Return every active legacy pass before completing class migration.", { exact: true }).waitFor();
-    assert.equal(await blockerPage.getByText("This migration changed in another session", { exact: true }).count(), 0);
+    await settingsPage.getByText("Kiosk Mode Enabled", { exact: true }).click();
+    assert.equal(await kioskSwitch.getAttribute("aria-checked"), "false");
+    await kioskSwitch.press("Space");
+    assert.equal(await kioskSwitch.getAttribute("aria-checked"), "true");
+    await kioskSwitch.press("Space");
+    assert.equal(await kioskSwitch.getAttribute("aria-checked"), "false");
+    await settingsPage.getByLabel("School Name", { exact: true }).fill("Verified Kiosk School");
+    await settingsPage.getByLabel("School Timezone", { exact: true }).selectOption("America/Chicago");
+
+    const saveSettingsButton = settingsPage.getByRole("button", { name: "Save Settings", exact: true });
+    await saveSettingsButton.evaluate((button) => {
+      button.click();
+      button.click();
+    });
+    await settingsPage.getByText("Settings saved", { exact: true }).waitFor();
+    assert.equal(settingsState.settingsWrites.length, 1, "a double-click must issue one settings write");
+    assert.deepEqual(settingsState.settingsWrites[0], {
+      expectedRevision: 4,
+      name: "Verified Kiosk School",
+      schoolTimezone: "America/Chicago",
+      kioskEnabled: false,
+    });
+    assert.ok(settingsState.settingsGetCount >= 2, "save must be verified through an authoritative GET");
+    await settingsPage.locator("header").getByText("Verified Kiosk School", { exact: true }).waitFor();
+
+    await settingsPage.reload();
+    const reloadedKioskSwitch = settingsPage.getByRole("switch", { name: "Kiosk Mode Enabled", exact: true });
+    await reloadedKioskSwitch.waitFor();
+    assert.equal(await reloadedKioskSwitch.getAttribute("aria-checked"), "false");
+    assert.equal(
+      await settingsPage.getByLabel("School Timezone", { exact: true }).inputValue(),
+      "America/Chicago",
+    );
+    assert.equal(
+      await settingsPage.getByLabel("School Name", { exact: true }).inputValue(),
+      "Verified Kiosk School",
+    );
+    assert.equal(settingsState.settingsWrites.length, 1, "reload must not write settings");
+
+    const failedSettingsPage = await browser.newPage();
+    const failedSettingsState = freshState({
+      source: "legacy_grades",
+      settingsSaveFailuresRemaining: 1,
+    });
+    await installApiMocks(failedSettingsPage, failedSettingsState);
+    await failedSettingsPage.goto(`${baseUrl}/passpilot/setup?section=settings`);
+    const failedDraftSwitch = failedSettingsPage.getByRole("switch", { name: "Kiosk Mode Enabled", exact: true });
+    await failedDraftSwitch.waitFor();
+    await failedSettingsPage.getByText("Kiosk Mode Enabled", { exact: true }).click();
+    await failedSettingsPage.getByRole("button", { name: "Save Settings", exact: true }).click();
+    await failedSettingsPage.getByText("School settings could not be saved.", { exact: true }).waitFor();
+    assert.equal(await failedDraftSwitch.getAttribute("aria-checked"), "false");
+    assert.equal(failedSettingsState.settings.kioskEnabled, true);
+    assert.equal(await failedSettingsPage.getByText("Settings saved", { exact: true }).count(), 0);
+
+    const unverifiedSettingsPage = await browser.newPage();
+    const unverifiedSettingsState = freshState({
+      source: "legacy_grades",
+      settingsVerificationFailuresRemaining: 1,
+    });
+    await installApiMocks(unverifiedSettingsPage, unverifiedSettingsState);
+    await unverifiedSettingsPage.goto(`${baseUrl}/passpilot/setup?section=settings`);
+    const unverifiedSwitch = unverifiedSettingsPage.getByRole("switch", {
+      name: "Kiosk Mode Enabled",
+      exact: true,
+    });
+    await unverifiedSwitch.waitFor();
+    await unverifiedSettingsPage.getByText("Kiosk Mode Enabled", { exact: true }).click();
+    await unverifiedSettingsPage.getByRole("button", { name: "Save Settings", exact: true }).click();
+    await unverifiedSettingsPage.getByText(
+      "Settings were saved, but the confirmation could not be loaded. Verify the saved settings before making another change.",
+      { exact: true },
+    ).waitFor();
+    assert.equal(await unverifiedSettingsPage.getByText("Settings saved", { exact: true }).count(), 0);
+    assert.equal(await unverifiedSwitch.getAttribute("aria-checked"), "false");
+    assert.equal(unverifiedSettingsState.settingsWrites.length, 1);
+    await unverifiedSettingsPage.getByRole("button", { name: "Verify Saved Settings", exact: true }).click();
+    await unverifiedSettingsPage.getByText("Settings saved", { exact: true }).waitFor();
+    assert.equal(unverifiedSettingsState.settingsWrites.length, 1, "verification retry must not repeat the write");
+    assert.equal(await unverifiedSwitch.getAttribute("aria-checked"), "false");
+
+    const conflictSettingsPage = await browser.newPage();
+    const conflictSettingsState = freshState({ source: "legacy_grades" });
+    await installApiMocks(conflictSettingsPage, conflictSettingsState);
+    await conflictSettingsPage.goto(`${baseUrl}/passpilot/setup?section=settings`);
+    const conflictName = conflictSettingsPage.getByLabel("School Name", { exact: true });
+    await conflictName.waitFor();
+    await conflictName.fill("Local Unsaved School Name");
+    conflictSettingsState.settings = {
+      ...conflictSettingsState.settings,
+      name: "Other Administrator School Name",
+      kioskEnabled: false,
+      revision: conflictSettingsState.settings.revision + 1,
+    };
+    await conflictSettingsPage.getByRole("button", { name: "Save Settings", exact: true }).click();
+    await conflictSettingsPage.getByText(
+      "Settings were changed by another administrator. Load the latest settings and try again.",
+      { exact: true },
+    ).waitFor();
+    assert.equal(await conflictName.inputValue(), "Local Unsaved School Name");
+    assert.equal(await conflictSettingsPage.getByText("Settings saved", { exact: true }).count(), 0);
+    assert.equal(conflictSettingsState.settingsWrites.length, 1);
+    await conflictSettingsPage.getByRole("button", { name: "Load latest settings", exact: true }).click();
+    await conflictSettingsPage.waitForFunction(() => (
+      document.querySelector("#passpilot-school-name")?.value === "Other Administrator School Name"
+    ));
+    assert.equal(
+      await conflictSettingsPage.getByRole("switch", { name: "Kiosk Mode Enabled", exact: true }).getAttribute("aria-checked"),
+      "false",
+    );
+
+    const newKioskPage = await browser.newPage();
+    const newKioskState = freshState({
+      source: "legacy_grades",
+      settings: {
+        name: "Browser Test School",
+        schoolTimezone: "America/New_York",
+        kioskEnabled: false,
+        kioskRequiresApproval: false,
+        kioskPinConfigured: false,
+        revision: 9,
+      },
+    });
+    await installApiMocks(newKioskPage, newKioskState);
+    await newKioskPage.goto(`${baseUrl}/passpilot/setup?section=settings`);
+    const newKioskSwitch = newKioskPage.getByRole("switch", { name: "Kiosk Mode Enabled", exact: true });
+    await newKioskSwitch.waitFor();
+    await newKioskPage.getByText("Kiosk Mode Enabled", { exact: true }).click();
+    const newKioskSave = newKioskPage.getByRole("button", { name: "Save Settings", exact: true });
+    assert.equal(await newKioskSave.isDisabled(), true);
+    await newKioskPage.getByText("A kiosk PIN is required while Kiosk Mode is enabled.", { exact: true }).waitFor();
+    await newKioskPage.getByLabel("Kiosk PIN", { exact: true }).fill("12ab34");
+    assert.equal(await newKioskPage.getByLabel("Kiosk PIN", { exact: true }).inputValue(), "1234");
+    assert.equal(await newKioskSave.isEnabled(), true);
+    await newKioskSave.click();
+    await newKioskPage.getByText("Settings saved", { exact: true }).waitFor();
+    assert.deepEqual(newKioskState.settingsWrites[0], {
+      expectedRevision: 9,
+      kioskEnabled: true,
+      kioskPin: "1234",
+    });
+    assert.equal(newKioskState.settings.kioskPinConfigured, true);
 
     const teacherPage = await browser.newPage();
     const teacherState = freshState({ role: "teacher" });

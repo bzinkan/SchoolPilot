@@ -6,6 +6,7 @@ import {
   timestamp,
   index,
   uniqueIndex,
+  unique,
 } from "drizzle-orm/pg-core";
 
 // ============================================================================
@@ -49,6 +50,7 @@ export const students = pgTable(
   },
   (table) => [
     index("students_school_id_idx").on(table.schoolId),
+    unique("students_school_id_id_unique").on(table.schoolId, table.id),
     index("students_grade_id_idx").on(table.gradeId),
     index("students_homeroom_id_idx").on(table.homeroomId),
     index("students_school_email_idx").on(table.schoolId, table.emailLc),

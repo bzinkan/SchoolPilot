@@ -448,7 +448,8 @@ export async function runStartupMigrations(): Promise<void> {
   `);
   await pool.query(`
     ALTER TABLE schools
-      ADD COLUMN IF NOT EXISTS kiosk_classpilot_group_id VARCHAR
+      ADD COLUMN IF NOT EXISTS kiosk_classpilot_group_id VARCHAR,
+      ADD COLUMN IF NOT EXISTS passpilot_settings_revision INTEGER NOT NULL DEFAULT 0
   `);
   await pool.query(`
     ALTER TABLE grades
@@ -464,6 +465,93 @@ export async function runStartupMigrations(): Promise<void> {
       ADD COLUMN IF NOT EXISTS classpilot_group_id TEXT,
       ADD COLUMN IF NOT EXISTS class_name_snapshot TEXT
   `);
+  // Legacy PassPilot originally stored one class directly on students. Keep
+  // that column as an old-client projection, but back it into a tenant-scoped
+  // junction so standalone schools can place a student in multiple classes.
+  // This table is created before generic RLS discovery below.
+  await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS grade_id TEXT`);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS grades_school_id_id_unique
+    ON grades (school_id, id)
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS students_school_id_id_unique
+    ON students (school_id, id)
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS passpilot_grade_students (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      school_id TEXT NOT NULL,
+      grade_id TEXT NOT NULL,
+      student_id TEXT NOT NULL,
+      assigned_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      CONSTRAINT passpilot_grade_students_school_grade_student_unique
+        UNIQUE (school_id, grade_id, student_id),
+      CONSTRAINT passpilot_grade_students_grade_school_fk
+        FOREIGN KEY (school_id, grade_id)
+        REFERENCES grades(school_id, id) ON DELETE RESTRICT,
+      CONSTRAINT passpilot_grade_students_student_school_fk
+        FOREIGN KEY (school_id, student_id)
+        REFERENCES students(school_id, id) ON DELETE CASCADE
+    )
+  `);
+  await pool.query(`
+    ALTER TABLE passpilot_grade_students
+      DROP CONSTRAINT IF EXISTS passpilot_grade_students_grade_fk,
+      DROP CONSTRAINT IF EXISTS passpilot_grade_students_student_fk
+  `);
+  await pool.query(`
+    DO $passpilot_grade_student_constraints$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'passpilot_grade_students_grade_school_fk'
+          AND conrelid = 'passpilot_grade_students'::regclass
+      ) THEN
+        ALTER TABLE passpilot_grade_students
+          ADD CONSTRAINT passpilot_grade_students_grade_school_fk
+          FOREIGN KEY (school_id, grade_id)
+          REFERENCES grades(school_id, id) ON DELETE RESTRICT NOT VALID;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'passpilot_grade_students_student_school_fk'
+          AND conrelid = 'passpilot_grade_students'::regclass
+      ) THEN
+        ALTER TABLE passpilot_grade_students
+          ADD CONSTRAINT passpilot_grade_students_student_school_fk
+          FOREIGN KEY (school_id, student_id)
+          REFERENCES students(school_id, id) ON DELETE CASCADE NOT VALID;
+      END IF;
+    END
+    $passpilot_grade_student_constraints$;
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS passpilot_grade_students_school_grade_idx
+    ON passpilot_grade_students (school_id, grade_id)
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS passpilot_grade_students_school_student_idx
+    ON passpilot_grade_students (school_id, student_id)
+  `);
+  await schedulerPool.query(`
+    INSERT INTO passpilot_grade_students (school_id, grade_id, student_id)
+    SELECT student.school_id, student.grade_id, student.id
+    FROM students AS student
+    INNER JOIN grades AS grade
+      ON grade.id = student.grade_id
+     AND grade.school_id = student.school_id
+    WHERE student.grade_id IS NOT NULL
+    ON CONFLICT (school_id, grade_id, student_id) DO NOTHING
+  `);
+  await pool.query(`
+    ALTER TABLE passpilot_grade_students
+      VALIDATE CONSTRAINT passpilot_grade_students_grade_school_fk
+  `);
+  await pool.query(`
+    ALTER TABLE passpilot_grade_students
+      VALIDATE CONSTRAINT passpilot_grade_students_student_school_fk
+  `);
 
   // Recover only nullable values left by an interrupted earlier attempt. Do
   // not normalize contradictory values: the validated checks below must expose
@@ -475,6 +563,11 @@ export async function runStartupMigrations(): Promise<void> {
       passpilot_class_migration_revision = COALESCE(passpilot_class_migration_revision, 0)
     WHERE passpilot_class_source IS NULL
        OR passpilot_class_migration_revision IS NULL
+  `);
+  await schedulerPool.query(`
+    UPDATE schools
+    SET passpilot_settings_revision = 0
+    WHERE passpilot_settings_revision IS NULL
   `);
   await schedulerPool.query(`
     UPDATE grades
@@ -506,6 +599,11 @@ export async function runStartupMigrations(): Promise<void> {
       ALTER COLUMN migration_state SET NOT NULL,
       ALTER COLUMN mapping_revision SET DEFAULT 0,
       ALTER COLUMN mapping_revision SET NOT NULL
+  `);
+  await pool.query(`
+    ALTER TABLE schools
+      ALTER COLUMN passpilot_settings_revision SET DEFAULT 0,
+      ALTER COLUMN passpilot_settings_revision SET NOT NULL
   `);
 
   await pool.query(`
@@ -556,6 +654,15 @@ export async function runStartupMigrations(): Promise<void> {
           ADD CONSTRAINT passes_single_class_source_check
           CHECK (NOT (grade_id IS NOT NULL AND classpilot_group_id IS NOT NULL)) NOT VALID;
       END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'schools_passpilot_settings_revision_check'
+          AND conrelid = 'schools'::regclass
+      ) THEN
+        ALTER TABLE schools
+          ADD CONSTRAINT schools_passpilot_settings_revision_check
+          CHECK (passpilot_settings_revision >= 0) NOT VALID;
+      END IF;
     END
     $passpilot_constraints$;
   `);
@@ -564,6 +671,7 @@ export async function runStartupMigrations(): Promise<void> {
   await pool.query(`ALTER TABLE grades VALIDATE CONSTRAINT grades_migration_state_check`);
   await pool.query(`ALTER TABLE grades VALIDATE CONSTRAINT grades_mapping_revision_check`);
   await pool.query(`ALTER TABLE passes VALIDATE CONSTRAINT passes_single_class_source_check`);
+  await pool.query(`ALTER TABLE schools VALIDATE CONSTRAINT schools_passpilot_settings_revision_check`);
 
   await pool.query(`
     CREATE INDEX IF NOT EXISTS grades_school_classpilot_group_idx
@@ -594,7 +702,19 @@ export async function runStartupMigrations(): Promise<void> {
           OR mapping_revision < 0) AS invalid_grades,
       (SELECT count(*)::integer
        FROM passes
-       WHERE grade_id IS NOT NULL AND classpilot_group_id IS NOT NULL) AS conflicting_passes
+       WHERE grade_id IS NOT NULL AND classpilot_group_id IS NOT NULL) AS conflicting_passes,
+      (SELECT count(*)::integer
+       FROM schools
+       WHERE passpilot_settings_revision < 0) AS invalid_school_settings_revisions,
+      (SELECT count(*)::integer
+       FROM passpilot_grade_students AS membership
+       LEFT JOIN grades AS grade
+         ON grade.id = membership.grade_id
+        AND grade.school_id = membership.school_id
+       LEFT JOIN students AS student
+         ON student.id = membership.student_id
+        AND student.school_id = membership.school_id
+       WHERE grade.id IS NULL OR student.id IS NULL) AS invalid_passpilot_grade_students
   `);
   const passpilotCanonicalDataFailures = Object.entries(
     passpilotCanonicalDataIntegrity.rows[0] ?? {}
@@ -613,6 +733,27 @@ export async function runStartupMigrations(): Promise<void> {
       to_regclass('public.grades_school_migration_state_idx') IS NOT NULL AS grades_state_index,
       to_regclass('public.passes_school_classpilot_group_status_idx') IS NOT NULL AS passes_status_index,
       to_regclass('public.passes_school_classpilot_group_issued_idx') IS NOT NULL AS passes_issued_index,
+      to_regclass('public.passpilot_grade_students_school_grade_idx') IS NOT NULL AS grade_students_grade_index,
+      to_regclass('public.passpilot_grade_students_school_student_idx') IS NOT NULL AS grade_students_student_index,
+      to_regclass('public.grades_school_id_id_unique') IS NOT NULL AS grades_tenant_identity_unique,
+      to_regclass('public.students_school_id_id_unique') IS NOT NULL AS students_tenant_identity_unique,
+      EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'passpilot_grade_students_school_grade_student_unique'
+          AND conrelid = 'passpilot_grade_students'::regclass
+      ) AS grade_students_unique_constraint,
+      EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'passpilot_grade_students_grade_school_fk'
+          AND conrelid = 'passpilot_grade_students'::regclass
+          AND convalidated
+      ) AS grade_students_grade_fk,
+      EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'passpilot_grade_students_student_school_fk'
+          AND conrelid = 'passpilot_grade_students'::regclass
+          AND convalidated
+      ) AS grade_students_student_fk,
       EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conname = 'settings_passpilot_class_source_check'
@@ -642,7 +783,13 @@ export async function runStartupMigrations(): Promise<void> {
         WHERE conname = 'passes_single_class_source_check'
           AND conrelid = 'passes'::regclass
           AND convalidated
-      ) AS passes_source_constraint
+      ) AS passes_source_constraint,
+      EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'schools_passpilot_settings_revision_check'
+          AND conrelid = 'schools'::regclass
+          AND convalidated
+      ) AS school_settings_revision_constraint
   `);
   const passpilotCanonicalCatalogFailures = Object.entries(
     passpilotCanonicalCatalogIntegrity.rows[0] ?? {}
@@ -1306,7 +1453,10 @@ export async function runStartupMigrations(): Promise<void> {
   // deploy flag is intentionally one-shot; normal startup never sets it.
   const requiredRlsTable = process.env.REQUIRE_RLS_TABLE_ENFORCEMENT?.trim();
   if (requiredRlsTable) {
-    if (requiredRlsTable !== "classpilot_session_summary_deliveries") {
+    if (
+      requiredRlsTable !== "classpilot_session_summary_deliveries" &&
+      requiredRlsTable !== "passpilot_grade_students"
+    ) {
       throw new Error(`Unsupported required RLS enforcement table: ${requiredRlsTable}`);
     }
     if (process.env.RLS_GUC_ENABLED !== "true") {

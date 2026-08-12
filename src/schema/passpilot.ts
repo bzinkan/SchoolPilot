@@ -8,7 +8,9 @@ import {
   index,
   unique,
   check,
+  foreignKey,
 } from "drizzle-orm/pg-core";
+import { students } from "./students.js";
 
 // ============================================================================
 // Grades (classes / periods) - PassPilot
@@ -33,6 +35,7 @@ export const grades = pgTable(
   },
   (table) => [
     index("grades_school_id_idx").on(table.schoolId),
+    unique("grades_school_id_id_unique").on(table.schoolId, table.id),
     index("grades_school_classpilot_group_idx").on(
       table.schoolId,
       table.classpilotGroupId
@@ -73,6 +76,54 @@ export const teacherGrades = pgTable(
 
 export type TeacherGrade = typeof teacherGrades.$inferSelect;
 export type InsertTeacherGrade = typeof teacherGrades.$inferInsert;
+
+// ============================================================================
+// Student-Class memberships - PassPilot legacy/standalone class model
+// ============================================================================
+// `students.grade_id` remains as a deprecated single-class compatibility
+// projection. This tenant-scoped junction is the source of truth for new
+// legacy-mode roster operations and permits a student to belong to many
+// PassPilot classes without affecting canonical ClassPilot group rosters.
+export const passpilotGradeStudents = pgTable(
+  "passpilot_grade_students",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    gradeId: text("grade_id").notNull(),
+    studentId: text("student_id").notNull(),
+    assignedAt: timestamp("assigned_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (table) => [
+    unique("passpilot_grade_students_school_grade_student_unique").on(
+      table.schoolId,
+      table.gradeId,
+      table.studentId
+    ),
+    index("passpilot_grade_students_school_grade_idx").on(
+      table.schoolId,
+      table.gradeId
+    ),
+    index("passpilot_grade_students_school_student_idx").on(
+      table.schoolId,
+      table.studentId
+    ),
+    foreignKey({
+      columns: [table.schoolId, table.gradeId],
+      foreignColumns: [grades.schoolId, grades.id],
+      name: "passpilot_grade_students_grade_school_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.schoolId, table.studentId],
+      foreignColumns: [students.schoolId, students.id],
+      name: "passpilot_grade_students_student_school_fk",
+    }).onDelete("cascade"),
+  ]
+);
+
+export type PasspilotGradeStudent = typeof passpilotGradeStudents.$inferSelect;
+export type InsertPasspilotGradeStudent = typeof passpilotGradeStudents.$inferInsert;
 
 // ============================================================================
 // Passes - PassPilot hall passes

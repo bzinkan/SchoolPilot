@@ -4,9 +4,7 @@ import { requireSchoolContext } from "../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../middleware/requireActiveSchool.js";
 import { requireRole } from "../middleware/requireRole.js";
 import { requireProductLicense } from "../middleware/requireProductLicense.js";
-import { updateSchoolSchema } from "../schema/validation.js";
 import { sanitizeSchool } from "../util/sanitizeSchool.js";
-import { toSchoolUpdate } from "../util/schoolUpdate.js";
 import { safeStudent } from "../util/safeStudent.js";
 import { decryptClassPilotPin } from "../services/classpilotPins.js";
 import { getSchoolDeviceStatuses } from "../realtime/student-statuses.js";
@@ -698,7 +696,7 @@ router.post("/admin/students/bulk-delete", ...schoolAuth, requireRole("admin"), 
     for (const id of studentIds) {
       const student = await getStudentById(id);
       if (student && student.schoolId === schoolId) {
-        await deleteStudent(id);
+        await deleteStudent(id, schoolId);
         deleted++;
       }
     }
@@ -755,37 +753,6 @@ router.get("/admin/reports", ...passPilotAuth, requirePassPilotRole("admin", "sc
   return res.json({ reports: [] });
 });
 
-router.patch("/admin/settings", ...passPilotAuth, requirePassPilotRole("admin", "school_admin"), async (req, res, next) => {
-  try {
-    // Whitelist fields — prevents mass-assignment of billing/plan fields
-    const parsed = updateSchoolSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
-    }
-    // toSchoolUpdate hashes the input-only kioskPin into kioskPinHash
-    const school = await updateSchool(res.locals.schoolId!, await toSchoolUpdate(parsed.data));
-
-    logAudit({
-      schoolId: res.locals.schoolId!,
-      userId: req.authUser!.id,
-      userEmail: req.authUser!.email,
-      userRole: res.locals.membershipRole,
-      action: "settings.update",
-      entityType: "school",
-      entityId: res.locals.schoolId!,
-      // never log the plaintext PIN
-      changes:
-        req.body?.kioskPin !== undefined
-          ? { ...req.body, kioskPin: "[redacted]" }
-          : req.body,
-    });
-
-    return res.json({ school: school ? sanitizeSchool(school) : school });
-  } catch (err) {
-    next(err);
-  }
-});
-
 // ============================================================================
 // Kiosk config (PassPilot calls PUT /kiosk-config)
 // ============================================================================
@@ -828,9 +795,21 @@ router.get("/kiosk-config", ...passPilotAuth, async (req, res, next) => {
 
 router.put("/kiosk-config", ...passPilotAuth, async (req, res, next) => {
   try {
-    const updates: Record<string, any> = {};
-    if (req.body.kioskEnabled !== undefined) updates.kioskEnabled = req.body.kioskEnabled;
     const schoolId = res.locals.schoolId!;
+    let role;
+    if (Object.prototype.hasOwnProperty.call(req.body ?? {}, "kioskEnabled")) {
+      role = await getRequestPassPilotRole(req, res);
+      if (role !== "super_admin" && role !== "admin" && role !== "school_admin") {
+        return res.status(403).json({ error: "Insufficient permissions" });
+      }
+      // The legacy kiosk-config endpoint has no settings revision or PIN
+      // invariant. Never let it bypass the authoritative admin settings API.
+      return res.status(409).json({
+        error: "Kiosk Mode is managed in PassPilot Setup settings.",
+        code: "PASSPILOT_KIOSK_SETTINGS_MANAGED_IN_SETUP",
+        managementUrl: "/passpilot/setup?section=settings",
+      });
+    }
     const source = await getPasspilotClassSourceForSchool(schoolId);
     if (source === "classpilot_groups" && !hasPasspilotCanonicalClassCapability(req)) {
       return res.status(426).json({
@@ -841,7 +820,7 @@ router.put("/kiosk-config", ...passPilotAuth, async (req, res, next) => {
     }
     const selectedClassId = req.body.classId !== undefined ? req.body.classId : req.body.gradeId;
     if (selectedClassId !== undefined) {
-      const role = await getRequestPassPilotRole(req, res);
+      role ??= await getRequestPassPilotRole(req, res);
       if (selectedClassId && !(await canAccessPasspilotClass(req.authUser!, schoolId, selectedClassId, role))) {
         return res.status(403).json({ error: "Insufficient permissions" });
       }
@@ -856,13 +835,12 @@ router.put("/kiosk-config", ...passPilotAuth, async (req, res, next) => {
         await updateLegacyKioskClass(
           schoolId,
           selectedClassId || null,
-          req.authUser!.id
+          req.authUser!.id,
+          isPassPilotManager(role)
         );
       }
     }
-    const school = Object.keys(updates).length > 0
-      ? await updateSchool(schoolId, updates)
-      : await getSchoolById(schoolId);
+    const school = await getSchoolById(schoolId);
     if (req.body.kioskName !== undefined) {
       const membership = await getMembershipByUserAndSchool(req.authUser!.id, schoolId);
       if (membership) {

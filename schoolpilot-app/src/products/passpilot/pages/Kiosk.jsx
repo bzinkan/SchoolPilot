@@ -114,7 +114,10 @@ export default function KioskPage() {
         setMessage(data.error || "Student not found");
         return;
       }
-      setStudent(data.student);
+      setStudent({
+        ...data.student,
+        classId: data.classId || data.student.classId || data.student.classpilotGroupId || null,
+      });
       setActivePass(data.activePass);
       setState("found");
     } catch {
@@ -133,9 +136,7 @@ export default function KioskPage() {
         body: JSON.stringify({
           studentId: student.id,
           destination,
-          ...((student.classId || student.classpilotGroupId)
-            ? { classId: student.classId || student.classpilotGroupId }
-            : {}),
+          ...(student.classId ? { classId: student.classId } : {}),
         }),
       });
 

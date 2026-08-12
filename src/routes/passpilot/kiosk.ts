@@ -7,13 +7,16 @@ import { requireProductLicense } from "../../middleware/requireProductLicense.js
 import { kioskLookupSchema, kioskCheckoutSchema } from "../../schema/validation.js";
 import { runWithTenantContext } from "../../middleware/tenantContext.js";
 
-// Strict rate limiter for public kiosk endpoints
+// Count only failed public kiosk requests toward the strict per-IP budget.
+// Successful, PIN-authenticated polling must not cause multiple kiosks behind
+// the same school NAT to rate-limit one another at idle.
 const kioskLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
-  max: 30, // 30 requests per minute per IP
+  max: 30, // 30 failed requests per minute per IP
   message: { error: "Too many kiosk requests, please try again later" },
   standardHeaders: true,
   legacyHeaders: false,
+  skipSuccessfulRequests: true,
 });
 import { eq, and } from "drizzle-orm";
 import { productLicenses } from "../../schema/core.js";
@@ -151,10 +154,13 @@ router.post("/lookup", kioskLimiter, async (req, res, next) => {
     const activePass = kioskState.activePass ?? undefined;
 
     return res.json({
+      source: kioskState.source,
+      classId: kioskState.configuredClassId,
       student: {
         id: student.id,
         firstName: student.firstName,
         lastName: student.lastName,
+        classId: kioskState.configuredClassId,
       },
       activePass: activePass ? await normalizePasspilotPass(activePass, schoolId) : null,
     });
@@ -235,9 +241,16 @@ router.post("/checkout", kioskLimiter, async (req, res, next) => {
       if (!group) return res.status(400).json({ error: "Kiosk class is not active" });
       className = group.name;
     } else if (selectedClassId) {
+      if (school.kioskGradeId && selectedClassId !== school.kioskGradeId) {
+        return res.status(400).json({
+          error: "Checkout class does not match the configured kiosk class",
+          code: "PASSPILOT_KIOSK_CLASS_CHANGED",
+        });
+      }
       const allGrades = await getGradesBySchool(schoolId);
       const grade = allGrades.find((g) => g.id === selectedClassId);
-      if (grade) className = grade.name;
+      if (!grade) return res.status(400).json({ error: "Kiosk class was not found" });
+      className = grade.name;
     }
 
     // Combine: "7th Science" or just "Science" or just "7th" or null
@@ -265,7 +278,13 @@ router.post("/checkout", kioskLimiter, async (req, res, next) => {
             { ...commonPass, classId: selectedClassId! },
             { kiosk: true }
           )
-        : await createLegacyPass({ ...commonPass, gradeId: selectedClassId || student.gradeId || null });
+        : await createLegacyPass(
+            { ...commonPass, gradeId: selectedClassId || null },
+            {
+              kiosk: true,
+              expectedKioskClassId: school.kioskGradeId || null,
+            }
+          );
     } catch (err: any) {
       if (err?.code === "23505") {
         return res.status(409).json({ error: "Student already has an active pass" });
@@ -329,8 +348,11 @@ router.get("/grades", kioskLimiter, async (req, res, next) => {
       getPasspilotClasses(schoolId, { userId: "kiosk", manager: true })
     );
     if (inventory.source === "classpilot_groups" && !requireKioskClassCapability(req, res)) return;
-    const classes = inventory.source === "classpilot_groups"
-      ? inventory.classes.filter((entry) => entry.classId === school.kioskClasspilotGroupId)
+    const configuredClassId = inventory.source === "classpilot_groups"
+      ? school.kioskClasspilotGroupId
+      : school.kioskGradeId;
+    const classes = configuredClassId
+      ? inventory.classes.filter((entry) => entry.classId === configuredClassId)
       : inventory.classes;
     return res.json({ source: inventory.source, classes, grades: classes });
   } catch (err) {
@@ -359,13 +381,19 @@ router.get("/students", kioskLimiter, async (req, res, next) => {
       getPasspilotClassSourceForSchool(schoolId)
     );
     if (source === "classpilot_groups" && !requireKioskClassCapability(req, res)) return;
-    if (
-      source === "classpilot_groups" &&
-      (!school.kioskClasspilotGroupId || classId !== school.kioskClasspilotGroupId)
-    ) {
+    const configuredClassId = source === "classpilot_groups"
+      ? school.kioskClasspilotGroupId
+      : school.kioskGradeId;
+    if (configuredClassId && classId !== configuredClassId) {
       return res.status(409).json({
         error: "The selected class does not match the configured kiosk class.",
         code: "PASSPILOT_KIOSK_CLASS_CHANGED",
+      });
+    }
+    if (source === "classpilot_groups" && !configuredClassId) {
+      return res.status(409).json({
+        error: "An administrator must select a kiosk class before students can be loaded.",
+        code: "PASSPILOT_KIOSK_CLASS_REQUIRED",
       });
     }
 
@@ -499,7 +527,8 @@ router.put(
           await updateLegacyKioskClass(
             schoolId,
             selectedClassId || null,
-            req.authUser!.id
+            req.authUser!.id,
+            isPassPilotManager(role)
           );
         }
       }

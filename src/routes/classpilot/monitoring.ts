@@ -332,7 +332,7 @@ router.delete("/students/:studentId", ...auth, requireRole("admin"), async (req,
     if (!existing || existing.schoolId !== res.locals.schoolId) {
       return res.status(404).json({ error: "Student not found" });
     }
-    await deleteStudent(studentId);
+    await deleteStudent(studentId, res.locals.schoolId!);
 
     logAudit({
       schoolId: res.locals.schoolId!,

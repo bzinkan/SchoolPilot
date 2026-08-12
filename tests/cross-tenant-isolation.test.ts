@@ -118,6 +118,44 @@ after(async () => {
 });
 
 describe("cross-school isolation", () => {
+  it("RLS partitions PassPilot legacy multi-class memberships", {
+    skip: process.env.RLS_GUC_ENABLED !== "true",
+  }, async () => {
+    const [gradeA, gradeB] = await Promise.all([
+      inSchool(schoolA.id, () => createGrade({ schoolId: schoolA.id, name: `${TAG}_pass_a` } as any)),
+      inSchool(schoolB.id, () => createGrade({ schoolId: schoolB.id, name: `${TAG}_pass_b` } as any)),
+    ]);
+    const [studentA, studentB] = await Promise.all([
+      inSchool(schoolA.id, () => createStudent({ schoolId: schoolA.id, firstName: "Pass", lastName: "A", status: "active" } as any)),
+      inSchool(schoolB.id, () => createStudent({ schoolId: schoolB.id, firstName: "Pass", lastName: "B", status: "active" } as any)),
+    ]);
+    await asSystem(() => db.execute(sql`
+      INSERT INTO passpilot_grade_students (school_id, grade_id, student_id)
+      VALUES
+        (${schoolA.id}, ${gradeA.id}, ${studentA.id}),
+        (${schoolB.id}, ${gradeB.id}, ${studentB.id})
+    `).then(() => undefined));
+
+    const rowsA = await inSchool(schoolA.id, () => db.execute(sql`
+      SELECT school_id, grade_id, student_id FROM passpilot_grade_students
+      WHERE student_id IN (${studentA.id}, ${studentB.id})
+    `));
+    const rowsB = await inSchool(schoolB.id, () => db.execute(sql`
+      SELECT school_id, grade_id, student_id FROM passpilot_grade_students
+      WHERE student_id IN (${studentA.id}, ${studentB.id})
+    `));
+    assert.deepEqual(rowsA.rows, [{ school_id: schoolA.id, grade_id: gradeA.id, student_id: studentA.id }]);
+    assert.deepEqual(rowsB.rows, [{ school_id: schoolB.id, grade_id: gradeB.id, student_id: studentB.id }]);
+    await assert.rejects(
+      inSchool(schoolA.id, () => db.execute(sql`
+        INSERT INTO passpilot_grade_students (school_id, grade_id, student_id)
+        VALUES (${schoolB.id}, ${gradeB.id}, ${studentB.id})
+        ON CONFLICT DO NOTHING
+      `)),
+      /row-level security|policy/i
+    );
+  });
+
   it("RLS partitions ClassPilot summary delivery and roster snapshot rows by tenant context", {
     skip: process.env.RLS_GUC_ENABLED !== "true",
   }, async () => {

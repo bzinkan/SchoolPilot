@@ -7,6 +7,10 @@ import passRoutes from "./passpilot/passes.js";
 import kioskRoutes from "./passpilot/kiosk.js";
 import passpilotClassRoutes from "./passpilot/classes.js";
 import passpilotClassMigrationRoutes from "./passpilot/classMigration.js";
+import passpilotSettingsRoutes, {
+  passpilotActiveGradeLevelsCompatibilityRouter,
+  passpilotLegacySettingsCompatibilityRouter,
+} from "./passpilot/settings.js";
 import homeroomRoutes from "./gopilot/homerooms.js";
 import dismissalRoutes from "./gopilot/dismissal.js";
 import changeRoutes from "./gopilot/changes.js";
@@ -340,6 +344,13 @@ router.use("/passpilot/passes", passRoutes);
 router.use("/passpilot/kiosk", kioskRoutes);
 router.use("/passpilot/classes", passpilotClassRoutes);
 router.use("/passpilot/admin/class-migration", passpilotClassMigrationRoutes);
+router.use("/passpilot/admin/settings", passpilotSettingsRoutes);
+// Compatibility alias used by the existing PassPilot web client. Keep this
+// pointed at the same strict handler; do not reintroduce the legacy broad
+// school-update schema here.
+router.use("/admin/settings", passpilotActiveGradeLevelsCompatibilityRouter);
+router.use("/admin/settings", passpilotLegacySettingsCompatibilityRouter);
+router.use("/admin/settings", passpilotSettingsRoutes);
 router.use("/passes", passRoutes);
 router.use("/kiosk", kioskRoutes);
 
