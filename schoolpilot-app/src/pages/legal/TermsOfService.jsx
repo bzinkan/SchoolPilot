@@ -47,7 +47,7 @@ export default function TermsOfService() {
               Schoolpilot is a suite of school management tools designed for K-12 educational environments.
               ClassPilot enables teachers to monitor student device activity during instructional time.
               PassPilot provides digital hall pass management for tracking student movement.
-              GoPilot streamlines the dismissal process with real-time parent check-in and teacher notifications.
+              GoPilot supports school-operated dismissal with staff-entered arrivals, classroom release workflows, and verified pickup records.
               The Service includes real-time monitoring, Google Classroom integration, and classroom management tools.
             </p>
           </section>
@@ -62,7 +62,7 @@ export default function TermsOfService() {
               <li>Teachers and educators authorized by their school</li>
               <li>School administrators</li>
               <li>Students whose schools have adopted the Service</li>
-              <li>Parents and guardians linked to their school's dismissal system</li>
+              <li>Authorized office staff who coordinate school dismissal</li>
             </ul>
             <p className="text-slate-700 leading-relaxed mt-4">
               Individual accounts must be created by school administrators. Users must provide accurate

@@ -1,17 +1,16 @@
 import { Router } from "express";
-import crypto from "crypto";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
+import { rejectDisabledGoPilotParent } from "../../middleware/rejectDisabledGoPilotParent.js";
 import {
   getFamilyGroupsBySchool,
-  createFamilyGroup,
-  updateFamilyGroup,
+  createFamilyGroupWithStudents,
+  updateFamilyGroupWithStudents,
   deleteFamilyGroup,
   getFamilyGroupStudents,
   addStudentsToFamilyGroup,
-  setFamilyGroupStudents,
   removeStudentFromFamilyGroup,
   autoAssignFamilyGroups,
 } from "../../services/storage.js";
@@ -22,6 +21,7 @@ import {
   requireGoPilotRole,
 } from "../../services/gopilotAccess.js";
 import { generateFamilyGroupNumber } from "../../util/studentCode.js";
+import { logAudit } from "../../services/audit.js";
 
 const router = Router();
 
@@ -32,6 +32,7 @@ function param(req: any, key: string): string {
 const auth = [
   authenticate,
   requireSchoolContext,
+  rejectDisabledGoPilotParent,
   requireActiveSchool,
   requireProductLicense("GOPILOT"),
 ] as const;
@@ -40,6 +41,20 @@ const manageAuth = [
   ...auth,
   requireGoPilotRole("admin", "school_admin", "office_staff"),
 ] as const;
+
+function familyGroupDto(group: {
+  id: string;
+  carNumber: string;
+  familyName?: string | null;
+  createdAt: Date | string;
+}) {
+  return {
+    id: group.id,
+    carNumber: group.carNumber,
+    familyName: group.familyName ?? null,
+    createdAt: group.createdAt,
+  };
+}
 
 // ============================================================================
 // Family Groups
@@ -77,7 +92,7 @@ router.get("/family-groups", ...manageAuth, async (req, res, next) => {
         );
 
         return {
-          ...g,
+          ...familyGroupDto(g),
           students: enrichedStudents,
         };
       })
@@ -98,24 +113,38 @@ router.post(
       const schoolId = res.locals.schoolId!;
       const { carNumber, familyName, studentIds } = req.body;
 
+      if (
+        Array.isArray(studentIds) &&
+        studentIds.length > 0 &&
+        !(await allStudentsBelongToSchool(studentIds, schoolId))
+      ) {
+        return res.status(404).json({ error: "One or more students not found" });
+      }
+
       const num = carNumber || (await generateFamilyGroupNumber(schoolId));
 
-      const inviteToken = crypto.randomBytes(32).toString("hex");
-      const group = await createFamilyGroup({
+      const group = await createFamilyGroupWithStudents({
         schoolId,
         carNumber: num,
         familyName: familyName || null,
-        inviteToken,
+        // Family groups and car numbers are internal staff identifiers. The
+        // former parent invitation tokens are retained only as historical data
+        // and are never generated for new groups.
+        inviteToken: null,
+      }, Array.isArray(studentIds) ? studentIds : []);
+
+      await logAudit({
+        schoolId,
+        userId: req.authUser!.id,
+        userEmail: req.authUser!.email,
+        userRole: res.locals.gopilotRole,
+        action: "gopilot.family_group.created",
+        entityType: "family_group",
+        entityId: group.id,
+        metadata: { studentCount: Array.isArray(studentIds) ? studentIds.length : 0 },
       });
 
-      if (Array.isArray(studentIds) && studentIds.length > 0) {
-        if (!(await allStudentsBelongToSchool(studentIds, schoolId))) {
-          return res.status(404).json({ error: "One or more students not found" });
-        }
-        await addStudentsToFamilyGroup(group.id, studentIds);
-      }
-
-      return res.status(201).json({ group });
+      return res.status(201).json({ group: familyGroupDto(group) });
     } catch (err) {
       next(err);
     }
@@ -137,11 +166,6 @@ router.put("/family-groups/:id", ...manageAuth, async (req, res, next) => {
     if (carNumber !== undefined) data.carNumber = carNumber;
     if (familyName !== undefined) data.familyName = familyName;
 
-    const updated = await updateFamilyGroup(id, data);
-    if (!updated) {
-      return res.status(404).json({ error: "Family group not found" });
-    }
-
     if (studentIds !== undefined) {
       if (!Array.isArray(studentIds)) {
         return res.status(400).json({ error: "studentIds must be an array" });
@@ -149,10 +173,37 @@ router.put("/family-groups/:id", ...manageAuth, async (req, res, next) => {
       if (!(await allStudentsBelongToSchool(studentIds, res.locals.schoolId!))) {
         return res.status(404).json({ error: "One or more students not found" });
       }
-      await setFamilyGroupStudents(id, studentIds);
     }
 
-    return res.json({ group: updated });
+    const updated = await updateFamilyGroupWithStudents(
+      id,
+      res.locals.schoolId!,
+      data,
+      studentIds
+    );
+    if (!updated) {
+      return res.status(404).json({ error: "Family group not found" });
+    }
+
+    await logAudit({
+      schoolId: res.locals.schoolId!,
+      userId: req.authUser!.id,
+      userEmail: req.authUser!.email,
+      userRole: res.locals.gopilotRole,
+      action: "gopilot.family_group.updated",
+      entityType: "family_group",
+      entityId: id,
+      changes: {
+        fields: [
+          ...(familyName !== undefined ? ["familyName"] : []),
+          ...(carNumber !== undefined ? ["carNumber"] : []),
+          ...(studentIds !== undefined ? ["studentIds"] : []),
+        ],
+      },
+      metadata: { studentCount: Array.isArray(studentIds) ? studentIds.length : undefined },
+    });
+
+    return res.json({ group: familyGroupDto(updated) });
   } catch (err) {
     next(err);
   }
@@ -176,6 +227,16 @@ router.post(
         return res.status(404).json({ error: "One or more students not found" });
       }
       await addStudentsToFamilyGroup(param(req, "id"), studentIds);
+      await logAudit({
+        schoolId: res.locals.schoolId!,
+        userId: req.authUser!.id,
+        userEmail: req.authUser!.email,
+        userRole: res.locals.gopilotRole,
+        action: "gopilot.family_group.students_added",
+        entityType: "family_group",
+        entityId: param(req, "id"),
+        metadata: { studentCount: studentIds.length },
+      });
       return res.json({ ok: true });
     } catch (err) {
       next(err);
@@ -197,6 +258,16 @@ router.delete(
         param(req, "groupId"),
         param(req, "studentId")
       );
+      await logAudit({
+        schoolId: res.locals.schoolId!,
+        userId: req.authUser!.id,
+        userEmail: req.authUser!.email,
+        userRole: res.locals.gopilotRole,
+        action: "gopilot.family_group.student_removed",
+        entityType: "family_group",
+        entityId: param(req, "groupId"),
+        metadata: { studentCount: 1 },
+      });
       return res.json({ ok: true });
     } catch (err) {
       next(err);
@@ -211,7 +282,19 @@ router.delete("/family-groups/:id", ...manageAuth, async (req, res, next) => {
     if (!group) {
       return res.status(404).json({ error: "Family group not found" });
     }
-    await deleteFamilyGroup(param(req, "id"));
+    const deleted = await deleteFamilyGroup(param(req, "id"), res.locals.schoolId!);
+    if (!deleted) {
+      return res.status(404).json({ error: "Family group not found" });
+    }
+    await logAudit({
+      schoolId: res.locals.schoolId!,
+      userId: req.authUser!.id,
+      userEmail: req.authUser!.email,
+      userRole: res.locals.gopilotRole,
+      action: "gopilot.family_group.deleted",
+      entityType: "family_group",
+      entityId: param(req, "id"),
+    });
     return res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -226,6 +309,16 @@ router.post(
     try {
       const schoolId = res.locals.schoolId!;
       const result = await autoAssignFamilyGroups(schoolId);
+      await logAudit({
+        schoolId,
+        userId: req.authUser!.id,
+        userEmail: req.authUser!.email,
+        userRole: res.locals.gopilotRole,
+        action: "gopilot.family_groups.auto_assigned",
+        entityType: "school",
+        entityId: schoolId,
+        metadata: { createdCount: result.created, assignedCount: result.assigned },
+      });
       return res.json({
         created: result.created,
         total: result.assigned,

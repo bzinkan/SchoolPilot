@@ -3,15 +3,18 @@ import { Server, type Socket } from "socket.io";
 import { verifyUserToken } from "../services/jwt.js";
 import { getUserById } from "../services/storage.js";
 import {
-  getApprovedParentStudentIds,
   getHomeroomForSchool,
   getTeacherHomeroomIds,
+  hasAnyActiveGoPilotStaffMembership,
   hasActiveGoPilotLicense,
   isGoPilotManager,
   resolveGoPilotIdentity,
 } from "../services/gopilotAccess.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
-import { subscribeSocketIoRedis } from "./socketio-redis.js";
+import {
+  publishSocketIoRedis,
+  subscribeSocketIoRedis,
+} from "./socketio-redis.js";
 
 let io: Server | null = null;
 
@@ -54,6 +57,16 @@ export function setupSocketIO(httpServer: HttpServer): Server {
       socket.data.userId = payload.userId;
       socket.data.email = payload.email;
       socket.data.isSuperAdmin = user.isSuperAdmin;
+      if (!user.isSuperAdmin && !(await hasAnyActiveGoPilotStaffMembership(payload.userId))) {
+        const disabled = new Error("GoPilot parent portal is disabled") as Error & {
+          data?: { code: string; status: number };
+        };
+        disabled.data = {
+          code: "GOPILOT_PARENT_PORTAL_DISABLED",
+          status: 410,
+        };
+        return next(disabled);
+      }
       next();
     } catch {
       next(new Error("Invalid token"));
@@ -72,11 +85,6 @@ export function setupSocketIO(httpServer: HttpServer): Server {
           return;
         }
 
-        if (!socket.data.isSuperAdmin && !(await hasActiveGoPilotLicense(requestedSchoolId))) {
-          socket.emit("join:error", { error: "Product license required" });
-          return;
-        }
-
         const identity = socket.data.isSuperAdmin
           ? null
           : await resolveGoPilotIdentity(userId, requestedSchoolId);
@@ -88,6 +96,21 @@ export function setupSocketIO(httpServer: HttpServer): Server {
         const role = socket.data.isSuperAdmin
           ? "super_admin"
           : identity!.primaryRole;
+
+        if (role === "parent") {
+          socket.emit("join:error", {
+            error: "GoPilot parent portal is disabled",
+            code: "GOPILOT_PARENT_PORTAL_DISABLED",
+            status: 410,
+          });
+          socket.disconnect(true);
+          return;
+        }
+
+        if (!socket.data.isSuperAdmin && !(await hasActiveGoPilotLicense(requestedSchoolId))) {
+          socket.emit("join:error", { error: "Product license required" });
+          return;
+        }
 
         // Socket.IO handlers run outside Express/ALS, so bind this school's tenant
         // context for the per-school access checks (students/homerooms reads) — RLS
@@ -118,18 +141,6 @@ export function setupSocketIO(httpServer: HttpServer): Server {
             return;
           }
 
-          if (role === "parent") {
-            // Only parents with at least one APPROVED child at this school may
-            // join the broadcast parent room — a membership alone isn't enough.
-            const approved = await getApprovedParentStudentIds(userId, requestedSchoolId);
-            if (approved.size === 0) {
-              socket.emit("join:error", { error: "No approved children at this school" });
-              return;
-            }
-            joinValidatedSchoolRoom(socket, requestedSchoolId);
-            socket.join(`school:${requestedSchoolId}:parent:${userId}`);
-            socket.join(`school:${requestedSchoolId}:parents`);
-          }
         });
       } catch {
         socket.emit("join:error", { error: "Failed to join school room" });
@@ -146,4 +157,19 @@ export function setupSocketIO(httpServer: HttpServer): Server {
 
 export function getIO(): Server | null {
   return io;
+}
+
+/**
+ * The sole GoPilot event path. Every producer emits locally for low latency and
+ * publishes the same message to Redis for clients attached to other API tasks.
+ */
+export async function broadcastGoPilot(
+  room: string,
+  event: string,
+  data: unknown
+): Promise<void> {
+  io?.to(room).emit(event, data);
+  // Local delivery is authoritative for request latency. The relay owns
+  // bounded connect/publish timeouts and recovery; callers must never block.
+  void publishSocketIoRedis({ room, event, data }).catch(() => undefined);
 }

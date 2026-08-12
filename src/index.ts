@@ -322,15 +322,33 @@ export async function runStartupMigrations(): Promise<void> {
       }
     }
 
-    const normalized = await schedulerPool.query(`
-      UPDATE schools
-      SET
-        status = CASE WHEN status = 'trial' THEN 'active' ELSE status END,
-        plan_tier = CASE WHEN plan_tier = 'trial' THEN 'basic' ELSE plan_tier END,
-        trial_ends_at = NULL,
-        updated_at = now()
-      WHERE status = 'trial' OR plan_tier = 'trial' OR trial_ends_at IS NOT NULL
+    const trialEndsAtColumn = await schedulerPool.query<{ exists: boolean }>(`
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'schools'
+          AND column_name = 'trial_ends_at'
+      ) AS exists
     `);
+    const normalized = trialEndsAtColumn.rows[0]?.exists
+      ? await schedulerPool.query(`
+          UPDATE schools
+          SET
+            status = CASE WHEN status = 'trial' THEN 'active' ELSE status END,
+            plan_tier = CASE WHEN plan_tier = 'trial' THEN 'basic' ELSE plan_tier END,
+            trial_ends_at = NULL,
+            updated_at = now()
+          WHERE status = 'trial' OR plan_tier = 'trial' OR trial_ends_at IS NOT NULL
+        `)
+      : await schedulerPool.query(`
+          UPDATE schools
+          SET
+            status = CASE WHEN status = 'trial' THEN 'active' ELSE status END,
+            plan_tier = CASE WHEN plan_tier = 'trial' THEN 'basic' ELSE plan_tier END,
+            updated_at = now()
+          WHERE status = 'trial' OR plan_tier = 'trial'
+        `);
     if ((normalized.rowCount || 0) > 0) {
       console.log(`[migration] normalized ${normalized.rowCount} schools to active/suspended lifecycle`);
     }
@@ -1386,6 +1404,502 @@ export async function runStartupMigrations(): Promise<void> {
     console.warn("[migration] Google roster connector migration skipped:", (err as Error).message);
   }
 
+  // GoPilot staff-dismissal hardening. Child rows get a direct school_id so
+  // same-tenant foreign keys and RLS do not depend on application joins. This
+  // migration is additive and preserves historical records; unsafe ambiguity
+  // (duplicates/orphans) fails the migration instead of silently rewriting it.
+  // Preserve legacy settings exactly once, when the canonical columns are
+  // introduced. Later canonical saves must never be overwritten on restart.
+  await schedulerPool.query(`
+    CREATE OR REPLACE FUNCTION public.gopilot_valid_pickup_zones(candidate JSONB)
+    RETURNS BOOLEAN
+    LANGUAGE plpgsql
+    IMMUTABLE
+    AS $gopilot_zone_validator$
+    DECLARE
+      zone JSONB;
+      normalized_id TEXT;
+      seen_ids TEXT[] := ARRAY[]::TEXT[];
+    BEGIN
+      IF candidate IS NULL OR jsonb_typeof(candidate) <> 'array'
+         OR jsonb_array_length(candidate) < 1 OR jsonb_array_length(candidate) > 12 THEN
+        RETURN false;
+      END IF;
+      FOR zone IN SELECT value FROM jsonb_array_elements(candidate)
+      LOOP
+        IF jsonb_typeof(zone) <> 'object'
+           OR NOT (zone ? 'id') OR NOT (zone ? 'name')
+           OR jsonb_typeof(zone->'id') <> 'string'
+           OR jsonb_typeof(zone->'name') <> 'string' THEN
+          RETURN false;
+        END IF;
+        normalized_id := btrim(zone->>'id');
+        IF length(normalized_id) < 1 OR length(normalized_id) > 16
+           OR normalized_id !~ '^[A-Za-z0-9][A-Za-z0-9_-]*$'
+           OR length(btrim(zone->>'name')) < 1 OR length(btrim(zone->>'name')) > 80
+           OR lower(normalized_id) = ANY(seen_ids) THEN
+          RETURN false;
+        END IF;
+        seen_ids := array_append(seen_ids, lower(normalized_id));
+      END LOOP;
+      RETURN true;
+    EXCEPTION WHEN OTHERS THEN
+      RETURN false;
+    END
+    $gopilot_zone_validator$;
+
+    DO $gopilot_settings_backfill$
+    DECLARE
+      school_row RECORD;
+      legacy JSONB;
+      auto_start_column_existed BOOLEAN;
+      pickup_zones_column_existed BOOLEAN;
+      preserved_auto_start INTEGER := 0;
+      preserved_zones INTEGER := 0;
+    BEGIN
+      SELECT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'schools'
+          AND column_name = 'gopilot_auto_start_enabled'
+      ) INTO auto_start_column_existed;
+      SELECT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'schools'
+          AND column_name = 'gopilot_pickup_zones'
+      ) INTO pickup_zones_column_existed;
+
+      ALTER TABLE schools
+        ADD COLUMN IF NOT EXISTS gopilot_auto_start_enabled BOOLEAN NOT NULL DEFAULT false,
+        ADD COLUMN IF NOT EXISTS gopilot_pickup_zones JSONB NOT NULL DEFAULT '[{"id":"A","name":"Zone A"},{"id":"B","name":"Zone B"},{"id":"C","name":"Zone C"}]'::jsonb,
+        ADD COLUMN IF NOT EXISTS gopilot_settings_revision INTEGER NOT NULL DEFAULT 0;
+
+      IF NOT auto_start_column_existed OR NOT pickup_zones_column_existed THEN
+        FOR school_row IN
+          SELECT id, settings FROM schools WHERE settings IS NOT NULL
+        LOOP
+          BEGIN
+            legacy := school_row.settings::jsonb;
+            IF NOT auto_start_column_existed
+               AND legacy->'autoDismissalEnabled' = 'true'::jsonb THEN
+              UPDATE schools SET gopilot_auto_start_enabled = true
+              WHERE id = school_row.id;
+              preserved_auto_start := preserved_auto_start + 1;
+            END IF;
+            IF NOT pickup_zones_column_existed THEN
+              IF public.gopilot_valid_pickup_zones(legacy->'pickupZones') THEN
+                UPDATE schools SET gopilot_pickup_zones = legacy->'pickupZones'
+                WHERE id = school_row.id;
+                preserved_zones := preserved_zones + 1;
+              END IF;
+            END IF;
+          EXCEPTION WHEN OTHERS THEN
+            -- Fail closed to the column defaults for this malformed legacy row.
+            NULL;
+          END;
+        END LOOP;
+      END IF;
+      UPDATE schools
+      SET gopilot_pickup_zones = '[{"id":"A","name":"Zone A"},{"id":"B","name":"Zone B"},{"id":"C","name":"Zone C"}]'::jsonb
+      WHERE NOT public.gopilot_valid_pickup_zones(gopilot_pickup_zones);
+      ALTER TABLE schools ALTER COLUMN dismissal_mode SET DEFAULT 'no_app';
+      UPDATE schools SET dismissal_mode = 'no_app' WHERE dismissal_mode IS DISTINCT FROM 'no_app';
+      RAISE NOTICE 'GoPilot settings backfill: explicit_auto_start=%, valid_zone_sets=%',
+        preserved_auto_start, preserved_zones;
+    END
+    $gopilot_settings_backfill$;
+
+    DO $gopilot_settings_constraints$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'schools_gopilot_settings_revision_check'
+      ) THEN
+        ALTER TABLE schools ADD CONSTRAINT schools_gopilot_settings_revision_check
+          CHECK (gopilot_settings_revision >= 0);
+      END IF;
+      ALTER TABLE schools DROP CONSTRAINT IF EXISTS schools_gopilot_pickup_zones_check;
+      ALTER TABLE schools ADD CONSTRAINT schools_gopilot_pickup_zones_check
+        CHECK (public.gopilot_valid_pickup_zones(gopilot_pickup_zones));
+    END
+    $gopilot_settings_constraints$;
+  `);
+
+  // Very old restores can predate product-specific role overrides. Add the
+  // column before any containment inventory, trigger, or backfill references
+  // gopilot_role.
+  await pool.query(`ALTER TABLE school_memberships ADD COLUMN IF NOT EXISTS gopilot_role TEXT`);
+  console.log("[migration] gopilot_role column ready");
+
+  // Two GoPilot child tables were introduced by earlier application releases
+  // as best-effort startup fallbacks.  Create them before the tenant-hardening
+  // pass below: a legacy database may legitimately have neither table yet,
+  // and ALTER/UPDATE must not run before the fallback exists.
+  await schedulerPool.query(`
+    CREATE TABLE IF NOT EXISTS homeroom_teachers (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      school_id TEXT,
+      homeroom_id TEXT NOT NULL,
+      teacher_id TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'primary',
+      assigned_at TIMESTAMP NOT NULL DEFAULT now(),
+      UNIQUE(homeroom_id, teacher_id)
+    );
+    CREATE TABLE IF NOT EXISTS dismissal_overrides (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      school_id TEXT,
+      session_id TEXT NOT NULL,
+      student_id TEXT NOT NULL,
+      original_type TEXT NOT NULL,
+      override_type TEXT NOT NULL,
+      bus_route TEXT,
+      reason TEXT,
+      changed_by TEXT NOT NULL,
+      changed_by_role TEXT NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT now(),
+      UNIQUE(session_id, student_id)
+    );
+  `);
+
+  await schedulerPool.query(`
+    ALTER TABLE authorized_pickups ADD COLUMN IF NOT EXISTS school_id TEXT;
+    ALTER TABLE custody_alerts ADD COLUMN IF NOT EXISTS school_id TEXT;
+    ALTER TABLE dismissal_queue ADD COLUMN IF NOT EXISTS school_id TEXT;
+    ALTER TABLE dismissal_changes ADD COLUMN IF NOT EXISTS school_id TEXT;
+    ALTER TABLE family_group_students ADD COLUMN IF NOT EXISTS school_id TEXT;
+    ALTER TABLE homeroom_teachers ADD COLUMN IF NOT EXISTS school_id TEXT;
+    ALTER TABLE dismissal_overrides ADD COLUMN IF NOT EXISTS school_id TEXT;
+
+    UPDATE authorized_pickups AS child
+    SET school_id = student.school_id
+    FROM students AS student
+    WHERE child.school_id IS NULL AND student.id = child.student_id;
+    UPDATE custody_alerts AS child
+    SET school_id = student.school_id
+    FROM students AS student
+    WHERE child.school_id IS NULL AND student.id = child.student_id;
+    UPDATE dismissal_queue AS child
+    SET school_id = session.school_id
+    FROM dismissal_sessions AS session
+    WHERE child.school_id IS NULL AND session.id = child.session_id;
+    UPDATE dismissal_changes AS child
+    SET school_id = session.school_id
+    FROM dismissal_sessions AS session
+    WHERE child.school_id IS NULL AND session.id = child.session_id;
+    UPDATE family_group_students AS child
+    SET school_id = family.school_id
+    FROM family_groups AS family
+    WHERE child.school_id IS NULL AND family.id = child.family_group_id;
+    UPDATE homeroom_teachers AS child
+    SET school_id = homeroom.school_id
+    FROM homerooms AS homeroom
+    WHERE child.school_id IS NULL AND homeroom.id = child.homeroom_id;
+    UPDATE dismissal_overrides AS child
+    SET school_id = session.school_id
+    FROM dismissal_sessions AS session
+    WHERE child.school_id IS NULL AND session.id = child.session_id;
+    UPDATE parent_student AS child
+    SET school_id = student.school_id
+    FROM students AS student
+    WHERE child.school_id IS NULL AND student.id = child.student_id;
+  `);
+
+  await schedulerPool.query(`
+    DO $gopilot_integrity_inventory$
+    DECLARE
+      orphan_count BIGINT;
+      tenant_mismatch_count BIGINT;
+      duplicate_queue_count BIGINT;
+      duplicate_family_student_count BIGINT;
+    BEGIN
+      SELECT
+        (SELECT count(*) FROM authorized_pickups WHERE school_id IS NULL) +
+        (SELECT count(*) FROM custody_alerts WHERE school_id IS NULL) +
+        (SELECT count(*) FROM dismissal_queue WHERE school_id IS NULL) +
+        (SELECT count(*) FROM dismissal_changes WHERE school_id IS NULL) +
+        (SELECT count(*) FROM family_group_students WHERE school_id IS NULL) +
+        (SELECT count(*) FROM homeroom_teachers WHERE school_id IS NULL) +
+        (SELECT count(*) FROM dismissal_overrides WHERE school_id IS NULL) +
+        (SELECT count(*) FROM parent_student WHERE school_id IS NULL)
+      INTO orphan_count;
+
+      SELECT
+        (SELECT count(*) FROM authorized_pickups c JOIN students s ON s.id = c.student_id WHERE s.school_id <> c.school_id) +
+        (SELECT count(*) FROM custody_alerts c JOIN students s ON s.id = c.student_id WHERE s.school_id <> c.school_id) +
+        (SELECT count(*) FROM dismissal_queue c JOIN dismissal_sessions p ON p.id = c.session_id WHERE p.school_id <> c.school_id) +
+        (SELECT count(*) FROM dismissal_queue c JOIN students s ON s.id = c.student_id WHERE s.school_id <> c.school_id) +
+        (SELECT count(*) FROM dismissal_changes c JOIN dismissal_sessions p ON p.id = c.session_id WHERE p.school_id <> c.school_id) +
+        (SELECT count(*) FROM dismissal_changes c JOIN students s ON s.id = c.student_id WHERE s.school_id <> c.school_id) +
+        (SELECT count(*) FROM family_group_students c JOIN family_groups p ON p.id = c.family_group_id WHERE p.school_id <> c.school_id) +
+        (SELECT count(*) FROM family_group_students c JOIN students s ON s.id = c.student_id WHERE s.school_id <> c.school_id) +
+        (SELECT count(*) FROM homeroom_teachers c JOIN homerooms p ON p.id = c.homeroom_id WHERE p.school_id <> c.school_id) +
+        (SELECT count(*) FROM dismissal_overrides c JOIN dismissal_sessions p ON p.id = c.session_id WHERE p.school_id <> c.school_id) +
+        (SELECT count(*) FROM dismissal_overrides c JOIN students s ON s.id = c.student_id WHERE s.school_id <> c.school_id) +
+        (SELECT count(*) FROM parent_student c JOIN students s ON s.id = c.student_id WHERE s.school_id <> c.school_id)
+      INTO tenant_mismatch_count;
+
+      SELECT count(*) INTO duplicate_queue_count FROM (
+        SELECT session_id, student_id FROM dismissal_queue
+        GROUP BY session_id, student_id HAVING count(*) > 1
+      ) duplicates;
+      SELECT count(*) INTO duplicate_family_student_count FROM (
+        SELECT school_id, student_id FROM family_group_students
+        GROUP BY school_id, student_id HAVING count(*) > 1
+      ) duplicates;
+
+      RAISE NOTICE 'GoPilot integrity inventory: orphan_child_rows=%, tenant_mismatches=%, duplicate_queue_pairs=%, duplicate_family_memberships=%',
+        orphan_count, tenant_mismatch_count, duplicate_queue_count, duplicate_family_student_count;
+      IF orphan_count > 0 OR tenant_mismatch_count > 0
+         OR duplicate_queue_count > 0 OR duplicate_family_student_count > 0 THEN
+        RAISE EXCEPTION 'GoPilot integrity migration blocked; review ID/count-only inventory before rollout';
+      END IF;
+    END
+    $gopilot_integrity_inventory$;
+
+    ALTER TABLE authorized_pickups ALTER COLUMN school_id SET NOT NULL;
+    ALTER TABLE custody_alerts ALTER COLUMN school_id SET NOT NULL;
+    ALTER TABLE dismissal_queue ALTER COLUMN school_id SET NOT NULL;
+    ALTER TABLE dismissal_changes ALTER COLUMN school_id SET NOT NULL;
+    ALTER TABLE family_group_students ALTER COLUMN school_id SET NOT NULL;
+    ALTER TABLE homeroom_teachers ALTER COLUMN school_id SET NOT NULL;
+    ALTER TABLE dismissal_overrides ALTER COLUMN school_id SET NOT NULL;
+    ALTER TABLE parent_student ALTER COLUMN school_id SET NOT NULL;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS students_school_id_id_unique ON students (school_id, id);
+    CREATE UNIQUE INDEX IF NOT EXISTS dismissal_sessions_school_id_id_unique ON dismissal_sessions (school_id, id);
+    CREATE UNIQUE INDEX IF NOT EXISTS family_groups_school_id_id_unique ON family_groups (school_id, id);
+    CREATE UNIQUE INDEX IF NOT EXISTS homerooms_school_id_id_unique ON homerooms (school_id, id);
+    CREATE UNIQUE INDEX IF NOT EXISTS dismissal_queue_session_student_unique ON dismissal_queue (session_id, student_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS family_group_students_school_student_unique ON family_group_students (school_id, student_id);
+
+    CREATE INDEX IF NOT EXISTS authorized_pickups_school_id_idx ON authorized_pickups (school_id);
+    CREATE INDEX IF NOT EXISTS custody_alerts_school_id_idx ON custody_alerts (school_id);
+    CREATE INDEX IF NOT EXISTS dismissal_queue_school_id_idx ON dismissal_queue (school_id);
+    CREATE INDEX IF NOT EXISTS dismissal_changes_school_id_idx ON dismissal_changes (school_id);
+    CREATE INDEX IF NOT EXISTS family_group_students_school_id_idx ON family_group_students (school_id);
+    CREATE INDEX IF NOT EXISTS family_group_students_group_id_idx ON family_group_students (family_group_id);
+    CREATE INDEX IF NOT EXISTS family_group_students_student_id_idx ON family_group_students (student_id);
+    CREATE INDEX IF NOT EXISTS homeroom_teachers_school_id_idx ON homeroom_teachers (school_id);
+    CREATE INDEX IF NOT EXISTS dismissal_overrides_school_id_idx ON dismissal_overrides (school_id);
+  `);
+
+  await schedulerPool.query(`
+    DO $gopilot_tenant_foreign_keys$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'authorized_pickups_school_student_fk') THEN
+        ALTER TABLE authorized_pickups ADD CONSTRAINT authorized_pickups_school_student_fk
+          FOREIGN KEY (school_id, student_id) REFERENCES students (school_id, id) NOT VALID;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'custody_alerts_school_student_fk') THEN
+        ALTER TABLE custody_alerts ADD CONSTRAINT custody_alerts_school_student_fk
+          FOREIGN KEY (school_id, student_id) REFERENCES students (school_id, id) NOT VALID;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dismissal_queue_school_session_fk') THEN
+        ALTER TABLE dismissal_queue ADD CONSTRAINT dismissal_queue_school_session_fk
+          FOREIGN KEY (school_id, session_id) REFERENCES dismissal_sessions (school_id, id) NOT VALID;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dismissal_queue_school_student_fk') THEN
+        ALTER TABLE dismissal_queue ADD CONSTRAINT dismissal_queue_school_student_fk
+          FOREIGN KEY (school_id, student_id) REFERENCES students (school_id, id) NOT VALID;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dismissal_changes_school_session_fk') THEN
+        ALTER TABLE dismissal_changes ADD CONSTRAINT dismissal_changes_school_session_fk
+          FOREIGN KEY (school_id, session_id) REFERENCES dismissal_sessions (school_id, id) NOT VALID;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dismissal_changes_school_student_fk') THEN
+        ALTER TABLE dismissal_changes ADD CONSTRAINT dismissal_changes_school_student_fk
+          FOREIGN KEY (school_id, student_id) REFERENCES students (school_id, id) NOT VALID;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'family_group_students_school_group_fk') THEN
+        ALTER TABLE family_group_students ADD CONSTRAINT family_group_students_school_group_fk
+          FOREIGN KEY (school_id, family_group_id) REFERENCES family_groups (school_id, id) NOT VALID;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'family_group_students_school_student_fk') THEN
+        ALTER TABLE family_group_students ADD CONSTRAINT family_group_students_school_student_fk
+          FOREIGN KEY (school_id, student_id) REFERENCES students (school_id, id) NOT VALID;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'homeroom_teachers_school_homeroom_fk') THEN
+        ALTER TABLE homeroom_teachers ADD CONSTRAINT homeroom_teachers_school_homeroom_fk
+          FOREIGN KEY (school_id, homeroom_id) REFERENCES homerooms (school_id, id) NOT VALID;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dismissal_overrides_school_session_fk') THEN
+        ALTER TABLE dismissal_overrides ADD CONSTRAINT dismissal_overrides_school_session_fk
+          FOREIGN KEY (school_id, session_id) REFERENCES dismissal_sessions (school_id, id) NOT VALID;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dismissal_overrides_school_student_fk') THEN
+        ALTER TABLE dismissal_overrides ADD CONSTRAINT dismissal_overrides_school_student_fk
+          FOREIGN KEY (school_id, student_id) REFERENCES students (school_id, id) NOT VALID;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'parent_student_school_student_fk') THEN
+        ALTER TABLE parent_student ADD CONSTRAINT parent_student_school_student_fk
+          FOREIGN KEY (school_id, student_id) REFERENCES students (school_id, id) NOT VALID;
+      END IF;
+    END
+    $gopilot_tenant_foreign_keys$;
+
+    ALTER TABLE authorized_pickups VALIDATE CONSTRAINT authorized_pickups_school_student_fk;
+    ALTER TABLE custody_alerts VALIDATE CONSTRAINT custody_alerts_school_student_fk;
+    ALTER TABLE dismissal_queue VALIDATE CONSTRAINT dismissal_queue_school_session_fk;
+    ALTER TABLE dismissal_queue VALIDATE CONSTRAINT dismissal_queue_school_student_fk;
+    ALTER TABLE dismissal_changes VALIDATE CONSTRAINT dismissal_changes_school_session_fk;
+    ALTER TABLE dismissal_changes VALIDATE CONSTRAINT dismissal_changes_school_student_fk;
+    ALTER TABLE family_group_students VALIDATE CONSTRAINT family_group_students_school_group_fk;
+    ALTER TABLE family_group_students VALIDATE CONSTRAINT family_group_students_school_student_fk;
+    ALTER TABLE homeroom_teachers VALIDATE CONSTRAINT homeroom_teachers_school_homeroom_fk;
+    ALTER TABLE dismissal_overrides VALIDATE CONSTRAINT dismissal_overrides_school_session_fk;
+    ALTER TABLE dismissal_overrides VALIDATE CONSTRAINT dismissal_overrides_school_student_fk;
+    ALTER TABLE parent_student VALIDATE CONSTRAINT parent_student_school_student_fk;
+  `);
+
+  await schedulerPool.query(`
+    ALTER TABLE authorized_pickups ALTER COLUMN status SET DEFAULT 'pending';
+    DO $gopilot_pickup_status$
+    DECLARE demoted_count BIGINT;
+    BEGIN
+      UPDATE authorized_pickups AS pickup
+      SET status = 'pending'
+      WHERE pickup.status = 'approved'
+        AND NOT EXISTS (
+          SELECT 1 FROM school_memberships AS membership
+          WHERE membership.school_id = pickup.school_id
+            AND membership.user_id = pickup.added_by
+            AND membership.status = 'active'
+            AND COALESCE(NULLIF(membership.gopilot_role, ''), membership.role)
+              IN ('admin', 'school_admin', 'office_staff')
+        );
+      GET DIAGNOSTICS demoted_count = ROW_COUNT;
+      RAISE NOTICE 'GoPilot pickup approvals moved to staff review: count=%', demoted_count;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'authorized_pickups_status_check') THEN
+        ALTER TABLE authorized_pickups ADD CONSTRAINT authorized_pickups_status_check
+          CHECK (status IN ('pending', 'approved', 'revoked')) NOT VALID;
+      END IF;
+    END
+    $gopilot_pickup_status$;
+    ALTER TABLE authorized_pickups VALIDATE CONSTRAINT authorized_pickups_status_check;
+
+    DO $gopilot_invitation_revoke$
+    DECLARE revoked_count BIGINT;
+    BEGIN
+      UPDATE family_groups SET invite_token = NULL
+      WHERE claimed_by_user_id IS NULL AND invite_token IS NOT NULL;
+      GET DIAGNOSTICS revoked_count = ROW_COUNT;
+      RAISE NOTICE 'GoPilot unused family invitation tokens revoked: count=%', revoked_count;
+    END
+    $gopilot_invitation_revoke$;
+
+    DO $gopilot_state_constraints$
+    DECLARE invalid_session_statuses BIGINT;
+    DECLARE invalid_queue_statuses BIGINT;
+    DECLARE invalid_change_statuses BIGINT;
+    DECLARE invalid_override_types BIGINT;
+    BEGIN
+      SELECT count(*) INTO invalid_session_statuses FROM dismissal_sessions
+        WHERE status NOT IN ('pending', 'active', 'paused', 'completed');
+      SELECT count(*) INTO invalid_queue_statuses FROM dismissal_queue
+        WHERE status NOT IN ('waiting', 'called', 'released', 'dismissed', 'held', 'delayed');
+      SELECT count(*) INTO invalid_change_statuses FROM dismissal_changes
+        WHERE status NOT IN ('pending', 'approved', 'rejected');
+      SELECT count(*) INTO invalid_override_types FROM dismissal_overrides
+        WHERE original_type NOT IN ('car', 'bus', 'walker', 'afterschool')
+           OR override_type NOT IN ('car', 'bus', 'walker', 'afterschool');
+      RAISE NOTICE 'GoPilot state inventory: sessions=%, queue=%, changes=%, overrides=%',
+        invalid_session_statuses, invalid_queue_statuses, invalid_change_statuses, invalid_override_types;
+      IF invalid_session_statuses > 0 OR invalid_queue_statuses > 0
+         OR invalid_change_statuses > 0 OR invalid_override_types > 0 THEN
+        RAISE EXCEPTION 'GoPilot state integrity migration blocked; review ID/count-only inventory';
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dismissal_sessions_status_check') THEN
+        ALTER TABLE dismissal_sessions ADD CONSTRAINT dismissal_sessions_status_check
+          CHECK (status IN ('pending', 'active', 'paused', 'completed')) NOT VALID;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dismissal_queue_status_check') THEN
+        ALTER TABLE dismissal_queue ADD CONSTRAINT dismissal_queue_status_check
+          CHECK (status IN ('waiting', 'called', 'released', 'dismissed', 'held', 'delayed')) NOT VALID;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dismissal_changes_status_check') THEN
+        ALTER TABLE dismissal_changes ADD CONSTRAINT dismissal_changes_status_check
+          CHECK (status IN ('pending', 'approved', 'rejected')) NOT VALID;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dismissal_overrides_type_check') THEN
+        ALTER TABLE dismissal_overrides ADD CONSTRAINT dismissal_overrides_type_check
+          CHECK (original_type IN ('car', 'bus', 'walker', 'afterschool') AND override_type IN ('car', 'bus', 'walker', 'afterschool')) NOT VALID;
+      END IF;
+    END
+    $gopilot_state_constraints$;
+    ALTER TABLE dismissal_sessions VALIDATE CONSTRAINT dismissal_sessions_status_check;
+    ALTER TABLE dismissal_queue VALIDATE CONSTRAINT dismissal_queue_status_check;
+    ALTER TABLE dismissal_changes VALIDATE CONSTRAINT dismissal_changes_status_check;
+    ALTER TABLE dismissal_overrides VALIDATE CONSTRAINT dismissal_overrides_type_check;
+  `);
+
+  // Database-level guard for active same-school homeroom staff. It applies to
+  // both the legacy primary pointer and the co-teacher junction table.
+  await schedulerPool.query(`
+    DO $gopilot_homeroom_staff_inventory$
+    DECLARE invalid_primary_count BIGINT;
+    DECLARE invalid_junction_count BIGINT;
+    BEGIN
+      SELECT count(*) INTO invalid_primary_count
+      FROM homerooms AS homeroom
+      WHERE homeroom.teacher_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM school_memberships AS membership
+          WHERE membership.school_id = homeroom.school_id
+            AND membership.user_id = homeroom.teacher_id
+            AND membership.status = 'active'
+            AND COALESCE(NULLIF(membership.gopilot_role, ''), membership.role)
+              IN ('admin', 'school_admin', 'office_staff', 'teacher')
+        );
+      SELECT count(*) INTO invalid_junction_count
+      FROM homeroom_teachers AS assignment
+      WHERE NOT EXISTS (
+        SELECT 1 FROM school_memberships AS membership
+        WHERE membership.school_id = assignment.school_id
+          AND membership.user_id = assignment.teacher_id
+          AND membership.status = 'active'
+          AND COALESCE(NULLIF(membership.gopilot_role, ''), membership.role)
+            IN ('admin', 'school_admin', 'office_staff', 'teacher')
+      );
+      RAISE NOTICE 'GoPilot homeroom assignment inventory: invalid_primary=%, invalid_junction=%',
+        invalid_primary_count, invalid_junction_count;
+      IF invalid_primary_count > 0 OR invalid_junction_count > 0 THEN
+        RAISE EXCEPTION 'GoPilot homeroom staff integrity migration blocked; review ID/count-only inventory';
+      END IF;
+    END
+    $gopilot_homeroom_staff_inventory$;
+
+    CREATE OR REPLACE FUNCTION gopilot_validate_homeroom_teacher()
+    RETURNS trigger LANGUAGE plpgsql AS $gopilot_homeroom_staff$
+    DECLARE resolved_school_id TEXT;
+    BEGIN
+      IF TG_TABLE_NAME = 'homerooms' THEN
+        IF NEW.teacher_id IS NULL THEN RETURN NEW; END IF;
+        resolved_school_id := NEW.school_id;
+      ELSE
+        resolved_school_id := NEW.school_id;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM school_memberships AS membership
+        WHERE membership.school_id = resolved_school_id
+          AND membership.user_id = NEW.teacher_id
+          AND membership.status = 'active'
+          AND COALESCE(NULLIF(membership.gopilot_role, ''), membership.role)
+            IN ('admin', 'school_admin', 'office_staff', 'teacher')
+      ) THEN
+        RAISE EXCEPTION 'GoPilot homeroom teacher must be active staff at the same school'
+          USING ERRCODE = '23514';
+      END IF;
+      RETURN NEW;
+    END
+    $gopilot_homeroom_staff$;
+    DROP TRIGGER IF EXISTS gopilot_validate_homeroom_primary_teacher ON homerooms;
+    CREATE TRIGGER gopilot_validate_homeroom_primary_teacher
+      BEFORE INSERT OR UPDATE OF school_id, teacher_id ON homerooms
+      FOR EACH ROW EXECUTE FUNCTION gopilot_validate_homeroom_teacher();
+    DROP TRIGGER IF EXISTS gopilot_validate_homeroom_co_teacher ON homeroom_teachers;
+    CREATE TRIGGER gopilot_validate_homeroom_co_teacher
+      BEFORE INSERT OR UPDATE OF school_id, homeroom_id, teacher_id ON homeroom_teachers
+      FOR EACH ROW EXECUTE FUNCTION gopilot_validate_homeroom_teacher();
+  `);
+
   // RLS Phase 4: author per-school tenant-isolation policies (idempotent) for
   // every table that has a school_id column, EXCEPT global/bootstrap tables. The
   // policies + FORCE ROW LEVEL SECURITY are INERT until a table is named in the
@@ -1447,31 +1961,49 @@ export async function runStartupMigrations(): Promise<void> {
     console.warn("[migration] RLS policy migration skipped:", (err as Error).message);
   }
 
-  // A reviewed deploy can request a fail-closed catalog assertion for one new
-  // tenant table. This runs outside the best-effort policy block above so a
-  // swallowed DDL error cannot let the migration task report success. The
-  // deploy flag is intentionally one-shot; normal startup never sets it.
-  const requiredRlsTable = process.env.REQUIRE_RLS_TABLE_ENFORCEMENT?.trim();
-  if (requiredRlsTable) {
+  // A reviewed deploy can request fail-closed catalog assertions for one new
+  // tenant table or the exact GoPilot child-table bundle. This runs outside
+  // the best-effort policy block above so swallowed DDL errors cannot let the
+  // migration task report success. The deploy flag is intentionally one-shot;
+  // normal startup never sets it.
+  const requiredRlsTables = (process.env.REQUIRE_RLS_TABLE_ENFORCEMENT ?? "")
+    .split(",")
+    .map((table) => table.trim())
+    .filter(Boolean);
+  if (requiredRlsTables.length > 0) {
+    const reviewedRlsTables = new Set([
+      "classpilot_session_summary_deliveries",
+      "passpilot_grade_students",
+      "authorized_pickups",
+      "custody_alerts",
+      "dismissal_changes",
+      "dismissal_overrides",
+      "dismissal_queue",
+      "family_group_students",
+      "homeroom_teachers",
+    ]);
     if (
-      requiredRlsTable !== "classpilot_session_summary_deliveries" &&
-      requiredRlsTable !== "passpilot_grade_students"
+      new Set(requiredRlsTables).size !== requiredRlsTables.length ||
+      requiredRlsTables.some((table) => !reviewedRlsTables.has(table))
     ) {
-      throw new Error(`Unsupported required RLS enforcement table: ${requiredRlsTable}`);
+      throw new Error(`Unsupported required RLS enforcement table list: ${requiredRlsTables.join(",")}`);
     }
     if (process.env.RLS_GUC_ENABLED !== "true") {
-      throw new Error(`Required RLS enforcement failed for ${requiredRlsTable}`);
+      throw new Error(`Required RLS enforcement failed for ${requiredRlsTables.join(",")}`);
     }
-    if (!parseRlsEnabledTables().has(requiredRlsTable)) {
-      throw new Error(`Required RLS enforcement failed for ${requiredRlsTable}`);
+    const enabledRlsTables = parseRlsEnabledTables();
+    if (requiredRlsTables.some((table) => !enabledRlsTables.has(table))) {
+      throw new Error(`Required RLS enforcement failed for ${requiredRlsTables.join(",")}`);
     }
     const { rows: rlsCatalogRows } = await pool.query<{
+      relname: string;
       relrowsecurity: boolean;
       relforcerowsecurity: boolean;
       has_tenant_isolation_policy: boolean;
     }>(
       `
         SELECT
+          relation.relname,
           relation.relrowsecurity,
           relation.relforcerowsecurity,
           EXISTS (
@@ -1484,28 +2016,20 @@ export async function runStartupMigrations(): Promise<void> {
         INNER JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
         WHERE namespace.nspname = 'public'
           AND relation.relkind = 'r'
-          AND relation.relname = $1
+          AND relation.relname = ANY($1::text[])
       `,
-      [requiredRlsTable],
+      [requiredRlsTables],
     );
-    const catalog = rlsCatalogRows[0];
     if (
-      rlsCatalogRows.length !== 1 ||
-      !catalog?.relrowsecurity ||
-      !catalog.relforcerowsecurity ||
-      !catalog.has_tenant_isolation_policy
+      rlsCatalogRows.length !== requiredRlsTables.length ||
+      requiredRlsTables.some((table) => {
+        const catalog = rlsCatalogRows.find((row) => row.relname === table);
+        return !catalog?.relrowsecurity || !catalog.relforcerowsecurity || !catalog.has_tenant_isolation_policy;
+      })
     ) {
-      throw new Error(`Required RLS enforcement failed for ${requiredRlsTable}`);
+      throw new Error(`Required RLS enforcement failed for ${requiredRlsTables.join(",")}`);
     }
-    console.log(`[migration] Required RLS enforcement verified for ${requiredRlsTable}`);
-  }
-
-  // Add gopilot_role column for per-product role overrides
-  try {
-    await pool.query(`ALTER TABLE school_memberships ADD COLUMN IF NOT EXISTS gopilot_role TEXT`);
-    console.log("[migration] gopilot_role column ready");
-  } catch (err) {
-    console.warn("[migration] gopilot_role migration skipped:", (err as Error).message);
+    console.log(`[migration] Required RLS enforcement verified for ${requiredRlsTables.join(", ")}`);
   }
 
   // Drop legacy substitute_assignments table
@@ -1651,6 +2175,7 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS homeroom_teachers (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
         homeroom_id TEXT NOT NULL,
         teacher_id TEXT NOT NULL,
         role TEXT NOT NULL DEFAULT 'primary',
@@ -1658,6 +2183,10 @@ export async function runStartupMigrations(): Promise<void> {
         UNIQUE(homeroom_id, teacher_id)
       )
     `);
+    await pool.query(`ALTER TABLE homeroom_teachers ADD COLUMN IF NOT EXISTS school_id TEXT`);
+    await pool.query(`UPDATE homeroom_teachers child SET school_id = homeroom.school_id FROM homerooms homeroom WHERE child.school_id IS NULL AND child.homeroom_id = homeroom.id`);
+    await pool.query(`ALTER TABLE homeroom_teachers ALTER COLUMN school_id SET NOT NULL`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS homeroom_teachers_school_id_idx ON homeroom_teachers (school_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS homeroom_teachers_homeroom_id_idx ON homeroom_teachers (homeroom_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS homeroom_teachers_teacher_id_idx ON homeroom_teachers (teacher_id)`);
     console.log("[migration] homeroom_teachers table ready");
@@ -1667,15 +2196,15 @@ export async function runStartupMigrations(): Promise<void> {
 
   // Seed co-teacher tables from existing teacherId columns
   try {
-    await pool.query(`
+    await schedulerPool.query(`
       INSERT INTO group_teachers (group_id, teacher_id, role)
       SELECT id, teacher_id, 'primary' FROM groups
       WHERE teacher_id IS NOT NULL
       ON CONFLICT DO NOTHING
     `);
-    await pool.query(`
-      INSERT INTO homeroom_teachers (homeroom_id, teacher_id, role)
-      SELECT id, teacher_id, 'primary' FROM homerooms
+    await schedulerPool.query(`
+      INSERT INTO homeroom_teachers (school_id, homeroom_id, teacher_id, role)
+      SELECT school_id, id, teacher_id, 'primary' FROM homerooms
       WHERE teacher_id IS NOT NULL
       ON CONFLICT DO NOTHING
     `);
@@ -1796,6 +2325,7 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS dismissal_overrides (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
         session_id TEXT NOT NULL,
         student_id TEXT NOT NULL,
         original_type TEXT NOT NULL,
@@ -1808,7 +2338,11 @@ export async function runStartupMigrations(): Promise<void> {
         UNIQUE(session_id, student_id)
       )
     `);
+    await pool.query(`ALTER TABLE IF EXISTS dismissal_overrides ADD COLUMN IF NOT EXISTS school_id TEXT`);
+    await pool.query(`UPDATE dismissal_overrides child SET school_id = session.school_id FROM dismissal_sessions session WHERE child.school_id IS NULL AND child.session_id = session.id`);
+    await pool.query(`ALTER TABLE dismissal_overrides ALTER COLUMN school_id SET NOT NULL`);
     await pool.query(`ALTER TABLE IF EXISTS dismissal_overrides ADD COLUMN IF NOT EXISTS bus_route TEXT`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS dismissal_overrides_school_id_idx ON dismissal_overrides (school_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS dismissal_overrides_session_id_idx ON dismissal_overrides (session_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS dismissal_overrides_student_id_idx ON dismissal_overrides (student_id)`);
     console.log("[migration] dismissal_overrides table ready");

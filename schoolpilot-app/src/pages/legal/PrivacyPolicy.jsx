@@ -65,7 +65,7 @@ export default function PrivacyPolicy() {
               <li>Current tab URLs and titles during monitoring</li>
               <li>Device connection status</li>
               <li>Hall pass records including destinations and timestamps (PassPilot)</li>
-              <li>Dismissal records and parent check-in data (GoPilot)</li>
+              <li>Staff-entered arrival, release, and dismissal records (GoPilot)</li>
             </ul>
 
             <h3 className="text-xl font-medium text-slate-800 mb-3">2.3 Technical Data</h3>

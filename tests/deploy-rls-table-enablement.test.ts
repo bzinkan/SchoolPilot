@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import {
+  GOPILOT_CHILD_RLS_TABLES,
   REVIEWED_RLS_TABLE_ENABLEMENTS,
   addReviewedRlsTable,
   verifyEnabledRlsCandidates,
@@ -13,6 +14,7 @@ const targetTable = "passpilot_grade_students";
 const deploySource = readFileSync(new URL("../scripts/deploy.sh", import.meta.url), "utf8");
 const migrationSource = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
 const claudeSource = readFileSync(new URL("../CLAUDE.md", import.meta.url), "utf8");
+const terraformVariables = readFileSync(new URL("../infra/variables.tf", import.meta.url), "utf8");
 
 function taskDefinition(
   containerName: "api" | "scheduler-worker",
@@ -46,6 +48,7 @@ describe("one-release RLS table enablement", () => {
     assert.deepEqual(REVIEWED_RLS_TABLE_ENABLEMENTS, [
       "classpilot_session_summary_deliveries",
       targetTable,
+      ...GOPILOT_CHILD_RLS_TABLES,
     ]);
     const api = taskDefinition("api");
     const worker = taskDefinition("scheduler-worker");
@@ -88,6 +91,38 @@ describe("one-release RLS table enablement", () => {
         { name: "DATABASE_URL", valueFrom: "parameter/database" },
       ]);
     }
+  });
+
+  it("adds the exact reviewed GoPilot child-table bundle atomically", () => {
+    const api = taskDefinition("api");
+    const worker = taskDefinition("scheduler-worker");
+    const bundle = GOPILOT_CHILD_RLS_TABLES.join(",");
+    assert.deepEqual(
+      verifyLiveRlsEnablementSources({
+        apiTaskDefinition: api,
+        workerTaskDefinition: worker,
+        table: bundle,
+      }),
+      { previousTables: ["students", "teaching_sessions"], addedTables: GOPILOT_CHILD_RLS_TABLES }
+    );
+    for (const definition of [api, worker]) {
+      addReviewedRlsTable(definition, {
+        containerName: definition.containerDefinitions[0].name as "api" | "scheduler-worker",
+        table: bundle,
+      });
+      assert.equal(
+        environmentValue(definition, "RLS_ENABLED_TABLES"),
+        `students,teaching_sessions,${bundle}`
+      );
+    }
+    verifyEnabledRlsCandidates({
+      taskDefinitions: [
+        { taskDefinition: api, containerName: "api" },
+        { taskDefinition: worker, containerName: "scheduler-worker" },
+      ],
+      table: bundle,
+      expectedPreviousTables: ["students", "teaching_sessions"],
+    });
   });
 
   it("preserves both kill switches by rejecting unsafe or redundant activation", () => {
@@ -157,6 +192,7 @@ describe("one-release RLS table enablement", () => {
     const validation = deploySource.slice(validationStart, validationEnd);
     assert.match(validation, /classpilot_session_summary_deliveries/);
     assert.match(validation, /passpilot_grade_students/);
+    assert.match(validation, /authorized_pickups,custody_alerts,dismissal_changes,dismissal_overrides,dismissal_queue,family_group_students,homeroom_teachers/);
     assert.match(validation, /"\$ENV" != "production"/);
     assert.match(validation, /"\$DEPLOY_BACKEND" != true/);
     assert.match(validation, /"\$DEPLOY_FRONTEND" != false/);
@@ -181,18 +217,19 @@ describe("one-release RLS table enablement", () => {
 
   it("makes the migration task prove the table, FORCE RLS, and tenant policy", () => {
     const assertionStart = migrationSource.indexOf(
-      "const requiredRlsTable = process.env.REQUIRE_RLS_TABLE_ENFORCEMENT"
+      "const requiredRlsTables = (process.env.REQUIRE_RLS_TABLE_ENFORCEMENT"
     );
     const assertionEnd = migrationSource.indexOf(
-      "// Add gopilot_role column",
+      "// Drop legacy substitute_assignments table",
       assertionStart
     );
     assert.ok(assertionStart >= 0 && assertionEnd > assertionStart);
     const assertion = migrationSource.slice(assertionStart, assertionEnd);
     assert.match(assertion, /classpilot_session_summary_deliveries/);
     assert.match(assertion, /passpilot_grade_students/);
+    for (const table of GOPILOT_CHILD_RLS_TABLES) assert.match(assertion, new RegExp(table));
     assert.match(assertion, /RLS_GUC_ENABLED !== "true"/);
-    assert.match(assertion, /parseRlsEnabledTables\(\)\.has\(requiredRlsTable\)/);
+    assert.match(assertion, /enabledRlsTables\.has\(table\)/);
     assert.match(assertion, /relation\.relrowsecurity/);
     assert.match(assertion, /relation\.relforcerowsecurity/);
     assert.match(assertion, /policy\.polname = 'tenant_isolation'/);
@@ -204,7 +241,22 @@ describe("one-release RLS table enablement", () => {
       claudeSource,
       /--enable-rls-table passpilot_grade_students/
     );
+    assert.match(
+      claudeSource,
+      /--enable-rls-table authorized_pickups,custody_alerts,dismissal_changes,dismissal_overrides,dismissal_queue,family_group_students,homeroom_teachers/
+    );
     assert.match(claudeSource, /Omit the flag on later deploys/);
     assert.match(claudeSource, /per-table kill-switch removal then remains removed/);
+    const defaultAllowlist = terraformVariables.match(
+      /variable "rls_enabled_tables"[\s\S]*?default\s*=\s*"([^"]+)"/
+    )?.[1] ?? "";
+    for (const table of GOPILOT_CHILD_RLS_TABLES) {
+      assert.equal(
+        defaultAllowlist.split(",").includes(table),
+        false,
+        `${table} must enter production only through the reviewed one-shot rollout`
+      );
+    }
+    assert.match(claudeSource, /separate baseline-adoption change/);
   });
 });

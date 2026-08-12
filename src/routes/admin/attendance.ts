@@ -70,6 +70,12 @@ function isGoPilotAttendanceContext(req: any): boolean {
 }
 
 async function getAttendanceScope(req: any, res: any): Promise<AttendanceScope | null> {
+  // GoPilot's product-role override must never narrow ClassPilot/PassPilot or
+  // shared attendance callers. Only the explicitly marked GoPilot UI/API path
+  // uses homeroom-scoped dismissal roles.
+  if (!isGoPilotAttendanceContext(req)) {
+    return { kind: "all" };
+  }
   const schoolId = res.locals.schoolId!;
   if (req.authUser?.isSuperAdmin || !(await hasActiveGoPilotLicense(schoolId))) {
     return { kind: "all" };
@@ -82,10 +88,7 @@ async function getAttendanceScope(req: any, res: any): Promise<AttendanceScope |
     if (homeroomIds.size > 0) {
       return { kind: "homerooms", homeroomIds };
     }
-    if (isGoPilotAttendanceContext(req)) {
-      return null;
-    }
-    return { kind: "all" };
+    return null;
   }
 
   return null;

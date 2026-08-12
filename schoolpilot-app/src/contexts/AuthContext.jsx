@@ -41,6 +41,7 @@ export function AuthProvider({ children }) {
   const activeSchoolIdRef = useRef(activeSchoolId);
   // Token kept in memory only — never persisted to localStorage (XSS protection)
   const [token, setToken] = useState(null);
+  const [secureStorageError, setSecureStorageError] = useState(null);
   const tokenRef = useRef(null);
   const authRequestIdRef = useRef(0);
 
@@ -51,12 +52,25 @@ export function AuthProvider({ children }) {
     setToken(normalizedToken);
   }, []);
 
-  const acceptToken = useCallback((nextToken) => {
-    publishToken(nextToken);
-    // Native secure storage must not delay or invalidate an otherwise
-    // successful in-memory authentication transition.
-    const persistence = nextToken ? saveToken(nextToken) : clearToken();
-    void persistence.catch(() => {});
+  const acceptToken = useCallback(async (nextToken) => {
+    try {
+      if (nextToken) {
+        await saveToken(nextToken);
+        publishToken(nextToken);
+      } else {
+        // Clear memory first, then require the native secure store to confirm
+        // removal. A storage failure remains visible and blocks sign-in.
+        publishToken(null);
+        await clearToken();
+      }
+      setSecureStorageError(null);
+    } catch (error) {
+      publishToken(null);
+      if (error?.code === 'NATIVE_SECURE_STORAGE_UNAVAILABLE') {
+        setSecureStorageError(error.message);
+      }
+      throw error;
+    }
   }, [publishToken]);
 
   const selectActiveSchool = useCallback((schoolId) => {
@@ -76,8 +90,9 @@ export function AuthProvider({ children }) {
     try {
       // On native, restore persisted token before first API call
       if (!tokenRef.current) {
-        const stored = await loadToken().catch(() => null);
+        const stored = await loadToken();
         if (!isLatestRequest()) return null;
+        setSecureStorageError(null);
         if (stored) {
           publishToken(stored);
         }
@@ -90,9 +105,9 @@ export function AuthProvider({ children }) {
       // Publish the JWT synchronously before exposing authenticated UI. Child
       // dashboards issue requests as soon as `user` becomes available.
       if (res.data.token) {
-        acceptToken(res.data.token);
+        await acceptToken(res.data.token);
       } else if (res.data.user?.impersonating) {
-        acceptToken(null);
+        await acceptToken(null);
       }
 
       const selectedSchoolId = activeSchoolIdRef.current;
@@ -122,13 +137,26 @@ export function AuthProvider({ children }) {
       return res.data;
     } catch (error) {
       if (!isLatestRequest()) return null;
-      if ([401, 403].includes(error.response?.status)) {
-        acceptToken(null);
-        if (error.response?.status === 403) selectActiveSchool(null);
-      }
+      // Authentication state must be cleared even when the native secure store
+      // cannot confirm token removal. The visible storage error then keeps the
+      // staff sign-in surface fail-closed instead of leaving stale UI mounted.
       setUser(null);
       setMemberships([]);
       setLicenses({});
+      if (error?.code === 'NATIVE_SECURE_STORAGE_UNAVAILABLE') {
+        publishToken(null);
+        setSecureStorageError(error.message);
+      }
+      if ([401, 403].includes(error.response?.status)) {
+        try {
+          await acceptToken(null);
+        } catch (storageError) {
+          if (storageError?.code !== 'NATIVE_SECURE_STORAGE_UNAVAILABLE') throw storageError;
+          if (throwOnError) throw storageError;
+          return null;
+        }
+        if (error.response?.status === 403) selectActiveSchool(null);
+      }
       if (throwOnError) throw error;
       return null;
     } finally {
@@ -146,7 +174,7 @@ export function AuthProvider({ children }) {
     // Axios uses a module-level in-memory token. Publish it before any state
     // update can mount protected routes or before /auth/me is requested.
     if (res.data.token) {
-      acceptToken(res.data.token);
+      await acceptToken(res.data.token);
     }
 
     if (res.data.memberships?.length > 0) {
@@ -162,7 +190,7 @@ export function AuthProvider({ children }) {
     const res = await api.post('/auth/register', data);
 
     if (res.data.token) {
-      acceptToken(res.data.token);
+      await acceptToken(res.data.token);
     }
 
     selectActiveSchool(res.data.membership?.schoolId || res.data.school?.id || null);
@@ -181,12 +209,12 @@ export function AuthProvider({ children }) {
     setMemberships([]);
     setLicenses({});
     selectActiveSchool(null);
-    acceptToken(null);
+    await acceptToken(null);
   };
 
   const stopImpersonating = async () => {
     authRequestIdRef.current += 1;
-    acceptToken(null);
+    await acceptToken(null);
     const res = await api.post('/super-admin/stop-impersonate');
     await fetchUser();
     return res.data;
@@ -218,6 +246,7 @@ export function AuthProvider({ children }) {
         activeMembership,
         refetchUser: fetchUser,
         acceptToken,
+        secureStorageError,
       }}
     >
       {children}

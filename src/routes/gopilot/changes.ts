@@ -5,12 +5,13 @@ import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
 import {
   createDismissalChange,
+  getEffectiveDismissalType,
   getChangesBySession,
   updateDismissalChange,
   getSessionById,
   getStudentById,
 } from "../../services/storage.js";
-import { getIO } from "../../realtime/socketio.js";
+import { broadcastGoPilot } from "../../realtime/socketio.js";
 import {
   canAccessStudent,
   getDismissalChangeForSchool,
@@ -21,8 +22,10 @@ import {
 } from "../../services/gopilotAccess.js";
 import {
   emitDismissalOverrideApplied,
+  GoPilotOverrideConflictError,
   reviewDismissalChangeRequest,
 } from "../../services/gopilotOverrides.js";
+import { rejectDisabledGoPilotParent } from "../../middleware/rejectDisabledGoPilotParent.js";
 
 const router = Router();
 
@@ -33,9 +36,11 @@ function param(req: any, key: string): string {
 const auth = [
   authenticate,
   requireSchoolContext,
+  rejectDisabledGoPilotParent,
   requireActiveSchool,
   requireProductLicense("GOPILOT"),
 ] as const;
+const VALID_DISMISSAL_TYPES = new Set(["car", "bus", "walker", "afterschool"]);
 
 // POST /api/gopilot/sessions/:sessionId/changes - Submit change request
 router.post(
@@ -56,11 +61,34 @@ router.post(
       if (!session || session.schoolId !== res.locals.schoolId) {
         return res.status(404).json({ error: "Session not found" });
       }
-      if (!(await canAccessStudent(req.authUser!, res.locals.schoolId!, studentId, await getRequestGoPilotRole(req, res)))) {
+      if (session.status !== "active") {
+        return res.status(409).json({ error: "Dismissal session is not active", code: "GOPILOT_SESSION_NOT_ACTIVE" });
+      }
+      if (!VALID_DISMISSAL_TYPES.has(fromType) || !VALID_DISMISSAL_TYPES.has(toType) || fromType === toType) {
+        return res.status(400).json({ error: "A valid dismissal type transition is required", code: "GOPILOT_INVALID_DISMISSAL_TRANSITION" });
+      }
+      if (toType === "bus" && !String(busRoute ?? "").trim()) {
+        return res.status(400).json({ error: "busRoute is required for bus changes" });
+      }
+      const role = await getRequestGoPilotRole(req, res);
+      if (!(await canAccessStudent(req.authUser!, res.locals.schoolId!, studentId, role))) {
         return res.status(403).json({ error: "Insufficient permissions" });
+      }
+      const student = await getStudentById(studentId);
+      if (!student || student.schoolId !== res.locals.schoolId || student.status !== "active") {
+        return res.status(404).json({ error: "Student not found" });
+      }
+      const effectiveType = await getEffectiveDismissalType(studentId, sessionId);
+      if (fromType !== effectiveType) {
+        return res.status(409).json({
+          error: "Student dismissal type changed; refresh before submitting",
+          code: "GOPILOT_DISMISSAL_TYPE_CONFLICT",
+          currentType: effectiveType,
+        });
       }
 
       const change = await createDismissalChange({
+        schoolId: res.locals.schoolId!,
         sessionId,
         studentId,
         requestedBy: req.authUser!.id,
@@ -71,18 +99,23 @@ router.post(
       });
 
       // Notify office and the student's homeroom teacher
-      const io = getIO();
-      if (io) {
-        const student = await getStudentById(studentId);
-        const payload = {
-          change,
-          studentName: student ? `${student.firstName} ${student.lastName}` : "",
-        };
-        io.to(`school:${res.locals.schoolId}:office`).emit("change:requested", payload);
-        if (student?.homeroomId) {
-          io.to(`school:${res.locals.schoolId}:teacher:${student.homeroomId}`).emit("change:requested", payload);
-        }
+      const payload = {
+        change,
+        studentName: student ? `${student.firstName} ${student.lastName}` : "",
+      };
+      const broadcasts = [
+        broadcastGoPilot(`school:${res.locals.schoolId}:office`, "change:requested", payload),
+      ];
+      if (student?.homeroomId) {
+        broadcasts.push(
+          broadcastGoPilot(
+            `school:${res.locals.schoolId}:teacher:${student.homeroomId}`,
+            "change:requested",
+            payload
+          )
+        );
       }
+      await Promise.all(broadcasts);
 
       return res.status(201).json({ change });
     } catch (err) {
@@ -112,7 +145,6 @@ router.get(
       const changes = rows
         .filter((r) => {
           if (isGoPilotManager(role)) return true;
-          if (role === "parent") return r.change.requestedBy === req.authUser!.id;
           if (role === "teacher" && r.student.homeroomId) {
             return teacherHomerooms?.has(r.student.homeroomId);
           }
@@ -161,24 +193,30 @@ router.post("/changes/:id/acknowledge", ...auth, async (req, res, next) => {
       acknowledgedAt: new Date(),
     });
 
-    const io = getIO();
-    if (io) {
-      const student = await getStudentById(existing.studentId);
-      const payload = {
-        change: updated,
-        studentName: student ? `${student.firstName} ${student.lastName}` : "",
-      };
-      io.to(`school:${res.locals.schoolId}:office`).emit("change:acknowledged", payload);
-      if (student?.homeroomId) {
-        io.to(`school:${res.locals.schoolId}:teacher:${student.homeroomId}`).emit(
+    const student = await getStudentById(existing.studentId);
+    const payload = {
+      change: updated,
+      studentName: student ? `${student.firstName} ${student.lastName}` : "",
+    };
+    const broadcasts = [
+      broadcastGoPilot(`school:${res.locals.schoolId}:office`, "change:acknowledged", payload),
+    ];
+    if (student?.homeroomId) {
+      broadcasts.push(
+        broadcastGoPilot(
+          `school:${res.locals.schoolId}:teacher:${student.homeroomId}`,
           "change:acknowledged",
           payload
-        );
-      }
+        )
+      );
     }
+    await Promise.all(broadcasts);
 
     return res.json({ change: updated });
   } catch (err) {
+    if (err instanceof GoPilotOverrideConflictError) {
+      return res.status(409).json({ error: err.message, code: err.code });
+    }
     next(err);
   }
 });
@@ -232,30 +270,33 @@ router.put("/changes/:id", ...auth, async (req, res, next) => {
         changedByRole: "office",
         override: reviewed.override,
         removedQueueEntries: reviewed.removedQueueEntries,
+        queueChanged: reviewed.queueChanged,
       });
     }
 
-    const io = getIO();
-    if (io) {
-      const payload = {
-        change: reviewed.change,
-        studentName: `${reviewed.student.firstName} ${reviewed.student.lastName}`.trim(),
-      };
-      io.to(`school:${res.locals.schoolId}:office`).emit("change:resolved", payload);
-      if (reviewed.student.homeroomId) {
-        io.to(`school:${res.locals.schoolId}:teacher:${reviewed.student.homeroomId}`).emit(
+    const payload = {
+      change: reviewed.change,
+      studentName: `${reviewed.student.firstName} ${reviewed.student.lastName}`.trim(),
+    };
+    const broadcasts = [
+      broadcastGoPilot(`school:${res.locals.schoolId}:office`, "change:resolved", payload),
+    ];
+    if (reviewed.student.homeroomId) {
+      broadcasts.push(
+        broadcastGoPilot(
+          `school:${res.locals.schoolId}:teacher:${reviewed.student.homeroomId}`,
           "change:resolved",
           payload
-        );
-      }
-      io.to(`school:${res.locals.schoolId}:parent:${existing.requestedBy}`).emit(
-        "change:resolved",
-        payload
+        )
       );
     }
+    await Promise.all(broadcasts);
 
     return res.json({ change: reviewed.change });
   } catch (err) {
+    if (err instanceof GoPilotOverrideConflictError) {
+      return res.status(409).json({ error: err.message, code: err.code });
+    }
     next(err);
   }
 });

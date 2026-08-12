@@ -15,7 +15,6 @@ import {
   createClasspilotAiDecision,
   createEvidenceArtifact,
   createStudentTimelineEvent,
-  getApprovedParentLinksForStudent,
   getClasspilotAiDecisionById,
   getDailyUsageForStudent,
   getEvidenceArtifactById,
@@ -54,6 +53,7 @@ const staffAuth = [
   requireSchoolContext,
   requireActiveSchool,
   requireProductLicense("CLASSPILOT"),
+  requireRole("admin", "school_admin", "office_staff", "teacher"),
 ] as const;
 
 const adminAuth = [...staffAuth, requireRole("admin", "school_admin")] as const;
@@ -75,6 +75,21 @@ function parseDate(value: unknown): Date | undefined {
 
 function studentName(student: any): string {
   return [student?.firstName, student?.lastName].filter(Boolean).join(" ") || student?.email || "Unknown student";
+}
+
+// Timeline consumers need enough identity to label the selected student, not
+// the unified cross-product record. In particular, never expose credential,
+// device, identity-provider, SIS, or retired GoPilot linkage fields here.
+function timelineStudentDto(student: any) {
+  return {
+    id: student.id,
+    firstName: student.firstName,
+    lastName: student.lastName,
+    email: student.email ?? null,
+    photoUrl: student.photoUrl ?? null,
+    gradeLevel: student.gradeLevel ?? null,
+    status: student.status,
+  };
 }
 
 function csvEscape(value: unknown): string {
@@ -522,7 +537,7 @@ router.get("/students/:studentId/timeline", ...staffAuth, async (req, res, next)
       types,
       role: access.role,
     });
-    return res.json({ student: access.student, events });
+    return res.json({ student: timelineStudentDto(access.student), events });
   } catch (err) {
     next(err);
   }
@@ -747,7 +762,6 @@ router.get("/parent-digests/preview", ...staffAuth, async (req, res, next) => {
     if (!access.allowed) return res.status(403).json({ error: "Insufficient permissions" });
     const schoolId = res.locals.schoolId!;
     const settings = await getSettingsForSchool(schoolId);
-    const parents = await getApprovedParentLinksForStudent(studentId);
     const end = new Date();
     const start = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000);
     const usage = await getDailyUsageForStudent(studentId, start.toISOString().slice(0, 10), end.toISOString().slice(0, 10));
@@ -767,7 +781,13 @@ router.get("/parent-digests/preview", ...staffAuth, async (req, res, next) => {
       enabled: !!settings?.parentTransparencyEnabled,
       cadence: settings?.parentDigestCadence || "weekly",
       student: { id: access.student.id, name: studentName(access.student), email: access.student.email },
-      recipients: parents.map((p) => ({ parentId: p.parent.id, email: p.parent.email, name: studentName(p.parent), relationship: p.relationship })),
+      // Historical parent_student rows belong to the retired GoPilot parent
+      // portal. They are retained for audit/history, but must never authorize
+      // or select recipients for ClassPilot communications. A future
+      // ClassPilot-owned guardian source can populate this contract.
+      recipients: [],
+      deliveryAvailable: false,
+      recipientSource: null,
       period: { start: start.toISOString(), end: end.toISOString() },
       learningSummary: {
         daysActive: usage.length,

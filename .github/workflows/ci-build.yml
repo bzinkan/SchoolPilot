@@ -175,7 +175,7 @@ jobs:
       RLS_TEST_ROLE: schoolpilot_rls_test_user
       RLS_TEST_PASSWORD: test
       RLS_GUC_ENABLED: "true"
-      RLS_ENABLED_TABLES: activity_log,audit_logs,block_lists,bus_routes,chat_messages,classpilot_active_hands,classpilot_ai_decisions,classpilot_classroom_states,classpilot_command_targets,classpilot_commands,classpilot_coverage_assignments,classpilot_coverage_scope_group_members,classpilot_coverage_scope_groups,classpilot_scheduled_conflicts,classpilot_session_students,classpilot_session_summary_deliveries,classpilot_session_usage,classpilot_supervision_contexts,classpilot_supervision_students,classroom_course_students,classroom_courses,daily_usage,dashboard_tabs,devices,dismissal_sessions,email_alerts,email_scan_log,error_logs,evidence_artifacts,family_groups,flight_paths,google_roster_connectors,grades,groups,heartbeats,homerooms,import_runs,mailpilot_watches,messages,parent_student,passes,passpilot_grade_students,security_events,settings,student_attendance,student_groups,student_safety_cases,student_timeline_events,students,subgroups,teacher_students,teaching_sessions,walker_zones
+      RLS_ENABLED_TABLES: activity_log,audit_logs,authorized_pickups,block_lists,bus_routes,chat_messages,classpilot_active_hands,classpilot_ai_decisions,classpilot_classroom_states,classpilot_command_targets,classpilot_commands,classpilot_coverage_assignments,classpilot_coverage_scope_group_members,classpilot_coverage_scope_groups,classpilot_scheduled_conflicts,classpilot_session_students,classpilot_session_summary_deliveries,classpilot_session_usage,classpilot_supervision_contexts,classpilot_supervision_students,classroom_course_students,classroom_courses,custody_alerts,daily_usage,dashboard_tabs,devices,dismissal_changes,dismissal_overrides,dismissal_queue,dismissal_sessions,email_alerts,email_scan_log,error_logs,evidence_artifacts,family_group_students,family_groups,flight_paths,google_roster_connectors,grades,groups,heartbeats,homeroom_teachers,homerooms,import_runs,mailpilot_watches,messages,parent_student,passes,passpilot_grade_students,security_events,settings,student_attendance,student_groups,student_safety_cases,student_timeline_events,students,subgroups,teacher_students,teaching_sessions,walker_zones
 
     steps:
       - uses: actions/checkout@v7
@@ -209,6 +209,7 @@ jobs:
           tests/classpilot-tile-authorization-plan-self-provisioning.integration.test.ts
           tests/cross-tenant-isolation.test.ts
           tests/classpilot-tile-read-scope.test.ts
+          tests/gopilot-rls-isolation.test.ts
           tests/passpilot-canonical-runtime.test.ts
           tests/passpilot-legacy-multiclass.test.ts
 
@@ -382,6 +383,10 @@ jobs:
         working-directory: schoolpilot-app
         run: npm run test:classpilot-tile-batching
 
+      - name: Test GoPilot staff-only contracts
+        working-directory: schoolpilot-app
+        run: npm run test:gopilot-staff-contracts
+
       - name: Lint frontend
         working-directory: schoolpilot-app
         run: npm run lint
@@ -406,6 +411,27 @@ jobs:
         working-directory: schoolpilot-app
         run: npm run build:gopilot
 
+      - name: Test GoPilot staff workflows in Chromium
+        working-directory: schoolpilot-app
+        run: npm run test:gopilot-browser
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Sync GoPilot Android staff bundle
+        working-directory: schoolpilot-app
+        run: npm run cap:sync:gopilot
+
+      - name: Build GoPilot Android debug APK
+        working-directory: schoolpilot-app/android-gopilot
+        run: ./gradlew clean assembleDebug
+
+      - name: Inspect GoPilot mobile security and generated bundle
+        working-directory: schoolpilot-app
+        run: npm run test:gopilot-mobile-security
+
       - name: Validate GoPilot Router bundle
         working-directory: schoolpilot-app
         run: npm run audit:router:postbuild:gopilot
@@ -413,6 +439,18 @@ jobs:
       - name: Build PassPilot frontend
         working-directory: schoolpilot-app
         run: npm run build:passpilot
+
+      - name: Sync PassPilot Android secure-storage bundle
+        working-directory: schoolpilot-app
+        run: npm run cap:sync:passpilot
+
+      - name: Build PassPilot Android debug APK
+        working-directory: schoolpilot-app/android-passpilot
+        run: ./gradlew clean assembleDebug
+
+      - name: Inspect PassPilot mobile security and generated bundle
+        working-directory: schoolpilot-app
+        run: npm run test:passpilot-mobile-security
 
       - name: Smoke canonical classes in the PassPilot bundle
         working-directory: schoolpilot-app
@@ -442,7 +480,7 @@ jobs:
           node scripts/soc2/collect-ci-evidence.mjs
           --job "Frontend lint and build"
           --controls "SP-SEC-004"
-          --summary "This job scheduled the high/critical production-dependency gate, complete-tree audit collection, frontend API-routing and ClassPilot tile-batching contracts, lint, the standard production-preview browser smoke, standard/GoPilot/PassPilot builds, a canonical-class browser smoke against the PassPilot bundle, and post-build Router reachability validation; the job status and separate frontend dependency audit packet record which gates completed and whether they passed."
+          --summary "This job scheduled the high/critical production-dependency gate, complete-tree audit collection, frontend API-routing and product contracts, lint, production-preview and GoPilot staff browser workflows, standard/GoPilot/PassPilot builds, GoPilot and PassPilot Android sync/debug build/security inspection, canonical PassPilot class smoke, and post-build Router validation; the job status and separate frontend dependency audit packet record which gates completed and whether they passed."
 
       - name: Upload SOC 2 evidence
         if: always()

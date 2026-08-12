@@ -17,7 +17,6 @@ import {
   getStudentsBySchool,
   bulkCreateStudents,
   getProductLicenses,
-  autoAssignFamilyGroups,
   runWithPasspilotLegacyClassLock,
   replaceLegacyPasspilotStudentClassInTransaction,
   type PasspilotClassTransaction,
@@ -34,13 +33,6 @@ import {
 import type { InsertStudent, Student } from "../schema/students.js";
 import db from "../db.js";
 import { and, eq, inArray } from "drizzle-orm";
-import { familyGroups, familyGroupStudents } from "../schema/gopilot.js";
-import { homerooms } from "../schema/gopilot.js";
-import {
-  getRequestGoPilotRole,
-  getTeacherHomeroomIds,
-  hasActiveGoPilotLicense,
-} from "../services/gopilotAccess.js";
 import {
   getPasspilotClassSourceForSchool,
   getRequestPassPilotRole,
@@ -50,7 +42,7 @@ import {
 } from "../services/passpilotAccess.js";
 import { groupStudents } from "../schema/classpilot.js";
 import { students as studentsTable } from "../schema/students.js";
-import { safeStudent as stripStudentCredentialHash } from "../util/safeStudent.js";
+import { sharedSchoolRosterStudentDto } from "../util/safeStudent.js";
 import { logAudit } from "../services/audit.js";
 import {
   encryptClassPilotPin,
@@ -69,7 +61,14 @@ function param(req: { params: Record<string, unknown> }, key: string): string {
 
 router.use(authenticate);
 
-const schoolContext = [requireSchoolContext, requireActiveSchool, requireProductLicense("CLASSPILOT", "PASSPILOT", "GOPILOT")] as const;
+// GoPilot uses its dedicated role-scoped `/gopilot/students` contract. Keeping
+// GOPILOT out of this unified route prevents a GoPilot-only credential from
+// retrieving ClassPilot device/SIS fields.
+const schoolContext = [
+  requireSchoolContext,
+  requireActiveSchool,
+  requireProductLicense("CLASSPILOT", "PASSPILOT"),
+] as const;
 
 type StudentSearchOptions = Parameters<typeof searchStudents>[1];
 
@@ -83,10 +82,8 @@ async function canonicalPasspilotStudentScope(
   res: Response
 ): Promise<Set<string> | null> {
   const schoolId = res.locals.schoolId!;
-  // `/students` is shared by ClassPilot, GoPilot, and PassPilot. Only apply
-  // PassPilot's canonical roster scope when the caller explicitly identifies
-  // the new class model; otherwise GoPilot homeroom policy below remains the
-  // authority for the same authenticated teacher.
+  // `/students` is shared by ClassPilot and PassPilot. GoPilot uses the
+  // dedicated narrow `/gopilot/students` contract.
   if (!hasPasspilotCanonicalClassCapability(req)) return null;
   if ((await getPasspilotClassSourceForSchool(schoolId)) !== "classpilot_groups") {
     return null;
@@ -227,7 +224,7 @@ async function applyBulkStudentUpdates(
             )
             .limit(1)
         : [updated];
-      rows.push(stripStudentCredentialHash(current ?? updated));
+      rows.push(sharedSchoolRosterStudentDto(current ?? updated));
     }
   }
   return rows;
@@ -329,53 +326,7 @@ async function searchStudentsVisibleToRequest(
     const rows = await searchStudents(schoolId, options);
     return rows.filter((student) => canonicalStudentIds.has(student.id));
   }
-
-  const role = await getRequestGoPilotRole(req, res);
-
-  if (!role || role === "parent") {
-    return [];
-  }
-
-  if (role !== "teacher") {
-    return searchStudents(schoolId, options);
-  }
-
-  // Per-homeroom teacher scoping is a GoPilot-only model. At a shared-product
-  // school, a ClassPilot/PassPilot teacher may have no GoPilot homeroom; those
-  // teachers keep the normal full roster view while assigned GoPilot homeroom
-  // teachers are scoped below.
-  if (!(await hasActiveGoPilotLicense(schoolId))) {
-    return searchStudents(schoolId, options);
-  }
-
-  const allowedHomeroomIds = await getTeacherHomeroomIds(req.authUser!.id, schoolId);
-  if (allowedHomeroomIds.size === 0) {
-    return searchStudents(schoolId, options);
-  }
-
-  if (options?.homeroomId) {
-    if (!allowedHomeroomIds.has(options.homeroomId)) {
-      return [];
-    }
-    return searchStudents(schoolId, options);
-  }
-
-  const rowsById = new Map<string, Awaited<ReturnType<typeof searchStudents>>[number]>();
-  for (const allowedHomeroomId of allowedHomeroomIds) {
-    const rows = await searchStudents(schoolId, {
-      ...options,
-      homeroomId: allowedHomeroomId,
-    });
-    for (const row of rows) {
-      rowsById.set(row.id, row);
-    }
-  }
-
-  return [...rowsById.values()].sort((a, b) => {
-    const byLast = (a.lastName || "").localeCompare(b.lastName || "");
-    if (byLast !== 0) return byLast;
-    return (a.firstName || "").localeCompare(b.firstName || "");
-  });
+  return searchStudents(schoolId, options);
 }
 
 async function canAccessStudentForRequest(
@@ -385,27 +336,7 @@ async function canAccessStudentForRequest(
 ): Promise<boolean> {
   const canonicalStudentIds = await canonicalPasspilotStudentScope(req, res);
   if (canonicalStudentIds) return canonicalStudentIds.has(student.id);
-
-  const role = await getRequestGoPilotRole(req, res);
-  if (!role || role === "parent") {
-    return false;
-  }
-  if (role !== "teacher") {
-    return true;
-  }
-  // Non-GoPilot school or shared-product teacher without a GoPilot homeroom:
-  // retain normal access. See searchStudentsVisibleToRequest for the rationale.
-  if (!(await hasActiveGoPilotLicense(res.locals.schoolId!))) {
-    return true;
-  }
-  const allowedHomeroomIds = await getTeacherHomeroomIds(req.authUser!.id, res.locals.schoolId!);
-  if (allowedHomeroomIds.size === 0) {
-    return true;
-  }
-  if (!student.homeroomId) {
-    return false;
-  }
-  return allowedHomeroomIds.has(student.homeroomId);
+  return true;
 }
 
 // ============================================================================
@@ -413,7 +344,11 @@ async function canAccessStudentForRequest(
 // ============================================================================
 
 // GET /api/students - List students (school-scoped)
-router.get("/", ...schoolContext, async (req, res, next) => {
+router.get(
+  "/",
+  ...schoolContext,
+  requireRole("admin", "school_admin", "teacher", "office_staff"),
+  async (req, res, next) => {
   try {
     const { search, gradeLevel, gradeId, homeroomId, status, dismissalType } = req.query as Record<string, string | undefined>;
     if (
@@ -437,51 +372,12 @@ router.get("/", ...schoolContext, async (req, res, next) => {
       dismissalType,
     });
 
-    // Enrich with car numbers from family_groups and homeroom names
-    const studentIds = studentsList.map((s) => s.id);
-    let carNumberMap: Record<string, string> = {};
-    let homeroomMap: Record<string, { name: string; grade: string }> = {};
-
-    if (studentIds.length > 0) {
-      // Get car numbers via family_group_students → family_groups
-      const fgRows = await db
-        .select({
-          studentId: familyGroupStudents.studentId,
-          carNumber: familyGroups.carNumber,
-        })
-        .from(familyGroupStudents)
-        .innerJoin(familyGroups, eq(familyGroups.id, familyGroupStudents.familyGroupId))
-        .where(eq(familyGroups.schoolId, res.locals.schoolId!));
-
-      for (const row of fgRows) {
-        if (row.carNumber) carNumberMap[row.studentId] = row.carNumber;
-      }
-
-      // Get homeroom names
-      const homeroomIds = [...new Set(studentsList.filter((s) => s.homeroomId).map((s) => s.homeroomId!))];
-      if (homeroomIds.length > 0) {
-        const hrRows = await db.select().from(homerooms).where(eq(homerooms.schoolId, res.locals.schoolId!));
-        for (const hr of hrRows) {
-          homeroomMap[hr.id] = { name: hr.name, grade: hr.grade || "" };
-        }
-      }
-    }
-
-    const enriched = studentsList.map((s) => {
-      const hr = s.homeroomId ? homeroomMap[s.homeroomId] : undefined;
-      return {
-        ...s,
-        carNumber: carNumberMap[s.id] || null,
-        homeroomName: hr?.name || null,
-        homeroomGrade: hr?.grade || null,
-      };
-    });
-
-    return res.json({ students: enriched.map(stripStudentCredentialHash) });
+    return res.json({ students: studentsList.map(sharedSchoolRosterStudentDto) });
   } catch (err) {
     next(err);
   }
-});
+  }
+);
 
 // POST /api/students - Create student
 router.post(
@@ -554,7 +450,7 @@ router.post(
       const generatedPins = pinPlan.plaintextPin
         ? [generatedPinForStudent(student, pinPlan.plaintextPin)]
         : [];
-      return res.status(201).json({ student: stripStudentCredentialHash(student), generatedPins });
+      return res.status(201).json({ student: sharedSchoolRosterStudentDto(student), generatedPins });
     } catch (err) {
       // Backstop for a race (or badge/code clash) that slipped past the pre-check.
       if (isUniqueViolation(err)) {
@@ -665,24 +561,10 @@ router.post(
         })
         .filter((pin): pin is GeneratedClassPilotPin => Boolean(pin));
 
-      // Auto-assign car numbers if school has GoPilot
-      let autoAssigned: number | undefined;
-      if (created.length > 0) {
-        const licenses = await getProductLicenses(res.locals.schoolId!);
-        const hasGoPilot = licenses.some(
-          (l) => l.product === "GOPILOT" && l.status === "active"
-        );
-        if (hasGoPilot) {
-          const result = await autoAssignFamilyGroups(res.locals.schoolId!);
-          autoAssigned = result.assigned;
-        }
-      }
-
       return res.status(201).json({
         imported: created.length,
         errors: errors.length > 0 ? errors : undefined,
         total: studentData.length,
-        autoAssigned,
         generatedPins,
       });
     } catch (err) {
@@ -818,19 +700,6 @@ const importCsvHandler = async (req: any, res: any, next: any) => {
       })
       .filter((pin): pin is GeneratedClassPilotPin => Boolean(pin));
 
-    // Auto-assign car numbers if school has GoPilot
-    let autoAssigned: number | undefined;
-    if (created.length > 0) {
-      const licenses = await getProductLicenses(res.locals.schoolId!);
-      const hasGoPilot = licenses.some(
-        (l) => l.product === "GOPILOT" && l.status === "active"
-      );
-      if (hasGoPilot) {
-        const result = await autoAssignFamilyGroups(res.locals.schoolId!);
-        autoAssigned = result.assigned;
-      }
-    }
-
     if (assignedPinCount > 0) {
       await logAudit({
         schoolId: res.locals.schoolId!,
@@ -850,7 +719,6 @@ const importCsvHandler = async (req: any, res: any, next: any) => {
       imported: created.length,
       errors: errors.length > 0 ? errors : undefined,
       total: rows.length,
-      autoAssigned,
       generatedPins,
     });
   } catch (err) {
@@ -1089,26 +957,31 @@ router.post(
 );
 
 // GET /api/students/:studentId
-router.get("/:studentId", ...schoolContext, async (req, res, next) => {
-  try {
-    const student = await getStudentById(param(req, "studentId"));
-    if (!student || student.schoolId !== res.locals.schoolId) {
-      return res.status(404).json({ error: "Student not found" });
+router.get(
+  "/:studentId",
+  ...schoolContext,
+  requireRole("admin", "school_admin", "teacher", "office_staff"),
+  async (req, res, next) => {
+    try {
+      const student = await getStudentById(param(req, "studentId"));
+      if (!student || student.schoolId !== res.locals.schoolId) {
+        return res.status(404).json({ error: "Student not found" });
+      }
+      if (!(await canAccessStudentForRequest(req, res, student))) {
+        return res.status(404).json({ error: "Student not found" });
+      }
+      return res.json({ student: sharedSchoolRosterStudentDto(student) });
+    } catch (err) {
+      next(err);
     }
-    if (!(await canAccessStudentForRequest(req, res, student))) {
-      return res.status(404).json({ error: "Student not found" });
-    }
-    return res.json({ student: stripStudentCredentialHash(student) });
-  } catch (err) {
-    next(err);
   }
-});
+);
 
-// Normalize incoming student fields from any frontend (ClassPilot, GoPilot, PassPilot)
+// Normalize incoming student fields from ClassPilot and PassPilot clients.
 // Each frontend sends different field conventions; this normalizes to DB column names.
 function normalizeStudentBody(raw: Record<string, unknown>): Record<string, unknown> {
   const body = { ...raw };
-  // Handle snake_case → camelCase (GoPilot sends first_name, last_name, etc.)
+  // Preserve legacy snake_case import compatibility.
   if (body.first_name && !body.firstName) { body.firstName = body.first_name; delete body.first_name; }
   if (body.last_name && !body.lastName) { body.lastName = body.last_name; delete body.last_name; }
   if (body.grade_level && !body.gradeLevel) { body.gradeLevel = body.grade_level; delete body.grade_level; }
@@ -1210,7 +1083,7 @@ router.put(
         updateData,
         writesLegacyGrade
       );
-      return res.json({ student: student ? stripStudentCredentialHash(student) : student });
+      return res.json({ student: student ? sharedSchoolRosterStudentDto(student) : student });
     } catch (err) {
       if (isUniqueViolation(err)) {
         return res.status(409).json({
@@ -1297,7 +1170,7 @@ router.patch(
         updateData,
         writesLegacyGrade
       );
-      return res.json({ student: student ? stripStudentCredentialHash(student) : student });
+      return res.json({ student: student ? sharedSchoolRosterStudentDto(student) : student });
     } catch (err) {
       if (isUniqueViolation(err)) {
         return res.status(409).json({

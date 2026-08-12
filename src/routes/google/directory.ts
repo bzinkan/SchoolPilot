@@ -4,6 +4,14 @@ import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import {
+  getRequestGoPilotRole,
+  hasActiveGoPilotLicense,
+} from "../../services/gopilotAccess.js";
+import {
+  isDisabledGoPilotParentRole,
+  sendGoPilotParentPortalDisabled,
+} from "../../util/gopilotParentContainment.js";
+import {
   createStudent,
   updateStudent,
   createUser,
@@ -36,11 +44,35 @@ import { getRosterDirectoryClientForSchool } from "../../services/googleRosterCo
 
 const router = Router();
 
+const requireBaseDirectoryAdmin = requireRole("admin", "school_admin");
+const requireDirectoryAdmin: import("express").RequestHandler = async (req, res, next) => {
+  const goPilotSetup = res.locals.goPilotSetup === true;
+  if (!goPilotSetup) {
+    if (!(await hasActiveClassPilotLicense(res.locals.schoolId!))) {
+      const role = await getRequestGoPilotRole(req, res);
+      if (isDisabledGoPilotParentRole(role) && await hasActiveGoPilotLicense(res.locals.schoolId!)) {
+        return sendGoPilotParentPortalDisabled(res);
+      }
+      return res.status(403).json({ error: "Product license required" });
+    }
+    return requireBaseDirectoryAdmin(req, res, next);
+  }
+  const role = await getRequestGoPilotRole(req, res);
+  if (isDisabledGoPilotParentRole(role)) return sendGoPilotParentPortalDisabled(res);
+  if (!(await hasActiveGoPilotLicense(res.locals.schoolId!))) {
+    return res.status(403).json({ error: "Product license required" });
+  }
+  if (role !== "super_admin" && role !== "admin" && role !== "school_admin") {
+    return res.status(403).json({ error: "Insufficient permissions" });
+  }
+  return next();
+};
+
 const adminAuth = [
   authenticate,
   requireSchoolContext,
   requireActiveSchool,
-  requireRole("admin", "school_admin"),
+  requireDirectoryAdmin,
 ] as const;
 
 // Extract student ID from Google Workspace externalIds field
@@ -222,8 +254,11 @@ async function maybeAutoAssignGoPilotFamilies(schoolId: string, imported: number
 
 async function hasActiveClassPilotLicense(schoolId: string): Promise<boolean> {
   const licenses = await getProductLicenses(schoolId);
+  const now = Date.now();
   return licenses.some(
-    (license) => license.product === "CLASSPILOT" && license.status === "active"
+    (license) => license.product === "CLASSPILOT"
+      && license.status === "active"
+      && (!license.expiresAt || new Date(license.expiresAt).getTime() > now)
   );
 }
 
@@ -619,7 +654,7 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
     const { users, role, orgUnitPath, userIds } = req.body;
     const schoolId = res.locals.schoolId!;
     const staffRole = role || "teacher";
-    const fromGoPilotSetup = req.headers["x-gopilot-setup"] === "true" || req.body?.source === "gopilot_setup";
+    const fromGoPilotSetup = res.locals.goPilotSetup === true;
     const membershipRole = fromGoPilotSetup && staffRole === "office_staff" ? "teacher" : staffRole;
     const gopilotRole = fromGoPilotSetup && staffRole === "office_staff" ? "office_staff" : null;
     const shouldNormalizeExistingOffice = fromGoPilotSetup && staffRole === "office_staff";

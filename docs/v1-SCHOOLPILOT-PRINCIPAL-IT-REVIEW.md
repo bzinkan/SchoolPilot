@@ -276,7 +276,7 @@ Current capacity is comfortable for thousands of concurrent classrooms across hu
 
 ### 5.3 Native Mobile (Companion Products Only)
 
-PassPilot and GoPilot are also available as native iOS / Android apps via Capacitor. ClassPilot remains web-only because Chromebook monitoring does not require a mobile companion. JWT credentials on mobile are stored in Keychain (iOS) and Keystore (Android), not in JavaScript-accessible storage.
+GoPilot is available as a staff-only Android app via Capacitor. ClassPilot remains web-only because Chromebook monitoring does not require a mobile companion. JWT credentials in GoPilot Android persist only in Keystore-backed secure storage and are held in JavaScript memory while the staff member is signed in; they are never persisted to plaintext preferences. This document makes no iOS availability claim.
 
 ---
 
@@ -324,7 +324,7 @@ SchoolPilot is building and evidencing the control families a SOC 2 Type II audi
 - Session-cookie hardening: `SameSite=Lax`, `Secure`, `HttpOnly`
 - CSRF defense-in-depth middleware
 - One-time code exchange for OAuth (eliminated JWT-in-URL leakage)
-- Mobile JWT storage in OS-secured Keychain/Keystore
+- Android JWT persistence in OS-secured Keystore-backed storage
 
 **Change management (CC8) — every push to main runs:**
 - CodeQL static analysis (SAST)
@@ -428,11 +428,11 @@ These are mentioned for completeness; they are separate licensed products within
 
 ### 7.1 PassPilot
 
-Digital hall-pass system. Teachers issue passes from a phone or web; students see their pass on the same Chromebook. Office staff and admin see live in/out status. Available as a native Android/iOS app via Capacitor.
+Digital hall-pass system. Teachers issue passes from a phone or web; students see their pass on the same Chromebook. Office staff and admin see live in/out status.
 
 ### 7.2 GoPilot
 
-Carpool / dismissal management. Parents queue from their car via a phone app; teachers see incoming arrivals and release students in order. Built for the after-school pickup window. Also Capacitor-native.
+School-operated dismissal management. Administrators and office staff queue car riders by internal car number or direct student/family search, while teachers release assigned students in order. Bus and walker workflows share the live queue. A staff-only Android app is supported; there is no GoPilot parent portal or iOS availability claim.
 
 Both share the same identity model, school isolation, audit logging, and infrastructure as ClassPilot.
 

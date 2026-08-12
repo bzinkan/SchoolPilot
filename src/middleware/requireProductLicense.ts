@@ -1,5 +1,5 @@
 import type { RequestHandler } from "express";
-import { eq, and } from "drizzle-orm";
+import { eq, and, gt, isNull, or, sql } from "drizzle-orm";
 import { productLicenses } from "../schema/core.js";
 import db from "../db.js";
 import { createSingleFlight } from "../util/singleFlight.js";
@@ -19,7 +19,11 @@ function loadActiveLicenses(schoolId: string) {
       .where(
         and(
           eq(productLicenses.schoolId, schoolId),
-          eq(productLicenses.status, "active")
+          eq(productLicenses.status, "active"),
+          or(
+            isNull(productLicenses.expiresAt),
+            gt(productLicenses.expiresAt, sql`NOW()`)
+          )
         )
       )
   );

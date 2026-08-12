@@ -699,6 +699,91 @@ export async function getStudentsBySchool(
     .orderBy(students.lastName, students.firstName);
 }
 
+export type GoPilotStaffStudentDto = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string | null;
+  externalId: string | null;
+  studentIdNumber: string | null;
+  gradeLevel: string | null;
+  homeroomId: string | null;
+  homeroomName: string | null;
+  dismissalType: string;
+  busRoute: string | null;
+  afterschoolReason: string | null;
+  status: string;
+  familyGroupId: string | null;
+  familyName: string | null;
+  carNumber: string | null;
+};
+
+/** Narrow GoPilot roster projection; unified student/device fields stay server-side. */
+export async function getGoPilotStaffStudents(
+  schoolId: string,
+  options: {
+    homeroomIds?: string[];
+    homeroomId?: string;
+    dismissalType?: string;
+    includeManagerFields?: boolean;
+  } = {}
+): Promise<GoPilotStaffStudentDto[]> {
+  const conditions = [
+    eq(students.schoolId, schoolId),
+    eq(students.status, "active"),
+  ];
+  if (options.homeroomIds) {
+    if (options.homeroomIds.length === 0) return [];
+    conditions.push(inArray(students.homeroomId, options.homeroomIds));
+  }
+  if (options.homeroomId) conditions.push(eq(students.homeroomId, options.homeroomId));
+  if (options.dismissalType) conditions.push(eq(students.dismissalType, options.dismissalType));
+
+  return db
+    .select({
+      id: students.id,
+      firstName: students.firstName,
+      lastName: students.lastName,
+      email: students.email,
+      externalId: students.externalId,
+      studentIdNumber: students.studentIdNumber,
+      gradeLevel: students.gradeLevel,
+      homeroomId: students.homeroomId,
+      homeroomName: homerooms.name,
+      dismissalType: sql<string>`COALESCE(${students.dismissalType}, 'car')`,
+      busRoute: students.busRoute,
+      afterschoolReason: students.afterschoolReason,
+      status: students.status,
+      familyGroupId: familyGroups.id,
+      familyName: familyGroups.familyName,
+      carNumber: familyGroups.carNumber,
+    })
+    .from(students)
+    .leftJoin(
+      homerooms,
+      and(
+        eq(homerooms.id, students.homeroomId),
+        eq(homerooms.schoolId, schoolId)
+      )
+    )
+    .leftJoin(
+      familyGroupStudents,
+      and(
+        eq(familyGroupStudents.schoolId, schoolId),
+        eq(familyGroupStudents.studentId, students.id)
+      )
+    )
+    .leftJoin(
+      familyGroups,
+      and(
+        eq(familyGroups.schoolId, schoolId),
+        eq(familyGroups.id, familyGroupStudents.familyGroupId)
+      )
+    )
+    .where(and(...conditions))
+    .orderBy(students.lastName, students.firstName, students.id);
+}
+
 // Lowercased emails of EVERY student in a school (any status) — used to detect
 // duplicate emails on bulk/CSV import without a DB hit per row. Inactive students
 // still hold the unique (school, email_lc) slot, so they count as conflicts.
@@ -964,18 +1049,53 @@ export async function updateSchool(
   const touchesPasspilotSettings = passpilotSettingsFields.some((field) =>
     Object.prototype.hasOwnProperty.call(data, field)
   );
+  const gopilotSettingsFields = [
+    "dismissalTime",
+    "schoolTimezone",
+    "gopilotAutoStartEnabled",
+    "gopilotPickupZones",
+  ] as const;
+  const touchesGopilotSettings = gopilotSettingsFields.some((field) =>
+    Object.prototype.hasOwnProperty.call(data, field)
+  );
   const update: PgUpdateSetSource<typeof schools> = {
     ...data,
     updatedAt: new Date(),
     ...(touchesPasspilotSettings
       ? { passpilotSettingsRevision: sql`${schools.passpilotSettingsRevision} + 1` }
       : {}),
+    ...(touchesGopilotSettings
+      ? { gopilotSettingsRevision: sql`${schools.gopilotSettingsRevision} + 1` }
+      : {}),
   };
-  const [school] = await db
-    .update(schools)
-    .set(update)
-    .where(eq(schools.id, id))
-    .returning();
+  const school = await db.transaction(async (tx) => {
+    const [saved] = await tx
+      .update(schools)
+      .set(update)
+      .where(eq(schools.id, id))
+      .returning();
+    if (!saved) return undefined;
+
+    // Name/timezone are duplicated for established ClassPilot consumers.
+    // Keep alternate school writers transactionally consistent while their
+    // revision increments force any open GoPilot/PassPilot settings draft to
+    // detect the concurrent change instead of overwriting it.
+    if (
+      Object.prototype.hasOwnProperty.call(data, "name") ||
+      Object.prototype.hasOwnProperty.call(data, "schoolTimezone")
+    ) {
+      await tx
+        .update(settings)
+        .set({
+          ...(data.name !== undefined ? { schoolName: data.name } : {}),
+          ...(data.schoolTimezone !== undefined
+            ? { schoolTimezone: data.schoolTimezone }
+            : {}),
+        })
+        .where(eq(settings.schoolId, id));
+    }
+    return saved;
+  });
   if (school) {
     const target = { kind: "cache-invalidation", schoolId: id, cache: "classpilot-dashboard-school" } as const;
     dispatchCacheInvalidation(target);
@@ -1145,6 +1265,9 @@ async function persistPasspilotAdminSettings(
         kioskRequiresApproval: nextKioskRequiresApproval,
         kioskPinHash: nextKioskPinHash,
         passpilotSettingsRevision: revision,
+        ...(nextTimezone !== current.schoolTimezone
+          ? { gopilotSettingsRevision: sql`${schools.gopilotSettingsRevision} + 1` }
+          : {}),
         updatedAt: now,
       })
       .where(eq(schools.id, schoolId))
@@ -2917,6 +3040,37 @@ export async function removeStudentFromLegacyPasspilotGrade(
 // GoPilot - Homeroom operations
 // ============================================================================
 
+async function assertActiveSchoolStaffMembership(
+  userId: string,
+  schoolId: string,
+  dbInstance: typeof db = db
+): Promise<void> {
+  const staffRoles = ["admin", "school_admin", "office_staff", "teacher"];
+  const [membership] = await dbInstance
+    .select({ id: schoolMemberships.id })
+    .from(schoolMemberships)
+    .where(
+      and(
+        eq(schoolMemberships.userId, userId),
+        eq(schoolMemberships.schoolId, schoolId),
+        eq(schoolMemberships.status, "active"),
+        or(
+          inArray(schoolMemberships.gopilotRole, staffRoles),
+          and(
+            or(isNull(schoolMemberships.gopilotRole), eq(schoolMemberships.gopilotRole, "")),
+            inArray(schoolMemberships.role, staffRoles)
+          )
+        )
+      )
+    )
+    .limit(1);
+  if (!membership) {
+    const err = new Error("Teacher must be active staff at this school") as Error & { code?: string };
+    err.code = "GOPILOT_INVALID_HOMEROOM_STAFF";
+    throw err;
+  }
+}
+
 export async function getHomeroomsBySchool(
   schoolId: string
 ): Promise<Homeroom[]> {
@@ -2941,14 +3095,45 @@ export async function getHomeroomById(
 export async function createHomeroom(
   data: InsertHomeroom
 ): Promise<Homeroom> {
+  if (data.teacherId) {
+    await assertActiveSchoolStaffMembership(data.teacherId, data.schoolId);
+  }
   const [hr] = await db.insert(homerooms).values(data).returning();
   return hr!;
+}
+
+export async function createHomeroomWithPrimaryTeacher(
+  data: InsertHomeroom
+): Promise<Homeroom> {
+  return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`gopilot:homerooms:${data.schoolId}`}, 0::bigint))`
+    );
+    if (data.teacherId) {
+      await assertActiveSchoolStaffMembership(data.teacherId, data.schoolId, tx as unknown as typeof db);
+    }
+    const [homeroom] = await tx.insert(homerooms).values(data).returning();
+    if (data.teacherId) {
+      await tx.insert(homeroomTeachers).values({
+        schoolId: data.schoolId,
+        homeroomId: homeroom!.id,
+        teacherId: data.teacherId,
+        role: "primary",
+      });
+    }
+    return homeroom!;
+  });
 }
 
 export async function updateHomeroom(
   id: string,
   data: Partial<InsertHomeroom>
 ): Promise<Homeroom | undefined> {
+  if (data.teacherId) {
+    const existing = await getHomeroomById(id);
+    if (!existing) return undefined;
+    await assertActiveSchoolStaffMembership(data.teacherId, existing.schoolId);
+  }
   const [hr] = await db
     .update(homerooms)
     .set(data)
@@ -2957,14 +3142,90 @@ export async function updateHomeroom(
   return hr;
 }
 
-export async function deleteHomeroom(id: string): Promise<boolean> {
-  // Unassign students first
-  await db
-    .update(students)
-    .set({ homeroomId: null })
-    .where(eq(students.homeroomId, id));
-  const result = await db.delete(homerooms).where(eq(homerooms.id, id));
-  return (result.rowCount ?? 0) > 0;
+export async function updateHomeroomWithPrimaryTeacher(
+  id: string,
+  schoolId: string,
+  data: Partial<InsertHomeroom>
+): Promise<Homeroom | undefined> {
+  return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`gopilot:homeroom:${schoolId}:${id}`}, 0::bigint))`
+    );
+    const [existing] = await tx
+      .select()
+      .from(homerooms)
+      .where(and(eq(homerooms.id, id), eq(homerooms.schoolId, schoolId)))
+      .limit(1);
+    if (!existing) return undefined;
+    if (data.schoolId !== undefined && data.schoolId !== schoolId) {
+      throw new Error("Homeroom school cannot be changed");
+    }
+    if (data.teacherId) {
+      await assertActiveSchoolStaffMembership(data.teacherId, schoolId, tx as unknown as typeof db);
+    }
+    const [updated] = await tx
+      .update(homerooms)
+      .set({ ...data, schoolId })
+      .where(and(eq(homerooms.id, id), eq(homerooms.schoolId, schoolId)))
+      .returning();
+    if (Object.prototype.hasOwnProperty.call(data, "teacherId")) {
+      await tx
+        .delete(homeroomTeachers)
+        .where(
+          and(
+            eq(homeroomTeachers.schoolId, schoolId),
+            eq(homeroomTeachers.homeroomId, id),
+            eq(homeroomTeachers.role, "primary")
+          )
+        );
+      if (data.teacherId) {
+        await tx.insert(homeroomTeachers).values({
+          schoolId,
+          homeroomId: id,
+          teacherId: data.teacherId,
+          role: "primary",
+        });
+      }
+    }
+    return updated;
+  });
+}
+
+export async function deleteHomeroom(id: string, schoolId: string): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const [homeroom] = await tx
+      .select({ id: homerooms.id })
+      .from(homerooms)
+      .where(and(eq(homerooms.id, id), eq(homerooms.schoolId, schoolId)))
+      .limit(1)
+      .for("update");
+    if (!homeroom) return false;
+
+    // The tenant FK intentionally prevents orphaned co-teacher assignments.
+    // Remove those assignments and detach students in the same transaction as
+    // the confirmed setup deletion so the new integrity guard remains usable.
+    await tx
+      .delete(homeroomTeachers)
+      .where(
+        and(
+          eq(homeroomTeachers.schoolId, schoolId),
+          eq(homeroomTeachers.homeroomId, id)
+        )
+      );
+    await tx
+      .update(students)
+      .set({ homeroomId: null })
+      .where(
+        and(
+          eq(students.schoolId, schoolId),
+          eq(students.homeroomId, id)
+        )
+      );
+    const result = await tx
+      .delete(homerooms)
+      .where(and(eq(homerooms.id, id), eq(homerooms.schoolId, schoolId)));
+    return (result.rowCount ?? 0) > 0;
+  });
 }
 
 export async function assignStudentsToHomeroom(
@@ -3069,6 +3330,29 @@ export async function getSessionById(
   return s;
 }
 
+async function getSessionSchoolIdForTenantWrite(
+  sessionId: string,
+  expectedSchoolId?: string,
+  dbInstance: typeof db = db
+): Promise<string> {
+  const [session] = await dbInstance
+    .select({ schoolId: dismissalSessions.schoolId })
+    .from(dismissalSessions)
+    .where(eq(dismissalSessions.id, sessionId))
+    .limit(1);
+  if (!session) {
+    const err = new Error("Dismissal session not found") as Error & { code?: string };
+    err.code = "GOPILOT_SESSION_NOT_FOUND";
+    throw err;
+  }
+  if (expectedSchoolId && session.schoolId !== expectedSchoolId) {
+    const err = new Error("Dismissal session does not belong to the active school") as Error & { code?: string };
+    err.code = "GOPILOT_SESSION_SCHOOL_MISMATCH";
+    throw err;
+  }
+  return session.schoolId;
+}
+
 export async function updateSessionStatus(
   id: string,
   status: string,
@@ -3088,6 +3372,129 @@ export async function updateSessionStatus(
     .where(eq(dismissalSessions.id, id))
     .returning();
   return s;
+}
+
+export type DismissalSessionStatus = "pending" | "active" | "paused" | "completed";
+
+export type DismissalSessionTransitionResult =
+  | {
+      outcome: "updated" | "unchanged";
+      session: DismissalSession;
+      previousStatus: DismissalSessionStatus;
+    }
+  | { outcome: "not_found" }
+  | { outcome: "invalid_status"; session: DismissalSession }
+  | { outcome: "invalid_transition"; session: DismissalSession }
+  | { outcome: "outstanding"; session: DismissalSession; outstanding: number };
+
+const DISMISSAL_SESSION_TRANSITIONS: Record<
+  DismissalSessionStatus,
+  readonly DismissalSessionStatus[]
+> = {
+  pending: ["active"],
+  active: ["paused", "completed"],
+  paused: ["active", "completed"],
+  completed: [],
+};
+
+function isDismissalSessionStatus(value: string): value is DismissalSessionStatus {
+  return value === "pending" || value === "active" || value === "paused" || value === "completed";
+}
+
+/**
+ * Changes a session state under a row lock. Completion and its outstanding
+ * queue check share the same transaction, and arrival creation locks this same
+ * session row, so a student cannot be queued while completion is committing.
+ */
+export async function transitionDismissalSessionStatus(options: {
+  sessionId: string;
+  schoolId: string;
+  nextStatus: DismissalSessionStatus;
+  actorId?: string | null;
+}): Promise<DismissalSessionTransitionResult> {
+  return db.transaction(async (tx) => {
+    const [current] = await tx
+      .select()
+      .from(dismissalSessions)
+      .where(
+        and(
+          eq(dismissalSessions.id, options.sessionId),
+          eq(dismissalSessions.schoolId, options.schoolId)
+        )
+      )
+      .limit(1)
+      .for("update");
+
+    if (!current) return { outcome: "not_found" as const };
+    if (!isDismissalSessionStatus(current.status)) {
+      return { outcome: "invalid_status" as const, session: current };
+    }
+    if (current.status === options.nextStatus) {
+      return {
+        outcome: "unchanged" as const,
+        session: current,
+        previousStatus: current.status,
+      };
+    }
+    if (!DISMISSAL_SESSION_TRANSITIONS[current.status].includes(options.nextStatus)) {
+      return { outcome: "invalid_transition" as const, session: current };
+    }
+
+    if (options.nextStatus === "completed") {
+      const [stats] = await tx
+        .select({
+          outstanding: sql<number>`COUNT(*) FILTER (WHERE ${dismissalQueue.status} <> 'dismissed')::int`,
+        })
+        .from(dismissalQueue)
+        .where(
+          and(
+            eq(dismissalQueue.schoolId, options.schoolId),
+            eq(dismissalQueue.sessionId, options.sessionId)
+          )
+        );
+      const outstanding = Number(stats?.outstanding ?? 0);
+      if (outstanding > 0) {
+        return { outcome: "outstanding" as const, session: current, outstanding };
+      }
+    }
+
+    const updates: Record<string, unknown> = { status: options.nextStatus };
+    if (options.nextStatus === "active") {
+      updates.startedAt = sql`COALESCE(${dismissalSessions.startedAt}, NOW())`;
+      updates.endedAt = null;
+    } else if (options.nextStatus === "completed") {
+      updates.endedAt = new Date();
+    }
+    const [updated] = await tx
+      .update(dismissalSessions)
+      .set(updates)
+      .where(
+        and(
+          eq(dismissalSessions.id, options.sessionId),
+          eq(dismissalSessions.schoolId, options.schoolId),
+          eq(dismissalSessions.status, current.status)
+        )
+      )
+      .returning();
+    if (!updated) {
+      return { outcome: "invalid_transition" as const, session: current };
+    }
+
+    await tx.insert(activityLog).values({
+      schoolId: options.schoolId,
+      sessionId: options.sessionId,
+      actorId: options.actorId ?? null,
+      action: `session.${options.nextStatus}`,
+      entityType: "dismissal_session",
+      entityId: options.sessionId,
+      details: { fromStatus: current.status, toStatus: options.nextStatus },
+    });
+    return {
+      outcome: "updated" as const,
+      session: updated,
+      previousStatus: current.status,
+    };
+  });
 }
 
 // ============================================================================
@@ -3146,173 +3553,438 @@ export async function isStudentInQueue(
 }
 
 export async function addToQueue(
-  data: InsertDismissalQueueEntry
+  data: Omit<InsertDismissalQueueEntry, "schoolId"> & { schoolId?: string }
 ): Promise<DismissalQueueEntry> {
-  const [entry] = await db.insert(dismissalQueue).values(data).returning();
-  return entry!;
+  const schoolId = await getSessionSchoolIdForTenantWrite(data.sessionId, data.schoolId);
+  const student = await getStudentById(data.studentId);
+  if (!student || student.schoolId !== schoolId || student.status !== "active") {
+    const err = new Error("Student does not belong to the dismissal session school") as Error & { code?: string };
+    err.code = "GOPILOT_STUDENT_SCHOOL_MISMATCH";
+    throw err;
+  }
+  const [entry] = await db
+    .insert(dismissalQueue)
+    .values({ ...data, schoolId })
+    .onConflictDoNothing({
+      target: [dismissalQueue.sessionId, dismissalQueue.studentId],
+    })
+    .returning();
+  if (entry) return entry;
+  const [existing] = await db
+    .select()
+    .from(dismissalQueue)
+    .where(
+      and(
+        eq(dismissalQueue.schoolId, schoolId),
+        eq(dismissalQueue.sessionId, data.sessionId),
+        eq(dismissalQueue.studentId, data.studentId)
+      )
+    )
+    .limit(1);
+  return existing!;
 }
 
-export async function updateQueueEntry(
-  id: string,
-  data: Partial<DismissalQueueEntry>
-): Promise<DismissalQueueEntry | undefined> {
-  const [entry] = await db
-    .update(dismissalQueue)
-    .set(data)
-    .where(eq(dismissalQueue.id, id))
-    .returning();
-  return entry;
+async function withActiveDismissalSessionQueueMutation<T>(
+  schoolId: string,
+  sessionId: string,
+  operation: (transactionDb: typeof db) => Promise<T>
+): Promise<T> {
+  return db.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    // All intake/session transitions take this same lock first. Once acquired,
+    // the session cannot be paused/completed until this queue mutation commits.
+    const [session] = await tx
+      .select({ status: dismissalSessions.status })
+      .from(dismissalSessions)
+      .where(
+        and(
+          eq(dismissalSessions.id, sessionId),
+          eq(dismissalSessions.schoolId, schoolId)
+        )
+      )
+      .limit(1)
+      .for("update");
+    if (!session) {
+      throw Object.assign(new Error("Dismissal session not found"), {
+        status: 404,
+        code: "GOPILOT_SESSION_NOT_FOUND",
+        expose: true,
+      });
+    }
+    if (session.status !== "active") {
+      throw Object.assign(new Error("Dismissal session must be active for this action"), {
+        status: 409,
+        code: "GOPILOT_SESSION_NOT_ACTIVE",
+        expose: true,
+      });
+    }
+    return operation(transactionDb);
+  });
 }
 
 export async function callQueueEntry(
   id: string,
-  zone: string | null
+  zone: string | null,
+  schoolId: string,
+  sessionId: string
 ): Promise<DismissalQueueEntry | undefined> {
-  const [entry] = await db
-    .update(dismissalQueue)
-    .set({
-      status: "called",
-      zone,
-      calledAt: new Date(),
-      holdReason: null,
-      delayedUntil: null,
-    })
-    .where(
-      and(
-        eq(dismissalQueue.id, id),
-        inArray(dismissalQueue.status, ["waiting", "called", "held", "delayed"])
+  return withActiveDismissalSessionQueueMutation(schoolId, sessionId, async (transactionDb) => {
+    const [entry] = await transactionDb
+      .update(dismissalQueue)
+      .set({
+        status: "called",
+        zone,
+        calledAt: new Date(),
+        holdReason: null,
+        delayedUntil: null,
+      })
+      .where(
+        and(
+          eq(dismissalQueue.id, id),
+          eq(dismissalQueue.schoolId, schoolId),
+          eq(dismissalQueue.sessionId, sessionId),
+          or(
+            eq(dismissalQueue.status, "waiting"),
+            eq(dismissalQueue.status, "held"),
+            and(
+              eq(dismissalQueue.status, "delayed"),
+              sql`${dismissalQueue.delayedUntil} <= NOW()`
+            )
+          )
+        )
       )
-    )
-    .returning();
-  return entry;
+      .returning();
+    return entry;
+  });
 }
 
 export async function callNextBatch(
   sessionId: string,
   count: number,
-  zone: string | null
+  zone: string | null,
+  schoolId: string
 ): Promise<DismissalQueueEntry[]> {
-  // Get IDs of next waiting entries, plus delayed entries whose delay expired.
-  const waiting = await db
-    .select({ id: dismissalQueue.id })
-    .from(dismissalQueue)
-    .where(
-      and(
-        eq(dismissalQueue.sessionId, sessionId),
-        or(
-          eq(dismissalQueue.status, "waiting"),
-          and(
-            eq(dismissalQueue.status, "delayed"),
-            sql`${dismissalQueue.delayedUntil} <= NOW()`
+  const boundedCount = Math.max(1, Math.min(Number(count) || 1, 100));
+  return withActiveDismissalSessionQueueMutation(schoolId, sessionId, async (transactionDb) => {
+    // SKIP LOCKED partitions concurrent batches across API tasks. The guarded
+    // UPDATE is still required in case state changes between selection/write.
+    const waiting = await transactionDb
+      .select({ id: dismissalQueue.id })
+      .from(dismissalQueue)
+      .where(
+        and(
+          eq(dismissalQueue.sessionId, sessionId),
+          eq(dismissalQueue.schoolId, schoolId),
+          or(
+            eq(dismissalQueue.status, "waiting"),
+            and(
+              eq(dismissalQueue.status, "delayed"),
+              sql`${dismissalQueue.delayedUntil} <= NOW()`
+            )
           )
         )
       )
-    )
-    .orderBy(dismissalQueue.position)
-    .limit(count);
+      .orderBy(dismissalQueue.position, dismissalQueue.id)
+      .limit(boundedCount)
+      .for("update", { skipLocked: true });
 
-  if (waiting.length === 0) return [];
-
-  const ids = waiting.map((w) => w.id);
-  return db
-    .update(dismissalQueue)
-    .set({
-      status: "called",
-      zone,
-      calledAt: new Date(),
-      holdReason: null,
-      delayedUntil: null,
-    })
-    .where(inArray(dismissalQueue.id, ids))
-    .returning();
+    if (waiting.length === 0) return [];
+    const ids = waiting.map((row) => row.id);
+    return transactionDb
+      .update(dismissalQueue)
+      .set({
+        status: "called",
+        zone,
+        calledAt: new Date(),
+        holdReason: null,
+        delayedUntil: null,
+      })
+      .where(
+        and(
+          inArray(dismissalQueue.id, ids),
+          eq(dismissalQueue.schoolId, schoolId),
+          eq(dismissalQueue.sessionId, sessionId),
+          or(
+            eq(dismissalQueue.status, "waiting"),
+            and(
+              eq(dismissalQueue.status, "delayed"),
+              sql`${dismissalQueue.delayedUntil} <= NOW()`
+            )
+          )
+        )
+      )
+      .returning();
+  });
 }
 
 export async function releaseQueueEntry(
-  id: string
+  id: string,
+  schoolId: string,
+  sessionId: string
 ): Promise<DismissalQueueEntry | undefined> {
-  const [entry] = await db
-    .update(dismissalQueue)
-    .set({ status: "released", releasedAt: new Date() })
-    .where(
-      and(
-        eq(dismissalQueue.id, id),
-        eq(dismissalQueue.status, "called")
+  return withActiveDismissalSessionQueueMutation(schoolId, sessionId, async (transactionDb) => {
+    const [entry] = await transactionDb
+      .update(dismissalQueue)
+      .set({ status: "released", releasedAt: new Date() })
+      .where(
+        and(
+          eq(dismissalQueue.id, id),
+          eq(dismissalQueue.schoolId, schoolId),
+          eq(dismissalQueue.sessionId, sessionId),
+          eq(dismissalQueue.status, "called")
+        )
       )
-    )
-    .returning();
-  return entry;
+      .returning();
+    return entry;
+  });
 }
 
 export async function dismissQueueEntry(
-  id: string
-): Promise<DismissalQueueEntry | undefined> {
-  const [entry] = await db
-    .update(dismissalQueue)
-    .set({ status: "dismissed", dismissedAt: new Date() })
-    .where(
-      and(
-        eq(dismissalQueue.id, id),
-        eq(dismissalQueue.status, "released")
+  id: string,
+  schoolId: string,
+  sessionId: string,
+  options: { custodyAcknowledged: boolean }
+): Promise<{
+  entry?: DismissalQueueEntry;
+  custodyAlerts: CustodyAlert[];
+}> {
+  return withActiveDismissalSessionQueueMutation(schoolId, sessionId, async (transactionDb) => {
+    const [current] = await transactionDb
+      .select()
+      .from(dismissalQueue)
+      .where(
+        and(
+          eq(dismissalQueue.id, id),
+          eq(dismissalQueue.schoolId, schoolId),
+          eq(dismissalQueue.sessionId, sessionId)
+        )
       )
-    )
-    .returning();
-  return entry;
+      .limit(1)
+      .for("update");
+    if (!current || current.status !== "released") {
+      return { entry: undefined, custodyAlerts: [] };
+    }
+
+    // Custody alert creation takes this same student-scoped lock. The alert
+    // inventory and dismissal write are therefore one serializable decision:
+    // an alert cannot appear between the acknowledgement check and pickup.
+    await transactionDb.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`gopilot:custody:${schoolId}:${current.studentId}`}, 0::bigint))`
+    );
+    const activeAlerts = await transactionDb
+      .select({
+        id: custodyAlerts.id,
+        schoolId: custodyAlerts.schoolId,
+        studentId: custodyAlerts.studentId,
+        personName: custodyAlerts.personName,
+        alertType: custodyAlerts.alertType,
+        notes: custodyAlerts.notes,
+        courtOrder: custodyAlerts.courtOrder,
+        createdBy: custodyAlerts.createdBy,
+        active: custodyAlerts.active,
+        createdAt: custodyAlerts.createdAt,
+        studentFirstName: students.firstName,
+        studentLastName: students.lastName,
+      })
+      .from(custodyAlerts)
+      .innerJoin(
+        students,
+        and(
+          eq(students.schoolId, custodyAlerts.schoolId),
+          eq(students.id, custodyAlerts.studentId)
+        )
+      )
+      .where(
+        and(
+          eq(custodyAlerts.schoolId, schoolId),
+          eq(custodyAlerts.studentId, current.studentId),
+          eq(custodyAlerts.active, true)
+        )
+      )
+      .orderBy(desc(custodyAlerts.createdAt));
+    if (activeAlerts.length > 0 && !options.custodyAcknowledged) {
+      return { entry: undefined, custodyAlerts: activeAlerts };
+    }
+
+    const [entry] = await transactionDb
+      .update(dismissalQueue)
+      .set({ status: "dismissed", dismissedAt: new Date() })
+      .where(
+        and(
+          eq(dismissalQueue.id, id),
+          eq(dismissalQueue.schoolId, schoolId),
+          eq(dismissalQueue.sessionId, sessionId),
+          eq(dismissalQueue.status, "released")
+        )
+      )
+      .returning();
+    return { entry, custodyAlerts: activeAlerts };
+  });
 }
 
 export async function batchDismiss(
-  queueIds: string[]
-): Promise<DismissalQueueEntry[]> {
-  return db
-    .update(dismissalQueue)
-    .set({ status: "dismissed", dismissedAt: new Date() })
-    .where(
-      and(
-        inArray(dismissalQueue.id, queueIds),
-        eq(dismissalQueue.status, "released")
+  queueIds: string[],
+  schoolId: string,
+  sessionId: string
+): Promise<{
+  entries: DismissalQueueEntry[];
+  custodyAlertsByQueueId: Map<string, CustodyAlert[]>;
+}> {
+  return withActiveDismissalSessionQueueMutation(schoolId, sessionId, async (transactionDb) => {
+    const requestedIds = [...new Set(queueIds.map(String))];
+    const current = await transactionDb
+      .select()
+      .from(dismissalQueue)
+      .where(
+        and(
+          inArray(dismissalQueue.id, requestedIds),
+          eq(dismissalQueue.schoolId, schoolId),
+          eq(dismissalQueue.sessionId, sessionId),
+          eq(dismissalQueue.status, "released")
+        )
       )
-    )
-    .returning();
+      .orderBy(dismissalQueue.studentId)
+      .for("update");
+    if (current.length !== requestedIds.length) {
+      return { entries: [], custodyAlertsByQueueId: new Map() };
+    }
+
+    // Acquire in deterministic student order to avoid deadlocks between two
+    // overlapping batch pickups and custody-alert creation.
+    for (const studentId of [...new Set(current.map((entry) => entry.studentId))].sort()) {
+      await transactionDb.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${`gopilot:custody:${schoolId}:${studentId}`}, 0::bigint))`
+      );
+    }
+    const alertRows = await transactionDb
+      .select({
+        id: custodyAlerts.id,
+        schoolId: custodyAlerts.schoolId,
+        studentId: custodyAlerts.studentId,
+        personName: custodyAlerts.personName,
+        alertType: custodyAlerts.alertType,
+        notes: custodyAlerts.notes,
+        courtOrder: custodyAlerts.courtOrder,
+        createdBy: custodyAlerts.createdBy,
+        active: custodyAlerts.active,
+        createdAt: custodyAlerts.createdAt,
+        studentFirstName: students.firstName,
+        studentLastName: students.lastName,
+      })
+      .from(custodyAlerts)
+      .innerJoin(
+        students,
+        and(
+          eq(students.schoolId, custodyAlerts.schoolId),
+          eq(students.id, custodyAlerts.studentId)
+        )
+      )
+      .where(
+        and(
+          eq(custodyAlerts.schoolId, schoolId),
+          inArray(custodyAlerts.studentId, current.map((entry) => entry.studentId)),
+          eq(custodyAlerts.active, true)
+        )
+      )
+      .orderBy(desc(custodyAlerts.createdAt));
+    const alertsByStudentId = new Map<string, CustodyAlert[]>();
+    for (const alert of alertRows) {
+      const alerts = alertsByStudentId.get(alert.studentId) ?? [];
+      alerts.push(alert);
+      alertsByStudentId.set(alert.studentId, alerts);
+    }
+    const custodyAlertsByQueueId = new Map<string, CustodyAlert[]>();
+    const dismissibleIds: string[] = [];
+    for (const entry of current) {
+      const alerts = alertsByStudentId.get(entry.studentId) ?? [];
+      if (alerts.length > 0) custodyAlertsByQueueId.set(entry.id, alerts);
+      else dismissibleIds.push(entry.id);
+    }
+    const entries = dismissibleIds.length === 0
+      ? []
+      : await transactionDb
+      .update(dismissalQueue)
+      .set({ status: "dismissed", dismissedAt: new Date() })
+      .where(
+        and(
+          inArray(dismissalQueue.id, dismissibleIds),
+          eq(dismissalQueue.schoolId, schoolId),
+          eq(dismissalQueue.sessionId, sessionId),
+          eq(dismissalQueue.status, "released")
+        )
+      )
+      .returning();
+    return { entries, custodyAlertsByQueueId };
+  });
 }
 
 export async function batchRelease(
-  queueIds: string[]
+  queueIds: string[],
+  schoolId: string,
+  sessionId: string
 ): Promise<DismissalQueueEntry[]> {
-  return db
-    .update(dismissalQueue)
-    .set({ status: "released", releasedAt: new Date() })
-    .where(
-      and(
-        inArray(dismissalQueue.id, queueIds),
-        eq(dismissalQueue.status, "called")
+  return withActiveDismissalSessionQueueMutation(schoolId, sessionId, (transactionDb) =>
+    transactionDb
+      .update(dismissalQueue)
+      .set({ status: "released", releasedAt: new Date() })
+      .where(
+        and(
+          inArray(dismissalQueue.id, queueIds),
+          eq(dismissalQueue.schoolId, schoolId),
+          eq(dismissalQueue.sessionId, sessionId),
+          eq(dismissalQueue.status, "called")
+        )
       )
-    )
-    .returning();
+      .returning()
+  );
 }
 
 export async function holdQueueEntry(
   id: string,
-  reason: string
+  reason: string,
+  schoolId: string,
+  sessionId: string
 ): Promise<DismissalQueueEntry | undefined> {
-  const [entry] = await db
-    .update(dismissalQueue)
-    .set({ status: "held", holdReason: reason })
-    .where(eq(dismissalQueue.id, id))
-    .returning();
-  return entry;
+  return withActiveDismissalSessionQueueMutation(schoolId, sessionId, async (transactionDb) => {
+    const [entry] = await transactionDb
+      .update(dismissalQueue)
+      .set({ status: "held", holdReason: reason })
+      .where(
+        and(
+          eq(dismissalQueue.id, id),
+          eq(dismissalQueue.schoolId, schoolId),
+          eq(dismissalQueue.sessionId, sessionId),
+          inArray(dismissalQueue.status, ["waiting", "called", "delayed"])
+        )
+      )
+      .returning();
+    return entry;
+  });
 }
 
 export async function delayQueueEntry(
-  id: string
+  id: string,
+  schoolId: string,
+  sessionId: string
 ): Promise<DismissalQueueEntry | undefined> {
-  const [entry] = await db
-    .update(dismissalQueue)
-    .set({
-      status: "delayed",
-      delayedUntil: sql`NOW() + INTERVAL '2 minutes'`,
-    })
-    .where(eq(dismissalQueue.id, id))
-    .returning();
-  return entry;
+  return withActiveDismissalSessionQueueMutation(schoolId, sessionId, async (transactionDb) => {
+    const [entry] = await transactionDb
+      .update(dismissalQueue)
+      .set({
+        status: "delayed",
+        delayedUntil: sql`NOW() + INTERVAL '2 minutes'`,
+      })
+      .where(
+        and(
+          eq(dismissalQueue.id, id),
+          eq(dismissalQueue.schoolId, schoolId),
+          eq(dismissalQueue.sessionId, sessionId),
+          inArray(dismissalQueue.status, ["waiting", "called", "held"])
+        )
+      )
+      .returning();
+    return entry;
+  });
 }
 
 export async function getSessionStats(sessionId: string) {
@@ -3330,6 +4002,577 @@ export async function getSessionStats(sessionId: string) {
     .from(dismissalQueue)
     .where(eq(dismissalQueue.sessionId, sessionId));
   return stats;
+}
+
+export type GoPilotArrivalCandidateDto = {
+  studentId: string;
+  firstName: string;
+  lastName: string;
+  gradeLevel: string | null;
+  homeroomId: string | null;
+  homeroomName: string | null;
+  dismissalType: string;
+  effectiveDismissalType: string;
+  familyGroupId: string | null;
+  familyName: string | null;
+  carNumber: string | null;
+  isAbsent: boolean;
+  alreadyQueued: boolean;
+};
+
+export async function searchGoPilotArrivalCandidates(options: {
+  schoolId: string;
+  sessionId: string;
+  localDate: string;
+  query: string;
+  limit?: number;
+}): Promise<GoPilotArrivalCandidateDto[]> {
+  const query = options.query.trim();
+  if (!query) return [];
+  const pattern = `%${query}%`;
+  const limit = Math.max(1, Math.min(options.limit ?? 30, 50));
+  const rows = await db
+    .select({
+      studentId: students.id,
+      firstName: students.firstName,
+      lastName: students.lastName,
+      gradeLevel: students.gradeLevel,
+      homeroomId: students.homeroomId,
+      homeroomName: homerooms.name,
+      dismissalType: sql<string>`COALESCE(${students.dismissalType}, 'car')`,
+      effectiveDismissalType: sql<string>`COALESCE(${dismissalOverrides.overrideType}, ${students.dismissalType}, 'car')`,
+      familyGroupId: familyGroups.id,
+      familyName: familyGroups.familyName,
+      carNumber: familyGroups.carNumber,
+      attendanceId: studentAttendance.id,
+      queueId: dismissalQueue.id,
+    })
+    .from(students)
+    .leftJoin(
+      homerooms,
+      and(
+        eq(homerooms.schoolId, options.schoolId),
+        eq(homerooms.id, students.homeroomId)
+      )
+    )
+    .leftJoin(
+      familyGroupStudents,
+      and(
+        eq(familyGroupStudents.schoolId, options.schoolId),
+        eq(familyGroupStudents.studentId, students.id)
+      )
+    )
+    .leftJoin(
+      familyGroups,
+      and(
+        eq(familyGroups.schoolId, options.schoolId),
+        eq(familyGroups.id, familyGroupStudents.familyGroupId)
+      )
+    )
+    .leftJoin(
+      dismissalOverrides,
+      and(
+        eq(dismissalOverrides.schoolId, options.schoolId),
+        eq(dismissalOverrides.sessionId, options.sessionId),
+        eq(dismissalOverrides.studentId, students.id)
+      )
+    )
+    .leftJoin(
+      studentAttendance,
+      and(
+        eq(studentAttendance.schoolId, options.schoolId),
+        eq(studentAttendance.studentId, students.id),
+        eq(studentAttendance.date, options.localDate),
+        inArray(studentAttendance.status, ["absent", "early_dismissal"])
+      )
+    )
+    .leftJoin(
+      dismissalQueue,
+      and(
+        eq(dismissalQueue.schoolId, options.schoolId),
+        eq(dismissalQueue.sessionId, options.sessionId),
+        eq(dismissalQueue.studentId, students.id)
+      )
+    )
+    .where(
+      and(
+        eq(students.schoolId, options.schoolId),
+        eq(students.status, "active"),
+        or(
+          ilike(students.firstName, pattern),
+          ilike(students.lastName, pattern),
+          sql`(${students.firstName} || ' ' || ${students.lastName}) ILIKE ${pattern}`,
+          ilike(familyGroups.familyName, pattern),
+          ilike(familyGroups.carNumber, pattern)
+        )
+      )
+    )
+    .orderBy(students.lastName, students.firstName, students.id)
+    .limit(limit);
+
+  return rows.map((row) => ({
+    studentId: row.studentId,
+    firstName: row.firstName,
+    lastName: row.lastName,
+    gradeLevel: row.gradeLevel,
+    homeroomId: row.homeroomId,
+    homeroomName: row.homeroomName,
+    dismissalType: row.dismissalType,
+    effectiveDismissalType: row.effectiveDismissalType,
+    familyGroupId: row.familyGroupId,
+    familyName: row.familyName,
+    carNumber: row.carNumber,
+    isAbsent: Boolean(row.attendanceId),
+    alreadyQueued: Boolean(row.queueId),
+  }));
+}
+
+export type StaffDismissalArrivalSource = "staff_car_number" | "staff_search";
+
+export type StaffDismissalArrivalResult = {
+  source: StaffDismissalArrivalSource;
+  groupLabel: string;
+  entries: Array<{ entry: DismissalQueueEntry; student: Student }>;
+  skippedDuplicate: Student[];
+  skippedAbsent: Student[];
+  skippedNotCar: Student[];
+};
+
+export type StaffOperationalQueueSource = "bus_number" | "walker";
+
+/**
+ * Transactional retained bus/walker intake. It shares the session row lock
+ * with car/search arrivals and session completion, preserving unique positions
+ * and making concurrent staff clicks idempotent.
+ */
+export async function createStaffOperationalQueueEntries(options: {
+  schoolId: string;
+  sessionId: string;
+  actorId: string;
+  source: StaffOperationalQueueSource;
+  studentIds: string[];
+  localDate: string;
+  pickupGroupId: string;
+  pickupGroupLabel: string;
+  busRoute?: string;
+  initialStatus?: "waiting" | "dismissed";
+}): Promise<{
+  entries: Array<{ entry: DismissalQueueEntry; student: Student }>;
+  skippedDuplicate: Student[];
+  skippedAbsent: Student[];
+  skippedWrongType: Student[];
+}> {
+  return db.transaction(async (tx) => {
+    const [session] = await tx
+      .select()
+      .from(dismissalSessions)
+      .where(
+        and(
+          eq(dismissalSessions.id, options.sessionId),
+          eq(dismissalSessions.schoolId, options.schoolId)
+        )
+      )
+      .limit(1)
+      .for("update");
+    if (!session) {
+      throw new GoPilotArrivalError("GOPILOT_SESSION_NOT_FOUND", "Dismissal session not found", 404);
+    }
+    if (session.status !== "active") {
+      throw new GoPilotArrivalError(
+        "GOPILOT_SESSION_NOT_ACTIVE",
+        "Dismissal session must be active for this action",
+        409
+      );
+    }
+
+    const requestedIds = [...new Set(options.studentIds.map(String))];
+    if (requestedIds.length === 0) {
+      return { entries: [], skippedDuplicate: [], skippedAbsent: [], skippedWrongType: [] };
+    }
+    const selected = await tx
+      .select()
+      .from(students)
+      .where(
+        and(
+          eq(students.schoolId, options.schoolId),
+          eq(students.status, "active"),
+          inArray(students.id, requestedIds)
+        )
+      );
+    const [overrideRows, absenceRows, existingRows] = await Promise.all([
+      tx
+        .select({
+          studentId: dismissalOverrides.studentId,
+          overrideType: dismissalOverrides.overrideType,
+          busRoute: dismissalOverrides.busRoute,
+        })
+        .from(dismissalOverrides)
+        .where(
+          and(
+            eq(dismissalOverrides.schoolId, options.schoolId),
+            eq(dismissalOverrides.sessionId, options.sessionId),
+            inArray(dismissalOverrides.studentId, requestedIds)
+          )
+        ),
+      tx
+        .select({ studentId: studentAttendance.studentId })
+        .from(studentAttendance)
+        .where(
+          and(
+            eq(studentAttendance.schoolId, options.schoolId),
+            eq(studentAttendance.date, options.localDate),
+            inArray(studentAttendance.status, ["absent", "early_dismissal"]),
+            inArray(studentAttendance.studentId, requestedIds)
+          )
+        ),
+      tx
+        .select({ studentId: dismissalQueue.studentId })
+        .from(dismissalQueue)
+        .where(
+          and(
+            eq(dismissalQueue.schoolId, options.schoolId),
+            eq(dismissalQueue.sessionId, options.sessionId),
+            inArray(dismissalQueue.studentId, requestedIds)
+          )
+        ),
+    ]);
+    const overrideByStudent = new Map(overrideRows.map((row) => [row.studentId, row]));
+    const absentIds = new Set(absenceRows.map((row) => row.studentId));
+    const duplicateIds = new Set(existingRows.map((row) => row.studentId));
+    const skippedDuplicate: Student[] = [];
+    const skippedAbsent: Student[] = [];
+    const skippedWrongType: Student[] = [];
+    const eligible: Student[] = [];
+    for (const student of selected) {
+      const override = overrideByStudent.get(student.id);
+      const effectiveType = override?.overrideType ?? student.dismissalType ?? "car";
+      const effectiveBusRoute = override?.busRoute ?? student.busRoute;
+      const correctType = effectiveType === (options.source === "walker" ? "walker" : "bus")
+        && (options.source !== "bus_number" || effectiveBusRoute === options.busRoute);
+      if (absentIds.has(student.id)) skippedAbsent.push(student);
+      else if (!correctType) skippedWrongType.push(student);
+      else if (duplicateIds.has(student.id)) skippedDuplicate.push(student);
+      else eligible.push(student);
+    }
+
+    const [positionRow] = await tx
+      .select({ maxPosition: sql<number>`COALESCE(MAX(${dismissalQueue.position}), 0)::int` })
+      .from(dismissalQueue)
+      .where(
+        and(
+          eq(dismissalQueue.schoolId, options.schoolId),
+          eq(dismissalQueue.sessionId, options.sessionId)
+        )
+      );
+    let position = Number(positionRow?.maxPosition ?? 0);
+    const entries: Array<{ entry: DismissalQueueEntry; student: Student }> = [];
+    for (const student of eligible) {
+      position += 1;
+      const initialStatus = options.initialStatus ?? "waiting";
+      const [entry] = await tx
+        .insert(dismissalQueue)
+        .values({
+          schoolId: options.schoolId,
+          sessionId: options.sessionId,
+          studentId: student.id,
+          guardianName: options.pickupGroupLabel,
+          pickupGroupId: options.pickupGroupId,
+          pickupGroupLabel: options.pickupGroupLabel,
+          checkInMethod: options.source,
+          status: initialStatus,
+          dismissedAt: initialStatus === "dismissed" ? new Date() : null,
+          position,
+        })
+        .onConflictDoNothing({ target: [dismissalQueue.sessionId, dismissalQueue.studentId] })
+        .returning();
+      if (!entry) {
+        skippedDuplicate.push(student);
+        continue;
+      }
+      entries.push({ entry, student });
+      await tx.insert(activityLog).values({
+        schoolId: options.schoolId,
+        sessionId: options.sessionId,
+        actorId: options.actorId,
+        action: options.source === "walker" ? "walker.released" : "arrival.created",
+        entityType: "dismissal_queue",
+        entityId: entry.id,
+        details: { source: options.source, studentId: student.id },
+      });
+    }
+    return { entries, skippedDuplicate, skippedAbsent, skippedWrongType };
+  });
+}
+
+export class GoPilotArrivalError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string,
+    public readonly status: number
+  ) {
+    super(message);
+    this.name = "GoPilotArrivalError";
+  }
+}
+
+/**
+ * Creates staff arrivals under one session-scoped transaction lock. The unique
+ * (session_id, student_id) constraint is the final idempotency backstop for
+ * concurrent office clicks and separate API tasks.
+ */
+export async function createStaffDismissalArrivals(options: {
+  schoolId: string;
+  sessionId: string;
+  actorId: string;
+  source: StaffDismissalArrivalSource;
+  carNumber?: string;
+  studentIds?: string[];
+  localDate: string;
+}): Promise<StaffDismissalArrivalResult> {
+  return db.transaction(async (tx) => {
+    const lockKey = `gopilot:dismissal-session:${options.sessionId}`;
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`);
+
+    const [session] = await tx
+      .select()
+      .from(dismissalSessions)
+      .where(
+        and(
+          eq(dismissalSessions.id, options.sessionId),
+          eq(dismissalSessions.schoolId, options.schoolId)
+        )
+      )
+      .limit(1)
+      .for("update");
+    if (!session) {
+      throw new GoPilotArrivalError("GOPILOT_SESSION_NOT_FOUND", "Dismissal session not found", 404);
+    }
+    if (session.status !== "active") {
+      throw new GoPilotArrivalError(
+        "GOPILOT_SESSION_NOT_ACTIVE",
+        "Dismissal session must be active for arrivals",
+        409
+      );
+    }
+
+    let requestedStudentIds: string[];
+    let groupLabel = "Staff search";
+    let carFamilyGroup: FamilyGroup | undefined;
+    if (options.source === "staff_car_number") {
+      const carNumber = String(options.carNumber ?? "").trim();
+      const [group] = await tx
+        .select()
+        .from(familyGroups)
+        .where(
+          and(
+            eq(familyGroups.schoolId, options.schoolId),
+            eq(familyGroups.carNumber, carNumber)
+          )
+        )
+        .limit(1);
+      if (!group) {
+        throw new GoPilotArrivalError("GOPILOT_CAR_NUMBER_NOT_FOUND", "Car number not found", 404);
+      }
+      carFamilyGroup = group;
+      groupLabel = group.familyName?.trim() || `Car #${group.carNumber}`;
+      const links = await tx
+        .select({ studentId: familyGroupStudents.studentId })
+        .from(familyGroupStudents)
+        .where(
+          and(
+            eq(familyGroupStudents.schoolId, options.schoolId),
+            eq(familyGroupStudents.familyGroupId, group.id)
+          )
+        );
+      requestedStudentIds = links.map((link) => link.studentId);
+    } else {
+      requestedStudentIds = [...new Set((options.studentIds ?? []).map(String))];
+      if (requestedStudentIds.length === 0 || requestedStudentIds.length > 50) {
+        throw new GoPilotArrivalError(
+          "GOPILOT_INVALID_STUDENT_SELECTION",
+          "Select between 1 and 50 students",
+          400
+        );
+      }
+    }
+
+    if (requestedStudentIds.length === 0) {
+      throw new GoPilotArrivalError(
+        "GOPILOT_NO_STUDENTS_FOR_ARRIVAL",
+        "No active car-rider students were found",
+        409
+      );
+    }
+
+    const selectedStudents = await tx
+      .select()
+      .from(students)
+      .where(
+        and(
+          eq(students.schoolId, options.schoolId),
+          eq(students.status, "active"),
+          inArray(students.id, requestedStudentIds)
+        )
+      );
+    if (options.source === "staff_search" && selectedStudents.length !== requestedStudentIds.length) {
+      throw new GoPilotArrivalError(
+        "GOPILOT_ARRIVAL_STUDENT_NOT_FOUND",
+        "One or more selected students are unavailable",
+        404
+      );
+    }
+    const selectedById = new Map(selectedStudents.map((student) => [student.id, student]));
+    const orderedStudents = requestedStudentIds
+      .map((studentId) => selectedById.get(studentId))
+      .filter((student): student is Student => Boolean(student));
+
+    const [overrideRows, absenceRows, existingRows, familyRows] = await Promise.all([
+      tx
+        .select({ studentId: dismissalOverrides.studentId, overrideType: dismissalOverrides.overrideType })
+        .from(dismissalOverrides)
+        .where(
+          and(
+            eq(dismissalOverrides.schoolId, options.schoolId),
+            eq(dismissalOverrides.sessionId, options.sessionId),
+            inArray(dismissalOverrides.studentId, requestedStudentIds)
+          )
+        ),
+      tx
+        .select({ studentId: studentAttendance.studentId })
+        .from(studentAttendance)
+        .where(
+          and(
+            eq(studentAttendance.schoolId, options.schoolId),
+            eq(studentAttendance.date, options.localDate),
+            inArray(studentAttendance.status, ["absent", "early_dismissal"]),
+            inArray(studentAttendance.studentId, requestedStudentIds)
+          )
+        ),
+      tx
+        .select({ studentId: dismissalQueue.studentId })
+        .from(dismissalQueue)
+        .where(
+          and(
+            eq(dismissalQueue.schoolId, options.schoolId),
+            eq(dismissalQueue.sessionId, options.sessionId),
+            inArray(dismissalQueue.studentId, requestedStudentIds)
+          )
+        ),
+      tx
+        .select({
+          studentId: familyGroupStudents.studentId,
+          groupId: familyGroups.id,
+          familyName: familyGroups.familyName,
+          carNumber: familyGroups.carNumber,
+        })
+        .from(familyGroupStudents)
+        .innerJoin(
+          familyGroups,
+          and(
+            eq(familyGroups.schoolId, familyGroupStudents.schoolId),
+            eq(familyGroups.id, familyGroupStudents.familyGroupId)
+          )
+        )
+        .where(
+          and(
+            eq(familyGroupStudents.schoolId, options.schoolId),
+            inArray(familyGroupStudents.studentId, requestedStudentIds)
+          )
+        ),
+    ]);
+
+    const overrideByStudent = new Map(overrideRows.map((row) => [row.studentId, row.overrideType]));
+    const absentIds = new Set(absenceRows.map((row) => row.studentId));
+    const duplicateIds = new Set(existingRows.map((row) => row.studentId));
+    const familyByStudent = new Map(familyRows.map((row) => [row.studentId, row]));
+    const skippedAbsent: Student[] = [];
+    const skippedDuplicate: Student[] = [];
+    const skippedNotCar: Student[] = [];
+    const eligible: Student[] = [];
+
+    for (const student of orderedStudents) {
+      if (absentIds.has(student.id)) {
+        skippedAbsent.push(student);
+      } else if ((overrideByStudent.get(student.id) ?? student.dismissalType ?? "car") !== "car") {
+        skippedNotCar.push(student);
+      } else if (duplicateIds.has(student.id)) {
+        skippedDuplicate.push(student);
+      } else {
+        eligible.push(student);
+      }
+    }
+
+    const [positionRow] = await tx
+      .select({ maxPosition: sql<number>`COALESCE(MAX(${dismissalQueue.position}), 0)::int` })
+      .from(dismissalQueue)
+      .where(
+        and(
+          eq(dismissalQueue.schoolId, options.schoolId),
+          eq(dismissalQueue.sessionId, options.sessionId)
+        )
+      );
+    let position = Number(positionRow?.maxPosition ?? 0);
+    const entries: Array<{ entry: DismissalQueueEntry; student: Student }> = [];
+
+    for (const student of eligible) {
+      position += 1;
+      const family = carFamilyGroup
+        ? {
+            groupId: carFamilyGroup.id,
+            familyName: carFamilyGroup.familyName,
+            carNumber: carFamilyGroup.carNumber,
+          }
+        : familyByStudent.get(student.id);
+      const pickupGroupId = family ? `family:${family.groupId}` : `student:${student.id}`;
+      const pickupGroupLabel = family
+        ? family.familyName?.trim() || `Car #${family.carNumber}`
+        : studentNameForStorage(student);
+      const [entry] = await tx
+        .insert(dismissalQueue)
+        .values({
+          schoolId: options.schoolId,
+          sessionId: options.sessionId,
+          studentId: student.id,
+          guardianName: pickupGroupLabel,
+          pickupGroupId,
+          pickupGroupLabel,
+          checkInMethod: options.source,
+          status: "waiting",
+          position,
+        })
+        .onConflictDoNothing({
+          target: [dismissalQueue.sessionId, dismissalQueue.studentId],
+        })
+        .returning();
+      if (!entry) {
+        skippedDuplicate.push(student);
+        continue;
+      }
+      entries.push({ entry, student });
+      await tx.insert(activityLog).values({
+        schoolId: options.schoolId,
+        sessionId: options.sessionId,
+        actorId: options.actorId,
+        action: "arrival.created",
+        entityType: "dismissal_queue",
+        entityId: entry.id,
+        details: { source: options.source, studentId: student.id },
+      });
+    }
+
+    return {
+      source: options.source,
+      groupLabel,
+      entries,
+      skippedDuplicate,
+      skippedAbsent,
+      skippedNotCar,
+    };
+  });
+}
+
+function studentNameForStorage(student: Pick<Student, "id" | "firstName" | "lastName">): string {
+  return `${student.firstName || ""} ${student.lastName || ""}`.trim() || student.id;
 }
 
 // ============================================================================
@@ -3351,9 +4594,17 @@ export async function getChangesBySession(sessionId: string) {
 }
 
 export async function createDismissalChange(
-  data: InsertDismissalChange
+  data: Omit<InsertDismissalChange, "schoolId"> & { schoolId?: string }
 ): Promise<DismissalChange> {
-  const [change] = await db.insert(dismissalChanges).values(data).returning();
+  const schoolId = await getSessionSchoolIdForTenantWrite(data.sessionId, data.schoolId);
+  const student = await getStudentById(data.studentId);
+  if (!student || student.schoolId !== schoolId) {
+    throw new Error("Student does not belong to the dismissal session school");
+  }
+  const [change] = await db
+    .insert(dismissalChanges)
+    .values({ ...data, schoolId })
+    .returning();
   return change!;
 }
 
@@ -3453,29 +4704,102 @@ export async function getPickupsBySchool(
 }
 
 export async function createPickup(
-  data: InsertAuthorizedPickup
+  data: Omit<InsertAuthorizedPickup, "schoolId"> & { schoolId?: string }
 ): Promise<AuthorizedPickup> {
-  const [p] = await db.insert(authorizedPickups).values(data).returning();
+  const schoolId = await getStudentSchoolIdForTenantWrite(data.studentId, data.schoolId);
+  const [p] = await db
+    .insert(authorizedPickups)
+    .values({ ...data, schoolId })
+    .returning();
   return p!;
 }
 
-export async function updatePickupStatus(
-  id: string,
-  status: string
-): Promise<AuthorizedPickup | undefined> {
-  const [p] = await db
-    .update(authorizedPickups)
-    .set({ status })
-    .where(eq(authorizedPickups.id, id))
-    .returning();
-  return p;
+export type AuthorizedPickupStatus = "pending" | "approved" | "revoked";
+
+export type AuthorizedPickupTransitionResult =
+  | {
+      outcome: "updated" | "unchanged";
+      pickup: AuthorizedPickup;
+      previousStatus: AuthorizedPickupStatus;
+    }
+  | { outcome: "not_found" }
+  | { outcome: "invalid_status"; pickup: AuthorizedPickup }
+  | { outcome: "invalid_transition"; pickup: AuthorizedPickup };
+
+function isStoredAuthorizedPickupStatus(value: string): value is AuthorizedPickupStatus {
+  return value === "pending" || value === "approved" || value === "revoked";
 }
 
-export async function revokePickup(id: string): Promise<void> {
-  await db
-    .update(authorizedPickups)
-    .set({ status: "revoked" })
-    .where(eq(authorizedPickups.id, id));
+function canApplyAuthorizedPickupTransition(
+  from: AuthorizedPickupStatus,
+  to: AuthorizedPickupStatus
+): boolean {
+  if (from === to) return true;
+  if (from === "pending") return to === "approved" || to === "revoked";
+  return from === "approved" && to === "revoked";
+}
+
+/**
+ * Applies the monotonic pickup-review state machine while holding the pickup
+ * row lock. The school predicate is deliberately part of both the read and
+ * write so a stale or cross-tenant identifier cannot mutate another school.
+ */
+export async function transitionAuthorizedPickupStatus(
+  id: string,
+  schoolId: string,
+  nextStatus: AuthorizedPickupStatus
+): Promise<AuthorizedPickupTransitionResult> {
+  return db.transaction(async (tx) => {
+    const [current] = await tx
+      .select()
+      .from(authorizedPickups)
+      .where(
+        and(
+          eq(authorizedPickups.id, id),
+          eq(authorizedPickups.schoolId, schoolId)
+        )
+      )
+      .limit(1)
+      .for("update");
+
+    if (!current) return { outcome: "not_found" as const };
+    if (!isStoredAuthorizedPickupStatus(current.status)) {
+      return { outcome: "invalid_status" as const, pickup: current };
+    }
+    if (!canApplyAuthorizedPickupTransition(current.status, nextStatus)) {
+      return { outcome: "invalid_transition" as const, pickup: current };
+    }
+    if (current.status === nextStatus) {
+      return {
+        outcome: "unchanged" as const,
+        pickup: current,
+        previousStatus: current.status,
+      };
+    }
+
+    const [updated] = await tx
+      .update(authorizedPickups)
+      .set({ status: nextStatus })
+      .where(
+        and(
+          eq(authorizedPickups.id, id),
+          eq(authorizedPickups.schoolId, schoolId),
+          eq(authorizedPickups.status, current.status)
+        )
+      )
+      .returning();
+
+    // The row lock makes this unreachable under normal operation. Treat an
+    // unexpected lost update as a conflict instead of claiming success.
+    if (!updated) {
+      return { outcome: "invalid_transition" as const, pickup: current };
+    }
+    return {
+      outcome: "updated" as const,
+      pickup: updated,
+      previousStatus: current.status,
+    };
+  });
 }
 
 // ============================================================================
@@ -3489,6 +4813,7 @@ export async function getCustodyAlertsBySchool(
   const rows = await db
     .select({
       id: custodyAlerts.id,
+      schoolId: custodyAlerts.schoolId,
       studentId: custodyAlerts.studentId,
       personName: custodyAlerts.personName,
       alertType: custodyAlerts.alertType,
@@ -3515,6 +4840,7 @@ export async function getActiveCustodyAlertsForStudent(
   const rows = await db
     .select({
       id: custodyAlerts.id,
+      schoolId: custodyAlerts.schoolId,
       studentId: custodyAlerts.studentId,
       personName: custodyAlerts.personName,
       alertType: custodyAlerts.alertType,
@@ -3539,10 +4865,39 @@ export async function getActiveCustodyAlertsForStudent(
 }
 
 export async function createCustodyAlert(
-  data: InsertCustodyAlert
+  data: Omit<InsertCustodyAlert, "schoolId"> & { schoolId?: string }
 ): Promise<CustodyAlert> {
-  const [alert] = await db.insert(custodyAlerts).values(data).returning();
-  return alert!;
+  const schoolId = await getStudentSchoolIdForTenantWrite(data.studentId, data.schoolId);
+  return db.transaction(async (tx) => {
+    // Pickup completion takes the same lock before checking active alerts, so
+    // a new restriction either commits before that check or after dismissal.
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`gopilot:custody:${schoolId}:${data.studentId}`}, 0::bigint))`
+    );
+    const [student] = await tx
+      .select({ id: students.id })
+      .from(students)
+      .where(
+        and(
+          eq(students.id, data.studentId),
+          eq(students.schoolId, schoolId),
+          eq(students.status, "active")
+        )
+      )
+      .limit(1);
+    if (!student) {
+      throw Object.assign(new Error("Student not found"), {
+        status: 404,
+        code: "GOPILOT_STUDENT_NOT_FOUND",
+        expose: true,
+      });
+    }
+    const [alert] = await tx
+      .insert(custodyAlerts)
+      .values({ ...data, schoolId })
+      .returning();
+    return alert!;
+  });
 }
 
 // ============================================================================
@@ -3640,6 +4995,30 @@ export async function createFamilyGroup(
   return fg!;
 }
 
+export async function createFamilyGroupWithStudents(
+  data: InsertFamilyGroup,
+  studentIds: string[]
+): Promise<FamilyGroup> {
+  return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`gopilot:family-groups:${data.schoolId}`}, 0::bigint))`
+    );
+    const uniqueStudentIds = [...new Set(studentIds)];
+    await assertFamilyStudentsBelongToSchool(uniqueStudentIds, data.schoolId, tx as unknown as typeof db);
+    const [group] = await tx.insert(familyGroups).values(data).returning();
+    if (uniqueStudentIds.length > 0) {
+      await tx.insert(familyGroupStudents).values(
+        uniqueStudentIds.map((studentId) => ({
+          schoolId: data.schoolId,
+          familyGroupId: group!.id,
+          studentId,
+        }))
+      );
+    }
+    return group!;
+  });
+}
+
 export async function updateFamilyGroup(
   id: string,
   data: Partial<InsertFamilyGroup>
@@ -3652,11 +5031,75 @@ export async function updateFamilyGroup(
   return fg;
 }
 
-export async function deleteFamilyGroup(id: string): Promise<void> {
-  await db
-    .delete(familyGroupStudents)
-    .where(eq(familyGroupStudents.familyGroupId, id));
-  await db.delete(familyGroups).where(eq(familyGroups.id, id));
+export async function updateFamilyGroupWithStudents(
+  id: string,
+  schoolId: string,
+  data: Partial<InsertFamilyGroup>,
+  studentIds?: string[]
+): Promise<FamilyGroup | undefined> {
+  return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`gopilot:family-group:${schoolId}:${id}`}, 0::bigint))`
+    );
+    const [existing] = await tx
+      .select()
+      .from(familyGroups)
+      .where(and(eq(familyGroups.id, id), eq(familyGroups.schoolId, schoolId)))
+      .limit(1);
+    if (!existing) return undefined;
+    if (data.schoolId !== undefined && data.schoolId !== schoolId) {
+      throw new Error("Family group school cannot be changed");
+    }
+    const uniqueStudentIds = studentIds === undefined ? undefined : [...new Set(studentIds)];
+    if (uniqueStudentIds) {
+      await assertFamilyStudentsBelongToSchool(uniqueStudentIds, schoolId, tx as unknown as typeof db);
+    }
+    const [updated] = await tx
+      .update(familyGroups)
+      .set({ ...data, schoolId })
+      .where(and(eq(familyGroups.id, id), eq(familyGroups.schoolId, schoolId)))
+      .returning();
+    if (uniqueStudentIds) {
+      await tx
+        .delete(familyGroupStudents)
+        .where(
+          and(
+            eq(familyGroupStudents.schoolId, schoolId),
+            eq(familyGroupStudents.familyGroupId, id)
+          )
+        );
+      if (uniqueStudentIds.length > 0) {
+        await tx.insert(familyGroupStudents).values(
+          uniqueStudentIds.map((studentId) => ({ schoolId, familyGroupId: id, studentId }))
+        );
+      }
+    }
+    return updated;
+  });
+}
+
+export async function deleteFamilyGroup(id: string, schoolId: string): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const [group] = await tx
+      .select({ id: familyGroups.id })
+      .from(familyGroups)
+      .where(and(eq(familyGroups.id, id), eq(familyGroups.schoolId, schoolId)))
+      .limit(1)
+      .for("update");
+    if (!group) return false;
+    await tx
+      .delete(familyGroupStudents)
+      .where(
+        and(
+          eq(familyGroupStudents.schoolId, schoolId),
+          eq(familyGroupStudents.familyGroupId, id)
+        )
+      );
+    const result = await tx
+      .delete(familyGroups)
+      .where(and(eq(familyGroups.id, id), eq(familyGroups.schoolId, schoolId)));
+    return (result.rowCount ?? 0) > 0;
+  });
 }
 
 export async function getFamilyGroupStudents(
@@ -3685,16 +5128,55 @@ export async function getFamilyGroupStudents(
   return rows as unknown as Student[];
 }
 
+async function getFamilyGroupSchoolIdForTenantWrite(
+  familyGroupId: string,
+  dbInstance: typeof db = db
+): Promise<string> {
+  const [group] = await dbInstance
+    .select({ schoolId: familyGroups.schoolId })
+    .from(familyGroups)
+    .where(eq(familyGroups.id, familyGroupId))
+    .limit(1);
+  if (!group) throw new Error("Family group not found");
+  return group.schoolId;
+}
+
+async function assertFamilyStudentsBelongToSchool(
+  studentIds: string[],
+  schoolId: string,
+  dbInstance: typeof db = db
+): Promise<void> {
+  const uniqueStudentIds = [...new Set(studentIds)];
+  if (uniqueStudentIds.length === 0) return;
+  const rows = await dbInstance
+    .select({ id: students.id })
+    .from(students)
+    .where(
+      and(
+        eq(students.schoolId, schoolId),
+        eq(students.status, "active"),
+        inArray(students.id, uniqueStudentIds)
+      )
+    );
+  if (rows.length !== uniqueStudentIds.length) {
+    throw new Error("One or more students do not belong to the family group's school");
+  }
+}
+
 export async function addStudentsToFamilyGroup(
   familyGroupId: string,
   studentIds: string[]
 ): Promise<void> {
-  for (const sid of studentIds) {
-    await db
-      .insert(familyGroupStudents)
-      .values({ familyGroupId, studentId: sid })
-      .onConflictDoNothing();
-  }
+  const schoolId = await getFamilyGroupSchoolIdForTenantWrite(familyGroupId);
+  const uniqueStudentIds = [...new Set(studentIds)];
+  await assertFamilyStudentsBelongToSchool(uniqueStudentIds, schoolId);
+  if (uniqueStudentIds.length === 0) return;
+  await db
+    .insert(familyGroupStudents)
+    .values(uniqueStudentIds.map((studentId) => ({ schoolId, familyGroupId, studentId })))
+    .onConflictDoNothing({
+      target: [familyGroupStudents.familyGroupId, familyGroupStudents.studentId],
+    });
 }
 
 export async function removeStudentFromFamilyGroup(
@@ -3715,15 +5197,24 @@ export async function setFamilyGroupStudents(
   familyGroupId: string,
   studentIds: string[]
 ): Promise<void> {
-  await db
-    .delete(familyGroupStudents)
-    .where(eq(familyGroupStudents.familyGroupId, familyGroupId));
-  for (const sid of studentIds) {
-    await db
-      .insert(familyGroupStudents)
-      .values({ familyGroupId, studentId: sid })
-      .onConflictDoNothing();
-  }
+  const schoolId = await getFamilyGroupSchoolIdForTenantWrite(familyGroupId);
+  const uniqueStudentIds = [...new Set(studentIds)];
+  await assertFamilyStudentsBelongToSchool(uniqueStudentIds, schoolId);
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(familyGroupStudents)
+      .where(
+        and(
+          eq(familyGroupStudents.schoolId, schoolId),
+          eq(familyGroupStudents.familyGroupId, familyGroupId)
+        )
+      );
+    if (uniqueStudentIds.length > 0) {
+      await tx.insert(familyGroupStudents).values(
+        uniqueStudentIds.map((studentId) => ({ schoolId, familyGroupId, studentId }))
+      );
+    }
+  });
 }
 
 export async function getUnassignedStudents(
@@ -3731,7 +5222,8 @@ export async function getUnassignedStudents(
 ): Promise<Student[]> {
   const assigned = db
     .select({ studentId: familyGroupStudents.studentId })
-    .from(familyGroupStudents);
+    .from(familyGroupStudents)
+    .where(eq(familyGroupStudents.schoolId, schoolId));
 
   return db
     .select()
@@ -3752,8 +5244,6 @@ export async function autoAssignFamilyGroups(
   const { generateFamilyGroupNumber } = await import(
     "../util/studentCode.js"
   );
-  const crypto = await import("crypto");
-
   const unassigned = await getUnassignedStudents(schoolId);
   if (unassigned.length === 0) return { created: 0, assigned: 0 };
 
@@ -3790,12 +5280,11 @@ export async function autoAssignFamilyGroups(
       );
     } else {
       const carNum = await generateFamilyGroupNumber(schoolId);
-      const inviteToken = crypto.randomBytes(32).toString("hex");
       const group = await createFamilyGroup({
         schoolId,
         carNumber: carNum,
         familyName,
-        inviteToken,
+        inviteToken: null,
       });
       await addStudentsToFamilyGroup(
         group.id,
@@ -4095,6 +5584,7 @@ export async function linkParentByCarNumber(
   // Link each student to this parent
   for (const s of studs) {
     await createParentStudentLink({
+      schoolId,
       parentId,
       studentId: s.id,
       relationship: "parent",
@@ -4228,12 +5718,28 @@ export async function addStudentToFamilyGroup(
   familyGroupId: string,
   studentId: string
 ): Promise<FamilyGroupStudent> {
+  const schoolId = await getFamilyGroupSchoolIdForTenantWrite(familyGroupId);
+  await assertFamilyStudentsBelongToSchool([studentId], schoolId);
   const [row] = await db
     .insert(familyGroupStudents)
-    .values({ familyGroupId, studentId })
-    .onConflictDoNothing()
+    .values({ schoolId, familyGroupId, studentId })
+    .onConflictDoNothing({
+      target: [familyGroupStudents.familyGroupId, familyGroupStudents.studentId],
+    })
     .returning();
-  return row!;
+  if (row) return row;
+  const [existing] = await db
+    .select()
+    .from(familyGroupStudents)
+    .where(
+      and(
+        eq(familyGroupStudents.schoolId, schoolId),
+        eq(familyGroupStudents.familyGroupId, familyGroupId),
+        eq(familyGroupStudents.studentId, studentId)
+      )
+    )
+    .limit(1);
+  return existing!;
 }
 
 export async function updateSession(
@@ -4254,10 +5760,25 @@ export async function getNextQueuePosition(sessionId: string): Promise<number> {
 }
 
 export async function createQueueEntries(
-  data: InsertDismissalQueueEntry[]
+  data: Array<Omit<InsertDismissalQueueEntry, "schoolId"> & { schoolId?: string }>
 ): Promise<DismissalQueueEntry[]> {
   if (data.length === 0) return [];
-  return db.insert(dismissalQueue).values(data).returning();
+  const normalized: InsertDismissalQueueEntry[] = [];
+  for (const entry of data) {
+    const schoolId = await getSessionSchoolIdForTenantWrite(entry.sessionId, entry.schoolId);
+    const student = await getStudentById(entry.studentId);
+    if (!student || student.schoolId !== schoolId || student.status !== "active") {
+      throw new Error("Student does not belong to the dismissal session school");
+    }
+    normalized.push({ ...entry, schoolId });
+  }
+  return db
+    .insert(dismissalQueue)
+    .values(normalized)
+    .onConflictDoNothing({
+      target: [dismissalQueue.sessionId, dismissalQueue.studentId],
+    })
+    .returning();
 }
 
 export async function getWaitingQueueEntries(
@@ -7899,12 +9420,27 @@ export async function addHomeroomTeacher(
   teacherId: string,
   role: string = "co-teacher"
 ): Promise<HomeroomTeacher> {
+  const homeroom = await getHomeroomById(homeroomId);
+  if (!homeroom) throw new Error("Homeroom not found");
+  await assertActiveSchoolStaffMembership(teacherId, homeroom.schoolId);
   const [row] = await db
     .insert(homeroomTeachers)
-    .values({ homeroomId, teacherId, role })
+    .values({ schoolId: homeroom.schoolId, homeroomId, teacherId, role })
     .onConflictDoNothing()
     .returning();
-  return row!;
+  if (row) return row;
+  const [existing] = await db
+    .select()
+    .from(homeroomTeachers)
+    .where(
+      and(
+        eq(homeroomTeachers.schoolId, homeroom.schoolId),
+        eq(homeroomTeachers.homeroomId, homeroomId),
+        eq(homeroomTeachers.teacherId, teacherId)
+      )
+    )
+    .limit(1);
+  return existing!;
 }
 
 export async function removeHomeroomTeacher(
@@ -12764,6 +14300,7 @@ export async function getAttendanceStats(
 // ============================================================================
 
 export async function upsertDismissalOverride(data: {
+  schoolId?: string;
   sessionId: string;
   studentId: string;
   originalType: string;
@@ -12773,9 +14310,14 @@ export async function upsertDismissalOverride(data: {
   changedBy: string;
   changedByRole: string;
 }): Promise<DismissalOverride> {
+  const schoolId = await getSessionSchoolIdForTenantWrite(data.sessionId, data.schoolId);
+  const student = await getStudentById(data.studentId);
+  if (!student || student.schoolId !== schoolId || student.status !== "active") {
+    throw new Error("Student does not belong to the dismissal session school");
+  }
   const [row] = await db
     .insert(dismissalOverrides)
-    .values(data)
+    .values({ ...data, schoolId })
     .onConflictDoUpdate({
       target: [dismissalOverrides.sessionId, dismissalOverrides.studentId],
       set: {

@@ -1,11 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Car, X, AlertCircle, RefreshCw, Settings, Users } from 'lucide-react';
+import { Car, X, AlertCircle, RefreshCw, Settings, ShieldCheck } from 'lucide-react';
 import { useGoPilotAuth } from '../../../hooks/useGoPilotAuth';
 import api from '../../../shared/utils/api';
 
 /** Safely extract an array from API response data (handles wrapped objects). */
 const toArray = (data, key) => Array.isArray(data) ? data : (data?.[key] ?? []);
+const toStudentMutation = (data = {}) => Object.fromEntries(Object.entries({
+  id: data.id,
+  firstName: data.firstName ?? data.first_name,
+  lastName: data.lastName ?? data.last_name,
+  email: data.email,
+  gradeLevel: data.gradeLevel ?? data.grade_level ?? data.grade,
+  dismissalType: data.dismissalType ?? data.dismissal_type,
+  busRoute: data.busRoute ?? data.bus_route,
+  afterschoolReason: data.afterschoolReason ?? data.afterschool_reason,
+  homeroomId: data.homeroomId ?? data.homeroom_id,
+  studentIdNumber: data.studentIdNumber ?? data.student_id_number,
+  externalId: data.externalId ?? data.external_id,
+}).filter(([, value]) => value !== undefined));
 import { normalizeStudent, normalizeStaff, tabs } from './setup/constants';
 import StaffManager from './setup/StaffManager';
 import StudentRoster from './setup/StudentRoster';
@@ -14,7 +27,7 @@ import AssignStudents from './setup/AssignStudents';
 import BusAssignments from './setup/BusAssignments';
 import DismissalConfig from './setup/DismissalConfig';
 import CarNumbersTab from './setup/CarNumbersTab';
-import ParentsTab from './setup/ParentsTab';
+import AuthorizedPickupsTab from './setup/AuthorizedPickupsTab';
 import SchoolSettingsTab from './setup/SchoolSettingsTab';
 
 
@@ -22,36 +35,56 @@ export default function SchoolSetupWizard() {
   const navigate = useNavigate();
   const { currentSchool, currentRole } = useGoPilotAuth();
   const canManageSetup = currentRole === 'admin' || currentRole === 'school_admin';
+  const canManagePickups = canManageSetup || currentRole === 'office_staff';
 
-  const [activeTab, setActiveTab] = useState('staff');
+  const [activeTab, setActiveTab] = useState(currentRole === 'office_staff' ? 'pickups' : 'staff');
   const [students, setStudents] = useState([]);
   const [homerooms, setHomerooms] = useState([]);
   const [staff, setStaff] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [, setSavingIds] = useState(new Set());
+  const [settingsDirty, setSettingsDirty] = useState(false);
 
   const [showCreateSchool, setShowCreateSchool] = useState(!currentSchool);
 
   const schoolId = currentSchool?.id;
   const schoolName = currentSchool?.name || '';
 
+  const requestSetupNavigation = (nextTabOrPath, { route = false } = {}) => {
+    if (!route && nextTabOrPath === activeTab) return;
+    if (activeTab === 'settings' && settingsDirty) {
+      const discard = window.confirm('Discard unsaved GoPilot settings or instructional calendar changes?');
+      if (!discard) return;
+    }
+    setSettingsDirty(false);
+    if (route) navigate(nextTabOrPath);
+    else setActiveTab(nextTabOrPath);
+  };
+
   useEffect(() => {
-    if (!currentRole || canManageSetup) return;
+    if (!currentRole || canManagePickups) return;
     navigate(currentRole === 'teacher' ? '/gopilot/teacher' : '/gopilot', { replace: true });
-  }, [canManageSetup, currentRole, navigate]);
+  }, [canManagePickups, currentRole, navigate]);
 
   // Fetch data on mount
   useEffect(() => {
     if (!schoolId) { setShowCreateSchool(true); return; }
-    if (!canManageSetup) return;
+    if (!canManagePickups) return;
     setShowCreateSchool(false);
     const fetchData = async () => {
       setLoading(true);
       setError(null);
       try {
+        if (!canManageSetup) {
+          // AuthorizedPickupsTab owns its narrow data load for office staff.
+          setStudents([]);
+          setHomerooms([]);
+          setStaff([]);
+          return;
+        }
         const [studentsRes, homeroomsRes, staffRes] = await Promise.all([
-          api.get(`/schools/${schoolId}/students`),
+          api.get('/gopilot/students'),
           api.get(`/schools/${schoolId}/homerooms`),
           api.get(`/schools/${schoolId}/staff`).catch(() => ({ data: [] })),
         ]);
@@ -66,17 +99,19 @@ export default function SchoolSetupWizard() {
       }
     };
     fetchData();
-  }, [canManageSetup, schoolId]);
+  }, [canManagePickups, canManageSetup, schoolId]);
 
   // Student CRUD
   const handleAddStudent = async (data) => {
     setError(null);
     try {
-      const res = await api.post(`/schools/${schoolId}/students`, data);
-      setStudents(prev => [...prev, normalizeStudent(res.data)]);
+      const res = await api.post('/gopilot/students', toStudentMutation(data));
+      setStudents(prev => [...prev, normalizeStudent(res.data?.student || res.data)]);
+      return true;
     } catch (err) {
       console.error('Failed to add student:', err);
       setError('Failed to add student.');
+      return false;
     }
   };
 
@@ -84,21 +119,24 @@ export default function SchoolSetupWizard() {
     setError(null);
     setSavingIds(prev => new Set(prev).add(id));
     try {
-      await api.put(`/students/${id}`, data);
-      const studentsRes = await api.get(`/schools/${schoolId}/students`);
+      await api.patch(`/gopilot/students/${id}`, toStudentMutation(data));
+      const studentsRes = await api.get('/gopilot/students');
       setStudents(toArray(studentsRes.data, 'students').map(normalizeStudent));
+      return true;
     } catch (err) {
       console.error('Failed to update student:', err);
       setError('Failed to update student.');
+      return false;
     } finally {
       setSavingIds(prev => { const n = new Set(prev); n.delete(id); return n; });
     }
   };
 
   const handleDeleteStudent = async (id) => {
+    if (!window.confirm('Delete this student record? Historical dismissal records will remain, but the active roster entry will be removed.')) return;
     setError(null);
     try {
-      await api.delete(`/students/${id}`);
+      await api.delete(`/gopilot/students/${id}`);
       setStudents(prev => prev.filter(s => s.id !== id));
     } catch (err) {
       console.error('Failed to delete student:', err);
@@ -107,9 +145,10 @@ export default function SchoolSetupWizard() {
   };
 
   const handleBulkDelete = async (ids) => {
+    if (!window.confirm(`Delete ${ids.length} student records? Historical dismissal records will remain.`)) return;
     setError(null);
     try {
-      await Promise.all(ids.map(id => api.delete(`/students/${id}`)));
+      await Promise.all(ids.map(id => api.delete(`/gopilot/students/${id}`)));
       setStudents(prev => prev.filter(s => !ids.includes(s.id)));
     } catch (err) {
       console.error('Failed to delete students:', err);
@@ -118,7 +157,7 @@ export default function SchoolSetupWizard() {
   };
 
   const refreshStudents = async () => {
-    const studentsRes = await api.get(`/schools/${schoolId}/students`);
+    const studentsRes = await api.get('/gopilot/students');
     setStudents(toArray(studentsRes.data, 'students').map(normalizeStudent));
   };
 
@@ -127,7 +166,7 @@ export default function SchoolSetupWizard() {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      await api.post(`/schools/${schoolId}/students/import`, formData, {
+      await api.post('/gopilot/students/import', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
       await refreshStudents();
@@ -152,6 +191,7 @@ export default function SchoolSetupWizard() {
   };
 
   const handleRemoveHomeroom = async (id) => {
+    if (!window.confirm('Delete this homeroom? Students will remain on the school roster.')) return;
     setError(null);
     try {
       await api.delete(`/homerooms/${id}`);
@@ -170,7 +210,7 @@ export default function SchoolSetupWizard() {
       if (homeroomId) {
         await api.post(`/homerooms/${homeroomId}/assign`, { studentIds: [studentId] });
       } else {
-        await api.put(`/students/${studentId}`, { homeroom_id: null });
+        await api.patch(`/gopilot/students/${studentId}`, { homeroomId: null });
       }
       setStudents(prev => prev.map(s => s.id === studentId ? { ...s, homeroom: homeroomId } : s));
     } catch (err) {
@@ -189,7 +229,7 @@ export default function SchoolSetupWizard() {
       if (field === 'dismissalType' && value !== 'bus') {
         payload.busRoute = null;
       }
-      await api.put(`/students/${studentId}`, payload);
+      await api.patch(`/gopilot/students/${studentId}`, payload);
       setStudents(prev => prev.map(s => {
         if (s.id !== studentId) return s;
         const updated = { ...s, [field]: value };
@@ -209,10 +249,10 @@ export default function SchoolSetupWizard() {
     try {
       const updates = students.map(s => ({
         id: s.id,
-        dismissal_type: type,
-        bus_route: type === 'bus' ? (s.busRoute || null) : null,
+        dismissalType: type,
+        busRoute: type === 'bus' ? (s.busRoute || null) : null,
       }));
-      await api.put(`/schools/${schoolId}/students/bulk-update`, { updates });
+      await api.patch('/gopilot/students/bulk', { updates });
       setStudents(prev => prev.map(s => ({
         ...s,
         dismissalType: type,
@@ -242,7 +282,7 @@ export default function SchoolSetupWizard() {
     );
   }
 
-  if (schoolId && !canManageSetup) {
+  if (schoolId && !canManagePickups) {
     return null;
   }
 
@@ -274,13 +314,13 @@ export default function SchoolSetupWizard() {
           <div className="flex items-center gap-2">
             {[
 
-              { id: 'parents', icon: Users, label: 'Parents' },
-              { id: 'settings', icon: Settings, label: 'Settings' },
+              { id: 'pickups', icon: ShieldCheck, label: 'Authorized Pickups' },
+              ...(canManageSetup ? [{ id: 'settings', icon: Settings, label: 'Settings' }] : []),
             // eslint-disable-next-line no-unused-vars
             ].map(({ id, icon: Icon, label }) => (
               <button
                 key={id}
-                onClick={() => setActiveTab(id)}
+                onClick={() => requestSetupNavigation(id)}
                 className={`flex items-center gap-1.5 px-2.5 py-2 rounded-lg border text-sm transition-colors ${
                   activeTab === id
                     ? 'bg-indigo-50 dark:bg-indigo-900/30 border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400'
@@ -292,7 +332,7 @@ export default function SchoolSetupWizard() {
                 <span className="hidden sm:inline">{label}</span>
               </button>
             ))}
-            <button onClick={() => navigate(currentRole === 'teacher' ? '/gopilot/teacher' : '/gopilot')} className="px-4 py-2 text-sm text-gray-600 dark:text-slate-300 border dark:border-slate-600 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800">
+            <button onClick={() => requestSetupNavigation(currentRole === 'teacher' ? '/gopilot/teacher' : '/gopilot', { route: true })} className="px-4 py-2 text-sm text-gray-600 dark:text-slate-300 border dark:border-slate-600 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800">
               Back to Dashboard
             </button>
           </div>
@@ -303,13 +343,13 @@ export default function SchoolSetupWizard() {
       <div className="bg-white dark:bg-slate-900 border-b dark:border-slate-700">
         <div className="max-w-6xl mx-auto px-4">
           <div className="flex gap-1 overflow-x-auto scrollbar-hide" style={{ WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none' }}>
-            {tabs.map(tab => {
+            {(canManageSetup ? tabs : []).map(tab => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
               return (
                 <button
                   key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
+                  onClick={() => requestSetupNavigation(tab.id)}
                   className={`flex items-center gap-2 px-3 sm:px-4 py-3 text-xs sm:text-sm font-medium border-b-2 whitespace-nowrap transition-colors flex-shrink-0 ${
                     isActive
                       ? 'border-indigo-600 text-indigo-600'
@@ -335,30 +375,33 @@ export default function SchoolSetupWizard() {
           </div>
         )}
 
-        {activeTab === 'staff' && (
+        {canManageSetup && activeTab === 'staff' && (
           <StaffManager
             staff={staff}
             schoolId={schoolId}
             onAdd={async (data) => {
               const res = await api.post(`/schools/${schoolId}/staff`, data);
-              setStaff(prev => [...prev.filter(s => s.id !== res.data.id), res.data]);
+              const created = normalizeStaff(res.data);
+              if (!created.id) throw new Error('The server did not return a staff membership ID.');
+              setStaff(prev => [...prev.filter(s => s.id !== created.id), created]);
             }}
-            onRemove={async (userId) => {
-              await api.delete(`/schools/${schoolId}/staff/${userId}`);
-              setStaff(prev => prev.filter(s => s.id !== userId));
+            onRemove={async (membershipId) => {
+              if (!window.confirm('Remove this staff member from the school? They will immediately lose access to every SchoolPilot product at this school.')) return;
+              await api.delete(`/schools/${schoolId}/staff/${membershipId}`);
+              setStaff(prev => prev.filter(s => s.id !== membershipId));
             }}
-            onUpdate={async (userId, data) => {
-              await api.put(`/schools/${schoolId}/staff/${userId}`, data);
+            onUpdate={async (membershipId, data) => {
+              await api.put(`/schools/${schoolId}/staff/${membershipId}`, data);
               const res = await api.get(`/schools/${schoolId}/staff`);
-              setStaff(toArray(res.data, 'staff'));
+              setStaff(toArray(res.data, 'staff').map(normalizeStaff));
             }}
             onRefresh={async () => {
               const res = await api.get(`/schools/${schoolId}/staff`);
-              setStaff(toArray(res.data, 'staff'));
+              setStaff(toArray(res.data, 'staff').map(normalizeStaff));
             }}
           />
         )}
-        {activeTab === 'roster' && (
+        {canManageSetup && activeTab === 'roster' && (
           <StudentRoster
             students={students}
             schoolId={schoolId}
@@ -370,7 +413,7 @@ export default function SchoolSetupWizard() {
             onBulkDelete={handleBulkDelete}
           />
         )}
-        {activeTab === 'homerooms' && (
+        {canManageSetup && activeTab === 'homerooms' && (
           <HomeroomManager
             homerooms={homerooms}
             students={students}
@@ -379,51 +422,50 @@ export default function SchoolSetupWizard() {
             onRemove={handleRemoveHomeroom}
           />
         )}
-        {activeTab === 'assign' && (
+        {canManageSetup && activeTab === 'assign' && (
           <AssignStudents
             students={students}
             homerooms={homerooms}
             onAssign={handleAssignStudent}
             schoolId={schoolId}
             onRefreshStudents={async () => {
-              const res = await api.get(`/schools/${schoolId}/students`);
+              const res = await api.get('/gopilot/students');
               setStudents(toArray(res.data, 'students').map(normalizeStudent));
             }}
           />
         )}
-        {activeTab === 'bus-assignments' && (
+        {canManageSetup && activeTab === 'bus-assignments' && (
           <BusAssignments
             students={students}
             homerooms={homerooms}
             onUpdateStudents={async (updates) => {
-              await api.put(`/schools/${schoolId}/students/bulk-update`, { updates });
-              const res = await api.get(`/schools/${schoolId}/students`);
+              await api.patch('/gopilot/students/bulk', { updates: updates.map(toStudentMutation) });
+              const res = await api.get('/gopilot/students');
               setStudents(toArray(res.data, 'students').map(normalizeStudent));
             }}
             onUpdateStudent={async (id, data) => {
-              await api.put(`/students/${id}`, data);
+              await api.patch(`/gopilot/students/${id}`, toStudentMutation(data));
               setStudents(prev => prev.map(s => s.id === id ? { ...s, ...normalizeStudent({ ...s, ...data }) } : s));
             }}
           />
         )}
-        {activeTab === 'dismissal' && (
+        {canManageSetup && activeTab === 'dismissal' && (
           <DismissalConfig
             students={students}
             homerooms={homerooms}
-            schoolId={schoolId}
             onUpdate={handleUpdateDismissal}
             onBulkSet={handleBulkSetDismissal}
           />
         )}
 
-        {activeTab === 'car-numbers' && (
+        {canManageSetup && activeTab === 'car-numbers' && (
           <CarNumbersTab schoolId={schoolId} students={students} />
         )}
-        {activeTab === 'parents' && (
-          <ParentsTab schoolId={schoolId} />
+        {activeTab === 'pickups' && (
+          <AuthorizedPickupsTab schoolId={schoolId} />
         )}
         {activeTab === 'settings' && (
-          <SchoolSettingsTab schoolId={schoolId} />
+          <SchoolSettingsTab schoolId={schoolId} onDirtyChange={setSettingsDirty} />
         )}
       </main>
     </div>

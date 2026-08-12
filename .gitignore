@@ -6,6 +6,10 @@ __pycache__/
 !.env.example
 *.log
 *.keystore
+*.jks
+*.p12
+*.pem
+*.key
 cookies.txt
 tmp_login.json
 temp_file.ts

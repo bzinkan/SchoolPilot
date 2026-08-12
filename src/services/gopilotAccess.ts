@@ -1,5 +1,5 @@
 import type { Request, RequestHandler, Response } from "express";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import db from "../db.js";
 import {
   productLicenses,
@@ -60,12 +60,10 @@ export function isGoPilotStaff(role: GoPilotRole | null | undefined): boolean {
 }
 
 function roleFromMembership(membership: Pick<SchoolMembership, "role" | "gopilotRole">): GoPilotRole[] {
-  const roles = new Set<GoPilotRole>();
-  if (membership.role) roles.add(membership.role as GoPilotRole);
-  if (membership.gopilotRole) roles.add(membership.gopilotRole as GoPilotRole);
-  return [...roles].filter((role) =>
-    ["admin", "school_admin", "office_staff", "teacher", "parent"].includes(role)
-  );
+  const role = effectiveGoPilotRole(membership);
+  return ["admin", "school_admin", "office_staff", "teacher", "parent"].includes(role)
+    ? [role]
+    : [];
 }
 
 function primaryRoleFromRoles(roles: GoPilotRole[]): GoPilotRole {
@@ -126,11 +124,37 @@ export async function hasActiveGoPilotLicense(schoolId: string): Promise<boolean
       and(
         eq(productLicenses.schoolId, schoolId),
         eq(productLicenses.product, "GOPILOT"),
-        eq(productLicenses.status, "active")
+        eq(productLicenses.status, "active"),
+        or(
+          isNull(productLicenses.expiresAt),
+          gt(productLicenses.expiresAt, sql`NOW()`)
+        )
       )
     )
     .limit(1);
   return !!license;
+}
+
+export async function hasAnyActiveGoPilotStaffMembership(userId: string): Promise<boolean> {
+  const staffRoles = ["admin", "school_admin", "office_staff", "teacher"];
+  const [membership] = await db
+    .select({ id: schoolMemberships.id })
+    .from(schoolMemberships)
+    .where(
+      and(
+        eq(schoolMemberships.userId, userId),
+        eq(schoolMemberships.status, "active"),
+        or(
+          inArray(schoolMemberships.gopilotRole, staffRoles),
+          and(
+            or(isNull(schoolMemberships.gopilotRole), eq(schoolMemberships.gopilotRole, "")),
+            inArray(schoolMemberships.role, staffRoles)
+          )
+        )
+      )
+    )
+    .limit(1);
+  return Boolean(membership);
 }
 
 export async function getGoPilotMembership(

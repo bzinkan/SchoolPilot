@@ -10,7 +10,7 @@ const validRegistration = {
 };
 
 describe("authentication registration context", () => {
-  it("requires exactly one school creation or join context", () => {
+  it("requires school creation and rejects retired school-slug enrollment", () => {
     assert.equal(registerSchema.safeParse(validRegistration).success, false);
     assert.equal(
       registerSchema.safeParse({
@@ -25,7 +25,7 @@ describe("authentication registration context", () => {
         ...validRegistration,
         schoolSlug: "existing-school",
       }).success,
-      true
+      false
     );
     assert.equal(
       registerSchema.safeParse({
@@ -38,12 +38,10 @@ describe("authentication registration context", () => {
     const normalized = registerSchema.safeParse({
       ...validRegistration,
       schoolName: "  New School  ",
-      schoolSlug: "   ",
     });
     assert.equal(normalized.success, true);
     if (normalized.success) {
       assert.equal(normalized.data.schoolName, "New School");
-      assert.equal(normalized.data.schoolSlug, "");
     }
   });
 });

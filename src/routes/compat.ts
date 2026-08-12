@@ -5,7 +5,7 @@ import { requireActiveSchool } from "../middleware/requireActiveSchool.js";
 import { requireRole } from "../middleware/requireRole.js";
 import { requireProductLicense } from "../middleware/requireProductLicense.js";
 import { sanitizeSchool } from "../util/sanitizeSchool.js";
-import { safeStudent } from "../util/safeStudent.js";
+import { classPilotStudentDto } from "../util/safeStudent.js";
 import { decryptClassPilotPin } from "../services/classpilotPins.js";
 import { getSchoolDeviceStatuses } from "../realtime/student-statuses.js";
 import { getConnectedStudentDeviceIds } from "../realtime/ws-broadcast.js";
@@ -26,10 +26,6 @@ import {
   updateSchool,
   updateCanonicalKioskClass,
   updateLegacyKioskClass,
-  getPendingParentRequests,
-  updateParentStudentLinkByIdAndSchool,
-  getParentStudentLinkByIdAndSchool,
-  getApprovedChildrenForParent,
   getUserByEmail,
   createUser,
   createMembership,
@@ -73,6 +69,12 @@ import {
   getClasspilotDashboardSchoolTimezone,
   getClasspilotDashboardSnapshot,
 } from "../services/classpilotDashboardSnapshot.js";
+import { requireGoPilotRole } from "../services/gopilotAccess.js";
+import {
+  getGoPilotSettings,
+} from "../services/gopilotSettings.js";
+import { sendGoPilotParentPortalDisabled } from "../util/gopilotParentContainment.js";
+import { rejectDisabledGoPilotParent } from "../middleware/rejectDisabledGoPilotParent.js";
 
 const router = Router();
 
@@ -82,6 +84,11 @@ function param(req: any, key: string): string {
 
 const auth = [authenticate] as const;
 const schoolAuth = [authenticate, requireSchoolContext, requireActiveSchool] as const;
+const classPilotStaffAuth = [
+  ...schoolAuth,
+  requireProductLicense("CLASSPILOT"),
+  requireRole("admin", "school_admin", "office_staff", "teacher"),
+] as const;
 const passPilotAuth = [
   ...schoolAuth,
   requireProductLicense("PASSPILOT"),
@@ -90,6 +97,18 @@ const passPilotAuth = [
 const legacyPassPilotClassAuth = [
   ...passPilotAuth,
   requireLegacyPasspilotClassSource,
+] as const;
+const goPilotStaffAuth = [
+  ...schoolAuth,
+  rejectDisabledGoPilotParent,
+  requireProductLicense("GOPILOT"),
+  requireGoPilotRole("admin", "school_admin", "office_staff", "teacher"),
+] as const;
+const goPilotAdminAuth = [
+  ...schoolAuth,
+  rejectDisabledGoPilotParent,
+  requireProductLicense("GOPILOT"),
+  requireGoPilotRole("admin", "school_admin"),
 ] as const;
 
 function todayInTimeZone(timeZone?: string | null): string {
@@ -630,7 +649,7 @@ router.get("/admin/teacher-students", ...schoolAuth, requireRole("admin"), async
     const students = await getStudentsBySchool(res.locals.schoolId!);
     // Include studentName/studentEmail for ClassPilot frontend compatibility
     const mapped = students.map((s: any) => ({
-      ...safeStudent(s),
+      ...classPilotStudentDto(s),
       hasClassPilotPin: !!s.classpilotPinHash,
       classpilotPin: decryptClassPilotPin(s.classpilotPinEncrypted),
       studentName: [s.firstName, s.lastName].filter(Boolean).join(" ") || s.email || "",
@@ -879,7 +898,7 @@ router.get("/my-classes", ...legacyPassPilotClassAuth, async (req, res, next) =>
 // Students aggregated (ClassPilot)
 // ============================================================================
 
-router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
+router.get("/students-aggregated", ...classPilotStaffAuth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
     const userId = req.authUser!.id;
@@ -1056,7 +1075,7 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
 // Export (ClassPilot)
 // ============================================================================
 
-router.get("/export/activity", ...schoolAuth, async (_req, res) => {
+router.get("/export/activity", ...classPilotStaffAuth, async (_req, res) => {
   return res.json({ activities: [] });
 });
 
@@ -1069,7 +1088,7 @@ router.get("/export/activity", ...schoolAuth, async (_req, res) => {
 
 // POST /auth/register/parent
 router.post("/auth/register/parent", async (_req, res) => {
-  return res.status(400).json({ error: "Use POST /auth/register with parentMode flag" });
+  return sendGoPilotParentPortalDisabled(res);
 });
 
 // ============================================================================
@@ -1077,105 +1096,40 @@ router.post("/auth/register/parent", async (_req, res) => {
 // (These are called via URL rewrite from /schools/:id/settings → /compat/school-settings)
 // ============================================================================
 
-router.get("/compat/school-settings", ...schoolAuth, async (req, res, next) => {
+router.get("/compat/school-settings", ...goPilotStaffAuth, async (_req, res, next) => {
   try {
-    const school = await getSchoolById(res.locals.schoolId!);
-    if (!school) return res.status(404).json({ error: "School not found" });
-    const parsed = school.settings ? JSON.parse(school.settings) : {};
-    // Provide default pickup zones if none configured
-    if (!parsed.pickupZones || parsed.pickupZones.length === 0) {
-      parsed.pickupZones = [
-        { id: "A", name: "Zone A" },
-        { id: "B", name: "Zone B" },
-        { id: "C", name: "Zone C" },
-      ];
-    }
-    return res.json(parsed);
-  } catch (err) {
-    next(err);
-  }
-});
-
-router.put("/compat/school-settings", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
-  try {
-    const school = await getSchoolById(res.locals.schoolId!);
-    if (!school) return res.status(404).json({ error: "School not found" });
-    // Merge incoming settings with existing settings JSON blob
-    const existing = school.settings ? JSON.parse(school.settings) : {};
-    const merged = { ...existing, ...req.body };
-    const updated = await updateSchool(res.locals.schoolId!, {
-      settings: JSON.stringify(merged),
+    const current = await getGoPilotSettings(res.locals.schoolId!);
+    if (!current) return res.status(404).json({ error: "School not found" });
+    return res.json({
+      autoDismissalEnabled: current.autoStartEnabled,
+      pickupZones: current.pickupZones,
     });
-    if (!updated) return res.status(404).json({ error: "School not found" });
-    return res.json(merged);
   } catch (err) {
     next(err);
   }
 });
 
-router.post("/compat/invite", ...schoolAuth, requireRole("admin"), async (_req, res) => {
-  return res.json({ inviteCode: "invite-" + Date.now(), message: "Invite feature stub" });
+router.put("/compat/school-settings", ...goPilotAdminAuth, (_req, res) => {
+  // Legacy clients have no revision token and cannot safely participate in
+  // concurrent settings updates. Keep the read alias during rollout, but
+  // never let an old bundle overwrite the authoritative revisioned contract.
+  return res.status(426).json({
+    error: "Update GoPilot before changing dismissal settings.",
+    code: "GOPILOT_SETTINGS_CLIENT_UPDATE_REQUIRED",
+    managementUrl: "/gopilot/setup?tab=settings",
+  });
 });
 
-router.get("/compat/parent-requests", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
-  try {
-    const requests = await getPendingParentRequests(res.locals.schoolId!);
-    return res.json({ requests });
-  } catch (err) {
-    next(err);
-  }
-});
-
-router.put("/compat/parent-requests/:id", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
-  try {
-    const { status } = req.body;
-    if (!status || !["approved", "rejected"].includes(status)) {
-      return res.status(400).json({ error: "status must be 'approved' or 'rejected'" });
-    }
-    const link = await getParentStudentLinkByIdAndSchool(param(req, "id"), res.locals.schoolId!);
-    if (!link) return res.status(404).json({ error: "Request not found" });
-    const updated = await updateParentStudentLinkByIdAndSchool(param(req, "id"), res.locals.schoolId!, { status });
-    return res.json({ request: updated });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// GET /compat/parents - List parents for a school with their linked children
-router.get("/compat/parents", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
-  try {
-    const parentMemberships = await getUsersBySchool(res.locals.schoolId!, "parent");
-    const parents = await Promise.all(
-      parentMemberships.map(async (m) => {
-        const children = await getApprovedChildrenForParent(m.userId, res.locals.schoolId!);
-        const { password: _, ...safeUser } = m.user;
-        return {
-          membershipId: m.id,
-          userId: m.userId,
-          role: m.role,
-          carNumber: m.carNumber,
-          user: safeUser,
-          children: children.map((c) => ({
-            id: c.student.id,
-            firstName: c.student.firstName,
-            lastName: c.student.lastName,
-            gradeLevel: c.student.gradeLevel,
-            relationship: c.link.relationship,
-          })),
-        };
-      })
-    );
-    return res.json(parents);
-  } catch (err) {
-    next(err);
-  }
-});
+router.all("/compat/invite", authenticate, (_req, res) => sendGoPilotParentPortalDisabled(res));
+router.all("/compat/parent-requests", authenticate, (_req, res) => sendGoPilotParentPortalDisabled(res));
+router.all("/compat/parent-requests/:id", authenticate, (_req, res) => sendGoPilotParentPortalDisabled(res));
+router.all("/compat/parents", authenticate, (_req, res) => sendGoPilotParentPortalDisabled(res));
 
 // ============================================================================
 // CSV template & import (PassPilot)
 // ============================================================================
 
-router.get("/students/csv-template", ...schoolAuth, async (_req, res) => {
+router.get("/students/csv-template", ...passPilotAuth, async (_req, res) => {
   res.setHeader("Content-Type", "text/csv");
   res.setHeader("Content-Disposition", "attachment; filename=students-template.csv");
   return res.send("firstName,lastName,email,studentIdNumber,gradeLevel,classpilotPin\n");

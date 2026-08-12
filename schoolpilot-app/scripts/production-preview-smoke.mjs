@@ -60,9 +60,8 @@ export const personas = {
       },
     },
   },
-  gopilotParent: {
+  gopilotHistoricalParent: {
     schoolId: 'preview-gopilot-school',
-    childId: 'preview-child',
     auth: {
       user: {
         id: 'preview-gopilot-parent',
@@ -143,19 +142,16 @@ const cases = [
   {
     requestedPath: '/gopilot/parent',
     expectedPath: '/gopilot/parent',
-    persona: personas.gopilotParent,
+    persona: personas.gopilotHistoricalParent,
     assertion: async (page) => {
       await page
-        .getByRole('heading', { name: 'Preview Parent', exact: true })
+        .getByRole('heading', { name: 'GoPilot staff access is unavailable', exact: true })
         .waitFor({ state: 'visible' });
       await page
-        .getByRole('heading', { name: 'My Children', exact: true })
-        .waitFor({ state: 'visible' });
-      await page
-        .getByText('Preview Child', { exact: true })
+        .getByRole('button', { name: 'Sign out', exact: true })
         .waitFor({ state: 'visible' });
     },
-    surface: 'licensed parent application',
+    surface: 'retired parent route without parent-data calls',
   },
   {
     requestedPath: '/preview-smoke/unknown-route',
@@ -324,45 +320,7 @@ export function responseBodyFor(
     apiFailure('preview_api_request_not_allowlisted');
   }
 
-  if (testCase.persona === personas.gopilotParent) {
-    if (pathname === '/api/me/children') {
-      noQuery();
-      return {
-        children: [
-          {
-            id: testCase.persona.childId,
-            firstName: 'Preview',
-            lastName: 'Child',
-            gradeLevel: '4',
-            homeroom: 'Preview Homeroom',
-            dismissalType: 'car',
-          },
-        ],
-      };
-    }
-    if (pathname === `/api/students/${testCase.persona.childId}/pickups`) {
-      noQuery();
-      return { pickups: [] };
-    }
-    if (
-      pathname ===
-      `/api/schools/${testCase.persona.schoolId}/sessions/active`
-    ) {
-      noQuery();
-      return { session: null };
-    }
-    if (
-      pathname === `/api/schools/${testCase.persona.schoolId}/settings`
-    ) {
-      noQuery();
-      return {};
-    }
-    if (
-      /^\/api\/students\/[^/]+\/pickups$/.test(pathname) ||
-      /^\/api\/schools\/[^/]+\/(?:sessions\/active|settings)$/.test(pathname)
-    ) {
-      apiFailure('preview_api_resource_binding_invalid');
-    }
+  if (testCase.persona === personas.gopilotHistoricalParent) {
     apiFailure('preview_api_request_not_allowlisted');
   }
 

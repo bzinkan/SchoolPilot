@@ -4,16 +4,17 @@ import { useGoPilotAuth } from '../../../hooks/useGoPilotAuth';
 import { useSocket } from '../../../contexts/SocketContext';
 import api from '../../../shared/utils/api';
 import {
-  ArrowLeft, Car, Bus, PersonStanding, Clock, Users, Search, Bell, AlertTriangle,
+  ArrowLeft, Car, Bus, PersonStanding, Clock, Users, Search, AlertTriangle,
   Check, X, ChevronRight, ChevronDown, Phone, MapPin, Play, Pause,
-  Volume2, VolumeX, RefreshCw, Filter, MoreVertical, CheckCircle2,
+  RefreshCw, Filter, MoreVertical, CheckCircle2,
   AlertCircle, Timer, UserCheck, Send, ArrowRight, Shield, Eye,
-  Smartphone, QrCode, MessageSquare, Home, Settings, LogOut, Menu,
+  Home, Settings, LogOut, Menu,
   Zap, TrendingUp, Calendar, Download, Plus, Edit, Trash2
 } from 'lucide-react';
 import { ThemeToggle } from '../../../components/ThemeToggle';
 import { useLicenses } from '../../../contexts/LicenseContext';
 import { useNative } from '../../../contexts/NativeContext';
+import { nextPickupZoneId } from '../utils/pickupZones';
 
 const Badge = ({ children, variant = 'default', size = 'md', dot = false }) => {
   const variants = {
@@ -34,7 +35,7 @@ const Badge = ({ children, variant = 'default', size = 'md', dot = false }) => {
   );
 };
 
-const Button = ({ children, variant = 'primary', size = 'md', onClick, disabled, className = '' }) => {
+const Button = ({ children, variant = 'primary', size = 'md', type = 'button', onClick, disabled, className = '' }) => {
   const variants = {
     primary: 'bg-indigo-600 dark:bg-indigo-700 text-white hover:bg-indigo-700 disabled:bg-indigo-300',
     secondary: 'bg-white dark:bg-slate-800/50 text-gray-700 dark:text-slate-200 border border-gray-300 dark:border-slate-600 hover:bg-gray-50 dark:hover:bg-slate-800',
@@ -45,7 +46,7 @@ const Button = ({ children, variant = 'primary', size = 'md', onClick, disabled,
   };
   const sizes = { sm: 'px-3 py-1.5 text-sm', md: 'px-4 py-2 text-sm', lg: 'px-6 py-3 text-base' };
   return (
-    <button onClick={onClick} disabled={disabled}
+    <button type={type} onClick={onClick} disabled={disabled}
       className={`inline-flex items-center justify-center rounded-lg font-medium transition-colors ${variants[variant]} ${sizes[size]} ${className} disabled:cursor-not-allowed`}>
       {children}
     </button>
@@ -69,11 +70,10 @@ const apiErrorMessage = (err, fallback) => err?.response?.data?.error || fallbac
 const normalizeQueueEntry = (entry) => ({
   ...entry,
   pickupGroupId: entry.pickupGroupId ?? entry.pickup_group_id ?? null,
-  pickupGroupLabel: entry.pickupGroupLabel ?? entry.pickup_group_label ?? entry.guardianName ?? entry.guardian_name ?? 'Unknown',
+  pickupGroupLabel: entry.pickupGroupLabel ?? entry.pickup_group_label ?? 'Unknown',
   studentId: entry.studentId ?? entry.student_id,
   firstName: entry.firstName ?? entry.first_name,
   lastName: entry.lastName ?? entry.last_name,
-  guardianName: entry.guardianName ?? entry.guardian_name,
   checkInMethod: entry.checkInMethod ?? entry.check_in_method,
   effectiveDismissalType: entry.effectiveDismissalType ?? entry.dismissal_type,
   effectiveBusRoute: entry.effectiveBusRoute ?? entry.busRoute ?? entry.bus_route,
@@ -82,6 +82,29 @@ const normalizeQueueEntry = (entry) => ({
 });
 
 const normalizeQueue = (data) => (Array.isArray(data) ? data : (data?.queue ?? [])).map(normalizeQueueEntry);
+
+const normalizeArrivalCandidates = (data) => {
+  const flat = Array.isArray(data)
+    ? data
+    : (data?.candidates || data?.students || data?.results || []);
+  const nested = Array.isArray(data?.families)
+    ? data.families.flatMap((family) => (family.students || []).map((student) => ({
+        ...student,
+        familyName: family.familyName || family.name || family.label || '',
+        carNumber: student.carNumber || family.carNumber || family.car_number || '',
+      })))
+    : [];
+  return [...flat, ...nested].map((student) => ({
+    ...student,
+    id: student.id || student.studentId || student.student_id,
+    firstName: student.firstName || student.first_name || '',
+    lastName: student.lastName || student.last_name || '',
+    gradeLevel: student.gradeLevel || student.grade_level || student.grade || '',
+    homeroomName: student.homeroomName || student.homeroom_name || '',
+    familyName: student.familyName || student.family_name || student.groupLabel || '',
+    carNumber: student.carNumber || student.car_number || '',
+  })).filter((student) => student.id);
+};
 
 const queueGroups = (entries) => {
   const grouped = new Map();
@@ -92,7 +115,7 @@ const queueGroups = (entries) => {
       grouped.set(key, {
         key,
         pickupGroupId,
-        name: item.pickupGroupLabel ?? item.pickup_group_label ?? item.guardianName ?? item.guardian_name ?? 'Unknown',
+        name: item.pickupGroupLabel ?? item.pickup_group_label ?? 'Unknown',
         students: [],
       });
     }
@@ -117,6 +140,7 @@ export default function DismissalDashboard() {
   const { hasClassPilot, hasPassPilot } = useLicenses();
   const { isNative } = useNative();
   const canManageSetup = currentRole === 'admin' || currentRole === 'school_admin';
+  const canManageArrivals = canManageSetup || currentRole === 'office_staff';
 
   // Teachers should see their homeroom view, not the admin dashboard
   useEffect(() => {
@@ -129,7 +153,6 @@ export default function DismissalDashboard() {
   const [session, setSession] = useState(null);
   const [realtimeStale, setRealtimeStale] = useState(false);
   const [dashboardError, setDashboardError] = useState(null);
-  const [soundEnabled, setSoundEnabled] = useState(true);
   const [selectedView, setSelectedView] = useState('queue');
   const [queueTab, setQueueTab] = useState('active'); // 'active' or 'dismissed'
   const [searchTerm, setSearchTerm] = useState('');
@@ -142,13 +165,13 @@ export default function DismissalDashboard() {
   const [busRoutes, setBusRoutes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [pickupZones, setPickupZones] = useState([]);
+  const [settingsRevision, setSettingsRevision] = useState(0);
   const [selectedZone, setSelectedZone] = useState(null);
-  const [showZoneManager, setShowZoneManager] = useState(false);
+  const [zoneManagerSnapshot, setZoneManagerSnapshot] = useState(null);
   const [zoneSaving, setZoneSaving] = useState(false);
   const [carNumberInput, setCarNumberInput] = useState('');
   const [carNumberLoading, setCarNumberLoading] = useState(false);
   const [carNumberResult, setCarNumberResult] = useState(null); // { type: 'success'|'error', message };
-  const [showQrScanner, setShowQrScanner] = useState(false);
   const [busNumberInput, setBusNumberInput] = useState('');
   const [busNumberLoading, setBusNumberLoading] = useState(false);
   const [busNumberResult, setBusNumberResult] = useState(null);
@@ -171,23 +194,19 @@ export default function DismissalDashboard() {
   const [homeroomStudents, setHomeroomStudents] = useState([]);
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
-  // Change request notifications
-  const [changeRequests, setChangeRequests] = useState([]);
-  const [showChangeNotifications, setShowChangeNotifications] = useState(false);
-  const [unreadChangeCount, setUnreadChangeCount] = useState(0);
-  const [showNoteFor, setShowNoteFor] = useState(null);
-  const [changeReviewingId, setChangeReviewingId] = useState(null);
   // Student lookup state
   const [showStudentLookup, setShowStudentLookup] = useState(false);
   const [studentSearchTerm, setStudentSearchTerm] = useState('');
   const [studentSearchResults, setStudentSearchResults] = useState([]);
   const [studentSearchLoading, setStudentSearchLoading] = useState(false);
+  const [selectedArrivalStudents, setSelectedArrivalStudents] = useState(new Set());
+  const [studentArrivalLoading, setStudentArrivalLoading] = useState(false);
   const [custodyPickup, setCustodyPickup] = useState(null);
   const studentSearchTimeout = useRef(null);
   const snapshotRefreshTimeout = useRef(null);
   const snapshotRefreshInFlight = useRef(false);
   const sessionStatus = realtimeStale ? 'offline/stale' : (session?.status || 'not_started');
-  const isSessionActive = session?.status === 'active' && !realtimeStale;
+  const isSessionActive = session?.status === 'active';
 
   // Initialize read-only dashboard snapshot
   const loadData = useCallback(async ({ silent = false } = {}) => {
@@ -199,7 +218,7 @@ export default function DismissalDashboard() {
         api.get(`/schools/${currentSchool.id}/sessions/today`),
         api.get(`/schools/${currentSchool.id}/homerooms`),
         api.get(`/schools/${currentSchool.id}/custody-alerts`),
-        api.get(`/schools/${currentSchool.id}/settings`),
+        api.get('/gopilot/settings'),
         api.get('/pickups/all').catch(() => ({ data: { pickups: [] } })),
         api.get(`/schools/${currentSchool.id}/bus-routes`).catch(() => ({ data: { routes: [] } })),
       ]);
@@ -233,40 +252,23 @@ export default function DismissalDashboard() {
           setOverrides(map);
         } catch { /* non-critical */ }
 
-        try {
-          const changesRes = await api.get(`/sessions/${sessionData.id}/changes`);
-          const changes = changesRes.data?.changes || [];
-          setChangeRequests(changes.map(c => ({
-            id: c.id,
-            studentId: c.studentId,
-            studentName: c.student ? `${c.student.firstName} ${c.student.lastName}` : '',
-            fromType: c.fromType,
-            toType: c.toType,
-            busRoute: c.busRoute,
-            note: c.note,
-            status: c.status || 'pending',
-            createdAt: c.createdAt,
-          })));
-        } catch { /* non-critical */ }
       } else {
         setQueue([]);
         setStats(EMPTY_STATS);
         setOverrides({});
-        setChangeRequests([]);
       }
 
       // Fetch permanent afterschool students
       try {
-        const afterRes = await api.get(`/schools/${currentSchool.id}/students`, { params: { dismissalType: 'afterschool' } });
+        const afterRes = await api.get('/gopilot/students', { params: { dismissalType: 'afterschool' } });
         setAfterschoolStudents(afterRes.data?.students || []);
       } catch { /* non-critical */ }
 
-      const zones = settingsRes.data.pickupZones || [
-        { id: 'A', name: 'Zone A' }, { id: 'B', name: 'Zone B' }, { id: 'C', name: 'Zone C' }
-      ];
+      const settings = settingsRes.data?.settings || settingsRes.data || {};
+      const zones = Array.isArray(settings.pickupZones) ? settings.pickupZones : [];
       setPickupZones(zones);
+      setSettingsRevision(Number.isInteger(settings.revision) ? settings.revision : 0);
       setSelectedZone(prev => prev && zones.find(z => z.id === prev) ? prev : zones[0]?.id || null);
-      setRealtimeStale(false);
     } catch (err) {
       console.error('Failed to load dashboard data:', err);
       setDashboardError(apiErrorMessage(err, 'Failed to load dashboard data'));
@@ -288,7 +290,7 @@ export default function DismissalDashboard() {
     if (!socket || !currentSchool) return;
 
     const joinRoom = () => {
-      socket.emit('join:school', { schoolId: currentSchool.id, role: 'admin' });
+      socket.emit('join:school', { schoolId: currentSchool.id, role: currentRole });
       setRealtimeStale(false);
     };
     const scheduleSnapshotRefresh = () => {
@@ -309,8 +311,10 @@ export default function DismissalDashboard() {
       scheduleSnapshotRefresh();
     };
     const handleDisconnect = () => setRealtimeStale(true);
+    const handleConnectError = () => setRealtimeStale(true);
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
+    socket.on('connect_error', handleConnectError);
 
     const handleQueueUpdate = (data) => {
       if (data?.entry) {
@@ -327,32 +331,6 @@ export default function DismissalDashboard() {
     socket.on('dismissal:status', scheduleSnapshotRefresh);
     socket.on('dismissal:started', scheduleSnapshotRefresh);
     socket.on('dismissal:ended', scheduleSnapshotRefresh);
-    const handleChangeRequested = ({ change, studentName }) => {
-      setChangeRequests(prev => [...prev, {
-        id: change.id,
-        studentId: change.studentId,
-        studentName: studentName || '',
-        fromType: change.fromType,
-        toType: change.toType,
-        busRoute: change.busRoute,
-        note: change.note,
-        status: change.status || 'pending',
-        createdAt: change.createdAt,
-      }]);
-      setUnreadChangeCount(prev => prev + 1);
-    };
-    socket.on('change:requested', handleChangeRequested);
-    const handleChangeResolved = ({ change }) => {
-      if (!change?.id) return;
-      setChangeRequests(prev => prev.map(cr => (
-        cr.id === change.id
-          ? { ...cr, status: change.status || cr.status, reviewedAt: change.reviewedAt || cr.reviewedAt }
-          : cr
-      )));
-      scheduleSnapshotRefresh();
-    };
-    socket.on('change:resolved', handleChangeResolved);
-
     const handleTypeUpdated = ({ studentId, dismissalType, busRoute }) => {
       setHomeroomStudents(prev => prev.map(s =>
         s.id === studentId ? { ...s, effectiveDismissalType: dismissalType, effectiveBusRoute: busRoute, isOverridden: true } : s
@@ -382,6 +360,7 @@ export default function DismissalDashboard() {
       if (snapshotRefreshTimeout.current) clearTimeout(snapshotRefreshTimeout.current);
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
+      socket.off('connect_error', handleConnectError);
       socket.off('queue:updated', handleQueueUpdate);
       socket.off('student:called', handleQueueUpdate);
       socket.off('student:released', handleQueueUpdate);
@@ -389,33 +368,31 @@ export default function DismissalDashboard() {
       socket.off('dismissal:status', scheduleSnapshotRefresh);
       socket.off('dismissal:started', scheduleSnapshotRefresh);
       socket.off('dismissal:ended', scheduleSnapshotRefresh);
-      socket.off('change:requested', handleChangeRequested);
-      socket.off('change:resolved', handleChangeResolved);
       socket.off('student:typeUpdated', handleTypeUpdated);
       socket.off('dismissal:override', handleOverride);
     };
-  }, [socket, currentSchool, loadData]);
+  }, [socket, currentSchool, currentRole, loadData]);
 
-  const reviewChangeRequest = useCallback(async (changeId, status) => {
-    if (!changeId || !['approved', 'rejected'].includes(status)) return;
-    const reviewKey = `${changeId}:${status}`;
-    setChangeReviewingId(reviewKey);
-    setDashboardError(null);
-    try {
-      const res = await api.put(`/changes/${changeId}`, { status });
-      const updated = res.data?.change;
-      setChangeRequests(prev => prev.map(cr => (
-        cr.id === changeId
-          ? { ...cr, ...(updated || {}), status: updated?.status || status }
-          : cr
-      )));
-      await loadData({ silent: true });
-    } catch (err) {
-      setDashboardError(apiErrorMessage(err, `Could not ${status} change request`));
-    } finally {
-      setChangeReviewingId(null);
-    }
-  }, [loadData]);
+  // Reconcile the authoritative snapshot even when a Redis relay or socket is
+  // degraded. Active sessions poll more often, and reconnects already trigger
+  // an immediate refresh above.
+  useEffect(() => {
+    if (!currentSchool) return undefined;
+    const interval = window.setInterval(
+      () => loadData({ silent: true }),
+      realtimeStale ? 5_000 : (session?.status === 'active' ? 15_000 : 60_000),
+    );
+    const refreshVisible = () => {
+      if (document.visibilityState === 'visible') loadData({ silent: true });
+    };
+    document.addEventListener('visibilitychange', refreshVisible);
+    window.addEventListener('focus', refreshVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', refreshVisible);
+      window.removeEventListener('focus', refreshVisible);
+    };
+  }, [currentSchool, loadData, realtimeStale, session?.status]);
 
   // Effective afterschool list: permanent afterschool students + override-to-afterschool
   // Build lookup: studentId → pickups[]
@@ -632,21 +609,34 @@ export default function DismissalDashboard() {
     setSelectedWalkerHomerooms(prev => prev.includes(homeroomId) ? prev.filter(h => h !== homeroomId) : [...prev, homeroomId]);
   };
 
-  const handleSaveZones = async (zones) => {
+  const handleSaveZones = async (zones, openingRevision) => {
     if (!currentSchool) return;
     setZoneSaving(true);
+    setDashboardError(null);
     try {
-      const settingsRes = await api.get(`/schools/${currentSchool.id}/settings`);
-      const settings = settingsRes.data;
-      settings.pickupZones = zones;
-      await api.put(`/schools/${currentSchool.id}/settings`, settings);
-      setPickupZones(zones);
-      if (zones.length > 0 && !zones.find(z => z.id === selectedZone)) {
-        setSelectedZone(zones[0].id);
+      const response = await api.patch('/gopilot/settings', {
+        pickupZones: zones,
+        expectedRevision: openingRevision,
+      });
+      const authoritative = response.data?.settings || response.data;
+      const savedZones = Array.isArray(authoritative.pickupZones) ? authoritative.pickupZones : [];
+      setPickupZones(savedZones);
+      setSettingsRevision(authoritative.revision);
+      if (savedZones.length > 0 && !savedZones.find(z => z.id === selectedZone)) {
+        setSelectedZone(savedZones[0].id);
       }
-      setShowZoneManager(false);
+      setZoneManagerSnapshot(null);
     } catch (err) {
-      console.error('Failed to save zones:', err);
+      const conflicted = err.response?.status === 409;
+      setDashboardError(conflicted
+        ? 'Pickup zones changed in another window. Reopen the zone editor to review the latest version.'
+        : apiErrorMessage(err, 'Pickup zones could not be saved.'));
+      if (conflicted) {
+        // Discard the stale modal draft. Keeping it open after refreshing the
+        // revision would let the next click overwrite the concurrent edit.
+        setZoneManagerSnapshot(null);
+        await loadData({ silent: true });
+      }
     } finally {
       setZoneSaving(false);
     }
@@ -672,8 +662,8 @@ export default function DismissalDashboard() {
       return {
         type: skippedAbsent.length > 0 ? 'info' : 'error',
         message: skippedAbsent.length > 0
-          ? `${groupLabel} — no students checked in; skipped absent: ${skippedNames}`
-          : `${groupLabel} — no students checked in`,
+          ? `${groupLabel} — no students added; skipped absent: ${skippedNames}`
+          : `${groupLabel} — no students added`,
         createdCount: 0,
       };
     }
@@ -681,25 +671,28 @@ export default function DismissalDashboard() {
     const skippedText = skippedAbsent.length > 0 ? `; skipped absent: ${skippedNames}` : '';
     return {
       type: data?.outcome === 'partial' ? 'info' : 'success',
-      message: `${groupLabel} — checked in: ${names}${skippedText}`,
+      message: `${groupLabel} — added: ${names}${skippedText}`,
       createdCount: entries.length,
     };
   };
 
   const handleCarNumberCheckIn = async () => {
     if (!carNumberInput.trim() || !session) return;
-    if (!requireActiveSession('Car check-in')) return;
+    if (!requireActiveSession('Adding an arrival')) return;
     setCarNumberLoading(true);
     setCarNumberResult(null);
     try {
-      const res = await api.post(`/sessions/${session.id}/check-in-by-number`, { carNumber: carNumberInput.trim() });
+      const res = await api.post(`/gopilot/dismissal/sessions/${session.id}/arrivals`, {
+        source: 'staff_car_number',
+        carNumber: carNumberInput.trim(),
+      });
       const result = formatCheckInResult(res.data, `Car #${carNumberInput.trim()}`);
       setCarNumberResult({ type: result.type, message: result.message });
       setCarNumberInput('');
       if (result.createdCount > 0) await refreshQueue();
       setTimeout(() => setCarNumberResult(null), 5000);
     } catch (err) {
-      setCarNumberResult({ type: 'error', message: err.response?.data?.error || 'Check-in failed' });
+      setCarNumberResult({ type: 'error', message: err.response?.data?.error || 'Arrival could not be added' });
     } finally {
       setCarNumberLoading(false);
     }
@@ -707,7 +700,7 @@ export default function DismissalDashboard() {
 
   const handleBusNumberCheckIn = async () => {
     if (!busNumberInput.trim() || !session) return;
-    if (!requireActiveSession('Bus check-in')) return;
+    if (!requireActiveSession('Adding bus arrivals')) return;
     setBusNumberLoading(true);
     setBusNumberResult(null);
     try {
@@ -718,47 +711,9 @@ export default function DismissalDashboard() {
       if (result.createdCount > 0) await refreshQueue();
       setTimeout(() => setBusNumberResult(null), 5000);
     } catch (err) {
-      setBusNumberResult({ type: 'error', message: err.response?.data?.error || 'Check-in failed' });
+      setBusNumberResult({ type: 'error', message: err.response?.data?.error || 'Bus arrivals could not be added' });
     } finally {
       setBusNumberLoading(false);
-    }
-  };
-
-  const handleQrScanned = (decodedText) => {
-    setShowQrScanner(false);
-    // Parse gopilot://checkin?car=142&school=demo
-    let carNumber = null;
-    try {
-      const url = new URL(decodedText);
-      carNumber = url.searchParams.get('car');
-    } catch {
-      // Try plain number
-      const match = decodedText.match(/\d+/);
-      if (match) carNumber = match[0];
-    }
-    if (carNumber) {
-      if (!requireActiveSession('QR check-in')) return;
-      setCarNumberInput(carNumber);
-      // Auto-submit after a tick so state updates
-      setTimeout(async () => {
-        setCarNumberLoading(true);
-        setCarNumberResult(null);
-        try {
-          const res = await api.post(`/sessions/${session.id}/check-in-by-number`, { carNumber });
-          const result = formatCheckInResult(res.data, `Car #${carNumber}`);
-          setCarNumberResult({ type: result.type, message: result.message });
-          setCarNumberInput('');
-          if (result.createdCount > 0) await refreshQueue();
-          setTimeout(() => setCarNumberResult(null), 5000);
-        } catch (err) {
-          setCarNumberResult({ type: 'error', message: err.response?.data?.error || 'Check-in failed' });
-        } finally {
-          setCarNumberLoading(false);
-        }
-      }, 0);
-    } else {
-      setCarNumberResult({ type: 'error', message: 'Could not read car number from QR code' });
-      setTimeout(() => setCarNumberResult(null), 5000);
     }
   };
 
@@ -782,7 +737,7 @@ export default function DismissalDashboard() {
     setExpandedHomeroom(roomId);
     setLoadingStudents(true);
     try {
-      const res = await api.get(`/schools/${currentSchool.id}/students?homeroomId=${roomId}`);
+      const res = await api.get('/gopilot/students', { params: { homeroomId: roomId } });
       const students = Array.isArray(res.data) ? res.data : (res.data?.students ?? []);
       setHomeroomStudents(students.map(student => ({
         ...student,
@@ -839,6 +794,7 @@ export default function DismissalDashboard() {
   // Student lookup search with debounce
   const handleStudentSearch = (term) => {
     setStudentSearchTerm(term);
+    setSelectedArrivalStudents(new Set());
     if (studentSearchTimeout.current) clearTimeout(studentSearchTimeout.current);
     if (!term.trim()) {
       setStudentSearchResults([]);
@@ -847,10 +803,11 @@ export default function DismissalDashboard() {
     studentSearchTimeout.current = setTimeout(async () => {
       setStudentSearchLoading(true);
       try {
-        const res = await api.get(`/schools/${currentSchool.id}/students`, { params: { search: term.trim() } });
-        setStudentSearchResults(res.data?.students || res.data || []);
+        if (!session?.id) return;
+        const res = await api.get(`/gopilot/dismissal/sessions/${session.id}/arrival-candidates`, { params: { q: term.trim() } });
+        setStudentSearchResults(normalizeArrivalCandidates(res.data));
       } catch (err) {
-        console.error('Student search failed:', err);
+        setDashboardError(apiErrorMessage(err, 'Student and family search failed.'));
         setStudentSearchResults([]);
       } finally {
         setStudentSearchLoading(false);
@@ -858,11 +815,37 @@ export default function DismissalDashboard() {
     }, 300);
   };
 
-  const handleUseCarNumber = (carNumber) => {
-    setCarNumberInput(carNumber);
-    setShowStudentLookup(false);
-    setStudentSearchTerm('');
-    setStudentSearchResults([]);
+  const toggleArrivalStudent = (studentId) => {
+    setSelectedArrivalStudents((current) => {
+      const next = new Set(current);
+      if (next.has(studentId)) next.delete(studentId);
+      else next.add(studentId);
+      return next;
+    });
+  };
+
+  const handleStudentArrival = async () => {
+    if (!session?.id || selectedArrivalStudents.size === 0) return;
+    if (!requireActiveSession('Adding an arrival')) return;
+    setStudentArrivalLoading(true);
+    setCarNumberResult(null);
+    try {
+      const response = await api.post(`/gopilot/dismissal/sessions/${session.id}/arrivals`, {
+        source: 'staff_search',
+        studentIds: Array.from(selectedArrivalStudents),
+      });
+      const result = formatCheckInResult(response.data, 'Selected students');
+      setCarNumberResult({ type: result.type, message: result.message });
+      if (result.createdCount > 0) await refreshQueue();
+      setShowStudentLookup(false);
+      setStudentSearchTerm('');
+      setStudentSearchResults([]);
+      setSelectedArrivalStudents(new Set());
+    } catch (err) {
+      setDashboardError(apiErrorMessage(err, 'Selected arrivals could not be added.'));
+    } finally {
+      setStudentArrivalLoading(false);
+    }
   };
 
   // Filter queue - exclude bus students from car queue (they show in Buses tab)
@@ -948,90 +931,7 @@ export default function DismissalDashboard() {
                 {currentTime.toLocaleTimeString([], { timeZone: currentSchool?.timezone, hour: '2-digit', minute: '2-digit' })}
               </p>
               <div className="flex items-center gap-1 sm:gap-2">
-                <div className="relative">
-                  <button
-                    onClick={() => {
-                      const opening = !showChangeNotifications;
-                      setShowChangeNotifications(opening);
-                      if (opening) {
-                        setUnreadChangeCount(0);
-                      }
-                    }}
-                    className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 relative"
-                  >
-                    <Bell className="w-5 h-5 text-gray-600 dark:text-gray-300" />
-                    {unreadChangeCount > 0 && (
-                      <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
-                        {unreadChangeCount}
-                      </span>
-                    )}
-                  </button>
-                  {showChangeNotifications && (
-                    <div className="absolute right-0 top-full mt-1 w-80 bg-white dark:bg-slate-800 rounded-xl shadow-xl border dark:border-slate-700 z-[100] max-h-96 overflow-y-auto">
-                      <div className="p-3 border-b dark:border-slate-700 font-semibold text-sm flex items-center justify-between">
-                        <span>Change Requests</span>
-                        <button onClick={() => setShowChangeNotifications(false)} className="p-1 hover:bg-gray-100 dark:hover:bg-slate-700 rounded"><X className="w-4 h-4" /></button>
-                      </div>
-                      {changeRequests.length === 0 ? (
-                        <div className="p-4 text-center text-sm text-gray-400">No change requests</div>
-                      ) : (
-                        changeRequests.map((cr, i) => (
-                          <div key={cr.id || i} className={`p-3 border-b last:border-b-0 dark:border-slate-700 ${cr.status !== 'pending' ? 'opacity-70' : ''} hover:bg-gray-50 dark:hover:bg-slate-700/50`}>
-                            <div className="flex items-center justify-between">
-                              <p className="text-sm font-medium flex items-center gap-1.5">
-                                {cr.studentName}
-                                {cr.status === 'approved' && <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />}
-                                {cr.status === 'rejected' && <X className="w-3.5 h-3.5 text-red-500" />}
-                              </p>
-                              <span className="text-xs text-gray-400">{cr.createdAt ? new Date(cr.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
-                            </div>
-                            <p className="text-xs text-gray-500 mt-0.5">
-                              <span className="capitalize">{cr.fromType}</span> → <span className="capitalize">{cr.toType}</span>
-                              {cr.busRoute && <span> ({cr.busRoute})</span>}
-                            </p>
-                            {cr.note && (
-                              <p className="text-xs bg-amber-50 dark:bg-amber-900/30 text-amber-800 dark:text-amber-200 rounded px-2 py-1 mt-1">
-                                <MessageSquare className="w-3 h-3 inline mr-1" />{cr.note}
-                              </p>
-                            )}
-                            {cr.status === 'pending' ? (
-                              <div className="mt-2 flex gap-2">
-                                <Button
-                                  variant="success"
-                                  size="sm"
-                                  className="h-8 flex-1 gap-1"
-                                  onClick={() => reviewChangeRequest(cr.id, 'approved')}
-                                  disabled={!!changeReviewingId}
-                                >
-                                  <Check className="w-3.5 h-3.5" />
-                                  Approve
-                                </Button>
-                                <Button
-                                  variant="secondary"
-                                  size="sm"
-                                  className="h-8 flex-1 gap-1"
-                                  onClick={() => reviewChangeRequest(cr.id, 'rejected')}
-                                  disabled={!!changeReviewingId}
-                                >
-                                  <X className="w-3.5 h-3.5" />
-                                  Reject
-                                </Button>
-                              </div>
-                            ) : (
-                              <p className="mt-2 text-xs font-medium capitalize text-gray-500 dark:text-slate-400">
-                                {cr.status}
-                              </p>
-                            )}
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  )}
-                </div>
                 <ThemeToggle />
-                <Button variant={soundEnabled ? 'secondary' : 'ghost'} size="sm" onClick={() => setSoundEnabled(!soundEnabled)}>
-                  {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
-                </Button>
                 {session?.status === 'active' ? (
                   <>
                     <Button variant="secondary" size="sm" onClick={handleToggleDismissal}>
@@ -1119,7 +1019,7 @@ export default function DismissalDashboard() {
               <span className="text-[10px]">{view.label}</span>
             </button>
           ))}
-          {canManageSetup && (
+          {canManageArrivals && (
             <button onClick={() => navigate('/gopilot/setup')}
               className="w-12 h-12 rounded-lg flex flex-col items-center justify-center gap-1 text-gray-400 dark:text-slate-500 hover:bg-gray-100 dark:hover:bg-slate-800">
               <Settings className="w-5 h-5" />
@@ -1146,7 +1046,7 @@ export default function DismissalDashboard() {
                 <span className="text-[10px]">{view.label}</span>
               </button>
             ))}
-            {canManageSetup && (
+            {canManageArrivals && (
               <button onClick={() => navigate('/gopilot/setup')}
                 className="flex flex-col items-center justify-center py-1.5 px-3 rounded-lg text-gray-400 dark:text-slate-500">
                 <Settings className="w-5 h-5" />
@@ -1162,14 +1062,11 @@ export default function DismissalDashboard() {
               {/* Car Number Input - shows first on mobile */}
               <div className="lg:hidden space-y-3">
                 <Card className="p-3 sm:p-4">
-                  <div className="flex items-center justify-between mb-2">
+                  <div className="mb-2">
                     <h3 className="font-semibold flex items-center gap-2 text-sm">
                       <Car className="w-4 h-4 text-indigo-600" />
-                      Enter Car #
+                      Add by car number
                     </h3>
-                    <Button variant="secondary" size="sm" onClick={() => setShowQrScanner(true)}>
-                      <QrCode className="w-4 h-4 mr-1" /> Scan
-                    </Button>
                   </div>
                   <form onSubmit={(e) => { e.preventDefault(); handleCarNumberCheckIn(); }} className="flex gap-2">
                     <input
@@ -1179,7 +1076,7 @@ export default function DismissalDashboard() {
                       placeholder="e.g. 142"
                       className="flex-1 px-3 py-2 border dark:border-slate-600 rounded-lg text-lg font-mono text-center tracking-widest bg-white dark:bg-slate-800 dark:text-white"
                     />
-                    <Button variant="primary" size="md" onClick={handleCarNumberCheckIn} disabled={carNumberLoading || !carNumberInput.trim() || !isSessionActive}>
+                    <Button variant="primary" size="md" onClick={handleCarNumberCheckIn} disabled={!canManageArrivals || carNumberLoading || !carNumberInput.trim() || !isSessionActive}>
                       {carNumberLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
                     </Button>
                   </form>
@@ -1190,9 +1087,9 @@ export default function DismissalDashboard() {
                   )}
                 </Card>
                 <Card className="p-3 sm:p-4">
-                  <h3 className="font-semibold mb-2 text-sm">Car# Look Up</h3>
+                  <h3 className="font-semibold mb-2 text-sm">Add by student or family</h3>
                   <Button variant="secondary" size="sm" className="w-full justify-start" onClick={() => setShowStudentLookup(true)}>
-                    <Search className="w-4 h-4 mr-2" /> Find Student
+                    <Search className="w-4 h-4 mr-2" /> Search arrivals
                   </Button>
                 </Card>
                 <Card className="p-3 sm:p-4">
@@ -1297,14 +1194,11 @@ export default function DismissalDashboard() {
               </div>
               <div className="hidden lg:block space-y-4">
                 <Card className="p-4">
-                  <div className="flex items-center justify-between mb-3">
+                  <div className="mb-3">
                     <h3 className="font-semibold flex items-center gap-2">
                       <Car className="w-5 h-5 text-indigo-600" />
-                      Enter Car #
+                      Add by car number
                     </h3>
-                    <Button variant="secondary" size="sm" onClick={() => setShowQrScanner(true)}>
-                      <QrCode className="w-4 h-4 mr-1" /> Scan QR
-                    </Button>
                   </div>
                   <form onSubmit={(e) => { e.preventDefault(); handleCarNumberCheckIn(); }} className="flex gap-2">
                     <input
@@ -1315,7 +1209,7 @@ export default function DismissalDashboard() {
                       className="flex-1 px-3 py-2 border dark:border-slate-600 rounded-lg text-lg font-mono text-center tracking-widest bg-white dark:bg-slate-800 dark:text-white"
                       autoFocus
                     />
-                    <Button variant="primary" size="md" onClick={handleCarNumberCheckIn} disabled={carNumberLoading || !carNumberInput.trim() || !isSessionActive}>
+                    <Button variant="primary" size="md" onClick={handleCarNumberCheckIn} disabled={!canManageArrivals || carNumberLoading || !carNumberInput.trim() || !isSessionActive}>
                       {carNumberLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
                     </Button>
                   </form>
@@ -1329,7 +1223,14 @@ export default function DismissalDashboard() {
                   <div className="flex items-center justify-between mb-3">
                     <h3 className="font-semibold dark:text-white">Pickup Zones</h3>
                     {canManageSetup && (
-                      <Button variant="ghost" size="sm" onClick={() => setShowZoneManager(true)}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setZoneManagerSnapshot({
+                          zones: pickupZones.map((zone) => ({ ...zone })),
+                          revision: settingsRevision,
+                        })}
+                      >
                         <Settings className="w-4 h-4" />
                       </Button>
                     )}
@@ -1355,10 +1256,10 @@ export default function DismissalDashboard() {
                   )}
                 </Card>
                 <Card className="p-4">
-                  <h3 className="font-semibold mb-3">Car# Look Up</h3>
+                  <h3 className="font-semibold mb-3">Add by student or family</h3>
                   <div className="space-y-2">
                     <Button variant="secondary" size="sm" className="w-full justify-start" onClick={() => setShowStudentLookup(true)}>
-                      <Search className="w-4 h-4 mr-2" /> Find Student
+                      <Search className="w-4 h-4 mr-2" /> Search arrivals
                     </Button>
                   </div>
                 </Card>
@@ -1428,14 +1329,6 @@ export default function DismissalDashboard() {
                                           </span>
                                         </div>
                                         <span className="text-sm font-medium dark:text-white">{fname} {lname}</span>
-                                        {changeRequests.find(cr => cr.studentId === student.id && cr.note) && (
-                                          <button onClick={(e) => {
-                                            e.stopPropagation();
-                                            setShowNoteFor(showNoteFor === student.id ? null : student.id);
-                                          }} className="flex-shrink-0">
-                                            <MessageSquare className="w-3.5 h-3.5 text-amber-500" />
-                                          </button>
-                                        )}
                                       </div>
                                       <div className="flex items-center gap-2">
                                       {isOverridden && (
@@ -1460,15 +1353,6 @@ export default function DismissalDashboard() {
                                       </button>
                                       </div>
                                     </div>
-                                    {showNoteFor === student.id && (() => {
-                                      const cr = changeRequests.find(c => c.studentId === student.id && c.note);
-                                      return cr ? (
-                                        <div className="text-xs bg-amber-50 dark:bg-amber-900/30 text-amber-800 dark:text-amber-200 rounded px-2 py-1 mt-1 ml-11">
-                                          <span className="font-medium">Parent note:</span> {cr.note}
-                                          <div className="text-amber-600 dark:text-amber-400 mt-0.5 capitalize">{cr.fromType} → {cr.toType}</div>
-                                        </div>
-                                      ) : null;
-                                    })()}
                                   </div>
                                 );
                               })}
@@ -1700,7 +1584,7 @@ export default function DismissalDashboard() {
                           </div>
                           <div className="flex-1">
                             <p className="font-medium text-sm">{student.firstName || student.first_name} {student.lastName || student.last_name}</p>
-                            <p className="text-xs text-gray-500 dark:text-slate-400">{student.guardianName || student.guardian_name}</p>
+                            <p className="text-xs text-gray-500 dark:text-slate-400">{student.pickupGroupLabel || student.pickup_group_label}</p>
                           </div>
                           <span className="text-xs text-gray-400 dark:text-slate-500">
                             {(student.dismissedAt || student.dismissed_at) && new Date(student.dismissedAt || student.dismissed_at).toLocaleTimeString([], { timeZone: currentSchool?.timezone, hour: '2-digit', minute: '2-digit' })}
@@ -1739,7 +1623,7 @@ export default function DismissalDashboard() {
                   <div className="p-8 text-center text-gray-500 dark:text-slate-400">
                     <Clock className="w-12 h-12 mx-auto mb-2 text-gray-300 dark:text-slate-600" />
                     <p>No after-school activities for today</p>
-                    <p className="text-sm mt-1">Students will appear here when parents, teachers, or office change their dismissal to "After School"</p>
+                    <p className="text-sm mt-1">Students will appear here when authorized staff set today’s dismissal to “After School.”</p>
                   </div>
                 </Card>
               ) : (
@@ -1892,43 +1776,41 @@ export default function DismissalDashboard() {
       )}
 
       {/* Zone Manager Modal */}
-      {showZoneManager && (
+      {zoneManagerSnapshot && (
         <ZoneManagerModal
-          zones={pickupZones}
+          zones={zoneManagerSnapshot.zones}
+          revision={zoneManagerSnapshot.revision}
           onSave={handleSaveZones}
-          onClose={() => setShowZoneManager(false)}
+          onClose={() => setZoneManagerSnapshot(null)}
           saving={zoneSaving}
-        />
-      )}
-
-      {/* QR Scanner Modal */}
-      {showQrScanner && (
-        <QrScannerModal
-          onScan={handleQrScanned}
-          onClose={() => setShowQrScanner(false)}
         />
       )}
 
       {/* Student Lookup Modal */}
       {showStudentLookup && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-xl shadow-xl w-full max-w-md max-h-[80vh] flex flex-col">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" role="presentation">
+          <div role="dialog" aria-modal="true" aria-labelledby="arrival-search-title" className="bg-white dark:bg-slate-900 rounded-xl shadow-xl w-full max-w-lg max-h-[85vh] flex flex-col">
             <div className="p-4 border-b flex items-center justify-between">
-              <h2 className="text-lg font-semibold">Find Student</h2>
-              <button onClick={() => { setShowStudentLookup(false); setStudentSearchTerm(''); setStudentSearchResults([]); }}
-                className="p-1 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg">
+              <div>
+                <h2 id="arrival-search-title" className="text-lg font-semibold">Add arrivals by student or family</h2>
+                <p className="text-xs text-gray-500 dark:text-slate-400">Students without a car number can be added here.</p>
+              </div>
+              <button aria-label="Close arrival search" onClick={() => { setShowStudentLookup(false); setStudentSearchTerm(''); setStudentSearchResults([]); setSelectedArrivalStudents(new Set()); }}
+                className="flex h-10 w-10 items-center justify-center hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500">
                 <X className="w-5 h-5" />
               </button>
             </div>
             <div className="p-4 border-b">
               <div className="relative">
-                <Search className="w-4 h-4 absolute left-3 top-3 text-gray-400" />
+                <Search className="w-4 h-4 absolute left-3 top-3.5 text-gray-400" />
+                <label htmlFor="arrival-candidate-search" className="sr-only">Search student, family, or car number</label>
                 <input
-                  type="text"
+                  id="arrival-candidate-search"
+                  type="search"
                   value={studentSearchTerm}
                   onChange={(e) => handleStudentSearch(e.target.value)}
-                  placeholder="Search by student name..."
-                  className="w-full pl-9 pr-4 py-2 border dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 dark:text-white"
+                  placeholder="Student, family, or car number"
+                  className="min-h-11 w-full pl-9 pr-4 py-2 border dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 dark:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
                   autoFocus
                 />
               </div>
@@ -1944,7 +1826,7 @@ export default function DismissalDashboard() {
                 <div className="p-4 text-center text-gray-400 dark:text-slate-500">No students found</div>
               )}
               {!studentSearchLoading && studentSearchResults.map(student => (
-                <div key={student.id} className="p-3 hover:bg-gray-50 dark:bg-slate-800/50 dark:hover:bg-slate-800 rounded-lg flex items-center justify-between">
+                <label key={student.id} className={`p-3 hover:bg-gray-50 dark:hover:bg-slate-800 rounded-lg flex cursor-pointer items-center justify-between gap-3 ${selectedArrivalStudents.has(student.id) ? 'bg-indigo-50 ring-1 ring-indigo-300 dark:bg-indigo-950/30 dark:ring-indigo-800' : ''}`}>
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 bg-indigo-100 dark:bg-indigo-950/60 rounded-full flex items-center justify-center text-indigo-600 dark:text-indigo-400 font-medium">
                       {student.firstName?.[0]}{student.lastName?.[0]}
@@ -1954,26 +1836,26 @@ export default function DismissalDashboard() {
                       <p className="text-sm text-gray-500 dark:text-slate-400">
                         {student.homeroomName ? `${student.homeroomName} • Grade ${student.homeroomGrade || student.gradeLevel}` : `Grade ${student.gradeLevel || '—'}`}
                       </p>
+                      <p className="text-xs text-gray-400 dark:text-slate-500">
+                        {[student.familyName, student.carNumber ? `Car #${student.carNumber}` : 'No car number'].filter(Boolean).join(' • ')}
+                      </p>
                     </div>
                   </div>
-                  {student.carNumber ? (
-                    <button
-                      onClick={() => handleUseCarNumber(student.carNumber)}
-                      className="flex items-center gap-2 px-3 py-1.5 bg-indigo-600 dark:bg-indigo-700 text-white rounded-lg text-sm hover:bg-indigo-700"
-                    >
-                      <Car className="w-4 h-4" />
-                      #{student.carNumber}
-                    </button>
-                  ) : (
-                    <span className="text-sm text-gray-400 dark:text-slate-500 italic">No car #</span>
-                  )}
-                </div>
+                  <input type="checkbox" checked={selectedArrivalStudents.has(student.id)} onChange={() => toggleArrivalStudent(student.id)} className="h-5 w-5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+                </label>
               ))}
               {!studentSearchTerm && (
                 <div className="p-4 text-center text-gray-400 dark:text-slate-500 text-sm">
-                  Start typing to search for a student by name
+                  Start typing to search the active school roster
                 </div>
               )}
+            </div>
+            <div className="flex flex-col-reverse gap-2 border-t p-4 sm:flex-row sm:items-center sm:justify-between dark:border-slate-700">
+              <p className="text-sm text-gray-500 dark:text-slate-400" aria-live="polite">{selectedArrivalStudents.size} selected</p>
+              <button type="button" onClick={handleStudentArrival} disabled={!isSessionActive || selectedArrivalStudents.size === 0 || studentArrivalLoading} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 font-semibold text-white hover:bg-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:cursor-not-allowed disabled:opacity-50">
+                {studentArrivalLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                Add selected arrivals
+              </button>
             </div>
           </div>
         </div>
@@ -1982,19 +1864,19 @@ export default function DismissalDashboard() {
   );
 }
 
-function ZoneManagerModal({ zones, onSave, onClose, saving }) {
+function ZoneManagerModal({ zones, revision, onSave, onClose, saving }) {
   const [editZones, setEditZones] = useState(zones.map(z => ({ ...z })));
   const [newZoneName, setNewZoneName] = useState('');
 
   const handleAdd = () => {
     if (!newZoneName.trim()) return;
-    const id = newZoneName.trim().replace(/\s+/g, '_').substring(0, 50);
-    if (editZones.find(z => z.id === id)) return;
+    const id = nextPickupZoneId(editZones);
     setEditZones([...editZones, { id, name: newZoneName.trim() }]);
     setNewZoneName('');
   };
 
   const handleRemove = (id) => {
+    if (!window.confirm('Remove this pickup zone from the saved configuration?')) return;
     setEditZones(editZones.filter(z => z.id !== id));
   };
 
@@ -2006,7 +1888,7 @@ function ZoneManagerModal({ zones, onSave, onClose, saving }) {
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
       <div className="bg-white dark:bg-slate-900 rounded-xl shadow-xl w-full max-w-md">
         <div className="p-4 border-b flex items-center justify-between">
-          <h2 className="font-semibold text-lg">Manage Pickup Zones</h2>
+          <div><h2 className="font-semibold text-lg">Manage Pickup Zones</h2><p className="text-xs text-gray-500 dark:text-slate-400">Settings revision {revision}</p></div>
           <button onClick={onClose} className="p-1 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-full">
             <X className="w-5 h-5" />
           </button>
@@ -2052,71 +1934,10 @@ function ZoneManagerModal({ zones, onSave, onClose, saving }) {
             className="flex-1 px-4 py-2 border dark:border-slate-600 rounded-lg text-sm font-medium dark:text-slate-300 hover:bg-gray-50 dark:bg-slate-800/50 dark:hover:bg-slate-800">
             Cancel
           </button>
-          <button onClick={() => onSave(editZones)} disabled={saving}
+          <button onClick={() => onSave(editZones, revision)} disabled={saving}
             className="flex-1 px-4 py-2 bg-indigo-600 dark:bg-indigo-700 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:bg-indigo-300">
             {saving ? 'Saving...' : 'Save Zones'}
           </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function QrScannerModal({ onScan, onClose }) {
-  const scannerRef = useRef(null);
-  const html5QrCodeRef = useRef(null);
-
-  useEffect(() => {
-    let scanner = null;
-    let mounted = true;
-
-    const startScanner = async () => {
-      try {
-        const { Html5Qrcode } = await import('html5-qrcode');
-        if (!mounted) return;
-        scanner = new Html5Qrcode('qr-reader');
-        html5QrCodeRef.current = scanner;
-        await scanner.start(
-          { facingMode: 'environment' },
-          { fps: 10, qrbox: { width: 250, height: 250 } },
-          (decodedText) => {
-            scanner.stop().catch(() => {});
-            onScan(decodedText);
-          },
-          () => {} // ignore errors (no QR in frame)
-        );
-      } catch (err) {
-        console.error('QR scanner error:', err);
-      }
-    };
-
-    startScanner();
-
-    return () => {
-      mounted = false;
-      if (html5QrCodeRef.current) {
-        html5QrCodeRef.current.stop().catch(() => {});
-      }
-    };
-  }, [onScan]);
-
-  return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white dark:bg-slate-900 rounded-xl shadow-xl w-full max-w-sm" onClick={e => e.stopPropagation()}>
-        <div className="p-4 border-b flex items-center justify-between">
-          <h2 className="font-semibold text-lg flex items-center gap-2">
-            <QrCode className="w-5 h-5 text-indigo-600" />
-            Scan Parent QR
-          </h2>
-          <button onClick={onClose} className="p-1 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-full">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-        <div className="p-4">
-          <div id="qr-reader" ref={scannerRef} className="w-full rounded-lg overflow-hidden" />
-          <p className="text-sm text-gray-500 dark:text-slate-400 text-center mt-3">
-            Point camera at parent's QR code
-          </p>
         </div>
       </div>
     </div>
@@ -2177,15 +1998,17 @@ function QueueItem({ item, position, onCall, onPickup, authorizedPickups, custod
 
   const getCheckInIcon = (method) => {
     switch (method) {
-      case 'sms': return MessageSquare;
-      case 'qr': return QrCode;
+      case 'staff_search': return Search;
+      case 'bus_number': return Bus;
+      case 'walker': return PersonStanding;
+      case 'staff_car_number': return Car;
       case 'car_number': return Car;
-      default: return Smartphone;
+      default: return Car;
     }
   };
 
   const CheckInIcon = getCheckInIcon(item.checkInMethod || item.check_in_method);
-  // Calculate wait time: from check-in to dismissal (or now if not yet dismissed)
+  // Calculate wait time: from staff arrival entry to dismissal (or now if not yet dismissed)
   const getWaitTime = () => {
     if (!item.check_in_time) return 0;
     const start = new Date(item.check_in_time).getTime();
@@ -2218,7 +2041,7 @@ function QueueItem({ item, position, onCall, onPickup, authorizedPickups, custod
             <span className="hidden sm:inline">•</span>
             <span className="hidden sm:inline">{item.homeroom_name || 'No homeroom'}</span>
             <span>•</span>
-            <span className="truncate">{item.guardianName || item.guardian_name}</span>
+            <span className="truncate">{item.pickupGroupLabel || item.pickup_group_label}</span>
             {custodyAlerts?.length > 0 && (
               <>
                 <span>•</span>

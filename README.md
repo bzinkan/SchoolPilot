@@ -15,7 +15,7 @@ SchoolPilot is a multi-tenant K-12 school operations platform that puts three pr
 
 - **ClassPilot** — classroom Chromebook monitoring: device heartbeats, teaching sessions, web filtering, teacher controls, and student analytics (paired with a Chrome extension maintained in a separate repo).
 - **PassPilot** — digital hall passes: class-based pass assignment, pass history, and a public kiosk mode.
-- **GoPilot** — dismissal management: parent/student pickup flows, family groups, bus and walker handling, and a live dismissal queue.
+- **GoPilot** — school-operated dismissal: staff arrival intake, family/car-number groups, bus and walker handling, teacher release, and a live dismissal queue.
 
 ## Architecture
 

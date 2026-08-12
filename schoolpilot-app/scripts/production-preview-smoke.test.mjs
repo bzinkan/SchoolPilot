@@ -37,24 +37,13 @@ test('accepts an exact same-origin, GET-only, school-bound request', () => {
   );
 });
 
-test('accepts only the bound GoPilot school and child resources', () => {
-  assert.deepEqual(
-    respond(personas.gopilotParent, {
-      url:
-        `${baseUrl}/api/students/` +
-        `${personas.gopilotParent.childId}/pickups`,
-      schoolId: personas.gopilotParent.schoolId,
+test('does not allow historical GoPilot parent routes to fetch product data', () => {
+  assert.throws(
+    () => respond(personas.gopilotHistoricalParent, {
+      url: `${baseUrl}/api/me/children`,
+      schoolId: personas.gopilotHistoricalParent.schoolId,
     }),
-    { pickups: [] }
-  );
-  assert.deepEqual(
-    respond(personas.gopilotParent, {
-      url:
-        `${baseUrl}/api/schools/` +
-        `${personas.gopilotParent.schoolId}/sessions/active`,
-      schoolId: personas.gopilotParent.schoolId,
-    }),
-    { session: null }
+    /preview_api_request_not_allowlisted/
   );
 });
 
@@ -91,7 +80,7 @@ test('rejects missing, wrong, or unexpected school bindings', () => {
   );
   assert.throws(
     () =>
-      respond(personas.gopilotParent, {
+      respond(personas.gopilotHistoricalParent, {
         url: `${baseUrl}/api/auth/me`,
         schoolId: 'preview-other-school',
       }),
@@ -107,22 +96,22 @@ test('rejects missing, wrong, or unexpected school bindings', () => {
   );
 });
 
-test('rejects unbound school and child resource identifiers', () => {
+test('rejects unbound school resource identifiers', () => {
   assert.throws(
     () =>
-      respond(personas.gopilotParent, {
+      respond(personas.gopilotHistoricalParent, {
         url: `${baseUrl}/api/students/preview-other-child/pickups`,
-        schoolId: personas.gopilotParent.schoolId,
+        schoolId: personas.gopilotHistoricalParent.schoolId,
       }),
-    /preview_api_resource_binding_invalid/
+    /preview_api_request_not_allowlisted/
   );
   assert.throws(
     () =>
-      respond(personas.gopilotParent, {
+      respond(personas.gopilotHistoricalParent, {
         url: `${baseUrl}/api/schools/preview-other-school/settings`,
-        schoolId: personas.gopilotParent.schoolId,
+        schoolId: personas.gopilotHistoricalParent.schoolId,
       }),
-    /preview_api_resource_binding_invalid/
+    /preview_api_request_not_allowlisted/
   );
 });
 

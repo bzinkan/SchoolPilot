@@ -1,96 +1,69 @@
 import { Capacitor } from '@capacitor/core';
+import { SecureStoragePlugin } from 'capacitor-secure-storage-plugin';
 
 const isNative = Capacitor.isNativePlatform();
 const KEY = 'sp_token';
+const productName = import.meta.env.VITE_APP_PRODUCT === 'passpilot' ? 'PassPilot' : 'GoPilot';
 
-/**
- * JWT secure storage for the native (Capacitor) app.
- *
- * Uses `capacitor-secure-storage-plugin` which writes to:
- *   - Android: Android Keystore (hardware-backed where available)
- *   - iOS: Keychain (encrypted, app-sandboxed)
- *
- * On first run after the upgrade, we migrate existing tokens from the legacy
- * `@capacitor/preferences` (SharedPreferences / NSUserDefaults — NOT encrypted)
- * to the secure store, then delete the legacy copy. Older app builds without the
- * native plugin gracefully fall back to Preferences so existing users aren't
- * locked out before they update.
- */
-
-let _secureUnavailable = false; // cache: true once we confirm the plugin isn't on the device
-
-async function getSecure() {
-  if (_secureUnavailable) return null;
-  try {
-    const mod = await import('capacitor-secure-storage-plugin');
-    return mod.SecureStoragePlugin;
-  } catch {
-    _secureUnavailable = true;
-    return null;
+export class SecureStorageUnavailableError extends Error {
+  constructor(message = `Secure device storage is unavailable. ${productName} cannot sign in safely on this device.`) {
+    super(message);
+    this.name = 'SecureStorageUnavailableError';
+    this.code = 'NATIVE_SECURE_STORAGE_UNAVAILABLE';
   }
 }
 
-async function getPrefs() {
-  const { Preferences } = await import('@capacitor/preferences');
-  return Preferences;
+async function requireSecureStorage() {
+  if (!isNative) return null;
+  if (!Capacitor.isPluginAvailable('SecureStoragePlugin')) {
+    throw new SecureStorageUnavailableError();
+  }
+  try {
+    await SecureStoragePlugin.getPlatform();
+    return SecureStoragePlugin;
+  } catch {
+    throw new SecureStorageUnavailableError();
+  }
 }
 
 export async function saveToken(token) {
   if (!isNative) return;
-  const secure = await getSecure();
-  if (secure) {
-    try {
-      await secure.set({ key: KEY, value: token });
-      // Best-effort cleanup of legacy plaintext copy
-      const Preferences = await getPrefs();
-      await Preferences.remove({ key: KEY }).catch(() => {});
-      return;
-    } catch {
-      // Fall through to Preferences if secure store fails for any reason
+  if (!token) throw new TypeError('A non-empty authentication token is required.');
+  const secure = await requireSecureStorage();
+  try {
+    await secure.set({ key: KEY, value: token });
+    const verification = await secure.get({ key: KEY });
+    if (verification?.value !== token) {
+      throw new Error('Secure-storage verification did not match');
     }
+  } catch {
+    throw new SecureStorageUnavailableError(`${productName} could not protect the sign-in token. Sign-in was stopped.`);
   }
-  const Preferences = await getPrefs();
-  await Preferences.set({ key: KEY, value: token });
 }
 
 export async function loadToken() {
   if (!isNative) return null;
-  const secure = await getSecure();
-  if (secure) {
-    try {
-      const result = await secure.get({ key: KEY });
-      if (result?.value) return result.value;
-    } catch {
-      // Key not found in secure store — try legacy
-    }
-    // Migrate from legacy Preferences if found
-    const Preferences = await getPrefs();
-    const legacy = await Preferences.get({ key: KEY });
-    if (legacy?.value) {
-      try {
-        await secure.set({ key: KEY, value: legacy.value });
-        await Preferences.remove({ key: KEY });
-      } catch {
-        // If migration fails, keep returning the legacy value so user stays signed in
-      }
-      return legacy.value;
-    }
-    return null;
+  const secure = await requireSecureStorage();
+  try {
+    const result = await secure.get({ key: KEY });
+    if (!result?.value) throw new Error('Stored token is empty');
+    return result.value;
+  } catch (error) {
+    // Missing includes a legacy/corrupt value that the native fork removed and
+    // verified before returning this code. Stay signed out and never publish it.
+    if (error?.code === 'SECURE_STORAGE_ITEM_NOT_FOUND') return null;
+    if (error instanceof SecureStorageUnavailableError) throw error;
+    throw new SecureStorageUnavailableError(`${productName} could not read protected sign-in data. Sign in again after securing this device.`);
   }
-  // Fallback for older app builds without the native plugin
-  const Preferences = await getPrefs();
-  const { value } = await Preferences.get({ key: KEY });
-  return value || null;
 }
 
 export async function clearToken() {
   if (!isNative) return;
-  const secure = await getSecure();
-  if (secure) {
-    try {
-      await secure.remove({ key: KEY });
-    } catch { /* ignore */ }
+  const secure = await requireSecureStorage();
+  try {
+    const { value: keys = [] } = await secure.keys();
+    if (keys.includes(KEY)) await secure.remove({ key: KEY });
+  } catch {
+    throw new SecureStorageUnavailableError(`${productName} could not clear protected sign-in data on this device.`);
   }
-  const Preferences = await getPrefs();
-  await Preferences.remove({ key: KEY }).catch(() => {});
 }

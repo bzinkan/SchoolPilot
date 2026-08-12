@@ -40,11 +40,9 @@ const PPKioskSimple = lazy(() => import('./products/passpilot/pages/KioskSimple'
 // GoPilot pages (lazy-loaded)
 const GPDismissalDashboard = lazy(() => import('./products/gopilot/pages/DismissalDashboard'));
 const GPTeacherView = lazy(() => import('./products/gopilot/pages/TeacherView'));
-const GPParentApp = lazy(() => import('./products/gopilot/pages/ParentApp'));
 const GPSetupWizard = lazy(() => import('./products/gopilot/pages/SetupWizard'));
-const GPParentOnboarding = lazy(() => import('./products/gopilot/pages/ParentOnboarding'));
-const GPJoinSchool = lazy(() => import('./products/gopilot/pages/JoinSchool'));
-const GPLinkChild = lazy(() => import('./products/gopilot/pages/LinkChild'));
+const GPAccessDenied = lazy(() => import('./products/gopilot/pages/GoPilotAccessDenied'));
+const includeRetiredGoPilotWebRoutes = import.meta.env.VITE_APP_PRODUCT !== 'gopilot';
 
 // Product landing pages (lazy-loaded, public)
 const ClassPilotLanding = lazy(() => import('./pages/products/ClassPilotLanding'));
@@ -129,13 +127,16 @@ function AppRoutes() {
 
   const isSuperAdmin = user?.isSuperAdmin === true;
   const superAdminDefault = '/super-admin/schools';
+  const gopilotRole = activeMembership?.gopilotRole || activeMembership?.role;
+  const canManageGoPilot = ['admin', 'school_admin', 'office_staff'].includes(gopilotRole);
+  const canTeachGoPilot = gopilotRole === 'teacher';
+  const hasGoPilotStaffAccess = canManageGoPilot || canTeachGoPilot;
 
   // On native, override default destination based on product
   let defaultDest;
   if (isNative && (product === 'gopilot' || (product === null && hasGoPilot))) {
-    const gopilotRole = activeMembership?.gopilotRole || activeMembership?.role;
-    if (gopilotRole === 'parent') defaultDest = '/gopilot/parent';
-    else if (gopilotRole === 'teacher') defaultDest = '/gopilot/teacher';
+    if (!hasGoPilotStaffAccess) defaultDest = '/gopilot/unavailable';
+    else if (canTeachGoPilot) defaultDest = '/gopilot/teacher';
     else defaultDest = '/gopilot';
   } else if (isNative && product === 'passpilot') {
     defaultDest = '/passpilot';
@@ -213,15 +214,20 @@ function AppRoutes() {
         {/* GoPilot routes — web or native (product may be null if VITE_APP_PRODUCT not set) */}
         {(!isNative || product === 'gopilot' || product === null) && (
           <>
-            <Route path="/gopilot/join/:schoolSlug" element={<GPJoinSchool />} />
-            <Route path="/gopilot/onboarding" element={<GPParentOnboarding />} />
-            {hasGoPilot && (
+            <Route path="/gopilot/unavailable" element={<GPAccessDenied />} />
+            {includeRetiredGoPilotWebRoutes && !isNative && (
               <>
-                <Route path="/gopilot" element={<GPDismissalDashboard />} />
-                <Route path="/gopilot/teacher" element={<GPTeacherView />} />
-                <Route path="/gopilot/parent" element={<GPParentApp />} />
-                <Route path="/gopilot/setup" element={<GPSetupWizard />} />
-                <Route path="/gopilot/link" element={<GPLinkChild />} />
+                <Route path="/gopilot/join/:schoolSlug" element={<GPAccessDenied />} />
+                <Route path="/gopilot/onboarding" element={<GPAccessDenied />} />
+                <Route path="/gopilot/parent" element={<GPAccessDenied />} />
+                <Route path="/gopilot/link" element={<GPAccessDenied />} />
+              </>
+            )}
+            {hasGoPilot && hasGoPilotStaffAccess && (
+              <>
+                {canManageGoPilot && <Route path="/gopilot" element={<GPDismissalDashboard />} />}
+                {canTeachGoPilot && <Route path="/gopilot/teacher" element={<GPTeacherView />} />}
+                {canManageGoPilot && <Route path="/gopilot/setup" element={<GPSetupWizard />} />}
               </>
             )}
           </>

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Car, Bus, PersonStanding, Clock, CheckCircle2, Save } from 'lucide-react';
 import api from '../../../../shared/utils/api';
 
-export default function DismissalConfig({ students, homerooms, schoolId, onUpdate, onBulkSet }) {
+export default function DismissalConfig({ students, homerooms, onUpdate, onBulkSet }) {
   const [filterHomeroom, setFilterHomeroom] = useState('all');
   const [showBulkOptions, setShowBulkOptions] = useState(false);
   const [toast, setToast] = useState(null);
@@ -36,7 +36,7 @@ export default function DismissalConfig({ students, homerooms, schoolId, onUpdat
         dismissalType: s.dismissalType,
         busRoute: s.dismissalType === 'bus' ? (s.busRoute || null) : null,
       }));
-      await api.put(`/schools/${schoolId}/students/bulk-update`, { updates });
+      await api.patch('/gopilot/students/bulk', { updates });
       showToast(`Saved ${updates.length} students`);
     } catch (err) {
       console.error('Failed to save homeroom:', err);

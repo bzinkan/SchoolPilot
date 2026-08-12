@@ -396,7 +396,7 @@ export default function SchoolpilotLanding() {
                 Dismissal management made simple. Coordinate car riders, buses, and walkers with a live dashboard.
               </p>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {["Car number check-in", "Real-time parent alerts", "Teacher release flow", "Multi-zone pickup"].map(f => (
+                {["Staff arrival intake", "Direct student search", "Teacher release flow", "Multi-zone pickup"].map(f => (
                   <div key={f} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, color: "#64748b" }}>
                     <div style={{ width: 22, height: 22, borderRadius: 6, background: "#eef2ff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                       <span style={{ color: "#6366f1", fontSize: 13, fontWeight: 700 }}>✓</span>

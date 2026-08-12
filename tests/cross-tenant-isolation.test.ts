@@ -432,11 +432,33 @@ describe("cross-school isolation", () => {
   });
 
   it("homerooms and family groups are school-scoped under tenant context", async () => {
+    const homeroomTeacherA = await createUser({
+      email: `${TAG}-homeroom-a@${TAG}-a.example.edu`,
+      firstName: "Homeroom",
+      lastName: "A",
+    } as any);
+    const homeroomTeacherB = await createUser({
+      email: `${TAG}-homeroom-b@${TAG}-b.example.edu`,
+      firstName: "Homeroom",
+      lastName: "B",
+    } as any);
+    await createMembership({
+      userId: homeroomTeacherA.id,
+      schoolId: schoolA.id,
+      role: "teacher",
+      status: "active",
+    } as any);
+    await createMembership({
+      userId: homeroomTeacherB.id,
+      schoolId: schoolB.id,
+      role: "teacher",
+      status: "active",
+    } as any);
     const hrA = await inSchool(schoolA.id, () =>
-      createHomeroom({ schoolId: schoolA.id, teacherId: teacher.id, name: `${TAG}_hrA`, grade: "4" } as any)
+      createHomeroom({ schoolId: schoolA.id, teacherId: homeroomTeacherA.id, name: `${TAG}_hrA`, grade: "4" } as any)
     );
     await inSchool(schoolB.id, () =>
-      createHomeroom({ schoolId: schoolB.id, teacherId: teacher.id, name: `${TAG}_hrB`, grade: "4" } as any)
+      createHomeroom({ schoolId: schoolB.id, teacherId: homeroomTeacherB.id, name: `${TAG}_hrB`, grade: "4" } as any)
     );
     const homeroomsA = await inSchool(schoolA.id, () => getHomeroomsBySchool(schoolA.id));
     const homeroomsB = await inSchool(schoolB.id, () => getHomeroomsBySchool(schoolB.id));

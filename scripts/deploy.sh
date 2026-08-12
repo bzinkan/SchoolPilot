@@ -1168,7 +1168,7 @@ validate_rls_table_enablement_mode() {
     return 0
   fi
   case "$ENABLE_RLS_TABLE" in
-    classpilot_session_summary_deliveries|passpilot_grade_students) ;;
+    classpilot_session_summary_deliveries|passpilot_grade_students|authorized_pickups,custody_alerts,dismissal_changes,dismissal_overrides,dismissal_queue,family_group_students,homeroom_teachers) ;;
     *)
       error "--enable-rls-table is not reviewed for: ${ENABLE_RLS_TABLE}"
       return 1
