@@ -950,33 +950,42 @@ describe("PassPilot canonical ClassPilot classes", () => {
 
     const lockObserver = new pg.Client({
       connectionString: process.env.ADMIN_DATABASE_URL ?? process.env.DATABASE_URL,
+      connectionTimeoutMillis: 2_000,
+      query_timeout: 1_000,
+      statement_timeout: 1_000,
     });
-    await lockObserver.connect();
-    let releaseLock!: () => void;
-    let reportLocked!: () => void;
-    const locked = new Promise<void>((resolve) => { reportLocked = resolve; });
-    const release = new Promise<void>((resolve) => { releaseLock = resolve; });
-    const blocker = inSchool(schoolA.id, () =>
-      db.transaction(async (tx) => {
-        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`passpilot-class-source:${schoolA.id}`}))`);
-        reportLocked();
-        await release;
-      })
-    );
-    await locked;
+    let releaseLock: (() => void) | undefined;
+    let blocker: Promise<void> | undefined;
+    let mutation: Promise<void> | undefined;
     let mutationSettled = false;
-    const mutation = inSchool(schoolA.id, () =>
-      removeGroupStudent(group.id, student.id)
-    ).finally(() => {
-        mutationSettled = true;
-    });
-
-    const waitDeadline = Date.now() + 2_000;
     let mutationWaitingOnAdvisoryLock = false;
     let mutationSettledBeforeRelease = true;
-    let blockerOutcome: PromiseSettledResult<void>;
-    let mutationOutcome: PromiseSettledResult<void>;
+    let operationOutcomes: PromiseSettledResult<void>[] = [];
     try {
+      await lockObserver.connect();
+      let reportLocked!: () => void;
+      const locked = new Promise<void>((resolve) => { reportLocked = resolve; });
+      const release = new Promise<void>((resolve) => { releaseLock = resolve; });
+      blocker = inSchool(schoolA.id, () =>
+        db.transaction(async (tx) => {
+          await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`passpilot-class-source:${schoolA.id}`}))`);
+          reportLocked();
+          await release;
+        })
+      );
+      await Promise.race([
+        locked,
+        blocker.then(() => {
+          throw new Error("Class lock blocker exited before acquiring the advisory lock");
+        }),
+      ]);
+      mutation = inSchool(schoolA.id, () =>
+        removeGroupStudent(group.id, student.id)
+      ).finally(() => {
+        mutationSettled = true;
+      });
+
+      const waitDeadline = Date.now() + 2_000;
       while (!mutationSettled && Date.now() < waitDeadline) {
         const waitingLocks = await lockObserver.query<{ waiting: boolean }>(
           `SELECT EXISTS (
@@ -992,12 +1001,15 @@ describe("PassPilot canonical ClassPilot classes", () => {
       }
       mutationSettledBeforeRelease = mutationSettled;
     } finally {
-      releaseLock();
-      [blockerOutcome, mutationOutcome] = await Promise.allSettled([blocker, mutation]);
-      await lockObserver.end();
+      releaseLock?.();
+      operationOutcomes = await Promise.allSettled(
+        [blocker, mutation].filter((operation): operation is Promise<void> => operation !== undefined)
+      );
+      await lockObserver.end().catch(() => undefined);
     }
-    assert.equal(blockerOutcome.status, "fulfilled");
-    assert.equal(mutationOutcome.status, "fulfilled");
+    assert.equal(operationOutcomes.length, 2);
+    assert.equal(operationOutcomes[0]?.status, "fulfilled");
+    assert.equal(operationOutcomes[1]?.status, "fulfilled");
     assert.equal(mutationSettledBeforeRelease, false);
     assert.equal(mutationWaitingOnAdvisoryLock, true);
   });
