@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 
 export const REVIEWED_RLS_TABLE_ENABLEMENTS = Object.freeze([
   "classpilot_session_summary_deliveries",
+  "passpilot_grade_students",
 ]);
 
 function parseAllowlist(raw) {

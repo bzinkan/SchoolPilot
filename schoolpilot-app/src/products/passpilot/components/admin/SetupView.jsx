@@ -1,9 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useTeachers, useGrades } from "../../../../hooks/use-students";
 import { usePassPilotAuth } from "../../../../hooks/usePassPilotAuth";
-import { useLicenses } from "../../../../contexts/LicenseContext";
 import { apiRequest, queryClient } from "../../../../lib/queryClient";
 import api from "../../../../shared/utils/api";
 import ImportInClassPilotNotice from "../../../../shared/components/ImportInClassPilotNotice";
@@ -24,22 +23,36 @@ import { Checkbox } from "../../../../components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../../../../components/ui/dropdown-menu";
 import { Plus, Trash2, Download, RefreshCw, Search, Pencil, Eye, Users, Upload, FileSpreadsheet, Cloud, GraduationCap, ChevronDown } from "lucide-react";
 import { toast } from "../../../../hooks/use-toast";
-import { isCanonicalPassPilotSource, useCanonicalPassPilotClasses } from "../../classData";
-import ClassSourceSetup from "./ClassSourceSetup";
+import {
+  addStudentsToPassPilotClass,
+  isCanonicalPassPilotSource,
+  PASSPILOT_CLASSES_QUERY_KEY,
+  passPilotClassRosterQueryKey,
+  removeStudentFromPassPilotClass,
+  useCanonicalPassPilotClasses,
+  usePassPilotClassRoster,
+} from "../../classData";
 
 const GRADE_LEVELS = ["K", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"];
+const PASS_PILOT_SETTINGS_PATH = "/passpilot/admin/settings";
+
+function samePassPilotSettings(left, right) {
+  return left?.name === right?.name
+    && left?.schoolTimezone === right?.schoolTimezone
+    && left?.kioskEnabled === right?.kioskEnabled
+    && left?.kioskRequiresApproval === right?.kioskRequiresApproval
+    && left?.kioskPinConfigured === right?.kioskPinConfigured
+    && left?.revision === right?.revision;
+}
 
 export function SetupView() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { hasClassPilot } = useLicenses();
   const classesQuery = useCanonicalPassPilotClasses();
   const canonical = classesQuery.isSuccess && isCanonicalPassPilotSource(classesQuery.data?.source);
-  const showClassSource = canonical || hasClassPilot;
   const availableTabs = [
     "teachers",
     "students",
     ...(!canonical ? ["classes", "assignments"] : []),
-    ...(showClassSource ? ["class-source"] : []),
     "settings",
   ];
   const requestedTab = searchParams.get("section") || "teachers";
@@ -96,14 +109,16 @@ export function SetupView() {
           <TabsTrigger value="students">Student Roster</TabsTrigger>
           {!canonical ? <TabsTrigger value="classes">Classes</TabsTrigger> : null}
           {!canonical ? <TabsTrigger value="assignments">Class Assignments</TabsTrigger> : null}
-          {showClassSource ? <TabsTrigger value="class-source">Class Source</TabsTrigger> : null}
           <TabsTrigger value="settings">Settings</TabsTrigger>
         </TabsList>
         <TabsContent value="teachers"><TeachersTab /></TabsContent>
         <TabsContent value="students"><StudentRosterTab canonical={canonical} /></TabsContent>
-        {!canonical ? <TabsContent value="classes"><ClassesTab /></TabsContent> : null}
+        {!canonical ? (
+          <TabsContent value="classes">
+            <ClassesTab classRecords={classesQuery.data?.classes ?? []} />
+          </TabsContent>
+        ) : null}
         {!canonical ? <TabsContent value="assignments"><AssignmentsTab /></TabsContent> : null}
-        {showClassSource ? <TabsContent value="class-source"><ClassSourceSetup /></TabsContent> : null}
         <TabsContent value="settings"><SettingsTab /></TabsContent>
       </Tabs>
     </div>
@@ -1741,7 +1756,7 @@ function StudentRosterTab({ canonical = false }) {
   );
 }
 
-function ClassesTab() {
+function ClassesTab({ classRecords }) {
   // ClassesTab is omitted after canonical cutover. While it is mounted, the
   // legacy grade roster remains the authoritative PassPilot write surface.
   const consolidated = false;
@@ -1782,24 +1797,23 @@ function ClassesTab() {
   const [gcGradeLevels, setGcGradeLevels] = useState({});
   const [gcResult, setGcResult] = useState(null);
 
-  const { data: students } = useQuery({
+  const studentsQuery = useQuery({
     queryKey: ["students"],
-    queryFn: () => apiRequest("GET", "/students").catch(() => []),
+    queryFn: () => apiRequest("GET", "/students"),
     select: (data) => Array.isArray(data) ? data : (data?.students ?? []),
   });
+  const students = studentsQuery.data ?? [];
+  const rosterClassId = assignOpen ? assignGradeId : (viewOpen ? viewingGrade?.id : "");
+  const classRosterQuery = usePassPilotClassRoster(rosterClassId, assignOpen || viewOpen);
+  const classRoster = classRosterQuery.data ?? [];
 
-  // Count students per grade (class)
-  const studentCountMap = new Map();
-  for (const s of students ?? []) {
-    if (s.gradeId) {
-      studentCountMap.set(s.gradeId, (studentCountMap.get(s.gradeId) ?? 0) + 1);
-    }
-  }
+  const studentCountMap = new Map(classRecords.map((item) => [item.id, item.studentCount]));
 
   const addClass = useMutation({
     mutationFn: (data) => apiRequest("POST", "/grades", data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["grades"] });
+      queryClient.invalidateQueries({ queryKey: PASSPILOT_CLASSES_QUERY_KEY });
       toast({ title: "Class added" });
       setAddOpen(false);
       setClassName("");
@@ -1811,6 +1825,7 @@ function ClassesTab() {
     mutationFn: (data) => apiRequest("PUT", `/grades/${data.id}`, { name: data.name }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["grades"] });
+      queryClient.invalidateQueries({ queryKey: PASSPILOT_CLASSES_QUERY_KEY });
       toast({ title: "Class updated" });
       setEditOpen(false);
     },
@@ -1822,6 +1837,7 @@ function ClassesTab() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["grades"] });
       queryClient.invalidateQueries({ queryKey: ["students"] });
+      queryClient.invalidateQueries({ queryKey: PASSPILOT_CLASSES_QUERY_KEY });
       toast({ title: "Class deleted" });
     },
     onError: (err) => toast({ title: "Error", description: err.message, variant: "destructive" }),
@@ -1830,8 +1846,10 @@ function ClassesTab() {
   const addStudent = useMutation({
     mutationFn: (data) =>
       apiRequest("POST", "/students", data),
-    onSuccess: () => {
+    onSuccess: (_result, variables) => {
       queryClient.invalidateQueries({ queryKey: ["students"] });
+      queryClient.invalidateQueries({ queryKey: PASSPILOT_CLASSES_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: passPilotClassRosterQueryKey(variables.gradeId) });
       toast({ title: "Student added" });
       setAddStudentOpen(false);
       setStudentName("");
@@ -1855,8 +1873,10 @@ function ClassesTab() {
         }
       }
     },
-    onSuccess: () => {
+    onSuccess: (_result, variables) => {
       queryClient.invalidateQueries({ queryKey: ["students"] });
+      queryClient.invalidateQueries({ queryKey: PASSPILOT_CLASSES_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: passPilotClassRosterQueryKey(variables.gradeId) });
       toast({ title: "Students added" });
       setBulkOpen(false);
       setBulkNames("");
@@ -1865,22 +1885,40 @@ function ClassesTab() {
     onError: (err) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
 
-  const unassignedStudents = (students ?? []).filter((s) => !s.gradeId);
+  const currentRosterIds = new Set(classRoster.map((student) => student.id));
+  const assignableStudents = students.filter((student) => !currentRosterIds.has(student.id));
 
   const assignStudents = useMutation({
-    mutationFn: async ({ gradeId, studentIds }) => {
-      for (const id of studentIds) {
-        await apiRequest("PUT", `/students/${id}`, { gradeId });
-      }
-    },
-    onSuccess: () => {
+    mutationFn: ({ classId, studentIds }) => addStudentsToPassPilotClass(classId, studentIds),
+    onSuccess: (_result, variables) => {
       queryClient.invalidateQueries({ queryKey: ["students"] });
+      queryClient.invalidateQueries({ queryKey: PASSPILOT_CLASSES_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: passPilotClassRosterQueryKey(variables.classId) });
       toast({ title: "Students assigned" });
       setAssignOpen(false);
       setAssignSelected(new Set());
       setAssignSearch("");
     },
-    onError: (err) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+    onError: (err) => toast({
+      title: "Students weren’t assigned",
+      description: err?.response?.data?.error || err.message,
+      variant: "destructive",
+    }),
+  });
+
+  const unassignStudent = useMutation({
+    mutationFn: ({ classId, studentId }) => removeStudentFromPassPilotClass(classId, studentId),
+    onSuccess: (_result, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["students"] });
+      queryClient.invalidateQueries({ queryKey: PASSPILOT_CLASSES_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: passPilotClassRosterQueryKey(variables.classId) });
+      toast({ title: "Student removed from class" });
+    },
+    onError: (err) => toast({
+      title: "Student wasn’t removed",
+      description: err?.response?.data?.error || err.message,
+      variant: "destructive",
+    }),
   });
 
   const loadGcCourses = async () => {
@@ -1929,6 +1967,7 @@ function ClassesTab() {
     }
     queryClient.invalidateQueries({ queryKey: ["grades"] });
     queryClient.invalidateQueries({ queryKey: ["students"] });
+    queryClient.invalidateQueries({ queryKey: PASSPILOT_CLASSES_QUERY_KEY });
     setGcResult({ synced, imported: totalImported, updated: totalUpdated });
     toast({ title: `Synced ${synced} course(s): ${totalImported} imported, ${totalUpdated} updated` });
     setGcSyncing(false);
@@ -1936,7 +1975,7 @@ function ClassesTab() {
 
   if (isLoading) return <Skeleton className="h-40 w-full mt-4" />;
 
-  const viewingStudents = viewingGrade ? (students ?? []).filter((s) => s.gradeId === viewingGrade.id) : [];
+  const viewingStudents = viewOpen ? classRoster : [];
 
   return (
     <div className="space-y-4 mt-4">
@@ -1972,6 +2011,7 @@ function ClassesTab() {
                       variant="ghost"
                       onClick={() => { setViewingGrade(grade); setViewOpen(true); }}
                       className="h-6 w-6 p-0"
+                      aria-label={`View ${grade.name} roster`}
                     >
                       <Eye className="h-3 w-3" />
                     </Button>
@@ -1984,12 +2024,20 @@ function ClassesTab() {
                         setEditOpen(true);
                       }}
                       className="h-6 w-6 p-0"
+                      aria-label={`Edit ${grade.name}`}
                     >
                       <Pencil className="h-3 w-3" />
                     </Button>
                     <AlertDialog>
                       <AlertDialogTrigger asChild>
-                        <Button variant="ghost" size="sm" className="h-6 w-6 p-0 hover:text-red-600"><Trash2 className="h-3 w-3" /></Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 w-6 p-0 hover:text-red-600"
+                          aria-label={`Delete ${grade.name}`}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
                       </AlertDialogTrigger>
                       <AlertDialogContent>
                         <AlertDialogHeader>
@@ -2090,7 +2138,21 @@ function ClassesTab() {
             <DialogTitle>{viewingGrade?.name} - Roster</DialogTitle>
           </DialogHeader>
           <div className="max-h-96 overflow-y-auto">
-            {viewingStudents.length === 0 ? (
+            {classRosterQuery.isLoading ? (
+              <div className="space-y-2 py-4" aria-live="polite">
+                <Skeleton className="h-14 w-full" />
+                <Skeleton className="h-14 w-full" />
+                <span className="sr-only">Loading class roster</span>
+              </div>
+            ) : classRosterQuery.isError ? (
+              <div className="py-8 text-center" role="alert">
+                <p className="text-sm font-medium">This roster couldn’t be loaded.</p>
+                <p className="mt-1 text-sm text-muted-foreground">Try again before changing class membership.</p>
+                <Button type="button" size="sm" variant="outline" className="mt-4" onClick={() => classRosterQuery.refetch()}>
+                  Retry
+                </Button>
+              </div>
+            ) : viewingStudents.length === 0 ? (
               <div className="text-center py-8">
                 <Users className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
                 <p className="text-muted-foreground">
@@ -2100,6 +2162,9 @@ function ClassesTab() {
                   <div className="flex gap-2 justify-center mt-4">
                     <Button size="sm" onClick={() => { if (viewingGrade) { setAddStudentGradeId(viewingGrade.id); setAddStudentGradeName(viewingGrade.name); setViewOpen(false); setAddStudentOpen(true); } }}>Add Student</Button>
                     <Button size="sm" variant="outline" onClick={() => { if (viewingGrade) { setBulkGradeId(viewingGrade.id); setBulkGradeName(viewingGrade.name); setViewOpen(false); setBulkOpen(true); } }}>Bulk Add</Button>
+                    <Button size="sm" variant="outline" onClick={() => { if (viewingGrade) { setAssignGradeId(viewingGrade.id); setAssignGradeName(viewingGrade.name); setAssignGradeLevel(""); setAssignSelected(new Set()); setAssignSearch(""); setViewOpen(false); setAssignOpen(true); } }}>
+                      Assign Students
+                    </Button>
                   </div>
                 )}
               </div>
@@ -2121,9 +2186,37 @@ function ClassesTab() {
                 {viewingStudents.map((student) => (
                   <div key={student.id} className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
                     <div>
-                      <p className="font-medium">{student.firstName} {student.lastName}</p>
+                      <p className="font-medium">{student.name || `${student.firstName ?? ""} ${student.lastName ?? ""}`.trim()}</p>
                       {student.studentIdNumber && <p className="text-sm text-muted-foreground">ID: {student.studentIdNumber}</p>}
                     </div>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          aria-label={`Remove ${student.name || `${student.firstName ?? ""} ${student.lastName ?? ""}`.trim()} from ${viewingGrade?.name}`}
+                        >
+                          Remove
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Remove student from {viewingGrade?.name}?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            This only removes the student from this class. Their school record and other class memberships stay unchanged.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction
+                            onClick={() => unassignStudent.mutate({ classId: viewingGrade.id, studentId: student.id })}
+                          >
+                            Remove from class
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
                   </div>
                 ))}
               </div>
@@ -2205,21 +2298,51 @@ function ClassesTab() {
           <DialogHeader><DialogTitle>Assign Students to {assignGradeName}</DialogTitle></DialogHeader>
           <div className="space-y-3">
             {(() => {
-              const gradeTabs = [...new Set(unassignedStudents.map((s) => s.gradeLevel).filter(Boolean))].sort((a, b) => Number(a) - Number(b));
-              const gradeFiltered = unassignedStudents.filter((s) =>
+              const gradeTabs = [...new Set(assignableStudents.map((s) => s.gradeLevel).filter(Boolean))]
+                .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+              const gradeFiltered = assignableStudents.filter((s) =>
                 !assignGradeLevel ? true : s.gradeLevel === assignGradeLevel
               );
               const visible = gradeFiltered
                 .filter((s) => {
                   if (!assignSearch) return true;
                   const q = assignSearch.toLowerCase();
-                  return `${s.firstName} ${s.lastName}`.toLowerCase().includes(q);
+                  return `${s.name ?? ""} ${s.firstName ?? ""} ${s.lastName ?? ""}`.toLowerCase().includes(q);
                 })
                 .sort((a, b) => (a.lastName || "").localeCompare(b.lastName || ""));
-              return unassignedStudents.length === 0 ? (
-                <p className="text-center text-sm text-muted-foreground py-4">All students are already assigned to a class.</p>
+              const allVisibleSelected = visible.length > 0 && visible.every((student) => assignSelected.has(student.id));
+              return studentsQuery.isLoading || classRosterQuery.isLoading ? (
+                <div className="space-y-2 py-4" aria-live="polite">
+                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-32 w-full" />
+                  <span className="sr-only">Loading students</span>
+                </div>
+              ) : studentsQuery.isError || classRosterQuery.isError ? (
+                <div className="py-4 text-center" role="alert">
+                  <p className="text-sm font-medium">Students couldn’t be loaded.</p>
+                  <p className="mt-1 text-sm text-muted-foreground">Try again before changing this roster.</p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="mt-3"
+                    onClick={() => {
+                      if (studentsQuery.isError) studentsQuery.refetch();
+                      if (classRosterQuery.isError) classRosterQuery.refetch();
+                    }}
+                  >
+                    Retry
+                  </Button>
+                </div>
+              ) : assignableStudents.length === 0 ? (
+                <p className="text-center text-sm text-muted-foreground py-4">
+                  Every active student is already in {assignGradeName}.
+                </p>
               ) : (
                 <>
+                  <p className="rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                    Students can belong to multiple classes. Adding them here won’t remove them from another class.
+                  </p>
                   <div className="flex flex-wrap gap-1">
                     <Button
                       size="sm"
@@ -2227,10 +2350,10 @@ function ClassesTab() {
                       className="h-7 text-xs px-3 rounded-full"
                       onClick={() => { setAssignGradeLevel(""); setAssignSelected(new Set()); }}
                     >
-                      All ({unassignedStudents.length})
+                      All ({assignableStudents.length})
                     </Button>
                     {gradeTabs.map((level) => {
-                      const count = unassignedStudents.filter((s) => s.gradeLevel === level).length;
+                      const count = assignableStudents.filter((s) => s.gradeLevel === level).length;
                       return (
                         <Button
                           key={level}
@@ -2251,18 +2374,22 @@ function ClassesTab() {
                       variant="ghost"
                       className="text-xs h-6"
                       onClick={() => {
-                        if (assignSelected.size === visible.length) {
-                          setAssignSelected(new Set());
-                        } else {
-                          setAssignSelected(new Set(visible.map((s) => s.id)));
-                        }
+                        setAssignSelected((previous) => {
+                          const next = new Set(previous);
+                          for (const student of visible) {
+                            if (allVisibleSelected) next.delete(student.id);
+                            else next.add(student.id);
+                          }
+                          return next;
+                        });
                       }}
                     >
-                      {assignSelected.size > 0 ? "Deselect All" : "Select All"}
+                      {allVisibleSelected ? "Deselect visible" : "Select visible"}
                     </Button>
                   </div>
                   <Input
                     placeholder="Search students..."
+                    aria-label="Search students"
                     value={assignSearch}
                     onChange={(e) => setAssignSearch(e.target.value)}
                   />
@@ -2282,7 +2409,9 @@ function ClassesTab() {
                           className="rounded border-gray-300"
                         />
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">{s.lastName}, {s.firstName}</p>
+                          <p className="text-sm font-medium truncate">
+                            {s.lastName || s.firstName ? `${s.lastName ?? ""}, ${s.firstName ?? ""}` : s.name}
+                          </p>
                           {s.gradeLevel && <p className="text-xs text-muted-foreground">Grade {s.gradeLevel}</p>}
                         </div>
                       </label>
@@ -2290,7 +2419,7 @@ function ClassesTab() {
                   </div>
                   <Button
                     className="w-full"
-                    onClick={() => assignStudents.mutate({ gradeId: assignGradeId, studentIds: [...assignSelected] })}
+                    onClick={() => assignStudents.mutate({ classId: assignGradeId, studentIds: [...assignSelected] })}
                     disabled={assignStudents.isPending || assignSelected.size === 0}
                   >
                     {assignStudents.isPending ? "Assigning..." : `Assign ${assignSelected.size} Student${assignSelected.size !== 1 ? "s" : ""}`}
@@ -2510,65 +2639,184 @@ function AssignmentsTab() {
 }
 
 function SettingsTab() {
-  const { school } = usePassPilotAuth();
-  const [name, setName] = useState(school?.name ?? "");
-  const [kioskEnabled, setKioskEnabled] = useState(school?.kioskEnabled ?? true);
-  const [kioskRequiresApproval, setKioskRequiresApproval] = useState(school?.kioskRequiresApproval ?? false);
-  const [schoolTimezone, setSchoolTimezone] = useState(school?.schoolTimezone ?? "America/New_York");
+  const { school, refetchUser } = usePassPilotAuth();
+  const settingsQueryKey = [PASS_PILOT_SETTINGS_PATH, school?.id];
+  const settingsQuery = useQuery({
+    queryKey: settingsQueryKey,
+    queryFn: () => apiRequest("GET", PASS_PILOT_SETTINGS_PATH),
+    enabled: !!school?.id,
+  });
+
+  if (settingsQuery.isLoading) {
+    return (
+      <div className="mt-4 space-y-4" aria-live="polite">
+        <Skeleton className="h-7 w-40" />
+        <Skeleton className="h-64 w-full" />
+        <span className="sr-only">Loading school settings</span>
+      </div>
+    );
+  }
+
+  if (settingsQuery.isError || !settingsQuery.data) {
+    return (
+      <Card className="mt-4 border-destructive/40">
+        <CardContent className="p-8 text-center">
+          <h3 className="font-semibold">School settings couldn’t be loaded</h3>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Try again. No settings were changed.
+          </p>
+          <Button type="button" variant="outline" className="mt-4" onClick={() => settingsQuery.refetch()}>
+            Retry
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <SettingsForm
+      key={`${school.id}:${settingsQuery.data.revision}`}
+      settings={settingsQuery.data}
+      settingsQueryKey={settingsQueryKey}
+      refetchUser={refetchUser}
+    />
+  );
+}
+
+function SettingsForm({ settings, settingsQueryKey, refetchUser }) {
+  const [name, setName] = useState(settings.name);
+  const [kioskEnabled, setKioskEnabled] = useState(settings.kioskEnabled);
+  const [schoolTimezone, setSchoolTimezone] = useState(settings.schoolTimezone);
   const [kioskPin, setKioskPin] = useState("");
   const [saving, setSaving] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [conflict, setConflict] = useState(null);
+  const [pendingVerification, setPendingVerification] = useState(null);
+  const saveInFlightRef = useRef(false);
 
-  useEffect(() => {
-    if (school) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setName(school.name ?? "");
-      setKioskEnabled(school.kioskEnabled ?? true);
-      setKioskRequiresApproval(school.kioskRequiresApproval ?? false);
-      setSchoolTimezone(school.schoolTimezone ?? "America/New_York");
+  const trimmedName = name.trim();
+  const pinIsValid = !kioskPin || /^\d{4,8}$/.test(kioskPin);
+  const kioskNeedsPin = kioskEnabled && !settings.kioskPinConfigured && !kioskPin;
+  const dirty = trimmedName !== settings.name
+    || schoolTimezone !== settings.schoolTimezone
+    || kioskEnabled !== settings.kioskEnabled
+    || !!kioskPin;
+
+  const verifySavedSettings = async (candidate) => {
+    const verified = await apiRequest("GET", PASS_PILOT_SETTINGS_PATH);
+    if (!samePassPilotSettings(candidate, verified)) {
+      setConflict(verified);
+      setErrorMessage("Settings changed again before the save could be verified. Review the latest settings before saving.");
+      return false;
     }
-  }, [school]);
+    // Refresh shared school identity used by the product header and the other
+    // SchoolPilot surfaces. The settings DTO remains the authority for this
+    // form; auth refresh is only the cross-product projection update.
+    await refetchUser();
+    queryClient.setQueryData(settingsQueryKey, verified);
+    setPendingVerification(null);
+    toast({ title: "Settings saved" });
+    return true;
+  };
 
-  const handleSave = async () => {
-    if (kioskPin && !/^\d{4,8}$/.test(kioskPin)) {
-      toast({ title: "Error", description: "Kiosk PIN must be 4-8 digits", variant: "destructive" });
+  const handleSave = async (event) => {
+    event.preventDefault();
+    if (saveInFlightRef.current) return;
+    if (!trimmedName) {
+      setErrorMessage("School name is required.");
       return;
     }
+    if (!pinIsValid) {
+      setErrorMessage("Kiosk PIN must be 4-8 digits.");
+      return;
+    }
+    if (kioskNeedsPin) {
+      setErrorMessage("Set a 4-8 digit kiosk PIN before enabling Kiosk Mode.");
+      return;
+    }
+
+    saveInFlightRef.current = true;
     setSaving(true);
+    setErrorMessage("");
+    setConflict(null);
     try {
-      await apiRequest("PATCH", "/admin/settings", {
-        name,
-        kioskEnabled,
-        kioskRequiresApproval,
-        schoolTimezone,
-        // only send when the admin typed a new PIN — the current PIN is never
-        // returned by the API, so an empty field means "leave unchanged"
-        ...(kioskPin ? { kioskPin } : {}),
-      });
-      toast({ title: "Settings saved" });
-      window.location.hash = "setup/settings";
-      window.location.reload();
+      if (pendingVerification) {
+        await verifySavedSettings(pendingVerification);
+        return;
+      }
+
+      const payload = { expectedRevision: settings.revision };
+      if (trimmedName !== settings.name) payload.name = trimmedName;
+      if (schoolTimezone !== settings.schoolTimezone) payload.schoolTimezone = schoolTimezone;
+      if (kioskEnabled !== settings.kioskEnabled) payload.kioskEnabled = kioskEnabled;
+      if (kioskPin) payload.kioskPin = kioskPin;
+
+      const saved = await apiRequest("PATCH", PASS_PILOT_SETTINGS_PATH, payload);
+      setPendingVerification(saved);
+      try {
+        await verifySavedSettings(saved);
+      } catch {
+        setErrorMessage("Settings were saved, but the confirmation could not be loaded. Verify the saved settings before making another change.");
+      }
     } catch (err) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+      const response = err?.response?.data;
+      if (err?.response?.status === 409 && response?.code === "PASSPILOT_SETTINGS_REVISION_CONFLICT") {
+        setConflict(response.current || null);
+      }
+      setErrorMessage(response?.error || err?.message || "Settings couldn’t be saved. Try again.");
+    } finally {
+      setSaving(false);
+      saveInFlightRef.current = false;
+    }
+  };
+
+  const loadLatest = async () => {
+    setSaving(true);
+    setErrorMessage("");
+    try {
+      const latest = conflict || await apiRequest("GET", PASS_PILOT_SETTINGS_PATH);
+      queryClient.setQueryData(settingsQueryKey, latest);
+    } catch (err) {
+      setErrorMessage(err?.response?.data?.error || err?.message || "Latest settings couldn’t be loaded.");
       setSaving(false);
     }
   };
 
+  const saveDisabled = saving
+    || !!conflict
+    || !trimmedName
+    || !pinIsValid
+    || kioskNeedsPin
+    || (!dirty && !pendingVerification);
+
   return (
-    <div className="space-y-4 mt-4">
+    <form className="mt-4 space-y-4" onSubmit={handleSave}>
       <Card>
-        <CardHeader><CardTitle className="text-base">School Settings</CardTitle></CardHeader>
+        <CardHeader>
+          <CardTitle className="text-base">School Settings</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Configure the school identity and whether students can use PassPilot kiosks.
+          </p>
+        </CardHeader>
         <CardContent className="space-y-5">
           <div className="space-y-1">
-            <Label>School Name</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} />
+            <Label htmlFor="passpilot-school-name">School Name</Label>
+            <Input
+              id="passpilot-school-name"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              disabled={saving || !!pendingVerification}
+            />
           </div>
 
           <div className="space-y-1">
-            <Label>School Timezone</Label>
+            <Label htmlFor="passpilot-school-timezone">School Timezone</Label>
             <select
+              id="passpilot-school-timezone"
               className="w-full border rounded-md px-3 py-2 text-sm"
               value={schoolTimezone}
-              onChange={(e) => setSchoolTimezone(e.target.value)}
+              onChange={(event) => setSchoolTimezone(event.target.value)}
+              disabled={saving || !!pendingVerification}
             >
               <option value="America/New_York">Eastern (America/New_York)</option>
               <option value="America/Chicago">Central (America/Chicago)</option>
@@ -2579,45 +2827,71 @@ function SettingsTab() {
             </select>
           </div>
 
-          <div className="flex items-center justify-between">
-            <div>
-              <Label>Kiosk Mode Enabled</Label>
-              <p className="text-xs text-muted-foreground">Allow students to self-checkout via kiosk</p>
-            </div>
-            <Switch checked={kioskEnabled} onCheckedChange={setKioskEnabled} />
+          <div className="border-t pt-5">
+            <h3 className="font-medium">Kiosk access</h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Students can request and return hall passes from a shared kiosk device. A kiosk checkout issues the pass immediately.
+            </p>
           </div>
 
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-6">
             <div>
-              <Label>Kiosk Requires Approval</Label>
-              <p className="text-xs text-muted-foreground">Require teacher approval for kiosk checkouts</p>
+              <Label htmlFor="passpilot-kiosk-enabled">Kiosk Mode Enabled</Label>
+              <p id="passpilot-kiosk-enabled-description" className="text-xs text-muted-foreground">
+                Allow students to request and return passes from a kiosk.
+              </p>
             </div>
-            <Switch checked={kioskRequiresApproval} onCheckedChange={setKioskRequiresApproval} />
+            <Switch
+              id="passpilot-kiosk-enabled"
+              checked={kioskEnabled}
+              onCheckedChange={setKioskEnabled}
+              aria-describedby="passpilot-kiosk-enabled-description"
+              disabled={saving || !!pendingVerification}
+            />
           </div>
 
           <div className="space-y-1">
-            <Label>Kiosk PIN</Label>
-            <p className="text-xs text-muted-foreground">
-              Required to unlock kiosk devices. Staff enter it once per device.
-              Kiosks will not work until a PIN is set. Leave blank to keep the
-              current PIN.
+            <Label htmlFor="passpilot-kiosk-pin">Kiosk PIN</Label>
+            <p id="passpilot-kiosk-pin-description" className="text-xs text-muted-foreground">
+              {settings.kioskPinConfigured
+                ? "A PIN is configured. Leave this blank to keep it, or enter 4-8 digits to replace it."
+                : "Set a 4-8 digit PIN before enabling Kiosk Mode. Staff enter it once per kiosk device."}
             </p>
             <Input
+              id="passpilot-kiosk-pin"
               type="password"
               inputMode="numeric"
               placeholder="4-8 digits"
               value={kioskPin}
-              onChange={(e) => setKioskPin(e.target.value)}
+              onChange={(event) => setKioskPin(event.target.value.replace(/\D/g, "").slice(0, 8))}
               autoComplete="new-password"
+              aria-describedby="passpilot-kiosk-pin-description"
+              aria-invalid={!pinIsValid || kioskNeedsPin}
+              disabled={saving || !!pendingVerification}
             />
+            {!pinIsValid ? <p className="text-xs text-destructive">Kiosk PIN must be 4-8 digits.</p> : null}
+            {kioskNeedsPin ? <p className="text-xs text-destructive">A kiosk PIN is required while Kiosk Mode is enabled.</p> : null}
           </div>
 
-          <Button onClick={handleSave} disabled={saving} className="w-full">
-            {saving ? "Saving..." : "Save Settings"}
+          {errorMessage ? (
+            <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">
+              <p>{errorMessage}</p>
+              {conflict ? (
+                <Button type="button" variant="outline" size="sm" className="mt-2" onClick={loadLatest} disabled={saving}>
+                  Load latest settings
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+
+          <Button type="submit" disabled={saveDisabled} className="w-full">
+            {saving
+              ? (pendingVerification ? "Verifying..." : "Saving...")
+              : (pendingVerification ? "Verify Saved Settings" : "Save Settings")}
           </Button>
         </CardContent>
       </Card>
-    </div>
+    </form>
   );
 }
 

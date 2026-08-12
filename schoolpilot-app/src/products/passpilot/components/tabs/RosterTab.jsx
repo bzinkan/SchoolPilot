@@ -7,18 +7,26 @@ import { Label } from "../../../../components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "../../../../components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../../components/ui/select";
 import { useToast } from "../../../../hooks/use-toast";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "../../../../lib/queryClient";
 import { usePassPilotAuth } from "../../../../hooks/usePassPilotAuth";
 import { Trash2, Edit, Plus, Users, Eye } from "lucide-react";
 import ImportInClassPilotNotice from "../../../../shared/components/ImportInClassPilotNotice";
 import { useStudentImportHome } from "../../../../shared/hooks/useStudentImportHome";
 import CanonicalClassesView from "../CanonicalClassesView";
-import { isCanonicalPassPilotSource, useCanonicalPassPilotClasses } from "../../classData";
+import {
+  addStudentsToPassPilotClass,
+  isCanonicalPassPilotSource,
+  PASSPILOT_CLASSES_QUERY_KEY,
+  passPilotClassRosterQueryKey,
+  removeStudentFromPassPilotClass,
+  useCanonicalPassPilotClasses,
+  usePassPilotClassRoster,
+} from "../../classData";
 
 const GRADE_LEVELS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
 
-function LegacyRosterTab() {
+function LegacyRosterTab({ classRecords }) {
   const { isAdmin } = usePassPilotAuth();
   const navigate = useNavigate();
   const { canLinkToClassPilot, importPath } = useStudentImportHome();
@@ -33,6 +41,9 @@ function LegacyRosterTab() {
   const [editingStudent, setEditingStudent] = useState(null);
   const [editingGrade, setEditingGrade] = useState(null);
   const [viewingGrade, setViewingGrade] = useState(null);
+  const [assigningGrade, setAssigningGrade] = useState(null);
+  const [assignSelected, setAssignSelected] = useState(new Set());
+  const [assignSearch, setAssignSearch] = useState("");
   const [bulkGrade, setBulkGrade] = useState('');
   const [bulkGradeLevel, setBulkGradeLevel] = useState('');
   const [newClassName, setNewClassName] = useState('');
@@ -49,12 +60,8 @@ function LegacyRosterTab() {
 
   const { toast } = useToast();
 
-  // For teachers - their assigned classes; for admins - all classes
-  const { data: myClasses = [], isLoading: classesLoading } = useQuery({
-    queryKey: ['my-classes'],
-    queryFn: () => apiRequest('GET', isAdmin ? '/grades' : '/my-classes'),
-    select: (data) => Array.isArray(data) ? data : (data?.grades ?? data?.classes ?? []),
-  });
+  // The normalized class inventory already applies manager/teacher visibility.
+  const myClasses = classRecords;
 
   // Available classes for "Add Class" dialog (teachers only)
   const { data: availableClasses = [] } = useQuery({
@@ -72,13 +79,54 @@ function LegacyRosterTab() {
     select: (data) => Array.isArray(data) ? data : (data?.students ?? []),
   });
 
-  const isLoading = classesLoading || studentsLoading;
+  const rosterClassId = assigningGrade?.id || (showViewGradeModal ? viewingGrade?.id : "");
+  const classRosterQuery = usePassPilotClassRoster(
+    rosterClassId,
+    !!assigningGrade || (showViewGradeModal && !!viewingGrade),
+  );
+  const classRoster = classRosterQuery.data ?? [];
+  const currentRosterIds = new Set(classRoster.map((student) => student.id));
+  const assignableStudents = students.filter((student) => !currentRosterIds.has(student.id));
+
+  const isLoading = studentsLoading;
+
+  const assignStudents = useMutation({
+    mutationFn: ({ classId, studentIds }) => addStudentsToPassPilotClass(classId, studentIds),
+    onSuccess: (_result, variables) => {
+      queryClient.invalidateQueries({ queryKey: PASSPILOT_CLASSES_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: passPilotClassRosterQueryKey(variables.classId) });
+      setAssigningGrade(null);
+      setAssignSelected(new Set());
+      setAssignSearch("");
+      toast({ title: "Students assigned" });
+    },
+    onError: (error) => toast({
+      title: "Students weren’t assigned",
+      description: error?.response?.data?.error || error.message,
+      variant: "destructive",
+    }),
+  });
+
+  const unassignStudent = useMutation({
+    mutationFn: ({ classId, studentId }) => removeStudentFromPassPilotClass(classId, studentId),
+    onSuccess: (_result, variables) => {
+      queryClient.invalidateQueries({ queryKey: PASSPILOT_CLASSES_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: passPilotClassRosterQueryKey(variables.classId) });
+      toast({ title: "Student removed from class" });
+    },
+    onError: (error) => toast({
+      title: "Student wasn’t removed",
+      description: error?.response?.data?.error || error.message,
+      variant: "destructive",
+    }),
+  });
 
   const handleAssignClass = async (gradeId) => {
     try {
       await apiRequest('POST', '/teacher-grades/self-assign', { gradeId });
       queryClient.invalidateQueries({ queryKey: ['my-classes'] });
       queryClient.invalidateQueries({ queryKey: ['available-classes'] });
+      queryClient.invalidateQueries({ queryKey: PASSPILOT_CLASSES_QUERY_KEY });
       toast({ title: "Class added", description: "Class has been added to your list." });
     } catch (error) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -100,6 +148,7 @@ function LegacyRosterTab() {
       queryClient.invalidateQueries({ queryKey: ['my-classes'] });
       queryClient.invalidateQueries({ queryKey: ['available-classes'] });
       queryClient.invalidateQueries({ queryKey: ['/api/grades'] });
+      queryClient.invalidateQueries({ queryKey: PASSPILOT_CLASSES_QUERY_KEY });
       setNewClassName('');
       setShowAddClassModal(false);
       toast({ title: "Class created", description: `${newClassName.trim()} has been created and added.` });
@@ -121,6 +170,7 @@ function LegacyRosterTab() {
       await apiRequest('PUT', `/grades/${editingGrade.id}`, gradeForm);
       queryClient.invalidateQueries({ queryKey: ['my-classes'] });
       queryClient.invalidateQueries({ queryKey: ['/api/grades'] });
+      queryClient.invalidateQueries({ queryKey: PASSPILOT_CLASSES_QUERY_KEY });
       setGradeForm({ name: '' });
       setEditingGrade(null);
       toast({ title: "Class updated", description: `Class has been updated to ${gradeForm.name}.` });
@@ -138,6 +188,7 @@ function LegacyRosterTab() {
       queryClient.invalidateQueries({ queryKey: ['/api/grades'] });
       queryClient.invalidateQueries({ queryKey: ['/api/students'] });
       queryClient.invalidateQueries({ queryKey: ['available-classes'] });
+      queryClient.invalidateQueries({ queryKey: PASSPILOT_CLASSES_QUERY_KEY });
       toast({ title: "Class deleted", description: `${gradeName} has been deleted.` });
     } catch (error) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -159,6 +210,8 @@ function LegacyRosterTab() {
         gradeLevel: studentForm.gradeLevel || undefined
       });
       queryClient.invalidateQueries({ queryKey: ['/api/students'] });
+      queryClient.invalidateQueries({ queryKey: PASSPILOT_CLASSES_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: passPilotClassRosterQueryKey(studentForm.grade) });
       setStudentForm({ name: '', grade: '', studentId: '', gradeLevel: '' });
       setShowAddStudentModal(false);
       toast({ title: "Student added", description: `${studentForm.name} has been added.` });
@@ -202,6 +255,8 @@ function LegacyRosterTab() {
 
       await Promise.all(promises);
       queryClient.invalidateQueries({ queryKey: ['/api/students'] });
+      queryClient.invalidateQueries({ queryKey: PASSPILOT_CLASSES_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: passPilotClassRosterQueryKey(bulkGrade) });
       setBulkStudentNames('');
       setBulkGrade('');
       setBulkGradeLevel('');
@@ -214,11 +269,10 @@ function LegacyRosterTab() {
 
   const handleEditStudent = (student) => {
     setEditingStudent(student);
-    const fullName = `${student.firstName || ''} ${student.lastName || ''}`.trim();
-    const grade = myClasses.find((g) => g.id === student.gradeId);
+    const fullName = student.name || `${student.firstName || ''} ${student.lastName || ''}`.trim();
     setStudentForm({
       name: fullName,
-      grade: grade ? grade.name : '',
+      grade: '',
       studentId: student.studentIdNumber || '',
       gradeLevel: student.gradeLevel || ''
     });
@@ -226,12 +280,11 @@ function LegacyRosterTab() {
 
   const handleUpdateStudent = async (e) => {
     e.preventDefault();
-    if (!studentForm.name || !studentForm.grade || !editingStudent) return;
+    if (!studentForm.name || !editingStudent) return;
 
     try {
       await apiRequest('PUT', `/students/${editingStudent.id}`, {
         name: studentForm.name,
-        gradeId: studentForm.grade,
         studentId: studentForm.studentId || undefined,
         gradeLevel: studentForm.gradeLevel || undefined
       });
@@ -239,18 +292,6 @@ function LegacyRosterTab() {
       setStudentForm({ name: '', grade: '', studentId: '', gradeLevel: '' });
       setEditingStudent(null);
       toast({ title: "Student updated", description: `${studentForm.name} has been updated.` });
-    } catch (error) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-    }
-  };
-
-  const handleDeleteStudent = async (studentId, studentName) => {
-    if (!confirm(`Are you sure you want to delete ${studentName}?`)) return;
-
-    try {
-      await apiRequest('DELETE', `/students/${studentId}`, {});
-      queryClient.invalidateQueries({ queryKey: ['/api/students'] });
-      toast({ title: "Student deleted", description: `${studentName} has been deleted.` });
     } catch (error) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     }
@@ -367,10 +408,7 @@ function LegacyRosterTab() {
             </p>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {myClasses.map((grade) => {
-                const gradeStudents = students.filter((student) => student.gradeId === grade.id);
-
-                return (
+              {myClasses.map((grade) => (
                   <Card
                     key={grade.id}
                     className="hover:shadow-md transition-all"
@@ -380,34 +418,41 @@ function LegacyRosterTab() {
                       <div className="flex items-center justify-between mb-2">
                         <h3 className="font-semibold">{grade.name}</h3>
                         <div className="flex items-center space-x-1">
-                          <Button size="sm" variant="ghost" onClick={() => { setViewingGrade(grade); setShowViewGradeModal(true); }} className="h-6 w-6 p-0">
+                          <Button size="sm" variant="ghost" onClick={() => { setViewingGrade(grade); setShowViewGradeModal(true); }} className="h-6 w-6 p-0" aria-label={`View ${grade.name} roster`}>
                             <Eye className="h-3 w-3" />
                           </Button>
-                          <Button size="sm" variant="ghost" onClick={() => handleEditGrade(grade)} className="h-6 w-6 p-0">
+                          <Button size="sm" variant="ghost" onClick={() => handleEditGrade(grade)} className="h-6 w-6 p-0" aria-label={`Edit ${grade.name}`}>
                             <Edit className="h-3 w-3" />
                           </Button>
-                          <Button size="sm" variant="ghost" onClick={() => handleDeleteGrade(grade.id, grade.name)} className="h-6 w-6 p-0 hover:text-red-600">
+                          <Button size="sm" variant="ghost" onClick={() => handleDeleteGrade(grade.id, grade.name)} className="h-6 w-6 p-0 hover:text-red-600" aria-label={`Delete ${grade.name}`}>
                             <Trash2 className="h-3 w-3" />
                           </Button>
                         </div>
                       </div>
                       <p className="text-sm text-muted-foreground">
-                        {gradeStudents.length} student{gradeStudents.length !== 1 ? 's' : ''}
+                        {grade.studentCount} student{grade.studentCount !== 1 ? 's' : ''}
                       </p>
                       {!consolidated && (
                         <div className="flex gap-1 mt-2">
                           <Button size="sm" variant="outline" onClick={() => { setStudentForm({ name: '', grade: grade.id, studentId: '', gradeLevel: '' }); setShowAddStudentModal(true); }} className="h-6 text-xs px-2">
                             Add Student
                           </Button>
-                          <Button size="sm" variant="outline" onClick={() => { setBulkGrade(grade.name); setBulkGradeLevel(''); setShowBulkAddStudentsModal(true); }} className="h-6 text-xs px-2">
+                          <Button size="sm" variant="outline" onClick={() => { setBulkGrade(grade.id); setBulkGradeLevel(''); setShowBulkAddStudentsModal(true); }} className="h-6 text-xs px-2">
                             Bulk Add
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => { setAssigningGrade(grade); setAssignSelected(new Set()); setAssignSearch(""); }}
+                            className="h-6 text-xs px-2"
+                          >
+                            Assign Students
                           </Button>
                         </div>
                       )}
                     </CardContent>
                   </Card>
-                );
-              })}
+              ))}
             </div>
           )}
         </CardContent>
@@ -504,6 +549,86 @@ function LegacyRosterTab() {
         </DialogContent>
       </Dialog>
 
+      {/* Assign existing students without removing other class memberships */}
+      <Dialog
+        open={!!assigningGrade}
+        onOpenChange={(open) => {
+          if (!open) {
+            setAssigningGrade(null);
+            setAssignSelected(new Set());
+            setAssignSearch("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Assign Students to {assigningGrade?.name}</DialogTitle></DialogHeader>
+          {studentsLoading || classRosterQuery.isLoading ? (
+            <p className="py-8 text-center text-sm text-muted-foreground" aria-live="polite">Loading students…</p>
+          ) : classRosterQuery.isError ? (
+            <div className="py-8 text-center" role="alert">
+              <p className="text-sm font-medium">Students couldn’t be loaded.</p>
+              <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => classRosterQuery.refetch()}>Retry</Button>
+            </div>
+          ) : assignableStudents.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              Every active student is already in {assigningGrade?.name}.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              <p className="rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                Students can belong to multiple classes. Adding them here won’t remove them from another class.
+              </p>
+              <Label htmlFor="assign-student-search" className="sr-only">Search students</Label>
+              <Input
+                id="assign-student-search"
+                value={assignSearch}
+                onChange={(event) => setAssignSearch(event.target.value)}
+                placeholder="Search students..."
+              />
+              <div className="max-h-72 divide-y overflow-y-auto rounded-md border">
+                {assignableStudents
+                  .filter((student) => {
+                    const query = assignSearch.trim().toLowerCase();
+                    if (!query) return true;
+                    return `${student.name ?? ""} ${student.firstName ?? ""} ${student.lastName ?? ""}`.toLowerCase().includes(query);
+                  })
+                  .map((student) => {
+                    const name = student.name || `${student.firstName ?? ""} ${student.lastName ?? ""}`.trim();
+                    return (
+                      <label key={student.id} className="flex cursor-pointer items-center gap-3 px-3 py-2 hover:bg-muted/50">
+                        <input
+                          type="checkbox"
+                          checked={assignSelected.has(student.id)}
+                          onChange={() => {
+                            setAssignSelected((previous) => {
+                              const next = new Set(previous);
+                              if (next.has(student.id)) next.delete(student.id);
+                              else next.add(student.id);
+                              return next;
+                            });
+                          }}
+                        />
+                        <span className="min-w-0 flex-1 truncate text-sm font-medium">{name}</span>
+                        {student.gradeLevel ? <span className="text-xs text-muted-foreground">Grade {student.gradeLevel}</span> : null}
+                      </label>
+                    );
+                  })}
+              </div>
+              <Button
+                type="button"
+                className="w-full"
+                disabled={assignStudents.isPending || assignSelected.size === 0}
+                onClick={() => assignStudents.mutate({ classId: assigningGrade.id, studentIds: [...assignSelected] })}
+              >
+                {assignStudents.isPending
+                  ? "Assigning..."
+                  : `Assign ${assignSelected.size} Student${assignSelected.size === 1 ? "" : "s"}`}
+              </Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {/* Edit Grade Dialog */}
       {editingGrade && (
         <Dialog open={!!editingGrade} onOpenChange={() => setEditingGrade(null)}>
@@ -532,17 +657,6 @@ function LegacyRosterTab() {
               <div>
                 <Label htmlFor="editStudentName">Student Name</Label>
                 <Input id="editStudentName" value={studentForm.name} onChange={(e) => setStudentForm({ ...studentForm, name: e.target.value })} />
-              </div>
-              <div>
-                <Label htmlFor="editStudentGrade">Class</Label>
-                <Select value={studentForm.grade} onValueChange={(value) => setStudentForm({ ...studentForm, grade: value })}>
-                  <SelectTrigger><SelectValue placeholder="Select a class" /></SelectTrigger>
-                  <SelectContent>
-                    {myClasses.map((grade) => (
-                      <SelectItem key={grade.id} value={grade.id}>{grade.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
               </div>
               <div>
                 <Label htmlFor="editStudentGradeLevel">Grade Level</Label>
@@ -577,7 +691,20 @@ function LegacyRosterTab() {
             </DialogHeader>
             <div className="max-h-96 overflow-y-auto">
               {(() => {
-                const gradeStudents = students.filter((student) => student.gradeId === viewingGrade.id);
+                const gradeStudents = classRoster;
+
+                if (classRosterQuery.isLoading) {
+                  return <p className="py-8 text-center text-sm text-muted-foreground" aria-live="polite">Loading class roster…</p>;
+                }
+
+                if (classRosterQuery.isError) {
+                  return (
+                    <div className="py-8 text-center" role="alert">
+                      <p className="text-sm font-medium">This roster couldn’t be loaded.</p>
+                      <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => classRosterQuery.refetch()}>Retry</Button>
+                    </div>
+                  );
+                }
 
                 if (gradeStudents.length === 0) {
                   return (
@@ -588,8 +715,9 @@ function LegacyRosterTab() {
                       </p>
                       {!consolidated && (
                         <div className="flex gap-2 justify-center mt-4">
-                          <Button onClick={() => { setStudentForm({ name: '', grade: viewingGrade.name, studentId: '', gradeLevel: '' }); setShowViewGradeModal(false); setShowAddStudentModal(true); }} size="sm">Add Student</Button>
-                          <Button onClick={() => { setBulkGrade(viewingGrade.name); setBulkGradeLevel(''); setShowViewGradeModal(false); setShowBulkAddStudentsModal(true); }} size="sm" variant="outline">Bulk Add Students</Button>
+                          <Button onClick={() => { setStudentForm({ name: '', grade: viewingGrade.id, studentId: '', gradeLevel: '' }); setShowViewGradeModal(false); setShowAddStudentModal(true); }} size="sm">Add Student</Button>
+                          <Button onClick={() => { setBulkGrade(viewingGrade.id); setBulkGradeLevel(''); setShowViewGradeModal(false); setShowBulkAddStudentsModal(true); }} size="sm" variant="outline">Bulk Add Students</Button>
+                          <Button onClick={() => { setAssigningGrade(viewingGrade); setAssignSelected(new Set()); setAssignSearch(""); setShowViewGradeModal(false); }} size="sm" variant="outline">Assign Students</Button>
                         </div>
                       )}
                     </div>
@@ -602,8 +730,8 @@ function LegacyRosterTab() {
                       <p className="text-sm text-muted-foreground">{gradeStudents.length} student{gradeStudents.length !== 1 ? 's' : ''}</p>
                       {!consolidated && (
                         <div className="flex gap-2">
-                          <Button onClick={() => { setStudentForm({ name: '', grade: viewingGrade.name, studentId: '', gradeLevel: '' }); setShowViewGradeModal(false); setShowAddStudentModal(true); }} size="sm"><Plus className="w-4 h-4 mr-2" />Add Student</Button>
-                          <Button onClick={() => { setBulkGrade(viewingGrade.name); setBulkGradeLevel(''); setShowViewGradeModal(false); setShowBulkAddStudentsModal(true); }} size="sm" variant="outline"><Users className="w-4 h-4 mr-2" />Bulk Add</Button>
+                          <Button onClick={() => { setStudentForm({ name: '', grade: viewingGrade.id, studentId: '', gradeLevel: '' }); setShowViewGradeModal(false); setShowAddStudentModal(true); }} size="sm"><Plus className="w-4 h-4 mr-2" />Add Student</Button>
+                          <Button onClick={() => { setBulkGrade(viewingGrade.id); setBulkGradeLevel(''); setShowViewGradeModal(false); setShowBulkAddStudentsModal(true); }} size="sm" variant="outline"><Users className="w-4 h-4 mr-2" />Bulk Add</Button>
                         </div>
                       )}
                     </div>
@@ -614,16 +742,22 @@ function LegacyRosterTab() {
                             {getInitials(student)}
                           </div>
                           <div>
-                            <p className="font-medium">{student.firstName} {student.lastName}</p>
+                            <p className="font-medium">{student.name || `${student.firstName ?? ""} ${student.lastName ?? ""}`.trim()}</p>
                             {student.studentIdNumber && <p className="text-sm text-muted-foreground">ID: {student.studentIdNumber}</p>}
                           </div>
                         </div>
                         {!consolidated && (
                           <div className="flex items-center space-x-2">
-                            <Button size="sm" variant="ghost" onClick={() => { handleEditStudent(student); setShowViewGradeModal(false); }}>
+                            <Button size="sm" variant="ghost" onClick={() => { handleEditStudent(student); setShowViewGradeModal(false); }} aria-label={`Edit ${student.name || student.firstName || "student"}`}>
                               <Edit className="h-4 w-4" />
                             </Button>
-                            <Button size="sm" variant="ghost" onClick={() => handleDeleteStudent(student.id, `${student.firstName} ${student.lastName}`)} className="hover:text-red-600">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => unassignStudent.mutate({ classId: viewingGrade.id, studentId: student.id })}
+                              className="hover:text-red-600"
+                              aria-label={`Remove ${student.name || student.firstName || "student"} from ${viewingGrade.name}`}
+                            >
                               <Trash2 className="h-4 w-4" />
                             </Button>
                           </div>
@@ -662,7 +796,7 @@ function RosterTab() {
 
   return isCanonicalPassPilotSource(classesQuery.data?.source)
     ? <CanonicalClassesView />
-    : <LegacyRosterTab />;
+    : <LegacyRosterTab classRecords={classesQuery.data?.classes ?? []} />;
 }
 
 export default RosterTab;

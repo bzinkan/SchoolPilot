@@ -51,6 +51,23 @@ function scopedSchoolId(req: any, res: any): string {
   return req.authUser?.isSuperAdmin ? param(req, "schoolId") : res.locals.schoolId;
 }
 
+function rejectPasspilotKioskSettingsBypass(req: any, res: any): boolean {
+  const body = req.body ?? {};
+  if (
+    !Object.prototype.hasOwnProperty.call(body, "kioskEnabled")
+    && !Object.prototype.hasOwnProperty.call(body, "kioskRequiresApproval")
+    && !Object.prototype.hasOwnProperty.call(body, "kioskPin")
+  ) {
+    return false;
+  }
+  res.status(409).json({
+    error: "Kiosk settings are managed in PassPilot Setup.",
+    code: "PASSPILOT_KIOSK_SETTINGS_MANAGED_IN_SETUP",
+    managementUrl: "/passpilot/setup?section=settings",
+  });
+  return true;
+}
+
 // All school routes require authentication
 router.use(authenticate);
 
@@ -177,6 +194,7 @@ router.put(
   requireRole("admin"),
   async (req, res, next) => {
     try {
+      if (rejectPasspilotKioskSettingsBypass(req, res)) return;
       const parsed = updateSchoolSchema.safeParse(req.body);
       if (!parsed.success) {
         return res
@@ -203,6 +221,7 @@ router.patch(
   requireRole("admin"),
   async (req, res, next) => {
     try {
+      if (rejectPasspilotKioskSettingsBypass(req, res)) return;
       const parsed = updateSchoolSchema.safeParse(req.body);
       if (!parsed.success) {
         return res

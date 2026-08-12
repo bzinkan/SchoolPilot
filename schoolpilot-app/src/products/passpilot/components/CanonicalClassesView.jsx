@@ -18,40 +18,6 @@ function ClassPilotSourceBadge() {
   );
 }
 
-function MigrationNotice({ migration }) {
-  const pendingCount = Number(
-    migration?.pendingCount
-      ?? migration?.reviewRequiredCount
-      ?? migration?.unresolvedCount
-      ?? 0,
-  );
-  const needsReview = migration?.status === "review_required" || migration?.requiresReview === true || pendingCount > 0;
-  if (!needsReview) return null;
-
-  return (
-    <div
-      className="flex flex-col gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-amber-950 sm:flex-row sm:items-center sm:justify-between dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100"
-      role="status"
-      data-testid="passpilot-migration-notice"
-    >
-      <div>
-        <p className="font-semibold">Existing PassPilot classes need review</p>
-        <p className="mt-1 text-sm text-amber-900/80 dark:text-amber-100/80">
-          {pendingCount > 0
-            ? `${pendingCount} ${pendingCount === 1 ? "class needs" : "classes need"} an IT decision before setup is complete.`
-            : "Review the existing PassPilot classes before setup is complete."}
-        </p>
-      </div>
-      <Button asChild size="sm" className="shrink-0 bg-amber-500 text-slate-950 hover:bg-amber-400">
-        <Link to="/passpilot/setup?section=class-source">
-          Review Classes
-          <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
-        </Link>
-      </Button>
-    </div>
-  );
-}
-
 export default function CanonicalClassesView() {
   const { isAdmin, isSchoolwideManager } = usePassPilotAuth();
   const { canLinkToClassPilot } = useStudentImportHome();
@@ -83,8 +49,6 @@ export default function CanonicalClassesView() {
           </Button>
         ) : null}
       </div>
-
-      {isAdmin ? <MigrationNotice migration={classesQuery.data?.migration} /> : null}
 
       {classesQuery.isLoading ? (
         <Card>

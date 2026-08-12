@@ -4,6 +4,7 @@ import api from "../../shared/utils/api";
 
 export const PASSPILOT_CLASSES_QUERY_KEY = ["passpilot", "classes"];
 export const PASSPILOT_HISTORY_CLASSES_QUERY_KEY = ["passpilot", "classes", "history"];
+export const passPilotClassRosterQueryKey = (classId) => ["passpilot", "class-students", classId];
 export const PASSPILOT_CLASS_MODEL_HEADER = {
   "X-PassPilot-Class-Model": "classpilot-groups-v1",
 };
@@ -125,6 +126,33 @@ export function usePassPilotHistoryClasses(enabled = true) {
     select: normalizePassPilotClassesResponse,
     enabled,
   });
+}
+
+export function usePassPilotClassRoster(classId, enabled = true) {
+  return useQuery({
+    queryKey: passPilotClassRosterQueryKey(classId),
+    queryFn: () => passPilotClassRequest(
+      "GET",
+      `/passpilot/classes/${encodeURIComponent(classId)}/students`,
+    ),
+    select: (data) => (Array.isArray(data) ? data : (data?.students ?? [])),
+    enabled: enabled && !!classId,
+  });
+}
+
+export function addStudentsToPassPilotClass(classId, studentIds) {
+  return passPilotClassRequest(
+    "POST",
+    `/passpilot/classes/${encodeURIComponent(classId)}/students`,
+    { studentIds },
+  );
+}
+
+export function removeStudentFromPassPilotClass(classId, studentId) {
+  return passPilotClassRequest(
+    "DELETE",
+    `/passpilot/classes/${encodeURIComponent(classId)}/students/${encodeURIComponent(studentId)}`,
+  );
 }
 
 export function teacherLabel(item) {

@@ -53,6 +53,8 @@ export default function KioskSimplePage() {
   const inactivityRef = useRef();
   const feedbackRef = useRef();
   const scrollContainerRef = useRef(null);
+  const legacyConfiguredClassRef = useRef(undefined);
+  const configAvailableRef = useRef(null);
 
   // Close destination picker on inactivity (10s), but keep grade selected
   const resetInactivity = useCallback(() => {
@@ -84,10 +86,9 @@ export default function KioskSimplePage() {
     return r;
   }, []);
 
-  // Fetch grades
-  useEffect(() => {
-    if (!schoolId || !kioskPin) return;
-    fetch(`/api/passpilot/kiosk/grades?school=${schoolId}`, { headers: kioskHeaders() })
+  const fetchClasses = useCallback(() => {
+    if (!schoolId || !kioskPin) return Promise.resolve();
+    return fetch(`/api/passpilot/kiosk/grades?school=${schoolId}`, { headers: kioskHeaders() })
       .then(checkPinRejected)
       .then(r => r.ok ? r.json() : { classes: [] })
       .then(data => {
@@ -96,6 +97,15 @@ export default function KioskSimplePage() {
       })
       .catch(() => {});
   }, [schoolId, kioskPin, kioskHeaders, checkPinRejected]);
+
+  // Refresh class inventory periodically and immediately after a disabled or
+  // unavailable kiosk becomes available, without requiring a page reload.
+  useEffect(() => {
+    if (!schoolId || !kioskPin) return;
+    fetchClasses();
+    const interval = setInterval(fetchClasses, 30_000);
+    return () => clearInterval(interval);
+  }, [schoolId, kioskPin, fetchClasses]);
 
   // Poll for teacher-controlled grade
   useEffect(() => {
@@ -112,13 +122,25 @@ export default function KioskSimplePage() {
           throw error;
         })
         .then(data => {
+          const recovered = configAvailableRef.current === false;
+          configAvailableRef.current = true;
+          if (recovered) fetchClasses();
           setConfigError(null);
           if (data?.source) {
             setClassSource(data.source);
             if (isCanonicalPassPilotSource(data.source)) {
               setSelectedGradeId(data.classId || null);
-            } else if (data.classId || data.gradeId) {
-              setSelectedGradeId(data.classId || data.gradeId);
+            } else {
+              const configuredClassId = data.classId || data.gradeId || null;
+              const previousConfiguredClassId = legacyConfiguredClassRef.current;
+              legacyConfiguredClassRef.current = configuredClassId;
+              if (configuredClassId) {
+                setSelectedGradeId(configuredClassId);
+              } else if (previousConfiguredClassId) {
+                setSelectedGradeId(null);
+                setStudents([]);
+                setStudentsClassId(null);
+              }
             }
           }
           if (data?.kioskName !== undefined) {
@@ -127,6 +149,7 @@ export default function KioskSimplePage() {
           setConfigLoaded(true);
         })
         .catch((error) => {
+          configAvailableRef.current = false;
           if (error?.source) setClassSource(error.source);
           setSelectedGradeId(null);
           setStudents([]);
@@ -141,7 +164,7 @@ export default function KioskSimplePage() {
     poll();
     const interval = setInterval(poll, 5000);
     return () => clearInterval(interval);
-  }, [schoolId, kioskPin, kioskHeaders, checkPinRejected]);
+  }, [schoolId, kioskPin, kioskHeaders, checkPinRejected, fetchClasses]);
 
   // Poll students when grade selected
   useEffect(() => {
@@ -191,7 +214,7 @@ export default function KioskSimplePage() {
         body: JSON.stringify({
           studentId,
           destination,
-          ...(isCanonicalPassPilotSource(classSource) ? { classId: selectedGradeId } : {}),
+          classId: selectedGradeId,
         }),
       });
       checkPinRejected(res);

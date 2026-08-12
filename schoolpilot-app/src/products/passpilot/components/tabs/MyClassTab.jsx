@@ -29,8 +29,10 @@ import { useStudentImportHome } from "../../../../shared/hooks/useStudentImportH
 import {
   fetchAllPassPilotHistory,
   isCanonicalPassPilotSource,
+  passPilotClassRosterQueryKey,
   passPilotClassRequest,
   useCanonicalPassPilotClasses,
+  usePassPilotClassRoster,
 } from "../../classData";
 
 const DESTINATION_LABELS = {
@@ -42,7 +44,6 @@ const DESTINATION_LABELS = {
 };
 
 function MyClassTab() {
-  const [legacyActiveGradeId, setLegacyActiveGradeId] = useState('');
   const [searchParams, setSearchParams] = useSearchParams();
   const [customReason, setCustomReason] = useState('');
   const [selectedStudentForCustom, setSelectedStudentForCustom] = useState(null);
@@ -75,33 +76,12 @@ function MyClassTab() {
     setKioskGradeId(kioskConfigQuery.data?.classId || kioskConfigQuery.data?.gradeId || null);
   }, [kioskConfigQuery.data, kioskConfigQuery.isSuccess]);
 
-  const {
-    data: legacyClasses = [],
-    isLoading: legacyClassesLoading,
-    isError: legacyClassesError,
-    refetch: refetchLegacyClasses,
-  } = useQuery({
-    queryKey: ['my-classes', 'legacy'],
-    queryFn: () => apiRequest('GET', isAdmin ? '/grades' : '/my-classes'),
-    select: (data) => Array.isArray(data) ? data : (data?.grades ?? data?.classes ?? []),
-    enabled: sourceResolved && !canonical,
-  });
-
-  const myClasses = useMemo(
-    () => (canonical ? (classInventoryQuery.data?.classes || []) : legacyClasses),
-    [canonical, classInventoryQuery.data?.classes, legacyClasses]
-  );
+  const myClasses = classInventoryQuery.data?.classes || [];
   const requestedClassId = searchParams.get('classId') || '';
-  const requestedClassIsAvailable = canonical && myClasses.some((item) => item.id === requestedClassId);
-  const activeGradeId = canonical
-    ? (requestedClassIsAvailable ? requestedClassId : (myClasses[0]?.id || ''))
-    : legacyActiveGradeId;
+  const requestedClassIsAvailable = myClasses.some((item) => item.id === requestedClassId);
+  const activeGradeId = requestedClassIsAvailable ? requestedClassId : (myClasses[0]?.id || '');
 
   const setActiveGradeId = (classId) => {
-    if (!canonical) {
-      setLegacyActiveGradeId(classId);
-      return;
-    }
     const next = new URLSearchParams(searchParams);
     next.set('classId', classId);
     setSearchParams(next);
@@ -109,31 +89,19 @@ function MyClassTab() {
 
   // Auto-select first class if none selected
   React.useEffect(() => {
-    if (sourceResolved && !canonical && !legacyActiveGradeId && myClasses.length > 0) {
-      setLegacyActiveGradeId(myClasses[0].id);
-    }
-    if (canonical && activeGradeId && requestedClassId !== activeGradeId) {
+    if (sourceResolved && activeGradeId && requestedClassId !== activeGradeId) {
       const next = new URLSearchParams(searchParams);
       next.set('classId', activeGradeId);
       setSearchParams(next, { replace: true });
     }
-  }, [activeGradeId, canonical, legacyActiveGradeId, myClasses, requestedClassId, searchParams, setSearchParams, sourceResolved]);
+  }, [activeGradeId, requestedClassId, searchParams, setSearchParams, sourceResolved]);
 
   const {
     data: students = [],
     isLoading: studentsLoading,
     isError: studentsError,
     refetch: refetchStudents,
-  } = useQuery({
-    queryKey: canonical
-      ? ['passpilot', 'class-students', activeGradeId]
-      : ['/api/students'],
-    queryFn: () => canonical
-      ? passPilotClassRequest('GET', `/passpilot/classes/${encodeURIComponent(activeGradeId)}/students`)
-      : apiRequest('GET', '/students'),
-    select: (data) => Array.isArray(data) ? data : (data?.students ?? []),
-    enabled: sourceResolved && (!canonical || !!activeGradeId),
-  });
+  } = usePassPilotClassRoster(activeGradeId, sourceResolved && !!activeGradeId);
 
   const {
     data: passes = [],
@@ -209,9 +177,7 @@ function MyClassTab() {
     });
 
     // Include ALL grade students (even those with 0 passes)
-    const currentGradeStudents = canonical
-      ? students
-      : students.filter(s => s.gradeId === activeGradeId);
+    const currentGradeStudents = students;
     currentGradeStudents.forEach(s => {
       if (!studentCounts.has(s.id)) {
         studentCounts.set(s.id, { id: s.id, name: `${s.firstName} ${s.lastName}`, count: 0 });
@@ -246,7 +212,7 @@ function MyClassTab() {
     const avgDuration = completedCount > 0 ? Math.round(totalDuration / completedCount) : 0;
 
     return { allStudents, topDestinations, total: passHistory.length, avgDuration };
-  }, [passHistory, students, activeGradeId, canonical]);
+  }, [passHistory, students]);
 
   // Per-student destinations when a student is selected
   const selectedStudentStats = useMemo(() => {
@@ -307,8 +273,7 @@ function MyClassTab() {
 
   const isLoading = studentsLoading
     || passesLoading
-    || classInventoryQuery.isLoading
-    || (sourceResolved && !canonical && legacyClassesLoading);
+    || classInventoryQuery.isLoading;
 
   const handleMarkOut = async (studentId, studentName, passType = 'general', customReasonText = '') => {
     try {
@@ -316,7 +281,7 @@ function MyClassTab() {
         studentId,
         passType,
         customReason: customReasonText || undefined,
-        ...(canonical && activeGradeId ? { classId: activeGradeId } : {}),
+        ...(activeGradeId ? { classId: activeGradeId } : {}),
       };
 
       await passPilotClassRequest('POST', '/passes', requestBody);
@@ -324,9 +289,7 @@ function MyClassTab() {
       queryClient.invalidateQueries({ queryKey: ['/api/passes/active'] });
       queryClient.invalidateQueries({ queryKey: ['/api/passes'] });
       queryClient.invalidateQueries({ queryKey: ['/api/students'] });
-      if (canonical && activeGradeId) {
-        queryClient.invalidateQueries({ queryKey: ['passpilot', 'class-students', activeGradeId] });
-      }
+      if (activeGradeId) queryClient.invalidateQueries({ queryKey: passPilotClassRosterQueryKey(activeGradeId) });
 
       const reasonText = customReasonText ? customReasonText : (
         passType === 'nurse' ? 'Nurse' :
@@ -404,9 +367,7 @@ function MyClassTab() {
       queryClient.invalidateQueries({ queryKey: ['/api/passes/active'] });
       queryClient.invalidateQueries({ queryKey: ['/api/passes'] });
       queryClient.invalidateQueries({ queryKey: ['/api/students'] });
-      if (canonical && activeGradeId) {
-        queryClient.invalidateQueries({ queryKey: ['passpilot', 'class-students', activeGradeId] });
-      }
+      if (activeGradeId) queryClient.invalidateQueries({ queryKey: passPilotClassRosterQueryKey(activeGradeId) });
 
       toast({
         title: "Student returned",
@@ -556,7 +517,7 @@ function MyClassTab() {
     );
   }
 
-  if (legacyClassesError || studentsError || passesError) {
+  if (studentsError || passesError) {
     return (
       <div className="p-4">
         <Card className="border-destructive/40">
@@ -570,7 +531,6 @@ function MyClassTab() {
               variant="outline"
               className="mt-4"
               onClick={() => {
-                if (legacyClassesError) void refetchLegacyClasses();
                 if (studentsError) void refetchStudents();
                 if (passesError) void refetchPasses();
               }}
@@ -616,15 +576,10 @@ function MyClassTab() {
 
   // Get current active grade data
   const currentActiveGrade = myClasses.find(g => g.id === activeGradeId);
-  const gradeStudents = currentActiveGrade
-    ? (canonical ? students : students.filter((student) => student.gradeId === currentActiveGrade.id))
-    : [];
+  const gradeStudents = currentActiveGrade ? students : [];
   const gradeOutPasses = currentActiveGrade ? passes.filter((pass) => {
-    if (canonical) {
-      return (pass.classId || pass.classpilotGroupId) === currentActiveGrade.id;
-    }
-    const student = students.find((s) => s.id === pass.studentId);
-    return student && student.gradeId === currentActiveGrade.id;
+    const passClassId = pass.classId || pass.classpilotGroupId || pass.gradeId;
+    return passClassId === currentActiveGrade.id;
   }) : [];
 
   // Filter students based on search query
@@ -704,11 +659,9 @@ function MyClassTab() {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap gap-2">
             {myClasses.map((grade) => {
-              const gradeOutCount = passes.filter(p => {
-                if (canonical) return (p.classId || p.classpilotGroupId) === grade.id;
-                const student = students.find(s => s.id === p.studentId);
-                return student && student.gradeId === grade.id;
-              }).length;
+              const gradeOutCount = passes.filter((pass) => (
+                pass.classId || pass.classpilotGroupId || pass.gradeId
+              ) === grade.id).length;
 
               const isActive = activeGradeId === grade.id;
 

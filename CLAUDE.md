@@ -725,6 +725,15 @@ the flag on later releases:
   --enable-rls-table classpilot_session_summary_deliveries
 ```
 
+For the single release that first adds the PassPilot legacy multi-class
+membership table, use the same reviewed one-table path and omit the flag on
+later releases:
+
+```bash
+./scripts/deploy.sh production --backend --activate-emergency \
+  --enable-rls-table passpilot_grade_students
+```
+
 That mode keeps the prior 2048 MiB API serving while the deploy script builds
 and registers the new image. It then uses the newly registered, digest-matched
 2048 MiB revision for the migration task, API service update, and strict

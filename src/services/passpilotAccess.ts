@@ -1,5 +1,5 @@
 import type { Request, RequestHandler, Response } from "express";
-import { and, eq, inArray, or } from "drizzle-orm";
+import { and, eq, inArray, or, type SQL } from "drizzle-orm";
 import db from "../db.js";
 import {
   schoolMemberships,
@@ -8,6 +8,7 @@ import {
 } from "../schema/core.js";
 import {
   grades,
+  passpilotGradeStudents,
   passes,
   teacherGrades,
   type Pass,
@@ -345,6 +346,45 @@ export async function getTeacherGradeIds(
   return new Set(rows.map((row) => row.gradeId));
 }
 
+export async function getLegacyAccessibleStudentIds(
+  schoolId: string,
+  allowedGradeIds: Set<string>,
+  candidateStudentIds?: Set<string>
+): Promise<Set<string>> {
+  if (allowedGradeIds.size === 0 || candidateStudentIds?.size === 0) return new Set();
+  const gradeIds = Array.from(allowedGradeIds);
+  const membershipConditions: SQL[] = [
+    eq(passpilotGradeStudents.schoolId, schoolId),
+    inArray(passpilotGradeStudents.gradeId, gradeIds),
+    eq(students.schoolId, schoolId),
+  ];
+  if (candidateStudentIds) {
+    membershipConditions.push(
+      inArray(passpilotGradeStudents.studentId, Array.from(candidateStudentIds))
+    );
+  }
+  const membershipRows = await db
+    .select({ studentId: passpilotGradeStudents.studentId })
+    .from(passpilotGradeStudents)
+    .innerJoin(students, eq(students.id, passpilotGradeStudents.studentId))
+    .where(and(...membershipConditions));
+  const allowedStudentIds = new Set(membershipRows.map((row) => row.studentId));
+
+  const fallbackConditions: SQL[] = [
+    eq(students.schoolId, schoolId),
+    inArray(students.gradeId, gradeIds),
+  ];
+  if (candidateStudentIds) {
+    fallbackConditions.push(inArray(students.id, Array.from(candidateStudentIds)));
+  }
+  const fallbackRows = await db
+    .select({ studentId: students.id })
+    .from(students)
+    .where(and(...fallbackConditions));
+  for (const row of fallbackRows) allowedStudentIds.add(row.studentId);
+  return allowedStudentIds;
+}
+
 export async function getTeacherGradeAssignments(
   teacherId: string,
   schoolId: string
@@ -388,7 +428,14 @@ export async function canAccessLegacyPassHistory(
   if (!grade) return false;
   if (isPassPilotManager(role)) return true;
   if (role !== "teacher") return false;
-  if ((await getTeacherGradeIds(user.id, schoolId)).has(gradeId)) return true;
+  const source = await getPasspilotClassSourceForSchool(schoolId);
+  if (source === "classpilot_groups" && grade.classpilotGroupId) {
+    if ((await getTeacherCanonicalHistoryClassIds(user.id, schoolId)).has(grade.classpilotGroupId)) {
+      return true;
+    }
+  } else if ((await getTeacherGradeIds(user.id, schoolId)).has(gradeId)) {
+    return true;
+  }
   const [issued] = await db
     .select({ id: passes.id })
     .from(passes)
@@ -432,9 +479,12 @@ export async function canAccessStudent(
       .limit(1);
     return !!membership;
   }
-  if (!student.gradeId) return false;
   const teacherGradeIds = await getTeacherGradeIds(user.id, schoolId);
-  return teacherGradeIds.has(student.gradeId);
+  return (await getLegacyAccessibleStudentIds(
+    schoolId,
+    teacherGradeIds,
+    new Set([studentId])
+  )).has(studentId);
 }
 
 export async function canAccessPass(
@@ -467,13 +517,13 @@ export async function canAccessPass(
 
   const teacherGradeIds = await getTeacherGradeIds(user.id, schoolId);
   if (pass.gradeId && teacherGradeIds.has(pass.gradeId)) return true;
+  if (pass.gradeId) return false;
 
-  const [student] = await db
-    .select({ gradeId: students.gradeId })
-    .from(students)
-    .where(and(eq(students.id, pass.studentId), eq(students.schoolId, schoolId)))
-    .limit(1);
-  return !!student?.gradeId && teacherGradeIds.has(student.gradeId);
+  return (await getLegacyAccessibleStudentIds(
+    schoolId,
+    teacherGradeIds,
+    new Set([pass.studentId])
+  )).has(pass.studentId);
 }
 
 export type PassHistoryQueryAccessScope = {
@@ -498,7 +548,7 @@ export async function getPassHistoryQueryAccessScope(
   if (role !== "teacher") return empty;
 
   const source = await getPasspilotClassSourceForSchool(schoolId);
-  const teacherGradeIds = await getTeacherGradeIds(user.id, schoolId);
+  const assignedTeacherGradeIds = await getTeacherGradeIds(user.id, schoolId);
   const canonicalClassIds = source === "classpilot_groups"
     ? await getTeacherCanonicalHistoryClassIds(user.id, schoolId)
     : new Set<string>();
@@ -513,8 +563,23 @@ export async function getPassHistoryQueryAccessScope(
           )
         )
     : [];
+  const legacyTeacherGradeIds = source === "classpilot_groups" && assignedTeacherGradeIds.size > 0
+    ? new Set(
+        (await db
+          .select({ id: grades.id, classpilotGroupId: grades.classpilotGroupId })
+          .from(grades)
+          .where(
+            and(
+              eq(grades.schoolId, schoolId),
+              inArray(grades.id, Array.from(assignedTeacherGradeIds))
+            )
+          ))
+          .filter((grade) => !grade.classpilotGroupId)
+          .map((grade) => grade.id)
+      )
+    : assignedTeacherGradeIds;
   const allowedGradeIds = new Set([
-    ...teacherGradeIds,
+    ...legacyTeacherGradeIds,
     ...mappedGrades.map((grade) => grade.id),
   ]);
 
@@ -535,17 +600,7 @@ export async function getPassHistoryQueryAccessScope(
           )
         )
     : [];
-  const legacyStudentRows = allowedGradeIds.size > 0
-    ? await db
-        .select({ studentId: students.id })
-        .from(students)
-        .where(
-          and(
-            eq(students.schoolId, schoolId),
-            inArray(students.gradeId, Array.from(allowedGradeIds))
-          )
-        )
-    : [];
+  const legacyStudentIds = await getLegacyAccessibleStudentIds(schoolId, allowedGradeIds);
 
   return {
     issuerTeacherId: user.id,
@@ -554,7 +609,7 @@ export async function getPassHistoryQueryAccessScope(
     studentIds: Array.from(
       new Set([
         ...canonicalStudentRows.map((row) => row.studentId),
-        ...legacyStudentRows.map((row) => row.studentId),
+        ...legacyStudentIds,
       ])
     ),
   };
@@ -628,20 +683,10 @@ export async function filterPassesForRole(
       }
       return rawPasses.filter((pass) => allowedPassIds.has(pass.id));
     }
-    const studentRows = await db
-      .select({ id: students.id, gradeId: students.gradeId })
-      .from(students)
-      .where(
-        and(
-          eq(students.schoolId, schoolId),
-          inArray(students.id, Array.from(missingGradeStudentIds))
-        )
-      );
-
-    const allowedStudentIds = new Set(
-      studentRows
-        .filter((student) => !!student.gradeId && teacherGradeIds.has(student.gradeId))
-        .map((student) => student.id)
+    const allowedStudentIds = await getLegacyAccessibleStudentIds(
+      schoolId,
+      teacherGradeIds,
+      missingGradeStudentIds
     );
 
     for (const pass of rawPasses) {

@@ -9,6 +9,7 @@ import {
   index,
   unique,
   uniqueIndex,
+  check,
 } from "drizzle-orm/pg-core";
 
 // ============================================================================
@@ -58,6 +59,9 @@ export const schools = pgTable("schools", {
   // bcrypt hash of the kiosk PIN — never store or return the plaintext.
   // Required for the public kiosk endpoints (see routes/passpilot/kiosk.ts).
   kioskPinHash: text("kiosk_pin_hash"),
+  // Optimistic-concurrency token for the narrow PassPilot admin settings API.
+  // It is intentionally separate from the class-migration revision.
+  passpilotSettingsRevision: integer("passpilot_settings_revision").notNull().default(0),
   activeGradeLevels: text("active_grade_levels"), // JSON array
 
   // GoPilot settings
@@ -88,6 +92,10 @@ export const schools = pgTable("schools", {
 }, (table) => [
   unique("schools_domain_name_unique").on(table.domain, table.name),
   index("schools_domain_idx").on(table.domain),
+  check(
+    "schools_passpilot_settings_revision_check",
+    sql`${table.passpilotSettingsRevision} >= 0`
+  ),
 ]);
 
 export type School = typeof schools.$inferSelect;

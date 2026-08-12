@@ -13,6 +13,7 @@ import {
   autoAssignFamilyGroups,
   getClassroomCoursesBySchool,
   upsertClassroomCourse,
+  addStudentsToLegacyPasspilotGrade,
 } from "../../services/storage.js";
 import { recordImportRun } from "../../services/importLog.js";
 import {
@@ -32,6 +33,7 @@ import {
   getRosterClassroomClientForSchool,
   recordRosterConnectorSync,
 } from "../../services/googleRosterConnector.js";
+import { getPasspilotClassSourceForSchool } from "../../services/passpilotAccess.js";
 
 const router = Router();
 
@@ -213,6 +215,7 @@ async function hasActiveClassPilotLicense(schoolId: string): Promise<boolean> {
 
 type ClassroomStudentUpsertResult = {
   status: "imported" | "updated" | "skipped";
+  studentId?: string;
   generatedPin?: GeneratedClassPilotPin;
 };
 
@@ -252,7 +255,7 @@ async function upsertStudentFromClassroom(
       ...(options.gradeLevel ? { gradeLevel: options.gradeLevel } : {}),
       ...(options.homeroomId ? { homeroomId: options.homeroomId } : {}),
     });
-    return { status: "updated" };
+    return { status: "updated", studentId: existing.id };
   }
 
   const pin = options.autoGenerateClassPilotPins
@@ -272,6 +275,7 @@ async function upsertStudentFromClassroom(
   });
   return {
     status: "imported",
+    studentId: student.id,
     generatedPin: pin ? generatedPinForStudent(student, pin) : undefined,
   };
 }
@@ -285,7 +289,12 @@ async function getCourseMetadata(classroom: any, courseId: string, fallback?: an
   }
 }
 
-async function recordCourseSync(schoolId: string, courseId: string, course: any) {
+async function recordCourseSync(
+  schoolId: string,
+  courseId: string,
+  course: any,
+  gradeId?: string | null
+) {
   await upsertClassroomCourse({
     schoolId,
     googleCourseId: courseId,
@@ -294,6 +303,7 @@ async function recordCourseSync(schoolId: string, courseId: string, course: any)
     room: course.room || null,
     descriptionHeading: course.descriptionHeading || null,
     ownerId: course.ownerId || null,
+    ...(gradeId !== undefined ? { gradeId: gradeId || null } : {}),
     lastSyncedAt: new Date(),
   });
 }
@@ -494,6 +504,16 @@ router.post("/courses/:courseId/sync", ...adminAuth, async (req, res, next) => {
     const courseId = String(req.params.courseId ?? "");
     const schoolId = res.locals.schoolId!;
     const gradeLevel = req.body?.gradeLevel || null;
+    const gradeId = typeof req.body?.gradeId === "string" && req.body.gradeId.trim()
+      ? req.body.gradeId.trim()
+      : null;
+    if (gradeId && (await getPasspilotClassSourceForSchool(schoolId)) === "classpilot_groups") {
+      throw routeError(
+        "PassPilot classes and rosters are managed in ClassPilot after migration.",
+        409,
+        "CLASSES_MANAGED_IN_CLASSPILOT"
+      );
+    }
     const { classroom } = await getRosterClassroomClientForSchool(schoolId);
 
     const courseMeta = await getCourseMetadata(classroom, courseId);
@@ -506,6 +526,7 @@ router.post("/courses/:courseId/sync", ...adminAuth, async (req, res, next) => {
     const failures: string[] = [];
     const autoGenerateClassPilotPins = await hasActiveClassPilotLicense(schoolId);
     const generatedPins: GeneratedClassPilotPin[] = [];
+    const syncedStudentIds: string[] = [];
     const usedPins = new Set<string>();
     for (const gs of googleStudents) {
       try {
@@ -521,6 +542,7 @@ router.post("/courses/:courseId/sync", ...adminAuth, async (req, res, next) => {
         }
         else if (result.status === "updated") updated++;
         else skipped++;
+        if (result.studentId) syncedStudentIds.push(result.studentId);
       } catch (error: any) {
         skipped++;
         const email = gs.profile?.emailAddress || gs.userId || "unknown student";
@@ -528,7 +550,15 @@ router.post("/courses/:courseId/sync", ...adminAuth, async (req, res, next) => {
       }
     }
 
-    await recordCourseSync(schoolId, courseId, courseMeta);
+    if (gradeId && syncedStudentIds.length > 0) {
+      await addStudentsToLegacyPasspilotGrade(
+        schoolId,
+        gradeId,
+        syncedStudentIds,
+        { actorUserId: req.authUser!.id, manager: true }
+      );
+    }
+    await recordCourseSync(schoolId, courseId, courseMeta, gradeId);
     const autoAssigned = await maybeAutoAssignGoPilotFamilies(schoolId, imported);
 
     void recordImportRun({

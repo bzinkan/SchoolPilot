@@ -53,6 +53,26 @@ import { getClasspilotDashboardSnapshot } from "../dist/services/classpilotDashb
 import db, { pool } from "../dist/db.js";
 import { runWithTenantContext } from "../dist/middleware/tenantContext.js";
 
+function errorChainMatches(error: unknown, pattern: RegExp): boolean {
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    const message = current instanceof Error
+      ? current.message
+      : typeof current === "object" && "message" in current
+        ? String((current as { message?: unknown }).message)
+        : String(current);
+    if (pattern.test(message)) return true;
+    current = typeof current === "object" && "cause" in current
+      ? (current as { cause?: unknown }).cause
+      : undefined;
+  }
+
+  return false;
+}
+
 // Cross-tenant isolation regression suite. Seeds two schools and asserts the
 // school-scoped storage helpers never return one school's resource to the other,
 // and that legitimate same-school access still works (no over-blocking). Durable
@@ -105,6 +125,7 @@ after(async () => {
       await db.execute(sql`DELETE FROM homeroom_teachers WHERE homeroom_id IN (SELECT id FROM homerooms WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`}))`);
       await db.execute(sql`DELETE FROM homerooms WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
       await db.execute(sql`DELETE FROM groups WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
+      await db.execute(sql`DELETE FROM passpilot_grade_students WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
       await db.execute(sql`DELETE FROM grades WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
       await db.execute(sql`DELETE FROM students WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
       await db.execute(sql`DELETE FROM schools WHERE name LIKE 'xtest_%'`);
@@ -118,6 +139,44 @@ after(async () => {
 });
 
 describe("cross-school isolation", () => {
+  it("RLS partitions PassPilot legacy multi-class memberships", {
+    skip: process.env.RLS_GUC_ENABLED !== "true",
+  }, async () => {
+    const [gradeA, gradeB] = await Promise.all([
+      inSchool(schoolA.id, () => createGrade({ schoolId: schoolA.id, name: `${TAG}_pass_a` } as any)),
+      inSchool(schoolB.id, () => createGrade({ schoolId: schoolB.id, name: `${TAG}_pass_b` } as any)),
+    ]);
+    const [studentA, studentB] = await Promise.all([
+      inSchool(schoolA.id, () => createStudent({ schoolId: schoolA.id, firstName: "Pass", lastName: "A", status: "active" } as any)),
+      inSchool(schoolB.id, () => createStudent({ schoolId: schoolB.id, firstName: "Pass", lastName: "B", status: "active" } as any)),
+    ]);
+    await asSystem(() => db.execute(sql`
+      INSERT INTO passpilot_grade_students (school_id, grade_id, student_id)
+      VALUES
+        (${schoolA.id}, ${gradeA.id}, ${studentA.id}),
+        (${schoolB.id}, ${gradeB.id}, ${studentB.id})
+    `).then(() => undefined));
+
+    const rowsA = await inSchool(schoolA.id, () => db.execute(sql`
+      SELECT school_id, grade_id, student_id FROM passpilot_grade_students
+      WHERE student_id IN (${studentA.id}, ${studentB.id})
+    `));
+    const rowsB = await inSchool(schoolB.id, () => db.execute(sql`
+      SELECT school_id, grade_id, student_id FROM passpilot_grade_students
+      WHERE student_id IN (${studentA.id}, ${studentB.id})
+    `));
+    assert.deepEqual(rowsA.rows, [{ school_id: schoolA.id, grade_id: gradeA.id, student_id: studentA.id }]);
+    assert.deepEqual(rowsB.rows, [{ school_id: schoolB.id, grade_id: gradeB.id, student_id: studentB.id }]);
+    await assert.rejects(
+      inSchool(schoolA.id, () => db.execute(sql`
+        INSERT INTO passpilot_grade_students (school_id, grade_id, student_id)
+        VALUES (${schoolB.id}, ${gradeB.id}, ${studentB.id})
+        ON CONFLICT DO NOTHING
+      `)),
+      (error: unknown) => errorChainMatches(error, /row-level security|policy/i)
+    );
+  });
+
   it("RLS partitions ClassPilot summary delivery and roster snapshot rows by tenant context", {
     skip: process.env.RLS_GUC_ENABLED !== "true",
   }, async () => {

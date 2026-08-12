@@ -9,7 +9,7 @@ import {
   verifyLiveRlsEnablementSources,
 } from "../scripts/enforce-deploy-rls-allowlist.mjs";
 
-const targetTable = "classpilot_session_summary_deliveries";
+const targetTable = "passpilot_grade_students";
 const deploySource = readFileSync(new URL("../scripts/deploy.sh", import.meta.url), "utf8");
 const migrationSource = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
 const claudeSource = readFileSync(new URL("../CLAUDE.md", import.meta.url), "utf8");
@@ -43,7 +43,10 @@ function environmentValue(definition: ReturnType<typeof taskDefinition>, name: s
 
 describe("one-release RLS table enablement", () => {
   it("adds only the reviewed table after matching live API/worker admission", () => {
-    assert.deepEqual(REVIEWED_RLS_TABLE_ENABLEMENTS, [targetTable]);
+    assert.deepEqual(REVIEWED_RLS_TABLE_ENABLEMENTS, [
+      "classpilot_session_summary_deliveries",
+      targetTable,
+    ]);
     const api = taskDefinition("api");
     const worker = taskDefinition("scheduler-worker");
     assert.deepEqual(
@@ -153,6 +156,7 @@ describe("one-release RLS table enablement", () => {
     assert.ok(validationStart >= 0 && validationEnd > validationStart);
     const validation = deploySource.slice(validationStart, validationEnd);
     assert.match(validation, /classpilot_session_summary_deliveries/);
+    assert.match(validation, /passpilot_grade_students/);
     assert.match(validation, /"\$ENV" != "production"/);
     assert.match(validation, /"\$DEPLOY_BACKEND" != true/);
     assert.match(validation, /"\$DEPLOY_FRONTEND" != false/);
@@ -186,6 +190,7 @@ describe("one-release RLS table enablement", () => {
     assert.ok(assertionStart >= 0 && assertionEnd > assertionStart);
     const assertion = migrationSource.slice(assertionStart, assertionEnd);
     assert.match(assertion, /classpilot_session_summary_deliveries/);
+    assert.match(assertion, /passpilot_grade_students/);
     assert.match(assertion, /RLS_GUC_ENABLED !== "true"/);
     assert.match(assertion, /parseRlsEnabledTables\(\)\.has\(requiredRlsTable\)/);
     assert.match(assertion, /relation\.relrowsecurity/);
@@ -197,7 +202,7 @@ describe("one-release RLS table enablement", () => {
   it("documents the one-shot command and later kill-switch preservation", () => {
     assert.match(
       claudeSource,
-      /--enable-rls-table classpilot_session_summary_deliveries/
+      /--enable-rls-table passpilot_grade_students/
     );
     assert.match(claudeSource, /Omit the flag on later deploys/);
     assert.match(claudeSource, /per-table kill-switch removal then remains removed/);

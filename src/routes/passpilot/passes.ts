@@ -132,8 +132,8 @@ async function enrichPasses(rawPasses: Pass[], schoolId: string) {
             firstName: student.firstName,
             lastName: student.lastName,
             grade: className,
-            gradeId: pass.classpilotGroupId ? null : student.gradeId,
-            legacyGradeId: student.gradeId,
+            gradeId: pass.classpilotGroupId ? null : pass.gradeId,
+            legacyGradeId: pass.gradeId,
           }
         : null,
       teacher: teacher
@@ -347,15 +347,12 @@ router.post("/", async (req, res, next) => {
       });
     }
 
-    let passGradeId = student.gradeId || null;
+    let passGradeId: string | null = null;
     const requestedLegacyGradeId = gradeId || (classSource === "legacy_grades" ? classId : undefined);
     if (requestedLegacyGradeId) {
       const grade = await getGradeForSchool(requestedLegacyGradeId, schoolId);
       if (!grade) {
         return res.status(400).json({ error: "Class not found" });
-      }
-      if (student.gradeId && requestedLegacyGradeId !== student.gradeId) {
-        return res.status(400).json({ error: "Class does not match student" });
       }
       if (!(await canAccessGrade(req.authUser!, schoolId, requestedLegacyGradeId, role))) {
         return res.status(403).json({ error: "Insufficient permissions" });
@@ -421,7 +418,13 @@ router.post("/", async (req, res, next) => {
               manager: isPassPilotManager(role),
             }
           )
-        : await createLegacyPass({ ...commonPass, gradeId: passGradeId });
+        : await createLegacyPass(
+            { ...commonPass, gradeId: passGradeId },
+            {
+              actorUserId: req.authUser!.id,
+              manager: isPassPilotManager(role),
+            }
+          );
     } catch (err: any) {
       // Partial unique index (one active pass per student) — a concurrent
       // double-issue loses the race here. Surface it as the same 409.

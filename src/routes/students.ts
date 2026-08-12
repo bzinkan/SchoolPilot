@@ -19,6 +19,7 @@ import {
   getProductLicenses,
   autoAssignFamilyGroups,
   runWithPasspilotLegacyClassLock,
+  replaceLegacyPasspilotStudentClassInTransaction,
   type PasspilotClassTransaction,
 } from "../services/storage.js";
 import {
@@ -118,6 +119,14 @@ async function createStudentWithOptionalLegacyGradeLock(
   if (!writesLegacyGrade) return createStudent(data);
   return runWithPasspilotLegacyClassLock(data.schoolId, async (tx) => {
     const [student] = await tx.insert(studentsTable).values(data).returning();
+    if (student && data.gradeId) {
+      await replaceLegacyPasspilotStudentClassInTransaction(
+        tx,
+        data.schoolId,
+        student.id,
+        data.gradeId
+      );
+    }
     return student!;
   });
 }
@@ -129,9 +138,19 @@ async function bulkCreateStudentsWithOptionalLegacyGradeLock(
 ): Promise<Student[]> {
   if (!writesLegacyGrade) return bulkCreateStudents(data);
   if (data.length === 0) return [];
-  return runWithPasspilotLegacyClassLock(schoolId, (tx) =>
-    tx.insert(studentsTable).values(data).returning()
-  );
+  return runWithPasspilotLegacyClassLock(schoolId, async (tx) => {
+    const created = await tx.insert(studentsTable).values(data).returning();
+    for (const student of created) {
+      if (!student.gradeId) continue;
+      await replaceLegacyPasspilotStudentClassInTransaction(
+        tx,
+        schoolId,
+        student.id,
+        student.gradeId
+      );
+    }
+    return created;
+  });
 }
 
 async function updateStudentWithOptionalLegacyGradeLock(
@@ -142,12 +161,27 @@ async function updateStudentWithOptionalLegacyGradeLock(
 ): Promise<Student | undefined> {
   if (!writesLegacyGrade) return updateStudent(id, data);
   return runWithPasspilotLegacyClassLock(schoolId, async (tx) => {
+    const requestedGradeId = data.gradeId ? String(data.gradeId) : null;
+    const studentData = { ...data };
+    delete studentData.gradeId;
     const [student] = await tx
       .update(studentsTable)
-      .set({ ...data, updatedAt: new Date() })
+      .set({ ...studentData, updatedAt: new Date() })
       .where(and(eq(studentsTable.id, id), eq(studentsTable.schoolId, schoolId)))
       .returning();
-    return student;
+    if (!student) return undefined;
+    await replaceLegacyPasspilotStudentClassInTransaction(
+      tx,
+      schoolId,
+      student.id,
+      requestedGradeId
+    );
+    const [updated] = await tx
+      .select()
+      .from(studentsTable)
+      .where(and(eq(studentsTable.id, id), eq(studentsTable.schoolId, schoolId)))
+      .limit(1);
+    return updated;
   });
 }
 
@@ -158,9 +192,13 @@ async function applyBulkStudentUpdates(
 ): Promise<unknown[]> {
   const rows: unknown[] = [];
   for (const item of updates) {
+    const hasGradeId = hasExplicitLegacyGradeId(item.data);
+    const requestedGradeId = item.data.gradeId ? String(item.data.gradeId) : null;
+    const preparedData = prepareStudentUpdateData(item.data);
+    if (hasGradeId) delete preparedData.gradeId;
     const [updated] = await tx
       .update(studentsTable)
-      .set({ ...prepareStudentUpdateData(item.data), updatedAt: new Date() })
+      .set({ ...preparedData, updatedAt: new Date() })
       .where(
         and(
           eq(studentsTable.id, item.id),
@@ -168,7 +206,29 @@ async function applyBulkStudentUpdates(
         )
       )
       .returning();
-    if (updated) rows.push(stripStudentCredentialHash(updated));
+    if (updated && hasGradeId) {
+      await replaceLegacyPasspilotStudentClassInTransaction(
+        tx,
+        schoolId,
+        updated.id,
+        requestedGradeId
+      );
+    }
+    if (updated) {
+      const [current] = hasGradeId
+        ? await tx
+            .select()
+            .from(studentsTable)
+            .where(
+              and(
+                eq(studentsTable.id, updated.id),
+                eq(studentsTable.schoolId, schoolId)
+              )
+            )
+            .limit(1)
+        : [updated];
+      rows.push(stripStudentCredentialHash(current ?? updated));
+    }
   }
   return rows;
 }
@@ -1262,7 +1322,7 @@ router.delete(
         return res.status(404).json({ error: "Student not found" });
       }
 
-      await deleteStudent(param(req, "studentId"));
+      await deleteStudent(param(req, "studentId"), res.locals.schoolId!);
       return res.json({ ok: true });
     } catch (err) {
       next(err);

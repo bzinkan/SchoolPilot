@@ -28,6 +28,7 @@ import {
   getPasspilotClassSourceForSchool,
   getTeacherCanonicalClassIds,
   getTeacherGradeIds,
+  getLegacyAccessibleStudentIds,
   isPassPilotManager,
   type PassPilotRole,
 } from "./passpilotAccess.js";
@@ -108,13 +109,7 @@ async function passpilotStudentIdsForTeacher(ctx: ToolContext): Promise<Set<stri
   }
 
   const gradeIds = await getTeacherGradeIds(ctx.userId, ctx.schoolId);
-  if (gradeIds.size === 0) return new Set<string>();
-  const students = await getStudentsBySchool(ctx.schoolId);
-  return new Set(
-    students
-      .filter((student) => student.gradeId && gradeIds.has(student.gradeId))
-      .map((student) => student.id)
-  );
+  return getLegacyAccessibleStudentIds(ctx.schoolId, gradeIds);
 }
 
 const executors: Record<string, ToolExecutor> = {
@@ -432,7 +427,10 @@ const executors: Record<string, ToolExecutor> = {
             { ...commonPass, classId: args.classId },
             { actorUserId: ctx.userId, manager }
           )
-        : await createLegacyPass({ ...commonPass, gradeId: args.classId });
+        : await createLegacyPass(
+            { ...commonPass, gradeId: args.classId },
+            { actorUserId: ctx.userId, manager }
+          );
     } catch (err: any) {
       if (err?.code === "23505") {
         return { success: false, error: "Student already has an active pass" };

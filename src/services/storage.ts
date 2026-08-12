@@ -40,6 +40,7 @@ import {
 import {
   grades,
   teacherGrades,
+  passpilotGradeStudents,
   passes,
   type Grade,
   type InsertGrade,
@@ -812,9 +813,42 @@ export async function replaceEncryptedClasspilotPin(
   return updated.length === 1;
 }
 
-export async function deleteStudent(id: string): Promise<boolean> {
-  const result = await db.delete(students).where(eq(students.id, id));
-  return (result.rowCount ?? 0) > 0;
+export async function deleteStudent(id: string, schoolId: string): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    await takePasspilotClassLock(tx, schoolId);
+    const [student] = await tx
+      .select({ id: students.id })
+      .from(students)
+      .where(and(eq(students.id, id), eq(students.schoolId, schoolId)))
+      .limit(1)
+      .for("update");
+    if (!student) return false;
+    await tx
+      .delete(passpilotGradeStudents)
+      .where(
+        and(
+          eq(passpilotGradeStudents.schoolId, schoolId),
+          eq(passpilotGradeStudents.studentId, id)
+        )
+      );
+    const result = await tx
+      .delete(students)
+      .where(and(eq(students.id, id), eq(students.schoolId, schoolId)));
+    return (result.rowCount ?? 0) > 0;
+  });
+}
+
+function legacyGradeMembershipCondition(schoolId: string, gradeId: string): SQL {
+  return sql`(
+    EXISTS (
+      SELECT 1
+      FROM passpilot_grade_students AS passpilot_membership
+      WHERE passpilot_membership.school_id = ${schoolId}
+        AND passpilot_membership.student_id = ${students.id}
+        AND passpilot_membership.grade_id = ${gradeId}
+    )
+    OR ${students.gradeId} = ${gradeId}
+  )`;
 }
 
 export async function searchStudents(
@@ -840,7 +874,7 @@ export async function searchStudents(
     conditions.push(eq(students.gradeLevel, options.gradeLevel));
   }
   if (options.gradeId) {
-    conditions.push(eq(students.gradeId, options.gradeId));
+    conditions.push(legacyGradeMembershipCondition(schoolId, options.gradeId));
   }
   if (options.homeroomId) {
     conditions.push(eq(students.homeroomId, options.homeroomId));
@@ -920,9 +954,26 @@ export async function updateSchool(
   id: string,
   data: Partial<InsertSchool>
 ): Promise<School | undefined> {
+  const passpilotSettingsFields = [
+    "name",
+    "schoolTimezone",
+    "kioskEnabled",
+    "kioskRequiresApproval",
+    "kioskPinHash",
+  ] as const;
+  const touchesPasspilotSettings = passpilotSettingsFields.some((field) =>
+    Object.prototype.hasOwnProperty.call(data, field)
+  );
+  const update: PgUpdateSetSource<typeof schools> = {
+    ...data,
+    updatedAt: new Date(),
+    ...(touchesPasspilotSettings
+      ? { passpilotSettingsRevision: sql`${schools.passpilotSettingsRevision} + 1` }
+      : {}),
+  };
   const [school] = await db
     .update(schools)
-    .set({ ...data, updatedAt: new Date() })
+    .set(update)
     .where(eq(schools.id, id))
     .returning();
   if (school) {
@@ -931,6 +982,272 @@ export async function updateSchool(
     await publishCacheInvalidation(target);
   }
   return school;
+}
+
+export type PasspilotAdminSettingsDto = {
+  name: string;
+  schoolTimezone: string;
+  kioskEnabled: boolean;
+  kioskRequiresApproval: boolean;
+  kioskPinConfigured: boolean;
+  revision: number;
+};
+
+export type PasspilotAdminSettingsPatch = {
+  name?: string;
+  schoolTimezone?: string;
+  kioskEnabled?: boolean;
+  kioskRequiresApproval?: boolean;
+  kioskPinHash?: string | null;
+};
+
+export type PasspilotAdminSettingsActor = {
+  userId: string;
+  userEmail?: string;
+  userRole?: string;
+};
+
+export type UpdatePasspilotAdminSettingsResult =
+  | {
+      status: "saved";
+      current: PasspilotAdminSettingsDto;
+      changedFields: string[];
+      kioskPinChange: "configured" | "cleared" | null;
+    }
+  | { status: "conflict"; current: PasspilotAdminSettingsDto }
+  | { status: "pin_required"; current: PasspilotAdminSettingsDto };
+
+function passpilotAdminSettingsDto(school: Pick<
+  School,
+  | "name"
+  | "schoolTimezone"
+  | "kioskEnabled"
+  | "kioskRequiresApproval"
+  | "kioskPinHash"
+  | "passpilotSettingsRevision"
+>): PasspilotAdminSettingsDto {
+  return {
+    name: school.name,
+    schoolTimezone: school.schoolTimezone,
+    kioskEnabled: school.kioskEnabled,
+    kioskRequiresApproval: school.kioskRequiresApproval,
+    kioskPinConfigured: Boolean(school.kioskPinHash),
+    revision: school.passpilotSettingsRevision,
+  };
+}
+
+/**
+ * Read the deliberately narrow, non-secret PassPilot school-settings DTO.
+ * Callers must already be inside an authenticated school tenant context.
+ */
+export async function getPasspilotAdminSettings(
+  schoolId: string
+): Promise<PasspilotAdminSettingsDto | undefined> {
+  const [school] = await db
+    .select({
+      name: schools.name,
+      schoolTimezone: schools.schoolTimezone,
+      kioskEnabled: schools.kioskEnabled,
+      kioskRequiresApproval: schools.kioskRequiresApproval,
+      kioskPinHash: schools.kioskPinHash,
+      passpilotSettingsRevision: schools.passpilotSettingsRevision,
+    })
+    .from(schools)
+    .where(and(eq(schools.id, schoolId), isNull(schools.deletedAt)))
+    .limit(1);
+  return school ? passpilotAdminSettingsDto(school) : undefined;
+}
+
+/** Narrow compatibility write used by PassPilot's existing grade-level picker. */
+export async function updatePasspilotActiveGradeLevels(
+  schoolId: string,
+  gradeLevels: string[]
+): Promise<string | undefined> {
+  const activeGradeLevels = JSON.stringify(gradeLevels);
+  const [school] = await db
+    .update(schools)
+    .set({ activeGradeLevels, updatedAt: new Date() })
+    .where(and(eq(schools.id, schoolId), isNull(schools.deletedAt)))
+    .returning({ activeGradeLevels: schools.activeGradeLevels });
+  return school?.activeGradeLevels ?? undefined;
+}
+
+/**
+ * Atomically updates the authoritative school row and the ClassPilot settings
+ * name/timezone mirrors. The school row lock makes the revisioned contract a
+ * single winner and safely serializes the narrow legacy alias.
+ */
+async function persistPasspilotAdminSettings(
+  schoolId: string,
+  expectedRevision: number | undefined,
+  patch: PasspilotAdminSettingsPatch,
+  actor: PasspilotAdminSettingsActor,
+  contract: "revisioned" | "legacy_alias"
+): Promise<UpdatePasspilotAdminSettingsResult | undefined> {
+  const result = await db.transaction(async (tx) => {
+    const [currentSchool] = await tx
+      .select({
+        name: schools.name,
+        schoolTimezone: schools.schoolTimezone,
+        kioskEnabled: schools.kioskEnabled,
+        kioskRequiresApproval: schools.kioskRequiresApproval,
+        kioskPinHash: schools.kioskPinHash,
+        passpilotSettingsRevision: schools.passpilotSettingsRevision,
+      })
+      .from(schools)
+      .where(and(eq(schools.id, schoolId), isNull(schools.deletedAt)))
+      .limit(1)
+      .for("update");
+    if (!currentSchool) return undefined;
+
+    const current = passpilotAdminSettingsDto(currentSchool);
+    if (expectedRevision !== undefined && current.revision !== expectedRevision) {
+      return { status: "conflict" as const, current };
+    }
+
+    const nextName = patch.name === undefined ? current.name : patch.name.trim();
+    const nextTimezone = patch.schoolTimezone ?? current.schoolTimezone;
+    const nextKioskEnabled = patch.kioskEnabled ?? current.kioskEnabled;
+    const nextKioskRequiresApproval =
+      patch.kioskRequiresApproval ?? current.kioskRequiresApproval;
+    const nextKioskPinHash =
+      patch.kioskPinHash === undefined ? currentSchool.kioskPinHash : patch.kioskPinHash;
+
+    // Public kiosk routes deliberately fail closed without a PIN. Do not let
+    // an administrator create a misleading "enabled" configuration that can
+    // never authenticate, or clear the PIN while the kiosk remains enabled.
+    if (nextKioskEnabled && !nextKioskPinHash) {
+      return { status: "pin_required" as const, current };
+    }
+
+    const changedFields: string[] = [];
+    if (nextName !== current.name) changedFields.push("name");
+    if (nextTimezone !== current.schoolTimezone) changedFields.push("schoolTimezone");
+    if (nextKioskEnabled !== current.kioskEnabled) changedFields.push("kioskEnabled");
+    if (nextKioskRequiresApproval !== current.kioskRequiresApproval) {
+      changedFields.push("kioskRequiresApproval");
+    }
+    const kioskPinChange = patch.kioskPinHash === undefined
+      ? null
+      : patch.kioskPinHash === null
+        ? "cleared" as const
+        : "configured" as const;
+    if (kioskPinChange) changedFields.push("kioskPin");
+
+    const revision = current.revision + 1;
+    const now = new Date();
+    const [savedSchool] = await tx
+      .update(schools)
+      .set({
+        name: nextName,
+        schoolTimezone: nextTimezone,
+        kioskEnabled: nextKioskEnabled,
+        kioskRequiresApproval: nextKioskRequiresApproval,
+        kioskPinHash: nextKioskPinHash,
+        passpilotSettingsRevision: revision,
+        updatedAt: now,
+      })
+      .where(eq(schools.id, schoolId))
+      .returning({
+        name: schools.name,
+        schoolTimezone: schools.schoolTimezone,
+        kioskEnabled: schools.kioskEnabled,
+        kioskRequiresApproval: schools.kioskRequiresApproval,
+        kioskPinHash: schools.kioskPinHash,
+        passpilotSettingsRevision: schools.passpilotSettingsRevision,
+      });
+    if (!savedSchool) return undefined;
+
+    // Some ClassPilot consumers still read these two values from settings.
+    // A missing row is a provisioning/integrity failure: never manufacture one
+    // with an empty security-sensitive ws_shared_key. Throwing here rolls back
+    // the authoritative school update and revision increment above.
+    const [savedMirror] = await tx
+      .update(settings)
+      .set({
+        schoolName: nextName,
+        schoolTimezone: nextTimezone,
+      })
+      .where(eq(settings.schoolId, schoolId))
+      .returning({ id: settings.id });
+    if (!savedMirror) {
+      throw Object.assign(
+        new Error("PassPilot school settings are not initialized."),
+        { status: 500, code: "PASSPILOT_SETTINGS_MIRROR_MISSING" }
+      );
+    }
+
+    // The audit row belongs to the same tenant transaction, so a successful
+    // response cannot exist without its corresponding sanitized audit event.
+    await tx.insert(auditLogs).values({
+      schoolId,
+      userId: actor.userId,
+      userEmail: actor.userEmail ?? null,
+      userRole: actor.userRole ?? null,
+      action: "passpilot.settings.update",
+      entityType: "school",
+      entityId: schoolId,
+      changes: {
+        fields: changedFields,
+        kioskPin: kioskPinChange,
+      },
+      metadata: { revision, contract },
+    });
+
+    return {
+      status: "saved" as const,
+      current: passpilotAdminSettingsDto(savedSchool),
+      changedFields,
+      kioskPinChange,
+    };
+  });
+
+  if (result?.status === "saved") {
+    invalidateHeartbeatTrackingSettingsCache(schoolId);
+    const targets = [
+      { kind: "cache-invalidation", schoolId, cache: "classpilot-dashboard-school" },
+      { kind: "cache-invalidation", schoolId, cache: "heartbeat-tracking-settings" },
+    ] as const;
+    for (const target of targets) {
+      dispatchCacheInvalidation(target);
+      await publishCacheInvalidation(target);
+    }
+  }
+  return result;
+}
+
+export async function updatePasspilotAdminSettings(
+  schoolId: string,
+  expectedRevision: number,
+  patch: PasspilotAdminSettingsPatch,
+  actor: PasspilotAdminSettingsActor
+): Promise<UpdatePasspilotAdminSettingsResult | undefined> {
+  return persistPasspilotAdminSettings(
+    schoolId,
+    expectedRevision,
+    patch,
+    actor,
+    "revisioned"
+  );
+}
+
+/**
+ * Backend-first bridge for the previously deployed web form, which did not
+ * send a revision. The transaction still locks and re-reads the school row,
+ * then applies only fields explicitly present in the strict legacy payload.
+ */
+export async function updatePasspilotAdminSettingsCompatibility(
+  schoolId: string,
+  patch: PasspilotAdminSettingsPatch,
+  actor: PasspilotAdminSettingsActor
+): Promise<UpdatePasspilotAdminSettingsResult | undefined> {
+  return persistPasspilotAdminSettings(
+    schoolId,
+    undefined,
+    patch,
+    actor,
+    "legacy_alias"
+  );
 }
 
 export async function softDeleteSchool(
@@ -1241,6 +1558,15 @@ export async function deleteGrade(id: string): Promise<boolean> {
       .select({ count: sql<number>`COUNT(*)::int` })
       .from(students)
       .where(and(eq(students.schoolId, existing.schoolId), eq(students.gradeId, id)));
+    const [membershipReference] = await tx
+      .select({ count: sql<number>`COUNT(*)::int` })
+      .from(passpilotGradeStudents)
+      .where(
+        and(
+          eq(passpilotGradeStudents.schoolId, existing.schoolId),
+          eq(passpilotGradeStudents.gradeId, id)
+        )
+      );
     const [teacherReference] = await tx
       .select({ count: sql<number>`COUNT(*)::int` })
       .from(teacherGrades)
@@ -1253,6 +1579,7 @@ export async function deleteGrade(id: string): Promise<boolean> {
     const hasReferences =
       (passReference?.count ?? 0) > 0 ||
       (studentReference?.count ?? 0) > 0 ||
+      (membershipReference?.count ?? 0) > 0 ||
       (teacherReference?.count ?? 0) > 0 ||
       (kioskReference?.count ?? 0) > 0 ||
       lockedGrade.migrationState !== "pending" ||
@@ -1753,7 +2080,52 @@ export async function createPass(data: InsertPass): Promise<Pass> {
   return pass!;
 }
 
-export async function createLegacyPass(data: InsertPass): Promise<Pass> {
+export type LegacyPasspilotClassAuthorization = {
+  actorUserId?: string | null;
+  manager?: boolean;
+  kiosk?: boolean;
+  expectedKioskClassId?: string | null;
+};
+
+async function assertLegacyPasspilotClassAuthorization(
+  tx: PasspilotClassTransaction,
+  schoolId: string,
+  gradeId: string,
+  authorization: Pick<LegacyPasspilotClassAuthorization, "actorUserId" | "manager">
+): Promise<void> {
+  if (authorization.manager) return;
+  if (!authorization.actorUserId) {
+    throw passpilotClassError(
+      "PASSPILOT_CLASS_ACCESS_DENIED",
+      "Class access denied.",
+      403
+    );
+  }
+  const [assignment] = await tx
+    .select({ id: teacherGrades.id })
+    .from(teacherGrades)
+    .innerJoin(grades, eq(teacherGrades.gradeId, grades.id))
+    .where(
+      and(
+        eq(teacherGrades.teacherId, authorization.actorUserId),
+        eq(teacherGrades.gradeId, gradeId),
+        eq(grades.schoolId, schoolId)
+      )
+    )
+    .limit(1);
+  if (!assignment) {
+    throw passpilotClassError(
+      "PASSPILOT_CLASS_ACCESS_DENIED",
+      "Class access denied.",
+      403
+    );
+  }
+}
+
+export async function createLegacyPass(
+  data: InsertPass,
+  authorization: LegacyPasspilotClassAuthorization
+): Promise<Pass> {
   return db.transaction(async (tx) => {
     await takePasspilotClassLock(tx, data.schoolId);
     const [settingsRow] = await tx
@@ -1769,23 +2141,6 @@ export async function createLegacyPass(data: InsertPass): Promise<Pass> {
         409
       );
     }
-    if (data.gradeId) {
-      const [grade] = await tx
-        .select({ id: grades.id, migrationState: grades.migrationState })
-        .from(grades)
-        .where(and(eq(grades.id, data.gradeId), eq(grades.schoolId, data.schoolId)))
-        .limit(1);
-      if (!grade) {
-        throw passpilotClassError("PASSPILOT_LEGACY_CLASS_NOT_FOUND", "Class not found.", 404);
-      }
-      if (grade.migrationState === "history_only") {
-        throw passpilotClassError(
-          "PASSPILOT_HISTORY_CLASS_READ_ONLY",
-          "This legacy class is history-only and cannot issue new passes.",
-          409
-        );
-      }
-    }
     const [student] = await tx
       .select({ id: students.id, gradeId: students.gradeId })
       .from(students)
@@ -1797,14 +2152,144 @@ export async function createLegacyPass(data: InsertPass): Promise<Pass> {
         )
       )
       .limit(1);
-    if (!student || (data.gradeId && student.gradeId && data.gradeId !== student.gradeId)) {
+    if (!student) {
       throw passpilotClassError(
         "PASSPILOT_STUDENT_NOT_IN_CLASS",
         "Student is not enrolled in the selected class.",
         409
       );
     }
-    const [pass] = await tx.insert(passes).values(data).returning();
+
+    const memberships = await tx
+      .select({
+        gradeId: passpilotGradeStudents.gradeId,
+        name: grades.name,
+        migrationState: grades.migrationState,
+      })
+      .from(passpilotGradeStudents)
+      .innerJoin(
+        grades,
+        and(
+          eq(grades.id, passpilotGradeStudents.gradeId),
+          eq(grades.schoolId, passpilotGradeStudents.schoolId)
+        )
+      )
+      .where(
+        and(
+          eq(passpilotGradeStudents.schoolId, data.schoolId),
+          eq(passpilotGradeStudents.studentId, data.studentId)
+        )
+      )
+      .orderBy(asc(passpilotGradeStudents.assignedAt), asc(passpilotGradeStudents.gradeId));
+
+    let resolvedGradeId = data.gradeId ?? null;
+    let requestedGrade: (typeof memberships)[number] | undefined;
+    if (resolvedGradeId) {
+      const [grade] = await tx
+        .select({
+          gradeId: grades.id,
+          name: grades.name,
+          migrationState: grades.migrationState,
+        })
+        .from(grades)
+        .where(and(eq(grades.id, resolvedGradeId), eq(grades.schoolId, data.schoolId)))
+        .limit(1);
+      if (!grade) {
+        throw passpilotClassError("PASSPILOT_LEGACY_CLASS_NOT_FOUND", "Class not found.", 404);
+      }
+      requestedGrade = grade;
+    }
+    let selectedGrade = resolvedGradeId
+      ? memberships.find((membership) => membership.gradeId === resolvedGradeId)
+      : undefined;
+    if (student.gradeId && !memberships.some((membership) => membership.gradeId === student.gradeId)) {
+      const [fallbackGrade] = await tx
+        .select({
+          gradeId: grades.id,
+          name: grades.name,
+          migrationState: grades.migrationState,
+        })
+        .from(grades)
+        .where(and(eq(grades.id, student.gradeId), eq(grades.schoolId, data.schoolId)))
+        .limit(1);
+      if (fallbackGrade) {
+        memberships.push(fallbackGrade);
+        if (resolvedGradeId === fallbackGrade.gradeId) selectedGrade = fallbackGrade;
+      }
+    }
+    const writableMemberships = memberships.filter(
+      (membership) => membership.migrationState !== "history_only"
+    );
+    if (!resolvedGradeId) {
+      if (writableMemberships.length > 1) {
+        throw passpilotClassError(
+          "PASSPILOT_CLASS_REQUIRED",
+          "Select the class for this student before issuing a pass.",
+          400
+        );
+      }
+      if (writableMemberships.length === 1) {
+        selectedGrade = writableMemberships[0];
+        resolvedGradeId = selectedGrade!.gradeId;
+      }
+    }
+    if (resolvedGradeId && !selectedGrade) {
+      throw passpilotClassError(
+        "PASSPILOT_STUDENT_NOT_IN_CLASS",
+        "Student is not enrolled in the selected class.",
+        409
+      );
+    }
+    if (selectedGrade && requestedGrade) selectedGrade = requestedGrade;
+    if (selectedGrade?.migrationState === "history_only") {
+      throw passpilotClassError(
+        "PASSPILOT_HISTORY_CLASS_READ_ONLY",
+        "This legacy class is history-only and cannot issue new passes.",
+        409
+      );
+    }
+    if (authorization?.kiosk) {
+      const [school] = await tx
+        .select({ kioskGradeId: schools.kioskGradeId })
+        .from(schools)
+        .where(eq(schools.id, data.schoolId))
+        .limit(1)
+        .for("update");
+      if (
+        !school ||
+        school.kioskGradeId !== (authorization.expectedKioskClassId ?? null) ||
+        (school.kioskGradeId !== null && school.kioskGradeId !== resolvedGradeId)
+      ) {
+        throw passpilotClassError(
+          "PASSPILOT_KIOSK_CLASS_CHANGED",
+          "The configured kiosk class changed. Reload the kiosk before checking out.",
+          409
+        );
+      }
+    } else if (!authorization.manager) {
+      if (!resolvedGradeId) {
+        throw passpilotClassError(
+          "PASSPILOT_CLASS_REQUIRED",
+          "Select the class for this student before issuing a pass.",
+          400
+        );
+      }
+      await assertLegacyPasspilotClassAuthorization(
+        tx,
+        data.schoolId,
+        resolvedGradeId,
+        authorization
+      );
+    }
+    const [pass] = await tx
+      .insert(passes)
+      .values({
+        ...data,
+        gradeId: resolvedGradeId,
+        classpilotGroupId: null,
+        classNameSnapshot: selectedGrade?.name ?? data.classNameSnapshot ?? null,
+      })
+      .returning();
     return pass!;
   });
 }
@@ -1871,12 +2356,44 @@ export async function getKioskStudentState(
       )
       .limit(1);
     if (classSource === "legacy_grades") {
+      const configuredClassId = school.kioskGradeId;
+      if (!configuredClassId) {
+        return {
+          source: classSource,
+          configuredClassId: null,
+          enrolled: true,
+          activePass: activePass ?? null,
+          hasActivePassInAnotherClass: false,
+        };
+      }
+      const [membership] = await tx
+        .select({ id: students.id })
+        .from(students)
+        .where(
+          and(
+            eq(students.id, studentId),
+            eq(students.schoolId, schoolId),
+            eq(students.status, "active"),
+            legacyGradeMembershipCondition(schoolId, configuredClassId)
+          )
+        )
+        .limit(1);
+      if (!membership) {
+        return {
+          source: classSource,
+          configuredClassId,
+          enrolled: false,
+          activePass: null,
+          hasActivePassInAnotherClass: false,
+        };
+      }
+      const belongsToConfiguredClass = !activePass || activePass.gradeId === configuredClassId;
       return {
         source: classSource,
-        configuredClassId: school.kioskGradeId,
+        configuredClassId,
         enrolled: true,
-        activePass: activePass ?? null,
-        hasActivePassInAnotherClass: false,
+        activePass: belongsToConfiguredClass ? (activePass ?? null) : null,
+        hasActivePassInAnotherClass: !!activePass && !belongsToConfiguredClass,
       };
     }
     if (!canonicalCapability) {
@@ -2007,7 +2524,15 @@ export async function returnKioskPassForStudent(
       .for("update");
     if (!activePass) return undefined;
 
-    if (source?.value === "classpilot_groups") {
+    if (source?.value === "legacy_grades" && school.kioskGradeId) {
+      if (activePass.gradeId !== school.kioskGradeId) {
+        throw passpilotClassError(
+          "PASSPILOT_KIOSK_PASS_CLASS_MISMATCH",
+          "This pass belongs to a different class and cannot be returned from this kiosk.",
+          403
+        );
+      }
+    } else if (source?.value === "classpilot_groups") {
       if (!canonicalCapability) {
         throw passpilotClassError(
           "PASSPILOT_CLASS_MODEL_UPGRADE_REQUIRED",
@@ -2124,11 +2649,268 @@ export async function getStudentsByGrade(
     .where(
       and(
         eq(students.schoolId, schoolId),
-        eq(students.gradeId, gradeId),
+        legacyGradeMembershipCondition(schoolId, gradeId),
         eq(students.status, "active")
       )
     )
     .orderBy(students.lastName, students.firstName);
+}
+
+export async function getLegacyPasspilotGradeIdsForStudent(
+  schoolId: string,
+  studentId: string
+): Promise<string[]> {
+  const rows = await db
+    .select({ gradeId: passpilotGradeStudents.gradeId })
+    .from(passpilotGradeStudents)
+    .innerJoin(
+      grades,
+      and(
+        eq(grades.id, passpilotGradeStudents.gradeId),
+        eq(grades.schoolId, passpilotGradeStudents.schoolId)
+      )
+    )
+    .where(
+      and(
+        eq(passpilotGradeStudents.schoolId, schoolId),
+        eq(passpilotGradeStudents.studentId, studentId)
+      )
+    )
+    .orderBy(asc(passpilotGradeStudents.assignedAt), asc(passpilotGradeStudents.gradeId));
+  const gradeIds = new Set(rows.map((row) => row.gradeId));
+  // Rolling-deploy compatibility: an old serving task can still change the
+  // single-class projection after the startup backfill. Union that valid
+  // projection with junction rows until every old task has drained.
+  const [student] = await db
+    .select({ gradeId: students.gradeId })
+    .from(students)
+    .innerJoin(
+      grades,
+      and(eq(grades.id, students.gradeId), eq(grades.schoolId, students.schoolId))
+    )
+    .where(and(eq(students.schoolId, schoolId), eq(students.id, studentId)))
+    .limit(1);
+  if (student?.gradeId) gradeIds.add(student.gradeId);
+  return Array.from(gradeIds);
+}
+
+export async function isStudentInLegacyPasspilotGrade(
+  schoolId: string,
+  studentId: string,
+  gradeId: string
+): Promise<boolean> {
+  const [student] = await db
+    .select({ id: students.id })
+    .from(students)
+    .where(
+      and(
+        eq(students.id, studentId),
+        eq(students.schoolId, schoolId),
+        eq(students.status, "active"),
+        legacyGradeMembershipCondition(schoolId, gradeId)
+      )
+    )
+    .limit(1);
+  return !!student;
+}
+
+async function assertWritableLegacyGrade(
+  tx: PasspilotClassTransaction,
+  schoolId: string,
+  gradeId: string
+): Promise<Grade> {
+  const [grade] = await tx
+    .select()
+    .from(grades)
+    .where(and(eq(grades.id, gradeId), eq(grades.schoolId, schoolId)))
+    .limit(1)
+    .for("update");
+  if (!grade) {
+    throw passpilotClassError("PASSPILOT_LEGACY_CLASS_NOT_FOUND", "Class not found.", 404);
+  }
+  if (grade.migrationState === "history_only") {
+    throw passpilotClassError(
+      "PASSPILOT_HISTORY_CLASS_READ_ONLY",
+      "This legacy class is history-only and cannot accept roster changes.",
+      409
+    );
+  }
+  return grade;
+}
+
+/**
+ * Preserve the old students.grade_id write contract as an explicit exclusive
+ * assignment. New multi-class UI uses the additive normalized class endpoint.
+ */
+export async function replaceLegacyPasspilotStudentClassInTransaction(
+  tx: PasspilotClassTransaction,
+  schoolId: string,
+  studentId: string,
+  gradeId: string | null
+): Promise<void> {
+  if (gradeId) await assertWritableLegacyGrade(tx, schoolId, gradeId);
+  const [student] = await tx
+    .select({ id: students.id })
+    .from(students)
+    .where(and(eq(students.id, studentId), eq(students.schoolId, schoolId)))
+    .limit(1)
+    .for("update");
+  if (!student) {
+    throw passpilotClassError("STUDENT_NOT_FOUND", "Student not found.", 404);
+  }
+  await tx
+    .delete(passpilotGradeStudents)
+    .where(
+      and(
+        eq(passpilotGradeStudents.schoolId, schoolId),
+        eq(passpilotGradeStudents.studentId, studentId)
+      )
+    );
+  if (gradeId) {
+    await tx
+      .insert(passpilotGradeStudents)
+      .values({ schoolId, gradeId, studentId })
+      .onConflictDoNothing();
+  }
+  await tx
+    .update(students)
+    .set({ gradeId, updatedAt: new Date() })
+    .where(and(eq(students.id, studentId), eq(students.schoolId, schoolId)));
+}
+
+export async function addStudentsToLegacyPasspilotGrade(
+  schoolId: string,
+  gradeId: string,
+  requestedStudentIds: string[],
+  authorization: Pick<LegacyPasspilotClassAuthorization, "actorUserId" | "manager">
+): Promise<{ addedCount: number; addedStudentIds: string[]; studentIds: string[] }> {
+  const studentIds = Array.from(new Set(requestedStudentIds));
+  return runWithPasspilotLegacyClassLock(schoolId, async (tx) => {
+    await assertWritableLegacyGrade(tx, schoolId, gradeId);
+    await assertLegacyPasspilotClassAuthorization(
+      tx,
+      schoolId,
+      gradeId,
+      authorization
+    );
+    if (studentIds.length === 0) {
+      return { addedCount: 0, addedStudentIds: [], studentIds: [] };
+    }
+    const schoolStudents = await tx
+      .select({ id: students.id, gradeId: students.gradeId })
+      .from(students)
+      .where(
+        and(
+          eq(students.schoolId, schoolId),
+          eq(students.status, "active"),
+          inArray(students.id, studentIds)
+        )
+      )
+      .orderBy(asc(students.id))
+      .for("update");
+    if (schoolStudents.length !== studentIds.length) {
+      throw passpilotClassError(
+        "PASSPILOT_STUDENT_NOT_FOUND",
+        "One or more students were not found in this school.",
+        404
+      );
+    }
+    const existingRows = await tx
+      .select({ studentId: passpilotGradeStudents.studentId })
+      .from(passpilotGradeStudents)
+      .where(
+        and(
+          eq(passpilotGradeStudents.schoolId, schoolId),
+          eq(passpilotGradeStudents.gradeId, gradeId),
+          inArray(passpilotGradeStudents.studentId, studentIds)
+        )
+      );
+    const logicallyExisting = new Set(existingRows.map((row) => row.studentId));
+    for (const student of schoolStudents) {
+      if (student.gradeId === gradeId) logicallyExisting.add(student.id);
+    }
+    await tx
+      .insert(passpilotGradeStudents)
+      .values(studentIds.map((studentId) => ({ schoolId, gradeId, studentId })))
+      .onConflictDoNothing();
+    await tx
+      .update(students)
+      .set({ gradeId, updatedAt: new Date() })
+      .where(
+        and(
+          eq(students.schoolId, schoolId),
+          inArray(students.id, studentIds),
+          isNull(students.gradeId)
+        )
+      );
+    const addedStudentIds = studentIds.filter((studentId) => !logicallyExisting.has(studentId));
+    return { addedCount: addedStudentIds.length, addedStudentIds, studentIds };
+  });
+}
+
+export async function removeStudentFromLegacyPasspilotGrade(
+  schoolId: string,
+  gradeId: string,
+  studentId: string,
+  authorization: Pick<LegacyPasspilotClassAuthorization, "actorUserId" | "manager">
+): Promise<{ removed: boolean }> {
+  return runWithPasspilotLegacyClassLock(schoolId, async (tx) => {
+    await assertWritableLegacyGrade(tx, schoolId, gradeId);
+    await assertLegacyPasspilotClassAuthorization(
+      tx,
+      schoolId,
+      gradeId,
+      authorization
+    );
+    const [student] = await tx
+      .select({ id: students.id, gradeId: students.gradeId })
+      .from(students)
+      .where(and(eq(students.id, studentId), eq(students.schoolId, schoolId)))
+      .limit(1)
+      .for("update");
+    if (!student) {
+      throw passpilotClassError("PASSPILOT_STUDENT_NOT_FOUND", "Student not found.", 404);
+    }
+    const [existing] = await tx
+      .select({ id: passpilotGradeStudents.id })
+      .from(passpilotGradeStudents)
+      .where(
+        and(
+          eq(passpilotGradeStudents.schoolId, schoolId),
+          eq(passpilotGradeStudents.gradeId, gradeId),
+          eq(passpilotGradeStudents.studentId, studentId)
+        )
+      )
+      .limit(1);
+    const removed = !!existing || student.gradeId === gradeId;
+    await tx
+      .delete(passpilotGradeStudents)
+      .where(
+        and(
+          eq(passpilotGradeStudents.schoolId, schoolId),
+          eq(passpilotGradeStudents.gradeId, gradeId),
+          eq(passpilotGradeStudents.studentId, studentId)
+        )
+      );
+    if (student.gradeId === gradeId) {
+      const [remaining] = await tx
+        .select({ gradeId: passpilotGradeStudents.gradeId })
+        .from(passpilotGradeStudents)
+        .where(
+          and(
+            eq(passpilotGradeStudents.schoolId, schoolId),
+            eq(passpilotGradeStudents.studentId, studentId)
+          )
+        )
+        .orderBy(asc(passpilotGradeStudents.assignedAt), asc(passpilotGradeStudents.gradeId))
+        .limit(1);
+      await tx
+        .update(students)
+        .set({ gradeId: remaining?.gradeId ?? null, updatedAt: new Date() })
+        .where(and(eq(students.id, studentId), eq(students.schoolId, schoolId)));
+    }
+    return { removed };
+  });
 }
 
 // ============================================================================
@@ -10106,14 +10888,27 @@ export async function updateCanonicalKioskClass(
       );
     }
 
-    if (classId) {
+    const [currentSchool] = await tx
+      .select({ kioskClasspilotGroupId: schools.kioskClasspilotGroupId })
+      .from(schools)
+      .where(eq(schools.id, schoolId))
+      .limit(1)
+      .for("update");
+    if (!currentSchool) {
+      throw passpilotClassError("SCHOOL_NOT_FOUND", "School not found.", 404);
+    }
+
+    const authorizationClassId = classId ?? currentSchool.kioskClasspilotGroupId;
+    // Managers must be able to clear a stale kiosk reference after its class
+    // is archived. Teachers may clear only a currently active assigned class.
+    if (authorizationClassId && !(manager && classId === null)) {
       const [group] = await tx
         .select({ id: groups.id })
         .from(groups)
         .leftJoin(groupTeachers, eq(groupTeachers.groupId, groups.id))
         .where(
           and(
-            eq(groups.id, classId),
+            eq(groups.id, authorizationClassId),
             eq(groups.schoolId, schoolId),
             eq(groups.groupType, "admin_class"),
             eq(groups.status, "active"),
@@ -10151,7 +10946,8 @@ export async function updateCanonicalKioskClass(
 export async function updateLegacyKioskClass(
   schoolId: string,
   gradeId: string | null,
-  actorUserId: string
+  actorUserId: string,
+  manager = false
 ): Promise<School | undefined> {
   return db.transaction(async (tx) => {
     await takePasspilotClassLock(tx, schoolId);
@@ -10167,6 +10963,15 @@ export async function updateLegacyKioskClass(
         "PassPilot class configuration changed. Reload classes before saving kiosk settings.",
         409
       );
+    }
+    const [currentSchool] = await tx
+      .select({ kioskGradeId: schools.kioskGradeId })
+      .from(schools)
+      .where(eq(schools.id, schoolId))
+      .limit(1)
+      .for("update");
+    if (!currentSchool) {
+      throw passpilotClassError("SCHOOL_NOT_FOUND", "School not found.", 404);
     }
     if (gradeId) {
       const [grade] = await tx
@@ -10184,6 +10989,15 @@ export async function updateLegacyKioskClass(
           409
         );
       }
+    }
+    const authorizationGradeId = gradeId ?? currentSchool.kioskGradeId;
+    if (authorizationGradeId && !manager) {
+      await assertLegacyPasspilotClassAuthorization(
+        tx,
+        schoolId,
+        authorizationGradeId,
+        { actorUserId, manager: false }
+      );
     }
     const [school] = await tx
       .update(schools)
@@ -10382,6 +11196,7 @@ async function loadPasspilotCleanSchoolCutoverEligibility(
     gradeRows,
     passRows,
     studentGradeRows,
+    studentMembershipRows,
     teacherGradeRows,
     activeOfficialClassRows,
     activeLicenseRows,
@@ -10400,6 +11215,11 @@ async function loadPasspilotCleanSchoolCutoverEligibility(
       .select({ id: students.id })
       .from(students)
       .where(and(eq(students.schoolId, schoolId), isNotNull(students.gradeId)))
+      .for("update"),
+    tx
+      .select({ id: passpilotGradeStudents.studentId })
+      .from(passpilotGradeStudents)
+      .where(eq(passpilotGradeStudents.schoolId, schoolId))
       .for("update"),
     tx
       .select({ id: teacherGrades.id })
@@ -10439,7 +11259,10 @@ async function loadPasspilotCleanSchoolCutoverEligibility(
     activeClasspilotLicenses: activeLicenseRows.filter((row) => row.product === "CLASSPILOT").length,
     legacyGrades: gradeRows.length,
     passes: passRows.length,
-    studentGradeAssignments: studentGradeRows.length,
+    studentGradeAssignments: new Set([
+      ...studentGradeRows.map((row) => row.id),
+      ...studentMembershipRows.map((row) => row.id),
+    ]).size,
     teacherGradeAssignments: teacherGradeRows.length,
     legacyKioskSelections: school.kioskGradeId ? 1 : 0,
     canonicalKioskSelections: school.kioskClasspilotGroupId ? 1 : 0,
@@ -10539,7 +11362,7 @@ async function loadPasspilotMigrationInventory(
     throw passpilotClassError("SCHOOL_NOT_FOUND", "School not found.", 404);
   }
 
-  const [legacyGrades, canonicalClasses, legacyStudentRows, legacyTeacherRows, legacyPassRows, groupStudentRows, groupTeacherRows, staffRows] =
+  const [legacyGrades, canonicalClasses, legacyMembershipRows, legacyFallbackStudentRows, legacyTeacherRows, legacyPassRows, groupStudentRows, groupTeacherRows, staffRows] =
     await Promise.all([
       tx.select().from(grades).where(eq(grades.schoolId, schoolId)).orderBy(grades.displayOrder, grades.name),
       tx
@@ -10576,6 +11399,23 @@ async function loadPasspilotMigrationInventory(
         )
         .groupBy(groups.id)
         .orderBy(groups.name),
+      tx
+        .select({
+          gradeId: passpilotGradeStudents.gradeId,
+          studentId: students.id,
+          firstName: students.firstName,
+          lastName: students.lastName,
+          studentIdNumber: students.studentIdNumber,
+        })
+        .from(passpilotGradeStudents)
+        .innerJoin(students, eq(students.id, passpilotGradeStudents.studentId))
+        .where(
+          and(
+            eq(passpilotGradeStudents.schoolId, schoolId),
+            eq(students.schoolId, schoolId),
+            eq(students.status, "active")
+          )
+        ),
       tx
         .select({
           gradeId: students.gradeId,
@@ -10649,6 +11489,7 @@ async function loadPasspilotMigrationInventory(
         .where(eq(schoolMemberships.schoolId, schoolId)),
     ]);
 
+  const legacyStudentRows = [...legacyMembershipRows, ...legacyFallbackStudentRows];
   const studentMembers = new Map<string, PasspilotClassMigrationMember>();
   for (const row of [...legacyStudentRows, ...groupStudentRows]) {
     const name = [row.firstName, row.lastName].filter(Boolean).join(" ").trim() || "Student record";

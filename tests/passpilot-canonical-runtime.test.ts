@@ -39,6 +39,8 @@ import {
 import { getPasspilotClasses, getPasspilotClassRoster } from "../dist/services/passpilotClasses.js";
 import {
   canAccessPass,
+  canAccessLegacyPassHistory,
+  getPassHistoryQueryAccessScope,
   requirePasspilotClassModel,
 } from "../dist/services/passpilotAccess.js";
 import { executeTool } from "../dist/services/chatToolExecutor.js";
@@ -372,7 +374,7 @@ describe("PassPilot canonical ClassPilot classes", () => {
           duration: 5,
           expiresAt: new Date(Date.now() + 300_000),
           issuedVia: "teacher",
-        }),
+        }, { manager: true }),
         (error: any) => error?.code === "PASSPILOT_CLASS_SOURCE_CHANGED"
       );
       assert.equal(await canAccessPass(teacher, schoolA.id, pass, "teacher"), true);
@@ -453,7 +455,7 @@ describe("PassPilot canonical ClassPilot classes", () => {
           duration: 5,
           expiresAt: new Date(Date.now() + 300_000),
           issuedVia: "kiosk",
-        }),
+        }, { manager: true }),
         (error: any) => error?.code === "PASSPILOT_HISTORY_CLASS_READ_ONLY"
       );
       await assert.rejects(
@@ -726,6 +728,18 @@ describe("PassPilot canonical ClassPilot classes", () => {
       assert.equal(initialized.legacyGrades[0]?.migrationState, "auto_linked");
       assert.equal(initialized.legacyGrades[0]?.classpilotGroupId, migrationGroup.id);
 
+      const formerLegacyTeacher = await createUser({
+        email: `former-legacy@${TAG}-migration.example.edu`,
+        firstName: "Former",
+        lastName: "Legacy",
+      } as any);
+      await createMembership({
+        schoolId: migrationSchool.id,
+        userId: formerLegacyTeacher.id,
+        role: "teacher",
+        status: "active",
+      } as any);
+
       await assert.rejects(
         updatePasspilotClassMappings(
           migrationSchool.id,
@@ -752,7 +766,7 @@ describe("PassPilot canonical ClassPilot classes", () => {
         duration: 5,
         expiresAt: new Date(Date.now() + 300_000),
         issuedVia: "teacher",
-      });
+      }, { actorUserId: migrationTeacher.id, manager: false });
       await assert.rejects(
         completePasspilotClassMigration(
           migrationSchool.id,
@@ -776,6 +790,14 @@ describe("PassPilot canonical ClassPilot classes", () => {
       );
       assert.equal(completed.source, "classpilot_groups");
       assert.equal(completed.revision, 2);
+      // Model a retained pre-cutover legacy assignment. Once its grade maps to
+      // a canonical class, only canonical teacher assignment (or issuance)
+      // grants history access.
+      await db.execute(sql`
+        INSERT INTO teacher_grades (teacher_id, grade_id)
+        VALUES (${formerLegacyTeacher.id}, ${legacyGrade.id})
+        ON CONFLICT DO NOTHING
+      `);
       const school = await getSchoolById(migrationSchool.id);
       assert.equal(school?.kioskGradeId, null);
       assert.equal(school?.kioskClasspilotGroupId, migrationGroup.id);
@@ -786,6 +808,21 @@ describe("PassPilot canonical ClassPilot classes", () => {
       assert.equal(mappedHistory.some((pass) => pass.id === migrationPass.id), true);
       assert.equal(mappedHistory.find((pass) => pass.id === migrationPass.id)?.gradeId, legacyGrade.id);
       assert.equal(mappedHistory.find((pass) => pass.id === migrationPass.id)?.classpilotGroupId, null);
+      assert.equal(
+        await canAccessLegacyPassHistory(
+          formerLegacyTeacher,
+          migrationSchool.id,
+          legacyGrade.id,
+          "teacher"
+        ),
+        false
+      );
+      const formerScope = await getPassHistoryQueryAccessScope(
+        formerLegacyTeacher,
+        migrationSchool.id,
+        "teacher"
+      );
+      assert.equal(formerScope?.gradeIds.includes(legacyGrade.id), false);
 
       const auditRows = await db.execute(sql`
         SELECT action FROM audit_logs
@@ -839,7 +876,7 @@ describe("PassPilot canonical ClassPilot classes", () => {
         duration: 5,
         expiresAt: new Date(Date.now() + 300_000),
         issuedVia: "teacher",
-      });
+      }, { actorUserId: legacyTeacher.id, manager: false });
       assert.equal((await returnPass(legacyPass.id, legacySchool.id))?.id, legacyPass.id);
 
       await createProductLicense({
@@ -1025,7 +1062,7 @@ describe("PassPilot canonical ClassPilot classes", () => {
         duration: 5,
         expiresAt: new Date(Date.now() + 300_000),
         issuedVia: "kiosk",
-      });
+      }, { manager: true });
       const cutover = completePasspilotClassMigration(raceSchool.id, teacher.id, 0, true);
       const outcomes = await Promise.allSettled([legacyWrite, cutover]);
       assert.equal(outcomes.filter((outcome) => outcome.status === "fulfilled").length, 1);

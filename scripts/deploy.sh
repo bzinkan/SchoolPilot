@@ -10,7 +10,7 @@
 #   ./scripts/deploy.sh production --backend --activate-emergency
 #                                       # Backend only; activate the newly registered 512/2048 API revision
 #   ./scripts/deploy.sh production --backend --activate-emergency \
-#     --enable-rls-table classpilot_session_summary_deliveries
+#     --enable-rls-table passpilot_grade_students
 #                                       # One reviewed release only; add one tenant table without changing the master switch or existing entries
 #   ./scripts/deploy.sh production --backend --activate-emergency \
 #     --classpilot-tile-auth-plan-gate --classpilot-tile-auth-plan-rehearsal
@@ -1167,10 +1167,13 @@ validate_rls_table_enablement_mode() {
   if [[ -z "$ENABLE_RLS_TABLE" ]]; then
     return 0
   fi
-  if [[ "$ENABLE_RLS_TABLE" != "classpilot_session_summary_deliveries" ]]; then
-    error "--enable-rls-table is not reviewed for: ${ENABLE_RLS_TABLE}"
-    return 1
-  fi
+  case "$ENABLE_RLS_TABLE" in
+    classpilot_session_summary_deliveries|passpilot_grade_students) ;;
+    *)
+      error "--enable-rls-table is not reviewed for: ${ENABLE_RLS_TABLE}"
+      return 1
+      ;;
+  esac
   if [[ "$ENV" != "production" || "$DEPLOY_BACKEND" != true ||
         "$DEPLOY_FRONTEND" != false || -n "$SAME_IMAGE_NETWORKING_STAGE" ||
         "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" == true ||
