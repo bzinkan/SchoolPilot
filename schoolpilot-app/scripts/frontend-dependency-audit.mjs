@@ -548,27 +548,33 @@ function validateOneReachabilityEvidence(
     "frontend_router_reachability_evidence_invalid"
   );
   const expectedMode = phase === "final" ? "post-build" : "source-only";
-  if (
-      evidence.schemaVersion !== REACHABILITY_SCHEMA_VERSION ||
-      evidence.mode !== expectedMode ||
-      !["standard", "gopilot", "passpilot"].includes(evidence.variant) ||
-      evidence.status !== "passed" ||
-      evidence.passed !== true ||
-      evidence.packageLockSha256 !== lockfileSha256 ||
-      evidence.routerVersion !== routerIdentity.router.version ||
-      evidence.routerDomVersion !== routerIdentity.routerDom.version ||
-      evidence.routerVersion !== ROUTER_VERSION ||
-      evidence.routerDomVersion !== ROUTER_VERSION ||
-      !SHA256_PATTERN.test(evidence.sourceTreeSha256 ?? "") ||
-      !Number.isSafeInteger(evidence.sourceFileCount) ||
-      evidence.sourceFileCount <= 0 ||
-      !Number.isSafeInteger(evidence.routerImportCount) ||
-      evidence.routerImportCount <= 0 ||
-      !Number.isSafeInteger(evidence.bundleFileCount) ||
-      evidence.bundleFileCount < 0 ||
-      !Array.isArray(evidence.violations) ||
-      evidence.violations.length !== 0) {
-    throw new Error("frontend_router_reachability_evidence_invalid");
+  const failedFields = [];
+  if (evidence.schemaVersion !== REACHABILITY_SCHEMA_VERSION) failedFields.push("schemaVersion");
+  if (evidence.mode !== expectedMode) failedFields.push("mode");
+  if (!["standard", "gopilot", "passpilot"].includes(evidence.variant)) failedFields.push("variant");
+  if (evidence.status !== "passed") failedFields.push("status");
+  if (evidence.passed !== true) failedFields.push("passed");
+  if (evidence.packageLockSha256 !== lockfileSha256) failedFields.push("packageLockSha256");
+  if (evidence.routerVersion !== routerIdentity.router.version) failedFields.push("routerVersion");
+  if (evidence.routerDomVersion !== routerIdentity.routerDom.version) failedFields.push("routerDomVersion");
+  if (evidence.routerVersion !== ROUTER_VERSION) failedFields.push("routerVersionPin");
+  if (evidence.routerDomVersion !== ROUTER_VERSION) failedFields.push("routerDomVersionPin");
+  if (!SHA256_PATTERN.test(evidence.sourceTreeSha256 ?? "")) failedFields.push("sourceTreeSha256");
+  if (!Number.isSafeInteger(evidence.sourceFileCount) ||
+      evidence.sourceFileCount <= 0) failedFields.push("sourceFileCount");
+  if (!Number.isSafeInteger(evidence.routerImportCount) ||
+      evidence.routerImportCount <= 0) failedFields.push("routerImportCount");
+  if (!Number.isSafeInteger(evidence.bundleFileCount) ||
+      evidence.bundleFileCount < 0) failedFields.push("bundleFileCount");
+  if (!Array.isArray(evidence.violations) ||
+      evidence.violations.length !== 0) failedFields.push("violations");
+  if (failedFields.length > 0) {
+    const variantLabel = typeof evidence.variant === "string"
+      ? evidence.variant
+      : "unknown";
+    throw new Error(
+      `frontend_router_reachability_evidence_invalid: variant=${variantLabel} fields=${failedFields.join(",")}`
+    );
   }
   if (phase === "final" &&
       (!SHA256_PATTERN.test(evidence.bundleTreeSha256 ?? "") ||
@@ -615,9 +621,18 @@ function validateReachabilityEvidenceSet(
       )
   ).sort((left, right) => left.variant.localeCompare(right.variant));
   if (JSON.stringify(validated.map((item) => item.variant)) !==
-      JSON.stringify(expectedVariants) ||
-      new Set(validated.map((item) => item.sourceTreeSha256)).size !== 1) {
-    throw new Error("frontend_router_reachability_evidence_invalid");
+      JSON.stringify(expectedVariants)) {
+    throw new Error(
+      `frontend_router_reachability_evidence_invalid: variants=${validated.map((item) => item.variant).join(",")}`
+    );
+  }
+  if (new Set(validated.map((item) => item.sourceTreeSha256)).size !== 1) {
+    const summary = validated
+      .map((item) => `${item.variant}=${item.sourceTreeSha256.slice(0, 12)}`)
+      .join(",");
+    throw new Error(
+      `frontend_router_reachability_evidence_invalid: sourceTreeSha256 drift ${summary}`
+    );
   }
   return validated;
 }
@@ -1142,8 +1157,11 @@ if (invokedPath && import.meta.url === pathToFileURL(invokedPath).href) {
     const report = runFrontendDependencyAuditCli(process.argv.slice(2));
     process.stdout.write(`${report.status}\n`);
     if (report.status !== "passed") process.exitCode = 1;
-  } catch {
+  } catch (error) {
     process.stderr.write("frontend_dependency_audit_invalid\n");
+    process.stderr.write(
+      `${error instanceof Error ? error.message : String(error)}\n`
+    );
     process.exitCode = 1;
   }
 }
