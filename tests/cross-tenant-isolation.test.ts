@@ -53,6 +53,26 @@ import { getClasspilotDashboardSnapshot } from "../dist/services/classpilotDashb
 import db, { pool } from "../dist/db.js";
 import { runWithTenantContext } from "../dist/middleware/tenantContext.js";
 
+function errorChainMatches(error: unknown, pattern: RegExp): boolean {
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    const message = current instanceof Error
+      ? current.message
+      : typeof current === "object" && "message" in current
+        ? String((current as { message?: unknown }).message)
+        : String(current);
+    if (pattern.test(message)) return true;
+    current = typeof current === "object" && "cause" in current
+      ? (current as { cause?: unknown }).cause
+      : undefined;
+  }
+
+  return false;
+}
+
 // Cross-tenant isolation regression suite. Seeds two schools and asserts the
 // school-scoped storage helpers never return one school's resource to the other,
 // and that legitimate same-school access still works (no over-blocking). Durable
@@ -105,6 +125,7 @@ after(async () => {
       await db.execute(sql`DELETE FROM homeroom_teachers WHERE homeroom_id IN (SELECT id FROM homerooms WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`}))`);
       await db.execute(sql`DELETE FROM homerooms WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
       await db.execute(sql`DELETE FROM groups WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
+      await db.execute(sql`DELETE FROM passpilot_grade_students WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
       await db.execute(sql`DELETE FROM grades WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
       await db.execute(sql`DELETE FROM students WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
       await db.execute(sql`DELETE FROM schools WHERE name LIKE 'xtest_%'`);
@@ -152,7 +173,7 @@ describe("cross-school isolation", () => {
         VALUES (${schoolB.id}, ${gradeB.id}, ${studentB.id})
         ON CONFLICT DO NOTHING
       `)),
-      /row-level security|policy/i
+      (error: unknown) => errorChainMatches(error, /row-level security|policy/i)
     );
   });
 
