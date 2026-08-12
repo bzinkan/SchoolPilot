@@ -19,7 +19,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 
 import {
   AlertDialog,
@@ -860,6 +860,7 @@ function ClassroomImportDialog({ open, onOpenChange, teachers }) {
 
 export default function AdminClasses() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { toast } = useToast();
   const { currentUser, isLoading: authLoading } = useClassPilotAuth();
 
@@ -880,6 +881,12 @@ export default function AdminClasses() {
   const [deleteTarget, setDeleteTarget] = useState(null);
 
   const isAdmin = currentUser?.isSuperAdmin || currentUser?.role === "admin" || currentUser?.role === "school_admin";
+  const requestedReturnTo = new URLSearchParams(location.search).get("returnTo");
+  const safeReturnTo = requestedReturnTo === "/passpilot/classes"
+    || requestedReturnTo === "/passpilot/setup"
+    || requestedReturnTo?.startsWith("/passpilot/setup?")
+    ? requestedReturnTo
+    : null;
 
   const queryFilters = useMemo(() => {
     const params = new URLSearchParams();
@@ -1126,6 +1133,12 @@ export default function AdminClasses() {
           </div>
           <div className="flex items-center gap-2">
             <ThemeToggle />
+            {safeReturnTo ? (
+              <Button variant="outline" onClick={() => navigate(safeReturnTo)} data-testid="button-back-passpilot">
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                Back to PassPilot
+              </Button>
+            ) : null}
             <Button variant="outline" onClick={() => navigate("/classpilot/admin")} data-testid="button-back-admin">
               <ArrowLeft className="mr-2 h-4 w-4" />
               Admin Panel

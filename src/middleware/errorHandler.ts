@@ -42,5 +42,10 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
 
   // Return the requestId so a user/IT admin can quote it when reporting an
   // issue — it ties directly to the error_logs row + CloudWatch line.
-  res.status(status).json({ error: message, code: err.code, requestId: reqId });
+  res.status(status).json({
+    error: message,
+    code: err.code,
+    requestId: reqId,
+    ...(typeof err.managementUrl === "string" ? { managementUrl: err.managementUrl } : {}),
+  });
 };

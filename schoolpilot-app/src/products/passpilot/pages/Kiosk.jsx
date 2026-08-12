@@ -4,6 +4,7 @@ import { Card, CardContent } from "../../../components/ui/card";
 import { Input } from "../../../components/ui/input";
 import { Badge } from "../../../components/ui/badge";
 import { ArrowLeftRight, LogIn, X } from "lucide-react";
+import { PASSPILOT_CLASS_MODEL_HEADER } from "../classData";
 
 const DESTINATIONS = [
   { value: "bathroom", label: "Bathroom", emoji: "\u{1F6BB}" },
@@ -36,6 +37,7 @@ export default function KioskPage() {
     "Content-Type": "application/json",
     "X-School-Id": schoolId,
     "X-Kiosk-Pin": kioskPin,
+    ...PASSPILOT_CLASS_MODEL_HEADER,
   });
 
   const savePin = (pin) => {
@@ -128,7 +130,13 @@ export default function KioskPage() {
       const res = await fetch("/api/passpilot/kiosk/checkout", {
         method: "POST",
         headers: kioskHeaders(),
-        body: JSON.stringify({ studentId: student.id, destination }),
+        body: JSON.stringify({
+          studentId: student.id,
+          destination,
+          ...((student.classId || student.classpilotGroupId)
+            ? { classId: student.classId || student.classpilotGroupId }
+            : {}),
+        }),
       });
 
       if (!res.ok) {

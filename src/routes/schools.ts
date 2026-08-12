@@ -18,7 +18,7 @@ import {
   getAllSchools,
   getProductLicenses,
   createProductLicense,
-  deleteProductLicense,
+  deleteProductLicenseForSchool,
   getGradesBySchool,
   createGrade,
   getGradeById,
@@ -29,7 +29,16 @@ import {
   assignTeacherGrade,
   removeTeacherGrade,
   getSchoolBySlugIncludingDeleted,
+  upsertSettings,
 } from "../services/storage.js";
+import {
+  getRequestPassPilotRole,
+  isPassPilotManager,
+  requireLegacyPasspilotClassSource,
+  userBelongsToSchool,
+} from "../services/passpilotAccess.js";
+import { runWithTenantContext } from "../middleware/tenantContext.js";
+import { logAudit } from "../services/audit.js";
 
 const router = Router();
 
@@ -71,7 +80,12 @@ router.post("/", requireSuperAdmin, async (req, res, next) => {
         .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
     }
 
-    const { products, timezone, ...schoolData } = parsed.data;
+    const {
+      products,
+      timezone,
+      passpilotClassModelAcknowledged,
+      ...schoolData
+    } = parsed.data;
 
     const school = await createSchool({
       ...schoolData,
@@ -87,6 +101,34 @@ router.post("/", requireSuperAdmin, async (req, res, next) => {
         });
       }
     }
+
+    const initialProducts = new Set(products ?? []);
+    const startsCanonical = passpilotClassModelAcknowledged === true
+      && initialProducts.has("PASSPILOT")
+      && initialProducts.has("CLASSPILOT");
+    await runWithTenantContext({ isSuper: true }, () =>
+      upsertSettings(school.id, {
+        schoolName: school.name,
+        schoolTimezone: school.schoolTimezone,
+        passpilotClassSource: startsCanonical ? "classpilot_groups" : "legacy_grades",
+        passpilotClassCutoverAt: startsCanonical ? new Date() : null,
+        passpilotClassMigrationRevision: startsCanonical ? 1 : 0,
+      })
+    );
+
+    await logAudit({
+      schoolId: school.id,
+      userId: req.authUser!.id,
+      userEmail: req.authUser!.email,
+      action: "school.created",
+      entityType: "school",
+      entityId: school.id,
+      entityName: school.name,
+      metadata: {
+        passpilotClassSource: startsCanonical ? "classpilot_groups" : "legacy_grades",
+        passpilotClassModelAcknowledged: startsCanonical,
+      },
+    });
 
     const licenses = await getProductLicenses(school.id);
     return res.status(201).json({ school, licenses });
@@ -273,7 +315,15 @@ router.delete(
   requireSuperAdmin,
   async (req, res, next) => {
     try {
-      const deleted = await deleteProductLicense(param(req, "licenseId"));
+      const schoolId = param(req, "schoolId");
+      const licenseId = param(req, "licenseId");
+      const license = (await getProductLicenses(schoolId)).find((row) => row.id === licenseId);
+      if (!license) {
+        return res.status(404).json({ error: "License not found" });
+      }
+      const deleted = await runWithTenantContext({ isSuper: true }, () =>
+        deleteProductLicenseForSchool(schoolId, licenseId)
+      );
       if (!deleted) {
         return res.status(404).json({ error: "License not found" });
       }
@@ -293,9 +343,11 @@ router.get(
   "/:schoolId/grades",
   requireSchoolContext,
   requireActiveSchool,
+  requireLegacyPasspilotClassSource,
   async (req, res, next) => {
     try {
-      const gradesList = await getGradesBySchool(res.locals.schoolId!);
+      const gradesList = (await getGradesBySchool(res.locals.schoolId!))
+        .filter((grade) => grade.migrationState !== "history_only");
       return res.json({ grades: gradesList });
     } catch (err) {
       next(err);
@@ -308,6 +360,7 @@ router.post(
   "/:schoolId/grades",
   requireSchoolContext,
   requireActiveSchool,
+  requireLegacyPasspilotClassSource,
   requireRole("admin"),
   async (req, res, next) => {
     try {
@@ -334,6 +387,7 @@ router.put(
   "/:schoolId/grades/:gradeId",
   requireSchoolContext,
   requireActiveSchool,
+  requireLegacyPasspilotClassSource,
   requireRole("admin"),
   async (req, res, next) => {
     try {
@@ -357,6 +411,7 @@ router.delete(
   "/:schoolId/grades/:gradeId",
   requireSchoolContext,
   requireActiveSchool,
+  requireLegacyPasspilotClassSource,
   requireRole("admin"),
   async (req, res, next) => {
     try {
@@ -384,11 +439,22 @@ router.get(
   "/:schoolId/teacher-grades/:teacherId",
   requireSchoolContext,
   requireActiveSchool,
+  requireLegacyPasspilotClassSource,
   async (req, res, next) => {
     try {
-      const assignments = await getTeacherGrades(param(req, "teacherId"));
+      const teacherId = param(req, "teacherId");
+      const role = await getRequestPassPilotRole(req, res);
+      if (!isPassPilotManager(role) && teacherId !== req.authUser!.id) {
+        return res.status(403).json({ error: "Insufficient permissions" });
+      }
+      if (!(await userBelongsToSchool(teacherId, res.locals.schoolId!))) {
+        return res.status(404).json({ error: "Teacher not found" });
+      }
+      const assignments = await getTeacherGrades(teacherId);
       // Only expose assignments whose grade belongs to the caller's school.
-      const scoped = assignments.filter((a) => a.grade.schoolId === res.locals.schoolId);
+      const scoped = assignments.filter(
+        (a) => a.grade.schoolId === res.locals.schoolId && a.grade.migrationState !== "history_only"
+      );
       return res.json({
         assignments: scoped.map((a) => ({
           id: a.teacherGrade.id,
@@ -408,6 +474,7 @@ router.post(
   "/:schoolId/teacher-grades",
   requireSchoolContext,
   requireActiveSchool,
+  requireLegacyPasspilotClassSource,
   requireRole("admin"),
   async (req, res, next) => {
     try {
@@ -441,6 +508,7 @@ router.delete(
   "/:schoolId/teacher-grades",
   requireSchoolContext,
   requireActiveSchool,
+  requireLegacyPasspilotClassSource,
   requireRole("admin"),
   async (req, res, next) => {
     try {

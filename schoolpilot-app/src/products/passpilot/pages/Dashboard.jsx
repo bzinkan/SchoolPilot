@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Navigate, useLocation } from 'react-router-dom';
 import { usePassPilotAuth } from '../../../hooks/usePassPilotAuth';
 import AppShell from '../components/AppShell';
 import PassesTab from '../components/tabs/PassesTab';
@@ -9,15 +9,8 @@ import SetupView from '../components/admin/SetupView';
 import BillingView from '../components/admin/BillingView';
 
 export default function Dashboard() {
-  const { isLoading, user } = usePassPilotAuth();
-  const [currentTab, setCurrentTab] = useState(() => {
-    const hash = window.location.hash.replace('#', '');
-    if (hash.startsWith('setup')) {
-      window.history.replaceState(null, '', window.location.pathname);
-      return 'setup';
-    }
-    return 'myclass';
-  });
+  const { isLoading, user, isAdmin, isSchoolwideManager } = usePassPilotAuth();
+  const location = useLocation();
 
   if (isLoading) {
     return (
@@ -25,6 +18,33 @@ export default function Dashboard() {
         <div className="h-12 w-48 bg-muted rounded animate-pulse" />
       </div>
     );
+  }
+
+  const legacyHash = location.hash.replace('#', '');
+  if (legacyHash.startsWith('setup')) {
+    const legacySection = legacyHash.split('/')[1];
+    const target = legacySection ? `/passpilot/setup?section=${encodeURIComponent(legacySection)}` : '/passpilot/setup';
+    return <Navigate to={target} replace />;
+  }
+
+  const routeSegment = location.pathname.replace(/^\/passpilot\/?/, '').split('/')[0];
+  if (!routeSegment) return <Navigate to="/passpilot/my-class" replace />;
+
+  const tabBySegment = {
+    passes: 'passes',
+    'my-class': 'myclass',
+    classes: 'roster',
+    reports: 'reports',
+    setup: 'setup',
+    billing: 'billing',
+  };
+  const currentTab = tabBySegment[routeSegment];
+  if (!currentTab) return <Navigate to="/passpilot/my-class" replace />;
+  if (currentTab === 'reports' && !isSchoolwideManager) {
+    return <Navigate to="/passpilot/my-class" replace />;
+  }
+  if (!isAdmin && ['setup', 'billing'].includes(currentTab)) {
+    return <Navigate to="/passpilot/my-class" replace />;
   }
 
   const renderTabContent = () => {
@@ -40,7 +60,7 @@ export default function Dashboard() {
   };
 
   return (
-    <AppShell currentTab={currentTab} onTabChange={setCurrentTab}>
+    <AppShell currentTab={currentTab}>
       {renderTabContent()}
     </AppShell>
   );

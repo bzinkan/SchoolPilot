@@ -27,7 +27,7 @@ export const chatTools: ChatTool[] = [
     definition: {
       name: "list_students",
       description:
-        "List all students enrolled at the school. Returns student names, grade levels, and basic info.",
+        "List students the current staff member may access. Returns student labels, grade levels, and basic info.",
       input_schema: {
         type: "object" as const,
         properties: {},
@@ -122,7 +122,7 @@ export const chatTools: ChatTool[] = [
     definition: {
       name: "list_classes",
       description:
-        "List all classes (groups) at the school with their teacher, grade level, and student count.",
+        "List ClassPilot classes the current staff member may access with teacher and grade details.",
       input_schema: {
         type: "object" as const,
         properties: {},
@@ -273,9 +273,24 @@ export const chatTools: ChatTool[] = [
   // === PASSPILOT ===
   {
     definition: {
+      name: "list_passpilot_classes",
+      description:
+        "List the PassPilot classes this user may access. Use the returned class IDs when issuing a hall pass.",
+      input_schema: {
+        type: "object" as const,
+        properties: {},
+        required: [],
+      },
+    },
+    product: "passpilot",
+    requiredRoles: teacherAndAdmin,
+    mutating: false,
+  },
+  {
+    definition: {
       name: "list_active_passes",
       description:
-        "List all currently active hall passes at the school, showing student name, destination, and time elapsed.",
+        "List currently active hall passes the current staff member may access, including destination and elapsed time.",
       input_schema: {
         type: "object" as const,
         properties: {},
@@ -290,13 +305,17 @@ export const chatTools: ChatTool[] = [
     definition: {
       name: "issue_pass",
       description:
-        "Issue a hall pass to a student. Requires the student ID and destination.",
+        "Issue a hall pass to a student in a specific class. Use list_passpilot_classes first, then provide its class ID with the student ID and destination.",
       input_schema: {
         type: "object" as const,
         properties: {
           studentId: {
             type: "string",
             description: "The student's ID",
+          },
+          classId: {
+            type: "string",
+            description: "The PassPilot class ID returned by the class inventory",
           },
           destination: {
             type: "string",
@@ -311,10 +330,11 @@ export const chatTools: ChatTool[] = [
           },
           duration: {
             type: "number",
+            minimum: 1,
             description: "Duration in minutes (default: 5)",
           },
         },
-        required: ["studentId", "destination"],
+        required: ["studentId", "classId", "destination"],
       },
     },
     product: "passpilot",

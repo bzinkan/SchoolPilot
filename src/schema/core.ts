@@ -53,6 +53,7 @@ export const schools = pgTable("schools", {
   kioskRequiresApproval: boolean("kiosk_requires_approval").notNull().default(false),
   defaultPassDuration: integer("default_pass_duration").notNull().default(5),
   kioskGradeId: varchar("kiosk_grade_id"),
+  kioskClasspilotGroupId: varchar("kiosk_classpilot_group_id"),
   kioskActivatedByUserId: varchar("kiosk_activated_by_user_id"),
   // bcrypt hash of the kiosk PIN — never store or return the plaintext.
   // Required for the public kiosk endpoints (see routes/passpilot/kiosk.ts).

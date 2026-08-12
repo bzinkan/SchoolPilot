@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import * as React from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../../components/ui/card";
 import { Button } from "../../../../components/ui/button";
 import { useToast } from "../../../../hooks/use-toast";
@@ -24,6 +25,13 @@ import { Input } from "../../../../components/ui/input";
 import { Label } from "../../../../components/ui/label";
 import { useAbsentStudents } from "../../../../hooks/useAbsentStudents";
 import { AttendancePanel } from "../../../../components/AttendancePanel";
+import { useStudentImportHome } from "../../../../shared/hooks/useStudentImportHome";
+import {
+  fetchAllPassPilotHistory,
+  isCanonicalPassPilotSource,
+  passPilotClassRequest,
+  useCanonicalPassPilotClasses,
+} from "../../classData";
 
 const DESTINATION_LABELS = {
   bathroom: 'Bathroom',
@@ -34,7 +42,8 @@ const DESTINATION_LABELS = {
 };
 
 function MyClassTab() {
-  const [activeGradeId, setActiveGradeId] = useState('');
+  const [legacyActiveGradeId, setLegacyActiveGradeId] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
   const [customReason, setCustomReason] = useState('');
   const [selectedStudentForCustom, setSelectedStudentForCustom] = useState(null);
   const [isCustomReasonDialogOpen, setIsCustomReasonDialogOpen] = useState(false);
@@ -45,36 +54,99 @@ function MyClassTab() {
   const [timePeriod, setTimePeriod] = useState('today');
   const [selectedPassDataStudent, setSelectedPassDataStudent] = useState(null); // { id, name }
 
-  const { isAdmin, school } = usePassPilotAuth();
+  const { isAdmin, isSchoolwideManager, school } = usePassPilotAuth();
+  const { canLinkToClassPilot } = useStudentImportHome();
   const tz = school?.schoolTimezone ?? "America/New_York";
   const { toast } = useToast();
   const { absentIds } = useAbsentStudents();
 
-  const { data: myClasses = [] } = useQuery({
-    queryKey: ['my-classes'],
+  const classInventoryQuery = useCanonicalPassPilotClasses();
+  const sourceResolved = classInventoryQuery.isSuccess;
+  const canonical = sourceResolved && isCanonicalPassPilotSource(classInventoryQuery.data?.source);
+
+  const kioskConfigQuery = useQuery({
+    queryKey: ['passpilot', 'kiosk-config', canonical ? 'classpilot_groups' : 'legacy_grades'],
+    queryFn: () => passPilotClassRequest('GET', '/kiosk-config'),
+    enabled: sourceResolved,
+  });
+
+  React.useEffect(() => {
+    if (!kioskConfigQuery.isSuccess) return;
+    setKioskGradeId(kioskConfigQuery.data?.classId || kioskConfigQuery.data?.gradeId || null);
+  }, [kioskConfigQuery.data, kioskConfigQuery.isSuccess]);
+
+  const {
+    data: legacyClasses = [],
+    isLoading: legacyClassesLoading,
+    isError: legacyClassesError,
+    refetch: refetchLegacyClasses,
+  } = useQuery({
+    queryKey: ['my-classes', 'legacy'],
     queryFn: () => apiRequest('GET', isAdmin ? '/grades' : '/my-classes'),
     select: (data) => Array.isArray(data) ? data : (data?.grades ?? data?.classes ?? []),
+    enabled: sourceResolved && !canonical,
   });
+
+  const myClasses = useMemo(
+    () => (canonical ? (classInventoryQuery.data?.classes || []) : legacyClasses),
+    [canonical, classInventoryQuery.data?.classes, legacyClasses]
+  );
+  const requestedClassId = searchParams.get('classId') || '';
+  const requestedClassIsAvailable = canonical && myClasses.some((item) => item.id === requestedClassId);
+  const activeGradeId = canonical
+    ? (requestedClassIsAvailable ? requestedClassId : (myClasses[0]?.id || ''))
+    : legacyActiveGradeId;
+
+  const setActiveGradeId = (classId) => {
+    if (!canonical) {
+      setLegacyActiveGradeId(classId);
+      return;
+    }
+    const next = new URLSearchParams(searchParams);
+    next.set('classId', classId);
+    setSearchParams(next);
+  };
 
   // Auto-select first class if none selected
   React.useEffect(() => {
-    if (!activeGradeId && myClasses.length > 0) {
-      setActiveGradeId(myClasses[0].id);
+    if (sourceResolved && !canonical && !legacyActiveGradeId && myClasses.length > 0) {
+      setLegacyActiveGradeId(myClasses[0].id);
     }
-  }, [myClasses, activeGradeId]);
+    if (canonical && activeGradeId && requestedClassId !== activeGradeId) {
+      const next = new URLSearchParams(searchParams);
+      next.set('classId', activeGradeId);
+      setSearchParams(next, { replace: true });
+    }
+  }, [activeGradeId, canonical, legacyActiveGradeId, myClasses, requestedClassId, searchParams, setSearchParams, sourceResolved]);
 
-  const { data: students = [], isLoading: studentsLoading } = useQuery({
-    queryKey: ['/api/students'],
-    queryFn: () => apiRequest('GET', '/students'),
+  const {
+    data: students = [],
+    isLoading: studentsLoading,
+    isError: studentsError,
+    refetch: refetchStudents,
+  } = useQuery({
+    queryKey: canonical
+      ? ['passpilot', 'class-students', activeGradeId]
+      : ['/api/students'],
+    queryFn: () => canonical
+      ? passPilotClassRequest('GET', `/passpilot/classes/${encodeURIComponent(activeGradeId)}/students`)
+      : apiRequest('GET', '/students'),
     select: (data) => Array.isArray(data) ? data : (data?.students ?? []),
+    enabled: sourceResolved && (!canonical || !!activeGradeId),
   });
 
-  const { data: passes = [], isLoading: passesLoading } = useQuery({
-    queryKey: ['/api/passes/active'],
-    queryFn: () => apiRequest('GET', '/passes/active'),
+  const {
+    data: passes = [],
+    isLoading: passesLoading,
+    isError: passesError,
+    refetch: refetchPasses,
+  } = useQuery({
+    queryKey: ['/api/passes/active', canonical ? 'classpilot_groups' : 'legacy_grades'],
+    queryFn: () => passPilotClassRequest('GET', '/passes/active'),
     select: (data) => Array.isArray(data) ? data : (data?.passes ?? []),
     refetchInterval: 3000,
     gcTime: 0,
+    enabled: sourceResolved,
   });
 
   // Pass Data: fetch history for analytics
@@ -103,14 +175,18 @@ function MyClassTab() {
     }
   }, [timePeriod, tz]);
 
-  const { data: passHistory = [], isLoading: historyLoading } = useQuery({
+  const {
+    data: passHistory = [],
+    isLoading: historyLoading,
+    isError: historyError,
+    refetch: refetchHistory,
+  } = useQuery({
     queryKey: ['/api/passes/history', activeGradeId, passDataDateStart],
     queryFn: async () => {
       const params = new URLSearchParams();
       params.append('dateStart', passDataDateStart);
-      if (activeGradeId) params.append('gradeId', activeGradeId);
-      const data = await apiRequest('GET', `/passes/history?${params.toString()}`);
-      return Array.isArray(data) ? data : (data?.passes ?? []);
+      if (activeGradeId) params.append(canonical ? 'classId' : 'gradeId', activeGradeId);
+      return fetchAllPassPilotHistory(`/passes/history?${params.toString()}`);
     },
     enabled: showPassData && !!activeGradeId,
     gcTime: 0,
@@ -133,7 +209,9 @@ function MyClassTab() {
     });
 
     // Include ALL grade students (even those with 0 passes)
-    const currentGradeStudents = students.filter(s => s.gradeId === activeGradeId);
+    const currentGradeStudents = canonical
+      ? students
+      : students.filter(s => s.gradeId === activeGradeId);
     currentGradeStudents.forEach(s => {
       if (!studentCounts.has(s.id)) {
         studentCounts.set(s.id, { id: s.id, name: `${s.firstName} ${s.lastName}`, count: 0 });
@@ -168,7 +246,7 @@ function MyClassTab() {
     const avgDuration = completedCount > 0 ? Math.round(totalDuration / completedCount) : 0;
 
     return { allStudents, topDestinations, total: passHistory.length, avgDuration };
-  }, [passHistory, students, activeGradeId]);
+  }, [passHistory, students, activeGradeId, canonical]);
 
   // Per-student destinations when a student is selected
   const selectedStudentStats = useMemo(() => {
@@ -227,7 +305,10 @@ function MyClassTab() {
     URL.revokeObjectURL(url);
   };
 
-  const isLoading = studentsLoading || passesLoading;
+  const isLoading = studentsLoading
+    || passesLoading
+    || classInventoryQuery.isLoading
+    || (sourceResolved && !canonical && legacyClassesLoading);
 
   const handleMarkOut = async (studentId, studentName, passType = 'general', customReasonText = '') => {
     try {
@@ -235,13 +316,17 @@ function MyClassTab() {
         studentId,
         passType,
         customReason: customReasonText || undefined,
+        ...(canonical && activeGradeId ? { classId: activeGradeId } : {}),
       };
 
-      await apiRequest('POST', '/passes', requestBody);
+      await passPilotClassRequest('POST', '/passes', requestBody);
 
       queryClient.invalidateQueries({ queryKey: ['/api/passes/active'] });
       queryClient.invalidateQueries({ queryKey: ['/api/passes'] });
       queryClient.invalidateQueries({ queryKey: ['/api/students'] });
+      if (canonical && activeGradeId) {
+        queryClient.invalidateQueries({ queryKey: ['passpilot', 'class-students', activeGradeId] });
+      }
 
       const reasonText = customReasonText ? customReasonText : (
         passType === 'nurse' ? 'Nurse' :
@@ -270,8 +355,13 @@ function MyClassTab() {
 
   const handleSendToKiosk = async (gradeId) => {
     try {
-      await apiRequest('PUT', '/kiosk-config', { gradeId });
+      if (canonical) await passPilotClassRequest('PUT', '/kiosk-config', { classId: gradeId });
+      else await apiRequest('PUT', '/kiosk-config', { gradeId });
       setKioskGradeId(gradeId);
+      queryClient.setQueryData(
+        ['passpilot', 'kiosk-config', canonical ? 'classpilot_groups' : 'legacy_grades'],
+        (current = {}) => ({ ...current, classId: gradeId, gradeId: canonical ? null : gradeId })
+      );
       toast({ title: "Kiosk Updated", description: "Kiosk is now showing this grade." });
     } catch {
       toast({ title: "Error", description: "Failed to update kiosk.", variant: "destructive" });
@@ -280,9 +370,14 @@ function MyClassTab() {
 
   const handleClearKiosk = async () => {
     try {
-      await apiRequest('PUT', '/kiosk-config', { gradeId: null });
+      if (canonical) await passPilotClassRequest('PUT', '/kiosk-config', { classId: null });
+      else await apiRequest('PUT', '/kiosk-config', { gradeId: null });
       setKioskGradeId(null);
-      toast({ title: "Kiosk Cleared", description: "Kiosk returned to grade picker." });
+      queryClient.setQueryData(
+        ['passpilot', 'kiosk-config', canonical ? 'classpilot_groups' : 'legacy_grades'],
+        (current = {}) => ({ ...current, classId: null, gradeId: null })
+      );
+      toast({ title: "Kiosk Cleared", description: "The kiosk class selection was cleared." });
     } catch {
       toast({ title: "Error", description: "Failed to clear kiosk.", variant: "destructive" });
     }
@@ -305,10 +400,13 @@ function MyClassTab() {
 
   const handleMarkReturned = async (passId, studentName) => {
     try {
-      await apiRequest('PUT', `/passes/${passId}/return`, {});
+      await passPilotClassRequest('PUT', `/passes/${passId}/return`, {});
       queryClient.invalidateQueries({ queryKey: ['/api/passes/active'] });
       queryClient.invalidateQueries({ queryKey: ['/api/passes'] });
       queryClient.invalidateQueries({ queryKey: ['/api/students'] });
+      if (canonical && activeGradeId) {
+        queryClient.invalidateQueries({ queryKey: ['passpilot', 'class-students', activeGradeId] });
+      }
 
       toast({
         title: "Student returned",
@@ -430,6 +528,61 @@ function MyClassTab() {
     return `${Math.max(1, diffMinutes)} min`;
   };
 
+  if (isLoading) {
+    return (
+      <div className="p-4" aria-live="polite">
+        <div className="animate-pulse space-y-4 motion-reduce:animate-none">
+          <div className="h-4 bg-muted rounded w-1/4"></div>
+          <div className="h-20 bg-muted rounded"></div>
+          <div className="h-20 bg-muted rounded"></div>
+        </div>
+      </div>
+    );
+  }
+
+  if (classInventoryQuery.isError) {
+    return (
+      <div className="p-4">
+        <Card className="border-destructive/40">
+          <CardContent className="p-8 text-center">
+            <h2 className="text-lg font-semibold">Classes couldn’t be loaded</h2>
+            <p className="mt-2 text-sm text-muted-foreground">Try again. No class changes were made.</p>
+            <Button type="button" variant="outline" className="mt-4" onClick={() => classInventoryQuery.refetch()}>
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (legacyClassesError || studentsError || passesError) {
+    return (
+      <div className="p-4">
+        <Card className="border-destructive/40">
+          <CardContent className="p-8 text-center" aria-live="polite">
+            <h2 className="text-lg font-semibold">Class roster couldn’t be loaded</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Try again. PassPilot will not treat a loading failure as an empty class.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-4"
+              onClick={() => {
+                if (legacyClassesError) void refetchLegacyClasses();
+                if (studentsError) void refetchStudents();
+                if (passesError) void refetchPasses();
+              }}
+            >
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   if (myClasses.length === 0) {
     return (
       <div className="p-4">
@@ -440,32 +593,36 @@ function MyClassTab() {
         <Card>
           <CardContent className="p-6 text-center">
             <Users className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-muted-foreground mb-2">No Classes Assigned</h3>
+            <h3 className="text-lg font-medium text-foreground mb-2">
+              {canonical && isSchoolwideManager ? "No official classes yet" : "No Classes Assigned"}
+            </h3>
             <p className="text-sm text-muted-foreground mb-4">
-              Ask your admin to assign classes to your account, or add classes from the Classes tab.
+              {canonical
+                ? (isSchoolwideManager
+                  ? "Create a class in ClassPilot to use it in PassPilot."
+                  : "Ask IT to assign you as a teacher or co-teacher in ClassPilot.")
+                : "Ask your admin to assign classes to your account, or add classes from the Classes tab."}
             </p>
+            {canonical && isAdmin && canLinkToClassPilot ? (
+              <Button asChild>
+                <Link to="/classpilot/admin/classes?returnTo=%2Fpasspilot%2Fclasses">Manage Classes in ClassPilot</Link>
+              </Button>
+            ) : null}
           </CardContent>
         </Card>
       </div>
     );
   }
 
-  if (isLoading) {
-    return (
-      <div className="p-4">
-        <div className="animate-pulse space-y-4">
-          <div className="h-4 bg-muted rounded w-1/4"></div>
-          <div className="h-20 bg-muted rounded"></div>
-          <div className="h-20 bg-muted rounded"></div>
-        </div>
-      </div>
-    );
-  }
-
   // Get current active grade data
   const currentActiveGrade = myClasses.find(g => g.id === activeGradeId);
-  const gradeStudents = currentActiveGrade ? students.filter((student) => student.gradeId === currentActiveGrade.id) : [];
+  const gradeStudents = currentActiveGrade
+    ? (canonical ? students : students.filter((student) => student.gradeId === currentActiveGrade.id))
+    : [];
   const gradeOutPasses = currentActiveGrade ? passes.filter((pass) => {
+    if (canonical) {
+      return (pass.classId || pass.classpilotGroupId) === currentActiveGrade.id;
+    }
     const student = students.find((s) => s.id === pass.studentId);
     return student && student.gradeId === currentActiveGrade.id;
   }) : [];
@@ -525,16 +682,30 @@ function MyClassTab() {
   return (
     <div className="p-4">
       <div className="mb-6">
-        <h2 className="text-xl font-semibold text-foreground mb-2">My Class</h2>
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <h2 className="text-xl font-semibold text-foreground">My Class</h2>
+          {canonical ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-950 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden="true" />
+              Managed in ClassPilot
+            </span>
+          ) : null}
+        </div>
         <p className="text-sm text-muted-foreground">Manage student passes and track who's out of class</p>
+        {canonical ? (
+          <p className="mt-1 text-sm text-muted-foreground">
+            Classes and rosters follow your ClassPilot assignments.
+          </p>
+        ) : null}
       </div>
 
       {/* Grade Tabs (left) + Action Buttons (right) */}
       <div className="mb-6">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap gap-2">
             {myClasses.map((grade) => {
               const gradeOutCount = passes.filter(p => {
+                if (canonical) return (p.classId || p.classpilotGroupId) === grade.id;
                 const student = students.find(s => s.id === p.studentId);
                 return student && student.gradeId === grade.id;
               }).length;
@@ -552,7 +723,7 @@ function MyClassTab() {
                   data-testid={`tab-grade-${grade.name}`}
                   className={`flex items-center gap-2 ${isActive ? 'ring-2 ring-primary' : ''}`}
                 >
-                  <Users className="w-4 h-4" />
+                  <Users className="w-4 h-4" aria-hidden="true" />
                   {grade.name}
                   {gradeOutCount > 0 && (
                     <span className="ml-1 px-1.5 py-0.5 text-xs bg-red-100 text-red-700 rounded-full">
@@ -574,7 +745,7 @@ function MyClassTab() {
                     }
                   }}
                   className="flex items-center gap-1.5"
-                  title={kioskGradeId === currentActiveGrade.id ? "Click to clear kiosk" : "Send this grade to kiosk"}
+                  title={kioskGradeId === currentActiveGrade.id ? "Click to clear kiosk" : "Send this class to kiosk"}
                 >
                   <Monitor className="w-4 h-4" />
                   {kioskGradeId === currentActiveGrade.id ? "On Kiosk" : "Send to Kiosk"}
@@ -697,6 +868,13 @@ function MyClassTab() {
 
                 {historyLoading ? (
                   <div className="text-center py-4 text-muted-foreground text-sm">Loading pass data...</div>
+                ) : historyError ? (
+                  <div className="py-4 text-center" role="alert">
+                    <p className="text-sm font-medium text-destructive">Pass history couldn’t be loaded.</p>
+                    <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => refetchHistory()}>
+                      Retry
+                    </Button>
+                  </div>
                 ) : !selectedPassDataStudent ? (
                   /* ========== CLASS VIEW ========== */
                   <>
@@ -722,9 +900,10 @@ function MyClassTab() {
                         </h4>
                         <div className="space-y-1.5 max-h-64 overflow-y-auto">
                           {passDataStats.allStudents.map((s, i) => (
-                            <div
+                            <button
+                              type="button"
                               key={s.id || i}
-                              className="flex items-center justify-between text-sm py-1.5 px-2 rounded bg-muted/50 cursor-pointer hover:bg-muted transition-colors"
+                              className="flex w-full items-center justify-between rounded bg-muted/50 px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                               onClick={() => setSelectedPassDataStudent({ id: s.id, name: s.name })}
                             >
                               <span className="flex items-center gap-2">
@@ -734,7 +913,7 @@ function MyClassTab() {
                               <span className={`${s.count === 0 ? 'text-muted-foreground/50' : 'text-muted-foreground'}`}>
                                 {s.count} {s.count === 1 ? 'pass' : 'passes'}
                               </span>
-                            </div>
+                            </button>
                           ))}
                         </div>
                       </div>
@@ -761,9 +940,6 @@ function MyClassTab() {
                       </div>
                     </div>
 
-                    {passHistory.length >= 2000 && (
-                      <p className="text-xs text-muted-foreground">Showing data from the most recent 2,000 passes</p>
-                    )}
                   </>
                 ) : (
                   /* ========== STUDENT VIEW ========== */
@@ -801,13 +977,14 @@ function MyClassTab() {
                   </>
                 )}
 
-                {/* Export CSV */}
-                <div className="pt-2 border-t">
-                  <Button variant="outline" size="sm" onClick={handlePassDataExportCSV} className="flex items-center gap-1.5">
-                    <Download className="h-4 w-4" />
-                    Export CSV
-                  </Button>
-                </div>
+                {!historyLoading && !historyError ? (
+                  <div className="pt-2 border-t">
+                    <Button variant="outline" size="sm" onClick={handlePassDataExportCSV} className="flex items-center gap-1.5">
+                      <Download className="h-4 w-4" />
+                      Export CSV
+                    </Button>
+                  </div>
+                ) : null}
               </CardContent>
             </Card>
           )}
@@ -829,6 +1006,7 @@ function MyClassTab() {
                 onClick={() => setSearchQuery('')}
                 className="absolute right-1 top-1/2 transform -translate-y-1/2 h-8 w-8 p-0"
                 data-testid="button-clear-search"
+                aria-label="Clear student search"
               >
                 <X className="h-4 w-4" />
               </Button>
@@ -904,12 +1082,25 @@ function MyClassTab() {
             </CardHeader>
             <CardContent>
               {availableStudents.length === 0 ? (
-                <p className="text-center text-muted-foreground py-4">
-                  {gradeStudents.length === 0
-                    ? `No students in ${currentActiveGrade.name}. Add students in the Classes tab.`
-                    : "All students are currently out of class"
-                  }
-                </p>
+                <div className="py-4 text-center text-muted-foreground">
+                  <p>
+                    {gradeStudents.length === 0
+                      ? (canonical
+                        ? (isAdmin
+                          ? "This class has no students. Add students to its roster in ClassPilot."
+                          : isSchoolwideManager
+                            ? "This class has no students. Ask an administrator to update its ClassPilot roster."
+                            : "This class has no students yet. Ask IT to update the ClassPilot roster.")
+                        : `No students in ${currentActiveGrade.name}. Add students in the Classes tab.`)
+                      : "All students are currently out of class"
+                    }
+                  </p>
+                  {gradeStudents.length === 0 && canonical && isAdmin && canLinkToClassPilot ? (
+                    <Button asChild variant="outline" size="sm" className="mt-3">
+                      <Link to="/classpilot/admin/classes?returnTo=%2Fpasspilot%2Fclasses">Manage Roster in ClassPilot</Link>
+                    </Button>
+                  ) : null}
+                </div>
               ) : (
                 <div className="grid gap-3">
                   {availableStudents.map((student) => {
@@ -940,8 +1131,9 @@ function MyClassTab() {
                     return (
                       <DropdownMenu key={student.id}>
                         <DropdownMenuTrigger asChild>
-                          <div
-                            className="flex items-center justify-between p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg cursor-pointer hover:bg-green-100 dark:hover:bg-green-900/30 transition-colors"
+                          <button
+                            type="button"
+                            className="flex w-full items-center justify-between rounded-lg border border-green-200 bg-green-50 p-3 text-left transition-colors hover:bg-green-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 dark:border-green-800 dark:bg-green-900/20 dark:hover:bg-green-900/30"
                             data-testid={`button-checkout-${student.id}`}
                           >
                             <div className="flex items-center space-x-3 flex-grow">
@@ -958,7 +1150,7 @@ function MyClassTab() {
                                 )}
                               </div>
                             </div>
-                          </div>
+                          </button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="start">
                           <DropdownMenuItem

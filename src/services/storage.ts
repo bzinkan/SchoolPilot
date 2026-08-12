@@ -1157,25 +1157,118 @@ export async function getGradeById(id: string): Promise<Grade | undefined> {
 }
 
 export async function createGrade(data: InsertGrade): Promise<Grade> {
-  const [grade] = await db.insert(grades).values(data).returning();
-  return grade!;
+  return db.transaction(async (tx) => {
+    await takePasspilotClassLock(tx, data.schoolId);
+    const [source] = await tx
+      .select({ value: settings.passpilotClassSource })
+      .from(settings)
+      .where(eq(settings.schoolId, data.schoolId))
+      .limit(1)
+      .for("update");
+    if (source?.value === "classpilot_groups") {
+      throw passpilotClassError(
+        "CLASSES_MANAGED_IN_CLASSPILOT",
+        "PassPilot classes are managed in ClassPilot after migration.",
+        409
+      );
+    }
+    const [grade] = await tx.insert(grades).values(data).returning();
+    return grade!;
+  });
 }
 
 export async function updateGrade(
   id: string,
   data: Partial<InsertGrade>
 ): Promise<Grade | undefined> {
-  const [grade] = await db
-    .update(grades)
-    .set(data)
-    .where(eq(grades.id, id))
-    .returning();
-  return grade;
+  const existing = await getGradeById(id);
+  if (!existing) return undefined;
+  return db.transaction(async (tx) => {
+    await takePasspilotClassLock(tx, existing.schoolId);
+    const [source] = await tx
+      .select({ value: settings.passpilotClassSource })
+      .from(settings)
+      .where(eq(settings.schoolId, existing.schoolId))
+      .limit(1)
+      .for("update");
+    if (source?.value === "classpilot_groups") {
+      throw passpilotClassError("CLASSES_MANAGED_IN_CLASSPILOT", "PassPilot classes are managed in ClassPilot after migration.", 409);
+    }
+    const safeData: Partial<InsertGrade> = {};
+    if (typeof data.name === "string") safeData.name = data.name;
+    if (typeof data.displayOrder === "number") safeData.displayOrder = data.displayOrder;
+    if (Object.keys(safeData).length === 0) return existing;
+    const [grade] = await tx
+      .update(grades)
+      .set(safeData)
+      .where(and(eq(grades.id, id), eq(grades.schoolId, existing.schoolId)))
+      .returning();
+    return grade;
+  });
 }
 
 export async function deleteGrade(id: string): Promise<boolean> {
-  const result = await db.delete(grades).where(eq(grades.id, id));
-  return (result.rowCount ?? 0) > 0;
+  const existing = await getGradeById(id);
+  if (!existing) return false;
+  return db.transaction(async (tx) => {
+    await takePasspilotClassLock(tx, existing.schoolId);
+    const [source] = await tx
+      .select({ value: settings.passpilotClassSource })
+      .from(settings)
+      .where(eq(settings.schoolId, existing.schoolId))
+      .limit(1)
+      .for("update");
+    if (source?.value === "classpilot_groups") {
+      throw passpilotClassError("CLASSES_MANAGED_IN_CLASSPILOT", "PassPilot classes are managed in ClassPilot after migration.", 409);
+    }
+    const [lockedGrade] = await tx
+      .select({
+        id: grades.id,
+        classpilotGroupId: grades.classpilotGroupId,
+        migrationState: grades.migrationState,
+      })
+      .from(grades)
+      .where(and(eq(grades.id, id), eq(grades.schoolId, existing.schoolId)))
+      .limit(1)
+      .for("update");
+    if (!lockedGrade) return false;
+
+    const [passReference] = await tx
+      .select({ count: sql<number>`COUNT(*)::int` })
+      .from(passes)
+      .where(and(eq(passes.schoolId, existing.schoolId), eq(passes.gradeId, id)));
+    const [studentReference] = await tx
+      .select({ count: sql<number>`COUNT(*)::int` })
+      .from(students)
+      .where(and(eq(students.schoolId, existing.schoolId), eq(students.gradeId, id)));
+    const [teacherReference] = await tx
+      .select({ count: sql<number>`COUNT(*)::int` })
+      .from(teacherGrades)
+      .innerJoin(grades, eq(teacherGrades.gradeId, grades.id))
+      .where(and(eq(grades.schoolId, existing.schoolId), eq(teacherGrades.gradeId, id)));
+    const [kioskReference] = await tx
+      .select({ count: sql<number>`COUNT(*)::int` })
+      .from(schools)
+      .where(and(eq(schools.id, existing.schoolId), eq(schools.kioskGradeId, id)));
+    const hasReferences =
+      (passReference?.count ?? 0) > 0 ||
+      (studentReference?.count ?? 0) > 0 ||
+      (teacherReference?.count ?? 0) > 0 ||
+      (kioskReference?.count ?? 0) > 0 ||
+      lockedGrade.migrationState !== "pending" ||
+      !!lockedGrade.classpilotGroupId;
+    if (hasReferences) {
+      throw passpilotClassError(
+        "PASSPILOT_LEGACY_CLASS_REFERENCED",
+        "This legacy class is still referenced by PassPilot data. Preserve it for history or mark it history-only during migration.",
+        409
+      );
+    }
+    const result = await tx
+      .delete(grades)
+      .where(and(eq(grades.id, id), eq(grades.schoolId, existing.schoolId)));
+    return (result.rowCount ?? 0) > 0;
+  });
 }
 
 // ============================================================================
@@ -1197,27 +1290,69 @@ export async function assignTeacherGrade(
   teacherId: string,
   gradeId: string
 ) {
-  const [assignment] = await db
-    .insert(teacherGrades)
-    .values({ teacherId, gradeId })
-    .onConflictDoNothing()
-    .returning();
-  return assignment;
+  const grade = await getGradeById(gradeId);
+  if (!grade) return undefined;
+  return db.transaction(async (tx) => {
+    await takePasspilotClassLock(tx, grade.schoolId);
+    const [source] = await tx
+      .select({ value: settings.passpilotClassSource })
+      .from(settings)
+      .where(eq(settings.schoolId, grade.schoolId))
+      .limit(1)
+      .for("update");
+    if (source?.value === "classpilot_groups") {
+      throw passpilotClassError("CLASSES_MANAGED_IN_CLASSPILOT", "Teacher assignments are managed in ClassPilot after migration.", 409);
+    }
+    const [lockedGrade] = await tx
+      .select({ migrationState: grades.migrationState })
+      .from(grades)
+      .where(and(eq(grades.id, gradeId), eq(grades.schoolId, grade.schoolId)))
+      .limit(1)
+      .for("update");
+    if (!lockedGrade) return undefined;
+    if (lockedGrade.migrationState === "history_only") {
+      throw passpilotClassError(
+        "PASSPILOT_HISTORY_CLASS_READ_ONLY",
+        "This legacy class is history-only and cannot receive new teacher assignments.",
+        409
+      );
+    }
+    const [assignment] = await tx
+      .insert(teacherGrades)
+      .values({ teacherId, gradeId })
+      .onConflictDoNothing()
+      .returning();
+    return assignment;
+  });
 }
 
 export async function removeTeacherGrade(
   teacherId: string,
   gradeId: string
 ): Promise<boolean> {
-  const result = await db
-    .delete(teacherGrades)
-    .where(
-      and(
-        eq(teacherGrades.teacherId, teacherId),
-        eq(teacherGrades.gradeId, gradeId)
-      )
-    );
-  return (result.rowCount ?? 0) > 0;
+  const grade = await getGradeById(gradeId);
+  if (!grade) return false;
+  return db.transaction(async (tx) => {
+    await takePasspilotClassLock(tx, grade.schoolId);
+    const [source] = await tx
+      .select({ value: settings.passpilotClassSource })
+      .from(settings)
+      .where(eq(settings.schoolId, grade.schoolId))
+      .limit(1)
+      .for("update");
+    if (source?.value === "classpilot_groups") {
+      throw passpilotClassError("CLASSES_MANAGED_IN_CLASSPILOT", "Teacher assignments are managed in ClassPilot after migration.", 409);
+    }
+    const result = await tx
+      .delete(teacherGrades)
+      .where(
+        and(
+          eq(teacherGrades.teacherId, teacherId),
+          eq(teacherGrades.gradeId, gradeId)
+        )
+      );
+    return (result.rowCount ?? 0) > 0;
+  });
 }
 
 // ============================================================================
@@ -1309,6 +1444,78 @@ export async function getActivePassesByGrade(
     .orderBy(desc(passes.issuedAt));
 }
 
+export async function deleteProductLicenseForSchool(
+  schoolId: string,
+  licenseId: string
+): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    await takePasspilotClassLock(tx, schoolId);
+    const [license] = await tx
+      .select()
+      .from(productLicenses)
+      .where(
+        and(
+          eq(productLicenses.id, licenseId),
+          eq(productLicenses.schoolId, schoolId)
+        )
+      )
+      .limit(1)
+      .for("update");
+    if (!license) return false;
+    if (license.product === "CLASSPILOT") {
+      const [source] = await tx
+        .select({ value: settings.passpilotClassSource })
+        .from(settings)
+        .where(eq(settings.schoolId, schoolId))
+        .limit(1)
+        .for("update");
+      if (source?.value === "classpilot_groups") {
+        throw passpilotClassError(
+          "CLASSPILOT_REQUIRED_FOR_PASSPILOT_CLASSES",
+          "ClassPilot cannot be removed while PassPilot uses ClassPilot classes. Migrate PassPilot away from canonical classes first.",
+          409
+        );
+      }
+    }
+    const result = await tx
+      .delete(productLicenses)
+      .where(
+        and(
+          eq(productLicenses.id, licenseId),
+          eq(productLicenses.schoolId, schoolId)
+        )
+      );
+    return (result.rowCount ?? 0) > 0;
+  });
+}
+
+export async function getActivePassesByClass(
+  schoolId: string,
+  classId: string
+): Promise<Pass[]> {
+  const mappedGrades = await db
+    .select({ id: grades.id })
+    .from(grades)
+    .where(and(eq(grades.schoolId, schoolId), eq(grades.classpilotGroupId, classId)));
+  const classCondition = mappedGrades.length > 0
+    ? or(
+        eq(passes.classpilotGroupId, classId),
+        inArray(passes.gradeId, mappedGrades.map((grade) => grade.id))
+      )!
+    : eq(passes.classpilotGroupId, classId);
+  return db
+    .select()
+    .from(passes)
+    .where(
+      and(
+        eq(passes.schoolId, schoolId),
+        classCondition,
+        eq(passes.status, "active")
+      )
+    )
+    .orderBy(desc(passes.issuedAt));
+}
+
 export async function getActivePassForStudent(
   studentId: string,
   schoolId: string
@@ -1339,20 +1546,53 @@ export async function getPassById(
   return pass;
 }
 
-export async function getPassHistory(
+export async function getPassHistoryPage(
   schoolId: string,
   filters: {
     gradeId?: string;
+    classId?: string;
     studentId?: string;
     teacherId?: string;
     startDate?: Date;
     endDate?: Date;
+    limit?: number;
+    cursor?: { issuedAtMs: string; id: string };
+    passType?: string;
+    access?: {
+      issuerTeacherId: string;
+      classIds: string[];
+      gradeIds: string[];
+      studentIds: string[];
+    };
   } = {}
-): Promise<Pass[]> {
+): Promise<{
+  passes: Pass[];
+  nextCursor: { issuedAtMs: string; id: string } | null;
+  hasMore: boolean;
+}> {
   const conditions = [eq(passes.schoolId, schoolId)];
 
   if (filters.gradeId) {
     conditions.push(eq(passes.gradeId, filters.gradeId));
+  }
+  if (filters.classId) {
+    const mappedGrades = await db
+      .select({ id: grades.id })
+      .from(grades)
+      .where(
+        and(
+          eq(grades.schoolId, schoolId),
+          eq(grades.classpilotGroupId, filters.classId)
+        )
+      );
+    conditions.push(
+      mappedGrades.length > 0
+        ? or(
+            eq(passes.classpilotGroupId, filters.classId),
+            inArray(passes.gradeId, mappedGrades.map((grade) => grade.id))
+          )!
+        : eq(passes.classpilotGroupId, filters.classId)
+    );
   }
   if (filters.studentId) {
     conditions.push(eq(passes.studentId, filters.studentId));
@@ -1366,18 +1606,207 @@ export async function getPassHistory(
   if (filters.endDate) {
     conditions.push(sql`${passes.issuedAt} <= ${filters.endDate}`);
   }
+  if (filters.passType) {
+    switch (filters.passType) {
+      case "nurse":
+        conditions.push(eq(passes.destination, "nurse"));
+        break;
+      case "discipline":
+        conditions.push(inArray(passes.destination, ["office", "counselor"]));
+        break;
+      case "general":
+        conditions.push(sql`${passes.destination} NOT IN ('nurse', 'office', 'counselor')`);
+        break;
+    }
+  }
+  if (filters.access) {
+    const accessConditions: SQL[] = [eq(passes.teacherId, filters.access.issuerTeacherId)];
+    if (filters.access.classIds.length > 0) {
+      accessConditions.push(inArray(passes.classpilotGroupId, filters.access.classIds));
+    }
+    if (filters.access.gradeIds.length > 0) {
+      accessConditions.push(inArray(passes.gradeId, filters.access.gradeIds));
+    }
+    if (filters.access.studentIds.length > 0) {
+      accessConditions.push(
+        and(
+          isNull(passes.classpilotGroupId),
+          isNull(passes.gradeId),
+          inArray(passes.studentId, filters.access.studentIds)
+        )!
+      );
+    }
+    conditions.push(or(...accessConditions)!);
+  }
+  const issuedAtMsExpression = sql`(
+    extract(epoch from date_trunc('milliseconds', ${passes.issuedAt})) * 1000
+  )::bigint`;
+  if (filters.cursor) {
+    conditions.push(
+      sql`(
+        ${issuedAtMsExpression} < ${filters.cursor.issuedAtMs}::bigint
+        OR (
+          ${issuedAtMsExpression} = ${filters.cursor.issuedAtMs}::bigint
+          AND ${passes.id} < ${filters.cursor.id}
+        )
+      )`
+    );
+  }
 
-  return db
-    .select()
+  const limit = Math.min(500, Math.max(1, Math.trunc(filters.limit ?? 500)));
+  const rows = await db
+    .select({
+      ...getTableColumns(passes),
+      cursorIssuedAtMs: sql<string>`${issuedAtMsExpression}::text`,
+    })
     .from(passes)
     .where(and(...conditions))
-    .orderBy(desc(passes.issuedAt))
-    .limit(2000);
+    .orderBy(desc(issuedAtMsExpression), desc(passes.id))
+    .limit(limit + 1);
+  const hasMore = rows.length > limit;
+  const pageRows = hasMore ? rows.slice(0, limit) : rows;
+  const last = pageRows.at(-1);
+  const page = pageRows.map(({ cursorIssuedAtMs: _cursorIssuedAtMs, ...pass }) => pass);
+  return {
+    passes: page,
+    nextCursor: hasMore && last
+      ? { issuedAtMs: last.cursorIssuedAtMs, id: last.id }
+      : null,
+    hasMore,
+  };
+}
+
+export async function getPassHistory(
+  schoolId: string,
+  filters: {
+    gradeId?: string;
+    classId?: string;
+    studentId?: string;
+    teacherId?: string;
+    startDate?: Date;
+    endDate?: Date;
+  } = {}
+): Promise<Pass[]> {
+  const results: Pass[] = [];
+  let cursor: { issuedAtMs: string; id: string } | undefined;
+  do {
+    const page = await getPassHistoryPage(schoolId, { ...filters, limit: 500, cursor });
+    results.push(...page.passes);
+    cursor = page.nextCursor ?? undefined;
+    if (!page.hasMore) break;
+  } while (cursor);
+  return results;
+}
+
+export async function getPasspilotClassHistoryReferences(
+  schoolId: string,
+  teacherId?: string
+): Promise<{
+  canonicalClassIds: string[];
+  legacyGradeIds: string[];
+  passCountByLegacyGrade: Map<string, number>;
+}> {
+  const schoolGrades = await db
+    .select({ id: grades.id, classpilotGroupId: grades.classpilotGroupId })
+    .from(grades)
+    .where(eq(grades.schoolId, schoolId));
+  const gradeMap = new Map(schoolGrades.map((grade) => [grade.id, grade.classpilotGroupId]));
+  const passRows = await db
+    .select({
+      classpilotGroupId: passes.classpilotGroupId,
+      gradeId: passes.gradeId,
+    })
+    .from(passes)
+    .where(
+      teacherId
+        ? and(eq(passes.schoolId, schoolId), eq(passes.teacherId, teacherId))
+        : eq(passes.schoolId, schoolId)
+    );
+  const canonicalClassIds = new Set<string>();
+  const legacyGradeIds = new Set<string>();
+  const passCountByLegacyGrade = new Map<string, number>();
+  if (!teacherId) {
+    for (const grade of schoolGrades) {
+      if (grade.classpilotGroupId) canonicalClassIds.add(grade.classpilotGroupId);
+    }
+  }
+  for (const pass of passRows) {
+    if (pass.classpilotGroupId) canonicalClassIds.add(pass.classpilotGroupId);
+    if (!pass.gradeId) continue;
+    passCountByLegacyGrade.set(
+      pass.gradeId,
+      (passCountByLegacyGrade.get(pass.gradeId) ?? 0) + 1
+    );
+    const mappedClassId = gradeMap.get(pass.gradeId);
+    if (mappedClassId) canonicalClassIds.add(mappedClassId);
+    else legacyGradeIds.add(pass.gradeId);
+  }
+  return {
+    canonicalClassIds: Array.from(canonicalClassIds),
+    legacyGradeIds: Array.from(legacyGradeIds),
+    passCountByLegacyGrade,
+  };
 }
 
 export async function createPass(data: InsertPass): Promise<Pass> {
   const [pass] = await db.insert(passes).values(data).returning();
   return pass!;
+}
+
+export async function createLegacyPass(data: InsertPass): Promise<Pass> {
+  return db.transaction(async (tx) => {
+    await takePasspilotClassLock(tx, data.schoolId);
+    const [settingsRow] = await tx
+      .select({ source: settings.passpilotClassSource })
+      .from(settings)
+      .where(eq(settings.schoolId, data.schoolId))
+      .limit(1)
+      .for("update");
+    if (settingsRow?.source !== "legacy_grades") {
+      throw passpilotClassError(
+        "PASSPILOT_CLASS_SOURCE_CHANGED",
+        "PassPilot class configuration changed. Reload classes before issuing a pass.",
+        409
+      );
+    }
+    if (data.gradeId) {
+      const [grade] = await tx
+        .select({ id: grades.id, migrationState: grades.migrationState })
+        .from(grades)
+        .where(and(eq(grades.id, data.gradeId), eq(grades.schoolId, data.schoolId)))
+        .limit(1);
+      if (!grade) {
+        throw passpilotClassError("PASSPILOT_LEGACY_CLASS_NOT_FOUND", "Class not found.", 404);
+      }
+      if (grade.migrationState === "history_only") {
+        throw passpilotClassError(
+          "PASSPILOT_HISTORY_CLASS_READ_ONLY",
+          "This legacy class is history-only and cannot issue new passes.",
+          409
+        );
+      }
+    }
+    const [student] = await tx
+      .select({ id: students.id, gradeId: students.gradeId })
+      .from(students)
+      .where(
+        and(
+          eq(students.id, data.studentId),
+          eq(students.schoolId, data.schoolId),
+          eq(students.status, "active")
+        )
+      )
+      .limit(1);
+    if (!student || (data.gradeId && student.gradeId && data.gradeId !== student.gradeId)) {
+      throw passpilotClassError(
+        "PASSPILOT_STUDENT_NOT_IN_CLASS",
+        "Student is not enrolled in the selected class.",
+        409
+      );
+    }
+    const [pass] = await tx.insert(passes).values(data).returning();
+    return pass!;
+  });
 }
 
 export async function returnPass(
@@ -1396,6 +1825,241 @@ export async function returnPass(
     )
     .returning();
   return pass;
+}
+
+export async function getKioskStudentState(
+  schoolId: string,
+  studentId: string,
+  canonicalCapability: boolean
+): Promise<{
+  source: PasspilotClassSource;
+  configuredClassId: string | null;
+  enrolled: boolean;
+  activePass: Pass | null;
+  hasActivePassInAnotherClass: boolean;
+}> {
+  return db.transaction(async (tx) => {
+    await takePasspilotClassLock(tx, schoolId);
+    const [source] = await tx
+      .select({ value: settings.passpilotClassSource })
+      .from(settings)
+      .where(eq(settings.schoolId, schoolId))
+      .limit(1)
+      .for("update");
+    const classSource = source?.value ?? "legacy_grades";
+    const [school] = await tx
+      .select({
+        kioskGradeId: schools.kioskGradeId,
+        classId: schools.kioskClasspilotGroupId,
+      })
+      .from(schools)
+      .where(eq(schools.id, schoolId))
+      .limit(1)
+      .for("update");
+    if (!school) {
+      throw passpilotClassError("SCHOOL_NOT_FOUND", "School not found.", 404);
+    }
+    const [activePass] = await tx
+      .select()
+      .from(passes)
+      .where(
+        and(
+          eq(passes.schoolId, schoolId),
+          eq(passes.studentId, studentId),
+          eq(passes.status, "active")
+        )
+      )
+      .limit(1);
+    if (classSource === "legacy_grades") {
+      return {
+        source: classSource,
+        configuredClassId: school.kioskGradeId,
+        enrolled: true,
+        activePass: activePass ?? null,
+        hasActivePassInAnotherClass: false,
+      };
+    }
+    if (!canonicalCapability) {
+      throw passpilotClassError(
+        "PASSPILOT_CLASS_MODEL_UPGRADE_REQUIRED",
+        "This kiosk must be updated before looking up ClassPilot students.",
+        426
+      );
+    }
+    if (!school?.classId) {
+      throw passpilotClassError(
+        "PASSPILOT_KIOSK_CLASS_REQUIRED",
+        "A kiosk class must be selected before looking up students.",
+        409
+      );
+    }
+    const [configuredClass] = await tx
+      .select({ id: groups.id })
+      .from(groups)
+      .where(
+        and(
+          eq(groups.id, school.classId),
+          eq(groups.schoolId, schoolId),
+          eq(groups.groupType, "admin_class"),
+          eq(groups.status, "active")
+        )
+      )
+      .limit(1)
+      .for("update");
+    if (!configuredClass) {
+      throw passpilotClassError(
+        "PASSPILOT_KIOSK_CLASS_INACTIVE",
+        "The configured kiosk class is no longer active.",
+        409
+      );
+    }
+    const [membership] = await tx
+      .select({ id: groupStudents.id })
+      .from(groupStudents)
+      .innerJoin(students, eq(students.id, groupStudents.studentId))
+      .where(
+        and(
+          eq(groupStudents.groupId, configuredClass.id),
+          eq(groupStudents.studentId, studentId),
+          eq(students.schoolId, schoolId),
+          eq(students.status, "active")
+        )
+      )
+      .limit(1);
+    if (!membership) {
+      return {
+        source: classSource,
+        configuredClassId: configuredClass.id,
+        enrolled: false,
+        activePass: null,
+        hasActivePassInAnotherClass: false,
+      };
+    }
+    if (!activePass) {
+      return {
+        source: classSource,
+        configuredClassId: configuredClass.id,
+        enrolled: true,
+        activePass: null,
+        hasActivePassInAnotherClass: false,
+      };
+    }
+    let belongsToConfiguredClass = activePass.classpilotGroupId === configuredClass.id;
+    if (!belongsToConfiguredClass && activePass.gradeId) {
+      const [mappedGrade] = await tx
+        .select({ id: grades.id })
+        .from(grades)
+        .where(
+          and(
+            eq(grades.id, activePass.gradeId),
+            eq(grades.schoolId, schoolId),
+            eq(grades.classpilotGroupId, configuredClass.id)
+          )
+        )
+        .limit(1);
+      belongsToConfiguredClass = !!mappedGrade;
+    }
+    return {
+      source: classSource,
+      configuredClassId: configuredClass.id,
+      enrolled: true,
+      activePass: belongsToConfiguredClass ? activePass : null,
+      hasActivePassInAnotherClass: !belongsToConfiguredClass,
+    };
+  });
+}
+
+export async function returnKioskPassForStudent(
+  schoolId: string,
+  studentId: string,
+  canonicalCapability: boolean
+): Promise<Pass | undefined> {
+  return db.transaction(async (tx) => {
+    await takePasspilotClassLock(tx, schoolId);
+    const [source] = await tx
+      .select({ value: settings.passpilotClassSource })
+      .from(settings)
+      .where(eq(settings.schoolId, schoolId))
+      .limit(1)
+      .for("update");
+    const [school] = await tx
+      .select({
+        kioskGradeId: schools.kioskGradeId,
+        kioskClasspilotGroupId: schools.kioskClasspilotGroupId,
+      })
+      .from(schools)
+      .where(eq(schools.id, schoolId))
+      .limit(1)
+      .for("update");
+    if (!school) return undefined;
+
+    const [activePass] = await tx
+      .select()
+      .from(passes)
+      .where(
+        and(
+          eq(passes.schoolId, schoolId),
+          eq(passes.studentId, studentId),
+          eq(passes.status, "active")
+        )
+      )
+      .limit(1)
+      .for("update");
+    if (!activePass) return undefined;
+
+    if (source?.value === "classpilot_groups") {
+      if (!canonicalCapability) {
+        throw passpilotClassError(
+          "PASSPILOT_CLASS_MODEL_UPGRADE_REQUIRED",
+          "This kiosk must be updated before returning ClassPilot class passes.",
+          426
+        );
+      }
+      const configuredClassId = school.kioskClasspilotGroupId;
+      if (!configuredClassId) {
+        throw passpilotClassError(
+          "PASSPILOT_KIOSK_CLASS_REQUIRED",
+          "A kiosk class must be selected before returning passes.",
+          409
+        );
+      }
+      let belongsToConfiguredClass = activePass.classpilotGroupId === configuredClassId;
+      if (!belongsToConfiguredClass && activePass.gradeId) {
+        const [mappedGrade] = await tx
+          .select({ id: grades.id })
+          .from(grades)
+          .where(
+            and(
+              eq(grades.id, activePass.gradeId),
+              eq(grades.schoolId, schoolId),
+              eq(grades.classpilotGroupId, configuredClassId)
+            )
+          )
+          .limit(1);
+        belongsToConfiguredClass = !!mappedGrade;
+      }
+      if (!belongsToConfiguredClass) {
+        throw passpilotClassError(
+          "PASSPILOT_KIOSK_PASS_CLASS_MISMATCH",
+          "This pass belongs to a different class and cannot be returned from this kiosk.",
+          403
+        );
+      }
+    }
+
+    const [pass] = await tx
+      .update(passes)
+      .set({ status: "returned", returnedAt: new Date() })
+      .where(
+        and(
+          eq(passes.id, activePass.id),
+          eq(passes.schoolId, schoolId),
+          eq(passes.status, "active")
+        )
+      )
+      .returning();
+    return pass;
+  });
 }
 
 export async function cancelPass(
@@ -6211,10 +6875,18 @@ export async function getAdminClassSummariesBySchool(
       blockEndTime: groups.blockEndTime,
       scheduleSkippedDate: groups.scheduleSkippedDate,
       createdAt: groups.createdAt,
-      studentCount: sql<number>`COUNT(DISTINCT ${groupStudents.studentId})::int`,
+      studentCount: sql<number>`COUNT(DISTINCT ${students.id})::int`,
     })
     .from(groups)
     .leftJoin(groupStudents, eq(groupStudents.groupId, groups.id))
+    .leftJoin(
+      students,
+      and(
+        eq(students.id, groupStudents.studentId),
+        eq(students.schoolId, schoolId),
+        eq(students.status, "active")
+      )
+    )
     .where(and(...conditions))
     .groupBy(
       groups.id,
@@ -6289,6 +6961,36 @@ function dedupeAndSortGroups(...lists: Group[][]): Group[] {
 // Group Teachers (co-teacher support)
 // ============================================================================
 
+async function withPasspilotGroupMutationLock<T>(
+  groupId: string,
+  operation: (
+    tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+    group: { id: string; schoolId: string }
+  ) => Promise<T>
+): Promise<T> {
+  return db.transaction(async (tx) => {
+    const [candidate] = await tx
+      .select({ id: groups.id, schoolId: groups.schoolId })
+      .from(groups)
+      .where(eq(groups.id, groupId))
+      .limit(1);
+    if (!candidate) {
+      throw schoolIsolationError("CLASS_NOT_FOUND", "Class not found", 404);
+    }
+    await takePasspilotClassLock(tx, candidate.schoolId);
+    const [lockedGroup] = await tx
+      .select({ id: groups.id, schoolId: groups.schoolId })
+      .from(groups)
+      .where(and(eq(groups.id, groupId), eq(groups.schoolId, candidate.schoolId)))
+      .limit(1)
+      .for("update");
+    if (!lockedGroup) {
+      throw schoolIsolationError("CLASS_NOT_FOUND", "Class not found", 404);
+    }
+    return operation(tx, lockedGroup);
+  });
+}
+
 export async function getGroupTeachers(
   groupId: string
 ): Promise<GroupTeacher[]> {
@@ -6349,12 +7051,14 @@ export async function addGroupTeacher(
   teacherId: string,
   role: string = "co-teacher"
 ): Promise<GroupTeacher> {
-  const [row] = await db
-    .insert(groupTeachers)
-    .values({ groupId, teacherId, role })
-    .onConflictDoNothing()
-    .returning();
-  return row!;
+  return withPasspilotGroupMutationLock(groupId, async (tx) => {
+    const [row] = await tx
+      .insert(groupTeachers)
+      .values({ groupId, teacherId, role })
+      .onConflictDoNothing()
+      .returning();
+    return row!;
+  });
 }
 
 export async function replaceGroupTeachers(
@@ -6365,7 +7069,7 @@ export async function replaceGroupTeachers(
   const uniqueCoTeachers = Array.from(
     new Set(coTeacherIds.filter((id) => id && id !== primaryTeacherId))
   );
-  await db.transaction(async (tx) => {
+  await withPasspilotGroupMutationLock(groupId, async (tx) => {
     await tx
       .delete(groupTeachers)
       .where(eq(groupTeachers.groupId, groupId));
@@ -6384,12 +7088,14 @@ export async function removeGroupTeacher(
   groupId: string,
   teacherId: string
 ): Promise<boolean> {
-  const result = await db
-    .delete(groupTeachers)
-    .where(
-      and(eq(groupTeachers.groupId, groupId), eq(groupTeachers.teacherId, teacherId))
-    );
-  return (result.rowCount ?? 0) > 0;
+  return withPasspilotGroupMutationLock(groupId, async (tx) => {
+    const result = await tx
+      .delete(groupTeachers)
+      .where(
+        and(eq(groupTeachers.groupId, groupId), eq(groupTeachers.teacherId, teacherId))
+      );
+    return (result.rowCount ?? 0) > 0;
+  });
 }
 
 // ============================================================================
@@ -6513,12 +7219,14 @@ export async function updateGroup(
   groupId: string,
   data: Partial<InsertGroup>
 ): Promise<Group | undefined> {
-  const [group] = await db
-    .update(groups)
-    .set(data)
-    .where(eq(groups.id, groupId))
-    .returning();
-  return group;
+  return withPasspilotGroupMutationLock(groupId, async (tx, lockedGroup) => {
+    const [group] = await tx
+      .update(groups)
+      .set(data)
+      .where(and(eq(groups.id, groupId), eq(groups.schoolId, lockedGroup.schoolId)))
+      .returning();
+    return group;
+  });
 }
 
 export async function updateAdminClassWithTeachers(options: {
@@ -6530,14 +7238,14 @@ export async function updateAdminClassWithTeachers(options: {
   const uniqueCoTeachers = Array.from(
     new Set(options.coTeacherIds.filter((id) => id && id !== options.primaryTeacherId))
   );
-  return db.transaction(async (tx) => {
+  return withPasspilotGroupMutationLock(options.groupId, async (tx, lockedGroup) => {
     const [group] = await tx
       .update(groups)
       .set({
         ...options.data,
         teacherId: options.primaryTeacherId,
       })
-      .where(eq(groups.id, options.groupId))
+      .where(and(eq(groups.id, options.groupId), eq(groups.schoolId, lockedGroup.schoolId)))
       .returning();
     if (!group) return undefined;
 
@@ -6580,6 +7288,24 @@ export async function upsertAdminClassroomClass(options: {
   const uniqueStudentIds = Array.from(new Set(options.studentIds.filter(Boolean)));
 
   return db.transaction(async (tx) => {
+    await takePasspilotClassLock(tx, options.schoolId);
+    if (options.existingGroupId) {
+      const [lockedGroup] = await tx
+        .select({ id: groups.id })
+        .from(groups)
+        .where(
+          and(
+            eq(groups.id, options.existingGroupId),
+            eq(groups.schoolId, options.schoolId),
+            eq(groups.groupType, "admin_class")
+          )
+        )
+        .limit(1)
+        .for("update");
+      if (!lockedGroup) {
+        throw schoolIsolationError("CLASS_NOT_FOUND", "Class not found", 404);
+      }
+    }
     const groupValues = {
       ...options.data,
       schoolId: options.schoolId,
@@ -6656,12 +7382,32 @@ export async function deleteGroup(groupId: string): Promise<boolean> {
 }
 
 export async function archiveGroup(groupId: string): Promise<Group | undefined> {
-  const [group] = await db
-    .update(groups)
-    .set({ status: "archived", archivedAt: new Date(), scheduleEnabled: false })
-    .where(eq(groups.id, groupId))
-    .returning();
-  return group;
+  return db.transaction(async (tx) => {
+    const [candidate] = await tx
+      .select({ id: groups.id, schoolId: groups.schoolId })
+      .from(groups)
+      .where(eq(groups.id, groupId))
+      .limit(1);
+    if (!candidate) return undefined;
+
+    // Class archiving and PassPilot class cutover use the same lock order so a
+    // mapped class cannot become archived between final validation and cutover.
+    await takePasspilotClassLock(tx, candidate.schoolId);
+    const [lockedGroup] = await tx
+      .select({ id: groups.id })
+      .from(groups)
+      .where(and(eq(groups.id, groupId), eq(groups.schoolId, candidate.schoolId)))
+      .limit(1)
+      .for("update");
+    if (!lockedGroup) return undefined;
+
+    const [group] = await tx
+      .update(groups)
+      .set({ status: "archived", archivedAt: new Date(), scheduleEnabled: false })
+      .where(and(eq(groups.id, groupId), eq(groups.schoolId, candidate.schoolId)))
+      .returning();
+    return group;
+  });
 }
 
 export async function groupHasTeachingHistory(groupId: string): Promise<boolean> {
@@ -6674,10 +7420,17 @@ export async function groupHasTeachingHistory(groupId: string): Promise<boolean>
 
 export async function hardDeleteGroupWithCleanup(groupId: string): Promise<boolean> {
   return db.transaction(async (tx) => {
+    const [candidate] = await tx
+      .select({ id: groups.id, schoolId: groups.schoolId })
+      .from(groups)
+      .where(eq(groups.id, groupId))
+      .limit(1);
+    if (!candidate) return false;
+    await takePasspilotClassLock(tx, candidate.schoolId);
     const [lockedGroup] = await tx
       .select({ id: groups.id })
       .from(groups)
-      .where(eq(groups.id, groupId))
+      .where(and(eq(groups.id, groupId), eq(groups.schoolId, candidate.schoolId)))
       .limit(1)
       .for("update");
     if (!lockedGroup) return false;
@@ -6690,6 +7443,34 @@ export async function hardDeleteGroupWithCleanup(groupId: string): Promise<boole
         status: 409,
         code: "CLASS_HAS_HISTORY",
       });
+    }
+    const [[passReference], [gradeReference], [kioskReference]] = await Promise.all([
+      tx
+        .select({ value: sql<number>`COUNT(*)::int` })
+        .from(passes)
+        .where(eq(passes.classpilotGroupId, groupId)),
+      tx
+        .select({ value: sql<number>`COUNT(*)::int` })
+        .from(grades)
+        .where(eq(grades.classpilotGroupId, groupId)),
+      tx
+        .select({ value: sql<number>`COUNT(*)::int` })
+        .from(schools)
+        .where(eq(schools.kioskClasspilotGroupId, groupId)),
+    ]);
+    if (
+      (passReference?.value ?? 0) > 0 ||
+      (gradeReference?.value ?? 0) > 0 ||
+      (kioskReference?.value ?? 0) > 0
+    ) {
+      throw Object.assign(
+        new Error("This class is referenced by PassPilot history, migration mappings, or kiosk settings. Archive the class instead."),
+        {
+          status: 409,
+          code: "CLASSPILOT_CLASS_IN_USE_BY_PASSPILOT",
+          expose: true,
+        }
+      );
     }
     const subgroupRows = await tx
       .select({ id: subgroups.id })
@@ -6741,18 +7522,24 @@ export async function addGroupStudentsDetailed(
 }> {
   const uniqueIds = Array.from(new Set(studentIds));
   if (uniqueIds.length === 0) return { added: [], alreadyPresent: [] };
-  const before = new Set(await getGroupStudentIds(groupId));
-  const inserted = await db
-    .insert(groupStudents)
-    .values(uniqueIds.map((studentId) => ({ groupId, studentId })))
-    .onConflictDoNothing()
-    .returning({ studentId: groupStudents.studentId });
-  const added = inserted.map((row) => row.studentId);
-  const addedSet = new Set(added);
-  return {
-    added,
-    alreadyPresent: uniqueIds.filter((id) => before.has(id) && !addedSet.has(id)),
-  };
+  return withPasspilotGroupMutationLock(groupId, async (tx) => {
+    const beforeRows = await tx
+      .select({ studentId: groupStudents.studentId })
+      .from(groupStudents)
+      .where(eq(groupStudents.groupId, groupId));
+    const before = new Set(beforeRows.map((row) => row.studentId));
+    const inserted = await tx
+      .insert(groupStudents)
+      .values(uniqueIds.map((studentId) => ({ groupId, studentId })))
+      .onConflictDoNothing()
+      .returning({ studentId: groupStudents.studentId });
+    const added = inserted.map((row) => row.studentId);
+    const addedSet = new Set(added);
+    return {
+      added,
+      alreadyPresent: uniqueIds.filter((id) => before.has(id) && !addedSet.has(id)),
+    };
+  });
 }
 
 export async function addGroupStudents(
@@ -6761,33 +7548,39 @@ export async function addGroupStudents(
 ): Promise<void> {
   if (studentIds.length === 0) return;
   const values = studentIds.map((studentId) => ({ groupId, studentId }));
-  await db.insert(groupStudents).values(values).onConflictDoNothing();
+  await withPasspilotGroupMutationLock(groupId, async (tx) => {
+    await tx.insert(groupStudents).values(values).onConflictDoNothing();
+  });
 }
 
 export async function removeGroupStudent(
   groupId: string,
   studentId: string
 ): Promise<void> {
-  await db
-    .delete(groupStudents)
-    .where(
-      and(
-        eq(groupStudents.groupId, groupId),
-        eq(groupStudents.studentId, studentId)
-      )
-    );
+  await withPasspilotGroupMutationLock(groupId, async (tx) => {
+    await tx
+      .delete(groupStudents)
+      .where(
+        and(
+          eq(groupStudents.groupId, groupId),
+          eq(groupStudents.studentId, studentId)
+        )
+      );
+  });
 }
 
 export async function setGroupStudents(
   groupId: string,
   studentIds: string[]
 ): Promise<void> {
-  await db
-    .delete(groupStudents)
-    .where(eq(groupStudents.groupId, groupId));
-  if (studentIds.length === 0) return;
-  const values = studentIds.map((studentId) => ({ groupId, studentId }));
-  await db.insert(groupStudents).values(values).onConflictDoNothing();
+  await withPasspilotGroupMutationLock(groupId, async (tx) => {
+    await tx
+      .delete(groupStudents)
+      .where(eq(groupStudents.groupId, groupId));
+    if (studentIds.length === 0) return;
+    const values = studentIds.map((studentId) => ({ groupId, studentId }));
+    await tx.insert(groupStudents).values(values).onConflictDoNothing();
+  });
 }
 
 // ============================================================================
@@ -9164,6 +9957,1183 @@ export async function getSettingsForSchool(
     .where(eq(settings.schoolId, schoolId))
     .limit(1);
   return row;
+}
+
+export async function createCanonicalPass(
+  data: Omit<InsertPass, "gradeId" | "classpilotGroupId" | "classNameSnapshot"> & {
+    classId: string;
+  },
+  authorization: {
+    actorUserId?: string | null;
+    manager?: boolean;
+    kiosk?: boolean;
+  } = {}
+): Promise<Pass> {
+  return db.transaction(async (tx) => {
+    await takePasspilotClassLock(tx, data.schoolId);
+    const [settingsRow] = await tx
+      .select({ source: settings.passpilotClassSource })
+      .from(settings)
+      .where(eq(settings.schoolId, data.schoolId))
+      .limit(1)
+      .for("update");
+    if (settingsRow?.source !== "classpilot_groups") {
+      throw passpilotClassError(
+        "PASSPILOT_CLASS_SOURCE_CHANGED",
+        "PassPilot class configuration changed. Reload classes before issuing a pass.",
+        409
+      );
+    }
+
+    if (authorization.kiosk) {
+      const [school] = await tx
+        .select({ kioskClasspilotGroupId: schools.kioskClasspilotGroupId })
+        .from(schools)
+        .where(eq(schools.id, data.schoolId))
+        .limit(1)
+        .for("update");
+      if (!school?.kioskClasspilotGroupId || school.kioskClasspilotGroupId !== data.classId) {
+        throw passpilotClassError(
+          "PASSPILOT_KIOSK_CLASS_CHANGED",
+          "The configured kiosk class changed. Reload the kiosk before checking out.",
+          409
+        );
+      }
+    }
+
+    const [group] = await tx
+      .select()
+      .from(groups)
+      .where(
+        and(
+          eq(groups.id, data.classId),
+          eq(groups.schoolId, data.schoolId),
+          eq(groups.groupType, "admin_class"),
+          eq(groups.status, "active")
+        )
+      )
+      .limit(1)
+      .for("update");
+    if (!group) {
+      throw passpilotClassError(
+        "PASSPILOT_CANONICAL_CLASS_NOT_FOUND",
+        "Class not found or no longer active.",
+        404
+      );
+    }
+
+    const [membership] = await tx
+      .select({ id: groupStudents.id })
+      .from(groupStudents)
+      .innerJoin(students, eq(students.id, groupStudents.studentId))
+      .where(
+        and(
+          eq(groupStudents.groupId, group.id),
+          eq(groupStudents.studentId, data.studentId),
+          eq(students.schoolId, data.schoolId),
+          eq(students.status, "active")
+        )
+      )
+      .limit(1);
+    if (!membership) {
+      throw passpilotClassError(
+        "PASSPILOT_STUDENT_NOT_IN_CLASS",
+        "Student is not enrolled in the selected class.",
+        409
+      );
+    }
+
+    if (!authorization.kiosk && !authorization.manager) {
+      const actorUserId = authorization.actorUserId;
+      if (!actorUserId) {
+        throw passpilotClassError("PASSPILOT_CLASS_ACCESS_DENIED", "Class access denied.", 403);
+      }
+      const [relationship] = await tx
+        .select({ groupId: groups.id })
+        .from(groups)
+        .leftJoin(groupTeachers, eq(groupTeachers.groupId, groups.id))
+        .where(
+          and(
+            eq(groups.id, group.id),
+            or(eq(groups.teacherId, actorUserId), eq(groupTeachers.teacherId, actorUserId))
+          )
+        )
+        .limit(1);
+      if (!relationship) {
+        throw passpilotClassError("PASSPILOT_CLASS_ACCESS_DENIED", "Class access denied.", 403);
+      }
+    }
+
+    const { classId, ...passData } = data;
+    const [pass] = await tx
+      .insert(passes)
+      .values({
+        ...passData,
+        gradeId: null,
+        classpilotGroupId: classId,
+        classNameSnapshot: group.name,
+      })
+      .returning();
+    await tx
+      .update(settings)
+      .set({
+        passpilotCanonicalWritesAt: sql`COALESCE(${settings.passpilotCanonicalWritesAt}, now())`,
+      })
+      .where(eq(settings.schoolId, data.schoolId));
+    return pass!;
+  });
+}
+
+export async function updateCanonicalKioskClass(
+  schoolId: string,
+  classId: string | null,
+  actorUserId: string,
+  manager: boolean
+): Promise<School | undefined> {
+  return db.transaction(async (tx) => {
+    await takePasspilotClassLock(tx, schoolId);
+    const [settingsRow] = await tx
+      .select({ source: settings.passpilotClassSource })
+      .from(settings)
+      .where(eq(settings.schoolId, schoolId))
+      .limit(1)
+      .for("update");
+    if (settingsRow?.source !== "classpilot_groups") {
+      throw passpilotClassError(
+        "PASSPILOT_CLASS_SOURCE_CHANGED",
+        "PassPilot class configuration changed. Reload classes before saving kiosk settings.",
+        409
+      );
+    }
+
+    if (classId) {
+      const [group] = await tx
+        .select({ id: groups.id })
+        .from(groups)
+        .leftJoin(groupTeachers, eq(groupTeachers.groupId, groups.id))
+        .where(
+          and(
+            eq(groups.id, classId),
+            eq(groups.schoolId, schoolId),
+            eq(groups.groupType, "admin_class"),
+            eq(groups.status, "active"),
+            manager
+              ? sql`true`
+              : or(eq(groups.teacherId, actorUserId), eq(groupTeachers.teacherId, actorUserId))!
+          )
+        )
+        .limit(1)
+        .for("update", { of: groups });
+      if (!group) {
+        throw passpilotClassError("PASSPILOT_CLASS_ACCESS_DENIED", "Class not found or access denied.", 403);
+      }
+    }
+
+    const [school] = await tx
+      .update(schools)
+      .set({
+        kioskGradeId: null,
+        kioskClasspilotGroupId: classId,
+        kioskActivatedByUserId: actorUserId,
+      })
+      .where(eq(schools.id, schoolId))
+      .returning();
+    await tx
+      .update(settings)
+      .set({
+        passpilotCanonicalWritesAt: sql`COALESCE(${settings.passpilotCanonicalWritesAt}, now())`,
+      })
+      .where(eq(settings.schoolId, schoolId));
+    return school;
+  });
+}
+
+export async function updateLegacyKioskClass(
+  schoolId: string,
+  gradeId: string | null,
+  actorUserId: string
+): Promise<School | undefined> {
+  return db.transaction(async (tx) => {
+    await takePasspilotClassLock(tx, schoolId);
+    const [settingsRow] = await tx
+      .select({ source: settings.passpilotClassSource })
+      .from(settings)
+      .where(eq(settings.schoolId, schoolId))
+      .limit(1)
+      .for("update");
+    if (settingsRow?.source !== "legacy_grades") {
+      throw passpilotClassError(
+        "PASSPILOT_CLASS_SOURCE_CHANGED",
+        "PassPilot class configuration changed. Reload classes before saving kiosk settings.",
+        409
+      );
+    }
+    if (gradeId) {
+      const [grade] = await tx
+        .select({ id: grades.id, migrationState: grades.migrationState })
+        .from(grades)
+        .where(and(eq(grades.id, gradeId), eq(grades.schoolId, schoolId)))
+        .limit(1);
+      if (!grade) {
+        throw passpilotClassError("PASSPILOT_LEGACY_CLASS_NOT_FOUND", "Class not found.", 404);
+      }
+      if (grade.migrationState === "history_only") {
+        throw passpilotClassError(
+          "PASSPILOT_HISTORY_CLASS_READ_ONLY",
+          "This legacy class is history-only and cannot be selected for the kiosk.",
+          409
+        );
+      }
+    }
+    const [school] = await tx
+      .update(schools)
+      .set({
+        kioskGradeId: gradeId,
+        kioskClasspilotGroupId: null,
+        kioskActivatedByUserId: actorUserId,
+      })
+      .where(eq(schools.id, schoolId))
+      .returning();
+    return school;
+  });
+}
+
+export type PasspilotClassSource = "legacy_grades" | "classpilot_groups";
+
+export type PasspilotClassMigrationMember = {
+  id: string;
+  name: string;
+  detail: string | null;
+};
+
+export type PasspilotClassMigrationInventory = {
+  source: PasspilotClassSource;
+  cutoverAt: Date | null;
+  canonicalWritesAt: Date | null;
+  revision: number;
+  legacyGrades: Array<Grade & {
+    studentIds: string[];
+    teacherIds: string[];
+    studentMembers: PasspilotClassMigrationMember[];
+    teacherMembers: PasspilotClassMigrationMember[];
+    historicalPassCount: number;
+    activePassCount: number;
+    suggestedClasspilotGroupId: string | null;
+    autoLinkEligible: boolean;
+    conflictReasons: string[];
+  }>;
+  canonicalClasses: Array<AdminClassSummary & {
+    studentIds: string[];
+    teacherIds: string[];
+    studentMembers: PasspilotClassMigrationMember[];
+    teacherMembers: PasspilotClassMigrationMember[];
+  }>;
+  kioskGradeId: string | null;
+  kioskClasspilotGroupId: string | null;
+};
+
+type PasspilotMappingInput = {
+  gradeId: string;
+  classId?: string | null;
+  state?: "pending" | "auto_linked" | "confirmed" | "history_only";
+};
+
+function passpilotClassError(
+  code: string,
+  message: string,
+  status = 400
+): Error & { code: string; status: number; expose: true; managementUrl?: string } {
+  return Object.assign(new Error(message), {
+    code,
+    status,
+    expose: true as const,
+    ...(code === "CLASSES_MANAGED_IN_CLASSPILOT"
+      ? { managementUrl: "/classpilot/admin/classes?returnTo=%2Fpasspilot%2Fclasses" }
+      : {}),
+  });
+}
+
+function normalizedPasspilotClassName(value: string): string {
+  return value.trim().toLocaleLowerCase("en-US").replace(/\s+/g, " ");
+}
+
+function sameStringSet(left: string[], right: string[]): boolean {
+  const a = Array.from(new Set(left)).sort();
+  const b = Array.from(new Set(right)).sort();
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+async function takePasspilotClassLock(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  schoolId: string
+): Promise<void> {
+  await tx.execute(
+    sql`SELECT pg_advisory_xact_lock(hashtext(${`passpilot-class-source:${schoolId}`}))`
+  );
+}
+
+export type PasspilotClassTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+export type PasspilotCleanSchoolCutoverReason =
+  | "settings_missing"
+  | "school_missing"
+  | "school_not_active"
+  | "source_not_legacy"
+  | "active_official_class_required"
+  | "active_passpilot_license_required"
+  | "active_classpilot_license_required"
+  | "legacy_grades_present"
+  | "passes_present"
+  | "student_grade_assignments_present"
+  | "teacher_grade_assignments_present"
+  | "kiosk_selection_present"
+  | "prior_canonical_write_present"
+  | "prior_cutover_marker_present";
+
+export type PasspilotCleanSchoolCutoverEligibility = {
+  schoolId: string;
+  source: PasspilotClassSource | null;
+  revision: number | null;
+  eligible: boolean;
+  reasons: PasspilotCleanSchoolCutoverReason[];
+  counts: {
+    activeOfficialClasses: number;
+    activePasspilotLicenses: number;
+    activeClasspilotLicenses: number;
+    legacyGrades: number;
+    passes: number;
+    studentGradeAssignments: number;
+    teacherGradeAssignments: number;
+    legacyKioskSelections: number;
+    canonicalKioskSelections: number;
+    priorCanonicalWriteMarkers: number;
+    priorCutoverMarkers: number;
+  };
+};
+
+async function loadPasspilotCleanSchoolCutoverEligibility(
+  tx: PasspilotClassTransaction,
+  schoolId: string
+): Promise<PasspilotCleanSchoolCutoverEligibility> {
+  const emptyCounts: PasspilotCleanSchoolCutoverEligibility["counts"] = {
+    activeOfficialClasses: 0,
+    activePasspilotLicenses: 0,
+    activeClasspilotLicenses: 0,
+    legacyGrades: 0,
+    passes: 0,
+    studentGradeAssignments: 0,
+    teacherGradeAssignments: 0,
+    legacyKioskSelections: 0,
+    canonicalKioskSelections: 0,
+    priorCanonicalWriteMarkers: 0,
+    priorCutoverMarkers: 0,
+  };
+  const [settingsRow] = await tx
+    .select({
+      source: settings.passpilotClassSource,
+      revision: settings.passpilotClassMigrationRevision,
+      canonicalWritesAt: settings.passpilotCanonicalWritesAt,
+      cutoverAt: settings.passpilotClassCutoverAt,
+    })
+    .from(settings)
+    .where(eq(settings.schoolId, schoolId))
+    .limit(1)
+    .for("update");
+  if (!settingsRow) {
+    return {
+      schoolId,
+      source: null,
+      revision: null,
+      eligible: false,
+      reasons: ["settings_missing"],
+      counts: emptyCounts,
+    };
+  }
+
+  const [school] = await tx
+    .select({
+      id: schools.id,
+      status: schools.status,
+      isActive: schools.isActive,
+      deletedAt: schools.deletedAt,
+      kioskGradeId: schools.kioskGradeId,
+      kioskClasspilotGroupId: schools.kioskClasspilotGroupId,
+    })
+    .from(schools)
+    .where(eq(schools.id, schoolId))
+    .limit(1)
+    .for("update");
+  if (!school) {
+    return {
+      schoolId,
+      source: settingsRow.source,
+      revision: settingsRow.revision,
+      eligible: false,
+      reasons: ["school_missing"],
+      counts: {
+        ...emptyCounts,
+        priorCanonicalWriteMarkers: settingsRow.canonicalWritesAt ? 1 : 0,
+        priorCutoverMarkers: settingsRow.cutoverAt ? 1 : 0,
+      },
+    };
+  }
+
+  const [
+    gradeRows,
+    passRows,
+    studentGradeRows,
+    teacherGradeRows,
+    activeOfficialClassRows,
+    activeLicenseRows,
+  ] = await Promise.all([
+    tx
+      .select({ id: grades.id })
+      .from(grades)
+      .where(eq(grades.schoolId, schoolId))
+      .for("update"),
+    tx
+      .select({ id: passes.id })
+      .from(passes)
+      .where(eq(passes.schoolId, schoolId))
+      .for("update"),
+    tx
+      .select({ id: students.id })
+      .from(students)
+      .where(and(eq(students.schoolId, schoolId), isNotNull(students.gradeId)))
+      .for("update"),
+    tx
+      .select({ id: teacherGrades.id })
+      .from(teacherGrades)
+      .innerJoin(grades, eq(teacherGrades.gradeId, grades.id))
+      .where(eq(grades.schoolId, schoolId))
+      .for("update", { of: teacherGrades }),
+    tx
+      .select({ id: groups.id })
+      .from(groups)
+      .where(
+        and(
+          eq(groups.schoolId, schoolId),
+          eq(groups.groupType, "admin_class"),
+          eq(groups.status, "active")
+        )
+      )
+      .orderBy(asc(groups.id))
+      .for("update"),
+    tx
+      .select({ id: productLicenses.id, product: productLicenses.product })
+      .from(productLicenses)
+      .where(
+        and(
+          eq(productLicenses.schoolId, schoolId),
+          eq(productLicenses.status, "active"),
+          inArray(productLicenses.product, ["PASSPILOT", "CLASSPILOT"])
+        )
+      )
+      .orderBy(asc(productLicenses.id))
+      .for("update"),
+  ]);
+
+  const counts: PasspilotCleanSchoolCutoverEligibility["counts"] = {
+    activeOfficialClasses: activeOfficialClassRows.length,
+    activePasspilotLicenses: activeLicenseRows.filter((row) => row.product === "PASSPILOT").length,
+    activeClasspilotLicenses: activeLicenseRows.filter((row) => row.product === "CLASSPILOT").length,
+    legacyGrades: gradeRows.length,
+    passes: passRows.length,
+    studentGradeAssignments: studentGradeRows.length,
+    teacherGradeAssignments: teacherGradeRows.length,
+    legacyKioskSelections: school.kioskGradeId ? 1 : 0,
+    canonicalKioskSelections: school.kioskClasspilotGroupId ? 1 : 0,
+    priorCanonicalWriteMarkers: settingsRow.canonicalWritesAt ? 1 : 0,
+    priorCutoverMarkers: settingsRow.cutoverAt ? 1 : 0,
+  };
+  const reasons: PasspilotCleanSchoolCutoverReason[] = [];
+  if (!school.isActive || school.status !== "active" || school.deletedAt) reasons.push("school_not_active");
+  if (settingsRow.source !== "legacy_grades") reasons.push("source_not_legacy");
+  if (counts.activeOfficialClasses < 1) reasons.push("active_official_class_required");
+  if (counts.activePasspilotLicenses < 1) reasons.push("active_passpilot_license_required");
+  if (counts.activeClasspilotLicenses < 1) reasons.push("active_classpilot_license_required");
+  if (counts.legacyGrades > 0) reasons.push("legacy_grades_present");
+  if (counts.passes > 0) reasons.push("passes_present");
+  if (counts.studentGradeAssignments > 0) reasons.push("student_grade_assignments_present");
+  if (counts.teacherGradeAssignments > 0) reasons.push("teacher_grade_assignments_present");
+  if (counts.legacyKioskSelections + counts.canonicalKioskSelections > 0) reasons.push("kiosk_selection_present");
+  if (counts.priorCanonicalWriteMarkers > 0) reasons.push("prior_canonical_write_present");
+  if (counts.priorCutoverMarkers > 0) reasons.push("prior_cutover_marker_present");
+  return {
+    schoolId,
+    source: settingsRow.source,
+    revision: settingsRow.revision,
+    eligible: reasons.length === 0,
+    reasons,
+    counts,
+  };
+}
+
+export async function getPasspilotCleanSchoolCutoverEligibility(
+  schoolId: string
+): Promise<PasspilotCleanSchoolCutoverEligibility> {
+  return db.transaction(async (tx) => {
+    await takePasspilotClassLock(tx, schoolId);
+    return loadPasspilotCleanSchoolCutoverEligibility(tx, schoolId);
+  });
+}
+
+export async function listPasspilotLegacyClassSourceSchoolIds(): Promise<string[]> {
+  const rows = await db
+    .select({ schoolId: settings.schoolId })
+    .from(settings)
+    .where(eq(settings.passpilotClassSource, "legacy_grades"))
+    .orderBy(asc(settings.schoolId));
+  return rows.map((row) => row.schoolId);
+}
+
+export async function runWithPasspilotLegacyClassLock<T>(
+  schoolId: string,
+  operation: (tx: PasspilotClassTransaction) => Promise<T>
+): Promise<T> {
+  return db.transaction(async (tx) => {
+    await takePasspilotClassLock(tx, schoolId);
+    const [settingsRow] = await tx
+      .select({ source: settings.passpilotClassSource })
+      .from(settings)
+      .where(eq(settings.schoolId, schoolId))
+      .limit(1)
+      .for("update");
+    if (settingsRow?.source !== "legacy_grades") {
+      throw passpilotClassError(
+        "CLASSES_MANAGED_IN_CLASSPILOT",
+        "PassPilot classes are managed in ClassPilot after migration.",
+        409
+      );
+    }
+    return operation(tx);
+  });
+}
+
+async function loadPasspilotMigrationInventory(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  schoolId: string
+): Promise<PasspilotClassMigrationInventory> {
+  const [settingsRow] = await tx
+    .select()
+    .from(settings)
+    .where(eq(settings.schoolId, schoolId))
+    .limit(1);
+  if (!settingsRow) {
+    throw passpilotClassError(
+      "PASSPILOT_CLASS_SETTINGS_MISSING",
+      "School settings are not initialized.",
+      409
+    );
+  }
+
+  const [school] = await tx
+    .select({
+      kioskGradeId: schools.kioskGradeId,
+      kioskClasspilotGroupId: schools.kioskClasspilotGroupId,
+    })
+    .from(schools)
+    .where(eq(schools.id, schoolId))
+    .limit(1);
+  if (!school) {
+    throw passpilotClassError("SCHOOL_NOT_FOUND", "School not found.", 404);
+  }
+
+  const [legacyGrades, canonicalClasses, legacyStudentRows, legacyTeacherRows, legacyPassRows, groupStudentRows, groupTeacherRows, staffRows] =
+    await Promise.all([
+      tx.select().from(grades).where(eq(grades.schoolId, schoolId)).orderBy(grades.displayOrder, grades.name),
+      tx
+        .select({
+          id: groups.id,
+          schoolId: groups.schoolId,
+          teacherId: groups.teacherId,
+          name: groups.name,
+          description: groups.description,
+          periodLabel: groups.periodLabel,
+          gradeLevel: groups.gradeLevel,
+          groupType: groups.groupType,
+          parentGroupId: groups.parentGroupId,
+          status: groups.status,
+          archivedAt: groups.archivedAt,
+          schoolYear: groups.schoolYear,
+          term: groups.term,
+          googleClassroomCourseId: groups.googleClassroomCourseId,
+          scheduleEnabled: groups.scheduleEnabled,
+          blockStartTime: groups.blockStartTime,
+          blockEndTime: groups.blockEndTime,
+          scheduleSkippedDate: groups.scheduleSkippedDate,
+          createdAt: groups.createdAt,
+          studentCount: sql<number>`COUNT(DISTINCT ${groupStudents.studentId})::int`,
+        })
+        .from(groups)
+        .leftJoin(groupStudents, eq(groupStudents.groupId, groups.id))
+        .where(
+          and(
+            eq(groups.schoolId, schoolId),
+            eq(groups.groupType, "admin_class"),
+            eq(groups.status, "active")
+          )
+        )
+        .groupBy(groups.id)
+        .orderBy(groups.name),
+      tx
+        .select({
+          gradeId: students.gradeId,
+          studentId: students.id,
+          firstName: students.firstName,
+          lastName: students.lastName,
+          studentIdNumber: students.studentIdNumber,
+        })
+        .from(students)
+        .where(
+          and(
+            eq(students.schoolId, schoolId),
+            eq(students.status, "active"),
+            isNotNull(students.gradeId)
+          )
+        ),
+      tx
+        .select({ gradeId: teacherGrades.gradeId, teacherId: teacherGrades.teacherId })
+        .from(teacherGrades)
+        .innerJoin(grades, eq(teacherGrades.gradeId, grades.id))
+        .where(eq(grades.schoolId, schoolId)),
+      tx
+        .select({ gradeId: passes.gradeId, status: passes.status })
+        .from(passes)
+        .where(and(eq(passes.schoolId, schoolId), isNotNull(passes.gradeId))),
+      tx
+        .select({
+          groupId: groupStudents.groupId,
+          studentId: groupStudents.studentId,
+          firstName: students.firstName,
+          lastName: students.lastName,
+          studentIdNumber: students.studentIdNumber,
+        })
+        .from(groupStudents)
+        .innerJoin(groups, eq(groupStudents.groupId, groups.id))
+        .innerJoin(students, eq(groupStudents.studentId, students.id))
+        .where(
+          and(
+            eq(groups.schoolId, schoolId),
+            eq(groups.groupType, "admin_class"),
+            eq(groups.status, "active"),
+            eq(students.schoolId, schoolId),
+            eq(students.status, "active")
+          )
+        ),
+      tx
+        .select({
+          groupId: groups.id,
+          primaryTeacherId: groups.teacherId,
+          coTeacherId: groupTeachers.teacherId,
+        })
+        .from(groups)
+        .leftJoin(groupTeachers, eq(groupTeachers.groupId, groups.id))
+        .where(
+          and(
+            eq(groups.schoolId, schoolId),
+            eq(groups.groupType, "admin_class"),
+            eq(groups.status, "active")
+          )
+        ),
+      tx
+        .select({
+          userId: users.id,
+          displayName: users.displayName,
+          firstName: users.firstName,
+          lastName: users.lastName,
+          email: users.email,
+        })
+        .from(schoolMemberships)
+        .innerJoin(users, eq(schoolMemberships.userId, users.id))
+        .where(eq(schoolMemberships.schoolId, schoolId)),
+    ]);
+
+  const studentMembers = new Map<string, PasspilotClassMigrationMember>();
+  for (const row of [...legacyStudentRows, ...groupStudentRows]) {
+    const name = [row.firstName, row.lastName].filter(Boolean).join(" ").trim() || "Student record";
+    studentMembers.set(row.studentId, {
+      id: row.studentId,
+      name,
+      detail: row.studentIdNumber || null,
+    });
+  }
+  const teacherMembers = new Map<string, PasspilotClassMigrationMember>();
+  for (const row of staffRows) {
+    const name = row.displayName
+      || [row.firstName, row.lastName].filter(Boolean).join(" ").trim()
+      || row.email
+      || "Staff record";
+    teacherMembers.set(row.userId, {
+      id: row.userId,
+      name,
+      detail: row.email && row.email !== name ? row.email : null,
+    });
+  }
+  const resolveMembers = (
+    ids: string[],
+    members: Map<string, PasspilotClassMigrationMember>,
+    fallback: string
+  ): PasspilotClassMigrationMember[] => Array.from(new Set(ids)).map((id) => (
+    members.get(id) ?? { id, name: fallback, detail: null }
+  ));
+
+  const gradeStudents = new Map<string, string[]>();
+  for (const row of legacyStudentRows) {
+    if (!row.gradeId) continue;
+    const ids = gradeStudents.get(row.gradeId) ?? [];
+    ids.push(row.studentId);
+    gradeStudents.set(row.gradeId, ids);
+  }
+  const gradeTeachers = new Map<string, string[]>();
+  for (const row of legacyTeacherRows) {
+    const ids = gradeTeachers.get(row.gradeId) ?? [];
+    ids.push(row.teacherId);
+    gradeTeachers.set(row.gradeId, ids);
+  }
+  const gradePassCounts = new Map<string, { historical: number; active: number }>();
+  for (const row of legacyPassRows) {
+    if (!row.gradeId) continue;
+    const counts = gradePassCounts.get(row.gradeId) ?? { historical: 0, active: 0 };
+    counts.historical += 1;
+    if (row.status === "active") counts.active += 1;
+    gradePassCounts.set(row.gradeId, counts);
+  }
+  const canonicalStudents = new Map<string, string[]>();
+  for (const row of groupStudentRows) {
+    const ids = canonicalStudents.get(row.groupId) ?? [];
+    ids.push(row.studentId);
+    canonicalStudents.set(row.groupId, ids);
+  }
+  const canonicalTeachers = new Map<string, string[]>();
+  for (const row of groupTeacherRows) {
+    const ids = canonicalTeachers.get(row.groupId) ?? [];
+    ids.push(row.primaryTeacherId);
+    if (row.coTeacherId) ids.push(row.coTeacherId);
+    canonicalTeachers.set(row.groupId, Array.from(new Set(ids)));
+  }
+
+  const gradesByName = new Map<string, Grade[]>();
+  for (const grade of legacyGrades) {
+    const name = normalizedPasspilotClassName(grade.name);
+    gradesByName.set(name, [...(gradesByName.get(name) ?? []), grade]);
+  }
+  const groupsByName = new Map<string, typeof canonicalClasses>();
+  for (const group of canonicalClasses) {
+    const name = normalizedPasspilotClassName(group.name);
+    groupsByName.set(name, [...(groupsByName.get(name) ?? []), group]);
+  }
+
+  return {
+    source: settingsRow.passpilotClassSource,
+    cutoverAt: settingsRow.passpilotClassCutoverAt,
+    canonicalWritesAt: settingsRow.passpilotCanonicalWritesAt,
+    revision: settingsRow.passpilotClassMigrationRevision,
+    legacyGrades: legacyGrades.map((grade) => {
+      const studentIds = gradeStudents.get(grade.id) ?? [];
+      const teacherIds = gradeTeachers.get(grade.id) ?? [];
+      const passCounts = gradePassCounts.get(grade.id) ?? { historical: 0, active: 0 };
+      const sameNameGrades = gradesByName.get(normalizedPasspilotClassName(grade.name)) ?? [];
+      const sameNameGroups = groupsByName.get(normalizedPasspilotClassName(grade.name)) ?? [];
+      const candidate = sameNameGrades.length === 1 && sameNameGroups.length === 1
+        ? sameNameGroups[0]!
+        : null;
+      const conflictReasons: string[] = [];
+      if (sameNameGrades.length !== 1) conflictReasons.push("duplicate_legacy_name");
+      if (sameNameGroups.length === 0) conflictReasons.push("no_exact_name_match");
+      if (sameNameGroups.length > 1) conflictReasons.push("duplicate_canonical_name");
+      if (candidate) {
+        const candidateTeacherIds = canonicalTeachers.get(candidate.id) ?? [];
+        const candidateStudentIds = canonicalStudents.get(candidate.id) ?? [];
+        if (teacherIds.length > 0 && !sameStringSet(teacherIds, candidateTeacherIds)) {
+          conflictReasons.push("teacher_mismatch");
+        }
+        if (studentIds.length > 0 && !sameStringSet(studentIds, candidateStudentIds)) {
+          conflictReasons.push("roster_mismatch");
+        }
+      }
+      const uniqueStudentIds = Array.from(new Set(studentIds));
+      const uniqueTeacherIds = Array.from(new Set(teacherIds));
+      return {
+        ...grade,
+        studentIds: uniqueStudentIds,
+        teacherIds: uniqueTeacherIds,
+        studentMembers: resolveMembers(uniqueStudentIds, studentMembers, "Student record"),
+        teacherMembers: resolveMembers(uniqueTeacherIds, teacherMembers, "Staff record"),
+        historicalPassCount: passCounts.historical,
+        activePassCount: passCounts.active,
+        suggestedClasspilotGroupId: candidate?.id ?? null,
+        autoLinkEligible: !!candidate && conflictReasons.length === 0,
+        conflictReasons,
+      };
+    }),
+    canonicalClasses: canonicalClasses.map((group) => {
+      const studentIds = Array.from(new Set(canonicalStudents.get(group.id) ?? []));
+      const teacherIds = Array.from(new Set(canonicalTeachers.get(group.id) ?? [group.teacherId]));
+      return {
+        ...group,
+        studentIds,
+        teacherIds,
+        studentMembers: resolveMembers(studentIds, studentMembers, "Student record"),
+        teacherMembers: resolveMembers(teacherIds, teacherMembers, "Staff record"),
+      };
+    }),
+    kioskGradeId: school.kioskGradeId,
+    kioskClasspilotGroupId: school.kioskClasspilotGroupId,
+  };
+}
+
+export async function getPasspilotClassMigrationInventory(
+  schoolId: string
+): Promise<PasspilotClassMigrationInventory> {
+  return db.transaction((tx) => loadPasspilotMigrationInventory(tx, schoolId));
+}
+
+export async function initializePasspilotClassMigrationInventory(
+  schoolId: string,
+  reviewerId: string
+): Promise<PasspilotClassMigrationInventory> {
+  return db.transaction(async (tx) => {
+    await takePasspilotClassLock(tx, schoolId);
+    const [settingsRow] = await tx
+      .select()
+      .from(settings)
+      .where(eq(settings.schoolId, schoolId))
+      .limit(1)
+      .for("update");
+    if (!settingsRow) {
+      throw passpilotClassError("PASSPILOT_CLASS_SETTINGS_MISSING", "School settings are not initialized.", 409);
+    }
+    const inventory = await loadPasspilotMigrationInventory(tx, schoolId);
+    if (inventory.source === "classpilot_groups") return inventory;
+
+    const eligible = inventory.legacyGrades.filter(
+      (grade) =>
+        grade.migrationState === "pending" &&
+        grade.autoLinkEligible &&
+        grade.suggestedClasspilotGroupId
+    );
+    if (eligible.length === 0) return inventory;
+
+    const revision = settingsRow.passpilotClassMigrationRevision + 1;
+    for (const grade of eligible) {
+      await tx
+        .update(grades)
+        .set({
+          classpilotGroupId: grade.suggestedClasspilotGroupId,
+          migrationState: "auto_linked",
+          mappingRevision: revision,
+          mappingMethod: "unique_exact_name",
+          mappingReviewerId: reviewerId,
+          mappedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(grades.id, grade.id),
+            eq(grades.schoolId, schoolId),
+            eq(grades.migrationState, "pending")
+          )
+        );
+    }
+    await tx
+      .update(settings)
+      .set({ passpilotClassMigrationRevision: revision })
+      .where(eq(settings.schoolId, schoolId));
+    await tx.insert(auditLogs).values({
+      schoolId,
+      userId: reviewerId,
+      action: "passpilot.class_migration.inventory_initialized",
+      entityType: "settings",
+      entityId: settingsRow.id,
+      changes: {
+        revision,
+        autoLinkedGradeIds: eligible.map((grade) => grade.id),
+      },
+    });
+    return loadPasspilotMigrationInventory(tx, schoolId);
+  });
+}
+
+export async function updatePasspilotClassMappings(
+  schoolId: string,
+  reviewerId: string,
+  expectedRevision: number,
+  inputs: PasspilotMappingInput[],
+  autoLink = false
+): Promise<PasspilotClassMigrationInventory> {
+  return db.transaction(async (tx) => {
+    await takePasspilotClassLock(tx, schoolId);
+    const [settingsRow] = await tx
+      .select()
+      .from(settings)
+      .where(eq(settings.schoolId, schoolId))
+      .limit(1)
+      .for("update");
+    if (!settingsRow) {
+      throw passpilotClassError("PASSPILOT_CLASS_SETTINGS_MISSING", "School settings are not initialized.", 409);
+    }
+    if (settingsRow.passpilotClassSource === "classpilot_groups") {
+      throw passpilotClassError("PASSPILOT_CLASSES_ALREADY_CANONICAL", "PassPilot already uses ClassPilot classes.", 409);
+    }
+    if (settingsRow.passpilotClassMigrationRevision !== expectedRevision) {
+      throw passpilotClassError("PASSPILOT_CLASS_MIGRATION_CONFLICT", "The class mapping changed in another session. Reload before saving.", 409);
+    }
+
+    const inventory = await loadPasspilotMigrationInventory(tx, schoolId);
+    const gradeById = new Map(inventory.legacyGrades.map((grade) => [grade.id, grade]));
+    const groupById = new Map(inventory.canonicalClasses.map((group) => [group.id, group]));
+    const requested = new Map(inputs.map((input) => [input.gradeId, input]));
+    if (autoLink) {
+      for (const grade of inventory.legacyGrades) {
+        if (grade.migrationState !== "pending" || requested.has(grade.id) || !grade.autoLinkEligible) continue;
+        requested.set(grade.id, {
+          gradeId: grade.id,
+          classId: grade.suggestedClasspilotGroupId,
+          state: "auto_linked",
+        });
+      }
+    }
+
+    const nextRevision = expectedRevision + 1;
+    for (const input of requested.values()) {
+      const grade = gradeById.get(input.gradeId);
+      if (!grade) {
+        throw passpilotClassError("PASSPILOT_LEGACY_CLASS_NOT_FOUND", "Legacy class not found.", 404);
+      }
+      const state = input.state ?? (input.classId ? "confirmed" : "pending");
+      if (state === "history_only") {
+        if (grade.activePassCount > 0 || inventory.kioskGradeId === grade.id) {
+          throw passpilotClassError(
+            "PASSPILOT_HISTORY_CLASS_IN_USE",
+            `Class ${grade.name} still has an active pass or kiosk selection.`,
+            409
+          );
+        }
+      } else if (state === "confirmed" || state === "auto_linked") {
+        if (!input.classId || !groupById.has(input.classId)) {
+          throw passpilotClassError("PASSPILOT_CANONICAL_CLASS_NOT_FOUND", "Canonical ClassPilot class not found.", 404);
+        }
+        if (state === "auto_linked" && (!grade.autoLinkEligible || grade.suggestedClasspilotGroupId !== input.classId)) {
+          throw passpilotClassError("PASSPILOT_AUTO_LINK_CONFLICT", "This class cannot be auto-linked because its name, teacher, or roster is ambiguous.", 409);
+        }
+      }
+
+      await tx
+        .update(grades)
+        .set({
+          classpilotGroupId: state === "confirmed" || state === "auto_linked" ? input.classId! : null,
+          migrationState: state,
+          mappingRevision: nextRevision,
+          mappingMethod: state === "auto_linked" ? "unique_exact_name" : state,
+          mappingReviewerId: reviewerId,
+          mappedAt: state === "pending" ? null : new Date(),
+        })
+        .where(and(eq(grades.id, grade.id), eq(grades.schoolId, schoolId)));
+    }
+    await tx
+      .update(settings)
+      .set({ passpilotClassMigrationRevision: nextRevision })
+      .where(eq(settings.schoolId, schoolId));
+    await tx.insert(auditLogs).values({
+      schoolId,
+      userId: reviewerId,
+      action: "passpilot.class_migration.mappings_saved",
+      entityType: "settings",
+      entityId: settingsRow.id,
+      changes: {
+        revision: nextRevision,
+        autoLink,
+        mappings: Array.from(requested.values()).map((input) => ({
+          gradeId: input.gradeId,
+          classpilotGroupId: input.classId ?? null,
+          state: input.state ?? (input.classId ? "confirmed" : "pending"),
+        })),
+      },
+    });
+    return loadPasspilotMigrationInventory(tx, schoolId);
+  });
+}
+
+export async function completePasspilotClassMigration(
+  schoolId: string,
+  reviewerId: string,
+  expectedRevision: number,
+  classModelAcknowledged = false,
+  requireClean = false
+): Promise<PasspilotClassMigrationInventory> {
+  return db.transaction(async (tx) => {
+    await takePasspilotClassLock(tx, schoolId);
+    if (!classModelAcknowledged) {
+      throw passpilotClassError(
+        "PASSPILOT_CLASS_MODEL_ACKNOWLEDGEMENT_REQUIRED",
+        "Confirm that PassPilot web, kiosk, and installed clients support ClassPilot classes before cutover.",
+        409
+      );
+    }
+    const [settingsRow] = await tx
+      .select()
+      .from(settings)
+      .where(eq(settings.schoolId, schoolId))
+      .limit(1)
+      .for("update");
+    if (!settingsRow) {
+      throw passpilotClassError("PASSPILOT_CLASS_SETTINGS_MISSING", "School settings are not initialized.", 409);
+    }
+    if (requireClean) {
+      const eligibility = await loadPasspilotCleanSchoolCutoverEligibility(tx, schoolId);
+      if (!eligibility.eligible) {
+        throw passpilotClassError(
+          "PASSPILOT_CLEAN_CUTOVER_INELIGIBLE",
+          `School is not eligible for guarded clean cutover (${eligibility.reasons.join(",") || "unknown"}).`,
+          409
+        );
+      }
+    }
+    if (settingsRow.passpilotClassSource === "classpilot_groups") {
+      return loadPasspilotMigrationInventory(tx, schoolId);
+    }
+    if (settingsRow.passpilotClassMigrationRevision !== expectedRevision) {
+      throw passpilotClassError("PASSPILOT_CLASS_MIGRATION_CONFLICT", "The class mapping changed in another session. Reload before completing migration.", 409);
+    }
+
+    const inventory = await loadPasspilotMigrationInventory(tx, schoolId);
+    const revision = expectedRevision;
+
+    const unresolved = inventory.legacyGrades.filter(
+      (grade) => grade.migrationState !== "history_only" && !grade.classpilotGroupId
+    );
+    if (unresolved.length > 0) {
+      throw passpilotClassError(
+        "PASSPILOT_CLASS_MIGRATION_INCOMPLETE",
+        `${unresolved.length} legacy class${unresolved.length === 1 ? " is" : "es are"} still unresolved.`,
+        409
+      );
+    }
+    const staleAutoLinks = inventory.legacyGrades.filter(
+      (grade) =>
+        grade.migrationState === "auto_linked" &&
+        (!grade.autoLinkEligible || grade.suggestedClasspilotGroupId !== grade.classpilotGroupId)
+    );
+    if (staleAutoLinks.length > 0) {
+      throw passpilotClassError(
+        "PASSPILOT_AUTO_LINK_REVIEW_REQUIRED",
+        "One or more automatically linked classes changed after matching. Review and confirm those mappings before cutover.",
+        409
+      );
+    }
+    const [activeLegacyPassState] = await tx
+      .select({ count: sql<number>`COUNT(*)::int` })
+      .from(passes)
+      .where(
+        and(
+          eq(passes.schoolId, schoolId),
+          eq(passes.status, "active"),
+          isNull(passes.classpilotGroupId)
+        )
+      );
+    if ((activeLegacyPassState?.count ?? 0) > 0) {
+      throw passpilotClassError(
+        "PASSPILOT_ACTIVE_LEGACY_PASSES",
+        "Return, cancel, or expire every active legacy pass before completing class migration.",
+        409
+      );
+    }
+    const licenses = await tx
+      .select({ product: productLicenses.product })
+      .from(productLicenses)
+      .where(
+        and(
+          eq(productLicenses.schoolId, schoolId),
+          eq(productLicenses.status, "active"),
+          inArray(productLicenses.product, ["PASSPILOT", "CLASSPILOT"])
+        )
+      );
+    const licensed = new Set(licenses.map((row) => row.product));
+    if (!licensed.has("PASSPILOT") || !licensed.has("CLASSPILOT")) {
+      throw passpilotClassError(
+        "PASSPILOT_CANONICAL_LICENSE_REQUIRED",
+        "Active PassPilot and ClassPilot licenses are required before cutover.",
+        409
+      );
+    }
+
+    let kioskClasspilotGroupId = inventory.kioskClasspilotGroupId;
+    if (inventory.kioskGradeId) {
+      const kioskGrade = inventory.legacyGrades.find((grade) => grade.id === inventory.kioskGradeId);
+      if (!kioskGrade?.classpilotGroupId) {
+        throw passpilotClassError("PASSPILOT_KIOSK_CLASS_UNRESOLVED", "The kiosk class must be mapped before cutover.", 409);
+      }
+      kioskClasspilotGroupId = kioskGrade.classpilotGroupId;
+    }
+    const mappedClassIds = inventory.legacyGrades.flatMap((grade) =>
+      grade.classpilotGroupId ? [grade.classpilotGroupId] : []
+    );
+    const requiredClassIds = Array.from(
+      new Set([
+        ...mappedClassIds,
+        ...(kioskClasspilotGroupId ? [kioskClasspilotGroupId] : []),
+      ])
+    ).sort();
+    const lockedCanonicalClasses = requiredClassIds.length > 0
+      ? await tx
+          .select({ id: groups.id, groupType: groups.groupType, status: groups.status })
+          .from(groups)
+          .where(and(eq(groups.schoolId, schoolId), inArray(groups.id, requiredClassIds)))
+          .orderBy(asc(groups.id))
+          .for("update")
+      : [];
+    const activeCanonicalIds = new Set(
+      lockedCanonicalClasses
+        .filter((group) => group.groupType === "admin_class" && group.status === "active")
+        .map((group) => group.id)
+    );
+    const invalidMappings = inventory.legacyGrades.filter(
+      (grade) => grade.classpilotGroupId && !activeCanonicalIds.has(grade.classpilotGroupId)
+    );
+    if (invalidMappings.length > 0) {
+      throw passpilotClassError(
+        "PASSPILOT_MAPPED_CLASS_INACTIVE",
+        "One or more mapped ClassPilot classes were archived or removed. Review the mappings before cutover.",
+        409
+      );
+    }
+    if (kioskClasspilotGroupId && !activeCanonicalIds.has(kioskClasspilotGroupId)) {
+      throw passpilotClassError(
+        "PASSPILOT_KIOSK_CLASS_INACTIVE",
+        "The selected kiosk class is not an active official ClassPilot class.",
+        409
+      );
+    }
+
+    const completedAt = new Date();
+    await tx
+      .update(schools)
+      .set({ kioskGradeId: null, kioskClasspilotGroupId })
+      .where(eq(schools.id, schoolId));
+    await tx
+      .update(settings)
+      .set({
+        passpilotClassSource: "classpilot_groups",
+        passpilotClassCutoverAt: completedAt,
+        passpilotClassMigrationRevision: revision + 1,
+      })
+      .where(eq(settings.schoolId, schoolId));
+    await tx.insert(auditLogs).values({
+      schoolId,
+      userId: reviewerId,
+      action: "passpilot.class_migration.completed",
+      entityType: "settings",
+      entityId: settingsRow.id,
+      changes: {
+        from: "legacy_grades",
+        to: "classpilot_groups",
+        revision: revision + 1,
+        classModelAcknowledged,
+        requireClean,
+      },
+    });
+    return loadPasspilotMigrationInventory(tx, schoolId);
+  });
 }
 
 export type InstructionalCalendarMonthState = {

@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useTeachers, useGrades } from "../../../../hooks/use-students";
 import { usePassPilotAuth } from "../../../../hooks/usePassPilotAuth";
+import { useLicenses } from "../../../../contexts/LicenseContext";
 import { apiRequest, queryClient } from "../../../../lib/queryClient";
 import api from "../../../../shared/utils/api";
 import ImportInClassPilotNotice from "../../../../shared/components/ImportInClassPilotNotice";
@@ -23,31 +24,86 @@ import { Checkbox } from "../../../../components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../../../../components/ui/dropdown-menu";
 import { Plus, Trash2, Download, RefreshCw, Search, Pencil, Eye, Users, Upload, FileSpreadsheet, Cloud, GraduationCap, ChevronDown } from "lucide-react";
 import { toast } from "../../../../hooks/use-toast";
+import { isCanonicalPassPilotSource, useCanonicalPassPilotClasses } from "../../classData";
+import ClassSourceSetup from "./ClassSourceSetup";
 
 const GRADE_LEVELS = ["K", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"];
 
 export function SetupView() {
-  const [activeTab, setActiveTab] = useState(() => {
-    const hash = window.location.hash.replace('#', '');
-    const sub = hash.split('/')[1];
-    return sub === 'settings' ? 'settings' : 'teachers';
-  });
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { hasClassPilot } = useLicenses();
+  const classesQuery = useCanonicalPassPilotClasses();
+  const canonical = classesQuery.isSuccess && isCanonicalPassPilotSource(classesQuery.data?.source);
+  const showClassSource = canonical || hasClassPilot;
+  const availableTabs = [
+    "teachers",
+    "students",
+    ...(!canonical ? ["classes", "assignments"] : []),
+    ...(showClassSource ? ["class-source"] : []),
+    "settings",
+  ];
+  const requestedTab = searchParams.get("section") || "teachers";
+  const activeTab = availableTabs.includes(requestedTab) ? requestedTab : "teachers";
+
+  useEffect(() => {
+    if (!classesQuery.isSuccess || requestedTab === activeTab) return;
+    const next = new URLSearchParams(searchParams);
+    if (activeTab === "teachers") next.delete("section");
+    else next.set("section", activeTab);
+    setSearchParams(next, { replace: true });
+  }, [activeTab, classesQuery.isSuccess, requestedTab, searchParams, setSearchParams]);
+
+  const setActiveTab = (nextTab) => {
+    const next = new URLSearchParams(searchParams);
+    if (nextTab === "teachers") next.delete("section");
+    else next.set("section", nextTab);
+    setSearchParams(next);
+  };
+
+  if (classesQuery.isLoading) {
+    return (
+      <div className="space-y-4 p-4" aria-live="polite">
+        <Skeleton className="h-7 w-36" />
+        <Skeleton className="h-10 w-full max-w-2xl" />
+        <Skeleton className="h-48 w-full" />
+        <span className="sr-only">Loading school setup</span>
+      </div>
+    );
+  }
+
+  if (classesQuery.isError) {
+    return (
+      <div className="p-4">
+        <Card className="border-destructive/40">
+          <CardContent className="p-8 text-center">
+            <h2 className="text-lg font-semibold">Class settings couldn’t be loaded</h2>
+            <p className="mt-2 text-sm text-muted-foreground">Try again. No settings were changed.</p>
+            <Button type="button" variant="outline" className="mt-4" onClick={() => classesQuery.refetch()}>
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 space-y-4">
       <h2 className="text-xl font-semibold">School Setup</h2>
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList>
+        <TabsList className="h-auto w-full flex-wrap justify-start">
           <TabsTrigger value="teachers">Teachers</TabsTrigger>
           <TabsTrigger value="students">Student Roster</TabsTrigger>
-          <TabsTrigger value="classes">Classes</TabsTrigger>
-          <TabsTrigger value="assignments">Class Assignments</TabsTrigger>
+          {!canonical ? <TabsTrigger value="classes">Classes</TabsTrigger> : null}
+          {!canonical ? <TabsTrigger value="assignments">Class Assignments</TabsTrigger> : null}
+          {showClassSource ? <TabsTrigger value="class-source">Class Source</TabsTrigger> : null}
           <TabsTrigger value="settings">Settings</TabsTrigger>
         </TabsList>
         <TabsContent value="teachers"><TeachersTab /></TabsContent>
-        <TabsContent value="students"><StudentRosterTab /></TabsContent>
-        <TabsContent value="classes"><ClassesTab /></TabsContent>
-        <TabsContent value="assignments"><AssignmentsTab /></TabsContent>
+        <TabsContent value="students"><StudentRosterTab canonical={canonical} /></TabsContent>
+        {!canonical ? <TabsContent value="classes"><ClassesTab /></TabsContent> : null}
+        {!canonical ? <TabsContent value="assignments"><AssignmentsTab /></TabsContent> : null}
+        {showClassSource ? <TabsContent value="class-source"><ClassSourceSetup /></TabsContent> : null}
         <TabsContent value="settings"><SettingsTab /></TabsContent>
       </Tabs>
     </div>
@@ -413,9 +469,10 @@ function TeachersTab() {
   );
 }
 
-function StudentRosterTab() {
+function StudentRosterTab({ canonical = false }) {
   const navigate = useNavigate();
-  const { consolidated, canLinkToClassPilot, importPath } = useStudentImportHome();
+  const { canLinkToClassPilot, importPath } = useStudentImportHome();
+  const consolidated = canonical;
   const { school } = usePassPilotAuth();
   const [filterGrade, setFilterGrade] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -472,8 +529,6 @@ function StudentRosterTab() {
     queryFn: () => apiRequest("GET", "/students"),
     select: (data) => Array.isArray(data) ? data : (data?.students ?? []),
   });
-
-  const { data: grades } = useGrades();
 
   const addStudent = useMutation({
     mutationFn: (data) =>
@@ -748,12 +803,6 @@ function StudentRosterTab() {
     },
     onError: (err) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
-
-  // Build a grade ID -> grade name map
-  const gradeMap = new Map();
-  for (const g of grades ?? []) {
-    gradeMap.set(g.id, g.name);
-  }
 
   // Count students per grade level for badge counts
   const gradeLevelCounts = new Map();
@@ -1693,7 +1742,9 @@ function StudentRosterTab() {
 }
 
 function ClassesTab() {
-  const { consolidated } = useStudentImportHome();
+  // ClassesTab is omitted after canonical cutover. While it is mounted, the
+  // legacy grade roster remains the authoritative PassPilot write surface.
+  const consolidated = false;
   const { data: grades, isLoading } = useGrades();
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);

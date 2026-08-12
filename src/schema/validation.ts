@@ -101,6 +101,7 @@ export const issuePassSchema = z.object({
   ]),
   customDestination: z.string().optional(),
   duration: z.number().min(1).optional(),
+  classId: z.string().min(1).optional(),
   gradeId: z.string().optional(),
   notes: z.string().optional(),
 });
@@ -112,6 +113,7 @@ export const kioskLookupSchema = z.object({
 
 export const kioskCheckoutSchema = z.object({
   studentId: z.string().min(1),
+  classId: z.string().min(1).optional(),
   destination: z.enum([
     "bathroom",
     "nurse",
@@ -149,6 +151,9 @@ export const createSchoolSchema = z.object({
   products: z
     .array(z.enum(["PASSPILOT", "GOPILOT", "CLASSPILOT"]))
     .optional(),
+  // Canonical ClassPilot classes require an updated PassPilot client fleet.
+  // License selection alone is never sufficient admission.
+  passpilotClassModelAcknowledged: z.literal(true).optional(),
 });
 export type CreateSchoolData = z.infer<typeof createSchoolSchema>;
 

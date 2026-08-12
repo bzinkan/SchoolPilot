@@ -13,19 +13,33 @@ import {
   getActivePassForStudent,
   expireOverduePasses,
   getStudentById,
-  createPass,
+  createCanonicalPass,
+  createLegacyPass,
   addGroupTeacher,
   addHomeroomTeacher,
   getSchoolUsageSummary,
   getHeartbeatsByStudent,
+  getGroupsByTeacherAndSchool,
+  getAbsentStudentIds,
+  getSettingsForSchool,
 } from "./storage.js";
+import {
+  filterPassesForRole,
+  getPasspilotClassSourceForSchool,
+  getTeacherCanonicalClassIds,
+  getTeacherGradeIds,
+  isPassPilotManager,
+  type PassPilotRole,
+} from "./passpilotAccess.js";
 import { sendChatEscalationEmail } from "./email.js";
 import db from "../db.js";
-import { heartbeats, teachingSessions, groups } from "../schema/classpilot.js";
+import { heartbeats, teachingSessions, groups, groupStudents } from "../schema/classpilot.js";
 import { users } from "../schema/core.js";
 import { devices as deviceTable } from "../schema/classpilot.js";
-import { eq, and, sql, desc } from "drizzle-orm";
+import { eq, and, sql, desc, inArray } from "drizzle-orm";
 import { getToolsForContext } from "./chatTools.js";
+import { getPasspilotClasses } from "./passpilotClasses.js";
+import { isWithinTrackingWindow } from "./schoolHours.js";
 
 // Lazy imports to avoid circular deps — flight paths may not exist in all setups
 let _getFlightPathsBySchool: ((schoolId: string) => Promise<any[]>) | null =
@@ -67,11 +81,51 @@ function todayDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+function passpilotRoleForTool(ctx: ToolContext): PassPilotRole | null {
+  const role = ctx.userRole as PassPilotRole;
+  return ["super_admin", "admin", "school_admin", "office_staff", "teacher"].includes(role)
+    ? role
+    : null;
+}
+
+async function passpilotStudentIdsForTeacher(ctx: ToolContext): Promise<Set<string> | null> {
+  const role = passpilotRoleForTool(ctx);
+  if (isPassPilotManager(role)) return null;
+  if (role !== "teacher") return new Set<string>();
+  if (!ctx.licensedProducts.some((product) => product.toUpperCase() === "PASSPILOT")) {
+    return null;
+  }
+
+  const source = await getPasspilotClassSourceForSchool(ctx.schoolId);
+  if (source === "classpilot_groups") {
+    const classIds = Array.from(await getTeacherCanonicalClassIds(ctx.userId, ctx.schoolId));
+    if (classIds.length === 0) return new Set<string>();
+    const rows = await db
+      .select({ studentId: groupStudents.studentId })
+      .from(groupStudents)
+      .where(inArray(groupStudents.groupId, classIds));
+    return new Set(rows.map((row) => row.studentId));
+  }
+
+  const gradeIds = await getTeacherGradeIds(ctx.userId, ctx.schoolId);
+  if (gradeIds.size === 0) return new Set<string>();
+  const students = await getStudentsBySchool(ctx.schoolId);
+  return new Set(
+    students
+      .filter((student) => student.gradeId && gradeIds.has(student.gradeId))
+      .map((student) => student.id)
+  );
+}
+
 const executors: Record<string, ToolExecutor> = {
   // === SHARED ===
 
   list_students: async (_args, ctx) => {
-    const students = await getStudentsBySchool(ctx.schoolId);
+    const allowedStudentIds = await passpilotStudentIdsForTeacher(ctx);
+    const schoolStudents = await getStudentsBySchool(ctx.schoolId);
+    const students = allowedStudentIds
+      ? schoolStudents.filter((student) => allowedStudentIds.has(student.id))
+      : schoolStudents;
     const summary = students.map((s: any, index: number) => ({
       id: s.id,
       label: `Student ${index + 1}`,
@@ -132,15 +186,17 @@ const executors: Record<string, ToolExecutor> = {
   // === CLASSPILOT ===
 
   list_classes: async (_args, ctx) => {
-    const groups = await getGroupsBySchool(ctx.schoolId);
-    const summary = groups.map((g: any) => ({
+    const schoolGroups = ctx.userRole === "teacher"
+      ? await getGroupsByTeacherAndSchool(ctx.userId, ctx.schoolId)
+      : await getGroupsBySchool(ctx.schoolId);
+    const summary = schoolGroups.map((g: any) => ({
       id: g.id,
       name: g.name,
       gradeLevel: g.gradeLevel || "N/A",
       periodLabel: g.periodLabel || "",
       teacherId: g.teacherId,
     }));
-    return { success: true, data: { count: groups.length, classes: summary } };
+    return { success: true, data: { count: schoolGroups.length, classes: summary } };
   },
 
   create_class: async (args, ctx) => {
@@ -273,15 +329,42 @@ const executors: Record<string, ToolExecutor> = {
 
   // === PASSPILOT ===
 
+  list_passpilot_classes: async (_args, ctx) => {
+    const role = passpilotRoleForTool(ctx);
+    const result = await getPasspilotClasses(ctx.schoolId, {
+      userId: ctx.userId,
+      manager: isPassPilotManager(role),
+      scope: "active",
+    });
+    return {
+      success: true,
+      data: {
+        source: result.source,
+        count: result.classes.length,
+        classes: result.classes.map((passpilotClass) => ({
+          id: passpilotClass.classId,
+          name: passpilotClass.name,
+          gradeLevel: passpilotClass.gradeLevel,
+          periodLabel: passpilotClass.periodLabel,
+          studentCount: passpilotClass.studentCount,
+        })),
+      },
+    };
+  },
+
   list_active_passes: async (_args, ctx) => {
-    const passes = await getActivePassesBySchool(ctx.schoolId);
+    const rawPasses = await getActivePassesBySchool(ctx.schoolId);
+    const [user] = await db.select().from(users).where(eq(users.id, ctx.userId)).limit(1);
+    const passes = user
+      ? await filterPassesForRole(rawPasses, user, ctx.schoolId, passpilotRoleForTool(ctx))
+      : [];
     const summary = passes.map((p: any) => ({
       id: p.id,
       studentId: p.studentId,
       destination: p.destination,
       status: p.status,
       duration: p.duration,
-      createdAt: p.createdAt,
+      issuedAt: p.issuedAt,
     }));
     return {
       success: true,
@@ -290,10 +373,29 @@ const executors: Record<string, ToolExecutor> = {
   },
 
   issue_pass: async (args, ctx) => {
+    if (!args.classId) {
+      return { success: false, error: "A class ID is required to issue a pass" };
+    }
     // Verify the student belongs to this school (no cross-school pass writes).
     const student = await getStudentById(args.studentId);
     if (!student || student.schoolId !== ctx.schoolId) {
       return { success: false, error: "Student not found" };
+    }
+
+    const duration = args.duration ?? 5;
+    if (typeof duration !== "number" || !Number.isFinite(duration) || duration < 1) {
+      return { success: false, error: "Pass duration must be a finite number of at least 1 minute" };
+    }
+
+    const [absentStudentIds, schoolSettings] = await Promise.all([
+      getAbsentStudentIds(ctx.schoolId, todayDate()),
+      getSettingsForSchool(ctx.schoolId),
+    ]);
+    if (absentStudentIds.has(args.studentId)) {
+      return { success: false, error: "Cannot issue a pass to an absent student" };
+    }
+    if (schoolSettings && !isWithinTrackingWindow(schoolSettings)) {
+      return { success: false, error: "Passes cannot be issued outside school hours" };
     }
 
     // Mirror the route safeguards: expire stale passes first, then enforce
@@ -304,20 +406,33 @@ const executors: Record<string, ToolExecutor> = {
       return { success: false, error: "Student already has an active pass" };
     }
 
-    const duration = args.duration || 5;
     const expiresAt = new Date(Date.now() + duration * 60 * 1000);
+    const source = await getPasspilotClassSourceForSchool(ctx.schoolId);
+    const manager = ["super_admin", "admin", "school_admin", "office_staff"].includes(ctx.userRole);
+    if (source === "legacy_grades" && !manager) {
+      const allowedGradeIds = await getTeacherGradeIds(ctx.userId, ctx.schoolId);
+      if (!allowedGradeIds.has(args.classId)) {
+        return { success: false, error: "You do not have access to that class" };
+      }
+    }
     let pass;
     try {
-      pass = await createPass({
+      const commonPass = {
         schoolId: ctx.schoolId,
         studentId: args.studentId,
         teacherId: ctx.userId,
         destination: args.destination,
         duration,
         expiresAt,
-        status: "active",
-        issuedVia: "teacher",
-      });
+        status: "active" as const,
+        issuedVia: "teacher" as const,
+      };
+      pass = source === "classpilot_groups"
+        ? await createCanonicalPass(
+            { ...commonPass, classId: args.classId },
+            { actorUserId: ctx.userId, manager }
+          )
+        : await createLegacyPass({ ...commonPass, gradeId: args.classId });
     } catch (err: any) {
       if (err?.code === "23505") {
         return { success: false, error: "Student already has an active pass" };

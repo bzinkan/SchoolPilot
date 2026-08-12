@@ -209,6 +209,7 @@ jobs:
           tests/classpilot-tile-authorization-plan-self-provisioning.integration.test.ts
           tests/cross-tenant-isolation.test.ts
           tests/classpilot-tile-read-scope.test.ts
+          tests/passpilot-canonical-runtime.test.ts
 
       - name: Collect SOC 2 evidence
         if: always()
@@ -412,6 +413,10 @@ jobs:
         working-directory: schoolpilot-app
         run: npm run build:passpilot
 
+      - name: Smoke canonical classes in the PassPilot bundle
+        working-directory: schoolpilot-app
+        run: npm run test:passpilot-canonical-classes
+
       - name: Validate PassPilot Router bundle
         working-directory: schoolpilot-app
         run: npm run audit:router:postbuild:passpilot
@@ -436,7 +441,7 @@ jobs:
           node scripts/soc2/collect-ci-evidence.mjs
           --job "Frontend lint and build"
           --controls "SP-SEC-004"
-          --summary "This job scheduled the high/critical production-dependency gate, complete-tree audit collection, frontend API-routing and ClassPilot tile-batching contracts, lint, the standard production-preview browser smoke, standard/GoPilot/PassPilot builds, and post-build Router reachability validation; the job status and separate frontend dependency audit packet record which gates completed and whether they passed."
+          --summary "This job scheduled the high/critical production-dependency gate, complete-tree audit collection, frontend API-routing and ClassPilot tile-batching contracts, lint, the standard production-preview browser smoke, standard/GoPilot/PassPilot builds, a canonical-class browser smoke against the PassPilot bundle, and post-build Router reachability validation; the job status and separate frontend dependency audit packet record which gates completed and whether they passed."
 
       - name: Upload SOC 2 evidence
         if: always()

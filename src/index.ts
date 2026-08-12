@@ -434,6 +434,228 @@ export async function runStartupMigrations(): Promise<void> {
   }
   console.log("[migration] ClassPilot instructional calendar settings ready");
 
+  // PassPilot canonical ClassPilot-class compatibility is required before a
+  // dual-license school can switch writes away from the legacy grades model.
+  // This block is intentionally fail-closed: partial DDL, invalid mappings, or
+  // a missing index/constraint must abort the migration task before API/worker
+  // rollout. Existing grade/pass rows remain intact and default to legacy mode.
+  await pool.query(`
+    ALTER TABLE settings
+      ADD COLUMN IF NOT EXISTS passpilot_class_source TEXT NOT NULL DEFAULT 'legacy_grades',
+      ADD COLUMN IF NOT EXISTS passpilot_class_cutover_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS passpilot_class_migration_revision INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS passpilot_canonical_writes_at TIMESTAMPTZ
+  `);
+  await pool.query(`
+    ALTER TABLE schools
+      ADD COLUMN IF NOT EXISTS kiosk_classpilot_group_id VARCHAR
+  `);
+  await pool.query(`
+    ALTER TABLE grades
+      ADD COLUMN IF NOT EXISTS classpilot_group_id TEXT,
+      ADD COLUMN IF NOT EXISTS migration_state TEXT NOT NULL DEFAULT 'pending',
+      ADD COLUMN IF NOT EXISTS mapping_revision INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS mapping_method TEXT,
+      ADD COLUMN IF NOT EXISTS mapping_reviewer_id TEXT,
+      ADD COLUMN IF NOT EXISTS mapped_at TIMESTAMPTZ
+  `);
+  await pool.query(`
+    ALTER TABLE passes
+      ADD COLUMN IF NOT EXISTS classpilot_group_id TEXT,
+      ADD COLUMN IF NOT EXISTS class_name_snapshot TEXT
+  `);
+
+  // Recover only nullable values left by an interrupted earlier attempt. Do
+  // not normalize contradictory values: the validated checks below must expose
+  // them and fail the deployment instead of silently changing operator state.
+  await schedulerPool.query(`
+    UPDATE settings
+    SET
+      passpilot_class_source = COALESCE(passpilot_class_source, 'legacy_grades'),
+      passpilot_class_migration_revision = COALESCE(passpilot_class_migration_revision, 0)
+    WHERE passpilot_class_source IS NULL
+       OR passpilot_class_migration_revision IS NULL
+  `);
+  await schedulerPool.query(`
+    UPDATE grades
+    SET
+      migration_state = COALESCE(migration_state, 'pending'),
+      mapping_revision = COALESCE(mapping_revision, 0)
+    WHERE migration_state IS NULL
+       OR mapping_revision IS NULL
+  `);
+  await schedulerPool.query(`
+    UPDATE passes AS pass
+    SET class_name_snapshot = grade.name
+    FROM grades AS grade
+    WHERE pass.class_name_snapshot IS NULL
+      AND pass.grade_id = grade.id
+      AND pass.school_id = grade.school_id
+  `);
+
+  await pool.query(`
+    ALTER TABLE settings
+      ALTER COLUMN passpilot_class_source SET DEFAULT 'legacy_grades',
+      ALTER COLUMN passpilot_class_source SET NOT NULL,
+      ALTER COLUMN passpilot_class_migration_revision SET DEFAULT 0,
+      ALTER COLUMN passpilot_class_migration_revision SET NOT NULL
+  `);
+  await pool.query(`
+    ALTER TABLE grades
+      ALTER COLUMN migration_state SET DEFAULT 'pending',
+      ALTER COLUMN migration_state SET NOT NULL,
+      ALTER COLUMN mapping_revision SET DEFAULT 0,
+      ALTER COLUMN mapping_revision SET NOT NULL
+  `);
+
+  await pool.query(`
+    DO $passpilot_constraints$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'settings_passpilot_class_source_check'
+          AND conrelid = 'settings'::regclass
+      ) THEN
+        ALTER TABLE settings
+          ADD CONSTRAINT settings_passpilot_class_source_check
+          CHECK (passpilot_class_source IN ('legacy_grades', 'classpilot_groups')) NOT VALID;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'settings_passpilot_class_migration_revision_check'
+          AND conrelid = 'settings'::regclass
+      ) THEN
+        ALTER TABLE settings
+          ADD CONSTRAINT settings_passpilot_class_migration_revision_check
+          CHECK (passpilot_class_migration_revision >= 0) NOT VALID;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'grades_migration_state_check'
+          AND conrelid = 'grades'::regclass
+      ) THEN
+        ALTER TABLE grades
+          ADD CONSTRAINT grades_migration_state_check
+          CHECK (migration_state IN ('pending', 'auto_linked', 'confirmed', 'history_only')) NOT VALID;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'grades_mapping_revision_check'
+          AND conrelid = 'grades'::regclass
+      ) THEN
+        ALTER TABLE grades
+          ADD CONSTRAINT grades_mapping_revision_check
+          CHECK (mapping_revision >= 0) NOT VALID;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'passes_single_class_source_check'
+          AND conrelid = 'passes'::regclass
+      ) THEN
+        ALTER TABLE passes
+          ADD CONSTRAINT passes_single_class_source_check
+          CHECK (NOT (grade_id IS NOT NULL AND classpilot_group_id IS NOT NULL)) NOT VALID;
+      END IF;
+    END
+    $passpilot_constraints$;
+  `);
+  await pool.query(`ALTER TABLE settings VALIDATE CONSTRAINT settings_passpilot_class_source_check`);
+  await pool.query(`ALTER TABLE settings VALIDATE CONSTRAINT settings_passpilot_class_migration_revision_check`);
+  await pool.query(`ALTER TABLE grades VALIDATE CONSTRAINT grades_migration_state_check`);
+  await pool.query(`ALTER TABLE grades VALIDATE CONSTRAINT grades_mapping_revision_check`);
+  await pool.query(`ALTER TABLE passes VALIDATE CONSTRAINT passes_single_class_source_check`);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS grades_school_classpilot_group_idx
+    ON grades (school_id, classpilot_group_id)
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS grades_school_migration_state_idx
+    ON grades (school_id, migration_state)
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS passes_school_classpilot_group_status_idx
+    ON passes (school_id, classpilot_group_id, status)
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS passes_school_classpilot_group_issued_idx
+    ON passes (school_id, classpilot_group_id, issued_at)
+  `);
+
+  const passpilotCanonicalDataIntegrity = await schedulerPool.query(`
+    SELECT
+      (SELECT count(*)::integer
+       FROM settings
+       WHERE passpilot_class_source NOT IN ('legacy_grades', 'classpilot_groups')
+          OR passpilot_class_migration_revision < 0) AS invalid_settings,
+      (SELECT count(*)::integer
+       FROM grades
+       WHERE migration_state NOT IN ('pending', 'auto_linked', 'confirmed', 'history_only')
+          OR mapping_revision < 0) AS invalid_grades,
+      (SELECT count(*)::integer
+       FROM passes
+       WHERE grade_id IS NOT NULL AND classpilot_group_id IS NOT NULL) AS conflicting_passes
+  `);
+  const passpilotCanonicalDataFailures = Object.entries(
+    passpilotCanonicalDataIntegrity.rows[0] ?? {}
+  ).filter(([, value]) => Number(value) > 0);
+  if (passpilotCanonicalDataFailures.length > 0) {
+    throw new Error(
+      `PassPilot canonical class data integrity check failed: ${passpilotCanonicalDataFailures
+        .map(([name, value]) => `${name}=${value}`)
+        .join(", ")}`
+    );
+  }
+
+  const passpilotCanonicalCatalogIntegrity = await pool.query(`
+    SELECT
+      to_regclass('public.grades_school_classpilot_group_idx') IS NOT NULL AS grades_group_index,
+      to_regclass('public.grades_school_migration_state_idx') IS NOT NULL AS grades_state_index,
+      to_regclass('public.passes_school_classpilot_group_status_idx') IS NOT NULL AS passes_status_index,
+      to_regclass('public.passes_school_classpilot_group_issued_idx') IS NOT NULL AS passes_issued_index,
+      EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'settings_passpilot_class_source_check'
+          AND conrelid = 'settings'::regclass
+          AND convalidated
+      ) AS settings_source_constraint,
+      EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'settings_passpilot_class_migration_revision_check'
+          AND conrelid = 'settings'::regclass
+          AND convalidated
+      ) AS settings_revision_constraint,
+      EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'grades_migration_state_check'
+          AND conrelid = 'grades'::regclass
+          AND convalidated
+      ) AS grades_state_constraint,
+      EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'grades_mapping_revision_check'
+          AND conrelid = 'grades'::regclass
+          AND convalidated
+      ) AS grades_revision_constraint,
+      EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'passes_single_class_source_check'
+          AND conrelid = 'passes'::regclass
+          AND convalidated
+      ) AS passes_source_constraint
+  `);
+  const passpilotCanonicalCatalogFailures = Object.entries(
+    passpilotCanonicalCatalogIntegrity.rows[0] ?? {}
+  ).filter(([, ready]) => ready !== true);
+  if (passpilotCanonicalCatalogFailures.length > 0) {
+    throw new Error(
+      `PassPilot canonical class schema integrity check failed: ${passpilotCanonicalCatalogFailures
+        .map(([name]) => name)
+        .join(", ")}`
+    );
+  }
+  console.log("[migration] PassPilot canonical class columns and constraints ready");
+
   // RLS Phase 1: add school_id to derived tables + backfill from parents.
   // Idempotent; nullable legacy/ambiguous rows stay NULL by design and are hidden
   // once table RLS is enabled. dashboard_tabs/messages can only infer teacher
@@ -1229,6 +1451,52 @@ export async function runStartupMigrations(): Promise<void> {
     console.warn("[migration] group_teachers migration skipped:", (err as Error).message);
   }
 
+  // Canonical PassPilot mappings depend on the ClassPilot groups base table.
+  // Keep this fail-closed integrity gate after groups, group_students, and
+  // group_teachers startup DDL so a partial legacy schema cannot bypass it.
+  const passpilotCanonicalGroupIntegrity = await schedulerPool.query(`
+    SELECT
+      (SELECT count(*)::integer
+       FROM grades AS grade
+       LEFT JOIN groups AS class_group ON class_group.id = grade.classpilot_group_id
+       WHERE grade.classpilot_group_id IS NOT NULL
+         AND (
+           class_group.id IS NULL
+           OR class_group.school_id <> grade.school_id
+           OR class_group.group_type <> 'admin_class'
+         )) AS invalid_grade_groups,
+      (SELECT count(*)::integer
+       FROM passes AS pass
+       LEFT JOIN groups AS class_group ON class_group.id = pass.classpilot_group_id
+       WHERE pass.classpilot_group_id IS NOT NULL
+         AND (
+           class_group.id IS NULL
+           OR class_group.school_id <> pass.school_id
+           OR class_group.group_type <> 'admin_class'
+         )) AS invalid_pass_groups,
+      (SELECT count(*)::integer
+       FROM schools AS school
+       LEFT JOIN groups AS class_group ON class_group.id = school.kiosk_classpilot_group_id
+       WHERE school.kiosk_classpilot_group_id IS NOT NULL
+         AND (
+           class_group.id IS NULL
+           OR class_group.school_id <> school.id
+           OR class_group.group_type <> 'admin_class'
+         )) AS invalid_kiosk_groups
+  `);
+  const passpilotCanonicalGroupFailures = Object.entries(
+    passpilotCanonicalGroupIntegrity.rows[0] ?? {}
+  ).filter(([, value]) => Number(value) > 0);
+  if (passpilotCanonicalGroupFailures.length > 0) {
+    throw new Error(
+      `PassPilot canonical group integrity check failed: ${passpilotCanonicalGroupFailures
+        .map(([name, value]) => `${name}=${value}`)
+        .join(", ")}`
+    );
+  }
+  console.log("[migration] PassPilot canonical ClassPilot-class compatibility ready");
+
+  // GoPilot homeroom co-teacher junction table.
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS homeroom_teachers (

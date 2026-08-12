@@ -59,6 +59,7 @@ export default function CreateSchool() {
     firstAdminPassword: '',
     zipCode: searchParams.get('zipCode') || '',
     products: [],
+    passpilotClassModelAcknowledged: false,
     schoolHours: {
       enabled: !!(preStartTime && preEndTime),
       startTime: preStartTime || '08:00',
@@ -70,12 +71,19 @@ export default function CreateSchool() {
   });
 
   const toggleProduct = (product) => {
-    setForm((prev) => ({
-      ...prev,
-      products: prev.products.includes(product)
+    setForm((prev) => {
+      const products = prev.products.includes(product)
         ? prev.products.filter((p) => p !== product)
-        : [...prev.products, product],
-    }));
+        : [...prev.products, product];
+      const remainsDual = products.includes('CLASSPILOT') && products.includes('PASSPILOT');
+      return {
+        ...prev,
+        products,
+        passpilotClassModelAcknowledged: remainsDual
+          ? prev.passpilotClassModelAcknowledged
+          : false,
+      };
+    });
   };
 
   const setHoursField = (field, value) => {
@@ -105,6 +113,8 @@ export default function CreateSchool() {
   };
 
   const showSchoolHours = form.products.includes('CLASSPILOT') || form.products.includes('PASSPILOT');
+  const createsCanonicalPassPilotSchool =
+    form.products.includes('CLASSPILOT') && form.products.includes('PASSPILOT');
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -121,11 +131,18 @@ export default function CreateSchool() {
       setError('School name and domain are required');
       return;
     }
+    if (createsCanonicalPassPilotSchool && !form.passpilotClassModelAcknowledged) {
+      setError('Confirm that every PassPilot web, kiosk, and installed app supports ClassPilot classes.');
+      return;
+    }
     setSubmitting(true);
     setError(null);
 
     try {
       const payload = { ...form };
+      if (!createsCanonicalPassPilotSchool) {
+        delete payload.passpilotClassModelAcknowledged;
+      }
       // Only include schoolHours if products require it and hours are enabled
       const needsHours = payload.products.includes('CLASSPILOT') || payload.products.includes('PASSPILOT');
       if (!needsHours || !payload.schoolHours?.enabled) {
@@ -181,6 +198,7 @@ export default function CreateSchool() {
               </button>
             )}
           </div>
+
         </div>
       </div>
     );
@@ -288,6 +306,27 @@ export default function CreateSchool() {
               );
             })}
           </div>
+          {createsCanonicalPassPilotSchool ? (
+            <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 p-4 text-left">
+              <input
+                type="checkbox"
+                checked={form.passpilotClassModelAcknowledged}
+                onChange={(event) => setForm((current) => ({
+                  ...current,
+                  passpilotClassModelAcknowledged: event.target.checked,
+                }))}
+                className="mt-1 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span>
+                <span className="block text-sm font-semibold text-slate-900">
+                  Use ClassPilot classes in PassPilot
+                </span>
+                <span className="mt-1 block text-xs leading-5 text-slate-600">
+                  I confirm that this school will use the current PassPilot web app and kiosk, and that every installed PassPilot app supports ClassPilot classes. Class names, rosters, and teacher assignments will be managed only in ClassPilot.
+                </span>
+              </span>
+            </label>
+          ) : null}
         </div>
 
         {/* School Hours - shown when ClassPilot or PassPilot is selected */}

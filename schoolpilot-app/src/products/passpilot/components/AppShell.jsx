@@ -1,10 +1,9 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { usePassPilotAuth } from '../../../hooks/usePassPilotAuth';
-import { apiRequest } from '../../../lib/queryClient';
 import { useLicenses } from '../../../contexts/LicenseContext';
+import { passPilotClassRequest } from '../classData';
 import {
-  ArrowLeft,
   ClipboardList,
   Users,
   BookOpen,
@@ -35,17 +34,16 @@ import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
 
 const navItems = [
-  { label: 'Passes', icon: <ClipboardList className="h-5 w-5" />, id: 'passes' },
-  { label: 'My Class', icon: <BookOpen className="h-5 w-5" />, id: 'myclass' },
-  { label: 'Classes', icon: <Users className="h-5 w-5" />, id: 'roster' },
-  { label: 'Reports', icon: <BarChart3 className="h-5 w-5" />, id: 'reports', adminOnly: true },
-  { label: 'Set Up', icon: <Settings className="h-5 w-5" />, id: 'setup', adminOnly: true },
+  { label: 'Passes', icon: <ClipboardList className="h-5 w-5" />, id: 'passes', to: '/passpilot/passes' },
+  { label: 'My Class', icon: <BookOpen className="h-5 w-5" />, id: 'myclass', to: '/passpilot/my-class' },
+  { label: 'Classes', icon: <Users className="h-5 w-5" />, id: 'roster', to: '/passpilot/classes' },
+  { label: 'Reports', icon: <BarChart3 className="h-5 w-5" />, id: 'reports', to: '/passpilot/reports', managerOnly: true },
+  { label: 'Set Up', icon: <Settings className="h-5 w-5" />, id: 'setup', to: '/passpilot/setup', adminOnly: true },
 ];
 
-export default function AppShell({ children, currentTab, onTabChange }) {
-  const { user, school, isAdmin, logout, refetchUser } = usePassPilotAuth();
+export default function AppShell({ children, currentTab }) {
+  const { user, school, isAdmin, isSchoolwideManager, logout, refetchUser } = usePassPilotAuth();
   const { hasClassPilot, hasGoPilot } = useLicenses();
-  const navigate = useNavigate();
   const [kioskNameInput, setKioskNameInput] = useState('');
   const [isKioskNameDialogOpen, setIsKioskNameDialogOpen] = useState(false);
   const [pendingKioskAction, setPendingKioskAction] = useState(null);
@@ -54,7 +52,7 @@ export default function AppShell({ children, currentTab, onTabChange }) {
 
   const saveKioskName = async (name) => {
     try {
-      await apiRequest('PUT', '/kiosk-config', { kioskName: name });
+      await passPilotClassRequest('PUT', '/kiosk-config', { kioskName: name });
       // Refresh user data so kioskName updates
       refetchUser();
     } catch {
@@ -94,7 +92,10 @@ export default function AppShell({ children, currentTab, onTabChange }) {
     setPendingKioskAction(null);
   };
 
-  const visibleNav = navItems.filter((item) => !item.adminOnly || isAdmin);
+  const visibleNav = navItems.filter((item) => (
+    (!item.adminOnly || isAdmin)
+    && (!item.managerOnly || isSchoolwideManager)
+  ));
 
   const initials = user?.displayName
     ? user.displayName
@@ -111,20 +112,20 @@ export default function AppShell({ children, currentTab, onTabChange }) {
       <header className="border-b bg-card px-4 py-3 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
           {hasClassPilot && (
-            <button
-              onClick={() => navigate('/classpilot')}
+            <Link
+              to="/classpilot"
               className="px-3 py-1 rounded-md text-sm font-semibold bg-yellow-400 text-blue-900 hover:bg-yellow-300 transition-colors"
             >
               ClassPilot
-            </button>
+            </Link>
           )}
           {hasGoPilot && (
-            <button
-              onClick={() => navigate('/gopilot')}
+            <Link
+              to="/gopilot"
               className="px-3 py-1 rounded-md text-sm font-semibold bg-purple-600 text-white hover:bg-purple-500 transition-colors"
             >
               GoPilot
-            </button>
+            </Link>
           )}
           <h1 className="text-2xl font-bold text-primary">PassPilot</h1>
           <div className="flex items-center space-x-2 text-sm text-muted-foreground">
@@ -181,7 +182,11 @@ export default function AppShell({ children, currentTab, onTabChange }) {
               <div className="px-2 py-1.5">
                 <p className="text-sm font-medium">{user?.displayName ?? user?.email}</p>
                 <p className="text-xs text-muted-foreground">
-                  {user?.role === 'school_admin' ? 'Admin' : 'Teacher'}
+                  {user?.role === 'school_admin'
+                    ? 'Admin'
+                    : user?.role === 'office_staff'
+                      ? 'Office staff'
+                      : 'Teacher'}
                 </p>
               </div>
               <DropdownMenuItem onClick={logout}>
@@ -206,9 +211,10 @@ export default function AppShell({ children, currentTab, onTabChange }) {
             const active = currentTab === item.id;
 
             return (
-              <button
+              <Link
                 key={item.id}
-                onClick={() => onTabChange(item.id)}
+                to={item.to}
+                aria-current={active ? 'page' : undefined}
                 className={`flex flex-col items-center justify-center gap-1 text-xs transition-colors ${
                   active
                     ? 'text-primary bg-primary/10'
@@ -218,7 +224,7 @@ export default function AppShell({ children, currentTab, onTabChange }) {
               >
                 {item.icon}
                 <span>{item.label}</span>
-              </button>
+              </Link>
             );
           })}
         </div>
