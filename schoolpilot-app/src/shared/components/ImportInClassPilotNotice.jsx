@@ -6,9 +6,9 @@ export default function ImportInClassPilotNotice({ canLink, onGoToClassPilot }) 
     >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <p className="text-sm font-semibold">Students are imported in ClassPilot</p>
+          <p className="text-sm font-semibold">Students are shared across Schoolpilot</p>
           <p className="mt-1 text-sm text-amber-800 dark:text-amber-200">
-            One ClassPilot roster import feeds ClassPilot, PassPilot, and GoPilot automatically.
+            Import and edit student records in ClassPilot. The same records are available in PassPilot and GoPilot.
           </p>
           {!canLink && (
             <p className="mt-2 text-xs font-medium text-amber-800 dark:text-amber-200">
@@ -22,7 +22,7 @@ export default function ImportInClassPilotNotice({ canLink, onGoToClassPilot }) 
             onClick={onGoToClassPilot}
             className="inline-flex shrink-0 items-center justify-center rounded-md bg-amber-500 px-3 py-2 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:ring-offset-2 dark:focus:ring-offset-slate-950"
           >
-            Go to ClassPilot Students
+            Manage Students in ClassPilot
           </button>
         )}
       </div>

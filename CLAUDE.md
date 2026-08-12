@@ -532,7 +532,38 @@ Teacher My Class tab includes a collapsible "Pass Data" section showing:
 - All students ranked by pass count (including 0 passes)
 - Click student for per-student destination breakdown with Class/Student tab switcher
 - Export CSV button for current view (class-wide or individual student)
-- Pass history API limit: 2000 records
+- Pass history API uses opaque keyset pagination (`limit <= 500`, `nextCursor`, `hasMore`). Reports and CSV exports must follow every page; never silently truncate.
+
+### PassPilot Class Source
+- `settings.passpilot_class_source` is the only authority: `legacy_grades` preserves standalone PassPilot behavior, while `classpilot_groups` uses active official ClassPilot `admin_class` groups, `group_students`, and primary/co-teacher assignments.
+- Never infer the source from licenses and never dual-write live rosters. Existing schools cut over only through the reviewed migration. New-school provisioning also requires explicit `passpilotClassModelAcknowledged: true`; licenses alone leave the school in legacy mode.
+- Canonical-aware web/native/kiosk requests send `X-PassPilot-Class-Model: classpilot-groups-v1`. Canonical schools reject old clients rather than synthesizing grades or collapsing many-to-many membership into `students.grade_id`.
+- Class mappings preserve legacy history only. Canonical passes write `passes.classpilot_group_id` and `class_name_snapshot`; historical `grade_id` values and labels are never rewritten.
+- Cutover, pass issuance, kiosk changes, official class/roster/teacher mutations, and ClassPilot license removal share the per-school PassPilot advisory lock. Do not add an alternate write path that bypasses it.
+- The ClassPilot license cannot be removed while PassPilot is canonical. After the first canonical write, recovery is roll-forward; mixed-source reads remain supported.
+
+#### Guarded clean-school cutover runbook
+
+The clean-school CLI is only for an existing `legacy_grades` school that already has at least one active official ClassPilot `admin_class` and has **zero** PassPilot grades, passes of any status/class shape, `students.grade_id` assignments, teacher-grade assignments, kiosk class selections, prior canonical-write markers, or prior cutover markers. Active PassPilot and ClassPilot licenses are prerequisites, but licenses never establish readiness by themselves. Suspended, inactive, or deleted schools are ineligible.
+
+1. Build and deploy the exact reviewed backend image, including startup migrations. Run this CLI only from a controlled one-off task with production RDS connectivity and that same digest; production RDS is not reachable from a workstation.
+2. Dry-run one exact school (default mode; no source mutation):
+   ```bash
+   npm run migrate:passpilot-clean-schools -- --school-id <school-uuid>
+   ```
+   Or inventory every persisted legacy-source candidate using IDs and counts only:
+   ```bash
+   npm run migrate:passpilot-clean-schools -- --all-clean-schools
+   ```
+3. Review `eligible`, every reason, and every count. Resolve any non-zero legacy state through the normal PassPilot class-migration review; never delete history to make a school appear clean.
+4. Execute only after web, native, and kiosk clients support `classpilot-groups-v1`. Execution requires the audited ID of an existing super administrator and the exact acknowledgement:
+   ```bash
+   npm run migrate:passpilot-clean-schools -- --school-id <school-uuid> --execute --super-admin-actor-id <user-uuid> --acknowledge-class-model classpilot-groups-v1
+   ```
+   `--all-clean-schools` may replace `--school-id`; it executes only rows that were eligible and pass the same eligibility check again inside the advisory-locked cutover transaction.
+5. Require an `executed` outcome and the durable `passpilot.class_migration.completed` audit event. Re-run the single-school dry-run: it must report `source_not_legacy`; the school must no longer appear in `--all-clean-schools` output.
+
+The CLI never runs from startup, a GET request, or scheduler work, and dry-run is always the default. Do not add license-based source inference or automatic retry. A failed or ambiguous execution is investigated and rolled forward through the reviewed migration path; do not manually switch the source back.
 
 ### ClassPilot Student Data Analytics
 Student Data dialog (accessible from dashboard toolbar) shows:

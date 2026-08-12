@@ -1,22 +1,40 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Card, CardContent } from "../../../../components/ui/card";
 import { Button } from "../../../../components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../../components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "../../../../components/ui/select";
 import { Label } from "../../../../components/ui/label";
 import { Input } from "../../../../components/ui/input";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useToast } from "../../../../hooks/use-toast";
 import { apiRequest } from "../../../../lib/queryClient";
-import { Trash2, AlertTriangle } from "lucide-react";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "../../../../components/ui/alert-dialog";
 import { usePassPilotAuth } from "../../../../hooks/usePassPilotAuth";
 import { formatTime, formatHour, formatDateTime, startOfTodayInTimezone } from "../../../../lib/date-utils";
+import {
+  fetchAllPassPilotHistory,
+  isCanonicalPassPilotSource,
+  usePassPilotHistoryClasses,
+} from "../../classData";
+
+function reportClassFilterValue(item) {
+  const type = item?.filterKey?.type
+    || (item?.legacyGradeId || item?.historyOnly ? "gradeId" : "classId");
+  const value = item?.filterKey?.value || item?.legacyGradeId || item?.classId || item?.id;
+  return `${type}:${value}`;
+}
+
+function reportClassLabel(item) {
+  if (item.historyOnly || item.migrationState === "history_only") return `${item.name} (History only)`;
+  if (item.status && item.status !== "active") return `${item.name} (Archived)`;
+  return item.name;
+}
 
 function ReportsTab() {
   const { school } = usePassPilotAuth();
   const tz = school?.schoolTimezone ?? "America/New_York";
   const { toast } = useToast();
-  const queryClient = useQueryClient();
+  const classInventoryQuery = usePassPilotHistoryClasses();
+  const canonical = classInventoryQuery.isSuccess
+    && isCanonicalPassPilotSource(classInventoryQuery.data?.source);
   const [filters, setFilters] = useState({
     dateRange: 'today',
     grade: 'all',
@@ -37,9 +55,14 @@ function ReportsTab() {
     return Math.max(0, Math.round(diffMs / (1000 * 60)));
   };
 
-  const { data: passes = [], refetch } = useQuery({
-    queryKey: ['/api/passes/history', JSON.stringify(filters), JSON.stringify(customDateRange)],
-    refetchInterval: 3000,
+  const {
+    data: passes = [],
+    isLoading: passesLoading,
+    isError: passesError,
+    refetch: refetchPasses,
+  } = useQuery({
+    queryKey: ['/api/passes/history', canonical ? 'classpilot_groups' : 'legacy_grades', JSON.stringify(filters), JSON.stringify(customDateRange)],
+    refetchInterval: 30000,
     queryFn: async () => {
       const params = new URLSearchParams();
 
@@ -71,40 +94,34 @@ function ReportsTab() {
         }
       }
 
-      if (filters.grade && filters.grade !== 'all') params.append('gradeId', filters.grade);
+      if (filters.grade && filters.grade !== 'all') {
+        const selectedClass = (classInventoryQuery.data?.classes || [])
+          .find((item) => reportClassFilterValue(item) === filters.grade);
+        if (selectedClass) {
+          const filterType = selectedClass.filterKey?.type
+            || (selectedClass.legacyGradeId || selectedClass.historyOnly ? 'gradeId' : 'classId');
+          const filterValue = selectedClass.filterKey?.value
+            || selectedClass.legacyGradeId
+            || selectedClass.classId
+            || selectedClass.id;
+          params.append(filterType, filterValue);
+        }
+      }
       if (filters.teacher && filters.teacher !== 'all') params.append('teacherId', filters.teacher);
       if (filters.passType && filters.passType !== 'all') params.append('passType', filters.passType);
 
       const url = `/passes/history${params.toString() ? '?' + params.toString() : ''}`;
-      const data = await apiRequest('GET', url);
-      return Array.isArray(data) ? data : (data?.passes ?? []);
+      return fetchAllPassPilotHistory(url);
     },
+    enabled: classInventoryQuery.isSuccess,
     gcTime: 0,
   });
 
-  useEffect(() => {
-    refetch();
-  }, [filters, customDateRange, refetch]);
-
-  const deletePassMutation = useMutation({
-    mutationFn: async (passId) => {
-      return await apiRequest('DELETE', `/passes/${passId}`);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/passes'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/passes/history'] });
-      toast({ title: "Pass Deleted", description: "The pass record has been removed." });
-    },
-    onError: () => {
-      toast({ title: "Delete Failed", description: "Failed to delete the pass record.", variant: "destructive" });
-    },
-  });
-
-  const { data: grades = [] } = useQuery({
-    queryKey: ['/api/grades'],
-    queryFn: () => apiRequest('GET', '/grades'),
-    select: (data) => Array.isArray(data) ? data : (data?.grades ?? []),
-  });
+  const reportClasses = classInventoryQuery.data?.classes || [];
+  const legacyHistoryClasses = reportClasses.filter((item) => (
+    item.filterKey?.type === 'gradeId' || item.legacyGradeId || item.historyOnly
+  ));
+  const canonicalHistoryClasses = reportClasses.filter((item) => !legacyHistoryClasses.includes(item));
 
   const { data: teachers = [] } = useQuery({
     queryKey: ['/api/teachers'],
@@ -118,14 +135,14 @@ function ReportsTab() {
       return;
     }
 
-    const csvHeaders = ["Student Name", "Grade/Class", "Teacher", "Pass Type", "Destination", "Checkout Time", "Return Time", "Duration (min)"];
+    const csvHeaders = ["Student Name", "Class", "Teacher", "Pass Type", "Destination", "Checkout Time", "Return Time", "Duration (min)"];
     const csvRows = passes.map((pass) => {
       const isReturned = pass.returnedAt || pass.status === 'returned';
       const calculatedDuration = isReturned ? calculateDuration(pass.issuedAt, pass.returnedAt) : null;
 
       return [
         `${pass.student?.firstName ?? ''} ${pass.student?.lastName ?? ''}`.trim() || "Unknown",
-        pass.student?.grade || "Unknown",
+        pass.className || pass.classNameSnapshot || pass.student?.grade || "Unknown",
         `${pass.teacher?.firstName ?? ''} ${pass.teacher?.lastName ?? ''}`.trim() || "Unknown",
         pass.destination || 'General',
         pass.customDestination || pass.destination || 'General',
@@ -214,6 +231,51 @@ function ReportsTab() {
       };
     }) : [];
 
+  if (classInventoryQuery.isLoading) {
+    return <div className="p-8 text-center text-sm text-muted-foreground" aria-live="polite">Loading reports…</div>;
+  }
+
+  if (classInventoryQuery.isError) {
+    return (
+      <div className="p-4">
+        <Card className="border-destructive/40">
+          <CardContent className="p-8 text-center">
+            <h2 className="text-lg font-semibold">Report classes couldn’t be loaded</h2>
+            <p className="mt-2 text-sm text-muted-foreground">Try again. No report data was changed.</p>
+            <Button type="button" variant="outline" className="mt-4" onClick={() => classInventoryQuery.refetch()}>Retry</Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (passesLoading) {
+    return (
+      <div className="p-8 text-center text-sm text-muted-foreground" aria-live="polite">
+        Loading complete report data…
+      </div>
+    );
+  }
+
+
+  if (passesError) {
+    return (
+      <div className="p-4">
+        <Card className="border-destructive/40">
+          <CardContent className="p-8 text-center" aria-live="polite">
+            <h2 className="text-lg font-semibold">Report data couldn’t be loaded</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Try again. No empty report or partial export was generated.
+            </p>
+            <Button type="button" variant="outline" className="mt-4" onClick={() => refetchPasses()}>
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="p-4">
       <div className="mb-6">
@@ -229,7 +291,7 @@ function ReportsTab() {
             <div>
               <Label htmlFor="dateRange">Date Range</Label>
               <Select value={filters.dateRange} onValueChange={(value) => setFilters({ ...filters, dateRange: value })}>
-                <SelectTrigger><SelectValue placeholder="Select date range" /></SelectTrigger>
+                <SelectTrigger id="dateRange"><SelectValue placeholder="Select date range" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="today">Today</SelectItem>
                   <SelectItem value="week">This Week</SelectItem>
@@ -243,24 +305,41 @@ function ReportsTab() {
               <>
                 <div>
                   <Label htmlFor="startDate">Start Date</Label>
-                  <Input type="date" value={customDateRange.startDate} onChange={(e) => setCustomDateRange({ ...customDateRange, startDate: e.target.value })} />
+                  <Input id="startDate" type="date" value={customDateRange.startDate} onChange={(e) => setCustomDateRange({ ...customDateRange, startDate: e.target.value })} />
                 </div>
                 <div>
                   <Label htmlFor="endDate">End Date</Label>
-                  <Input type="date" value={customDateRange.endDate} onChange={(e) => setCustomDateRange({ ...customDateRange, endDate: e.target.value })} />
+                  <Input id="endDate" type="date" value={customDateRange.endDate} onChange={(e) => setCustomDateRange({ ...customDateRange, endDate: e.target.value })} />
                 </div>
               </>
             )}
 
             <div>
-              <Label>Grade/Class</Label>
+              <Label htmlFor="reportClass">Class</Label>
               <Select value={filters.grade} onValueChange={(value) => setFilters({ ...filters, grade: value })}>
-                <SelectTrigger><SelectValue placeholder="All Grades" /></SelectTrigger>
+                <SelectTrigger id="reportClass"><SelectValue placeholder="All Classes" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Grades</SelectItem>
-                  {grades.map((grade) => (
-                    <SelectItem key={grade.id} value={grade.id}>{grade.name}</SelectItem>
-                  ))}
+                  <SelectItem value="all">All Classes</SelectItem>
+                  {canonicalHistoryClasses.length > 0 ? (
+                    <SelectGroup>
+                      <SelectLabel>ClassPilot classes</SelectLabel>
+                      {canonicalHistoryClasses.map((item) => (
+                        <SelectItem key={reportClassFilterValue(item)} value={reportClassFilterValue(item)}>
+                          {reportClassLabel(item)}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  ) : null}
+                  {legacyHistoryClasses.length > 0 ? (
+                    <SelectGroup>
+                      <SelectLabel>{canonical ? "Legacy class history" : "PassPilot classes"}</SelectLabel>
+                      {legacyHistoryClasses.map((item) => (
+                        <SelectItem key={reportClassFilterValue(item)} value={reportClassFilterValue(item)}>
+                          {reportClassLabel(item)}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  ) : null}
                 </SelectContent>
               </Select>
             </div>
@@ -394,40 +473,9 @@ function ReportsTab() {
                         <p className="text-xs text-muted-foreground">{activity.action}</p>
                       </div>
                     </div>
-                    <div className="flex items-center space-x-2">
-                      <div className="text-right">
-                        <p className="text-xs text-muted-foreground">{activity.time}</p>
-                        <p className="text-xs text-muted-foreground">{activity.date}</p>
-                      </div>
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle className="flex items-center space-x-2">
-                              <AlertTriangle className="h-5 w-5 text-destructive" />
-                              <span>Delete Pass Record</span>
-                            </AlertDialogTitle>
-                            <AlertDialogDescription>
-                              Are you sure you want to delete this pass record for <strong>{activity.studentName}</strong>?
-                              This will permanently remove it from all reports.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
-                            <AlertDialogAction
-                              onClick={() => deletePassMutation.mutate(activity.id)}
-                              className="bg-destructive hover:bg-destructive/90"
-                              disabled={deletePassMutation.isPending}
-                            >
-                              {deletePassMutation.isPending ? 'Deleting...' : 'Delete Pass'}
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
+                    <div className="text-right">
+                      <p className="text-xs text-muted-foreground">{activity.time}</p>
+                      <p className="text-xs text-muted-foreground">{activity.date}</p>
                     </div>
                   </div>
                 </div>

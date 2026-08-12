@@ -57,6 +57,7 @@ export function usePassPilotAuth() {
 
   const isAuthenticated = !!unifiedUser;
   const isAdmin = role === 'school_admin';
+  const isSchoolwideManager = isAdmin || role === 'office_staff';
   const isTeacher = role === 'teacher';
 
   return {
@@ -65,6 +66,7 @@ export function usePassPilotAuth() {
     isLoading: loading,
     isAuthenticated,
     isAdmin,
+    isSchoolwideManager,
     isTeacher,
     logout: async () => {
       await logout();

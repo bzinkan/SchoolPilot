@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronDown, ChevronRight, ExternalLink, CheckCircle2 } from 'lucide-react';
-import api from '../../../../shared/utils/api';
+import { AlertCircle, ChevronDown, ChevronRight, ExternalLink, CheckCircle2 } from 'lucide-react';
+import { passPilotClassRequest } from '../../../passpilot/classData';
 
 const AVATAR_COLORS = [
   'bg-blue-500', 'bg-pink-500', 'bg-green-500',
@@ -38,6 +38,7 @@ function formatDuration(issuedAt) {
 export default function PassPilotMiniView() {
   const [passes, setPasses] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [expanded, setExpanded] = useState(true);
   const navigate = useNavigate();
 
@@ -45,13 +46,14 @@ export default function PassPilotMiniView() {
     let mounted = true;
     const fetchPasses = async () => {
       try {
-        const res = await api.get('/passpilot/passes/active');
+        const data = await passPilotClassRequest('GET', '/passpilot/passes/active');
         if (mounted) {
-          const list = res.data?.passes || (Array.isArray(res.data) ? res.data : []);
+          const list = data?.passes || (Array.isArray(data) ? data : []);
           setPasses(list);
+          setLoadError(false);
         }
       } catch {
-        // Silent fail - widget is optional
+        if (mounted) setLoadError(true);
       } finally {
         if (mounted) setLoading(false);
       }
@@ -101,6 +103,12 @@ export default function PassPilotMiniView() {
           {loading ? (
             <div className="flex items-center justify-center py-4">
               <div className="h-5 w-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : loadError ? (
+            <div className="flex flex-col items-center py-4 text-center" role="status">
+              <AlertCircle className="mb-2 h-8 w-8 text-amber-500" aria-hidden="true" />
+              <p className="text-xs font-medium text-slate-600 dark:text-slate-300">Passes unavailable</p>
+              <p className="text-xs text-slate-400 dark:text-slate-500">Refresh or open PassPilot to try again</p>
             </div>
           ) : passes.length === 0 ? (
             <div className="flex flex-col items-center py-4 text-center">
@@ -154,13 +162,13 @@ export default function PassPilotMiniView() {
           {/* Footer */}
           <div className="flex items-center gap-1 pt-1 border-t border-slate-100 dark:border-slate-800">
             <button
-              onClick={() => navigate('/passpilot')}
+              onClick={() => navigate('/passpilot/passes')}
               className="flex-1 text-xs font-medium text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 py-1.5 rounded hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors text-center"
             >
               View All Passes
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); window.open('/passpilot', '_blank'); }}
+              onClick={(e) => { e.stopPropagation(); window.open('/passpilot/passes', '_blank'); }}
               className="p-1.5 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
               title="Open PassPilot in new tab"
             >

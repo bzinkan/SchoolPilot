@@ -26,6 +26,8 @@ import {
   updateStudent,
   getSchoolById,
   updateSchool,
+  updateCanonicalKioskClass,
+  updateLegacyKioskClass,
   getPendingParentRequests,
   updateParentStudentLinkByIdAndSchool,
   getParentStudentLinkByIdAndSchool,
@@ -52,10 +54,15 @@ import { hashPassword } from "../util/password.js";
 import { logAudit, getAuditLogs, countAuditLogs } from "../services/audit.js";
 import {
   canAccessGrade,
+  canAccessPasspilotClass,
+  getCanonicalClassForSchool,
+  getPasspilotClassSourceForSchool,
   getGradeForSchool,
   getRequestPassPilotRole,
   getTeacherGradeAssignments,
+  hasPasspilotCanonicalClassCapability,
   isPassPilotManager,
+  requireLegacyPasspilotClassSource,
   requirePassPilotRole,
   userBelongsToSchool,
 } from "../services/passpilotAccess.js";
@@ -82,6 +89,10 @@ const passPilotAuth = [
   requireProductLicense("PASSPILOT"),
   requirePassPilotRole("admin", "school_admin", "office_staff", "teacher"),
 ] as const;
+const legacyPassPilotClassAuth = [
+  ...passPilotAuth,
+  requireLegacyPasspilotClassSource,
+] as const;
 
 function todayInTimeZone(timeZone?: string | null): string {
   try {
@@ -100,25 +111,25 @@ function todayInTimeZone(timeZone?: string | null): string {
 // Grades without school prefix (PassPilot calls GET /grades, POST /grades)
 // ============================================================================
 
-router.get("/grades", ...passPilotAuth, async (req, res, next) => {
+router.get("/grades", ...legacyPassPilotClassAuth, async (req, res, next) => {
   try {
-    const grades = await getGradesBySchool(res.locals.schoolId!);
+    const grades = (await getGradesBySchool(res.locals.schoolId!)).filter((grade) => grade.migrationState !== "history_only");
     return res.json({ grades });
   } catch (err) {
     next(err);
   }
 });
 
-router.get("/grades/available", ...passPilotAuth, async (req, res, next) => {
+router.get("/grades/available", ...legacyPassPilotClassAuth, async (req, res, next) => {
   try {
-    const grades = await getGradesBySchool(res.locals.schoolId!);
+    const grades = (await getGradesBySchool(res.locals.schoolId!)).filter((grade) => grade.migrationState !== "history_only");
     return res.json({ grades });
   } catch (err) {
     next(err);
   }
 });
 
-router.post("/grades", ...passPilotAuth, requirePassPilotRole("admin", "school_admin"), async (req, res, next) => {
+router.post("/grades", ...legacyPassPilotClassAuth, requirePassPilotRole("admin", "school_admin"), async (req, res, next) => {
   try {
     const parsed = createGradeSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -131,7 +142,7 @@ router.post("/grades", ...passPilotAuth, requirePassPilotRole("admin", "school_a
   }
 });
 
-router.put("/grades/:id", ...passPilotAuth, requirePassPilotRole("admin", "school_admin"), async (req, res, next) => {
+router.put("/grades/:id", ...legacyPassPilotClassAuth, requirePassPilotRole("admin", "school_admin"), async (req, res, next) => {
   try {
     const existing = await getGradeForSchool(param(req, "id"), res.locals.schoolId!);
     if (!existing) return res.status(404).json({ error: "Grade not found" });
@@ -143,7 +154,7 @@ router.put("/grades/:id", ...passPilotAuth, requirePassPilotRole("admin", "schoo
   }
 });
 
-router.delete("/grades/:id", ...passPilotAuth, requirePassPilotRole("admin", "school_admin"), async (req, res, next) => {
+router.delete("/grades/:id", ...legacyPassPilotClassAuth, requirePassPilotRole("admin", "school_admin"), async (req, res, next) => {
   try {
     const existing = await getGradeForSchool(param(req, "id"), res.locals.schoolId!);
     if (!existing) return res.status(404).json({ error: "Grade not found" });
@@ -159,7 +170,7 @@ router.delete("/grades/:id", ...passPilotAuth, requirePassPilotRole("admin", "sc
 // Teacher-grades without school prefix (PassPilot)
 // ============================================================================
 
-router.get("/teacher-grades/:teacherId", ...passPilotAuth, async (req, res, next) => {
+router.get("/teacher-grades/:teacherId", ...legacyPassPilotClassAuth, async (req, res, next) => {
   try {
     const teacherId = param(req, "teacherId");
     const role = await getRequestPassPilotRole(req, res);
@@ -169,7 +180,8 @@ router.get("/teacher-grades/:teacherId", ...passPilotAuth, async (req, res, next
     if (!(await userBelongsToSchool(teacherId, res.locals.schoolId!))) {
       return res.status(404).json({ error: "Teacher not found" });
     }
-    const assignments = await getTeacherGradeAssignments(teacherId, res.locals.schoolId!);
+    const assignments = (await getTeacherGradeAssignments(teacherId, res.locals.schoolId!))
+      .filter((assignment) => assignment.grade.migrationState !== "history_only");
     return res.json({
       assignments: assignments.map((a) => ({
         id: a.teacherGrade.id,
@@ -183,7 +195,7 @@ router.get("/teacher-grades/:teacherId", ...passPilotAuth, async (req, res, next
   }
 });
 
-router.post("/teacher-grades", ...passPilotAuth, async (req, res, next) => {
+router.post("/teacher-grades", ...legacyPassPilotClassAuth, async (req, res, next) => {
   try {
     const { teacherId, gradeId } = req.body;
     if (!teacherId || !gradeId) {
@@ -207,7 +219,7 @@ router.post("/teacher-grades", ...passPilotAuth, async (req, res, next) => {
   }
 });
 
-router.delete("/teacher-grades", ...passPilotAuth, requirePassPilotRole("admin", "school_admin"), async (req, res, next) => {
+router.delete("/teacher-grades", ...legacyPassPilotClassAuth, requirePassPilotRole("admin", "school_admin"), async (req, res, next) => {
   try {
     const { teacherId, gradeId } = req.body;
     if (!teacherId || !gradeId) {
@@ -224,7 +236,7 @@ router.delete("/teacher-grades", ...passPilotAuth, requirePassPilotRole("admin",
   }
 });
 
-router.post("/teacher-grades/self-assign", ...passPilotAuth, async (req, res, next) => {
+router.post("/teacher-grades/self-assign", ...legacyPassPilotClassAuth, async (req, res, next) => {
   try {
     const { gradeId } = req.body;
     if (!gradeId) {
@@ -778,21 +790,81 @@ router.patch("/admin/settings", ...passPilotAuth, requirePassPilotRole("admin", 
 // Kiosk config (PassPilot calls PUT /kiosk-config)
 // ============================================================================
 
+router.get("/kiosk-config", ...passPilotAuth, async (req, res, next) => {
+  try {
+    const schoolId = res.locals.schoolId!;
+    const source = await getPasspilotClassSourceForSchool(schoolId);
+    if (source === "classpilot_groups" && !hasPasspilotCanonicalClassCapability(req)) {
+      return res.status(426).json({
+        error: "This school uses the ClassPilot class model. Refresh or update PassPilot before continuing.",
+        code: "PASSPILOT_CLASS_MODEL_UPGRADE_REQUIRED",
+        requiredClassModel: "classpilot-groups-v1",
+      });
+    }
+    const school = await getSchoolById(schoolId);
+    if (!school) return res.status(404).json({ error: "School not found" });
+    const classId = source === "classpilot_groups"
+      ? school.kioskClasspilotGroupId || null
+      : school.kioskGradeId || null;
+    if (source === "classpilot_groups" && classId) {
+      const configuredClass = await getCanonicalClassForSchool(classId, schoolId);
+      if (!configuredClass) {
+        return res.status(409).json({
+          error: "The configured kiosk class is no longer active. Select an active ClassPilot class before using the kiosk.",
+          code: "PASSPILOT_KIOSK_CLASS_INACTIVE",
+          source,
+        });
+      }
+    }
+    return res.json({
+      source,
+      classId,
+      gradeId: source === "legacy_grades" ? classId : null,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.put("/kiosk-config", ...passPilotAuth, async (req, res, next) => {
   try {
     const updates: Record<string, any> = {};
     if (req.body.kioskEnabled !== undefined) updates.kioskEnabled = req.body.kioskEnabled;
-    if (req.body.gradeId !== undefined) {
+    const schoolId = res.locals.schoolId!;
+    const source = await getPasspilotClassSourceForSchool(schoolId);
+    if (source === "classpilot_groups" && !hasPasspilotCanonicalClassCapability(req)) {
+      return res.status(426).json({
+        error: "This school uses the ClassPilot class model. Refresh or update PassPilot before continuing.",
+        code: "PASSPILOT_CLASS_MODEL_UPGRADE_REQUIRED",
+        requiredClassModel: "classpilot-groups-v1",
+      });
+    }
+    const selectedClassId = req.body.classId !== undefined ? req.body.classId : req.body.gradeId;
+    if (selectedClassId !== undefined) {
       const role = await getRequestPassPilotRole(req, res);
-      if (req.body.gradeId && !(await canAccessGrade(req.authUser!, res.locals.schoolId!, req.body.gradeId, role))) {
+      if (selectedClassId && !(await canAccessPasspilotClass(req.authUser!, schoolId, selectedClassId, role))) {
         return res.status(403).json({ error: "Insufficient permissions" });
       }
-      updates.kioskGradeId = req.body.gradeId;
-      updates.kioskActivatedByUserId = req.authUser!.id;
+      if (source === "classpilot_groups") {
+        await updateCanonicalKioskClass(
+          schoolId,
+          selectedClassId || null,
+          req.authUser!.id,
+          isPassPilotManager(role)
+        );
+      } else {
+        await updateLegacyKioskClass(
+          schoolId,
+          selectedClassId || null,
+          req.authUser!.id
+        );
+      }
     }
-    const school = await updateSchool(res.locals.schoolId!, updates);
+    const school = Object.keys(updates).length > 0
+      ? await updateSchool(schoolId, updates)
+      : await getSchoolById(schoolId);
     if (req.body.kioskName !== undefined) {
-      const membership = await getMembershipByUserAndSchool(req.authUser!.id, res.locals.schoolId!);
+      const membership = await getMembershipByUserAndSchool(req.authUser!.id, schoolId);
       if (membership) {
         await updateMembership(membership.id, { kioskName: req.body.kioskName || null });
       }
@@ -808,9 +880,10 @@ router.put("/kiosk-config", ...passPilotAuth, async (req, res, next) => {
 // My classes (PassPilot teacher dashboard)
 // ============================================================================
 
-router.get("/my-classes", ...passPilotAuth, async (req, res, next) => {
+router.get("/my-classes", ...legacyPassPilotClassAuth, async (req, res, next) => {
   try {
-    const assignments = await getTeacherGradeAssignments(req.authUser!.id, res.locals.schoolId!);
+    const assignments = (await getTeacherGradeAssignments(req.authUser!.id, res.locals.schoolId!))
+      .filter((assignment) => assignment.grade.migrationState !== "history_only");
 
     return res.json({
       classes: assignments.map((a) => ({

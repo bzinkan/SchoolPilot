@@ -54,4 +54,12 @@ describe("AI chat tool privacy and authorization", () => {
     assert.equal(result.success, false);
     assert.match(result.error || "", /not authorized/);
   });
+
+  it("gives PassPilot-only teachers an authorized class inventory for pass issuance", () => {
+    const { toolMeta } = getToolsForContext("teacher", ["PASSPILOT"]);
+
+    assert.equal(toolMeta.has("list_passpilot_classes"), true);
+    assert.equal(toolMeta.has("issue_pass"), true);
+    assert.equal(toolMeta.has("list_classes"), false);
+  });
 });

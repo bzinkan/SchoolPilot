@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { ArrowLeft, Bath, Heart, Triangle, Clock } from "lucide-react";
+import { isCanonicalPassPilotSource, PASSPILOT_CLASS_MODEL_HEADER } from "../classData";
 
 const DESTINATIONS = [
   { value: "bathroom", label: "General/Restroom", icon: Bath, color: "text-blue-400" },
@@ -38,12 +39,17 @@ export default function KioskSimplePage() {
   const [kioskPin, setKioskPin] = useState(() => localStorage.getItem(KIOSK_PIN_KEY) ?? "");
   const [pinInput, setPinInput] = useState("");
   const [grades, setGrades] = useState([]);
+  const [classSource, setClassSource] = useState(null);
   const [selectedGradeId, setSelectedGradeId] = useState(null);
   const [students, setStudents] = useState([]);
+  const [studentsClassId, setStudentsClassId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [checkoutStudentId, setCheckoutStudentId] = useState(null);
   const [feedback, setFeedback] = useState(null);
   const [kioskName, setKioskName] = useState(null);
+  const [configLoaded, setConfigLoaded] = useState(false);
+  const [configError, setConfigError] = useState(null);
+  const [studentsError, setStudentsError] = useState(null);
   const inactivityRef = useRef();
   const feedbackRef = useRef();
   const scrollContainerRef = useRef(null);
@@ -66,6 +72,7 @@ export default function KioskSimplePage() {
     "Content-Type": "application/json",
     "X-School-Id": schoolId,
     "X-Kiosk-Pin": kioskPin,
+    ...PASSPILOT_CLASS_MODEL_HEADER,
   }), [schoolId, kioskPin]);
 
   // 401 = wrong PIN: clear it so the PIN screen re-prompts
@@ -82,8 +89,11 @@ export default function KioskSimplePage() {
     if (!schoolId || !kioskPin) return;
     fetch(`/api/passpilot/kiosk/grades?school=${schoolId}`, { headers: kioskHeaders() })
       .then(checkPinRejected)
-      .then(r => r.ok ? r.json() : { grades: [] })
-      .then(data => setGrades(data.grades || data || []))
+      .then(r => r.ok ? r.json() : { classes: [] })
+      .then(data => {
+        setClassSource(data?.source || null);
+        setGrades(data?.classes || data?.grades || data || []);
+      })
       .catch(() => {});
   }, [schoolId, kioskPin, kioskHeaders, checkPinRejected]);
 
@@ -93,16 +103,40 @@ export default function KioskSimplePage() {
     const poll = () => {
       fetch(`/api/passpilot/kiosk/config?school=${schoolId}`, { headers: kioskHeaders() })
         .then(checkPinRejected)
-        .then(r => r.ok ? r.json() : null)
+        .then(async (response) => {
+          if (response.ok) return response.json();
+          const body = await response.json().catch(() => ({}));
+          const error = new Error(body.error || "The kiosk configuration is unavailable.");
+          error.code = body.code || null;
+          error.source = body.source || null;
+          throw error;
+        })
         .then(data => {
-          if (data?.gradeId) {
-            setSelectedGradeId(data.gradeId);
+          setConfigError(null);
+          if (data?.source) {
+            setClassSource(data.source);
+            if (isCanonicalPassPilotSource(data.source)) {
+              setSelectedGradeId(data.classId || null);
+            } else if (data.classId || data.gradeId) {
+              setSelectedGradeId(data.classId || data.gradeId);
+            }
           }
           if (data?.kioskName !== undefined) {
             setKioskName(data.kioskName);
           }
+          setConfigLoaded(true);
         })
-        .catch(() => {});
+        .catch((error) => {
+          if (error?.source) setClassSource(error.source);
+          setSelectedGradeId(null);
+          setStudents([]);
+          setStudentsClassId(null);
+          setConfigError({
+            code: error?.code || null,
+            message: error?.message || "The kiosk configuration is unavailable.",
+          });
+          setConfigLoaded(true);
+        });
     };
     poll();
     const interval = setInterval(poll, 5000);
@@ -114,16 +148,28 @@ export default function KioskSimplePage() {
     if (!schoolId || !selectedGradeId || !kioskPin) return;
     let active = true;
     const poll = () => {
-      fetch(`/api/passpilot/kiosk/students?school=${schoolId}&gradeId=${selectedGradeId}`, { headers: kioskHeaders() })
+      const classParam = isCanonicalPassPilotSource(classSource) ? "classId" : "gradeId";
+      fetch(`/api/passpilot/kiosk/students?school=${schoolId}&${classParam}=${encodeURIComponent(selectedGradeId)}`, { headers: kioskHeaders() })
         .then(checkPinRejected)
-        .then(r => r.ok ? r.json() : { students: [] })
-        .then(data => { if (active) setStudents(data.students || data || []); })
-        .catch(() => {});
+        .then(async (response) => {
+          if (response.ok) return response.json();
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body.error || "The kiosk roster is unavailable.");
+        })
+        .then(data => {
+          if (!active) return;
+          setStudents(data.students || data || []);
+          setStudentsClassId(selectedGradeId);
+          setStudentsError(null);
+        })
+        .catch((error) => {
+          if (active) setStudentsError(error.message || "The kiosk roster is unavailable.");
+        });
     };
     poll();
     const interval = setInterval(poll, 5000);
     return () => { active = false; clearInterval(interval); };
-  }, [schoolId, selectedGradeId, kioskPin, kioskHeaders, checkPinRejected]);
+  }, [schoolId, selectedGradeId, classSource, kioskPin, kioskHeaders, checkPinRejected]);
 
   const showFeedback = (type, message) => {
     setFeedback({ type, message });
@@ -142,7 +188,11 @@ export default function KioskSimplePage() {
       const res = await fetch("/api/passpilot/kiosk/checkout", {
         method: "POST",
         headers: kioskHeaders(),
-        body: JSON.stringify({ studentId, destination }),
+        body: JSON.stringify({
+          studentId,
+          destination,
+          ...(isCanonicalPassPilotSource(classSource) ? { classId: selectedGradeId } : {}),
+        }),
       });
       checkPinRejected(res);
       if (!res.ok) {
@@ -157,7 +207,8 @@ export default function KioskSimplePage() {
       showFeedback("error", "Connection error");
     }
     setLoading(false);
-    fetch(`/api/passpilot/kiosk/students?school=${schoolId}&gradeId=${selectedGradeId}`, { headers: kioskHeaders() })
+    const classParam = isCanonicalPassPilotSource(classSource) ? "classId" : "gradeId";
+    fetch(`/api/passpilot/kiosk/students?school=${schoolId}&${classParam}=${encodeURIComponent(selectedGradeId)}`, { headers: kioskHeaders() })
       .then(r => r.ok ? r.json() : { students: [] })
       .then(data => setStudents(data.students || data || []))
       .catch(() => {});
@@ -183,7 +234,8 @@ export default function KioskSimplePage() {
       showFeedback("error", "Connection error");
     }
     setLoading(false);
-    fetch(`/api/passpilot/kiosk/students?school=${schoolId}&gradeId=${selectedGradeId}`, { headers: kioskHeaders() })
+    const classParam = isCanonicalPassPilotSource(classSource) ? "classId" : "gradeId";
+    fetch(`/api/passpilot/kiosk/students?school=${schoolId}&${classParam}=${encodeURIComponent(selectedGradeId)}`, { headers: kioskHeaders() })
       .then(r => r.ok ? r.json() : { students: [] })
       .then(data => setStudents(data.students || data || []))
       .catch(() => {});
@@ -246,6 +298,21 @@ export default function KioskSimplePage() {
 
   const selectedGrade = grades.find(g => g.id === selectedGradeId);
 
+  if (configLoaded && isCanonicalPassPilotSource(classSource) && (configError || !selectedGradeId)) {
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center p-8">
+        <div className="max-w-lg text-center" role={configError ? "alert" : undefined}>
+          <h1 className="text-3xl font-bold text-blue-400">Kiosk Class Required</h1>
+          <p className="mt-4 text-gray-300">
+            {configError?.code === "PASSPILOT_KIOSK_CLASS_INACTIVE"
+              ? "The configured ClassPilot class is no longer active. An administrator must select an active class before this kiosk can be used."
+              : configError?.message || "An administrator must select an official ClassPilot class in PassPilot Setup before this kiosk can be used."}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   // Grade picker
   if (!selectedGradeId) {
     return (
@@ -270,20 +337,25 @@ export default function KioskSimplePage() {
   const sortByName = (a, b) =>
     `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`);
 
-  const studentsOut = students.filter(s => s.activePass).sort(sortByName);
-  const studentsAvailable = students.filter(s => !s.activePass).sort(sortByName);
+  const visibleStudents = studentsClassId === selectedGradeId ? students : [];
+  const studentsOut = visibleStudents.filter(s => s.activePass).sort(sortByName);
+  const studentsAvailable = visibleStudents.filter(s => !s.activePass).sort(sortByName);
 
   return (
     <div className="min-h-screen bg-gray-950 text-white flex flex-col">
       {/* Header */}
       <header className="bg-gray-900 border-b border-gray-800 px-4 py-3 flex items-center justify-between shrink-0">
-        <button
-          onClick={() => { setSelectedGradeId(null); setCheckoutStudentId(null); }}
-          className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors"
-        >
-          <ArrowLeft className="h-5 w-5" />
-          Back
-        </button>
+        {isCanonicalPassPilotSource(classSource) ? (
+          <div className="w-16" aria-hidden="true" />
+        ) : (
+          <button
+            onClick={() => { setSelectedGradeId(null); setCheckoutStudentId(null); }}
+            className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors"
+          >
+            <ArrowLeft className="h-5 w-5" />
+            Back
+          </button>
+        )}
         <h2 className="text-xl font-bold text-blue-400">
           {selectedGrade?.name}{kioskName ? ` \u2014 ${kioskName}` : ''}
         </h2>
@@ -300,6 +372,11 @@ export default function KioskSimplePage() {
       )}
 
       <div ref={scrollContainerRef} className="flex-1 overflow-auto p-4 space-y-6">
+        {studentsError ? (
+          <div className="rounded-lg border border-red-700/60 bg-red-950/40 px-4 py-3 text-center text-red-200" role="alert">
+            {studentsError}
+          </div>
+        ) : null}
         {/* Currently Out section */}
         <div>
           <div className="flex items-center gap-2 mb-3">
@@ -351,7 +428,7 @@ export default function KioskSimplePage() {
               Available Students - {selectedGrade?.name}
             </span>
           </div>
-          {studentsAvailable.length === 0 && students.length > 0 ? (
+          {studentsAvailable.length === 0 && visibleStudents.length > 0 ? (
             <div className="bg-gray-900/50 border border-gray-800 rounded-lg px-4 py-6 text-center text-gray-500">
               All students are currently out
             </div>
@@ -402,7 +479,7 @@ export default function KioskSimplePage() {
           )}
         </div>
 
-        {students.length === 0 && (
+        {!studentsError && visibleStudents.length === 0 && (
           <div className="text-center text-gray-500 py-16">
             <p className="text-xl">No students in this class</p>
           </div>

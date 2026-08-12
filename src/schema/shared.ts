@@ -11,6 +11,7 @@ import {
   uniqueIndex,
   jsonb,
   uuid,
+  check,
 } from "drizzle-orm/pg-core";
 
 // ============================================================================
@@ -90,11 +91,33 @@ export const settings = pgTable("settings", {
   // admin has already imported — an unknown email is rejected, never auto-created.
   // A school can opt into zero-touch auto-enrollment by setting this true.
   autoEnrollStudents: boolean("auto_enroll_students").notNull().default(false),
+  passpilotClassSource: text("passpilot_class_source")
+    .notNull()
+    .default("legacy_grades")
+    .$type<"legacy_grades" | "classpilot_groups">(),
+  passpilotClassCutoverAt: timestamp("passpilot_class_cutover_at", {
+    withTimezone: true,
+  }),
+  passpilotClassMigrationRevision: integer("passpilot_class_migration_revision")
+    .notNull()
+    .default(0),
+  passpilotCanonicalWritesAt: timestamp("passpilot_canonical_writes_at", {
+    withTimezone: true,
+  }),
   instructionalCalendar: jsonb("instructional_calendar")
     .notNull()
     .default(sql`'{}'::jsonb`)
     .$type<InstructionalCalendarSettings>(),
-});
+}, (table) => [
+  check(
+    "settings_passpilot_class_source_check",
+    sql`${table.passpilotClassSource} IN ('legacy_grades', 'classpilot_groups')`
+  ),
+  check(
+    "settings_passpilot_class_migration_revision_check",
+    sql`${table.passpilotClassMigrationRevision} >= 0`
+  ),
+]);
 
 export type Settings = typeof settings.$inferSelect;
 export type InsertSettings = typeof settings.$inferInsert;

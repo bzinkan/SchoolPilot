@@ -230,7 +230,7 @@ function AppRoutes() {
         {/* PassPilot routes — web or native passpilot app */}
         {(!isNative || product === 'passpilot') && hasPassPilot && (
           <>
-            <Route path="/passpilot" element={<PPDashboard />} />
+            <Route path="/passpilot/*" element={<PPDashboard />} />
           </>
         )}
 

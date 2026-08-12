@@ -13,13 +13,19 @@ import { usePassPilotAuth } from "../../../../hooks/usePassPilotAuth";
 import { Trash2, Edit, Plus, Users, Eye } from "lucide-react";
 import ImportInClassPilotNotice from "../../../../shared/components/ImportInClassPilotNotice";
 import { useStudentImportHome } from "../../../../shared/hooks/useStudentImportHome";
+import CanonicalClassesView from "../CanonicalClassesView";
+import { isCanonicalPassPilotSource, useCanonicalPassPilotClasses } from "../../classData";
 
 const GRADE_LEVELS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
 
-function RosterTab() {
+function LegacyRosterTab() {
   const { isAdmin } = usePassPilotAuth();
   const navigate = useNavigate();
-  const { consolidated, canLinkToClassPilot, importPath } = useStudentImportHome();
+  const { canLinkToClassPilot, importPath } = useStudentImportHome();
+  // This component is rendered only while the persisted PassPilot class
+  // source is legacy_grades. A ClassPilot license alone must not disable the
+  // still-authoritative legacy roster before reviewed cutover.
+  const consolidated = false;
   const [showAddStudentModal, setShowAddStudentModal] = useState(false);
   const [showBulkAddStudentsModal, setShowBulkAddStudentsModal] = useState(false);
   const [showAddClassModal, setShowAddClassModal] = useState(false);
@@ -633,6 +639,30 @@ function RosterTab() {
       )}
     </div>
   );
+}
+
+function RosterTab() {
+  const classesQuery = useCanonicalPassPilotClasses();
+
+  if (classesQuery.isLoading) {
+    return (
+      <div className="p-4" aria-live="polite">
+        <div className="animate-pulse space-y-4 motion-reduce:animate-none">
+          <div className="h-7 w-44 rounded bg-muted" />
+          <div className="h-24 rounded-xl bg-muted" />
+        </div>
+        <span className="sr-only">Loading classes</span>
+      </div>
+    );
+  }
+
+  if (classesQuery.isError) {
+    return <CanonicalClassesView />;
+  }
+
+  return isCanonicalPassPilotSource(classesQuery.data?.source)
+    ? <CanonicalClassesView />
+    : <LegacyRosterTab />;
 }
 
 export default RosterTab;

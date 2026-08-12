@@ -7,8 +7,9 @@ import { issuePassSchema } from "../../schema/validation.js";
 import {
   getActivePassesBySchool,
   getActivePassForStudent,
-  getPassHistory,
-  createPass,
+  getPassHistoryPage,
+  createLegacyPass,
+  createCanonicalPass,
   returnPass,
   cancelPass,
   expireOverduePasses,
@@ -23,15 +24,22 @@ import {
 } from "../../services/storage.js";
 import { isWithinTrackingWindow } from "../../services/schoolHours.js";
 import type { Pass } from "../../schema/passpilot.js";
+import { normalizePasspilotPass } from "../../services/passpilotClasses.js";
 import {
   canAccessGrade,
+  canAccessPasspilotClass,
+  canAccessCanonicalPassHistory,
+  canAccessLegacyPassHistory,
   canAccessPass,
   canAccessStudent,
   filterPassesForRole,
   getGradeForSchool,
   getPassForSchool,
+  getPassHistoryQueryAccessScope,
   getRequestPassPilotRole,
+  getPasspilotClassSourceForSchool,
   isPassPilotManager,
+  requirePasspilotClassModel,
   requirePassPilotRole,
 } from "../../services/passpilotAccess.js";
 
@@ -39,6 +47,34 @@ const router = Router();
 
 function param(req: { params: Record<string, unknown> }, key: string): string {
   return String(req.params[key] ?? "");
+}
+
+function decodeHistoryCursor(value: string): { issuedAtMs: string; id: string } | null {
+  if (!value || value.length > 512) return null;
+  try {
+    const decoded = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as {
+      issuedAtMs?: unknown;
+      id?: unknown;
+    };
+    if (
+      typeof decoded.issuedAtMs !== "string" ||
+      !/^-?\d+$/.test(decoded.issuedAtMs) ||
+      typeof decoded.id !== "string" ||
+      !decoded.id
+    ) {
+      return null;
+    }
+    return { issuedAtMs: decoded.issuedAtMs, id: decoded.id };
+  } catch {
+    return null;
+  }
+}
+
+function encodeHistoryCursor(cursor: { issuedAtMs: string; id: string }): string {
+  return Buffer.from(
+    JSON.stringify(cursor),
+    "utf8"
+  ).toString("base64url");
 }
 
 // All pass routes require auth + school context + active school + PassPilot license
@@ -49,6 +85,7 @@ router.use(
   requireProductLicense("PASSPILOT"),
   requirePassPilotRole("admin", "school_admin", "office_staff", "teacher")
 );
+router.use(requirePasspilotClassModel);
 
 // Enrich passes with student/teacher/grade data
 async function enrichPasses(rawPasses: Pass[], schoolId: string) {
@@ -74,16 +111,29 @@ async function enrichPasses(rawPasses: Pass[], schoolId: string) {
     const student = studentMap.get(pass.studentId);
     const teacher = pass.teacherId ? teacherMap.get(pass.teacherId) : null;
     const grade = pass.gradeId ? gradeMap.get(pass.gradeId) : null;
+    const classId = pass.classpilotGroupId || grade?.classpilotGroupId || pass.gradeId || null;
+    const className = pass.classNameSnapshot || grade?.name || null;
+    const classSource = pass.classpilotGroupId ? "classpilot_groups" : "legacy_grades";
 
     return {
       ...pass,
+      classId,
+      className,
+      class: classId
+        ? {
+            id: classId,
+            name: className,
+            source: classSource,
+          }
+        : null,
       student: student
         ? {
             id: student.id,
             firstName: student.firstName,
             lastName: student.lastName,
-            grade: grade?.name || null,
-            gradeId: student.gradeId,
+            grade: className,
+            gradeId: pass.classpilotGroupId ? null : student.gradeId,
+            legacyGradeId: student.gradeId,
           }
         : null,
       teacher: teacher
@@ -175,6 +225,7 @@ router.get("/history", async (req, res, next) => {
     const role = await getRequestPassPilotRole(req, res);
     const {
       gradeId,
+      classId,
       studentId,
       teacherId,
       startDate,
@@ -183,7 +234,20 @@ router.get("/history", async (req, res, next) => {
       dateEnd,
       grade: gradeName,
       passType,
+      cursor: cursorValue,
+      limit: limitValue,
     } = req.query as Record<string, string | undefined>;
+
+    const limit = limitValue === undefined ? 500 : Number(limitValue);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+      return res.status(400).json({ error: "limit must be an integer between 1 and 500" });
+    }
+    const cursor = cursorValue === undefined
+      ? undefined
+      : (decodeHistoryCursor(cursorValue) ?? undefined);
+    if (cursorValue !== undefined && !cursor) {
+      return res.status(400).json({ error: "Invalid history cursor", code: "PASSPILOT_HISTORY_CURSOR_INVALID" });
+    }
 
     // Resolve grade name to gradeId
     let resolvedGradeId = gradeId;
@@ -195,7 +259,10 @@ router.get("/history", async (req, res, next) => {
       if (matchedGrade) resolvedGradeId = matchedGrade.id;
     }
 
-    if (resolvedGradeId && !(await canAccessGrade(req.authUser!, schoolId, resolvedGradeId, role))) {
+    if (classId && !(await canAccessCanonicalPassHistory(req.authUser!, schoolId, classId, role))) {
+      return res.status(403).json({ error: "Insufficient permissions" });
+    }
+    if (resolvedGradeId && !(await canAccessLegacyPassHistory(req.authUser!, schoolId, resolvedGradeId, role))) {
       return res.status(403).json({ error: "Insufficient permissions" });
     }
     if (studentId && !(await canAccessStudent(req.authUser!, schoolId, studentId, role))) {
@@ -207,34 +274,32 @@ router.get("/history", async (req, res, next) => {
 
     const start = startDate || dateStart;
     const end = endDate || dateEnd;
+    const access = await getPassHistoryQueryAccessScope(
+      req.authUser!,
+      schoolId,
+      role
+    );
 
-    let rawPasses = await getPassHistory(schoolId, {
+    const historyPage = await getPassHistoryPage(schoolId, {
       gradeId: resolvedGradeId,
+      classId,
       studentId,
       teacherId: isPassPilotManager(role) ? teacherId : undefined,
       startDate: start ? new Date(start) : undefined,
       endDate: end ? new Date(end) : undefined,
+      limit,
+      cursor,
+      passType,
+      access: access ?? undefined,
     });
-    rawPasses = await filterPassesForRole(rawPasses, req.authUser!, schoolId, role);
-
-    // In-memory passType filtering (legacy)
-    if (passType) {
-      rawPasses = rawPasses.filter((p) => {
-        switch (passType) {
-          case "nurse":
-            return p.destination === "nurse";
-          case "discipline":
-            return p.destination === "office" || p.destination === "counselor";
-          case "general":
-            return !["nurse", "office", "counselor"].includes(p.destination);
-          default:
-            return true;
-        }
-      });
-    }
+    const rawPasses = historyPage.passes;
 
     const enriched = await enrichPasses(rawPasses, schoolId);
-    return res.json({ passes: enriched });
+    return res.json({
+      passes: enriched,
+      nextCursor: historyPage.nextCursor ? encodeHistoryCursor(historyPage.nextCursor) : null,
+      hasMore: historyPage.hasMore,
+    });
   } catch (err) {
     next(err);
   }
@@ -260,7 +325,7 @@ router.post("/", async (req, res, next) => {
         .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
     }
 
-    const { studentId, destination, customDestination, duration, gradeId, notes } =
+    const { studentId, destination, customDestination, duration, gradeId, classId, notes } =
       parsed.data;
     const schoolId = res.locals.schoolId!;
     const role = await getRequestPassPilotRole(req, res);
@@ -274,19 +339,36 @@ router.post("/", async (req, res, next) => {
       return res.status(403).json({ error: "Insufficient permissions" });
     }
 
+    const classSource = await getPasspilotClassSourceForSchool(schoolId);
+    if (classSource === "classpilot_groups" && !classId) {
+      return res.status(400).json({
+        error: "classId is required when issuing a pass",
+        code: "PASSPILOT_CLASS_REQUIRED",
+      });
+    }
+
     let passGradeId = student.gradeId || null;
-    if (gradeId) {
-      const grade = await getGradeForSchool(gradeId, schoolId);
+    const requestedLegacyGradeId = gradeId || (classSource === "legacy_grades" ? classId : undefined);
+    if (requestedLegacyGradeId) {
+      const grade = await getGradeForSchool(requestedLegacyGradeId, schoolId);
       if (!grade) {
         return res.status(400).json({ error: "Class not found" });
       }
-      if (student.gradeId && gradeId !== student.gradeId) {
+      if (student.gradeId && requestedLegacyGradeId !== student.gradeId) {
         return res.status(400).json({ error: "Class does not match student" });
       }
-      if (!(await canAccessGrade(req.authUser!, schoolId, gradeId, role))) {
+      if (!(await canAccessGrade(req.authUser!, schoolId, requestedLegacyGradeId, role))) {
         return res.status(403).json({ error: "Insufficient permissions" });
       }
-      passGradeId = gradeId;
+      passGradeId = requestedLegacyGradeId;
+    }
+    if (classSource === "classpilot_groups" && classId) {
+      if (gradeId) {
+        return res.status(400).json({ error: "Use classId, not gradeId, for canonical classes" });
+      }
+      if (!(await canAccessPasspilotClass(req.authUser!, schoolId, classId, role))) {
+        return res.status(403).json({ error: "Insufficient permissions" });
+      }
     }
 
     // Check if student is absent
@@ -319,19 +401,27 @@ router.post("/", async (req, res, next) => {
 
     let pass;
     try {
-      pass = await createPass({
-        schoolId,
-        studentId,
-        teacherId: req.authUser!.id,
-        gradeId: passGradeId,
-        destination,
-        customDestination: destination === "custom" ? (customDestination || null) : null,
-        status: "active",
-        duration: passDuration,
-        expiresAt,
-        issuedVia: "teacher",
-        notes: notes || null,
-      });
+      const commonPass = {
+          schoolId,
+          studentId,
+          teacherId: req.authUser!.id,
+          destination,
+          customDestination: destination === "custom" ? (customDestination || null) : null,
+          status: "active" as const,
+          duration: passDuration,
+          expiresAt,
+          issuedVia: "teacher" as const,
+          notes: notes || null,
+        };
+      pass = classSource === "classpilot_groups"
+        ? await createCanonicalPass(
+            { ...commonPass, classId: classId! },
+            {
+              actorUserId: req.authUser!.id,
+              manager: isPassPilotManager(role),
+            }
+          )
+        : await createLegacyPass({ ...commonPass, gradeId: passGradeId });
     } catch (err: any) {
       // Partial unique index (one active pass per student) — a concurrent
       // double-issue loses the race here. Surface it as the same 409.
@@ -342,7 +432,7 @@ router.post("/", async (req, res, next) => {
     }
 
     await recordPassTimeline(pass, "issued", req.authUser!.id);
-    return res.status(201).json({ pass });
+    return res.status(201).json({ pass: await normalizePasspilotPass(pass, schoolId) });
   } catch (err) {
     next(err);
   }
@@ -364,7 +454,7 @@ router.patch("/:id/return", async (req, res, next) => {
       return res.status(400).json({ error: "Active pass not found" });
     }
     await recordPassTimeline(pass, "returned", req.authUser!.id);
-    return res.json({ pass });
+    return res.json({ pass: await normalizePasspilotPass(pass, schoolId) });
   } catch (err) {
     next(err);
   }
@@ -386,7 +476,7 @@ router.put("/:id/return", async (req, res, next) => {
       return res.status(400).json({ error: "Active pass not found" });
     }
     await recordPassTimeline(pass, "returned", req.authUser!.id);
-    return res.json({ pass });
+    return res.json({ pass: await normalizePasspilotPass(pass, schoolId) });
   } catch (err) {
     next(err);
   }
@@ -408,7 +498,7 @@ router.patch("/:id/cancel", async (req, res, next) => {
       return res.status(400).json({ error: "Active pass not found" });
     }
     await recordPassTimeline(pass, "cancelled", req.authUser!.id);
-    return res.json({ pass });
+    return res.json({ pass: await normalizePasspilotPass(pass, schoolId) });
   } catch (err) {
     next(err);
   }
@@ -429,7 +519,7 @@ router.delete("/:id", async (req, res, next) => {
       return res.status(400).json({ error: "Active pass not found" });
     }
     await recordPassTimeline(pass, "cancelled", req.authUser!.id);
-    return res.json({ ok: true });
+    return res.json({ ok: true, pass: await normalizePasspilotPass(pass, schoolId) });
   } catch (err) {
     next(err);
   }

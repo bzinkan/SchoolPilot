@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import Card from '../../../shared/components/Card';
 import Spinner from '../../../shared/components/Spinner';
-import api from '../../../shared/utils/api';
+import { passPilotClassRequest } from '../classData';
 
 export default function Passes() {
   const [passes, setPasses] = useState([]);
@@ -10,8 +10,8 @@ export default function Passes() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await api.get('/passpilot/passes');
-        setPasses(Array.isArray(res.data) ? res.data : res.data.passes || []);
+        const data = await passPilotClassRequest('GET', '/passpilot/passes');
+        setPasses(Array.isArray(data) ? data : data.passes || []);
       } catch { /* ignore */ }
       setLoading(false);
     })();

@@ -18,6 +18,8 @@ import {
   bulkCreateStudents,
   getProductLicenses,
   autoAssignFamilyGroups,
+  runWithPasspilotLegacyClassLock,
+  type PasspilotClassTransaction,
 } from "../services/storage.js";
 import {
   checkStudentEmail,
@@ -38,6 +40,14 @@ import {
   getTeacherHomeroomIds,
   hasActiveGoPilotLicense,
 } from "../services/gopilotAccess.js";
+import {
+  getPasspilotClassSourceForSchool,
+  getRequestPassPilotRole,
+  getTeacherCanonicalClassIds,
+  hasPasspilotCanonicalClassCapability,
+  isPassPilotManager,
+} from "../services/passpilotAccess.js";
+import { groupStudents } from "../schema/classpilot.js";
 import { students as studentsTable } from "../schema/students.js";
 import { safeStudent as stripStudentCredentialHash } from "../util/safeStudent.js";
 import { logAudit } from "../services/audit.js";
@@ -61,6 +71,107 @@ router.use(authenticate);
 const schoolContext = [requireSchoolContext, requireActiveSchool, requireProductLicense("CLASSPILOT", "PASSPILOT", "GOPILOT")] as const;
 
 type StudentSearchOptions = Parameters<typeof searchStudents>[1];
+
+/**
+ * Return the exact student IDs a canonical-mode PassPilot teacher may see.
+ * `null` means the canonical policy does not narrow this request (manager or
+ * legacy source); an empty set intentionally means no assigned classes.
+ */
+async function canonicalPasspilotStudentScope(
+  req: Request,
+  res: Response
+): Promise<Set<string> | null> {
+  const schoolId = res.locals.schoolId!;
+  // `/students` is shared by ClassPilot, GoPilot, and PassPilot. Only apply
+  // PassPilot's canonical roster scope when the caller explicitly identifies
+  // the new class model; otherwise GoPilot homeroom policy below remains the
+  // authority for the same authenticated teacher.
+  if (!hasPasspilotCanonicalClassCapability(req)) return null;
+  if ((await getPasspilotClassSourceForSchool(schoolId)) !== "classpilot_groups") {
+    return null;
+  }
+
+  const role = await getRequestPassPilotRole(req, res);
+  if (isPassPilotManager(role)) return null;
+  if (role !== "teacher") return new Set<string>();
+
+  const classIds = Array.from(
+    await getTeacherCanonicalClassIds(req.authUser!.id, schoolId)
+  );
+  if (classIds.length === 0) return new Set<string>();
+
+  const rows = await db
+    .select({ studentId: groupStudents.studentId })
+    .from(groupStudents)
+    .where(inArray(groupStudents.groupId, classIds));
+  return new Set(rows.map((row) => row.studentId));
+}
+
+function hasExplicitLegacyGradeId(value: Record<string, unknown>): boolean {
+  return Object.prototype.hasOwnProperty.call(value, "gradeId");
+}
+
+async function createStudentWithOptionalLegacyGradeLock(
+  data: InsertStudent,
+  writesLegacyGrade: boolean
+): Promise<Student> {
+  if (!writesLegacyGrade) return createStudent(data);
+  return runWithPasspilotLegacyClassLock(data.schoolId, async (tx) => {
+    const [student] = await tx.insert(studentsTable).values(data).returning();
+    return student!;
+  });
+}
+
+async function bulkCreateStudentsWithOptionalLegacyGradeLock(
+  schoolId: string,
+  data: InsertStudent[],
+  writesLegacyGrade: boolean
+): Promise<Student[]> {
+  if (!writesLegacyGrade) return bulkCreateStudents(data);
+  if (data.length === 0) return [];
+  return runWithPasspilotLegacyClassLock(schoolId, (tx) =>
+    tx.insert(studentsTable).values(data).returning()
+  );
+}
+
+async function updateStudentWithOptionalLegacyGradeLock(
+  id: string,
+  schoolId: string,
+  data: Partial<InsertStudent>,
+  writesLegacyGrade: boolean
+): Promise<Student | undefined> {
+  if (!writesLegacyGrade) return updateStudent(id, data);
+  return runWithPasspilotLegacyClassLock(schoolId, async (tx) => {
+    const [student] = await tx
+      .update(studentsTable)
+      .set({ ...data, updatedAt: new Date() })
+      .where(and(eq(studentsTable.id, id), eq(studentsTable.schoolId, schoolId)))
+      .returning();
+    return student;
+  });
+}
+
+async function applyBulkStudentUpdates(
+  tx: PasspilotClassTransaction,
+  schoolId: string,
+  updates: Array<{ id: string; data: Record<string, unknown> }>
+): Promise<unknown[]> {
+  const rows: unknown[] = [];
+  for (const item of updates) {
+    const [updated] = await tx
+      .update(studentsTable)
+      .set({ ...prepareStudentUpdateData(item.data), updatedAt: new Date() })
+      .where(
+        and(
+          eq(studentsTable.id, item.id),
+          eq(studentsTable.schoolId, schoolId)
+        )
+      )
+      .returning();
+    if (updated) rows.push(stripStudentCredentialHash(updated));
+  }
+  return rows;
+}
 
 async function mapWithConcurrency<T, R>(
   items: T[],
@@ -153,6 +264,12 @@ async function searchStudentsVisibleToRequest(
   options: StudentSearchOptions
 ) {
   const schoolId = res.locals.schoolId!;
+  const canonicalStudentIds = await canonicalPasspilotStudentScope(req, res);
+  if (canonicalStudentIds) {
+    const rows = await searchStudents(schoolId, options);
+    return rows.filter((student) => canonicalStudentIds.has(student.id));
+  }
+
   const role = await getRequestGoPilotRole(req, res);
 
   if (!role || role === "parent") {
@@ -204,8 +321,11 @@ async function searchStudentsVisibleToRequest(
 async function canAccessStudentForRequest(
   req: Request,
   res: Response,
-  student: Pick<Student, "homeroomId">
+  student: Pick<Student, "id" | "homeroomId">
 ): Promise<boolean> {
+  const canonicalStudentIds = await canonicalPasspilotStudentScope(req, res);
+  if (canonicalStudentIds) return canonicalStudentIds.has(student.id);
+
   const role = await getRequestGoPilotRole(req, res);
   if (!role || role === "parent") {
     return false;
@@ -236,6 +356,17 @@ async function canAccessStudentForRequest(
 router.get("/", ...schoolContext, async (req, res, next) => {
   try {
     const { search, gradeLevel, gradeId, homeroomId, status, dismissalType } = req.query as Record<string, string | undefined>;
+    if (
+      gradeId &&
+      (await getPasspilotClassSourceForSchool(res.locals.schoolId!)) === "classpilot_groups"
+    ) {
+      return res.status(409).json({
+        error: "PassPilot class rosters are managed through ClassPilot classes after migration.",
+        code: "CLASSES_MANAGED_IN_CLASSPILOT",
+        classEndpoint: "/api/passpilot/classes",
+        managementUrl: "/classpilot/admin/classes?returnTo=%2Fpasspilot%2Fclasses",
+      });
+    }
 
     const studentsList = await searchStudentsVisibleToRequest(req, res, {
       search,
@@ -300,6 +431,7 @@ router.post(
   async (req, res, next) => {
     try {
       const body = normalizeStudentBody(req.body);
+      const writesLegacyGrade = hasExplicitLegacyGradeId(body);
       // Handle grade → gradeLevel (GoPilot sends grade)
       if (body.grade && !body.gradeLevel) { body.gradeLevel = body.grade; delete body.grade; }
 
@@ -354,11 +486,11 @@ router.post(
         await hasActiveClassPilotLicense(res.locals.schoolId!),
         new Set<string>()
       );
-      const student = await createStudent({
+      const student = await createStudentWithOptionalLegacyGradeLock({
         ...data,
         classpilotPinHash: pinPlan.classpilotPinHash,
         classpilotPinEncrypted: pinPlan.classpilotPinEncrypted,
-      });
+      }, writesLegacyGrade);
       const generatedPins = pinPlan.plaintextPin
         ? [generatedPinForStudent(student, pinPlan.plaintextPin)]
         : [];
@@ -398,6 +530,7 @@ router.post(
       const autoGenerateClassPilotPins = await hasActiveClassPilotLicense(res.locals.schoolId!);
       const usedPins = new Set<string>();
       const plaintextPins: Array<string | null> = [];
+      let writesLegacyGrade = false;
 
       for (let i = 0; i < studentData.length; i++) {
         const item = { ...studentData[i] };
@@ -415,6 +548,7 @@ router.post(
           });
           continue;
         }
+        if (hasExplicitLegacyGradeId(item)) writesLegacyGrade = true;
 
         // Guardrail: email required for ClassPilot; any email must match domain.
         const emailErr = checkStudentEmail(parsed.data.email, rules);
@@ -459,7 +593,11 @@ router.post(
         });
       }
 
-      const created = await bulkCreateStudents(toInsert);
+      const created = await bulkCreateStudentsWithOptionalLegacyGradeLock(
+        res.locals.schoolId!,
+        toInsert,
+        writesLegacyGrade
+      );
       const generatedPins: GeneratedClassPilotPin[] = created
         .map((student, index) => {
           const pin = plaintextPins[index];
@@ -709,6 +847,7 @@ router.put(
         id: string;
         data: Record<string, unknown>;
         classpilotPin: string | null | undefined;
+        writesLegacyGrade: boolean;
       }> = [];
 
       for (const item of updateItems) {
@@ -741,6 +880,7 @@ router.put(
         preparedUpdates.push({
           id,
           data: safeItem,
+          writesLegacyGrade: hasExplicitLegacyGradeId(normalized),
           classpilotPin:
             typeof classpilotPin === "string" || classpilotPin === null
               ? classpilotPin
@@ -760,23 +900,14 @@ router.put(
         })
       );
 
-      const results = await db.transaction(async (tx) => {
-        const rows: unknown[] = [];
-        for (const item of hashedUpdates) {
-          const [updated] = await tx
-            .update(studentsTable)
-            .set({ ...prepareStudentUpdateData(item.data), updatedAt: new Date() })
-            .where(
-              and(
-                eq(studentsTable.id, item.id),
-                eq(studentsTable.schoolId, res.locals.schoolId!)
-              )
-            )
-            .returning();
-          if (updated) rows.push(stripStudentCredentialHash(updated));
-        }
-        return rows;
-      });
+      const writesLegacyGrade = hashedUpdates.some((item) => item.writesLegacyGrade);
+      const results = writesLegacyGrade
+        ? await runWithPasspilotLegacyClassLock(res.locals.schoolId!, (tx) =>
+            applyBulkStudentUpdates(tx, res.locals.schoolId!, hashedUpdates)
+          )
+        : await db.transaction((tx) =>
+            applyBulkStudentUpdates(tx, res.locals.schoolId!, hashedUpdates)
+          );
 
       const pinResetIds = preparedUpdates
         .filter((item) => item.classpilotPin !== undefined)
@@ -960,7 +1091,9 @@ router.put(
         return res.status(404).json({ error: "Student not found" });
       }
 
-      const parsed = updateStudentSchema.safeParse(normalizeStudentBody(req.body));
+      const normalizedBody = normalizeStudentBody(req.body);
+      const writesLegacyGrade = hasExplicitLegacyGradeId(normalizedBody);
+      const parsed = updateStudentSchema.safeParse(normalizedBody);
       if (!parsed.success) {
         return res
           .status(400)
@@ -1011,7 +1144,12 @@ router.put(
         updateData.afterschoolReason = null;
       }
 
-      const student = await updateStudent(param(req, "studentId"), updateData);
+      const student = await updateStudentWithOptionalLegacyGradeLock(
+        param(req, "studentId"),
+        res.locals.schoolId!,
+        updateData,
+        writesLegacyGrade
+      );
       return res.json({ student: student ? stripStudentCredentialHash(student) : student });
     } catch (err) {
       if (isUniqueViolation(err)) {
@@ -1040,7 +1178,9 @@ router.patch(
         return res.status(404).json({ error: "Student not found" });
       }
 
-      const parsed = updateStudentSchema.safeParse(normalizeStudentBody(req.body));
+      const normalizedBody = normalizeStudentBody(req.body);
+      const writesLegacyGrade = hasExplicitLegacyGradeId(normalizedBody);
+      const parsed = updateStudentSchema.safeParse(normalizedBody);
       if (!parsed.success) {
         return res
           .status(400)
@@ -1091,7 +1231,12 @@ router.patch(
         updateData.afterschoolReason = null;
       }
 
-      const student = await updateStudent(param(req, "studentId"), updateData);
+      const student = await updateStudentWithOptionalLegacyGradeLock(
+        param(req, "studentId"),
+        res.locals.schoolId!,
+        updateData,
+        writesLegacyGrade
+      );
       return res.json({ student: student ? stripStudentCredentialHash(student) : student });
     } catch (err) {
       if (isUniqueViolation(err)) {

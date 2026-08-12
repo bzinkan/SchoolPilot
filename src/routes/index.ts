@@ -5,6 +5,8 @@ import studentRoutes from "./students.js";
 import userRoutes from "./users.js";
 import passRoutes from "./passpilot/passes.js";
 import kioskRoutes from "./passpilot/kiosk.js";
+import passpilotClassRoutes from "./passpilot/classes.js";
+import passpilotClassMigrationRoutes from "./passpilot/classMigration.js";
 import homeroomRoutes from "./gopilot/homerooms.js";
 import dismissalRoutes from "./gopilot/dismissal.js";
 import changeRoutes from "./gopilot/changes.js";
@@ -336,6 +338,8 @@ router.use("/users", userRoutes);
 // PassPilot - Hall passes
 router.use("/passpilot/passes", passRoutes);
 router.use("/passpilot/kiosk", kioskRoutes);
+router.use("/passpilot/classes", passpilotClassRoutes);
+router.use("/passpilot/admin/class-migration", passpilotClassMigrationRoutes);
 router.use("/passes", passRoutes);
 router.use("/kiosk", kioskRoutes);
 

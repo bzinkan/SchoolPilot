@@ -17,7 +17,7 @@ import {
   getAllProductLicenses,
   getProductLicenses,
   createProductLicense,
-  deleteProductLicense,
+  deleteProductLicenseForSchool,
   deleteMembership,
   updateUser,
   getSettingsForSchool,
@@ -162,6 +162,7 @@ router.post("/schools", ...auth, async (req, res, next) => {
       adminPassword, firstAdminPassword,
       products,
       schoolHours,
+      passpilotClassModelAcknowledged,
     } = req.body;
 
     if (!name) {
@@ -265,8 +266,21 @@ router.post("/schools", ...auth, async (req, res, next) => {
     // Always create a settings row so every school has one from creation (some
     // features read settings and degrade without it). Merge school-hours config
     // when provided.
+    const initialProducts = new Set(
+      Array.isArray(products)
+        ? products.filter((product: unknown) =>
+            typeof product === "string" && ["CLASSPILOT", "PASSPILOT", "GOPILOT"].includes(product)
+          )
+        : []
+    );
+    const startsCanonical = passpilotClassModelAcknowledged === true
+      && initialProducts.has("PASSPILOT")
+      && initialProducts.has("CLASSPILOT");
     await upsertSettings(school.id, {
       schoolName: name,
+      passpilotClassSource: startsCanonical ? "classpilot_groups" : "legacy_grades",
+      passpilotClassCutoverAt: startsCanonical ? new Date() : null,
+      passpilotClassMigrationRevision: startsCanonical ? 1 : 0,
       ...(schoolHours
         ? {
             enableTrackingHours: schoolHours.enabled ?? false,
@@ -287,6 +301,10 @@ router.post("/schools", ...auth, async (req, res, next) => {
       entityType: "school",
       entityId: school.id,
       entityName: name,
+      metadata: {
+        passpilotClassSource: startsCanonical ? "classpilot_groups" : "legacy_grades",
+        passpilotClassModelAcknowledged: startsCanonical,
+      },
     });
 
     return res.status(201).json({ school, tempPassword });
@@ -784,7 +802,10 @@ router.delete("/schools/:id/products/:product", ...auth, async (req, res, next) 
       return res.status(404).json({ error: "Product license not found" });
     }
 
-    await deleteProductLicense(license.id);
+    const deleted = await deleteProductLicenseForSchool(schoolId, license.id);
+    if (!deleted) {
+      return res.status(404).json({ error: "Product license not found" });
+    }
 
     await logAudit({
       schoolId,

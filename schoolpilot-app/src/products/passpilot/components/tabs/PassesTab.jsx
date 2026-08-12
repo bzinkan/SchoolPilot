@@ -6,28 +6,39 @@ import { useState } from "react";
 import { usePassPilotAuth } from "../../../../hooks/usePassPilotAuth";
 import { apiRequest } from "../../../../lib/queryClient";
 import { formatTime } from "../../../../lib/date-utils";
+import {
+  isCanonicalPassPilotSource,
+  passPilotClassRequest,
+  useCanonicalPassPilotClasses,
+} from "../../classData";
 
 function PassesTab() {
-  const { school } = usePassPilotAuth();
+  const { school, isSchoolwideManager } = usePassPilotAuth();
   const tz = school?.schoolTimezone ?? "America/New_York";
+  const classInventoryQuery = useCanonicalPassPilotClasses();
+  const canonical = classInventoryQuery.isSuccess
+    && isCanonicalPassPilotSource(classInventoryQuery.data?.source);
   const { data: passes, isLoading, error } = useQuery({
     queryKey: ['/api/passes/active'],
-    queryFn: () => apiRequest('GET', '/passes/active'),
+    queryFn: () => passPilotClassRequest('GET', '/passes/active'),
     select: (data) => Array.isArray(data) ? data : (data?.passes ?? []),
     refetchInterval: 5000,
     gcTime: 0,
+    enabled: classInventoryQuery.isSuccess,
   });
 
-  const { data: grades = [] } = useQuery({
+  const { data: legacyGrades = [] } = useQuery({
     queryKey: ['/api/grades'],
     queryFn: () => apiRequest('GET', '/grades'),
     select: (data) => Array.isArray(data) ? data : (data?.grades ?? []),
+    enabled: classInventoryQuery.isSuccess && !canonical,
   });
+  const classes = canonical ? (classInventoryQuery.data?.classes || []) : legacyGrades;
 
   const [filterType, setFilterType] = useState("all");
-  const [filterGrade, setFilterGrade] = useState("all");
+  const [filterClassId, setFilterClassId] = useState("all");
 
-  if (isLoading) {
+  if (isLoading || classInventoryQuery.isLoading) {
     return (
       <div className="p-4">
         <div className="animate-pulse space-y-4">
@@ -39,13 +50,13 @@ function PassesTab() {
     );
   }
 
-  if (error) {
+  if (error || classInventoryQuery.isError) {
     return (
       <div className="p-4">
         <Card>
           <CardContent className="p-6 text-center">
             <p className="text-sm text-destructive mb-2">Could not load passes</p>
-            <p className="text-xs text-muted-foreground">{error.message}</p>
+            <p className="text-xs text-muted-foreground">{error?.message || classInventoryQuery.error?.message}</p>
           </CardContent>
         </Card>
       </div>
@@ -116,9 +127,10 @@ function PassesTab() {
     }
 
     const typeMatch = filterType === "all" || passType === filterType;
-    const gradeMatch = filterGrade === "all" || pass.student?.grade === filterGrade;
+    const passClassId = pass.classId || pass.classpilotGroupId || pass.gradeId || pass.student?.gradeId;
+    const classMatch = filterClassId === "all" || passClassId === filterClassId;
 
-    return typeMatch && gradeMatch;
+    return typeMatch && classMatch;
   });
 
   return (
@@ -139,7 +151,7 @@ function PassesTab() {
               Showing {filteredPasses.length} of {passes.length} passes
             </div>
             <div className="text-xs text-blue-600 font-medium">
-              Showing all school passes
+              {isSchoolwideManager ? "Showing all school passes" : "Showing passes you can access"}
             </div>
           </div>
         </div>
@@ -162,15 +174,15 @@ function PassesTab() {
 
           <div className="flex items-center space-x-2">
             <span className="text-sm text-muted-foreground">Filter by class:</span>
-            <Select value={filterGrade} onValueChange={setFilterGrade}>
+            <Select value={filterClassId} onValueChange={setFilterClassId}>
               <SelectTrigger className="w-32">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Classes</SelectItem>
-                {grades.map((grade) => (
-                  <SelectItem key={grade.id} value={grade.name}>
-                    {grade.name}
+                {classes.map((item) => (
+                  <SelectItem key={item.id} value={item.id}>
+                    {item.name}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -186,7 +198,7 @@ function PassesTab() {
               <p className="text-sm text-muted-foreground">
                 {passes.length === 0
                   ? "All students are in class"
-                  : `No ${filterType === 'all' ? '' : filterType + ' '}${filterGrade === 'all' ? '' : 'grade ' + filterGrade + ' '}passes currently active`
+                  : `No ${filterType === 'all' ? '' : filterType + ' '}${filterClassId === 'all' ? '' : 'class '}passes currently active`
                 }
               </p>
             </CardContent>
@@ -210,7 +222,7 @@ function PassesTab() {
                         {getDestinationBadge(pass)}
                       </div>
                       <p className="text-sm text-muted-foreground">
-                        Grade <span data-testid={`student-grade-${pass.id}`}>{pass.student?.grade}</span> •
+                        Class <span data-testid={`student-grade-${pass.id}`}>{pass.className || pass.classNameSnapshot || pass.student?.grade || "Unknown"}</span> •
                         Out for <span data-testid={`pass-duration-${pass.id}`}>{formatDuration(pass.issuedAt)}</span>
                       </p>
                       <p className="text-xs text-muted-foreground">
