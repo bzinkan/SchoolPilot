@@ -415,6 +415,12 @@ jobs:
         working-directory: schoolpilot-app
         run: npm run test:gopilot-browser
 
+      # Router-bundle evidence must be captured before cap:sync overwrites
+      # capacitor.config.ts (part of sourceTreeSha256) with a variant config.
+      - name: Validate GoPilot Router bundle
+        working-directory: schoolpilot-app
+        run: npm run audit:router:postbuild:gopilot
+
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -432,13 +438,18 @@ jobs:
         working-directory: schoolpilot-app
         run: npm run test:gopilot-mobile-security
 
-      - name: Validate GoPilot Router bundle
-        working-directory: schoolpilot-app
-        run: npm run audit:router:postbuild:gopilot
-
       - name: Build PassPilot frontend
         working-directory: schoolpilot-app
         run: npm run build:passpilot
+
+      - name: Smoke canonical classes in the PassPilot bundle
+        working-directory: schoolpilot-app
+        run: npm run test:passpilot-canonical-classes
+
+      # Same evidence-before-sync ordering as the GoPilot variant above.
+      - name: Validate PassPilot Router bundle
+        working-directory: schoolpilot-app
+        run: npm run audit:router:postbuild:passpilot
 
       - name: Sync PassPilot Android secure-storage bundle
         working-directory: schoolpilot-app
@@ -451,14 +462,6 @@ jobs:
       - name: Inspect PassPilot mobile security and generated bundle
         working-directory: schoolpilot-app
         run: npm run test:passpilot-mobile-security
-
-      - name: Smoke canonical classes in the PassPilot bundle
-        working-directory: schoolpilot-app
-        run: npm run test:passpilot-canonical-classes
-
-      - name: Validate PassPilot Router bundle
-        working-directory: schoolpilot-app
-        run: npm run audit:router:postbuild:passpilot
 
       - name: Finalize production dependency gate
         working-directory: schoolpilot-app
