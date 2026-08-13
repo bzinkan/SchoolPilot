@@ -18,6 +18,8 @@ import pickupRoutes from "./gopilot/pickups.js";
 import busRouteRoutes from "./gopilot/busRoutes.js";
 import familyRoutes from "./gopilot/families.js";
 import gopilotSettingsRoutes from "./gopilot/settings.js";
+import gopilotStudentRoutes from "./gopilot/students.js";
+import gopilotInstructionalCalendarRoutes from "./gopilot/instructionalCalendar.js";
 import deviceRoutes from "./classpilot/devices.js";
 import monitoringRoutes from "./classpilot/monitoring.js";
 import teachingSessionRoutes from "./classpilot/sessions.js";
@@ -55,7 +57,11 @@ const router = Router();
 // Runs before all route handlers to map frontend paths to canonical server paths.
 // Each frontend app was built standalone and uses its own URL conventions.
 // ============================================================================
-router.use((req: Request, _res: Response, next: NextFunction) => {
+router.use((req: Request, res: Response, next: NextFunction) => {
+  // Product context is routing metadata, never a client assertion. Strip the
+  // retired header before matching aliases and record context only in Express
+  // locals, which cannot be supplied over HTTP.
+  delete req.headers["x-gopilot-setup"];
   const p = req.path;
   const m = req.method;
 
@@ -119,6 +125,7 @@ router.use((req: Request, _res: Response, next: NextFunction) => {
   }
   // GoPilot: /google/workspace/* → /google/directory/*
   if (p.startsWith("/google/workspace/")) {
+    res.locals.goPilotSetup = true;
     req.url = "/google/directory" + req.url.slice("/google/workspace".length);
     return next();
   }
@@ -243,9 +250,7 @@ router.use((req: Request, _res: Response, next: NextFunction) => {
     };
     const mapped = googleMap[sub];
     if (mapped) {
-      if (sub === "import-staff") {
-        req.headers["x-gopilot-setup"] = "true";
-      }
+      res.locals.goPilotSetup = true;
       const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
       req.url = mapped + qs;
       return next();
@@ -262,9 +267,12 @@ router.use((req: Request, _res: Response, next: NextFunction) => {
     const resource = schoolMatch[2]!;
     const rest = schoolMatch[3] ?? "";
     req.headers["x-school-id"] = schoolId;
+    // Downstream compatibility routes use this server-owned marker to apply
+    // GoPilot's effective-role policy instead of generic base-role auth.
+    res.locals.goPilotSetup = true;
     const map: Record<string, string> = {
       "homerooms": "/homerooms",
-      "students": "/students",
+      "students": "/gopilot/students",
       "staff": "/users/staff",
       "family-groups": "/gopilot/family-groups",
       "sessions": "/gopilot/dismissal/sessions",
@@ -362,6 +370,8 @@ router.use("/gopilot", changeRoutes);
 router.use("/gopilot/pickups", pickupRoutes);
 router.use("/gopilot/bus-routes", busRouteRoutes);
 router.use("/gopilot/settings", gopilotSettingsRoutes);
+router.use("/gopilot/students", gopilotStudentRoutes);
+router.use("/gopilot/instructional-calendar", gopilotInstructionalCalendarRoutes);
 router.use("/gopilot", familyRoutes);
 
 // GoPilot root-level aliases (dismissal sessions/queue, changes, homerooms)

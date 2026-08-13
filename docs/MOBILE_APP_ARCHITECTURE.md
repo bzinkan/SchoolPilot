@@ -1,215 +1,90 @@
-# Mobile Apps: GoPilot & PassPilot (Capacitor)
+# SchoolPilot Mobile Architecture
 
-## Context
+## Supported native applications
 
-SchoolPilot has 3 products in one React/Vite web app: ClassPilot (Chromebook monitoring), GoPilot (student dismissal), and PassPilot (hall passes). We need **2 native mobile apps** for App Store and Google Play:
+- **GoPilot Android** (`com.schoolpilot.gopilot`) — staff-only dismissal dashboard and teacher workflow.
+- **PassPilot Android** (`com.schoolpilot.passpilot`) — PassPilot staff and kiosk workflows.
 
-1. **GoPilot App** — Parents (check-in, pickup queue, QR), Teachers (homeroom roster), Office Staff (dismissal dashboard), Admin (setup/config)
-2. **PassPilot App** — Full PassPilot with all roles (teachers, students, admin)
+ClassPilot remains web/Chrome-extension based. No SchoolPilot iOS project is currently supported or released.
 
-ClassPilot is desktop-only (WebRTC screen monitoring, Chrome extension) and gets **no mobile app**.
+## GoPilot boundary
 
-## Approach: Capacitor
+The GoPilot Android bundle may include only authenticated staff surfaces:
 
-**Why Capacitor over React Native:**
-- All the UI already exists as React components (ParentApp.jsx, TeacherView.jsx, DismissalDashboard.jsx, PassPilot Dashboard/Kiosk)
-- Capacitor wraps the existing Vite build in a native iOS/Android shell — zero UI rewrite
-- Adds native APIs: push notifications, camera, secure storage, haptics
-- React Native would mean rewriting every component from scratch for no benefit
+- administrators and office staff: session controls, staff car-number/direct-search arrival intake, live queue, bus/walker workflows, and authorized pickups;
+- teachers: assigned-student view and release workflow;
+- administrators: school setup and versioned settings.
 
-**How 2 apps from 1 codebase:**
-- Build-time env var `VITE_APP_PRODUCT=gopilot|passpilot` determines which product routes are included
-- Two Capacitor config files (`capacitor.gopilot.config.ts`, `capacitor.passpilot.config.ts`) with separate app IDs, names, and native project directories
-- Each build excludes ClassPilot routes entirely and defaults to the correct product
+Parent registration, parent portal, child linking, QR arrival, parent change requests, and parent notifications are not native routes. Historical parent data remains server-side and does not grant access.
 
-## Architecture
+## Build configuration
 
-### Project Structure (new files)
-```
-schoolpilot-app/
-  capacitor.gopilot.config.ts           # appId: com.schoolpilot.gopilot
-  capacitor.passpilot.config.ts         # appId: com.schoolpilot.passpilot
-  ios-gopilot/                           # iOS native project (GoPilot)
-  android-gopilot/                       # Android native project (GoPilot)
-  ios-passpilot/                         # iOS native project (PassPilot)
-  android-passpilot/                     # Android native project (PassPilot)
-  src/
-    contexts/NativeContext.jsx           # Platform detection (isNative, product, platform)
-    native/
-      push.js                            # Push notification registration
-      storage.js                         # Secure token storage (Preferences)
-  resources/
-    gopilot/icon.png, splash.png         # App icons & splash screens
-    passpilot/icon.png, splash.png
+The Vite variant selects the product. Capacitor uses `capacitor.gopilot.config.ts` with `android-gopilot/` or `capacitor.passpilot.config.ts` with `android-passpilot/`.
+
+```bash
+cd schoolpilot-app
+npm run mobile:gopilot
+npm run mobile:passpilot
 ```
 
-### How Each App Knows Its Product
+Each command builds its product assets, copies the matching Capacitor configuration, and synchronizes that Android project's plugins. Inspect both generated plugin registries after dependency changes; a stale generated project can retain references to removed packages.
 
-New `NativeContext.jsx`:
-```jsx
-const isNative = Capacitor.isNativePlatform();       // true in app, false on web
-const product = import.meta.env.VITE_APP_PRODUCT;    // 'gopilot' or 'passpilot' (baked at build)
-const platform = Capacitor.getPlatform();             // 'ios', 'android', or 'web'
+## Credential storage
+
+Bearer tokens must be stored only with the repository-controlled
+`schoolpilot-app/plugins/capacitor-secure-storage-plugin` fork. Its Android
+implementation requires API 24, encrypts each value with a randomized
+AES-256-GCM operation backed by Android Keystore, and stores only the versioned
+ciphertext envelope in private SharedPreferences. It has no SDK16/plaintext
+fallback. Keystore, cryptographic, and persistence failures reject the
+Capacitor call, and sign-in publishes a token only after an immediate protected
+readback matches the value written. Capacitor Preferences, localStorage,
+bundled files, and plaintext SharedPreferences must never contain bearer
+tokens. On upgrade, an unreadable or retired plaintext-format token is never
+decoded or published: the native fork synchronously removes the residue,
+verifies its removal, and returns the app to signed-out state. A cleanup
+failure rejects the Capacitor call and keeps authentication failed closed.
+
+Native GoPilot sign-in currently uses school-issued staff email and password. Google OAuth and custom-scheme callbacks are disabled in the Android app until a verified HTTPS App Link flow is implemented and reviewed.
+
+Required verification:
+
+```bash
+npm run test:gopilot-mobile-security
+npm run test:passpilot-mobile-security
 ```
 
-### Key Modifications to Existing Files
+The checks compare the installed dependency with the controlled fork, inspect
+the generated projects and merged API-24 manifests, and unpack each debug APK's
+DEX payload to require the AES-GCM implementation and reject the retired SDK16
+and RSA fallback classes. The gates enforce the exact reviewed Java source and
+compiled-class allowlists, verify legacy/corrupt token cleanup is present, and
+confirm no plaintext token fallback exists,
+parent routes are absent from the GoPilot bundle, and signing secrets are not
+embedded in Gradle.
 
-**1. `src/App.jsx`** — Product-filtered routing
-- Wrap tree with `<NativeProvider>`
-- When `isNative && product === 'gopilot'`: exclude ClassPilot routes, exclude PassPilot routes, default redirect → `/gopilot` (role-based)
-- When `isNative && product === 'passpilot'`: exclude ClassPilot routes, exclude GoPilot routes, default redirect → `/passpilot`
-- When web (no product): current behavior unchanged
-- Remove Landing/marketing routes in native builds
+## Release signing
 
-**2. `src/shared/utils/api.js`** — Dynamic API base URL
-```js
-// Currently: baseURL: '/api' (relies on Vite proxy / CloudFront origin)
-// Native: must be absolute URL since there's no proxy
-const baseURL = Capacitor.isNativePlatform()
-  ? (import.meta.env.VITE_API_URL || 'https://api.schoolpilot.com/api')
-  : '/api';
-// Also: withCredentials: false for native (JWT only, no cookies)
-```
+Signing credentials are never committed. Release builds read these protected CI/distribution secrets:
 
-**3. `src/contexts/AuthContext.jsx`** — Token persistence for native
-- Currently keeps JWT in memory only (XSS protection) — lost when app is killed
-- For native: persist via `@capacitor/preferences` (secure key-value store)
-- On app launch: restore token from Preferences, call `/auth/me` to rehydrate session
-- On login: save token to Preferences
-- On logout: clear Preferences
+- `GOPILOT_KEYSTORE_PATH`
+- `GOPILOT_KEYSTORE_PASSWORD`
+- `GOPILOT_KEY_ALIAS`
+- `GOPILOT_KEY_PASSWORD`
+- `PASSPILOT_KEYSTORE_PATH`
+- `PASSPILOT_KEYSTORE_PASSWORD`
+- `PASSPILOT_KEY_ALIAS`
+- `PASSPILOT_KEY_PASSWORD`
 
-**4. `src/contexts/SocketContext.jsx`** — Absolute socket URL
-```js
-// Currently: io(window.location.origin, ...) — broken in native (capacitor://localhost)
-// Fix: use absolute backend URL when native
-const socketUrl = Capacitor.isNativePlatform()
-  ? (import.meta.env.VITE_API_URL || 'https://api.schoolpilot.com')
-  : window.location.origin;
-```
+Each product's Gradle project fails a requested release build when any of its four values is missing; debug builds use Android's debug signing and do not require release secrets. Rotate both exposed upload/signing credentials through the applicable app distribution provider; removing values from Git does not rotate them.
 
-**5. `index.html`** — Safe area support
-- Add `viewport-fit=cover` to viewport meta tag
-- Add CSS env vars for `safe-area-inset-top/bottom`
+## Release checklist
 
-**6. Backend CORS** — Allow Capacitor origins
-- Add `capacitor://localhost` (iOS) and `http://localhost` (Android) to CORS allowlist in `src/app.ts` and `src/realtime/socketio.ts`
-
-### Push Notifications (Phase 2)
-
-- **Plugin**: `@capacitor/push-notifications`
-- **Service**: Firebase Cloud Messaging (FCM) — handles both iOS (via APNs relay) and Android
-- **Backend**: New `push_tokens` table, `POST /api/push/register`, `DELETE /api/push/unregister`
-- **GoPilot alerts**: "Your child has been called", "Dismissal starting", pickup confirmation
-- **PassPilot alerts**: "Pass approved", "Pass expired", "Student returned"
-
-### Capacitor Plugins
-
-| Plugin | Purpose |
-|--------|---------|
-| `@capacitor/core` | Platform detection, native bridge |
-| `@capacitor/app` | App lifecycle, back button, deep links |
-| `@capacitor/preferences` | Secure JWT persistence |
-| `@capacitor/push-notifications` | Push notification registration (Phase 2) |
-| `@capacitor/status-bar` | Status bar color/style |
-| `@capacitor/splash-screen` | Splash screen control |
-| `@capacitor/keyboard` | Keyboard behavior on forms |
-| `@capacitor/haptics` | Tactile feedback |
-| `@capacitor/network` | Offline detection |
-
-### NPM Scripts (added to package.json)
-```json
-"build:gopilot": "cross-env VITE_APP_PRODUCT=gopilot vite build",
-"build:passpilot": "cross-env VITE_APP_PRODUCT=passpilot vite build",
-"cap:config:gopilot": "node -e \"require('fs').copyFileSync('capacitor.gopilot.config.ts','capacitor.config.ts')\"",
-"cap:config:passpilot": "node -e \"require('fs').copyFileSync('capacitor.passpilot.config.ts','capacitor.config.ts')\"",
-"cap:sync:gopilot": "npm run cap:config:gopilot && npx cap sync android",
-"cap:sync:passpilot": "npm run cap:config:passpilot && npx cap sync android",
-"mobile:gopilot": "npm run build:gopilot && npm run cap:sync:gopilot",
-"mobile:passpilot": "npm run build:passpilot && npm run cap:sync:passpilot"
-```
-
-> The Capacitor CLI has no `--config`/`--project` flag — the per-product config is
-> selected by copying it over `capacitor.config.ts` before `cap sync`. Each config's
-> `android.path` points the sync at the right native project (`android-gopilot` /
-> `android-passpilot`).
-
-## Phased Implementation
-
-### Phase 1: Proof of Concept — GoPilot on Simulator
-1. Install Capacitor: `@capacitor/core`, `@capacitor/cli`, `@capacitor/preferences`, `@capacitor/app`, `@capacitor/status-bar`, `@capacitor/splash-screen`, `@capacitor/keyboard`
-2. Create `capacitor.gopilot.config.ts` (appId `com.schoolpilot.gopilot`, webDir `dist`, ios path `ios-gopilot`, android path `android-gopilot`)
-3. Create `src/contexts/NativeContext.jsx` (platform detection + status bar + splash screen)
-4. Modify `api.js` — dynamic baseURL, conditional `withCredentials`
-5. Modify `AuthContext.jsx` — token persistence via Preferences when native
-6. Modify `SocketContext.jsx` — absolute URL when native
-7. Modify `App.jsx` — wrap with NativeProvider, filter routes by product
-8. Update `index.html` — `viewport-fit=cover`
-9. Update backend CORS — add Capacitor origins
-10. Build: `VITE_APP_PRODUCT=gopilot VITE_API_URL=http://localhost:4000 vite build`
-11. Init native: `npx cap add ios --config capacitor.gopilot.config.ts`
-12. Sync: `npx cap sync --config capacitor.gopilot.config.ts`
-13. Open in Xcode, run on simulator
-
-**Success**: Login → see ParentApp/TeacherView/Dashboard based on role, socket connected, no ClassPilot routes
-
-### Phase 2: Full GoPilot App (iOS + Android)
-- Add Android platform
-- App icons and splash screens
-- Push notifications (FCM + backend)
-- Safe area insets across all GoPilot pages
-- Android back button handling
-- QR scanning verification in WebView
-- Keyboard handling for form inputs
-- App lifecycle: reconnect socket on foreground resume
-- Test all 4 roles on physical devices
-
-### Phase 3: PassPilot App
-- Create `capacitor.passpilot.config.ts`
-- Add iOS and Android platforms for PassPilot
-- Route filtering for `VITE_APP_PRODUCT=passpilot`
-- PassPilot-specific push notifications
-- Hide "Back to ClassPilot" links in AppShell when native
-- Test all roles on physical devices
-
-### Phase 4: App Store Submission
-- App Store screenshots (iPhone 6.7", 6.5", iPad 12.9")
-- Play Store screenshots (phone + tablet)
-- App descriptions, keywords, privacy policy URL
-- iOS code signing (Apple Developer $99/year)
-- Android keystore + Play Console ($25 one-time)
-- Submit for review
-
-## Dev Environment Requirements
-- **macOS** required for iOS builds (Xcode 15+)
-- **Android Studio** for Android builds
-- **Apple Developer Account** for device testing + App Store
-- **Google Play Developer Account** for Play Store
-- **Firebase Project** for FCM push notifications
-
-## Files Modified Summary
-
-| Existing File | Change |
-|------|--------|
-| `schoolpilot-app/src/App.jsx` | NativeProvider wrapper, product-based route filtering |
-| `schoolpilot-app/src/shared/utils/api.js` | Dynamic baseURL, conditional withCredentials |
-| `schoolpilot-app/src/contexts/AuthContext.jsx` | JWT persistence via @capacitor/preferences |
-| `schoolpilot-app/src/contexts/SocketContext.jsx` | Absolute socket URL for native |
-| `schoolpilot-app/index.html` | viewport-fit=cover for safe areas |
-| `schoolpilot-app/package.json` | Capacitor deps + mobile build scripts |
-| `src/app.ts` | CORS: add capacitor://localhost origins |
-| `src/realtime/socketio.ts` | CORS: add capacitor://localhost origins |
-
-| New File | Purpose |
-|----------|---------|
-| `schoolpilot-app/capacitor.gopilot.config.ts` | GoPilot native config |
-| `schoolpilot-app/capacitor.passpilot.config.ts` | PassPilot native config |
-| `schoolpilot-app/src/contexts/NativeContext.jsx` | Platform detection context |
-| `schoolpilot-app/src/native/storage.js` | Secure token storage wrapper |
-| `schoolpilot-app/src/native/push.js` | Push notification utilities |
-
-## Verification
-1. `VITE_APP_PRODUCT=gopilot npm run build` — succeeds, dist contains no ClassPilot chunks
-2. iOS simulator: login as parent → see ParentApp; login as teacher → see TeacherView
-3. Socket.io connects and receives real-time dismissal updates
-4. Token survives app kill + relaunch (Preferences persistence)
-5. Web app (`npm run build` without VITE_APP_PRODUCT) still works identically — no regression
+1. Confirm the backend containment release is deployed and parent GoPilot endpoints return `410 GOPILOT_PARENT_PORTAL_DISABLED`.
+2. Run lint, the GoPilot production build, staff workflow tests, and the mobile security check.
+3. Run `npm run cap:sync:gopilot` and inspect generated plugin registration.
+4. Build a release AAB with protected signing secrets.
+5. Inspect the final AAB/APK for parent route strings, plaintext credentials, development hosts, and unexpected permissions.
+6. Test administrator, office-staff, and teacher routing on a clean Android installation.
+7. Verify sign-in fails closed when secure storage is intentionally unavailable.
+8. Publish the Android release separately from the SchoolPilot web/API deployment.

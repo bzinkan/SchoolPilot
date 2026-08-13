@@ -23,7 +23,6 @@ const NAV_ITEMS = {
   GOPILOT: [
     { label: 'Dashboard', path: '/gopilot', icon: '📊' },
     { label: 'Teacher View', path: '/gopilot/teacher', icon: '👩‍🏫' },
-    { label: 'Parent App', path: '/gopilot/parent', icon: '👨‍👩‍👧' },
     { label: 'Setup', path: '/gopilot/setup', icon: '⚙️' },
   ],
 };

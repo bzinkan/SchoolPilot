@@ -7,16 +7,18 @@ import { useLicenses } from './LicenseContext';
 const SocketContext = createContext(null);
 
 export function SocketProvider({ children }) {
-  const { token } = useAuth();
+  const { token, activeMembership } = useAuth();
   const { hasGoPilot } = useLicenses();
   const socketRef = useRef(null);
   const subscribersRef = useRef(new Set());
 
   const notify = () => subscribersRef.current.forEach((cb) => cb());
+  const effectiveRole = activeMembership?.gopilotRole || activeMembership?.role;
+  const hasGoPilotStaffRole = ['admin', 'school_admin', 'office_staff', 'teacher'].includes(effectiveRole);
 
   useEffect(() => {
     // Only connect GoPilot socket if GoPilot is licensed
-    if (!token || !hasGoPilot) {
+    if (!token || !hasGoPilot || !hasGoPilotStaffRole) {
       if (socketRef.current) {
         socketRef.current.disconnect();
         socketRef.current = null;
@@ -56,7 +58,7 @@ export function SocketProvider({ children }) {
       s.disconnect();
       appListener?.remove();
     };
-  }, [token, hasGoPilot]);
+  }, [token, hasGoPilot, hasGoPilotStaffRole]);
 
   const subscribe = (cb) => {
     subscribersRef.current.add(cb);

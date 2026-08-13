@@ -8,7 +8,7 @@ Schoolpilot is a unified multi-product SaaS platform for K-12 schools. It combin
 
 - **ClassPilot** — Chromebook classroom monitoring (screen viewing, web filtering, device locking)
 - **PassPilot** — Digital hall pass system with kiosk mode
-- **GoPilot** — Student dismissal management with parent notifications
+- **GoPilot** — School-operated student dismissal for administrators, office staff, and teachers
 
 ## Repository Structure
 
@@ -48,7 +48,7 @@ schoolpilot-app/            # Frontend (React + Vite)
 │   ├── products/
 │   │   ├── classpilot/     # Dashboard, Roster, Admin, AdminAnalytics, Students, Settings
 │   │   ├── passpilot/      # Dashboard, Kiosk, KioskSimple
-│   │   └── gopilot/        # DismissalDashboard, TeacherView, ParentApp, SetupWizard
+│   │   └── gopilot/        # DismissalDashboard, TeacherView, SetupWizard
 │   ├── pages/              # Landing, Login, super-admin/
 │   ├── shell/              # Shared shell components (widgets, Layout)
 │   ├── components/ui/      # Radix UI component library
@@ -145,7 +145,7 @@ SchoolPilot is multi-tenant. Beyond the app-code rule of filtering every query b
 - **Background / cross-school work**: `schedulerDb` / `schedulerPool` (`src/services/schedulerDb.ts`) set `app.is_super='on'` on every connection → bypass RLS. Use them for scheduler jobs and cross-school boot migrations.
 - **Out-of-request DB access**: for code that runs OUTSIDE an Express request — WebSocket/Socket.IO handlers, unauthenticated routes (kiosk, device register), detached `.then()`/`.catch()` callbacks that outlive the response — wrap the DB work in **`runWithTenantContext({ schoolId }, fn)`** (or `{ isSuper: true }` for genuinely cross-school reads), from `src/middleware/tenantContext.ts`. It establishes the same tenant ALS scope on a fresh connection.
 - **Kill-switch / rollout**: gated by env on the ECS task def — `RLS_GUC_ENABLED` (master on/off) and `RLS_ENABLED_TABLES` (comma-list of enforced tables). Dropping a table from the list (or `RLS_GUC_ENABLED=false`) disables enforcement on the next deploy — no code change.
-- **Deploy-time allowlist additions**: ordinary backend deploys preserve the live task definition's RLS master switch and per-table allowlist exactly. A reviewed release may use the one-shot `--enable-rls-table <reviewed-table>` flag. That path requires matching live API/worker allowlists with `RLS_GUC_ENABLED=true`, adds only the named table to the rendered API/emergency/worker definitions, verifies the registered definitions, and makes the migration task fail unless PostgreSQL reports enabled + forced RLS and the `tenant_isolation` policy. Omit the flag on later deploys; a deliberate per-table kill-switch removal then remains removed. This path does not require a Terraform apply.
+- **Deploy-time allowlist additions**: ordinary backend deploys preserve the live task definition's RLS master switch and per-table allowlist exactly. A reviewed release may use the one-shot `--enable-rls-table <reviewed-table-or-exact-bundle>` flag. That path requires matching live API/worker allowlists with `RLS_GUC_ENABLED=true`, adds only the reviewed table set to the rendered API/emergency/worker definitions, verifies the registered definitions, and makes the migration task fail unless PostgreSQL reports enabled + forced RLS and the `tenant_isolation` policy for every requested table. Omit the flag on later deploys; a deliberate per-table kill-switch removal then remains removed. This path does not require a Terraform apply.
 - **Teacher command/state tables are tenant tables**: keep `classpilot_commands`, `classpilot_command_targets`, and `classpilot_classroom_states` in `RLS_ENABLED_TABLES` anywhere teacher command safety is enabled. These tables store per-school command history, target outcomes, and active classroom restrictions, so they must remain school-scoped in production and tests.
 
 **THE RULE when you add or change DB code:** any path that reads or writes a tenant table MUST run under a tenant context — a GUC-bound request, `schedulerDb` (is_super), or `runWithTenantContext`. A new unauthenticated route, WebSocket handler, detached callback, or boot migration that touches a tenant table on the bare `db`/`pool` will **silently return 0 rows or fail `WITH CHECK`** once that table is enforced. New `INSERT`s must set `school_id` (derive it from the parent/owner — never trust the request body). The cross-tenant regression suite (`tests/cross-tenant-isolation.test.ts`) wraps calls in `inSchool()` / `asSystem()` helpers around `runWithTenantContext` — extend it when you add school-scoped storage functions.
@@ -393,26 +393,38 @@ JAVA_HOME="C:/Program Files/Android/Android Studio/jbr" ./gradlew assembleDebug
 - `VITE_APP_PRODUCT` env var (`gopilot` | `passpilot`) controls branding and routing
 - `NativeContext.jsx` detects native platform via `@capacitor/core` and reads `VITE_APP_PRODUCT`
 - API base URL: `/api` on web, `https://school-pilot.net/api` on native
-- Auth: JWT Bearer tokens (no cookies on native), persisted via `@capacitor/preferences`
+- Auth: JWT Bearer tokens (no cookies on native), persisted only through the repository-controlled `schoolpilot-app/plugins/capacitor-secure-storage-plugin` fork (Android Keystore AES-256-GCM, API 24+, no plaintext fallback); authentication fails closed if secure storage or protected readback is unavailable
 - `useGoPilotAuth` hook adapts unified AuthContext to GoPilot-specific shape
 
-### GoPilot Parent Flow
-1. Parent registers via `/auth/register/parent` with `schoolSlug`
-2. Auto-assigned car number via `generateCarNumber()`
-3. Onboarding links children by car number (`/me/children/link-by-car`)
-4. **Parent app is fully passive** — no check-in or pickup buttons. All status driven by socket events:
-   - `Waiting for Dismissal` → `Dismissal is Active` (shows car number) → `You're checked in!` → `Pickup Complete`
-   - Office enters car number → `student:checked-in` socket event → parent sees "Checked in"
-   - Office marks pickup complete → `student:dismissed` socket event → parent sees "Pickup Complete"
-5. Office has final authority — can complete dismissal even if teacher hasn't released
-6. Session reset: admin can end and restart dismissal same day (clears queue, resets timestamps)
+### GoPilot Staff-Only Flow
+1. GoPilot parent registration, linking, portal, QR arrival, change requests, and parent sockets are permanently disabled with `GOPILOT_PARENT_PORTAL_DISABLED`.
+2. Administrators and office staff add car riders by internal car number or direct family/student search. Bus and walker workflows remain staff operated.
+3. Teachers see only assigned students and may acknowledge/release them; teachers cannot add arrivals.
+4. Office staff retain final dismissal authority. Session reset and queue transitions remain audited.
+5. Historical parent accounts, links, requests, and dismissal records remain stored under existing retention rules but grant no GoPilot access.
+
+#### GoPilot containment and rollout runbook
+
+1. Deploy the backend containment behavior first and verify every retired parent route and parent socket handshake returns `410 GOPILOT_PARENT_PORTAL_DISABLED`. Never roll back by re-enabling those endpoints.
+2. From a controlled one-off task using the exact reviewed backend image and production database network configuration, run the ID/count-only inventory before the schema/RLS rollout:
+   ```bash
+   npm run audit:gopilot
+   # or narrow the report without exposing names, emails, car numbers, or tokens
+   npm run audit:gopilot -- --school-id <school-uuid>
+   ```
+   Review parent memberships/links, pickup approvals without staff evidence, duplicate queue/family rows, weekend or unlicensed sessions, invalid states, completed sessions with open queue entries, and orphan totals. Resolve every migration-blocking count deliberately; do not delete retained history simply to make the report clean.
+3. Deploy the additive GoPilot schema and normalized staff APIs backend-first with the exact seven-table RLS bundle documented below. Wait for the old API tasks to drain and verify migration, RLS, Redis-relay health, scheduler skips/starts, queue metrics, alarms, and public health before publishing the web client.
+4. Publish the staff web client. Pilot car-number and direct-search arrivals with synthetic students under separate office and teacher accounts before a live dismissal.
+5. Release Android separately only after rotating the historical GoPilot upload/signing credential through the distribution provider, building with protected `GOPILOT_KEYSTORE_*` secrets, inspecting the signed AAB, and confirming the staff-only version is adopted. Retain the temporary staff car-number compatibility alias until that adoption is verified.
+
+The inventory CLI is read-only and must remain school-ID/count-only. It never changes parent links, pickups, queue rows, invitations, or sessions.
 
 ### GoPilot Socket Events
-- `dismissal:started` — emitted when admin starts session, parent app switches to active
-- `dismissal:ended` — emitted when admin ends session, parent app resets
-- `student:checked-in` — office adds student to queue, parent app updates
+- `dismissal:started` — emitted when an administrator starts a session
+- `dismissal:ended` — emitted when an administrator ends a session
+- `student:checked-in` — office adds a student to the queue
 - `student:called` — office calls student
-- `student:dismissed` — office completes pickup, parent app shows "Pickup Complete"
+- `student:dismissed` — office completes pickup
 - `student:released` — teacher releases student
 
 ## Production Deployment
@@ -431,16 +443,16 @@ Since production RDS is in a private VPC, `drizzle-kit push` cannot reach it dir
 3. Let `scripts/deploy.sh` run the migration ECS task before web/worker rollout; do not rely on scaled web tasks to apply DDL
 
 ### GoPilot Dismissal Override System
-Session-scoped dismissal type changes (car/bus/walker/afterschool) for today only, without admin approval:
+Session-scoped dismissal type changes (car/bus/walker/afterschool) for today only, controlled by administrators, school administrators, and office staff:
 - **Table:** `dismissal_overrides` (schema in `src/schema/gopilot.ts`, auto-migration in `src/index.ts`)
 - **Storage functions:** `src/services/storage.ts` — `upsertDismissalOverride`, `deleteDismissalOverride`, `getOverridesForSession`, `getEffectiveDismissalType(s)`
 - **API endpoints** in `src/routes/gopilot/dismissal.ts`:
-  - `POST /sessions/:id/override` — create/update override (role-based: parent must be linked, teacher must have homeroom, office/admin unrestricted)
+  - `POST /sessions/:id/override` — create/update override (administrators, school administrators, and office staff only)
   - `GET /sessions/:id/overrides` — list all overrides for session
-  - `DELETE /sessions/:id/override/:studentId` — revert to permanent default
-- **Socket event:** `dismissal:override` emitted to office, teacher, and parent rooms
-- **Queue integration:** All check-in methods (app, car number, bus, walker release) use `getEffectiveDismissalTypes()` to respect overrides. Afterschool students are excluded from queue.
-- **Frontend:** Override UI in ParentApp, TeacherView, and DismissalDashboard (including expandable homerooms in Rooms tab)
+  - `DELETE /sessions/:id/override/:studentId` — revert to permanent default (administrators, school administrators, and office staff only)
+- **Socket event:** `dismissal:override` emitted to authorized office and teacher rooms through the local-plus-Redis GoPilot broadcaster
+- **Queue integration:** Staff car-number/search, bus, and walker arrivals use `getEffectiveDismissalTypes()` to respect overrides. Afterschool students are excluded from queue.
+- **Frontend:** Override mutation UI appears only in administrator/office views. Teachers see the effective same-day type for their assigned students but cannot create or revert overrides.
 
 ### GoPilot Role Override
 GoPilot uses a `gopilot_role` column on `memberships` that overrides the base `role` for dismissal-specific access control. This lets a teacher be assigned as `office_staff` in GoPilot (to manage the dismissal queue) without changing their role in ClassPilot or PassPilot. The `useGoPilotAuth` hook reads `gopilot_role ?? role` to determine the effective role.
@@ -517,7 +529,7 @@ ClassPilot now has a shared cross-product safety/context layer for IT review rea
 - **Timeline producers**: Browser safety alerts, MailPilot alerts/reviews, attendance marks, PassPilot pass lifecycle, GoPilot dismissal/check-in/override events, and targeted ClassPilot remote actions write `student_timeline_events`.
 - **Evidence packets**: `POST /classpilot/evidence-packets` creates a packet manifest; `GET /classpilot/evidence-packets/:id/download` returns a ZIP with JSON, CSV, HTML, and available artifacts. Safety alerts snapshot the current Redis screenshot when available and record an unavailable artifact otherwise.
 - **Context-aware monitoring**: `/students-aggregated` includes `attendanceStatus`, `activePass`, `dismissalStatus`, `monitoringContext`, and `suppressionReason`. Classroom off-task noise is suppressed for absent/on-pass/dismissal states, but critical safety alerts still display and log.
-- **Parent transparency**: Opt-in only. Settings fields are on `settings` (`parent_transparency_enabled`, cadence/includes fields). Scheduler sends weekly digests using approved GoPilot `parent_student` links only, with no screenshots, raw browsing timeline, or raw email content.
+- **Parent transparency**: GoPilot parent digests and dismissal content are retired. Historical parent-link and digest settings remain retained but must not grant GoPilot access or trigger GoPilot email. Do not change unrelated product communication policy by reusing those links.
 - **Classroom Flight Paths**: Google OAuth includes read-only coursework/material scopes. `/google/classroom/courses/:courseId/resources` extracts Classroom links, and `/classpilot/flight-paths/from-classroom` creates source-tagged Flight Paths with exact YouTube video URLs preserved.
 
 ### Student Detail Drawer (ClassPilot)
@@ -733,6 +745,24 @@ later releases:
 ./scripts/deploy.sh production --backend --activate-emergency \
   --enable-rls-table passpilot_grade_students
 ```
+
+For the single backend-first GoPilot staff-dismissal release, add and verify
+the seven direct-tenant child tables as one indivisible reviewed bundle. Do
+not split, reorder, or retain this flag on later releases:
+
+```bash
+./scripts/deploy.sh production --backend --activate-emergency \
+  --enable-rls-table authorized_pickups,custody_alerts,dismissal_changes,dismissal_overrides,dismissal_queue,family_group_students,homeroom_teachers
+```
+
+Before that one-shot deploy succeeds, keep Terraform's generic and production
+allowlists at the currently deployed baseline; preloading the seven tables
+would bypass the live-source and catalog admission checks above. Immediately
+after the rollout is verified, land a separate baseline-adoption change that
+copies the observed live allowlist (including all seven tables) into an
+explicit `infra/production.tfvars` value before any later Terraform apply.
+Stage non-production environments separately. Never combine the pre-rollout
+activation and post-rollout Terraform baseline into one static value.
 
 That mode keeps the prior 2048 MiB API serving while the deploy script builds
 and registers the new image. It then uses the newly registered, digest-matched

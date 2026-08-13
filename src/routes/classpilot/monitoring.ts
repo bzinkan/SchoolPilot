@@ -29,7 +29,7 @@ import {
 } from "../../services/studentEmailPolicy.js";
 import { logAudit } from "../../services/audit.js";
 import type { InsertStudent } from "../../schema/students.js";
-import { safeStudent, safeStudents } from "../../util/safeStudent.js";
+import { classPilotStudentDto, classPilotStudentDtos } from "../../util/safeStudent.js";
 import {
   encryptClassPilotPin,
   generatedPinForStudent,
@@ -50,6 +50,7 @@ const auth = [
   requireSchoolContext,
   requireActiveSchool,
   requireProductLicense("CLASSPILOT"),
+  requireRole("admin", "school_admin", "office_staff", "teacher"),
 ] as const;
 
 // GET /api/classpilot/students - List all students with optional filters
@@ -63,7 +64,7 @@ router.get("/students", ...auth, async (req, res, next) => {
     if (search) filters.search = search as string;
 
     const students = await searchStudents(schoolId, filters);
-    return res.json({ students: safeStudents(students) });
+    return res.json({ students: classPilotStudentDtos(students) });
   } catch (err) {
     next(err);
   }
@@ -100,7 +101,7 @@ router.get("/student-analytics/:studentId", ...auth, async (req, res, next) => {
     const activeSession = await getActiveSessionByStudent(studentId);
 
     return res.json({
-      student: safeStudent(student),
+      student: classPilotStudentDto(student),
       heartbeats,
       activeSession,
     });
@@ -138,7 +139,7 @@ router.get("/student-analytics/:studentId/usage", ...auth, async (req, res, next
 router.get("/roster/students", ...auth, async (req, res, next) => {
   try {
     const students = await getStudentsBySchool(res.locals.schoolId!);
-    return res.json({ students: safeStudents(students) });
+    return res.json({ students: classPilotStudentDtos(students) });
   } catch (err) {
     next(err);
   }
@@ -206,7 +207,7 @@ router.post("/roster/student", ...auth, async (req, res, next) => {
     });
 
     return res.status(201).json({
-      student: safeStudent(student),
+      student: classPilotStudentDto(student),
       generatedPins: [generatedPinForStudent(student, pin)],
     });
   } catch (err) {
@@ -278,7 +279,7 @@ router.post("/roster/bulk", ...auth, requireRole("admin"), async (req, res, next
     );
     return res.json({
       created: created.length,
-      students: safeStudents(created),
+      students: classPilotStudentDtos(created),
       errors: errors.length > 0 ? errors : undefined,
       total: studentData.length,
       generatedPins,
@@ -316,7 +317,7 @@ router.patch("/students/:studentId", ...auth, async (req, res, next) => {
     if (!updated) {
       return res.status(404).json({ error: "Student not found" });
     }
-    return res.json({ student: updated ? safeStudent(updated) : updated });
+    return res.json({ student: updated ? classPilotStudentDto(updated) : updated });
   } catch (err) {
     next(err);
   }

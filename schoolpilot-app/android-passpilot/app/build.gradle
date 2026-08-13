@@ -16,17 +16,32 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    def releaseKeystorePath = System.getenv('PASSPILOT_KEYSTORE_PATH') ?: project.findProperty('PASSPILOT_KEYSTORE_PATH')
+    def releaseStorePassword = System.getenv('PASSPILOT_KEYSTORE_PASSWORD') ?: project.findProperty('PASSPILOT_KEYSTORE_PASSWORD')
+    def releaseKeyAlias = System.getenv('PASSPILOT_KEY_ALIAS') ?: project.findProperty('PASSPILOT_KEY_ALIAS')
+    def releaseKeyPassword = System.getenv('PASSPILOT_KEY_PASSWORD') ?: project.findProperty('PASSPILOT_KEY_PASSWORD')
+    def releaseSigningConfigured = [releaseKeystorePath, releaseStorePassword, releaseKeyAlias, releaseKeyPassword].every { it }
+    def releaseRequested = gradle.startParameter.taskNames.any { it.toLowerCase().contains('release') }
+
+    if (releaseRequested && !releaseSigningConfigured) {
+        throw new GradleException('PassPilot release signing secrets are required via protected PASSPILOT_KEYSTORE_* environment variables or Gradle properties.')
+    }
+
     signingConfigs {
-        release {
-            storeFile file('../../passpilot-release.keystore')
-            storePassword 'SchoolPilot2026!'
-            keyAlias 'passpilot'
-            keyPassword 'SchoolPilot2026!'
+        if (releaseSigningConfigured) {
+            release {
+                storeFile file(releaseKeystorePath)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
         }
     }
     buildTypes {
         release {
-            signingConfig signingConfigs.release
+            if (releaseSigningConfigured) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

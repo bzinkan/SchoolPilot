@@ -4,6 +4,7 @@ import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
+import { requireRole } from "../../middleware/requireRole.js";
 import {
   getFlightPathsBySchool,
   getFlightPathsByTeacherAndSchool,
@@ -35,6 +36,7 @@ const auth = [
   requireSchoolContext,
   requireActiveSchool,
   requireProductLicense("CLASSPILOT"),
+  requireRole("admin", "school_admin", "office_staff", "teacher"),
 ] as const;
 
 function allowedEntryFromUrl(rawUrl: string): string | null {

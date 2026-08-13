@@ -22,8 +22,8 @@ export default function GoPilotLanding() {
                 School Dismissal, Made Safe & Simple
               </p>
               <p className="text-lg mb-12 opacity-80 max-w-2xl mx-auto">
-                Real-time parent check-in, instant teacher notifications, and verified pickups.
-                Streamline your car line while keeping every student safe.
+                Staff-controlled arrivals, instant classroom updates, and verified pickups.
+                Run car riders, buses, walkers, and after-school handoffs from one live queue.
               </p>
             </div>
 
@@ -50,7 +50,7 @@ export default function GoPilotLanding() {
                   <polyline points="12 6 12 12 16 14"/>
                 </svg>
                 <h3 className="font-semibold mb-2">Real-Time Tracking</h3>
-                <p className="text-sm opacity-80">Know exactly when parents arrive and where every student is</p>
+                <p className="text-sm opacity-80">Office staff enter arrivals and track every student through pickup</p>
               </div>
               <div className="bg-white/10 backdrop-blur-sm rounded-lg p-6">
                 {/* Shield icon */}
@@ -58,7 +58,7 @@ export default function GoPilotLanding() {
                   <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
                 </svg>
                 <h3 className="font-semibold mb-2">Authorized Pickup List</h3>
-                <p className="text-sm opacity-80">Parents manage authorized pickup contacts. Office sees the list during dismissal for safe, verified releases.</p>
+                <p className="text-sm opacity-80">School staff verify, approve, and revoke pickup contacts</p>
               </div>
               <div className="bg-white/10 backdrop-blur-sm rounded-lg p-6">
                 {/* Bell icon */}
@@ -66,8 +66,8 @@ export default function GoPilotLanding() {
                   <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
                   <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
                 </svg>
-                <h3 className="font-semibold mb-2">Instant Alerts</h3>
-                <p className="text-sm opacity-80">Teachers notified the moment a parent checks in</p>
+                <h3 className="font-semibold mb-2">Classroom Updates</h3>
+                <p className="text-sm opacity-80">Teachers see calls immediately and release only assigned students</p>
               </div>
             </div>
           </div>
@@ -82,8 +82,7 @@ export default function GoPilotLanding() {
               Everything You Need for Safe Dismissals
             </h2>
             <p className="text-lg text-gray-500 max-w-3xl mx-auto">
-              GoPilot connects parents, teachers, and office staff in real-time
-              to make dismissal smooth and secure.
+              GoPilot connects authorized school staff in real time so each handoff is deliberate, visible, and accountable.
             </p>
           </div>
 
@@ -96,8 +95,8 @@ export default function GoPilotLanding() {
                     <path d="M12 18h.01"/>
                   </svg>
                 ),
-                title: 'Apps for Everyone',
-                description: 'Parent, office, admin, and teacher apps available for easy access on any device.',
+                title: 'Staff Web & Android',
+                description: 'Authorized office staff, administrators, and teachers can work from the web or staff-only Android app.',
                 color: 'bg-indigo-500',
               },
               {
@@ -108,7 +107,7 @@ export default function GoPilotLanding() {
                   </svg>
                 ),
                 title: 'Instant Teacher Alerts',
-                description: 'Teachers get notified the moment a parent arrives. One tap to dismiss the student.',
+                description: 'Teachers see office-entered arrivals and calls, then release only students assigned to them.',
                 color: 'bg-green-500',
               },
               {
@@ -118,7 +117,7 @@ export default function GoPilotLanding() {
                   </svg>
                 ),
                 title: 'Authorized Pickup List',
-                description: 'Parents manage authorized pickup contacts. Office sees the list during dismissal for safe, verified releases.',
+                description: 'Authorized school staff verify, approve, and revoke pickup contacts with history preserved.',
                 color: 'bg-red-500',
               },
               {

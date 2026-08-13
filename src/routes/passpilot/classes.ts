@@ -20,7 +20,7 @@ import {
   removeStudentFromLegacyPasspilotGrade,
 } from "../../services/storage.js";
 import { logAudit } from "../../services/audit.js";
-import { safeStudent } from "../../util/safeStudent.js";
+import { passPilotStudentDto } from "../../util/safeStudent.js";
 
 const router = Router();
 
@@ -60,7 +60,7 @@ router.get("/:id/students", async (req, res, next) => {
     return res.json({
       source: result.source,
       class: result.classRecord,
-      students: result.students.map((student) => safeStudent(student)),
+      students: result.students.map(passPilotStudentDto),
     });
   } catch (err) {
     next(err);

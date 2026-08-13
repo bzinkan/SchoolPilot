@@ -6,6 +6,7 @@ import {
   timestamp,
   boolean,
   integer,
+  jsonb,
   index,
   unique,
   uniqueIndex,
@@ -66,7 +67,15 @@ export const schools = pgTable("schools", {
 
   // GoPilot settings
   dismissalTime: text("dismissal_time"), // HH:MM format
-  dismissalMode: text("dismissal_mode").notNull().default("no_app"), // app | no_app
+  dismissalMode: text("dismissal_mode").notNull().default("no_app"), // rollback compatibility; staff-only runtime
+  // GoPilot is staff-operated. Auto-start is opt-in and defaults off for
+  // newly provisioned and previously unconfigured schools.
+  gopilotAutoStartEnabled: boolean("gopilot_auto_start_enabled").notNull().default(false),
+  gopilotPickupZones: jsonb("gopilot_pickup_zones")
+    .$type<Array<{ id: string; name: string }>>()
+    .notNull()
+    .default(sql`'[{"id":"A","name":"Zone A"},{"id":"B","name":"Zone B"},{"id":"C","name":"Zone C"}]'::jsonb`),
+  gopilotSettingsRevision: integer("gopilot_settings_revision").notNull().default(0),
   maxStudents: integer("max_students"),
 
   // ClassPilot settings
@@ -95,6 +104,10 @@ export const schools = pgTable("schools", {
   check(
     "schools_passpilot_settings_revision_check",
     sql`${table.passpilotSettingsRevision} >= 0`
+  ),
+  check(
+    "schools_gopilot_settings_revision_check",
+    sql`${table.gopilotSettingsRevision} >= 0`
   ),
 ]);
 
@@ -143,7 +156,7 @@ export const users = pgTable(
     phone: text("phone"),
     profileImageUrl: text("profile_image_url"),
     isSuperAdmin: boolean("is_super_admin").notNull().default(false),
-    checkInMethod: text("check_in_method").default("app"), // GoPilot: app | manual
+    checkInMethod: text("check_in_method").default("app"), // Retained historical parent preference; never authorizes GoPilot access
     notificationPrefs: text("notification_prefs"), // JSON from GoPilot
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
     lastLoginAt: timestamp("last_login_at"),

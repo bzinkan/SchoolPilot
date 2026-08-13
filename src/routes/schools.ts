@@ -68,6 +68,22 @@ function rejectPasspilotKioskSettingsBypass(req: any, res: any): boolean {
   return true;
 }
 
+function rejectGoPilotSettingsBypass(req: any, res: any): boolean {
+  const body = req.body ?? {};
+  if (
+    !Object.prototype.hasOwnProperty.call(body, "dismissalTime") &&
+    !Object.prototype.hasOwnProperty.call(body, "dismissalMode")
+  ) {
+    return false;
+  }
+  res.status(409).json({
+    error: "Dismissal settings are managed in GoPilot Setup.",
+    code: "GOPILOT_SETTINGS_MANAGED_IN_SETUP",
+    managementUrl: "/gopilot/setup?tab=settings",
+  });
+  return true;
+}
+
 // All school routes require authentication
 router.use(authenticate);
 
@@ -155,7 +171,11 @@ router.post("/", requireSuperAdmin, async (req, res, next) => {
 });
 
 // GET /api/schools/:schoolId - Get school details
-router.get("/:schoolId", requireSchoolContext, async (req, res, next) => {
+router.get(
+  "/:schoolId",
+  requireSchoolContext,
+  requireRole("admin", "school_admin", "office_staff", "teacher"),
+  async (req, res, next) => {
   try {
     const schoolId = scopedSchoolId(req, res);
     let school = await getSchoolById(schoolId);
@@ -185,7 +205,8 @@ router.get("/:schoolId", requireSchoolContext, async (req, res, next) => {
   } catch (err) {
     next(err);
   }
-});
+  }
+);
 
 // PUT /api/schools/:schoolId - Update school
 router.put(
@@ -195,6 +216,7 @@ router.put(
   async (req, res, next) => {
     try {
       if (rejectPasspilotKioskSettingsBypass(req, res)) return;
+      if (rejectGoPilotSettingsBypass(req, res)) return;
       const parsed = updateSchoolSchema.safeParse(req.body);
       if (!parsed.success) {
         return res
@@ -222,6 +244,7 @@ router.patch(
   async (req, res, next) => {
     try {
       if (rejectPasspilotKioskSettingsBypass(req, res)) return;
+      if (rejectGoPilotSettingsBypass(req, res)) return;
       const parsed = updateSchoolSchema.safeParse(req.body);
       if (!parsed.success) {
         return res

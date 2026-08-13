@@ -1,6 +1,5 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { X, Car, Plus, Trash2, Search, CheckCircle2, RefreshCw, UserPlus } from 'lucide-react';
-import { QRCodeSVG } from 'qrcode.react';
 import api from '../../../../shared/utils/api';
 
 // ─── CAR NUMBERS TAB ──────────────────────────────────────────────
@@ -16,11 +15,9 @@ export default function CarNumbersTab({ schoolId, students }) {
   const [autoAssigning, setAutoAssigning] = useState(false);
   const [editingGroupId, setEditingGroupId] = useState(null);
   const [editingCarNumber, setEditingCarNumber] = useState('');
-  const [showInviteGroupId, setShowInviteGroupId] = useState(null);
   const [addingToGroupId, setAddingToGroupId] = useState(null);
   const [addSearchTerm, setAddSearchTerm] = useState('');
 
-  const clientUrl = window.location.origin;
 
   const loadGroups = useCallback(async () => {
     if (!schoolId) return;
@@ -119,6 +116,7 @@ export default function CarNumbersTab({ schoolId, students }) {
   };
 
   const handleRemoveStudent = async (groupId, studentId) => {
+    if (!window.confirm('Remove this student from the car-number group? The student record will remain.')) return;
     try {
       await api.delete(`/family-groups/${groupId}/students/${studentId}`);
       await loadGroups();
@@ -126,6 +124,7 @@ export default function CarNumbersTab({ schoolId, students }) {
   };
 
   const handleDeleteGroup = async (groupId) => {
+    if (!window.confirm('Delete this car-number group? Student records and dismissal history will remain.')) return;
     try {
       await api.delete(`/family-groups/${groupId}`);
       await loadGroups();
@@ -324,9 +323,6 @@ export default function CarNumbersTab({ schoolId, students }) {
                         </span>
                       )}
                       {(g.familyName || g.family_name) && <span className="text-sm text-gray-500 dark:text-slate-400">{g.familyName || g.family_name}</span>}
-                      {(g.claimedByUserId || g.claimed_by_user_id) && (
-                        <span className="text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-1.5 py-0.5 rounded-full">Linked</span>
-                      )}
                     </div>
                     <div className="flex items-center gap-2">
                       <button
@@ -335,13 +331,6 @@ export default function CarNumbersTab({ schoolId, students }) {
                         title="Add student"
                       >
                         <UserPlus className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => setShowInviteGroupId(showInviteGroupId === g.id ? null : g.id)}
-                        className="text-xs text-green-600 dark:text-green-400 hover:text-green-700 font-medium px-2 py-1 rounded hover:bg-green-50 dark:hover:bg-green-900/20"
-                        title="Share invite with parent"
-                      >
-                        QR
                       </button>
                       <button onClick={() => { setEditingGroupId(g.id); setEditingCarNumber(g.carNumber || g.car_number); }} className="text-xs text-indigo-500 hover:text-indigo-700 font-medium px-2 py-1 rounded hover:bg-indigo-50">
                         Edit #
@@ -409,20 +398,6 @@ export default function CarNumbersTab({ schoolId, students }) {
                       </div>
                     );
                   })()}
-                  {showInviteGroupId === g.id && (g.inviteToken || g.invite_token) && (
-                    <div className="mt-3 pt-3 border-t dark:border-slate-700 flex flex-col items-center">
-                      <QRCodeSVG value={`${clientUrl}/register?invite=${g.inviteToken || g.invite_token}`} size={120} />
-                      <p className="text-xs text-gray-400 dark:text-slate-500 mt-2 break-all text-center max-w-[200px]">
-                        {`${clientUrl}/register?invite=${g.inviteToken || g.invite_token}`}
-                      </p>
-                      <button
-                        onClick={() => navigator.clipboard.writeText(`${clientUrl}/register?invite=${g.inviteToken || g.invite_token}`)}
-                        className="mt-2 text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
-                      >
-                        Copy Link
-                      </button>
-                    </div>
-                  )}
                 </div>
               ))}
             </div>

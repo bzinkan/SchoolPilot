@@ -4,6 +4,7 @@ import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
+import { requireRole } from "../../middleware/requireRole.js";
 import {
   getDashboardTabs,
   createDashboardTab,
@@ -39,7 +40,7 @@ import {
   effectiveSharedChromebookLoginMethod,
   normalizeSharedChromebookLoginMethod,
 } from "../../services/classpilotSharedChromebook.js";
-import { safeStudent } from "../../util/safeStudent.js";
+import { classPilotStudentDto } from "../../util/safeStudent.js";
 
 const router = Router();
 
@@ -77,6 +78,7 @@ const auth = [
   requireSchoolContext,
   requireActiveSchool,
   requireProductLicense("CLASSPILOT"),
+  requireRole("admin", "school_admin", "office_staff", "teacher"),
 ] as const;
 
 // ============================================================================
@@ -336,7 +338,7 @@ router.get("/students", ...auth, async (req, res, next) => {
     return res.json({
       students: assignments.map((assignment) => ({
         ...assignment,
-        student: safeStudent(assignment.student),
+        student: classPilotStudentDto(assignment.student),
       })),
     });
   } catch (err) {

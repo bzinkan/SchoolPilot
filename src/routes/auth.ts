@@ -15,7 +15,6 @@ import {
   getProductLicenses,
   normalizeDomain,
   updateUser,
-  getSchoolBySlug,
 } from "../services/storage.js";
 import { authenticate } from "../middleware/authenticate.js";
 import { authLimiter } from "../middleware/rateLimiter.js";
@@ -28,6 +27,10 @@ import {
 } from "../util/googleOAuthTokenExchange.js";
 import { establishWebSession } from "../services/webSession.js";
 import { clearSessionCookie } from "../config/sessionCookie.js";
+import {
+  isDisabledNativeGoPilotOAuthRedirect,
+  rejectGoPilotParentRegistration,
+} from "../util/gopilotParentContainment.js";
 
 function clientIp(req: any): string | undefined {
   // Trust proxy is set by the app — this gives us the client IP, not ALB
@@ -164,7 +167,9 @@ router.post("/login", authLimiter, async (req, res, next) => {
         activeGradeLevels: m.school.activeGradeLevels,
         mailpilotEntitled: m.school.mailpilotEntitled,
         classpilotEmailMonitoring: m.school.classpilotEmailMonitoring,
-        dismissalTime: m.school.dismissalTime,
+        ...((m.membership.gopilotRole || m.membership.role) !== "parent"
+          ? { dismissalTime: m.school.dismissalTime }
+          : {}),
       })),
     });
   } catch (err) {
@@ -174,7 +179,7 @@ router.post("/login", authLimiter, async (req, res, next) => {
 
 // POST /api/auth/register
 // GoPilot-style: creates user + optionally a school
-router.post("/register", authLimiter, async (req, res, next) => {
+router.post("/register", rejectGoPilotParentRegistration, authLimiter, async (req, res, next) => {
   try {
     const parsed = registerSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -183,22 +188,13 @@ router.post("/register", authLimiter, async (req, res, next) => {
         .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
     }
 
-    const { email, password, firstName, lastName, phone, schoolName, timezone, schoolSlug } =
+    const { email, password, firstName, lastName, phone, schoolName, timezone } =
       parsed.data;
 
     // Check if user exists
     const existing = await getUserByEmail(email);
     if (existing) {
       return res.status(409).json({ error: "Email already registered" });
-    }
-
-    // If schoolSlug provided, verify school exists (parent registration)
-    let parentSchool = null;
-    if (schoolSlug) {
-      parentSchool = await getSchoolBySlug(schoolSlug);
-      if (!parentSchool) {
-        return res.status(404).json({ error: "School not found. Check the code and try again." });
-      }
     }
 
     const hashedPassword = await hashPassword(password);
@@ -215,16 +211,7 @@ router.post("/register", authLimiter, async (req, res, next) => {
     let school = null;
     let membership = null;
 
-    if (parentSchool) {
-      // Parent registration: join existing school
-      school = parentSchool;
-      membership = await createMembership({
-        userId: user.id,
-        schoolId: school.id,
-        role: "parent",
-      });
-
-    } else if (schoolName) {
+    if (schoolName) {
       // Admin registration: create a new school
       school = await createSchool({
         name: schoolName,
@@ -330,11 +317,12 @@ router.get("/me", authenticate, async (req, res, next) => {
     if (schoolId) {
       const productLicenses = await getProductLicenses(schoolId);
       for (const pl of productLicenses) {
-        if (pl.product === "CLASSPILOT" && pl.status === "active")
+        const unexpired = !pl.expiresAt || pl.expiresAt.getTime() > Date.now();
+        if (pl.product === "CLASSPILOT" && pl.status === "active" && unexpired)
           licenses.classPilot = true;
-        if (pl.product === "PASSPILOT" && pl.status === "active")
+        if (pl.product === "PASSPILOT" && pl.status === "active" && unexpired)
           licenses.passPilot = true;
-        if (pl.product === "GOPILOT" && pl.status === "active")
+        if (pl.product === "GOPILOT" && pl.status === "active" && unexpired)
           licenses.goPilot = true;
       }
     }
@@ -367,9 +355,13 @@ router.get("/me", authenticate, async (req, res, next) => {
         kioskRequiresApproval: m.school.kioskRequiresApproval,
         defaultPassDuration: m.school.defaultPassDuration,
         activeGradeLevels: m.school.activeGradeLevels,
-        dismissalTime: m.school.dismissalTime,
+        ...((m.membership.gopilotRole || m.membership.role) !== "parent"
+          ? {
+              dismissalTime: m.school.dismissalTime,
+              carNumber: m.membership.carNumber,
+            }
+          : {}),
         kioskName: m.membership.kioskName,
-        carNumber: m.membership.carNumber,
       })),
     });
   } catch (err) {
@@ -404,6 +396,12 @@ function getFrontendUrl(): string {
   return allowlist[0] || "http://localhost:5173";
 }
 
+/**
+ * The legacy GoPilot Android OAuth callback used an unverified custom URI
+ * scheme. Another installed app could claim that scheme and race the
+ * single-use code, so native GoPilot OAuth stays disabled until a verified
+ * HTTPS App Link is shipped. Staff can still use password authentication.
+ */
 // GET /api/auth/google — Initiate identity-only Google OIDC login
 // Accepts optional ?redirect= to return the user to a specific path after login
 router.get("/google", (req, res, next) => {
@@ -412,6 +410,12 @@ router.get("/google", (req, res, next) => {
   }
 
   const requestedRedirect = String(req.query.redirect || "");
+  if (isDisabledNativeGoPilotOAuthRedirect(requestedRedirect)) {
+    return res.status(410).json({
+      error: "Google sign-in is unavailable in the GoPilot staff app. Use your school account password.",
+      code: "GOPILOT_NATIVE_OAUTH_DISABLED",
+    });
+  }
   const redirectPath = requestedRedirect.startsWith("/") ? requestedRedirect : "";
   const state = crypto.randomBytes(32).toString("base64url");
   const nonce = crypto.randomBytes(32).toString("base64url");
@@ -586,12 +590,23 @@ router.get("/google/callback", async (req, res, next) => {
 
     let redirectAfter = savedRedirect;
 
-    // Resolve /gopilot to the correct role-based path
+    const gopilotRole = firstMembership?.membership.gopilotRole || firstMembership?.membership.role;
+
+    // Resolve /gopilot to the correct role-based path. Historical parent
+    // accounts remain valid identities for unrelated products, but may not be
+    // routed into the retired GoPilot parent portal.
     if (redirectAfter === "/gopilot") {
-      const gopilotRole = firstMembership?.membership.gopilotRole || firstMembership?.membership.role;
-      if (gopilotRole === "parent") redirectAfter = "/gopilot/parent";
-      else if (gopilotRole === "teacher") redirectAfter = "/gopilot/teacher";
+      if (gopilotRole === "teacher") redirectAfter = "/gopilot/teacher";
       // else stays /gopilot (office/admin dashboard)
+    }
+    if (gopilotRole === "parent" && redirectAfter.startsWith("/gopilot")) {
+      redirectAfter = "/gopilot/unavailable";
+    }
+
+    // Never revive the retired unverified custom-scheme callback for an OAuth
+    // session that began before this server version was deployed.
+    if (isDisabledNativeGoPilotOAuthRedirect(redirectAfter)) {
+      return res.redirect(`${frontendUrl}/login?error=native_oauth_disabled`);
     }
 
     // Issue a one-time code (60s TTL, single-use) and put THAT in the URL
@@ -599,12 +614,6 @@ router.get("/google/callback", async (req, res, next) => {
     // Avoids leaking JWTs to browser history, Referer headers, server logs,
     // and native deep-link logs.
     const oneTimeCode = issueAuthCode(token);
-
-    // Native GoPilot app: redirect via deep link back into the app
-    if (redirectAfter.startsWith("/gopilot")) {
-      const deepLink = `com.schoolpilot.gopilot://auth/callback?code=${encodeURIComponent(oneTimeCode)}&redirect=${encodeURIComponent(redirectAfter)}`;
-      return res.redirect(deepLink);
-    }
 
     // Web login: go to /login as usual
     return res.redirect(`${frontendUrl}/login?code=${encodeURIComponent(oneTimeCode)}`);

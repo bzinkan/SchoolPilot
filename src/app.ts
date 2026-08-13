@@ -24,25 +24,31 @@ import {
 const PgStore = connectPgSimple(session);
 const isProduction = process.env.NODE_ENV === "production";
 
-function skipsWebSession(req: express.Request): boolean {
-  const path = req.path;
+export function skipsWebSession(
+  req: Pick<express.Request, "path" | "method">
+): boolean {
+  // Session policy runs before the API compatibility rewriter. Normalize both
+  // canonical `/api/classpilot/...` paths and the legacy `/api/...` aliases so
+  // the device/student boundary is expressed once.
+  let path = req.path.startsWith("/api") ? req.path.slice(4) || "/" : req.path;
+  if (path.startsWith("/classpilot/")) path = path.slice("/classpilot".length);
+  const method = req.method.toUpperCase();
+
+  const devicePath = path.startsWith("/device/");
+  const staffScreenshotRead =
+    method === "GET" && /^\/device\/screenshot\/[^/]+\/?$/.test(path);
+  const studentPollResponse =
+    method === "POST" && /^\/polls\/[^/]+\/respond\/?$/.test(path);
+
   return (
-    path.startsWith("/api/classpilot/device/") ||
-    path.startsWith("/api/device/") ||
-    path.startsWith("/api/classpilot/extension/") ||
-    path.startsWith("/api/extension/") ||
-    path.startsWith("/api/classpilot/student/") ||
-    path.startsWith("/api/student/") ||
-    path.startsWith("/api/classpilot/polls/") ||
-    path.startsWith("/api/polls/") ||
-    path.startsWith("/api/classpilot/checkin/") ||
-    path.startsWith("/api/checkin/") ||
-    path === "/api/classpilot/school/status" ||
-    path === "/api/school/status" ||
-    path === "/api/classpilot/register" ||
-    path === "/api/register" ||
-    path === "/api/classpilot/register-student" ||
-    path === "/api/register-student"
+    (devicePath && !staffScreenshotRead) ||
+    path.startsWith("/extension/") ||
+    path.startsWith("/student/") ||
+    studentPollResponse ||
+    (method === "POST" && path === "/checkin/respond") ||
+    path === "/school/status" ||
+    (method === "POST" && path === "/register") ||
+    (method === "POST" && path === "/register-student")
   );
 }
 

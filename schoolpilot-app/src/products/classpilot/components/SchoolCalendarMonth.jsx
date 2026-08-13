@@ -158,18 +158,18 @@ function SchoolCalendarDayButton({ day, modifiers, className, children, disabled
   const dateKey = day.isoDate;
   const isClosure = Boolean(modifiers.nonInstructional);
   const isLocked = disabled || modifiers.past || modifiers.weekend;
-  let status = "Automatic classes run";
+  let status = "Automatic schedules run";
 
   if (modifiers.weekend) status = "Weekend · locked";
-  else if (isClosure && modifiers.past) status = "No automatic classes · locked";
+  else if (isClosure && modifiers.past) status = "No automatic schedules · locked";
   else if (modifiers.past) status = "Past date · locked";
-  else if (isClosure) status = "No automatic classes";
+  else if (isClosure) status = "No automatic schedules";
 
   const action = isLocked
     ? ""
     : isClosure
-      ? " Activate automatic classes for this date."
-      : " Mark this date as no automatic classes.";
+      ? " Activate automatic schedules for this date."
+      : " Mark this date as no automatic schedules.";
 
   useEffect(() => {
     if (modifiers.focused) buttonRef.current?.focus();
@@ -254,7 +254,7 @@ function CalendarLoadError({ error, onRetry }) {
   );
 }
 
-function LoadedSchoolCalendar({ initialProjection, queryKey, onDirtyChange, onMonthChange }) {
+function LoadedSchoolCalendar({ initialProjection, queryKey, onDirtyChange, onMonthChange, apiBasePath }) {
   const { toast } = useToast();
   const [baseline, setBaseline] = useState(initialProjection);
   const [draft, setDraft] = useState(() => new Set(initialProjection.nonInstructionalDates));
@@ -314,7 +314,7 @@ function LoadedSchoolCalendar({ initialProjection, queryKey, onDirtyChange, onMo
       if (mode === "save") {
         const response = await apiRequest(
           "PUT",
-          `/classpilot/admin/instructional-calendar/${baseline.month}`,
+          `${apiBasePath}/${baseline.month}`,
           { expectedRevision, nonInstructionalDates: dates },
         );
         saved = normalizeProjection(response, baseline.month);
@@ -325,7 +325,7 @@ function LoadedSchoolCalendar({ initialProjection, queryKey, onDirtyChange, onMo
       try {
         const response = await apiRequest(
           "GET",
-          `/classpilot/admin/instructional-calendar?month=${encodeURIComponent(baseline.month)}`,
+          `${apiBasePath}?month=${encodeURIComponent(baseline.month)}`,
         );
         const verified = normalizeProjection(response, baseline.month);
         if (verified && saved && verified.revision > saved.revision) {
@@ -490,7 +490,7 @@ function LoadedSchoolCalendar({ initialProjection, queryKey, onDirtyChange, onMo
                 School Calendar
               </CardTitle>
               <CardDescription className="max-w-2xl text-slate-300">
-                Mark school closures and other non-instructional weekdays. Automatic ClassPilot sessions will not run on amber dates.
+                Mark school closures and other non-instructional weekdays. Automatic school-day schedules will not run on amber dates.
               </CardDescription>
             </div>
             <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -602,8 +602,8 @@ function LoadedSchoolCalendar({ initialProjection, queryKey, onDirtyChange, onMo
           </div>
 
           <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-muted-foreground" aria-label="Calendar legend">
-            <span className="flex items-center gap-2"><span className="h-3 w-3 rounded-sm border bg-background" /> Automatic classes run</span>
-            <span className="flex items-center gap-2"><span className="h-3 w-3 rounded-sm border border-amber-300 bg-amber-100 dark:bg-amber-950" /> No automatic classes</span>
+            <span className="flex items-center gap-2"><span className="h-3 w-3 rounded-sm border bg-background" /> Automatic schedules run</span>
+            <span className="flex items-center gap-2"><span className="h-3 w-3 rounded-sm border border-amber-300 bg-amber-100 dark:bg-amber-950" /> No automatic schedules</span>
             <span className="flex items-center gap-2"><span className="h-3 w-3 rounded-sm bg-muted" /> Locked</span>
             <span className="flex items-center gap-2"><span className="h-3 w-3 rounded-sm outline outline-2 outline-primary" /> Today</span>
           </div>
@@ -675,7 +675,7 @@ function LoadedSchoolCalendar({ initialProjection, queryKey, onDirtyChange, onMo
                 aria-pressed={rangeAction === "close"}
                 onClick={() => setRangeAction("close")}
               >
-                No automatic classes
+                No automatic schedules
               </Button>
               <Button
                 type="button"
@@ -683,7 +683,7 @@ function LoadedSchoolCalendar({ initialProjection, queryKey, onDirtyChange, onMo
                 aria-pressed={rangeAction === "open"}
                 onClick={() => setRangeAction("open")}
               >
-                Automatic classes run
+                Automatic schedules run
               </Button>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -743,14 +743,19 @@ function formatDateKeyForZone(date, timeZone) {
   return `${values.year}-${values.month}-${values.day}`;
 }
 
-export default function SchoolCalendarMonth({ month, onDirtyChange, onMonthChange }) {
-  const queryKey = ["classpilot-admin-instructional-calendar", month];
+export default function SchoolCalendarMonth({
+  month,
+  onDirtyChange,
+  onMonthChange,
+  apiBasePath = "/classpilot/admin/instructional-calendar",
+}) {
+  const queryKey = ["instructional-calendar", apiBasePath, month];
   const calendarQuery = useQuery({
     queryKey,
     queryFn: async () => {
       const response = await apiRequest(
         "GET",
-        `/classpilot/admin/instructional-calendar?month=${encodeURIComponent(month)}`,
+        `${apiBasePath}?month=${encodeURIComponent(month)}`,
       );
       const projection = normalizeProjection(response, month);
       if (!projection) throw new Error("The server returned an invalid school calendar.");
@@ -770,6 +775,7 @@ export default function SchoolCalendarMonth({ month, onDirtyChange, onMonthChang
       queryKey={queryKey}
       onDirtyChange={onDirtyChange}
       onMonthChange={onMonthChange}
+      apiBasePath={apiBasePath}
     />
   );
 }

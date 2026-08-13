@@ -39,6 +39,26 @@ export async function logAudit(entry: {
   }
 }
 
+/**
+ * Record a privileged mutation before returning success to the caller.
+ * Unlike best-effort telemetry, this intentionally propagates failures so a
+ * staff-management response can never claim an unaudited success.
+ */
+export async function logAuditStrict(entry: Parameters<typeof logAudit>[0]): Promise<void> {
+  await schedulerDb.insert(auditLogs).values({
+    schoolId: entry.schoolId ?? null,
+    userId: entry.userId ?? null,
+    userEmail: entry.userEmail ?? null,
+    userRole: entry.userRole ?? null,
+    action: entry.action,
+    entityType: entry.entityType ?? null,
+    entityId: entry.entityId ?? null,
+    entityName: entry.entityName ?? null,
+    changes: entry.changes ?? null,
+    metadata: entry.metadata ?? null,
+  });
+}
+
 export async function getAuditLogs(options: {
   schoolId?: string;
   userId?: string;

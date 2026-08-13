@@ -32,7 +32,7 @@ import {
   groupHasTeachingHistory,
 } from "../../services/storage.js";
 import { userBelongsToSchool } from "../../services/passpilotAccess.js";
-import { safeStudent } from "../../util/safeStudent.js";
+import { classPilotStudentDto } from "../../util/safeStudent.js";
 import { freezeScheduledOccurrenceIfDue } from "../../services/classpilotScheduledStart.js";
 
 const router = Router();
@@ -65,6 +65,7 @@ const auth = [
   requireSchoolContext,
   requireActiveSchool,
   requireProductLicense("CLASSPILOT"),
+  requireRole("admin", "school_admin", "office_staff", "teacher"),
 ] as const;
 
 // ============================================================================
@@ -112,7 +113,7 @@ router.get("/:id", ...auth, async (req, res, next) => {
 
     const students = (await getGroupStudents(group.id)).map((row) => ({
       ...row,
-      student: safeStudent(row.student),
+      student: classPilotStudentDto(row.student),
     }));
     const subgroups = await getSubgroupsByGroup(group.id);
 

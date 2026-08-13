@@ -83,7 +83,7 @@ import { classifyUrl } from "../../services/aiClassification.js";
 import { recordBrowserSafetyTimeline } from "./competitive.js";
 import { runWithTenantContext } from "../../middleware/tenantContext.js";
 import { scopedDeviceTargets } from "../../services/classpilotDeviceScope.js";
-import { safeStudent, safeStudents } from "../../util/safeStudent.js";
+import { classPilotStudentDto, classPilotStudentDtos } from "../../util/safeStudent.js";
 import {
   CLASSPILOT_ENROLLMENT_KEY_HEADER,
   enrollmentKeyFromRequest,
@@ -691,7 +691,7 @@ async function completeStudentDeviceLogin(options: {
   return {
     success: true,
     device,
-    student: safeStudent(options.student),
+    student: classPilotStudentDto(options.student),
     studentToken,
     manualExpiresInSeconds: 300,
   };
@@ -1540,7 +1540,7 @@ router.get("/device/:deviceId/students", requireDeviceAuth, deviceActionLimiter,
     const students = await getStudentsForDevice(deviceId);
     const active = await getActiveStudentForDevice(deviceId);
     return res.json({
-      students: safeStudents(students),
+      students: classPilotStudentDtos(students),
       activeStudentId: active?.student.id || null,
     });
   } catch (err) {

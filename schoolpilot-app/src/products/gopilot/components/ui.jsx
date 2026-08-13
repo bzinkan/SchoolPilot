@@ -1,10 +1,7 @@
 // Shared GoPilot UI primitives (light theme).
 //
-// Extracted from the previously duplicated inline copies in ParentOnboarding
-// and TeacherView. ParentApp and DismissalDashboard intentionally keep their
-// own inline kits: ParentApp's uses different spacing/radii (gap-1 badges,
-// rounded-xl buttons, rounded-2xl cards) and DismissalDashboard's is
-// dark-mode aware, so folding them in here would change their rendering.
+// Staff workflow pages share these light-theme controls. The dismissal
+// dashboard keeps its own dark-mode-aware primitives for its denser queue UI.
 
 export const Badge = ({ children, variant = 'default', size = 'md', pulse = false }) => {
   const variants = {

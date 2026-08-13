@@ -1,19 +1,25 @@
 import { useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import api, { setApiToken } from '../shared/utils/api';
-import { saveToken } from '../native/storage';
+import api from '../shared/utils/api';
 import Spinner from '../shared/components/Spinner';
+import { useNative } from '../contexts/NativeContext';
 
 export default function AuthCallback() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { refetchUser } = useAuth();
+  const { acceptToken, refetchUser } = useAuth();
+  const { isNative, product } = useNative();
   const processed = useRef(false);
 
   useEffect(() => {
     if (processed.current) return;
     processed.current = true;
+
+    if (isNative && product === 'gopilot') {
+      navigate('/login?error=native_oauth_disabled', { replace: true });
+      return;
+    }
 
     // OAuth callback uses one-time code (60s TTL, single-use). Exchange it for the JWT.
     const code = searchParams.get('code');
@@ -23,22 +29,20 @@ export default function AuthCallback() {
     }
 
     api.post('/auth/exchange-code', { code })
-      .then((res) => {
+      .then(async (res) => {
         const token = res.data?.token;
         if (!token) {
           navigate('/login?error=oauth_failed', { replace: true });
           return;
         }
-        setApiToken(token);
-        saveToken(token);
-        return refetchUser().then(() => {
-          navigate('/login', { replace: true });
-        });
+        await acceptToken(token);
+        await refetchUser();
+        navigate('/login', { replace: true });
       })
       .catch(() => {
         navigate('/login?error=oauth_failed', { replace: true });
       });
-  }, [searchParams, navigate, refetchUser]);
+  }, [searchParams, navigate, acceptToken, refetchUser, isNative, product]);
 
   return (
     <div className="flex min-h-screen items-center justify-center">

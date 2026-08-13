@@ -27,9 +27,10 @@ export function LicenseProvider({ children }) {
     let roleBasedDefaultPath = defaultPath;
     // Use gopilotRole override if set, otherwise fall back to base role
     const gopilotRole = activeMembership?.gopilotRole || role;
-    // Parents with GoPilot go to parent view
-    if (hasGoPilot && gopilotRole === 'parent') {
-      roleBasedDefaultPath = '/gopilot/parent';
+    // GoPilot is staff-only. Historical parent memberships remain stored but
+    // no longer grant access to a GoPilot product surface.
+    if (hasGoPilot && gopilotRole === 'parent' && defaultProduct === 'GOPILOT') {
+      roleBasedDefaultPath = '/gopilot/unavailable';
     }
     // Teachers default into GoPilot only when GoPilot is the selected product.
     // Shared-product schools may have ClassPilot teachers without GoPilot homerooms.

@@ -55,7 +55,7 @@ export default function DeleteAccount() {
             </li>
             <li className="flex items-start gap-2">
               <span className="text-red-500 mt-1">&#x2022;</span>
-              Your dismissal history and check-in records will be anonymized
+              Your dismissal history and staff-recorded arrival records will be anonymized
             </li>
             <li className="flex items-start gap-2">
               <span className="text-red-500 mt-1">&#x2022;</span>

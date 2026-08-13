@@ -15,6 +15,10 @@ audit-evidence
 
 # Release keystores
 *.keystore
+*.jks
+*.p12
+*.pem
+*.key
 
 # Android build outputs
 android-gopilot/app/build/

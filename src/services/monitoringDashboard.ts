@@ -1,6 +1,7 @@
 import { and, desc, eq, gte, lt, or, sql, type SQL } from "drizzle-orm";
 import db, { pool, sessionPool } from "../db.js";
 import { getIO } from "../realtime/socketio.js";
+import { getSocketIoRedisHealth } from "../realtime/socketio-redis.js";
 import { errorLogs, type ErrorLog } from "../schema/shared.js";
 import errorMonitor, {
   getAlertingStatus,
@@ -233,6 +234,25 @@ export async function buildMonitoringHealthSnapshot(
     ? { ok: true, clients: io.engine.clientsCount }
     : { ok: false, error: "not initialized" };
   if (!io) coreOk = false;
+
+  const gopilotRedisRelay = getSocketIoRedisHealth();
+  checks.gopilotRedisRelay = {
+    ok: gopilotRedisRelay.healthy,
+    ...gopilotRedisRelay,
+  };
+  if (gopilotRedisRelay.configured && !gopilotRedisRelay.healthy) {
+    errorMonitor.trackError(
+      "websocket_error",
+      new Error("GoPilot Redis relay is unavailable"),
+      {
+        job: "health_endpoint",
+        messageType: "gopilot-redis-relay",
+        errorCode: "redis_relay_unhealthy",
+      },
+      { persist: false, priority: "high" }
+    );
+    coreOk = false;
+  }
 
   const alerting = getAlertingStatus();
   checks.alerting = alerting.ok

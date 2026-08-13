@@ -1,8 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Upload, X, Users, Plus, Trash2, Edit, ChevronRight, Search, CheckCircle2, AlertCircle, ArrowLeft, Download, RefreshCw, Save, QrCode, Printer } from 'lucide-react';
-import { QRCodeSVG } from 'qrcode.react';
-import { useGoPilotAuth } from '../../../../hooks/useGoPilotAuth';
+import { Upload, X, Users, Plus, Trash2, Edit, ChevronRight, Search, CheckCircle2, AlertCircle, ArrowLeft, Download, RefreshCw, Save } from 'lucide-react';
 import api from '../../../../shared/utils/api';
 import { GoogleLogo, GRADES, PAGE_SIZE, detectGradeFromName } from './constants';
 import ImportInClassPilotNotice from '../../../../shared/components/ImportInClassPilotNotice';
@@ -21,7 +19,6 @@ function needsGoogleRosterConnector(err) {
 }
 
 export default function StudentRoster({ students, schoolId, onImport, onRefresh, onAdd, onUpdate, onDelete, onBulkDelete }) {
-  const { currentSchool } = useGoPilotAuth();
   const navigate = useNavigate();
   const { consolidated, canLinkToClassPilot, importPath } = useStudentImportHome();
   const [gradeFilter, setGradeFilter] = useState('All');
@@ -44,15 +41,7 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
   const [wsImporting, setWsImporting] = useState(false);
   const [wsStep, setWsStep] = useState('orgunits'); // 'orgunits' | 'users'
   const [wsConnectorRequired, setWsConnectorRequired] = useState(false);
-  const [showQrPrint, setShowQrPrint] = useState(false);
-  const [schoolSettings, setSchoolSettings] = useState({});
   const fileInputRef = useRef(null);
-
-  // Load school settings for QR toggle
-  useEffect(() => {
-    if (!schoolId) return;
-    api.get(`/schools/${schoolId}/settings`).then(r => setSchoolSettings(r.data || {})).catch(() => {});
-  }, [schoolId]);
 
   // Get unique grades from students
   const studentGrades = [...new Set(students.map(s => s.grade || 'Unknown'))].sort((a, b) => {
@@ -160,8 +149,8 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
           bus_route: editData.bus_route,
         }
       : editData;
-    await onUpdate(editingId, payload);
-    setEditingId(null);
+    const updated = await onUpdate(editingId, payload);
+    if (updated !== false) setEditingId(null);
   };
 
   return (
@@ -174,7 +163,7 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
       )}
 
       {/* Import Bar */}
-      {(!consolidated || schoolSettings.checkInMethod === 'qr') && (
+      {!consolidated && (
         <div className="bg-white dark:bg-slate-900 rounded-xl border dark:border-slate-700 p-4 flex flex-wrap items-center gap-3">
         {!consolidated && (
           <>
@@ -192,12 +181,6 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
               Download Template
             </button>
           </>
-        )}
-        {schoolSettings.checkInMethod === 'qr' && (
-          <button onClick={() => setShowQrPrint(true)} className="flex items-center gap-2 px-4 py-2 border dark:border-slate-700 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-slate-800 dark:text-slate-200">
-            <QrCode className="w-4 h-4" />
-            Print QR Codes
-          </button>
         )}
         {!consolidated && (
           <>
@@ -482,44 +465,6 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
         />
       )}
 
-      {/* QR Code Print Modal */}
-      {showQrPrint && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-auto">
-            <div className="flex items-center justify-between p-4 border-b dark:border-slate-700 print:hidden">
-              <h3 className="text-lg font-bold dark:text-white">QR Codes — Student Linking</h3>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => window.print()}
-                  className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"
-                >
-                  <Printer className="w-4 h-4" />
-                  Print
-                </button>
-                <button onClick={() => setShowQrPrint(false)} className="p-2 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg dark:text-slate-300">
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-            <div className="p-6 grid grid-cols-2 md:grid-cols-3 gap-4 print:grid-cols-3">
-              {(selectedIds.size > 0 ? students.filter(s => selectedIds.has(s.id)) : students).map(student => (
-                <div key={student.id} className="border dark:border-slate-700 rounded-lg p-4 text-center break-inside-avoid">
-                  <QRCodeSVG
-                    value={`${window.location.origin}/gopilot/link?school=${currentSchool?.slug || ''}&code=${student.student_code}`}
-                    size={120}
-                    className="mx-auto mb-2"
-                  />
-                  <p className="font-bold text-sm dark:text-white">{student.firstName} {student.lastName}</p>
-                  <p className="text-xs text-gray-500 dark:text-slate-400">
-                    {student.grade ? `Grade ${student.grade}` : ''}{student.grade && student.homeroom_name ? ' • ' : ''}{student.homeroom_name || ''}
-                  </p>
-                  <p className="text-xs text-gray-400 dark:text-slate-500 mt-1 font-mono">{student.student_code}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -788,7 +733,8 @@ export function AddStudentForm({ onAdd, onClose }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!form.first_name.trim() || !form.last_name.trim()) return;
-    await onAdd(form);
+    const added = await onAdd(form);
+    if (added === false) return;
     setForm({ first_name: '', last_name: '', email: '', grade: '', dismissal_type: 'car', bus_route: '' });
     onClose();
   };
@@ -797,31 +743,31 @@ export function AddStudentForm({ onAdd, onClose }) {
     <div className="bg-white dark:bg-slate-900 rounded-xl border dark:border-slate-700 p-4">
       <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-3">
         <div>
-          <label className="block text-xs font-medium text-gray-600 dark:text-slate-300 mb-1">First Name *</label>
-          <input value={form.first_name} onChange={e => setForm(f => ({ ...f, first_name: e.target.value }))}
+          <label htmlFor="gopilot-add-first-name" className="block text-xs font-medium text-gray-600 dark:text-slate-300 mb-1">First Name *</label>
+          <input id="gopilot-add-first-name" value={form.first_name} onChange={e => setForm(f => ({ ...f, first_name: e.target.value }))}
             className="border dark:border-slate-600 rounded-lg px-3 py-2 text-sm w-36 dark:bg-slate-800 dark:text-white" required />
         </div>
         <div>
-          <label className="block text-xs font-medium text-gray-600 dark:text-slate-300 mb-1">Last Name *</label>
-          <input value={form.last_name} onChange={e => setForm(f => ({ ...f, last_name: e.target.value }))}
+          <label htmlFor="gopilot-add-last-name" className="block text-xs font-medium text-gray-600 dark:text-slate-300 mb-1">Last Name *</label>
+          <input id="gopilot-add-last-name" value={form.last_name} onChange={e => setForm(f => ({ ...f, last_name: e.target.value }))}
             className="border dark:border-slate-600 rounded-lg px-3 py-2 text-sm w-36 dark:bg-slate-800 dark:text-white" required />
         </div>
         <div>
-          <label className="block text-xs font-medium text-gray-600 dark:text-slate-300 mb-1">Email</label>
-          <input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+          <label htmlFor="gopilot-add-email" className="block text-xs font-medium text-gray-600 dark:text-slate-300 mb-1">Email</label>
+          <input id="gopilot-add-email" type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
             className="border dark:border-slate-600 rounded-lg px-3 py-2 text-sm w-48 dark:bg-slate-800 dark:text-white" />
         </div>
         <div>
-          <label className="block text-xs font-medium text-gray-600 dark:text-slate-300 mb-1">Grade</label>
-          <select value={form.grade} onChange={e => setForm(f => ({ ...f, grade: e.target.value }))}
+          <label htmlFor="gopilot-add-grade" className="block text-xs font-medium text-gray-600 dark:text-slate-300 mb-1">Grade</label>
+          <select id="gopilot-add-grade" value={form.grade} onChange={e => setForm(f => ({ ...f, grade: e.target.value }))}
             className="border dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white">
             <option value="">--</option>
             {GRADES.map(g => <option key={g} value={g}>{g}</option>)}
           </select>
         </div>
         <div>
-          <label className="block text-xs font-medium text-gray-600 dark:text-slate-300 mb-1">Dismissal</label>
-          <select value={form.dismissal_type} onChange={e => setForm(f => ({ ...f, dismissal_type: e.target.value }))}
+          <label htmlFor="gopilot-add-dismissal" className="block text-xs font-medium text-gray-600 dark:text-slate-300 mb-1">Dismissal</label>
+          <select id="gopilot-add-dismissal" value={form.dismissal_type} onChange={e => setForm(f => ({ ...f, dismissal_type: e.target.value }))}
             className="border dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white">
             <option value="car">Car</option>
             <option value="bus">Bus</option>

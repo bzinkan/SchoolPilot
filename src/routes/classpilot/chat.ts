@@ -5,6 +5,7 @@ import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
+import { requireRole } from "../../middleware/requireRole.js";
 import { requireDeviceAuth } from "../../middleware/requireDeviceAuth.js";
 import {
   getChatMessages,
@@ -53,6 +54,7 @@ const staffAuth = [
   requireSchoolContext,
   requireActiveSchool,
   requireProductLicense("CLASSPILOT"),
+  requireRole("admin", "school_admin", "office_staff", "teacher"),
 ] as const;
 
 const pollResponseLimiter = rateLimit({

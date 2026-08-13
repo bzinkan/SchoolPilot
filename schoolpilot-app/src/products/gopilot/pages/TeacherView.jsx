@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Car, Bus, PersonStanding, Clock, Users, Bell, Check, X,
   ChevronRight, ChevronDown, AlertTriangle, CheckCircle2, Timer,
-  Volume2, VolumeX, LogOut, Home, RefreshCw, User,
+  LogOut, Home, RefreshCw, User,
   AlertCircle, Send, Coffee, Hand, MapPin, Smartphone, Filter,
-  Loader2, ArrowRight, Megaphone, ClipboardCheck, MessageSquare
+  Loader2, ArrowRight, Megaphone, ClipboardCheck
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useGoPilotAuth } from '../../../hooks/useGoPilotAuth';
@@ -15,24 +15,6 @@ import api from '../../../shared/utils/api';
 import { useAbsentStudents } from '../../../hooks/useAbsentStudents';
 import { AttendancePanel } from '../../../components/AttendancePanel';
 import { Badge, Button, Card } from '../components/ui';
-
-const normalizeChangeRequest = (change, fallbackStudentName = '') => ({
-  id: change.id,
-  studentId: change.studentId,
-  studentName: change.student
-    ? `${change.student.firstName} ${change.student.lastName}`.trim()
-    : fallbackStudentName,
-  fromType: change.fromType,
-  toType: change.toType,
-  busRoute: change.busRoute,
-  note: change.note,
-  status: change.status || 'pending',
-  acknowledgedAt: change.acknowledgedAt,
-  acknowledgedBy: change.acknowledgedBy,
-  reviewedAt: change.reviewedAt,
-  reviewedBy: change.reviewedBy,
-  createdAt: change.createdAt,
-});
 
 const sessionStatusMeta = {
   not_started: { label: 'Not Started', className: 'bg-gray-100 text-gray-600', dot: 'bg-gray-400' },
@@ -138,7 +120,7 @@ const mergeQueueState = (student, queueItem, override) => {
     dismissedAt: queueItem?.dismissed_at || queueItem?.dismissedAt ? new Date(queueItem.dismissed_at || queueItem.dismissedAt) : null,
     releasedAt: queueItem?.released_at || queueItem?.releasedAt ? new Date(queueItem.released_at || queueItem.releasedAt) : null,
     zone: queueItem?.zone || null,
-    guardian: queueItem ? (queueItem.guardian_name || queueItem.guardianName || student.guardian || null) : null,
+    pickupGroupLabel: queueItem ? (queueItem.pickupGroupLabel || queueItem.pickup_group_label || null) : null,
     checkInMethod: queueItem?.check_in_method || queueItem?.checkInMethod || null,
     holdReason: queueItem?.hold_reason || queueItem?.holdReason || null,
   };
@@ -155,7 +137,6 @@ export default function TeacherView() {
 
   const { unavailableIds, attendanceStatusByStudent } = useAbsentStudents('gopilot');
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [soundEnabled, setSoundEnabled] = useState(true);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -164,16 +145,6 @@ export default function TeacherView() {
   const [session, setSession] = useState(null);
   const [students, setStudents] = useState([]);
   const [overrides, setOverrides] = useState({});
-  const [busRoutes, setBusRoutes] = useState([]);
-  const [changeRequests, setChangeRequests] = useState([]);
-  const [showNotifications, setShowNotifications] = useState(false);
-  const [showNoteFor, setShowNoteFor] = useState(null);
-  const [unreadChangeCount, setUnreadChangeCount] = useState(0);
-  const [changeActionId, setChangeActionId] = useState(null);
-  const [showOverrideFor, setShowOverrideFor] = useState(null);
-  const [overrideType, setOverrideType] = useState('');
-  const [overrideBusRoute, setOverrideBusRoute] = useState('');
-  const [overrideReason, setOverrideReason] = useState('');
   const [retryCount, setRetryCount] = useState(0);
   const teacher = {
     name: user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() : '',
@@ -182,22 +153,7 @@ export default function TeacherView() {
   const rawSessionStatus = session?.status || 'not_started';
   const sessionStatus = rawSessionStatus === 'active' && socket?.connected === false ? 'stale' : rawSessionStatus;
   const sessionMeta = sessionStatusMeta[sessionStatus] || sessionStatusMeta.stale;
-  const isSessionActive = sessionStatus === 'active';
-  const selectedOverrideStudent = useMemo(
-    () => students.find((student) => student.id === showOverrideFor) || null,
-    [students, showOverrideFor]
-  );
-  const busRouteOptions = useMemo(() => {
-    const values = new Set(
-      busRoutes
-        .map((route) => route.routeNumber || route.busRoute || route.name || route.id)
-        .filter(Boolean)
-    );
-    if (selectedOverrideStudent?.permanentBusRoute) values.add(selectedOverrideStudent.permanentBusRoute);
-    if (selectedOverrideStudent?.effectiveBusRoute) values.add(selectedOverrideStudent.effectiveBusRoute);
-    if (overrideBusRoute) values.add(overrideBusRoute);
-    return [...values].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
-  }, [busRoutes, selectedOverrideStudent, overrideBusRoute]);
+  const isSessionActive = rawSessionStatus === 'active';
 
   // Fetch initial data
   useEffect(() => {
@@ -206,7 +162,7 @@ export default function TeacherView() {
 
     const init = async () => {
       try {
-        setLoading(true);
+        if (retryCount === 0) setLoading(true);
         setError(null);
 
         const homeroomsRes = await api.get('/gopilot/homerooms/mine');
@@ -221,23 +177,14 @@ export default function TeacherView() {
 
         if (!cancelled) setHomeroom(myHomeroom);
 
-        const studentsRes = await api.get(`/schools/${currentSchool.id}/students`, { params: { homeroomId: myHomeroom.id } });
+        const studentsRes = await api.get('/gopilot/students', { params: { homeroomId: myHomeroom.id } });
         const sessionRes = await api.get('/sessions/today');
         const sessionData = sessionRes.data?.session || null;
         if (!cancelled) setSession(sessionData);
 
-        try {
-          const busRoutesRes = await api.get('/gopilot/bus-routes');
-          const routes = Array.isArray(busRoutesRes.data) ? busRoutesRes.data : busRoutesRes.data?.routes || [];
-          if (!cancelled) setBusRoutes(routes);
-        } catch {
-          if (!cancelled) setBusRoutes([]);
-        }
-
         const studentList = Array.isArray(studentsRes.data) ? studentsRes.data : studentsRes.data?.students || [];
         let queueItems = [];
         const overrideMap = {};
-        let changes = [];
         if (sessionData?.id) {
           const queueRes = await api.get(`/sessions/${sessionData.id}/queue`, { params: { homeroomId: myHomeroom.id } });
           queueItems = Array.isArray(queueRes.data) ? queueRes.data : queueRes.data?.items || [];
@@ -249,10 +196,6 @@ export default function TeacherView() {
             }
           } catch { /* non-critical */ }
 
-          try {
-            const changesRes = await api.get(`/sessions/${sessionData.id}/changes`);
-            changes = changesRes.data?.changes || [];
-          } catch { /* non-critical */ }
         }
 
         const queueByStudentId = {};
@@ -266,7 +209,6 @@ export default function TeacherView() {
 
         if (!cancelled) {
           setOverrides(overrideMap);
-          setChangeRequests(changes.map(c => normalizeChangeRequest(c)));
           setStudents(merged);
           setLoading(false);
         }
@@ -305,21 +247,42 @@ export default function TeacherView() {
     };
   }, [socket, currentSchool?.id, homeroom?.id]);
 
+  // Socket events are the fast path; periodic snapshots keep the classroom
+  // correct after reconnects or a degraded Redis relay.
+  useEffect(() => {
+    if (!currentSchool?.id || !homeroom?.id) return undefined;
+    const refresh = () => setRetryCount((count) => count + 1);
+    const interval = window.setInterval(
+      refresh,
+      socket?.connected === false ? 5_000 : (session?.status === 'active' ? 15_000 : 60_000),
+    );
+    const refreshVisible = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+    document.addEventListener('visibilitychange', refreshVisible);
+    window.addEventListener('focus', refresh);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', refreshVisible);
+      window.removeEventListener('focus', refresh);
+    };
+  }, [currentSchool?.id, homeroom?.id, session?.status, socket?.connected]);
+
   // Socket event listeners
   useEffect(() => {
     if (!socket) return;
 
-    // student:checked-in — office entered car/bus/walker, student goes to center as RED
+    // A staff-entered arrival moves the student into the waiting queue.
     const handleStudentCheckedIn = (data) => {
       const entry = data.entry || data;
       const studentId = entry.student_id || entry.studentId;
-      const guardianName = entry.guardian_name || entry.guardianName || null;
+      const pickupGroupLabel = entry.pickupGroupLabel || entry.pickup_group_label || null;
       const queueId = entry.id || entry.queueId;
       const checkInMethod = entry.check_in_method || entry.checkInMethod || null;
       setStudents((prev) =>
         prev.map((s) =>
           s.id === studentId
-            ? { ...s, queueStatus: 'waiting', queueId: queueId || s.queueId, guardian: guardianName || s.guardian, checkInMethod: checkInMethod || s.checkInMethod }
+            ? { ...s, queueStatus: 'waiting', queueId: queueId || s.queueId, pickupGroupLabel: pickupGroupLabel || s.pickupGroupLabel, checkInMethod: checkInMethod || s.checkInMethod }
             : s
         )
       );
@@ -328,12 +291,12 @@ export default function TeacherView() {
     const handleStudentCalled = (data) => {
       const entry = data.entry || data;
       const studentId = entry.student_id || entry.studentId;
-      const guardianName = entry.guardian_name || entry.guardianName || null;
+      const pickupGroupLabel = entry.pickupGroupLabel || entry.pickup_group_label || null;
       const queueId = entry.id || entry.queueId;
       setStudents((prev) =>
         prev.map((s) =>
           s.id === studentId
-            ? { ...s, queueStatus: entry.status || 'called', calledAt: new Date(), guardian: guardianName || s.guardian, queueId: queueId || s.queueId, zone: data.zone || entry.zone || s.zone }
+            ? { ...s, queueStatus: entry.status || 'called', calledAt: new Date(), pickupGroupLabel: pickupGroupLabel || s.pickupGroupLabel, queueId: queueId || s.queueId, zone: data.zone || entry.zone || s.zone }
             : s
         )
       );
@@ -351,7 +314,7 @@ export default function TeacherView() {
       );
     };
 
-    // student:dismissed — picked up by office/parent, move to roster as blue
+    // A completed pickup moves the student back to the roster as dismissed.
     const handleStudentDismissed = (data) => {
       const entry = data.entry || data;
       const studentId = entry.student_id || entry.studentId;
@@ -393,22 +356,6 @@ export default function TeacherView() {
       }
     };
 
-    const upsertChangeRequest = ({ change, studentName }) => {
-      const normalized = normalizeChangeRequest(change, studentName || '');
-      setChangeRequests(prev => {
-        const idx = prev.findIndex(cr => cr.id === normalized.id);
-        if (idx === -1) return [normalized, ...prev];
-        const next = [...prev];
-        next[idx] = { ...next[idx], ...normalized, studentName: normalized.studentName || next[idx].studentName };
-        return next;
-      });
-    };
-
-    const handleChangeRequested = ({ change, studentName }) => {
-      upsertChangeRequest({ change, studentName });
-      setUnreadChangeCount(prev => prev + 1);
-    };
-
     const handleTypeUpdated = ({ studentId, dismissalType, busRoute, isOverride }) => {
       setStudents(prev => prev.map(s =>
         s.id === studentId
@@ -442,9 +389,6 @@ export default function TeacherView() {
     socket.on('student:dismissed', handleStudentDismissed);
     socket.on('queue:updated', handleQueueUpdated);
     socket.on('dismissal:override', handleOverride);
-    socket.on('change:requested', handleChangeRequested);
-    socket.on('change:acknowledged', upsertChangeRequest);
-    socket.on('change:resolved', upsertChangeRequest);
     socket.on('student:typeUpdated', handleTypeUpdated);
     socket.on('dismissal:status', refreshSnapshot);
     socket.on('dismissal:started', refreshSnapshot);
@@ -458,9 +402,6 @@ export default function TeacherView() {
       socket.off('student:dismissed', handleStudentDismissed);
       socket.off('queue:updated', handleQueueUpdated);
       socket.off('dismissal:override', handleOverride);
-      socket.off('change:requested', handleChangeRequested);
-      socket.off('change:acknowledged', upsertChangeRequest);
-      socket.off('change:resolved', upsertChangeRequest);
       socket.off('student:typeUpdated', handleTypeUpdated);
       socket.off('dismissal:status', refreshSnapshot);
       socket.off('dismissal:started', refreshSnapshot);
@@ -501,84 +442,19 @@ export default function TeacherView() {
   const inTransitStudents = students.filter(s => s.queueStatus === 'released');
   // LEFT panel: roster (not in queue = grey, dismissed = blue "picked up")
   const rosterStudents = students.filter(s => !s.queueStatus || s.queueStatus === 'dismissed');
-  // Group called students by reason (guardian name)
+  // Group students by the server-provided pickup batch label.
   const calledByReason = {};
   calledStudents.forEach(s => {
-    const key = s.guardian || 'Unknown';
+    const key = s.pickupGroupLabel || 'Unknown';
     if (!calledByReason[key]) calledByReason[key] = [];
     calledByReason[key].push(s);
   });
   const waitingByReason = {};
   waitingStudents.forEach(s => {
-    const key = s.guardian || 'Unknown';
+    const key = s.pickupGroupLabel || 'Unknown';
     if (!waitingByReason[key]) waitingByReason[key] = [];
     waitingByReason[key].push(s);
   });
-
-  // Override handler
-  const handleOverrideSubmit = async () => {
-    if (!session?.id || !showOverrideFor || !overrideType) return;
-    if (!isSessionActive) {
-      setError('Dismissal must be active before changing today\'s dismissal type.');
-      return;
-    }
-    const effectiveBusRoute = overrideType === 'bus'
-      ? (overrideBusRoute.trim() || selectedOverrideStudent?.permanentBusRoute || '').trim()
-      : '';
-    if (overrideType === 'bus' && !effectiveBusRoute) {
-      setError('Choose a bus route before saving this override.');
-      return;
-    }
-    try {
-      await api.post(`/sessions/${session.id}/override`, {
-        studentId: showOverrideFor,
-        overrideType,
-        ...(overrideType === 'bus' ? { busRoute: effectiveBusRoute } : {}),
-        reason: overrideReason || undefined,
-      });
-      const override = { overrideType, reason: overrideReason, busRoute: effectiveBusRoute };
-      setOverrides(prev => ({ ...prev, [showOverrideFor]: override }));
-      setStudents(prev => prev.map(s => s.id === showOverrideFor ? applyOverrideToStudent(s, override) : s));
-      setShowOverrideFor(null);
-      setOverrideType('');
-      setOverrideBusRoute('');
-      setOverrideReason('');
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to change dismissal type');
-    }
-  };
-
-  const handleRevertOverride = async () => {
-    if (!session?.id || !showOverrideFor) return;
-    if (!isSessionActive) {
-      setError('Dismissal must be active before reverting today\'s dismissal type.');
-      return;
-    }
-    try {
-      await api.delete(`/sessions/${session.id}/override/${showOverrideFor}`);
-      setOverrides(prev => { const next = { ...prev }; delete next[showOverrideFor]; return next; });
-      setStudents(prev => prev.map(s => s.id === showOverrideFor ? applyOverrideToStudent(s, null) : s));
-      setShowOverrideFor(null);
-      setOverrideType('');
-      setOverrideBusRoute('');
-      setOverrideReason('');
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to revert dismissal override');
-    }
-  };
-
-  const handleAcknowledgeChangeRequest = async (changeId) => {
-    setChangeActionId(changeId);
-    try {
-      const res = await api.post(`/changes/${changeId}/acknowledge`);
-      const updated = normalizeChangeRequest(res.data?.change || {}, '');
-      setChangeRequests(prev => prev.map(cr => cr.id === changeId ? { ...cr, ...updated, studentName: updated.studentName || cr.studentName } : cr));
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to acknowledge request');
-    } finally {
-      setChangeActionId(null);
-    }
-  };
 
   const getEffectiveType = (student) => {
     const override = overrides[student.id];
@@ -730,82 +606,6 @@ export default function TeacherView() {
                 </p>
               </div>
 
-              <div className="relative">
-                <button
-                  onClick={() => {
-                    const opening = !showNotifications;
-                    setShowNotifications(opening);
-                    if (opening) {
-                      setUnreadChangeCount(0);
-                    }
-                  }}
-                  className="p-1.5 sm:p-2 rounded-lg hover:bg-gray-100 relative"
-                >
-                  <Bell className="w-5 h-5 text-gray-600" />
-                  {unreadChangeCount > 0 && (
-                    <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
-                      {unreadChangeCount}
-                    </span>
-                  )}
-                </button>
-                {showNotifications && (
-                  <div className="absolute right-0 top-full mt-1 w-80 bg-white rounded-xl shadow-xl border z-[100] max-h-96 overflow-y-auto">
-                    <div className="p-3 border-b font-semibold text-sm flex items-center justify-between">
-                      <span>Change Requests</span>
-                      <button onClick={() => setShowNotifications(false)} className="p-1 hover:bg-gray-100 rounded"><X className="w-4 h-4" /></button>
-                    </div>
-                    {changeRequests.length === 0 ? (
-                      <div className="p-4 text-center text-sm text-gray-400">No change requests</div>
-                    ) : (
-                      changeRequests.map((cr, i) => (
-                        <div key={cr.id || i} className={`p-3 border-b last:border-b-0 ${cr.status !== 'pending' ? 'opacity-70' : ''} hover:bg-gray-50`}>
-                          <div className="flex items-center justify-between">
-                            <p className="text-sm font-medium flex items-center gap-1.5">
-                              {cr.studentName}
-                              {cr.status === 'approved' && <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />}
-                              {cr.status === 'rejected' && <X className="w-3.5 h-3.5 text-red-500" />}
-                            </p>
-                            <span className="text-xs text-gray-400">{cr.createdAt ? new Date(cr.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
-                          </div>
-                          <div className="flex items-center gap-2 mt-0.5">
-                            <p className="text-xs text-gray-500">
-                              <span className="capitalize">{cr.fromType}</span> → <span className="capitalize">{cr.toType}</span>
-                              {cr.busRoute && <span> #{cr.busRoute}</span>}
-                            </p>
-                            <span className={`text-[10px] uppercase px-1.5 py-0.5 rounded ${cr.status === 'approved' ? 'bg-green-100 text-green-700' : cr.status === 'rejected' ? 'bg-red-100 text-red-700' : cr.acknowledgedAt ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
-                              {cr.status === 'pending' && cr.acknowledgedAt ? 'Acknowledged' : cr.status}
-                            </span>
-                          </div>
-                          {cr.note && (
-                            <p className="text-xs bg-amber-50 text-amber-800 rounded px-2 py-1 mt-1">
-                              <MessageSquare className="w-3 h-3 inline mr-1" />{cr.note}
-                            </p>
-                          )}
-                          {cr.status === 'pending' && !cr.acknowledgedAt && (
-                            <button
-                              type="button"
-                              disabled={changeActionId === cr.id}
-                              onClick={() => handleAcknowledgeChangeRequest(cr.id)}
-                              className="mt-2 px-2 py-1 text-xs rounded bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-60"
-                            >
-                              Acknowledge
-                            </button>
-                          )}
-                        </div>
-                      ))
-                    )}
-                  </div>
-                )}
-              </div>
-
-              <Button
-                variant={soundEnabled ? 'secondary' : 'ghost'}
-                size="sm"
-                onClick={() => setSoundEnabled(!soundEnabled)}
-              >
-                {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
-              </Button>
-
               <Button
                 variant="ghost"
                 size="sm"
@@ -893,39 +693,13 @@ export default function TeacherView() {
                   <div className="flex-1 min-w-0">
                     <p className={`text-sm font-medium truncate flex items-center gap-1 ${isAbsent ? 'text-gray-500' : isPickedUp ? 'text-blue-700' : 'text-gray-900'}`}>
                       {student.first_name || student.firstName} {student.last_name || student.lastName}
-                      {changeRequests.find(cr => cr.studentId === student.id && cr.note) && (
-                        <button onClick={(e) => {
-                          e.stopPropagation();
-                          setShowNoteFor(showNoteFor === student.id ? null : student.id);
-                        }} className="flex-shrink-0">
-                          <MessageSquare className="w-3.5 h-3.5 text-amber-500" />
-                        </button>
-                      )}
                     </p>
-                    {showNoteFor === student.id && (() => {
-                      const cr = changeRequests.find(c => c.studentId === student.id && c.note);
-                      return cr ? (
-                        <div className="text-xs bg-amber-50 text-amber-800 rounded px-2 py-1 mt-1">
-                          <span className="font-medium">Parent note:</span> {cr.note}
-                          <div className="text-amber-600 mt-0.5 capitalize">{cr.fromType} → {cr.toType}</div>
-                        </div>
-                      ) : null;
-                    })()}
-                    <button
-                      className={`flex items-center gap-1 text-xs ${isSessionActive ? 'text-gray-500 hover:text-indigo-600' : 'text-gray-400 cursor-not-allowed'}`}
-                      disabled={!isSessionActive}
-                      onClick={() => {
-                        setShowOverrideFor(student.id);
-                        setOverrideType(effectiveType);
-                        setOverrideBusRoute(overrides[student.id]?.busRoute || getEffectiveBusRoute(student));
-                        setOverrideReason(overrides[student.id]?.reason || '');
-                      }}
-                    >
+                    <div className="flex items-center gap-1 text-xs text-gray-500">
                       <TypeIcon className="w-3 h-3" />
                       <span className="capitalize">{effectiveType === 'afterschool' ? 'After School' : effectiveType}</span>
                       {getEffectiveBusRoute(student) && effectiveType === 'bus' && <span>#{getEffectiveBusRoute(student)}</span>}
                       {isOverridden && <span className="text-orange-500 font-medium ml-1">Today</span>}
-                    </button>
+                    </div>
                   </div>
                   {isAbsent && (
                     <Badge variant="default" size="sm">{attendanceStatus === 'early_dismissal' ? 'Early Dismissal' : 'Absent'}</Badge>
@@ -1044,7 +818,7 @@ export default function TeacherView() {
                         </div>
                         <div>
                           <p className="font-medium text-gray-900">{student.first_name || student.firstName} {student.last_name || student.lastName}</p>
-                          <p className="text-xs text-green-600">Dismissed from class • {student.guardian}</p>
+                          <p className="text-xs text-green-600">Dismissed from class • {student.pickupGroupLabel}</p>
                         </div>
                       </div>
                       <Badge variant="green" size="sm">
@@ -1063,7 +837,7 @@ export default function TeacherView() {
               <div className="text-center text-gray-400">
                 <Bell className="w-16 h-16 mx-auto mb-4 opacity-30" />
                 <p className="text-lg font-medium">No students called yet</p>
-                <p className="text-sm">Students will appear here when the office checks them in and calls them</p>
+                <p className="text-sm">Students will appear here when the office queues and calls them.</p>
               </div>
             </div>
           )}
@@ -1240,91 +1014,6 @@ export default function TeacherView() {
         </aside>
       </div>
 
-      {/* Dismissal Override Modal */}
-      {showOverrideFor && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm">
-            <div className="p-4 border-b flex items-center justify-between">
-              <h2 className="font-bold">Change Dismissal for Today</h2>
-              <button onClick={() => setShowOverrideFor(null)} className="p-1"><X className="w-5 h-5" /></button>
-            </div>
-            <div className="p-4 space-y-4">
-              <p className="text-xs text-gray-500">This change only applies to today.</p>
-              <div className="grid grid-cols-2 gap-2">
-                {dismissalTypes.map(opt => (
-                  <button
-                    key={opt.id}
-                    onClick={() => {
-                      setOverrideType(opt.id);
-                      if (opt.id === 'bus' && !overrideBusRoute) {
-                        setOverrideBusRoute(selectedOverrideStudent?.permanentBusRoute || selectedOverrideStudent?.effectiveBusRoute || '');
-                      }
-                    }}
-                    className={`p-3 rounded-lg border-2 flex flex-col items-center gap-1 text-sm ${
-                      overrideType === opt.id ? 'border-indigo-600 bg-indigo-50 text-indigo-600' : 'border-gray-200 text-gray-500'
-                    }`}
-                  >
-                    <opt.icon className="w-5 h-5" />
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-              {overrideType === 'bus' && (
-                <div className="space-y-2">
-                  {busRouteOptions.length > 0 && (
-                    <select
-                      value={overrideBusRoute}
-                      onChange={(e) => setOverrideBusRoute(e.target.value)}
-                      className="w-full px-3 py-2 border rounded-lg text-sm bg-white"
-                    >
-                      <option value="">Select bus route</option>
-                      {busRouteOptions.map((route) => (
-                        <option key={route} value={route}>Bus #{route}</option>
-                      ))}
-                    </select>
-                  )}
-                  <input
-                    type="text"
-                    value={overrideBusRoute}
-                    onChange={(e) => setOverrideBusRoute(e.target.value)}
-                    placeholder="Bus route"
-                    className="w-full px-3 py-2 border rounded-lg text-sm"
-                  />
-                </div>
-              )}
-              {overrideType === 'afterschool' && (
-                <input
-                  type="text" value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)}
-                  placeholder="Activity name (required)" className="w-full px-3 py-2 border rounded-lg text-sm"
-                />
-              )}
-              {overrideType !== 'afterschool' && (
-                <input
-                  type="text" value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)}
-                  placeholder="Reason (optional)" className="w-full px-3 py-2 border rounded-lg text-sm"
-                />
-              )}
-              <div className="flex gap-2">
-                {overrides[showOverrideFor] && (
-                  <Button variant="secondary" className="flex-1" onClick={handleRevertOverride} disabled={!isSessionActive}>
-                    Revert to default
-                  </Button>
-                )}
-                <Button variant="secondary" className="flex-1" onClick={() => {
-                  setShowOverrideFor(null);
-                  setOverrideType('');
-                  setOverrideBusRoute('');
-                  setOverrideReason('');
-                }}>Cancel</Button>
-                <Button variant="primary" className="flex-1" onClick={handleOverrideSubmit}
-                  disabled={!isSessionActive || (overrideType === 'afterschool' && !overrideReason.trim()) || (overrideType === 'bus' && !(overrideBusRoute.trim() || selectedOverrideStudent?.permanentBusRoute))}>
-                  Save
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

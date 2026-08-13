@@ -6,6 +6,23 @@ import { pathToFileURL } from "node:url";
 export const REVIEWED_RLS_TABLE_ENABLEMENTS = Object.freeze([
   "classpilot_session_summary_deliveries",
   "passpilot_grade_students",
+  "authorized_pickups",
+  "custody_alerts",
+  "dismissal_changes",
+  "dismissal_overrides",
+  "dismissal_queue",
+  "family_group_students",
+  "homeroom_teachers",
+]);
+
+export const GOPILOT_CHILD_RLS_TABLES = Object.freeze([
+  "authorized_pickups",
+  "custody_alerts",
+  "dismissal_changes",
+  "dismissal_overrides",
+  "dismissal_queue",
+  "family_group_students",
+  "homeroom_teachers",
 ]);
 
 function parseAllowlist(raw) {
@@ -61,10 +78,19 @@ function inspectedRlsEnvironment(taskDefinition, containerName) {
   };
 }
 
-function requireReviewedTable(table) {
-  if (!REVIEWED_RLS_TABLE_ENABLEMENTS.includes(table)) {
-    throw new Error(`RLS table enablement is not reviewed for: ${table}`);
+function requestedTables(table) {
+  const tables = Array.isArray(table)
+    ? table
+    : String(table ?? "").split(",").map((value) => value.trim()).filter(Boolean);
+  if (tables.length === 0 || new Set(tables).size !== tables.length) {
+    throw new Error("RLS table enablement must contain a non-empty, unique reviewed table list");
   }
+  for (const requested of tables) {
+    if (!REVIEWED_RLS_TABLE_ENABLEMENTS.includes(requested)) {
+      throw new Error(`RLS table enablement is not reviewed for: ${requested}`);
+    }
+  }
+  return tables;
 }
 
 export function verifyLiveRlsEnablementSources({
@@ -72,7 +98,7 @@ export function verifyLiveRlsEnablementSources({
   workerTaskDefinition,
   table,
 }) {
-  requireReviewedTable(table);
+  const additions = requestedTables(table);
   const api = inspectedRlsEnvironment(apiTaskDefinition, "api");
   const worker = inspectedRlsEnvironment(workerTaskDefinition, "scheduler-worker");
   if (api.gucEnabled !== "true" || worker.gucEnabled !== "true") {
@@ -85,24 +111,28 @@ export function verifyLiveRlsEnablementSources({
   if (JSON.stringify(apiSet) !== JSON.stringify(workerSet)) {
     throw new Error("Live API and scheduler-worker RLS allowlists must match exactly");
   }
-  if (api.tables.includes(table)) {
+  const alreadyEnabled = additions.filter((requested) => api.tables.includes(requested));
+  if (alreadyEnabled.length > 0) {
     throw new Error(
-      `${table} is already enabled; omit the one-time --enable-rls-table flag`
+      `${alreadyEnabled.join(",")} is already enabled; omit the one-time --enable-rls-table flag`
     );
   }
-  return { previousTables: api.tables, addedTable: table };
+  return additions.length === 1
+    ? { previousTables: api.tables, addedTable: additions[0] }
+    : { previousTables: api.tables, addedTables: additions };
 }
 
 export function addReviewedRlsTable(taskDefinition, { containerName, table }) {
-  requireReviewedTable(table);
+  const additions = requestedTables(table);
   const inspected = inspectedRlsEnvironment(taskDefinition, containerName);
   if (inspected.gucEnabled !== "true") {
     throw new Error("Explicit table enablement requires RLS_GUC_ENABLED=true");
   }
-  if (inspected.tables.includes(table)) {
-    throw new Error(`${table} is already present in ${containerName} RLS_ENABLED_TABLES`);
+  const alreadyEnabled = additions.filter((requested) => inspected.tables.includes(requested));
+  if (alreadyEnabled.length > 0) {
+    throw new Error(`${alreadyEnabled.join(",")} is already present in ${containerName} RLS_ENABLED_TABLES`);
   }
-  inspected.allowlistEntry.value = [...inspected.tables, table].join(",");
+  inspected.allowlistEntry.value = [...inspected.tables, ...additions].join(",");
   return taskDefinition;
 }
 
@@ -111,20 +141,23 @@ export function verifyEnabledRlsCandidates({
   table,
   expectedPreviousTables,
 }) {
-  requireReviewedTable(table);
+  const additions = requestedTables(table);
   const inspected = taskDefinitions.map(({ taskDefinition, containerName }) => ({
     containerName,
     ...inspectedRlsEnvironment(taskDefinition, containerName),
   }));
   for (const candidate of inspected) {
-    if (candidate.gucEnabled !== "true" || !candidate.tables.includes(table)) {
+    if (
+      candidate.gucEnabled !== "true" ||
+      additions.some((requested) => !candidate.tables.includes(requested))
+    ) {
       throw new Error(
-        `${candidate.containerName} does not enforce the explicitly enabled RLS table ${table}`
+        `${candidate.containerName} does not enforce every explicitly enabled RLS table: ${additions.join(",")}`
       );
     }
   }
   const expectedTables = expectedPreviousTables
-    ? [...expectedPreviousTables, table]
+    ? [...expectedPreviousTables, ...additions]
     : inspected[0].tables;
   const expected = JSON.stringify([...expectedTables].sort());
   if (inspected.some((candidate) => JSON.stringify([...candidate.tables].sort()) !== expected)) {
@@ -164,7 +197,11 @@ function main() {
       table,
     });
     process.stdout.write(
-      JSON.stringify({ addedTable: result.addedTable, previousCount: result.previousTables.length })
+      JSON.stringify({
+        addedTable: result.addedTable,
+        addedTables: result.addedTables,
+        previousCount: result.previousTables.length,
+      })
     );
     return;
   }

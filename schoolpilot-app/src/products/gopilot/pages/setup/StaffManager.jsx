@@ -288,6 +288,7 @@ export default function StaffManager({ staff, schoolId, onAdd, onRemove, onUpdat
             {filtered.length === 0 ? (
               <tr><td colSpan={5} className="p-8 text-center text-gray-400 dark:text-slate-500">No staff added yet. Click "Add Staff" to get started.</td></tr>
             ) : filtered.map(s => {
+              const staffName = s.first_name && s.last_name ? `${s.first_name} ${s.last_name}` : s.email || 'staff member';
               const isEditing = editingId === `${s.id}-${s.effectiveRole}`;
               return isEditing ? (
               <tr key={`${s.id}-${s.effectiveRole}`} className="bg-blue-50 dark:bg-blue-900/30">
@@ -356,10 +357,10 @@ export default function StaffManager({ staff, schoolId, onAdd, onRemove, onUpdat
                 </td>
                 <td className="p-3 text-right">
                   <div className="flex items-center justify-end gap-1">
-                    <button onClick={() => startEdit(s)} className="text-gray-400 dark:text-slate-500 hover:text-blue-600">
+                    <button type="button" onClick={() => startEdit(s)} aria-label={`Edit ${staffName}`} className="flex h-10 w-10 items-center justify-center rounded-lg text-gray-400 hover:bg-blue-50 hover:text-blue-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-500 dark:hover:bg-blue-950/40">
                       <Pencil className="w-4 h-4" />
                     </button>
-                    <button onClick={() => onRemove(s.id)} className="text-gray-400 dark:text-slate-500 hover:text-red-600">
+                    <button type="button" onClick={() => onRemove(s.id)} aria-label={`Remove ${staffName}`} className="flex h-10 w-10 items-center justify-center rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 dark:text-slate-500 dark:hover:bg-red-950/40">
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>

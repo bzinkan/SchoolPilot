@@ -3,14 +3,22 @@ import { authenticate } from "../middleware/authenticate.js";
 import { requireSchoolContext } from "../middleware/requireSchoolContext.js";
 import { requireRole } from "../middleware/requireRole.js";
 import { requireActiveSchool } from "../middleware/requireActiveSchool.js";
-import { runWithTenantContext } from "../middleware/tenantContext.js";
 import {
   createTeacherSchema,
   updateUserSchema,
   updateMembershipSchema,
 } from "../schema/validation.js";
 import { hashPassword } from "../util/password.js";
-import { sanitizeSchool } from "../util/sanitizeSchool.js";
+import { logAuditStrict } from "../services/audit.js";
+import { disabledGoPilotParentPortalHandler } from "../util/gopilotParentContainment.js";
+import {
+  isDisabledGoPilotParentRole,
+  sendGoPilotParentPortalDisabled,
+} from "../util/gopilotParentContainment.js";
+import {
+  getRequestGoPilotRole,
+  hasActiveGoPilotLicense,
+} from "../services/gopilotAccess.js";
 import {
   getUserByEmail,
   createUser,
@@ -23,12 +31,8 @@ import {
   updateMembershipForSchool,
   deleteMembershipForSchool,
   getMembershipsWithSchool,
-  getApprovedChildrenForParent,
-  createParentStudentLink,
-  getSchoolBySlug,
-  getStudentByCode,
-  linkParentByCarNumber,
   validateStaffEmailDomainForSchool,
+  getProductLicenses,
 } from "../services/storage.js";
 
 const router = Router();
@@ -37,9 +41,94 @@ function param(req: { params: Record<string, unknown> }, key: string): string {
   return String(req.params[key] ?? "");
 }
 
+function staffUserDto(user: any, goPilotSetup: boolean) {
+  const { password: _password, ...legacy } = user;
+  if (!goPilotSetup) return legacy;
+  return {
+    id: user.id,
+    email: user.email,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    displayName: user.displayName,
+    profileImageUrl: user.profileImageUrl,
+  };
+}
+
 router.use(authenticate);
 
 const schoolContext = [requireSchoolContext, requireActiveSchool] as const;
+const requireBaseAdmin = requireRole("admin");
+const requireBaseStaff = requireRole("admin", "school_admin", "teacher", "office_staff");
+
+function isGoPilotSetupRequest(res: import("express").Response): boolean {
+  return res.locals.goPilotSetup === true;
+}
+
+function rejectCrossProductGoPilotRoleMutation(
+  req: import("express").Request,
+  res: import("express").Response
+): boolean {
+  if (
+    !isGoPilotSetupRequest(res)
+    && Object.prototype.hasOwnProperty.call(req.body ?? {}, "gopilotRole")
+  ) {
+    res.status(400).json({
+      error: "GoPilot roles must be changed from GoPilot staff setup.",
+      code: "GOPILOT_ROLE_CONTEXT_REQUIRED",
+    });
+    return true;
+  }
+  return false;
+}
+
+async function hasActiveIndependentStaffProduct(schoolId: string): Promise<boolean> {
+  const now = Date.now();
+  const licenses = await getProductLicenses(schoolId);
+  return licenses.some((license) =>
+    (license.product === "CLASSPILOT" || license.product === "PASSPILOT")
+    && license.status === "active"
+    && (!license.expiresAt || new Date(license.expiresAt).getTime() > now)
+  );
+}
+
+/** GoPilot setup aliases use the product override role, not the shared base role. */
+const requireStaffManagementRole: import("express").RequestHandler = async (req, res, next) => {
+  const schoolId = res.locals.schoolId!;
+  const role = await getRequestGoPilotRole(req, res);
+  if (isGoPilotSetupRequest(res)) {
+    if (isDisabledGoPilotParentRole(role)) return sendGoPilotParentPortalDisabled(res);
+    if (!(await hasActiveGoPilotLicense(schoolId))) {
+      return res.status(403).json({ error: "Product license required" });
+    }
+    if (role !== "super_admin" && role !== "admin" && role !== "school_admin") {
+      return res.status(403).json({ error: "Insufficient permissions" });
+    }
+    return next();
+  }
+
+  // The canonical shared endpoint is available only through an independently
+  // licensed staff product. A GoPilot-only historical parent cannot omit the
+  // setup alias/header and recover an old base-admin capability.
+  if (!(await hasActiveIndependentStaffProduct(schoolId))) {
+    if (isDisabledGoPilotParentRole(role) && await hasActiveGoPilotLicense(schoolId)) {
+      return sendGoPilotParentPortalDisabled(res);
+    }
+    return res.status(403).json({ error: "Product license required" });
+  }
+  return requireBaseAdmin(req, res, next);
+};
+
+const requireSharedStaffDirectoryRole: import("express").RequestHandler = async (req, res, next) => {
+  const schoolId = res.locals.schoolId!;
+  if (!(await hasActiveIndependentStaffProduct(schoolId))) {
+    const role = await getRequestGoPilotRole(req, res);
+    if (isDisabledGoPilotParentRole(role) && await hasActiveGoPilotLicense(schoolId)) {
+      return sendGoPilotParentPortalDisabled(res);
+    }
+    return res.status(403).json({ error: "Product license required" });
+  }
+  return requireBaseStaff(req, res, next);
+};
 
 // ============================================================================
 // Current user profile
@@ -84,6 +173,7 @@ router.get("/me/memberships", async (req, res, next) => {
         id: m.membership.id,
         schoolId: m.membership.schoolId,
         role: m.membership.role,
+        gopilotRole: m.membership.gopilotRole,
         schoolName: m.school.name,
         schoolTimezone: m.school.schoolTimezone,
         kioskEnabled: m.school.kioskEnabled,
@@ -91,7 +181,12 @@ router.get("/me/memberships", async (req, res, next) => {
         defaultPassDuration: m.school.defaultPassDuration,
         activeGradeLevels: m.school.activeGradeLevels,
         kioskName: m.membership.kioskName,
-        carNumber: m.membership.carNumber,
+        ...((m.membership.gopilotRole || m.membership.role) !== "parent"
+          ? {
+              carNumber: m.membership.carNumber,
+              dismissalTime: m.school.dismissalTime,
+            }
+          : {}),
       })),
     });
   } catch (err) {
@@ -104,122 +199,16 @@ router.get("/me/memberships", async (req, res, next) => {
 // ============================================================================
 
 // GET /api/users/me/children
-router.get("/me/children", async (req, res, next) => {
-  try {
-    // schoolId from header or session
-    const schoolId = (req.headers["x-school-id"] as string) || req.session?.schoolId || "";
-    if (schoolId) {
-      const membership = await getMembershipByUserAndSchool(req.authUser!.id, schoolId);
-      if (!membership) {
-        return res.status(403).json({ error: "You do not have access to this school" });
-      }
-    }
-    const children = schoolId
-      ? await runWithTenantContext({ schoolId }, () => getApprovedChildrenForParent(req.authUser!.id, schoolId))
-      : (
-          await Promise.all(
-            (await getMembershipsWithSchool(req.authUser!.id)).map((m) =>
-              runWithTenantContext({ schoolId: m.membership.schoolId }, () =>
-                getApprovedChildrenForParent(req.authUser!.id, m.membership.schoolId)
-              )
-            )
-          )
-        ).flat();
-    return res.json({ children });
-  } catch (err) {
-    next(err);
-  }
-});
+router.get("/me/children", disabledGoPilotParentPortalHandler);
 
 // POST /api/users/me/children/link
-router.post("/me/children/link", async (req, res, next) => {
-  try {
-    const { studentCode, schoolId } = req.body;
-    if (!studentCode || !schoolId) {
-      return res.status(400).json({ error: "studentCode and schoolId are required" });
-    }
-    // Verify the parent has a membership in this school
-    const membership = await getMembershipByUserAndSchool(req.authUser!.id, schoolId);
-    if (!membership) {
-      return res.status(403).json({ error: "You do not have access to this school" });
-    }
-    const link = await runWithTenantContext({ schoolId }, async () => {
-      // Look up student by code to get studentId
-      const student = await getStudentByCode(schoolId, studentCode);
-      if (!student) {
-        return undefined;
-      }
-      return createParentStudentLink({
-        parentId: req.authUser!.id,
-        studentId: student.id,
-        relationship: req.body.relationship || "parent",
-      });
-    });
-    if (!link) {
-      return res.status(404).json({ error: "Student not found with that code" });
-    }
-    return res.status(201).json({ link });
-  } catch (err) {
-    next(err);
-  }
-});
+router.post("/me/children/link", disabledGoPilotParentPortalHandler);
 
 // POST /api/users/me/children/link-by-car
-router.post("/me/children/link-by-car", async (req, res, next) => {
-  try {
-    const { carNumber, schoolId } = req.body;
-    if (!carNumber || !schoolId) {
-      return res.status(400).json({ error: "carNumber and schoolId are required" });
-    }
-    const membership = await getMembershipByUserAndSchool(req.authUser!.id, schoolId);
-    if (!membership) {
-      return res.status(403).json({ error: "You do not have access to this school" });
-    }
-    const result = await runWithTenantContext({ schoolId }, () =>
-      linkParentByCarNumber(
-        req.authUser!.id,
-        schoolId,
-        carNumber,
-        membership.id
-      )
-    );
-    return res.status(201).json({
-      students: result.students,
-      familyGroup: result.group,
-    });
-  } catch (err: any) {
-    if (err.message?.includes("No family found") || err.message?.includes("No students found")) {
-      return res.status(404).json({ error: err.message });
-    }
-    next(err);
-  }
-});
+router.post("/me/children/link-by-car", disabledGoPilotParentPortalHandler);
 
 // POST /api/users/me/join-school
-router.post("/me/join-school", async (req, res, next) => {
-  try {
-    const { slug, inviteCode } = req.body;
-    if (!slug && !inviteCode) {
-      return res.status(400).json({ error: "slug or inviteCode required" });
-    }
-    const school = slug ? await getSchoolBySlug(slug) : null;
-    if (!school) {
-      return res.status(404).json({ error: "School not found" });
-    }
-    const existing = await getMembershipByUserAndSchool(req.authUser!.id, school.id);
-    if (existing) {
-      return res.status(409).json({ error: "Already a member of this school" });
-    }
-    const membership = await createMembership({
-      userId: req.authUser!.id,
-      schoolId: school.id,
-      role: "parent",
-    });
-    return res.status(201).json({ membership, school: sanitizeSchool(school) });
-  } catch (err) {
-    next(err);
-  }
-});
+router.post("/me/join-school", disabledGoPilotParentPortalHandler);
 
 // ============================================================================
 // Staff management (school-scoped)
@@ -229,13 +218,13 @@ router.post("/me/join-school", async (req, res, next) => {
 router.get(
   "/staff",
   ...schoolContext,
-  requireRole("admin"),
+  requireStaffManagementRole,
   async (req, res, next) => {
     try {
       const staff = await getStaffBySchool(res.locals.schoolId!);
+      const goPilotSetup = isGoPilotSetupRequest(res);
       return res.json({
         staff: staff.map((s) => {
-          const { password: _, ...safeUser } = s.user;
           return {
             id: s.id,
             userId: s.userId,
@@ -243,7 +232,7 @@ router.get(
             gopilotRole: s.gopilotRole,
             kioskName: s.kioskName,
             carNumber: s.carNumber,
-            user: safeUser,
+            user: staffUserDto(s.user, goPilotSetup),
           };
         }),
       });
@@ -254,7 +243,7 @@ router.get(
 );
 
 // GET /api/users/teachers
-router.get("/teachers", ...schoolContext, async (req, res, next) => {
+router.get("/teachers", ...schoolContext, requireSharedStaffDirectoryRole, async (req, res, next) => {
   try {
     const teachers = await getUsersBySchool(res.locals.schoolId!, "teacher");
     return res.json({
@@ -278,9 +267,10 @@ router.get("/teachers", ...schoolContext, async (req, res, next) => {
 router.post(
   "/staff",
   ...schoolContext,
-  requireRole("admin"),
+  requireStaffManagementRole,
   async (req, res, next) => {
     try {
+      if (rejectCrossProductGoPilotRoleMutation(req, res)) return;
       const parsed = createTeacherSchema.safeParse(req.body);
       if (!parsed.success) {
         return res
@@ -340,8 +330,22 @@ router.post(
         gopilotRole: parsed.data.gopilotRole || null,
       });
 
-      const { password: _, ...safeUser } = user;
-      return res.status(201).json({ user: safeUser, membership });
+      await logAuditStrict({
+        schoolId: res.locals.schoolId!,
+        userId: req.authUser!.id,
+        userEmail: req.authUser!.email,
+        userRole: isGoPilotSetupRequest(res) ? res.locals.gopilotRole : res.locals.membershipRole,
+        action: isGoPilotSetupRequest(res) ? "gopilot.staff.created" : "school.staff.created",
+        entityType: "school_membership",
+        entityId: membership.id,
+        changes: { fields: ["role", ...(parsed.data.gopilotRole ? ["gopilotRole"] : [])] },
+        metadata: { userId: user.id },
+      });
+
+      return res.status(201).json({
+        user: staffUserDto(user, isGoPilotSetupRequest(res)),
+        membership,
+      });
     } catch (err) {
       next(err);
     }
@@ -352,9 +356,10 @@ router.post(
 router.put(
   "/staff/:membershipId",
   ...schoolContext,
-  requireRole("admin"),
+  requireStaffManagementRole,
   async (req, res, next) => {
     try {
+      if (rejectCrossProductGoPilotRoleMutation(req, res)) return;
       const parsed = updateMembershipSchema.safeParse(req.body);
       if (!parsed.success) {
         return res
@@ -388,6 +393,21 @@ router.put(
         }
       }
 
+      const changedFields = ["role", "gopilotRole", "status", "firstName", "lastName", "password"]
+        .filter((field) => Object.prototype.hasOwnProperty.call(req.body ?? {}, field))
+        .map((field) => field === "password" ? "passwordChanged" : field);
+      await logAuditStrict({
+        schoolId: res.locals.schoolId!,
+        userId: req.authUser!.id,
+        userEmail: req.authUser!.email,
+        userRole: isGoPilotSetupRequest(res) ? res.locals.gopilotRole : res.locals.membershipRole,
+        action: isGoPilotSetupRequest(res) ? "gopilot.staff.updated" : "school.staff.updated",
+        entityType: "school_membership",
+        entityId: membership.id,
+        changes: { fields: changedFields },
+        metadata: { userId: membership.userId },
+      });
+
       return res.json({ membership });
     } catch (err) {
       next(err);
@@ -399,7 +419,7 @@ router.put(
 router.delete(
   "/staff/:membershipId",
   ...schoolContext,
-  requireRole("admin"),
+  requireStaffManagementRole,
   async (req, res, next) => {
     try {
       const deleted = await deleteMembershipForSchool(
@@ -409,6 +429,16 @@ router.delete(
       if (!deleted) {
         return res.status(404).json({ error: "Membership not found" });
       }
+      await logAuditStrict({
+        schoolId: res.locals.schoolId!,
+        userId: req.authUser!.id,
+        userEmail: req.authUser!.email,
+        userRole: isGoPilotSetupRequest(res) ? res.locals.gopilotRole : res.locals.membershipRole,
+        action: isGoPilotSetupRequest(res) ? "gopilot.staff.removed" : "school.staff.removed",
+        entityType: "school_membership",
+        entityId: param(req, "membershipId"),
+        changes: { fields: ["status"] },
+      });
       return res.json({ ok: true });
     } catch (err) {
       next(err);
@@ -424,7 +454,7 @@ router.delete(
 router.get(
   "/members",
   ...schoolContext,
-  requireRole("admin"),
+  requireStaffManagementRole,
   async (req, res, next) => {
     try {
       const role = req.query.role as string | undefined;
@@ -434,7 +464,6 @@ router.get(
 
       return res.json({
         members: members.map((m) => {
-          const { password: _, ...safeUser } = m.user;
           return {
             membershipId: m.id,
             userId: m.userId,
@@ -443,7 +472,7 @@ router.get(
             status: m.status,
             carNumber: m.carNumber,
             kioskName: m.kioskName,
-            user: safeUser,
+            user: staffUserDto(m.user, isGoPilotSetupRequest(res)),
           };
         }),
       });

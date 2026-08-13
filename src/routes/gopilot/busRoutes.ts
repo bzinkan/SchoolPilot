@@ -3,6 +3,7 @@ import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
+import { rejectDisabledGoPilotParent } from "../../middleware/rejectDisabledGoPilotParent.js";
 import {
   getBusRoutesBySchool,
   createBusRoute,
@@ -15,6 +16,7 @@ import {
   getBusRouteForSchool,
   requireGoPilotRole,
 } from "../../services/gopilotAccess.js";
+import { logAudit } from "../../services/audit.js";
 
 const router = Router();
 
@@ -25,6 +27,7 @@ function param(req: any, key: string): string {
 const auth = [
   authenticate,
   requireSchoolContext,
+  rejectDisabledGoPilotParent,
   requireActiveSchool,
   requireProductLicense("GOPILOT"),
 ] as const;
@@ -79,6 +82,17 @@ router.post("/", ...manageAuth, async (req, res, next) => {
       departureTime: departureTime || null,
     });
 
+    await logAudit({
+      schoolId: res.locals.schoolId!,
+      userId: req.authUser!.id,
+      userEmail: req.authUser!.email,
+      userRole: res.locals.gopilotRole,
+      action: "gopilot.bus_route.created",
+      entityType: "bus_route",
+      entityId: route.id,
+      changes: { fields: ["routeNumber", ...(departureTime ? ["departureTime"] : [])] },
+    });
+
     return res.status(201).json({ route });
   } catch (err) {
     next(err);
@@ -102,6 +116,21 @@ router.put("/:id", ...manageAuth, async (req, res, next) => {
     if (!updated) {
       return res.status(404).json({ error: "Bus route not found" });
     }
+    await logAudit({
+      schoolId: res.locals.schoolId!,
+      userId: req.authUser!.id,
+      userEmail: req.authUser!.email,
+      userRole: res.locals.gopilotRole,
+      action: "gopilot.bus_route.updated",
+      entityType: "bus_route",
+      entityId: updated.id,
+      changes: {
+        fields: [
+          ...(status !== undefined ? ["status"] : []),
+          ...(departureTime !== undefined ? ["departureTime"] : []),
+        ],
+      },
+    });
     return res.json({ route: updated });
   } catch (err) {
     next(err);
@@ -133,6 +162,16 @@ router.post("/walker-zones", ...manageAuth, async (req, res, next) => {
     const zone = await createWalkerZone({
       schoolId: res.locals.schoolId!,
       name,
+    });
+    await logAudit({
+      schoolId: res.locals.schoolId!,
+      userId: req.authUser!.id,
+      userEmail: req.authUser!.email,
+      userRole: res.locals.gopilotRole,
+      action: "gopilot.walker_zone.created",
+      entityType: "walker_zone",
+      entityId: zone.id,
+      changes: { fields: ["name"] },
     });
 
     return res.status(201).json({ zone });

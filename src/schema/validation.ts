@@ -26,33 +26,12 @@ export const registerSchema = z.object({
   firstName: z.string().min(1, "First name is required"),
   lastName: z.string().min(1, "Last name is required"),
   phone: z.string().optional(),
-  // GoPilot-style: create school on register
-  schoolName: z.string().trim().optional(),
+  // Public registration provisions a school administrator only. Historical
+  // school-slug parent enrollment is terminally rejected before validation.
+  schoolName: z.string().trim().min(1, "School name is required"),
   timezone: z.string().optional(),
-  // Parent registration: join existing school by slug
-  schoolSlug: z.string().trim().optional(),
-}).superRefine((data, ctx) => {
-  const hasSchoolName = Boolean(data.schoolName?.trim());
-  const hasSchoolSlug = Boolean(data.schoolSlug?.trim());
-  if (hasSchoolName === hasSchoolSlug) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "Provide exactly one school name or school code",
-      path: ["schoolSlug"],
-    });
-  }
-});
+}).strict();
 export type RegisterData = z.infer<typeof registerSchema>;
-
-export const registerParentSchema = z.object({
-  email: z.string().email("Invalid email address"),
-  password: STRONG_PASSWORD,
-  firstName: z.string().min(1, "First name is required"),
-  lastName: z.string().min(1, "Last name is required"),
-  phone: z.string().optional(),
-  inviteToken: z.string().optional(),
-});
-export type RegisterParentData = z.infer<typeof registerParentSchema>;
 
 // ============================================================================
 // User management
@@ -181,7 +160,9 @@ export const updateSchoolSchema = z.object({
     .optional(),
   // GoPilot
   dismissalTime: z.string().optional().nullable(),
-  dismissalMode: z.enum(["app", "no_app"]).optional(),
+  // Parent-operated dismissal was retired. Keep only the rollback-compatible
+  // database value; no API may re-enable the former app mode.
+  dismissalMode: z.literal("no_app").optional(),
   maxStudents: z.number().min(1).optional().nullable(),
   // ClassPilot
   trackingStartHour: z.number().min(0).max(23).optional(),

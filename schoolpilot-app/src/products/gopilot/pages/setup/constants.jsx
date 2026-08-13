@@ -21,18 +21,31 @@ export const normalizeStudent = (s) => ({
   afterschoolReason: s.afterschool_reason || s.afterschoolReason || '',
   busRoute: s.bus_route || s.busRoute || '',
   homeroom: s.homeroomId || s.homeroom_id || s.homeroom || null,
+  studentIdNumber: s.studentIdNumber || s.student_id_number || '',
   externalId: s.external_id || s.externalId || '',
 });
 
 // Normalize nested staff API data to flat structure for components
-export const normalizeStaff = (s) => ({
-  ...s,
-  id: s.userId || s.id,
-  first_name: s.user?.firstName || s.first_name || s.firstName || '',
-  last_name: s.user?.lastName || s.last_name || s.lastName || '',
-  email: s.user?.email || s.email || '',
-  role: s.role || 'teacher',
-});
+export const normalizeStaff = (source = {}) => {
+  // List responses are membership rows, while create returns
+  // `{ user, membership }`. Setup mutations are membership-scoped, so never
+  // substitute the user ID for the row's authoritative membership ID.
+  const membership = source.membership || source;
+  const user = source.user || membership.user || {};
+  const membershipId = source.membershipId || membership.membershipId || membership.id || null;
+  return {
+    ...membership,
+    membershipId,
+    id: membershipId,
+    userId: membership.userId || source.userId || user.id || null,
+    user,
+    first_name: user.firstName || user.first_name || source.first_name || source.firstName || '',
+    last_name: user.lastName || user.last_name || source.last_name || source.lastName || '',
+    email: user.email || source.email || '',
+    role: membership.role || source.role || 'teacher',
+    gopilotRole: membership.gopilotRole ?? membership.gopilot_role ?? source.gopilotRole ?? source.gopilot_role ?? null,
+  };
+};
 
 export const GRADES = ['Pre-K', 'K', '1', '2', '3', '4', '5', '6', '7', '8'];
 export const PAGE_SIZE = 30;

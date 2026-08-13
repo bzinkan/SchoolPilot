@@ -6,7 +6,7 @@ Product areas live under `src/products/`:
 
 - `classpilot/` — classroom Chromebook monitoring dashboards
 - `passpilot/` — digital hall passes and kiosk mode
-- `gopilot/` — dismissal management for office staff, teachers, and parents
+- `gopilot/` — school-operated dismissal management for administrators, office staff, and teachers
 
 Shared state (auth, licenses, native platform detection, sockets, theme) lives in `src/contexts/`; the Axios client and other cross-product utilities are in `src/shared/`.
 

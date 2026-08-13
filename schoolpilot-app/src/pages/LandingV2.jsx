@@ -33,8 +33,8 @@ const products = [
     tag: 'Dismissal Management',
     color: C.gopilot,
     icon: '🚗',
-    desc: 'Coordinate car riders, buses, and walkers with a live dismissal queue. Parents get real-time pickup notifications.',
-    features: ['Car number check-in', 'Real-time parent alerts', 'Teacher release flow', 'Multi-zone pickup'],
+    desc: 'Coordinate car riders, buses, and walkers with a live, staff-operated dismissal queue.',
+    features: ['Staff arrival intake', 'Direct student search', 'Teacher release flow', 'Multi-zone pickup'],
   },
   {
     name: 'PassPilot',
@@ -55,7 +55,7 @@ const stats = [
 
 const testimonialPlaceholders = [
   { quote: 'Finally, a platform that does everything we need without stitching together five different tools.', name: 'School Administrator', role: 'K-8 School, Ohio' },
-  { quote: 'The dismissal queue alone saves us 20 minutes every day. Parents love the notifications.', name: 'Office Manager', role: 'Elementary School' },
+  { quote: 'The dismissal queue alone saves us 20 minutes every day. Our office always knows who entered each arrival.', name: 'Office Manager', role: 'Elementary School' },
 ];
 
 // ─── Animated counter ───

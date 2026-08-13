@@ -367,6 +367,169 @@ after(async () => {
 });
 
 describe("multi-school readiness route hardening", () => {
+  it("denies the device aggregate to a GoPilot-only retained parent while preserving dual-product base-admin access", async () => {
+    const suffix = `${TAG}-aggregate-gate`;
+    const gopilotOnlySchool = await createSchool({
+      name: suffix,
+      domain: `${suffix}.example.edu`,
+      slug: suffix,
+      status: "active",
+    } as any);
+    const retainedParent = await createUser({
+      email: `${suffix}@${suffix}.example.edu`,
+      firstName: "Retained",
+      lastName: "Parent",
+    } as any);
+    const dualProductParent = await createUser({
+      email: `${suffix}@${schoolA.domain}`,
+      firstName: "Dual Product",
+      lastName: "Parent",
+    } as any);
+    const baseParent = await createUser({
+      email: `${suffix}-base-parent@${schoolA.domain}`,
+      firstName: "Historical",
+      lastName: "Base Parent",
+    } as any);
+    try {
+      await asSystem(async () => {
+        await createProductLicense({ schoolId: gopilotOnlySchool.id, product: "GOPILOT", status: "active" } as any);
+        await createMembership({
+          userId: retainedParent.id,
+          schoolId: gopilotOnlySchool.id,
+          role: "admin",
+          gopilotRole: "parent",
+          status: "active",
+        } as any);
+      });
+
+      const denied = await requestJson(
+        "GET",
+        "/students-aggregated",
+        undefined,
+        authFor(retainedParent, gopilotOnlySchool.id)
+      );
+      assert.equal(denied.status, 403);
+      assert.doesNotMatch(JSON.stringify(denied.body), /deviceId|device_id/i);
+
+      const retainedMembership = await asSystem(() =>
+        getMembershipByUserAndSchool(retainedParent.id, gopilotOnlySchool.id)
+      );
+      assert.ok(retainedMembership?.id);
+      const directDenials = [
+        await requestJson("GET", "/users/staff", undefined, {
+          ...authFor(retainedParent, gopilotOnlySchool.id),
+          "x-gopilot-setup": "true",
+        }),
+        await requestJson("POST", "/users/staff", {}, authFor(retainedParent, gopilotOnlySchool.id)),
+        await requestJson("PUT", `/users/staff/${retainedMembership.id}`, { role: "teacher" }, authFor(retainedParent, gopilotOnlySchool.id)),
+        await requestJson("DELETE", `/users/staff/${retainedMembership.id}`, undefined, authFor(retainedParent, gopilotOnlySchool.id)),
+        await requestJson("GET", "/users/members", undefined, authFor(retainedParent, gopilotOnlySchool.id)),
+        await requestJson("GET", "/users/teachers", undefined, authFor(retainedParent, gopilotOnlySchool.id)),
+        await requestJson("GET", "/google/directory/users", undefined, authFor(retainedParent, gopilotOnlySchool.id)),
+      ];
+      for (const response of directDenials) {
+        assert.equal(response.status, 410, JSON.stringify(response.body));
+        assert.equal(response.body.code, "GOPILOT_PARENT_PORTAL_DISABLED");
+      }
+      const membershipAfter = await asSystem(() =>
+        getMembershipByUserAndSchool(retainedParent.id, gopilotOnlySchool.id)
+      );
+      assert.equal(membershipAfter?.status, "active", "denied direct mutations must not change historical membership data");
+
+      const classPilotAllowed = await requestJson(
+        "GET",
+        "/students-aggregated",
+        undefined,
+        authFor(adminUser, schoolA.id)
+      );
+      assert.equal(classPilotAllowed.status, 200);
+      assert.ok(Array.isArray(classPilotAllowed.body));
+
+      const dualProductMembership = await asSystem(() =>
+        createMembership({
+          userId: dualProductParent.id,
+          schoolId: schoolA.id,
+          role: "admin",
+          gopilotRole: "parent",
+          status: "active",
+        } as any)
+      );
+      await asSystem(() =>
+        createMembership({
+          userId: baseParent.id,
+          schoolId: schoolA.id,
+          role: "parent",
+          gopilotRole: "parent",
+          status: "active",
+        } as any)
+      );
+      const classPilotParentDenials = [
+        await requestJson("GET", "/classpilot/students", undefined, authFor(baseParent, schoolA.id)),
+        await requestJson(
+          "GET",
+          `/classpilot/student-analytics/${teacherAStudent.id}`,
+          undefined,
+          authFor(baseParent, schoolA.id)
+        ),
+        await requestJson(
+          "POST",
+          "/classpilot/checkin/request",
+          { question: "Unauthorized broadcast" },
+          authFor(baseParent, schoolA.id)
+        ),
+        await requestJson(
+          "POST",
+          "/classpilot/groups",
+          { name: "Unauthorized class" },
+          authFor(baseParent, schoolA.id)
+        ),
+      ];
+      for (const response of classPilotParentDenials) {
+        assert.equal(response.status, 403, JSON.stringify(response.body));
+        assert.doesNotMatch(JSON.stringify(response.body), /Assigned Alpha|device|heartbeat/i);
+      }
+      const selfPromotion = await requestJson(
+        "PUT",
+        `/users/staff/${dualProductMembership.id}`,
+        { gopilotRole: "office_staff" },
+        authFor(dualProductParent, schoolA.id)
+      );
+      assert.equal(selfPromotion.status, 400, JSON.stringify(selfPromotion.body));
+      assert.equal(selfPromotion.body.code, "GOPILOT_ROLE_CONTEXT_REQUIRED");
+
+      const crossProductCreate = await requestJson(
+        "POST",
+        "/users/staff",
+        {
+          email: `${suffix}-new@${schoolA.domain}`,
+          firstName: "Blocked",
+          lastName: "Promotion",
+          role: "teacher",
+          gopilotRole: "teacher",
+        },
+        authFor(dualProductParent, schoolA.id)
+      );
+      assert.equal(crossProductCreate.status, 400, JSON.stringify(crossProductCreate.body));
+      assert.equal(crossProductCreate.body.code, "GOPILOT_ROLE_CONTEXT_REQUIRED");
+
+      const dualProductMembershipAfter = await asSystem(() =>
+        getMembershipByUserAndSchool(dualProductParent.id, schoolA.id)
+      );
+      assert.equal(dualProductMembershipAfter?.gopilotRole, "parent");
+    } finally {
+      await asSystem(async () => {
+        await db.execute(sql`DELETE FROM school_memberships WHERE user_id = ${retainedParent.id}`);
+        await db.execute(sql`DELETE FROM school_memberships WHERE user_id = ${dualProductParent.id}`);
+        await db.execute(sql`DELETE FROM school_memberships WHERE user_id = ${baseParent.id}`);
+        await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${gopilotOnlySchool.id}`);
+        await db.execute(sql`DELETE FROM schools WHERE id = ${gopilotOnlySchool.id}`);
+        await db.execute(sql`DELETE FROM users WHERE id = ${retainedParent.id}`);
+        await db.execute(sql`DELETE FROM users WHERE id = ${dualProductParent.id}`);
+        await db.execute(sql`DELETE FROM users WHERE id = ${baseParent.id}`);
+      });
+    }
+  });
+
   it("legacy register-student succeeds for an exact roster email in an active ClassPilot school", async () => {
     const response = await registerStudent({
       deviceId: `${TAG}-exact-device`,
@@ -375,7 +538,7 @@ describe("multi-school readiness route hardening", () => {
     });
 
     assert.equal(response.status, 200);
-    assert.equal(response.body.student.emailLc, `exact@${TAG}-a.example.edu`);
+    assert.equal(response.body.student.email, `exact@${TAG}-a.example.edu`);
     const token = verifyStudentToken(response.body.studentToken);
     assert.equal(token.schoolId, schoolA.id);
     assert.equal(token.studentId, response.body.student.id);
@@ -547,7 +710,7 @@ describe("multi-school readiness route hardening", () => {
     });
 
     assert.equal(response.status, 200);
-    assert.equal(response.body.student.emailLc, `auto@${TAG}-a.example.edu`);
+    assert.equal(response.body.student.email, `auto@${TAG}-a.example.edu`);
     const created = await inSchool(schoolA.id, () => getStudentByEmail(schoolA.id, `auto@${TAG}-a.example.edu`));
     assert.equal(created?.id, response.body.student.id);
   });
@@ -606,30 +769,66 @@ describe("multi-school readiness route hardening", () => {
     assert.ok(homeroomIds.has(homeroomA.id));
     assert.ok(!homeroomIds.has(homeroomB.id));
 
-    const assignedStudents = await requestJson("GET", "/students", undefined, auth);
+    const assignedStudents = await requestJson("GET", "/gopilot/students", undefined, auth);
     assert.equal(assignedStudents.status, 200);
     const assignedIds = new Set((assignedStudents.body.students || []).map((s: any) => s.id));
     assert.ok(assignedIds.has(teacherAStudent.id));
     assert.ok(!assignedIds.has(teacherBStudent.id));
 
-    const foreignHomeroomStudents = await requestJson("GET", `/students?homeroomId=${homeroomB.id}`, undefined, auth);
-    assert.equal(foreignHomeroomStudents.status, 200);
-    assert.deepEqual(foreignHomeroomStudents.body.students, []);
+    const foreignHomeroomStudents = await requestJson("GET", `/gopilot/students?homeroomId=${homeroomB.id}`, undefined, auth);
+    assert.equal(foreignHomeroomStudents.status, 403);
 
-    const ownStudent = await requestJson("GET", `/students/${teacherAStudent.id}`, undefined, auth);
+    const ownStudent = await requestJson("GET", `/gopilot/students/${teacherAStudent.id}`, undefined, auth);
     assert.equal(ownStudent.status, 200);
     assert.equal(ownStudent.body.student.id, teacherAStudent.id);
 
-    const foreignStudent = await requestJson("GET", `/students/${teacherBStudent.id}`, undefined, auth);
+    const foreignStudent = await requestJson("GET", `/gopilot/students/${teacherBStudent.id}`, undefined, auth);
     assert.equal(foreignStudent.status, 404);
 
     const foreignUpdate = await requestJson(
       "PATCH",
-      `/students/${teacherBStudent.id}`,
+      `/gopilot/students/${teacherBStudent.id}`,
       { firstName: "Changed" },
       auth
     );
-    assert.equal(foreignUpdate.status, 404);
+    assert.equal(foreignUpdate.status, 403);
+  });
+
+  it("ClassPilot timeline returns a narrow student identity DTO", async () => {
+    await inSchool(schoolA.id, () =>
+      db.execute(sql`
+        UPDATE students SET
+          google_user_id = 'sensitive-google-id',
+          student_code = '1234',
+          external_id = 'sensitive-sis-id',
+          classpilot_pin_hash = 'sensitive-pin-hash',
+          classpilot_pin_encrypted = 'sensitive-pin-ciphertext',
+          device_id = 'sensitive-device-id'
+        WHERE id = ${teacherAStudent.id}
+      `)
+    );
+    const response = await requestJson(
+      "GET",
+      `/classpilot/students/${teacherAStudent.id}/timeline`,
+      undefined,
+      authFor(adminUser, schoolA.id)
+    );
+    assert.equal(response.status, 200);
+    assert.equal(response.body.student.id, teacherAStudent.id);
+    assert.deepEqual(
+      Object.keys(response.body.student).sort(),
+      ["email", "firstName", "gradeLevel", "id", "lastName", "photoUrl", "status"]
+    );
+    for (const forbidden of [
+      "googleUserId",
+      "studentCode",
+      "externalId",
+      "classpilotPinHash",
+      "classpilotPinEncrypted",
+      "deviceId",
+    ]) {
+      assert.equal(forbidden in response.body.student, false, forbidden);
+    }
   });
 
   it("GoPilot role resolution treats office representations consistently", async () => {
@@ -687,6 +886,52 @@ describe("multi-school readiness route hardening", () => {
     assert.equal(importedIdentity?.capabilities.manageDismissal, true);
     assert.equal(duplicateIdentity?.primaryRole, "teacher");
     assert.equal(duplicateIdentity?.capabilities.parentStudentAccess, false);
+  });
+
+  it("GoPilot staff setup writes sanitized create, update, and removal audits", async () => {
+    const email = `${TAG}-audited-staff@${TAG}-a.example.edu`;
+    const auth = authFor(adminUser, schoolA.id);
+    const created = await requestJson(
+      "POST",
+      `/schools/${schoolA.id}/staff`,
+      { email, firstName: "Audit", lastName: "Staff", role: "teacher", gopilotRole: "teacher" },
+      auth
+    );
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const membershipId = created.body.membership.id;
+    assert.ok(membershipId);
+
+    const updated = await requestJson(
+      "PUT",
+      `/schools/${schoolA.id}/staff/${membershipId}`,
+      { role: "teacher", gopilotRole: "office_staff" },
+      auth
+    );
+    assert.equal(updated.status, 200, JSON.stringify(updated.body));
+    const removed = await requestJson(
+      "DELETE",
+      `/schools/${schoolA.id}/staff/${membershipId}`,
+      undefined,
+      auth
+    );
+    assert.equal(removed.status, 200, JSON.stringify(removed.body));
+
+    const auditResult = await inSchool(schoolA.id, () => db.execute(sql`
+      SELECT action, entity_id, changes, metadata
+      FROM audit_logs
+      WHERE school_id = ${schoolA.id}
+        AND entity_id = ${membershipId}
+        AND action IN ('gopilot.staff.created', 'gopilot.staff.updated', 'gopilot.staff.removed')
+      ORDER BY created_at
+    `));
+    assert.deepEqual(auditResult.rows.map((row: any) => row.action), [
+      "gopilot.staff.created",
+      "gopilot.staff.updated",
+      "gopilot.staff.removed",
+    ]);
+    const serialized = JSON.stringify(auditResult.rows);
+    assert.doesNotMatch(serialized, new RegExp(email, "i"));
+    assert.doesNotMatch(serialized, /password/i);
   });
 
   it("GoPilot Workspace office re-import updates existing teacher memberships", async () => {
@@ -751,7 +996,7 @@ describe("multi-school readiness route hardening", () => {
     );
     assert.equal(seed.status, 201);
 
-    const read = await requestJson("GET", `/attendance?date=${date}`, undefined, teacherAuth);
+    const read = await requestJson("GET", `/attendance?date=${date}&productContext=gopilot`, undefined, teacherAuth);
     assert.equal(read.status, 200);
     const visibleIds = new Set((read.body.records || []).map((record: any) => record.studentId));
     assert.ok(visibleIds.has(teacherAStudent.id));
@@ -760,7 +1005,7 @@ describe("multi-school readiness route hardening", () => {
     const foreignWrite = await requestJson(
       "POST",
       "/attendance",
-      { studentIds: [teacherBStudent.id], date: "2099-01-03", status: "tardy" },
+      { studentIds: [teacherBStudent.id], date: "2099-01-03", status: "tardy", productContext: "gopilot" },
       teacherAuth
     );
     assert.equal(foreignWrite.status, 403);
@@ -768,14 +1013,19 @@ describe("multi-school readiness route hardening", () => {
     const ownWrite = await requestJson(
       "POST",
       "/attendance",
-      { studentIds: [teacherAStudent.id], date: "2099-01-03", status: "tardy" },
+      { studentIds: [teacherAStudent.id], date: "2099-01-03", status: "tardy", productContext: "gopilot" },
       teacherAuth
     );
     assert.equal(ownWrite.status, 201);
 
     const foreignRecord = (seed.body.records || []).find((record: any) => record.studentId === teacherBStudent.id);
     assert.ok(foreignRecord?.id);
-    const foreignDelete = await requestJson("DELETE", `/attendance/${foreignRecord.id}`, undefined, teacherAuth);
+    const foreignDelete = await requestJson(
+      "DELETE",
+      `/attendance/${foreignRecord.id}?productContext=gopilot`,
+      undefined,
+      teacherAuth
+    );
     assert.equal(foreignDelete.status, 403);
   });
 
@@ -967,12 +1217,12 @@ describe("multi-school readiness route hardening", () => {
       { studentId: carStudent.id, overrideType: "bus" },
       teacherAuth
     );
-    assert.equal(busOverrideMissingRoute.status, 400);
+    assert.equal(busOverrideMissingRoute.status, 403);
     const busOverride = await requestJson(
       "POST",
       `/gopilot/dismissal/sessions/${sessionId}/override`,
       { studentId: carStudent.id, overrideType: "bus", busRoute: `${TAG}-ROUTE-9` },
-      teacherAuth
+      adminAuth
     );
     assert.equal(busOverride.status, 201);
     assert.equal(busOverride.body.override.busRoute, `${TAG}-ROUTE-9`);
@@ -997,7 +1247,7 @@ describe("multi-school readiness route hardening", () => {
       { studentId: carStudent.id, overrideType: "walker" },
       teacherAuth
     );
-    assert.equal(pendingOverride.status, 409);
+    assert.equal(pendingOverride.status, 403);
 
     const earlyRelease = await requestJson("POST", `/queue/${queueId}/release`, undefined, teacherAuth);
     assert.equal(earlyRelease.status, 409);
@@ -1005,12 +1255,14 @@ describe("multi-school readiness route hardening", () => {
     assert.equal(earlyPickup.status, 409);
 
     const hold = await requestJson("POST", `/queue/${queueId}/hold`, { reason: "Waiting for ID" }, adminAuth);
-    assert.equal(hold.status, 200);
-    assert.equal(hold.body.entry.status, "held");
+    assert.equal(hold.status, 409);
 
     const start = await requestJson("PUT", `/gopilot/dismissal/sessions/${sessionId}`, { status: "active" }, adminAuth);
     assert.equal(start.status, 200);
     assert.equal(start.body.session.status, "active");
+    const activeHold = await requestJson("POST", `/queue/${queueId}/hold`, { reason: "Waiting for ID" }, adminAuth);
+    assert.equal(activeHold.status, 200);
+    assert.equal(activeHold.body.entry.status, "held");
 
     const call = await requestJson(
       "POST",
@@ -1043,9 +1295,19 @@ describe("multi-school readiness route hardening", () => {
       { queueId, zone: "B" },
       adminAuth
     );
-    assert.equal(recallDelayed.status, 200);
-    assert.equal(recallDelayed.body.entry.status, "called");
-    assert.equal(recallDelayed.body.entry.delayedUntil, null);
+    assert.equal(recallDelayed.status, 409);
+    await inSchool(schoolA.id, () =>
+      db.execute(sql`UPDATE dismissal_queue SET delayed_until = NOW() - INTERVAL '1 second' WHERE id = ${queueId}`)
+    );
+    const recallExpiredDelay = await requestJson(
+      "POST",
+      `/gopilot/dismissal/sessions/${sessionId}/call`,
+      { queueId, zone: "B" },
+      adminAuth
+    );
+    assert.equal(recallExpiredDelay.status, 200);
+    assert.equal(recallExpiredDelay.body.entry.status, "called");
+    assert.equal(recallExpiredDelay.body.entry.delayedUntil, null);
 
     const pause = await requestJson("PUT", `/gopilot/dismissal/sessions/${sessionId}`, { status: "paused" }, adminAuth);
     assert.equal(pause.status, 200);
@@ -1057,7 +1319,7 @@ describe("multi-school readiness route hardening", () => {
       { studentId: carStudent.id, overrideType: "walker" },
       teacherAuth
     );
-    assert.equal(pausedOverride.status, 409);
+    assert.equal(pausedOverride.status, 403);
     const resume = await requestJson("PUT", `/gopilot/dismissal/sessions/${sessionId}`, { status: "active" }, adminAuth);
     assert.equal(resume.status, 200);
 
@@ -1173,6 +1435,7 @@ describe("multi-school readiness route hardening", () => {
       } as any)
     );
 
+    const queueBeforeParentAttempts = await inSchool(schoolA.id, () => getQueueBySession(sessionId));
     const checkInOne = await requestJson(
       "POST",
       `/gopilot/dismissal/sessions/${sessionId}/check-in`,
@@ -1185,14 +1448,35 @@ describe("multi-school readiness route hardening", () => {
       undefined,
       authFor(parentTwo, schoolA.id)
     );
-    assert.equal(checkInOne.status, 200);
-    assert.equal(checkInTwo.status, 200);
-    assert.equal(checkInOne.body.groupLabel, "Same Guardian");
-    assert.equal(checkInTwo.body.groupLabel, "Same Guardian");
-    assert.notEqual(checkInOne.body.entries[0].pickupGroupId, checkInTwo.body.entries[0].pickupGroupId);
+    assert.equal(checkInOne.status, 410);
+    assert.equal(checkInTwo.status, 410);
+    assert.equal(checkInOne.body.code, "GOPILOT_PARENT_PORTAL_DISABLED");
+    assert.deepEqual(checkInTwo.body, checkInOne.body);
+    const queueAfterParentAttempts = await inSchool(schoolA.id, () => getQueueBySession(sessionId));
+    assert.equal(
+      queueAfterParentAttempts.length,
+      queueBeforeParentAttempts.length,
+      "disabled parent calls must not mutate the queue"
+    );
 
-    const queueOne = checkInOne.body.entries[0].queueId;
-    const queueTwo = checkInTwo.body.entries[0].queueId;
+    const arrivalOne = await requestJson(
+      "POST",
+      `/gopilot/dismissal/sessions/${sessionId}/arrivals`,
+      { source: "staff_search", studentIds: [studentOne.id] },
+      adminAuth
+    );
+    const arrivalTwo = await requestJson(
+      "POST",
+      `/gopilot/dismissal/sessions/${sessionId}/arrivals`,
+      { source: "staff_search", studentIds: [studentTwo.id] },
+      adminAuth
+    );
+    assert.equal(arrivalOne.status, 200);
+    assert.equal(arrivalTwo.status, 200);
+    assert.notEqual(arrivalOne.body.entries[0].pickupGroupId, arrivalTwo.body.entries[0].pickupGroupId);
+
+    const queueOne = arrivalOne.body.entries[0].queueId;
+    const queueTwo = arrivalTwo.body.entries[0].queueId;
     for (const queueId of [queueOne, queueTwo]) {
       const call = await requestJson("POST", `/gopilot/dismissal/sessions/${sessionId}/call`, { queueId, zone: "A" }, adminAuth);
       assert.equal(call.status, 200);
@@ -1203,7 +1487,7 @@ describe("multi-school readiness route hardening", () => {
     const mixedBatch = await requestJson(
       "POST",
       "/queue/dismiss-batch",
-      { queueIds: [queueOne, queueTwo], pickupGroupId: checkInOne.body.entries[0].pickupGroupId },
+      { queueIds: [queueOne, queueTwo], pickupGroupId: arrivalOne.body.entries[0].pickupGroupId },
       adminAuth
     );
     assert.equal(mixedBatch.status, 409);
@@ -1212,7 +1496,7 @@ describe("multi-school readiness route hardening", () => {
     const legacyBatch = await requestJson(
       "POST",
       "/queue/dismiss-batch",
-      { queueIds: [queueOne], pickupGroupId: checkInOne.body.entries[0].pickupGroupId },
+      { queueIds: [queueOne], pickupGroupId: arrivalOne.body.entries[0].pickupGroupId },
       adminAuth
     );
     assert.equal(legacyBatch.status, 409);
@@ -1419,7 +1703,7 @@ describe("multi-school readiness route hardening", () => {
       assert.ok(homeroomIdsA.has(multiHomeroomA.id));
       assert.ok(!homeroomIdsA.has(districtHomeroom.id));
 
-      const studentsA = await requestJson("GET", "/students", undefined, schoolAAuth);
+      const studentsA = await requestJson("GET", "/gopilot/students", undefined, schoolAAuth);
       assert.equal(studentsA.status, 200);
       const studentIdsA = new Set((studentsA.body.students || []).map((s: any) => s.id));
       assert.ok(studentIdsA.has(multiStudentA.id));
@@ -1431,7 +1715,7 @@ describe("multi-school readiness route hardening", () => {
       assert.ok(homeroomIdsC.has(districtHomeroom.id));
       assert.ok(!homeroomIdsC.has(multiHomeroomA.id));
 
-      const studentsC = await requestJson("GET", "/students", undefined, districtAuth);
+      const studentsC = await requestJson("GET", "/gopilot/students", undefined, districtAuth);
       assert.equal(studentsC.status, 200);
       const studentIdsC = new Set((studentsC.body.students || []).map((s: any) => s.id));
       assert.ok(studentIdsC.has(districtStudent.id));

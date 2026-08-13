@@ -249,13 +249,13 @@ describe("frontend dependency audit engine", () => {
     const runtimePackages = [
       "@capacitor/android",
       "@capacitor/app",
-      "@capacitor/browser",
       "@capacitor/core",
       "@capacitor/haptics",
       "@capacitor/keyboard",
-      "@capacitor/preferences",
+      "@capacitor/network",
       "@capacitor/splash-screen",
       "@capacitor/status-bar",
+      "capacitor-secure-storage-plugin",
     ];
 
     assert.equal(packageJson.dependencies["@capacitor/cli"], undefined);

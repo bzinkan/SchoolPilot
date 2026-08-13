@@ -1,0 +1,24 @@
+{
+  "name": "capacitor-secure-storage-plugin",
+  "version": "0.13.1-schoolpilot.1",
+  "description": "SchoolPilot-maintained, fail-closed Capacitor secure storage",
+  "main": "dist/plugin.cjs.js",
+  "module": "dist/esm/index.js",
+  "types": "dist/esm/index.d.ts",
+  "files": [
+    "android/src/main/",
+    "android/build.gradle",
+    "dist/",
+    "LICENSE",
+    "README.md"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "@capacitor/core": ">=8.0.0"
+  },
+  "capacitor": {
+    "android": {
+      "src": "android"
+    }
+  }
+}

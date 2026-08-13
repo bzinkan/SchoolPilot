@@ -10,7 +10,7 @@ interface PromptContext {
 const BASE_PROMPT = `You are SchoolPilot Assistant — a helpful, friendly guide for school administrators and staff using the SchoolPilot platform. SchoolPilot is a suite of three products for K-12 schools:
 
 - **ClassPilot**: Classroom device monitoring, website filtering (flight paths & block lists), teaching sessions, and student safety tools.
-- **GoPilot**: Student dismissal management — homerooms, dismissal queues, zones, bus routes, authorized pickups, custody alerts, and parent check-in.
+- **GoPilot**: School-operated student dismissal — staff arrival intake, homerooms, dismissal queues, zones, bus routes, authorized pickups, and custody alerts.
 - **PassPilot**: Digital hall pass system — issue passes, track destinations, kiosk mode for student self-checkout, and pass history.
 
 ## Your Behavior
@@ -63,21 +63,20 @@ const GOPILOT_DOCS = `
 ## GoPilot Features
 - **Homerooms**: Classrooms organized by grade with an assigned teacher and optional co-teachers. Students belong to a homeroom for dismissal.
 - **Dismissal Sessions**: Daily sessions that manage the student pickup queue. One session per school per day.
-- **Dismissal Queue**: Students are checked in (by parent app, car number, or bus number), called to zones, and released/dismissed.
+- **Dismissal Queue**: Office staff add car riders by internal car number or direct family/student search. Staff also manage bus and walker arrivals. Students are then called to zones, acknowledged by assigned teachers, released, and dismissed.
 - **Zones**: Physical pickup areas (e.g., Zone A, Zone B) where students wait to be collected.
-- **Dismissal Types**: car (car-rider), bus (bus rider), walker (walks home), parent_pickup (guardian comes inside).
+- **Dismissal Types**: car (car rider), bus (bus rider), walker (walks home), afterschool (remains for a staff-supervised activity).
 - **Authorized Pickups**: Named individuals authorized to pick up each student, with relationship and phone number.
 - **Custody Alerts**: Court orders or restrictions flagging specific individuals who may NOT pick up a student.
 - **Bus Routes**: Named bus routes assigned to students for bus dismissal.
 - **Family Groups**: Families linked by car number for carpooling — siblings dismissed together.
-- **Dismissal Changes**: Parents or staff can request a change in dismissal type for a specific day (e.g., car → bus).
 - **Co-Teachers**: Multiple teachers can be assigned to a homeroom.
 
 ## GoPilot UI Navigation
-- **Dismissal Dashboard**: school-pilot.net/gopilot — Office staff view with dismissal queue, zone management, student check-in, and real-time status
-- **Teacher View**: Homeroom teacher view showing their students' dismissal status
-- **Setup Wizard**: Admin setup flow for configuring homerooms, bus routes, zones, and student assignments
-- **Parent App**: Parent-facing interface for check-in, viewing children, and requesting dismissal changes`;
+- **Dismissal Dashboard**: school-pilot.net/gopilot — Administrator and office-staff view with car-number/direct-search arrival intake, dismissal queue, zones, and real-time status
+- **Teacher View**: Assigned-student view for acknowledging and releasing students. Teachers cannot add arrivals.
+- **Setup Wizard**: Admin setup flow for configuring homerooms, bus routes, zones, the instructional calendar, and student assignments
+- **Authorized Pickups**: Staff-managed review area in GoPilot Setup. GoPilot does not have parent accounts, parent check-in, QR arrival, or parent change requests.`;
 
 const PASSPILOT_DOCS = `
 ## PassPilot Features
@@ -111,7 +110,7 @@ function getRoleContext(role: string): string {
     case "office_staff":
       return "The current user is office staff. They can mark attendance, manage the dismissal queue, and view student information. They cannot create classes, homerooms, or flight paths.";
     case "parent":
-      return "The current user is a parent. They can view their child's status, check in for dismissal via the parent app, and request dismissal changes. They cannot modify any school data.";
+      return "The current user has no GoPilot access. GoPilot dismissal is operated only by authorized school staff.";
     default:
       return "The current user has limited access.";
   }

@@ -9,6 +9,7 @@ import {
   index,
   unique,
   uniqueIndex,
+  check,
   jsonb,
   date,
   time,
@@ -47,7 +48,7 @@ export const parentStudent = pgTable(
     parentId: text("parent_id").notNull(), // FK to users
     studentId: text("student_id").notNull(), // FK to students
     // Derived from the linked student's school (backfilled + set on insert). Basis for RLS.
-    schoolId: text("school_id"),
+    schoolId: text("school_id").notNull(),
     relationship: text("relationship").notNull(),
     isPrimary: boolean("is_primary").notNull().default(false),
     status: text("status").notNull().default("approved"), // pending | approved
@@ -71,17 +72,23 @@ export const authorizedPickups = pgTable(
   "authorized_pickups",
   {
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
     studentId: text("student_id").notNull(),
     addedBy: text("added_by").notNull(), // FK to users
     name: text("name").notNull(),
     relationship: text("relationship").notNull(),
     phone: text("phone"),
     photoUrl: text("photo_url"),
-    status: text("status").notNull().default("approved"),
+    status: text("status").notNull().default("pending"),
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
   },
   (table) => [
+    index("authorized_pickups_school_id_idx").on(table.schoolId),
     index("authorized_pickups_student_id_idx").on(table.studentId),
+    check(
+      "authorized_pickups_status_check",
+      sql`${table.status} IN ('pending', 'approved', 'revoked')`
+    ),
   ]
 );
 
@@ -95,6 +102,7 @@ export const custodyAlerts = pgTable(
   "custody_alerts",
   {
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
     studentId: text("student_id").notNull(),
     personName: text("person_name").notNull(),
     alertType: text("alert_type").notNull(), // custody_restriction | court_order
@@ -105,6 +113,7 @@ export const custodyAlerts = pgTable(
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
   },
   (table) => [
+    index("custody_alerts_school_id_idx").on(table.schoolId),
     index("custody_alerts_student_id_idx").on(table.studentId),
   ]
 );
@@ -169,6 +178,10 @@ export const dismissalSessions = pgTable(
       table.date
     ),
     index("dismissal_sessions_school_id_idx").on(table.schoolId),
+    check(
+      "dismissal_sessions_status_check",
+      sql`${table.status} IN ('pending', 'active', 'paused', 'completed')`
+    ),
   ]
 );
 
@@ -182,6 +195,7 @@ export const dismissalQueue = pgTable(
   "dismissal_queue",
   {
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
     sessionId: text("session_id").notNull(), // FK to dismissalSessions
     studentId: text("student_id").notNull(), // FK to students
     guardianId: text("guardian_id"), // FK to users (parent)
@@ -189,7 +203,7 @@ export const dismissalQueue = pgTable(
     pickupGroupId: text("pickup_group_id"),
     pickupGroupLabel: text("pickup_group_label"),
     checkInTime: timestamp("check_in_time").default(sql`now()`),
-    checkInMethod: text("check_in_method"), // app | car_number | bus_number | walker
+    checkInMethod: text("check_in_method"), // staff_car_number | staff_search | car_number | bus_number | walker
     status: text("status").notNull().default("waiting"), // waiting | called | released | dismissed | held | delayed
     zone: text("zone"),
     calledAt: timestamp("called_at"),
@@ -201,11 +215,20 @@ export const dismissalQueue = pgTable(
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
   },
   (table) => [
+    unique("dismissal_queue_session_student_unique").on(
+      table.sessionId,
+      table.studentId
+    ),
+    index("dismissal_queue_school_id_idx").on(table.schoolId),
     index("dismissal_queue_session_status_idx").on(
       table.sessionId,
       table.status
     ),
     index("dismissal_queue_student_id_idx").on(table.studentId),
+    check(
+      "dismissal_queue_status_check",
+      sql`${table.status} IN ('waiting', 'called', 'released', 'dismissed', 'held', 'delayed')`
+    ),
   ]
 );
 
@@ -219,6 +242,7 @@ export const dismissalChanges = pgTable(
   "dismissal_changes",
   {
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
     sessionId: text("session_id").notNull(),
     studentId: text("student_id").notNull(),
     requestedBy: text("requested_by").notNull(), // FK to users
@@ -234,8 +258,13 @@ export const dismissalChanges = pgTable(
     acknowledgedAt: timestamp("acknowledged_at"),
   },
   (table) => [
+    index("dismissal_changes_school_id_idx").on(table.schoolId),
     index("dismissal_changes_session_id_idx").on(table.sessionId),
     index("dismissal_changes_student_id_idx").on(table.studentId),
+    check(
+      "dismissal_changes_status_check",
+      sql`${table.status} IN ('pending', 'approved', 'rejected')`
+    ),
   ]
 );
 
@@ -278,14 +307,16 @@ export const familyGroupStudents = pgTable(
   "family_group_students",
   {
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
     familyGroupId: text("family_group_id").notNull(),
     studentId: text("student_id").notNull(),
   },
   (table) => [
-    unique("family_group_students_unique").on(
-      table.familyGroupId,
-      table.studentId
-    ),
+    unique("family_group_students_unique").on(table.familyGroupId, table.studentId),
+    unique("family_group_students_school_student_unique").on(table.schoolId, table.studentId),
+    index("family_group_students_school_id_idx").on(table.schoolId),
+    index("family_group_students_group_id_idx").on(table.familyGroupId),
+    index("family_group_students_student_id_idx").on(table.studentId),
   ]
 );
 
@@ -327,6 +358,7 @@ export const homeroomTeachers = pgTable(
   "homeroom_teachers",
   {
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
     homeroomId: text("homeroom_id").notNull(),
     teacherId: text("teacher_id").notNull(),
     role: text("role").notNull().default("primary"), // 'primary' | 'co-teacher'
@@ -334,6 +366,7 @@ export const homeroomTeachers = pgTable(
   },
   (table) => [
     unique("homeroom_teachers_unique").on(table.homeroomId, table.teacherId),
+    index("homeroom_teachers_school_id_idx").on(table.schoolId),
     index("homeroom_teachers_homeroom_id_idx").on(table.homeroomId),
     index("homeroom_teachers_teacher_id_idx").on(table.teacherId),
   ]
@@ -349,6 +382,7 @@ export const dismissalOverrides = pgTable(
   "dismissal_overrides",
   {
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
     sessionId: text("session_id").notNull(),
     studentId: text("student_id").notNull(),
     originalType: text("original_type").notNull(),
@@ -364,8 +398,13 @@ export const dismissalOverrides = pgTable(
       table.sessionId,
       table.studentId
     ),
+    index("dismissal_overrides_school_id_idx").on(table.schoolId),
     index("dismissal_overrides_session_id_idx").on(table.sessionId),
     index("dismissal_overrides_student_id_idx").on(table.studentId),
+    check(
+      "dismissal_overrides_type_check",
+      sql`${table.originalType} IN ('car', 'bus', 'walker', 'afterschool') AND ${table.overrideType} IN ('car', 'bus', 'walker', 'afterschool')`
+    ),
   ]
 );
 

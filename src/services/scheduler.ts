@@ -1,12 +1,12 @@
 import type { Server as SocketServer } from "socket.io";
 import errorMonitor from "./errorMonitor.js";
 import {
-  getSchoolById,
   getGroupByIdAndSchool,
   getOrCreateSession,
   updateSessionStatus,
   getSettingsForSchool,
   getInstructionalDateStatus,
+  withInstructionalCalendarDateLock,
   getScheduledGroupsReadyToStart,
   backfillOpenTeachingSessionRosterSnapshots,
   listScheduledSessionsReadyToFinalize,
@@ -20,26 +20,22 @@ import {
 } from "./classpilotSessionLifecycle.js";
 import { broadcastToTeachersLocal } from "../realtime/ws-broadcast.js";
 import { publishWS } from "../realtime/ws-redis.js";
-import { publishSocketIoRedis } from "../realtime/socketio-redis.js";
+import { broadcastGoPilot } from "../realtime/socketio.js";
 import { runSecurityChecks } from "./securityMonitor.js";
 import { schedulerDb, schedulerLockPool, schedulerPool } from "./schedulerDb.js";
 import { schools, productLicenses } from "../schema/core.js";
 import { heartbeats, dailyUsage, teachingSessions, groups } from "../schema/classpilot.js";
-import { dismissalQueue, dismissalSessions, parentStudent } from "../schema/gopilot.js";
-import { passes } from "../schema/passpilot.js";
+import { activityLog, dismissalQueue, dismissalSessions } from "../schema/gopilot.js";
 import { students } from "../schema/students.js";
-import { users } from "../schema/core.js";
-import { settings as schoolSettings } from "../schema/shared.js";
-import { emailAlerts } from "../schema/mailpilot.js";
-import { eq, and, desc, gte, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import { eq, and, gt, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import {
   getWatchesDueForRenewal,
   upsertMailpilotWatch,
   updateMailpilotWatchError,
 } from "./storage.js";
 import { startWatch, isMailpilotConfigured } from "./mailpilotGmail.js";
-import { sendEmail } from "./email.js";
 import { coerceSchedulerTimestamp } from "../util/schedulerTimestamp.js";
+import { localDateInTimeZone } from "../util/schoolTime.js";
 import {
   DailyUsageRollupMarkers,
   dailyUsageRollupWindow,
@@ -132,8 +128,7 @@ function scheduleLockedJob(jobName: string, fn: () => Promise<void>) {
 }
 
 async function publishGoPilotEvent(room: string, event: string, data: unknown) {
-  io?.to(room).emit(event, data);
-  await publishSocketIoRedis({ room, event, data });
+  await broadcastGoPilot(room, event, data);
 }
 
 async function runHeavyJobsSerially() {
@@ -149,7 +144,6 @@ async function runHeavyJobsSerially() {
       lastRollupHour = currentHour;
       await rollupDailyUsage();
       await renewMailpilotWatches();
-      await sendParentTransparencyDigests();
     }
     // Purge at 30min past the hour (staggered to avoid overlap with rollup)
     const currentMinute = new Date().getUTCMinutes();
@@ -203,8 +197,8 @@ export function stopScheduler() {
 
 async function checkDismissalTimes() {
   try {
-
-    // Find schools where current time >= dismissal_time (catches exact match + late starts after deploys)
+    // Auto-start is explicit and license-gated. Clock validation is isolated
+    // per school so one malformed legacy timezone/time cannot abort all schools.
     const result = await schedulerDb
       .select({
         id: schools.id,
@@ -213,28 +207,63 @@ async function checkDismissalTimes() {
         schoolTimezone: schools.schoolTimezone,
       })
       .from(schools)
+      .innerJoin(
+        productLicenses,
+        and(
+          eq(productLicenses.schoolId, schools.id),
+          eq(productLicenses.product, "GOPILOT"),
+          eq(productLicenses.status, "active"),
+          or(isNull(productLicenses.expiresAt), gt(productLicenses.expiresAt, sql`NOW()`))
+        )
+      )
       .where(
         and(
           eq(schools.status, "active"),
-          isNotNull(schools.dismissalTime),
-          sql`TO_CHAR(NOW() AT TIME ZONE COALESCE(${schools.schoolTimezone}, 'America/New_York'), 'HH24:MI') >= ${schools.dismissalTime}`
+          isNull(schools.deletedAt),
+          eq(schools.gopilotAutoStartEnabled, true),
+          isNotNull(schools.dismissalTime)
         )
       );
 
-    // Filter out schools with auto-dismissal disabled
-    const eligible = [];
+    const now = new Date();
+    const eligible: Array<(typeof result)[number] & { localDate: string }> = [];
     for (const school of result) {
-      const fullSchool = await getSchoolById(school.id, schedulerDb);
-      const schoolSettings = fullSchool?.settings ? JSON.parse(fullSchool.settings) : {};
-      if (schoolSettings.autoDismissalEnabled === false) continue;
-      eligible.push(school);
+      const clock = evaluateGoPilotAutoStartClock(
+        now,
+        school.schoolTimezone || "America/New_York",
+        school.dismissalTime || ""
+      );
+      if (!clock.ready) {
+        if (clock.reason !== "before_dismissal_time") {
+          emitGoPilotSchedulerMetric("AutoStartSkipped", clock.reason);
+        }
+        continue;
+      }
+      try {
+        const instructional = await getInstructionalDateStatus(school.id, clock.localDate, schedulerDb);
+        if (!instructional.instructional) {
+          emitGoPilotSchedulerMetric("AutoStartSkipped", instructional.reason);
+          continue;
+        }
+      } catch (error) {
+        // Missing/corrupt instructional settings fail closed for student safety;
+        // one school's bad legacy data must not abort unrelated schools.
+        emitGoPilotSchedulerMetric("AutoStartSkipped", "calendar_unavailable");
+        errorMonitor.trackError("scheduler_failure", error as Error, {
+          job: "checkDismissalTimes",
+          schoolId: school.id,
+          errorCode: (error as { code?: string }).code ?? "GOPILOT_CALENDAR_UNAVAILABLE",
+        });
+        continue;
+      }
+      eligible.push({ ...school, localDate: clock.localDate });
     }
 
     if (eligible.length > 0) {
       console.log(`[Scheduler] Found ${eligible.length} school(s) ready for dismissal:`, eligible.map(s => `${s.name} (${s.dismissalTime} ${s.schoolTimezone})`));
     }
     for (const school of eligible) {
-      await autoStartDismissal(school.id, school.name);
+      await autoStartDismissal(school.id, school.name, school.localDate);
     }
   } catch (err) {
     console.error("Scheduler error:", err);
@@ -242,26 +271,128 @@ async function checkDismissalTimes() {
   }
 }
 
-async function autoStartDismissal(schoolId: string, schoolName: string) {
+export type GoPilotAutoStartClock =
+  | { ready: true; localDate: string; localTime: string }
+  | { ready: false; reason: "invalid_timezone" | "invalid_dismissal_time" | "before_dismissal_time" };
+
+export function evaluateGoPilotAutoStartClock(
+  now: Date,
+  timeZone: string,
+  dismissalTime: string
+): GoPilotAutoStartClock {
+  if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(dismissalTime)) {
+    return { ready: false, reason: "invalid_dismissal_time" };
+  }
   try {
-    const school = await getSchoolById(schoolId, schedulerDb);
-    const timezone = school?.schoolTimezone || "America/New_York";
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(now);
+    const part = (type: Intl.DateTimeFormatPartTypes) =>
+      parts.find((candidate) => candidate.type === type)?.value ?? "";
+    const localDate = `${part("year")}-${part("month")}-${part("day")}`;
+    const localTime = `${part("hour")}:${part("minute")}`;
+    if (localTime < dismissalTime) {
+      return { ready: false, reason: "before_dismissal_time" };
+    }
+    return { ready: true, localDate, localTime };
+  } catch {
+    return { ready: false, reason: "invalid_timezone" };
+  }
+}
 
-    // Get today's date in school timezone
-    const now = new Date();
-    const localDate = now.toLocaleDateString("en-CA", { timeZone: timezone });
+function emitGoPilotSchedulerMetric(
+  metric: "AutoStartStarted" | "AutoStartSkipped" | "StaleSessionPaused",
+  reason: string
+) {
+  console.log(JSON.stringify({
+    _aws: {
+      Timestamp: Date.now(),
+      CloudWatchMetrics: [{
+        Namespace: "SchoolPilot/GoPilot",
+        Dimensions: [["Environment", "Reason"]],
+        Metrics: [{ Name: metric, Unit: "Count" }],
+      }],
+    },
+    Environment: process.env.APP_ENV || process.env.NODE_ENV || "development",
+    Reason: reason,
+    [metric]: 1,
+  }));
+}
 
-    const session = await getOrCreateSession(schoolId, localDate, schedulerDb);
+async function autoStartDismissal(schoolId: string, schoolName: string, expectedLocalDate: string) {
+  try {
+    const startedSession = await withInstructionalCalendarDateLock(
+      schoolId,
+      expectedLocalDate,
+      async (transactionDb) => {
+        const [school] = await transactionDb
+          .select({
+            id: schools.id,
+            schoolTimezone: schools.schoolTimezone,
+            dismissalTime: schools.dismissalTime,
+          })
+          .from(schools)
+          .innerJoin(
+            productLicenses,
+            and(
+              eq(productLicenses.schoolId, schools.id),
+              eq(productLicenses.product, "GOPILOT"),
+              eq(productLicenses.status, "active"),
+              or(isNull(productLicenses.expiresAt), gt(productLicenses.expiresAt, sql`NOW()`))
+            )
+          )
+          .where(
+            and(
+              eq(schools.id, schoolId),
+              eq(schools.status, "active"),
+              isNull(schools.deletedAt),
+              eq(schools.gopilotAutoStartEnabled, true)
+            )
+          )
+          .limit(1)
+          .for("update", { of: schools });
+        if (!school) return null;
+        const currentClock = evaluateGoPilotAutoStartClock(
+          new Date(),
+          school.schoolTimezone || "America/New_York",
+          school.dismissalTime || ""
+        );
+        if (!currentClock.ready || currentClock.localDate !== expectedLocalDate) return null;
+        const instructional = await getInstructionalDateStatus(
+          schoolId,
+          currentClock.localDate,
+          transactionDb
+        );
+        if (!instructional.instructional) return null;
+        const session = await getOrCreateSession(schoolId, currentClock.localDate, transactionDb);
+        if (session.status !== "pending") return null;
+        const updated = await updateSessionStatus(session.id, "active", transactionDb);
+        await transactionDb.insert(activityLog).values({
+          schoolId,
+          sessionId: session.id,
+          action: "session.auto_started",
+          entityType: "dismissal_session",
+          entityId: session.id,
+          details: { localDate: currentClock.localDate },
+        });
+        return updated ?? session;
+      },
+      schedulerDb
+    );
 
-    if (session.status === "pending") {
-      await updateSessionStatus(session.id, "active", schedulerDb);
-      console.log(`Auto-started dismissal for ${schoolName} (session ${session.id})`);
-      const payload = { sessionId: session.id };
+    if (startedSession) {
+      console.log(`Auto-started dismissal for ${schoolName} (session ${startedSession.id})`);
+      emitGoPilotSchedulerMetric("AutoStartStarted", "scheduled_time_reached");
+      const payload = { sessionId: startedSession.id };
       await Promise.all([
         publishGoPilotEvent(`school:${schoolId}`, "dismissal:status", { ...payload, status: "active" }),
         publishGoPilotEvent(`school:${schoolId}`, "dismissal:started", payload),
-        publishGoPilotEvent(`school:${schoolId}:office`, "dismissal:started", payload),
-        publishGoPilotEvent(`school:${schoolId}:parents`, "dismissal:started", payload),
       ]);
     }
   } catch (err) {
@@ -272,25 +403,98 @@ async function autoStartDismissal(schoolId: string, schoolName: string) {
 
 async function autoCompleteStaleGoPilotSessions() {
   try {
-    // Find active sessions whose date is before today (stale from previous days)
+    // Stale sessions with outstanding students are paused for staff review;
+    // empty/completed queues may be closed automatically.
     const staleSessions = await schedulerDb
       .select({
         id: dismissalSessions.id,
         schoolId: dismissalSessions.schoolId,
         date: dismissalSessions.date,
+        schoolTimezone: schools.schoolTimezone,
       })
       .from(dismissalSessions)
       .innerJoin(schools, eq(dismissalSessions.schoolId, schools.id))
       .where(
-        and(
-          eq(dismissalSessions.status, "active"),
-          sql`${dismissalSessions.date} < (NOW() AT TIME ZONE COALESCE(${schools.schoolTimezone}, 'America/New_York'))::date`
-        )
+        inArray(dismissalSessions.status, ["active", "paused"])
       );
 
     for (const session of staleSessions) {
-      await updateSessionStatus(session.id, "completed", schedulerDb);
-      console.log(`[GoPilot] Auto-completed stale session for school ${session.schoolId} (date: ${session.date})`);
+      let currentLocalDate: string;
+      try {
+        currentLocalDate = localDateInTimeZone(
+          new Date(),
+          session.schoolTimezone || "America/New_York"
+        );
+      } catch (error) {
+        errorMonitor.trackError("scheduler_failure", error as Error, {
+          job: "autoCompleteStaleGoPilotSessions",
+          schoolId: session.schoolId,
+          errorCode: "GOPILOT_INVALID_TIMEZONE",
+        });
+        continue;
+      }
+      if (session.date >= currentLocalDate) continue;
+      const outcome = await schedulerDb.transaction(async (tx) => {
+        const [current] = await tx
+          .select()
+          .from(dismissalSessions)
+          .where(
+            and(
+              eq(dismissalSessions.id, session.id),
+              eq(dismissalSessions.schoolId, session.schoolId)
+            )
+          )
+          .limit(1)
+          .for("update");
+        if (!current || !["active", "paused"].includes(current.status)) return null;
+        const [stats] = await tx
+          .select({
+            outstanding: sql<number>`COUNT(*) FILTER (WHERE ${dismissalQueue.status} <> 'dismissed')::int`,
+          })
+          .from(dismissalQueue)
+          .where(
+            and(
+              eq(dismissalQueue.schoolId, session.schoolId),
+              eq(dismissalQueue.sessionId, session.id)
+            )
+          );
+        const outstanding = Number(stats?.outstanding ?? 0);
+        const nextStatus = outstanding > 0 ? "paused" : "completed";
+        if (current.status === nextStatus) return null;
+        const [updated] = await tx
+          .update(dismissalSessions)
+          .set({
+            status: nextStatus,
+            ...(nextStatus === "completed" ? { endedAt: new Date() } : {}),
+          })
+          .where(
+            and(
+              eq(dismissalSessions.id, session.id),
+              eq(dismissalSessions.schoolId, session.schoolId),
+              eq(dismissalSessions.status, current.status)
+            )
+          )
+          .returning({ id: dismissalSessions.id });
+        if (!updated) return null;
+        await tx.insert(activityLog).values({
+          schoolId: session.schoolId,
+          sessionId: session.id,
+          action: outstanding > 0 ? "session.stale_paused" : "session.stale_completed",
+          entityType: "dismissal_session",
+          entityId: session.id,
+          details: { outstanding },
+        });
+        return { outstanding, nextStatus };
+      });
+      if (!outcome) continue;
+      const { outstanding, nextStatus } = outcome;
+      if (outstanding > 0) emitGoPilotSchedulerMetric("StaleSessionPaused", "outstanding_queue");
+      await publishGoPilotEvent(`school:${session.schoolId}`, "dismissal:status", {
+        sessionId: session.id,
+        status: nextStatus,
+        outstanding,
+      });
+      console.log(`[GoPilot] Stale session ${session.id} moved to ${nextStatus}; outstanding=${outstanding}`);
     }
   } catch (err) {
     console.error("[GoPilot] Failed to auto-complete stale sessions:", err);
@@ -536,177 +740,6 @@ async function rollupSchoolUsage(schoolId: string, window: DailyUsageRollupWindo
   }
 
   console.log(`[ClassPilot] Rolled up daily usage for school ${schoolId}: ${studentTotals.length} students (${window.date})`);
-}
-
-// ============================================================================
-// ClassPilot - Parent transparency digest
-// Opt-in weekly digest using approved GoPilot parent-child links only.
-// ============================================================================
-
-function localDateParts(timeZone: string) {
-  const now = new Date();
-  return {
-    date: now.toLocaleDateString("en-CA", { timeZone }),
-    weekday: new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short" }).format(now),
-  };
-}
-
-function escapeHtml(value: unknown): string {
-  return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  }[ch]!));
-}
-
-function digestHtml(options: {
-  schoolName: string;
-  studentName: string;
-  periodStart: string;
-  periodEnd: string;
-  totalSeconds: number;
-  topDomains: Array<{ domain: string; seconds: number }>;
-  passCount: number;
-  dismissalCount: number;
-  safetyNotes: Array<{ safetyAlert: string | null; severity: string; reviewNote: string | null }>;
-}) {
-  const hours = Math.round((options.totalSeconds / 3600) * 10) / 10;
-  const domains = options.topDomains.length
-    ? options.topDomains.map((d) => `<li>${escapeHtml(d.domain)} (${Math.round(d.seconds / 60)} min)</li>`).join("")
-    : "<li>No ClassPilot browsing rollup available for this period.</li>";
-  const safety = options.safetyNotes.length
-    ? options.safetyNotes.map((n) => `<li>${escapeHtml(n.safetyAlert || "reviewed concern")} (${escapeHtml(n.severity)})${n.reviewNote ? `: ${escapeHtml(n.reviewNote)}` : ""}</li>`).join("")
-    : "<li>No staff-approved safety notes for this period.</li>";
-
-  return `
-    <h2>${escapeHtml(options.schoolName)} weekly student digest</h2>
-    <p><strong>Student:</strong> ${escapeHtml(options.studentName)}</p>
-    <p><strong>Period:</strong> ${escapeHtml(options.periodStart)} to ${escapeHtml(options.periodEnd)}</p>
-    <h3>Learning activity</h3>
-    <p>ClassPilot recorded about ${hours} hour(s) of Chromebook learning activity.</p>
-    <ul>${domains}</ul>
-    <h3>School day context</h3>
-    <p>Hall passes issued: ${options.passCount}</p>
-    <p>Dismissal events: ${options.dismissalCount}</p>
-    <h3>Staff-approved safety notes</h3>
-    <ul>${safety}</ul>
-    <p>No screenshots, raw browsing timelines, or raw email content are included in this digest.</p>
-  `;
-}
-
-async function sendParentTransparencyDigests() {
-  try {
-    const eligible = await schedulerDb
-      .select({ settings: schoolSettings, school: schools })
-      .from(schoolSettings)
-      .innerJoin(schools, eq(schoolSettings.schoolId, schools.id))
-      .innerJoin(
-        productLicenses,
-        and(
-          eq(productLicenses.schoolId, schools.id),
-          eq(productLicenses.product, "CLASSPILOT"),
-          eq(productLicenses.status, "active")
-        )
-      )
-      .where(and(eq(schoolSettings.parentTransparencyEnabled, true), eq(schools.status, "active")));
-
-    for (const row of eligible) {
-      const timeZone = row.school.schoolTimezone || row.settings.schoolTimezone || "America/New_York";
-      const local = localDateParts(timeZone);
-      if (local.weekday !== "Mon") continue;
-      const lastSentDate = row.settings.parentDigestLastSentAt
-        ? row.settings.parentDigestLastSentAt.toLocaleDateString("en-CA", { timeZone })
-        : null;
-      if (lastSentDate === local.date) continue;
-      if (row.settings.parentDigestLastSentAt && Date.now() - row.settings.parentDigestLastSentAt.getTime() < 6 * 24 * 60 * 60 * 1000) {
-        continue;
-      }
-
-      const end = new Date();
-      const start = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000);
-      const startDate = start.toISOString().slice(0, 10);
-      const endDate = end.toISOString().slice(0, 10);
-
-      const links = await schedulerDb
-        .select({ link: parentStudent, parent: users, student: students })
-        .from(parentStudent)
-        .innerJoin(users, eq(parentStudent.parentId, users.id))
-        .innerJoin(students, eq(parentStudent.studentId, students.id))
-        .where(and(eq(students.schoolId, row.school.id), eq(parentStudent.status, "approved")));
-
-      for (const item of links) {
-        if (!item.parent.email) continue;
-        const [usage, passRows, dismissalRows, safetyRows] = await Promise.all([
-          schedulerDb
-            .select()
-            .from(dailyUsage)
-            .where(and(eq(dailyUsage.schoolId, row.school.id), eq(dailyUsage.studentId, item.student.id), sql`${dailyUsage.date} >= ${startDate}`, sql`${dailyUsage.date} <= ${endDate}`)),
-          row.settings.parentDigestIncludesPassDismissal !== false
-            ? schedulerDb.select().from(passes).where(and(eq(passes.schoolId, row.school.id), eq(passes.studentId, item.student.id), gte(passes.issuedAt, start)))
-            : Promise.resolve([]),
-          row.settings.parentDigestIncludesPassDismissal !== false
-            ? schedulerDb
-                .select({ queue: dismissalQueue })
-                .from(dismissalQueue)
-                .innerJoin(dismissalSessions, eq(dismissalQueue.sessionId, dismissalSessions.id))
-                .where(and(eq(dismissalSessions.schoolId, row.school.id), eq(dismissalQueue.studentId, item.student.id), sql`${dismissalSessions.date} >= ${startDate}`))
-            : Promise.resolve([]),
-          row.settings.parentDigestIncludesSafety
-            ? schedulerDb
-                .select()
-                .from(emailAlerts)
-                .where(and(eq(emailAlerts.schoolId, row.school.id), eq(emailAlerts.studentId, item.student.id), gte(emailAlerts.alertedAt, start), sql`${emailAlerts.reviewStatus} IN ('confirmed','escalated')`))
-                .orderBy(desc(emailAlerts.alertedAt))
-                .limit(10)
-            : Promise.resolve([]),
-        ]);
-
-        const domainTotals = new Map<string, number>();
-        for (const day of usage) {
-          for (const domain of ((day.topDomains as any[]) || [])) {
-            if (!domain?.domain) continue;
-            domainTotals.set(domain.domain, (domainTotals.get(domain.domain) || 0) + (domain.seconds || 0));
-          }
-        }
-        const topDomains = [...domainTotals.entries()]
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, 8)
-          .map(([domain, seconds]) => ({ domain, seconds }));
-        const studentName = `${item.student.firstName || ""} ${item.student.lastName || ""}`.trim() || item.student.email || "Student";
-
-        await sendEmail({
-          to: item.parent.email,
-          subject: `${row.school.name} weekly digest for ${studentName}`,
-          html: digestHtml({
-            schoolName: row.school.name,
-            studentName,
-            periodStart: startDate,
-            periodEnd: endDate,
-            totalSeconds: usage.reduce((sum, day) => sum + day.totalSeconds, 0),
-            topDomains,
-            passCount: passRows.length,
-            dismissalCount: dismissalRows.length,
-            safetyNotes: safetyRows.map((alert) => ({
-              safetyAlert: alert.safetyAlert,
-              severity: alert.severity,
-              reviewNote: alert.reviewNote,
-            })),
-          }),
-        });
-      }
-
-      await schedulerDb
-        .update(schoolSettings)
-        .set({ parentDigestLastSentAt: new Date() })
-        .where(eq(schoolSettings.schoolId, row.school.id));
-      console.log(`[ClassPilot] Parent transparency digests sent for ${row.school.name}`);
-    }
-  } catch (err) {
-    console.error("[ClassPilot] Parent transparency digest error:", err);
-    errorMonitor.trackError("scheduler_failure", err as Error, { job: "sendParentTransparencyDigests" });
-  }
 }
 
 // ============================================================================
