@@ -29,7 +29,7 @@ ClassPilot is a comprehensive classroom monitoring system designed for education
 - 🎥 **Live Screen Viewing** - Watch student screens via WebRTC with advanced controls
 - 🎯 **Per-Student Targeting** - Apply controls to specific students or entire class
 - 🔒 **Remote Classroom Control** - Lock screens, manage tabs, apply domain restrictions
-- 📸 **Advanced Recording** - Capture screenshots and record screen activity
+- 📸 **Screenshot Capture** - Save a still frame from a live student view
 - 📱 **Shared Device Support** - Multiple students per Chromebook
 - 🔐 **Privacy-First Design** - Transparent monitoring with clear consent
 - 📈 **Website Duration Tracking** - Track time spent on websites
@@ -200,14 +200,6 @@ Click **Expand** to open the **Video Portal** with professional monitoring tools
 - **Auto-downloads** to your `~/Downloads` folder
 - Filename: `screenshot-[student]-[timestamp].png`
 - No file picker required - instant save
-
-##### Screen Recording
-- Click **🔴 Record** button to start recording
-- **Duration counter** shows recording time
-- Click **⏹️ Stop** to end recording
-- Saves as WebM video file
-- **Auto-downloads** to your `~/Downloads` folder
-- Filename: `recording-[student]-[timestamp].webm`
 
 ##### Additional Controls
 - **Fullscreen Mode** - Maximize video to entire screen
@@ -796,7 +788,7 @@ The extension sends activity updates every **10 seconds**:
 4. Check for Chrome browser updates
 5. Restart Chromebook
 
-#### Screenshots/Recordings Not Downloading
+#### Screenshots Not Downloading
 
 **Possible Causes:**
 1. Browser blocked automatic downloads
@@ -949,7 +941,6 @@ The extension sends activity updates every **10 seconds**:
 **Per Student/Day:**
 - ~5 MB activity data
 - ~50 MB with screenshots (if using)
-- ~500 MB with recordings (if using)
 
 **Database:**
 - PostgreSQL with automatic cleanup
@@ -1041,7 +1032,6 @@ ClassPilot is designed to support compliance with:
 - `+` - Zoom in
 - `-` - Zoom out
 - `S` - Take screenshot
-- `R` - Start/stop recording
 - `Esc` - Close portal
 
 ### Support Resources
