@@ -17,10 +17,10 @@ import {
   getScheduledTeachingSessionOccurrence,
   getGroupTeachers,
   getGroupStudents,
-  resyncClasspilotSessionStudents,
+  resyncActiveClasspilotSessionStudents,
   getSchoolById,
   getUserById,
-  updateTeachingSessionControlTimestamp,
+  isAuthorizedClasspilotSessionStaff,
 } from "../../services/storage.js";
 import { logAudit } from "../../services/audit.js";
 import { runWithTenantContext } from "../../middleware/tenantContext.js";
@@ -96,12 +96,11 @@ function kickSummaryDispatch(schoolId: string, teachingSessionId: string) {
 async function assertCanManageTeachingSession(req: any, res: any, session: any): Promise<void> {
   const role = res.locals.membershipRole as string | undefined;
   const isAdmin = req.authUser?.isSuperAdmin || role === "admin" || role === "school_admin";
-  if (isAdmin || session.teacherId === req.authUser!.id) return;
-
-  const coTeachers = await getGroupTeachers(session.groupId);
-  if (coTeachers.some((teacher) => teacher.teacherId === req.authUser!.id)) return;
-
-  throw Object.assign(new Error("This class session is not assigned to you"), { status: 403 });
+  if (isAdmin) return;
+  if (await isAuthorizedClasspilotSessionStaff(
+    res.locals.schoolId!, session.id, req.authUser!.id
+  )) return;
+  throw Object.assign(new Error("Class session not found"), { status: 404 });
 }
 
 function emptyResyncSummary() {
@@ -460,10 +459,18 @@ router.post("/:id/resync", ...auth, async (req, res, next) => {
       });
     }
 
-    const syncSummary = await resyncClasspilotSessionStudents(session);
-    const updatedSession = acknowledgeOverlap && preview.activeElsewhere > 0
-      ? await updateTeachingSessionControlTimestamp(session.id)
-      : session;
+    // Every accepted resync is one serialized ownership transition, including
+    // newly added students. If End Class won the row-lock race, fail closed
+    // without mutating the frozen roster.
+    const reconciled = await resyncActiveClasspilotSessionStudents({
+      schoolId,
+      teachingSessionId: session.id,
+    });
+    if (!reconciled) {
+      return res.status(404).json({ error: "Active class session not found" });
+    }
+    const syncSummary = reconciled.summary;
+    const updatedSession = reconciled.session;
     const summary = {
       ...preview,
       rosterCount: syncSummary.rosterCount,
@@ -491,7 +498,7 @@ router.post("/:id/resync", ...auth, async (req, res, next) => {
     });
 
     return res.json({
-      session: serializeClasspilotSession(updatedSession || session),
+      session: serializeClasspilotSession(updatedSession),
       ...summary,
     });
   } catch (err: any) {

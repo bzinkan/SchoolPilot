@@ -18,6 +18,7 @@ let db: any;
 let pool: any;
 let storage: any;
 let lifecycle: any;
+let monitoringReports: any;
 let scheduled: any;
 let scheduler: any;
 let schoolTime: any;
@@ -144,8 +145,8 @@ async function createClass(options: {
   return group;
 }
 
-async function deliveryRows(sessionId: string): Promise<any[]> {
-  const result = await inSchool(school.id, () => db.execute(sql`
+async function deliveryRows(sessionId: string, targetSchoolId = school.id): Promise<any[]> {
+  const result = await inSchool(targetSchoolId, () => db.execute(sql`
     SELECT id, school_id, teaching_session_id, recipient_kind, recipient_email,
            state, attempt_count, submission_started_at, next_attempt_at,
            provider_message_id, last_error, sent_at
@@ -154,6 +155,44 @@ async function deliveryRows(sessionId: string): Promise<any[]> {
     ORDER BY recipient_kind
   `));
   return result.rows;
+}
+
+async function materializeReportForSession(
+  sessionId: string,
+  targetSchoolId = school.id
+): Promise<Date> {
+  const pending = await inSchool(targetSchoolId, () =>
+    storage.getClasspilotSessionReportBySession(targetSchoolId, sessionId)
+  );
+  assert.ok(pending, "finalization must create a pending immutable report");
+  assert.ok(["pending", "materializing"].includes(pending.state), `unexpected pre-settlement report state: ${pending.state}`);
+  const settleAt = new Date(pending.settleAt);
+  await inSchool(targetSchoolId, () => monitoringReports.materializeDueClasspilotSessionReports({
+    now: settleAt,
+    limit: 100,
+    schoolId: targetSchoolId,
+    teachingSessionId: sessionId,
+  }));
+  const ready = await inSchool(targetSchoolId, () =>
+    storage.getClasspilotSessionReportBySession(targetSchoolId, sessionId)
+  );
+  assert.equal(ready?.state, "ready", "settled report must materialize before delivery");
+  return settleAt;
+}
+
+async function materializeAndDispatch(options: {
+  sessionId: string;
+  schoolId?: string;
+  transport?: (message: any) => Promise<any>;
+}): Promise<any> {
+  const targetSchoolId = options.schoolId || school.id;
+  const settledAt = await materializeReportForSession(options.sessionId, targetSchoolId);
+  return inSchool(targetSchoolId, () => lifecycle.dispatchDueClasspilotSessionSummaries({
+    schoolId: targetSchoolId,
+    teachingSessionId: options.sessionId,
+    now: settledAt,
+    ...(options.transport ? { transport: options.transport } : {}),
+  }));
 }
 
 async function occurrenceCount(groupId: string, scheduledDate: string): Promise<number> {
@@ -191,6 +230,11 @@ async function cleanup(): Promise<void> {
   if (!school?.id) return;
   await asSystem(async () => {
     await db.execute(sql`DELETE FROM classpilot_session_summary_deliveries WHERE school_id = ${school.id}`);
+    await db.execute(sql`DELETE FROM classpilot_monitoring_events WHERE school_id = ${school.id}`);
+    await db.execute(sql`DELETE FROM classpilot_session_student_reports WHERE school_id = ${school.id}`);
+    await db.execute(sql`DELETE FROM classpilot_session_reports WHERE school_id = ${school.id}`);
+    await db.execute(sql`DELETE FROM classpilot_session_staff WHERE school_id = ${school.id}`);
+    await db.execute(sql`DELETE FROM classpilot_student_control_states WHERE school_id = ${school.id}`);
     await db.execute(sql`DELETE FROM classpilot_session_usage WHERE school_id = ${school.id}`);
     await db.execute(sql`DELETE FROM session_settings WHERE session_id IN (SELECT id FROM teaching_sessions WHERE school_id = ${school.id})`);
     await db.execute(sql`DELETE FROM classpilot_classroom_states WHERE school_id = ${school.id}`);
@@ -223,6 +267,7 @@ before(async () => {
   pool = dbModule.pool;
   storage = await import("../dist/services/storage.js");
   lifecycle = await import("../dist/services/classpilotSessionLifecycle.js");
+  monitoringReports = await import("../dist/services/classpilotMonitoringReports.js");
   scheduled = await import("../dist/services/classpilotScheduledStart.js");
   scheduler = await import("../dist/services/scheduler.js");
   schoolTime = await import("../dist/util/schoolTime.js");
@@ -426,11 +471,20 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
       new Date("2031-07-02T14:00:00.000Z"),
       school.id
     );
+    const waiting = await deliveryRows(occurrence.id);
+    assert.equal(waiting.length, 1);
+    assert.equal(waiting[0].state, "waiting_report");
+    assert.equal(sentMessages.length, messageStart, "settlement window must not send early");
+    await scheduler.reconcileClasspilotScheduledSessions(
+      new Date("2031-07-02T14:00:30.000Z"),
+      school.id
+    );
     await waitFor(async () => {
       const rows = await deliveryRows(occurrence.id);
       return rows.length === 1 && rows[0].state === "sent";
-    }, "unmarked instructional weekday did not dispatch its zero-activity summary");
-    assert.match(sentMessages.slice(messageStart).at(-1).html, /No student activity was recorded/);
+    }, "unmarked instructional weekday did not dispatch its settled summary");
+    assert.match(sentMessages.slice(messageStart).at(-1).html, /Observed browser telemetry/);
+    assert.match(sentMessages.slice(messageStart).at(-1).html, /Monitoring coverage/);
 
     const manualGroup = await createClass({ name: "manual_on_calendar_closed" });
     const manualSession = await inSchool(school.id, () => storage.createTeachingSession({
@@ -445,13 +499,14 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
       finalizedAt: new Date("2031-07-01T13:20:00.000Z"),
     }));
     assert.equal(finalized.summaryDisposition, "queued");
-    const manualDispatch = await inSchool(school.id, () =>
-      lifecycle.dispatchDueClasspilotSessionSummaries({
-        schoolId: school.id,
-        teachingSessionId: manualSession.id,
-        now: new Date("2031-07-01T13:20:00.000Z"),
-      })
-    );
+    assert.equal((await deliveryRows(manualSession.id))[0].state, "waiting_report");
+    const premature = await inSchool(school.id, () => lifecycle.dispatchDueClasspilotSessionSummaries({
+      schoolId: school.id,
+      teachingSessionId: manualSession.id,
+      now: new Date("2031-07-01T13:20:00.000Z"),
+    }));
+    assert.equal(premature.claimed, 0);
+    const manualDispatch = await materializeAndDispatch({ sessionId: manualSession.id });
     assert.equal(manualDispatch.sent, 1);
     assert.equal((await deliveryRows(manualSession.id))[0].state, "sent");
   });
@@ -658,11 +713,13 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
     const ended = await requestJson("POST", "/sessions/end", {}, authFor(teacher));
     assert.equal(ended.status, 200);
     assert.equal(ended.body.summaryDisposition, "queued");
-    await waitFor(async () => {
-      const deliveries = await deliveryRows(session.id);
-      return deliveries.length === 2 && deliveries.every((delivery) => delivery.state === "sent");
-    }, "manual End did not immediately dispatch both deliveries");
+    const waiting = await deliveryRows(session.id);
+    assert.equal(waiting.length, 2);
+    assert.ok(waiting.every((delivery) => delivery.state === "waiting_report"));
+    const dispatch = await materializeAndDispatch({ sessionId: session.id });
+    assert.equal(dispatch.sent, 2);
     const rows = await deliveryRows(session.id);
+    assert.ok(rows.every((delivery) => delivery.state === "sent"));
     assert.deepEqual(rows.map((row) => row.recipient_kind), ["central", "teacher"]);
     assert.equal(new Set(rows.map((row) => row.recipient_email.toLowerCase())).size, 2);
     assert.equal(await inSchool(school.id, () => storage.getActiveTeachingSessionForSchool(teacher.id, school.id)), undefined);
@@ -701,14 +758,12 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
       finalizedAt: new Date("2031-01-06T14:00:00.000Z"),
     }));
     assert.equal(ended.summaryDisposition, "queued");
-    assert.equal((await deliveryRows(session.id)).length, 1);
+    const waiting = await deliveryRows(session.id);
+    assert.equal(waiting.length, 1);
+    assert.equal(waiting[0].state, "waiting_report");
 
     const messageStart = sentMessages.length;
-    const dispatched = await inSchool(school.id, () => lifecycle.dispatchDueClasspilotSessionSummaries({
-      schoolId: school.id,
-      teachingSessionId: session.id,
-      now: new Date("2031-01-06T14:00:00.000Z"),
-    }));
+    const dispatched = await materializeAndDispatch({ sessionId: session.id });
     assert.equal(dispatched.sent, 1);
     assert.equal(sentMessages.length, messageStart + 1);
     assert.match(sentMessages.at(-1).html, /Students<\/td><td[^>]*>2<\/td>/);
@@ -728,7 +783,7 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
       undefined,
       authFor(secondTeacher)
     );
-    assert.equal(read.status, 403);
+    assert.equal(read.status, 404);
 
     const update = await requestJson(
       "PUT",
@@ -736,7 +791,7 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
       { chatEnabled: false, raiseHandEnabled: false },
       authFor(secondTeacher)
     );
-    assert.equal(update.status, 403);
+    assert.equal(update.status, 404);
     const settingsMutation = await inSchool(school.id, () => db.execute(sql`
       SELECT count(*)::int AS count
       FROM session_settings
@@ -1609,16 +1664,14 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
       finalizedAt: new Date("2031-01-08T15:05:00.000Z"),
     }));
     assert.equal(unattendedEnd.session.endTime.toISOString(), "2031-01-08T15:00:00.000Z");
+    assert.ok((await deliveryRows(unattended.id)).every((delivery) => delivery.state === "waiting_report"));
     const messageStart = sentMessages.length;
-    await inSchool(school.id, () => lifecycle.dispatchDueClasspilotSessionSummaries({
-      schoolId: school.id,
-      teachingSessionId: unattended.id,
-      now: new Date("2031-01-08T15:05:00.000Z"),
-    }));
+    await materializeAndDispatch({ sessionId: unattended.id });
     const unattendedMessages = sentMessages.slice(messageStart);
     assert.equal(unattendedMessages.length, 2);
     assert.ok(unattendedMessages.every((message) => /No live ClassPilot session was opened/.test(message.html)));
-    assert.ok(unattendedMessages.every((message) => /No student activity was recorded/.test(message.html)));
+    assert.ok(unattendedMessages.every((message) => /Observed browser telemetry/.test(message.html)));
+    assert.ok(unattendedMessages.every((message) => /Monitoring coverage/.test(message.html)));
 
     const connectedGroup = await createClass({ name: "scheduled_connected", teacherId: secondTeacher.id, scheduled: true });
     const connectedStart = await inSchool(school.id, () => scheduled.processScheduledClassAutoStart({
@@ -1637,7 +1690,9 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
       finalizedAt: new Date("2031-01-09T15:04:00.000Z"),
     }));
     assert.equal(connectedEnd.session.endTime.toISOString(), "2031-01-09T15:00:00.000Z");
-    assert.equal((await deliveryRows(connectedStart.session.id)).length, 2);
+    const connectedWaiting = await deliveryRows(connectedStart.session.id);
+    assert.equal(connectedWaiting.length, 2);
+    assert.ok(connectedWaiting.every((delivery) => delivery.state === "waiting_report"));
 
     const lateGroup = await createClass({ name: "scheduled_late_reconnect", teacherId: secondTeacher.id, scheduled: true });
     const lateStart = await inSchool(school.id, () => scheduled.processScheduledClassAutoStart({
@@ -1682,7 +1737,9 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
       finalizedAt: new Date("2031-01-10T15:02:00.000Z"),
     }));
     assert.equal(lateEnd.session.endTime.toISOString(), "2031-01-10T15:00:00.000Z");
-    assert.equal((await deliveryRows(lateOccurrence.id)).length, 2);
+    const lateWaiting = await deliveryRows(lateOccurrence.id);
+    assert.equal(lateWaiting.length, 2);
+    assert.ok(lateWaiting.every((delivery) => delivery.state === "waiting_report"));
   });
 
   it("shows active scheduled-report occurrences in the admin session list and rejects teacher access", async () => {
@@ -2087,15 +2144,14 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
       new Date("2031-02-04T14:00:00.000Z"),
       centralRecipient.id
     );
-    const result = await inSchool(school.id, () => lifecycle.dispatchDueClasspilotSessionSummaries({
-      schoolId: school.id,
-      teachingSessionId: independent.session.id,
-      now: new Date("2031-02-04T14:00:00.000Z"),
+    assert.ok((await deliveryRows(independent.session.id)).every((row) => row.state === "waiting_report"));
+    const result = await materializeAndDispatch({
+      sessionId: independent.session.id,
       transport: async (message: any) =>
         String(message.to).toLowerCase() === teacher.email.toLowerCase()
           ? { status: "transient_failure", error: "provider unavailable", providerStatus: 503 }
           : { status: "sent", providerMessageId: `${TAG}-central-sent` },
-    }));
+    });
     assert.equal(result.sent, 1);
     assert.equal(result.retry, 1);
     const rows = await deliveryRows(independent.session.id);
@@ -2128,10 +2184,11 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
     }));
 
     const observed: Array<{ to: string; className: string }> = [];
+    const settledAt = await materializeReportForSession(occurrence.id);
     const first = await inSchool(school.id, () => lifecycle.dispatchDueClasspilotSessionSummaries({
       schoolId: school.id,
       teachingSessionId: occurrence.id,
-      now: new Date("2031-02-10T14:10:00.000Z"),
+      now: settledAt,
       transport: async (message: any) => {
         observed.push({ to: String(message.to).toLowerCase(), className: message.className });
         return String(message.to).toLowerCase() === teacher.email.toLowerCase()
@@ -2144,7 +2201,7 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
     const retry = await inSchool(school.id, () => lifecycle.dispatchDueClasspilotSessionSummaries({
       schoolId: school.id,
       teachingSessionId: occurrence.id,
-      now: new Date("2031-02-10T14:11:00.000Z"),
+      now: new Date(settledAt.getTime() + 60_000),
       transport: async (message: any) => {
         observed.push({ to: String(message.to).toLowerCase(), className: message.className });
         return { status: "sent", providerMessageId: `${TAG}-frozen-teacher-retry` };
@@ -2159,24 +2216,369 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
     );
   });
 
+  it("freezes tracking policy at finalization so settlement retries ignore later settings edits", async () => {
+    const original = await inSchool(school.id, () => storage.getSettingsForSchool(school.id));
+    try {
+      await inSchool(school.id, () => storage.updateEnrollmentSettings(school.id, {
+        enableTrackingHours: true,
+        trackingStartTime: "08:15",
+        trackingEndTime: "14:45",
+        trackingDays: ["Monday", "Wednesday"],
+        afterHoursMode: "off",
+      } as any));
+      const finalized = await finalizeManualForDelivery(
+        "frozen_tracking_policy",
+        new Date("2031-02-11T14:00:00.000Z"),
+        null
+      );
+      const report = await inSchool(school.id, () =>
+        storage.getClasspilotSessionReportBySession(school.id, finalized.session.id)
+      );
+      assert.deepEqual(report.trackingPolicy, {
+        enableTrackingHours: true,
+        trackingStartTime: "08:15",
+        trackingEndTime: "14:45",
+        trackingDays: ["Monday", "Wednesday"],
+        schoolTimezone: "America/New_York",
+        afterHoursMode: "off",
+      });
+
+      await inSchool(school.id, () => storage.updateEnrollmentSettings(school.id, {
+        enableTrackingHours: false,
+        trackingStartTime: "01:00",
+        trackingEndTime: "02:00",
+        trackingDays: ["Friday"],
+        afterHoursMode: "full",
+      } as any));
+      const input = await inSchool(school.id, () => storage.getClasspilotSessionReportInput(report));
+      assert.deepEqual(input.trackingPolicy, report.trackingPolicy);
+    } finally {
+      await inSchool(school.id, () => storage.updateEnrollmentSettings(school.id, {
+        enableTrackingHours: original?.enableTrackingHours ?? false,
+        trackingStartTime: original?.trackingStartTime || "08:00",
+        trackingEndTime: original?.trackingEndTime || "15:00",
+        trackingDays: original?.trackingDays || ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+        afterHoursMode: original?.afterHoursMode || "off",
+      } as any));
+    }
+  });
+
+  it("fences a stale report worker after another worker reclaims its lease", async () => {
+    const finalized = await finalizeManualForDelivery(
+      "materialization_lease_fence",
+      new Date("2031-02-11T16:00:00.000Z"),
+      null
+    );
+    const pending = await inSchool(school.id, () =>
+      storage.getClasspilotSessionReportBySession(school.id, finalized.session.id)
+    );
+    const firstLeaseAt = new Date(pending.settleAt);
+    const firstOwner = `${TAG}-report-worker-one`;
+    const firstClaim = await inSchool(school.id, () => storage.claimDueClasspilotSessionReports({
+      leaseOwner: firstOwner,
+      now: firstLeaseAt,
+      leaseMs: 1_000,
+      schoolId: school.id,
+      teachingSessionId: finalized.session.id,
+    }));
+    assert.equal(firstClaim.reports.length, 1);
+
+    const secondLeaseAt = new Date(firstLeaseAt.getTime() + 2_000);
+    const secondOwner = `${TAG}-report-worker-two`;
+    const secondClaim = await inSchool(school.id, () => storage.claimDueClasspilotSessionReports({
+      leaseOwner: secondOwner,
+      now: secondLeaseAt,
+      leaseMs: 60_000,
+      schoolId: school.id,
+      teachingSessionId: finalized.session.id,
+    }));
+    assert.equal(secondClaim.reports.length, 1);
+
+    const staleCommit = await inSchool(school.id, () => storage.completeClasspilotSessionReport({
+      report: firstClaim.reports[0],
+      leaseOwner: firstOwner,
+      students: [],
+      completedAt: new Date(secondLeaseAt.getTime() + 1),
+    }));
+    assert.equal(staleCommit, undefined);
+    const current = await inSchool(school.id, () =>
+      storage.getClasspilotSessionReportBySession(school.id, finalized.session.id)
+    );
+    assert.equal(current.state, "materializing");
+    assert.equal(current.leaseOwner, secondOwner);
+    const detail = await inSchool(school.id, () => db.execute(sql`
+      SELECT count(*)::int AS count
+      FROM classpilot_session_student_reports
+      WHERE school_id = ${school.id} AND report_id = ${pending.id}
+    `));
+    assert.equal(Number(detail.rows[0]?.count || 0), 0);
+  });
+
+  it("serializes monitoring-event scope binding with a supervision handoff", async () => {
+    const contextId = `${TAG}-atomic-scope-context`;
+    const sourceEventId = `${TAG}-atomic-scope-event`;
+    const studentSessionId = `${TAG}-atomic-scope-student-session`;
+    const eventAt = new Date(Date.now() + 1_000);
+    let releaseTransition!: () => void;
+    let transitionLocked!: () => void;
+    const transitionReady = new Promise<void>((resolve) => { transitionLocked = resolve; });
+    const mayCommit = new Promise<void>((resolve) => { releaseTransition = resolve; });
+    const transition = inSchool(school.id, () => db.transaction(async (tx: any) => {
+      const lockKey = `classpilot:student-control:${school.id}:${studentOne.id}`;
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`);
+      await tx.execute(sql`
+        INSERT INTO classpilot_supervision_contexts (
+          id, school_id, context_type, name, status, assigned_staff_id,
+          created_by, starts_at, ends_at
+        ) VALUES (
+          ${contextId}, ${school.id}, 'manual', 'Atomic scope test', 'active',
+          ${teacher.id}, ${teacher.id}, ${new Date(eventAt.getTime() - 1_000)},
+          ${new Date(eventAt.getTime() + 60_000)}
+        )
+      `);
+      await tx.execute(sql`
+        INSERT INTO classpilot_supervision_students (
+          school_id, context_id, student_id, source, assigned_by, assigned_at
+        ) VALUES (
+          ${school.id}, ${contextId}, ${studentOne.id}, 'manual', ${teacher.id},
+          ${new Date(eventAt.getTime() - 500)}
+        )
+      `);
+      transitionLocked();
+      await mayCommit;
+    }));
+    await transitionReady;
+
+    let insertSettled = false;
+    const insertion = inSchool(school.id, () => storage.insertClasspilotMonitoringEventForResolvedScope({
+      schoolId: school.id,
+      studentId: studentOne.id,
+      deviceId: null,
+      studentSessionId,
+      claimedTeachingSessionId: null,
+      claimedSupervisionContextId: contextId,
+      sourceEventId,
+      schemaVersion: 1,
+      origin: "extension",
+      eventType: "navigation_changed",
+      occurredAt: eventAt,
+      receivedAt: eventAt,
+      normalizedDomain: "example.edu",
+      sanitizedPath: "/lesson",
+      title: "Lesson",
+      metadata: {},
+      retentionExpiresAt: new Date(eventAt.getTime() + 24 * 60 * 60_000),
+    })).finally(() => { insertSettled = true; });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(insertSettled, false, "event insertion must wait for the authority handoff lock");
+    releaseTransition();
+    await transition;
+    assert.equal(await insertion, "stored");
+
+    const retained = await inSchool(school.id, () => db.execute(sql`
+      SELECT teaching_session_id, supervision_context_id
+      FROM classpilot_monitoring_events
+      WHERE school_id = ${school.id}
+        AND student_session_id = ${studentSessionId}
+        AND source_event_id = ${sourceEventId}
+    `));
+    assert.equal(retained.rows[0]?.teaching_session_id, null);
+    assert.equal(retained.rows[0]?.supervision_context_id, contextId);
+    await inSchool(school.id, async () => {
+      await db.execute(sql`
+        DELETE FROM classpilot_monitoring_events
+        WHERE school_id = ${school.id}
+          AND student_session_id = ${studentSessionId}
+          AND source_event_id = ${sourceEventId}
+      `);
+      await db.execute(sql`
+        DELETE FROM classpilot_supervision_students
+        WHERE school_id = ${school.id} AND context_id = ${contextId}
+      `);
+      await db.execute(sql`
+        DELETE FROM classpilot_supervision_contexts
+        WHERE school_id = ${school.id} AND id = ${contextId}
+      `);
+    });
+  });
+
+  it("removes expired roster/staff linkage while preserving authorized 410 responses", async () => {
+    const finalized = await finalizeManualForDelivery(
+      "expired_non_pii_marker",
+      new Date("2031-02-11T17:00:00.000Z"),
+      null
+    );
+    const report = await inSchool(school.id, () =>
+      storage.getClasspilotSessionReportBySession(school.id, finalized.session.id)
+    );
+    assert.ok(report.authorizationMarker);
+    assert.equal(JSON.stringify(report.authorizationMarker).includes(teacher.id), false);
+
+    const expiredAt = new Date(Date.now() - 1_000);
+    await inSchool(school.id, async () => {
+      await db.execute(sql`
+        DELETE FROM classpilot_session_students
+        WHERE school_id = ${school.id} AND teaching_session_id = ${finalized.session.id}
+      `);
+      await db.execute(sql`
+        DELETE FROM classpilot_session_staff
+        WHERE school_id = ${school.id} AND teaching_session_id = ${finalized.session.id}
+      `);
+      await db.execute(sql`
+        UPDATE classpilot_session_reports
+        SET state = 'expired', expires_at = ${expiredAt}, detail_expired_at = ${expiredAt}
+        WHERE school_id = ${school.id} AND teaching_session_id = ${finalized.session.id}
+      `);
+    });
+
+    const authorizedRead = await requestJson(
+      "GET",
+      `/classpilot/teaching-sessions/${finalized.session.id}/report`,
+      undefined,
+      authFor(teacher)
+    );
+    assert.equal(authorizedRead.status, 410);
+    assert.equal(authorizedRead.body.code, "SUMMARY_EXPIRED");
+    const unrelatedRead = await requestJson(
+      "GET",
+      `/classpilot/teaching-sessions/${finalized.session.id}/report`,
+      undefined,
+      authFor(secondTeacher)
+    );
+    assert.equal(unrelatedRead.status, 404);
+
+    const linkage = await inSchool(school.id, () => db.execute(sql`
+      SELECT
+        (SELECT count(*) FROM classpilot_session_students
+          WHERE school_id = ${school.id} AND teaching_session_id = ${finalized.session.id})::int AS roster_count,
+        (SELECT count(*) FROM classpilot_session_staff
+          WHERE school_id = ${school.id} AND teaching_session_id = ${finalized.session.id})::int AS staff_count
+    `));
+    assert.equal(Number(linkage.rows[0]?.roster_count || 0), 0);
+    assert.equal(Number(linkage.rows[0]?.staff_count || 0), 0);
+  });
+
+  it("returns 410 and terminalizes queued email when immutable report detail expires", async () => {
+    const finalized = await finalizeManualForDelivery(
+      "expired_report_not_emailed",
+      new Date("2031-02-12T14:00:00.000Z"),
+      null
+    );
+    await materializeReportForSession(finalized.session.id);
+    const expiredAt = new Date(Date.now() - 1_000);
+    await inSchool(school.id, () => db.execute(sql`
+      UPDATE classpilot_session_reports
+      SET expires_at = ${expiredAt}
+      WHERE school_id = ${school.id} AND teaching_session_id = ${finalized.session.id}
+    `));
+
+    const read = await requestJson(
+      "GET",
+      `/classpilot/teaching-sessions/${finalized.session.id}/report`,
+      undefined,
+      authFor(teacher)
+    );
+    assert.equal(read.status, 410);
+    assert.equal(read.body.code, "SUMMARY_EXPIRED");
+
+    let transportCalls = 0;
+    const dispatched = await inSchool(school.id, () => lifecycle.dispatchDueClasspilotSessionSummaries({
+      schoolId: school.id,
+      teachingSessionId: finalized.session.id,
+      now: new Date(),
+      transport: async () => {
+        transportCalls += 1;
+        return { status: "sent" };
+      },
+    }));
+    assert.equal(dispatched.claimed, 0);
+    assert.equal(transportCalls, 0);
+    const [delivery] = await deliveryRows(finalized.session.id);
+    assert.equal(delivery.state, "failed");
+    assert.match(delivery.last_error, /expired before email/i);
+  });
+
+  it("rechecks report expiry with a fresh clock immediately before materialization commits", async () => {
+    const finalized = await finalizeManualForDelivery(
+      "materialization_expiry_boundary",
+      new Date("2031-02-12T15:00:00.000Z"),
+      null
+    );
+    const pending = await inSchool(school.id, () =>
+      storage.getClasspilotSessionReportBySession(school.id, finalized.session.id)
+    );
+    const claimAt = new Date(pending.settleAt);
+    const expiresAt = new Date(claimAt.getTime() + 1_000);
+    await inSchool(school.id, () => db.execute(sql`
+      UPDATE classpilot_session_reports
+      SET expires_at = ${expiresAt}
+      WHERE school_id = ${school.id} AND teaching_session_id = ${finalized.session.id}
+    `));
+
+    const outcome = await inSchool(school.id, () => monitoringReports.materializeDueClasspilotSessionReports({
+      now: claimAt,
+      clock: () => new Date(expiresAt.getTime() + 1),
+      schoolId: school.id,
+      teachingSessionId: finalized.session.id,
+    }));
+    assert.equal(outcome.claimed, 1);
+    assert.equal(outcome.ready, 0);
+    const expired = await inSchool(school.id, () =>
+      storage.getClasspilotSessionReportBySession(school.id, finalized.session.id)
+    );
+    assert.equal(expired.state, "expired");
+  });
+
+  it("rechecks report expiry immediately before provider submission", async () => {
+    const finalized = await finalizeManualForDelivery(
+      "delivery_expiry_boundary",
+      new Date("2031-02-12T16:00:00.000Z"),
+      null
+    );
+    const claimAt = await materializeReportForSession(finalized.session.id);
+    const expiresAt = new Date(claimAt.getTime() + 1_000);
+    await inSchool(school.id, () => db.execute(sql`
+      UPDATE classpilot_session_reports
+      SET expires_at = ${expiresAt}
+      WHERE school_id = ${school.id} AND teaching_session_id = ${finalized.session.id}
+    `));
+    const times = [
+      new Date(expiresAt.getTime() - 1),
+      new Date(expiresAt.getTime() + 1),
+      new Date(expiresAt.getTime() + 2),
+    ];
+    let transportCalls = 0;
+    const outcome = await inSchool(school.id, () => lifecycle.dispatchDueClasspilotSessionSummaries({
+      now: claimAt,
+      clock: () => times.shift() || new Date(expiresAt.getTime() + 3),
+      schoolId: school.id,
+      teachingSessionId: finalized.session.id,
+      transport: async () => {
+        transportCalls += 1;
+        return { status: "sent" };
+      },
+    }));
+    assert.equal(outcome.claimed, 1);
+    assert.equal(transportCalls, 0);
+    const [delivery] = await deliveryRows(finalized.session.id);
+    assert.equal(delivery.state, "failed");
+    assert.match(delivery.last_error, /expired before email/i);
+  });
+
   it("fails permanent delivery errors and isolates a poison recipient from a healthy recipient", async () => {
     const permanent = await finalizeManualForDelivery(
       "permanent_delivery_failure",
       new Date("2031-02-05T14:00:00.000Z"),
       null
     );
-    const permanentResult = await inSchool(school.id, () =>
-      lifecycle.dispatchDueClasspilotSessionSummaries({
-        schoolId: school.id,
-        teachingSessionId: permanent.session.id,
-        now: new Date("2031-02-05T14:00:00.000Z"),
-        transport: async () => ({
+    const permanentResult = await materializeAndDispatch({
+      sessionId: permanent.session.id,
+      transport: async () => ({
           status: "permanent_failure",
           error: "recipient rejected",
           providerStatus: 400,
-        }),
-      })
-    );
+      }),
+    });
     assert.equal(permanentResult.failed, 1);
     assert.equal((await deliveryRows(permanent.session.id))[0].state, "failed");
 
@@ -2185,19 +2587,15 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
       new Date("2031-02-06T14:00:00.000Z"),
       centralRecipient.id
     );
-    const poisonResult = await inSchool(school.id, () =>
-      lifecycle.dispatchDueClasspilotSessionSummaries({
-        schoolId: school.id,
-        teachingSessionId: poison.session.id,
-        now: new Date("2031-02-06T14:00:00.000Z"),
-        transport: async (message: any) => {
+    const poisonResult = await materializeAndDispatch({
+      sessionId: poison.session.id,
+      transport: async (message: any) => {
           if (String(message.to).toLowerCase() === teacher.email.toLowerCase()) {
             throw new Error("poison transport callback");
           }
           return { status: "sent", providerMessageId: `${TAG}-healthy-recipient` };
-        },
-      })
-    );
+      },
+    });
     assert.equal(poisonResult.sent, 1);
     assert.equal(poisonResult.unknown, 1);
     const poisonRows = await deliveryRows(poison.session.id);
@@ -2216,20 +2614,15 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
       error: "temporary provider failure",
       providerStatus: 503,
     });
-    const attemptTimes = [
-      new Date("2031-03-03T14:00:00.000Z"),
-      new Date("2031-03-03T14:01:00.000Z"),
-      new Date("2031-03-03T14:06:00.000Z"),
-      new Date("2031-03-03T14:21:00.000Z"),
-      new Date("2031-03-03T15:21:00.000Z"),
-    ];
-    const expectedNext = [
-      "2031-03-03T14:01:00.000Z",
-      "2031-03-03T14:06:00.000Z",
-      "2031-03-03T14:21:00.000Z",
-      "2031-03-03T15:21:00.000Z",
-      "2031-03-03T18:21:00.000Z",
-    ];
+    const firstAttemptAt = await materializeReportForSession(transient.session.id);
+    const attemptOffsetsMinutes = [0, 1, 6, 21, 81];
+    const nextOffsetsMinutes = [1, 6, 21, 81, 261];
+    const attemptTimes = attemptOffsetsMinutes.map(
+      (minutes) => new Date(firstAttemptAt.getTime() + minutes * 60_000)
+    );
+    const expectedNext = nextOffsetsMinutes.map(
+      (minutes) => new Date(firstAttemptAt.getTime() + minutes * 60_000).toISOString()
+    );
     for (let index = 0; index < attemptTimes.length; index++) {
       const outcome = await inSchool(school.id, () => lifecycle.dispatchDueClasspilotSessionSummaries({
         schoolId: school.id,
@@ -2245,7 +2638,7 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
     const exhausted = await inSchool(school.id, () => lifecycle.dispatchDueClasspilotSessionSummaries({
       schoolId: school.id,
       teachingSessionId: transient.session.id,
-      now: new Date("2031-03-03T18:21:00.000Z"),
+      now: new Date(firstAttemptAt.getTime() + 261 * 60_000),
       transport: transientTransport,
     }));
     assert.equal(exhausted.failed, 1);
@@ -2256,10 +2649,11 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
       new Date("2031-03-04T14:00:00.000Z"),
       null
     );
+    const ambiguousSettledAt = await materializeReportForSession(ambiguous.session.id);
     const unknown = await inSchool(school.id, () => lifecycle.dispatchDueClasspilotSessionSummaries({
       schoolId: school.id,
       teachingSessionId: ambiguous.session.id,
-      now: new Date("2031-03-04T14:00:00.000Z"),
+      now: ambiguousSettledAt,
       transport: async () => ({
         status: "unknown",
         error: "provider acceptance timed out",
@@ -2271,7 +2665,7 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
     const notRetried = await inSchool(school.id, () => lifecycle.dispatchDueClasspilotSessionSummaries({
       schoolId: school.id,
       teachingSessionId: ambiguous.session.id,
-      now: new Date("2031-03-05T14:00:00.000Z"),
+      now: new Date(ambiguousSettledAt.getTime() + 24 * 60 * 60_000),
       transport: async () => ({ status: "sent" }),
     }));
     assert.equal(notRetried.claimed, 0);
@@ -2281,9 +2675,10 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
       new Date("2031-03-05T15:00:00.000Z"),
       null
     );
+    const processDeathSettledAt = await materializeReportForSession(processDeath.session.id);
     const [claimed] = await inSchool(school.id, () => storage.claimDueSessionSummaryDeliveries({
       leaseOwner: `${TAG}-dead-worker`,
-      now: new Date("2031-03-05T15:00:00.000Z"),
+      now: processDeathSettledAt,
       leaseMs: 1_000,
       schoolId: school.id,
       teachingSessionId: processDeath.session.id,
@@ -2292,10 +2687,10 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
     await inSchool(school.id, () => storage.markSessionSummarySubmissionStarted(
       claimed.id,
       `${TAG}-dead-worker`,
-      new Date("2031-03-05T15:00:00.000Z")
+      processDeathSettledAt
     ));
     const recovered = await inSchool(school.id, () => storage.recoverExpiredSessionSummaryLeases(
-      new Date("2031-03-05T15:00:02.000Z")
+      new Date(processDeathSettledAt.getTime() + 2_000)
     ));
     assert.equal(recovered.quarantined, 1);
     assert.equal((await deliveryRows(processDeath.session.id))[0].state, "unknown");
@@ -2661,7 +3056,7 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
     }
   });
 
-  it("drains 120 bell-time recipient rows exactly once in one scheduler reconciliation cycle", async () => {
+  it("holds 120 bell-time recipients through settlement, then drains them exactly once", async () => {
     const volumeSchool = await storage.createSchool({
       name: `${TAG}_Bell_Volume_School`,
       domain: `${TAG}-volume.example.edu`,
@@ -2721,11 +3116,23 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
         ORDER BY id
       `));
       assert.equal(queued.rows.length, 120);
-      assert.ok(queued.rows.every((row: any) => row.state === "queued"));
+      assert.ok(queued.rows.every((row: any) => row.state === "waiting_report"));
       const expectedDeliveryIds = new Set(queued.rows.map((row: any) => row.id));
       const messageStart = sentMessages.length;
 
-      await scheduler.reconcileClasspilotScheduledSessions(bellTime);
+      await scheduler.reconcileClasspilotScheduledSessions(bellTime, volumeSchool.id);
+      const beforeSettlement = await inSchool(volumeSchool.id, () => db.execute(sql`
+        SELECT state
+        FROM classpilot_session_summary_deliveries
+        WHERE school_id = ${volumeSchool.id}
+      `));
+      assert.ok(beforeSettlement.rows.every((row: any) => row.state === "waiting_report"));
+      assert.equal(sentMessages.length, messageStart, "no bell-time delivery may bypass report settlement");
+
+      await scheduler.reconcileClasspilotScheduledSessions(
+        new Date(bellTime.getTime() + 30_000),
+        volumeSchool.id
+      );
 
       const rows = await inSchool(volumeSchool.id, () => db.execute(sql`
         SELECT id, state
@@ -2744,6 +3151,11 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
     } finally {
       await asSystem(async () => {
         await db.execute(sql`DELETE FROM classpilot_session_summary_deliveries WHERE school_id = ${volumeSchool.id}`);
+        await db.execute(sql`DELETE FROM classpilot_monitoring_events WHERE school_id = ${volumeSchool.id}`);
+        await db.execute(sql`DELETE FROM classpilot_session_student_reports WHERE school_id = ${volumeSchool.id}`);
+        await db.execute(sql`DELETE FROM classpilot_session_reports WHERE school_id = ${volumeSchool.id}`);
+        await db.execute(sql`DELETE FROM classpilot_session_staff WHERE school_id = ${volumeSchool.id}`);
+        await db.execute(sql`DELETE FROM classpilot_student_control_states WHERE school_id = ${volumeSchool.id}`);
         await db.execute(sql`DELETE FROM classpilot_session_students WHERE school_id = ${volumeSchool.id}`);
         await db.execute(sql`DELETE FROM teaching_sessions WHERE school_id = ${volumeSchool.id}`);
         await db.execute(sql`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id = ${volumeSchool.id})`);

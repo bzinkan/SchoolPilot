@@ -7,8 +7,6 @@ import { requireProductLicense } from "../middleware/requireProductLicense.js";
 import { sanitizeSchool } from "../util/sanitizeSchool.js";
 import { classPilotStudentDto } from "../util/safeStudent.js";
 import { decryptClassPilotPin } from "../services/classpilotPins.js";
-import { getSchoolDeviceStatuses } from "../realtime/student-statuses.js";
-import { getConnectedStudentDeviceIds } from "../realtime/ws-broadcast.js";
 import {
   getGradesBySchool,
   createGrade,
@@ -35,6 +33,10 @@ import {
   updateMembershipForSchool,
   updateUser,
   getActiveTeachingSessionForSchool,
+  getTeachingSessionByIdAndSchool,
+  isAuthorizedClasspilotSessionStaff,
+  getClasspilotSessionStudentRoster,
+  getClasspilotStudentControlStates,
   getGroupStudents,
   getGroupByIdAndSchool,
   getUserById,
@@ -75,6 +77,21 @@ import {
 } from "../services/gopilotSettings.js";
 import { sendGoPilotParentPortalDisabled } from "../util/gopilotParentContainment.js";
 import { rejectDisabledGoPilotParent } from "../middleware/rejectDisabledGoPilotParent.js";
+import { readHeartbeatTileCacheBatch } from "../services/heartbeatTileCache.js";
+import {
+  CLASSPILOT_REALTIME_EXPIRED_AFTER_MS,
+  CLASSPILOT_REALTIME_SCHEMA_VERSION,
+  CLASSPILOT_REALTIME_STALE_AFTER_MS,
+  classpilotPublicRealtimeBinding,
+  readClasspilotRealtimeStatusBatch,
+  readLocalClasspilotRealtimeStatusBatch,
+  type ClasspilotRealtimeBinding,
+  type ClasspilotRealtimeStatus,
+} from "../services/classpilotRealtimeStatus.js";
+import {
+  effectiveClasspilotControlEnforcementHealth,
+  serializeClasspilotStudentControlState,
+} from "../services/classpilotClassroomState.js";
 
 const router = Router();
 
@@ -122,6 +139,114 @@ function todayInTimeZone(timeZone?: string | null): string {
   } catch {
     return new Date().toISOString().slice(0, 10);
   }
+}
+
+type AuthorizedRealtimeBinding = ClasspilotRealtimeBinding & {
+  sessionStartedAt: Date | null;
+};
+
+function realtimeStatusFromHeartbeat(
+  schoolId: string,
+  binding: AuthorizedRealtimeBinding,
+  heartbeat: any
+): ClasspilotRealtimeStatus | null {
+  const observedAt = new Date(heartbeat?.timestamp ?? 0).getTime();
+  const sessionStartedAt = binding.sessionStartedAt?.getTime() ?? 0;
+  if (
+    heartbeat?.schoolId !== schoolId ||
+    heartbeat?.studentId !== binding.studentId ||
+    heartbeat?.deviceId !== binding.deviceId ||
+    !Number.isFinite(observedAt) ||
+    observedAt < sessionStartedAt ||
+    Date.now() - observedAt >= CLASSPILOT_REALTIME_EXPIRED_AFTER_MS
+  ) {
+    return null;
+  }
+  const snapshot: ClasspilotRealtimeStatus = {
+    schemaVersion: CLASSPILOT_REALTIME_SCHEMA_VERSION,
+    state: "active",
+    schoolId,
+    studentId: binding.studentId,
+    studentSessionId: binding.studentSessionId,
+    deviceId: binding.deviceId,
+    revision: 0,
+    heartbeatId: heartbeat.id || null,
+    observedAt,
+    activeTabUrl: heartbeat.activeTabUrl || "",
+    activeTabTitle: heartbeat.activeTabTitle || "",
+    allOpenTabs: [],
+    openTabCount: 0,
+    tabsTruncated: false,
+    activityState: "unknown",
+    classroomControls: {
+      screenLocked: heartbeat.screenLocked === true,
+      flightPathActive: heartbeat.flightPathActive === true,
+      isSharing: heartbeat.isSharing === true,
+      cameraActive: heartbeat.cameraActive === true,
+    },
+    classificationPending: false,
+  };
+  if (heartbeat.favicon) snapshot.favicon = heartbeat.favicon;
+  if (heartbeat.activeFlightPathName) {
+    snapshot.classroomControls.activeFlightPathName = heartbeat.activeFlightPathName;
+  }
+  if (heartbeat.aiCategory || heartbeat.safetyAlert) {
+    snapshot.aiClassification = {
+      category: heartbeat.aiCategory || "unknown",
+      safetyAlert: heartbeat.safetyAlert || null,
+    };
+  }
+  if (heartbeat.screenshotHealth) snapshot.screenshotHealth = heartbeat.screenshotHealth;
+  if (heartbeat.extensionVersion) snapshot.extensionVersion = heartbeat.extensionVersion;
+  if (heartbeat.chromeVersion) snapshot.chromeVersion = heartbeat.chromeVersion;
+  return snapshot;
+}
+
+async function loadAuthorizedRealtimeStatuses(
+  schoolId: string,
+  bindings: AuthorizedRealtimeBinding[]
+): Promise<Map<string, ClasspilotRealtimeStatus>> {
+  const selected = new Map<string, ClasspilotRealtimeStatus>();
+  if (bindings.length === 0) return selected;
+
+  const sharedLatest = await readClasspilotRealtimeStatusBatch(schoolId, bindings);
+  const fallbackBindings: AuthorizedRealtimeBinding[] = [];
+  for (const binding of bindings) {
+    const result = sharedLatest.get(binding.studentId);
+    if (result?.status === "hit") selected.set(binding.studentId, result.snapshot);
+    else fallbackBindings.push(binding);
+  }
+  if (fallbackBindings.length === 0) return selected;
+
+  // Shared heartbeat history is the first degraded-mode source. It carries
+  // school/student/device bindings and is additionally constrained to the
+  // currently authorized student-session window here.
+  const sharedHistory = await readHeartbeatTileCacheBatch(
+    schoolId,
+    fallbackBindings,
+    1
+  );
+  const localCandidates = readLocalClasspilotRealtimeStatusBatch(
+    schoolId,
+    fallbackBindings
+  );
+  for (const binding of fallbackBindings) {
+    const history = sharedHistory.get(binding.studentId);
+    if (history?.status === "hit") {
+      const candidate = realtimeStatusFromHeartbeat(
+        schoolId,
+        binding,
+        history.heartbeats[0]
+      );
+      if (candidate) {
+        selected.set(binding.studentId, candidate);
+        continue;
+      }
+    }
+    const local = localCandidates.get(binding.studentId);
+    if (local?.status === "hit") selected.set(binding.studentId, local.snapshot);
+  }
+  return selected;
 }
 
 // ============================================================================
@@ -905,20 +1030,48 @@ router.get("/students-aggregated", ...classPilotStaffAuth, async (req, res, next
     const membershipRole = res.locals.membershipRole as string | undefined;
     const isAdmin = membershipRole === "admin" || membershipRole === "school_admin" || membershipRole === "super_admin";
 
-    // Check for active teaching session. getActiveTeachingSession is keyed by
-    // teacherId only, so for a multi-school teacher it can return a session that
-    // belongs to a DIFFERENT school. Verify the session's group belongs to the
-    // current school before exposing its students (cross-school PII guard).
-    const activeSession = await getActiveTeachingSessionForSchool(userId, schoolId);
+    const requestedTeachingSessionId = typeof req.query.teachingSessionId === "string"
+      ? req.query.teachingSessionId.trim()
+      : "";
+    let activeSession = requestedTeachingSessionId
+      ? await getTeachingSessionByIdAndSchool(requestedTeachingSessionId, schoolId)
+      : await getActiveTeachingSessionForSchool(userId, schoolId);
+    if (requestedTeachingSessionId) {
+      const authorized = isAdmin || !!activeSession && await isAuthorizedClasspilotSessionStaff(
+        schoolId,
+        requestedTeachingSessionId,
+        userId
+      );
+      if (!activeSession || activeSession.endTime || !authorized) {
+        return res.status(404).json({ error: "Active class session not found" });
+      }
+    }
     const activeGroup = activeSession?.groupId
       ? await getGroupByIdAndSchool(activeSession.groupId, schoolId)
       : undefined;
 
     let dbStudents;
     if (activeGroup) {
-      // Teacher/admin with active in-school session → show only that group's students
-      const groupStudentRows = await getGroupStudents(activeGroup.id);
-      dbStudents = groupStudentRows.map((gs) => gs.student);
+      // The class roster is frozen at session start. Current group membership
+      // must not silently add or remove students from an already-running
+      // teacher monitoring boundary.
+      const groupStudentRows = await getClasspilotSessionStudentRoster(
+        schoolId,
+        activeSession!.id
+      );
+      dbStudents = groupStudentRows.map((row) => {
+        if (row.student) return row.student;
+        const snapshotName = String(row.studentNameSnapshot || "Unknown student").trim();
+        const nameParts = snapshotName.split(/\s+/);
+        return {
+          id: row.studentId,
+          firstName: nameParts.shift() || "Unknown",
+          lastName: nameParts.join(" "),
+          email: null,
+          gradeLevel: null,
+          deviceId: null,
+        };
+      });
     } else if (isAdmin) {
       // Admin without active session → show all students
       dbStudents = await getStudentsBySchool(schoolId);
@@ -927,40 +1080,46 @@ router.get("/students-aggregated", ...classPilotStaffAuth, async (req, res, next
       return res.json([]);
     }
 
-    const realtimeStatuses = getSchoolDeviceStatuses(schoolId);
-    const connectedDevices = getConnectedStudentDeviceIds(schoolId);
     const schoolTimezone = await getClasspilotDashboardSchoolTimezone(schoolId);
     const today = todayInTimeZone(schoolTimezone);
 
-    // Build lookups for real-time status
-    const statusByDevice = new Map(
-      realtimeStatuses.map((s) => [s.deviceId, s])
-    );
-    const statusByStudent = new Map(
-      realtimeStatuses.map((s) => [s.studentId, s])
-    );
-    const statusByEmail = new Map(
-      realtimeStatuses
-        .filter((s) => s.studentEmail)
-        .map((s) => [s.studentEmail!.toLowerCase(), s])
-    );
-
     const studentIds = dbStudents.map((s) => s.id);
-    const snapshotRows = await getClasspilotDashboardSnapshot(schoolId, studentIds, today);
+    const [snapshotRows, controlStateRows] = await Promise.all([
+      getClasspilotDashboardSnapshot(schoolId, studentIds, today),
+      getClasspilotStudentControlStates(schoolId, studentIds),
+    ]);
     const snapshotByStudent = new Map(snapshotRows.map((row) => [row.studentId, row]));
+    const controlStateByStudent = new Map(controlStateRows.map((row) => [row.studentId, row]));
+    const authorizedRealtimeBindings = snapshotRows
+      .filter((row) => row.studentSessionId && row.sessionDeviceId)
+      .map((row) => ({
+        studentId: row.studentId,
+        studentSessionId: row.studentSessionId!,
+        deviceId: row.sessionDeviceId!,
+        sessionStartedAt: row.sessionStartedAt,
+      }));
+    const realtimeByStudent = await loadAuthorizedRealtimeStatuses(
+      schoolId,
+      authorizedRealtimeBindings
+    );
 
     const aggregated = dbStudents.map((student) => {
       const snapshot = snapshotByStudent.get(student.id);
-      const rt =
-        (student.deviceId ? statusByDevice.get(student.deviceId) : null) ||
-        statusByStudent.get(student.id) ||
-        (student.email ? statusByEmail.get(student.email.toLowerCase()) : null) ||
-        null;
+      const rt = realtimeByStudent.get(student.id) || null;
+      const desiredControlState = controlStateByStudent.get(student.id);
       const activeCoverage = snapshot?.coverage || null;
       const activeClass = snapshot?.activeClass || null;
       // Fallback to student_devices table when realtime status has no device mapping
       const deviceId = rt?.deviceId || snapshot?.sessionDeviceId || student.deviceId || snapshot?.mappedDeviceId || null;
-      const isConnected = deviceId ? connectedDevices.has(deviceId) : false;
+      const activeRealtime = rt?.state === "active" ? rt : null;
+      // A delegated student is observed by the assigned coverage staff, not by
+      // the original class teacher. Keep roster/supervision context visible but
+      // do not return live browser telemetry from the delegated interval.
+      const delegatedAway = Boolean(
+        activeCoverage && activeCoverage.assignedStaffId !== userId && !isAdmin
+      );
+      const visibleRealtime = delegatedAway ? null : activeRealtime;
+      const signedOut = rt?.state === "signed_out";
       const attendanceStatus = snapshot?.attendanceStatus || "present";
       const activePass = snapshot?.activePass || null;
       const dismissal = snapshot?.dismissal || null;
@@ -975,18 +1134,62 @@ router.get("/students-aggregated", ...classPilotStaffAuth, async (req, res, next
       const sessionLastSeenAt = snapshot?.sessionLastSeenAt
         ? new Date(snapshot.sessionLastSeenAt).getTime()
         : 0;
-      const lastActivityAt = rt?.lastSeenAt || sessionLastSeenAt || 0;
+      const lastActivityAt = visibleRealtime?.observedAt
+        || (delegatedAway ? 0 : rt?.observedAt)
+        || sessionLastSeenAt
+        || 0;
       const timeSinceLastSeen = lastActivityAt ? Date.now() - lastActivityAt : Infinity;
-      const isLoggedIn = !!snapshot?.sessionDeviceId && timeSinceLastSeen < 300000;
+      // Authentication state and monitoring freshness are deliberately
+      // separate. A still-active session with stale telemetry is reported as
+      // signal loss, never rewritten as "not logged in."
+      const isLoggedIn = Boolean(
+        snapshot?.studentSessionId && snapshot?.sessionDeviceId && !signedOut
+      );
       let status: "online" | "idle" | "offline" = "offline";
-      if (timeSinceLastSeen < 60000 || (isConnected && timeSinceLastSeen < 90000)) {
+      if (isLoggedIn && timeSinceLastSeen < CLASSPILOT_REALTIME_STALE_AFTER_MS) {
         status = "online";
-      } else if (timeSinceLastSeen < 300000) {
+      } else if (isLoggedIn && timeSinceLastSeen < CLASSPILOT_REALTIME_EXPIRED_AFTER_MS) {
         status = "idle";
       }
-      if (!isLoggedIn) {
-        status = "offline";
-      }
+      const activityFresh = !delegatedAway && status === "online";
+      const monitoringState = delegatedAway
+        ? "not_expected"
+        : !isLoggedIn
+        ? "not_logged_in"
+        : activityFresh
+          ? "healthy"
+          : "signal_lost";
+      const monitoringLostAt = !delegatedAway && isLoggedIn && !activityFresh && lastActivityAt
+        ? new Date(lastActivityAt + CLASSPILOT_REALTIME_STALE_AFTER_MS).toISOString()
+        : null;
+      const ownedDesiredControlState = (
+        activeSession?.id
+        && desiredControlState?.teachingSessionId === activeSession.id
+      ) ? desiredControlState : undefined;
+      const desiredClassroomState = ownedDesiredControlState
+        ? serializeClasspilotStudentControlState(ownedDesiredControlState)
+        : undefined;
+      const realtimeClassroomState = visibleRealtime?.classroomState;
+      const scopedRealtimeClassroomState = activeSession?.id
+        ? realtimeClassroomState?.teachingSessionId === activeSession.id
+          ? realtimeClassroomState
+          : undefined
+        : realtimeClassroomState;
+      const realtimeClassroomRevision = scopedRealtimeClassroomState?.revision ?? -1;
+      const authoritativeClassroomState = desiredClassroomState
+        && desiredClassroomState.revision >= realtimeClassroomRevision
+        ? desiredClassroomState
+        : scopedRealtimeClassroomState;
+      const enforcementHealth = ownedDesiredControlState
+        ? (!isLoggedIn
+            ? ownedDesiredControlState.enforcementHealth
+            : effectiveClasspilotControlEnforcementHealth(
+                ownedDesiredControlState,
+                visibleRealtime?.extensionVersion
+              ))
+        : scopedRealtimeClassroomState
+          ? visibleRealtime?.enforcementHealth || "unsupported"
+          : "unsupported";
 
       return {
         studentId: student.id,
@@ -998,26 +1201,43 @@ router.get("/students-aggregated", ...classPilotStaffAuth, async (req, res, next
         gradeLevel: student.gradeLevel || undefined,
         classId: "",
         deviceCount: deviceId ? 1 : 0,
-        devices: deviceId
-          ? [{ deviceId, deviceName: undefined, status, lastSeenAt: lastActivityAt }]
-          : [],
+        devices: [],
         status,
         loginState: isLoggedIn ? "logged_in" : "not_logged_in",
         isLoggedIn,
         lastSeenAt: lastActivityAt,
-        primaryDeviceId: deviceId,
         deviceName: undefined,
-        activeTabTitle: rt?.activeTabTitle || "",
-        activeTabUrl: rt?.activeTabUrl || "",
-        favicon: rt?.favicon,
-        allOpenTabs: rt?.allOpenTabs?.map((t) => ({ ...t, deviceId: deviceId || "" })),
-        isSharing: rt?.isSharing || false,
-        screenLocked: rt?.screenLocked || false,
-        flightPathActive: rt?.flightPathActive || false,
-        activeFlightPathName: rt?.activeFlightPathName,
-        cameraActive: rt?.cameraActive || false,
-        aiClassification: rt?.aiClassification || undefined,
-        screenshotHealth: rt?.screenshotHealth || undefined,
+        activeTabTitle: visibleRealtime?.activeTabTitle || "",
+        activeTabUrl: visibleRealtime?.activeTabUrl || "",
+        favicon: visibleRealtime?.favicon,
+        allOpenTabs: visibleRealtime?.allOpenTabs,
+        isSharing: visibleRealtime?.classroomControls.isSharing || false,
+        screenLocked: visibleRealtime?.classroomControls.screenLocked || false,
+        flightPathActive: visibleRealtime?.classroomControls.flightPathActive || false,
+        activeFlightPathName: visibleRealtime?.classroomControls.activeFlightPathName,
+        cameraActive: visibleRealtime?.classroomControls.cameraActive || false,
+        aiClassification: visibleRealtime?.aiClassification || undefined,
+        screenshotHealth: visibleRealtime?.screenshotHealth || undefined,
+        classroomState: authoritativeClassroomState,
+        enforcementHealth,
+        realtimeBinding: !delegatedAway
+          ? classpilotPublicRealtimeBinding(snapshot?.studentSessionId)
+          : null,
+        realtimeRevision: !delegatedAway && rt && rt.revision > 0
+          ? rt.revision
+          : null,
+        realtimeObservedAt: !delegatedAway && rt
+          ? new Date(rt.observedAt).toISOString()
+          : null,
+        activityFresh,
+        activityState: delegatedAway
+          ? "delegated"
+          : visibleRealtime?.activityState || (signedOut ? "off" : "unknown"),
+        monitoringState,
+        monitoringLostAt,
+        classificationPending: visibleRealtime?.classificationPending || false,
+        openTabCount: visibleRealtime?.openTabCount || 0,
+        tabsTruncated: visibleRealtime?.tabsTruncated || false,
         attendanceStatus,
         activePass: activePass ? {
           id: activePass.id,
@@ -1057,7 +1277,7 @@ router.get("/students-aggregated", ...classPilotStaffAuth, async (req, res, next
           teacherId: activeClass.teacherId,
           startTime: activeClass.startTime,
         } : null,
-        monitoringContext: rt?.aiClassification?.safetyAlert
+        monitoringContext: visibleRealtime?.aiClassification?.safetyAlert
           ? "safety_with_context"
           : (suppressionReason ? "classroom_noise_suppressed" : "classroom"),
         suppressionReason,

@@ -11,7 +11,9 @@ export const CLASSPILOT_DASHBOARD_SCHOOL_CACHE_TTL_MS = 5_000;
 export type ClasspilotDashboardSnapshotRow = {
   studentId: string;
   mappedDeviceId: string | null;
+  studentSessionId: string | null;
   sessionDeviceId: string | null;
+  sessionStartedAt: Date | null;
   sessionLastSeenAt: Date | null;
   attendanceStatus: string | null;
   activePass: {
@@ -47,7 +49,9 @@ export type ClasspilotDashboardSnapshotRow = {
 export type RawClasspilotDashboardSnapshotRow = {
   student_id: string;
   mapped_device_id: string | null;
+  student_session_id?: string | null;
   session_device_id: string | null;
+  session_started_at?: Date | null;
   session_last_seen_at: Date | null;
   attendance_status: string | null;
   pass_id: string | null;
@@ -224,7 +228,9 @@ function mapSnapshotRow(
   return {
     studentId: row.student_id,
     mappedDeviceId: row.mapped_device_id,
+    studentSessionId: row.student_session_id ?? null,
     sessionDeviceId: row.session_device_id,
+    sessionStartedAt: row.session_started_at ?? null,
     sessionLastSeenAt: row.session_last_seen_at,
     attendanceStatus: row.attendance_status,
     activePass: row.pass_id && row.pass_destination && row.pass_issued_at && row.pass_expires_at && row.pass_status
@@ -301,7 +307,8 @@ async function loadSnapshotChunk(
     ),
     active_student_sessions AS MATERIALIZED (
       SELECT DISTINCT ON (session.student_id)
-             session.student_id, session.device_id, session.last_seen_at
+             session.student_id, session.id, session.device_id,
+             session.started_at, session.last_seen_at
       FROM student_sessions AS session
       INNER JOIN scoped_students AS scoped ON scoped.student_id = session.student_id
       WHERE session.is_active = true
@@ -376,7 +383,9 @@ async function loadSnapshotChunk(
     SELECT
       scoped.student_id,
       mapped_device.device_id AS mapped_device_id,
+      active_student_session.id AS student_session_id,
       active_student_session.device_id AS session_device_id,
+      active_student_session.started_at AS session_started_at,
       active_student_session.last_seen_at AS session_last_seen_at,
       attendance.status AS attendance_status,
       active_pass.id AS pass_id,

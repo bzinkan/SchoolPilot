@@ -271,20 +271,17 @@ describe("PostgreSQL session-pool isolation", () => {
     const screenshotEnd = routeSource.indexOf('// Events (item #3');
     assert.ok(screenshotStart > -1 && screenshotEnd > screenshotStart);
     const screenshotRoute = routeSource.slice(screenshotStart, screenshotEnd);
-    assert.match(screenshotRoute, /\.\.\.tileReadAuth/);
-    assert.match(screenshotRoute, /await withAuthorizedTileDevice/);
-    assert.match(screenshotRoute, /"live"/);
-    assert.ok(
-      screenshotRoute.indexOf("await withAuthorizedTileDevice") <
-        screenshotRoute.indexOf("await getScreenshot(deviceId)")
-    );
+    assert.match(screenshotRoute, /\.\.\.deviceAdminAuth/);
+    assert.doesNotMatch(screenshotRoute, /tileReadAuth/);
+    assert.ok(screenshotRoute.indexOf("deviceAdminAuth") < screenshotRoute.indexOf("await getScreenshot(deviceId)"));
     const historyStart = routeSource.indexOf(
       '// GET /api/classpilot/heartbeats/:deviceId'
     );
     const historyEnd = routeSource.indexOf('// Remote Control Commands');
     assert.ok(historyStart > -1 && historyEnd > historyStart);
     const historyRoute = routeSource.slice(historyStart, historyEnd);
-    assert.match(historyRoute, /\.\.\.tileReadAuth/);
+    assert.match(historyRoute, /\.\.\.deviceAdminAuth/);
+    assert.doesNotMatch(historyRoute, /tileReadAuth/);
     assert.match(historyRoute, /await withAuthorizedTileDevice/);
     assert.match(historyRoute, /"history"/);
     assert.match(historyRoute, /authorizedStudentIds/);

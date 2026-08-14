@@ -11,7 +11,9 @@ import {
   getFlightPathById,
   getPollById,
   markClasspilotCommandTargetsSent,
-  upsertClasspilotClassroomStates,
+  markClasspilotCommandTargetsServerCompleted,
+  persistClasspilotControlCommandState,
+  replaceClasspilotSupervisionControlSnapshots,
   type ClasspilotCommandWithTargets,
 } from "./storage.js";
 import { broadcastToStaffSessionLocal, sendToDeviceLocal } from "../realtime/ws-broadcast.js";
@@ -22,6 +24,27 @@ import {
   type PublishWSBatchItem,
 } from "../realtime/ws-redis.js";
 import { removeDeviceStatus } from "../realtime/student-statuses.js";
+import {
+  markClasspilotRealtimeSignedOut,
+} from "./classpilotRealtimeStatus.js";
+import {
+  applyClasspilotControlCommand,
+  emptyClasspilotRestrictions,
+  normalizeClasspilotRestrictions,
+  serializeClasspilotStudentControlState,
+} from "./classpilotClassroomState.js";
+import {
+  classpilotCommandDeliveryPolicy,
+  classpilotCommandExpiresAt,
+  isPersistentClasspilotControl,
+  summarizeClasspilotCommandTargets,
+  type ClasspilotCommandDeliveryPolicy,
+} from "./classpilotCommandDelivery.js";
+import { recordClasspilotStudentSessionMonitoringEvent } from "./classpilotMonitoringEvents.js";
+import type {
+  ClasspilotClassroomState,
+  ClasspilotStudentControlState,
+} from "../schema/classpilot.js";
 
 export type ClasspilotCommandTargetScope = "class" | "subgroup" | "students" | "context";
 
@@ -31,6 +54,8 @@ export type ResolvedClasspilotCommandTarget = {
   studentSessionId: string | null;
   deviceId: string | null;
   available: boolean;
+  /** Whether this command's scope currently owns the student's desired state. */
+  stateAuthorized?: boolean;
   unavailableReason?: string;
 };
 
@@ -65,54 +90,37 @@ function ensureHttpUrl(raw: unknown, fieldName = "url"): string {
   return parsed.toString();
 }
 
+function requireRuleListWithinExtensionLimit(value: unknown, label: string): unknown[] {
+  const list = Array.isArray(value) ? value : [];
+  if (list.length > 1_000) {
+    throw Object.assign(
+      new Error(`${label} cannot contain more than 1,000 entries`),
+      { status: 400, code: "CLASSROOM_RULE_LIMIT_EXCEEDED" }
+    );
+  }
+  return list;
+}
+
 export function commandSummary(command: ClasspilotCommandWithTargets) {
-  const targets = command.targets || [];
-  const requested = targets.length;
-  const sent = targets.filter((target) =>
-    ["sent", "received", "completed", "failed"].includes(target.status)
-  ).length;
-  const received = targets.filter((target) =>
-    ["received", "completed"].includes(target.status)
-  ).length;
-  const completed = targets.filter((target) => target.status === "completed").length;
-  const failed = targets.filter((target) => target.status === "failed").length;
-  const unavailable = targets.filter((target) => target.status === "unavailable").length;
-  const acknowledged = targets.filter((target) =>
-    ["received", "completed", "failed"].includes(target.status)
-  ).length;
-  return {
-    requested,
-    sent,
-    received,
-    completed,
-    failed,
-    unavailable,
-    awaitingAck: Math.max(0, sent - acknowledged),
-  };
+  return summarizeClasspilotCommandTargets(command);
 }
 
 export function resultMessage(commandType: string, summary: ReturnType<typeof commandSummary>): string {
-  const unavailable = summary.unavailable ? ` - ${summary.unavailable} not signed in` : "";
+  const unavailable = summary.unavailable ? ` - ${summary.unavailable} student unavailable` : "";
+  const expired = summary.expired ? ` - ${summary.expired} not delivered` : "";
   const failed = summary.failed ? ` - ${summary.failed} failed` : "";
-  const awaiting = summary.awaitingAck ? ` - ${summary.awaitingAck} awaiting acknowledgement` : "";
-  switch (commandType) {
-    case "open-tab":
-      return `Opened for ${summary.sent} student${summary.sent === 1 ? "" : "s"}${unavailable}${failed}${awaiting}`;
-    case "close-tabs":
-      return `Close tabs sent to ${summary.sent} student${summary.sent === 1 ? "" : "s"}${unavailable}${failed}${awaiting}`;
-    case "lock-screen":
-      return `Locked ${summary.sent} student${summary.sent === 1 ? "" : "s"}${unavailable}${failed}${awaiting}`;
-    case "unlock-screen":
-      return `Unlocked ${summary.sent} student${summary.sent === 1 ? "" : "s"}${unavailable}${failed}${awaiting}`;
-    case "student-sign-out":
-      return `Signed out ${summary.sent} student${summary.sent === 1 ? "" : "s"}${unavailable}${failed}${awaiting}`;
-    case "apply-flight-path":
-      return `Flight Path sent to ${summary.sent} student${summary.sent === 1 ? "" : "s"}${unavailable}${failed}${awaiting}`;
-    case "apply-block-list":
-      return `Block List sent to ${summary.sent} student${summary.sent === 1 ? "" : "s"}${unavailable}${failed}${awaiting}`;
-    default:
-      return `Command sent to ${summary.sent} student${summary.sent === 1 ? "" : "s"}${unavailable}${failed}${awaiting}`;
+  const awaiting = summary.awaitingAck ? ` - ${summary.awaitingAck} awaiting device acknowledgement` : "";
+  const policy = classpilotCommandDeliveryPolicy(commandType);
+  if (policy === "persistent_control") {
+    return `Restriction saved${unavailable}${failed}${awaiting}`;
   }
+  if (policy === "durable_message") {
+    return `Message queued for ${summary.requested} student${summary.requested === 1 ? "" : "s"}${unavailable}${failed}`;
+  }
+  if (policy === "server_authoritative") {
+    return `Student session ended for ${summary.completed} student${summary.completed === 1 ? "" : "s"}${unavailable}${failed}`;
+  }
+  return `Delivery attempted for ${summary.attempted} student${summary.attempted === 1 ? "" : "s"}${unavailable}${expired}${failed}${awaiting}`;
 }
 
 export async function normalizeCommandPayload(
@@ -154,12 +162,16 @@ export async function normalizeCommandPayload(
       const flightPathId = String(payload?.flightPathId || "").trim();
       const flightPath = flightPathId ? await getFlightPathById(flightPathId, schoolId) : undefined;
       if (!flightPath) throw Object.assign(new Error("Flight Path not found"), { status: 404 });
+      const allowedDomains = requireRuleListWithinExtensionLimit(
+        flightPath.allowedDomains,
+        "Flight Path"
+      );
       return {
         extensionType: "apply-flight-path",
         payload: {
           flightPathId: flightPath.id,
           flightPathName: flightPath.flightPathName,
-          allowedDomains: flightPath.allowedDomains || [],
+          allowedDomains,
         },
       };
     }
@@ -167,12 +179,16 @@ export async function normalizeCommandPayload(
       const blockListId = String(payload?.blockListId || "").trim();
       const blockList = blockListId ? await getBlockListById(blockListId, schoolId) : undefined;
       if (!blockList) throw Object.assign(new Error("Block List not found"), { status: 404 });
+      const blockedDomains = requireRuleListWithinExtensionLimit(
+        blockList.blockedDomains,
+        "Block List"
+      );
       return {
         extensionType: "apply-block-list",
         payload: {
           blockListId: blockList.id,
           blockListName: blockList.name,
-          blockedDomains: blockList.blockedDomains || [],
+          blockedDomains,
         },
       };
     }
@@ -220,8 +236,17 @@ function payloadForTarget(
   commandType: string,
   extensionType: string,
   payload: any,
-  target: ResolvedClasspilotCommandTarget
+  target: ResolvedClasspilotCommandTarget,
+  delivery: {
+    policy: ClasspilotCommandDeliveryPolicy;
+    expiresAt: Date | null;
+  },
+  classroomState?: ReturnType<typeof serializeClasspilotStudentControlState>
 ) {
+  const deliveryEnvelope = {
+    deliveryPolicy: delivery.policy,
+    expiresAt: delivery.expiresAt?.toISOString() || null,
+  };
   if (commandType === "close-tabs" && Array.isArray(payload?.tabsToClose)) {
     const ownTabs = payload.tabsToClose.filter((tab: any) =>
       String(tab.studentId || "") === target.studentId ||
@@ -232,23 +257,28 @@ function payloadForTarget(
       type: "remote-control",
       _msgId: crypto.randomUUID(),
       commandId: payload.commandId,
+      ...deliveryEnvelope,
       command: {
         type: extensionType,
         commandId: payload.commandId,
+        ...deliveryEnvelope,
         data: {
           ...payload,
           tabsToClose: undefined,
           specificUrls: ownTabs.map((tab: any) => String(tab.url || "").trim()).filter(Boolean),
         },
       },
+      ...(classroomState ? { classroomState } : {}),
     };
   }
 
   if (commandType === "teacher-message") {
     return {
       type: "teacher-message",
-      _msgId: crypto.randomUUID(),
+      _msgId: payload.messageId || crypto.randomUUID(),
+      messageId: payload.messageId || undefined,
       commandId: payload.commandId,
+      ...deliveryEnvelope,
       message: payload.message,
       fromName: "Teacher",
     };
@@ -258,45 +288,80 @@ function payloadForTarget(
     type: "remote-control",
     _msgId: crypto.randomUUID(),
     commandId: payload.commandId,
+    ...deliveryEnvelope,
     command: {
       type: extensionType,
       commandId: payload.commandId,
+      ...deliveryEnvelope,
       data: { ...payload },
     },
+    ...(classroomState ? { classroomState } : {}),
   };
 }
 
 async function endStudentSessionsForSignOut(options: {
   schoolId: string;
   teachingSessionId: string;
+  commandId: string;
   targets: ResolvedClasspilotCommandTarget[];
 }) {
   const seenSessionIds = new Set<string>();
   const seenDeviceIds = new Set<string>();
+  const completedStudentIds = new Set<string>();
 
   for (const target of options.targets) {
     if (!target.deviceId) continue;
     if (target.studentSessionId && !seenSessionIds.has(target.studentSessionId)) {
       seenSessionIds.add(target.studentSessionId);
-      await endStudentSession(target.studentSessionId);
+      const endedSession = await endStudentSession(target.studentSessionId);
+      if (endedSession) completedStudentIds.add(target.studentId);
+      void recordClasspilotStudentSessionMonitoringEvent({
+        schoolId: options.schoolId,
+        studentId: target.studentId,
+        studentSessionId: target.studentSessionId,
+        deviceId: target.deviceId,
+        type: "student_session_ended",
+        reason: "teacher_sign_out",
+      }).catch(() => { /* lifecycle telemetry must not block sign-out */ });
     }
     if (seenDeviceIds.has(target.deviceId)) continue;
     seenDeviceIds.add(target.deviceId);
 
     removeDeviceStatus(options.schoolId, target.deviceId);
+    const realtimeMutation = target.studentSessionId
+      ? await markClasspilotRealtimeSignedOut({
+          schoolId: options.schoolId,
+          studentId: target.studentId,
+          studentSessionId: target.studentSessionId,
+          deviceId: target.deviceId,
+          reason: "teacher_sign_out",
+        })
+      : null;
+    const realtimeSnapshot = realtimeMutation?.snapshot;
     const update = {
       type: "student-signed-out",
       studentId: target.studentId,
-      deviceId: target.deviceId,
       schoolId: options.schoolId,
       sessionId: options.teachingSessionId,
       status: "offline",
       reason: "teacher_sign_out",
       timestamp: new Date().toISOString(),
+      schemaVersion: 2,
+      ...(realtimeSnapshot ? {
+        realtimeRevision: realtimeSnapshot.revision,
+        revision: realtimeSnapshot.revision,
+        realtimeObservedAt: new Date(realtimeSnapshot.observedAt).toISOString(),
+        observedAtMs: realtimeSnapshot.observedAt,
+        state: "signed_out",
+      } : {}),
     };
     broadcastToStaffSessionLocal(options.schoolId, options.teachingSessionId, update);
     await publishWS({ kind: "staff-session", schoolId: options.schoolId, sessionId: options.teachingSessionId }, update);
   }
+  await markClasspilotCommandTargetsServerCompleted(
+    options.commandId,
+    [...completedStudentIds]
+  );
 }
 
 async function persistActiveState(options: {
@@ -307,10 +372,10 @@ async function persistActiveState(options: {
   commandType: string;
   payload: any;
   targets: ResolvedClasspilotCommandTarget[];
-  sentTargets: ResolvedClasspilotCommandTarget[];
 }) {
   const targetStudentIds = options.targets.map((target) => target.studentId);
-  const sentStudentIds = options.sentTargets.map((target) => target.studentId);
+  if (targetStudentIds.length === 0) return [];
+  const now = new Date();
   const base = {
     schoolId: options.schoolId,
     teachingSessionId: options.teachingSessionId,
@@ -318,55 +383,66 @@ async function persistActiveState(options: {
     appliedBy: options.teacherId,
   };
 
-  if (options.commandType === "unlock-screen") {
+  // Timer and poll commands are transient actions. A dispatch attempt is not
+  // evidence that a device received or applied one, so they must not create an
+  // authoritative active-state row. Clear legacy rows on every transition;
+  // the command target acknowledgements (and the poll record itself) remain
+  // the truthful delivery/lifecycle sources.
+  if (options.commandType === "timer" || options.commandType === "poll") {
+    const stateType = options.commandType;
     await clearClasspilotClassroomStates({
+      schoolId: options.schoolId,
+      teachingSessionId: options.teachingSessionId,
+      studentIds: targetStudentIds,
+      stateTypes: [stateType],
+      commandId: options.commandId,
+    });
+    return [];
+  }
+  if (!isPersistentClasspilotControl(options.commandType)) return [];
+
+  const classroomStateClears: Array<{
+    schoolId: string;
+    teachingSessionId: string;
+    studentIds: string[];
+    stateTypes: string[];
+    commandId: string;
+  }> = [];
+  if (options.commandType === "unlock-screen") {
+    classroomStateClears.push({
       schoolId: options.schoolId,
       teachingSessionId: options.teachingSessionId,
       studentIds: targetStudentIds,
       stateTypes: ["screen-lock", "flight-path"],
       commandId: options.commandId,
     });
-    return;
   }
   if (options.commandType === "remove-flight-path" || options.commandType === "remove-block-list") {
-    await clearClasspilotClassroomStates({
+    classroomStateClears.push({
       schoolId: options.schoolId,
       teachingSessionId: options.teachingSessionId,
       studentIds: targetStudentIds,
       stateTypes: [options.commandType === "remove-flight-path" ? "flight-path" : "block-list"],
       commandId: options.commandId,
     });
-    return;
   }
   if (options.commandType === "attention-mode" && options.payload.active === false) {
-    await clearClasspilotClassroomStates({
+    classroomStateClears.push({
       schoolId: options.schoolId,
       teachingSessionId: options.teachingSessionId,
       studentIds: targetStudentIds,
       stateTypes: ["attention"],
       commandId: options.commandId,
     });
-    return;
   }
-  if (options.commandType === "timer" && options.payload.action === "stop") {
-    await clearClasspilotClassroomStates({
+  if (options.commandType === "limit-tabs" && !options.payload.maxTabs) {
+    classroomStateClears.push({
       schoolId: options.schoolId,
       teachingSessionId: options.teachingSessionId,
       studentIds: targetStudentIds,
-      stateTypes: ["timer"],
+      stateTypes: ["tab-limit"],
       commandId: options.commandId,
     });
-    return;
-  }
-  if (options.commandType === "poll" && options.payload.action === "close") {
-    await clearClasspilotClassroomStates({
-      schoolId: options.schoolId,
-      teachingSessionId: options.teachingSessionId,
-      studentIds: targetStudentIds,
-      stateTypes: ["poll"],
-      commandId: options.commandId,
-    });
-    return;
   }
 
   const stateTypeByCommand: Record<string, string | undefined> = {
@@ -374,30 +450,113 @@ async function persistActiveState(options: {
     "apply-flight-path": "flight-path",
     "apply-block-list": "block-list",
     "attention-mode": options.payload.active === false ? undefined : "attention",
-    timer: options.payload.action === "start" ? "timer" : undefined,
-    poll: options.payload.action === "start" ? "poll" : undefined,
+    "limit-tabs": options.payload.maxTabs ? "tab-limit" : undefined,
+    "temp-unblock": "temporary-allow",
   };
   const stateType = stateTypeByCommand[options.commandType];
-  if (!stateType) return;
 
-  if (options.commandType === "apply-flight-path" && sentStudentIds.length > 0) {
-    await clearClasspilotClassroomStates({
+  if (options.commandType === "apply-flight-path" && targetStudentIds.length > 0) {
+    classroomStateClears.push({
       schoolId: options.schoolId,
       teachingSessionId: options.teachingSessionId,
-      studentIds: sentStudentIds,
-      stateTypes: ["screen-lock"],
+      studentIds: targetStudentIds,
+      // The full-state contract can represent one active Flight Path. Clear a
+      // prior path as well as the mutually exclusive screen lock before the
+      // new legacy/audit row is inserted.
+      stateTypes: ["screen-lock", "flight-path"],
+      commandId: options.commandId,
+    });
+  }
+  if (options.commandType === "apply-block-list" && targetStudentIds.length > 0) {
+    classroomStateClears.push({
+      schoolId: options.schoolId,
+      teachingSessionId: options.teachingSessionId,
+      studentIds: targetStudentIds,
+      stateTypes: ["block-list"],
       commandId: options.commandId,
     });
   }
 
-  await upsertClasspilotClassroomStates(options.sentTargets.map((target) => ({
-    ...base,
-    studentId: target.studentId,
-    stateType,
-    stateKey: options.payload.flightPathId || options.payload.blockListId || options.payload.pollId || "active",
-    payload: options.payload,
-    expiresAt: options.payload.expiresAt ? new Date(options.payload.expiresAt) : null,
-  })));
+  const result = await persistClasspilotControlCommandState({
+    classroomStateClears,
+    classroomStateUpserts: stateType ? options.targets.map((target) => ({
+      ...base,
+      studentId: target.studentId,
+      stateType,
+      stateKey: options.payload.flightPathId || options.payload.blockListId || options.payload.domain || options.payload.pollId || "active",
+      payload: options.payload,
+      expiresAt: options.payload.expiresAt
+        ? new Date(options.payload.expiresAt)
+        : options.commandType === "temp-unblock"
+          ? new Date(now.getTime() + Math.min(720, Math.max(1, Number(options.payload.durationMinutes) || 5)) * 60_000)
+          : null,
+    })) : [],
+    studentSnapshots: {
+      schoolId: options.schoolId,
+      teachingSessionId: options.teachingSessionId,
+      studentIds: targetStudentIds,
+      sourceCommandId: options.commandId,
+      now,
+      desiredState: (
+        studentId: string,
+        current: ClasspilotStudentControlState | null,
+        activeStates: ClasspilotClassroomState[]
+      ) => {
+        const baseRestrictions = current?.teachingSessionId === options.teachingSessionId
+          ? normalizeClasspilotRestrictions((current.desiredState as any)?.restrictions ?? current.desiredState)
+          : activeStates.length > 0
+            ? activeStates
+                .filter((state) => state.studentId === studentId)
+                .reduce(
+                  (state, row) => applyClasspilotControlCommand(state, ({
+                    "screen-lock": "lock-screen",
+                    "flight-path": "apply-flight-path",
+                    "block-list": "apply-block-list",
+                    attention: "attention-mode",
+                    "tab-limit": "limit-tabs",
+                    "temporary-allow": "temp-unblock",
+                  } as Record<string, string>)[row.stateType] || "", row.payload, now),
+                  emptyClasspilotRestrictions()
+                )
+            : emptyClasspilotRestrictions();
+        return { restrictions: applyClasspilotControlCommand(baseRestrictions, options.commandType, options.payload, now) };
+      },
+    },
+  });
+  return result.studentControlStates;
+}
+
+async function persistActiveSupervisionState(options: {
+  schoolId: string;
+  supervisionContextId: string;
+  commandId: string;
+  commandType: string;
+  payload: any;
+  targets: ResolvedClasspilotCommandTarget[];
+  actorId: string;
+  actorIsAdmin: boolean;
+}) {
+  const studentIds = options.targets.map((target) => target.studentId);
+  return replaceClasspilotSupervisionControlSnapshots({
+    schoolId: options.schoolId,
+    supervisionContextId: options.supervisionContextId,
+    studentIds,
+    sourceCommandId: options.commandId,
+    authorizedActorId: options.actorId,
+    actorIsAdmin: options.actorIsAdmin,
+    desiredState: (_studentId: string, current: ClasspilotStudentControlState | null) => {
+      const baseRestrictions = current?.supervisionContextId === options.supervisionContextId
+        ? normalizeClasspilotRestrictions((current.desiredState as any)?.restrictions ?? current.desiredState)
+        : emptyClasspilotRestrictions();
+      return {
+        restrictions: applyClasspilotControlCommand(
+          baseRestrictions,
+          options.commandType,
+          options.payload
+        ),
+      };
+    },
+  });
 }
 
 export async function executeClasspilotCommand(options: {
@@ -411,6 +570,7 @@ export async function executeClasspilotCommand(options: {
   rawCommandPayload: any;
   targets: ResolvedClasspilotCommandTarget[];
   persistClassroomState?: boolean;
+  supervisionActorIsAdmin?: boolean;
 }) {
   const normalized = await normalizeCommandPayload(
     options.commandType,
@@ -420,6 +580,9 @@ export async function executeClasspilotCommand(options: {
     options.teachingSessionId || null
   );
   const commandPayload = { ...normalized.payload };
+  const issuedAt = new Date();
+  const deliveryPolicy = classpilotCommandDeliveryPolicy(options.commandType);
+  const expiresAt = classpilotCommandExpiresAt(options.commandType, issuedAt);
 
   const created = await createClasspilotCommandWithTargets(
     {
@@ -433,6 +596,7 @@ export async function executeClasspilotCommand(options: {
       commandPayload,
       requestedCount: options.targets.length,
       unavailableCount: options.targets.filter((target) => !target.available).length,
+      expiresAt,
     },
     options.targets.map((target) => ({
       schoolId: options.schoolId,
@@ -447,6 +611,53 @@ export async function executeClasspilotCommand(options: {
     }))
   );
 
+  const shouldPersistBeforeDelivery = deliveryPolicy === "persistent_control";
+  const stateAuthorizedTargets = options.targets.filter((target) => target.stateAuthorized !== false);
+  const durableMessageIdByStudent = new Map<string, string>();
+  if (deliveryPolicy === "durable_message") {
+    // The pending-message inbox is the durable authority. Persist once for
+    // every authorized selected student even if no live device is reachable.
+    for (const target of stateAuthorizedTargets) {
+      const message = await createMessage({
+        fromUserId: options.actorId,
+        toStudentId: target.studentId,
+        message: commandPayload.message,
+        isAnnouncement: false,
+      }, options.schoolId);
+      durableMessageIdByStudent.set(target.studentId, message.id);
+    }
+  }
+  const controlStateRows = shouldPersistBeforeDelivery
+    && options.persistClassroomState !== false
+    && options.teachingSessionId
+    ? await persistActiveState({
+        schoolId: options.schoolId,
+        teachingSessionId: options.teachingSessionId,
+        teacherId: options.actorId,
+        commandId: created.id,
+        commandType: options.commandType,
+        payload: commandPayload,
+        targets: stateAuthorizedTargets,
+      })
+    : shouldPersistBeforeDelivery
+      && options.persistClassroomState !== false
+      && options.supervisionContextId
+      ? await persistActiveSupervisionState({
+          schoolId: options.schoolId,
+          supervisionContextId: options.supervisionContextId,
+          commandId: created.id,
+          commandType: options.commandType,
+          payload: commandPayload,
+          targets: stateAuthorizedTargets,
+          actorId: options.actorId,
+          actorIsAdmin: options.supervisionActorIsAdmin === true,
+        })
+    : [];
+  const classroomStateByStudent = new Map(controlStateRows.map((row) => [
+    row.studentId,
+    serializeClasspilotStudentControlState(row),
+  ]));
+
   const sentTargets: ResolvedClasspilotCommandTarget[] = [];
   const deliveryCandidates: ResolvedClasspilotCommandTarget[] = [];
   const remotePublications: PublishWSBatchItem[] = [];
@@ -457,17 +668,12 @@ export async function executeClasspilotCommand(options: {
       const message = payloadForTarget(options.commandType, normalized.extensionType, {
         ...commandPayload,
         commandId: created.id,
-      }, target);
+        messageId: durableMessageIdByStudent.get(target.studentId),
+      }, target, {
+        policy: deliveryPolicy,
+        expiresAt,
+      }, classroomStateByStudent.get(target.studentId));
       if (!message) continue;
-
-      if (options.commandType === "teacher-message") {
-        await createMessage({
-          fromUserId: options.actorId,
-          toStudentId: target.studentId,
-          message: commandPayload.message,
-          isAnnouncement: false,
-        }, options.schoolId);
-      }
 
       // Keep both arrays in the caller's exact target order. Local delivery is
       // immediate; Redis publication below sends the corresponding envelopes in
@@ -528,10 +734,15 @@ export async function executeClasspilotCommand(options: {
     await endStudentSessionsForSignOut({
       schoolId: options.schoolId,
       teachingSessionId: options.teachingSessionId,
+      commandId: created.id,
       targets: sentTargets,
     });
   }
-  if (options.persistClassroomState !== false && options.teachingSessionId) {
+  if (
+    !shouldPersistBeforeDelivery
+    && options.persistClassroomState !== false
+    && options.teachingSessionId
+  ) {
     await persistActiveState({
       schoolId: options.schoolId,
       teachingSessionId: options.teachingSessionId,
@@ -539,8 +750,7 @@ export async function executeClasspilotCommand(options: {
       commandId: created.id,
       commandType: options.commandType,
       payload: commandPayload,
-      targets: options.targets,
-      sentTargets,
+      targets: stateAuthorizedTargets,
     });
   }
   const command = await getClasspilotCommandByIdAndSchool(created.id, options.schoolId);
@@ -553,8 +763,15 @@ export async function executeClasspilotCommand(options: {
   const summary = commandSummary(command);
   return {
     command,
+    deliveryPolicy,
+    expiresAt: command.expiresAt,
     summary,
     message: resultMessage(options.commandType, summary),
+    enforcement: controlStateRows.map((state) => ({
+      studentId: state.studentId,
+      revision: state.revision,
+      health: state.enforcementHealth,
+    })),
     extra: normalized.extra || null,
   };
 }

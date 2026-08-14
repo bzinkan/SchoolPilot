@@ -377,6 +377,9 @@ export type SessionSummaryEmailOptions = {
     offTaskCount?: number;
     safetyAlerts?: string[];
     safetyUrls?: string[];
+    coverageStatus?: "complete" | "partial" | "none" | "not_expected" | "unavailable";
+    coveragePercent?: number | null;
+    gapMinutes?: number;
   }>;
   copyNotice?: string;
   deliveryId?: string;
@@ -415,19 +418,17 @@ function buildSessionSummaryEmail(options: SessionSummaryEmailOptions): { subjec
         .slice(0, 5)
         .map((d) => `${escapeEmailHtml(d.domain)} (${Number(d.minutes) || 0}m)`)
         .join(", ");
-      const offTaskMinutes = Math.round(((s.offTaskCount || 0) * 10) / 60);
-      const offTaskCell = offTaskMinutes > 0
-        ? `<span style="color: #dc2626; font-weight: bold;">${offTaskMinutes}m</span>`
-        : `<span style="color: #16a34a;">0m</span>`;
-      const safetyCell = s.safetyAlerts && s.safetyAlerts.length > 0
-        ? `<span style="color: #dc2626; font-weight: bold;">${s.safetyAlerts.map(escapeEmailHtml).join(", ")}</span>`
-        : "";
+      const coverageLabel = s.coverageStatus === "not_expected"
+        ? "Not expected"
+        : s.coverageStatus === "unavailable"
+          ? "Unavailable"
+          : `${Math.max(0, Math.min(100, Number(s.coveragePercent) || 0))}%${s.gapMinutes ? ` (${s.gapMinutes}m gap)` : ""}`;
       return `
         <tr>
           <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${escapeEmailHtml(s.name)}</td>
           <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: center;">${s.totalMinutes}m</td>
-          <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: center;">${offTaskCell}${safetyCell ? ` ${safetyCell}` : ""}</td>
-          <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; font-size: 13px; color: #6b7280;">${domains || "No activity"}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: center;">${escapeEmailHtml(coverageLabel)}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; font-size: 13px; color: #6b7280;">${domains || "No observed browser telemetry"}</td>
         </tr>`;
     })
     .join("");
@@ -444,13 +445,13 @@ function buildSessionSummaryEmail(options: SessionSummaryEmailOptions): { subjec
         <tr><td style="padding: 8px 12px; font-weight: bold;">Time</td><td style="padding: 8px 12px;">${safeStartTime} — ${safeEndTime} (${safeDuration})</td></tr>
         <tr><td style="padding: 8px 12px; font-weight: bold;">Students</td><td style="padding: 8px 12px;">${Number(studentCount) || 0}</td></tr>
       </table>
-      <h3 style="margin-top: 24px; color: #1e293b;">Student Activity</h3>
+      <h3 style="margin-top: 24px; color: #1e293b;">Observed browser telemetry</h3>
       <table style="width: 100%; border-collapse: collapse;">
         <thead>
           <tr style="background: #f1f5f9;">
             <th style="padding: 8px; text-align: left; border-bottom: 2px solid #e2e8f0;">Student</th>
-            <th style="padding: 8px; text-align: center; border-bottom: 2px solid #e2e8f0;">Active Time</th>
-            <th style="padding: 8px; text-align: center; border-bottom: 2px solid #e2e8f0;">Off-Task</th>
+            <th style="padding: 8px; text-align: center; border-bottom: 2px solid #e2e8f0;">Observed Time</th>
+            <th style="padding: 8px; text-align: center; border-bottom: 2px solid #e2e8f0;">Monitoring coverage</th>
             <th style="padding: 8px; text-align: left; border-bottom: 2px solid #e2e8f0;">Top Sites</th>
           </tr>
         </thead>

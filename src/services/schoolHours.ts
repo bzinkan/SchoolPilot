@@ -10,23 +10,16 @@ export function isWithinTrackingWindow(settings: {
   trackingEndTime: string | null;
   trackingDays: string[] | null;
   schoolTimezone: string | null;
-}): boolean {
+}, at: Date = new Date()): boolean {
   if (!settings.enableTrackingHours) return true; // tracking hours disabled = always track
 
   const tz = settings.schoolTimezone || "America/New_York";
   let now: Date;
   try {
-    const dateStr = new Date().toLocaleString("en-US", { timeZone: tz });
+    const dateStr = at.toLocaleString("en-US", { timeZone: tz });
     now = new Date(dateStr);
   } catch {
-    now = new Date();
-  }
-
-  // Check day of week
-  if (settings.trackingDays && settings.trackingDays.length > 0) {
-    const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-    const today = dayNames[now.getDay()]!;
-    if (!settings.trackingDays.includes(today)) return false;
+    now = at;
   }
 
   // Check time range
@@ -36,7 +29,31 @@ export function isWithinTrackingWindow(settings: {
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
     const startMinutes = (startH ?? 8) * 60 + (startM ?? 0);
     const endMinutes = (endH ?? 15) * 60 + (endM ?? 0);
-    if (currentMinutes < startMinutes || currentMinutes > endMinutes) return false;
+    const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const todayIndex = now.getDay();
+    const activeDays = settings.trackingDays && settings.trackingDays.length > 0
+      ? new Set(settings.trackingDays)
+      : null;
+    const dayEnabled = (dayIndex: number) => !activeDays || activeDays.has(dayNames[dayIndex]!);
+
+    if (startMinutes < endMinutes) {
+      return dayEnabled(todayIndex)
+        && currentMinutes >= startMinutes
+        && currentMinutes <= endMinutes;
+    }
+
+    // An overnight window belongs to the day on which it starts. For example,
+    // Monday 20:00–02:00 remains active through Tuesday 02:00 when Monday is
+    // configured, even if Tuesday itself is not selected.
+    if (currentMinutes >= startMinutes) return dayEnabled(todayIndex);
+    if (currentMinutes <= endMinutes) return dayEnabled((todayIndex + 6) % 7);
+    return false;
+  }
+
+  // With no valid time range, the configured days still bound monitoring.
+  if (settings.trackingDays && settings.trackingDays.length > 0) {
+    const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    if (!settings.trackingDays.includes(dayNames[now.getDay()]!)) return false;
   }
 
   return true;

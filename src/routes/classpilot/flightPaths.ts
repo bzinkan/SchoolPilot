@@ -39,6 +39,22 @@ const auth = [
   requireRole("admin", "school_admin", "office_staff", "teacher"),
 ] as const;
 
+const adminAuth = [
+  authenticate,
+  requireSchoolContext,
+  requireActiveSchool,
+  requireProductLicense("CLASSPILOT"),
+  requireRole("admin", "school_admin"),
+] as const;
+
+function canManageOwnedResource(req: any, res: any, teacherId: string | null): boolean {
+  const role = res.locals.membershipRole as string | undefined;
+  return req.authUser?.isSuperAdmin
+    || role === "admin"
+    || role === "school_admin"
+    || teacherId === req.authUser?.id;
+}
+
 function allowedEntryFromUrl(rawUrl: string): string | null {
   try {
     const url = new URL(rawUrl);
@@ -71,6 +87,21 @@ function extractAllowedEntries(resources: any[], fallbackLinks: string[] = []): 
   return [...entries].sort();
 }
 
+function validateRuleList(value: unknown, label: string): string[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw Object.assign(new Error(`${label} must be an array`), { status: 400 });
+  }
+  const normalized = [...new Set(value.map((entry) => String(entry || "").trim()).filter(Boolean))];
+  if (normalized.length > 1_000) {
+    throw Object.assign(new Error(`${label} cannot contain more than 1,000 entries`), {
+      status: 400,
+      code: "CLASSROOM_RULE_LIMIT_EXCEEDED",
+    });
+  }
+  return normalized;
+}
+
 // ============================================================================
 // Block Lists (MUST come before /:id routes to avoid route conflicts)
 // ============================================================================
@@ -92,6 +123,9 @@ router.get("/block-lists/:id", ...auth, async (req, res, next) => {
     if (!bl) {
       return res.status(404).json({ error: "Block list not found" });
     }
+    if (!canManageOwnedResource(req, res, bl.teacherId)) {
+      return res.status(404).json({ error: "Block list not found" });
+    }
     return res.json({ blockList: bl });
   } catch (err) {
     next(err);
@@ -111,7 +145,7 @@ router.post("/block-lists", ...auth, async (req, res, next) => {
       teacherId: req.authUser!.id,
       name,
       description: description || null,
-      blockedDomains: blockedDomains || [],
+      blockedDomains: validateRuleList(blockedDomains, "Block List"),
       isDefault: isDefault || false,
     });
 
@@ -125,12 +159,16 @@ router.post("/block-lists", ...auth, async (req, res, next) => {
 router.patch("/block-lists/:id", ...auth, async (req, res, next) => {
   try {
     const id = param(req, "id");
+    const existing = await getBlockListById(id, res.locals.schoolId!);
+    if (!existing || !canManageOwnedResource(req, res, existing.teacherId)) {
+      return res.status(404).json({ error: "Block list not found" });
+    }
     const { name, description, blockedDomains, isDefault } = req.body;
 
     const data: Record<string, unknown> = {};
     if (name !== undefined) data.name = name;
     if (description !== undefined) data.description = description;
-    if (blockedDomains !== undefined) data.blockedDomains = blockedDomains;
+    if (blockedDomains !== undefined) data.blockedDomains = validateRuleList(blockedDomains, "Block List");
     if (isDefault !== undefined) data.isDefault = isDefault;
 
     const updated = await updateBlockList(id, res.locals.schoolId!, data);
@@ -150,6 +188,9 @@ router.delete("/block-lists/:id", ...auth, async (req, res, next) => {
     if (!existing) {
       return res.status(404).json({ error: "Block list not found" });
     }
+    if (!canManageOwnedResource(req, res, existing.teacherId)) {
+      return res.status(404).json({ error: "Block list not found" });
+    }
     await deleteBlockList(param(req, "id"), res.locals.schoolId!);
     return res.json({ ok: true });
   } catch (err) {
@@ -158,7 +199,7 @@ router.delete("/block-lists/:id", ...auth, async (req, res, next) => {
 });
 
 // POST /api/classpilot/block-lists/:id/apply - Apply block list to devices
-router.post("/block-lists/:id/apply", ...auth, async (req, res, next) => {
+router.post("/block-lists/:id/apply", ...adminAuth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
     const bl = await getBlockListById(param(req, "id"), schoolId);
@@ -204,7 +245,7 @@ router.post("/block-lists/:id/apply", ...auth, async (req, res, next) => {
 });
 
 // POST /api/classpilot/block-lists/remove - Remove block list from devices
-router.post("/block-lists/remove", ...auth, async (req, res, next) => {
+router.post("/block-lists/remove", ...adminAuth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
     const { deviceIds, targetDeviceIds } = req.body;
@@ -267,8 +308,8 @@ router.post("/", ...auth, async (req, res, next) => {
       teacherId: req.authUser!.id,
       flightPathName,
       description: description || null,
-      allowedDomains: allowedDomains || [],
-      blockedDomains: blockedDomains || [],
+      allowedDomains: validateRuleList(allowedDomains, "Flight Path"),
+      blockedDomains: validateRuleList(blockedDomains, "Flight Path block list"),
       isDefault: isDefault || false,
     });
 
@@ -310,6 +351,7 @@ router.post("/from-classroom", ...auth, async (req, res, next) => {
     if (allowedDomains.length === 0) {
       return res.status(400).json({ error: "No usable Classroom resource URLs were found" });
     }
+    validateRuleList(allowedDomains, "Flight Path");
 
     const fp = await createFlightPath({
       schoolId: res.locals.schoolId!,
@@ -317,7 +359,7 @@ router.post("/from-classroom", ...auth, async (req, res, next) => {
       flightPathName: flightPathName || name || "Classroom Flight Path",
       description: description || null,
       allowedDomains,
-      blockedDomains: Array.isArray(blockedDomains) ? blockedDomains : [],
+      blockedDomains: validateRuleList(blockedDomains, "Flight Path block list"),
       isDefault: !!isDefault,
       sourceType: "google_classroom",
       sourceCourseId: String(courseId),
@@ -347,6 +389,9 @@ router.get("/:id", ...auth, async (req, res, next) => {
     if (!fp) {
       return res.status(404).json({ error: "Flight path not found" });
     }
+    if (!canManageOwnedResource(req, res, fp.teacherId)) {
+      return res.status(404).json({ error: "Flight path not found" });
+    }
     return res.json({ flightPath: fp });
   } catch (err) {
     next(err);
@@ -357,13 +402,17 @@ router.get("/:id", ...auth, async (req, res, next) => {
 router.patch("/:id", ...auth, async (req, res, next) => {
   try {
     const id = param(req, "id");
+    const existing = await getFlightPathById(id, res.locals.schoolId!);
+    if (!existing || !canManageOwnedResource(req, res, existing.teacherId)) {
+      return res.status(404).json({ error: "Flight path not found" });
+    }
     const { flightPathName, description, allowedDomains, blockedDomains, isDefault } = req.body;
 
     const data: Record<string, unknown> = {};
     if (flightPathName !== undefined) data.flightPathName = flightPathName;
     if (description !== undefined) data.description = description;
-    if (allowedDomains !== undefined) data.allowedDomains = allowedDomains;
-    if (blockedDomains !== undefined) data.blockedDomains = blockedDomains;
+    if (allowedDomains !== undefined) data.allowedDomains = validateRuleList(allowedDomains, "Flight Path");
+    if (blockedDomains !== undefined) data.blockedDomains = validateRuleList(blockedDomains, "Flight Path block list");
     if (isDefault !== undefined) data.isDefault = isDefault;
 
     const updated = await updateFlightPath(id, res.locals.schoolId!, data);
@@ -381,6 +430,9 @@ router.delete("/:id", ...auth, async (req, res, next) => {
   try {
     const existing = await getFlightPathById(param(req, "id"), res.locals.schoolId!);
     if (!existing) {
+      return res.status(404).json({ error: "Flight path not found" });
+    }
+    if (!canManageOwnedResource(req, res, existing.teacherId)) {
       return res.status(404).json({ error: "Flight path not found" });
     }
     await deleteFlightPath(param(req, "id"), res.locals.schoolId!);

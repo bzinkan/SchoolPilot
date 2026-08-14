@@ -22,6 +22,7 @@ import {
   createTeachingSession,
   createUser,
   endTeachingSession,
+  expireClasspilotTransientCommandTargets,
   getActiveClassOwnersForStudents,
   getActiveTeachingSessionForSchool,
   getActiveCoverageAssignmentsForStaff,
@@ -32,7 +33,12 @@ import {
   getCoverageScopeGroupStudentIds,
   getCentralEmailRecipientForSchool,
   getClasspilotSessionStudents,
+  getClasspilotSessionStudentRoster,
+  getClasspilotStudentControlState,
   getClasspilotCommandByIdAndSchool,
+  getActiveClasspilotClassroomStates,
+  getPendingMessagesForStudent,
+  getRecentMessagesForStudent,
   getGroupStudents,
   getSettingsForSchool,
   getOnlineUnassignedStudents,
@@ -45,6 +51,7 @@ import {
   markClasspilotCommandTargetsSent,
   replaceCoverageScopeGroupMembers,
   releaseSupervisionStudents,
+  resyncActiveClasspilotSessionStudents,
   setActiveStudentForDevice,
   updateCoverageAssignment,
   updateCoverageScopeGroup,
@@ -52,8 +59,10 @@ import {
   updateClasspilotCommandSummary,
   updateEnrollmentSettings,
   upsertSettings,
+  upsertClasspilotClassroomStates,
   withClasspilotCommandBroadcastLock,
 } from "../dist/services/storage.js";
+import { executeClasspilotCommand } from "../dist/services/classpilotCommandDispatcher.js";
 import {
   expireScheduledClassConflictsForSchool,
   processScheduledClassAutoStart,
@@ -74,6 +83,7 @@ let studentUnassigned: any;
 let studentInClass: any;
 let studentCoverage: any;
 let studentDeviceGuard: any;
+let sessionGuard: any;
 let server: Server;
 let baseUrl: string;
 let originalRedisUrl: string | undefined;
@@ -400,7 +410,7 @@ before(async () => {
     await setActiveStudentForDevice(deviceUnassigned, studentUnassigned.id);
     await setActiveStudentForDevice(deviceInClass, studentInClass.id);
     await setActiveStudentForDevice(deviceCoverage, studentCoverage.id);
-    await setActiveStudentForDevice(deviceGuard, studentDeviceGuard.id);
+    sessionGuard = await setActiveStudentForDevice(deviceGuard, studentDeviceGuard.id);
   });
 
   const { createApp } = await import("../dist/app.js");
@@ -1117,7 +1127,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
         ["teacher", scheduledTeacher.email.toLowerCase()],
       ]
     );
-    assert.ok(queuedDeliveries.rows.every((row: any) => row.state === "queued"));
+    assert.ok(queuedDeliveries.rows.every((row: any) => row.state === "waiting_report"));
     const expiredCoverage = await inSchool(school.id, () => getActiveSupervisionForStudent(school.id, scheduledOnlyStudent.id));
     assert.equal(expiredCoverage, undefined);
     const expiredReportSession = await inSchool(school.id, () => getActiveScheduledReportSessionForConflict(school.id, expiringConflictId));
@@ -1170,6 +1180,11 @@ describe("ClassPilot supervision coverage storage contracts", () => {
 
     const oldSession = await inSchool(school.id, () => createTeachingSession({ groupId: oldGroup.id, teacherId: teacher.id }));
     const newSession = await inSchool(school.id, () => createTeachingSession({ groupId: newGroup.id, teacherId: secondTeacher.id }));
+    const replacementState = await inSchool(school.id, () =>
+      getClasspilotStudentControlState(school.id, studentDeviceGuard.id)
+    );
+    assert.equal(replacementState?.teachingSessionId, newSession.id);
+    assert.equal(replacementState?.supervisionContextId, null);
     await inSchool(school.id, async () => {
       await db.execute(sql`UPDATE teaching_sessions SET start_time = ${new Date(Date.now() - 60_000)} WHERE id = ${oldSession.id}`);
       await db.execute(sql`UPDATE teaching_sessions SET start_time = ${new Date()} WHERE id = ${newSession.id}`);
@@ -1274,7 +1289,9 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     try {
       const requestedStudentIds = [staleStudent.id, activeStudentB.id, activeStudentA.id];
       const requestedSet = new Set(requestedStudentIds);
-      const classRows = await inSchool(school.id, () => getGroupStudents(group.id));
+      const classRows = await inSchool(school.id, () =>
+        getClasspilotSessionStudentRoster(school.id, teachingSession.id)
+      );
       const expectedTargetOrder = classRows
         .filter((row) => requestedSet.has(row.studentId))
         .map((row) => row.studentId);
@@ -1391,7 +1408,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.ok(sessionRowsAfterAdd.some((row) => row.studentId === lateStudent.id));
 
     const forbidden = await requestJson("POST", `/sessions/${resyncSession.id}/resync`, {}, authFor(unauthorizedTeacher, school.id));
-    assert.equal(forbidden.status, 403);
+    assert.equal(forbidden.status, 404);
 
     await inSchool(school.id, async () => {
       await addGroupStudentsDetailed(resyncGroup.id, [overlapStudent.id]);
@@ -1428,6 +1445,73 @@ describe("ClassPilot supervision coverage storage contracts", () => {
 
     await inSchool(school.id, () => endTeachingSession(resyncSession.id));
     await inSchool(school.id, () => endTeachingSession(otherSession.id));
+  });
+
+  it("serializes an active roster resync against session finalization", async () => {
+    const raceTeacher = await createUser({
+      email: `resync-race-teacher@${TAG}.example.edu`,
+      firstName: "Race",
+      lastName: "Teacher",
+    } as any);
+    await createMembership({
+      userId: raceTeacher.id,
+      schoolId: school.id,
+      role: "teacher",
+      status: "active",
+    } as any);
+    const original = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Race",
+      lastName: "Original",
+      email: `resync-race-original@${TAG}.example.edu`,
+      emailLc: `resync-race-original@${TAG}.example.edu`,
+      gradeLevel: "7",
+      status: "active",
+    } as any));
+    const late = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Race",
+      lastName: "Late",
+      email: `resync-race-late@${TAG}.example.edu`,
+      emailLc: `resync-race-late@${TAG}.example.edu`,
+      gradeLevel: "7",
+      status: "active",
+    } as any));
+    const group = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: raceTeacher.id,
+      name: `${TAG}_Resync_Finalize_Race`,
+      groupType: "admin_class",
+      status: "active",
+    } as any));
+    await inSchool(school.id, () => addGroupStudentsDetailed(group.id, [original.id]));
+    const session = await inSchool(school.id, () => createTeachingSession({
+      groupId: group.id,
+      teacherId: raceTeacher.id,
+    }));
+    await inSchool(school.id, () => addGroupStudentsDetailed(group.id, [late.id]));
+
+    const [resyncResult, ended] = await Promise.all([
+      inSchool(school.id, () => resyncActiveClasspilotSessionStudents({
+        schoolId: school.id,
+        teachingSessionId: session.id,
+      })),
+      inSchool(school.id, () => endTeachingSession(session.id)),
+    ]);
+    assert.ok(ended?.endTime);
+
+    const frozenRoster = await inSchool(school.id, () => getClasspilotSessionStudents(session.id));
+    assert.equal(
+      frozenRoster.some((row) => row.studentId === late.id),
+      Boolean(resyncResult),
+      "the late student is frozen only when resync wins the lifecycle lock"
+    );
+    for (const studentId of [original.id, late.id]) {
+      const state = await inSchool(school.id, () =>
+        getClasspilotStudentControlState(school.id, studentId)
+      );
+      assert.notEqual(state?.teachingSessionId, session.id);
+    }
   });
 
   it("signs out explicit active class students and rejects implicit whole-class sign-out", async () => {
@@ -1476,15 +1560,95 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.equal(selectedCommand.status, 201);
     assert.equal(selectedCommand.body.summary.requested, 1);
     assert.equal(selectedCommand.body.summary.sent, 1);
+    assert.equal(selectedCommand.body.summary.completed, 1);
+    assert.equal(selectedCommand.body.summary.acknowledged, 0);
     assert.equal(selectedCommand.body.summary.unavailable, 0);
+    assert.equal(selectedCommand.body.deliveryPolicy, "server_authoritative");
+    assert.equal(selectedCommand.body.expiresAt, null);
     assert.equal(selectedCommand.body.command.targets[0].studentId, signOutStudent.id);
-    assert.equal(selectedCommand.body.command.targets[0].deviceId, signOutDevice);
-    assert.match(selectedCommand.body.message, /Signed out 1 student/);
+    assert.equal(selectedCommand.body.command.targets[0].result.serverAuthoritative, true);
+    expectNoDeviceIds(selectedCommand.body);
+    assert.match(selectedCommand.body.message, /Student session ended for 1 student/);
 
     const activeAfterSignOut = await inSchool(school.id, () => getActiveSessionByStudent(signOutStudent.id));
     assert.equal(activeAfterSignOut, undefined);
 
     await inSchool(school.id, () => endTeachingSession(session.id));
+  });
+
+  it("ends a stale active student session through server-authoritative sign-out", async () => {
+    const staleStudent = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Stale",
+      lastName: "Signout",
+      email: `stale-sign-out@${TAG}.example.edu`,
+      emailLc: `stale-sign-out@${TAG}.example.edu`,
+      gradeLevel: "8",
+      status: "active",
+    } as any));
+    const staleDevice = `${TAG}-device-stale-sign-out`;
+    const staleGroup = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: teacher.id,
+      name: `${TAG}_Stale_Sign_Out_Class`,
+      groupType: "admin_class",
+      status: "active",
+    } as any));
+
+    const staleStudentSession = await inSchool(school.id, async () => {
+      await createDevice({
+        deviceId: staleDevice,
+        schoolId: school.id,
+        classId: "default",
+        deviceName: "Stale Sign Out",
+      } as any);
+      await linkStudentDevice({ studentId: staleStudent.id, deviceId: staleDevice });
+      const active = await setActiveStudentForDevice(staleDevice, staleStudent.id);
+      await addGroupStudentsDetailed(staleGroup.id, [staleStudent.id]);
+      await db.execute(sql`
+        UPDATE student_sessions
+        SET last_seen_at = ${new Date(Date.now() - 10 * 60 * 1000)}
+        WHERE id = ${active.id}
+      `);
+      return active;
+    });
+    const teachingSession = await inSchool(school.id, () => createTeachingSession({
+      groupId: staleGroup.id,
+      teacherId: teacher.id,
+    }));
+
+    const response = await requestJson("POST", "/commands", {
+      teachingSessionId: teachingSession.id,
+      targetScope: "students",
+      targetStudentIds: [staleStudent.id],
+      commandType: "student-sign-out",
+      commandPayload: {},
+    }, authFor(teacher, school.id));
+
+    assert.equal(response.status, 201);
+    assert.equal(response.body.deliveryPolicy, "server_authoritative");
+    assert.equal(response.body.summary.requested, 1);
+    assert.equal(response.body.summary.attempted, 1);
+    assert.equal(response.body.summary.completed, 1);
+    assert.equal(response.body.summary.acknowledged, 0);
+    assert.equal(response.body.summary.unavailable, 0);
+    assert.equal(response.body.command.targets[0].result.serverAuthoritative, true);
+    expectNoDeviceIds(response.body);
+    assert.equal(
+      await inSchool(school.id, () => getActiveSessionByStudent(staleStudent.id)),
+      undefined
+    );
+    const endedRow = await inSchool(school.id, async () => {
+      const result = await db.execute(sql`
+        SELECT ended_at
+        FROM student_sessions
+        WHERE id = ${staleStudentSession.id}
+      `);
+      return result.rows[0] as { ended_at: Date | null } | undefined;
+    });
+    assert.ok(endedRow?.ended_at);
+
+    await inSchool(school.id, () => endTeachingSession(teachingSession.id));
   });
 
   it("excludes actively logged-in students from the shared Chromebook login roster", async () => {
@@ -2058,6 +2222,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       schoolId: school.id,
       deviceId: deviceUnassigned,
       studentId: studentUnassigned.id,
+      studentSessionId: activeSession!.id,
       ackState: "completed",
       result: { ok: true },
     }));
@@ -2093,7 +2258,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
         supervisionContextId: null,
         commandId: "",
         studentId: studentDeviceGuard.id,
-        studentSessionId: null,
+        studentSessionId: sessionGuard.id,
         deviceId: deviceGuard,
         status: "requested",
         errorMessage: null,
@@ -2105,6 +2270,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       schoolId: school.id,
       deviceId: deviceGuard,
       studentId: studentDeviceGuard.id,
+      studentSessionId: sessionGuard.id,
       ackState: "completed",
       result: { ok: true },
     }));
@@ -2127,6 +2293,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       schoolId: school.id,
       deviceId: deviceGuard,
       studentId: studentDeviceGuard.id,
+      studentSessionId: sessionGuard.id,
       ackState: "received",
       result: { late: true },
     }));
@@ -2167,7 +2334,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
         supervisionContextId: null,
         commandId: "",
         studentId: studentDeviceGuard.id,
-        studentSessionId: null,
+        studentSessionId: sessionGuard.id,
         deviceId: deviceGuard,
         status: "requested",
         errorMessage: null,
@@ -2181,6 +2348,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
         schoolId: school.id,
         deviceId: deviceGuard,
         studentId: studentDeviceGuard.id,
+        studentSessionId: sessionGuard.id,
         ackState: "received",
         result: { phase: "received" },
       })),
@@ -2189,6 +2357,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
         schoolId: school.id,
         deviceId: deviceGuard,
         studentId: studentDeviceGuard.id,
+        studentSessionId: sessionGuard.id,
         ackState: "completed",
         result: { phase: "completed" },
       })),
@@ -2230,7 +2399,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
         supervisionContextId: null,
         commandId: "",
         studentId: studentDeviceGuard.id,
-        studentSessionId: null,
+        studentSessionId: sessionGuard.id,
         deviceId: deviceGuard,
         status: "requested",
         errorMessage: null,
@@ -2242,6 +2411,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       schoolId: school.id,
       deviceId: deviceGuard,
       studentId: studentDeviceGuard.id,
+      studentSessionId: sessionGuard.id,
       ackState: "failed",
       errorMessage: "synthetic failure",
     }));
@@ -2250,6 +2420,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       schoolId: school.id,
       deviceId: deviceGuard,
       studentId: studentDeviceGuard.id,
+      studentSessionId: sessionGuard.id,
       ackState: "received",
     }));
     assert.equal(lateReceived?.status, "failed");
@@ -2264,6 +2435,337 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.equal(loaded?.targets[0]?.ackState, "failed");
     assert.ok(loaded?.targets[0]?.receivedAt);
     assert.ok(loaded?.targets[0]?.failedAt);
+  });
+
+  it("expires an unreceived transient target and rejects a late received acknowledgement", async () => {
+    const deadline = new Date("2026-08-13T12:00:15.000Z");
+    const created = await inSchool(school.id, () => createClasspilotCommandWithTargets(
+      {
+        schoolId: school.id,
+        teachingSessionId: null,
+        supervisionContextId: null,
+        teacherId: teacher.id,
+        targetScope: "students",
+        subgroupId: null,
+        commandType: "open-tab",
+        commandPayload: { url: "https://example.com/" },
+        requestedCount: 1,
+        unavailableCount: 0,
+        expiresAt: deadline,
+      } as any,
+      [{
+        schoolId: school.id,
+        teachingSessionId: null,
+        supervisionContextId: null,
+        commandId: "",
+        studentId: studentDeviceGuard.id,
+        studentSessionId: sessionGuard.id,
+        deviceId: deviceGuard,
+        status: "requested",
+        errorMessage: null,
+      } as any]
+    ));
+    await inSchool(school.id, () => markClasspilotCommandTargetsSent(created.id, [deviceGuard]));
+
+    const lateReceived = await inSchool(school.id, () => updateClasspilotCommandTargetAck({
+      commandId: created.id,
+      schoolId: school.id,
+      deviceId: deviceGuard,
+      studentId: studentDeviceGuard.id,
+      studentSessionId: sessionGuard.id,
+      ackState: "received",
+      now: new Date(deadline.getTime() + 1),
+    }));
+    assert.equal(lateReceived?.status, "expired");
+    assert.equal(lateReceived?.receivedAt, null);
+    assert.notEqual(lateReceived?.ackState, "received");
+
+    await inSchool(school.id, () => updateClasspilotCommandSummary(created.id));
+    const loaded = await inSchool(school.id, () => getClasspilotCommandByIdAndSchool(created.id, school.id));
+    assert.equal(loaded?.status, "expired");
+    assert.equal(loaded?.targets[0]?.status, "expired");
+  });
+
+  it("allows completion after expiry only when receipt was recorded before the deadline", async () => {
+    const deadline = new Date(Date.now() + 60_000);
+    const created = await inSchool(school.id, () => createClasspilotCommandWithTargets(
+      {
+        schoolId: school.id,
+        teachingSessionId: null,
+        supervisionContextId: null,
+        teacherId: teacher.id,
+        targetScope: "students",
+        subgroupId: null,
+        commandType: "close-tabs",
+        commandPayload: {},
+        requestedCount: 1,
+        unavailableCount: 0,
+        expiresAt: deadline,
+      } as any,
+      [{
+        schoolId: school.id,
+        teachingSessionId: null,
+        supervisionContextId: null,
+        commandId: "",
+        studentId: studentDeviceGuard.id,
+        studentSessionId: sessionGuard.id,
+        deviceId: deviceGuard,
+        status: "requested",
+        errorMessage: null,
+      } as any]
+    ));
+    await inSchool(school.id, () => markClasspilotCommandTargetsSent(created.id, [deviceGuard]));
+    const received = await inSchool(school.id, () => updateClasspilotCommandTargetAck({
+      commandId: created.id,
+      schoolId: school.id,
+      deviceId: deviceGuard,
+      studentId: studentDeviceGuard.id,
+      studentSessionId: sessionGuard.id,
+      ackState: "received",
+      now: new Date(deadline.getTime() - 1),
+    }));
+    assert.equal(received?.status, "received");
+
+    const completed = await inSchool(school.id, () => updateClasspilotCommandTargetAck({
+      commandId: created.id,
+      schoolId: school.id,
+      deviceId: deviceGuard,
+      studentId: studentDeviceGuard.id,
+      studentSessionId: sessionGuard.id,
+      ackState: "completed",
+      now: new Date(deadline.getTime() + 1),
+    }));
+    assert.equal(completed?.status, "completed");
+    assert.ok(completed?.receivedAt);
+    assert.ok(completed?.completedAt);
+  });
+
+  it("persists expired transient targets and accepts an exact expired device outcome", async () => {
+    const deadline = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const created = await inSchool(school.id, () => createClasspilotCommandWithTargets(
+      {
+        schoolId: school.id,
+        teachingSessionId: null,
+        supervisionContextId: null,
+        teacherId: teacher.id,
+        targetScope: "students",
+        subgroupId: null,
+        commandType: "timer",
+        commandPayload: {},
+        requestedCount: 1,
+        unavailableCount: 0,
+        expiresAt: deadline,
+      } as any,
+      [{
+        schoolId: school.id,
+        teachingSessionId: null,
+        supervisionContextId: null,
+        commandId: "",
+        studentId: studentDeviceGuard.id,
+        studentSessionId: sessionGuard.id,
+        deviceId: deviceGuard,
+        status: "sent",
+        sentAt: new Date(deadline.getTime() - 1_000),
+        errorMessage: null,
+      } as any]
+    ));
+
+    assert.ok(created.expiresAt);
+    assert.equal(created.targets[0]?.status, "sent");
+
+    const expiredCommandIds = await inSchool(school.id, () =>
+      expireClasspilotTransientCommandTargets({
+        commandId: created.id,
+        schoolId: school.id,
+        now: new Date(),
+      })
+    );
+    assert.deepEqual(expiredCommandIds, [created.id]);
+
+    const expiredAck = await inSchool(school.id, () => updateClasspilotCommandTargetAck({
+      commandId: created.id,
+      schoolId: school.id,
+      deviceId: deviceGuard,
+      studentId: studentDeviceGuard.id,
+      studentSessionId: sessionGuard.id,
+      ackState: "expired",
+      now: new Date(),
+    }));
+    assert.equal(expiredAck?.status, "expired");
+    assert.equal(expiredAck?.ackState, "expired");
+  });
+
+  it("recovers a durable teacher message after an outage longer than five minutes", async () => {
+    const offlineStudent = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Offline",
+      lastName: "Message",
+      email: `offline-message@${TAG}.example.edu`,
+      emailLc: `offline-message@${TAG}.example.edu`,
+      gradeLevel: "8",
+      status: "active",
+    } as any));
+    const text = `Queued while offline ${TAG}`;
+    const result = await inSchool(school.id, () => executeClasspilotCommand({
+      schoolId: school.id,
+      actorId: teacher.id,
+      targetScope: "students",
+      commandType: "teacher-message",
+      rawCommandPayload: { message: text },
+      targets: [{
+        studentId: offlineStudent.id,
+        studentName: "Offline Message",
+        studentSessionId: null,
+        deviceId: null,
+        available: false,
+        stateAuthorized: true,
+        unavailableReason: "Student is not signed in to the extension",
+      }],
+    }));
+
+    assert.equal(result.deliveryPolicy, "durable_message");
+    assert.equal(result.expiresAt, null);
+    assert.equal(result.summary.requested, 1);
+    assert.equal(result.summary.attempted, 0);
+    await inSchool(school.id, () => db.execute(sql`
+      UPDATE messages
+      SET timestamp = ${new Date(Date.now() - 10 * 60 * 1000)}
+      WHERE school_id = ${school.id}
+        AND to_student_id = ${offlineStudent.id}
+        AND message = ${text}
+    `));
+
+    const legacyFiveMinuteWindow = await inSchool(school.id, () =>
+      getRecentMessagesForStudent(offlineStudent.id, 5)
+    );
+    assert.equal(legacyFiveMinuteWindow.some((message) => message.message === text), false);
+
+    const pending = await inSchool(school.id, () => getPendingMessagesForStudent({
+      schoolId: school.id,
+      studentId: offlineStudent.id,
+    }));
+    const recovered = pending.find((message) => message.message === text);
+    assert.ok(recovered);
+    const excluded = await inSchool(school.id, () => getPendingMessagesForStudent({
+      schoolId: school.id,
+      studentId: offlineStudent.id,
+      excludeMessageIds: [recovered.id],
+    }));
+    assert.equal(excluded.some((message) => message.id === recovered.id), false);
+  });
+
+  it("never represents transient timer or poll dispatch as active classroom state", async () => {
+    const transientGroup = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: teacher.id,
+      name: `${TAG}_Transient_State_Class`,
+      groupType: "admin_class",
+      status: "active",
+    } as any));
+    await inSchool(school.id, () => addGroupStudentsDetailed(
+      transientGroup.id,
+      [studentDeviceGuard.id]
+    ));
+    const teachingSession = await inSchool(school.id, () => createTeachingSession({
+      groupId: transientGroup.id,
+      teacherId: teacher.id,
+    }));
+    await inSchool(school.id, () => upsertClasspilotClassroomStates([
+      {
+        schoolId: school.id,
+        teachingSessionId: teachingSession.id,
+        studentId: studentDeviceGuard.id,
+        stateType: "timer",
+        stateKey: "active",
+        payload: { action: "start" },
+        commandId: null,
+        appliedBy: teacher.id,
+      } as any,
+      {
+        schoolId: school.id,
+        teachingSessionId: teachingSession.id,
+        studentId: studentDeviceGuard.id,
+        stateType: "poll",
+        stateKey: "legacy-poll",
+        payload: { action: "start" },
+        commandId: null,
+        appliedBy: teacher.id,
+      } as any,
+    ]));
+
+    const target = {
+      studentId: studentDeviceGuard.id,
+      studentName: "Device Guard",
+      studentSessionId: sessionGuard.id,
+      deviceId: deviceGuard,
+      available: true,
+      stateAuthorized: true,
+    };
+    const timer = await inSchool(school.id, () => executeClasspilotCommand({
+      schoolId: school.id,
+      actorId: teacher.id,
+      teachingSessionId: teachingSession.id,
+      targetScope: "students",
+      commandType: "timer",
+      rawCommandPayload: { action: "start", durationSeconds: 120 },
+      targets: [target],
+    }));
+    const poll = await inSchool(school.id, () => executeClasspilotCommand({
+      schoolId: school.id,
+      actorId: teacher.id,
+      teachingSessionId: teachingSession.id,
+      targetScope: "students",
+      commandType: "poll",
+      rawCommandPayload: {
+        action: "start",
+        question: "Transient delivery?",
+        options: ["Yes", "No"],
+      },
+      targets: [target],
+    }));
+
+    assert.equal(timer.deliveryPolicy, "transient_action");
+    assert.equal(poll.deliveryPolicy, "transient_action");
+    assert.ok(timer.expiresAt);
+    assert.ok(poll.expiresAt);
+    assert.ok(poll.extra?.poll?.id);
+    const close = await inSchool(school.id, () => executeClasspilotCommand({
+      schoolId: school.id,
+      actorId: teacher.id,
+      teachingSessionId: teachingSession.id,
+      targetScope: "students",
+      commandType: "poll",
+      rawCommandPayload: { action: "close", pollId: poll.extra.poll.id },
+      targets: [target],
+    }));
+    assert.equal(close.extra?.poll?.isActive, false, "the poll resource closes server-side");
+    assert.equal(close.summary.completed, 0, "dispatch is not device completion");
+    assert.equal(close.summary.pending, 1);
+    assert.match(close.message, /Delivery attempted/);
+    await inSchool(school.id, () => db.execute(sql`
+      UPDATE classpilot_commands
+      SET expires_at = ${new Date(Date.now() - 1_000)}
+      WHERE id = ${close.command.id}
+    `));
+    await inSchool(school.id, () => expireClasspilotTransientCommandTargets({
+      commandId: close.command.id,
+      schoolId: school.id,
+      now: new Date(),
+    }));
+    const expiredClose = await inSchool(school.id, () =>
+      getClasspilotCommandByIdAndSchool(close.command.id, school.id)
+    );
+    assert.equal(expiredClose?.status, "expired");
+    assert.equal(expiredClose?.completedCount, 0);
+    const activeStates = await inSchool(school.id, () =>
+      getActiveClasspilotClassroomStates(school.id, teachingSession.id)
+    );
+    assert.equal(
+      activeStates.some((state) => state.stateType === "timer" || state.stateType === "poll"),
+      false
+    );
+
+    await inSchool(school.id, () => endTeachingSession(teachingSession.id));
   });
 
   it("summarizes an empty command as unavailable", async () => {
@@ -2310,7 +2812,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
         supervisionContextId: null,
         commandId: "",
         studentId: studentDeviceGuard.id,
-        studentSessionId: null,
+        studentSessionId: sessionGuard.id,
         deviceId: deviceGuard,
         status: "requested",
         errorMessage: null,
@@ -2321,6 +2823,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       schoolId: school.id,
       deviceId: deviceGuard,
       studentId: studentDeviceGuard.id,
+      studentSessionId: sessionGuard.id,
       ackState: "received",
     }));
 
@@ -2350,6 +2853,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       schoolId: school.id,
       deviceId: deviceGuard,
       studentId: studentDeviceGuard.id,
+      studentSessionId: sessionGuard.id,
       ackState: "completed",
     }));
     const secondPublisher = inSchool(school.id, () => withClasspilotCommandBroadcastLock(
@@ -2370,5 +2874,59 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     await Promise.all([firstPublisher, secondPublisher]);
     assert.deepEqual(publishedStatuses, ["received", "completed"]);
     assert.ok(publishedRevisions[1]! > publishedRevisions[0]!);
+  });
+
+  it("rejects command acknowledgements after a device starts a replacement student session", async () => {
+    const originalSessionId = sessionGuard.id;
+    const created = await inSchool(school.id, () => createClasspilotCommandWithTargets(
+      {
+        schoolId: school.id,
+        teachingSessionId: null,
+        supervisionContextId: null,
+        teacherId: teacher.id,
+        targetScope: "students",
+        subgroupId: null,
+        commandType: "lock-screen",
+        commandPayload: {},
+        requestedCount: 1,
+        unavailableCount: 0,
+      } as any,
+      [{
+        schoolId: school.id,
+        teachingSessionId: null,
+        supervisionContextId: null,
+        commandId: "",
+        studentId: studentDeviceGuard.id,
+        studentSessionId: originalSessionId,
+        deviceId: deviceGuard,
+        status: "requested",
+        errorMessage: null,
+      } as any]
+    ));
+
+    sessionGuard = await inSchool(school.id, () =>
+      setActiveStudentForDevice(deviceGuard, studentDeviceGuard.id)
+    );
+    const replacementAck = await inSchool(school.id, () => updateClasspilotCommandTargetAck({
+      commandId: created.id,
+      schoolId: school.id,
+      deviceId: deviceGuard,
+      studentId: studentDeviceGuard.id,
+      studentSessionId: sessionGuard.id,
+      ackState: "completed",
+    }));
+    const staleAck = await inSchool(school.id, () => updateClasspilotCommandTargetAck({
+      commandId: created.id,
+      schoolId: school.id,
+      deviceId: deviceGuard,
+      studentId: studentDeviceGuard.id,
+      studentSessionId: originalSessionId,
+      ackState: "completed",
+    }));
+
+    assert.equal(replacementAck, undefined);
+    assert.equal(staleAck, undefined);
+    const loaded = await inSchool(school.id, () => getClasspilotCommandByIdAndSchool(created.id, school.id));
+    assert.equal(loaded?.targets[0]?.status, "requested");
   });
 });

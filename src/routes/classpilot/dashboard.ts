@@ -5,6 +5,7 @@ import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { assertClasspilotRetentionHours } from "../../util/classpilotRetention.js";
 import {
   getDashboardTabs,
   createDashboardTab,
@@ -29,6 +30,7 @@ import {
   getUserById,
   validateStaffEmailDomainForSchool,
   addGroupTeacher,
+  isAuthorizedClasspilotSessionStaff,
 } from "../../services/storage.js";
 import { broadcastToStudentsLocal } from "../../realtime/ws-broadcast.js";
 import { publishWS } from "../../realtime/ws-redis.js";
@@ -51,6 +53,20 @@ function param(req: any, key: string): string {
 function isAdminRole(req: any, res: any): boolean {
   const role = res.locals.membershipRole;
   return req.authUser?.isSuperAdmin || role === "admin" || role === "school_admin";
+}
+
+function validateClasspilotRuleList(value: unknown, label: string): string[] {
+  if (!Array.isArray(value)) {
+    throw Object.assign(new Error(`${label} must be an array`), { status: 400 });
+  }
+  if (value.length > 1_000) {
+    throw Object.assign(new Error(`${label} cannot contain more than 1,000 entries`), {
+      status: 400,
+      code: "CLASSROOM_RULE_LIMIT_EXCEEDED",
+    });
+  }
+  const normalized = [...new Set(value.map((entry) => String(entry || "").trim()).filter(Boolean))];
+  return normalized;
 }
 
 function safeSchoolSettingsResponse(
@@ -197,8 +213,8 @@ router.post("/settings", ...auth, async (req, res, next) => {
     // Teacher-specific settings
     const data: Record<string, unknown> = {};
     if (maxTabsPerStudent !== undefined) data.maxTabsPerStudent = maxTabsPerStudent;
-    if (allowedDomains !== undefined) data.allowedDomains = allowedDomains;
-    if (blockedDomains !== undefined) data.blockedDomains = blockedDomains;
+    if (allowedDomains !== undefined) data.allowedDomains = validateClasspilotRuleList(allowedDomains, "Allowed domains");
+    if (blockedDomains !== undefined) data.blockedDomains = validateClasspilotRuleList(blockedDomains, "Blocked domains");
     if (defaultFlightPathId !== undefined) data.defaultFlightPathId = defaultFlightPathId;
 
     // School-wide settings — only when the admin settings page sends them.
@@ -254,10 +270,12 @@ router.post("/settings", ...auth, async (req, res, next) => {
       const schoolId = res.locals.schoolId!;
       const schoolData: Record<string, unknown> = {};
       if (schoolName !== undefined) schoolData.schoolName = schoolName;
-      if (retentionHours !== undefined) schoolData.retentionHours = String(retentionHours);
+      if (retentionHours !== undefined) {
+        schoolData.retentionHours = String(assertClasspilotRetentionHours(retentionHours));
+      }
       if (ipAllowlist !== undefined) schoolData.ipAllowlist = ipAllowlist;
-      if (blockedDomains !== undefined) schoolData.blockedDomains = blockedDomains;
-      if (allowedDomains !== undefined) schoolData.allowedDomains = allowedDomains;
+      if (blockedDomains !== undefined) schoolData.blockedDomains = validateClasspilotRuleList(blockedDomains, "Blocked domains");
+      if (allowedDomains !== undefined) schoolData.allowedDomains = validateClasspilotRuleList(allowedDomains, "Allowed domains");
       if (maxTabsPerStudent !== undefined) schoolData.maxTabsPerStudent = maxTabsPerStudent || null;
       if (aiSafetyEmailsEnabled !== undefined) schoolData.aiSafetyEmailsEnabled = aiSafetyEmailsEnabled !== false;
       if (autoBlockUnsafeUrls !== undefined) schoolData.autoBlockUnsafeUrls = autoBlockUnsafeUrls !== false;
@@ -290,7 +308,7 @@ router.post("/settings", ...auth, async (req, res, next) => {
       if (blockedDomains !== undefined) {
         const blacklistMsg = {
           type: "update-global-blacklist",
-          blockedDomains: blockedDomains || [],
+          blockedDomains: savedSchoolSettings?.blockedDomains || [],
         };
         broadcastToStudentsLocal(schoolId, blacklistMsg);
         void publishWS({ kind: "students", schoolId }, blacklistMsg);
@@ -568,6 +586,13 @@ router.get("/raised-hands", ...auth, async (req, res, next) => {
     if (!session) {
       return res.status(requestedSessionId ? 404 : 409).json({ error: "Session not found" });
     }
+    if (!isAdminRole(req, res) && !(await isAuthorizedClasspilotSessionStaff(
+      schoolId,
+      session.id,
+      req.authUser!.id
+    ))) {
+      return res.status(404).json({ error: "Session not found" });
+    }
 
     const hands = await getActiveHandsBySession(schoolId, session.id);
     return res.json({
@@ -575,7 +600,6 @@ router.get("/raised-hands", ...auth, async (req, res, next) => {
       raisedHands: hands.map((hand) => ({
         sessionId: session.id,
         studentId: hand.studentId,
-        deviceId: hand.deviceId,
         studentName: [hand.student.firstName, hand.student.lastName].filter(Boolean).join(" ").trim() || hand.student.email || hand.studentId,
         studentEmail: hand.student.email || "",
         timestamp: hand.raisedAt.toISOString(),

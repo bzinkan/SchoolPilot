@@ -6,6 +6,8 @@ export type WSClient = {
   ws: WebSocket;
   role: WsRole;
   deviceId?: string;
+  studentId?: string;
+  studentSessionId?: string;
   userId?: string;
   schoolId?: string;
   subscribedSessionIds: Set<string>;
@@ -82,6 +84,8 @@ export function authenticateWsClient(
     role: WsRole;
     schoolId: string;
     deviceId?: string;
+    studentId?: string;
+    studentSessionId?: string;
     userId?: string;
   }
 ): WSClient | undefined {
@@ -96,6 +100,8 @@ export function authenticateWsClient(
   client.role = auth.role;
   client.schoolId = auth.schoolId;
   client.deviceId = auth.deviceId;
+  client.studentId = auth.studentId;
+  client.studentSessionId = auth.studentSessionId;
   client.userId = auth.userId;
   client.authenticated = true;
   client.subscribedSessionIds.clear();

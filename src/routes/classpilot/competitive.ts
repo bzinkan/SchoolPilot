@@ -6,9 +6,7 @@ import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import { getConnectedStudentDeviceIds } from "../../realtime/ws-broadcast.js";
-import { getSchoolDeviceStatuses } from "../../realtime/student-statuses.js";
-import { studentDevices } from "../../schema/classpilot.js";
+import { studentDevices, studentSessions } from "../../schema/classpilot.js";
 import { dismissalQueue, dismissalSessions } from "../../schema/gopilot.js";
 import { importRuns } from "../../schema/shared.js";
 import {
@@ -45,6 +43,19 @@ import {
 } from "../../services/storage.js";
 import { logAudit } from "../../services/audit.js";
 import { GOOGLE_ROSTER_SCOPES } from "../../services/googleRosterConnector.js";
+import {
+  CLASSPILOT_REALTIME_STALE_AFTER_MS,
+  readClasspilotRealtimeStatusBatch,
+  readLocalClasspilotRealtimeStatusBatch,
+  type ClasspilotRealtimeStatus,
+} from "../../services/classpilotRealtimeStatus.js";
+import {
+  toPublicAiDecisionTimelineMetadata,
+  toPublicBrowserSafetyTimelineMetadata,
+  toPublicClasspilotAiTimelineMetadata,
+  toPublicClasspilotAiDecision,
+  toPublicClasspilotTimelineEvent,
+} from "../../services/classpilotPublicAiDecision.js";
 
 const router = Router();
 
@@ -124,9 +135,9 @@ async function canViewStudent(req: any, res: any, studentId: string): Promise<{ 
 }
 
 function redactTimelineEvent(event: any, role: string): any {
-  if (isAdminRole(role)) return event;
-  if (event.sourceType === "mailpilot" || event.source_type === "mailpilot") {
-    return {
+  let roleSafeEvent = event;
+  if (!isAdminRole(role) && (event.sourceType === "mailpilot" || event.source_type === "mailpilot")) {
+    roleSafeEvent = {
       ...event,
       title: "Email safety alert",
       summary: "Email details hidden for this role.",
@@ -137,7 +148,13 @@ function redactTimelineEvent(event: any, role: string): any {
       },
     };
   }
-  return event;
+  if (roleSafeEvent.sourceType === "classpilot_ai" || roleSafeEvent.source_type === "classpilot_ai") {
+    roleSafeEvent = {
+      ...roleSafeEvent,
+      metadata: toPublicClasspilotAiTimelineMetadata(roleSafeEvent.metadata),
+    };
+  }
+  return toPublicClasspilotTimelineEvent(roleSafeEvent);
 }
 
 function normalizeEvent(row: any): any {
@@ -210,7 +227,7 @@ async function buildTimeline(options: {
       title: d.safetyAlert ? `AI safety alert: ${d.safetyAlert}` : `AI classified: ${d.category || "unknown"}`,
       summary: d.reasoning || d.url || null,
       severity: d.safetyAlert ? "high" : null,
-      metadata: d,
+      metadata: toPublicAiDecisionTimelineMetadata(d),
       occurredAt: d.createdAt,
       persisted: false,
     })));
@@ -347,16 +364,47 @@ async function buildReadinessPayload(req: any, res: any) {
   const delegatedAdminDomain = getEmailDomain(rosterConnector?.delegatedAdminEmail || null);
   const connectorVerified = rosterConnector?.status === "verified";
   const googleDomainVerified = connectorVerified && !!schoolDomain && connectorDomain === schoolDomain && delegatedAdminDomain === schoolDomain;
-  const realtime = getSchoolDeviceStatuses(schoolId);
-  const connected = getConnectedStudentDeviceIds(schoolId);
-  const realtimeByDevice = new Map(realtime.map((s) => [s.deviceId, s]));
   const studentMappings = students.length
     ? await db.select().from(studentDevices).where(inArray(studentDevices.studentId, students.map((s) => s.id)))
     : [];
+  const activeStudentSessions = students.length
+    ? await db
+        .select()
+        .from(studentSessions)
+        .where(and(
+          inArray(studentSessions.studentId, students.map((student) => student.id)),
+          eq(studentSessions.isActive, true)
+        ))
+    : [];
+  const realtimeBindings = activeStudentSessions.map((session) => ({
+    studentId: session.studentId,
+    studentSessionId: session.id,
+    deviceId: session.deviceId,
+  }));
+  const sharedRealtime = await readClasspilotRealtimeStatusBatch(schoolId, realtimeBindings);
+  const localRealtime = readLocalClasspilotRealtimeStatusBatch(schoolId, realtimeBindings);
+  const realtimeByDevice = new Map<string, ClasspilotRealtimeStatus>();
+  for (const binding of realtimeBindings) {
+    const shared = sharedRealtime.get(binding.studentId);
+    const local = localRealtime.get(binding.studentId);
+    const snapshot = shared?.status === "hit"
+      ? shared.snapshot
+      : local?.status === "hit"
+        ? local.snapshot
+        : null;
+    if (snapshot?.state === "active") realtimeByDevice.set(binding.deviceId, snapshot);
+  }
+  const connectedDeviceCount = new Set(dbDevices
+    .filter((device) => {
+      const rt = realtimeByDevice.get(device.deviceId);
+      const last = rt?.observedAt || device.lastSeenAt?.getTime?.() || 0;
+      return last > 0 && now - last < CLASSPILOT_REALTIME_STALE_AFTER_MS;
+    })
+    .map((device) => device.deviceId)).size;
 
   const staleDevices = dbDevices.filter((d) => {
     const rt = realtimeByDevice.get(d.deviceId);
-    const last = rt?.lastSeenAt || d.lastSeenAt?.getTime?.() || 0;
+    const last = rt?.observedAt || d.lastSeenAt?.getTime?.() || 0;
     return last === 0 || now - last > 48 * 60 * 60 * 1000;
   });
   const screenshotFailures = dbDevices.filter((d) => {
@@ -399,7 +447,7 @@ async function buildReadinessPayload(req: any, res: any) {
       fail: counts.fail || 0,
       students: students.length,
       devices: dbDevices.length,
-      connectedDevices: connected.size,
+      connectedDevices: connectedDeviceCount,
       openSafetyCases: cases.length,
     },
     issues,
@@ -482,7 +530,7 @@ router.get("/ai-decisions", ...staffAuth, async (req, res, next) => {
       to: parseDate(req.query.to),
       limit: 200,
     });
-    return res.json({ decisions });
+    return res.json({ decisions: decisions.map(toPublicClasspilotAiDecision) });
   } catch (err) {
     next(err);
   }
@@ -516,7 +564,9 @@ router.patch("/ai-decisions/:id/review", ...adminAuth, async (req, res, next) =>
         metadata: { reviewStatus, reviewNote },
       });
     }
-    return res.json({ decision: updated });
+    return res.json({
+      decision: updated ? toPublicClasspilotAiDecision(updated) : null,
+    });
   } catch (err) {
     next(err);
   }
@@ -898,13 +948,7 @@ export async function recordBrowserSafetyTimeline(options: {
     title: `Browser safety alert: ${safetyAlert}`,
     summary: options.url,
     severity: "high",
-    metadata: {
-      deviceId: options.deviceId,
-      heartbeatId: options.heartbeatId,
-      domain: options.classification?.domain,
-      category: options.classification?.category,
-      actionTaken: "close-tab",
-    },
+    metadata: toPublicBrowserSafetyTimelineMetadata(options.classification),
   });
   return { caseId: safetyCase.id, decisionId: decision.id };
 }

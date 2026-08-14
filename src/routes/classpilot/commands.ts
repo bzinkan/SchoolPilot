@@ -10,8 +10,8 @@ import {
   getActiveSessionsForStudents,
   getActiveSupervisionForStudents,
   getGroupByIdAndSchool,
-  getGroupStudents,
-  getGroupTeachers,
+  getClasspilotSessionStudentRoster,
+  isAuthorizedClasspilotSessionStaff,
   getRecentClasspilotCommands,
   getSubgroupByIdAndSchool,
   getSubgroupMembers,
@@ -24,6 +24,7 @@ import {
   resultMessage,
   type ResolvedClasspilotCommandTarget,
 } from "../../services/classpilotCommandDispatcher.js";
+import { publicClasspilotCommand } from "../../services/classpilotCommandPublic.js";
 
 const router = Router();
 
@@ -55,11 +56,8 @@ async function resolveTargets(req: Request, res: Response, body: any): Promise<R
   if ((session as any).sessionMode && (session as any).sessionMode !== "live") {
     throw Object.assign(new Error("This scheduled reporting block is not a live class session"), { status: 403 });
   }
-  if (!isAdmin && session.teacherId !== userId) {
-    const coTeachers = await getGroupTeachers(session.groupId);
-    if (!coTeachers.some((teacher) => teacher.teacherId === userId)) {
-      throw Object.assign(new Error("This class session is not assigned to you"), { status: 403 });
-    }
+  if (!isAdmin && !(await isAuthorizedClasspilotSessionStaff(schoolId, teachingSessionId, userId))) {
+    throw Object.assign(new Error("Active class session not found"), { status: 404 });
   }
 
   const group = await getGroupByIdAndSchool(session.groupId, schoolId);
@@ -68,7 +66,7 @@ async function resolveTargets(req: Request, res: Response, body: any): Promise<R
   const scope = normalizeTargetScope(body.targetScope);
   if (!scope) throw Object.assign(new Error("targetScope must be class, subgroup, or students"), { status: 400 });
 
-  const classRows = await getGroupStudents(group.id);
+  const classRows = await getClasspilotSessionStudentRoster(schoolId, teachingSessionId);
   const classStudentIds = new Set(classRows.map((row) => row.studentId));
   if (classRows.length === 0) throw Object.assign(new Error("The active class has no students"), { status: 400 });
 
@@ -103,6 +101,7 @@ async function resolveTargets(req: Request, res: Response, body: any): Promise<R
 
   const now = Date.now();
   const activeWindowMs = 5 * 60 * 1000;
+  const serverAuthoritativeSignOut = String(body.commandType || "").trim() === "student-sign-out";
   const resolved: ResolvedClasspilotCommandTarget[] = [];
   const selectedStudentIds = selectedRows.map((row) => row.studentId);
   // These queries intentionally run sequentially. Under RLS they share the
@@ -116,7 +115,9 @@ async function resolveTargets(req: Request, res: Response, body: any): Promise<R
   const studentSessionByStudent = new Map(activeStudentSessions.map((session) => [session.studentId, session]));
   for (const row of selectedRows) {
     const coverage = coverageByStudent.get(row.studentId);
-    const studentName = [row.student.firstName, row.student.lastName].filter(Boolean).join(" ") || row.student.email || row.studentId;
+    const studentName = row.student
+      ? [row.student.firstName, row.student.lastName].filter(Boolean).join(" ") || row.student.email || row.studentId
+      : row.studentNameSnapshot || row.studentId;
     if (coverage) {
       resolved.push({
         studentId: row.studentId,
@@ -124,6 +125,7 @@ async function resolveTargets(req: Request, res: Response, body: any): Promise<R
         studentSessionId: null,
         deviceId: null,
         available: false,
+        stateAuthorized: false,
         unavailableReason: `Student is assigned to ${coverage.name}`,
       });
       continue;
@@ -136,20 +138,30 @@ async function resolveTargets(req: Request, res: Response, body: any): Promise<R
         studentSessionId: null,
         deviceId: null,
         available: false,
+        stateAuthorized: false,
         unavailableReason: `Student is active in ${classOwner.groupName}`,
       });
       continue;
     }
     const studentSession = studentSessionByStudent.get(row.studentId);
     const lastSeenAt = studentSession?.lastSeenAt?.getTime?.() ?? 0;
-    const active = !!studentSession && lastSeenAt > 0 && now - lastSeenAt <= activeWindowMs;
+    const deviceReachable = !!studentSession && lastSeenAt > 0 && now - lastSeenAt <= activeWindowMs;
+    // Sign-out is authoritative on the authenticated server session. A stale
+    // heartbeat makes device delivery uncertain, but it must not preserve a
+    // still-active session that the teacher explicitly selected for sign-out.
+    const available = serverAuthoritativeSignOut ? !!studentSession : deviceReachable;
     resolved.push({
       studentId: row.studentId,
       studentName,
-      studentSessionId: active ? studentSession!.id : null,
-      deviceId: active ? studentSession!.deviceId : null,
-      available: active,
-      unavailableReason: active ? undefined : "Student is not signed in to the extension",
+      studentSessionId: available ? studentSession!.id : null,
+      deviceId: available ? studentSession!.deviceId : null,
+      available,
+      stateAuthorized: true,
+      unavailableReason: available
+        ? undefined
+        : serverAuthoritativeSignOut
+          ? "Student has no active extension session"
+          : "Student is not signed in to the extension",
     });
   }
   return resolved;
@@ -185,7 +197,7 @@ router.post("/commands", ...auth, async (req, res, next) => {
       persistClassroomState: true,
     });
 
-    return res.status(201).json(result);
+    return res.status(201).json({ ...result, command: publicClasspilotCommand(result.command) });
   } catch (err: any) {
     if (err?.status) return res.status(err.status).json({ error: err.message });
     next(err);
@@ -204,7 +216,7 @@ router.get("/commands/recent", ...auth, async (req, res, next) => {
     );
     return res.json({
       commands: commands.map((command) => ({
-        ...command,
+        ...(publicClasspilotCommand(command) as Record<string, unknown>),
         summary: commandSummary(command),
         message: resultMessage(command.commandType, commandSummary(command)),
       })),
@@ -222,11 +234,10 @@ router.get("/commands/active-state", ...auth, async (req, res, next) => {
     if (!session) return res.status(404).json({ error: "Class session not found" });
     const role = res.locals.membershipRole as string | undefined;
     const isAdmin = req.authUser?.isSuperAdmin || role === "admin" || role === "school_admin";
-    if (!isAdmin && session.teacherId !== req.authUser!.id) {
-      const coTeachers = await getGroupTeachers(session.groupId);
-      if (!coTeachers.some((teacher) => teacher.teacherId === req.authUser!.id)) {
-        return res.status(403).json({ error: "This class session is not assigned to you" });
-      }
+    if (!isAdmin && !(await isAuthorizedClasspilotSessionStaff(
+      res.locals.schoolId!, teachingSessionId, req.authUser!.id
+    ))) {
+      return res.status(404).json({ error: "Class session not found" });
     }
     const states = await getActiveClasspilotClassroomStates(res.locals.schoolId!, teachingSessionId);
     return res.json({ states });

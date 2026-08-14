@@ -58,6 +58,9 @@ describe("ClassPilot command and ACK hot path", () => {
     const snapshotIndex = commandUpdateSection.indexOf("withClasspilotCommandBroadcastLock");
     assert.ok(summaryIndex >= 0 && snapshotIndex > summaryIndex);
     assert.match(websocket, /setTimeout\(\(\) => \{[\s\S]*?\}, 50\)/);
+    assert.match(websocket, /rawAckState === "expired"[\s\S]*?\? "expired"/);
+    assert.match(commandUpdateSection, /deliveryPolicy: classpilotCommandDeliveryPolicy\(command\.commandType\)/);
+    assert.match(commandUpdateSection, /summary: summarizeClasspilotCommandTargets\(command\)/);
 
     const lockSection = storage.slice(
       storage.indexOf("export async function withClasspilotCommandBroadcastLock"),
@@ -79,15 +82,23 @@ describe("ClassPilot command and ACK hot path", () => {
     const globalPublish = commandUpdateSection.indexOf(
       "const outcome = await publishOrderedWS"
     );
-    const localPublish = commandUpdateSection.indexOf(
-      "broadcastToTeachersLocal(state.schoolId, payload)",
+    const localSessionPublish = commandUpdateSection.indexOf(
+      "broadcastToStaffSessionLocal(state.schoolId, staffTarget.sessionId, payload)",
       globalPublish
     );
-    assert.ok(globalPublish >= 0 && localPublish > globalPublish);
+    const localActorPublish = commandUpdateSection.indexOf(
+      "sendToStaffUserLocal(state.schoolId, staffTarget.userId, payload)",
+      globalPublish
+    );
+    assert.ok(globalPublish >= 0 && localSessionPublish > globalPublish);
+    assert.ok(localActorPublish > globalPublish);
     assert.match(
-      commandUpdateSection.slice(globalPublish, localPublish),
+      commandUpdateSection.slice(globalPublish, localSessionPublish),
       /outcome\.status === "accepted"/
     );
+    assert.match(commandUpdateSection, /kind: "staff-session"/);
+    assert.match(commandUpdateSection, /kind: "staff-user"/);
+    assert.doesNotMatch(commandUpdateSection, /broadcastToTeachersLocal/);
     assert.match(
       commandUpdateSection,
       /outcome\.subscriberCount === 0[\s\S]*?publication had no subscribers/
@@ -128,5 +139,27 @@ describe("ClassPilot command and ACK hot path", () => {
     assert.match(metricSection, /totalDurationMs:/);
     assert.match(metricSection, /maxDurationMs:/);
     assert.doesNotMatch(metricSection, /schoolId|userId|deviceId|commandId|message|payload/);
+  });
+
+  it("recovers the bounded durable-message inbox without pre-marking response delivery", () => {
+    const devices = source("src/routes/classpilot/devices.ts");
+    const storage = source("src/services/storage.ts");
+    const heartbeatSection = devices.slice(
+      devices.indexOf('router.post("/device/heartbeat"'),
+      devices.indexOf('router.post("/device/screenshot"')
+    );
+    const inboxSection = storage.slice(
+      storage.indexOf("export async function getPendingMessagesForStudent"),
+      storage.indexOf("// ============================================================================\n// ClassPilot - Check-ins")
+    );
+
+    assert.match(devices, /PENDING_MESSAGE_RECONNECT_GAP_MS = 60_000/);
+    assert.match(heartbeatSection, /pendingMessageRecoveryHeartbeat/);
+    assert.match(heartbeatSection, /getPendingMessagesForStudent\(\{[\s\S]*?schoolId,[\s\S]*?studentId,/);
+    assert.match(heartbeatSection, /res\.once\("finish", \(\) => \{[\s\S]*?current\.messageIds\.add\(messageId\)/);
+    assert.match(inboxSection, /eq\(messages\.schoolId, options\.schoolId\)/);
+    assert.match(inboxSection, /eq\(messages\.toStudentId, options\.studentId\)/);
+    assert.match(inboxSection, /CLASSPILOT_PENDING_MESSAGE_RETENTION_DAYS/);
+    assert.match(inboxSection, /\.limit\(CLASSPILOT_PENDING_MESSAGE_BATCH_LIMIT\)/);
   });
 });
