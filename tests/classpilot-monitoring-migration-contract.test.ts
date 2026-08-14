@@ -39,6 +39,18 @@ test("startup migration and Drizzle schema include all monitoring tenant tables"
   );
   assert.match(migration, /classpilot_set_report_authorization_marker/);
   assert.match(migration, /ALTER COLUMN authorization_marker SET NOT NULL/);
+  const staffSnapshotTable = migration.indexOf(
+    "CREATE TABLE IF NOT EXISTS classpilot_session_staff"
+  );
+  const reportAuthorizationFunction = migration.indexOf(
+    "CREATE OR REPLACE FUNCTION classpilot_set_report_authorization_marker()"
+  );
+  assert.ok(staffSnapshotTable >= 0, "staff snapshot table migration must exist");
+  assert.ok(reportAuthorizationFunction >= 0, "report authorization function migration must exist");
+  assert.ok(
+    staffSnapshotTable < reportAuthorizationFunction,
+    "staff snapshot table must exist before the report authorization function reads it"
+  );
 });
 
 test("monitoring event scope, idempotency, retention, and privacy constraints are database-enforced", async () => {
