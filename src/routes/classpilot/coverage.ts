@@ -4,7 +4,14 @@ import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import { getSchoolDeviceStatuses } from "../../realtime/student-statuses.js";
+import {
+  CLASSPILOT_REALTIME_EXPIRED_AFTER_MS,
+  CLASSPILOT_REALTIME_STALE_AFTER_MS,
+  readClasspilotRealtimeStatusBatch,
+  readLocalClasspilotRealtimeStatusBatch,
+  type ClasspilotRealtimeBinding,
+  type ClasspilotRealtimeStatus,
+} from "../../services/classpilotRealtimeStatus.js";
 import {
   assignStudentsToSupervisionContext,
   createCoverageAssignment,
@@ -21,6 +28,7 @@ import {
   getCoverageScopeGroupByIdAndSchool,
   getCoverageScopeGroupStudentIds,
   getActiveTeachingSessionForSchool,
+  getClasspilotSessionStudentRoster,
   getGroupsBySchool,
   getGroupByIdAndSchool,
   getGroupStudents,
@@ -47,6 +55,7 @@ import {
   updateCoverageScopeGroup,
   type OnlineUnassignedStudent,
 } from "../../services/storage.js";
+import { publicClasspilotCommand } from "../../services/classpilotCommandPublic.js";
 import {
   broadcastScheduledConflictUpdate,
   buildScheduledCoveragePayload,
@@ -58,6 +67,7 @@ import {
   type ResolvedClasspilotCommandTarget,
 } from "../../services/classpilotCommandDispatcher.js";
 import { localDateInTimeZone, localDateStartUtc } from "../../util/schoolTime.js";
+import { syncClasspilotControlStatesToActiveDevices } from "../../services/classpilotControlStateDelivery.js";
 
 const router = Router();
 
@@ -176,15 +186,37 @@ function staffName(staff: any): string {
   return staff?.displayName || [staff?.firstName, staff?.lastName].filter(Boolean).join(" ").trim() || staff?.email || staff?.id || "Staff";
 }
 
-function activeStatusFor(row: OnlineUnassignedStudent) {
-  const statuses = getSchoolDeviceStatuses(row.student.schoolId);
-  const byStudent = statuses.find((status) => status.studentId === row.student.id);
-  const byDevice = statuses.find((status) => status.deviceId === row.studentSession.deviceId);
-  const rt = byStudent || byDevice || null;
-  const lastSeenAt = rt?.lastSeenAt || row.studentSession.lastSeenAt.getTime();
+async function realtimeForBinding(
+  schoolId: string,
+  binding: ClasspilotRealtimeBinding
+): Promise<ClasspilotRealtimeStatus | null> {
+  const shared = await readClasspilotRealtimeStatusBatch(schoolId, [binding]);
+  const sharedResult = shared.get(binding.studentId);
+  if (sharedResult?.status === "hit") return sharedResult.snapshot;
+  const local = readLocalClasspilotRealtimeStatusBatch(schoolId, [binding]);
+  const localResult = local.get(binding.studentId);
+  return localResult?.status === "hit" ? localResult.snapshot : null;
+}
+
+async function activeStatusFor(row: OnlineUnassignedStudent) {
+  const binding = {
+    studentId: row.student.id,
+    studentSessionId: row.studentSession.id,
+    deviceId: row.studentSession.deviceId,
+  };
+  const candidate = await realtimeForBinding(row.student.schoolId, binding);
+  const rt = candidate?.state === "active" ? candidate : null;
+  const signedOut = candidate?.state === "signed_out";
+  const lastSeenAt = candidate?.observedAt || row.studentSession.lastSeenAt.getTime();
   const age = lastSeenAt ? Date.now() - lastSeenAt : Infinity;
   return {
-    status: age < 60000 ? "online" : age < 300000 ? "idle" : "offline",
+    status: signedOut
+      ? "offline"
+      : age < CLASSPILOT_REALTIME_STALE_AFTER_MS
+      ? "online"
+      : age < CLASSPILOT_REALTIME_EXPIRED_AFTER_MS
+        ? "idle"
+        : "offline",
     lastSeenAt,
     activeTabTitle: rt?.activeTabTitle || "",
     activeTabUrl: rt?.activeTabUrl || "",
@@ -204,14 +236,25 @@ function sanitizeTabs(tabs: any[]) {
 
 async function activeStatusForStudent(schoolId: string, student: any) {
   const session = await getActiveSessionByStudent(student.id);
-  const statuses = getSchoolDeviceStatuses(schoolId);
-  const byStudent = statuses.find((status) => status.studentId === student.id);
-  const byDevice = session ? statuses.find((status) => status.deviceId === session.deviceId) : null;
-  const rt = byStudent || byDevice || null;
-  const lastSeenAt = rt?.lastSeenAt || session?.lastSeenAt?.getTime?.() || null;
+  const candidate = session
+    ? await realtimeForBinding(schoolId, {
+        studentId: student.id,
+        studentSessionId: session.id,
+        deviceId: session.deviceId,
+      })
+    : null;
+  const rt = candidate?.state === "active" ? candidate : null;
+  const signedOut = candidate?.state === "signed_out";
+  const lastSeenAt = candidate?.observedAt || session?.lastSeenAt?.getTime?.() || null;
   const age = lastSeenAt ? Date.now() - lastSeenAt : Infinity;
   return {
-    status: age < 60000 ? "online" : age < 300000 ? "idle" : "offline",
+    status: signedOut
+      ? "offline"
+      : age < CLASSPILOT_REALTIME_STALE_AFTER_MS
+      ? "online"
+      : age < CLASSPILOT_REALTIME_EXPIRED_AFTER_MS
+        ? "idle"
+        : "offline",
     lastSeenAt,
     activeTabTitle: rt?.activeTabTitle || "",
     activeTabUrl: rt?.activeTabUrl || "",
@@ -666,7 +709,7 @@ async function availableStudentPayload(
   matchingGroups: any[],
   matchingAssignments: any[] = []
 ) {
-  const status = activeStatusFor(row);
+  const status = await activeStatusFor(row);
   const matchingScopes = await Promise.all(matchingAssignments.map(async (assignment) => ({
     id: assignment.id,
     name: await assignmentScopeLabel(schoolId, assignment),
@@ -801,15 +844,7 @@ async function defaultClaimEndsAt(schoolId: string): Promise<Date> {
 }
 
 function coverageCommandResponse(result: any) {
-  const command = result.command
-    ? {
-        ...result.command,
-        targets: (result.command.targets || []).map((target: any) => {
-          const { deviceId: _deviceId, studentSessionId: _studentSessionId, ...safeTarget } = target;
-          return safeTarget;
-        }),
-      }
-    : result.command;
+  const command = result.command ? publicClasspilotCommand(result.command) : result.command;
   return { ...result, command };
 }
 
@@ -950,9 +985,8 @@ router.get("/coverage/unassigned", ...auth, async (req, res, next) => {
           await getActiveCoverageAssignmentsForStaff(schoolId, req.authUser!.id)
         );
 
-    return res.json({
-      students: visibleRows.map((row) => {
-        const status = activeStatusFor(row);
+    const students = await Promise.all(visibleRows.map(async (row) => {
+        const status = await activeStatusFor(row);
         return {
           studentId: row.student.id,
           studentName: studentName(row.student),
@@ -970,8 +1004,8 @@ router.get("/coverage/unassigned", ...auth, async (req, res, next) => {
           allOpenTabs: status.allOpenTabs,
           screenshotHealth: status.screenshotHealth,
         };
-      }),
-    });
+      }));
+    return res.json({ students });
   } catch (err) {
     next(err);
   }
@@ -1530,6 +1564,15 @@ async function assignStudentsToSupervisionGroup(options: {
       assignedBy: options.actorId,
       source: options.source,
     });
+    const activeRows = await listSupervisionStudentsForContexts(
+      options.schoolId,
+      [existing.id],
+      { activeOnly: true }
+    );
+    await syncClasspilotControlStatesToActiveDevices(
+      options.schoolId,
+      activeRows.map((row) => row.studentId)
+    );
     return { context: context || existing, assignments };
   }
 
@@ -1578,6 +1621,15 @@ async function assignStudentsToDirectSupervision(options: {
       assignedBy: options.actorId,
       source: options.source,
     });
+    const activeRows = await listSupervisionStudentsForContexts(
+      options.schoolId,
+      [existing.id],
+      { activeOnly: true }
+    );
+    await syncClasspilotControlStatesToActiveDevices(
+      options.schoolId,
+      activeRows.map((row) => row.studentId)
+    );
     return { context: context || existing, assignments };
   }
 
@@ -1660,6 +1712,17 @@ router.post("/coverage/claim", ...auth, async (req, res, next) => {
         endsAt: await defaultClaimEndsAt(schoolId),
         note: req.body.note ? String(req.body.note) : undefined,
       });
+      // The claim transaction revision-refreshes every active member when it
+      // extends this shared context. Push those durable snapshots together.
+      const activeContextRows = await listSupervisionStudentsForContexts(
+        schoolId,
+        [result.context.id],
+        { activeOnly: true }
+      );
+      await syncClasspilotControlStatesToActiveDevices(
+        schoolId,
+        activeContextRows.map((row) => row.studentId)
+      );
       const refreshedPayload = await buildScheduledCoveragePayload({
         group,
         scheduledDate: conflict.scheduledDate,
@@ -1723,6 +1786,7 @@ router.post("/coverage/claim", ...auth, async (req, res, next) => {
         note: req.body.note ? String(req.body.note) : undefined,
       });
     }
+    await syncClasspilotControlStatesToActiveDevices(schoolId, studentIds);
     await logAudit({
       schoolId,
       userId: req.authUser!.id,
@@ -1768,7 +1832,7 @@ router.post("/coverage/send", ...auth, async (req, res, next) => {
     if (!isAdmin(req, res)) {
       const session = await getActiveTeachingSessionForSchool(req.authUser!.id, schoolId);
       if (!session) return res.status(409).json({ error: "Start a class session before sending students" });
-      const classRows = await getGroupStudents(session.groupId);
+      const classRows = await getClasspilotSessionStudentRoster(schoolId, session.id);
       const classStudentIds = new Set(classRows.map((row) => row.studentId));
       if (studentIds.some((studentId) => !classStudentIds.has(studentId))) {
         return res.status(403).json({ error: "Teachers can only send students from their active class" });
@@ -1784,6 +1848,7 @@ router.post("/coverage/send", ...auth, async (req, res, next) => {
       source: isAdmin(req, res) ? "admin_send" : "teacher_send",
       note: req.body.note ? String(req.body.note) : undefined,
     });
+    await syncClasspilotControlStatesToActiveDevices(schoolId, studentIds);
     await logAudit({
       schoolId,
       userId: req.authUser!.id,
@@ -1816,7 +1881,7 @@ router.post("/coverage/return-to-class", ...auth, async (req, res, next) => {
     }
 
     await assertStudentsInSchool(schoolId, studentIds);
-    const classRows = await getGroupStudents(session.groupId);
+    const classRows = await getClasspilotSessionStudentRoster(schoolId, session.id);
     const classStudentIds = new Set(classRows.map((row) => row.studentId));
     if (studentIds.some((studentId) => !classStudentIds.has(studentId))) {
       return res.status(403).json({ error: "Teachers can only return students from their active class" });
@@ -1860,6 +1925,8 @@ router.post("/coverage/return-to-class", ...auth, async (req, res, next) => {
         },
       });
     }
+
+    await syncClasspilotControlStatesToActiveDevices(schoolId, studentIds);
 
     return res.json({ released });
   } catch (err: any) {
@@ -2031,7 +2098,7 @@ router.post("/coverage/contexts/:id/commands", ...auth, async (req, res, next) =
       commandType,
       rawCommandPayload: req.body.commandPayload || {},
       targets,
-      persistClassroomState: false,
+      supervisionActorIsAdmin: isAdmin(req, res),
     });
 
     await logAudit({
@@ -2118,6 +2185,7 @@ router.post("/coverage/contexts", ...auth, async (req, res, next) => {
       assignedBy: req.authUser!.id,
       source: admin ? "admin_claim" : "coverage_claim",
     });
+    await syncClasspilotControlStatesToActiveDevices(schoolId, studentIds);
     await logAudit({
       schoolId,
       userId: req.authUser!.id,
@@ -2152,9 +2220,7 @@ router.post("/coverage/reroute", ...auth, async (req, res, next) => {
     if (!isAdmin(req, res)) {
       const session = await getActiveTeachingSessionForSchool(req.authUser!.id, schoolId);
       if (!session) return res.status(409).json({ error: "Start a class session before rerouting students" });
-      const group = await getGroupByIdAndSchool(session.groupId, schoolId);
-      if (!group) return res.status(404).json({ error: "Active class group not found" });
-      const classRows = await getGroupStudents(group.id);
+      const classRows = await getClasspilotSessionStudentRoster(schoolId, session.id);
       const classStudentIds = new Set(classRows.map((row) => row.studentId));
       if (studentIds.some((studentId) => !classStudentIds.has(studentId))) {
         return res.status(403).json({ error: "Teachers can only reroute students in their active class" });
@@ -2168,6 +2234,7 @@ router.post("/coverage/reroute", ...auth, async (req, res, next) => {
       assignedBy: req.authUser!.id,
       source: isAdmin(req, res) ? "admin_reroute" : "teacher_reroute",
     });
+    await syncClasspilotControlStatesToActiveDevices(schoolId, studentIds);
     await logAudit({
       schoolId,
       userId: req.authUser!.id,
@@ -2212,6 +2279,10 @@ router.post("/coverage/contexts/:id/release", ...auth, async (req, res, next) =>
       studentIds,
       releaseReason,
     });
+    await syncClasspilotControlStatesToActiveDevices(
+      schoolId,
+      released.map((row) => row.studentId)
+    );
     await logAudit({
       schoolId,
       userId: req.authUser!.id,
@@ -2259,6 +2330,13 @@ router.patch("/coverage/contexts/:id", ...auth, async (req, res, next) => {
       note: req.body.note === undefined ? undefined : String(req.body.note || ""),
       assignedStaffId,
     });
+    if (endsAt) {
+      const activeRows = await listSupervisionStudentsForContexts(schoolId, [context.id], { activeOnly: true });
+      await syncClasspilotControlStatesToActiveDevices(
+        schoolId,
+        activeRows.map((row) => row.studentId)
+      );
+    }
     const updateChanges: Record<string, unknown> = {};
     if (endsAt) updateChanges.endsAt = endsAt;
     if (req.body.note !== undefined) updateChanges.note = String(req.body.note || "");

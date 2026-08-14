@@ -597,7 +597,10 @@ describe("heartbeat authority and lifecycle wiring", () => {
     assert.doesNotMatch(route, /activeStudentSession/);
     assert.match(route, /error: "student_session_replaced"/);
     assert.match(route, /error: "Student session is no longer active"/);
-    assert.match(route, /await heartbeatTileCacheWrite/);
+    assert.match(
+      route,
+      /Promise\.all\(\[\s*heartbeatTileCacheWrite,\s*realtimeStatusWrite/
+    );
     assert.match(route, /void invalidateHeartbeatTileCaches\(\[\{ schoolId, deviceId \}\]\)/);
     assert.match(storageSource, /student\.email AS student_email/);
     assert.match(storageSource, /eligible_session\.student_email/);

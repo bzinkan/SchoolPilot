@@ -453,13 +453,15 @@ function TeacherFab({
             disabled={pollPending}
             className={cn(
               "flex items-center gap-3 px-4 py-3 rounded-full shadow-lg transition-all duration-200 hover:scale-105",
-              activePoll
+              pollPending
+                ? "bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800"
+                : activePoll
                 ? "bg-violet-500 text-white"
                 : "bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-700"
             )}
           >
             <BarChart3 className="h-5 w-5" />
-            <span className="font-medium">{activePoll ? `Poll (${pollTotalResponses})` : "Poll"}</span>
+            <span className="font-medium">{pollPending ? "Poll pending" : activePoll ? `Poll (${pollTotalResponses})` : "Poll"}</span>
           </button>
 
           {/* Timer */}
@@ -472,13 +474,15 @@ function TeacherFab({
             disabled={timerPending}
             className={cn(
               "flex items-center gap-3 px-4 py-3 rounded-full shadow-lg transition-all duration-200 hover:scale-105",
-              timerActive
+              timerPending
+                ? "bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800"
+                : timerActive
                 ? "bg-teal-500 text-white"
                 : "bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-700"
             )}
           >
-            {timerActive ? <Clock className="h-5 w-5" /> : <Timer className="h-5 w-5" />}
-            <span className="font-medium">{timerActive ? "Stop Timer" : "Timer"}</span>
+            {timerActive || timerPending ? <Clock className="h-5 w-5" /> : <Timer className="h-5 w-5" />}
+            <span className="font-medium">{timerPending ? "Timer pending" : timerActive ? "Stop Timer" : "Timer"}</span>
           </button>
 
           {/* Attention */}

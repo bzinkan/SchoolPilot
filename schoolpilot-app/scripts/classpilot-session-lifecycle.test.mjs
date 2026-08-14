@@ -244,7 +244,7 @@ test("ClassPilot dashboard explains scheduled and manual summary lifecycle", { t
     });
     await assert.doesNotReject(async () => {
       await scheduledPage.getByTestId("text-end-class-consequence").getByText(
-        /cover the scheduled start through now, be emailed immediately, and today’s block will not restart/,
+        /cover the scheduled start through now and be emailed; today’s block will not restart/,
       ).waitFor();
     });
     await scheduledPage.getByTestId("button-confirm-end-class").click();
@@ -322,7 +322,7 @@ test("ClassPilot dashboard explains scheduled and manual summary lifecycle", { t
     });
     await assert.doesNotReject(async () => {
       await manualPage.getByTestId("text-end-class-consequence").getByText(
-        /Session Summary will be emailed/,
+        /Session Summary will be generated after a short telemetry-settlement window, then emailed/,
       ).waitFor();
     });
     await manualPage.getByTestId("button-confirm-end-class").click();

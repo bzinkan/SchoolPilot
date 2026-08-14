@@ -1,7 +1,8 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "../../../lib/queryClient";
-import { ExternalLink, Clock, Monitor, Camera, History as HistoryIcon, LayoutGrid, Calendar as CalendarIcon, AlertTriangle, BarChart3 } from "lucide-react";
+import api from "../../../shared/utils/api";
+import { ExternalLink, Clock, Monitor, Camera, History as HistoryIcon, LayoutGrid, Calendar as CalendarIcon, AlertTriangle, BarChart3, Activity, Download } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { Badge } from "../../../components/ui/badge";
 import { ScrollArea } from "../../../components/ui/scroll-area";
@@ -13,6 +14,8 @@ import { Separator } from "../../../components/ui/separator";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card";
 import { formatDistanceToNow, format, startOfDay, endOfDay } from "date-fns";
 import { calculateURLSessions, formatDuration, isSessionOffTask } from "../../../lib/classpilot-utils";
+import { useToast } from "../../../hooks/use-toast";
+import { deriveStudentMonitoringDisplay, deriveUnavailablePreview, formatAbsoluteObservedAt, lastObservedDomain } from "../lib/studentMonitoringDisplay";
 
 function StudentDetailDrawer({
   student,
@@ -21,7 +24,13 @@ function StudentDetailDrawer({
   flightPaths = [],
   onClose,
   activeClassName,
+  teachingSessionId,
+  canViewHistoricalUsage = false,
+  freshnessNowMs,
 }) {
+  const { toast } = useToast();
+  const monitoringStudentId = student?.studentId;
+  const monitoringStudentName = student?.studentName;
   const [historyStartDate, setHistoryStartDate] = useState(new Date());
   const [historyEndDate, setHistoryEndDate] = useState(new Date());
   // Calculate URL sessions with duration from heartbeats
@@ -95,7 +104,7 @@ function StudentDetailDrawer({
     queryFn: () =>
       apiRequest('GET', `/classpilot/student-analytics/${student.studentId}/usage?startDate=${usageDateRange.startDate}&endDate=${usageDateRange.endDate}`),
     select: (data) => data?.usage ?? [],
-    enabled: !!student?.studentId,
+    enabled: canViewHistoricalUsage && !!student?.studentId,
     staleTime: 60000,
   });
 
@@ -119,9 +128,55 @@ function StudentDetailDrawer({
     staleTime: 30000,
   });
 
+  const { data: monitoringEvents = [], isLoading: monitoringEventsLoading } = useQuery({
+    queryKey: [
+      '/api/classpilot/teaching-sessions/events',
+      teachingSessionId,
+      student?.studentId,
+    ],
+    queryFn: () => apiRequest(
+      'GET',
+      `/classpilot/teaching-sessions/${encodeURIComponent(teachingSessionId)}/events?studentId=${encodeURIComponent(student.studentId)}&limit=100`,
+    ),
+    select: (data) => data?.events ?? [],
+    enabled: !!teachingSessionId && !!student?.studentId,
+    staleTime: 10000,
+    refetchInterval: 30000,
+  });
+
+  const exportMonitoringEvents = useCallback(async () => {
+    if (!teachingSessionId || !monitoringStudentId) return;
+    try {
+      const response = await api.get(
+        `/classpilot/teaching-sessions/${encodeURIComponent(teachingSessionId)}/events/export.csv?studentId=${encodeURIComponent(monitoringStudentId)}`,
+        { responseType: 'blob' },
+      );
+      const blobUrl = URL.createObjectURL(response.data);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = `ClassPilot_${String(monitoringStudentName || 'Student').replace(/[^a-z0-9_-]+/gi, '_')}_Monitoring.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(blobUrl);
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Could not export monitoring activity',
+        description: error.response?.data?.error || error.message,
+      });
+    }
+  }, [monitoringStudentId, monitoringStudentName, teachingSessionId, toast]);
+
   if (!student) return null;
 
+  const monitoringDisplay = deriveStudentMonitoringDisplay(student, freshnessNowMs);
+  const unavailablePreview = deriveUnavailablePreview(monitoringDisplay);
+  const observedDomain = lastObservedDomain(student);
+  const absoluteLastObservedAt = formatAbsoluteObservedAt(monitoringDisplay.observedAtMs);
+
   const getStatusLabel = (status) => {
+    if (monitoringDisplay.label) return monitoringDisplay.label;
     switch (status) {
       case 'online':
         return 'Online';
@@ -155,17 +210,12 @@ function StudentDetailDrawer({
                   {activeClassName || "No Class"}
                 </Badge>
                 <Badge className={`text-xs ${
-                  student.status === "offline" ? "bg-status-offline text-white" :
-                  student.status === "idle" ? "bg-status-away text-white" :
+                  monitoringDisplay.status === "offline" ? "bg-status-offline text-white" :
+                  monitoringDisplay.status === "idle" || monitoringDisplay.status === "signal_lost" ? "bg-status-away text-white" :
                   "bg-status-online text-white"
                 }`}>
-                  {getStatusLabel(student.status)}
+                  {getStatusLabel(monitoringDisplay.status)}
                 </Badge>
-                {student.primaryDeviceId && (
-                  <span className="text-xs text-muted-foreground font-mono">
-                    device-{student.primaryDeviceId.slice(0, 8)}
-                  </span>
-                )}
               </div>
             </div>
           </div>
@@ -183,6 +233,10 @@ function StudentDetailDrawer({
                   <TabsTrigger value="timeline" className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none" data-testid="tab-timeline">
                     <Clock className="h-4 w-4 mr-2" />
                     Timeline
+                  </TabsTrigger>
+                  <TabsTrigger value="monitoring" className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none" data-testid="tab-monitoring">
+                    <Activity className="h-4 w-4 mr-2" />
+                    Monitoring Activity
                   </TabsTrigger>
                   <TabsTrigger value="history" className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none" data-testid="tab-history">
                     <HistoryIcon className="h-4 w-4 mr-2" />
@@ -202,46 +256,61 @@ function StudentDetailDrawer({
                       </CardHeader>
                       <Separator />
                       <CardContent className="pt-4">
-                        <div className="p-3 rounded-lg border">
-                          <div className="flex items-start gap-2 mb-2">
-                            {student.favicon && (
-                              <img
-                                src={student.favicon}
-                                alt=""
-                                className="w-4 h-4 flex-shrink-0 mt-0.5"
-                                onError={(e) => {
-                                  e.target.style.display = 'none';
-                                }}
-                              />
-                            )}
-                            <p className="text-sm font-medium flex-1">
-                              {student.activeTabTitle || "No active tab"}
-                            </p>
-                          </div>
-                          {student.activeTabUrl && (
-                            <a
-                              href={student.activeTabUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex items-center gap-1.5 text-xs font-mono text-muted-foreground hover:text-foreground truncate"
-                            >
-                              <ExternalLink className="h-3 w-3 flex-shrink-0" />
-                              <span className="truncate">{student.activeTabUrl}</span>
-                            </a>
-                          )}
-                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-2 pt-2 border-t">
-                            <Clock className="h-3 w-3" />
-                            {currentUrlDuration !== null ? (
-                              <span className="font-medium text-primary" data-testid="current-url-duration">
-                                {formatDuration(currentUrlDuration)}
-                              </span>
-                            ) : (
-                              <span>
-                                {formatDistanceToNow(student.lastSeenAt, { addSuffix: true })}
-                              </span>
+                        {!monitoringDisplay.telemetryCurrent ? (
+                          <div className={`rounded-lg border p-4 ${unavailablePreview.warning ? 'border-amber-200 bg-amber-50/70 dark:border-amber-900 dark:bg-amber-950/20' : 'border-border bg-muted/30'}`} data-testid="drawer-preview-unavailable">
+                            <p className="text-sm font-semibold">Preview unavailable</p>
+                            <p className="mt-1 text-xs text-muted-foreground">{unavailablePreview.reason}</p>
+                            {unavailablePreview.showLastObservation && (
+                              <>
+                                <p className="mt-3 text-xs text-muted-foreground">Last observed at {absoluteLastObservedAt}</p>
+                                {observedDomain && (
+                                  <p className="mt-1 text-xs text-muted-foreground">Last observed site: {observedDomain}</p>
+                                )}
+                              </>
                             )}
                           </div>
-                        </div>
+                        ) : (
+                          <div className="p-3 rounded-lg border">
+                            <div className="flex items-start gap-2 mb-2">
+                              {student.favicon && (
+                                <img
+                                  src={student.favicon}
+                                  alt=""
+                                  className="w-4 h-4 flex-shrink-0 mt-0.5"
+                                  onError={(e) => {
+                                    e.target.style.display = 'none';
+                                  }}
+                                />
+                              )}
+                              <p className="text-sm font-medium flex-1">
+                                {student.activeTabTitle || "No active tab"}
+                              </p>
+                            </div>
+                            {student.activeTabUrl && (
+                              <a
+                                href={student.activeTabUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-1.5 text-xs font-mono text-muted-foreground hover:text-foreground truncate"
+                              >
+                                <ExternalLink className="h-3 w-3 flex-shrink-0" />
+                                <span className="truncate">{student.activeTabUrl}</span>
+                              </a>
+                            )}
+                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-2 pt-2 border-t">
+                              <Clock className="h-3 w-3" />
+                              {currentUrlDuration !== null ? (
+                                <span className="font-medium text-primary" data-testid="current-url-duration">
+                                  {formatDuration(currentUrlDuration)}
+                                </span>
+                              ) : (
+                                <span>
+                                  {formatDistanceToNow(student.lastSeenAt, { addSuffix: true })}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </CardContent>
                     </Card>
 
@@ -688,6 +757,82 @@ function StudentDetailDrawer({
                         </Card>
                       );
                     })()}
+                  </div>
+                </ScrollArea>
+              </TabsContent>
+
+              <TabsContent value="monitoring" className="flex-1 overflow-hidden m-0">
+                <ScrollArea className="h-full">
+                  <div className="p-6 space-y-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className="text-lg font-semibold">Monitoring Activity</h3>
+                      <p className="text-sm text-muted-foreground">
+                        Observed browser telemetry for this class session. Monitoring gaps indicate missing telemetry; they do not identify the cause or prove intentional behavior.
+                      </p>
+                      </div>
+                      {teachingSessionId && (
+                        <Button variant="outline" size="sm" onClick={() => void exportMonitoringEvents()}>
+                          <Download className="mr-2 h-4 w-4" /> Export CSV
+                        </Button>
+                      )}
+                    </div>
+                    {!teachingSessionId ? (
+                      <Card>
+                        <CardContent className="py-8 text-center text-sm text-muted-foreground">
+                          Select an active class session to view monitoring activity.
+                        </CardContent>
+                      </Card>
+                    ) : monitoringEventsLoading ? (
+                      <Card>
+                        <CardContent className="py-8 text-center text-sm text-muted-foreground">
+                          Loading monitoring activity…
+                        </CardContent>
+                      </Card>
+                    ) : monitoringEvents.length === 0 ? (
+                      <Card>
+                        <CardContent className="py-8 text-center text-sm text-muted-foreground">
+                          No retained monitoring events for this student and class session.
+                        </CardContent>
+                      </Card>
+                    ) : (
+                      <div className="space-y-3" data-testid="monitoring-activity-list">
+                        {monitoringEvents.map((event) => {
+                          const metadata = event.metadata || {};
+                          const label = String(event.type || 'monitoring_event').replaceAll('_', ' ');
+                          const details = [
+                            event.title,
+                            event.domain && event.path ? `${event.domain}${event.path}` : event.domain,
+                            metadata.policySource ? `Policy: ${metadata.policySource}` : null,
+                            metadata.outcome ? `Outcome: ${metadata.outcome}` : null,
+                            event.type === 'monitoring_gap' && metadata.durationSeconds != null
+                              ? `Telemetry unavailable for ${formatDuration(metadata.durationSeconds)}`
+                              : null,
+                          ].filter(Boolean);
+                          return (
+                            <Card key={event.id || `${event.type}-${event.occurredAt}`}>
+                              <CardContent className="p-4">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <Badge variant={event.type === 'restriction_state_failed' || event.type === 'monitoring_gap' ? 'destructive' : 'secondary'} className="capitalize">
+                                      {label}
+                                    </Badge>
+                                    {details.map((detail, index) => (
+                                      <p key={`${detail}-${index}`} className={index === 0 ? 'mt-2 text-sm font-medium break-words' : 'mt-1 text-xs text-muted-foreground break-words'}>
+                                        {detail}
+                                      </p>
+                                    ))}
+                                  </div>
+                                  <time className="shrink-0 text-xs text-muted-foreground" dateTime={event.occurredAt}>
+                                    {event.occurredAt ? format(new Date(event.occurredAt), 'MMM d, h:mm:ss a') : ''}
+                                  </time>
+                                </div>
+                              </CardContent>
+                            </Card>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 </ScrollArea>
               </TabsContent>

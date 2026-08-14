@@ -1,13 +1,14 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useQuery, useQueries, useMutation } from "@tanstack/react-query";
 import { useNavigate } from 'react-router-dom';
-import { Monitor, Users, Activity, Settings as SettingsIcon, LogOut, Download, Calendar, Shield, AlertTriangle, UserCog, Plus, X, GraduationCap, WifiOff, Video, MonitorPlay, TabletSmartphone, Lock, Unlock, Layers, CheckSquare, XSquare, User, UserCheck, List, ShieldBan, Eye, EyeOff, Timer, Clock, BarChart3, Trash2, UsersRound, Filter, Hand, MessageSquareOff, MessageSquare, Send, ClipboardCheck, RefreshCw } from "lucide-react";
+import { Monitor, Users, Activity, Settings as SettingsIcon, LogOut, Calendar, Shield, AlertTriangle, UserCog, Plus, X, GraduationCap, WifiOff, Video, MonitorPlay, TabletSmartphone, Lock, Unlock, Layers, CheckSquare, XSquare, User, UserCheck, List, ShieldBan, Eye, EyeOff, Timer, Clock, BarChart3, Trash2, UsersRound, Filter, Hand, MessageSquareOff, MessageSquare, Send, ClipboardCheck, RefreshCw } from "lucide-react";
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Badge } from '../../../components/ui/badge';
 import StudentTile from '../components/StudentTile';
 import StudentDetailDrawer from '../components/StudentDetailDrawer';
 import RemoteControlToolbar from '../components/RemoteControlToolbar';
+import SessionMonitoringReportDialog from '../components/SessionMonitoringReportDialog';
 import TeacherFab from '../components/TeacherFab';
 import {
   Dialog,
@@ -39,9 +40,44 @@ import {
   indexTileHistory,
   indexTileScreenshots,
 } from '../lib/tileBatchPolling';
+import {
+  applyStudentRealtimeEvents,
+  coalesceStudentRealtimeEvents,
+  makeAggregatedStudentsQueryKey,
+  mergeAggregatedStudents,
+} from '../lib/studentRealtimeCache';
+import {
+  deriveStudentMonitoringDisplay,
+  findNextStudentFreshnessBoundary,
+  formatAbsoluteObservedAt,
+  lastObservedDomain,
+  removeStoppedLiveStream,
+} from '../lib/studentMonitoringDisplay';
+import {
+  applyTransientCommandUpdate,
+  completedStudentIdsFromCommand,
+  commandDeliveryFeedback,
+  expireTransientCommands,
+  findNextTransientExpiry,
+  hasPendingTransientAction,
+  latestTransientClassroomUiEffect,
+  trackTransientCommandResponse,
+  transientEntryFeedback,
+} from '../lib/commandDeliveryTruth';
 
 const EMPTY_LIST = Object.freeze([]);
 const EMPTY_TILE_MAP = new Map();
+const EMPTY_PICKUP_DATA = Object.freeze({
+  students: EMPTY_LIST,
+  scheduledCoverageGroups: EMPTY_LIST,
+});
+
+function pendingTransientControls(entries) {
+  return {
+    timer: hasPendingTransientAction(entries, 'timer'),
+    poll: hasPendingTransientAction(entries, 'poll'),
+  };
+}
 
 // Helper to normalize grade levels (strip "th", "rd", "st", "nd" suffixes)
 function normalizeGrade(grade) {
@@ -49,10 +85,6 @@ function normalizeGrade(grade) {
   const trimmed = grade.trim();
   if (!trimmed) return null;
   return trimmed.replace(/(\d+)(st|nd|rd|th)\b/gi, '$1');
-}
-
-function optimisticUpdateDeadline(durationMs = 15000) {
-  return Date.now() + durationMs;
 }
 
 function classStartOverlapData(error) {
@@ -127,6 +159,29 @@ function sessionEndToastDescription(data, wasScheduled) {
     return "Class ended. No Session Summary is required for this session.";
   }
   return "Class session has been ended.";
+}
+
+function AvailableStudentActivity({ student, nowMs }) {
+  const display = deriveStudentMonitoringDisplay(student, nowMs);
+  if (display.telemetryCurrent) {
+    return (
+      <div className="mt-3 rounded-md bg-muted/40 p-3">
+        <p className="truncate text-xs font-medium text-muted-foreground">{student.activeTabTitle || "No active tab"}</p>
+        <p className="mt-1 truncate text-sm">{student.activeTabUrl || "Signed in to Chrome"}</p>
+      </div>
+    );
+  }
+
+  const domain = lastObservedDomain(student);
+  const observedAt = formatAbsoluteObservedAt(display.observedAtMs);
+  return (
+    <div className="mt-3 rounded-md border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-900 dark:bg-amber-950/20">
+      <p className="text-xs font-semibold">Preview unavailable</p>
+      <p className="mt-1 text-xs text-muted-foreground">{display.label}</p>
+      <p className="mt-2 text-[11px] text-muted-foreground">Last observed at {observedAt}</p>
+      {domain && <p className="mt-1 truncate text-[11px] text-muted-foreground">Last observed site: {domain}</p>}
+    </div>
+  );
 }
 
 export default function Dashboard() {
@@ -211,6 +266,7 @@ export default function Dashboard() {
   const [classStartOverlap, setClassStartOverlap] = useState(null);
   const [classResyncOverlap, setClassResyncOverlap] = useState(null);
   const [endClassTarget, setEndClassTarget] = useState(null);
+  const [sessionReportTarget, setSessionReportTarget] = useState(null);
   const [showLogoutDialog, setShowLogoutDialog] = useState(false);
   const [skipTodayGroup, setSkipTodayGroup] = useState(null);
   const [logoutPending, setLogoutPending] = useState(false);
@@ -237,35 +293,52 @@ export default function Dashboard() {
   const { toast } = useToast();
   const notifiedViolations = useRef(new Set());
   const wsRef = useRef(null);
+  const websocketAuthRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
   const reconnectAttemptsRef = useRef(0);
   const isMountedRef = useRef(true);
   const invalidateTimeoutRef = useRef(null);
-  const optimisticUpdateUntilRef = useRef(0);
+  const realtimeFlushTimeoutRef = useRef(null);
+  const pendingRealtimeEventsRef = useRef([]);
+  const freshnessTimeoutRef = useRef(null);
+  const commandExpiryTimeoutRef = useRef(null);
+  const transientCommandOutcomesRef = useRef(new Map());
+  const aggregatedStudentsQueryKeyRef = useRef(null);
+  const activeSchoolIdRef = useRef(null);
+  const authenticatedSchoolIdRef = useRef(null);
   const maxReconnectDelay = 30000;
   const [wsAuthenticated, setWsAuthenticated] = useState(false);
+  const [freshnessNowMs, setFreshnessNowMs] = useState(() => Date.now());
+  const [transientCommandVersion, setTransientCommandVersion] = useState(0);
+  const [transientPendingControls, setTransientPendingControls] = useState({
+    timer: false,
+    poll: false,
+  });
   const effectiveSessionIdRef = useRef(null);
   const LIVE_VIEW_TIMEOUT_MS = 15 * 60 * 1000;
   const LIVE_VIEW_CONNECT_TIMEOUT_MS = 12000;
   const liveViewTimers = useRef(new Map());
   const liveViewConnectTimers = useRef(new Map());
 
+  const handleLiveStreamStopped = useCallback((studentId) => {
+    setLiveStreams((current) => removeStoppedLiveStream(current, studentId));
+    setLiveViewPendingIds((current) => {
+      if (!current.has(studentId)) return current;
+      const next = new Set(current);
+      next.delete(studentId);
+      return next;
+    });
+    const connectTimer = liveViewConnectTimers.current.get(studentId);
+    if (connectTimer) clearTimeout(connectTimer);
+    liveViewConnectTimers.current.delete(studentId);
+    const liveTimer = liveViewTimers.current.get(studentId);
+    if (liveTimer) clearTimeout(liveTimer);
+    liveViewTimers.current.delete(studentId);
+  }, []);
+
   // WebRTC hook for live video streaming
   // eslint-disable-next-line react-hooks/refs
-  const webrtc = useWebRTC(wsRef.current);
-
-  const { data: students = [], isLoading: studentsLoading } = useQuery({
-    queryKey: ['/api/students-aggregated'],
-    queryFn: () => apiRequest('GET', '/students-aggregated'),
-    select: (data) => Array.isArray(data) ? data : data?.students ?? [],
-    refetchInterval: () => {
-      if (Date.now() < optimisticUpdateUntilRef.current) {
-        return false;
-      }
-      return 30000;
-    },
-    staleTime: 10000,
-  });
+  const webrtc = useWebRTC(wsRef.current, handleLiveStreamStopped);
 
   const { data: settings } = useQuery({
     queryKey: ['/api/settings'],
@@ -273,13 +346,13 @@ export default function Dashboard() {
     select: (data) => data?.settings ?? data ?? null,
   });
 
-  const { data: flightPaths = [] } = useQuery({
+  const { data: flightPaths = EMPTY_LIST } = useQuery({
     queryKey: ['/api/flight-paths'],
     queryFn: () => apiRequest('GET', '/flight-paths'),
     select: (data) => Array.isArray(data) ? data : data?.flightPaths ?? [],
   });
 
-  const { data: blockLists = [] } = useQuery({
+  const { data: blockLists = EMPTY_LIST } = useQuery({
     queryKey: ['/api/block-lists'],
     queryFn: () => apiRequest('GET', '/block-lists'),
     select: (data) => Array.isArray(data) ? data : data?.blockLists ?? [],
@@ -292,7 +365,7 @@ export default function Dashboard() {
     refetchInterval: 10000,
   });
 
-  const { data: groups = [] } = useQuery({
+  const { data: groups = EMPTY_LIST } = useQuery({
     queryKey: ['/api/teacher/groups'],
     queryFn: () => apiRequest('GET', '/teacher/groups'),
     select: (data) => Array.isArray(data) ? data : data?.groups ?? [],
@@ -308,7 +381,7 @@ export default function Dashboard() {
     }
   }, [groups, startGroupId]);
 
-  const { data: adminTeachingGroups = [], isLoading: adminTeachingGroupsLoading } = useQuery({
+  const { data: adminTeachingGroups = EMPTY_LIST, isLoading: adminTeachingGroupsLoading } = useQuery({
     queryKey: ['/api/teacher/groups', 'mine'],
     queryFn: () => apiRequest('GET', '/teacher/groups?scope=mine'),
     select: (data) => Array.isArray(data) ? data : data?.groups ?? [],
@@ -325,7 +398,7 @@ export default function Dashboard() {
     }
   }, [adminTeachingGroups, adminStartGroupId, isAdmin]);
 
-  const { data: allActiveSessions = [] } = useQuery({
+  const { data: allActiveSessions = EMPTY_LIST } = useQuery({
     queryKey: ['/api/sessions/all'],
     queryFn: () => apiRequest('GET', '/sessions/all'),
     select: (data) => Array.isArray(data) ? data : data?.sessions ?? [],
@@ -333,7 +406,7 @@ export default function Dashboard() {
     refetchInterval: 10000,
   });
 
-  const { data: activeCoverageContexts = [] } = useQuery({
+  const { data: activeCoverageContexts = EMPTY_LIST } = useQuery({
     queryKey: ['/api/coverage/contexts'],
     queryFn: () => apiRequest('GET', '/coverage/contexts'),
     select: (data) => (data?.contexts || []).filter((context) => context.status === 'active'),
@@ -349,7 +422,7 @@ export default function Dashboard() {
   });
   const canManageSupervisionSetup = isAdmin || !!coverageCapabilities.canManageSupervisionSetup;
 
-  const { data: availablePickupData = { students: [], scheduledCoverageGroups: [] } } = useQuery({
+  const { data: availablePickupData = EMPTY_PICKUP_DATA } = useQuery({
     queryKey: ['/api/coverage/available-students'],
     queryFn: () => apiRequest('GET', '/coverage/available-students'),
     select: (data) => ({
@@ -359,10 +432,10 @@ export default function Dashboard() {
     enabled: isAdmin || isTeacher,
     refetchInterval: 10000,
   });
-  const availablePickupStudents = availablePickupData.students || [];
-  const scheduledCoverageGroups = availablePickupData.scheduledCoverageGroups || [];
+  const availablePickupStudents = availablePickupData.students;
+  const scheduledCoverageGroups = availablePickupData.scheduledCoverageGroups;
 
-  const { data: claimedPickupStudents = [] } = useQuery({
+  const { data: claimedPickupStudents = EMPTY_LIST } = useQuery({
     queryKey: ['/api/coverage/claimed-students'],
     queryFn: () => apiRequest('GET', '/coverage/claimed-students'),
     select: (data) => data?.students || [],
@@ -370,7 +443,7 @@ export default function Dashboard() {
     refetchInterval: 10000,
   });
 
-  const { data: rerouteCoverageTargets = [] } = useQuery({
+  const { data: rerouteCoverageTargets = EMPTY_LIST } = useQuery({
     queryKey: ['/api/coverage/reroute-targets'],
     queryFn: () => apiRequest('GET', '/coverage/reroute-targets'),
     select: (data) => data?.targets || data?.contexts || [],
@@ -378,7 +451,7 @@ export default function Dashboard() {
     refetchInterval: 10000,
   });
 
-  const { data: scheduledClassConflicts = [] } = useQuery({
+  const { data: scheduledClassConflicts = EMPTY_LIST } = useQuery({
     queryKey: ['/api/classpilot/scheduled-conflicts'],
     queryFn: () => apiRequest('GET', '/classpilot/scheduled-conflicts'),
     select: (data) => data?.conflicts || [],
@@ -395,6 +468,35 @@ export default function Dashboard() {
     (observedSession && observedSession.teacherId === currentUser?.id)
   );
   const effectiveSession = isAdmin ? (observedSession || activeSession) : activeSession;
+  const activeSchoolId = school?.id || currentUser?.schoolId || null;
+  const effectiveSessionId = effectiveSession?.id || null;
+  const adminSchoolMode = isAdmin && !effectiveSessionId;
+  const aggregatedStudentsQueryKey = useMemo(
+    () => makeAggregatedStudentsQueryKey(activeSchoolId, effectiveSessionId, adminSchoolMode),
+    [activeSchoolId, adminSchoolMode, effectiveSessionId],
+  );
+  const { data: students = EMPTY_LIST, isLoading: studentsLoading } = useQuery({
+    queryKey: aggregatedStudentsQueryKey,
+    queryFn: () => apiRequest(
+      'GET',
+      effectiveSessionId
+        ? `/students-aggregated?teachingSessionId=${encodeURIComponent(effectiveSessionId)}`
+        : '/students-aggregated',
+    ),
+    select: (data) => Array.isArray(data) ? data : data?.students ?? [],
+    refetchInterval: 30000,
+    staleTime: 10000,
+    structuralSharing: mergeAggregatedStudents,
+  });
+
+  useEffect(() => {
+    websocketAuthRef.current = currentUser?.id && token ? {
+      role: currentUser.role === 'admin' || currentUser.role === 'school_admin' ? 'school_admin' : 'teacher',
+      userId: currentUser.id,
+      userToken: token,
+      schoolId: currentUser.schoolId,
+    } : null;
+  }, [currentUser?.id, currentUser?.role, currentUser?.schoolId, token]);
   const activeSessionIsScheduled = isScheduledTeachingSession(activeSession);
   const activeSessionScheduledEnd = formatScheduledSessionEnd(
     activeSession,
@@ -407,7 +509,12 @@ export default function Dashboard() {
     effectiveSessionIdRef.current = effectiveSession?.id || null;
   }, [effectiveSession?.id]);
 
-  const { data: activeClassroomStates = [] } = useQuery({
+  useEffect(() => {
+    aggregatedStudentsQueryKeyRef.current = aggregatedStudentsQueryKey;
+    activeSchoolIdRef.current = activeSchoolId;
+  }, [activeSchoolId, aggregatedStudentsQueryKey]);
+
+  const { data: activeClassroomStates = EMPTY_LIST } = useQuery({
     queryKey: ['/api/commands/active-state', effectiveSession?.id],
     queryFn: () => apiRequest('GET', `/commands/active-state?teachingSessionId=${encodeURIComponent(effectiveSession.id)}`),
     select: (data) => data?.states ?? [],
@@ -415,20 +522,19 @@ export default function Dashboard() {
     refetchInterval: 30000,
   });
 
-  const { data: urlHistory = [] } = useQuery({
-    queryKey: ['/api/heartbeats', selectedStudent?.primaryDeviceId, effectiveSession?.startTime],
+  const { data: urlHistory = EMPTY_LIST } = useQuery({
+    queryKey: ['/api/classpilot/tiles/history', selectedStudent?.studentId, effectiveSession?.startTime],
     queryFn: () => {
-      const params = new URLSearchParams();
-      if (effectiveSession?.startTime) params.set('startTime', new Date(effectiveSession.startTime).toISOString());
-      if (effectiveSession?.endTime) params.set('endTime', new Date(effectiveSession.endTime).toISOString());
-      const qs = params.toString();
-      return apiRequest('GET', `/heartbeats/${selectedStudent?.primaryDeviceId}${qs ? `?${qs}` : ''}`);
+      return apiRequest('POST', '/classpilot/tiles/history', {
+        studentIds: [selectedStudent.studentId],
+        limit: 10,
+      });
     },
-    select: (data) => Array.isArray(data) ? data : data?.heartbeats ?? [],
-    enabled: !!selectedStudent?.primaryDeviceId,
+    select: (data) => data?.tiles?.[0]?.heartbeats || [],
+    enabled: !!selectedStudent?.studentId,
   });
 
-  const { data: subgroups = [] } = useQuery({
+  const { data: subgroups = EMPTY_LIST } = useQuery({
     queryKey: ['/api/groups', effectiveSession?.groupId, 'subgroups'],
     queryFn: async () => {
       if (!effectiveSession?.groupId) return [];
@@ -438,7 +544,7 @@ export default function Dashboard() {
     enabled: !!effectiveSession?.groupId,
   });
 
-  const { data: sessionStudentIds = [] } = useQuery({
+  const { data: sessionStudentIds = EMPTY_LIST } = useQuery({
     queryKey: ['/api/groups', effectiveSession?.groupId, 'students'],
     queryFn: () => apiRequest('GET', `/groups/${effectiveSession?.groupId}/students`),
     enabled: !!effectiveSession?.groupId,
@@ -477,7 +583,6 @@ export default function Dashboard() {
           studentId: hand.studentId,
           studentName: hand.studentName,
           studentEmail: hand.studentEmail,
-          deviceId: hand.deviceId,
           timestamp: hand.timestamp,
         });
       });
@@ -514,7 +619,6 @@ export default function Dashboard() {
         studentId: msg.studentId,
         studentName: nameFor(msg.studentId),
         studentEmail: emailFor(msg.studentId),
-        deviceId: msg.deviceId,
         message: msg.content,
         messageType: msg.messageType || 'message',
         timestamp: msg.createdAt,
@@ -549,6 +653,33 @@ export default function Dashboard() {
     }
     reconnectAttemptsRef.current = 0;
 
+    const flushRealtimeEvents = () => {
+      realtimeFlushTimeoutRef.current = null;
+      const queued = pendingRealtimeEventsRef.current;
+      pendingRealtimeEventsRef.current = [];
+      const queryKey = aggregatedStudentsQueryKeyRef.current;
+      if (!queryKey || queued.length === 0) return;
+      const events = coalesceStudentRealtimeEvents(queued);
+      queryClient.setQueryData(queryKey, (old) => applyStudentRealtimeEvents(old, events, {
+        schoolId: activeSchoolIdRef.current,
+      }));
+    };
+
+    const queueRealtimeEvent = (message) => {
+      pendingRealtimeEventsRef.current.push(message);
+      if (realtimeFlushTimeoutRef.current) return;
+      realtimeFlushTimeoutRef.current = setTimeout(flushRealtimeEvents, 100);
+    };
+
+    const reconcileLegacyRealtime = () => {
+      if (invalidateTimeoutRef.current) clearTimeout(invalidateTimeoutRef.current);
+      invalidateTimeoutRef.current = setTimeout(() => {
+        const queryKey = aggregatedStudentsQueryKeyRef.current;
+        if (queryKey) queryClient.invalidateQueries({ queryKey, exact: true });
+        invalidateTimeoutRef.current = null;
+      }, 300);
+    };
+
     const connectWebSocket = () => {
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
@@ -572,13 +703,11 @@ export default function Dashboard() {
           console.log("[Dashboard] WebSocket connected successfully");
           setWsConnected(true);
           reconnectAttemptsRef.current = 0;
-          if (currentUser?.id && token) {
+          const auth = websocketAuthRef.current;
+          if (auth) {
             socket.send(JSON.stringify({
               type: 'auth',
-              role: currentUser.role === 'admin' || currentUser.role === 'school_admin' ? 'school_admin' : 'teacher',
-              userId: currentUser.id,
-              userToken: token,
-              schoolId: currentUser.schoolId,
+              ...auth,
             }));
           }
 
@@ -597,20 +726,83 @@ export default function Dashboard() {
             const message = JSON.parse(event.data);
             if (message.type === 'auth-success') {
               setWsAuthenticated(true);
+              authenticatedSchoolIdRef.current = activeSchoolIdRef.current;
+              const queryKey = aggregatedStudentsQueryKeyRef.current;
+              if (queryKey) queryClient.refetchQueries({ queryKey, exact: true });
             }
             if (message.type === 'auth-error') {
               setWsAuthenticated(false);
+              authenticatedSchoolIdRef.current = null;
+            }
+            if (message.type === 'classpilot-command-update') {
+              const publicCommand = message.command || {};
+              const messageSchoolId = publicCommand.schoolId || message.schoolId;
+              const messageSessionId = publicCommand.teachingSessionId || message.teachingSessionId;
+              if (messageSchoolId && String(messageSchoolId) !== String(activeSchoolIdRef.current)) return;
+              if (
+                messageSessionId
+                && String(messageSessionId) !== String(effectiveSessionIdRef.current)
+              ) return;
+
+              const before = transientCommandOutcomesRef.current;
+              const tracked = trackTransientCommandResponse(
+                before,
+                message,
+                publicCommand.commandType,
+              );
+              const after = applyTransientCommandUpdate(tracked, message);
+              if (after !== before) {
+                transientCommandOutcomesRef.current = after;
+                setTransientPendingControls(pendingTransientControls(after));
+                setTransientCommandVersion((version) => version + 1);
+                const id = message.commandId || publicCommand.id;
+                const previousEntry = id ? before.get(id) : null;
+                const currentEntry = id ? after.get(id) : null;
+                const previousTimerEffect = latestTransientClassroomUiEffect(before, 'timer');
+                const currentTimerEffect = latestTransientClassroomUiEffect(after, 'timer');
+                if (
+                  previousTimerEffect?.commandId !== currentTimerEffect?.commandId
+                  || previousTimerEffect?.active !== currentTimerEffect?.active
+                ) {
+                  setTimerActive(currentTimerEffect?.active === true);
+                }
+
+                const previousPollEffect = latestTransientClassroomUiEffect(before, 'poll');
+                const currentPollEffect = latestTransientClassroomUiEffect(after, 'poll');
+                if (
+                  previousPollEffect?.commandId !== currentPollEffect?.commandId
+                  || previousPollEffect?.active !== currentPollEffect?.active
+                ) {
+                  if (currentPollEffect?.active) {
+                    setActivePoll(currentPollEffect.poll);
+                    if (previousPollEffect?.poll?.id !== currentPollEffect.poll.id) {
+                      setPollResults([]);
+                      setPollTotalResponses(0);
+                    }
+                  } else {
+                    setActivePoll(null);
+                    setShowPollResultsDialog(false);
+                  }
+                }
+                if (
+                  currentEntry
+                  && (
+                    (!previousEntry && currentEntry.summary.acknowledged > 0)
+                    || currentEntry.summary.acknowledged > (previousEntry?.summary.acknowledged || 0)
+                    || currentEntry.summary.expired > (previousEntry?.summary.expired || 0)
+                    || currentEntry.summary.failed > (previousEntry?.summary.failed || 0)
+                  )
+                ) {
+                  const feedback = transientEntryFeedback(currentEntry);
+                  toast(feedback);
+                }
+              }
             }
             if (message.type === 'student-update') {
-              if (Date.now() < optimisticUpdateUntilRef.current) return;
-              if (invalidateTimeoutRef.current) {
-                clearTimeout(invalidateTimeoutRef.current);
+              queueRealtimeEvent(message);
+              if (!Number.isSafeInteger(Number(message.revision ?? message.realtimeRevision))) {
+                reconcileLegacyRealtime();
               }
-              invalidateTimeoutRef.current = setTimeout(() => {
-                if (Date.now() < optimisticUpdateUntilRef.current) return;
-                queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
-                invalidateTimeoutRef.current = null;
-              }, 300);
             }
             if (message.type === 'answer') {
               webrtc.handleAnswer(message.from, message.sdp);
@@ -628,7 +820,6 @@ export default function Dashboard() {
                   studentId: message.data.studentId,
                   studentName: message.data.studentName,
                   studentEmail: message.data.studentEmail,
-                  deviceId: message.data.deviceId,
                   timestamp: message.data.timestamp,
                 });
                 return newMap;
@@ -664,7 +855,6 @@ export default function Dashboard() {
                 studentId: message.data.studentId,
                 studentName: message.data.studentName,
                 studentEmail: message.data.studentEmail,
-                deviceId: message.data.deviceId,
                 message: message.data.message,
                 messageType: message.data.messageType,
                 timestamp: message.data.timestamp,
@@ -700,26 +890,17 @@ export default function Dashboard() {
               queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
             }
             if (message.type === 'student-signed-out') {
-              queryClient.setQueryData(['/api/students-aggregated'], (old) =>
-                Array.isArray(old)
-                  ? old.map((student) => (
-                    student.studentId === message.studentId || student.primaryDeviceId === message.deviceId
-                      ? {
-                        ...student,
-                        status: 'offline',
-                        loginState: 'not_logged_in',
-                        isLoggedIn: false,
-                        activeTabTitle: '',
-                        activeTabUrl: '',
-                        allOpenTabs: [],
-                        isSharing: false,
-                        cameraActive: false,
-                      }
-                      : student
-                  ))
-                  : old
-              );
-              queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
+              webrtc.stopLiveView(message.studentId);
+              pendingRealtimeEventsRef.current = pendingRealtimeEventsRef.current.filter((queued) => (
+                queued.studentId !== message.studentId
+              ));
+              const queryKey = aggregatedStudentsQueryKeyRef.current;
+              if (queryKey) {
+                queryClient.setQueryData(queryKey, (old) => applyStudentRealtimeEvents(old, [message], {
+                  schoolId: activeSchoolIdRef.current,
+                }));
+                queryClient.invalidateQueries({ queryKey, exact: true });
+              }
             }
             if (message.type === 'session-ended') {
               const endedOwnSession = Boolean(
@@ -751,7 +932,10 @@ export default function Dashboard() {
               queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
             }
             if (message.type === 'ai-classification') {
-              queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
+              queueRealtimeEvent(message);
+              if (!Number.isSafeInteger(Number(message.revision ?? message.realtimeRevision))) {
+                reconcileLegacyRealtime();
+              }
             }
             if (message.type === 'safety-alert') {
               toast({
@@ -784,6 +968,7 @@ export default function Dashboard() {
           if (socket._heartbeatInterval) clearInterval(socket._heartbeatInterval);
           setWsConnected(false);
           setWsAuthenticated(false);
+          authenticatedSchoolIdRef.current = null;
           wsRef.current = null;
           reconnectAttemptsRef.current++;
           const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current - 1), maxReconnectDelay);
@@ -815,6 +1000,15 @@ export default function Dashboard() {
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
       }
+      if (invalidateTimeoutRef.current) {
+        clearTimeout(invalidateTimeoutRef.current);
+        invalidateTimeoutRef.current = null;
+      }
+      if (realtimeFlushTimeoutRef.current) {
+        clearTimeout(realtimeFlushTimeoutRef.current);
+        realtimeFlushTimeoutRef.current = null;
+      }
+      pendingRealtimeEventsRef.current = [];
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
@@ -825,11 +1019,15 @@ export default function Dashboard() {
       activeLiveViewConnectTimers.clear();
       webrtc.cleanup();
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Reconnect when an administrator switches schools. Other live values are carried through refs.
+  }, [currentUser?.schoolId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-authenticate when currentUser becomes available (e.g. token loaded after WS connected)
   useEffect(() => {
-    if (!currentUser?.id || !token || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || wsAuthenticated) return;
+    const alreadyAuthenticatedForSchool = wsAuthenticated
+      && authenticatedSchoolIdRef.current === currentUser?.schoolId;
+    if (!currentUser?.id || !token || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || alreadyAuthenticatedForSchool) return;
+    setWsAuthenticated(false);
     wsRef.current.send(JSON.stringify({
       type: 'auth',
       role: currentUser.role === 'admin' || currentUser.role === 'school_admin' ? 'school_admin' : 'teacher',
@@ -851,6 +1049,51 @@ export default function Dashboard() {
     };
   }, [effectiveSession?.id, wsAuthenticated, wsConnected]);
 
+  useEffect(() => {
+    transientCommandOutcomesRef.current = new Map();
+    setTransientPendingControls({ timer: false, poll: false });
+    setTimerActive(false);
+    setActivePoll(null);
+    setShowPollResultsDialog(false);
+    if (commandExpiryTimeoutRef.current) {
+      clearTimeout(commandExpiryTimeoutRef.current);
+      commandExpiryTimeoutRef.current = null;
+    }
+  }, [activeSchoolId, effectiveSessionId]);
+
+  useEffect(() => {
+    if (commandExpiryTimeoutRef.current) {
+      clearTimeout(commandExpiryTimeoutRef.current);
+      commandExpiryTimeoutRef.current = null;
+    }
+    const expiresAt = findNextTransientExpiry(transientCommandOutcomesRef.current, Date.now());
+    if (expiresAt === null) return undefined;
+
+    commandExpiryTimeoutRef.current = setTimeout(() => {
+      commandExpiryTimeoutRef.current = null;
+      const before = transientCommandOutcomesRef.current;
+      const after = expireTransientCommands(before, Date.now());
+      if (after !== before) {
+        transientCommandOutcomesRef.current = after;
+        setTransientPendingControls(pendingTransientControls(after));
+        for (const [id, entry] of after) {
+          const previousEntry = before.get(id);
+          if (entry.summary.expired > (previousEntry?.summary.expired || 0)) {
+            toast(transientEntryFeedback(entry));
+          }
+        }
+      }
+      setTransientCommandVersion((version) => version + 1);
+    }, Math.max(0, expiresAt - Date.now()));
+
+    return () => {
+      if (commandExpiryTimeoutRef.current) {
+        clearTimeout(commandExpiryTimeoutRef.current);
+        commandExpiryTimeoutRef.current = null;
+      }
+    };
+  }, [transientCommandVersion, toast]);
+
   // Set initial grade when settings load
   useEffect(() => {
     if (settings?.gradeLevels && settings.gradeLevels.length > 0) {
@@ -869,6 +1112,7 @@ export default function Dashboard() {
 
   // Check if student is off-task
   const isStudentOffTask = (student) => {
+    if (!deriveStudentMonitoringDisplay(student, freshnessNowMs).telemetryCurrent) return false;
     if (student.cameraActive) return true;
     if (!student.activeTabUrl) return false;
     if (student.status !== 'online') return false;
@@ -944,48 +1188,48 @@ export default function Dashboard() {
   };
 
   // Live view handlers — auto-timeout after 15 minutes to protect student device CPU/battery
-  const markLiveViewPending = (deviceId, pending) => {
+  const markLiveViewPending = (studentId, pending) => {
     setLiveViewPendingIds((prev) => {
       const next = new Set(prev);
-      if (pending) next.add(deviceId);
-      else next.delete(deviceId);
+      if (pending) next.add(studentId);
+      else next.delete(studentId);
       return next;
     });
   };
 
-  const refreshTile = (deviceId) => {
-    setTileRevisions((prev) => ({ ...prev, [deviceId]: (prev[deviceId] ?? 0) + 1 }));
+  const refreshTile = (studentId) => {
+    setTileRevisions((prev) => ({ ...prev, [studentId]: (prev[studentId] ?? 0) + 1 }));
   };
 
-  const handleStartLiveView = async (deviceId) => {
+  const handleStartLiveView = async (studentId) => {
     if (!wsAuthenticated) {
       toast({ title: "Not Ready", description: "Please wait for connection to be established", variant: "destructive" });
       return;
     }
-    markLiveViewPending(deviceId, true);
+    markLiveViewPending(studentId, true);
     let streamReceived = false;
-    if (liveViewConnectTimers.current.has(deviceId)) clearTimeout(liveViewConnectTimers.current.get(deviceId));
+    if (liveViewConnectTimers.current.has(studentId)) clearTimeout(liveViewConnectTimers.current.get(studentId));
 
     try {
-      const connection = await webrtc.startLiveView(deviceId, (stream) => {
+      const connection = await webrtc.startLiveView(studentId, effectiveSession?.id, (stream) => {
         streamReceived = true;
-        markLiveViewPending(deviceId, false);
-        if (liveViewConnectTimers.current.has(deviceId)) {
-          clearTimeout(liveViewConnectTimers.current.get(deviceId));
-          liveViewConnectTimers.current.delete(deviceId);
+        markLiveViewPending(studentId, false);
+        if (liveViewConnectTimers.current.has(studentId)) {
+          clearTimeout(liveViewConnectTimers.current.get(studentId));
+          liveViewConnectTimers.current.delete(studentId);
         }
-        setLiveStreams((prev) => { const newMap = new Map(prev); newMap.set(deviceId, stream); return newMap; });
+        setLiveStreams((prev) => { const newMap = new Map(prev); newMap.set(studentId, stream); return newMap; });
       });
       if (!connection) {
-        markLiveViewPending(deviceId, false);
+        markLiveViewPending(studentId, false);
         toast({ title: "Live View Not Ready", description: "The teacher connection is not ready yet. Try again in a moment.", variant: "destructive" });
         return;
       }
-      liveViewConnectTimers.current.set(deviceId, setTimeout(() => {
+      liveViewConnectTimers.current.set(studentId, setTimeout(() => {
         if (streamReceived) return;
-        markLiveViewPending(deviceId, false);
-        handleStopLiveView(deviceId);
-        refreshTile(deviceId);
+        markLiveViewPending(studentId, false);
+        handleStopLiveView(studentId);
+        refreshTile(studentId);
         toast({
           title: "Live View Timed Out",
           description: "The request was sent, but no stream arrived. The managed session, extension policy, or network may be blocking live capture; showing the latest screenshot instead.",
@@ -993,31 +1237,21 @@ export default function Dashboard() {
         });
       }, LIVE_VIEW_CONNECT_TIMEOUT_MS));
     } catch (error) {
-      markLiveViewPending(deviceId, false);
+      markLiveViewPending(studentId, false);
       toast({ title: "Live View Failed", description: error?.message || "Could not start live view.", variant: "destructive" });
       return;
     }
     // Clear any existing timer for this device and start a new one
-    if (liveViewTimers.current.has(deviceId)) clearTimeout(liveViewTimers.current.get(deviceId));
-    liveViewTimers.current.set(deviceId, setTimeout(() => {
-      handleStopLiveView(deviceId);
+    if (liveViewTimers.current.has(studentId)) clearTimeout(liveViewTimers.current.get(studentId));
+    liveViewTimers.current.set(studentId, setTimeout(() => {
+      handleStopLiveView(studentId);
       toast({ title: "Live View Ended", description: "Auto-stopped after 15 minutes to protect student device" });
     }, LIVE_VIEW_TIMEOUT_MS));
   };
 
-  const handleStopLiveView = (deviceId) => {
-    markLiveViewPending(deviceId, false);
-    if (liveViewConnectTimers.current.has(deviceId)) {
-      clearTimeout(liveViewConnectTimers.current.get(deviceId));
-      liveViewConnectTimers.current.delete(deviceId);
-    }
-    webrtc.stopLiveView(deviceId, wsRef.current);
-    setLiveStreams((prev) => { const newMap = new Map(prev); newMap.delete(deviceId); return newMap; });
-    if (liveViewTimers.current.has(deviceId)) {
-      clearTimeout(liveViewTimers.current.get(deviceId));
-      liveViewTimers.current.delete(deviceId);
-    }
-    refreshTile(deviceId);
+  const handleStopLiveView = (studentId) => {
+    webrtc.stopLiveView(studentId, wsRef.current);
+    refreshTile(studentId);
     queryClient.invalidateQueries({
       queryKey: [TILE_BATCH_QUERY_ROOTS.screenshots],
       refetchType: 'all',
@@ -1087,8 +1321,8 @@ export default function Dashboard() {
   );
   const legacyTileDeviceByStudent = new Map(
     (studentView === "available" ? EMPTY_LIST : filteredStudents)
-      .filter((student) => student?.studentId && student?.primaryDeviceId)
-      .map((student) => [student.studentId, student.primaryDeviceId])
+      .filter((student) => student?.studentId)
+      .map((student) => [student.studentId, student.studentId])
   );
   const [screenshotTileRequests, historyTileRequests] = useMemo(() => [
     tileBatchRequests.filter((request) => request.kind === 'screenshots'),
@@ -1144,16 +1378,58 @@ export default function Dashboard() {
       ? historyTileRequests[index]?.body.studentIds || EMPTY_LIST
       : EMPTY_LIST)
   ), [historyTileQueries, historyTileRequests]);
+
+  useEffect(() => {
+    if (freshnessTimeoutRef.current) {
+      clearTimeout(freshnessTimeoutRef.current);
+      freshnessTimeoutRef.current = null;
+    }
+    const now = new Date().getTime();
+    const freshnessStudents = studentView === 'claimed'
+      ? claimedPickupStudents
+      : studentView === 'available'
+        ? [
+            ...scheduledCoverageGroups.flatMap((group) => group.students || EMPTY_LIST),
+            ...availablePickupStudents,
+          ]
+        : students;
+    const boundary = findNextStudentFreshnessBoundary(
+      freshnessStudents,
+      screenshotsByStudent,
+      freshnessNowMs,
+    );
+    if (boundary === null) return undefined;
+
+    freshnessTimeoutRef.current = setTimeout(() => {
+      freshnessTimeoutRef.current = null;
+      setFreshnessNowMs(Date.now());
+    }, Math.max(0, boundary - now));
+
+    return () => {
+      if (freshnessTimeoutRef.current) {
+        clearTimeout(freshnessTimeoutRef.current);
+        freshnessTimeoutRef.current = null;
+      }
+    };
+  }, [availablePickupStudents, claimedPickupStudents, freshnessNowMs, scheduledCoverageGroups, screenshotsByStudent, studentView, students]);
+
   const controllableStudents = filteredStudents.filter(isStudentCommandable);
   const selectableStudents = studentView === "class" ? controllableStudents : filteredStudents;
 
   const statsStudents = studentView === "class" ? sessionFilteredStudents : filteredStudents;
-  const onlineCount = statsStudents.filter((s) => s.status === 'online').length;
-  const idleCount = statsStudents.filter((s) => s.status === 'idle').length;
-  const offlineCount = statsStudents.filter((s) => s.status === 'offline').length;
+  const statsMonitoringDisplays = statsStudents.map((student) => (
+    deriveStudentMonitoringDisplay(student, freshnessNowMs)
+  ));
+  const onlineCount = statsMonitoringDisplays.filter((display) => display.kind === 'online').length;
+  const idleCount = statsMonitoringDisplays.filter((display) => display.kind === 'idle').length;
+  const monitoringLostCount = statsMonitoringDisplays.filter((display) => display.kind === 'signal_lost').length;
+  const offlineCount = statsMonitoringDisplays.filter((display) => display.kind === 'signed_out').length;
   const offTaskCount = statsStudents.filter(isStudentOffTask).length;
 
-  const isConnectedStudent = (student) => student.status === 'online' || student.status === 'idle';
+  const isConnectedStudent = (student) => {
+    const display = deriveStudentMonitoringDisplay(student, freshnessNowMs);
+    return display.kind === 'online' || display.kind === 'idle';
+  };
 
   const getStudentsForCommandTarget = (overrideStudentIds = null) => {
     const overrideSet = overrideStudentIds ? new Set(overrideStudentIds) : null;
@@ -1226,19 +1502,6 @@ export default function Dashboard() {
       .sort((a, b) => a.label.localeCompare(b.label));
   })();
 
-  const deviceIdsForStudentIds = (studentIds) => {
-    const ids = new Set(studentIds || []);
-    const deviceIds = [];
-    students.forEach((student) => {
-      if (!ids.has(student.studentId)) return;
-      student.devices?.forEach(device => { if (device.deviceId) deviceIds.push(device.deviceId); });
-      if (student.primaryDeviceId && !deviceIds.includes(student.primaryDeviceId)) {
-        deviceIds.push(student.primaryDeviceId);
-      }
-    });
-    return deviceIds;
-  };
-
   const commandStudentIdsFromRequest = (request) => {
     if (request.targetScope === "students") return request.targetStudentIds || [];
     if (request.targetScope === "subgroup") return getStudentsForCommandTarget().map((student) => student.studentId);
@@ -1278,7 +1541,6 @@ export default function Dashboard() {
 
   const makeTabKey = (tab) => JSON.stringify({
     studentId: tab.studentId,
-    deviceId: tab.deviceId,
     url: tab.url,
   });
 
@@ -1295,12 +1557,13 @@ export default function Dashboard() {
   const manageTabsStudents = getActiveCommandStudents(manageTabsStudentIds);
   const openTabs = manageTabsStudents
     .flatMap(s => {
+      if (!deriveStudentMonitoringDisplay(s, freshnessNowMs).telemetryCurrent) return [];
       if (s.allOpenTabs && s.allOpenTabs.length > 0) {
         return s.allOpenTabs
           .filter((tab) => tab.url && !tab.url.startsWith('chrome://'))
-          .map((tab) => ({ url: tab.url, title: tab.title || 'Untitled', studentName: s.studentName, studentId: s.studentId, deviceId: tab.deviceId || s.primaryDeviceId, active: tab.url === s.activeTabUrl }));
-      } else if (s.activeTabUrl && s.activeTabUrl.trim() && !s.activeTabUrl.startsWith('chrome://') && s.primaryDeviceId) {
-        return [{ url: s.activeTabUrl, title: s.activeTabTitle || 'Untitled', studentName: s.studentName, studentId: s.studentId, deviceId: s.primaryDeviceId, active: true }];
+          .map((tab) => ({ url: tab.url, title: tab.title || 'Untitled', studentName: s.studentName, studentId: s.studentId, active: tab.url === s.activeTabUrl }));
+      } else if (s.activeTabUrl && s.activeTabUrl.trim() && !s.activeTabUrl.startsWith('chrome://')) {
+        return [{ url: s.activeTabUrl, title: s.activeTabTitle || 'Untitled', studentName: s.studentName, studentId: s.studentId, active: true }];
       }
       return [];
     })
@@ -1320,13 +1583,13 @@ export default function Dashboard() {
   useEffect(() => {
     if (!settings?.blockedDomains || settings.blockedDomains.length === 0) return;
     students.forEach((student) => {
-      const deviceId = student.primaryDeviceId;
-      if (!student.activeTabUrl) {
-        const keysToDelete = Array.from(notifiedViolations.current).filter(key => key.startsWith(deviceId + '-'));
+      const studentId = student.studentId;
+      if (!deriveStudentMonitoringDisplay(student, freshnessNowMs).telemetryCurrent || !student.activeTabUrl) {
+        const keysToDelete = Array.from(notifiedViolations.current).filter(key => key.startsWith(studentId + '-'));
         keysToDelete.forEach(key => notifiedViolations.current.delete(key));
         return;
       }
-      const violationKey = `${deviceId}-${student.activeTabUrl}`;
+      const violationKey = `${studentId}-${student.activeTabUrl}`;
       const isBlocked = settings.blockedDomains.some(blocked => {
         try {
           const hostname = new URL(student.activeTabUrl).hostname.toLowerCase();
@@ -1340,31 +1603,15 @@ export default function Dashboard() {
           notifiedViolations.current.add(violationKey);
         }
       } else {
-        const keysToDelete = Array.from(notifiedViolations.current).filter(key => key.startsWith(deviceId + '-'));
+        const keysToDelete = Array.from(notifiedViolations.current).filter(key => key.startsWith(studentId + '-'));
         keysToDelete.forEach(key => notifiedViolations.current.delete(key));
       }
     });
-  }, [students, settings, toast]);
+  }, [freshnessNowMs, students, settings, toast]);
 
   useEffect(() => {
-    if (!activeClassroomStates.length) {
-      setAttentionActive(false);
-      setTimerActive(false);
-      return;
-    }
-
     const hasAttention = activeClassroomStates.some((state) => state.stateType === 'attention');
-    const hasTimer = activeClassroomStates.some((state) => state.stateType === 'timer');
-    const pollState = activeClassroomStates.find((state) => state.stateType === 'poll' && state.payload?.pollId);
     setAttentionActive(hasAttention);
-    setTimerActive(hasTimer);
-    if (pollState?.payload?.pollId) {
-      setActivePoll((current) => current?.id === pollState.payload.pollId ? current : {
-        id: pollState.payload.pollId,
-        question: pollState.payload.question,
-        options: pollState.payload.options || [],
-      });
-    }
   }, [activeClassroomStates]);
 
   const performLogout = async () => {
@@ -1455,6 +1702,14 @@ export default function Dashboard() {
       queryClient.invalidateQueries({ queryKey: ['/api/groups'], exact: false });
       queryClient.invalidateQueries({ queryKey: ['/api/teacher/groups'], exact: false });
       setEndClassTarget(null);
+      if (variables?.session?.id) {
+        setSessionReportTarget({
+          id: variables.session.id,
+          name: variables.session.classNameSnapshot
+            || groups.find((group) => group.id === variables.session.groupId)?.name
+            || 'Class',
+        });
+      }
       toast({
         title: "Class Ended",
         description: sessionEndToastDescription(data, isScheduledTeachingSession(variables?.session)),
@@ -1729,16 +1984,34 @@ export default function Dashboard() {
     }
   };
 
+  const decorateCommandResponse = (data, commandType) => {
+    const tracked = trackTransientCommandResponse(
+      transientCommandOutcomesRef.current,
+      data,
+      commandType,
+    );
+    if (tracked !== transientCommandOutcomesRef.current) {
+      transientCommandOutcomesRef.current = tracked;
+      setTransientPendingControls(pendingTransientControls(tracked));
+      setTransientCommandVersion((version) => version + 1);
+    }
+    const deliveryFeedback = commandDeliveryFeedback(data, commandType);
+    return {
+      ...data,
+      deliveryFeedback,
+      message: deliveryFeedback.description,
+    };
+  };
+
   const postClassroomCommand = async (commandType, commandPayload, options = {}) => {
     const request = buildCommandRequest(commandType, commandPayload, options);
     const data = await apiRequest('POST', '/commands', request);
     const targetStudentIds = commandStudentIdsFromRequest(request);
-    return {
+    return decorateCommandResponse({
       ...data,
       request,
       targetStudentIds,
-      targetDeviceIds: deviceIdsForStudentIds(targetStudentIds),
-    };
+    }, commandType);
   };
 
   const postClaimedCommand = async (commandType, commandPayload, options = {}) => {
@@ -1752,7 +2025,7 @@ export default function Dashboard() {
       return map;
     }, new Map());
     if (byContext.size === 0) throw new Error("Selected students are missing a claimed group.");
-    const results = await Promise.all(Array.from(byContext.entries()).map(([contextId, rows]) =>
+    const rawResults = await Promise.all(Array.from(byContext.entries()).map(([contextId, rows]) =>
       apiRequest('POST', `/coverage/contexts/${contextId}/commands`, {
         targetScope: "students",
         targetStudentIds: rows.map((student) => student.studentId),
@@ -1760,19 +2033,27 @@ export default function Dashboard() {
         commandPayload,
       })
     ));
+    const results = rawResults.map((result) => decorateCommandResponse(result, commandType));
     const targets = results.flatMap((result) => result?.command?.targets || []);
     const targetStudentIds = targetStudents.map((student) => student.studentId);
-    return {
-      message: results.map((result) => result?.message).filter(Boolean).join(" ") || "Command sent.",
-      command: { targets },
+    const aggregateKeys = ['requested', 'attempted', 'acknowledged', 'completed', 'pending', 'expired', 'failed', 'unavailable', 'sent', 'received', 'awaitingAck'];
+    const summary = Object.fromEntries(aggregateKeys.map((key) => [
+      key,
+      results.reduce((total, result) => total + Number(result?.summary?.[key] || 0), 0),
+    ]));
+    return decorateCommandResponse({
+      command: {
+        commandType,
+        deliveryPolicy: results[0]?.command?.deliveryPolicy || results[0]?.deliveryPolicy,
+        expiresAt: results.map((result) => result?.command?.expiresAt || result?.expiresAt).filter(Boolean).sort()[0],
+        targets,
+      },
       summary: {
-        requested: targets.length,
-        sent: targets.filter((target) => ['sent', 'received', 'completed'].includes(target.status)).length,
-        unavailable: targets.filter((target) => target.status === 'unavailable').length,
+        ...summary,
+        requested: summary.requested || targets.length,
       },
       targetStudentIds,
-      targetDeviceIds: [],
-    };
+    }, commandType);
   };
 
   const postActiveCommand = (commandType, commandPayload, options = {}) => (
@@ -1781,32 +2062,13 @@ export default function Dashboard() {
       : postClassroomCommand(commandType, commandPayload, options)
   );
 
-  const getSentStudentIdsFromCommand = (data) => new Set(
-    (data?.command?.targets || [])
-      .filter((target) => ['sent', 'received', 'completed'].includes(target.status))
-      .map((target) => target.studentId)
-  );
-
-  const reconcileOptimisticStudentState = (data, context, applySentUpdate) => {
-    const requestedStudentIds = new Set((data?.command?.targets || []).map((target) => target.studentId));
-    const sentStudentIds = getSentStudentIdsFromCommand(data);
-    const previousByStudentId = new Map((context?.previousStudents || []).map((student) => [student.studentId, student]));
-    queryClient.setQueryData(['/api/students-aggregated'], (old) =>
-      old?.map((student) => {
-        if (!requestedStudentIds.has(student.studentId)) return student;
-        if (!sentStudentIds.has(student.studentId)) return previousByStudentId.get(student.studentId) || student;
-        return applySentUpdate(student);
-      })
-    );
-  };
-
   const openTabMutation = useMutation({
     mutationFn: async ({ url }) => postActiveCommand('open-tab', { url }),
     onSuccess: (data, variables) => {
-      toast({ title: "Open URL", description: data.message }); setShowOpenTabDialog(false);
+      toast(data.deliveryFeedback); setShowOpenTabDialog(false);
       // Auto-allow the opened domain so it's not flagged as off-task
       try { const d = new URL(variables.url).hostname.toLowerCase().replace(/^www\./, ''); handleAllowDomain(d); } catch { /* ignore invalid URL */ }
-      setOpenTabUrl(""); refreshScreenshotsForDevices(data.targetDeviceIds);
+      setOpenTabUrl(""); refreshScreenshotsForDevices();
     },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
@@ -1817,59 +2079,33 @@ export default function Dashboard() {
       return postActiveCommand('close-tabs', payload, { studentIds });
     },
     onSuccess: (data) => {
-      toast({ title: "Manage Tabs", description: data.message });
+      toast(data.deliveryFeedback);
       setShowCloseTabsDialog(false);
       setSelectedTabsToClose(new Set());
       setManageTabsStudentIds(null);
-      refreshScreenshotsForDevices(data.targetDeviceIds);
+      refreshScreenshotsForDevices();
     },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
   const lockScreenMutation = useMutation({
     mutationFn: async ({ url }) => postActiveCommand('lock-screen', { url }),
-    onMutate: async () => {
-      optimisticUpdateUntilRef.current = optimisticUpdateDeadline();
-      await queryClient.cancelQueries({ queryKey: ['/api/students-aggregated'] });
-      const previousStudents = queryClient.getQueryData(['/api/students-aggregated']);
-      const devicesToLock = deviceIdsForStudentIds(getActiveCommandStudents().map((student) => student.studentId));
-      queryClient.setQueryData(['/api/students-aggregated'], (old) =>
-        old?.map(s => devicesToLock.includes(s.primaryDeviceId ?? '') ? { ...s, screenLocked: true } : s)
-      );
-      return { previousStudents, devicesToLock };
+    onSuccess: (data) => {
+      toast(data.deliveryFeedback);
+      refreshScreenshotsForDevices();
     },
-    onSuccess: (data, _variables, context) => {
-      reconcileOptimisticStudentState(data, context, (student) => ({ ...student, screenLocked: true }));
-      toast({ title: "Screen Control", description: data.message });
-      refreshScreenshotsForDevices(data.targetDeviceIds);
-    },
-    onError: (error, _, context) => {
-      optimisticUpdateUntilRef.current = 0;
-      if (context?.previousStudents) queryClient.setQueryData(['/api/students-aggregated'], context.previousStudents);
+    onError: (error) => {
       toast({ variant: "destructive", title: "Error", description: error.message });
     },
   });
 
   const unlockScreenMutation = useMutation({
     mutationFn: async ({ studentIds } = {}) => postActiveCommand('unlock-screen', {}, { studentIds }),
-    onMutate: async ({ studentIds } = {}) => {
-      optimisticUpdateUntilRef.current = optimisticUpdateDeadline();
-      await queryClient.cancelQueries({ queryKey: ['/api/students-aggregated'] });
-      const previousStudents = queryClient.getQueryData(['/api/students-aggregated']);
-      const devicesToUnlock = deviceIdsForStudentIds((studentIds && studentIds.length > 0 ? studentIds : getActiveCommandStudents().map((student) => student.studentId)));
-      queryClient.setQueryData(['/api/students-aggregated'], (old) =>
-        old?.map(s => devicesToUnlock.includes(s.primaryDeviceId ?? '') ? { ...s, screenLocked: false } : s)
-      );
-      return { previousStudents, devicesToUnlock };
+    onSuccess: (data) => {
+      toast(data.deliveryFeedback);
+      refreshScreenshotsForDevices();
     },
-    onSuccess: (data, _variables, context) => {
-      reconcileOptimisticStudentState(data, context, (student) => ({ ...student, screenLocked: false }));
-      toast({ title: "Screen Control", description: data.message });
-      refreshScreenshotsForDevices(data.targetDeviceIds);
-    },
-    onError: (error, _, context) => {
-      optimisticUpdateUntilRef.current = 0;
-      if (context?.previousStudents) queryClient.setQueryData(['/api/students-aggregated'], context.previousStudents);
+    onError: (error) => {
       toast({ variant: "destructive", title: "Error", description: error.message });
     },
   });
@@ -1930,51 +2166,25 @@ export default function Dashboard() {
       const data = await postActiveCommand('apply-flight-path', { flightPathId });
       return { ...data, flightPathName, allowedDomains };
     },
-    onMutate: async ({ flightPathName }) => {
-      optimisticUpdateUntilRef.current = optimisticUpdateDeadline();
-      await queryClient.cancelQueries({ queryKey: ['/api/students-aggregated'] });
-      const previousStudents = queryClient.getQueryData(['/api/students-aggregated']);
-      const devicesToApply = deviceIdsForStudentIds(getActiveCommandStudents().map((student) => student.studentId));
-      queryClient.setQueryData(['/api/students-aggregated'], (old) =>
-        old?.map(s => devicesToApply.includes(s.primaryDeviceId ?? '') ? { ...s, flightPathActive: true, activeFlightPathName: flightPathName } : s)
-      );
-      return { previousStudents, devicesToApply };
-    },
-    onSuccess: (data, variables, context) => {
-      reconcileOptimisticStudentState(data, context, (student) => ({ ...student, flightPathActive: true, activeFlightPathName: variables.flightPathName }));
-      toast({ title: "Web Access", description: data.message });
+    onSuccess: (data, variables) => {
+      toast(data.deliveryFeedback);
       setShowApplyFlightPathDialog(false); setSelectedFlightPathId("");
       // Auto-allow all domains in the flight path so they're not flagged as off-task
       (variables.allowedDomains || []).forEach(d => { try { handleAllowDomain(d.toLowerCase().replace(/^www\./, '')); } catch { /* ignore */ } });
-      refreshScreenshotsForDevices(data.targetDeviceIds);
+      refreshScreenshotsForDevices();
     },
-    onError: (error, _, context) => {
-      optimisticUpdateUntilRef.current = 0;
-      if (context?.previousStudents) queryClient.setQueryData(['/api/students-aggregated'], context.previousStudents);
+    onError: (error) => {
       toast({ variant: "destructive", title: "Error", description: error.message });
     },
   });
 
   const removeFlightPathMutation = useMutation({
     mutationFn: async ({ studentIds } = {}) => postClassroomCommand('remove-flight-path', {}, { studentIds }),
-    onMutate: async ({ studentIds } = {}) => {
-      optimisticUpdateUntilRef.current = optimisticUpdateDeadline();
-      await queryClient.cancelQueries({ queryKey: ['/api/students-aggregated'] });
-      const previousStudents = queryClient.getQueryData(['/api/students-aggregated']);
-      const targetDeviceIds = deviceIdsForStudentIds(studentIds || getStudentsForCommandTarget().map((student) => student.studentId));
-      queryClient.setQueryData(['/api/students-aggregated'], (old) =>
-        old?.map(s => targetDeviceIds.includes(s.primaryDeviceId ?? '') ? { ...s, flightPathActive: false, activeFlightPathName: undefined } : s)
-      );
-      return { previousStudents };
+    onSuccess: (data) => {
+      toast(data.deliveryFeedback);
+      refreshScreenshotsForDevices();
     },
-    onSuccess: (data, _variables, context) => {
-      reconcileOptimisticStudentState(data, context, (student) => ({ ...student, flightPathActive: false, activeFlightPathName: undefined }));
-      toast({ title: "Web Access", description: data.message });
-      refreshScreenshotsForDevices(data.targetDeviceIds);
-    },
-    onError: (error, _, context) => {
-      optimisticUpdateUntilRef.current = 0;
-      if (context?.previousStudents) queryClient.setQueryData(['/api/students-aggregated'], context.previousStudents);
+    onError: (error) => {
       toast({ variant: "destructive", title: "Error", description: error.message });
     },
   });
@@ -1991,9 +2201,9 @@ export default function Dashboard() {
   const applyBlockListMutation = useMutation({
     mutationFn: async ({ blockListId }) => postActiveCommand('apply-block-list', { blockListId }),
     onSuccess: (data) => {
-      toast({ title: "Web Access", description: data.message });
+      toast(data.deliveryFeedback);
       setShowApplyBlockListDialog(false); setSelectedBlockListId("");
-      refreshScreenshotsForDevices(data.targetDeviceIds);
+      refreshScreenshotsForDevices();
     },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
@@ -2001,8 +2211,8 @@ export default function Dashboard() {
   const removeBlockListMutation = useMutation({
     mutationFn: async ({ studentIds } = {}) => postClassroomCommand('remove-block-list', {}, { studentIds }),
     onSuccess: (data) => {
-      toast({ title: "Web Access", description: data.message });
-      refreshScreenshotsForDevices(data.targetDeviceIds);
+      toast(data.deliveryFeedback);
+      refreshScreenshotsForDevices();
     },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
@@ -2017,10 +2227,10 @@ export default function Dashboard() {
   const attentionModeMutation = useMutation({
     mutationFn: async ({ active, message }) => postClassroomCommand('attention-mode', { active, message }),
     onSuccess: (data, variables) => {
-      setAttentionActive(Boolean(variables.active && (data.summary?.sent || 0) > 0));
-      toast({ title: variables.active ? "Attention Mode Enabled" : "Attention Mode Disabled", description: data.message });
+      toast(data.deliveryFeedback);
+      queryClient.invalidateQueries({ queryKey: ['/api/commands/active-state', effectiveSession?.id] });
       if (!variables.active) setShowAttentionDialog(false);
-      refreshScreenshotsForDevices(data.targetDeviceIds);
+      refreshScreenshotsForDevices();
     },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
@@ -2028,8 +2238,7 @@ export default function Dashboard() {
   const timerMutation = useMutation({
     mutationFn: async ({ action, seconds, message }) => postClassroomCommand('timer', { action, seconds, message }),
     onSuccess: (data, variables) => {
-      setTimerActive(variables.action === 'start' && (data.summary?.sent || 0) > 0);
-      toast({ title: variables.action === 'start' ? "Timer Started" : "Timer Stopped", description: data.message });
+      toast(data.deliveryFeedback);
       if (variables.action === 'start') setShowTimerDialog(false);
     },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
@@ -2048,25 +2257,15 @@ export default function Dashboard() {
   const pollMutation = useMutation({
     mutationFn: async ({ question, options }) => postClassroomCommand('poll', { action: 'start', question, options }),
     onSuccess: (data) => {
-      const poll = data.extra?.poll || data.poll;
-      if (!poll || (data.summary?.sent || 0) === 0) {
-        setActivePoll(null);
-        toast({ title: "Poll Not Sent", description: data.message });
-        setShowPollDialog(false); setPollQuestion(""); setPollOptions(["", ""]);
-        return;
-      }
-      setActivePoll({ id: poll.id, question: poll.question, options: poll.options });
-      setPollResults([]); setPollTotalResponses(0);
-      toast({ title: "Poll Created", description: data.message });
+      toast(data.deliveryFeedback);
       setShowPollDialog(false); setPollQuestion(""); setPollOptions(["", ""]);
-      startPollResultsPolling(poll.id);
     },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
   const closePollMutation = useMutation({
     mutationFn: async ({ pollId }) => postClassroomCommand('poll', { action: 'close', pollId }),
-    onSuccess: (data) => { setActivePoll(null); setShowPollResultsDialog(false); toast({ title: "Poll Closed", description: data.message }); },
+    onSuccess: (data) => { toast(data.deliveryFeedback); },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
@@ -2077,7 +2276,7 @@ export default function Dashboard() {
   });
 
   const replyToMessageMutation = useMutation({
-    mutationFn: async ({ sessionId, studentId, message, deviceId }) => apiRequest('POST', '/teacher/reply', { sessionId, studentId, message, deviceId }),
+    mutationFn: async ({ sessionId, studentId, message }) => apiRequest('POST', '/teacher/reply', { sessionId, studentId, message }),
     onSuccess: (data, variables) => {
       const reply = data?.message || {};
       setChatReplies(prev => ({
@@ -2105,7 +2304,7 @@ export default function Dashboard() {
   const sendMessageMutation = useMutation({
     mutationFn: async ({ message }) => postClassroomCommand('teacher-message', { message }),
     onSuccess: (data) => {
-      toast({ title: "Message Sent", description: data.message });
+      toast(data.deliveryFeedback);
       setShowSendMessageDialog(false); setSendMessageText("");
     },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
@@ -2120,8 +2319,11 @@ export default function Dashboard() {
       return postClassroomCommand('student-sign-out', { reason: 'teacher_sign_out' }, { studentIds });
     },
     onSuccess: (data) => {
-      const signedOutStudentIds = getSentStudentIdsFromCommand(data);
-      queryClient.setQueryData(['/api/students-aggregated'], (old) =>
+      const signedOutStudentIds = completedStudentIdsFromCommand(data);
+      for (const studentId of signedOutStudentIds) {
+        webrtc.stopLiveView(studentId);
+      }
+      queryClient.setQueryData(aggregatedStudentsQueryKey, (old) =>
         Array.isArray(old)
           ? old.map((student) => (
             signedOutStudentIds.has(student.studentId)
@@ -2143,15 +2345,7 @@ export default function Dashboard() {
       queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
       setShowSignOutDialog(false);
       clearSelection();
-      const signedOut = data.summary?.sent || 0;
-      const unavailable = data.summary?.unavailable || 0;
-      toast({
-        title: signedOut > 0 ? "Students Signed Out" : "No Students Signed Out",
-        description: [
-          signedOut > 0 ? `Signed out ${signedOut} student${signedOut === 1 ? "" : "s"}.` : data.message,
-          unavailable > 0 ? `${unavailable} ${unavailable === 1 ? "student was" : "students were"} already offline or unavailable.` : "",
-        ].filter(Boolean).join(" "),
-      });
+      toast(data.deliveryFeedback);
     },
     onError: (error) => {
       toast({ variant: "destructive", title: "Could Not Sign Out Students", description: error.message });
@@ -2178,8 +2372,8 @@ export default function Dashboard() {
     const msg = studentMessages.find(m => m.studentId === studentId);
     setStudentMessages(prev => prev.filter(m => m.studentId !== studentId));
     setChatReplies(prev => { const next = { ...prev }; delete next[studentId]; return next; });
-    if (msg?.deviceId) {
-      try { await apiRequest('POST', '/teacher/close-chat', { sessionId: effectiveSession?.id, studentId, deviceId: msg.deviceId }); } catch (error) {
+    if (msg) {
+      try { await apiRequest('POST', '/teacher/close-chat', { sessionId: effectiveSession?.id, studentId }); } catch (error) {
         console.error('Failed to send close-chat:', error);
       }
     }
@@ -2197,25 +2391,31 @@ export default function Dashboard() {
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
-  // Poll results polling
-  const pollResultsIntervalRef = useRef(null);
+  // Poll result reads start only after the device-reported ACK activates the
+  // poll. Clearing activePoll on an acknowledged close tears the interval down.
+  useEffect(() => {
+    const pollId = activePoll?.id;
+    if (!pollId) return undefined;
+    let cancelled = false;
 
-  const startPollResultsPolling = (pollId) => {
-    if (pollResultsIntervalRef.current) clearInterval(pollResultsIntervalRef.current);
-    fetchPollResults(pollId);
-    pollResultsIntervalRef.current = setInterval(() => { fetchPollResults(pollId); }, 2000);
-  };
+    const fetchPollResults = async () => {
+      try {
+        const data = await apiRequest('GET', `/polls/${pollId}/results`);
+        if (cancelled) return;
+        setPollResults(data.results || []);
+        setPollTotalResponses(data.totalResponses || 0);
+      } catch (err) {
+        if (!cancelled) console.error('Error fetching poll results:', err);
+      }
+    };
 
-  const fetchPollResults = async (pollId) => {
-    try {
-      const data = await apiRequest('GET', `/polls/${pollId}/results`);
-      setPollResults(data.results || []);
-      setPollTotalResponses(data.totalResponses || 0);
-      if (!data.poll.isActive) { if (pollResultsIntervalRef.current) { clearInterval(pollResultsIntervalRef.current); pollResultsIntervalRef.current = null; } }
-    } catch (err) { console.error('Error fetching poll results:', err); }
-  };
-
-  useEffect(() => { return () => { if (pollResultsIntervalRef.current) clearInterval(pollResultsIntervalRef.current); }; }, []);
+    void fetchPollResults();
+    const interval = setInterval(fetchPollResults, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [activePoll?.id]);
 
   // Fetch subgroup members when subgroup is selected
   useEffect(() => {
@@ -2237,6 +2437,9 @@ export default function Dashboard() {
     if (!activePoll) return;
     closePollMutation.mutate({ pollId: activePoll.id });
   };
+
+  const timerDeliveryPending = transientPendingControls.timer;
+  const pollDeliveryPending = transientPendingControls.poll;
 
   const addPollOption = () => { if (pollOptions.length < 5) setPollOptions([...pollOptions, ""]); };
   const removePollOption = (index) => { if (pollOptions.length > 2) setPollOptions(pollOptions.filter((_, i) => i !== index)); };
@@ -2519,6 +2722,8 @@ export default function Dashboard() {
             onOpenCoverage={canManageSupervisionSetup ? () => navigate("/classpilot/coverage") : undefined}
             canReroute={studentView === "class" && rerouteCoverageTargets.length > 0}
             onReroute={studentView === "class" ? () => setShowRerouteDialog(true) : undefined}
+            onClassroomCommand={canUseRemoteControls ? postActiveCommand : null}
+            canViewHistoricalTelemetry={isAdmin}
           />
         )}
 
@@ -2593,7 +2798,7 @@ export default function Dashboard() {
 
         {/* Stats Cards */}
         {canShowStudentWorkspace && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
             <div className="p-5 rounded-xl bg-green-500/10 border border-green-500/20 dark:bg-green-500/10 dark:border-green-500/20 transition-all duration-300">
               <div className="flex items-center gap-4">
                 <div className="h-12 w-12 rounded-xl bg-green-500 flex items-center justify-center"><Users className="h-6 w-6 text-white" /></div>
@@ -2610,6 +2815,12 @@ export default function Dashboard() {
               <div className="flex items-center gap-4">
                 <div className="h-12 w-12 rounded-xl bg-slate-500 flex items-center justify-center"><WifiOff className="h-6 w-6 text-white" /></div>
                 <div><p className="text-[28px] font-bold text-foreground" data-testid="text-offline-count">{offlineCount}</p><p className="text-[13px] text-muted-foreground font-medium">Not logged in</p></div>
+              </div>
+            </div>
+            <div className="p-5 rounded-xl bg-orange-500/10 border border-orange-500/20 dark:bg-orange-500/10 dark:border-orange-500/20 transition-all duration-300">
+              <div className="flex items-center gap-4">
+                <div className="h-12 w-12 rounded-xl bg-orange-500 flex items-center justify-center"><WifiOff className="h-6 w-6 text-white" /></div>
+                <div><p className="text-[28px] font-bold text-foreground" data-testid="text-monitoring-lost-count">{monitoringLostCount}</p><p className="text-[13px] text-orange-600 dark:text-orange-400 font-medium">Signal lost — cause unknown</p></div>
               </div>
             </div>
             <div className="p-5 rounded-xl bg-red-500/10 border border-red-500/20 dark:bg-red-500/10 dark:border-red-500/20 transition-all duration-300">
@@ -2770,13 +2981,10 @@ export default function Dashboard() {
                             <div className="min-w-0 flex-1">
                               <div className="flex flex-wrap items-center gap-2">
                                 <p className="font-semibold text-foreground">{student.studentName}</p>
-                                <Badge variant="secondary">{student.status}</Badge>
+                                <Badge variant="secondary">{deriveStudentMonitoringDisplay(student, freshnessNowMs).label}</Badge>
                               </div>
                               <p className="text-sm text-muted-foreground">{student.gradeLevel ? `Grade ${student.gradeLevel}` : "No grade"}</p>
-                              <div className="mt-3 rounded-md bg-muted/40 p-3">
-                                <p className="truncate text-xs font-medium text-muted-foreground">{student.activeTabTitle || "No active tab"}</p>
-                                <p className="mt-1 truncate text-sm">{student.activeTabUrl || "Signed in to Chrome"}</p>
-                              </div>
+                              <AvailableStudentActivity student={student} nowMs={freshnessNowMs} />
                               <div className="mt-3 flex flex-wrap gap-2">
                                 <Badge variant="outline">Scheduled Supervision</Badge>
                                 <Badge variant="outline">Reporting active</Badge>
@@ -2840,13 +3048,10 @@ export default function Dashboard() {
                             <div className="min-w-0 flex-1">
                               <div className="flex flex-wrap items-center gap-2">
                                 <p className="font-semibold text-foreground">{student.studentName}</p>
-                                <Badge variant="secondary">{student.status}</Badge>
+                                <Badge variant="secondary">{deriveStudentMonitoringDisplay(student, freshnessNowMs).label}</Badge>
                               </div>
                               <p className="text-sm text-muted-foreground">{student.gradeLevel ? `Grade ${student.gradeLevel}` : "No grade"}</p>
-                              <div className="mt-3 rounded-md bg-muted/40 p-3">
-                                <p className="truncate text-xs font-medium text-muted-foreground">{student.activeTabTitle || "No active tab"}</p>
-                                <p className="mt-1 truncate text-sm">{student.activeTabUrl || "Signed in to Chrome"}</p>
-                              </div>
+                              <AvailableStudentActivity student={student} nowMs={freshnessNowMs} />
                               <div className="mt-3 flex flex-wrap gap-2">
                                 {(student.matchingGroups || []).map((group) => (
                                   <Badge key={group.id} variant="outline">{group.name}</Badge>
@@ -2904,8 +3109,9 @@ export default function Dashboard() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 2xl:grid-cols-6 gap-6">
             {filteredStudents.map((student) => {
-              const primaryDeviceId = student.primaryDeviceId ?? undefined;
-              const tileRevision = primaryDeviceId ? tileRevisions[primaryDeviceId] ?? 0 : 0;
+              const studentRealtimeKey = student.studentId;
+              const monitoringDisplay = deriveStudentMonitoringDisplay(student, freshnessNowMs);
+              const tileRevision = tileRevisions[studentRealtimeKey] ?? 0;
               const supervisedElsewhere = studentView === "class" && isStudentInTemporarySupervision(student);
               const supervisionStaffName = student.supervisionContext?.assignedStaff?.displayName || "";
               const coverageLabel = student.supervisionState === "temporary_coverage"
@@ -2924,7 +3130,7 @@ export default function Dashboard() {
               const returnToClassPending = returnToClassMutation.isPending &&
                 returnToClassMutation.variables?.studentIds?.includes(student.studentId);
               return (
-                <div key={`${student.studentId}-${primaryDeviceId ?? "no-device"}-${tileRevision}`} className={`relative ${supervisedElsewhere ? "rounded-lg ring-2 ring-slate-300/70 dark:ring-slate-700/70" : ""}`}>
+                <div key={`${student.studentId}-${tileRevision}`} className={`relative ${supervisedElsewhere ? "rounded-lg ring-2 ring-slate-300/70 dark:ring-slate-700/70" : ""}`}>
                   {coverageLabel && (
                     <div className={`absolute left-3 top-3 z-10 max-w-[calc(100%-1.5rem)] rounded-md px-2 py-1 text-[11px] font-semibold shadow-sm ${student.supervisionState === "temporary_coverage" || student.supervisionState === "claimed" ? "bg-slate-800 text-white" : "bg-amber-400 text-slate-900"}`}>
                       {coverageLabel}
@@ -2938,12 +3144,11 @@ export default function Dashboard() {
                     isAbsent={absentIds.has(student.studentId)}
                     isSelected={selectedStudentIds.has(student.studentId)}
                     onToggleSelect={supervisedElsewhere ? undefined : () => toggleStudentSelection(student.studentId)}
-                    liveStream={primaryDeviceId ? liveStreams.get(primaryDeviceId) || null : null}
-                    liveViewPending={primaryDeviceId ? liveViewPendingIds.has(primaryDeviceId) : false}
-                    onStartLiveView={!supervisedElsewhere && primaryDeviceId ? () => handleStartLiveView(primaryDeviceId) : undefined}
-                    onStopLiveView={!supervisedElsewhere && primaryDeviceId ? () => handleStopLiveView(primaryDeviceId) : undefined}
-                    onEndLiveRefresh={primaryDeviceId ? () => refreshTile(primaryDeviceId) : undefined}
-                    onBlockRefetches={() => { optimisticUpdateUntilRef.current = optimisticUpdateDeadline(); }}
+                    liveStream={liveStreams.get(studentRealtimeKey) || null}
+                    liveViewPending={liveViewPendingIds.has(studentRealtimeKey)}
+                    onStartLiveView={!supervisedElsewhere && student.isLoggedIn && effectiveSession?.id ? () => handleStartLiveView(studentRealtimeKey) : undefined}
+                    onStopLiveView={!supervisedElsewhere ? () => handleStopLiveView(studentRealtimeKey) : undefined}
+                    onEndLiveRefresh={() => refreshTile(studentRealtimeKey)}
                     onAllowDomain={supervisedElsewhere ? undefined : handleAllowDomain}
                     teachingSessionId={effectiveSession?.id}
                     onManageTabs={supervisedElsewhere ? undefined : () => openManageTabs([student.studentId])}
@@ -2955,6 +3160,9 @@ export default function Dashboard() {
                     recentHeartbeats={supervisedElsewhere || failedHistoryStudentIds.has(student.studentId) ? EMPTY_LIST : historyByStudent.get(student.studentId) || EMPTY_LIST}
                     screenshotData={supervisedElsewhere || failedScreenshotStudentIds.has(student.studentId) ? null : screenshotsByStudent.get(student.studentId) || null}
                     flightPaths={flightPaths}
+                    monitoringDisplay={monitoringDisplay}
+                    freshnessNowMs={freshnessNowMs}
+                    onCommandResult={decorateCommandResponse}
                   />
                 </div>
               );
@@ -2967,12 +3175,15 @@ export default function Dashboard() {
       {/* Student Detail Drawer */}
       {selectedStudent && (
         <StudentDetailDrawer
-          student={selectedStudent}
+          student={students.find((student) => student.studentId === selectedStudent.studentId) || selectedStudent}
           urlHistory={urlHistory}
           allowedDomains={settings?.allowedDomains || []}
           flightPaths={flightPaths}
           onClose={() => setSelectedStudent(null)}
           activeClassName={effectiveSession ? groups.find(g => g.id === effectiveSession.groupId)?.name : null}
+          teachingSessionId={effectiveSession?.id}
+          canViewHistoricalUsage={isAdmin}
+          freshnessNowMs={freshnessNowMs}
         />
       )}
 
@@ -2989,8 +3200,8 @@ export default function Dashboard() {
             </DialogTitle>
             <DialogDescription data-testid="text-end-class-consequence">
               {isScheduledTeachingSession(endClassTarget)
-                ? "Monitoring and classroom controls will stop now. The Session Summary will cover the scheduled start through now, be emailed immediately, and today’s block will not restart."
-                : "Monitoring and classroom controls will stop now, and the Session Summary will be emailed."}
+                ? "Monitoring and classroom controls will stop now. After a short telemetry-settlement window, the Session Summary will cover the scheduled start through now and be emailed; today’s block will not restart."
+                : "Monitoring and classroom controls will stop now. The Session Summary will be generated after a short telemetry-settlement window, then emailed."}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -3013,6 +3224,13 @@ export default function Dashboard() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {sessionReportTarget && (
+        <SessionMonitoringReportDialog
+          target={sessionReportTarget}
+          onClose={() => setSessionReportTarget(null)}
+        />
+      )}
 
       <Dialog
         open={showLogoutDialog}
@@ -3337,7 +3555,7 @@ export default function Dashboard() {
                         const compositeKey = makeTabKey(tab);
                         const hostname = (() => { try { return new URL(tab.url).hostname; } catch { return tab.url; } })();
                         return (
-                          <div key={compositeKey} className="flex items-center gap-3 p-3 hover:bg-muted/50 group" data-testid={`tab-row-${tab.deviceId}-${encodeURIComponent(tab.url)}`}>
+                          <div key={compositeKey} className="flex items-center gap-3 p-3 hover:bg-muted/50 group" data-testid={`tab-row-${tab.studentId}-${encodeURIComponent(tab.url)}`}>
                             <input type="checkbox" className="h-4 w-4 shrink-0" checked={selectedTabsToClose.has(compositeKey)} onChange={(e) => { const newSet = new Set(selectedTabsToClose); if (e.target.checked) newSet.add(compositeKey); else newSet.delete(compositeKey); setSelectedTabsToClose(newSet); }} data-testid={`checkbox-tab-${encodeURIComponent(tab.url)}`} />
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2"><span className="text-sm font-medium truncate">{tab.title}</span>{tab.active && <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Active</Badge>}</div>
@@ -3405,16 +3623,15 @@ export default function Dashboard() {
               <thead className="border-b sticky top-0 bg-background"><tr><th className="text-left p-2 text-sm font-medium">Student</th><th className="text-left p-2 text-sm font-medium">Flight Path</th><th className="text-left p-2 text-sm font-medium">Status</th><th className="text-left p-2 text-sm font-medium">Actions</th></tr></thead>
               <tbody>
                 {students.map((student) => {
-                  const primaryDeviceId = student.primaryDeviceId ?? undefined;
                   return (
                     <tr key={student.studentId} className="border-b" data-testid={`row-student-${student.studentId}`}>
                       <td className="p-2 text-sm">{student.studentName}</td>
                       <td className="p-2">{student.flightPathActive && student.activeFlightPathName ? <Badge variant="secondary" className="text-xs" data-testid={`badge-flight-path-${student.studentId}`}>{student.activeFlightPathName}</Badge> : <span className="text-xs text-muted-foreground">No flight path</span>}</td>
                       <td className="p-2"><Badge variant={student.status === 'online' ? 'default' : student.status === 'idle' ? 'secondary' : 'outline'} className="text-xs" data-testid={`badge-status-${student.studentId}`}>{student.status}</Badge></td>
                       <td className="p-2">
-                        {student.flightPathActive && primaryDeviceId ? (
+                        {student.flightPathActive && student.isLoggedIn ? (
                           <Button size="sm" variant="ghost" onClick={() => handleRemoveFlightPath(student.studentId)} disabled={removeFlightPathMutation.isPending} data-testid={`button-remove-flight-path-${student.studentId}`} className="h-7 px-2 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"><X className="h-3 w-3 mr-1" />Remove</Button>
-                        ) : student.screenLocked && primaryDeviceId ? (
+                        ) : student.screenLocked && student.isLoggedIn ? (
                           <Button size="sm" variant="outline" onClick={() => unlockScreenMutation.mutate({ studentIds: [student.studentId] })} disabled={unlockScreenMutation.isPending} data-testid={`button-unlock-screen-${student.studentId}`} className="h-7 px-2 text-xs"><Unlock className="h-3 w-3 mr-1" />Unlock</Button>
                         ) : <span className="text-xs text-muted-foreground">&mdash;</span>}
                       </td>
@@ -3525,14 +3742,14 @@ export default function Dashboard() {
       {/* Attention Mode Dialog */}
       <Dialog open={showAttentionDialog} onOpenChange={setShowAttentionDialog}>
         <DialogContent data-testid="dialog-attention-mode">
-          <DialogHeader><DialogTitle>{attentionActive ? "Attention Mode Active" : "Attention Mode"}</DialogTitle><DialogDescription>{attentionActive ? "Students are currently viewing your attention message" : selectedStudentIds.size > 0 ? `Get the attention of ${selectedStudentIds.size} selected student(s)` : "Get the attention of all students"}</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>{attentionActive ? "Attention Restriction Saved" : "Attention Mode"}</DialogTitle><DialogDescription>{attentionActive ? "The attention restriction is saved. Delivery may still be pending for some students." : selectedStudentIds.size > 0 ? `Get the attention of ${selectedStudentIds.size} selected student(s)` : "Get the attention of all students"}</DialogDescription></DialogHeader>
           {attentionActive ? (
             <div className="space-y-4 py-4">
               <div className="flex items-center justify-center p-6 bg-indigo-50 rounded-lg">
                 <div className="text-center">
                   <Eye className="h-12 w-12 mx-auto mb-3 text-indigo-600" />
                   <p className="text-lg font-medium text-indigo-900">"{attentionMessage}"</p>
-                  <p className="text-sm text-indigo-600 mt-2">Displayed on student screens</p>
+                  <p className="text-sm text-indigo-600 mt-2">Saved for student screens; device acknowledgements are shown in control health</p>
                 </div>
               </div>
             </div>
@@ -3587,7 +3804,7 @@ export default function Dashboard() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowTimerDialog(false)} data-testid="button-cancel-timer">Cancel</Button>
-            <Button onClick={handleStartTimer} disabled={timerMutation.isPending} className="bg-teal-600 hover:bg-teal-700" data-testid="button-start-timer"><Timer className="h-4 w-4 mr-2" />Start Timer</Button>
+            <Button onClick={handleStartTimer} disabled={timerMutation.isPending || timerDeliveryPending} className="bg-teal-600 hover:bg-teal-700" data-testid="button-start-timer"><Timer className="h-4 w-4 mr-2" />Start Timer</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -3617,7 +3834,7 @@ export default function Dashboard() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowPollDialog(false)} data-testid="button-cancel-poll">Cancel</Button>
-            <Button onClick={handleCreatePoll} disabled={pollMutation.isPending} className="bg-violet-600 hover:bg-violet-700" data-testid="button-create-poll"><BarChart3 className="h-4 w-4 mr-2" />Create Poll</Button>
+            <Button onClick={handleCreatePoll} disabled={pollMutation.isPending || pollDeliveryPending} className="bg-violet-600 hover:bg-violet-700" data-testid="button-create-poll"><BarChart3 className="h-4 w-4 mr-2" />Create Poll</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -3650,7 +3867,7 @@ export default function Dashboard() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowPollResultsDialog(false)} data-testid="button-close-results">Close</Button>
-            <Button variant="destructive" onClick={handleClosePoll} disabled={closePollMutation.isPending} data-testid="button-end-poll"><X className="h-4 w-4 mr-2" />End Poll</Button>
+            <Button variant="destructive" onClick={handleClosePoll} disabled={closePollMutation.isPending || pollDeliveryPending} data-testid="button-end-poll"><X className="h-4 w-4 mr-2" />End Poll</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -3663,11 +3880,11 @@ export default function Dashboard() {
           attentionPending={attentionModeMutation.isPending}
           timerActive={timerActive}
           onTimerClick={() => timerActive ? handleStopTimer() : setShowTimerDialog(true)}
-          timerPending={timerMutation.isPending}
+          timerPending={timerMutation.isPending || timerDeliveryPending}
           activePoll={activePoll}
           pollTotalResponses={pollTotalResponses}
           onPollClick={() => activePoll ? setShowPollResultsDialog(true) : setShowPollDialog(true)}
-          pollPending={pollMutation.isPending}
+          pollPending={pollMutation.isPending || closePollMutation.isPending || pollDeliveryPending}
           raisedHands={raisedHands}
           onDismissHand={(studentId) => dismissHandMutation.mutate(studentId)}
           handRaisingEnabled={settings?.handRaisingEnabled !== false}
@@ -3676,8 +3893,7 @@ export default function Dashboard() {
           onMarkMessageRead={markMessageRead}
           onDismissMessage={dismissMessage}
           onReplyToMessage={(studentId, message) => {
-            const msg = studentMessages.find(m => m.studentId === studentId);
-            return replyToMessageMutation.mutateAsync({ sessionId: effectiveSession?.id, studentId, message, deviceId: msg?.deviceId });
+            return replyToMessageMutation.mutateAsync({ sessionId: effectiveSession?.id, studentId, message });
           }}
           replyPending={replyToMessageMutation.isPending}
           studentMessagingEnabled={settings?.studentMessagingEnabled !== false}

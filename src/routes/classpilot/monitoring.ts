@@ -53,6 +53,14 @@ const auth = [
   requireRole("admin", "school_admin", "office_staff", "teacher"),
 ] as const;
 
+const adminAuth = [
+  authenticate,
+  requireSchoolContext,
+  requireActiveSchool,
+  requireProductLicense("CLASSPILOT"),
+  requireRole("admin", "school_admin"),
+] as const;
+
 // GET /api/classpilot/students - List all students with optional filters
 router.get("/students", ...auth, async (req, res, next) => {
   try {
@@ -81,7 +89,7 @@ router.get("/student-analytics", ...auth, async (req, res, next) => {
 });
 
 // GET /api/classpilot/student-analytics/:studentId - Student activity analytics
-router.get("/student-analytics/:studentId", ...auth, async (req, res, next) => {
+router.get("/student-analytics/:studentId", ...adminAuth, async (req, res, next) => {
   try {
     const studentId = param(req, "studentId");
     const limit = parseInt(req.query.limit as string) || 100;
@@ -98,12 +106,22 @@ router.get("/student-analytics/:studentId", ...auth, async (req, res, next) => {
     }
 
     const heartbeats = await getHeartbeatsByStudent(studentId, limit, startDate, endDate);
-    const activeSession = await getActiveSessionByStudent(studentId);
 
     return res.json({
       student: classPilotStudentDto(student),
-      heartbeats,
-      activeSession,
+      heartbeats: heartbeats.map((heartbeat) => ({
+        timestamp: heartbeat.timestamp,
+        activeTabUrl: heartbeat.activeTabUrl,
+        activeTabTitle: heartbeat.activeTabTitle,
+        favicon: heartbeat.favicon,
+        screenLocked: heartbeat.screenLocked,
+        flightPathActive: heartbeat.flightPathActive,
+        activeFlightPathName: heartbeat.activeFlightPathName,
+        isSharing: heartbeat.isSharing,
+        cameraActive: heartbeat.cameraActive,
+        aiCategory: heartbeat.aiCategory,
+        safetyAlert: heartbeat.safetyAlert,
+      })),
     });
   } catch (err) {
     next(err);
@@ -111,7 +129,7 @@ router.get("/student-analytics/:studentId", ...auth, async (req, res, next) => {
 });
 
 // GET /api/classpilot/student-analytics/:studentId/usage - Daily usage history
-router.get("/student-analytics/:studentId/usage", ...auth, async (req, res, next) => {
+router.get("/student-analytics/:studentId/usage", ...adminAuth, async (req, res, next) => {
   try {
     const studentId = param(req, "studentId");
 
@@ -146,7 +164,7 @@ router.get("/roster/students", ...auth, async (req, res, next) => {
 });
 
 // GET /api/classpilot/roster/devices - List all devices
-router.get("/roster/devices", ...auth, async (req, res, next) => {
+router.get("/roster/devices", ...adminAuth, async (req, res, next) => {
   try {
     const devices = await getDevicesBySchool(res.locals.schoolId!);
     return res.json({ devices });
@@ -354,7 +372,7 @@ router.delete("/students/:studentId", ...auth, requireRole("admin"), async (req,
 
 // GET /api/classpilot/sessions/active/:deviceId - Active session for a student
 // (param is a studentId; historically mislabeled "deviceId")
-router.get("/sessions/active/:deviceId", ...auth, async (req, res, next) => {
+router.get("/sessions/active/:deviceId", ...adminAuth, async (req, res, next) => {
   try {
     const id = param(req, "deviceId");
     // School-isolation: only return the session if the student belongs to

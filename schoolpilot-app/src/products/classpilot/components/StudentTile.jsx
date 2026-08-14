@@ -6,8 +6,16 @@ import { Button } from "../../../components/ui/button";
 import { Monitor, ExternalLink, AlertTriangle, Lock, Unlock, Layers, Maximize2, X, List, RotateCcw } from "lucide-react";
 import { Checkbox } from "../../../components/ui/checkbox";
 import { useToast } from "../../../hooks/use-toast";
-import { apiRequest, queryClient } from "../../../lib/queryClient";
+import { apiRequest } from "../../../lib/queryClient";
 import VideoPortal from "./VideoPortal";
+import {
+  deriveScreenshotDisplay,
+  deriveStudentMonitoringDisplay,
+  deriveUnavailablePreview,
+  formatAbsoluteObservedAt,
+  lastObservedDomain,
+} from "../lib/studentMonitoringDisplay";
+import { commandDeliveryFeedback } from "../lib/commandDeliveryTruth";
 
 const EMPTY_LIST = Object.freeze([]);
 
@@ -48,7 +56,6 @@ function StudentTile({
   onStartLiveView,
   onStopLiveView,
   liveViewPending = false,
-  onBlockRefetches,
   onAllowDomain,
   teachingSessionId,
   onManageTabs,
@@ -60,12 +67,23 @@ function StudentTile({
   recentHeartbeats = EMPTY_LIST,
   screenshotData = null,
   flightPaths = EMPTY_LIST,
+  monitoringDisplay,
+  freshnessNowMs,
+  onCommandResult,
 }) {
   const [expanded, setExpanded] = useState(false);
   const { toast } = useToast();
   const tileVideoSlotRef = useRef(null);
   const videoElementRef = useRef(null);
   const lastAutoExpandedStreamRef = useRef(null);
+  const effectiveMonitoringDisplay = monitoringDisplay
+    || deriveStudentMonitoringDisplay(student, freshnessNowMs);
+  const currentTelemetry = effectiveMonitoringDisplay.telemetryCurrent;
+  const screenshotDisplay = deriveScreenshotDisplay(screenshotData, freshnessNowMs);
+  const displayStatus = effectiveMonitoringDisplay.status;
+  const unavailablePreview = deriveUnavailablePreview(effectiveMonitoringDisplay);
+  const observedDomain = lastObservedDomain(student);
+  const absoluteLastObservedAt = formatAbsoluteObservedAt(effectiveMonitoringDisplay.observedAtMs);
 
   // Create video element once and attach stream
   useEffect(() => {
@@ -163,7 +181,7 @@ function StudentTile({
 
   // Check if current URL is blocked by active flight path
   const activeFlightPath = flightPaths.find((fp) => fp.flightPathName === student.activeFlightPathName);
-  const isBlockedByFlightPath = student.flightPathActive && activeFlightPath && student.activeTabUrl &&
+  const isBlockedByFlightPath = currentTelemetry && student.flightPathActive && activeFlightPath && student.activeTabUrl &&
     isBlockedDomain(student.activeTabUrl, activeFlightPath.blockedDomains || []);
 
   // Expand video to portal
@@ -188,9 +206,9 @@ function StudentTile({
     setExpanded(false);
   };
 
-  const isBlocked = isBlockedDomain(student.activeTabUrl, blockedDomains);
+  const isBlocked = currentTelemetry && isBlockedDomain(student.activeTabUrl, blockedDomains);
   const classroomNoiseSuppressed = Boolean(student.classroomNoiseSuppressed || isAbsent || student.suppressionReason);
-  const effectiveIsOffTask = isOffTask && !classroomNoiseSuppressed;
+  const effectiveIsOffTask = currentTelemetry && isOffTask && !classroomNoiseSuppressed;
 
   // Unblock mutation for flight path
   const unblockForClassMutation = useMutation({
@@ -206,12 +224,9 @@ function StudentTile({
         commandPayload: {},
       });
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/students'] });
-      toast({
-        title: "Unblocked for class",
-        description: `${student.studentName} can now access this website`,
-      });
+    onSuccess: (data) => {
+      const result = onCommandResult?.(data, 'unlock-screen') || data;
+      toast(result.deliveryFeedback || commandDeliveryFeedback(result, 'unlock-screen'));
     },
   });
 
@@ -220,6 +235,9 @@ function StudentTile({
     mutationFn: async () => {
       if (!student.activeTabUrl) {
         throw new Error("No active tab to lock to");
+      }
+      if (!currentTelemetry) {
+        throw new Error("The current page is unavailable while the monitoring signal is lost.");
       }
       if (!teachingSessionId) {
         throw new Error("Start a class session before sending commands.");
@@ -232,34 +250,11 @@ function StudentTile({
         commandPayload: { url: student.activeTabUrl },
       });
     },
-    onMutate: async () => {
-      // Block dashboard refetches for 15 seconds to preserve optimistic state
-      onBlockRefetches?.();
-
-      // Cancel any outgoing refetches
-      await queryClient.cancelQueries({ queryKey: ['/api/students-aggregated'] });
-
-      // Snapshot the previous value
-      const previousStudents = queryClient.getQueryData(['/api/students-aggregated']);
-
-      // Optimistically update to the new value
-      queryClient.setQueryData(['/api/students-aggregated'], (old) =>
-        old?.map(s => s.primaryDeviceId === student.primaryDeviceId ? { ...s, screenLocked: true } : s)
-      );
-
-      return { previousStudents };
+    onSuccess: (data) => {
+      const result = onCommandResult?.(data, 'lock-screen') || data;
+      toast(result.deliveryFeedback || commandDeliveryFeedback(result, 'lock-screen'));
     },
-    onSuccess: () => {
-      toast({
-        title: "Screen locked",
-        description: `${student.studentName} is now locked to their current screen`,
-      });
-    },
-    onError: (error, _, context) => {
-      // Revert optimistic update on error
-      if (context?.previousStudents) {
-        queryClient.setQueryData(['/api/students-aggregated'], context.previousStudents);
-      }
+    onError: (error) => {
       toast({
         variant: "destructive",
         title: "Failed to lock screen",
@@ -282,41 +277,23 @@ function StudentTile({
         commandPayload: {},
       });
     },
-    onMutate: async () => {
-      // Block dashboard refetches for 15 seconds to preserve optimistic state
-      onBlockRefetches?.();
-
-      // Cancel any outgoing refetches
-      await queryClient.cancelQueries({ queryKey: ['/api/students-aggregated'] });
-
-      // Snapshot the previous value
-      const previousStudents = queryClient.getQueryData(['/api/students-aggregated']);
-
-      // Optimistically update to the new value
-      queryClient.setQueryData(['/api/students-aggregated'], (old) =>
-        old?.map(s => s.primaryDeviceId === student.primaryDeviceId ? { ...s, screenLocked: false } : s)
-      );
-
-      return { previousStudents };
+    onSuccess: (data) => {
+      const result = onCommandResult?.(data, 'unlock-screen') || data;
+      toast(result.deliveryFeedback || commandDeliveryFeedback(result, 'unlock-screen'));
     },
-    onSuccess: () => {
+    onError: (error) => {
       toast({
-        title: "Screen unlocked",
-        description: `${student.studentName} can now browse freely`,
+        variant: "destructive",
+        title: "Failed to save screen unlock",
+        description: error.message || "An error occurred",
       });
-    },
-    onError: (_, __, context) => {
-      // Revert optimistic update on error
-      if (context?.previousStudents) {
-        queryClient.setQueryData(['/api/students-aggregated'], context.previousStudents);
-      }
     },
   });
 
 
   const getStatusLabel = (status) => {
     if (isAbsent) return 'Absent';
-    if (student.loginState === 'not_logged_in') return 'Not logged in';
+    if (effectiveMonitoringDisplay.label) return effectiveMonitoringDisplay.label;
     switch (status) {
       case 'online':
         return 'Online';
@@ -334,7 +311,7 @@ function StudentTile({
       return 'border-2 border-slate-300 border-dashed dark:border-slate-700';
     }
 
-    if (isOffTask) {
+    if (effectiveIsOffTask) {
       return 'border-2 border-red-500';
     }
 
@@ -359,7 +336,7 @@ function StudentTile({
       return 'shadow-sm';
     }
 
-    if (isOffTask) {
+    if (effectiveIsOffTask) {
       return 'shadow-lg shadow-red-100 dark:shadow-red-950/30';
     }
 
@@ -396,8 +373,8 @@ function StudentTile({
 
   return (
     <Card
-      data-testid={`card-student-${student.primaryDeviceId}`}
-      className={`${getBorderStyle(student.status)} ${getShadowStyle(student.status)} ${getOpacity(student.status)} ${controlDisabled ? 'bg-slate-50/80 dark:bg-slate-950/40' : 'hover-elevate cursor-pointer'} transition-all duration-200 overflow-hidden`}
+      data-testid={`card-student-${student.studentId}`}
+      className={`${getBorderStyle(displayStatus)} ${getShadowStyle(displayStatus)} ${getOpacity(displayStatus)} ${controlDisabled ? 'bg-slate-50/80 dark:bg-slate-950/40' : 'hover-elevate cursor-pointer'} transition-all duration-200 overflow-hidden`}
       onClick={onClick}
     >
       <div className="p-4 space-y-3">
@@ -410,15 +387,15 @@ function StudentTile({
                 disabled={controlDisabled}
                 onCheckedChange={onToggleSelect}
                 onClick={(e) => e.stopPropagation()}
-                data-testid={`checkbox-select-student-${student.primaryDeviceId}`}
+                data-testid={`checkbox-select-student-${student.studentId}`}
               />
             )}
             {/* Avatar with status indicator */}
             <div className="relative flex-shrink-0">
               <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-semibold ${
-                student.status === 'online'
+                displayStatus === 'online'
                   ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                  : student.status === 'idle'
+                  : displayStatus === 'idle'
                   ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
                   : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'
               }`}>
@@ -428,7 +405,7 @@ function StudentTile({
               </div>
             </div>
             <div className="flex-1 min-w-0">
-              <h3 className="font-semibold text-sm" data-testid={`text-student-name-${student.primaryDeviceId}`}>
+              <h3 className="font-semibold text-sm" data-testid={`text-student-name-${student.studentId}`}>
                 {student.studentName || (
                   <span className="text-muted-foreground italic">
                     {student.deviceName || 'Unknown'}
@@ -437,14 +414,28 @@ function StudentTile({
               </h3>
               <div className="flex items-center gap-2">
                 <span className={`text-xs font-medium ${
-                  student.status === 'online'
+                  displayStatus === 'online'
                     ? 'text-green-600 dark:text-green-400'
-                    : student.status === 'idle'
+                    : displayStatus === 'idle' || displayStatus === 'signal_lost'
                     ? 'text-amber-600 dark:text-amber-400'
                     : 'text-muted-foreground'
                 }`}>
-                  {getStatusLabel(student.status)}
+                  {getStatusLabel(displayStatus)}
                 </span>
+                {student.classroomState?.revision != null && student.enforcementHealth && (
+                  <span
+                    className={`text-[10px] font-medium ${
+                      student.enforcementHealth === 'synced'
+                        ? 'text-green-600 dark:text-green-400'
+                        : student.enforcementHealth === 'failed'
+                          ? 'text-red-600 dark:text-red-400'
+                          : 'text-amber-600 dark:text-amber-400'
+                    }`}
+                    title="Device-reported classroom-control synchronization status. This is not proof against tampering."
+                  >
+                    Controls: {student.enforcementHealth}
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -453,7 +444,7 @@ function StudentTile({
               variant="ghost"
               size="icon"
               className="h-7 w-7"
-              disabled={controlDisabled || lockToCurrentScreenMutation.isPending || unlockScreenMutation.isPending}
+              disabled={controlDisabled || (!currentTelemetry && !student.screenLocked) || lockToCurrentScreenMutation.isPending || unlockScreenMutation.isPending}
               onClick={(e) => {
                 e.stopPropagation();
                 if (controlDisabled) return;
@@ -463,8 +454,14 @@ function StudentTile({
                   lockToCurrentScreenMutation.mutate();
                 }
               }}
-              title={controlDisabled ? disabledReason || "Student is currently in supervision" : student.screenLocked ? "Unlock screen" : "Lock to current screen"}
-              data-testid={`button-lock-toggle-${student.primaryDeviceId}`}
+              title={controlDisabled
+                ? disabledReason || "Student is currently in supervision"
+                : student.screenLocked
+                  ? "Save an unlock restriction"
+                  : currentTelemetry
+                    ? "Save a lock restriction for the current screen"
+                    : "Current screen unavailable while monitoring signal is lost"}
+              data-testid={`button-lock-toggle-${student.studentId}`}
             >
               {student.screenLocked ? (
                 <Lock className="h-4 w-4 text-amber-600 dark:text-amber-400" />
@@ -488,34 +485,34 @@ function StudentTile({
         )}
 
         {/* Alert Badges */}
-        {(effectiveIsOffTask || isBlocked || isBlockedByFlightPath || student.flightPathActive || student.aiClassification?.safetyAlert || classroomNoiseSuppressed) && (
+        {(effectiveIsOffTask || isBlocked || isBlockedByFlightPath || student.flightPathActive || (currentTelemetry && student.aiClassification?.safetyAlert) || classroomNoiseSuppressed) && (
           <div className="flex flex-col gap-2">
             <div className="flex flex-wrap gap-1.5">
-              {student.aiClassification?.safetyAlert && (
-                <Badge variant="outline" className="text-xs px-2 py-0.5 bg-red-100 text-red-900 border-red-400 animate-pulse dark:bg-red-950 dark:text-red-400 dark:border-red-800" data-testid={`badge-safety-${student.primaryDeviceId}`}>
+              {currentTelemetry && student.aiClassification?.safetyAlert && (
+                <Badge variant="outline" className="text-xs px-2 py-0.5 bg-red-100 text-red-900 border-red-400 animate-pulse dark:bg-red-950 dark:text-red-400 dark:border-red-800" data-testid={`badge-safety-${student.studentId}`}>
                   <AlertTriangle className="h-3 w-3 mr-1" />
                   Safety Alert: {student.aiClassification.safetyAlert}
                 </Badge>
               )}
               {classroomNoiseSuppressed && (
-                <Badge variant="outline" className="text-xs px-2 py-0.5 bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-700" data-testid={`badge-context-${student.primaryDeviceId}`}>
+                <Badge variant="outline" className="text-xs px-2 py-0.5 bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-700" data-testid={`badge-context-${student.studentId}`}>
                   {student.suppressionReason || "Classroom noise suppressed"}
                 </Badge>
               )}
               {student.flightPathActive && student.activeFlightPathName && !isBlockedByFlightPath && (
-                <Badge variant="outline" className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-400 dark:border-blue-800" data-testid={`badge-scene-${student.primaryDeviceId}`}>
+                <Badge variant="outline" className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-400 dark:border-blue-800" data-testid={`badge-scene-${student.studentId}`}>
                   <Layers className="h-3 w-3 mr-1" />
                   {student.activeFlightPathName}
                 </Badge>
               )}
               {isBlockedByFlightPath && (
-                <Badge variant="outline" className="text-xs px-2 py-0.5 bg-red-50 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-400 dark:border-red-800" data-testid={`badge-blocked-by-scene-${student.primaryDeviceId}`}>
+                <Badge variant="outline" className="text-xs px-2 py-0.5 bg-red-50 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-400 dark:border-red-800" data-testid={`badge-blocked-by-scene-${student.studentId}`}>
                   <AlertTriangle className="h-3 w-3 mr-1" />
                   Blocked by {student.activeFlightPathName}
                 </Badge>
               )}
               {effectiveIsOffTask && !isBlockedByFlightPath && (
-                <Badge variant="outline" className="text-xs px-2 py-0.5 bg-red-50 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-400 dark:border-red-800" data-testid={`badge-offtask-${student.primaryDeviceId}`}>
+                <Badge variant="outline" className="text-xs px-2 py-0.5 bg-red-50 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-400 dark:border-red-800" data-testid={`badge-offtask-${student.studentId}`}>
                   <AlertTriangle className="h-3 w-3 mr-1" />
                   Off-Task
                   {onAllowDomain && (
@@ -536,7 +533,7 @@ function StudentTile({
                 </Badge>
               )}
               {isBlocked && !effectiveIsOffTask && !isBlockedByFlightPath && (
-                <Badge variant="outline" className="text-xs px-2 py-0.5 bg-red-50 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-400 dark:border-red-800" data-testid={`badge-blocked-${student.primaryDeviceId}`}>
+                <Badge variant="outline" className="text-xs px-2 py-0.5 bg-red-50 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-400 dark:border-red-800" data-testid={`badge-blocked-${student.studentId}`}>
                   <AlertTriangle className="h-3 w-3 mr-1" />
                   Blocked Domain
                 </Badge>
@@ -555,7 +552,7 @@ function StudentTile({
                     e.stopPropagation();
                     unblockForClassMutation.mutate();
                   }}
-                  data-testid={`button-unblock-${student.primaryDeviceId}`}
+                  data-testid={`button-unblock-${student.studentId}`}
                 >
                   Unblock for class
                 </Button>
@@ -577,12 +574,33 @@ function StudentTile({
           <div className="aspect-video rounded-lg bg-black relative overflow-hidden">
             <div
               ref={tileVideoSlotRef}
-              id={`tile-video-slot-${student.primaryDeviceId}`}
+              id={`tile-video-slot-${student.studentId}`}
               className="w-full h-full rounded-lg overflow-hidden"
-              data-testid={`video-live-${student.primaryDeviceId}`}
+              data-testid={`video-live-${student.studentId}`}
             />
           </div>
-        ) : screenshotData?.screenshot ? (
+        ) : !currentTelemetry ? (
+          <div
+            className={`flex aspect-video items-center justify-center rounded-lg border text-center ${unavailablePreview.warning ? 'border-amber-200 bg-amber-50/70 dark:border-amber-900 dark:bg-amber-950/20' : 'border-border bg-muted/30'}`}
+            data-testid={`preview-unavailable-${student.studentId}`}
+          >
+            <div className="px-4">
+              <Monitor className={`mx-auto mb-2 h-6 w-6 ${unavailablePreview.warning ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`} />
+              <p className="text-sm font-semibold text-foreground">Preview unavailable</p>
+              <p className="mt-1 text-xs text-muted-foreground">{unavailablePreview.reason}</p>
+              {unavailablePreview.showLastObservation && (
+                <>
+                  <p className="mt-2 text-[11px] text-muted-foreground">Last observed at {absoluteLastObservedAt}</p>
+                  {observedDomain && (
+                    <p className="mt-1 truncate text-[11px] text-muted-foreground">
+                      Last observed site: {observedDomain}
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        ) : screenshotDisplay.fresh ? (
           // Screenshot thumbnail when available
           // Uses tab metadata from the screenshot (not current heartbeat) so overlay matches the image
           <div className="aspect-video rounded-lg bg-muted/40 relative overflow-hidden">
@@ -590,7 +608,7 @@ function StudentTile({
               src={screenshotData.screenshot}
               alt={`${student.studentName || 'Student'}'s screen`}
               className="w-full h-full object-cover"
-              data-testid={`screenshot-${student.primaryDeviceId}`}
+              data-testid={`screenshot-${student.studentId}`}
             />
             {/* Overlay with tab info from when screenshot was taken */}
             <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-2">
@@ -612,9 +630,15 @@ function StudentTile({
             </div>
           </div>
         ) : (
-          <div className="rounded-lg bg-muted/40 overflow-hidden">
-            {/* Website preview header bar */}
-            <div className="flex items-center gap-2 px-3 py-2 bg-muted/60 border-b border-border/30">
+          <div className="rounded-lg border border-border/40 bg-muted/30 overflow-hidden" data-testid={`screenshot-stale-${student.studentId}`}>
+            <div className="flex aspect-video items-center justify-center bg-muted/20 text-center">
+              <div className="px-4">
+                <Monitor className="mx-auto mb-2 h-6 w-6 text-muted-foreground/60" />
+                <p className="text-sm font-semibold text-foreground">Screenshot unavailable or stale</p>
+                <p className="mt-1 text-xs text-muted-foreground">Current website telemetry remains available below.</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 px-3 py-2 bg-muted/60 border-t border-border/30">
               {student.favicon ? (
                 <img
                   src={student.favicon}
@@ -629,13 +653,13 @@ function StudentTile({
                   <ExternalLink className="w-2.5 h-2.5 text-muted-foreground/50" />
                 </div>
               )}
-              <span className="text-xs text-muted-foreground truncate flex-1 font-mono" data-testid={`text-tab-url-${student.primaryDeviceId}`}>
+              <span className="text-xs text-muted-foreground truncate flex-1 font-mono" data-testid={`text-tab-url-${student.studentId}`}>
                 {student.activeTabUrl ? (() => { try { return new URL(student.activeTabUrl).hostname; } catch { return student.activeTabUrl; } })() : 'No tab'}
               </span>
             </div>
-            {/* Website content preview */}
             <div className="p-3 min-h-[60px]">
-              <p className="font-medium text-sm leading-snug line-clamp-2" data-testid={`text-tab-title-${student.primaryDeviceId}`}>
+              <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Current site</p>
+              <p className="font-medium text-sm leading-snug line-clamp-2" data-testid={`text-tab-title-${student.studentId}`}>
                 {student.activeTabTitle || <span className="text-muted-foreground italic">No active tab</span>}
               </p>
             </div>
@@ -684,7 +708,7 @@ function StudentTile({
                 onReturnToClass();
               }}
               title="Release this student from supervision and return them to your active class"
-              data-testid={`button-return-to-class-${student.primaryDeviceId ?? "unknown-device"}`}
+              data-testid={`button-return-to-class-${student.studentId}`}
             >
               <RotateCcw className="h-3.5 w-3.5 mr-1" />
               Return to Class
@@ -700,7 +724,7 @@ function StudentTile({
                 onManageTabs();
               }}
               title="Manage this student's open tabs"
-              data-testid={`button-manage-tabs-${student.primaryDeviceId ?? "unknown-device"}`}
+              data-testid={`button-manage-tabs-${student.studentId}`}
             >
               <List className="h-3.5 w-3.5 mr-1" />
               Tabs
@@ -721,7 +745,7 @@ function StudentTile({
                 }
               }}
               title={liveViewPending ? "Waiting for live view to connect" : liveStream ? "Stop live view" : "Start live view"}
-              data-testid={`button-live-view-${student.primaryDeviceId ?? "unknown-device"}`}
+              data-testid={`button-live-view-${student.studentId}`}
             >
               <Monitor className="h-3.5 w-3.5 mr-1" />
               {liveViewPending ? "Connecting" : liveStream ? "Stop" : "View"}
@@ -736,8 +760,8 @@ function StudentTile({
                 e.stopPropagation();
                 handleExpand();
               }}
-              title="Expand to full screen with zoom, screenshot, and recording controls"
-              data-testid={`button-expand-${student.primaryDeviceId ?? "unknown-device"}`}
+              title="Expand to full screen with zoom and screenshot controls"
+              data-testid={`button-expand-${student.studentId}`}
             >
               <Maximize2 className="h-3.5 w-3.5 mr-1" />
               Expand
@@ -749,7 +773,7 @@ function StudentTile({
       {/* Video Portal for enlarged view */}
       {expanded && liveStream && (
         <VideoPortal
-          studentName={student.studentName || student.deviceName || student.primaryDeviceId || "Unknown student"}
+          studentName={student.studentName || student.deviceName || "Unknown student"}
           onClose={handleCollapse}
           onStopLiveView={onStopLiveView}
         />

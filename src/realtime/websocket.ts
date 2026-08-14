@@ -16,6 +16,7 @@ import {
   broadcastToStaffSessionLocal,
   broadcastToStudentsLocal,
   sendToDeviceLocal,
+  sendToStaffUserLocal,
   sendToRoleLocal,
   subscribeWsClientToSession,
   unsubscribeWsClientFromSession,
@@ -36,7 +37,10 @@ import {
   withClasspilotCommandBroadcastLock,
   updateClasspilotCommandTargetAck,
   getTeachingSessionByIdAndSchool,
-  getGroupTeachers,
+  isAuthorizedClasspilotSessionStaff,
+  getClasspilotStudentControlState,
+  getActiveSessionsForStudents,
+  acknowledgeClasspilotStudentControlState,
   updateChatMessageDelivery,
   getChatMessageByIdAndSchool,
 } from "../services/storage.js";
@@ -57,6 +61,12 @@ import {
   touchClasspilotStaffPresence,
   type ClasspilotStaffPresenceStore,
 } from "./classpilotStaffPresence.js";
+import { serializeClasspilotStudentControlState } from "../services/classpilotClassroomState.js";
+import { publicClasspilotCommand } from "../services/classpilotCommandPublic.js";
+import {
+  classpilotCommandDeliveryPolicy,
+  summarizeClasspilotCommandTargets,
+} from "../services/classpilotCommandDelivery.js";
 
 // Ping/pong keepalive constants
 const WS_PING_INTERVAL_MS = 30_000; // 30 seconds
@@ -156,8 +166,22 @@ export function setupWebSocket(
           const payload = {
             type: "classpilot-command-update",
             commandId: state.commandId,
-            command,
+            command: publicClasspilotCommand(command),
+            deliveryPolicy: classpilotCommandDeliveryPolicy(command.commandType),
+            expiresAt: command.expiresAt,
+            summary: summarizeClasspilotCommandTargets(command),
           };
+          const staffTarget: WsRedisTarget = command.teachingSessionId
+            ? {
+                kind: "staff-session",
+                schoolId: state.schoolId,
+                sessionId: command.teachingSessionId,
+              }
+            : {
+                kind: "staff-user",
+                schoolId: state.schoolId,
+                userId: command.teacherId,
+              };
           if (!isRedisPublisherReady()) {
             throw new Error("Ordered ClassPilot command publication requires Redis");
           }
@@ -173,7 +197,7 @@ export function setupWebSocket(
             // deliver an older snapshot locally and only then be rejected by
             // the global revision watermark.
             const outcome = await publishOrderedWS(
-              { kind: "staff", schoolId: state.schoolId },
+              staffTarget,
               payload,
               {
                 includeSource: false,
@@ -189,7 +213,11 @@ export function setupWebSocket(
               outcome.status === "accepted" &&
               recordLocalOrderedDelivery(state.key, revision)
             ) {
-              broadcastToTeachersLocal(state.schoolId, payload);
+              if (staffTarget.kind === "staff-session") {
+                broadcastToStaffSessionLocal(state.schoolId, staffTarget.sessionId, payload);
+              } else {
+                sendToStaffUserLocal(state.schoolId, staffTarget.userId, payload);
+              }
             }
             if (
               outcome.status === "accepted" &&
@@ -306,6 +334,9 @@ export function setupWebSocket(
     switch (target.kind) {
       case "staff":
         broadcastToTeachersLocal(target.schoolId, message);
+        break;
+      case "staff-user":
+        sendToStaffUserLocal(target.schoolId, target.userId, message);
         break;
       case "staff-session":
         broadcastToStaffSessionLocal(target.schoolId, target.sessionId, message);
@@ -515,7 +546,15 @@ export function setupWebSocket(
                   const fab = await buildStudentFabState(schoolId, payload.studentId, {
                     schoolSettings,
                   });
-                  return { schoolSettings, fab };
+                  const classroomStateRow = await getClasspilotStudentControlState(schoolId, payload.studentId);
+                  return {
+                    schoolSettings,
+                    fab,
+                    studentSessionId: activeSession.id,
+                    classroomState: classroomStateRow
+                      ? serializeClasspilotStudentControlState(classroomStateRow)
+                      : null,
+                  };
                 });
                 if (!bootstrap) {
                   ws.send(JSON.stringify({ type: "auth-error", message: "Student session is no longer active" }));
@@ -528,6 +567,8 @@ export function setupWebSocket(
                   role: "student",
                   deviceId,
                   schoolId,
+                  studentId: payload.studentId,
+                  studentSessionId: bootstrap.studentSessionId,
                 });
 
                 ws.send(JSON.stringify({
@@ -539,6 +580,10 @@ export function setupWebSocket(
                     globalBlockedDomains: bootstrap.schoolSettings?.blockedDomains || [],
                     fab: bootstrap.fab,
                   },
+                  // Explicit null is authoritative on shared Chromebooks. If
+                  // the new student has no desired row, omitting the field
+                  // would leave the former student's persisted restrictions.
+                  classroomState: bootstrap.classroomState,
                 }));
                 activity.studentAuthenticated += 1;
               } catch (error) {
@@ -661,9 +706,11 @@ export function setupWebSocket(
             const session = await getTeachingSessionByIdAndSchool(sessionId, client.schoolId!);
             if (!session) return false;
             if (client.role === "school_admin" || client.role === "super_admin") return true;
-            if (session.teacherId === client.userId) return true;
-            const teachers = await getGroupTeachers(session.groupId);
-            return teachers.some((teacher) => teacher.teacherId === client.userId);
+            return isAuthorizedClasspilotSessionStaff(
+              client.schoolId!,
+              sessionId,
+              client.userId!
+            );
           });
 
           if (!allowed) {
@@ -685,6 +732,8 @@ export function setupWebSocket(
         if (
           client.role === "student" &&
           client.schoolId &&
+          client.studentId &&
+          client.studentSessionId &&
           client.deviceId &&
           (message.type === "chat-message-ack" || message.type === "chat_delivery_ack")
         ) {
@@ -710,7 +759,6 @@ export function setupWebSocket(
               sessionId: chatMessage.sessionId,
               messageId,
               studentId: chatMessage.studentId,
-              deviceId: client.deviceId,
               deliveryStatus,
               errorMessage: message.error || message.errorMessage || null,
             };
@@ -722,8 +770,88 @@ export function setupWebSocket(
 
         // --- ClassPilot teacher command acknowledgements ---
         if (
+          client.role === "student"
+          && client.schoolId
+          && client.studentId
+          && client.studentSessionId
+          && client.deviceId
+          && message.type === "classroom-state-ack"
+        ) {
+          const appliedRevision = Number(message.appliedRevision);
+          const rawOutcome = String(message.outcome || "").toLowerCase();
+          const outcome = rawOutcome === "applied"
+            ? "applied"
+            : rawOutcome === "failed"
+              ? "failed"
+              : rawOutcome === "expired"
+                ? "expired"
+                : rawOutcome === "unsupported"
+                  ? "unsupported"
+                  : null;
+          if (Number.isSafeInteger(appliedRevision) && appliedRevision >= 0 && outcome) {
+            await runWithTenantContext({ schoolId: client.schoolId }, () =>
+              acknowledgeClasspilotStudentControlState({
+                schoolId: client.schoolId!,
+                studentId: client.studentId!,
+                studentSessionId: client.studentSessionId!,
+                deviceId: client.deviceId!,
+                appliedRevision,
+                outcome,
+                error: message.error ? String(message.error) : null,
+              })
+            );
+          }
+          return;
+        }
+
+        if (
+          client.role === "student"
+          && client.schoolId
+          && client.studentId
+          && client.studentSessionId
+          && client.deviceId
+          && message.type === "classroom-state-request"
+        ) {
+          const reconciliation = await runWithTenantContext(
+            { schoolId: client.schoolId },
+            async () => {
+              const activeSessions = await getActiveSessionsForStudents(
+                client.schoolId!,
+                [client.studentId!]
+              );
+              const exactBindingIsActive = activeSessions.some((session) =>
+                session.id === client.studentSessionId
+                && session.studentId === client.studentId
+                && session.deviceId === client.deviceId
+              );
+              if (!exactBindingIsActive) return { active: false as const, state: null };
+              const state = await getClasspilotStudentControlState(
+                client.schoolId!,
+                client.studentId!
+              );
+              return {
+                active: true as const,
+                state: state ? serializeClasspilotStudentControlState(state) : null,
+              };
+            }
+          );
+          if (!reconciliation.active) {
+            ws.send(JSON.stringify({ type: "auth-error", message: "Student session is no longer active" }));
+            ws.close();
+            return;
+          }
+          ws.send(JSON.stringify({
+            type: "classroom-state-sync",
+            classroomState: reconciliation.state,
+          }));
+          return;
+        }
+
+        if (
           client.role === "student" &&
           client.schoolId &&
+          client.studentId &&
+          client.studentSessionId &&
           client.deviceId &&
           (message.type === "command-ack" ||
             message.type === "command_ack" ||
@@ -744,13 +872,23 @@ export function setupWebSocket(
           ).trim();
           const ackState = rawAckState === "failed"
             ? "failed"
-            : rawAckState === "completed" || rawAckState === "success"
-              ? "completed"
-              : rawAckState === "received"
-                ? "received"
-                : null;
+            : rawAckState === "expired"
+              ? "expired"
+              : rawAckState === "completed" || rawAckState === "success"
+                ? "completed"
+                : rawAckState === "received"
+                  ? "received"
+                  : null;
 
           if (!commandId || !ackState) return;
+          const rawResult = message.result || message.state || message.data || null;
+          const serializedResult = rawResult === null ? null : JSON.stringify(rawResult);
+          if (serializedResult && Buffer.byteLength(serializedResult, "utf8") > 16 * 1024) {
+            return;
+          }
+          const boundedError = message.error || message.errorMessage
+            ? String(message.error || message.errorMessage).slice(0, 500)
+            : null;
 
           const ackStartedAt = performance.now();
           let ackSucceeded = false;
@@ -761,10 +899,11 @@ export function setupWebSocket(
                 commandId,
                 schoolId: client.schoolId!,
                 deviceId: client.deviceId!,
-                studentId: message.studentId ? String(message.studentId) : undefined,
+                studentId: client.studentId!,
+                studentSessionId: client.studentSessionId!,
                 ackState,
-                result: message.result || message.state || message.data || null,
-                errorMessage: message.error || message.errorMessage || null,
+                result: rawResult,
+                errorMessage: boundedError,
               })
             );
             ackSucceeded = true;
@@ -780,64 +919,80 @@ export function setupWebSocket(
           return;
         }
 
-        // --- WebRTC signaling: offer, answer, ice ---
+        const resolveLiveTarget = async () => {
+          if (!client.schoolId || !client.userId) return null;
+          const studentId = String(message.studentId || message.toStudentId || "").trim();
+          const teachingSessionId = String(message.teachingSessionId || "").trim();
+          if (!studentId || !teachingSessionId || !client.subscribedSessionIds.has(teachingSessionId)) {
+            return null;
+          }
+          return runWithTenantContext({ schoolId: client.schoolId }, async () => {
+            const [controlState, activeSessions] = await Promise.all([
+              getClasspilotStudentControlState(client.schoolId!, studentId),
+              getActiveSessionsForStudents(client.schoolId!, [studentId]),
+            ]);
+            if (controlState?.teachingSessionId !== teachingSessionId) return null;
+            const active = activeSessions.find((row) => row.studentId === studentId);
+            return active ? { studentId, teachingSessionId, deviceId: active.deviceId } : null;
+          });
+        };
+
+        // --- WebRTC signaling: authorized student IDs on the teacher side ---
         if (message.type === "offer" || message.type === "answer" || message.type === "ice") {
-          const targetDeviceId = message.to;
-          if (!targetDeviceId) {
-            console.log(`[WebSocket] Dropping ${message.type} - missing 'to' field`);
+          if (!client.schoolId) return;
+          if (client.role === "student") {
+            if (message.to !== "teacher" || !client.studentId) return;
+            const state = await runWithTenantContext({ schoolId: client.schoolId }, () =>
+              getClasspilotStudentControlState(client.schoolId!, client.studentId!)
+            );
+            const sessionId = state?.teachingSessionId;
+            if (!sessionId) return;
+            const payload = {
+              type: message.type,
+              from: client.studentId,
+              ...(message.sdp ? { sdp: message.sdp } : {}),
+              ...(message.candidate ? { candidate: message.candidate } : {}),
+            };
+            broadcastToStaffSessionLocal(client.schoolId, sessionId, payload);
+            void publishWS({ kind: "staff-session", schoolId: client.schoolId, sessionId }, payload);
             return;
           }
-
-          console.log(`[WebSocket] Routing ${message.type} between clients`);
-
-          if (targetDeviceId === "teacher") {
-            const payload = {
-              type: message.type,
-              from: client.deviceId,
-              ...message,
-            };
-            if (client.schoolId) {
-              broadcastToTeachersLocal(client.schoolId, payload);
-              void publishWS({ kind: "staff", schoolId: client.schoolId }, payload);
-            }
-          } else {
-            const payload = {
-              type: message.type,
-              from: client.role === "teacher" || client.role === "school_admin" || client.role === "super_admin" ? "teacher" : client.deviceId,
-              ...message,
-            };
-            if (client.schoolId) {
-              sendToDeviceLocal(client.schoolId, targetDeviceId, payload);
-              void publishWS({ kind: "device", schoolId: client.schoolId, deviceId: targetDeviceId }, payload);
-            }
-          }
+          const target = await resolveLiveTarget();
+          if (!target) return;
+          const payload = {
+            type: message.type,
+            from: "teacher",
+            ...(message.sdp ? { sdp: message.sdp } : {}),
+            ...(message.candidate ? { candidate: message.candidate } : {}),
+          };
+          sendToDeviceLocal(client.schoolId, target.deviceId, payload);
+          void publishWS({ kind: "device", schoolId: client.schoolId, deviceId: target.deviceId }, payload);
+          return;
         }
 
         // --- Remote control: request-stream ---
         if (message.type === "request-stream" && (client.role === "teacher" || client.role === "school_admin" || client.role === "super_admin")) {
-          const targetDeviceId = message.deviceId;
-          if (!targetDeviceId || !client.schoolId) return;
-
-          console.log(`[WebSocket] Forwarding request-stream to ${targetDeviceId}`);
+          const target = await resolveLiveTarget();
+          if (!target || !client.schoolId) return;
           const payload = { type: "request-stream", from: "teacher" };
-          const deliveredLocally = sendToDeviceLocal(client.schoolId, targetDeviceId, payload);
-          void publishWS({ kind: "device", schoolId: client.schoolId, deviceId: targetDeviceId }, payload);
+          const deliveredLocally = sendToDeviceLocal(client.schoolId, target.deviceId, payload);
+          void publishWS({ kind: "device", schoolId: client.schoolId, deviceId: target.deviceId }, payload);
           ws.send(JSON.stringify({
             type: "live-view-requested",
-            deviceId: targetDeviceId,
+            studentId: target.studentId,
             deliveredLocally,
           }));
+          return;
         }
 
         // --- Remote control: stop-share ---
         if (message.type === "stop-share" && (client.role === "teacher" || client.role === "school_admin" || client.role === "super_admin")) {
-          const targetDeviceId = message.deviceId;
-          if (!targetDeviceId || !client.schoolId) return;
-
-          console.log(`[WebSocket] Sending stop-share to ${targetDeviceId}`);
+          const target = await resolveLiveTarget();
+          if (!target || !client.schoolId) return;
           const payload = { type: "stop-share", from: "teacher" };
-          sendToDeviceLocal(client.schoolId, targetDeviceId, payload);
-          void publishWS({ kind: "device", schoolId: client.schoolId, deviceId: targetDeviceId }, payload);
+          sendToDeviceLocal(client.schoolId, target.deviceId, payload);
+          void publishWS({ kind: "device", schoolId: client.schoolId, deviceId: target.deviceId }, payload);
+          return;
         }
       } catch (error) {
         console.error("[WebSocket] Message error:", error);

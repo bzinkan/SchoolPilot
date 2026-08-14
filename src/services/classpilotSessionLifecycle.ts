@@ -1,23 +1,26 @@
 import { randomUUID } from "node:crypto";
 import type db from "../db.js";
 import type { TeachingSession } from "../schema/classpilot.js";
-import { broadcastToTeachersLocal } from "../realtime/ws-broadcast.js";
+import {
+  broadcastToTeachersLocal,
+  sendToDeviceLocal,
+} from "../realtime/ws-broadcast.js";
 import { publishWS } from "../realtime/ws-redis.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
 import { sendSessionSummaryEmailWithResult } from "./email.js";
 import errorMonitor from "./errorMonitor.js";
 import {
   claimDueSessionSummaryDeliveries,
-  aggregateClasspilotSessionUsage,
   completeSessionSummaryDelivery,
   createTeachingSession,
   countOverdueSessionSummaryDeliveries,
   finalizeTeachingSession,
   getCentralEmailRecipientForSchool,
-  getClasspilotSessionStudentRoster,
-  getGroupByIdAndSchool,
-  getHeartbeatsForStudentsInRange,
-  getSchoolById,
+  getClasspilotSessionReportBySession,
+  getClasspilotSessionStudentReports,
+  getActiveSessionsForStudents,
+  getClasspilotSessionStudents,
+  getClasspilotStudentControlStates,
   getTeachingSessionByIdAndSchool,
   getActiveTeachingSessionForSchool,
   getUserById,
@@ -27,6 +30,48 @@ import {
   type TeachingSessionFinalizationReason,
   type FinalizeTeachingSessionResult,
 } from "./storage.js";
+import { serializeClasspilotStudentControlState } from "./classpilotClassroomState.js";
+
+async function publishControlStateRows(
+  schoolId: string,
+  states: Awaited<ReturnType<typeof getClasspilotStudentControlStates>>,
+  teachingSessionIdOverride?: string
+): Promise<void> {
+  if (states.length === 0) return;
+  const sessions = await getActiveSessionsForStudents(
+    schoolId,
+    states.map((state) => state.studentId)
+  );
+  const sessionByStudent = new Map(sessions.map((session) => [session.studentId, session]));
+  await Promise.all(states.map(async (state) => {
+    const studentSession = sessionByStudent.get(state.studentId);
+    if (!studentSession) return;
+    const classroomState = {
+      ...serializeClasspilotStudentControlState(state),
+      ...(teachingSessionIdOverride ? { teachingSessionId: teachingSessionIdOverride } : {}),
+    };
+    const message = { type: "classroom-state", classroomState };
+    sendToDeviceLocal(schoolId, studentSession.deviceId, message);
+    await publishWS(
+      { kind: "device", schoolId, deviceId: studentSession.deviceId },
+      message
+    );
+  }));
+}
+
+export async function pushClasspilotSessionControlStates(
+  schoolId: string,
+  teachingSessionId: string
+): Promise<void> {
+  await runWithTenantContext({ schoolId }, async () => {
+    const roster = await getClasspilotSessionStudents(teachingSessionId);
+    const states = await getClasspilotStudentControlStates(
+      schoolId,
+      roster.map((row) => row.studentId)
+    );
+    await publishControlStateRows(schoolId, states);
+  });
+}
 
 export async function startManualClasspilotSession(options: {
   schoolId: string;
@@ -77,6 +122,9 @@ export async function startManualClasspilotSession(options: {
       dbInstance: options.dbInstance,
     });
   }
+  void pushClasspilotSessionControlStates(options.schoolId, outcome.session.id).catch((err) => {
+    console.warn(`[ClassPilot] Initial classroom-state push failed for ${outcome.session.id}:`, err);
+  });
   return outcome;
 }
 
@@ -192,13 +240,9 @@ export function runClasspilotFinalizationSideEffects(
   }
 ): void {
   if (result.finalized) {
-    // Derived usage is rebuildable and deliberately detached only after the
-    // lifecycle transaction (and any outer start lock transaction) commits.
-    void runWithTenantContext({ schoolId: options.schoolId }, () =>
-      aggregateClasspilotSessionUsage(result.session.id)
-    ).catch((err) => {
-      console.warn(`[ClassPilot] Session usage aggregation failed for ${result.session.id}:`, err);
-    });
+    // Usage is frozen with the coverage rows and derived gap events by the
+    // immutable report worker. Keeping that write inside one transaction is
+    // what prevents email retries from observing a different raw heartbeat set.
     emitLifecycleMetric("SessionFinalized", 1, {
       LifecycleKind: result.session.scheduledDate ? "scheduled" : "manual",
       FinalizationReason: options.reason,
@@ -207,6 +251,29 @@ export function runClasspilotFinalizationSideEffects(
       const update = { type: "scheduled-class-conflict-updated", conflictId };
       broadcastToTeachersLocal(options.schoolId, update);
       void publishWS({ kind: "staff", schoolId: options.schoolId }, update);
+    }
+    if (result.clearedControlStates.length > 0) {
+      // The database rows are the reconnect authority. This post-commit push
+      // only makes an already-connected extension clear immediately. Keep the
+      // former session ID in the envelope so its retained event is scoped to
+      // the class that ended; subsequent heartbeat reconciliation sees the
+      // same higher revision with the stored null session.
+      void runWithTenantContext({ schoolId: options.schoolId }, () =>
+        publishControlStateRows(
+          options.schoolId,
+          result.clearedControlStates,
+          result.session.id
+        )
+      ).catch((err) => {
+        console.warn(`[ClassPilot] Final classroom-state clear push failed for ${result.session.id}:`, err);
+      });
+    }
+    if (result.restoredControlStates.length > 0) {
+      void runWithTenantContext({ schoolId: options.schoolId }, () =>
+        publishControlStateRows(options.schoolId, result.restoredControlStates)
+      ).catch((err) => {
+        console.warn(`[ClassPilot] Restored classroom-state push failed after ${result.session.id}:`, err);
+      });
     }
   }
 }
@@ -226,83 +293,48 @@ type SessionSummaryData = {
     offTaskCount: number;
     safetyAlerts: string[];
     safetyUrls: string[];
+    coverageStatus: "complete" | "partial" | "none" | "not_expected" | "unavailable";
+    coveragePercent: number | null;
+    gapMinutes: number;
   }>;
   hasActivity: boolean;
+  monitoringCoverageAvailable: boolean;
 };
 
 async function buildSessionSummaryData(
   session: TeachingSession,
   schoolId: string,
   recipientName: string,
-  dbInstance?: typeof db
+  dbInstance?: typeof db,
+  asOf = new Date()
 ): Promise<SessionSummaryData> {
-  const endTime = session.endTime || session.scheduledEndAt || new Date();
-  const group = await getGroupByIdAndSchool(session.groupId, schoolId, dbInstance);
-  const school = await getSchoolById(schoolId, dbInstance);
-  const timeZone = session.scheduledTimezone || school?.schoolTimezone || "America/New_York";
-  const roster = await getClasspilotSessionStudentRoster(schoolId, session.id, dbInstance);
-  const studentIds = roster.map((row) => row.studentId);
-  const heartbeatRows = await getHeartbeatsForStudentsInRange(
-    schoolId,
-    studentIds,
-    session.startTime,
-    endTime,
-    dbInstance
-  );
-
-  const studentMap = new Map<string, {
-    name: string;
-    domainSeconds: Map<string, number>;
-    count: number;
-    offTaskCount: number;
-    safetyAlerts: string[];
-    safetyUrls: string[];
-  }>();
-  for (const row of roster) {
-    const name = [row.student.firstName, row.student.lastName].filter(Boolean).join(" ")
-      || row.student.email
-      || "Unknown";
-    studentMap.set(row.studentId, {
-      name,
-      domainSeconds: new Map(),
-      count: 0,
+  const report = await getClasspilotSessionReportBySession(schoolId, session.id, dbInstance);
+  if (!report
+    || report.state !== "ready"
+    || report.detailExpiredAt
+    || report.expiresAt <= asOf) {
+    throw new Error("Immutable ClassPilot session report is not ready");
+  }
+  const studentReports = await getClasspilotSessionStudentReports(schoolId, report.id, dbInstance);
+  const endTime = report.windowEnd;
+  const timeZone = report.timezone;
+  const students = studentReports.map((student) => {
+    const topDomains = Array.isArray(student.topDomains) ? student.topDomains as Array<any> : [];
+    return {
+      name: student.studentNameSnapshot,
+      totalMinutes: Math.round(student.observedSeconds / 60),
+      topDomains: topDomains.slice(0, 5).map((domain) => ({
+        domain: String(domain.domain || ""),
+        minutes: Math.round(Number(domain.seconds || 0) / 60),
+      })).filter((domain) => domain.domain),
       offTaskCount: 0,
-      safetyAlerts: [],
-      safetyUrls: [],
-    });
-  }
-
-  for (const heartbeat of heartbeatRows) {
-    if (!heartbeat.studentId) continue;
-    const entry = studentMap.get(heartbeat.studentId);
-    if (!entry) continue;
-    entry.count += 1;
-    if (heartbeat.aiCategory === "non-educational") entry.offTaskCount += 1;
-    if (heartbeat.safetyAlert) {
-      entry.safetyAlerts.push(heartbeat.safetyAlert);
-      if (heartbeat.activeTabUrl) {
-        try { entry.safetyUrls.push(new URL(heartbeat.activeTabUrl).hostname.replace(/^www\./, "")); } catch { /* invalid URL */ }
-      }
-    }
-    if (heartbeat.activeTabUrl) {
-      try {
-        const domain = new URL(heartbeat.activeTabUrl).hostname.replace(/^www\./, "");
-        entry.domainSeconds.set(domain, (entry.domainSeconds.get(domain) || 0) + 10);
-      } catch { /* invalid URL */ }
-    }
-  }
-
-  const students = Array.from(studentMap.values()).map((student) => ({
-    name: student.name,
-    totalMinutes: Math.round((student.count * 10) / 60),
-    topDomains: Array.from(student.domainSeconds.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5)
-      .map(([domain, seconds]) => ({ domain, minutes: Math.round(seconds / 60) })),
-    offTaskCount: student.offTaskCount,
-    safetyAlerts: [...new Set(student.safetyAlerts)],
-    safetyUrls: [...new Set(student.safetyUrls)],
-  }));
+      safetyAlerts: [] as string[],
+      safetyUrls: [] as string[],
+      coverageStatus: student.status as SessionSummaryData["students"][number]["coverageStatus"],
+      coveragePercent: student.coveragePercent,
+      gapMinutes: Math.round(student.gapSeconds / 60),
+    };
+  });
   const formatTime = (date: Date) => date.toLocaleString("en-US", {
     timeZone,
     hour: "numeric",
@@ -318,18 +350,24 @@ async function buildSessionSummaryData(
   });
   return {
     teacherName: recipientName,
-    className: session.classNameSnapshot || group?.name || "Class",
+    className: session.classNameSnapshot || "Class",
     date: formatDate(session.startTime),
     startTime: formatTime(session.startTime),
     endTime: formatTime(endTime),
     duration: `${Math.max(0, Math.round((endTime.getTime() - session.startTime.getTime()) / 60_000))} min`,
-    studentCount: roster.length,
+    studentCount: report.rosterCount,
     students,
-    hasActivity: heartbeatRows.length > 0,
+    hasActivity: studentReports.some((student) => student.heartbeatCount > 0),
+    monitoringCoverageAvailable: studentReports.some((student) => student.status !== "not_expected" && student.status !== "unavailable"),
   };
 }
 
-function deliveryNotice(session: TeachingSession, recipientKind: string, hasActivity: boolean): string | undefined {
+function deliveryNotice(
+  session: TeachingSession,
+  recipientKind: string,
+  hasActivity: boolean,
+  monitoringCoverageAvailable: boolean
+): string | undefined {
   const notices: string[] = [];
   if (session.scheduledDate) {
     if (["teacher_end", "admin_end"].includes(session.scheduledFinalizationReason || "")) {
@@ -344,7 +382,9 @@ function deliveryNotice(session: TeachingSession, recipientKind: string, hasActi
       notices.push("This scheduled class ended automatically at its configured end time.");
     }
   }
-  if (!hasActivity) notices.push("No student activity was recorded during this session window.");
+  if (!hasActivity || !monitoringCoverageAvailable) {
+    notices.push("Observed browser telemetry was unavailable or incomplete for this session; Monitoring coverage shows the measured gaps without assigning a cause.");
+  }
   if (recipientKind === "central") notices.push("This is the configured Central Email Copy.");
   return notices.length ? notices.join(" ") : undefined;
 }
@@ -366,12 +406,16 @@ export async function dispatchDueClasspilotSessionSummaries(options: {
   teachingSessionId?: string;
   limit?: number;
   now?: Date;
+  clock?: () => Date;
   transport?: SessionSummaryTransport;
 } = {}): Promise<SessionSummaryDispatchCounts> {
   const dbInstance = options.dbInstance;
-  const now = options.now || new Date();
+  const clock = options.clock || (options.now
+    ? () => new Date(options.now!.getTime())
+    : () => new Date());
+  const claimNow = options.now || clock();
   const transport = options.transport || sendSessionSummaryEmailWithResult;
-  const recovered = await recoverExpiredSessionSummaryLeases(now, dbInstance, options.schoolId);
+  const recovered = await recoverExpiredSessionSummaryLeases(claimNow, dbInstance, options.schoolId);
   if (recovered.quarantined > 0) {
     emitLifecycleMetric("SummaryDeliveryUnknown", recovered.quarantined);
     errorMonitor.trackError(
@@ -385,7 +429,7 @@ export async function dispatchDueClasspilotSessionSummaries(options: {
   const leaseOwner = `${process.pid}:${randomUUID()}`;
   const deliveries = await claimDueSessionSummaryDeliveries({
     leaseOwner,
-    now,
+    now: claimNow,
     limit: options.limit,
     schoolId: options.schoolId,
     teachingSessionId: options.teachingSessionId,
@@ -409,7 +453,7 @@ export async function dispatchDueClasspilotSessionSummaries(options: {
           leaseOwner,
           state: "failed",
           error: "Finalized teaching session not found",
-          completedAt: now,
+          completedAt: clock(),
         }, dbInstance);
         counts.failed += 1;
         return;
@@ -419,9 +463,15 @@ export async function dispatchDueClasspilotSessionSummaries(options: {
         session,
         delivery.schoolId,
         delivery.recipientName || "Teacher",
+        dbInstance,
+        clock()
+      );
+      const submittedDelivery = await markSessionSummarySubmissionStarted(
+        delivery.id,
+        leaseOwner,
+        clock(),
         dbInstance
       );
-      const submittedDelivery = await markSessionSummarySubmissionStarted(delivery.id, leaseOwner, now, dbInstance);
       if (!submittedDelivery) return;
       submissionStarted = true;
       const sendResult = await transport({
@@ -434,32 +484,39 @@ export async function dispatchDueClasspilotSessionSummaries(options: {
         duration: summary.duration,
         studentCount: summary.studentCount,
         students: summary.students,
-        copyNotice: deliveryNotice(session, delivery.recipientKind, summary.hasActivity),
+        copyNotice: deliveryNotice(
+          session,
+          delivery.recipientKind,
+          summary.hasActivity,
+          summary.monitoringCoverageAvailable
+        ),
         deliveryId: delivery.id,
       });
 
       if (sendResult.status === "sent") {
+        const completedAt = clock();
         await completeSessionSummaryDelivery({
           deliveryId: delivery.id,
           leaseOwner,
           state: "sent",
           providerMessageId: sendResult.providerMessageId,
-          completedAt: now,
+          completedAt,
         }, dbInstance);
         counts.sent += 1;
-        emitLifecycleMetric("SummaryDeliveryLatency", now.getTime() - delivery.createdAt.getTime(), {
+        emitLifecycleMetric("SummaryDeliveryLatency", completedAt.getTime() - delivery.createdAt.getTime(), {
           RecipientKind: delivery.recipientKind,
         }, "Milliseconds");
         return;
       }
 
       if (sendResult.status === "unknown") {
+        const completedAt = clock();
         await completeSessionSummaryDelivery({
           deliveryId: delivery.id,
           leaseOwner,
           state: "unknown",
           error: sendResult.error,
-          completedAt: now,
+          completedAt,
         }, dbInstance);
         counts.unknown += 1;
         emitLifecycleMetric("SummaryDeliveryUnknown", 1, { RecipientKind: delivery.recipientKind });
@@ -474,15 +531,16 @@ export async function dispatchDueClasspilotSessionSummaries(options: {
 
       const retryIndex = submittedDelivery.attemptCount - 1;
       const canRetry = sendResult.status === "transient_failure" && retryIndex < RETRY_DELAYS_MINUTES.length;
+      const completedAt = clock();
       if (canRetry) {
-        const nextAttemptAt = new Date(now.getTime() + RETRY_DELAYS_MINUTES[retryIndex]! * 60_000);
+        const nextAttemptAt = new Date(completedAt.getTime() + RETRY_DELAYS_MINUTES[retryIndex]! * 60_000);
         await completeSessionSummaryDelivery({
           deliveryId: delivery.id,
           leaseOwner,
           state: "retry",
           error: sendResult.error,
           nextAttemptAt,
-          completedAt: now,
+          completedAt,
         }, dbInstance);
         counts.retry += 1;
         emitLifecycleMetric("SummaryDeliveryRetry", 1, { RecipientKind: delivery.recipientKind });
@@ -492,19 +550,20 @@ export async function dispatchDueClasspilotSessionSummaries(options: {
           leaseOwner,
           state: "failed",
           error: sendResult.error,
-          completedAt: now,
+          completedAt,
         }, dbInstance);
         counts.failed += 1;
         emitLifecycleMetric("SummaryDeliveryFailed", 1, { RecipientKind: delivery.recipientKind });
       }
     } catch (error) {
+      const completedAt = clock();
       if (submissionStarted) {
         await completeSessionSummaryDelivery({
           deliveryId: delivery.id,
           leaseOwner,
           state: "unknown",
           error: "Unexpected failure after provider submission began",
-          completedAt: now,
+          completedAt,
         }, dbInstance).catch(() => undefined);
         counts.unknown += 1;
         emitLifecycleMetric("SummaryDeliveryUnknown", 1, { RecipientKind: delivery.recipientKind });
@@ -527,9 +586,9 @@ export async function dispatchDueClasspilotSessionSummaries(options: {
         state: canRetry ? "retry" : "failed",
         error: "Session summary preparation failed",
         nextAttemptAt: canRetry
-          ? new Date(now.getTime() + RETRY_DELAYS_MINUTES[retryIndex]! * 60_000)
+          ? new Date(completedAt.getTime() + RETRY_DELAYS_MINUTES[retryIndex]! * 60_000)
           : undefined,
-        completedAt: now,
+        completedAt,
         incrementAttempt: true,
       }, dbInstance).catch(() => undefined);
       counts[canRetry ? "retry" : "failed"] += 1;
@@ -539,7 +598,7 @@ export async function dispatchDueClasspilotSessionSummaries(options: {
   }
 
   const overdue = await countOverdueSessionSummaryDeliveries(
-    new Date(now.getTime() - 10 * 60_000),
+    new Date(clock().getTime() - 10 * 60_000),
     dbInstance,
     options.schoolId
   );

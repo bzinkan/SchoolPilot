@@ -1,18 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "../../../components/ui/button";
-import { Badge } from "../../../components/ui/badge";
-import { Maximize, Minimize, X, ZoomIn, ZoomOut, RotateCcw, Camera, Circle, Square } from "lucide-react";
+import { Maximize, Minimize, X, ZoomIn, ZoomOut, RotateCcw, Camera } from "lucide-react";
 import { useToast } from "../../../hooks/use-toast";
 
 function VideoPortal({ studentName, onClose, onStopLiveView }) {
   const containerRef = useRef(null);
   const [zoom, setZoom] = useState(1);
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordingDuration, setRecordingDuration] = useState(0);
-  const mediaRecorderRef = useRef(null);
-  const recordedChunksRef = useRef([]);
-  const recordingIntervalRef = useRef(null);
   const { toast } = useToast();
 
   // Create portal container on first render
@@ -36,11 +30,6 @@ function VideoPortal({ studentName, onClose, onStopLiveView }) {
     return () => {
       // Restore scroll and cleanup DOM on unmount
       document.body.style.overflow = '';
-
-      // Stop recording if active
-      if (isRecording) {
-        stopRecording();
-      }
 
       if (containerRef.current) {
         document.body.removeChild(containerRef.current);
@@ -151,119 +140,6 @@ function VideoPortal({ studentName, onClose, onStopLiveView }) {
     }
   };
 
-  const startRecording = () => {
-    const video = document.querySelector("#portal-video-slot video");
-    if (!video || !video.srcObject) {
-      toast({
-        variant: "destructive",
-        title: "Recording failed",
-        description: "No video stream found",
-      });
-      return;
-    }
-
-    try {
-      const stream = video.srcObject;
-
-      // Check for supported MIME types
-      const mimeTypes = [
-        'video/webm;codecs=vp9',
-        'video/webm;codecs=vp8',
-        'video/webm',
-        'video/mp4',
-      ];
-
-      let selectedMimeType = '';
-      for (const type of mimeTypes) {
-        if (MediaRecorder.isTypeSupported(type)) {
-          selectedMimeType = type;
-          break;
-        }
-      }
-
-      if (!selectedMimeType) {
-        throw new Error('No supported video recording format found');
-      }
-
-      // Create MediaRecorder
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: selectedMimeType,
-        videoBitsPerSecond: 2500000, // 2.5 Mbps
-      });
-
-      recordedChunksRef.current = [];
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          recordedChunksRef.current.push(event.data);
-        }
-      };
-
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(recordedChunksRef.current, {
-          type: selectedMimeType,
-        });
-
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${studentName}_recording_${new Date().toISOString().replace(/[:.]/g, '-')}.webm`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-
-        toast({
-          title: "Recording saved",
-          description: `Saved ${formatRecordingDuration(recordingDuration)} recording of ${studentName}'s screen`,
-        });
-
-        setRecordingDuration(0);
-      };
-
-      mediaRecorder.start(1000); // Collect data every second
-      mediaRecorderRef.current = mediaRecorder;
-      setIsRecording(true);
-
-      // Start duration counter
-      recordingIntervalRef.current = setInterval(() => {
-        setRecordingDuration(prev => prev + 1);
-      }, 1000);
-
-      toast({
-        title: "Recording started",
-        description: `Recording ${studentName}'s screen`,
-      });
-
-    } catch (error) {
-      console.error('Recording error:', error);
-      toast({
-        variant: "destructive",
-        title: "Recording failed",
-        description: error instanceof Error ? error.message : "Unknown error",
-      });
-    }
-  };
-
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      mediaRecorderRef.current = null;
-      setIsRecording(false);
-
-      if (recordingIntervalRef.current) {
-        clearInterval(recordingIntervalRef.current);
-        recordingIntervalRef.current = null;
-      }
-    }
-  };
-
-  const formatRecordingDuration = (seconds) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
-
   const handleStopLiveView = () => {
     onStopLiveView?.();
     onClose();
@@ -281,12 +157,6 @@ function VideoPortal({ studentName, onClose, onStopLiveView }) {
           <h2 className="text-lg font-semibold text-white">
             Live View - {studentName}
           </h2>
-          {isRecording && (
-            <Badge variant="destructive" className="animate-pulse">
-              <Circle className="h-2 w-2 mr-1 fill-current" />
-              REC {formatRecordingDuration(recordingDuration)}
-            </Badge>
-          )}
         </div>
         <Button
           variant="ghost"
@@ -362,27 +232,6 @@ function VideoPortal({ studentName, onClose, onStopLiveView }) {
         >
           <Camera className="h-4 w-4 mr-2" />
           Screenshot
-        </Button>
-
-        {/* Recording */}
-        <Button
-          variant={isRecording ? "destructive" : "ghost"}
-          size="sm"
-          onClick={isRecording ? stopRecording : startRecording}
-          className={isRecording ? "" : "text-white hover:bg-white/10"}
-          data-testid="button-record"
-        >
-          {isRecording ? (
-            <>
-              <Square className="h-4 w-4 mr-2" />
-              Stop Recording
-            </>
-          ) : (
-            <>
-              <Circle className="h-4 w-4 mr-2" />
-              Record
-            </>
-          )}
         </Button>
 
         {/* Fullscreen & PiP */}

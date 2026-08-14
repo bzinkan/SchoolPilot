@@ -59,9 +59,14 @@ describe("ClassPilot dashboard relational snapshot", () => {
     assert.ok(start >= 0 && end > start);
     assert.match(handler, /getActiveTeachingSessionForSchool\(userId, schoolId\)/);
     assert.match(handler, /getGroupByIdAndSchool\(activeSession\.groupId, schoolId\)/);
-    assert.match(handler, /getGroupStudents\(activeGroup\.id\)/);
+    assert.match(handler, /getClasspilotSessionStudentRoster\(\s*schoolId,\s*activeSession!\.id\s*\)/);
+    assert.doesNotMatch(handler, /getGroupStudents\(activeGroup\.id\)/);
     assert.match(handler, /getClasspilotDashboardSnapshot\(schoolId, studentIds, today\)/);
-    assert.doesNotMatch(handler, /Promise\.all\(\[|getAttendanceBySchool|getActivePassesBySchool/);
+    assert.match(
+      handler,
+      /Promise\.all\(\[\s*getClasspilotDashboardSnapshot[\s\S]*getClasspilotStudentControlStates/
+    );
+    assert.doesNotMatch(handler, /getAttendanceBySchool|getActivePassesBySchool/);
 
     assert.match(service, /CLASSPILOT_DASHBOARD_SNAPSHOT_CHUNK_SIZE\s*=\s*2_500/);
     assert.match(service, /WITH requested\(student_id\) AS \(VALUES/);

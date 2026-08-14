@@ -30,7 +30,6 @@ import {
   createHeartbeatAndRefreshPresence,
   getHeartbeatsByDevice,
   getHeartbeatsByDeviceInRange,
-  createEvent,
   getStudentById,
   getStudentsBySchool,
   createStudent,
@@ -47,12 +46,14 @@ import {
   getAdminEmailsBySchool,
   addCentralEmailRecipientForSchool,
   upsertSettings,
-  getRecentMessagesForStudent,
+  getPendingMessagesForStudent,
   getStudentByEmail,
   createEvidenceArtifact,
   createStudentTimelineEvent,
   endStudentSession,
   getBatchTileAccessForStaff,
+  getClasspilotStudentControlState,
+  acknowledgeClasspilotStudentControlState,
   getHeartbeatTileHistoryBatch,
   getHeartbeatTileHistoryBatchSqlShapeIdentity,
   type ClassPilotHistoryTileAccess,
@@ -66,11 +67,13 @@ import {
 import { comparePassword } from "../../util/password.js";
 import { updateDeviceStatus, updateDeviceClassification, removeDeviceStatus } from "../../realtime/student-statuses.js";
 import {
-  broadcastToTeachersLocal,
+  broadcastToStaffSessionLocal,
   sendToDeviceLocal,
 } from "../../realtime/ws-broadcast.js";
 import {
   publishWS,
+  publishOrderedWS,
+  recordLocalOrderedDelivery,
   setScreenshot,
   getScreenshot,
   setFlightPathStatus,
@@ -98,6 +101,10 @@ import {
 } from "../../services/classpilotSharedChromebook.js";
 import { buildStudentFabState } from "../../services/classpilotFab.js";
 import {
+  classpilotCommandDeliveryPolicy,
+  classpilotCommandExpiresAt,
+} from "../../services/classpilotCommandDelivery.js";
+import {
   extensionRuntimeTelemetrySchema,
   trackExtensionRuntimeTelemetry,
 } from "../../services/runtimeTelemetry.js";
@@ -120,6 +127,21 @@ import {
   recordHeartbeatTileHistoryFallbackDatabaseRead,
   recordHeartbeatHotPathTiming,
 } from "../../services/heartbeatHotPathMetrics.js";
+import {
+  CLASSPILOT_REALTIME_STALE_AFTER_MS,
+  classpilotPublicRealtimeBinding,
+  classpilotRealtimeOrderingKey,
+  markClasspilotRealtimeSignedOut,
+  patchClasspilotRealtimeClassification,
+  writeClasspilotRealtimeStatus,
+  type ClasspilotRealtimeStatus,
+} from "../../services/classpilotRealtimeStatus.js";
+import {
+  effectiveClasspilotControlEnforcementHealth,
+  serializeClasspilotStudentControlState,
+} from "../../services/classpilotClassroomState.js";
+import { recordClasspilotStudentSessionMonitoringEvent } from "../../services/classpilotMonitoringEvents.js";
+import { resolveCurrentClasspilotSafetyAction } from "../../services/classpilotSafetyAction.js";
 
 bindHeartbeatHotPathHistoryFallbackSqlIdentity(
   getHeartbeatTileHistoryBatchSqlShapeIdentity()
@@ -141,8 +163,21 @@ function normalizeExtensionSignOutReason(value: unknown): string {
 
 // Cooldown for safety alerts: deviceId:domain → timestamp. Prevents duplicate alerts/emails.
 const safetyAlertCooldown = new Map<string, number>();
-// Track delivered message IDs per device to avoid re-sending
-const deliveredMessages = new Map<string, Set<string>>();
+// The legacy pending-message table has no durable delivery marker. Keep a
+// bounded, identity-bound process cache so reconnect recovery can advance
+// through the inbox. The extension also receives stable ids and must retain
+// its own dedupe history across API restarts.
+type DeliveredMessageState = {
+  studentId: string;
+  messageIds: Set<string>;
+  lastHeartbeatAt: number;
+  lastInboxCheckAt: number;
+};
+const deliveredMessages = new Map<string, DeliveredMessageState>();
+const PENDING_MESSAGE_RECONNECT_GAP_MS = 60_000;
+const PENDING_MESSAGE_PERIODIC_CHECK_MS = 5 * 60_000;
+const DELIVERED_MESSAGE_CACHE_TTL_MS = 24 * 60 * 60_000;
+const DELIVERED_MESSAGE_CACHE_MAX_IDS = 500;
 const SAFETY_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
 const PIN_LOGIN_MAX_FAILURES = 5;
 const PIN_LOGIN_LOCKOUT_MS = 10 * 60 * 1000;
@@ -307,6 +342,16 @@ const staffAuth = [
   authenticate,
   requireSchoolContext,
   requireRole("admin", "school_admin", "teacher", "office_staff"),
+  requireActiveSchool,
+  requireProductLicense("CLASSPILOT"),
+] as const;
+
+// Raw extension identifiers are device-management data, not teacher classroom
+// targets. Teachers use the student-scoped command and batch tile contracts.
+const deviceAdminAuth = [
+  authenticate,
+  requireSchoolContext,
+  requireRole("admin", "school_admin"),
   requireActiveSchool,
   requireProductLicense("CLASSPILOT"),
 ] as const;
@@ -603,24 +648,112 @@ async function clearPinFailures(schoolId: string, studentId: string) {
   fallbackPinLoginFailures.delete(key);
 }
 
+function publicRealtimeFields(snapshot: ClasspilotRealtimeStatus) {
+  const age = Math.max(0, Date.now() - snapshot.observedAt);
+  const activityFresh = snapshot.state === "active" && age < CLASSPILOT_REALTIME_STALE_AFTER_MS;
+  return {
+    schemaVersion: snapshot.schemaVersion,
+    eventVersion: 2,
+    realtimeBinding: classpilotPublicRealtimeBinding(snapshot.studentSessionId),
+    realtimeRevision: snapshot.revision,
+    realtimeObservedAt: new Date(snapshot.observedAt).toISOString(),
+    activityFresh,
+    activityState: snapshot.activityState,
+    monitoringState: snapshot.state === "signed_out"
+      ? "not_logged_in"
+      : activityFresh
+        ? "healthy"
+        : "signal_lost",
+    monitoringLostAt: snapshot.state === "active" && !activityFresh
+      ? new Date(snapshot.observedAt + CLASSPILOT_REALTIME_STALE_AFTER_MS).toISOString()
+      : null,
+    classificationPending: snapshot.classificationPending,
+    openTabCount: snapshot.openTabCount,
+    tabsTruncated: snapshot.tabsTruncated,
+    activeTabUrl: snapshot.activeTabUrl,
+    activeTabTitle: snapshot.activeTabTitle,
+    favicon: snapshot.favicon,
+    allOpenTabs: snapshot.allOpenTabs,
+    screenLocked: snapshot.classroomControls.screenLocked,
+    flightPathActive: snapshot.classroomControls.flightPathActive,
+    activeFlightPathName: snapshot.classroomControls.activeFlightPathName,
+    isSharing: snapshot.classroomControls.isSharing,
+    isScreenSharing: snapshot.classroomControls.isSharing,
+    cameraActive: snapshot.classroomControls.cameraActive,
+    aiClassification: snapshot.aiClassification ?? null,
+    screenshotHealth: snapshot.screenshotHealth,
+    classroomState: snapshot.classroomState,
+    enforcementHealth: snapshot.enforcementHealth,
+  };
+}
+
+async function publishRevisionedRealtimeUpdate(
+  snapshot: ClasspilotRealtimeStatus,
+  message: Record<string, unknown>,
+  teachingSessionId: string | null | undefined = snapshot.classroomState?.teachingSessionId
+): Promise<void> {
+  if (!teachingSessionId) return;
+  const orderedKey = classpilotRealtimeOrderingKey(snapshot.schoolId, snapshot.deviceId);
+  const revision = String(snapshot.revision);
+  const scopedOrderedKey = `${orderedKey}:session:${teachingSessionId}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 300);
+    timeout.unref?.();
+    let outcome: Awaited<ReturnType<typeof publishOrderedWS>>;
+    try {
+      outcome = await publishOrderedWS(
+        { kind: "staff-session", schoolId: snapshot.schoolId, sessionId: teachingSessionId },
+        message,
+        { orderedKey: scopedOrderedKey, revision, signal: controller.signal }
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (
+      (outcome.status === "accepted" || outcome.status === "failed")
+      && recordLocalOrderedDelivery(scopedOrderedKey, revision)
+    ) {
+      // Redis outages still permit local delivery, but only to clients that
+      // passed the authorized session-subscription check.
+      broadcastToStaffSessionLocal(snapshot.schoolId, teachingSessionId, message);
+    }
+}
+
 async function broadcastStudentSignedOut(options: {
   schoolId: string;
   studentId: string;
+  studentSessionId: string;
   deviceId: string;
   reason: string;
 }) {
+  const controlState = await runWithTenantContext({ schoolId: options.schoolId }, () =>
+    getClasspilotStudentControlState(options.schoolId, options.studentId)
+  ).catch(() => undefined);
+  void runWithTenantContext({ schoolId: options.schoolId }, () =>
+    recordClasspilotStudentSessionMonitoringEvent({
+      ...options,
+      type: "student_session_ended",
+      reason: options.reason,
+    })
+  ).catch(() => { /* lifecycle telemetry must not block sign-out */ });
+  const mutation = await markClasspilotRealtimeSignedOut(options);
+  if (mutation.status === "stale" || !mutation.snapshot) return;
   removeDeviceStatus(options.schoolId, options.deviceId);
   const signOutUpdate = {
     type: "student-signed-out",
     studentId: options.studentId,
-    deviceId: options.deviceId,
     schoolId: options.schoolId,
     status: "offline",
     reason: options.reason,
     timestamp: new Date().toISOString(),
+    ...publicRealtimeFields(mutation.snapshot),
   };
-  broadcastToTeachersLocal(options.schoolId, signOutUpdate);
-  await publishWS({ kind: "staff", schoolId: options.schoolId }, signOutUpdate);
+  await publishRevisionedRealtimeUpdate(
+    mutation.snapshot,
+    signOutUpdate,
+    controlState?.teachingSessionId
+  );
 }
 
 async function completeStudentDeviceLogin(options: {
@@ -636,6 +769,7 @@ async function completeStudentDeviceLogin(options: {
 
   const {
     device,
+    session,
     previousStudentSession,
     previousDeviceSession,
     studentToken,
@@ -648,10 +782,28 @@ async function completeStudentDeviceLogin(options: {
   });
   const studentEmail = options.student.email || undefined;
 
+  const tokenPayload = verifyStudentToken(studentToken);
+  if (!(await verifyActiveStudentTokenSession(tokenPayload))) {
+    throw Object.assign(new Error("Student session was replaced before login completed"), {
+      status: 409,
+      code: "STUDENT_SESSION_REPLACED",
+    });
+  }
+  void runWithTenantContext({ schoolId: options.schoolId }, () =>
+    recordClasspilotStudentSessionMonitoringEvent({
+      schoolId: options.schoolId,
+      studentId: options.student!.id,
+      studentSessionId: session.id,
+      deviceId: options.deviceId,
+      type: "student_session_started",
+    })
+  ).catch(() => { /* lifecycle telemetry must not block login */ });
+
   if (previousDeviceSession && previousDeviceSession.studentId !== options.student.id) {
     await broadcastStudentSignedOut({
       schoolId: options.schoolId,
       studentId: previousDeviceSession.studentId,
+      studentSessionId: previousDeviceSession.id,
       deviceId: options.deviceId,
       reason: "session_replaced",
     });
@@ -670,23 +822,29 @@ async function completeStudentDeviceLogin(options: {
     await broadcastStudentSignedOut({
       schoolId: options.schoolId,
       studentId: options.student.id,
+      studentSessionId: previousStudentSession.id,
       deviceId: previousStudentSession.deviceId,
       reason: "session_replaced",
     });
   }
 
-  broadcastToTeachersLocal(options.schoolId, {
-    type: "student-registered",
-    studentId: options.student.id,
-    deviceId: options.deviceId,
-    studentEmail,
-    studentName: `${options.student.firstName || ""} ${options.student.lastName || ""}`.trim() || options.student.email || "Student",
-  });
-  await publishWS({ kind: "staff", schoolId: options.schoolId }, {
-    type: "student-registered",
-    studentId: options.student.id,
-    deviceId: options.deviceId,
-  });
+  const controlState = await getClasspilotStudentControlState(
+    options.schoolId,
+    options.student.id
+  );
+  // The control state is student-scoped, but the login response is authorized
+  // by this exact newly-issued student/session/device binding. Re-check as the
+  // final awaited operation so a concurrent replacement cannot receive a
+  // stale token together with an apparently authoritative snapshot.
+  if (!(await verifyActiveStudentTokenSession(tokenPayload))) {
+    throw Object.assign(new Error("Student session was replaced before login completed"), {
+      status: 409,
+      code: "STUDENT_SESSION_REPLACED",
+    });
+  }
+  const classroomState = controlState
+    ? serializeClasspilotStudentControlState(controlState)
+    : null;
 
   return {
     success: true,
@@ -694,6 +852,7 @@ async function completeStudentDeviceLogin(options: {
     student: classPilotStudentDto(options.student),
     studentToken,
     manualExpiresInSeconds: 300,
+    classroomState,
   };
 }
 
@@ -739,6 +898,10 @@ const heartbeatRateLimitCleanupTimer = setInterval(() => {
   const cutoff = Date.now() - 120_000; // remove entries older than 2 min
   for (const [key, ts] of deviceLastHeartbeat) {
     if (ts < cutoff) deviceLastHeartbeat.delete(key);
+  }
+  const deliveredCutoff = Date.now() - DELIVERED_MESSAGE_CACHE_TTL_MS;
+  for (const [key, state] of deliveredMessages) {
+    if (state.lastHeartbeatAt < deliveredCutoff) deliveredMessages.delete(key);
   }
 }, RATE_LIMIT_CLEANUP_INTERVAL_MS);
 heartbeatRateLimitCleanupTimer.unref?.();
@@ -1245,18 +1408,13 @@ router.post("/extension/sign-out", requireDeviceAuth, async (req, res, next) => 
     if (active?.student.id === studentId) {
       await endStudentSession(active.session.id);
     }
-    removeDeviceStatus(schoolId, deviceId);
-    const update = {
-      type: "student-signed-out",
-      studentId,
-      deviceId,
+    await broadcastStudentSignedOut({
       schoolId,
-      status: "offline",
+      studentId,
+      studentSessionId: active?.session.id || (res.locals.studentSessionId as string),
+      deviceId,
       reason,
-      timestamp: new Date().toISOString(),
-    };
-    broadcastToTeachersLocal(schoolId, update);
-    await publishWS({ kind: "staff", schoolId }, update);
+    });
     return res.json({ success: true });
   } catch (err) {
     next(err);
@@ -1515,6 +1673,7 @@ router.post("/register-student", extensionRegisterLimiter, async (req, res, next
         studentToken: login.studentToken,
         student: login.student,
         manualExpiresInSeconds: login.manualExpiresInSeconds,
+        classroomState: login.classroomState,
       });
     });
   } catch (err) {
@@ -1612,11 +1771,13 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, deviceHeartbeat
       allOpenTabs, favicon, isScreenRecording, isScreenSharing,
       cameraActive, status: trackingStatus, activeStudentId,
       flightPathActive, activeFlightPathName, screenshotHealth,
-      extensionVersion, chromeVersion,
+      extensionVersion, chromeVersion, appliedClassroomStateRevision,
+      classroomStateOutcome,
     } = req.body;
     const schoolId = res.locals.schoolId as string;
     const studentId = res.locals.studentId as string;
     const deviceId = res.locals.deviceId as string;
+    const studentSessionId = res.locals.studentSessionId as string;
 
     // --- Per-device rate limiting (item #9) ---
     const lastHb = deviceLastHeartbeat.get(deviceId);
@@ -1624,6 +1785,8 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, deviceHeartbeat
     if (lastHb && now - lastHb < HEARTBEAT_MIN_INTERVAL_MS) {
       return res.status(204).send();
     }
+    const pendingMessageRecoveryHeartbeat = !lastHb
+      || now - lastHb >= PENDING_MESSAGE_RECONNECT_GAP_MS;
     deviceLastHeartbeat.set(deviceId, now);
 
     // Keep the RLS connection only around the short database section. Redis,
@@ -1654,7 +1817,8 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, deviceHeartbeat
       }
 
       // --- Save heartbeat and throttled presence in one DB round trip ---
-      const heartbeat = await createHeartbeatAndRefreshPresence({
+      const [heartbeat, controlState] = await Promise.all([
+        createHeartbeatAndRefreshPresence({
         deviceId,
         studentId,
         schoolId,
@@ -1669,15 +1833,48 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, deviceHeartbeat
         extensionVersion,
         chromeVersion,
         screenshotHealth,
-      }, res.locals.studentSessionId as string);
+        }, res.locals.studentSessionId as string),
+        getClasspilotStudentControlState(schoolId, studentId),
+      ]);
       if (heartbeat.outcome === "replaced_session") {
         return { outcome: "replaced_session" } as const;
       }
       if (heartbeat.outcome === "inactive_session") {
         return { outcome: "inactive_session" } as const;
       }
+      if (
+        controlState
+        && Number.isSafeInteger(Number(appliedClassroomStateRevision))
+        && Number(appliedClassroomStateRevision) === controlState.revision
+      ) {
+        const outcome = String(classroomStateOutcome || "").toLowerCase();
+        const ackOutcome = outcome === "applied" || outcome === "success"
+          ? "applied"
+          : outcome === "failed"
+            ? "failed"
+            : outcome === "unsupported"
+              ? "unsupported"
+              : outcome === "expired"
+                ? "expired"
+                : null;
+        const expectedHealth = ackOutcome === "applied" ? "synced" : ackOutcome;
+        if (
+          ackOutcome
+          && (controlState.appliedRevision !== Number(appliedClassroomStateRevision)
+            || controlState.enforcementHealth !== expectedHealth)
+        ) {
+          await acknowledgeClasspilotStudentControlState({
+            schoolId,
+            studentId,
+            studentSessionId,
+            deviceId,
+            appliedRevision: Number(appliedClassroomStateRevision),
+            outcome: ackOutcome,
+          });
+        }
+      }
 
-      return { outcome: "recorded", heartbeat, school } as const;
+      return { outcome: "recorded", heartbeat, school, controlState } as const;
     });
     recordHeartbeatHotPathTiming(
       "heartbeatDatabaseMs",
@@ -1695,18 +1892,13 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, deviceHeartbeat
     }
     if (heartbeatDbResult.outcome === "replaced_session") {
       recordHeartbeatHotPathCounter("heartbeatReplacedSession");
-      removeDeviceStatus(schoolId, deviceId);
-      const signOutUpdate = {
-        type: "student-signed-out",
-        studentId,
-        deviceId,
+      await broadcastStudentSignedOut({
         schoolId,
-        status: "offline",
+        studentId,
+        studentSessionId,
+        deviceId,
         reason: "session_replaced",
-        timestamp: new Date().toISOString(),
-      };
-      broadcastToTeachersLocal(schoolId, signOutUpdate);
-      await publishWS({ kind: "staff", schoolId }, signOutUpdate);
+      });
       return res.status(409).json({
         error: "student_session_replaced",
         message: "This student is signed in on another Chromebook.",
@@ -1718,13 +1910,23 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, deviceHeartbeat
       // letting the insert CTE remain the sole database authority.
       return res.status(401).json({ error: "Student session is no longer active" });
     }
-    const { heartbeat, school } = heartbeatDbResult;
+    const { heartbeat, school, controlState } = heartbeatDbResult;
+    const classroomState = controlState
+      ? serializeClasspilotStudentControlState(controlState)
+      : null;
+    const enforcementHealth = controlState
+      ? effectiveClasspilotControlEnforcementHealth(controlState, extensionVersion)
+      : undefined;
     const studentEmail = heartbeat.studentEmail;
     recordHeartbeatHotPathCounter("heartbeatRecorded");
 
-    // Write through the bounded latest-history cache without extending the
-    // request's PostgreSQL connection lifetime. A cache failure is deliberately
-    // non-authoritative; authorized history reads fall back to PostgreSQL.
+    const classificationPending = typeof activeTabUrl === "string" &&
+      activeTabUrl.length > 0 &&
+      !activeTabUrl.startsWith("chrome");
+
+    // Write the latest history and authoritative realtime snapshot concurrently
+    // after releasing PostgreSQL. Neither Redis path can make the accepted
+    // heartbeat fail; authorized reads retain their documented fallback chain.
     const heartbeatTileCacheWrite = writeHeartbeatTileCache({
       id: heartbeat.id,
       deviceId,
@@ -1745,15 +1947,40 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, deviceHeartbeat
       chromeVersion: chromeVersion ?? null,
       screenshotHealth: screenshotHealth ?? null,
       timestamp: heartbeat.timestamp,
-      classificationPending: Boolean(
-        activeTabUrl && !activeTabUrl.startsWith("chrome")
-      ),
+      classificationPending,
+    });
+    const realtimeStatusWrite = writeClasspilotRealtimeStatus({
+      schoolId,
+      studentId,
+      studentSessionId,
+      deviceId,
+      heartbeatId: heartbeat.id,
+      observedAt: heartbeat.timestamp.getTime(),
+      activeTabUrl,
+      activeTabTitle,
+      favicon,
+      allOpenTabs,
+      trackingStatus,
+      screenLocked,
+      flightPathActive,
+      activeFlightPathName,
+      isSharing: isScreenSharing || isScreenRecording || false,
+      cameraActive,
+      screenshotHealth,
+      classificationPending,
+      extensionVersion,
+      chromeVersion,
+      classroomState: classroomState || undefined,
+      enforcementHealth,
     });
     // A write-through cache must never keep serving an older complete list when
     // this heartbeat could not be inserted into Redis. Finish the single Redis
     // round trip after releasing PostgreSQL, then fail closed by deleting (or
     // locally suppressing) the affected cache key before the HTTP response.
-    const heartbeatTileCacheWritten = await heartbeatTileCacheWrite;
+    const [heartbeatTileCacheWritten, realtimeStatusMutation] = await Promise.all([
+      heartbeatTileCacheWrite,
+      realtimeStatusWrite,
+    ]);
     if (!heartbeatTileCacheWritten) {
       // invalidate() marks this process fail-closed before its first await.
       // Do not stack a second bounded Redis readiness wait onto heartbeat
@@ -1763,6 +1990,20 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, deviceHeartbeat
     const completedHeartbeatTileCacheWrite = Promise.resolve(
       heartbeatTileCacheWritten
     );
+    const realtimeSnapshot = realtimeStatusMutation.snapshot;
+    if (!realtimeSnapshot) {
+      if (realtimeStatusMutation.status === "stale") {
+        // A newer heartbeat or a sign-out tombstone already owns the latest
+        // status. Preserve the accepted historical row but never broadcast or
+        // classify this delayed request as current activity.
+        return res.json({
+          ok: true,
+          planStatus: school.planStatus || "active",
+          classroomState,
+        });
+      }
+      throw new Error("Realtime heartbeat snapshot was not created");
+    }
 
     // --- Update in-memory real-time status ---
     updateDeviceStatus({
@@ -1789,25 +2030,15 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, deviceHeartbeat
     const update: Record<string, unknown> = {
       type: "student-update",
       studentId,
-      deviceId,
       schoolId,
-      activeTabUrl,
-      activeTabTitle,
       visibilityState,
-      screenLocked,
       isScreenRecording,
-      isScreenSharing,
-      cameraActive,
       status: trackingStatus,
-      flightPathActive,
-      activeFlightPathName,
-      allOpenTabs: allOpenTabs || [],
-      favicon,
       timestamp: new Date().toISOString(),
+      ...publicRealtimeFields(realtimeSnapshot),
     };
 
-    broadcastToTeachersLocal(schoolId, update);
-    await publishWS({ kind: "staff", schoolId }, update);
+    await publishRevisionedRealtimeUpdate(realtimeSnapshot, update);
 
     // --- AI content classification (item #8) — async, non-blocking ---
     if (activeTabUrl && !activeTabUrl.startsWith("chrome")) {
@@ -1828,14 +2059,26 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, deviceHeartbeat
           if (!(await patchHeartbeatTileCacheClassifications([completion]))) {
             await invalidateHeartbeatTileCaches([completion]);
           }
+          const realtimeCompletion = await patchClasspilotRealtimeClassification({
+            schoolId,
+            studentId,
+            studentSessionId,
+            deviceId,
+            heartbeatId: heartbeat.id,
+            classification: null,
+          });
+          if (realtimeCompletion.snapshot) {
+            await publishRevisionedRealtimeUpdate(realtimeCompletion.snapshot, {
+              type: "ai-classification",
+              studentId,
+              schoolId,
+              classification: null,
+              classifiedUrl: realtimeCompletion.snapshot.activeTabUrl,
+              ...publicRealtimeFields(realtimeCompletion.snapshot),
+            });
+          }
           return;
         }
-
-        // Store classification in realtime status so students-aggregated includes it
-        updateDeviceClassification(schoolId, deviceId, {
-          category: classification.category,
-          safetyAlert: classification.safetyAlert,
-        });
 
         // Critical classifications persist immediately. Educational/unknown
         // results retain the same historical fields but share one school-bound
@@ -1849,23 +2092,68 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, deviceHeartbeat
           cacheWrite: completedHeartbeatTileCacheWrite,
         }).catch(() => {});
 
-        // Broadcast classification to teachers
-        const classificationUpdate = {
-          type: "ai-classification",
+        // Only the classification for the currently stored heartbeat may
+        // mutate or broadcast the latest page. Historical persistence above
+        // remains valid even when this result loses that race.
+        const realtimeClassification = await patchClasspilotRealtimeClassification({
+          schoolId,
           studentId,
+          studentSessionId,
           deviceId,
-          classification,
-        };
-        broadcastToTeachersLocal(schoolId, classificationUpdate);
-        void publishWS({ kind: "staff", schoolId }, classificationUpdate);
+          heartbeatId: heartbeat.id,
+          classification: {
+            category: classification.category,
+            safetyAlert: classification.safetyAlert,
+          },
+        });
+        if (realtimeClassification.snapshot) {
+          updateDeviceClassification(schoolId, deviceId, {
+            category: classification.category,
+            safetyAlert: classification.safetyAlert,
+          });
+          await publishRevisionedRealtimeUpdate(realtimeClassification.snapshot, {
+            type: "ai-classification",
+            studentId,
+            schoolId,
+            classification,
+            classifiedUrl: realtimeClassification.snapshot.activeTabUrl,
+            ...publicRealtimeFields(realtimeClassification.snapshot),
+          });
+        }
 
-        // Safety alert — broadcast urgently + email admins + force close tab
-        if (classification.safetyAlert) {
+        const safetyAction = resolveCurrentClasspilotSafetyAction({
+          classification,
+          realtimeMutation: realtimeClassification,
+          schoolId,
+          studentId,
+          studentSessionId,
+          deviceId,
+          heartbeatId: heartbeat.id,
+          activeTabUrl,
+          activeTabTitle,
+        });
+
+        // Historical classification persistence above remains valid for a
+        // stale result, but no live close, evidence, staff alert, or email may
+        // escape unless this exact heartbeat still owns the active binding.
+        if (safetyAction) {
           // Always close the tab immediately regardless of cooldown
+          const safetyCommandIssuedAt = new Date();
+          const safetyCommandExpiresAt = classpilotCommandExpiresAt(
+            "close-tab",
+            safetyCommandIssuedAt
+          )!;
           const closeCmd = {
             type: "remote-control",
             _msgId: crypto.randomUUID(),
-            command: { type: "close-tab", data: { pattern: classification.domain } },
+            deliveryPolicy: classpilotCommandDeliveryPolicy("close-tab"),
+            expiresAt: safetyCommandExpiresAt.toISOString(),
+            command: {
+              type: "close-tab",
+              deliveryPolicy: classpilotCommandDeliveryPolicy("close-tab"),
+              expiresAt: safetyCommandExpiresAt.toISOString(),
+              data: safetyAction.closeTabData,
+            },
           };
           sendToDeviceLocal(schoolId, deviceId, closeCmd);
           void publishWS({ kind: "device", schoolId, deviceId }, closeCmd);
@@ -1888,8 +2176,8 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, deviceHeartbeat
             studentId,
             deviceId,
             heartbeatId: heartbeat.id,
-            url: activeTabUrl,
-            title: activeTabTitle,
+            url: safetyAction.classifiedUrl,
+            title: safetyAction.classifiedTitle,
             classification,
           }).catch((err) => {
             console.warn("[Safety] Failed to record AI decision timeline:", err);
@@ -1912,8 +2200,8 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, deviceHeartbeat
                 content: screenshotData?.screenshot || null,
                 metadata: {
                   deviceId,
-                  tabTitle: screenshotData?.tabTitle || activeTabTitle,
-                  tabUrl: screenshotData?.tabUrl || activeTabUrl,
+                  tabTitle: screenshotData?.tabTitle || safetyAction.classifiedTitle,
+                  tabUrl: screenshotData?.tabUrl || safetyAction.classifiedUrl,
                   capturedFromRedis: !!screenshotData?.screenshot,
                 },
               });
@@ -1926,16 +2214,18 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, deviceHeartbeat
           const alert = {
             type: "safety-alert",
             studentId,
-            deviceId,
             studentEmail,
             alert: classification.safetyAlert,
-            url: activeTabUrl,
-            title: activeTabTitle,
+            url: safetyAction.classifiedUrl,
+            title: safetyAction.classifiedTitle,
             domain: classification.domain,
             timestamp: new Date().toISOString(),
           };
-          broadcastToTeachersLocal(schoolId, alert);
-          void publishWS({ kind: "staff", schoolId }, alert);
+          const alertSessionId = safetyAction.teachingSessionId;
+          if (alertSessionId) {
+            broadcastToStaffSessionLocal(schoolId, alertSessionId, alert);
+            void publishWS({ kind: "staff-session", schoolId, sessionId: alertSessionId }, alert);
+          }
 
           // Send email to school admins if enabled
           runWithTenantContext({ schoolId }, async () => {
@@ -1951,8 +2241,8 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, deviceHeartbeat
                   recipients,
                   studentEmail,
                   alertType: classification.safetyAlert!,
-                  url: activeTabUrl,
-                  title: activeTabTitle || "Unknown",
+                  url: safetyAction.classifiedUrl,
+                  title: safetyAction.classifiedTitle || "Unknown",
                   schoolName: school?.name || "Your School",
                 });
               }
@@ -1969,24 +2259,69 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, deviceHeartbeat
     }
 
     // --- Deliver any missed messages (item #3b) ---
-    // Only check DB for pending messages on the FIRST heartbeat from a device
-    // (when deliveredMessages has no entry). After that, WebSocket handles delivery.
-    // This saves 1 DB query on every subsequent heartbeat (~99% of traffic).
+    // Check on the first heartbeat, immediately after a monitoring-sized gap,
+    // or periodically as a fallback for a WebSocket-only interruption. Normal
+    // heartbeats retain the no-query hot path.
     let pendingMessages: Array<{ id: string; message: string }> = [];
-    const isFirstHeartbeat = !deliveredMessages.has(deviceId);
-    if (isFirstHeartbeat) {
+    let deliveryState = deliveredMessages.get(deviceId);
+    if (deliveryState && deliveryState.studentId !== studentId) {
+      // Shared Chromebook privacy boundary: never carry one student's inbox
+      // delivery history into another authenticated student session.
+      deliveredMessages.delete(deviceId);
+      deliveryState = undefined;
+    }
+    if (deliveryState) deliveryState.lastHeartbeatAt = now;
+    const shouldCheckPendingMessages = !deliveryState
+      || pendingMessageRecoveryHeartbeat
+      || now - deliveryState.lastInboxCheckAt >= PENDING_MESSAGE_PERIODIC_CHECK_MS;
+    if (shouldCheckPendingMessages) {
       try {
         const recent = await runWithTenantContext(
           { schoolId },
-          () => getRecentMessagesForStudent(studentId, 5)
+          () => getPendingMessagesForStudent({
+            schoolId,
+            studentId,
+            excludeMessageIds: deliveryState ? [...deliveryState.messageIds] : [],
+          })
         );
-        if (recent.length > 0) {
-          const delivered = new Set<string>();
-          deliveredMessages.set(deviceId, delivered);
-          pendingMessages = recent.map(m => ({ id: m.id, message: m.message }));
-          for (const m of pendingMessages) delivered.add(m.id);
-        } else {
-          deliveredMessages.set(deviceId, new Set());
+        const checkedState = deliveryState || {
+          studentId,
+          messageIds: new Set<string>(),
+          lastHeartbeatAt: now,
+          lastInboxCheckAt: now,
+        };
+        checkedState.lastHeartbeatAt = now;
+        checkedState.lastInboxCheckAt = now;
+        deliveredMessages.set(deviceId, checkedState);
+        pendingMessages = recent.map((message) => ({
+          id: message.id,
+          message: message.message,
+        }));
+        if (pendingMessages.length > 0) {
+          const deliveredIds = pendingMessages.map((message) => message.id);
+          let responseFinished = false;
+          // Do not suppress a retry merely because the response was assembled.
+          // `finish` is the server's available evidence that the successful
+          // heartbeat response was handed off for delivery to this binding.
+          res.once("finish", () => {
+            responseFinished = true;
+            const current = deliveredMessages.get(deviceId);
+            if (!current || current.studentId !== studentId) return;
+            for (const messageId of deliveredIds) current.messageIds.add(messageId);
+            while (current.messageIds.size > DELIVERED_MESSAGE_CACHE_MAX_IDS) {
+              const oldest = current.messageIds.values().next().value as string | undefined;
+              if (!oldest) break;
+              current.messageIds.delete(oldest);
+            }
+          });
+          res.once("close", () => {
+            if (responseFinished) return;
+            const current = deliveredMessages.get(deviceId);
+            if (!current || current.studentId !== studentId) return;
+            // The response closed before `finish`; leave ids unmarked and make
+            // the next authenticated heartbeat retry the inbox immediately.
+            current.lastInboxCheckAt = 0;
+          });
         }
       } catch { /* non-blocking */ }
     }
@@ -1995,6 +2330,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, deviceHeartbeat
     return res.json({
       ok: true,
       planStatus: school.planStatus || "active",
+      classroomState,
       ...(pendingMessages.length > 0 ? { pendingMessages } : {}),
     });
   } catch (err) {
@@ -2039,13 +2375,6 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, deviceScreensh
       typeof screenshot === "string" ? Buffer.byteLength(screenshot, "utf8") : 0,
       stored
     );
-
-    // Notify teachers
-    broadcastToTeachersLocal(schoolId, {
-      type: "screenshot-available",
-      deviceId,
-      timestamp: data.timestamp,
-    });
 
     return res.json({ ok: true });
   } catch (err) {
@@ -2218,7 +2547,7 @@ router.post("/tiles/history", ...tileReadAuth, async (req, res, next) => {
 });
 
 // GET /api/classpilot/device/screenshot/:deviceId - Get screenshot
-router.get("/device/screenshot/:deviceId", ...tileReadAuth, async (req, res, next) => {
+router.get("/device/screenshot/:deviceId", ...deviceAdminAuth, async (req, res, next) => {
   try {
     const deviceId = param(req, "deviceId");
     const authorization = await withAuthorizedTileDevice(
@@ -2266,48 +2595,23 @@ router.get("/device/screenshot/:deviceId", ...tileReadAuth, async (req, res, nex
 // Events (item #3 — return planStatus)
 // ============================================================================
 
-// POST /api/classpilot/device/event - Log device event
-router.post("/device/event", requireDeviceAuth, deviceActionLimiter, async (req, res, next) => {
+// Legacy unscoped event ingestion is intentionally retired. Older extensions
+// receive a successful no-op during the mixed rollout; new builds use the
+// tenant/session-bound /device/events outbox endpoint.
+router.post("/device/event", requireDeviceAuth, deviceActionLimiter, async (_req, res) => {
   try {
-    const { eventType, metadata } = req.body;
-    const deviceId = res.locals.deviceId as string;
-    const studentId = res.locals.studentId as string;
     const schoolId = res.locals.schoolId as string;
-
-    // Check school active for planStatus
     const school = await getSchoolById(schoolId);
     if (!school || school.status !== "active") {
       return res.status(402).json({ planStatus: "inactive" });
     }
-
-    await createEvent({
-      deviceId,
-      studentId,
-      eventType: eventType || "unknown",
-      metadata: metadata || null,
+    return res.json({
+      ok: true,
+      retained: false,
+      migration: "use_device_events_v1",
+      planStatus: school.planStatus || "active",
     });
-
-    // Broadcast relevant event types to teachers
-    const broadcastTypes = new Set([
-      "consent_granted", "consent_revoked", "blocked_domain",
-      "navigation", "url_change", "student_switched",
-    ]);
-    if (broadcastTypes.has(eventType)) {
-      const eventMsg = {
-        type: "student-event",
-        studentId,
-        deviceId,
-        eventType,
-        metadata,
-        timestamp: new Date().toISOString(),
-      };
-      broadcastToTeachersLocal(schoolId, eventMsg);
-      void publishWS({ kind: "staff", schoolId }, eventMsg);
-    }
-
-    return res.json({ ok: true, planStatus: school.planStatus || "active" });
-  } catch (err) {
-    // Bulletproof: never return 500 for events
+  } catch {
     return res.status(204).send();
   }
 });
@@ -2317,7 +2621,7 @@ router.post("/device/event", requireDeviceAuth, deviceActionLimiter, async (req,
 // ============================================================================
 
 // GET /api/classpilot/devices - List all devices for school
-router.get("/devices", ...staffAuth, async (req, res, next) => {
+router.get("/devices", ...deviceAdminAuth, async (req, res, next) => {
   try {
     const devices = await getDevicesBySchool(res.locals.schoolId!);
     return res.json({ devices });
@@ -2327,7 +2631,7 @@ router.get("/devices", ...staffAuth, async (req, res, next) => {
 });
 
 // PATCH /api/classpilot/devices/:deviceId - Update device
-router.patch("/devices/:deviceId", ...staffAuth, async (req, res, next) => {
+router.patch("/devices/:deviceId", ...deviceAdminAuth, async (req, res, next) => {
   try {
     const deviceId = param(req, "deviceId");
     const device = await getDeviceById(deviceId);
@@ -2350,7 +2654,7 @@ router.patch("/devices/:deviceId", ...staffAuth, async (req, res, next) => {
 });
 
 // DELETE /api/classpilot/devices/:deviceId - Delete device
-router.delete("/devices/:deviceId", ...staffAuth, requireRole("admin"), async (req, res, next) => {
+router.delete("/devices/:deviceId", ...deviceAdminAuth, requireRole("admin"), async (req, res, next) => {
   try {
     const deviceId = param(req, "deviceId");
     const device = await getDeviceById(deviceId);
@@ -2365,7 +2669,7 @@ router.delete("/devices/:deviceId", ...staffAuth, requireRole("admin"), async (r
 });
 
 // GET /api/classpilot/heartbeats - Recent heartbeats for all devices
-router.get("/heartbeats", ...staffAuth, async (req, res, next) => {
+router.get("/heartbeats", ...deviceAdminAuth, async (req, res, next) => {
   try {
     const devices = await getDevicesBySchool(res.locals.schoolId!);
     const heartbeats: unknown[] = [];
@@ -2380,7 +2684,7 @@ router.get("/heartbeats", ...staffAuth, async (req, res, next) => {
 });
 
 // GET /api/classpilot/heartbeats/:deviceId - Device heartbeat history
-router.get("/heartbeats/:deviceId", ...tileReadAuth, async (req, res, next) => {
+router.get("/heartbeats/:deviceId", ...deviceAdminAuth, async (req, res, next) => {
   try {
     const deviceId = param(req, "deviceId");
     // Live tiles render only the ten most recent samples. Keep explicit limits
@@ -2561,17 +2865,17 @@ function remoteCommand(type: string) {
   };
 }
 
-router.post("/remote/open-tab", ...staffAuth, remoteCommand("open-tab"));
-router.post("/remote/close-tabs", ...staffAuth, remoteCommand("close-tabs"));
-router.post("/remote/lock-screen", ...staffAuth, remoteCommand("lock-screen"));
-router.post("/remote/unlock-screen", ...staffAuth, remoteCommand("unlock-screen"));
-router.post("/remote/temp-unblock", ...staffAuth, remoteCommand("temp-unblock"));
-router.post("/remote/limit-tabs", ...staffAuth, remoteCommand("limit-tabs"));
-router.post("/remote/attention-mode", ...staffAuth, remoteCommand("attention-mode"));
-router.post("/remote/timer", ...staffAuth, remoteCommand("timer"));
+router.post("/remote/open-tab", ...deviceAdminAuth, remoteCommand("open-tab"));
+router.post("/remote/close-tabs", ...deviceAdminAuth, remoteCommand("close-tabs"));
+router.post("/remote/lock-screen", ...deviceAdminAuth, remoteCommand("lock-screen"));
+router.post("/remote/unlock-screen", ...deviceAdminAuth, remoteCommand("unlock-screen"));
+router.post("/remote/temp-unblock", ...deviceAdminAuth, remoteCommand("temp-unblock"));
+router.post("/remote/limit-tabs", ...deviceAdminAuth, remoteCommand("limit-tabs"));
+router.post("/remote/attention-mode", ...deviceAdminAuth, remoteCommand("attention-mode"));
+router.post("/remote/timer", ...deviceAdminAuth, remoteCommand("timer"));
 
 // POST /api/classpilot/remote/apply-flight-path - Apply flight path to devices
-router.post("/remote/apply-flight-path", ...staffAuth, async (req, res, next) => {
+router.post("/remote/apply-flight-path", ...deviceAdminAuth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
     const { deviceIds, targetDeviceIds, flightPathId, flightPathName, allowedDomains } = req.body;
@@ -2627,7 +2931,7 @@ router.post("/remote/apply-flight-path", ...staffAuth, async (req, res, next) =>
 });
 
 // POST /api/classpilot/remote/remove-flight-path - Remove flight path
-router.post("/remote/remove-flight-path", ...staffAuth, async (req, res, next) => {
+router.post("/remote/remove-flight-path", ...deviceAdminAuth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
     const { deviceIds, targetDeviceIds } = req.body;

@@ -32,55 +32,70 @@ const getIceServers = () => {
 
 const ICE_SERVERS = getIceServers();
 
-export function useWebRTC(ws) {
-  // Map of deviceId -> WebRTC connection
+export function useWebRTC(ws, onStreamStopped) {
+  // Map of authorized studentId -> WebRTC connection. Raw device IDs never
+  // cross the teacher-facing WebSocket contract.
   const connectionsRef = useRef(new Map());
 
   // Stop live view for a student
   // NOTE: The second parameter intentionally shadows the outer `ws` to match
   // ClassPilot's original behavior. When called without a ws argument (e.g. from
   // onconnectionstatechange), no stop-share message is sent.
-  const stopLiveView = useCallback((deviceId, wsArg) => {
-    const connection = connectionsRef.current.get(deviceId);
-    if (!connection) return;
-
-    console.log(`[WebRTC] Stopping live view for ${deviceId}`);
-
-    // Stop all tracks
-    if (connection.stream) {
-      connection.stream.getTracks().forEach(track => track.stop());
+  const stopLiveView = useCallback((studentId, wsArg) => {
+    const connection = connectionsRef.current.get(studentId);
+    if (!connection) {
+      onStreamStopped?.(studentId);
+      return;
     }
 
-    // Close peer connection
-    connection.peerConnection.close();
+    console.log(`[WebRTC] Stopping live view for student ${studentId}`);
 
-    // Tell student to stop sharing (only if ws is explicitly provided)
-    if (wsArg && wsArg.readyState === WebSocket.OPEN) {
-      wsArg.send(JSON.stringify({
-        type: 'stop-share',
-        deviceId: deviceId,
-      }));
-      console.log(`[WebRTC] Sent stop-share to ${deviceId}`);
+    // Remove the connection before closing it. Calling close() transitions the
+    // peer to "closed" and may synchronously fire onconnectionstatechange;
+    // deleting first prevents a recursive cleanup while still guaranteeing the
+    // dashboard is told that this stream is no longer active.
+    connectionsRef.current.delete(studentId);
+    connection.peerConnection.onconnectionstatechange = null;
+
+    try {
+      // Stop all tracks
+      if (connection.stream) {
+        connection.stream.getTracks().forEach(track => track.stop());
+      }
+
+      // Close peer connection
+      connection.peerConnection.close();
+
+      // Tell student to stop sharing (only if ws is explicitly provided)
+      if (wsArg && wsArg.readyState === WebSocket.OPEN) {
+        wsArg.send(JSON.stringify({
+          type: 'stop-share',
+          studentId,
+          teachingSessionId: connection.teachingSessionId,
+        }));
+        console.log(`[WebRTC] Sent stop-share for student ${studentId}`);
+      }
+    } finally {
+      // UI cleanup must still happen if a track, peer, or WebSocket teardown
+      // throws; otherwise a frozen MediaStream object can mask signal loss.
+      onStreamStopped?.(studentId);
     }
-
-    // Remove from map
-    connectionsRef.current.delete(deviceId);
-  }, []);
+  }, [onStreamStopped]);
 
   // Start live view for a student
-  const startLiveView = useCallback(async (deviceId, onStreamReceived) => {
+  const startLiveView = useCallback(async (studentId, teachingSessionId, onStreamReceived) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       console.error('[WebRTC] WebSocket not connected');
       return null;
     }
 
     // Guard against double invocation (React StrictMode in dev)
-    if (connectionsRef.current.has(deviceId)) {
-      console.log(`[WebRTC] Already have connection for ${deviceId}, skipping`);
-      return connectionsRef.current.get(deviceId);
+    if (connectionsRef.current.has(studentId)) {
+      console.log(`[WebRTC] Already have connection for ${studentId}, skipping`);
+      return connectionsRef.current.get(studentId);
     }
 
-    console.log(`[WebRTC] Starting live view for device ${deviceId}`);
+    console.log(`[WebRTC] Starting live view for student ${studentId}`);
 
     // Create peer connection
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
@@ -88,17 +103,19 @@ export function useWebRTC(ws) {
     const connection = {
       peerConnection: pc,
       stream: null,
+      teachingSessionId,
       onStreamReceived
     };
 
-    connectionsRef.current.set(deviceId, connection);
+    connectionsRef.current.set(studentId, connection);
 
     // Handle incoming stream
     pc.ontrack = (event) => {
-      console.log(`[WebRTC] Received track from ${deviceId}:`, event.track.kind);
+      console.log(`[WebRTC] Received track from ${studentId}:`, event.track.kind);
       const [stream] = event.streams;
       if (stream) {
         connection.stream = stream;
+        event.track.onended = () => stopLiveView(studentId);
         onStreamReceived(stream);
       }
     };
@@ -108,7 +125,8 @@ export function useWebRTC(ws) {
       if (event.candidate && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
           type: 'ice',
-          to: deviceId,
+          toStudentId: studentId,
+          teachingSessionId,
           candidate: event.candidate.toJSON(),
         }));
       }
@@ -116,19 +134,24 @@ export function useWebRTC(ws) {
 
     // Handle connection state changes
     pc.onconnectionstatechange = () => {
-      console.log(`[WebRTC] Connection state for ${deviceId}:`, pc.connectionState);
-      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-        stopLiveView(deviceId);
+      console.log(`[WebRTC] Connection state for ${studentId}:`, pc.connectionState);
+      if (
+        pc.connectionState === 'failed'
+        || pc.connectionState === 'disconnected'
+        || pc.connectionState === 'closed'
+      ) {
+        stopLiveView(studentId);
       }
     };
 
     // Request screen share from student
     ws.send(JSON.stringify({
       type: 'request-stream',
-      deviceId: deviceId,
+      studentId,
+      teachingSessionId,
     }));
 
-    console.log(`[WebRTC] Requested stream from ${deviceId}`);
+    console.log(`[WebRTC] Requested stream from student ${studentId}`);
 
     // Send offer immediately (student will queue it if not ready yet)
     try {
@@ -140,55 +163,56 @@ export function useWebRTC(ws) {
 
       ws.send(JSON.stringify({
         type: 'offer',
-        to: deviceId,
+        toStudentId: studentId,
+        teachingSessionId,
         sdp: pc.localDescription?.toJSON(),
       }));
 
-      console.log(`[WebRTC] Sent offer to ${deviceId}`);
+      console.log(`[WebRTC] Sent offer to student ${studentId}`);
     } catch (error) {
-      console.error(`[WebRTC] Error creating/sending offer for ${deviceId}:`, error);
+      console.error(`[WebRTC] Error creating/sending offer for ${studentId}:`, error);
     }
 
     return connection;
   }, [ws, stopLiveView]);
 
   // Handle answer from student
-  const handleAnswer = useCallback(async (deviceId, sdp) => {
-    const connection = connectionsRef.current.get(deviceId);
+  const handleAnswer = useCallback(async (studentId, sdp) => {
+    const connection = connectionsRef.current.get(studentId);
     if (!connection) {
-      console.error(`[WebRTC] No connection found for ${deviceId}`);
+      console.error(`[WebRTC] No connection found for ${studentId}`);
       return;
     }
 
     try {
       await connection.peerConnection.setRemoteDescription(new RTCSessionDescription(sdp));
-      console.log(`[WebRTC] Set remote description for ${deviceId}`);
+      console.log(`[WebRTC] Set remote description for ${studentId}`);
     } catch (error) {
-      console.error(`[WebRTC] Error setting remote description for ${deviceId}:`, error);
+      console.error(`[WebRTC] Error setting remote description for ${studentId}:`, error);
     }
   }, []);
 
   // Handle ICE candidate from student
-  const handleIceCandidate = useCallback(async (deviceId, candidate) => {
-    const connection = connectionsRef.current.get(deviceId);
+  const handleIceCandidate = useCallback(async (studentId, candidate) => {
+    const connection = connectionsRef.current.get(studentId);
     if (!connection) {
-      console.error(`[WebRTC] No connection found for ${deviceId}`);
+      console.error(`[WebRTC] No connection found for ${studentId}`);
       return;
     }
 
     try {
       await connection.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-      console.log(`[WebRTC] Added ICE candidate for ${deviceId}`);
+      console.log(`[WebRTC] Added ICE candidate for ${studentId}`);
     } catch (error) {
-      console.error(`[WebRTC] Error adding ICE candidate for ${deviceId}:`, error);
+      console.error(`[WebRTC] Error adding ICE candidate for ${studentId}:`, error);
     }
   }, []);
 
   // Cleanup all connections
   const cleanup = useCallback(() => {
     console.log('[WebRTC] Cleaning up all connections');
-    connectionsRef.current.forEach((_, deviceId) => {
-      stopLiveView(deviceId);
+    connectionsRef.current.forEach((_, studentId) => {
+      stopLiveView(studentId);
     });
     connectionsRef.current.clear();
   }, [stopLiveView]);

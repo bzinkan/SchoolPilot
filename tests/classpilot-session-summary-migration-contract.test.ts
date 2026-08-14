@@ -71,7 +71,7 @@ describe("ClassPilot Session Summary startup migration contract", () => {
     );
   });
 
-  it("detaches rebuildable usage aggregation from finalization and contains rejection", () => {
+  it("materializes immutable usage with the report instead of detached finalization side effects", () => {
     const finalizerStart = storageSource.indexOf("export async function finalizeTeachingSession");
     const finalizerEnd = storageSource.indexOf(
       "export async function listScheduledSessionsReadyToFinalize",
@@ -87,14 +87,8 @@ describe("ClassPilot Session Summary startup migration contract", () => {
     const sideEffectsEnd = lifecycleSource.indexOf("type SessionSummaryData", sideEffectsStart);
     assert.ok(sideEffectsStart >= 0 && sideEffectsEnd > sideEffectsStart);
     const sideEffects = lifecycleSource.slice(sideEffectsStart, sideEffectsEnd);
-    assert.match(sideEffects, /void\s+runWithTenantContext/);
-    assert.match(sideEffects, /runWithTenantContext\(\{\s*schoolId:\s*options\.schoolId\s*\}/);
-    assert.match(sideEffects, /aggregateClasspilotSessionUsage\(result\.session\.id\)/);
-    assert.doesNotMatch(sideEffects, /await\s+(?:runWithTenantContext|aggregateClasspilotSessionUsage)/);
-    assert.match(
-      sideEffects,
-      /\.catch\(\(err\)\s*=>\s*\{[\s\S]*console\.warn/
-    );
+    assert.doesNotMatch(sideEffects, /aggregateClasspilotSessionUsage/);
+    assert.match(sideEffects, /Usage is frozen with the coverage rows and derived gap events/);
 
     const manualStartEnd = lifecycleSource.indexOf("export type ClasspilotSessionLifecycle");
     const manualStart = lifecycleSource.slice(

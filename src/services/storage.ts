@@ -1,4 +1,4 @@
-import { eq, and, desc, asc, gt, ilike, or, isNull, isNotNull, inArray, getTableColumns, sql, ne, type SQL, type SQLWrapper } from "drizzle-orm";
+import { eq, and, desc, asc, gt, lt, ilike, or, isNull, isNotNull, inArray, notInArray, getTableColumns, sql, ne, type SQL, type SQLWrapper } from "drizzle-orm";
 import { PgDialect, type PgUpdateSetSource } from "drizzle-orm/pg-core";
 import db from "../db.js";
 import { getTenantStore, rlsGucEnabled } from "../db/tenantContext.js";
@@ -9,6 +9,15 @@ import {
   registerCacheInvalidationHandler,
 } from "../realtime/cacheInvalidation.js";
 import { createLocalDateFormatter, localDateInTimeZone, localDateTimeUtc } from "../util/schoolTime.js";
+import { classpilotRetentionExpiresAt } from "../util/classpilotRetention.js";
+import {
+  emptyClasspilotRestrictions,
+  restrictionsFromClassroomStates,
+} from "./classpilotClassroomState.js";
+import {
+  createClasspilotReportAuthorizationMarker,
+  isClasspilotReportAuthorizedStaff,
+} from "./classpilotReportAuthorization.js";
 import {
   assertClasspilotHistoryFallbackPiStatementDiscoverable,
   createClasspilotHistoryFallbackSqlShapeIdentity,
@@ -108,6 +117,11 @@ import {
   classpilotClassroomStates,
   classpilotScheduledConflicts,
   classpilotSessionSummaryDeliveries,
+  classpilotSessionReports,
+  classpilotSessionStudentReports,
+  classpilotSessionStaff,
+  classpilotMonitoringEvents,
+  classpilotStudentControlStates,
   classpilotSessionStudents,
   classpilotSessionUsage,
   classpilotCoverageAssignments,
@@ -161,6 +175,12 @@ import {
   type InsertClasspilotScheduledConflict,
   type ClasspilotSessionSummaryDelivery,
   type InsertClasspilotSessionSummaryDelivery,
+  type ClasspilotSessionReport,
+  type ClasspilotSessionStudentReport,
+  type ClasspilotSessionStaff,
+  type ClasspilotMonitoringEvent,
+  type InsertClasspilotMonitoringEvent,
+  type ClasspilotStudentControlState,
   type ClasspilotSessionStudent,
   type ClasspilotSessionUsage,
   type ClasspilotCoverageAssignment,
@@ -7180,8 +7200,20 @@ export async function resyncClasspilotSessionStudents(
     }
 
     const roster = await dbInstance
-      .select({ studentId: groupStudents.studentId })
+      .select({
+        studentId: groupStudents.studentId,
+        firstName: students.firstName,
+        lastName: students.lastName,
+        email: students.email,
+      })
       .from(groupStudents)
+      .innerJoin(
+        students,
+        and(
+          eq(students.id, groupStudents.studentId),
+          eq(students.schoolId, group.schoolId)
+        )
+      )
       .where(eq(groupStudents.groupId, session.groupId));
 
     if (roster.length === 0) {
@@ -7208,6 +7240,10 @@ export async function resyncClasspilotSessionStudents(
           teachingSessionId: session.id,
           groupId: session.groupId,
           studentId: row.studentId,
+          studentNameSnapshot:
+            [row.firstName, row.lastName].filter(Boolean).join(" ").trim()
+            || row.email
+            || "Unknown student",
         }))
       )
       .onConflictDoNothing()
@@ -7226,6 +7262,243 @@ export async function resyncClasspilotSessionStudents(
   }
 }
 
+export type ClasspilotActiveSessionRosterResyncResult = {
+  session: TeachingSession;
+  summary: ClasspilotSessionRosterSyncSummary;
+};
+
+async function lockClasspilotTeachingSessionLifecycle(
+  teachingSessionId: string,
+  dbInstance: typeof db
+): Promise<void> {
+  const lockKey = `classpilot:teaching-session-lifecycle:${teachingSessionId}`;
+  await dbInstance.execute(
+    sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`
+  );
+}
+
+/**
+ * Reconcile a live class roster as one ownership transition. The candidate
+ * roster is captured before taking the per-student authority locks, then the
+ * teaching-session row is locked and revalidated before any snapshot rows are
+ * inserted. This shares finalization's lock order, so an End Class race either
+ * completes before this transaction (and no rows are added) or observes and
+ * clears the complete reconciled roster.
+ */
+export async function resyncActiveClasspilotSessionStudents(
+  options: { schoolId: string; teachingSessionId: string; resyncedAt?: Date },
+  dbInstance: typeof db = db
+): Promise<ClasspilotActiveSessionRosterResyncResult | undefined> {
+  const resyncedAt = options.resyncedAt || new Date();
+  return dbInstance.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    // Finalization takes the same lifecycle lock before discovering its frozen
+    // roster. That prevents either side from acquiring a different subset of
+    // student locks while a mid-class resync is adding snapshot rows.
+    await lockClasspilotTeachingSessionLifecycle(options.teachingSessionId, transactionDb);
+    const [candidate] = await tx
+      .select()
+      .from(teachingSessions)
+      .where(and(
+        eq(teachingSessions.id, options.teachingSessionId),
+        eq(teachingSessions.schoolId, options.schoolId),
+        eq(teachingSessions.sessionMode, LIVE_TEACHING_SESSION_MODE),
+        isNull(teachingSessions.endTime)
+      ))
+      .limit(1);
+    if (!candidate) return undefined;
+
+    const [group] = await tx
+      .select({ id: groups.id })
+      .from(groups)
+      .where(and(
+        eq(groups.id, candidate.groupId),
+        eq(groups.schoolId, options.schoolId),
+        eq(groups.status, "active")
+      ))
+      .limit(1);
+    if (!group) return undefined;
+
+    // Freeze exactly this accepted resync candidate. A concurrent roster edit
+    // is intentionally picked up by the next explicit resync rather than being
+    // inserted without first participating in the authority-lock set.
+    const roster = await tx
+      .select({
+        studentId: groupStudents.studentId,
+        firstName: students.firstName,
+        lastName: students.lastName,
+        email: students.email,
+      })
+      .from(groupStudents)
+      .innerJoin(students, and(
+        eq(students.id, groupStudents.studentId),
+        eq(students.schoolId, options.schoolId)
+      ))
+      .where(eq(groupStudents.groupId, candidate.groupId));
+    const existing = await tx
+      .select({ studentId: classpilotSessionStudents.studentId })
+      .from(classpilotSessionStudents)
+      .where(and(
+        eq(classpilotSessionStudents.schoolId, options.schoolId),
+        eq(classpilotSessionStudents.teachingSessionId, candidate.id)
+      ));
+    await lockClasspilotStudentControlAuthorities(
+      options.schoolId,
+      [...existing.map((row) => row.studentId), ...roster.map((row) => row.studentId)],
+      transactionDb
+    );
+
+    const [locked] = await tx
+      .select()
+      .from(teachingSessions)
+      .where(and(
+        eq(teachingSessions.id, options.teachingSessionId),
+        eq(teachingSessions.schoolId, options.schoolId),
+        eq(teachingSessions.groupId, candidate.groupId),
+        eq(teachingSessions.sessionMode, LIVE_TEACHING_SESSION_MODE),
+        isNull(teachingSessions.endTime)
+      ))
+      .limit(1)
+      .for("update");
+    if (!locked) return undefined;
+
+    const existingIds = new Set(existing.map((row) => row.studentId));
+    const missing = roster.filter((row) => !existingIds.has(row.studentId));
+    const inserted = missing.length > 0
+      ? await tx
+          .insert(classpilotSessionStudents)
+          .values(missing.map((row) => ({
+            schoolId: options.schoolId,
+            teachingSessionId: locked.id,
+            groupId: locked.groupId,
+            studentId: row.studentId,
+            studentNameSnapshot:
+              [row.firstName, row.lastName].filter(Boolean).join(" ").trim()
+              || row.email
+              || "Unknown student",
+            capturedAt: resyncedAt,
+          })))
+          .onConflictDoNothing()
+          .returning({ studentId: classpilotSessionStudents.studentId })
+      : [];
+
+    // Make the frozen roster visible to authority resolution before composing
+    // its desired snapshots. This is also the ordering required when repairing
+    // a pre-rollout live session with a missing completion marker.
+    const [updatedSession] = await tx
+      .update(teachingSessions)
+      .set({
+        controlUpdatedAt: resyncedAt,
+        rosterSnapshotCompletedAt: locked.rosterSnapshotCompletedAt || resyncedAt,
+      })
+      .where(and(
+        eq(teachingSessions.id, locked.id),
+        eq(teachingSessions.schoolId, options.schoolId),
+        isNull(teachingSessions.endTime)
+      ))
+      .returning();
+    if (!updatedSession) return undefined;
+    const frozenStudentIds = [...new Set([
+      ...existing.map((row) => row.studentId),
+      ...roster.map((row) => row.studentId),
+    ])];
+    const hardExpiresAt = new Date(updatedSession.startTime.getTime() + 12 * 60 * 60 * 1000);
+    if (hardExpiresAt > resyncedAt && frozenStudentIds.length > 0) {
+      await replaceClasspilotStudentControlSnapshots({
+        schoolId: options.schoolId,
+        teachingSessionId: updatedSession.id,
+        studentIds: frozenStudentIds,
+        desiredState: (
+          _studentId: string,
+          currentState: ClasspilotStudentControlState | null,
+          activeClassroomStates: ClasspilotClassroomState[]
+        ) =>
+          currentState?.teachingSessionId === updatedSession.id
+            ? currentState.desiredState
+            : { restrictions: restrictionsFromClassroomStates(activeClassroomStates, resyncedAt) },
+        scheduledEndAt: effectiveClasspilotScheduledControlEndAt(
+          updatedSession.scheduledEndAt,
+          hardExpiresAt
+        ),
+        hardExpiresAt,
+        now: resyncedAt,
+        authorityMode: "filter",
+      }, transactionDb);
+    }
+
+    return {
+      session: updatedSession,
+      summary: {
+        rosterCount: roster.length,
+        alreadyInSession: roster.length - inserted.length,
+        addedToSession: inserted.length,
+      },
+    };
+  });
+}
+
+export async function snapshotClasspilotSessionStaff(
+  session: TeachingSession,
+  dbInstance: typeof db = db
+): Promise<number> {
+  if (!session.schoolId) return 0;
+  const [existingSnapshot] = await dbInstance
+    .select({ id: classpilotSessionStaff.id })
+    .from(classpilotSessionStaff)
+    .where(and(
+      eq(classpilotSessionStaff.schoolId, session.schoolId),
+      eq(classpilotSessionStaff.teachingSessionId, session.id)
+    ))
+    .limit(1);
+  // Once captured, membership is an immutable authorization boundary. This
+  // also prevents a later group-roster edit from granting access to history.
+  if (existingSnapshot) return 0;
+  const assigned = await dbInstance
+    .select({ staffId: groupTeachers.teacherId, role: groupTeachers.role })
+    .from(groupTeachers)
+    .where(eq(groupTeachers.groupId, session.groupId));
+  const roles = new Map<string, "primary" | "co_teacher">();
+  roles.set(session.teacherId, "primary");
+  for (const row of assigned) {
+    if (!roles.has(row.staffId)) {
+      roles.set(row.staffId, row.role === "primary" ? "primary" : "co_teacher");
+    }
+  }
+  const staffIds = Array.from(roles.keys());
+  if (staffIds.length === 0) return 0;
+  const staff = await dbInstance
+    .select({
+      id: users.id,
+      email: users.email,
+      firstName: users.firstName,
+      lastName: users.lastName,
+      displayName: users.displayName,
+    })
+    .from(users)
+    .where(inArray(users.id, staffIds));
+  const byId = new Map(staff.map((user) => [user.id, user]));
+  const inserted = await dbInstance
+    .insert(classpilotSessionStaff)
+    .values(staffIds.map((staffId) => {
+      const user = byId.get(staffId);
+      return {
+        schoolId: session.schoolId!,
+        teachingSessionId: session.id,
+        staffId,
+        role: roles.get(staffId)!,
+        staffNameSnapshot:
+          user?.displayName
+          || [user?.firstName, user?.lastName].filter(Boolean).join(" ").trim()
+          || user?.email
+          || null,
+        staffEmailSnapshot: user?.email || null,
+      };
+    }))
+    .onConflictDoNothing()
+    .returning({ id: classpilotSessionStaff.id });
+  return inserted.length;
+}
+
 /**
  * Rollout bridge for sessions opened before immutable roster snapshots existed
  * (including teacher-created groups that the legacy helper skipped). Only open
@@ -7239,7 +7512,8 @@ export async function backfillOpenTeachingSessionRosterSnapshots(
     isNull(teachingSessions.endTime),
     or(
       isNull(teachingSessions.rosterSnapshotCompletedAt),
-      isNull(teachingSessions.classNameSnapshot)
+      isNull(teachingSessions.classNameSnapshot),
+      isNull(teachingSessions.timezoneSnapshot)
     )!,
   ];
   if (schoolId) conditions.push(eq(teachingSessions.schoolId, schoolId));
@@ -7252,7 +7526,8 @@ export async function backfillOpenTeachingSessionRosterSnapshots(
   for (const { session } of openWithoutSnapshot) {
     await dbInstance.transaction(async (tx) => {
       const transactionDb = tx as unknown as typeof db;
-      const [locked] = await tx
+      await lockClasspilotTeachingSessionLifecycle(session.id, transactionDb);
+      const [candidate] = await tx
         .select()
         .from(teachingSessions)
         .where(and(
@@ -7260,28 +7535,78 @@ export async function backfillOpenTeachingSessionRosterSnapshots(
           isNull(teachingSessions.endTime),
           or(
             isNull(teachingSessions.rosterSnapshotCompletedAt),
-            isNull(teachingSessions.classNameSnapshot)
+            isNull(teachingSessions.classNameSnapshot),
+            isNull(teachingSessions.timezoneSnapshot)
+          )
+        ))
+        .limit(1);
+      if (!candidate) return;
+
+      // Keep the global control-authority lock order consistent: student
+      // advisory locks must be acquired before the teaching-session row lock.
+      // Legacy roster repair is additive and is revalidated after both locks.
+      if (!candidate.rosterSnapshotCompletedAt) {
+        await resyncClasspilotSessionStudents(candidate, transactionDb, { strict: true });
+      }
+      const frozenRoster = await tx
+        .select({ studentId: classpilotSessionStudents.studentId })
+        .from(classpilotSessionStudents)
+        .where(and(
+          eq(classpilotSessionStudents.schoolId, candidate.schoolId!),
+          eq(classpilotSessionStudents.teachingSessionId, candidate.id)
+        ));
+      await lockClasspilotStudentControlAuthorities(
+        candidate.schoolId!,
+        frozenRoster.map((row) => row.studentId),
+        transactionDb
+      );
+      const [locked] = await tx
+        .select()
+        .from(teachingSessions)
+        .where(and(
+          eq(teachingSessions.id, candidate.id),
+          isNull(teachingSessions.endTime),
+          or(
+            isNull(teachingSessions.rosterSnapshotCompletedAt),
+            isNull(teachingSessions.classNameSnapshot),
+            isNull(teachingSessions.timezoneSnapshot)
           )
         ))
         .limit(1)
         .for("update");
       if (!locked) return;
       const [group] = await tx
-        .select({ name: groups.name })
+        .select({ name: groups.name, timezone: schools.schoolTimezone })
         .from(groups)
+        .innerJoin(schools, eq(schools.id, groups.schoolId))
         .where(and(eq(groups.id, locked.groupId), eq(groups.schoolId, locked.schoolId!)))
         .limit(1);
       if (!group) throw new Error(`Open teaching session ${locked.id} has no parent group`);
-      if (!locked.rosterSnapshotCompletedAt) {
-        await resyncClasspilotSessionStudents(locked, transactionDb, { strict: true });
-      }
-      await tx
+      await tx.execute(sql`
+        UPDATE classpilot_session_students AS snapshot
+        SET student_name_snapshot = COALESCE(
+          NULLIF(btrim(concat_ws(' ', student.first_name, student.last_name)), ''),
+          student.email,
+          'Unknown student'
+        )
+        FROM students AS student
+        WHERE snapshot.teaching_session_id = ${locked.id}
+          AND snapshot.school_id = ${locked.schoolId!}
+          AND snapshot.student_id = student.id
+          AND student.school_id = ${locked.schoolId!}
+          AND snapshot.student_name_snapshot IS NULL
+      `);
+      await snapshotClasspilotSessionStaff(locked, transactionDb);
+      const [snapshotted] = await tx
         .update(teachingSessions)
         .set({
           rosterSnapshotCompletedAt: locked.rosterSnapshotCompletedAt || new Date(),
           classNameSnapshot: locked.classNameSnapshot || group.name,
+          timezoneSnapshot: locked.timezoneSnapshot || group.timezone || "America/New_York",
         })
-        .where(eq(teachingSessions.id, locked.id));
+        .where(eq(teachingSessions.id, locked.id))
+        .returning();
+      await initializeClasspilotStudentControlStatesForSession(snapshotted || locked, transactionDb);
       backfilled += 1;
     });
   }
@@ -7308,14 +7633,15 @@ export async function getClasspilotSessionStudentRoster(
   schoolId: string,
   teachingSessionId: string,
   dbInstance: typeof db = db
-): Promise<Array<{ studentId: string; student: Student }>> {
+): Promise<Array<{ studentId: string; studentNameSnapshot: string | null; student: Student | null }>> {
   return dbInstance
     .select({
       studentId: classpilotSessionStudents.studentId,
+      studentNameSnapshot: classpilotSessionStudents.studentNameSnapshot,
       student: students,
     })
     .from(classpilotSessionStudents)
-    .innerJoin(
+    .leftJoin(
       students,
       and(
         eq(students.id, classpilotSessionStudents.studentId),
@@ -7481,8 +7807,13 @@ export async function createTeachingSession(
   return dbInstance.transaction(async (tx) => {
     const transactionDb = tx as unknown as typeof db;
     const [group] = await tx
-      .select({ schoolId: groups.schoolId, name: groups.name })
+      .select({
+        schoolId: groups.schoolId,
+        name: groups.name,
+        timezone: schools.schoolTimezone,
+      })
       .from(groups)
+      .innerJoin(schools, eq(schools.id, groups.schoolId))
       .where(eq(groups.id, data.groupId))
       .limit(1)
       .for("share");
@@ -7495,16 +7826,20 @@ export async function createTeachingSession(
         ...data,
         schoolId: group.schoolId,
         classNameSnapshot: data.classNameSnapshot || group.name,
+        timezoneSnapshot: data.timezoneSnapshot || group.timezone || "America/New_York",
       })
       .returning();
     if (!session) throw new Error("createTeachingSession: insert did not return a session");
     await resyncClasspilotSessionStudents(session, transactionDb, { strict: true });
+    await snapshotClasspilotSessionStaff(session, transactionDb);
     const [snapshotted] = await tx
       .update(teachingSessions)
       .set({ rosterSnapshotCompletedAt: new Date() })
       .where(eq(teachingSessions.id, session.id))
       .returning();
-    return snapshotted || session;
+    const authoritativeSession = snapshotted || session;
+    await initializeClasspilotStudentControlStatesForSession(authoritativeSession, transactionDb);
+    return authoritativeSession;
   });
 }
 
@@ -7579,6 +7914,9 @@ export async function createOrReuseScheduledReportSession(
       transactionDb
     );
     if (existing) {
+      if (!existing.endTime) {
+        await initializeClasspilotStudentControlStatesForSession(existing, transactionDb);
+      }
       if (data.scheduledConflictId && !existing.scheduledConflictId && !existing.endTime) {
         const [updated] = await tx
           .update(teachingSessions)
@@ -7611,6 +7949,7 @@ export async function createOrReuseScheduledReportSession(
         scheduledTeacherEmail: data.scheduledTeacherEmail || null,
         scheduledTeacherName: data.scheduledTeacherName || null,
         classNameSnapshot: groupSnapshot.name,
+        timezoneSnapshot: data.scheduledTimezone,
       })
       // The partial occurrence unique index is the concurrency authority. A
       // second scheduler/API racer simply reads the winner below.
@@ -7620,12 +7959,15 @@ export async function createOrReuseScheduledReportSession(
       // The occurrence and immutable roster snapshot commit atomically; a
       // worker crash can never strand a canonical row with an empty snapshot.
       await resyncClasspilotSessionStudents(created, transactionDb, { strict: true });
+      await snapshotClasspilotSessionStaff(created, transactionDb);
       const [snapshotted] = await tx
         .update(teachingSessions)
         .set({ rosterSnapshotCompletedAt: new Date() })
         .where(eq(teachingSessions.id, created.id))
         .returning();
-      return snapshotted || created;
+      const authoritativeSession = snapshotted || created;
+      await initializeClasspilotStudentControlStatesForSession(authoritativeSession, transactionDb);
+      return authoritativeSession;
     }
 
     const raced = await getScheduledTeachingSessionOccurrence(
@@ -7690,6 +8032,7 @@ export async function skipScheduledTeachingSessionOccurrence(
         scheduledTeacherEmail: data.scheduledTeacherEmail || null,
         scheduledTeacherName: data.scheduledTeacherName || null,
         classNameSnapshot: groupSnapshot.name,
+        timezoneSnapshot: data.scheduledTimezone,
       })
       .onConflictDoNothing()
       .returning();
@@ -7723,33 +8066,76 @@ export async function promoteScheduledReportSessionToLive(
     : data.scheduledConflictId
       ? eq(teachingSessions.scheduledConflictId, data.scheduledConflictId)
       : sql`false`;
-  const [session] = await dbInstance
-    .update(teachingSessions)
-    .set({
-      sessionMode: LIVE_TEACHING_SESSION_MODE,
-      controlUpdatedAt: new Date(),
-    })
-    .where(and(
+  return dbInstance.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    const [current] = await tx.select().from(teachingSessions).where(and(
       identity,
       eq(teachingSessions.schoolId, data.schoolId),
       eq(teachingSessions.sessionMode, SCHEDULED_REPORT_SESSION_MODE),
       eq(teachingSessions.scheduledState, "active"),
       isNull(teachingSessions.endTime)
-    ))
-    .returning();
-  return session;
+    )).limit(1);
+    if (!current) return undefined;
+    const roster = await tx
+      .select({ studentId: classpilotSessionStudents.studentId })
+      .from(classpilotSessionStudents)
+      .where(and(
+        eq(classpilotSessionStudents.schoolId, data.schoolId),
+        eq(classpilotSessionStudents.teachingSessionId, current.id)
+      ));
+    await lockClasspilotStudentControlAuthorities(
+      data.schoolId,
+      roster.map((row) => row.studentId),
+      transactionDb
+    );
+    const [session] = await tx
+      .update(teachingSessions)
+      .set({ sessionMode: LIVE_TEACHING_SESSION_MODE, controlUpdatedAt: new Date() })
+      .where(and(
+        eq(teachingSessions.id, current.id),
+        eq(teachingSessions.schoolId, data.schoolId),
+        eq(teachingSessions.sessionMode, SCHEDULED_REPORT_SESSION_MODE),
+        eq(teachingSessions.scheduledState, "active"),
+        isNull(teachingSessions.endTime)
+      ))
+      .returning();
+    if (session) await initializeClasspilotStudentControlStatesForSession(session, transactionDb);
+    return session;
+  });
 }
 
 export async function updateTeachingSessionControlTimestamp(
   sessionId: string,
   dbInstance: typeof db = db
 ): Promise<TeachingSession | undefined> {
-  const [session] = await dbInstance
-    .update(teachingSessions)
-    .set({ controlUpdatedAt: new Date() })
-    .where(eq(teachingSessions.id, sessionId))
-    .returning();
-  return session;
+  return dbInstance.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    const [current] = await tx
+      .select()
+      .from(teachingSessions)
+      .where(and(eq(teachingSessions.id, sessionId), isNull(teachingSessions.endTime)))
+      .limit(1);
+    if (!current?.schoolId) return undefined;
+    const roster = await tx
+      .select({ studentId: classpilotSessionStudents.studentId })
+      .from(classpilotSessionStudents)
+      .where(and(
+        eq(classpilotSessionStudents.schoolId, current.schoolId),
+        eq(classpilotSessionStudents.teachingSessionId, sessionId)
+      ));
+    await lockClasspilotStudentControlAuthorities(
+      current.schoolId,
+      roster.map((row) => row.studentId),
+      transactionDb
+    );
+    const [session] = await tx
+      .update(teachingSessions)
+      .set({ controlUpdatedAt: new Date() })
+      .where(and(eq(teachingSessions.id, sessionId), isNull(teachingSessions.endTime)))
+      .returning();
+    if (session) await initializeClasspilotStudentControlStatesForSession(session, transactionDb);
+    return session;
+  });
 }
 
 export async function endTeachingSession(
@@ -7772,7 +8158,6 @@ export async function endTeachingSession(
     reason: existing.scheduledDate ? "teacher_end" : "manual_end",
     recipients: [],
   }, dbInstance);
-  if (result?.finalized) await aggregateClasspilotSessionUsage(sessionId, dbInstance);
   return result?.session;
 }
 
@@ -7809,6 +8194,8 @@ export type FinalizeTeachingSessionResult = {
   summaryDisposition: "queued" | "already_queued" | "not_applicable";
   deliveryCount: number;
   resolvedConflictIds: string[];
+  clearedControlStates: ClasspilotStudentControlState[];
+  restoredControlStates: ClasspilotStudentControlState[];
 };
 
 /**
@@ -7828,6 +8215,35 @@ export async function finalizeTeachingSession(
 ): Promise<FinalizeTeachingSessionResult | undefined> {
   const now = options.finalizedAt || new Date();
   const result = await dbInstance.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    await lockClasspilotTeachingSessionLifecycle(options.sessionId, transactionDb);
+    const [candidateSession] = await tx
+      .select()
+      .from(teachingSessions)
+      .where(and(
+        eq(teachingSessions.id, options.sessionId),
+        eq(teachingSessions.schoolId, options.schoolId)
+      ))
+      .limit(1);
+    if (!candidateSession) return undefined;
+    if (!candidateSession.endTime && !candidateSession.rosterSnapshotCompletedAt) {
+      // Repair an open legacy session before acquiring either student or
+      // session locks. The resulting rows become the frozen final roster;
+      // never discover new students after the session row lock is held.
+      await resyncClasspilotSessionStudents(candidateSession, transactionDb, { strict: true });
+    }
+    const finalizingRoster = await tx
+      .select({ studentId: classpilotSessionStudents.studentId })
+      .from(classpilotSessionStudents)
+      .where(and(
+        eq(classpilotSessionStudents.schoolId, options.schoolId),
+        eq(classpilotSessionStudents.teachingSessionId, options.sessionId)
+      ));
+    await lockClasspilotStudentControlAuthorities(
+      options.schoolId,
+      finalizingRoster.map((row) => row.studentId),
+      transactionDb
+    );
     const [session] = await tx
       .select()
       .from(teachingSessions)
@@ -7854,15 +8270,65 @@ export async function finalizeTeachingSession(
         summaryDisposition: existingDeliveries.length > 0 ? "already_queued" as const : "not_applicable" as const,
         deliveryCount: existingDeliveries.length,
         resolvedConflictIds: [],
+        clearedControlStates: [],
+        restoredControlStates: [],
       };
     }
 
     const isScheduled = !!session.scheduledDate;
-    const endTime = isScheduled && options.reason === "scheduled_end" && session.scheduledEndAt
+    const candidateEndTime = isScheduled && options.reason === "scheduled_end" && session.scheduledEndAt
       ? session.scheduledEndAt
       : isScheduled && session.scheduledEndAt && now > session.scheduledEndAt
         ? session.scheduledEndAt
         : now;
+    // A future frozen/synthetic occurrence can be replaced before its nominal
+    // start. Reports must still have a valid zero-length window instead of
+    // making the entire session-finalization transaction fail its invariant.
+    const endTime = candidateEndTime < session.startTime ? session.startTime : candidateEndTime;
+    const [groupSnapshot] = await tx
+      .select({ className: groups.name, timezone: schools.schoolTimezone })
+      .from(groups)
+      .innerJoin(schools, eq(schools.id, groups.schoolId))
+      .where(and(
+        eq(groups.id, session.groupId),
+        eq(groups.schoolId, options.schoolId)
+      ))
+      .limit(1);
+    if (!groupSnapshot) throw new Error("Teaching session parent class was not found");
+    const timezoneSnapshot = session.timezoneSnapshot
+      || session.scheduledTimezone
+      || groupSnapshot.timezone
+      || "America/New_York";
+    const classNameSnapshot = session.classNameSnapshot || groupSnapshot.className;
+    let rosterSnapshotCompletedAt = session.rosterSnapshotCompletedAt;
+    if (!rosterSnapshotCompletedAt) {
+      // The open legacy roster was repaired before the student/session locks.
+      // From this point onward, only enrich that frozen set; never reread the
+      // mutable group roster after finalization has acquired its row lock.
+      await tx.execute(sql`
+        UPDATE classpilot_session_students AS snapshot
+        SET student_name_snapshot = COALESCE(
+          NULLIF(btrim(concat_ws(' ', student.first_name, student.last_name)), ''),
+          student.email,
+          'Unknown student'
+        )
+        FROM students AS student
+        WHERE snapshot.teaching_session_id = ${session.id}
+          AND snapshot.school_id = ${options.schoolId}
+          AND snapshot.student_id = student.id
+          AND student.school_id = ${options.schoolId}
+          AND snapshot.student_name_snapshot IS NULL
+      `);
+      await tx
+        .update(classpilotSessionStudents)
+        .set({ studentNameSnapshot: "Unknown student" })
+        .where(and(
+          eq(classpilotSessionStudents.schoolId, options.schoolId),
+          eq(classpilotSessionStudents.teachingSessionId, session.id),
+          isNull(classpilotSessionStudents.studentNameSnapshot)
+        ));
+      rosterSnapshotCompletedAt = now;
+    }
 
     const [ended] = await tx
       .update(teachingSessions)
@@ -7872,6 +8338,9 @@ export async function finalizeTeachingSession(
         // Despite the legacy column name, this is the unified lifecycle audit
         // reason for both manual and scheduled sessions.
         scheduledFinalizationReason: options.reason,
+        classNameSnapshot,
+        timezoneSnapshot,
+        rosterSnapshotCompletedAt,
       })
       .where(and(eq(teachingSessions.id, session.id), isNull(teachingSessions.endTime)))
       .returning();
@@ -7893,6 +8362,12 @@ export async function finalizeTeachingSession(
         eq(classpilotActiveHands.teachingSessionId, session.id),
         isNull(classpilotActiveHands.clearedAt)
       ));
+    const clearedControlStates = await clearClasspilotStudentControlStatesForSession({
+      schoolId: options.schoolId,
+      teachingSessionId: session.id,
+      clearedAt: endTime,
+    }, transactionDb);
+    const restoredControlStates: ClasspilotStudentControlState[] = [];
 
     const frozenBlockStartTime = session.scheduledStartAt && session.scheduledTimezone
       ? session.scheduledStartAt.toLocaleString("en-US", {
@@ -7937,14 +8412,15 @@ export async function finalizeTeachingSession(
         ));
       const contextIds = contexts.map((context) => context.id);
       if (contextIds.length > 0) {
-        await tx
+        const releasedSupervisionStudents = await tx
           .update(classpilotSupervisionStudents)
           .set({ releasedAt: endTime, releaseReason: options.reason })
           .where(and(
             eq(classpilotSupervisionStudents.schoolId, options.schoolId),
             inArray(classpilotSupervisionStudents.contextId, contextIds),
             isNull(classpilotSupervisionStudents.releasedAt)
-          ));
+          ))
+          .returning();
         await tx
           .update(classpilotSupervisionContexts)
           .set({ status: "ended", endedAt: endTime, updatedAt: endTime })
@@ -7952,6 +8428,23 @@ export async function finalizeTeachingSession(
             eq(classpilotSupervisionContexts.schoolId, options.schoolId),
             inArray(classpilotSupervisionContexts.id, contextIds)
           ));
+        for (const context of contexts) {
+          const restored = await restoreClasspilotStudentControlStatesAfterSupervision({
+            schoolId: options.schoolId,
+            supervisionContextId: context.id,
+            studentIds: releasedSupervisionStudents
+              .filter((row) => row.contextId === context.id)
+              .map((row) => row.studentId),
+            restoredAt: endTime,
+          }, transactionDb);
+          for (const state of restored) {
+            if (state.teachingSessionId || state.supervisionContextId) {
+              restoredControlStates.push(state);
+            } else {
+              clearedControlStates.push(state);
+            }
+          }
+        }
       }
       await tx
         .update(classpilotScheduledConflicts)
@@ -7977,6 +8470,126 @@ export async function finalizeTeachingSession(
         .where(and(eq(groups.id, session.groupId), eq(groups.schoolId, options.schoolId)));
     }
 
+    // Staff membership is frozen when the session starts. The fallback below
+    // exists only for an open session created by a pre-rollout server; never
+    // append people whose group assignment changed after the snapshot.
+    const [existingStaffSnapshot] = await tx
+      .select({ id: classpilotSessionStaff.id })
+      .from(classpilotSessionStaff)
+      .where(and(
+        eq(classpilotSessionStaff.schoolId, options.schoolId),
+        eq(classpilotSessionStaff.teachingSessionId, session.id)
+      ))
+      .limit(1);
+    if (!existingStaffSnapshot) {
+      await snapshotClasspilotSessionStaff(ended, transactionDb);
+    }
+    const reportStaff = await tx
+      .select({ staffId: classpilotSessionStaff.staffId })
+      .from(classpilotSessionStaff)
+      .where(and(
+        eq(classpilotSessionStaff.schoolId, options.schoolId),
+        eq(classpilotSessionStaff.teachingSessionId, session.id)
+      ));
+    const authorizationMarker = createClasspilotReportAuthorizationMarker({
+      schoolId: options.schoolId,
+      teachingSessionId: session.id,
+      staffIds: reportStaff.map((row) => row.staffId),
+    });
+    const [schoolSettings] = await tx
+      .select({
+        retentionHours: settings.retentionHours,
+        enableTrackingHours: settings.enableTrackingHours,
+        trackingStartTime: settings.trackingStartTime,
+        trackingEndTime: settings.trackingEndTime,
+        trackingDays: settings.trackingDays,
+        afterHoursMode: settings.afterHoursMode,
+      })
+      .from(settings)
+      .where(eq(settings.schoolId, options.schoolId))
+      .limit(1);
+    const reportSettleAt = new Date(now.getTime() + 30_000);
+    const reportExpiresAt = classpilotRetentionExpiresAt(endTime, schoolSettings?.retentionHours);
+    const clearedStudentIds = [...new Set(clearedControlStates.map((state) => state.studentId))];
+    if (clearedStudentIds.length > 0) {
+      // The extension's acknowledgement necessarily arrives after the class
+      // window closes and is correctly rejected by the half-open scope guard.
+      // Preserve the authoritative class-end clear inside this transaction
+      // instead, bound to the latest authenticated student session that
+      // overlapped the frozen class window.
+      const overlappingStudentSessions = await tx
+        .select({
+          id: studentSessions.id,
+          studentId: studentSessions.studentId,
+          startedAt: studentSessions.startedAt,
+        })
+        .from(studentSessions)
+        .innerJoin(students, eq(students.id, studentSessions.studentId))
+        .where(and(
+          eq(students.schoolId, options.schoolId),
+          inArray(studentSessions.studentId, clearedStudentIds),
+          lt(studentSessions.startedAt, endTime),
+          or(isNull(studentSessions.endedAt), gt(studentSessions.endedAt, session.startTime))
+        ))
+        .orderBy(asc(studentSessions.studentId), desc(studentSessions.startedAt));
+      const latestSessionByStudent = new Map<string, string>();
+      for (const studentSession of overlappingStudentSessions) {
+        if (!latestSessionByStudent.has(studentSession.studentId)) {
+          latestSessionByStudent.set(studentSession.studentId, studentSession.id);
+        }
+      }
+      const clearedStateByStudent = new Map(
+        clearedControlStates.map((state) => [state.studentId, state])
+      );
+      const clearEvents = clearedStudentIds.flatMap((studentId) => {
+        const studentSessionId = latestSessionByStudent.get(studentId);
+        const state = clearedStateByStudent.get(studentId);
+        if (!studentSessionId || !state) return [];
+        return [{
+          schoolId: options.schoolId,
+          studentId,
+          studentSessionId,
+          teachingSessionId: session.id,
+          sourceEventId: `finalize:${session.id}:restriction-clear:${studentId}`,
+          schemaVersion: 1,
+          origin: "server",
+          eventType: "restriction_state_cleared",
+          occurredAt: endTime,
+          receivedAt: now,
+          metadata: { revision: state.revision, outcome: "cleared" },
+          retentionExpiresAt: reportExpiresAt,
+        } as const];
+      });
+      if (clearEvents.length > 0) {
+        await tx.insert(classpilotMonitoringEvents).values(clearEvents).onConflictDoNothing();
+      }
+    }
+    await tx
+      .insert(classpilotSessionReports)
+      .values({
+        schoolId: options.schoolId,
+        teachingSessionId: session.id,
+        state: "pending",
+        windowStart: session.startTime,
+        windowEnd: endTime,
+        timezone: timezoneSnapshot,
+        coverageAlgorithmVersion: "heartbeat-coverage-v1",
+        eventSchemaVersion: 1,
+        authorizationMarker,
+        trackingPolicy: {
+          enableTrackingHours: schoolSettings?.enableTrackingHours === true,
+          trackingStartTime: schoolSettings?.trackingStartTime || null,
+          trackingEndTime: schoolSettings?.trackingEndTime || null,
+          trackingDays: schoolSettings?.trackingDays || [],
+          schoolTimezone: timezoneSnapshot,
+          afterHoursMode: schoolSettings?.afterHoursMode || "off",
+        },
+        settleAt: reportSettleAt,
+        nextAttemptAt: reportSettleAt,
+        expiresAt: reportExpiresAt,
+      })
+      .onConflictDoNothing();
+
     const uniqueRecipients = new Map<string, SessionSummaryRecipientSnapshot>();
     for (const recipient of options.recipients || []) {
       const email = recipient.email.trim();
@@ -7993,8 +8606,8 @@ export async function finalizeTeachingSession(
             recipientKind: recipient.kind,
             recipientEmail: recipient.email,
             recipientName: recipient.name || null,
-            state: "queued",
-            nextAttemptAt: now,
+            state: "waiting_report",
+            nextAttemptAt: reportSettleAt,
           } as InsertClasspilotSessionSummaryDelivery)))
           .onConflictDoNothing()
           .returning({ id: classpilotSessionSummaryDeliveries.id })
@@ -8011,6 +8624,8 @@ export async function finalizeTeachingSession(
           : "not_applicable" as const,
       deliveryCount,
       resolvedConflictIds: conflictIds,
+      clearedControlStates,
+      restoredControlStates,
     };
   });
 
@@ -8056,6 +8671,947 @@ export async function listScheduledReportSessionsDueNow(
     .from(teachingSessions)
     .where(and(...conditions))
     .orderBy(teachingSessions.scheduledStartAt, teachingSessions.id);
+}
+
+export async function getClasspilotSessionReportBySession(
+  schoolId: string,
+  teachingSessionId: string,
+  dbInstance: typeof db = db
+): Promise<ClasspilotSessionReport | undefined> {
+  const [report] = await dbInstance
+    .select()
+    .from(classpilotSessionReports)
+    .where(and(
+      eq(classpilotSessionReports.schoolId, schoolId),
+      eq(classpilotSessionReports.teachingSessionId, teachingSessionId)
+    ))
+    .limit(1);
+  return report;
+}
+
+export async function getClasspilotSessionStudentReports(
+  schoolId: string,
+  reportId: string,
+  dbInstance: typeof db = db
+): Promise<ClasspilotSessionStudentReport[]> {
+  return dbInstance
+    .select()
+    .from(classpilotSessionStudentReports)
+    .where(and(
+      eq(classpilotSessionStudentReports.schoolId, schoolId),
+      eq(classpilotSessionStudentReports.reportId, reportId)
+    ))
+    .orderBy(classpilotSessionStudentReports.studentNameSnapshot, classpilotSessionStudentReports.studentId);
+}
+
+export type AuthorizedClasspilotSessionReportRead =
+  | { status: "not_found" | "unauthorized" | "expired" }
+  | {
+      status: "available";
+      report: ClasspilotSessionReport;
+      studentReports: ClasspilotSessionStudentReport[];
+    };
+
+/**
+ * Authorize and read an immutable report from one database snapshot. The
+ * shared report-row lock prevents the retention worker from deleting detail
+ * between the parent read and the student-detail read. Before expiry the
+ * immutable staff snapshot is authoritative; after expiry only the report's
+ * one-way authorization marker is consulted so raw staff rows can be purged.
+ */
+export async function readAuthorizedClasspilotSessionReport(options: {
+  schoolId: string;
+  teachingSessionId: string;
+  staffId: string;
+  isAdmin: boolean;
+  now?: Date;
+}, dbInstance: typeof db = db): Promise<AuthorizedClasspilotSessionReportRead> {
+  const now = options.now || new Date();
+  return dbInstance.transaction(async (tx) => {
+    const [report] = await tx
+      .select()
+      .from(classpilotSessionReports)
+      .where(and(
+        eq(classpilotSessionReports.schoolId, options.schoolId),
+        eq(classpilotSessionReports.teachingSessionId, options.teachingSessionId)
+      ))
+      .limit(1)
+      .for("share");
+    if (!report) return { status: "not_found" as const };
+
+    const expired = report.state === "expired"
+      || !!report.detailExpiredAt
+      || report.expiresAt <= now;
+    const authorized = options.isAdmin
+      ? true
+      : expired
+        ? isClasspilotReportAuthorizedStaff({
+            marker: report.authorizationMarker,
+            schoolId: options.schoolId,
+            teachingSessionId: options.teachingSessionId,
+            staffId: options.staffId,
+          })
+        : !!(await tx
+            .select({ id: classpilotSessionStaff.id })
+            .from(classpilotSessionStaff)
+            .where(and(
+              eq(classpilotSessionStaff.schoolId, options.schoolId),
+              eq(classpilotSessionStaff.teachingSessionId, options.teachingSessionId),
+              eq(classpilotSessionStaff.staffId, options.staffId)
+            ))
+            .limit(1))[0];
+    if (!authorized) return { status: "unauthorized" as const };
+    if (expired) return { status: "expired" as const };
+
+    const studentReports = report.state === "ready"
+      ? await tx
+          .select()
+          .from(classpilotSessionStudentReports)
+          .where(and(
+            eq(classpilotSessionStudentReports.schoolId, options.schoolId),
+            eq(classpilotSessionStudentReports.reportId, report.id)
+          ))
+          .orderBy(
+            classpilotSessionStudentReports.studentNameSnapshot,
+            classpilotSessionStudentReports.studentId
+          )
+      : [];
+    return { status: "available" as const, report, studentReports };
+  });
+}
+
+export async function isAuthorizedClasspilotSessionStaff(
+  schoolId: string,
+  teachingSessionId: string,
+  staffId: string,
+  dbInstance: typeof db = db
+): Promise<boolean> {
+  const [row] = await dbInstance
+    .select({ id: classpilotSessionStaff.id })
+    .from(classpilotSessionStaff)
+    .where(and(
+      eq(classpilotSessionStaff.schoolId, schoolId),
+      eq(classpilotSessionStaff.teachingSessionId, teachingSessionId),
+      eq(classpilotSessionStaff.staffId, staffId)
+    ))
+    .limit(1);
+  return !!row;
+}
+
+export async function claimDueClasspilotSessionReports(
+  options: {
+    leaseOwner: string;
+    now?: Date;
+    leaseMs?: number;
+    limit?: number;
+    schoolId?: string;
+    teachingSessionId?: string;
+  },
+  dbInstance: typeof db = db
+): Promise<{ reports: ClasspilotSessionReport[]; exhaustedLeaseCount: number }> {
+  const now = options.now || new Date();
+  const leaseExpiresAt = new Date(now.getTime() + (options.leaseMs || 2 * 60 * 1000));
+  const limit = Math.max(1, Math.min(options.limit || 25, 100));
+  return dbInstance.transaction(async (tx) => {
+    const reportScope: SQL[] = [];
+    if (options.schoolId) reportScope.push(eq(classpilotSessionReports.schoolId, options.schoolId));
+    if (options.teachingSessionId) {
+      reportScope.push(eq(classpilotSessionReports.teachingSessionId, options.teachingSessionId));
+    }
+    const expired = await tx
+      .update(classpilotSessionReports)
+      .set({
+        state: "expired",
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        lastError: "Session report expired before processing completed",
+        updatedAt: now,
+      })
+      .where(and(
+        inArray(classpilotSessionReports.state, ["pending", "materializing", "ready", "failed"]),
+        sql`${classpilotSessionReports.expiresAt} <= ${now}`,
+        ...reportScope
+      ))
+      .returning({
+        schoolId: classpilotSessionReports.schoolId,
+        teachingSessionId: classpilotSessionReports.teachingSessionId,
+      });
+    for (const report of expired) {
+      await tx
+        .update(classpilotSessionSummaryDeliveries)
+        .set({
+          state: "failed",
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          lastError: "Session summary expired before email was sent",
+          updatedAt: now,
+        })
+        .where(and(
+          eq(classpilotSessionSummaryDeliveries.schoolId, report.schoolId),
+          eq(classpilotSessionSummaryDeliveries.teachingSessionId, report.teachingSessionId),
+          or(
+            inArray(classpilotSessionSummaryDeliveries.state, ["waiting_report", "queued", "retry"]),
+            and(
+              eq(classpilotSessionSummaryDeliveries.state, "leased"),
+              isNull(classpilotSessionSummaryDeliveries.submissionStartedAt)
+            )
+          )!
+        ));
+    }
+    await tx
+      .update(classpilotSessionReports)
+      .set({
+        state: "pending",
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        nextAttemptAt: now,
+        lastError: "Report worker lease expired before materialization committed",
+        updatedAt: now,
+      })
+      .where(and(
+        eq(classpilotSessionReports.state, "materializing"),
+        sql`${classpilotSessionReports.leaseExpiresAt} < ${now}`,
+        sql`${classpilotSessionReports.attemptCount} < 5`,
+        gt(classpilotSessionReports.expiresAt, now),
+        ...reportScope
+      ));
+    const exhausted = await tx
+      .update(classpilotSessionReports)
+      .set({
+        state: "failed",
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        lastError: "Report generation exhausted retries after worker lease expiry",
+        updatedAt: now,
+      })
+      .where(and(
+        eq(classpilotSessionReports.state, "materializing"),
+        sql`${classpilotSessionReports.leaseExpiresAt} < ${now}`,
+        sql`${classpilotSessionReports.attemptCount} >= 5`,
+        gt(classpilotSessionReports.expiresAt, now),
+        ...reportScope
+      ))
+      .returning({
+        schoolId: classpilotSessionReports.schoolId,
+        teachingSessionId: classpilotSessionReports.teachingSessionId,
+      });
+    for (const report of exhausted) {
+      await tx
+        .update(classpilotSessionSummaryDeliveries)
+        .set({
+          state: "failed",
+          lastError: "Session report generation failed; email was not sent",
+          updatedAt: now,
+        })
+        .where(and(
+          eq(classpilotSessionSummaryDeliveries.schoolId, report.schoolId),
+          eq(classpilotSessionSummaryDeliveries.teachingSessionId, report.teachingSessionId),
+          eq(classpilotSessionSummaryDeliveries.state, "waiting_report")
+        ));
+    }
+    const candidates = await tx
+      .select({ id: classpilotSessionReports.id })
+      .from(classpilotSessionReports)
+      .where(and(
+        eq(classpilotSessionReports.state, "pending"),
+        sql`${classpilotSessionReports.settleAt} <= ${now}`,
+        sql`${classpilotSessionReports.nextAttemptAt} <= ${now}`,
+        gt(classpilotSessionReports.expiresAt, now),
+        ...reportScope
+      ))
+      .orderBy(classpilotSessionReports.nextAttemptAt, classpilotSessionReports.createdAt)
+      .limit(limit)
+      .for("update", { skipLocked: true });
+    if (candidates.length === 0) {
+      return { reports: [], exhaustedLeaseCount: exhausted.length };
+    }
+    const reports = await tx
+      .update(classpilotSessionReports)
+      .set({
+        state: "materializing",
+        attemptCount: sql`${classpilotSessionReports.attemptCount} + 1`,
+        leaseOwner: options.leaseOwner,
+        leaseExpiresAt,
+        updatedAt: now,
+      })
+      .where(and(
+        inArray(classpilotSessionReports.id, candidates.map((candidate) => candidate.id)),
+        eq(classpilotSessionReports.state, "pending"),
+        gt(classpilotSessionReports.expiresAt, now)
+      ))
+      .returning();
+    return { reports, exhaustedLeaseCount: exhausted.length };
+  });
+}
+
+export type ClasspilotSessionReportInput = {
+  session: TeachingSession;
+  roster: Array<{ studentId: string; studentName: string; capturedAt: Date }>;
+  authenticatedSessions: Array<{
+    id: string;
+    studentId: string;
+    startedAt: Date;
+    endedAt: Date | null;
+    lastSeenAt: Date;
+  }>;
+  heartbeats: Array<{ studentId: string | null; timestamp: Date; activeTabUrl: string | null }>;
+  exclusions: Array<{
+    studentId: string;
+    start: Date;
+    end: Date;
+    source: "delegated_supervision";
+  }>;
+  monitoringEvents: ClasspilotMonitoringEvent[];
+  trackingPolicy: {
+    enableTrackingHours: boolean;
+    trackingStartTime: string | null;
+    trackingEndTime: string | null;
+    trackingDays: string[];
+    schoolTimezone: string;
+    afterHoursMode: "off" | "limited" | "full";
+  };
+};
+
+export async function getClasspilotSessionReportInput(
+  report: ClasspilotSessionReport,
+  dbInstance: typeof db = db
+): Promise<ClasspilotSessionReportInput | undefined> {
+  const [session] = await dbInstance
+    .select()
+    .from(teachingSessions)
+    .where(and(
+      eq(teachingSessions.id, report.teachingSessionId),
+      eq(teachingSessions.schoolId, report.schoolId)
+    ))
+    .limit(1);
+  if (!session?.endTime
+    || !session.rosterSnapshotCompletedAt
+    || !session.classNameSnapshot
+    || !session.timezoneSnapshot
+    || !report.trackingPolicy) return undefined;
+  const roster = await dbInstance
+    .select({
+      studentId: classpilotSessionStudents.studentId,
+      studentName: classpilotSessionStudents.studentNameSnapshot,
+      capturedAt: classpilotSessionStudents.capturedAt,
+    })
+    .from(classpilotSessionStudents)
+    .where(and(
+      eq(classpilotSessionStudents.schoolId, report.schoolId),
+      eq(classpilotSessionStudents.teachingSessionId, report.teachingSessionId)
+    ));
+  const studentIds = roster.map((row) => row.studentId);
+  if (studentIds.length === 0) {
+    return {
+      session,
+      roster: [],
+      authenticatedSessions: [],
+      heartbeats: [],
+      exclusions: [],
+      monitoringEvents: [],
+      trackingPolicy: {
+        enableTrackingHours: report.trackingPolicy?.enableTrackingHours === true,
+        trackingStartTime: report.trackingPolicy?.trackingStartTime || null,
+        trackingEndTime: report.trackingPolicy?.trackingEndTime || null,
+        trackingDays: report.trackingPolicy?.trackingDays || [],
+        schoolTimezone: report.trackingPolicy?.schoolTimezone || report.timezone,
+        afterHoursMode: report.trackingPolicy?.afterHoursMode || "off",
+      },
+    };
+  }
+  const [authenticatedSessions, heartbeatRows, supervisionRows, monitoringEvents] = await Promise.all([
+    dbInstance
+      .select({
+        id: studentSessions.id,
+        studentId: studentSessions.studentId,
+        startedAt: studentSessions.startedAt,
+        endedAt: studentSessions.endedAt,
+        lastSeenAt: studentSessions.lastSeenAt,
+      })
+      .from(studentSessions)
+      .where(and(
+        inArray(studentSessions.studentId, studentIds),
+        sql`${studentSessions.startedAt} < ${report.windowEnd.toISOString()}`,
+        sql`coalesce(${studentSessions.endedAt}, ${report.windowEnd.toISOString()}) > ${report.windowStart.toISOString()}`
+      )),
+    getHeartbeatsForStudentsInRange(
+      report.schoolId,
+      studentIds,
+      report.windowStart,
+      report.windowEnd,
+      dbInstance
+    ),
+    dbInstance
+      .select({
+        studentId: classpilotSupervisionStudents.studentId,
+        assignedAt: classpilotSupervisionStudents.assignedAt,
+        releasedAt: classpilotSupervisionStudents.releasedAt,
+        startsAt: classpilotSupervisionContexts.startsAt,
+        endsAt: classpilotSupervisionContexts.endsAt,
+        endedAt: classpilotSupervisionContexts.endedAt,
+      })
+      .from(classpilotSupervisionStudents)
+      .innerJoin(classpilotSupervisionContexts, and(
+        eq(classpilotSupervisionContexts.id, classpilotSupervisionStudents.contextId),
+        eq(classpilotSupervisionContexts.schoolId, report.schoolId)
+      ))
+      .where(and(
+        eq(classpilotSupervisionStudents.schoolId, report.schoolId),
+        inArray(classpilotSupervisionStudents.studentId, studentIds),
+        sql`${classpilotSupervisionStudents.assignedAt} < ${report.windowEnd.toISOString()}`,
+        sql`coalesce(${classpilotSupervisionStudents.releasedAt}, ${classpilotSupervisionContexts.endedAt}, ${classpilotSupervisionContexts.endsAt}) > ${report.windowStart.toISOString()}`
+      )),
+    dbInstance
+      .select()
+      .from(classpilotMonitoringEvents)
+      .where(and(
+        eq(classpilotMonitoringEvents.schoolId, report.schoolId),
+        eq(classpilotMonitoringEvents.teachingSessionId, report.teachingSessionId),
+        inArray(classpilotMonitoringEvents.studentId, studentIds),
+        sql`${classpilotMonitoringEvents.occurredAt} >= ${report.windowStart}`,
+        sql`${classpilotMonitoringEvents.occurredAt} < ${report.windowEnd}`,
+        ne(classpilotMonitoringEvents.eventType, "monitoring_gap")
+      )),
+  ]);
+  return {
+    session,
+    roster: roster.map((row) => ({
+      studentId: row.studentId,
+      studentName: row.studentName || "Unknown student",
+      capturedAt: row.capturedAt,
+    })),
+    authenticatedSessions,
+    heartbeats: heartbeatRows,
+    exclusions: supervisionRows.map((row) => ({
+      studentId: row.studentId,
+      start: row.assignedAt > row.startsAt ? row.assignedAt : row.startsAt,
+      end: [row.releasedAt, row.endedAt, row.endsAt]
+        .filter((value): value is Date => !!value)
+        .sort((a, b) => a.getTime() - b.getTime())[0]!,
+      source: "delegated_supervision" as const,
+    })),
+    monitoringEvents,
+    trackingPolicy: {
+      enableTrackingHours: report.trackingPolicy?.enableTrackingHours === true,
+      trackingStartTime: report.trackingPolicy?.trackingStartTime || null,
+      trackingEndTime: report.trackingPolicy?.trackingEndTime || null,
+      trackingDays: report.trackingPolicy?.trackingDays || [],
+      schoolTimezone: report.trackingPolicy?.schoolTimezone || report.timezone,
+      afterHoursMode: report.trackingPolicy?.afterHoursMode || "off",
+    },
+  };
+}
+
+export type MaterializedClasspilotStudentReport = {
+  studentId: string;
+  studentNameSnapshot: string;
+  status: "complete" | "partial" | "none" | "not_expected" | "unavailable";
+  eligibleSeconds: number;
+  observedSeconds: number;
+  gapSeconds: number;
+  coveragePercent: number | null;
+  heartbeatCount: number;
+  firstObservedAt: Date | null;
+  lastObservedAt: Date | null;
+  gapIntervals: Array<{
+    start: string;
+    end: string;
+    durationSeconds: number;
+    cause: "unknown";
+    studentSessionId: string;
+  }>;
+  eventCounts: Record<string, number>;
+  topDomains: Array<{ domain: string; seconds: number; visits: number }>;
+};
+
+export type MaterializedClasspilotSessionBoundaryEvent = {
+  studentId: string;
+  studentSessionId: string;
+  eventType: "student_session_started" | "student_session_ended";
+  occurredAt: Date;
+};
+
+export async function completeClasspilotSessionReport(
+  options: {
+    report: ClasspilotSessionReport;
+    leaseOwner: string;
+    students: MaterializedClasspilotStudentReport[];
+    sessionBoundaryEvents?: MaterializedClasspilotSessionBoundaryEvent[];
+    completedAt?: Date;
+  },
+  dbInstance: typeof db = db
+): Promise<ClasspilotSessionReport | undefined> {
+  const completedAt = options.completedAt || new Date();
+  return dbInstance.transaction(async (tx) => {
+    const [locked] = await tx
+      .select()
+      .from(classpilotSessionReports)
+      .where(and(
+        eq(classpilotSessionReports.id, options.report.id),
+        eq(classpilotSessionReports.state, "materializing"),
+        eq(classpilotSessionReports.leaseOwner, options.leaseOwner)
+      ))
+      .limit(1)
+      .for("update");
+    if (!locked) return undefined;
+    if (!locked.leaseExpiresAt || locked.leaseExpiresAt <= completedAt) {
+      // A stale worker must not touch detail after its lease can be reclaimed.
+      // The recovery claimant will own the next state transition.
+      return undefined;
+    }
+    if (locked.expiresAt <= completedAt) {
+      await tx
+        .update(classpilotSessionReports)
+        .set({
+          state: "expired",
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          lastError: "Session report expired before materialization committed",
+          updatedAt: completedAt,
+        })
+        .where(eq(classpilotSessionReports.id, locked.id));
+      await tx
+        .update(classpilotSessionSummaryDeliveries)
+        .set({
+          state: "failed",
+          lastError: "Session summary expired before email was sent",
+          updatedAt: completedAt,
+        })
+        .where(and(
+          eq(classpilotSessionSummaryDeliveries.schoolId, locked.schoolId),
+          eq(classpilotSessionSummaryDeliveries.teachingSessionId, locked.teachingSessionId),
+          eq(classpilotSessionSummaryDeliveries.state, "waiting_report")
+        ));
+      return undefined;
+    }
+    const [sessionIdentity] = await tx
+      .select({ groupId: teachingSessions.groupId })
+      .from(teachingSessions)
+      .where(and(
+        eq(teachingSessions.id, locked.teachingSessionId),
+        eq(teachingSessions.schoolId, locked.schoolId)
+      ))
+      .limit(1);
+    if (!sessionIdentity) throw new Error("Materialized report teaching session was not found");
+
+    await tx.delete(classpilotSessionStudentReports).where(and(
+      eq(classpilotSessionStudentReports.schoolId, locked.schoolId),
+      eq(classpilotSessionStudentReports.reportId, locked.id)
+    ));
+    await tx.delete(classpilotMonitoringEvents).where(and(
+      eq(classpilotMonitoringEvents.schoolId, locked.schoolId),
+      eq(classpilotMonitoringEvents.teachingSessionId, locked.teachingSessionId),
+      eq(classpilotMonitoringEvents.origin, "server"),
+      eq(classpilotMonitoringEvents.eventType, "monitoring_gap")
+    ));
+    const sessionBoundaryEvents = options.sessionBoundaryEvents || [];
+    if (sessionBoundaryEvents.length > 0) {
+      await tx
+        .insert(classpilotMonitoringEvents)
+        .values(sessionBoundaryEvents.map((event) => ({
+          schoolId: locked.schoolId,
+          studentId: event.studentId,
+          studentSessionId: event.studentSessionId,
+          teachingSessionId: locked.teachingSessionId,
+          sourceEventId: `report:${locked.id}:${event.eventType}:${event.studentSessionId}`,
+          schemaVersion: 1,
+          origin: "server",
+          eventType: event.eventType,
+          occurredAt: event.occurredAt,
+          receivedAt: completedAt,
+          metadata: {},
+          retentionExpiresAt: locked.expiresAt,
+        })))
+        .onConflictDoNothing();
+    }
+    if (options.students.length > 0) {
+      await tx.insert(classpilotSessionStudentReports).values(options.students.map((student) => ({
+        schoolId: locked.schoolId,
+        reportId: locked.id,
+        teachingSessionId: locked.teachingSessionId,
+        studentId: student.studentId,
+        studentNameSnapshot: student.studentNameSnapshot,
+        status: student.status,
+        eligibleSeconds: student.eligibleSeconds,
+        observedSeconds: student.observedSeconds,
+        gapSeconds: student.gapSeconds,
+        coveragePercent: student.coveragePercent,
+        heartbeatCount: student.heartbeatCount,
+        firstObservedAt: student.firstObservedAt,
+        lastObservedAt: student.lastObservedAt,
+        gapIntervals: student.gapIntervals,
+        eventCounts: student.eventCounts,
+        topDomains: student.topDomains,
+      })));
+      const gapEvents = options.students.flatMap((student) => student.gapIntervals.map((gap, index) => ({
+        schoolId: locked.schoolId,
+        studentId: student.studentId,
+        studentSessionId: gap.studentSessionId,
+        teachingSessionId: locked.teachingSessionId,
+        sourceEventId: `report:${locked.id}:gap:${student.studentId}:${index}`,
+        schemaVersion: 1,
+        origin: "server",
+        eventType: "monitoring_gap",
+        occurredAt: new Date(gap.start),
+        receivedAt: completedAt,
+        metadata: {
+          endedAt: gap.end,
+          durationSeconds: gap.durationSeconds,
+          message: "Monitoring signal lost — cause unknown",
+        },
+        retentionExpiresAt: locked.expiresAt,
+      } as const)));
+      if (gapEvents.length > 0) {
+        await tx.insert(classpilotMonitoringEvents).values(gapEvents).onConflictDoNothing();
+      }
+
+      const localDate = localDateInTimeZone(locked.windowStart, locked.timezone);
+      for (const student of options.students) {
+        await tx
+          .insert(classpilotSessionUsage)
+          .values({
+            schoolId: locked.schoolId,
+            teachingSessionId: locked.teachingSessionId,
+            groupId: sessionIdentity.groupId,
+            studentId: student.studentId,
+            localDate,
+            totalSeconds: student.observedSeconds,
+            heartbeatCount: student.heartbeatCount,
+            topDomains: student.topDomains,
+            firstSeen: student.firstObservedAt,
+            lastSeen: student.lastObservedAt,
+            computedAt: completedAt,
+          })
+          .onConflictDoUpdate({
+            target: [
+              classpilotSessionUsage.teachingSessionId,
+              classpilotSessionUsage.studentId,
+              classpilotSessionUsage.localDate,
+            ],
+            set: {
+              totalSeconds: student.observedSeconds,
+              heartbeatCount: student.heartbeatCount,
+              topDomains: student.topDomains,
+              firstSeen: student.firstObservedAt,
+              lastSeen: student.lastObservedAt,
+              computedAt: completedAt,
+            },
+          });
+      }
+    }
+
+    const counts = {
+      complete: options.students.filter((student) => student.status === "complete").length,
+      partial: options.students.filter((student) => student.status === "partial").length,
+      none: options.students.filter((student) => student.status === "none").length,
+      notExpected: options.students.filter((student) => student.status === "not_expected").length,
+      unavailable: options.students.filter((student) => student.status === "unavailable").length,
+    };
+    const [ready] = await tx
+      .update(classpilotSessionReports)
+      .set({
+        state: "ready",
+        rosterCount: options.students.length,
+        eligibleStudentCount: options.students.filter((student) => student.eligibleSeconds > 0).length,
+        completeCount: counts.complete,
+        partialCount: counts.partial,
+        noneCount: counts.none,
+        notExpectedCount: counts.notExpected,
+        unavailableCount: counts.unavailable,
+        totalEligibleSeconds: options.students.reduce((sum, student) => sum + student.eligibleSeconds, 0),
+        totalObservedSeconds: options.students.reduce((sum, student) => sum + student.observedSeconds, 0),
+        totalGapSeconds: options.students.reduce((sum, student) => sum + student.gapSeconds, 0),
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        lastError: null,
+        materializedAt: completedAt,
+        updatedAt: completedAt,
+      })
+      .where(and(
+        eq(classpilotSessionReports.id, locked.id),
+        eq(classpilotSessionReports.state, "materializing"),
+        eq(classpilotSessionReports.leaseOwner, options.leaseOwner),
+        gt(classpilotSessionReports.leaseExpiresAt, completedAt),
+        gt(classpilotSessionReports.expiresAt, completedAt),
+        isNull(classpilotSessionReports.detailExpiredAt)
+      ))
+      .returning();
+    if (!ready) {
+      // Roll back all detail writes if the lease fence cannot promote the
+      // exact claimed row. Returning here would otherwise commit orphaned
+      // materialization detail without a ready parent.
+      throw new Error("ClassPilot report lease was lost before commit");
+    }
+    await tx
+      .update(classpilotSessionSummaryDeliveries)
+      .set({ state: "queued", nextAttemptAt: completedAt, updatedAt: completedAt })
+      .where(and(
+        eq(classpilotSessionSummaryDeliveries.schoolId, locked.schoolId),
+        eq(classpilotSessionSummaryDeliveries.teachingSessionId, locked.teachingSessionId),
+        eq(classpilotSessionSummaryDeliveries.state, "waiting_report")
+      ));
+    return ready;
+  });
+}
+
+export async function failClasspilotSessionReport(
+  options: {
+    reportId: string;
+    leaseOwner: string;
+    error: string;
+    retryAt?: Date;
+    failedAt?: Date;
+  },
+  dbInstance: typeof db = db
+): Promise<"retry" | "failed" | "lost_lease"> {
+  const failedAt = options.failedAt || new Date();
+  return dbInstance.transaction(async (tx) => {
+    const [report] = await tx
+      .select()
+      .from(classpilotSessionReports)
+      .where(and(
+        eq(classpilotSessionReports.id, options.reportId),
+        eq(classpilotSessionReports.state, "materializing"),
+        eq(classpilotSessionReports.leaseOwner, options.leaseOwner)
+      ))
+      .limit(1)
+      .for("update");
+    if (!report) return "lost_lease";
+    const expired = report.expiresAt <= failedAt;
+    const retry = !expired && report.attemptCount < 5 && !!options.retryAt;
+    await tx
+      .update(classpilotSessionReports)
+      .set({
+        state: expired ? "expired" : retry ? "pending" : "failed",
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        nextAttemptAt: retry ? options.retryAt! : failedAt,
+        lastError: options.error.slice(0, 500),
+        // detailExpiredAt is the durable marker that the retention worker
+        // actually removed/redacted report detail. Merely crossing expiresAt
+        // makes the report unreadable, but must not pretend PII was purged.
+        detailExpiredAt: report.detailExpiredAt,
+        updatedAt: failedAt,
+      })
+      .where(eq(classpilotSessionReports.id, report.id));
+    if (!retry) {
+      await tx
+        .update(classpilotSessionSummaryDeliveries)
+        .set({
+          state: "failed",
+          lastError: expired
+            ? "Session summary expired before email was sent"
+            : "Session report generation failed; email was not sent",
+          updatedAt: failedAt,
+        })
+        .where(and(
+          eq(classpilotSessionSummaryDeliveries.schoolId, report.schoolId),
+          eq(classpilotSessionSummaryDeliveries.teachingSessionId, report.teachingSessionId),
+          eq(classpilotSessionSummaryDeliveries.state, "waiting_report")
+        ));
+    }
+    return retry ? "retry" : "failed";
+  });
+}
+
+export type ClasspilotMonitoringScope =
+  | { kind: "teaching_session"; id: string }
+  | { kind: "supervision_context"; id: string };
+
+export async function resolveClasspilotMonitoringScope(
+  options: {
+    schoolId: string;
+    studentId: string;
+    occurredAt: Date;
+    claimedTeachingSessionId?: string | null;
+    claimedSupervisionContextId?: string | null;
+  },
+  dbInstance: typeof db = db
+): Promise<ClasspilotMonitoringScope | null> {
+  const claimedScopeProvided = options.claimedTeachingSessionId !== undefined
+    || options.claimedSupervisionContextId !== undefined;
+  const supervision = await dbInstance
+    .select({ id: classpilotSupervisionContexts.id })
+    .from(classpilotSupervisionStudents)
+    .innerJoin(classpilotSupervisionContexts, and(
+      eq(classpilotSupervisionContexts.id, classpilotSupervisionStudents.contextId),
+      eq(classpilotSupervisionContexts.schoolId, options.schoolId)
+    ))
+    .where(and(
+      eq(classpilotSupervisionStudents.schoolId, options.schoolId),
+      eq(classpilotSupervisionStudents.studentId, options.studentId),
+      sql`${classpilotSupervisionStudents.assignedAt} <= ${options.occurredAt}`,
+      sql`coalesce(${classpilotSupervisionStudents.releasedAt}, ${classpilotSupervisionContexts.endedAt}, ${classpilotSupervisionContexts.endsAt}) > ${options.occurredAt}`,
+      sql`${classpilotSupervisionContexts.startsAt} <= ${options.occurredAt}`
+    ))
+    .limit(2);
+  if (supervision.length === 1) {
+    const resolved = { kind: "supervision_context" as const, id: supervision[0]!.id };
+    return !claimedScopeProvided
+      || (options.claimedSupervisionContextId === resolved.id && !options.claimedTeachingSessionId)
+      ? resolved
+      : null;
+  }
+  if (supervision.length > 1) return null;
+
+  const sessions = await dbInstance
+    .select({ id: teachingSessions.id })
+    .from(classpilotSessionStudents)
+    .innerJoin(teachingSessions, and(
+      eq(teachingSessions.id, classpilotSessionStudents.teachingSessionId),
+      eq(teachingSessions.schoolId, options.schoolId)
+    ))
+    .where(and(
+      eq(classpilotSessionStudents.schoolId, options.schoolId),
+      eq(classpilotSessionStudents.studentId, options.studentId),
+      sql`${teachingSessions.startTime} <= ${options.occurredAt}`,
+      sql`coalesce(${teachingSessions.endTime}, ${teachingSessions.scheduledEndAt}, now()) > ${options.occurredAt}`
+    ))
+    .limit(2);
+  if (sessions.length !== 1) return null;
+  const resolved = { kind: "teaching_session" as const, id: sessions[0]!.id };
+  return !claimedScopeProvided
+    || (options.claimedTeachingSessionId === resolved.id && !options.claimedSupervisionContextId)
+    ? resolved
+    : null;
+}
+
+export async function insertClasspilotMonitoringEvent(
+  event: InsertClasspilotMonitoringEvent,
+  dbInstance: typeof db = db
+): Promise<"stored" | "duplicate"> {
+  const inserted = await dbInstance
+    .insert(classpilotMonitoringEvents)
+    .values(event)
+    .onConflictDoNothing()
+    .returning({ id: classpilotMonitoringEvents.id });
+  return inserted.length > 0 ? "stored" : "duplicate";
+}
+
+export type InsertScopedClasspilotMonitoringEvent = Omit<
+  InsertClasspilotMonitoringEvent,
+  "teachingSessionId" | "supervisionContextId"
+> & {
+  claimedTeachingSessionId?: string | null;
+  claimedSupervisionContextId?: string | null;
+};
+
+/**
+ * Resolve the student's occurrence-time authority and insert the event under
+ * the same per-student transaction lock used by class/supervision handoffs.
+ * This prevents a delegation transition from committing between scope
+ * resolution and retention of the scoped event.
+ */
+export async function insertClasspilotMonitoringEventForResolvedScope(
+  options: InsertScopedClasspilotMonitoringEvent,
+  dbInstance: typeof db = db
+): Promise<"stored" | "duplicate" | "not_retained"> {
+  const {
+    claimedTeachingSessionId,
+    claimedSupervisionContextId,
+    ...event
+  } = options;
+  return dbInstance.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    await lockClasspilotStudentControlAuthorities(
+      event.schoolId,
+      [event.studentId],
+      transactionDb
+    );
+    const scope = await resolveClasspilotMonitoringScope({
+      schoolId: event.schoolId,
+      studentId: event.studentId,
+      occurredAt: event.occurredAt,
+      claimedTeachingSessionId,
+      claimedSupervisionContextId,
+    }, transactionDb);
+    if (!scope) return "not_retained";
+    return insertClasspilotMonitoringEvent({
+      ...event,
+      teachingSessionId: scope.kind === "teaching_session" ? scope.id : null,
+      supervisionContextId: scope.kind === "supervision_context" ? scope.id : null,
+    }, transactionDb);
+  });
+}
+
+export type ClasspilotMonitoringEventView = {
+  event: ClasspilotMonitoringEvent;
+  studentName: string;
+};
+
+export async function listClasspilotMonitoringEvents(options: {
+  schoolId: string;
+  scope: ClasspilotMonitoringScope;
+  studentId?: string;
+  eventTypes?: string[];
+  before?: { occurredAt: Date; id: string };
+  limit?: number;
+}, dbInstance: typeof db = db): Promise<ClasspilotMonitoringEventView[]> {
+  const conditions: SQL[] = [
+    eq(classpilotMonitoringEvents.schoolId, options.schoolId),
+    gt(classpilotMonitoringEvents.retentionExpiresAt, new Date()),
+    options.scope.kind === "teaching_session"
+      ? eq(classpilotMonitoringEvents.teachingSessionId, options.scope.id)
+      : eq(classpilotMonitoringEvents.supervisionContextId, options.scope.id),
+  ];
+  if (options.studentId) conditions.push(eq(classpilotMonitoringEvents.studentId, options.studentId));
+  if (options.eventTypes?.length) conditions.push(inArray(classpilotMonitoringEvents.eventType, options.eventTypes));
+  if (options.before) {
+    conditions.push(or(
+      lt(classpilotMonitoringEvents.occurredAt, options.before.occurredAt),
+      and(
+        eq(classpilotMonitoringEvents.occurredAt, options.before.occurredAt),
+        lt(classpilotMonitoringEvents.id, options.before.id)
+      )
+    )!);
+  }
+  const limit = Math.max(1, Math.min(options.limit || 100, 50_001));
+  const rows = await dbInstance
+    .select({
+      event: classpilotMonitoringEvents,
+      firstName: students.firstName,
+      lastName: students.lastName,
+      email: students.email,
+      sessionNameSnapshot: classpilotSessionStudents.studentNameSnapshot,
+    })
+    .from(classpilotMonitoringEvents)
+    .leftJoin(students, and(
+      eq(students.id, classpilotMonitoringEvents.studentId),
+      eq(students.schoolId, options.schoolId)
+    ))
+    .leftJoin(classpilotSessionStudents, and(
+      eq(classpilotSessionStudents.schoolId, options.schoolId),
+      eq(classpilotSessionStudents.studentId, classpilotMonitoringEvents.studentId),
+      eq(classpilotSessionStudents.teachingSessionId, classpilotMonitoringEvents.teachingSessionId)
+    ))
+    .where(and(...conditions))
+    .orderBy(desc(classpilotMonitoringEvents.occurredAt), desc(classpilotMonitoringEvents.id))
+    .limit(limit);
+  return rows.map((row) => ({
+    event: row.event,
+    studentName: row.sessionNameSnapshot
+      || [row.firstName, row.lastName].filter(Boolean).join(" ").trim()
+      || row.email
+      || "Unknown student",
+  }));
+}
+
+export async function isAuthorizedClasspilotSupervisionStaff(
+  schoolId: string,
+  contextId: string,
+  staffId: string,
+  dbInstance: typeof db = db
+): Promise<boolean> {
+  const [context] = await dbInstance
+    .select({ id: classpilotSupervisionContexts.id })
+    .from(classpilotSupervisionContexts)
+    .where(and(
+      eq(classpilotSupervisionContexts.schoolId, schoolId),
+      eq(classpilotSupervisionContexts.id, contextId),
+      eq(classpilotSupervisionContexts.assignedStaffId, staffId)
+    ))
+    .limit(1);
+  return !!context;
 }
 
 /**
@@ -8188,6 +9744,26 @@ export async function recoverExpiredSessionSummaryLeases(
   const schoolCondition = schoolId
     ? eq(classpilotSessionSummaryDeliveries.schoolId, schoolId)
     : sql`true`;
+  await dbInstance
+    .update(classpilotSessionSummaryDeliveries)
+    .set({
+      state: "failed",
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      lastError: "Session summary expired before email was sent",
+      updatedAt: now,
+    })
+    .where(and(
+      eq(classpilotSessionSummaryDeliveries.state, "leased"),
+      schoolCondition,
+      isNull(classpilotSessionSummaryDeliveries.submissionStartedAt),
+      sql`EXISTS (
+        SELECT 1 FROM classpilot_session_reports AS report
+        WHERE report.school_id = ${classpilotSessionSummaryDeliveries.schoolId}
+          AND report.teaching_session_id = ${classpilotSessionSummaryDeliveries.teachingSessionId}
+          AND (report.expires_at <= ${now} OR report.detail_expired_at IS NOT NULL OR report.state = 'expired')
+      )`
+    ));
   const safe = await dbInstance
     .update(classpilotSessionSummaryDeliveries)
     .set({
@@ -8202,7 +9778,15 @@ export async function recoverExpiredSessionSummaryLeases(
       eq(classpilotSessionSummaryDeliveries.state, "leased"),
       schoolCondition,
       sql`${classpilotSessionSummaryDeliveries.leaseExpiresAt} < ${now}`,
-      isNull(classpilotSessionSummaryDeliveries.submissionStartedAt)
+      isNull(classpilotSessionSummaryDeliveries.submissionStartedAt),
+      sql`EXISTS (
+        SELECT 1 FROM classpilot_session_reports AS report
+        WHERE report.school_id = ${classpilotSessionSummaryDeliveries.schoolId}
+          AND report.teaching_session_id = ${classpilotSessionSummaryDeliveries.teachingSessionId}
+          AND report.state = 'ready'
+          AND report.detail_expired_at IS NULL
+          AND report.expires_at > ${now}
+      )`
     ))
     .returning({ id: classpilotSessionSummaryDeliveries.id });
 
@@ -8237,19 +9821,50 @@ export async function claimDueSessionSummaryDeliveries(
   dbInstance: typeof db = db
 ): Promise<ClasspilotSessionSummaryDelivery[]> {
   const now = options.now || new Date();
-  const conditions: SQL[] = [
+  const deliveryScope: SQL[] = [];
+  if (options.schoolId) deliveryScope.push(eq(classpilotSessionSummaryDeliveries.schoolId, options.schoolId));
+  if (options.teachingSessionId) deliveryScope.push(eq(classpilotSessionSummaryDeliveries.teachingSessionId, options.teachingSessionId));
+  const dueConditions: SQL[] = [
     inArray(classpilotSessionSummaryDeliveries.state, ["queued", "retry"]),
     sql`${classpilotSessionSummaryDeliveries.nextAttemptAt} <= ${now}`,
+    ...deliveryScope,
   ];
-  if (options.schoolId) conditions.push(eq(classpilotSessionSummaryDeliveries.schoolId, options.schoolId));
-  if (options.teachingSessionId) conditions.push(eq(classpilotSessionSummaryDeliveries.teachingSessionId, options.teachingSessionId));
   const leaseExpiresAt = new Date(now.getTime() + (options.leaseMs || 5 * 60 * 1000));
   const limit = Math.max(1, Math.min(options.limit || 25, 100));
   return dbInstance.transaction(async (tx) => {
+    await tx
+      .update(classpilotSessionSummaryDeliveries)
+      .set({
+        state: "failed",
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        lastError: "Session summary expired before email was sent",
+        updatedAt: now,
+      })
+      .where(and(
+        inArray(classpilotSessionSummaryDeliveries.state, ["waiting_report", "queued", "retry"]),
+        ...deliveryScope,
+        sql`EXISTS (
+          SELECT 1 FROM classpilot_session_reports AS report
+          WHERE report.school_id = ${classpilotSessionSummaryDeliveries.schoolId}
+            AND report.teaching_session_id = ${classpilotSessionSummaryDeliveries.teachingSessionId}
+            AND (report.expires_at <= ${now} OR report.detail_expired_at IS NOT NULL OR report.state = 'expired')
+        )`
+      ));
     const candidates = await tx
       .select({ id: classpilotSessionSummaryDeliveries.id })
       .from(classpilotSessionSummaryDeliveries)
-      .where(and(...conditions))
+      .where(and(
+        ...dueConditions,
+        sql`EXISTS (
+          SELECT 1 FROM classpilot_session_reports AS report
+          WHERE report.school_id = ${classpilotSessionSummaryDeliveries.schoolId}
+            AND report.teaching_session_id = ${classpilotSessionSummaryDeliveries.teachingSessionId}
+            AND report.state = 'ready'
+            AND report.detail_expired_at IS NULL
+            AND report.expires_at > ${now}
+        )`
+      ))
       .orderBy(classpilotSessionSummaryDeliveries.nextAttemptAt, classpilotSessionSummaryDeliveries.createdAt)
       .limit(limit)
       .for("update", { skipLocked: true });
@@ -8265,8 +9880,15 @@ export async function claimDueSessionSummaryDeliveries(
       })
       .where(and(
         inArray(classpilotSessionSummaryDeliveries.id, candidates.map((candidate) => candidate.id)),
-        inArray(classpilotSessionSummaryDeliveries.state, ["queued", "retry"]),
-        sql`${classpilotSessionSummaryDeliveries.nextAttemptAt} <= ${now}`
+        ...dueConditions,
+        sql`EXISTS (
+          SELECT 1 FROM classpilot_session_reports AS report
+          WHERE report.school_id = ${classpilotSessionSummaryDeliveries.schoolId}
+            AND report.teaching_session_id = ${classpilotSessionSummaryDeliveries.teachingSessionId}
+            AND report.state = 'ready'
+            AND report.detail_expired_at IS NULL
+            AND report.expires_at > ${now}
+        )`
       ))
       .returning();
   });
@@ -8278,21 +9900,47 @@ export async function markSessionSummarySubmissionStarted(
   startedAt = new Date(),
   dbInstance: typeof db = db
 ): Promise<ClasspilotSessionSummaryDelivery | undefined> {
-  const [delivery] = await dbInstance
-    .update(classpilotSessionSummaryDeliveries)
-    .set({
-      submissionStartedAt: startedAt,
-      attemptCount: sql`${classpilotSessionSummaryDeliveries.attemptCount} + 1`,
-      updatedAt: startedAt,
-    })
-    .where(and(
-      eq(classpilotSessionSummaryDeliveries.id, deliveryId),
-      eq(classpilotSessionSummaryDeliveries.state, "leased"),
-      eq(classpilotSessionSummaryDeliveries.leaseOwner, leaseOwner),
-      isNull(classpilotSessionSummaryDeliveries.submissionStartedAt)
-    ))
-    .returning();
-  return delivery;
+  return dbInstance.transaction(async (tx) => {
+    const [delivery] = await tx
+      .update(classpilotSessionSummaryDeliveries)
+      .set({
+        submissionStartedAt: startedAt,
+        attemptCount: sql`${classpilotSessionSummaryDeliveries.attemptCount} + 1`,
+        updatedAt: startedAt,
+      })
+      .where(and(
+        eq(classpilotSessionSummaryDeliveries.id, deliveryId),
+        eq(classpilotSessionSummaryDeliveries.state, "leased"),
+        eq(classpilotSessionSummaryDeliveries.leaseOwner, leaseOwner),
+        isNull(classpilotSessionSummaryDeliveries.submissionStartedAt),
+        sql`EXISTS (
+          SELECT 1 FROM classpilot_session_reports AS report
+          WHERE report.school_id = ${classpilotSessionSummaryDeliveries.schoolId}
+            AND report.teaching_session_id = ${classpilotSessionSummaryDeliveries.teachingSessionId}
+            AND report.state = 'ready'
+            AND report.detail_expired_at IS NULL
+            AND report.expires_at > ${startedAt}
+        )`
+      ))
+      .returning();
+    if (delivery) return delivery;
+    await tx
+      .update(classpilotSessionSummaryDeliveries)
+      .set({
+        state: "failed",
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        lastError: "Session summary expired before email was sent",
+        updatedAt: startedAt,
+      })
+      .where(and(
+        eq(classpilotSessionSummaryDeliveries.id, deliveryId),
+        eq(classpilotSessionSummaryDeliveries.state, "leased"),
+        eq(classpilotSessionSummaryDeliveries.leaseOwner, leaseOwner),
+        isNull(classpilotSessionSummaryDeliveries.submissionStartedAt)
+      ));
+    return undefined;
+  });
 }
 
 export async function completeSessionSummaryDelivery(
@@ -8412,9 +10060,44 @@ export async function upsertScheduledClassConflictForOccurrence(
     conflictPayload: unknown;
   },
   dbInstance: typeof db = db
-): Promise<{ conflict: ClasspilotScheduledConflict; occurrenceActive: boolean }> {
+): Promise<{
+  conflict: ClasspilotScheduledConflict;
+  occurrenceActive: boolean;
+  restoredStudentIds: string[];
+}> {
   return dbInstance.transaction(async (tx) => {
     const transactionDb = tx as unknown as typeof db;
+    const restoredStudentIds: string[] = [];
+    const [existingConflict] = await tx
+      .select({ id: classpilotScheduledConflicts.id })
+      .from(classpilotScheduledConflicts)
+      .where(and(
+        eq(classpilotScheduledConflicts.schoolId, data.schoolId),
+        eq(classpilotScheduledConflicts.groupId, data.groupId),
+        eq(classpilotScheduledConflicts.scheduledDate, data.scheduledDate),
+        eq(classpilotScheduledConflicts.blockStartTime, data.blockStartTime)
+      ))
+      .limit(1);
+    const existingAssignments = existingConflict
+      ? await tx
+          .select({ studentId: classpilotSupervisionStudents.studentId })
+          .from(classpilotSupervisionStudents)
+          .innerJoin(
+            classpilotSupervisionContexts,
+            eq(classpilotSupervisionContexts.id, classpilotSupervisionStudents.contextId)
+          )
+          .where(and(
+            eq(classpilotSupervisionContexts.schoolId, data.schoolId),
+            eq(classpilotSupervisionContexts.scheduledConflictId, existingConflict.id),
+            eq(classpilotSupervisionContexts.status, "active"),
+            isNull(classpilotSupervisionStudents.releasedAt)
+          ))
+      : [];
+    await lockClasspilotStudentControlAuthorities(
+      data.schoolId,
+      existingAssignments.map((row) => row.studentId),
+      transactionDb
+    );
     const [occurrence] = await tx
       .select()
       .from(teachingSessions)
@@ -8459,24 +10142,37 @@ export async function upsertScheduledClassConflictForOccurrence(
         ));
       const contextIds = contexts.map((context) => context.id);
       if (contextIds.length > 0) {
-        await tx
+        const releasedAt = occurrence.endTime || new Date();
+        const released = await tx
           .update(classpilotSupervisionStudents)
-          .set({ releasedAt: occurrence.endTime || new Date(), releaseReason: "scheduled_occurrence_finalized" })
+          .set({ releasedAt, releaseReason: "scheduled_occurrence_finalized" })
           .where(and(
             eq(classpilotSupervisionStudents.schoolId, data.schoolId),
             inArray(classpilotSupervisionStudents.contextId, contextIds),
             isNull(classpilotSupervisionStudents.releasedAt)
-          ));
+          ))
+          .returning();
+        restoredStudentIds.push(...released.map((row) => row.studentId));
         await tx
           .update(classpilotSupervisionContexts)
-          .set({ status: "ended", endedAt: occurrence.endTime || new Date(), updatedAt: new Date() })
+          .set({ status: "ended", endedAt: releasedAt, updatedAt: releasedAt })
           .where(and(
             eq(classpilotSupervisionContexts.schoolId, data.schoolId),
             inArray(classpilotSupervisionContexts.id, contextIds)
           ));
+        for (const context of contexts) {
+          await restoreClasspilotStudentControlStatesAfterSupervision({
+            schoolId: data.schoolId,
+            supervisionContextId: context.id,
+            studentIds: released
+              .filter((row) => row.contextId === context.id)
+              .map((row) => row.studentId),
+            restoredAt: releasedAt,
+          }, transactionDb);
+        }
       }
     }
-    return { conflict, occurrenceActive };
+    return { conflict, occurrenceActive, restoredStudentIds };
   });
 }
 
@@ -8605,6 +10301,25 @@ export async function resolveScheduledConflictForStartedOccurrence(
   dbInstance: typeof db = db
 ): Promise<ClasspilotScheduledConflict | undefined> {
   return dbInstance.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    const activeAssignments = await tx
+      .select({ studentId: classpilotSupervisionStudents.studentId })
+      .from(classpilotSupervisionStudents)
+      .innerJoin(
+        classpilotSupervisionContexts,
+        eq(classpilotSupervisionContexts.id, classpilotSupervisionStudents.contextId)
+      )
+      .where(and(
+        eq(classpilotSupervisionContexts.schoolId, options.schoolId),
+        eq(classpilotSupervisionContexts.scheduledConflictId, options.scheduledConflictId),
+        eq(classpilotSupervisionContexts.status, "active"),
+        isNull(classpilotSupervisionStudents.releasedAt)
+      ));
+    await lockClasspilotStudentControlAuthorities(
+      options.schoolId,
+      activeAssignments.map((row) => row.studentId),
+      transactionDb
+    );
     const [occurrence] = await tx
       .select()
       .from(teachingSessions)
@@ -8644,14 +10359,15 @@ export async function resolveScheduledConflictForStartedOccurrence(
       ));
     const contextIds = contexts.map((context) => context.id);
     if (contextIds.length > 0) {
-      await tx
+      const released = await tx
         .update(classpilotSupervisionStudents)
         .set({ releasedAt: endedAt, releaseReason: "scheduled_teacher_started" })
         .where(and(
           eq(classpilotSupervisionStudents.schoolId, options.schoolId),
           inArray(classpilotSupervisionStudents.contextId, contextIds),
           isNull(classpilotSupervisionStudents.releasedAt)
-        ));
+        ))
+        .returning();
       await tx
         .update(classpilotSupervisionContexts)
         .set({ status: "ended", endedAt, updatedAt: endedAt })
@@ -8659,6 +10375,16 @@ export async function resolveScheduledConflictForStartedOccurrence(
           eq(classpilotSupervisionContexts.schoolId, options.schoolId),
           inArray(classpilotSupervisionContexts.id, contextIds)
         ));
+      for (const context of contexts) {
+        await restoreClasspilotStudentControlStatesAfterSupervision({
+          schoolId: options.schoolId,
+          supervisionContextId: context.id,
+          studentIds: released
+            .filter((row) => row.contextId === context.id)
+            .map((row) => row.studentId),
+          restoredAt: endedAt,
+        }, transactionDb);
+      }
     }
 
     const [resolved] = await tx
@@ -8729,6 +10455,7 @@ export async function getActiveTeachingSessions(
       scheduledTeacherEmail: teachingSessions.scheduledTeacherEmail,
       scheduledTeacherName: teachingSessions.scheduledTeacherName,
       classNameSnapshot: teachingSessions.classNameSnapshot,
+      timezoneSnapshot: teachingSessions.timezoneSnapshot,
       rosterSnapshotCompletedAt: teachingSessions.rosterSnapshotCompletedAt,
       endTime: teachingSessions.endTime,
       createdAt: teachingSessions.createdAt,
@@ -8764,10 +10491,11 @@ export async function getActiveTeachingSession(
   return session;
 }
 
-// School-scoped active session. This returns the teacher's active session only
-// in the given school, which is the correct multi-tenant semantics.
+// School-scoped active session visible to immutable session staff. Prefer a
+// session the caller owns when a co-teacher is captured on more than one open
+// class, then choose the most recently started session deterministically.
 export async function getActiveTeachingSessionForSchool(
-  teacherId: string,
+  staffId: string,
   schoolId: string,
   dbInstance: typeof db = db
 ): Promise<TeachingSession | undefined> {
@@ -8775,13 +10503,22 @@ export async function getActiveTeachingSessionForSchool(
     .select({ session: teachingSessions })
     .from(teachingSessions)
     .innerJoin(groups, eq(teachingSessions.groupId, groups.id))
+    .innerJoin(classpilotSessionStaff, and(
+      eq(classpilotSessionStaff.teachingSessionId, teachingSessions.id),
+      eq(classpilotSessionStaff.schoolId, schoolId),
+      eq(classpilotSessionStaff.staffId, staffId)
+    ))
     .where(
       and(
-        eq(teachingSessions.teacherId, teacherId),
         eq(groups.schoolId, schoolId),
         eq(teachingSessions.sessionMode, LIVE_TEACHING_SESSION_MODE),
         isNull(teachingSessions.endTime)
       )
+    )
+    .orderBy(
+      sql`CASE WHEN ${teachingSessions.teacherId} = ${staffId} THEN 0 ELSE 1 END`,
+      desc(teachingSessions.startTime),
+      teachingSessions.id
     )
     .limit(1);
   return row?.session;
@@ -10442,16 +12179,17 @@ export async function createClasspilotCommandWithTargets(
 }
 
 export async function updateClasspilotCommandSummary(
-  commandId: string
+  commandId: string,
+  dbInstance: typeof db = db
 ): Promise<ClasspilotCommand | undefined> {
-  const summary = db
+  const summary = dbInstance
     .select({
       commandId: sql<string>`${commandId}`.as("target_command_id"),
       targetRequestedCount: sql<number>`count(*)::int`.as("target_requested_count"),
-      targetSentCount: sql<number>`count(*) filter (where ${classpilotCommandTargets.status} in ('sent', 'received', 'completed', 'failed'))::int`.as("target_sent_count"),
+      targetSentCount: sql<number>`count(*) filter (where ${classpilotCommandTargets.sentAt} is not null or ${classpilotCommandTargets.status} in ('received', 'completed', 'failed'))::int`.as("target_sent_count"),
       targetReceivedCount: sql<number>`count(*) filter (where ${classpilotCommandTargets.receivedAt} is not null)::int`.as("target_received_count"),
-      targetCompletedCount: sql<number>`count(*) filter (where ${classpilotCommandTargets.completedAt} is not null)::int`.as("target_completed_count"),
-      targetFailedCount: sql<number>`count(*) filter (where ${classpilotCommandTargets.failedAt} is not null)::int`.as("target_failed_count"),
+      targetCompletedCount: sql<number>`count(*) filter (where ${classpilotCommandTargets.status} = 'completed')::int`.as("target_completed_count"),
+      targetFailedCount: sql<number>`count(*) filter (where ${classpilotCommandTargets.status} = 'failed')::int`.as("target_failed_count"),
       targetUnavailableCount: sql<number>`count(*) filter (where ${classpilotCommandTargets.status} = 'unavailable')::int`.as("target_unavailable_count"),
       targetExpiredCount: sql<number>`count(*) filter (where ${classpilotCommandTargets.status} = 'expired')::int`.as("target_expired_count"),
     })
@@ -10459,17 +12197,21 @@ export async function updateClasspilotCommandSummary(
     .where(eq(classpilotCommandTargets.commandId, commandId))
     .as("classpilot_command_target_summary");
 
-  const [command] = await db
+  const [command] = await dbInstance
     .update(classpilotCommands)
     .set({
       status: sql<ClasspilotCommand["status"]>`case
-        when ${classpilotCommands.status} in ('completed', 'failed', 'unavailable', 'expired') then ${classpilotCommands.status}
         when greatest(${classpilotCommands.requestedCount}, ${summary.targetRequestedCount}) = 0
           or greatest(${classpilotCommands.unavailableCount}, ${summary.targetUnavailableCount}) = greatest(${classpilotCommands.requestedCount}, ${summary.targetRequestedCount}) then 'unavailable'
-        when greatest(${classpilotCommands.completedCount}, ${summary.targetCompletedCount}) = greatest(${classpilotCommands.requestedCount}, ${summary.targetRequestedCount}) then 'completed'
-        when greatest(${classpilotCommands.failedCount}, ${summary.targetFailedCount})
-          + greatest(${classpilotCommands.unavailableCount}, ${summary.targetUnavailableCount})
-          + ${summary.targetExpiredCount} = greatest(${classpilotCommands.requestedCount}, ${summary.targetRequestedCount}) then 'failed'
+        when ${summary.targetCompletedCount}
+          + ${summary.targetFailedCount}
+          + ${summary.targetUnavailableCount}
+          + ${summary.targetExpiredCount} = greatest(${classpilotCommands.requestedCount}, ${summary.targetRequestedCount})
+          then case
+            when ${summary.targetFailedCount} > 0 then 'failed'
+            when ${summary.targetExpiredCount} > 0 then 'expired'
+            else 'completed'
+          end
         when greatest(${classpilotCommands.receivedCount}, ${summary.targetReceivedCount}) > 0 then 'received'
         when greatest(${classpilotCommands.sentCount}, ${summary.targetSentCount}) > 0 then 'sent'
         else 'requested'
@@ -10524,79 +12266,259 @@ export async function markClasspilotCommandTargetsSent(
   return targets;
 }
 
+export async function markClasspilotCommandTargetsServerCompleted(
+  commandId: string,
+  studentIds: string[]
+): Promise<ClasspilotCommandTarget[]> {
+  const uniqueStudentIds = [...new Set(studentIds.filter(Boolean))];
+  if (uniqueStudentIds.length === 0) return [];
+  const now = new Date();
+  const targets = await db
+    .update(classpilotCommandTargets)
+    .set({
+      status: "completed",
+      completedAt: sql<Date>`coalesce(${classpilotCommandTargets.completedAt}, ${now})`,
+      result: sql`coalesce(${classpilotCommandTargets.result}, '{}'::jsonb) || '{"serverAuthoritative":true}'::jsonb`,
+      errorMessage: null,
+      updatedAt: now,
+    })
+    .where(and(
+      eq(classpilotCommandTargets.commandId, commandId),
+      inArray(classpilotCommandTargets.studentId, uniqueStudentIds),
+      inArray(classpilotCommandTargets.status, ["requested", "sent", "received"])
+    ))
+    .returning();
+  await updateClasspilotCommandSummary(commandId);
+  return targets;
+}
+
+/**
+ * Persist one-shot targets that were never acknowledged before the command
+ * deadline. The command row owns the existing expiry field, so this remains
+ * additive and requires no target-table migration.
+ */
+export async function expireClasspilotTransientCommandTargets(
+  options: {
+    commandId?: string;
+    schoolId?: string;
+    teacherId?: string;
+    now?: Date;
+  } = {},
+  dbInstance: typeof db = db
+): Promise<string[]> {
+  const now = options.now || new Date();
+  const commandConditions: SQL[] = [
+    isNotNull(classpilotCommands.expiresAt),
+    sql`${classpilotCommands.expiresAt} <= ${now}`,
+  ];
+  if (options.commandId) commandConditions.push(eq(classpilotCommands.id, options.commandId));
+  if (options.schoolId) commandConditions.push(eq(classpilotCommands.schoolId, options.schoolId));
+  if (options.teacherId) commandConditions.push(eq(classpilotCommands.teacherId, options.teacherId));
+
+  const dueCommands = await dbInstance
+    .selectDistinct({ id: classpilotCommands.id })
+    .from(classpilotCommands)
+    .innerJoin(
+      classpilotCommandTargets,
+      eq(classpilotCommandTargets.commandId, classpilotCommands.id)
+    )
+    .where(and(
+      ...commandConditions,
+      inArray(classpilotCommandTargets.status, ["requested", "sent"]),
+      isNull(classpilotCommandTargets.receivedAt)
+    ))
+    .limit(options.commandId ? 1 : 500);
+  if (dueCommands.length === 0) return [];
+
+  const expired = await dbInstance
+    .update(classpilotCommandTargets)
+    .set({
+      status: "expired",
+      errorMessage: "Not delivered before command expired",
+      updatedAt: now,
+    })
+    .where(and(
+      inArray(classpilotCommandTargets.commandId, dueCommands.map((command) => command.id)),
+      inArray(classpilotCommandTargets.status, ["requested", "sent"]),
+      isNull(classpilotCommandTargets.receivedAt)
+    ))
+    .returning({ commandId: classpilotCommandTargets.commandId });
+
+  const commandIds = [...new Set(expired.map((target) => target.commandId))];
+  for (const commandId of commandIds) {
+    await updateClasspilotCommandSummary(commandId, dbInstance);
+  }
+  return commandIds;
+}
+
 export async function updateClasspilotCommandTargetAck(options: {
   commandId: string;
   schoolId: string;
   deviceId: string;
-  studentId?: string | null;
-  ackState: "received" | "completed" | "failed";
+  studentId: string;
+  studentSessionId: string;
+  ackState: "received" | "completed" | "failed" | "expired";
   result?: unknown;
   errorMessage?: string | null;
+  now?: Date;
 }): Promise<ClasspilotCommandTarget | undefined> {
-  const now = new Date();
-  const status = options.ackState === "failed" ? "failed" : options.ackState;
-  const update: PgUpdateSetSource<typeof classpilotCommandTargets> = {
-    status,
-    ackState: options.ackState,
-    result: options.result ?? null,
-    errorMessage: options.errorMessage || null,
-    updatedAt: now,
-  };
-  if (options.ackState === "received") {
-    update.receivedAt = sql<Date>`coalesce(${classpilotCommandTargets.receivedAt}, ${now})`;
-  }
-  if (options.ackState === "completed") {
-    update.receivedAt = sql<Date>`coalesce(${classpilotCommandTargets.receivedAt}, ${now})`;
-    update.completedAt = sql<Date>`coalesce(${classpilotCommandTargets.completedAt}, ${now})`;
-  }
-  if (options.ackState === "failed") update.failedAt = now;
-
-  const identityConditions = [
-    eq(classpilotCommandTargets.commandId, options.commandId),
-    eq(classpilotCommandTargets.schoolId, options.schoolId),
-    eq(classpilotCommandTargets.deviceId, options.deviceId),
-  ];
-  if (options.studentId) {
-    identityConditions.push(eq(classpilotCommandTargets.studentId, options.studentId));
-  }
-  const allowedStatuses: ClasspilotCommandTarget["status"][] = options.ackState === "received"
-    ? ["requested", "sent"]
-    : ["requested", "sent", "received"];
-
-  let [target] = await db
-    .update(classpilotCommandTargets)
-    .set(update)
-    .where(and(
-      ...identityConditions,
-      inArray(classpilotCommandTargets.status, allowedStatuses)
-    ))
-    .returning();
-
-  if (!target && options.ackState === "received") {
-    // A failed ACK can win the row lock even when the device sent `received`
-    // first. Record that cumulative milestone without reopening or downgrading
-    // the terminal target state.
-    [target] = await db
-      .update(classpilotCommandTargets)
-      .set({
-        receivedAt: sql<Date>`coalesce(${classpilotCommandTargets.receivedAt}, ${now})`,
-        updatedAt: now,
+  const now = options.now || new Date();
+  return db.transaction(async (tx) => {
+    const identityConditions = [
+      eq(classpilotCommandTargets.commandId, options.commandId),
+      eq(classpilotCommandTargets.schoolId, options.schoolId),
+      eq(classpilotCommandTargets.deviceId, options.deviceId),
+      eq(classpilotCommandTargets.studentId, options.studentId),
+      eq(classpilotCommandTargets.studentSessionId, options.studentSessionId),
+      eq(classpilotCommands.id, classpilotCommandTargets.commandId),
+      eq(classpilotCommands.schoolId, options.schoolId),
+      sql`exists (
+        select 1
+        from ${studentSessions} as authenticated_session
+        join ${students} as authenticated_student
+          on authenticated_student.id = authenticated_session.student_id
+         and authenticated_student.school_id = ${options.schoolId}
+        join ${devices} as authenticated_device
+          on authenticated_device.device_id = authenticated_session.device_id
+         and authenticated_device.school_id = ${options.schoolId}
+        where authenticated_session.id = ${options.studentSessionId}
+          and authenticated_session.student_id = ${options.studentId}
+          and authenticated_session.device_id = ${options.deviceId}
+          and authenticated_session.is_active = true
+          and authenticated_session.ended_at is null
+      )`,
+    ];
+    const [binding] = await tx
+      .select({
+        target: getTableColumns(classpilotCommandTargets),
+        commandExpiresAt: classpilotCommands.expiresAt,
       })
-      .where(and(
-        ...identityConditions,
-        eq(classpilotCommandTargets.status, "failed"),
-        isNull(classpilotCommandTargets.receivedAt)
-      ))
-      .returning();
-  }
+      .from(classpilotCommandTargets)
+      .innerJoin(classpilotCommands, eq(classpilotCommands.id, classpilotCommandTargets.commandId))
+      .where(and(...identityConditions))
+      .limit(1)
+      .for("update");
+    if (!binding) return undefined;
 
-  return target;
+    const target = binding.target;
+    const deadline = binding.commandExpiresAt;
+    const deadlinePassed = !!deadline && deadline.getTime() <= now.getTime();
+    const receivedBeforeDeadline = !!deadline
+      && !!target.receivedAt
+      && target.receivedAt.getTime() <= deadline.getTime();
+
+    if (options.ackState === "expired") {
+      if (!deadlinePassed || target.receivedAt) return undefined;
+      if (target.status === "expired") {
+        if (target.ackState === "expired") return target;
+      } else if (!(["requested", "sent"] as string[]).includes(target.status)) {
+        return undefined;
+      }
+      const [expiredTarget] = await tx
+        .update(classpilotCommandTargets)
+        .set({
+          status: "expired",
+          ackState: "expired",
+          result: options.result ?? target.result ?? null,
+          errorMessage: options.errorMessage || "Not delivered before command expired",
+          updatedAt: now,
+        })
+        .where(eq(classpilotCommandTargets.id, target.id))
+        .returning();
+      return expiredTarget;
+    }
+
+    if (deadlinePassed && options.ackState === "received") {
+      if (!target.receivedAt && (["requested", "sent"] as string[]).includes(target.status)) {
+        const [expiredTarget] = await tx
+          .update(classpilotCommandTargets)
+          .set({
+            status: "expired",
+            errorMessage: "Not delivered before command expired",
+            updatedAt: now,
+          })
+          .where(eq(classpilotCommandTargets.id, target.id))
+          .returning();
+        return expiredTarget;
+      }
+      return undefined;
+    }
+
+    if (
+      deadlinePassed
+      && (options.ackState === "completed" || options.ackState === "failed")
+      && !receivedBeforeDeadline
+    ) {
+      if (!target.receivedAt && (["requested", "sent"] as string[]).includes(target.status)) {
+        const [expiredTarget] = await tx
+          .update(classpilotCommandTargets)
+          .set({
+            status: "expired",
+            errorMessage: "Not delivered before command expired",
+            updatedAt: now,
+          })
+          .where(eq(classpilotCommandTargets.id, target.id))
+          .returning();
+        return expiredTarget;
+      }
+      return undefined;
+    }
+
+    const allowedStatuses: ClasspilotCommandTarget["status"][] = options.ackState === "received"
+      ? ["requested", "sent"]
+      : ["requested", "sent", "received"];
+    if (!allowedStatuses.includes(target.status)) {
+      if (
+        options.ackState === "received"
+        && target.status === "failed"
+        && !target.receivedAt
+      ) {
+        // Preserve the cumulative receipt milestone for non-expiring legacy or
+        // persistent commands without reopening the failed terminal state.
+        const [failedTarget] = await tx
+          .update(classpilotCommandTargets)
+          .set({
+            receivedAt: now,
+            updatedAt: now,
+          })
+          .where(eq(classpilotCommandTargets.id, target.id))
+          .returning();
+        return failedTarget;
+      }
+      return undefined;
+    }
+
+    const status = options.ackState === "failed" ? "failed" : options.ackState;
+    const update: PgUpdateSetSource<typeof classpilotCommandTargets> = {
+      status,
+      ackState: options.ackState,
+      result: options.result ?? null,
+      errorMessage: options.errorMessage || null,
+      updatedAt: now,
+    };
+    if (options.ackState === "received") {
+      update.receivedAt = sql<Date>`coalesce(${classpilotCommandTargets.receivedAt}, ${now})`;
+    }
+    if (options.ackState === "completed") {
+      update.receivedAt = sql<Date>`coalesce(${classpilotCommandTargets.receivedAt}, ${now})`;
+      update.completedAt = sql<Date>`coalesce(${classpilotCommandTargets.completedAt}, ${now})`;
+    }
+    if (options.ackState === "failed") update.failedAt = now;
+
+    const [updatedTarget] = await tx
+      .update(classpilotCommandTargets)
+      .set(update)
+      .where(eq(classpilotCommandTargets.id, target.id))
+      .returning();
+    return updatedTarget;
+  });
 }
 
 export async function getClasspilotCommandByIdAndSchool(
   commandId: string,
   schoolId: string
 ): Promise<ClasspilotCommandWithTargets | undefined> {
+  await expireClasspilotTransientCommandTargets({ commandId, schoolId });
   const [command] = await db
     .select()
     .from(classpilotCommands)
@@ -10657,6 +12579,10 @@ export async function getRecentClasspilotCommands(
   teachingSessionId?: string | null,
   limit = 10
 ): Promise<ClasspilotCommandWithTargets[]> {
+  await expireClasspilotTransientCommandTargets({
+    schoolId,
+    teacherId,
+  });
   const conditions = [
     eq(classpilotCommands.schoolId, schoolId),
     eq(classpilotCommands.teacherId, teacherId),
@@ -10690,13 +12616,789 @@ export async function getRecentClasspilotCommands(
   }));
 }
 
+export type ClasspilotControlEnforcementHealth =
+  | "synced"
+  | "pending"
+  | "failed"
+  | "unsupported"
+  | "expired";
+
+/** Serialize all control-authority mutations for a student across classes and
+ * delegated supervision. Sorted transaction locks prevent cross-student
+ * deadlocks while keeping identifiers inside PostgreSQL only. */
+export async function lockClasspilotStudentControlAuthorities(
+  schoolId: string,
+  studentIds: readonly string[],
+  dbInstance: typeof db = db
+): Promise<string[]> {
+  const normalized = [...new Set(studentIds.map(String).map((id) => id.trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+  for (const studentId of normalized) {
+    const lockKey = `classpilot:student-control:${schoolId}:${studentId}`;
+    await dbInstance.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`
+    );
+  }
+  return normalized;
+}
+
+/**
+ * The extension clears controls at the earlier of the scheduled class end and
+ * the absolute 12-hour backstop. Persist that effective scheduled deadline so
+ * long reporting windows can start without weakening the safety cutoff or
+ * violating the control-state expiry constraint.
+ */
+function effectiveClasspilotScheduledControlEndAt(
+  scheduledEndAt: Date | null | undefined,
+  hardExpiresAt: Date
+): Date | null {
+  if (!scheduledEndAt) return null;
+  return scheduledEndAt < hardExpiresAt ? scheduledEndAt : hardExpiresAt;
+}
+
+/**
+ * Bind every frozen roster student to a revisioned empty control snapshot as
+ * soon as a class begins. Besides replacing a former teacher's state, this
+ * gives the extension an authenticated teaching-session scope for its bounded
+ * monitoring-event outbox even before the new teacher applies a restriction.
+ */
+export async function initializeClasspilotStudentControlStatesForSession(
+  session: TeachingSession,
+  dbInstance: typeof db = db
+): Promise<ClasspilotStudentControlState[]> {
+  if (!session.schoolId || session.endTime) return [];
+  const roster = await dbInstance
+    .select({ studentId: classpilotSessionStudents.studentId })
+    .from(classpilotSessionStudents)
+    .where(and(
+      eq(classpilotSessionStudents.schoolId, session.schoolId),
+      eq(classpilotSessionStudents.teachingSessionId, session.id)
+    ));
+  if (roster.length === 0) return [];
+
+  const now = new Date();
+  const hardExpiresAt = new Date(session.startTime.getTime() + 12 * 60 * 60 * 1000);
+  if (hardExpiresAt <= now) return [];
+  return replaceClasspilotStudentControlSnapshots({
+    schoolId: session.schoolId,
+    teachingSessionId: session.id,
+    // The replacement transaction rechecks the authoritative owner after it
+    // acquires the per-student locks. Passing the full frozen roster here
+    // avoids a pre-lock supervision read racing a simultaneous release.
+    studentIds: roster.map((row) => row.studentId),
+    desiredState: { restrictions: {} },
+    scheduledEndAt: effectiveClasspilotScheduledControlEndAt(
+      session.scheduledEndAt,
+      hardExpiresAt
+    ),
+    hardExpiresAt,
+    now,
+    authorityMode: "filter",
+  }, dbInstance);
+}
+
+function assertDesiredControlState(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw Object.assign(new Error("A complete desired control-state object is required"), {
+      status: 400,
+      code: "INVALID_CONTROL_STATE",
+    });
+  }
+  const serialized = JSON.stringify(value);
+  if (Buffer.byteLength(serialized, "utf8") > 64 * 1024) {
+    throw Object.assign(new Error("Desired control state exceeds 64 KiB"), {
+      status: 400,
+      code: "CONTROL_STATE_TOO_LARGE",
+    });
+  }
+  return value as Record<string, unknown>;
+}
+
+/**
+ * Atomically replaces the complete desired snapshot for every selected roster
+ * student. Revisions are allocated in PostgreSQL so concurrent command paths
+ * can never publish the same or a decreasing revision.
+ */
+export async function replaceClasspilotStudentControlSnapshots(
+  options: {
+    schoolId: string;
+    teachingSessionId: string;
+    studentIds: string[];
+    desiredState: unknown | ((
+      studentId: string,
+      currentState: ClasspilotStudentControlState | null,
+      activeClassroomStates: ClasspilotClassroomState[]
+    ) => unknown);
+    sourceCommandId?: string | null;
+    scheduledEndAt?: Date | null;
+    hardExpiresAt?: Date;
+    now?: Date;
+    authorityMode?: "require" | "filter";
+  },
+  dbInstance: typeof db = db
+): Promise<ClasspilotStudentControlState[]> {
+  const studentIds = [...new Set(options.studentIds.filter(Boolean))];
+  if (studentIds.length === 0) return [];
+  const now = options.now || new Date();
+
+  return dbInstance.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    await lockClasspilotStudentControlAuthorities(options.schoolId, studentIds, transactionDb);
+    const [session] = await tx
+      .select({
+        id: teachingSessions.id,
+        schoolId: teachingSessions.schoolId,
+        startTime: teachingSessions.startTime,
+        endTime: teachingSessions.endTime,
+        scheduledEndAt: teachingSessions.scheduledEndAt,
+      })
+      .from(teachingSessions)
+      .where(and(
+        eq(teachingSessions.id, options.teachingSessionId),
+        eq(teachingSessions.schoolId, options.schoolId)
+      ))
+      .limit(1);
+    if (!session || session.endTime) {
+      throw Object.assign(new Error("Active teaching session not found"), {
+        status: 404,
+        code: "TEACHING_SESSION_NOT_FOUND",
+      });
+    }
+
+    const absoluteCap = new Date(session.startTime.getTime() + 12 * 60 * 60 * 1000);
+    const hardExpiresAt = options.hardExpiresAt || absoluteCap;
+    if (hardExpiresAt > absoluteCap || hardExpiresAt <= now) {
+      throw Object.assign(new Error("Control-state hard expiry must be valid and within 12 hours of class start"), {
+        status: 400,
+        code: "INVALID_CONTROL_EXPIRY",
+      });
+    }
+    const scheduledEndAt = options.scheduledEndAt ?? session.scheduledEndAt ?? null;
+    if (scheduledEndAt && scheduledEndAt > hardExpiresAt) {
+      throw Object.assign(new Error("Scheduled control end cannot exceed the 12-hour safety cutoff"), {
+        status: 400,
+        code: "INVALID_CONTROL_EXPIRY",
+      });
+    }
+
+    const roster = await tx
+      .select({ studentId: classpilotSessionStudents.studentId })
+      .from(classpilotSessionStudents)
+      .where(and(
+        eq(classpilotSessionStudents.schoolId, options.schoolId),
+        eq(classpilotSessionStudents.teachingSessionId, options.teachingSessionId),
+        inArray(classpilotSessionStudents.studentId, studentIds)
+      ));
+    if (roster.length !== studentIds.length) {
+      throw Object.assign(new Error("One or more control targets are outside the session roster"), {
+        status: 404,
+        code: "CONTROL_TARGET_NOT_FOUND",
+      });
+    }
+
+    // The route preflight is advisory UX only. Re-resolve the authoritative
+    // class/supervision owner after acquiring the per-student locks, in the
+    // same transaction that advances the desired-state revision.
+    const activeSupervision = await getActiveSupervisionForStudents(
+      options.schoolId,
+      studentIds,
+      transactionDb
+    );
+    const activeOwners = await getActiveClassOwnersForStudents(
+      options.schoolId,
+      studentIds,
+      transactionDb
+    );
+    const supervisedIds = new Set(activeSupervision.map((row) => row.studentId));
+    const ownerByStudent = new Map(activeOwners.map((owner) => [owner.studentId, owner.session.id]));
+    const authorizedStudentIds = studentIds.filter((studentId) => {
+      if (supervisedIds.has(studentId)) return false;
+      const ownerSessionId = ownerByStudent.get(studentId);
+      return !ownerSessionId || ownerSessionId === options.teachingSessionId;
+    });
+    if (authorizedStudentIds.length !== studentIds.length && options.authorityMode !== "filter") {
+      throw Object.assign(new Error("One or more control targets changed classroom authority"), {
+        status: 409,
+        code: "CONTROL_AUTHORITY_CHANGED",
+      });
+    }
+    if (authorizedStudentIds.length === 0) return [];
+
+    const currentStates = await tx
+      .select()
+      .from(classpilotStudentControlStates)
+      .where(and(
+        eq(classpilotStudentControlStates.schoolId, options.schoolId),
+        inArray(classpilotStudentControlStates.studentId, authorizedStudentIds)
+      ))
+      .orderBy(classpilotStudentControlStates.studentId)
+      .for("update");
+    const currentByStudent = new Map(currentStates.map((state) => [state.studentId, state]));
+    const activeClassroomStates = await tx
+      .select()
+      .from(classpilotClassroomStates)
+      .where(and(
+        eq(classpilotClassroomStates.schoolId, options.schoolId),
+        eq(classpilotClassroomStates.teachingSessionId, options.teachingSessionId),
+        inArray(classpilotClassroomStates.studentId, authorizedStudentIds),
+        isNull(classpilotClassroomStates.clearedAt)
+      ))
+      .orderBy(classpilotClassroomStates.appliedAt);
+
+    const rows: ClasspilotStudentControlState[] = [];
+    for (const studentId of authorizedStudentIds) {
+      const desiredState = assertDesiredControlState(
+        typeof options.desiredState === "function"
+          ? options.desiredState(
+              studentId,
+              currentByStudent.get(studentId) || null,
+              activeClassroomStates.filter((state) => state.studentId === studentId)
+            )
+          : options.desiredState
+      );
+      const [row] = await tx
+        .insert(classpilotStudentControlStates)
+        .values({
+          schoolId: options.schoolId,
+          studentId,
+          teachingSessionId: options.teachingSessionId,
+          supervisionContextId: null,
+          revision: 1,
+          desiredState,
+          sourceCommandId: options.sourceCommandId || null,
+          scheduledEndAt,
+          hardExpiresAt,
+          enforcementHealth: "pending",
+          appliedRevision: null,
+          lastOutcome: null,
+          lastError: null,
+          lastAcknowledgedAt: null,
+          updatedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: [
+            classpilotStudentControlStates.schoolId,
+            classpilotStudentControlStates.studentId,
+          ],
+          set: {
+            teachingSessionId: options.teachingSessionId,
+            supervisionContextId: null,
+            revision: sql`${classpilotStudentControlStates.revision} + 1`,
+            desiredState,
+            sourceCommandId: options.sourceCommandId || null,
+            scheduledEndAt,
+            hardExpiresAt,
+            enforcementHealth: "pending",
+            appliedRevision: null,
+            lastOutcome: null,
+            lastError: null,
+            lastAcknowledgedAt: null,
+            updatedAt: now,
+          },
+        })
+        .returning();
+      if (row) rows.push(row);
+    }
+    return rows;
+  });
+}
+
+/**
+ * Revisioned desired state while a student is delegated to an authorized
+ * supervision context. The same school/student row is reused so transitions
+ * between class and coverage always increase one monotonic revision.
+ */
+export async function replaceClasspilotSupervisionControlSnapshots(
+  options: {
+    schoolId: string;
+    supervisionContextId: string;
+    studentIds: string[];
+    desiredState: unknown | ((
+      studentId: string,
+      currentState: ClasspilotStudentControlState | null
+    ) => unknown);
+    sourceCommandId?: string | null;
+    authorizedActorId?: string;
+    actorIsAdmin?: boolean;
+    now?: Date;
+  },
+  dbInstance: typeof db = db
+): Promise<ClasspilotStudentControlState[]> {
+  const studentIds = [...new Set(options.studentIds.filter(Boolean))];
+  if (studentIds.length === 0) return [];
+  const now = options.now || new Date();
+
+  return dbInstance.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    await lockClasspilotStudentControlAuthorities(options.schoolId, studentIds, transactionDb);
+    const [context] = await tx
+      .select()
+      .from(classpilotSupervisionContexts)
+      .where(and(
+        eq(classpilotSupervisionContexts.schoolId, options.schoolId),
+        eq(classpilotSupervisionContexts.id, options.supervisionContextId)
+      ))
+      .limit(1)
+      .for("update");
+    if (!context || context.status !== "active" || context.endsAt <= now) {
+      throw Object.assign(new Error("Active supervision context not found"), {
+        status: 404,
+        code: "SUPERVISION_CONTEXT_NOT_FOUND",
+      });
+    }
+    if (
+      options.authorizedActorId
+      && options.actorIsAdmin !== true
+      && context.assignedStaffId !== options.authorizedActorId
+    ) {
+      throw Object.assign(new Error("Active supervision context not found"), {
+        status: 404,
+        code: "SUPERVISION_CONTEXT_NOT_FOUND",
+      });
+    }
+
+    const assignments = await tx
+      .select({ studentId: classpilotSupervisionStudents.studentId })
+      .from(classpilotSupervisionStudents)
+      .where(and(
+        eq(classpilotSupervisionStudents.schoolId, options.schoolId),
+        eq(classpilotSupervisionStudents.contextId, options.supervisionContextId),
+        inArray(classpilotSupervisionStudents.studentId, studentIds),
+        isNull(classpilotSupervisionStudents.releasedAt)
+      ));
+    if (assignments.length !== studentIds.length) {
+      throw Object.assign(new Error("One or more control targets are outside the supervision context"), {
+        status: 404,
+        code: "CONTROL_TARGET_NOT_FOUND",
+      });
+    }
+
+    const hardExpiresAt = new Date(context.startsAt.getTime() + 12 * 60 * 60 * 1000);
+    if (hardExpiresAt <= now) {
+      throw Object.assign(new Error("Supervision control safety cutoff has expired"), {
+        status: 400,
+        code: "INVALID_CONTROL_EXPIRY",
+      });
+    }
+    const scheduledEndAt = context.endsAt < hardExpiresAt ? context.endsAt : hardExpiresAt;
+    const currentStates = await tx
+      .select()
+      .from(classpilotStudentControlStates)
+      .where(and(
+        eq(classpilotStudentControlStates.schoolId, options.schoolId),
+        inArray(classpilotStudentControlStates.studentId, studentIds)
+      ))
+      .orderBy(classpilotStudentControlStates.studentId)
+      .for("update");
+    const currentByStudent = new Map(currentStates.map((state) => [state.studentId, state]));
+    const rows: ClasspilotStudentControlState[] = [];
+    for (const studentId of studentIds) {
+      const desiredState = assertDesiredControlState(
+        typeof options.desiredState === "function"
+          ? options.desiredState(studentId, currentByStudent.get(studentId) || null)
+          : options.desiredState
+      );
+      const [row] = await tx
+        .insert(classpilotStudentControlStates)
+        .values({
+          schoolId: options.schoolId,
+          studentId,
+          teachingSessionId: null,
+          supervisionContextId: options.supervisionContextId,
+          revision: 1,
+          desiredState,
+          sourceCommandId: options.sourceCommandId || null,
+          scheduledEndAt,
+          hardExpiresAt,
+          enforcementHealth: "pending",
+          appliedRevision: null,
+          lastOutcome: null,
+          lastError: null,
+          lastAcknowledgedAt: null,
+          updatedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: [
+            classpilotStudentControlStates.schoolId,
+            classpilotStudentControlStates.studentId,
+          ],
+          set: {
+            teachingSessionId: null,
+            supervisionContextId: options.supervisionContextId,
+            revision: sql`${classpilotStudentControlStates.revision} + 1`,
+            desiredState,
+            sourceCommandId: options.sourceCommandId || null,
+            scheduledEndAt,
+            hardExpiresAt,
+            enforcementHealth: "pending",
+            appliedRevision: null,
+            lastOutcome: null,
+            lastError: null,
+            lastAcknowledgedAt: null,
+            updatedAt: now,
+          },
+        })
+        .returning();
+      if (row) rows.push(row);
+    }
+    return rows;
+  });
+}
+
+export async function initializeClasspilotSupervisionControlStates(
+  options: {
+    schoolId: string;
+    supervisionContextId: string;
+    studentIds: string[];
+    now?: Date;
+  },
+  dbInstance: typeof db = db
+): Promise<ClasspilotStudentControlState[]> {
+  return replaceClasspilotSupervisionControlSnapshots({
+    ...options,
+    desiredState: { restrictions: emptyClasspilotRestrictions() },
+  }, dbInstance);
+}
+
+/** Restore the class snapshot hidden by delegation, or publish an explicit
+ * higher-revision clear when no live class still owns the student. */
+export async function restoreClasspilotStudentControlStatesAfterSupervision(
+  options: {
+    schoolId: string;
+    supervisionContextId: string;
+    studentIds: string[];
+    restoredAt?: Date;
+  },
+  dbInstance: typeof db = db
+): Promise<ClasspilotStudentControlState[]> {
+  const studentIds = [...new Set(options.studentIds.filter(Boolean))];
+  if (studentIds.length === 0) return [];
+  const now = options.restoredAt || new Date();
+
+  return dbInstance.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    await lockClasspilotStudentControlAuthorities(options.schoolId, studentIds, transactionDb);
+    const currentRows = await tx
+      .select()
+      .from(classpilotStudentControlStates)
+      .where(and(
+        eq(classpilotStudentControlStates.schoolId, options.schoolId),
+        inArray(classpilotStudentControlStates.studentId, studentIds)
+      ))
+      .for("update");
+    const restorableIds = currentRows
+      .filter((row) => row.supervisionContextId === options.supervisionContextId)
+      .map((row) => row.studentId);
+    if (restorableIds.length === 0) return [];
+
+    const owners = await getActiveClassOwnersForStudents(options.schoolId, restorableIds, transactionDb);
+    const ownerByStudent = new Map(owners.map((owner) => [owner.studentId, owner]));
+    const restored: ClasspilotStudentControlState[] = [];
+    for (const studentId of restorableIds) {
+      const owner = ownerByStudent.get(studentId);
+      const hardExpiresAt = owner
+        ? new Date(owner.session.startTime.getTime() + 12 * 60 * 60 * 1000)
+        : null;
+      if (owner && hardExpiresAt && hardExpiresAt > now) {
+        const activeStates = await transactionDb
+          .select()
+          .from(classpilotClassroomStates)
+          .where(and(
+            eq(classpilotClassroomStates.schoolId, options.schoolId),
+            eq(classpilotClassroomStates.teachingSessionId, owner.session.id),
+            or(eq(classpilotClassroomStates.studentId, studentId), isNull(classpilotClassroomStates.studentId)),
+            isNull(classpilotClassroomStates.clearedAt)
+          ))
+          .orderBy(classpilotClassroomStates.appliedAt);
+        const scheduledEndAt = effectiveClasspilotScheduledControlEndAt(
+          owner.session.scheduledEndAt,
+          hardExpiresAt
+        );
+        const rows = await replaceClasspilotStudentControlSnapshots({
+          schoolId: options.schoolId,
+          teachingSessionId: owner.session.id,
+          studentIds: [studentId],
+          desiredState: {
+            restrictions: restrictionsFromClassroomStates(activeStates, now),
+          },
+          scheduledEndAt,
+          hardExpiresAt,
+          now,
+        }, transactionDb);
+        restored.push(...rows);
+        continue;
+      }
+
+      const [cleared] = await tx
+        .update(classpilotStudentControlStates)
+        .set({
+          teachingSessionId: null,
+          supervisionContextId: null,
+          revision: sql`${classpilotStudentControlStates.revision} + 1`,
+          desiredState: {},
+          sourceCommandId: null,
+          scheduledEndAt: null,
+          hardExpiresAt: null,
+          enforcementHealth: "pending",
+          appliedRevision: null,
+          lastOutcome: "cleared",
+          lastError: null,
+          lastAcknowledgedAt: null,
+          updatedAt: now,
+        })
+        .where(and(
+          eq(classpilotStudentControlStates.schoolId, options.schoolId),
+          eq(classpilotStudentControlStates.studentId, studentId),
+          eq(classpilotStudentControlStates.supervisionContextId, options.supervisionContextId)
+        ))
+        .returning();
+      if (cleared) restored.push(cleared);
+    }
+    return restored;
+  });
+}
+
+/**
+ * Finalization-safe empty snapshots. A row that already belongs to a newer
+ * class is deliberately left alone; missing rows receive revision 1 so every
+ * former roster student has an explicit clear state to reconcile.
+ */
+export async function clearClasspilotStudentControlStatesForSession(
+  options: { schoolId: string; teachingSessionId: string; clearedAt?: Date },
+  dbInstance: typeof db = db
+): Promise<ClasspilotStudentControlState[]> {
+  const now = options.clearedAt || new Date();
+  return dbInstance.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    const roster = await tx
+      .select({ studentId: classpilotSessionStudents.studentId })
+      .from(classpilotSessionStudents)
+      .where(and(
+        eq(classpilotSessionStudents.schoolId, options.schoolId),
+        eq(classpilotSessionStudents.teachingSessionId, options.teachingSessionId)
+      ));
+    if (roster.length === 0) return [];
+
+    const studentIds = roster.map((row) => row.studentId);
+    await lockClasspilotStudentControlAuthorities(options.schoolId, studentIds, transactionDb);
+    const cleared = await tx
+      .update(classpilotStudentControlStates)
+      .set({
+        teachingSessionId: null,
+        supervisionContextId: null,
+        revision: sql`${classpilotStudentControlStates.revision} + 1`,
+        desiredState: {},
+        sourceCommandId: null,
+        scheduledEndAt: null,
+        hardExpiresAt: null,
+        enforcementHealth: "pending",
+        appliedRevision: null,
+        lastOutcome: "cleared",
+        lastError: null,
+        lastAcknowledgedAt: null,
+        updatedAt: now,
+      })
+      .where(and(
+        eq(classpilotStudentControlStates.schoolId, options.schoolId),
+        eq(classpilotStudentControlStates.teachingSessionId, options.teachingSessionId),
+        inArray(classpilotStudentControlStates.studentId, studentIds)
+      ))
+      .returning();
+    const existingStudentIds = new Set((await tx
+      .select({ studentId: classpilotStudentControlStates.studentId })
+      .from(classpilotStudentControlStates)
+      .where(and(
+        eq(classpilotStudentControlStates.schoolId, options.schoolId),
+        inArray(classpilotStudentControlStates.studentId, studentIds)
+      ))).map((row) => row.studentId));
+    const missing = studentIds.filter((studentId) => !existingStudentIds.has(studentId));
+    const inserted = missing.length > 0
+      ? await tx
+          .insert(classpilotStudentControlStates)
+          .values(missing.map((studentId) => ({
+            schoolId: options.schoolId,
+            studentId,
+            teachingSessionId: null,
+            supervisionContextId: null,
+            revision: 1,
+            desiredState: {},
+            enforcementHealth: "pending" as const,
+            lastOutcome: "cleared",
+            updatedAt: now,
+          })))
+          .onConflictDoNothing()
+          .returning()
+      : [];
+    return [...cleared, ...inserted];
+  });
+}
+
+export async function getClasspilotStudentControlState(
+  schoolId: string,
+  studentId: string,
+  dbInstance: typeof db = db
+): Promise<ClasspilotStudentControlState | undefined> {
+  const [state] = await dbInstance
+    .select()
+    .from(classpilotStudentControlStates)
+    .where(and(
+      eq(classpilotStudentControlStates.schoolId, schoolId),
+      eq(classpilotStudentControlStates.studentId, studentId)
+    ))
+    .limit(1);
+  return state;
+}
+
+export async function getClasspilotStudentControlStates(
+  schoolId: string,
+  studentIds: string[],
+  dbInstance: typeof db = db
+): Promise<ClasspilotStudentControlState[]> {
+  const uniqueStudentIds = [...new Set(studentIds.filter(Boolean))];
+  if (uniqueStudentIds.length === 0) return [];
+  return dbInstance
+    .select()
+    .from(classpilotStudentControlStates)
+    .where(and(
+      eq(classpilotStudentControlStates.schoolId, schoolId),
+      inArray(classpilotStudentControlStates.studentId, uniqueStudentIds)
+    ));
+}
+
+export async function acknowledgeClasspilotStudentControlState(
+  options: {
+    schoolId: string;
+    studentId: string;
+    studentSessionId: string;
+    deviceId: string;
+    appliedRevision: number;
+    outcome: "applied" | "failed" | "unsupported" | "expired";
+    error?: string | null;
+    acknowledgedAt?: Date;
+  },
+  dbInstance: typeof db = db
+): Promise<ClasspilotStudentControlState | undefined> {
+  if (!Number.isSafeInteger(options.appliedRevision) || options.appliedRevision < 0) return undefined;
+  const health: ClasspilotControlEnforcementHealth = options.outcome === "applied"
+    ? "synced"
+    : options.outcome;
+  const [state] = await dbInstance
+    .update(classpilotStudentControlStates)
+    .set({
+      enforcementHealth: health,
+      appliedRevision: options.appliedRevision,
+      lastOutcome: options.outcome,
+      lastError: options.error?.slice(0, 500) || null,
+      lastAcknowledgedAt: options.acknowledgedAt || new Date(),
+      updatedAt: options.acknowledgedAt || new Date(),
+    })
+    .where(and(
+      eq(classpilotStudentControlStates.schoolId, options.schoolId),
+      eq(classpilotStudentControlStates.studentId, options.studentId),
+      eq(classpilotStudentControlStates.revision, options.appliedRevision),
+      sql`EXISTS (
+        SELECT 1
+        FROM student_sessions active_session
+        JOIN student_devices active_device
+          ON active_device.device_id = active_session.device_id
+        WHERE active_session.id = ${options.studentSessionId}
+          AND active_session.student_id = ${options.studentId}
+          AND active_session.device_id = ${options.deviceId}
+          AND active_session.is_active = true
+          AND active_session.ended_at IS NULL
+          AND active_device.school_id = ${options.schoolId}
+      )`
+    ))
+    .returning();
+  return state;
+}
+
+/**
+ * Canonical transaction boundary for a stateful teacher command. The legacy
+ * active-state representation and the per-student full desired snapshots
+ * either both commit or neither does. The dispatcher remains responsible for
+ * constructing the complete post-command snapshot before calling this helper.
+ */
+export async function persistClasspilotControlCommandState(
+  options: {
+    classroomStateUpserts?: InsertClasspilotClassroomState[];
+    classroomStateClears?: Array<{
+      schoolId: string;
+      teachingSessionId: string;
+      studentIds?: string[];
+      stateTypes?: string[];
+      commandId?: string;
+    }>;
+    studentSnapshots: {
+      schoolId: string;
+      teachingSessionId: string;
+      studentIds: string[];
+      desiredState: unknown | ((
+        studentId: string,
+        currentState: ClasspilotStudentControlState | null,
+        activeClassroomStates: ClasspilotClassroomState[]
+      ) => unknown);
+      sourceCommandId?: string | null;
+      scheduledEndAt?: Date | null;
+      hardExpiresAt?: Date;
+      now?: Date;
+    };
+  },
+  dbInstance: typeof db = db
+): Promise<{
+  classroomStates: ClasspilotClassroomState[];
+  studentControlStates: ClasspilotStudentControlState[];
+}> {
+  return dbInstance.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    await lockClasspilotStudentControlAuthorities(
+      options.studentSnapshots.schoolId,
+      options.studentSnapshots.studentIds,
+      transactionDb
+    );
+    // Serialize the entire read/modify/write operation before changing the
+    // legacy active-state rows. Building a full snapshot outside this lock can
+    // otherwise drop a concurrent teacher command even when revisions remain
+    // monotonic.
+    const [lockedSession] = await tx
+      .select({ id: teachingSessions.id })
+      .from(teachingSessions)
+      .where(and(
+        eq(teachingSessions.id, options.studentSnapshots.teachingSessionId),
+        eq(teachingSessions.schoolId, options.studentSnapshots.schoolId),
+        isNull(teachingSessions.endTime)
+      ))
+      .limit(1)
+      .for("update");
+    if (!lockedSession) {
+      throw Object.assign(new Error("Active teaching session not found"), {
+        status: 404,
+        code: "TEACHING_SESSION_NOT_FOUND",
+      });
+    }
+    for (const clear of options.classroomStateClears || []) {
+      await clearClasspilotClassroomStates(clear, transactionDb);
+    }
+    const classroomStates = await upsertClasspilotClassroomStates(
+      options.classroomStateUpserts || [],
+      transactionDb
+    );
+    const studentControlStates = await replaceClasspilotStudentControlSnapshots(
+      options.studentSnapshots,
+      transactionDb
+    );
+    return { classroomStates, studentControlStates };
+  });
+}
+
 export async function upsertClasspilotClassroomStates(
-  statesData: InsertClasspilotClassroomState[]
+  statesData: InsertClasspilotClassroomState[],
+  dbInstance: typeof db = db
 ): Promise<ClasspilotClassroomState[]> {
   if (statesData.length === 0) return [];
   const rows: ClasspilotClassroomState[] = [];
   for (const state of statesData) {
-    const [existing] = await db
+    const [existing] = await dbInstance
       .select()
       .from(classpilotClassroomStates)
       .where(
@@ -10714,7 +13416,7 @@ export async function upsertClasspilotClassroomStates(
       .limit(1);
 
     if (existing) {
-      const [row] = await db
+      const [row] = await dbInstance
         .update(classpilotClassroomStates)
         .set({
           payload: state.payload,
@@ -10730,7 +13432,7 @@ export async function upsertClasspilotClassroomStates(
       continue;
     }
 
-    const [row] = await db
+    const [row] = await dbInstance
       .insert(classpilotClassroomStates)
       .values(state)
       .returning();
@@ -10745,7 +13447,7 @@ export async function clearClasspilotClassroomStates(options: {
   studentIds?: string[];
   stateTypes?: string[];
   commandId?: string;
-}): Promise<void> {
+}, dbInstance: typeof db = db): Promise<void> {
   const conditions: SQL[] = [
     eq(classpilotClassroomStates.schoolId, options.schoolId),
     eq(classpilotClassroomStates.teachingSessionId, options.teachingSessionId),
@@ -10757,7 +13459,7 @@ export async function clearClasspilotClassroomStates(options: {
   if (options.stateTypes?.length) {
     conditions.push(inArray(classpilotClassroomStates.stateType, options.stateTypes));
   }
-  await db
+  await dbInstance
     .update(classpilotClassroomStates)
     .set({ clearedAt: new Date(), commandId: options.commandId || null, updatedAt: new Date() })
     .where(and(...conditions));
@@ -11255,7 +13957,7 @@ export async function getActiveSupervisionContextForStaffScheduledConflict(
 }
 
 /**
- * Claim scheduled coverage under the canonical occurrence→conflict lock order.
+ * Claim scheduled coverage under the canonical student→occurrence→conflict lock order.
  * Finalization that wins first makes this a side-effect-free 409; a successful
  * claim cannot later resurrect a terminal conflict.
  */
@@ -11274,6 +13976,35 @@ export async function claimScheduledCoverageStudents(options: {
 }> {
   const uniqueStudentIds = Array.from(new Set(options.studentIds.filter(Boolean)));
   return dbInstance.transaction(async (tx) => {
+    const [preExistingContext] = await tx
+      .select({ id: classpilotSupervisionContexts.id })
+      .from(classpilotSupervisionContexts)
+      .where(and(
+        eq(classpilotSupervisionContexts.schoolId, options.schoolId),
+        eq(classpilotSupervisionContexts.assignedStaffId, options.assignedStaffId),
+        eq(classpilotSupervisionContexts.scheduledConflictId, options.scheduledConflictId),
+        eq(classpilotSupervisionContexts.status, "active")
+      ))
+      .orderBy(desc(classpilotSupervisionContexts.createdAt))
+      .limit(1);
+    const preExistingAssignments = preExistingContext
+      ? await tx
+          .select({ studentId: classpilotSupervisionStudents.studentId })
+          .from(classpilotSupervisionStudents)
+          .where(and(
+            eq(classpilotSupervisionStudents.schoolId, options.schoolId),
+            eq(classpilotSupervisionStudents.contextId, preExistingContext.id),
+            isNull(classpilotSupervisionStudents.releasedAt)
+          ))
+      : [];
+    await lockClasspilotStudentControlAuthorities(
+      options.schoolId,
+      [
+        ...uniqueStudentIds,
+        ...preExistingAssignments.map((row) => row.studentId),
+      ],
+      tx as unknown as typeof db
+    );
     const [occurrence] = await tx
       .select()
       .from(teachingSessions)
@@ -11429,6 +14160,36 @@ export async function claimScheduledCoverageStudents(options: {
           })))
           .returning()
       : [];
+    const contextWasExtended = Boolean(existing && context.endsAt > existing.endsAt);
+    if (contextWasExtended) {
+      const activeContextAssignments = await tx
+        .select({ studentId: classpilotSupervisionStudents.studentId })
+        .from(classpilotSupervisionStudents)
+        .where(and(
+          eq(classpilotSupervisionStudents.schoolId, options.schoolId),
+          eq(classpilotSupervisionStudents.contextId, context.id),
+          isNull(classpilotSupervisionStudents.releasedAt)
+        ));
+      await replaceClasspilotSupervisionControlSnapshots({
+        schoolId: options.schoolId,
+        supervisionContextId: context.id,
+        studentIds: activeContextAssignments.map((assignment) => assignment.studentId),
+        desiredState: (
+          _studentId: string,
+          current: ClasspilotStudentControlState | null
+        ) => current?.supervisionContextId === context.id
+          ? current.desiredState
+          : { restrictions: emptyClasspilotRestrictions() },
+        now,
+      }, tx as unknown as typeof db);
+    } else if (uniqueStudentIds.length > 0) {
+      await initializeClasspilotSupervisionControlStates({
+        schoolId: options.schoolId,
+        supervisionContextId: context.id,
+        studentIds: uniqueStudentIds,
+        now,
+      }, tx as unknown as typeof db);
+    }
 
     await tx
       .update(classpilotScheduledConflicts)
@@ -11508,6 +14269,11 @@ export async function createSupervisionContextWithStudents(options: {
 }): Promise<ClasspilotSupervisionContext> {
   const uniqueStudentIds = Array.from(new Set(options.studentIds.filter(Boolean)));
   return db.transaction(async (tx) => {
+    await lockClasspilotStudentControlAuthorities(
+      options.context.schoolId,
+      uniqueStudentIds,
+      tx as unknown as typeof db
+    );
     const [context] = await tx
       .insert(classpilotSupervisionContexts)
       .values(options.context)
@@ -11534,6 +14300,11 @@ export async function createSupervisionContextWithStudents(options: {
           assignedBy: options.assignedBy,
         }))
       );
+      await initializeClasspilotSupervisionControlStates({
+        schoolId: context.schoolId,
+        supervisionContextId: context.id,
+        studentIds: uniqueStudentIds,
+      }, tx as unknown as typeof db);
     }
 
     return context;
@@ -11551,6 +14322,11 @@ export async function assignStudentsToSupervisionContext(options: {
   if (uniqueStudentIds.length === 0) return [];
 
   return db.transaction(async (tx) => {
+    await lockClasspilotStudentControlAuthorities(
+      options.schoolId,
+      uniqueStudentIds,
+      tx as unknown as typeof db
+    );
     await tx
       .update(classpilotSupervisionStudents)
       .set({ releasedAt: new Date(), releaseReason: "reassigned" })
@@ -11562,7 +14338,7 @@ export async function assignStudentsToSupervisionContext(options: {
         )
       );
 
-    return tx
+    const assignments = await tx
       .insert(classpilotSupervisionStudents)
       .values(
         uniqueStudentIds.map((studentId) => ({
@@ -11574,6 +14350,12 @@ export async function assignStudentsToSupervisionContext(options: {
         }))
       )
       .returning();
+    await initializeClasspilotSupervisionControlStates({
+      schoolId: options.schoolId,
+      supervisionContextId: options.contextId,
+      studentIds: uniqueStudentIds,
+    }, tx as unknown as typeof db);
+    return assignments;
   });
 }
 
@@ -11593,10 +14375,20 @@ export async function releaseSupervisionStudents(options: {
   }
 
   return db.transaction(async (tx) => {
+    const releasedAt = new Date();
+    const releasing = await tx
+      .select({ studentId: classpilotSupervisionStudents.studentId })
+      .from(classpilotSupervisionStudents)
+      .where(and(...conditions));
+    await lockClasspilotStudentControlAuthorities(
+      options.schoolId,
+      releasing.map((row) => row.studentId),
+      tx as unknown as typeof db
+    );
     const released = await tx
       .update(classpilotSupervisionStudents)
       .set({
-        releasedAt: new Date(),
+        releasedAt,
         releaseReason: options.releaseReason || "released",
       })
       .where(and(...conditions))
@@ -11616,7 +14408,7 @@ export async function releaseSupervisionStudents(options: {
     if (remaining.length === 0) {
       await tx
         .update(classpilotSupervisionContexts)
-        .set({ status: "ended", endedAt: new Date(), updatedAt: new Date() })
+        .set({ status: "ended", endedAt: releasedAt, updatedAt: releasedAt })
         .where(
           and(
             eq(classpilotSupervisionContexts.schoolId, options.schoolId),
@@ -11624,6 +14416,13 @@ export async function releaseSupervisionStudents(options: {
           )
         );
     }
+
+    await restoreClasspilotStudentControlStatesAfterSupervision({
+      schoolId: options.schoolId,
+      supervisionContextId: options.contextId,
+      studentIds: released.map((row) => row.studentId),
+      restoredAt: releasedAt,
+    }, tx as unknown as typeof db);
 
     return released;
   });
@@ -11647,17 +14446,51 @@ export async function extendSupervisionContext(options: {
   if (options.coverageGroupId !== undefined) data.coverageGroupId = options.coverageGroupId;
   if (options.scheduledConflictId !== undefined) data.scheduledConflictId = options.scheduledConflictId;
 
-  const [row] = await db
-    .update(classpilotSupervisionContexts)
-    .set(data)
-    .where(
-      and(
-        eq(classpilotSupervisionContexts.schoolId, options.schoolId),
-        eq(classpilotSupervisionContexts.id, options.contextId)
+  return db.transaction(async (tx) => {
+    const assignments = await tx
+      .select({ studentId: classpilotSupervisionStudents.studentId })
+      .from(classpilotSupervisionStudents)
+      .where(and(
+        eq(classpilotSupervisionStudents.schoolId, options.schoolId),
+        eq(classpilotSupervisionStudents.contextId, options.contextId),
+        isNull(classpilotSupervisionStudents.releasedAt)
+      ));
+    const studentIds = assignments.map((assignment) => assignment.studentId);
+    await lockClasspilotStudentControlAuthorities(
+      options.schoolId,
+      studentIds,
+      tx as unknown as typeof db
+    );
+    const [row] = await tx
+      .update(classpilotSupervisionContexts)
+      .set(data)
+      .where(
+        and(
+          eq(classpilotSupervisionContexts.schoolId, options.schoolId),
+          eq(classpilotSupervisionContexts.id, options.contextId),
+          eq(classpilotSupervisionContexts.status, "active")
+        )
       )
-    )
-    .returning();
-  return row;
+      .returning();
+    if (!row || !options.endsAt) return row;
+
+    if (studentIds.length > 0) {
+      await replaceClasspilotSupervisionControlSnapshots({
+        schoolId: options.schoolId,
+        supervisionContextId: options.contextId,
+        studentIds,
+        desiredState: (
+          _studentId: string,
+          current: ClasspilotStudentControlState | null
+        ) => {
+          return current?.supervisionContextId === options.contextId
+            ? current.desiredState
+            : { restrictions: emptyClasspilotRestrictions() };
+        },
+      }, tx as unknown as typeof db);
+    }
+    return row;
+  });
 }
 
 export async function releaseScheduledConflictSupervision(
@@ -11669,6 +14502,7 @@ export async function releaseScheduledConflictSupervision(
   dbInstance: typeof db = db
 ): Promise<ClasspilotSupervisionStudent[]> {
   return dbInstance.transaction(async (tx) => {
+    const releasedAt = new Date();
     const contexts = await tx
       .select()
       .from(classpilotSupervisionContexts)
@@ -11681,10 +14515,23 @@ export async function releaseScheduledConflictSupervision(
       );
     if (contexts.length === 0) return [];
     const contextIds = contexts.map((context) => context.id);
+    const releasing = await tx
+      .select({ studentId: classpilotSupervisionStudents.studentId })
+      .from(classpilotSupervisionStudents)
+      .where(and(
+        eq(classpilotSupervisionStudents.schoolId, options.schoolId),
+        inArray(classpilotSupervisionStudents.contextId, contextIds),
+        isNull(classpilotSupervisionStudents.releasedAt)
+      ));
+    await lockClasspilotStudentControlAuthorities(
+      options.schoolId,
+      releasing.map((row) => row.studentId),
+      tx as unknown as typeof db
+    );
     const released = await tx
       .update(classpilotSupervisionStudents)
       .set({
-        releasedAt: new Date(),
+        releasedAt,
         releaseReason: options.releaseReason || "scheduled_teacher_started",
       })
       .where(
@@ -11697,13 +14544,106 @@ export async function releaseScheduledConflictSupervision(
       .returning();
     await tx
       .update(classpilotSupervisionContexts)
-      .set({ status: "ended", endedAt: new Date(), updatedAt: new Date() })
+      .set({ status: "ended", endedAt: releasedAt, updatedAt: releasedAt })
       .where(
         and(
           eq(classpilotSupervisionContexts.schoolId, options.schoolId),
           inArray(classpilotSupervisionContexts.id, contextIds)
         )
       );
+    for (const context of contexts) {
+      await restoreClasspilotStudentControlStatesAfterSupervision({
+        schoolId: options.schoolId,
+        supervisionContextId: context.id,
+        studentIds: released
+          .filter((row) => row.contextId === context.id)
+          .map((row) => row.studentId),
+        restoredAt: releasedAt,
+      }, tx as unknown as typeof db);
+    }
+    return released;
+  });
+}
+
+/** End supervision contexts whose frozen window elapsed and publish a
+ * higher-revision class restore (or explicit clear) for every still-assigned
+ * student. The scheduler calls this independently of scheduled-class
+ * conflicts so direct-pickup and ad-hoc coverage cannot leave stale authority
+ * in the durable control-state row. */
+export async function releaseExpiredClasspilotSupervisionContexts(
+  options: { now?: Date; schoolId?: string } = {},
+  dbInstance: typeof db = db
+): Promise<ClasspilotSupervisionStudent[]> {
+  const endedAt = options.now || new Date();
+  return dbInstance.transaction(async (tx) => {
+    const contextConditions: SQL[] = [
+      eq(classpilotSupervisionContexts.status, "active"),
+      sql`${classpilotSupervisionContexts.endsAt} <= ${endedAt}`,
+    ];
+    if (options.schoolId) {
+      contextConditions.push(eq(classpilotSupervisionContexts.schoolId, options.schoolId));
+    }
+    const candidates = await tx
+      .select()
+      .from(classpilotSupervisionContexts)
+      .where(and(...contextConditions));
+    if (candidates.length === 0) return [];
+    const candidateIds = candidates.map((context) => context.id);
+    const candidateAssignments = await tx
+      .select({
+        schoolId: classpilotSupervisionStudents.schoolId,
+        studentId: classpilotSupervisionStudents.studentId,
+      })
+      .from(classpilotSupervisionStudents)
+      .where(and(
+        inArray(classpilotSupervisionStudents.contextId, candidateIds),
+        isNull(classpilotSupervisionStudents.releasedAt)
+      ));
+    const schoolIds = [...new Set(candidateAssignments.map((row) => row.schoolId))]
+      .sort((a, b) => a.localeCompare(b));
+    for (const schoolId of schoolIds) {
+      await lockClasspilotStudentControlAuthorities(
+        schoolId,
+        candidateAssignments
+          .filter((row) => row.schoolId === schoolId)
+          .map((row) => row.studentId),
+        tx as unknown as typeof db
+      );
+    }
+    const contexts = await tx
+      .select()
+      .from(classpilotSupervisionContexts)
+      .where(and(
+        ...contextConditions,
+        inArray(classpilotSupervisionContexts.id, candidateIds)
+      ))
+      .for("update", { skipLocked: true });
+    if (contexts.length === 0) return [];
+    const contextIds = contexts.map((context) => context.id);
+    const released = await tx
+      .update(classpilotSupervisionStudents)
+      .set({ releasedAt: endedAt, releaseReason: "supervision_window_ended" })
+      .where(and(
+        inArray(classpilotSupervisionStudents.contextId, contextIds),
+        isNull(classpilotSupervisionStudents.releasedAt)
+      ))
+      .returning();
+    await tx
+      .update(classpilotSupervisionContexts)
+      .set({ status: "ended", endedAt, updatedAt: endedAt })
+      .where(inArray(classpilotSupervisionContexts.id, contextIds));
+
+    const transactionDb = tx as unknown as typeof db;
+    for (const context of contexts) {
+      await restoreClasspilotStudentControlStatesAfterSupervision({
+        schoolId: context.schoolId,
+        supervisionContextId: context.id,
+        studentIds: released
+          .filter((row) => row.contextId === context.id)
+          .map((row) => row.studentId),
+        restoredAt: endedAt,
+      }, transactionDb);
+    }
     return released;
   });
 }
@@ -12007,6 +14947,48 @@ export async function getRecentMessagesForStudent(
     )
     .orderBy(desc(messages.timestamp))
     .limit(10);
+}
+
+const CLASSPILOT_PENDING_MESSAGE_RETENTION_DAYS = 30;
+const CLASSPILOT_PENDING_MESSAGE_BATCH_LIMIT = 50;
+const CLASSPILOT_PENDING_MESSAGE_EXCLUSION_LIMIT = 500;
+
+/**
+ * Returns a bounded batch from the durable teacher-message inbox.
+ *
+ * Unlike the legacy five-minute chat helper above, reconnect recovery must
+ * survive a meaningful network outage. Both school and student are included
+ * in the predicate so callers cannot rely on ambient RLS alone for identity
+ * binding. Message ids already returned by this process may be excluded to
+ * advance through a bounded backlog without replaying the newest page forever.
+ */
+export async function getPendingMessagesForStudent(options: {
+  schoolId: string;
+  studentId: string;
+  excludeMessageIds?: string[];
+}): Promise<MessageRecord[]> {
+  const since = new Date(
+    Date.now() - CLASSPILOT_PENDING_MESSAGE_RETENTION_DAYS * 24 * 60 * 60 * 1000
+  );
+  const excludedIds = [...new Set(
+    (options.excludeMessageIds || [])
+      .map((id) => String(id || "").trim())
+      .filter(Boolean)
+  )].slice(0, CLASSPILOT_PENDING_MESSAGE_EXCLUSION_LIMIT);
+  const conditions: SQL[] = [
+    eq(messages.schoolId, options.schoolId),
+    eq(messages.toStudentId, options.studentId),
+    sql`${messages.timestamp} >= ${since}`,
+  ];
+  if (excludedIds.length > 0) {
+    conditions.push(notInArray(messages.id, excludedIds));
+  }
+  return db
+    .select()
+    .from(messages)
+    .where(and(...conditions))
+    .orderBy(desc(messages.timestamp))
+    .limit(CLASSPILOT_PENDING_MESSAGE_BATCH_LIMIT);
 }
 
 // ============================================================================

@@ -309,6 +309,9 @@ export const teachingSessions = pgTable(
     // renamed or archived while a delivery is retrying, so rendering must not
     // depend on the mutable groups row.
     classNameSnapshot: text("class_name_snapshot"),
+    // Frozen IANA timezone used by coverage/report calculations. School
+    // settings can change after a class ends, so reports never reread them.
+    timezoneSnapshot: text("timezone_snapshot"),
     // Marks that the immutable session roster snapshot was completed, even
     // when the class legitimately had zero students at the time it started.
     rosterSnapshotCompletedAt: timestamp("roster_snapshot_completed_at", { withTimezone: true }),
@@ -371,7 +374,7 @@ export const classpilotSessionSummaryDeliveries = pgTable(
     recipientKind: text("recipient_kind").notNull(), // teacher | central
     recipientEmail: text("recipient_email").notNull(),
     recipientName: text("recipient_name"),
-    state: text("state").notNull().default("queued"), // queued | leased | retry | sent | failed | unknown
+    state: text("state").notNull().default("waiting_report"), // waiting_report | queued | leased | retry | sent | failed | unknown
     attemptCount: integer("attempt_count").notNull().default(0),
     leaseOwner: text("lease_owner"),
     leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
@@ -406,7 +409,7 @@ export const classpilotSessionSummaryDeliveries = pgTable(
     ),
     check(
       "cp_summary_delivery_state_check",
-      sql`${table.state} IN ('queued', 'leased', 'retry', 'sent', 'failed', 'unknown')`
+      sql`${table.state} IN ('waiting_report', 'queued', 'leased', 'retry', 'sent', 'failed', 'unknown')`
     ),
     check("cp_summary_delivery_attempt_count_check", sql`${table.attemptCount} >= 0`),
     check("cp_summary_delivery_email_check", sql`btrim(${table.recipientEmail}) <> ''`),
@@ -417,6 +420,219 @@ export type ClasspilotSessionSummaryDelivery =
   typeof classpilotSessionSummaryDeliveries.$inferSelect;
 export type InsertClasspilotSessionSummaryDelivery =
   typeof classpilotSessionSummaryDeliveries.$inferInsert;
+
+// ============================================================================
+// Immutable Session Reports - materialized once after the settlement window
+// ============================================================================
+export const classpilotSessionReports = pgTable(
+  "classpilot_session_reports",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    teachingSessionId: varchar("teaching_session_id").notNull(),
+    state: text("state").notNull().default("pending"),
+    windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
+    windowEnd: timestamp("window_end", { withTimezone: true }).notNull(),
+    timezone: text("timezone").notNull(),
+    coverageAlgorithmVersion: text("coverage_algorithm_version")
+      .notNull()
+      .default("heartbeat-coverage-v1"),
+    eventSchemaVersion: integer("event_schema_version").notNull().default(1),
+    // Salted, one-way staff identifiers preserve the ability to return an
+    // authorized 410 after detailed retention removes the immutable staff
+    // rows. The marker never contains a raw staff identifier.
+    authorizationMarker: jsonb("authorization_marker").$type<{
+      version: 1;
+      salt: string;
+      digests: string[];
+    }>().notNull(),
+    // Frozen with the report at finalization so a settings edit during the
+    // settlement window or a later retry cannot rewrite eligibility.
+    trackingPolicy: jsonb("tracking_policy").$type<{
+      enableTrackingHours: boolean;
+      trackingStartTime: string | null;
+      trackingEndTime: string | null;
+      trackingDays: string[];
+      schoolTimezone: string;
+      afterHoursMode: "off" | "limited" | "full";
+    }>(),
+    rosterCount: integer("roster_count").notNull().default(0),
+    eligibleStudentCount: integer("eligible_student_count").notNull().default(0),
+    completeCount: integer("complete_count").notNull().default(0),
+    partialCount: integer("partial_count").notNull().default(0),
+    noneCount: integer("none_count").notNull().default(0),
+    notExpectedCount: integer("not_expected_count").notNull().default(0),
+    unavailableCount: integer("unavailable_count").notNull().default(0),
+    totalEligibleSeconds: integer("total_eligible_seconds").notNull().default(0),
+    totalObservedSeconds: integer("total_observed_seconds").notNull().default(0),
+    totalGapSeconds: integer("total_gap_seconds").notNull().default(0),
+    settleAt: timestamp("settle_at", { withTimezone: true }).notNull(),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull(),
+    lastError: text("last_error"),
+    materializedAt: timestamp("materialized_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    // Set only after the retention worker has deleted/redacted report detail.
+    // `state = expired` or expiresAt alone means reads are blocked, not that
+    // the underlying PII cleanup has already completed.
+    detailExpiredAt: timestamp("detail_expired_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`now()`),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`now()`),
+  },
+  (table) => [
+    uniqueIndex("cp_session_reports_session_unique").on(table.teachingSessionId),
+    index("cp_session_reports_school_session_idx").on(table.schoolId, table.teachingSessionId),
+    index("cp_session_reports_due_idx").on(table.state, table.nextAttemptAt),
+    index("cp_session_reports_expiry_idx").on(table.state, table.expiresAt),
+    check(
+      "cp_session_reports_state_check",
+      sql`${table.state} IN ('pending', 'materializing', 'ready', 'failed', 'expired')`
+    ),
+    check("cp_session_reports_window_check", sql`${table.windowEnd} >= ${table.windowStart}`),
+    check("cp_session_reports_attempt_count_check", sql`${table.attemptCount} >= 0`),
+    check(
+      "cp_session_reports_authorization_marker_check",
+      sql`jsonb_typeof(${table.authorizationMarker}) = 'object'
+        AND ${table.authorizationMarker}->>'version' = '1'
+        AND jsonb_typeof(${table.authorizationMarker}->'salt') = 'string'
+        AND length(${table.authorizationMarker}->>'salt') BETWEEN 16 AND 128
+        AND jsonb_typeof(${table.authorizationMarker}->'digests') = 'array'`
+    ),
+  ]
+);
+
+export type ClasspilotSessionReport = typeof classpilotSessionReports.$inferSelect;
+export type InsertClasspilotSessionReport = typeof classpilotSessionReports.$inferInsert;
+
+export const classpilotSessionStudentReports = pgTable(
+  "classpilot_session_student_reports",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    reportId: varchar("report_id").notNull(),
+    teachingSessionId: varchar("teaching_session_id").notNull(),
+    studentId: text("student_id").notNull(),
+    studentNameSnapshot: text("student_name_snapshot").notNull(),
+    status: text("status").notNull(),
+    eligibleSeconds: integer("eligible_seconds").notNull().default(0),
+    observedSeconds: integer("observed_seconds").notNull().default(0),
+    gapSeconds: integer("gap_seconds").notNull().default(0),
+    coveragePercent: integer("coverage_percent"),
+    heartbeatCount: integer("heartbeat_count").notNull().default(0),
+    firstObservedAt: timestamp("first_observed_at", { withTimezone: true }),
+    lastObservedAt: timestamp("last_observed_at", { withTimezone: true }),
+    gapIntervals: jsonb("gap_intervals").notNull().default(sql`'[]'::jsonb`),
+    eventCounts: jsonb("event_counts").notNull().default(sql`'{}'::jsonb`),
+    topDomains: jsonb("top_domains").notNull().default(sql`'[]'::jsonb`),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`now()`),
+  },
+  (table) => [
+    uniqueIndex("cp_student_reports_report_student_unique").on(table.reportId, table.studentId),
+    index("cp_student_reports_school_session_idx").on(table.schoolId, table.teachingSessionId),
+    index("cp_student_reports_school_student_idx").on(table.schoolId, table.studentId),
+    check(
+      "cp_student_reports_status_check",
+      sql`${table.status} IN ('complete', 'partial', 'none', 'not_expected', 'unavailable')`
+    ),
+    check(
+      "cp_student_reports_coverage_check",
+      sql`${table.coveragePercent} IS NULL OR (${table.coveragePercent} >= 0 AND ${table.coveragePercent} <= 100)`
+    ),
+  ]
+);
+
+export type ClasspilotSessionStudentReport = typeof classpilotSessionStudentReports.$inferSelect;
+export type InsertClasspilotSessionStudentReport = typeof classpilotSessionStudentReports.$inferInsert;
+
+export const classpilotSessionStaff = pgTable(
+  "classpilot_session_staff",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    teachingSessionId: varchar("teaching_session_id").notNull(),
+    staffId: text("staff_id").notNull(),
+    role: text("role").notNull(),
+    staffNameSnapshot: text("staff_name_snapshot"),
+    staffEmailSnapshot: text("staff_email_snapshot"),
+    capturedAt: timestamp("captured_at", { withTimezone: true }).notNull().default(sql`now()`),
+  },
+  (table) => [
+    uniqueIndex("cp_session_staff_session_staff_unique").on(table.teachingSessionId, table.staffId),
+    index("cp_session_staff_school_session_idx").on(table.schoolId, table.teachingSessionId),
+    index("cp_session_staff_school_staff_idx").on(table.schoolId, table.staffId),
+    check("cp_session_staff_role_check", sql`${table.role} IN ('primary', 'co_teacher')`),
+  ]
+);
+
+export type ClasspilotSessionStaff = typeof classpilotSessionStaff.$inferSelect;
+export type InsertClasspilotSessionStaff = typeof classpilotSessionStaff.$inferInsert;
+
+// ============================================================================
+// Per-student desired classroom controls - authoritative full snapshots
+// ============================================================================
+export const classpilotStudentControlStates = pgTable(
+  "classpilot_student_control_states",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    studentId: text("student_id").notNull(),
+    teachingSessionId: varchar("teaching_session_id"),
+    supervisionContextId: varchar("supervision_context_id"),
+    revision: integer("revision").notNull().default(0),
+    desiredState: jsonb("desired_state").notNull().default(sql`'{}'::jsonb`),
+    sourceCommandId: varchar("source_command_id"),
+    scheduledEndAt: timestamp("scheduled_end_at", { withTimezone: true }),
+    hardExpiresAt: timestamp("hard_expires_at", { withTimezone: true }),
+    enforcementHealth: text("enforcement_health").notNull().default("pending"),
+    appliedRevision: integer("applied_revision"),
+    lastOutcome: text("last_outcome"),
+    lastError: text("last_error"),
+    lastAcknowledgedAt: timestamp("last_acknowledged_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`now()`),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`now()`),
+  },
+  (table) => [
+    uniqueIndex("cp_student_control_states_school_student_unique").on(
+      table.schoolId,
+      table.studentId
+    ),
+    index("cp_student_control_states_session_idx").on(
+      table.schoolId,
+      table.teachingSessionId
+    ),
+    index("cp_student_control_states_context_idx").on(
+      table.schoolId,
+      table.supervisionContextId
+    ),
+    index("cp_student_control_states_expiry_idx").on(table.hardExpiresAt),
+    check("cp_student_control_states_revision_check", sql`${table.revision} >= 0`),
+    check(
+      "cp_student_control_states_applied_revision_check",
+      sql`${table.appliedRevision} IS NULL OR (${table.appliedRevision} >= 0 AND ${table.appliedRevision} <= ${table.revision})`
+    ),
+    check(
+      "cp_student_control_states_health_check",
+      sql`${table.enforcementHealth} IN ('synced', 'pending', 'failed', 'unsupported', 'expired')`
+    ),
+    check(
+      "cp_student_control_states_session_expiry_check",
+      sql`(
+        num_nonnulls(${table.teachingSessionId}, ${table.supervisionContextId}) = 0
+        AND ${table.scheduledEndAt} IS NULL
+        AND ${table.hardExpiresAt} IS NULL
+      ) OR (
+        num_nonnulls(${table.teachingSessionId}, ${table.supervisionContextId}) = 1
+        AND ${table.hardExpiresAt} IS NOT NULL
+        AND (${table.scheduledEndAt} IS NULL OR ${table.scheduledEndAt} <= ${table.hardExpiresAt})
+      )`
+    ),
+  ]
+);
+
+export type ClasspilotStudentControlState = typeof classpilotStudentControlStates.$inferSelect;
+export type InsertClasspilotStudentControlState = typeof classpilotStudentControlStates.$inferInsert;
 
 // ============================================================================
 // Scheduled Class Conflicts - coverage needed for unattended scheduled starts
@@ -467,6 +683,7 @@ export const classpilotSessionStudents = pgTable(
     teachingSessionId: varchar("teaching_session_id").notNull(),
     groupId: text("group_id").notNull(),
     studentId: text("student_id").notNull(),
+    studentNameSnapshot: text("student_name_snapshot"),
     capturedAt: timestamp("captured_at", { withTimezone: true }).notNull().default(sql`now()`),
   },
   (table) => [
@@ -532,6 +749,78 @@ export const classpilotSessionUsage = pgTable(
 
 export type ClasspilotSessionUsage = typeof classpilotSessionUsage.$inferSelect;
 export type InsertClasspilotSessionUsage = typeof classpilotSessionUsage.$inferInsert;
+
+// ============================================================================
+// Scoped classroom monitoring events - privacy-bounded extension telemetry
+// ============================================================================
+export const classpilotMonitoringEvents = pgTable(
+  "classpilot_monitoring_events",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    studentId: text("student_id").notNull(),
+    // Internal correlation fields. Teacher-facing reads and exports never
+    // serialize either identifier.
+    deviceId: text("device_id"),
+    studentSessionId: varchar("student_session_id").notNull(),
+    teachingSessionId: varchar("teaching_session_id"),
+    supervisionContextId: varchar("supervision_context_id"),
+    sourceEventId: varchar("source_event_id", { length: 128 }).notNull(),
+    schemaVersion: integer("schema_version").notNull().default(1),
+    origin: text("origin").notNull(),
+    eventType: text("event_type").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().default(sql`now()`),
+    normalizedDomain: text("normalized_domain"),
+    sanitizedPath: text("sanitized_path"),
+    title: text("title"),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    retentionExpiresAt: timestamp("retention_expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("cp_monitoring_events_source_unique").on(
+      table.schoolId,
+      table.studentSessionId,
+      table.sourceEventId
+    ),
+    index("cp_monitoring_events_session_time_idx").on(
+      table.schoolId,
+      table.teachingSessionId,
+      table.occurredAt.desc(),
+      table.id
+    ),
+    index("cp_monitoring_events_context_time_idx").on(
+      table.schoolId,
+      table.supervisionContextId,
+      table.occurredAt.desc(),
+      table.id
+    ),
+    index("cp_monitoring_events_student_time_idx").on(
+      table.schoolId,
+      table.studentId,
+      table.occurredAt.desc()
+    ),
+    index("cp_monitoring_events_retention_idx").on(table.retentionExpiresAt),
+    check(
+      "cp_monitoring_events_scope_xor_check",
+      sql`num_nonnulls(${table.teachingSessionId}, ${table.supervisionContextId}) = 1`
+    ),
+    check("cp_monitoring_events_schema_check", sql`${table.schemaVersion} = 1`),
+    check("cp_monitoring_events_origin_check", sql`${table.origin} IN ('extension', 'server')`),
+    check(
+      "cp_monitoring_events_type_check",
+      sql`${table.eventType} IN (
+        'tab_changed', 'navigation_changed', 'navigation_blocked',
+        'monitoring_state_changed', 'restriction_state_applied',
+        'restriction_state_failed', 'restriction_state_cleared',
+        'student_session_started', 'student_session_ended', 'monitoring_gap'
+      )`
+    ),
+  ]
+);
+
+export type ClasspilotMonitoringEvent = typeof classpilotMonitoringEvents.$inferSelect;
+export type InsertClasspilotMonitoringEvent = typeof classpilotMonitoringEvents.$inferInsert;
 
 // ============================================================================
 // Session Settings - Per-session feature toggles

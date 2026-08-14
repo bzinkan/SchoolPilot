@@ -47,6 +47,11 @@ describe("one-release RLS table enablement", () => {
   it("adds only the reviewed table after matching live API/worker admission", () => {
     assert.deepEqual(REVIEWED_RLS_TABLE_ENABLEMENTS, [
       "classpilot_session_summary_deliveries",
+      "classpilot_monitoring_events",
+      "classpilot_session_reports",
+      "classpilot_session_staff",
+      "classpilot_session_student_reports",
+      "classpilot_student_control_states",
       targetTable,
       ...GOPILOT_CHILD_RLS_TABLES,
     ]);

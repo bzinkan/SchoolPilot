@@ -12,8 +12,10 @@ import { runWithTenantContext } from "../middleware/tenantContext.js";
 import {
   dispatchDueClasspilotSessionSummaries,
   finalizeClasspilotSession,
+  pushClasspilotSessionControlStates,
   runClasspilotFinalizationSideEffects,
 } from "./classpilotSessionLifecycle.js";
+import { syncClasspilotControlStatesToActiveDevices } from "./classpilotControlStateDelivery.js";
 import {
   createOrReuseScheduledReportSession,
   getActiveClassOwnersForStudents,
@@ -285,6 +287,14 @@ export async function buildScheduledCoveragePayload(options: {
   let offlineOrUnmonitoredCount = 0;
 
   for (const row of rows) {
+    const rosterStudent = row.student
+      ? safeStudent(row.student)
+      : {
+          studentId: row.studentId,
+          studentName: "studentNameSnapshot" in row && row.studentNameSnapshot
+            ? row.studentNameSnapshot
+            : row.studentId,
+        };
     const activeSession = await getActiveSessionByStudent(row.studentId);
     const lastSeenAt = activeSession?.lastSeenAt?.getTime?.() || 0;
     const isOnline = !!activeSession
@@ -319,12 +329,12 @@ export async function buildScheduledCoveragePayload(options: {
         monitoredByKey.set(key, entry);
       }
       entry.count++;
-      if (entry.students.length < 5) entry.students.push(safeStudent(row.student));
+      if (entry.students.length < 5) entry.students.push(rosterStudent);
       continue;
     }
 
     if (isOnline) {
-      claimableStudents.push(safeStudent(row.student));
+      claimableStudents.push(rosterStudent);
     } else {
       offlineOrUnmonitoredCount++;
     }
@@ -413,6 +423,9 @@ async function startScheduledClass(options: {
   for (const conflictId of outcome.resolvedConflictIds) {
     broadcastScheduledConflictUpdate(options.group.schoolId, conflictId);
   }
+  void pushClasspilotSessionControlStates(options.group.schoolId, outcome.session.id).catch((error) => {
+    console.warn(`[ClassPilot] Scheduled classroom-state push failed for ${outcome.session.id}:`, error);
+  });
   return outcome.session;
 }
 
@@ -708,6 +721,12 @@ export async function processScheduledClassAutoStart(options: {
     scheduledTeacherConnected: false,
   }, dbInstance);
   const conflict = conflictResult.conflict;
+  if (conflictResult.restoredStudentIds.length > 0) {
+    await syncClasspilotControlStatesToActiveDevices(
+      group.schoolId,
+      conflictResult.restoredStudentIds
+    );
+  }
   if (!conflictResult.occurrenceActive) {
     return { status: "skipped", reason: "finalized" };
   }
@@ -776,11 +795,15 @@ export async function closeScheduledConflictReporting(options: {
   dbInstance?: typeof db;
 }): Promise<void> {
   const dbInstance = options.dbInstance;
-  await releaseScheduledConflictSupervision({
+  const released = await releaseScheduledConflictSupervision({
     schoolId: options.conflict.schoolId,
     scheduledConflictId: options.conflict.id,
     releaseReason: options.releaseReason,
   }, dbInstance);
+  await syncClasspilotControlStatesToActiveDevices(
+    options.conflict.schoolId,
+    released.map((row) => row.studentId)
+  );
   const reportSession = await getActiveScheduledReportSessionForConflict(
     options.conflict.schoolId,
     options.conflict.id,

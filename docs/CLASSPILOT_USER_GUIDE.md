@@ -29,7 +29,7 @@ ClassPilot is a comprehensive classroom monitoring system designed for education
 - 🎥 **Live Screen Viewing** - Watch student screens via WebRTC with advanced controls
 - 🎯 **Per-Student Targeting** - Apply controls to specific students or entire class
 - 🔒 **Remote Classroom Control** - Lock screens, manage tabs, apply domain restrictions
-- 📸 **Advanced Recording** - Capture screenshots and record screen activity
+- 📸 **Screenshot Capture** - Save a still frame from a live student view
 - 📱 **Shared Device Support** - Multiple students per Chromebook
 - 🔐 **Privacy-First Design** - Transparent monitoring with clear consent
 - 📈 **Website Duration Tracking** - Track time spent on websites
@@ -77,7 +77,7 @@ The dashboard displays students in a **grid layout** with real-time activity car
 Each student tile shows:
 - **Student Name** and photo (if available)
 - **Current Activity** - What website/tab they're viewing
-- **Status Icon** - Online (🟢), Idle (🟡), Offline (⚫)
+- **Status Icon** - Online (🟢), Idle (🟡), Monitoring signal lost (🔴), or Not logged in (⚫)
 - **Camera Active** - Purple camera icon (📷) if camera is on
 - **Lock Status** - Lock icon (🔒) if screen is locked
 - **Selection Checkbox** - For per-student targeting
@@ -90,7 +90,8 @@ Students are automatically grouped into:
 1. **Off-Task** (Red) - Visiting non-educational sites or blocklist violations
 2. **On-Task** (Green) - Visiting approved educational websites  
 3. **Idle** (Yellow) - No activity for 30+ seconds
-4. **Offline** (Gray) - Device not connected or heartbeat stopped
+4. **Monitoring signal lost** (Red) - No browser telemetry has arrived for 60 seconds; the cause is unknown
+5. **Not logged in** (Gray) - No authenticated ClassPilot student session is active
 
 ### Statistics Bar
 
@@ -98,7 +99,8 @@ At the top of the dashboard:
 - 📊 **Total Students** - Number of students in class
 - 🟢 **Online** - Currently active students
 - 🟡 **Idle** - Inactive but connected
-- ⚫ **Offline** - Disconnected devices
+- 🔴 **Signal Lost** - Signed-in students whose browser telemetry is at least 60 seconds old
+- ⚫ **Not Logged In** - Students without an authenticated extension session
 - 📷 **Camera Active** - Students with camera on
 - 🔒 **Locked** - Students with locked screens
 
@@ -123,6 +125,8 @@ ClassPilot automatically tracks:
 - **Website Duration** - Time spent on each site
 
 **Update Frequency:** Every 10 seconds
+
+If browser telemetry stops for 60 seconds, ClassPilot replaces the cached preview with a neutral **Preview unavailable** panel. It may show the last observed time and site as historical context, but it does not present the old screenshot, URL, title, or activity classification as current. Cached screenshots are also hidden independently after 75 seconds even when URL telemetry remains current.
 
 ### Activity Details
 
@@ -201,14 +205,6 @@ Click **Expand** to open the **Video Portal** with professional monitoring tools
 - Filename: `screenshot-[student]-[timestamp].png`
 - No file picker required - instant save
 
-##### Screen Recording
-- Click **🔴 Record** button to start recording
-- **Duration counter** shows recording time
-- Click **⏹️ Stop** to end recording
-- Saves as WebM video file
-- **Auto-downloads** to your `~/Downloads` folder
-- Filename: `recording-[student]-[timestamp].webm`
-
 ##### Additional Controls
 - **Fullscreen Mode** - Maximize video to entire screen
 - **Picture-in-Picture** - Pop out video to floating window
@@ -233,6 +229,18 @@ Click **Expand** to open the **Video Portal** with professional monitoring tools
 ---
 
 ## Remote Classroom Controls
+
+### Understanding Delivery Status
+
+ClassPilot reports classroom actions according to what the server and device have actually confirmed:
+
+- **Restriction saved** - A persistent control such as Screen Lock, Flight Path, Block List, Attention Mode, tab limit, or temporary unblock is stored as the desired classroom state. If the student is unavailable, it remains pending and reconciles when monitoring resumes.
+- **Delivery attempted** - A momentary action such as Open Tab, Close Tabs, Timer, or Poll was dispatched once. It expires after 15 seconds if the device does not acknowledge receipt and is not replayed later.
+- **Acknowledged** - The extension reports that it received the action. Device acknowledgements are useful delivery evidence, but are not proof against tampering.
+- **Not delivered**, **Failed**, or **Student unavailable** - The action was not confirmed as completed. ClassPilot does not describe it as opened, closed, locked, or sent successfully.
+- **Message queued** - Teacher messages use the pending-message inbox and can be delivered after a temporary disconnection.
+
+ClassPilot describes monitoring gaps only as **cause unknown**. A gap does not prove that a student disabled Wi-Fi, disabled the extension, cheated, or used AI.
 
 ### Per-Student Targeting
 
@@ -796,7 +804,7 @@ The extension sends activity updates every **10 seconds**:
 4. Check for Chrome browser updates
 5. Restart Chromebook
 
-#### Screenshots/Recordings Not Downloading
+#### Screenshots Not Downloading
 
 **Possible Causes:**
 1. Browser blocked automatic downloads
@@ -949,7 +957,6 @@ The extension sends activity updates every **10 seconds**:
 **Per Student/Day:**
 - ~5 MB activity data
 - ~50 MB with screenshots (if using)
-- ~500 MB with recordings (if using)
 
 **Database:**
 - PostgreSQL with automatic cleanup
@@ -1041,7 +1048,6 @@ ClassPilot is designed to support compliance with:
 - `+` - Zoom in
 - `-` - Zoom out
 - `S` - Take screenshot
-- `R` - Start/stop recording
 - `Esc` - Close portal
 
 ### Support Resources

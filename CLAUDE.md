@@ -245,7 +245,7 @@ When a school has multiple products, priority order is: ClassPilot > PassPilot >
   - **Axios instance** from `shared/utils/api.js` — legacy pattern, auto-attaches JWT tokens.
 - **Role-aware hooks**: `useClassPilotAuth`, `usePassPilotAuth`, `useGoPilotAuth` map the generic `activeMembership.role` to product-specific role checks (isAdmin, isTeacher, etc.).
 - **Vite proxy**: The frontend dev server proxies `/api`, `/ws`, and `/gopilot-socket` to the backend on port 4000.
-- **Chrome extension**: The ClassPilot Chrome extension (MV3, separate repo at `ClassPilot/extension/`) uses a service worker (`service-worker.js`). Public Chrome Web Store listing `iggbfegfcjkfieoemeolfmfnapepalca` was verified on July 11, 2026 at live version `2.5.7` (updated July 2, 2026), matching the prepared `ClassPilot-v2.5.7.zip`; re-check the listing before any future bump/upload. Use `console.warn` instead of `console.error` — Chrome surfaces `console.error` calls as visible "Errors" on the chrome://extensions page, alarming school IT admins.
+- **Chrome extension**: The ClassPilot Chrome extension (MV3, separate repo at `ClassPilot/extension/`) uses a service worker (`service-worker.js`). Public Chrome Web Store listing `iggbfegfcjkfieoemeolfmfnapepalca` was reverified on August 13, 2026 at live version `2.5.7` (updated July 2, 2026); the next locally prepared package is `ClassPilot-v2.6.0.zip` and has not been uploaded. Re-check the listing before any future upload. Use `console.warn` instead of `console.error` — Chrome surfaces `console.error` calls as visible "Errors" on the chrome://extensions page, alarming school IT admins.
 - **MV3 service worker limits**: `setInterval` doesn't survive service worker termination. Use `chrome.alarms` for periodic tasks. Screenshots use a separate `chrome.alarms` alarm (30s). Heartbeats use `setInterval(10s)` plus `chrome.alarms` as fallback.
 - **WebSocket lives in offscreen document**: MV3 service workers can't maintain persistent WebSockets (Chrome 145+ enforces this). The extension uses an offscreen document (`offscreen.js`) as a WebSocket proxy. Chrome can kill the offscreen doc when the declared `reasons` (USER_MEDIA, DISPLAY_MEDIA, BLOBS) are inactive — the offscreen doc sends a 25s application-level ping to keep itself alive AND keep ALB connections from idling out.
 - **Extension deployment**: Requires force-install via Google Admin (Devices → Chrome → Apps & extensions) for managed browsers/Chromebooks. Google Workspace screen capture policies needed for `captureVisibleTab`. Updates flow: confirm the live CWS version → bump `manifest.json` version in the separate ClassPilot repo → package a versioned zip → publish to Chrome Web Store → CWS review → force-install pulls automatically. A SchoolPilot API/frontend deploy does not publish or update the Chrome extension.
@@ -745,6 +745,20 @@ later releases:
 ./scripts/deploy.sh production --backend --activate-emergency \
   --enable-rls-table passpilot_grade_students
 ```
+
+For the backend-first ClassPilot bypass-resilience release, add and verify the
+five direct-tenant monitoring/control tables as one indivisible reviewed
+bundle. Do not split, reorder, or retain this flag on later releases:
+
+```bash
+./scripts/deploy.sh production --backend --activate-emergency \
+  --enable-rls-table classpilot_monitoring_events,classpilot_session_reports,classpilot_session_staff,classpilot_session_student_reports,classpilot_student_control_states
+```
+
+Keep Terraform's production allowlist at the deployed baseline until this
+one-shot activation has completed and the live RLS catalog checks have passed.
+Then land the observed allowlist as a separate baseline-adoption change before
+any later Terraform apply.
 
 For the single backend-first GoPilot staff-dismissal release, add and verify
 the seven direct-tenant child tables as one indivisible reviewed bundle. Do

@@ -41,11 +41,6 @@ export function isWithinTrackingHours(
       weekday: 'long'
     });
 
-    // Check if current day is in the list of tracking days
-    if (!activeDays.includes(schoolDayName)) {
-      return false;
-    }
-
     // Get current time in school's timezone
     const schoolTimeString = now.toLocaleString("en-US", {
       timeZone: timezone,
@@ -57,8 +52,26 @@ export function isWithinTrackingHours(
     // Extract HH:MM from the formatted string
     const currentTime = schoolTimeString.split(', ')[1] || schoolTimeString;
 
-    // Compare times as strings (HH:MM format)
-    return currentTime >= startTime && currentTime <= endTime;
+    const [currentHour = 0, currentMinute = 0] = currentTime.split(':').map(Number);
+    const [startHour = 0, startMinute = 0] = startTime.split(':').map(Number);
+    const [endHour = 0, endMinute = 0] = endTime.split(':').map(Number);
+    const currentMinutes = currentHour * 60 + currentMinute;
+    const startMinutes = startHour * 60 + startMinute;
+    const endMinutes = endHour * 60 + endMinute;
+
+    if (startMinutes < endMinutes) {
+      return activeDays.includes(schoolDayName)
+        && currentMinutes >= startMinutes
+        && currentMinutes <= endMinutes;
+    }
+
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const currentDayIndex = dayNames.indexOf(schoolDayName);
+    if (currentMinutes >= startMinutes) return activeDays.includes(schoolDayName);
+    if (currentMinutes <= endMinutes && currentDayIndex >= 0) {
+      return activeDays.includes(dayNames[(currentDayIndex + 6) % 7]);
+    }
+    return false;
   } catch (error) {
     console.error("Error checking tracking hours:", error);
     // On error, default to allowing tracking (fail open for usability)

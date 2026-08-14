@@ -5,6 +5,11 @@ import { pathToFileURL } from "node:url";
 
 export const REVIEWED_RLS_TABLE_ENABLEMENTS = Object.freeze([
   "classpilot_session_summary_deliveries",
+  "classpilot_monitoring_events",
+  "classpilot_session_reports",
+  "classpilot_session_staff",
+  "classpilot_session_student_reports",
+  "classpilot_student_control_states",
   "passpilot_grade_students",
   "authorized_pickups",
   "custody_alerts",

@@ -965,6 +965,7 @@ export async function runStartupMigrations(): Promise<void> {
       END IF;
     END $$
   `);
+  await pool.query(`ALTER TABLE teaching_sessions ADD COLUMN IF NOT EXISTS timezone_snapshot TEXT`);
   console.log("[migration] teaching session scheduled occurrence metadata ready");
 
   // The tile authorization plan relies on teaching_sessions.school_id as both
@@ -1005,7 +1006,7 @@ export async function runStartupMigrations(): Promise<void> {
       recipient_kind TEXT NOT NULL,
       recipient_email TEXT NOT NULL,
       recipient_name TEXT,
-      state TEXT NOT NULL DEFAULT 'queued',
+      state TEXT NOT NULL DEFAULT 'waiting_report',
       attempt_count INTEGER NOT NULL DEFAULT 0,
       lease_owner TEXT,
       lease_expires_at TIMESTAMPTZ,
@@ -1019,12 +1020,15 @@ export async function runStartupMigrations(): Promise<void> {
       CONSTRAINT cp_summary_delivery_recipient_kind_check
         CHECK (recipient_kind IN ('teacher', 'central')),
       CONSTRAINT cp_summary_delivery_state_check
-        CHECK (state IN ('queued', 'leased', 'retry', 'sent', 'failed', 'unknown')),
+        CHECK (state IN ('waiting_report', 'queued', 'leased', 'retry', 'sent', 'failed', 'unknown')),
       CONSTRAINT cp_summary_delivery_attempt_count_check CHECK (attempt_count >= 0),
       CONSTRAINT cp_summary_delivery_email_check CHECK (btrim(recipient_email) <> '')
     )
   `);
   await pool.query(`ALTER TABLE classpilot_session_summary_deliveries ADD COLUMN IF NOT EXISTS submission_started_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE classpilot_session_summary_deliveries ALTER COLUMN state SET DEFAULT 'waiting_report'`);
+  await pool.query(`ALTER TABLE classpilot_session_summary_deliveries DROP CONSTRAINT IF EXISTS cp_summary_delivery_state_check`);
+  await pool.query(`ALTER TABLE classpilot_session_summary_deliveries ADD CONSTRAINT cp_summary_delivery_state_check CHECK (state IN ('waiting_report', 'queued', 'leased', 'retry', 'sent', 'failed', 'unknown'))`);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS cp_summary_delivery_session_kind_unique ON classpilot_session_summary_deliveries (teaching_session_id, recipient_kind)`);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS cp_summary_delivery_session_email_unique ON classpilot_session_summary_deliveries (teaching_session_id, lower(btrim(recipient_email)))`);
   await pool.query(`CREATE INDEX IF NOT EXISTS cp_summary_delivery_school_session_idx ON classpilot_session_summary_deliveries (school_id, teaching_session_id)`);
@@ -1338,10 +1342,12 @@ export async function runStartupMigrations(): Promise<void> {
       teaching_session_id VARCHAR NOT NULL,
       group_id TEXT NOT NULL,
       student_id TEXT NOT NULL,
+      student_name_snapshot TEXT,
       captured_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       CONSTRAINT classpilot_session_students_session_student_unique UNIQUE (teaching_session_id, student_id)
     )
   `);
+  await pool.query(`ALTER TABLE classpilot_session_students ADD COLUMN IF NOT EXISTS student_name_snapshot TEXT`);
   await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_session_students_school_session_idx ON classpilot_session_students (school_id, teaching_session_id)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_session_students_school_group_idx ON classpilot_session_students (school_id, group_id)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_session_students_school_student_idx ON classpilot_session_students (school_id, student_id)`);
@@ -1373,6 +1379,296 @@ export async function runStartupMigrations(): Promise<void> {
   } catch (err) {
     console.warn("[migration] ClassPilot session analytics migration skipped:", (err as Error).message);
   }
+
+  // Immutable ClassPilot monitoring reports, authorization snapshots, and
+  // privacy-bounded session/context events. These are required runtime
+  // infrastructure: fail the migration task if any table or invariant cannot
+  // be installed, rather than serving partially materialized summaries.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS classpilot_session_reports (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      school_id TEXT NOT NULL,
+      teaching_session_id VARCHAR NOT NULL,
+      state TEXT NOT NULL DEFAULT 'pending',
+      window_start TIMESTAMPTZ NOT NULL,
+      window_end TIMESTAMPTZ NOT NULL,
+      timezone TEXT NOT NULL,
+      coverage_algorithm_version TEXT NOT NULL DEFAULT 'heartbeat-coverage-v1',
+      event_schema_version INTEGER NOT NULL DEFAULT 1,
+      authorization_marker JSONB,
+      tracking_policy JSONB,
+      roster_count INTEGER NOT NULL DEFAULT 0,
+      eligible_student_count INTEGER NOT NULL DEFAULT 0,
+      complete_count INTEGER NOT NULL DEFAULT 0,
+      partial_count INTEGER NOT NULL DEFAULT 0,
+      none_count INTEGER NOT NULL DEFAULT 0,
+      not_expected_count INTEGER NOT NULL DEFAULT 0,
+      unavailable_count INTEGER NOT NULL DEFAULT 0,
+      total_eligible_seconds INTEGER NOT NULL DEFAULT 0,
+      total_observed_seconds INTEGER NOT NULL DEFAULT 0,
+      total_gap_seconds INTEGER NOT NULL DEFAULT 0,
+      settle_at TIMESTAMPTZ NOT NULL,
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      lease_owner TEXT,
+      lease_expires_at TIMESTAMPTZ,
+      next_attempt_at TIMESTAMPTZ NOT NULL,
+      last_error TEXT,
+      materialized_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ NOT NULL,
+      detail_expired_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      CONSTRAINT cp_session_reports_state_check
+        CHECK (state IN ('pending', 'materializing', 'ready', 'failed', 'expired')),
+      CONSTRAINT cp_session_reports_window_check CHECK (window_end >= window_start),
+      CONSTRAINT cp_session_reports_attempt_count_check CHECK (attempt_count >= 0)
+    )
+  `);
+  await pool.query(`ALTER TABLE classpilot_session_reports ADD COLUMN IF NOT EXISTS authorization_marker JSONB`);
+  await pool.query(`ALTER TABLE classpilot_session_reports ADD COLUMN IF NOT EXISTS tracking_policy JSONB`);
+  // A trigger protects the backend-first mixed-version window: an older API
+  // may finalize a class while the migration task is running, but every new
+  // report still receives the same salted SHA-256 staff marker as the new
+  // application code. Raw staff identifiers can therefore be removed at
+  // retention without weakening authorized 410 responses.
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION classpilot_set_report_authorization_marker()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path = public
+    AS $classpilot_report_auth$
+    DECLARE
+      marker_salt TEXT;
+      marker_digests JSONB;
+    BEGIN
+      IF NEW.authorization_marker IS NULL THEN
+        marker_salt := gen_random_uuid()::text;
+        SELECT COALESCE(
+          jsonb_agg(
+            to_jsonb(rtrim(translate(encode(sha256(convert_to(concat_ws('|',
+              'classpilot-report-staff-v1', marker_salt, NEW.school_id,
+              NEW.teaching_session_id, staff.staff_id
+            ), 'UTF8')), 'base64'), '+/', '-_'), '='))
+            ORDER BY staff.staff_id
+          ),
+          '[]'::jsonb
+        )
+        INTO marker_digests
+        FROM classpilot_session_staff AS staff
+        WHERE staff.school_id = NEW.school_id
+          AND staff.teaching_session_id = NEW.teaching_session_id;
+        NEW.authorization_marker := jsonb_build_object(
+          'version', 1,
+          'salt', marker_salt,
+          'digests', marker_digests
+        );
+      END IF;
+      RETURN NEW;
+    END
+    $classpilot_report_auth$;
+    DROP TRIGGER IF EXISTS classpilot_report_authorization_marker ON classpilot_session_reports;
+    CREATE TRIGGER classpilot_report_authorization_marker
+      BEFORE INSERT ON classpilot_session_reports
+      FOR EACH ROW EXECUTE FUNCTION classpilot_set_report_authorization_marker();
+  `);
+  const reportAuthorizationClient = await pool.connect();
+  try {
+    await reportAuthorizationClient.query("BEGIN");
+    await reportAuthorizationClient.query(`SELECT set_config('app.is_super', 'on', true)`);
+    await reportAuthorizationClient.query(`
+      WITH missing AS MATERIALIZED (
+        SELECT report.id, report.school_id, report.teaching_session_id,
+               gen_random_uuid()::text AS marker_salt
+        FROM classpilot_session_reports AS report
+        WHERE report.authorization_marker IS NULL
+        FOR UPDATE
+      ), markers AS (
+        SELECT missing.id, missing.marker_salt,
+               COALESCE(
+                 jsonb_agg(
+                   to_jsonb(rtrim(translate(encode(sha256(convert_to(concat_ws('|',
+                     'classpilot-report-staff-v1', missing.marker_salt,
+                     missing.school_id, missing.teaching_session_id, staff.staff_id
+                   ), 'UTF8')), 'base64'), '+/', '-_'), '='))
+                   ORDER BY staff.staff_id
+                 ) FILTER (WHERE staff.staff_id IS NOT NULL),
+                 '[]'::jsonb
+               ) AS digests
+        FROM missing
+        LEFT JOIN classpilot_session_staff AS staff
+          ON staff.school_id = missing.school_id
+         AND staff.teaching_session_id = missing.teaching_session_id
+        GROUP BY missing.id, missing.marker_salt
+      )
+      UPDATE classpilot_session_reports AS report
+      SET authorization_marker = jsonb_build_object(
+        'version', 1,
+        'salt', markers.marker_salt,
+        'digests', markers.digests
+      )
+      FROM markers
+      WHERE report.id = markers.id
+    `);
+    await reportAuthorizationClient.query("COMMIT");
+  } catch (error) {
+    await reportAuthorizationClient.query("ROLLBACK");
+    throw error;
+  } finally {
+    reportAuthorizationClient.release();
+  }
+  await pool.query(`ALTER TABLE classpilot_session_reports ALTER COLUMN authorization_marker SET NOT NULL`);
+  await pool.query(`ALTER TABLE classpilot_session_reports DROP CONSTRAINT IF EXISTS cp_session_reports_authorization_marker_check`);
+  await pool.query(`
+    ALTER TABLE classpilot_session_reports
+    ADD CONSTRAINT cp_session_reports_authorization_marker_check CHECK (
+      jsonb_typeof(authorization_marker) = 'object'
+      AND authorization_marker->>'version' = '1'
+      AND jsonb_typeof(authorization_marker->'salt') = 'string'
+      AND length(authorization_marker->>'salt') BETWEEN 16 AND 128
+      AND jsonb_typeof(authorization_marker->'digests') = 'array'
+    )
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS cp_session_reports_session_unique ON classpilot_session_reports (teaching_session_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS cp_session_reports_school_session_idx ON classpilot_session_reports (school_id, teaching_session_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS cp_session_reports_due_idx ON classpilot_session_reports (state, next_attempt_at)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS cp_session_reports_expiry_idx ON classpilot_session_reports (state, expires_at)`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS classpilot_session_student_reports (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      school_id TEXT NOT NULL,
+      report_id VARCHAR NOT NULL,
+      teaching_session_id VARCHAR NOT NULL,
+      student_id TEXT NOT NULL,
+      student_name_snapshot TEXT NOT NULL,
+      status TEXT NOT NULL,
+      eligible_seconds INTEGER NOT NULL DEFAULT 0,
+      observed_seconds INTEGER NOT NULL DEFAULT 0,
+      gap_seconds INTEGER NOT NULL DEFAULT 0,
+      coverage_percent INTEGER,
+      heartbeat_count INTEGER NOT NULL DEFAULT 0,
+      first_observed_at TIMESTAMPTZ,
+      last_observed_at TIMESTAMPTZ,
+      gap_intervals JSONB NOT NULL DEFAULT '[]'::jsonb,
+      event_counts JSONB NOT NULL DEFAULT '{}'::jsonb,
+      top_domains JSONB NOT NULL DEFAULT '[]'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      CONSTRAINT cp_student_reports_status_check
+        CHECK (status IN ('complete', 'partial', 'none', 'not_expected', 'unavailable')),
+      CONSTRAINT cp_student_reports_coverage_check
+        CHECK (coverage_percent IS NULL OR (coverage_percent >= 0 AND coverage_percent <= 100))
+    )
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS cp_student_reports_report_student_unique ON classpilot_session_student_reports (report_id, student_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS cp_student_reports_school_session_idx ON classpilot_session_student_reports (school_id, teaching_session_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS cp_student_reports_school_student_idx ON classpilot_session_student_reports (school_id, student_id)`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS classpilot_session_staff (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      school_id TEXT NOT NULL,
+      teaching_session_id VARCHAR NOT NULL,
+      staff_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      staff_name_snapshot TEXT,
+      staff_email_snapshot TEXT,
+      captured_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      CONSTRAINT cp_session_staff_role_check CHECK (role IN ('primary', 'co_teacher'))
+    )
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS cp_session_staff_session_staff_unique ON classpilot_session_staff (teaching_session_id, staff_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS cp_session_staff_school_session_idx ON classpilot_session_staff (school_id, teaching_session_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS cp_session_staff_school_staff_idx ON classpilot_session_staff (school_id, staff_id)`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS classpilot_student_control_states (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      school_id TEXT NOT NULL,
+      student_id TEXT NOT NULL,
+      teaching_session_id VARCHAR,
+      supervision_context_id VARCHAR,
+      revision INTEGER NOT NULL DEFAULT 0,
+      desired_state JSONB NOT NULL DEFAULT '{}'::jsonb,
+      source_command_id VARCHAR,
+      scheduled_end_at TIMESTAMPTZ,
+      hard_expires_at TIMESTAMPTZ,
+      enforcement_health TEXT NOT NULL DEFAULT 'pending',
+      applied_revision INTEGER,
+      last_outcome TEXT,
+      last_error TEXT,
+      last_acknowledged_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      CONSTRAINT cp_student_control_states_revision_check CHECK (revision >= 0),
+      CONSTRAINT cp_student_control_states_applied_revision_check
+        CHECK (applied_revision IS NULL OR (applied_revision >= 0 AND applied_revision <= revision)),
+      CONSTRAINT cp_student_control_states_health_check
+        CHECK (enforcement_health IN ('synced', 'pending', 'failed', 'unsupported', 'expired')),
+      CONSTRAINT cp_student_control_states_session_expiry_check CHECK (
+        (num_nonnulls(teaching_session_id, supervision_context_id) = 0
+          AND scheduled_end_at IS NULL AND hard_expires_at IS NULL)
+        OR
+        (num_nonnulls(teaching_session_id, supervision_context_id) = 1 AND hard_expires_at IS NOT NULL
+          AND (scheduled_end_at IS NULL OR scheduled_end_at <= hard_expires_at))
+      )
+    )
+  `);
+  await pool.query(`ALTER TABLE classpilot_student_control_states ADD COLUMN IF NOT EXISTS supervision_context_id VARCHAR`);
+  await pool.query(`ALTER TABLE classpilot_student_control_states DROP CONSTRAINT IF EXISTS cp_student_control_states_session_expiry_check`);
+  await pool.query(`
+    ALTER TABLE classpilot_student_control_states
+    ADD CONSTRAINT cp_student_control_states_session_expiry_check CHECK (
+      (num_nonnulls(teaching_session_id, supervision_context_id) = 0
+        AND scheduled_end_at IS NULL AND hard_expires_at IS NULL)
+      OR
+      (num_nonnulls(teaching_session_id, supervision_context_id) = 1
+        AND hard_expires_at IS NOT NULL
+        AND (scheduled_end_at IS NULL OR scheduled_end_at <= hard_expires_at))
+    )
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS cp_student_control_states_school_student_unique ON classpilot_student_control_states (school_id, student_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS cp_student_control_states_session_idx ON classpilot_student_control_states (school_id, teaching_session_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS cp_student_control_states_context_idx ON classpilot_student_control_states (school_id, supervision_context_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS cp_student_control_states_expiry_idx ON classpilot_student_control_states (hard_expires_at)`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS classpilot_monitoring_events (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      school_id TEXT NOT NULL,
+      student_id TEXT NOT NULL,
+      device_id TEXT,
+      student_session_id VARCHAR NOT NULL,
+      teaching_session_id VARCHAR,
+      supervision_context_id VARCHAR,
+      source_event_id VARCHAR(128) NOT NULL,
+      schema_version INTEGER NOT NULL DEFAULT 1,
+      origin TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      occurred_at TIMESTAMPTZ NOT NULL,
+      received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      normalized_domain TEXT,
+      sanitized_path TEXT,
+      title TEXT,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      retention_expires_at TIMESTAMPTZ NOT NULL,
+      CONSTRAINT cp_monitoring_events_scope_xor_check
+        CHECK (num_nonnulls(teaching_session_id, supervision_context_id) = 1),
+      CONSTRAINT cp_monitoring_events_schema_check CHECK (schema_version = 1),
+      CONSTRAINT cp_monitoring_events_origin_check CHECK (origin IN ('extension', 'server')),
+      CONSTRAINT cp_monitoring_events_type_check CHECK (event_type IN (
+        'tab_changed', 'navigation_changed', 'navigation_blocked',
+        'monitoring_state_changed', 'restriction_state_applied',
+        'restriction_state_failed', 'restriction_state_cleared',
+        'student_session_started', 'student_session_ended', 'monitoring_gap'
+      ))
+    )
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS cp_monitoring_events_source_unique ON classpilot_monitoring_events (school_id, student_session_id, source_event_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS cp_monitoring_events_session_time_idx ON classpilot_monitoring_events (school_id, teaching_session_id, occurred_at DESC, id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS cp_monitoring_events_context_time_idx ON classpilot_monitoring_events (school_id, supervision_context_id, occurred_at DESC, id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS cp_monitoring_events_student_time_idx ON classpilot_monitoring_events (school_id, student_id, occurred_at DESC)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS cp_monitoring_events_retention_idx ON classpilot_monitoring_events (retention_expires_at)`);
+  console.log("[migration] ClassPilot immutable reports and monitoring events ready");
 
   // Google roster connector: IT-approved Domain-Wide Delegation for read-only
   // Workspace/Classroom roster imports. Created before the generic RLS policy
@@ -1973,6 +2269,11 @@ export async function runStartupMigrations(): Promise<void> {
   if (requiredRlsTables.length > 0) {
     const reviewedRlsTables = new Set([
       "classpilot_session_summary_deliveries",
+      "classpilot_monitoring_events",
+      "classpilot_session_reports",
+      "classpilot_session_staff",
+      "classpilot_session_student_reports",
+      "classpilot_student_control_states",
       "passpilot_grade_students",
       "authorized_pickups",
       "custody_alerts",

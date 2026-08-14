@@ -12,12 +12,16 @@ import {
   listScheduledSessionsReadyToFinalize,
   listScheduledReportSessionsDueNow,
   reconcileLegacyOpenScheduledSessions,
+  releaseExpiredClasspilotSupervisionContexts,
+  expireClasspilotTransientCommandTargets,
 } from "./storage.js";
 import { expireScheduledClassConflictsForSchool, processScheduledClassAutoStart } from "./classpilotScheduledStart.js";
 import {
   drainDueClasspilotSessionSummaries,
   finalizeClasspilotSession,
 } from "./classpilotSessionLifecycle.js";
+import { materializeDueClasspilotSessionReports } from "./classpilotMonitoringReports.js";
+import { syncClasspilotControlStatesToActiveDevices } from "./classpilotControlStateDelivery.js";
 import { broadcastToTeachersLocal } from "../realtime/ws-broadcast.js";
 import { publishWS } from "../realtime/ws-redis.js";
 import { broadcastGoPilot } from "../realtime/socketio.js";
@@ -41,6 +45,8 @@ import {
   dailyUsageRollupWindow,
   type DailyUsageRollupWindow,
 } from "../util/dailyUsageRollup.js";
+import { parseClasspilotRetentionDays } from "../util/classpilotRetention.js";
+import { isWithinTrackingWindow } from "./schoolHours.js";
 
 let io: SocketServer | null = null;
 let intervalId: NodeJS.Timeout | null = null;
@@ -170,6 +176,8 @@ export function startScheduler(socketIo: SocketServer | null = null) {
     scheduleLockedJob("checkDismissalTimes", checkDismissalTimes);
     scheduleLockedJob("autoCompleteStaleGoPilotSessions", autoCompleteStaleGoPilotSessions);
     scheduleLockedJob("autoEndStaleClassPilotSessions", autoEndStaleClassPilotSessions);
+    scheduleLockedJob("expireClasspilotSupervisionContexts", expireClasspilotSupervisionContexts);
+    scheduleLockedJob("expireClasspilotTransientCommands", expireClasspilotTransientCommands);
     scheduleLockedJob("reconcileClasspilotScheduledSessions", reconcileClasspilotScheduledSessions);
     // Security monitor: run every 5 minutes (every 5th tick) — rule-based breach detection
     if (tickCount % 5 === 0) {
@@ -182,6 +190,8 @@ export function startScheduler(socketIo: SocketServer | null = null) {
   }, 60 * 1000);
   scheduleLockedJob("checkDismissalTimes", checkDismissalTimes);
   scheduleLockedJob("autoCompleteStaleGoPilotSessions", autoCompleteStaleGoPilotSessions);
+  scheduleLockedJob("expireClasspilotSupervisionContexts", expireClasspilotSupervisionContexts);
+  scheduleLockedJob("expireClasspilotTransientCommands", expireClasspilotTransientCommands);
   scheduleLockedJob("reconcileClasspilotScheduledSessions", reconcileClasspilotScheduledSessions);
   // Run heavy jobs immediately so a worker restart after 02:00 local time
   // catches up yesterday's usage without waiting for the next hourly boundary.
@@ -511,6 +521,37 @@ async function autoCompleteStaleGoPilotSessions() {
 const MAX_SESSION_HOURS = 12;
 const MIN_AGE_FOR_AFTER_HOURS_END = 1; // hours — don't cut off teachers who just started
 
+async function expireClasspilotSupervisionContexts() {
+  try {
+    const released = await releaseExpiredClasspilotSupervisionContexts({}, schedulerDb);
+    const studentsBySchool = new Map<string, Set<string>>();
+    for (const assignment of released) {
+      const studentIds = studentsBySchool.get(assignment.schoolId) || new Set<string>();
+      studentIds.add(assignment.studentId);
+      studentsBySchool.set(assignment.schoolId, studentIds);
+    }
+    await Promise.all([...studentsBySchool].map(([schoolId, studentIds]) =>
+      syncClasspilotControlStatesToActiveDevices(schoolId, [...studentIds])
+    ));
+  } catch (err) {
+    console.error("[ClassPilot] Failed to expire supervision contexts:", err);
+    errorMonitor.trackError("scheduler_failure", err as Error, {
+      job: "expireClasspilotSupervisionContexts",
+    });
+  }
+}
+
+async function expireClasspilotTransientCommands() {
+  try {
+    await expireClasspilotTransientCommandTargets({}, schedulerDb);
+  } catch (err) {
+    console.error("[ClassPilot] Failed to expire transient commands:", err);
+    errorMonitor.trackError("scheduler_failure", err as Error, {
+      job: "expireClasspilotTransientCommands",
+    });
+  }
+}
+
 async function autoEndStaleClassPilotSessions() {
   try {
     // Find all open teaching sessions across all schools
@@ -560,14 +601,13 @@ async function autoEndStaleClassPilotSessions() {
         try {
           const settings = await getSettingsForSchool(s.schoolId, schedulerDb);
           if (settings?.enableTrackingHours && settings.trackingEndTime) {
-            const tz = s.schoolTimezone || "America/New_York";
-            const localTimeStr = now.toLocaleString("en-US", {
-              timeZone: tz,
-              hour: "2-digit",
-              minute: "2-digit",
-              hour12: false,
-            }).replace(/^24:/, "00:");
-            if (localTimeStr >= settings.trackingEndTime) {
+            if (!isWithinTrackingWindow({
+              enableTrackingHours: settings.enableTrackingHours,
+              trackingStartTime: settings.trackingStartTime,
+              trackingEndTime: settings.trackingEndTime,
+              trackingDays: settings.trackingDays,
+              schoolTimezone: settings.schoolTimezone || s.schoolTimezone,
+            }, now)) {
               shouldEnd = true;
               reason = "school hours ended";
             }
@@ -748,26 +788,29 @@ async function rollupSchoolUsage(schoolId: string, window: DailyUsageRollupWindo
 
 async function purgeExpiredHeartbeats() {
   try {
-    // Uses dedicated scheduler pool — cannot starve API requests
-    const activeSchools = await schedulerDb
-      .select({
-        id: schools.id,
-      })
-      .from(schools)
-      .innerJoin(
-        productLicenses,
-        and(
-          eq(productLicenses.schoolId, schools.id),
-          eq(productLicenses.product, "CLASSPILOT"),
-          eq(productLicenses.status, "active")
-        )
-      )
-      .where(eq(schools.status, "active"));
+    // Retention applies to every school, including inactive, suspended, and
+    // unlicensed tenants. Licensing must never become a data-retention bypass.
+    const allSchools = await schedulerDb
+      .select({ id: schools.id, timezone: schools.schoolTimezone })
+      .from(schools);
 
-    for (const school of activeSchools) {
+    for (const school of allSchools) {
+      try {
       const schoolSettings = await getSettingsForSchool(school.id, schedulerDb);
-      const retentionHours = parseInt(schoolSettings?.retentionHours as string || "720", 10);
-      const cutoff = new Date(Date.now() - retentionHours * 60 * 60 * 1000);
+      const retentionDays = parseClasspilotRetentionDays(schoolSettings?.retentionHours);
+      const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+      let cutoffLocalDate: string;
+      try {
+        cutoffLocalDate = localDateInTimeZone(
+          cutoff,
+          school.timezone || "America/New_York"
+        );
+      } catch {
+        // A malformed legacy timezone must not become a privacy-retention
+        // bypass. Timestamped detail still purges normally; UTC is the safest
+        // deterministic fallback for date-bucket rollups.
+        cutoffLocalDate = localDateInTimeZone(cutoff, "UTC");
+      }
 
       // Batch delete in chunks of 5000 to avoid long table locks and memory bloat.
       // Uses raw SQL with row count instead of .returning() which loads all IDs into memory.
@@ -789,11 +832,155 @@ async function purgeExpiredHeartbeats() {
       } while (batchDeleted >= 5000);
 
       if (totalDeleted > 0) {
-        console.log(`[ClassPilot] Purged ${totalDeleted} expired heartbeats for school ${school.id} (retention: ${retentionHours}h)`);
+        console.log(`[ClassPilot] Purged ${totalDeleted} expired heartbeats for school ${school.id} (retention: ${retentionDays}d)`);
       }
+
+      // Session-linked derived data follows the same school setting. Report
+      // parents become non-detail expiration markers so reads return 410 rather
+      // than a misleading empty report.
+      await schedulerPool.query(`
+        WITH expired_reports AS MATERIALIZED (
+          SELECT report.id, report.teaching_session_id
+          FROM classpilot_session_reports AS report
+          WHERE report.school_id = $1
+            AND report.authorization_marker IS NOT NULL
+            AND (report.expires_at <= NOW() OR report.window_end < $2)
+            AND (
+              report.detail_expired_at IS NULL
+              OR EXISTS (
+                SELECT 1 FROM classpilot_session_student_reports AS detail
+                WHERE detail.school_id = $1 AND detail.report_id = report.id
+              )
+              OR EXISTS (
+                SELECT 1 FROM classpilot_session_students AS roster
+                WHERE roster.school_id = $1
+                  AND roster.teaching_session_id = report.teaching_session_id
+              )
+              OR EXISTS (
+                SELECT 1 FROM classpilot_session_staff AS staff
+                WHERE staff.school_id = $1
+                  AND staff.teaching_session_id = report.teaching_session_id
+              )
+              OR EXISTS (
+                SELECT 1 FROM classpilot_session_summary_deliveries AS delivery
+                WHERE delivery.school_id = $1
+                  AND delivery.teaching_session_id = report.teaching_session_id
+                  AND (
+                    delivery.recipient_email NOT LIKE 'expired+%@invalid.local'
+                    OR delivery.recipient_name IS NOT NULL
+                    OR delivery.provider_message_id IS NOT NULL
+                    OR delivery.last_error IS NOT NULL
+                )
+              )
+            )
+          FOR UPDATE OF report SKIP LOCKED
+        ), deleted_students AS (
+          DELETE FROM classpilot_session_student_reports
+          WHERE school_id = $1 AND report_id IN (SELECT id FROM expired_reports)
+        ), deleted_rosters AS (
+          DELETE FROM classpilot_session_students
+          WHERE school_id = $1
+            AND teaching_session_id IN (
+              SELECT teaching_session_id FROM expired_reports
+            )
+        ), deleted_staff AS (
+          DELETE FROM classpilot_session_staff
+          WHERE school_id = $1
+            AND teaching_session_id IN (
+              SELECT teaching_session_id FROM expired_reports
+            )
+        ), redacted_deliveries AS (
+          UPDATE classpilot_session_summary_deliveries
+          SET recipient_email = CONCAT('expired+', id, '@invalid.local'),
+              recipient_name = NULL,
+              provider_message_id = NULL,
+              last_error = NULL,
+              updated_at = NOW()
+          WHERE school_id = $1
+            AND teaching_session_id IN (
+              SELECT teaching_session_id FROM expired_reports
+            )
+        )
+        UPDATE classpilot_session_reports
+        SET state = 'expired', detail_expired_at = NOW(),
+            roster_count = 0, eligible_student_count = 0,
+            complete_count = 0, partial_count = 0, none_count = 0,
+            not_expected_count = 0, unavailable_count = 0,
+            total_eligible_seconds = 0, total_observed_seconds = 0,
+            total_gap_seconds = 0, lease_owner = NULL,
+            lease_expires_at = NULL, last_error = NULL, updated_at = NOW()
+        WHERE id IN (SELECT id FROM expired_reports)
+      `, [school.id, cutoff]);
+      await schedulerPool.query(`
+        DELETE FROM classpilot_monitoring_events
+        WHERE school_id = $1
+          AND (retention_expires_at <= NOW() OR occurred_at < $2)
+      `, [school.id, cutoff]);
+      await schedulerPool.query(`DELETE FROM classpilot_session_usage WHERE school_id = $1 AND local_date < $2`, [school.id, cutoffLocalDate]);
+      await schedulerPool.query(`DELETE FROM daily_usage WHERE school_id = $1 AND date < $2`, [school.id, cutoffLocalDate]);
+      await schedulerPool.query(`
+        DELETE FROM events AS legacy
+        USING devices AS device
+        WHERE legacy.device_id = device.device_id
+          AND device.school_id = $1
+          AND legacy.timestamp < $2
+      `, [school.id, cutoff]);
+      // Pre-report delivery rows can exist from an older release. They have no
+      // immutable report parent to drive the CTE above, but their recipient
+      // identity is subject to the same tenant retention period.
+      await schedulerPool.query(`
+        UPDATE classpilot_session_summary_deliveries AS delivery
+        SET recipient_email = CONCAT('expired+', delivery.id, '@invalid.local'),
+            recipient_name = NULL,
+            provider_message_id = NULL,
+            last_error = NULL,
+            state = CASE
+              WHEN delivery.state IN ('waiting_report', 'queued', 'leased', 'retry') THEN 'failed'
+              ELSE delivery.state
+            END,
+            lease_owner = NULL,
+            lease_expires_at = NULL,
+            updated_at = NOW()
+        FROM teaching_sessions AS session
+        WHERE delivery.school_id = $1
+          AND session.id = delivery.teaching_session_id
+          AND session.school_id = $1
+          AND session.end_time < $2
+          AND NOT EXISTS (
+            SELECT 1 FROM classpilot_session_reports AS report
+            WHERE report.school_id = $1
+              AND report.teaching_session_id = delivery.teaching_session_id
+          )
+          AND (
+            delivery.recipient_email NOT LIKE 'expired+%@invalid.local'
+            OR delivery.recipient_name IS NOT NULL
+            OR delivery.provider_message_id IS NOT NULL
+            OR delivery.last_error IS NOT NULL
+          )
+      `, [school.id, cutoff]);
       // Yield between schools
       await new Promise((resolve) => setTimeout(resolve, 50));
+      } catch (schoolError) {
+        // Isolate tenant failures so one damaged or transiently locked school
+        // cannot prevent retention from running for every later tenant.
+        console.error(`[ClassPilot] Retention purge failed for school ${school.id}:`, schoolError);
+        errorMonitor.trackError("scheduler_failure", schoolError as Error, {
+          job: "purgeExpiredHeartbeats",
+          schoolId: school.id,
+        });
+      }
     }
+
+    // The legacy events table has no session boundary and must never be
+    // exposed as monitoring history. Rows whose device can no longer identify
+    // a tenant are orphans and use the documented 30-day default.
+    await schedulerPool.query(`
+      DELETE FROM events AS legacy
+      WHERE legacy.timestamp < NOW() - INTERVAL '30 days'
+        AND NOT EXISTS (
+          SELECT 1 FROM devices AS device WHERE device.device_id = legacy.device_id
+        )
+    `);
   } catch (err) {
     console.error("[ClassPilot] Heartbeat purge error:", err);
     errorMonitor.trackError("scheduler_failure", err as Error, { job: "purgeExpiredHeartbeats" });
@@ -1001,8 +1188,21 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
     console.error("[ClassPilot] Scheduled session reconciliation error:", err);
     errorMonitor.trackError("scheduler_failure", err as Error, { job: "reconcileClasspilotScheduledSessions" });
   } finally {
-    // 4. Dispatch even when one malformed occurrence/school failed above; a
-    // poison scheduling row must not hold unrelated queued summaries hostage.
+    // 4. Freeze coverage after the 30-second settlement window, then dispatch
+    // only deliveries whose immutable report is ready. A poison report or
+    // scheduling row must not hold unrelated summaries hostage.
+    await materializeDueClasspilotSessionReports({
+      dbInstance: schedulerDb,
+      now,
+      limit: 100,
+      schoolId,
+    }).catch((error) => {
+      console.error("[ClassPilot] Session report materialization error:", error);
+      errorMonitor.trackError("scheduler_failure", error as Error, {
+        job: "reconcileClasspilotScheduledSessions",
+        errorCode: "REPORT_MATERIALIZATION_FAILED",
+      });
+    });
     await drainDueClasspilotSessionSummaries({
       dbInstance: schedulerDb,
       now,
