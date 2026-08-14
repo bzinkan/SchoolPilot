@@ -1384,6 +1384,25 @@ export async function runStartupMigrations(): Promise<void> {
   // privacy-bounded session/context events. These are required runtime
   // infrastructure: fail the migration task if any table or invariant cannot
   // be installed, rather than serving partially materialized summaries.
+  // The report authorization trigger and marker backfill both read the frozen
+  // staff snapshot, so this table must exist before either report operation.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS classpilot_session_staff (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      school_id TEXT NOT NULL,
+      teaching_session_id VARCHAR NOT NULL,
+      staff_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      staff_name_snapshot TEXT,
+      staff_email_snapshot TEXT,
+      captured_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      CONSTRAINT cp_session_staff_role_check CHECK (role IN ('primary', 'co_teacher'))
+    )
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS cp_session_staff_session_staff_unique ON classpilot_session_staff (teaching_session_id, staff_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS cp_session_staff_school_session_idx ON classpilot_session_staff (school_id, teaching_session_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS cp_session_staff_school_staff_idx ON classpilot_session_staff (school_id, staff_id)`);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS classpilot_session_reports (
       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1562,23 +1581,6 @@ export async function runStartupMigrations(): Promise<void> {
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS cp_student_reports_report_student_unique ON classpilot_session_student_reports (report_id, student_id)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS cp_student_reports_school_session_idx ON classpilot_session_student_reports (school_id, teaching_session_id)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS cp_student_reports_school_student_idx ON classpilot_session_student_reports (school_id, student_id)`);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS classpilot_session_staff (
-      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
-      school_id TEXT NOT NULL,
-      teaching_session_id VARCHAR NOT NULL,
-      staff_id TEXT NOT NULL,
-      role TEXT NOT NULL,
-      staff_name_snapshot TEXT,
-      staff_email_snapshot TEXT,
-      captured_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      CONSTRAINT cp_session_staff_role_check CHECK (role IN ('primary', 'co_teacher'))
-    )
-  `);
-  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS cp_session_staff_session_staff_unique ON classpilot_session_staff (teaching_session_id, staff_id)`);
-  await pool.query(`CREATE INDEX IF NOT EXISTS cp_session_staff_school_session_idx ON classpilot_session_staff (school_id, teaching_session_id)`);
-  await pool.query(`CREATE INDEX IF NOT EXISTS cp_session_staff_school_staff_idx ON classpilot_session_staff (school_id, staff_id)`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS classpilot_student_control_states (
