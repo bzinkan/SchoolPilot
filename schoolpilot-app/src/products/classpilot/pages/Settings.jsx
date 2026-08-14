@@ -102,7 +102,9 @@ function buildCentralRecipientOptions(staffOptions, selectedUserId, staffOptions
 
 const settingsSchema = z.object({
   schoolName: z.string().min(1, "School name is required"),
-  retentionDays: z.string().min(1, "Retention period is required"),
+  retentionDays: z.string()
+    .regex(/^\d+$/, "Retention must be a whole number of days")
+    .refine((value) => Number(value) >= 1 && Number(value) <= 365, "Retention must be between 1 and 365 days"),
   maxTabsPerStudent: z.string().optional(),
   blockedDomains: z.string(),
   allowedDomains: z.string(),
@@ -498,6 +500,9 @@ export default function Settings() {
                   id="retentionDays"
                   data-testid="input-retention-days"
                   type="number"
+                  min="1"
+                  max="365"
+                  step="1"
                   {...form.register("retentionDays")}
                   placeholder="30"
                 />
@@ -564,9 +569,14 @@ export default function Settings() {
                   {...form.register("blockedDomains")}
                   placeholder="lens.google.com, chat.openai.com, quillbot.com"
                 />
-                <p className="text-xs text-muted-foreground">
-                  Students will be blocked from accessing these domains. Use this to block AI tools, cheating sites, etc.
-                </p>
+                <div className="space-y-1 text-xs text-muted-foreground">
+                  <p>
+                    Domain rules block matching websites in the monitored Chrome profile. They do not disable browser features, extensions, apps, Incognito, Guest, or other profiles.
+                  </p>
+                  <p>
+                    <code className="rounded bg-muted px-1">lens.google.com</code> — Lens website only. This blocks navigation to that website in the monitored Chrome profile. It does not disable Chrome’s built-in Lens overlay or side panel; school IT must manage built-in Chrome features separately.
+                  </p>
+                </div>
               </div>
 
               <div className="flex items-center space-x-3">

@@ -992,10 +992,10 @@ export default function MySettings() {
                 placeholder="lens.google.com, chat.openai.com, quillbot.com"
               />
               <div className="text-xs text-muted-foreground space-y-1">
-                <p>Comma-separated domains. Students will be blocked from accessing these sites.</p>
+                <p>Domain rules block matching websites in the monitored Chrome profile. They do not disable browser features, extensions, apps, Incognito, Guest, or other profiles.</p>
                 <p className="font-medium text-destructive">Common Block Examples:</p>
                 <ul className="ml-3 space-y-0.5">
-                  <li>• <code className="text-xs bg-muted px-1 rounded">lens.google.com</code> - Google Lens (image search/AI)</li>
+                  <li>• <code className="text-xs bg-muted px-1 rounded">lens.google.com</code> — Lens website only. This blocks navigation to that website in the monitored Chrome profile. It does not disable Chrome’s built-in Lens overlay or side panel; school IT must manage built-in Chrome features separately.</li>
                   <li>• <code className="text-xs bg-muted px-1 rounded">chat.openai.com</code> - ChatGPT</li>
                   <li>• <code className="text-xs bg-muted px-1 rounded">quillbot.com</code> - QuillBot AI writing</li>
                   <li>• <code className="text-xs bg-muted px-1 rounded">discord.com</code> - Discord</li>

@@ -31,8 +31,9 @@ import {
   SelectValue,
 } from "../../../components/ui/select";
 import { useToast } from "../../../hooks/use-toast";
-import { apiRequest, queryClient } from "../../../lib/queryClient";
+import { apiRequest } from "../../../lib/queryClient";
 import { useQuery } from "@tanstack/react-query";
+import { commandDeliveryFeedback } from "../lib/commandDeliveryTruth";
 
 function RemoteControlToolbar({
   selectedStudentIds,
@@ -48,6 +49,8 @@ function RemoteControlToolbar({
   onOpenCoverage,
   canReroute = false,
   onReroute,
+  onClassroomCommand,
+  canViewHistoricalTelemetry = false,
 }) {
   const [showOpenTab, setShowOpenTab] = useState(false);
   const [showLockScreen, setShowLockScreen] = useState(false);
@@ -117,17 +120,8 @@ function RemoteControlToolbar({
 
     setIsLoading(true);
     try {
-      await apiRequest("POST", "/remote/open-tab", {
-        url: normalizedUrl,
-        targetDeviceIds: targetDeviceIdsArray
-      });
-      const target = selectedStudentIds.size > 0
-        ? `${selectedStudentIds.size} student(s)`
-        : "all students";
-      toast({
-        title: "Success",
-        description: `Opened ${normalizedUrl} on ${target}`,
-      });
+      const result = await onClassroomCommand("open-tab", { url: normalizedUrl });
+      toast(result.deliveryFeedback || commandDeliveryFeedback(result, 'open-tab'));
       setTargetUrl("");
       setShowOpenTab(false);
     } catch {
@@ -164,25 +158,8 @@ function RemoteControlToolbar({
 
     setIsLoading(true);
     try {
-      await apiRequest("POST", "/remote/lock-screen", {
-        url: normalizedLockUrl,
-        targetDeviceIds: targetDeviceIdsArray
-      });
-
-      // Invalidate cache to update lock icon immediately
-      queryClient.invalidateQueries({ queryKey: ['/api/students'] });
-
-      const target = selectedStudentIds.size > 0
-        ? `${selectedStudentIds.size} student(s)`
-        : "all students";
-
-      // Extract domain for display
-      const domain = normalizedLockUrl.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
-
-      toast({
-        title: "Screen Locked",
-        description: `${target} locked to ${domain} - they can browse within this site`,
-      });
+      const result = await onClassroomCommand("lock-screen", { url: normalizedLockUrl });
+      toast(result.deliveryFeedback || commandDeliveryFeedback(result, 'lock-screen'));
       setLockUrl("");
       setShowLockScreen(false);
     } catch {
@@ -212,19 +189,12 @@ function RemoteControlToolbar({
 
     setIsLoading(true);
     try {
-      await apiRequest("POST", "/remote/temp-unblock", {
+      const result = await onClassroomCommand("temp-unblock", {
         domain: tempUnblockDomain.trim().replace(/^https?:\/\//, '').replace(/^www\./, ''),
         durationMinutes: parseInt(tempUnblockDuration) || 5,
-        targetDeviceIds: targetDeviceIdsArray
       });
 
-      const target = selectedStudentIds.size > 0
-        ? `${selectedStudentIds.size} student(s)`
-        : "all students";
-      toast({
-        title: "Success",
-        description: `Temporarily unblocked ${tempUnblockDomain} for ${target} (${tempUnblockDuration} minutes)`,
-      });
+      toast(result.deliveryFeedback || commandDeliveryFeedback(result, 'temp-unblock'));
       setShowTempUnblock(false);
       setTempUnblockDomain("");
     } catch {
@@ -249,16 +219,12 @@ function RemoteControlToolbar({
       });
       return;
     }
+    if (!validateSelection()) return;
 
     setIsLoading(true);
     try {
-      await apiRequest("POST", "/remote/limit-tabs", { maxTabs });
-      toast({
-        title: "Success",
-        description: maxTabs
-          ? `Set tab limit to ${maxTabs} for all students`
-          : "Removed tab limit for all students",
-      });
+      const result = await onClassroomCommand("limit-tabs", { maxTabs });
+      toast(result.deliveryFeedback || commandDeliveryFeedback(result, 'limit-tabs'));
       setTabLimit("");
       setShowTabLimit(false);
     } catch {
@@ -299,18 +265,8 @@ function RemoteControlToolbar({
 
     setIsLoading(true);
     try {
-      await apiRequest("POST", "/remote/apply-flight-path", {
-        flightPathId: selectedSceneId,
-        allowedDomains: scene.allowedDomains,
-        targetDeviceIds: targetDeviceIdsArray
-      });
-      const target = selectedStudentIds.size > 0
-        ? `${selectedStudentIds.size} student(s)`
-        : "all students";
-      toast({
-        title: "Success",
-        description: `Applied "${scene.flightPathName}" to ${target}`,
-      });
+      const result = await onClassroomCommand("apply-flight-path", { flightPathId: selectedSceneId });
+      toast(result.deliveryFeedback || commandDeliveryFeedback(result, 'apply-flight-path'));
       setSelectedSceneId("");
       setShowApplyScene(false);
     } catch {
@@ -324,38 +280,14 @@ function RemoteControlToolbar({
     }
   };
 
-  // Convert selected student IDs to device IDs for API calls
-  const targetDeviceIdsArray = useMemo(() => {
-    if (selectedStudentIds.size === 0) return undefined; // All students
-
-    const deviceIds = [];
-    students.forEach(student => {
-      if (selectedStudentIds.has(student.studentId)) {
-        // Add all devices for this student
-        (student.devices || []).forEach(device => {
-          if (device.deviceId) {
-            deviceIds.push(device.deviceId);
-          }
-        });
-        // Also add primary device if it exists and isn't in the devices array
-        if (student.primaryDeviceId && !deviceIds.includes(student.primaryDeviceId)) {
-          deviceIds.push(student.primaryDeviceId);
-        }
-      }
-    });
-
-    // IMPORTANT: Return empty array (not undefined) when students selected but no devices
-    // This prevents silently targeting "all students" when selected students are offline
-    return deviceIds;
-  }, [selectedStudentIds, students]);
-
-  // Validate that selected students have active devices before executing commands
+  // The server resolves selected student IDs to the active class roster and
+  // devices. Offline students remain valid desired-state targets and reconcile
+  // when they reconnect.
   const validateSelection = () => {
-    // If students selected but none have devices, show warning
-    if (selectedStudentIds.size > 0 && targetDeviceIdsArray && targetDeviceIdsArray.length === 0) {
+    if (!onClassroomCommand) {
       toast({
-        title: "No Active Devices",
-        description: "Selected students have no active devices. Make sure students are online before sending commands.",
+        title: "Start a class first",
+        description: "Classroom controls require an active class or assigned supervision context.",
         variant: "destructive",
       });
       return false;
@@ -393,7 +325,7 @@ function RemoteControlToolbar({
       return apiRequest('GET', `/student-analytics/${selectedStudentForData}?${params.toString()}`);
     },
     select: (data) => data?.heartbeats ?? (Array.isArray(data) ? data : []),
-    enabled: showStudentDataDialog && !!selectedStudentForData,
+    enabled: canViewHistoricalTelemetry && showStudentDataDialog && !!selectedStudentForData,
   });
 
   // Fetch heartbeats for ALL students in class view
@@ -414,7 +346,7 @@ function RemoteControlToolbar({
       await Promise.all(fetches);
       return results;
     },
-    enabled: showStudentDataDialog && !selectedStudentForData && sortedStudents.length > 0,
+    enabled: canViewHistoricalTelemetry && showStudentDataDialog && !selectedStudentForData && sortedStudents.length > 0,
     gcTime: 0,
   });
 
@@ -557,15 +489,17 @@ function RemoteControlToolbar({
                   </TabsList>
                 </Tabs>
               )}
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setShowStudentDataDialog(true)}
-                data-testid="button-student-data-tab"
-              >
-                <BarChart3 className="h-4 w-4 mr-2" />
-                Student Data
-              </Button>
+              {canViewHistoricalTelemetry && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setShowStudentDataDialog(true)}
+                  data-testid="button-student-data-tab"
+                >
+                  <BarChart3 className="h-4 w-4 mr-2" />
+                  Student Data
+                </Button>
+              )}
             </div>
 
             <div className="flex justify-center">

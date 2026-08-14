@@ -145,6 +145,7 @@ export default function RosterPage() {
     queryKey: ["/api/devices"],
     queryFn: () => apiRequest("GET", "/devices"),
     select: (data) => Array.isArray(data) ? data : data?.devices ?? [],
+    enabled: isAdmin,
   });
 
   const { data: settings } = useQuery({
@@ -470,7 +471,7 @@ export default function RosterPage() {
               <div>
                 <h1 className="text-2xl font-bold">Rosters</h1>
                 <p className="text-sm text-muted-foreground">
-                  Manage student records and check ClassPilot extension health
+                  {isAdmin ? "Manage student records and check ClassPilot extension health" : "View student records"}
                 </p>
               </div>
             </div>
@@ -504,7 +505,7 @@ export default function RosterPage() {
 
       <main className="max-w-7xl mx-auto px-6 py-8">
         <div className="grid gap-4 md:grid-cols-4 mb-6">
-          <Card>
+          {isAdmin && <Card>
             <CardContent className="p-5 flex items-center gap-4">
               <div className="h-11 w-11 rounded-md bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300 flex items-center justify-center">
                 <Users className="h-5 w-5" />
@@ -514,8 +515,8 @@ export default function RosterPage() {
                 <p className="text-2xl font-bold">{students.length}</p>
               </div>
             </CardContent>
-          </Card>
-          <Card>
+          </Card>}
+          {isAdmin && <Card>
             <CardContent className="p-5 flex items-center gap-4">
               <div className="h-11 w-11 rounded-md bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300 flex items-center justify-center">
                 <GraduationCap className="h-5 w-5" />
@@ -525,7 +526,7 @@ export default function RosterPage() {
                 <p className="text-2xl font-bold">{activeGrades.length}</p>
               </div>
             </CardContent>
-          </Card>
+          </Card>}
           <Card>
             <CardContent className="p-5 flex items-center gap-4">
               <div className="h-11 w-11 rounded-md bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 flex items-center justify-center">
@@ -556,9 +557,11 @@ export default function RosterPage() {
               <TabsTrigger value="students" data-testid="tab-students">
                 Student Roster
               </TabsTrigger>
-              <TabsTrigger value="extensions" data-testid="tab-extensions">
-                Chromebook Status
-              </TabsTrigger>
+              {isAdmin && (
+                <TabsTrigger value="extensions" data-testid="tab-extensions">
+                  Chromebook Status
+                </TabsTrigger>
+              )}
             </TabsList>
             {activeTab === "students" && (
               <div className="relative w-full md:w-80">
@@ -675,7 +678,7 @@ export default function RosterPage() {
             </Card>
           </TabsContent>
 
-          <TabsContent value="extensions">
+          {isAdmin && <TabsContent value="extensions">
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center justify-between gap-3">
@@ -757,7 +760,7 @@ export default function RosterPage() {
                 )}
               </CardContent>
             </Card>
-          </TabsContent>
+          </TabsContent>}
         </Tabs>
       </main>
 
