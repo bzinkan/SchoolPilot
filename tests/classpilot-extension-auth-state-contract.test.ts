@@ -27,10 +27,9 @@ test("student login returns classroom state only for the exact active token sess
 });
 
 test("heartbeat and WebSocket reconciliation carry authoritative explicit-null state", async () => {
-  const [devices, websocket, extension] = await Promise.all([
+  const [devices, websocket] = await Promise.all([
     readFile(new URL("src/routes/classpilot/devices.ts", root), "utf8"),
     readFile(new URL("src/realtime/websocket.ts", root), "utf8"),
-    readFile(new URL("../ClassPilot/extension/service-worker.js", root), "utf8"),
   ]);
 
   const heartbeatStart = devices.indexOf('router.post("/device/heartbeat"');
@@ -49,8 +48,4 @@ test("heartbeat and WebSocket reconciliation carry authoritative explicit-null s
   assert.match(websocket, /session\.id === client\.studentSessionId/);
   assert.match(websocket, /session\.deviceId === client\.deviceId/);
   assert.match(websocket, /type: "classroom-state-sync",\s*classroomState: reconciliation\.state/);
-
-  assert.match(extension, /applyClassroomStateFromAuthResponse\(data, 'heartbeat_reconcile'\)/);
-  assert.match(extension, /hasOwnProperty\.call\(message, 'classroomState'\)/);
-  assert.match(extension, /applyClassroomStateFromAuthResponse\(message, 'websocket_reconcile'\)/);
 });

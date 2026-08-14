@@ -7416,7 +7416,10 @@ export async function resyncActiveClasspilotSessionStudents(
           currentState?.teachingSessionId === updatedSession.id
             ? currentState.desiredState
             : { restrictions: restrictionsFromClassroomStates(activeClassroomStates, resyncedAt) },
-        scheduledEndAt: updatedSession.scheduledEndAt,
+        scheduledEndAt: effectiveClasspilotScheduledControlEndAt(
+          updatedSession.scheduledEndAt,
+          hardExpiresAt
+        ),
         hardExpiresAt,
         now: resyncedAt,
         authorityMode: "filter",
@@ -12640,6 +12643,20 @@ export async function lockClasspilotStudentControlAuthorities(
 }
 
 /**
+ * The extension clears controls at the earlier of the scheduled class end and
+ * the absolute 12-hour backstop. Persist that effective scheduled deadline so
+ * long reporting windows can start without weakening the safety cutoff or
+ * violating the control-state expiry constraint.
+ */
+function effectiveClasspilotScheduledControlEndAt(
+  scheduledEndAt: Date | null | undefined,
+  hardExpiresAt: Date
+): Date | null {
+  if (!scheduledEndAt) return null;
+  return scheduledEndAt < hardExpiresAt ? scheduledEndAt : hardExpiresAt;
+}
+
+/**
  * Bind every frozen roster student to a revisioned empty control snapshot as
  * soon as a class begins. Besides replacing a former teacher's state, this
  * gives the extension an authenticated teaching-session scope for its bounded
@@ -12670,7 +12687,10 @@ export async function initializeClasspilotStudentControlStatesForSession(
     // avoids a pre-lock supervision read racing a simultaneous release.
     studentIds: roster.map((row) => row.studentId),
     desiredState: { restrictions: {} },
-    scheduledEndAt: session.scheduledEndAt,
+    scheduledEndAt: effectiveClasspilotScheduledControlEndAt(
+      session.scheduledEndAt,
+      hardExpiresAt
+    ),
     hardExpiresAt,
     now,
     authorityMode: "filter",
@@ -13090,11 +13110,10 @@ export async function restoreClasspilotStudentControlStatesAfterSupervision(
             isNull(classpilotClassroomStates.clearedAt)
           ))
           .orderBy(classpilotClassroomStates.appliedAt);
-        const scheduledEndAt = owner.session.scheduledEndAt && owner.session.scheduledEndAt < hardExpiresAt
-          ? owner.session.scheduledEndAt
-          : owner.session.scheduledEndAt
-            ? hardExpiresAt
-            : null;
+        const scheduledEndAt = effectiveClasspilotScheduledControlEndAt(
+          owner.session.scheduledEndAt,
+          hardExpiresAt
+        );
         const rows = await replaceClasspilotStudentControlSnapshots({
           schoolId: options.schoolId,
           teachingSessionId: owner.session.id,

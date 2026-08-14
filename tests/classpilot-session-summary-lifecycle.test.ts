@@ -2319,6 +2319,7 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
     const sourceEventId = `${TAG}-atomic-scope-event`;
     const studentSessionId = `${TAG}-atomic-scope-student-session`;
     const eventAt = new Date(Date.now() + 1_000);
+    const handoffAt = new Date(eventAt.getTime() - 500);
     let releaseTransition!: () => void;
     let transitionLocked!: () => void;
     const transitionReady = new Promise<void>((resolve) => { transitionLocked = resolve; });
@@ -2326,6 +2327,14 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
     const transition = inSchool(school.id, () => db.transaction(async (tx: any) => {
       const lockKey = `classpilot:student-control:${school.id}:${studentOne.id}`;
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`);
+      await tx.execute(sql`
+        UPDATE classpilot_supervision_students
+        SET released_at = ${handoffAt}, release_reason = 'reassigned'
+        WHERE school_id = ${school.id}
+          AND student_id = ${studentOne.id}
+          AND assigned_at <= ${handoffAt}
+          AND (released_at IS NULL OR released_at > ${handoffAt})
+      `);
       await tx.execute(sql`
         INSERT INTO classpilot_supervision_contexts (
           id, school_id, context_type, name, status, assigned_staff_id,
@@ -2341,7 +2350,7 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
           school_id, context_id, student_id, source, assigned_by, assigned_at
         ) VALUES (
           ${school.id}, ${contextId}, ${studentOne.id}, 'manual', ${teacher.id},
-          ${new Date(eventAt.getTime() - 500)}
+          ${handoffAt}
         )
       `);
       transitionLocked();

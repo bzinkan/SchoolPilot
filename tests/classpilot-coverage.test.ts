@@ -20,6 +20,7 @@ import {
   createStudent,
   createSupervisionContextWithStudents,
   createTeachingSession,
+  createOrReuseScheduledReportSession,
   createUser,
   endTeachingSession,
   expireClasspilotTransientCommandTargets,
@@ -531,6 +532,42 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       releaseReason: "returned_to_class",
     }));
     assert.equal(released[0]?.releaseReason, "returned_to_class");
+    await inSchool(school.id, () => endTeachingSession(session.id));
+  });
+
+  it("caps long scheduled control windows at the 12-hour safety cutoff", async () => {
+    const group = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: teacher.id,
+      name: `${TAG}_Long_Scheduled_Control_Window`,
+      groupType: "admin_class",
+      status: "active",
+    } as any));
+    await inSchool(school.id, () => addGroupStudentsDetailed(group.id, [studentUnassigned.id]));
+
+    const scheduledStartAt = new Date(Date.now() - 5 * 60_000);
+    const hardExpiresAt = new Date(scheduledStartAt.getTime() + 12 * 60 * 60_000);
+    const scheduledEndAt = new Date(hardExpiresAt.getTime() + 60 * 60_000);
+    const session = await inSchool(school.id, () => createOrReuseScheduledReportSession({
+      schoolId: school.id,
+      groupId: group.id,
+      teacherId: teacher.id,
+      scheduledDate: localDateInTimeZone(scheduledStartAt, "America/New_York"),
+      scheduledTimezone: "America/New_York",
+      scheduledStartAt,
+      scheduledEndAt,
+      scheduledTeacherEmail: teacher.email,
+      scheduledTeacherName: "Tara Teacher",
+    }));
+
+    assert.equal(session.scheduledEndAt?.toISOString(), scheduledEndAt.toISOString());
+    const controlState = await inSchool(school.id, () =>
+      getClasspilotStudentControlState(school.id, studentUnassigned.id)
+    );
+    assert.equal(controlState?.teachingSessionId, session.id);
+    assert.equal(controlState?.scheduledEndAt?.toISOString(), hardExpiresAt.toISOString());
+    assert.equal(controlState?.hardExpiresAt?.toISOString(), hardExpiresAt.toISOString());
+
     await inSchool(school.id, () => endTeachingSession(session.id));
   });
 
