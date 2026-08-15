@@ -162,7 +162,10 @@ function AppRoutes() {
         {/* Web-only routes (landing pages, legal, super admin) */}
         {!isNative && (
           <>
-            <Route path="/" element={<Landing />} />
+            <Route
+              path="/"
+              element={user && defaultDest !== '/' ? <Navigate to={defaultDest} replace /> : <Landing />}
+            />
             <Route path="/get-started" element={<GetStarted />} />
             <Route path="/products/classpilot" element={<ClassPilotLanding />} />
             <Route path="/products/passpilot" element={<PassPilotLanding />} />

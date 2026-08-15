@@ -1058,6 +1058,20 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     await inSchool(school.id, () => addGroupStudentsDetailed(startAnywayGroup.id, [scheduledOnlyStudent.id, overlapStudent.id]));
     const startAnywayNow = new Date();
     const startAnywayDate = localDateInTimeZone(startAnywayNow, "America/New_York");
+    // This subcase exercises an already-active conflict. Seed its canonical
+    // occurrence around the real clock so weekend CI does not re-test the
+    // separate instructional-calendar creation gate.
+    await inSchool(school.id, () => createOrReuseScheduledReportSession({
+      schoolId: school.id,
+      groupId: startAnywayGroup.id,
+      teacherId: scheduledTeacher.id,
+      scheduledDate: startAnywayDate,
+      scheduledTimezone: "America/New_York",
+      scheduledStartAt: new Date(startAnywayNow.getTime() - 60_000),
+      scheduledEndAt: new Date(startAnywayNow.getTime() + 60 * 60_000),
+      scheduledTeacherEmail: scheduledTeacher.email,
+      scheduledTeacherName: `${scheduledTeacher.firstName} ${scheduledTeacher.lastName}`,
+    }));
     const coverageStart = await inSchool(school.id, () => processScheduledClassAutoStart({
       group: startAnywayGroup,
       scheduledDate: startAnywayDate,
