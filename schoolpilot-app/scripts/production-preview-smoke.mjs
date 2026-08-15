@@ -60,6 +60,34 @@ export const personas = {
       },
     },
   },
+  unlicensedTeacher: {
+    schoolId: 'preview-unlicensed-school',
+    auth: {
+      activeSchoolId: 'preview-unlicensed-school',
+      user: {
+        id: 'preview-unlicensed-teacher',
+        email: 'preview-unlicensed-teacher@example.invalid',
+        firstName: 'Preview',
+        lastName: 'Unlicensed Teacher',
+        isSuperAdmin: false,
+      },
+      memberships: [
+        {
+          id: 'preview-unlicensed-membership',
+          schoolId: 'preview-unlicensed-school',
+          schoolName: 'Preview Unlicensed School',
+          schoolSlug: 'preview-unlicensed-school',
+          schoolTimezone: 'America/New_York',
+          role: 'teacher',
+        },
+      ],
+      licenses: {
+        classPilot: false,
+        passPilot: false,
+        goPilot: false,
+      },
+    },
+  },
   gopilotHistoricalParent: {
     schoolId: 'preview-gopilot-school',
     auth: {
@@ -118,6 +146,36 @@ async function assertClassPilotDashboard(page) {
 
 const cases = [
   {
+    requestedPath: '/',
+    expectedPath: '/',
+    persona: personas.anonymous,
+    assertion: async (page) => {
+      await page
+        .getByRole('heading', { name: /School management tools that work together/ })
+        .waitFor({ state: 'visible' });
+    },
+    surface: 'public homepage for signed-out visitors',
+  },
+  {
+    requestedPath: '/',
+    expectedPath: '/classpilot',
+    expectRedirect: true,
+    persona: personas.classpilotTeacher,
+    assertion: assertClassPilotDashboard,
+    surface: 'authenticated homepage redirect to licensed dashboard',
+  },
+  {
+    requestedPath: '/',
+    expectedPath: '/',
+    persona: personas.unlicensedTeacher,
+    assertion: async (page) => {
+      await page
+        .getByRole('heading', { name: /School management tools that work together/ })
+        .waitFor({ state: 'visible' });
+    },
+    surface: 'homepage fallback for authenticated user without a licensed dashboard',
+  },
+  {
     requestedPath: '/classpilot',
     expectedPath: '/classpilot',
     initialSchoolId: 'preview-deleted-school',
@@ -156,7 +214,7 @@ const cases = [
   {
     requestedPath: '/preview-smoke/unknown-route',
     expectedPath: '/classpilot',
-    expectCatchAllRedirect: true,
+    expectRedirect: true,
     persona: personas.classpilotTeacher,
     assertion: assertClassPilotDashboard,
     surface: 'authenticated catch-all redirect to licensed default',
@@ -491,12 +549,12 @@ async function verifyCase(browser, testCase) {
       { timeout: timeoutMilliseconds }
     );
     const finalPath = new URL(page.url()).pathname;
-    const redirectedByCatchAll = finalPath !== testCase.requestedPath;
-    if (redirectedByCatchAll !== (testCase.expectCatchAllRedirect === true)) {
+    const wasRedirected = finalPath !== testCase.requestedPath;
+    if (wasRedirected !== (testCase.expectRedirect === true)) {
       fail(
         `${testCase.requestedPath} ${
-          testCase.expectCatchAllRedirect ? 'did not use' : 'unexpectedly used'
-        } the catch-all redirect`
+          testCase.expectRedirect ? 'did not use' : 'unexpectedly used'
+        } a route redirect`
       );
     }
     await testCase.assertion(page);
