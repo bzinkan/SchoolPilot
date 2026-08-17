@@ -18,7 +18,7 @@ import {
   getStaffBySchool,
   getStudentsBySchool,
   getStudentById,
-  deleteStudent,
+  deactivateStudentsForRoster,
   updateStudent,
   getSchoolById,
   updateSchool,
@@ -48,6 +48,8 @@ import { eq, and, sql } from "drizzle-orm";
 import { createGradeSchema } from "../schema/validation.js";
 import { hashPassword } from "../util/password.js";
 import { logAudit, getAuditLogs, countAuditLogs } from "../services/audit.js";
+import { stopMailpilotMonitoringForStudent } from "../services/mailpilotProvisioning.js";
+import { revokeClasspilotStudentSocketsAfterRosterRemoval } from "../realtime/studentSocketRevocation.js";
 import {
   canAccessGrade,
   canAccessPasspilotClass,
@@ -829,32 +831,57 @@ router.post("/admin/bulk-import", ...schoolAuth, requireRole("admin"), async (_r
   return res.status(400).json({ error: "Use POST /students/import-csv for bulk import" });
 });
 
-router.post("/admin/students/bulk-delete", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
+router.post("/admin/students/bulk-delete", ...schoolAuth, requireRole("admin", "school_admin"), async (req, res, next) => {
   try {
     const { studentIds } = req.body;
     if (!Array.isArray(studentIds) || studentIds.length === 0) {
       return res.status(400).json({ error: "studentIds array required" });
     }
     const schoolId = res.locals.schoolId!;
-    let deleted = 0;
-    for (const id of studentIds) {
-      const student = await getStudentById(id);
-      if (student && student.schoolId === schoolId) {
-        await deleteStudent(id, schoolId);
-        deleted++;
-      }
-    }
-    // Audit destructive bulk action (who deleted how many, when).
-    logAudit({
-      schoolId,
-      userId: req.authUser!.id,
-      userEmail: req.authUser!.email,
-      userRole: res.locals.membershipRole,
-      action: "student.bulk_delete",
-      entityType: "student",
-      metadata: { requested: studentIds.length, deleted },
+    const requestedIds = [...new Set(studentIds.map((id: unknown) => String(id)).filter(Boolean))];
+    const result = await deactivateStudentsForRoster(schoolId, requestedIds, {
+      userId: req.authUser?.id ?? null,
+      userEmail: req.authUser?.email ?? null,
+      userRole: res.locals.membershipRole ?? null,
+      source: "compat.students.bulk_delete",
     });
-    return res.json({ deleted });
+
+    try {
+      await revokeClasspilotStudentSocketsAfterRosterRemoval(
+        schoolId,
+        result.foundStudentIds
+      );
+    } catch {
+      console.warn("[Student Removal] ClassPilot socket shutdown failed after bulk deactivation", {
+        schoolId,
+        studentCount: result.foundStudentIds.length,
+      });
+    }
+    const deactivated = new Set(result.deactivatedStudentIds);
+    const stopped = await Promise.allSettled(
+      result.students
+        .filter((student) => deactivated.has(student.id))
+        .map((student) =>
+          stopMailpilotMonitoringForStudent(schoolId, student.id, student.email)
+        )
+    );
+    const stopFailures = stopped.filter((outcome) => outcome.status === "rejected").length;
+    if (stopFailures > 0) {
+      console.warn("[Student Removal] MailPilot shutdown failed after bulk deactivation", {
+        schoolId,
+        failedCount: stopFailures,
+      });
+    }
+
+    const deactivatedCount = result.deactivatedStudentIds.length;
+    const alreadyInactive = result.foundStudentIds.length - deactivatedCount;
+    const failed = requestedIds.length - result.foundStudentIds.length;
+    return res.json({
+      deleted: deactivatedCount,
+      deactivated: deactivatedCount,
+      alreadyInactive,
+      failed,
+    });
   } catch (err) {
     next(err);
   }

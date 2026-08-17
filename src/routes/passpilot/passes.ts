@@ -14,7 +14,7 @@ import {
   cancelPass,
   expireOverduePasses,
   getStudentById,
-  getStudentsBySchool,
+  getStudentsByIds,
   getUserById,
   getGradesBySchool,
   getSchoolById,
@@ -92,7 +92,8 @@ async function enrichPasses(rawPasses: Pass[], schoolId: string) {
   if (rawPasses.length === 0) return [];
 
   const [allStudents, allGrades] = await Promise.all([
-    getStudentsBySchool(schoolId),
+    getStudentsByIds([...new Set(rawPasses.map((pass) => pass.studentId))])
+      .then((rows) => rows.filter((student) => student.schoolId === schoolId)),
     getGradesBySchool(schoolId),
   ]);
 
@@ -332,7 +333,7 @@ router.post("/", async (req, res, next) => {
 
     // Verify student exists in school
     const student = await getStudentById(studentId);
-    if (!student || student.schoolId !== schoolId) {
+    if (!student || student.schoolId !== schoolId || student.status !== "active") {
       return res.status(400).json({ error: "Student not found" });
     }
     if (!(await canAccessStudent(req.authUser!, schoolId, studentId, role))) {

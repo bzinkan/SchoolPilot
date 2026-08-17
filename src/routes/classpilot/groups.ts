@@ -57,7 +57,9 @@ async function studentsInSchool(studentIds: unknown, schoolId: string): Promise<
   if (!Array.isArray(studentIds) || studentIds.length === 0) return [];
   const ids = studentIds.map(String);
   const rows = await getStudentsByIds(ids);
-  return rows.filter((s) => s.schoolId === schoolId).map((s) => s.id);
+  return rows
+    .filter((s) => s.schoolId === schoolId && s.status === "active")
+    .map((s) => s.id);
 }
 
 const auth = [

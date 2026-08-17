@@ -14,6 +14,7 @@
     "test:classpilot-session-lifecycle": "node --test scripts/classpilot-session-lifecycle.test.mjs",
     "test:classpilot-realtime-cache": "node --test scripts/classpilot-realtime-cache.test.mjs",
     "test:classpilot-signal-loss": "node --test scripts/classpilot-signal-loss.test.mjs",
+    "test:classpilot-student-removal": "node scripts/classpilot-student-removal-browser.mjs",
     "test:central-email-copy-persistence": "node --test scripts/central-email-copy-persistence.test.mjs",
     "test:school-calendar-persistence": "node --test scripts/school-calendar-persistence.test.mjs",
     "test:passpilot-canonical-classes": "node --test scripts/passpilot-canonical-classes.test.mjs",

@@ -149,6 +149,13 @@ export async function issueStudentDeviceSessionToken(options: {
   classId?: string | null;
   student: Student;
 }) {
+  if (options.student.schoolId !== options.schoolId || options.student.status !== "active") {
+    throw Object.assign(new Error("Student is not enrolled"), {
+      status: 403,
+      code: "STUDENT_INACTIVE",
+      expose: true,
+    });
+  }
   const device = await ensureClassPilotDeviceForSchool({
     deviceId: options.deviceId,
     deviceName: options.deviceName,
@@ -159,7 +166,11 @@ export async function issueStudentDeviceSessionToken(options: {
   const previousDeviceSession = await getActiveSessionByDevice(options.deviceId);
 
   await linkStudentDevice({ studentId: options.student.id, deviceId: options.deviceId });
-  const session = await startStudentSession(options.student.id, options.deviceId);
+  const session = await startStudentSession(
+    options.schoolId,
+    options.student.id,
+    options.deviceId
+  );
 
   const studentToken = createStudentToken({
     studentId: options.student.id,
@@ -193,7 +204,8 @@ async function lookupActiveStudentTokenSession(
       students,
       and(
         eq(students.id, studentSessions.studentId),
-        eq(students.schoolId, payload.schoolId)
+        eq(students.schoolId, payload.schoolId),
+        eq(students.status, "active")
       )
     )
     .innerJoin(

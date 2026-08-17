@@ -234,10 +234,19 @@ export async function getQueueEntryForSchool(queueId: string, schoolId: string) 
     .select({ entry: dismissalQueue })
     .from(dismissalQueue)
     .innerJoin(dismissalSessions, eq(dismissalQueue.sessionId, dismissalSessions.id))
+    .innerJoin(
+      students,
+      and(
+        eq(students.id, dismissalQueue.studentId),
+        eq(students.schoolId, schoolId),
+        eq(students.status, "active")
+      )
+    )
     .where(
       and(
         eq(dismissalQueue.id, queueId),
-        eq(dismissalSessions.schoolId, schoolId)
+        eq(dismissalSessions.schoolId, schoolId),
+        eq(dismissalQueue.schoolId, schoolId)
       )
     )
     .limit(1);

@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../../components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../../../components/ui/dialog";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../../../components/ui/alert-dialog";
+import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../../../components/ui/alert-dialog";
 import { Input } from "../../../components/ui/input";
 import { Label } from "../../../components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../components/ui/select";
@@ -19,6 +19,28 @@ import { queryClient, apiRequest } from "../../../lib/queryClient";
 
 const NO_GRADE_VALUE = "__no_grade__";
 const STANDARD_GRADES = ["PK", "K", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"];
+const ACTIVE_ROSTER_QUERY_KEYS = [
+  ["/api/students"],
+  ["/api/roster/students"],
+  ["/api/admin/teacher-students"],
+  ["/api/groups"],
+  ["/api/teacher/groups"],
+  ["classpilot-admin-classes"],
+  ["admin-class-students"],
+];
+
+function getApiErrorMessage(error, fallback) {
+  const serverMessage = error?.response?.data?.error || error?.response?.data?.message;
+  return (typeof serverMessage === "string" && serverMessage.trim())
+    ? serverMessage
+    : error?.message || fallback;
+}
+
+function invalidateActiveRosterQueries() {
+  return Promise.all(ACTIVE_ROSTER_QUERY_KEYS.map((queryKey) => (
+    queryClient.invalidateQueries({ queryKey, exact: false })
+  )));
+}
 
 function normalizeGrade(grade) {
   if (!grade) return null;
@@ -138,7 +160,10 @@ export default function RosterPage() {
   const { data: students = [], isLoading: studentsLoading } = useQuery({
     queryKey: ["/api/students"],
     queryFn: () => apiRequest("GET", "/students"),
-    select: (data) => Array.isArray(data) ? data : data?.students ?? [],
+    select: (data) => {
+      const roster = Array.isArray(data) ? data : data?.students ?? [];
+      return roster.filter((student) => !student.status || student.status === "active");
+    },
   });
 
   const { data: devices = [], isLoading: devicesLoading } = useQuery({
@@ -268,20 +293,19 @@ export default function RosterPage() {
 
   const deleteStudentMutation = useMutation({
     mutationFn: async (studentId) => apiRequest("DELETE", `/students/${studentId}`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/students"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/roster/students"] });
+    onSuccess: async () => {
+      await invalidateActiveRosterQueries();
       toast({
-        title: "Student deleted",
-        description: "The student record has been deleted.",
+        title: "Student removed",
+        description: "The student was removed from active rosters. Their history is retained.",
       });
       setDeleteDialog(null);
     },
     onError: (error) => {
       toast({
         variant: "destructive",
-        title: "Delete failed",
-        description: error.message,
+        title: "Remove failed",
+        description: getApiErrorMessage(error, "Failed to remove student"),
       });
     },
   });
@@ -656,15 +680,18 @@ export default function RosterPage() {
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  onClick={() => setDeleteDialog({
-                                    type: "delete-student",
-                                    studentId: student.id,
-                                    studentName: fullName(student),
-                                  })}
+                                  onClick={() => {
+                                    deleteStudentMutation.reset();
+                                    setDeleteDialog({
+                                      type: "delete-student",
+                                      studentId: student.id,
+                                      studentName: fullName(student),
+                                    });
+                                  }}
                                   data-testid={`button-delete-student-${student.id}`}
                                 >
                                   <Trash2 className="h-4 w-4 mr-1" />
-                                  Delete
+                                  Remove Student
                                 </Button>
                               </div>
                             </TableCell>
@@ -897,26 +924,39 @@ export default function RosterPage() {
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={deleteDialog !== null} onOpenChange={() => setDeleteDialog(null)}>
+      <AlertDialog
+        open={deleteDialog !== null}
+        onOpenChange={(open) => {
+          if (!open && !deleteStudentMutation.isPending) {
+            setDeleteDialog(null);
+            deleteStudentMutation.reset();
+          }
+        }}
+      >
         <AlertDialogContent data-testid="dialog-delete-confirm">
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete student record?</AlertDialogTitle>
+            <AlertDialogTitle>Remove Student?</AlertDialogTitle>
             <AlertDialogDescription>
-              This deletes <strong>{deleteDialog?.studentName}</strong> from the school roster. This is not a Chromebook assignment.
+              <strong>{deleteDialog?.studentName}</strong> will no longer appear in active school or class rosters. Their class assignments and activity history are retained so IT can add them back later.
             </AlertDialogDescription>
+            {deleteStudentMutation.error ? (
+              <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive" role="alert" data-testid="remove-student-error">
+                {getApiErrorMessage(deleteStudentMutation.error, "Failed to remove student")}
+              </div>
+            ) : null}
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isPending} data-testid="button-cancel-delete">
+            <AlertDialogCancel disabled={deleteStudentMutation.isPending} data-testid="button-cancel-delete">
               Cancel
             </AlertDialogCancel>
-            <AlertDialogAction
+            <Button
+              variant="destructive"
               onClick={handleDelete}
-              disabled={isPending}
+              disabled={deleteStudentMutation.isPending}
               data-testid="button-confirm-delete"
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {isPending ? "Deleting..." : "Delete Student"}
-            </AlertDialogAction>
+              {deleteStudentMutation.isPending ? "Removing..." : "Remove Student"}
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

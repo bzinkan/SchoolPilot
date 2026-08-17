@@ -25,7 +25,7 @@ import {
   hardDeleteGroupWithCleanup,
   removeGroupStudent,
   replaceGroupTeachers,
-  updateStudent,
+  reactivateInactiveStudentForRosterImport,
   updateAdminClassWithTeachers,
   upsertAdminClassroomClass,
   upsertClassroomCourse,
@@ -277,6 +277,7 @@ function teacherPreview(entry: { user: any; membership?: any }) {
 
 type ClassroomStudentUpsertResult = {
   status: "imported" | "updated" | "skipped";
+  restored?: boolean;
   studentId?: string;
   googleUserId?: string | null;
   emailLc?: string | null;
@@ -301,6 +302,12 @@ async function upsertStudentFromClassroom(
     rules: StudentEmailRules;
     autoGenerateClassPilotPins?: boolean;
     usedPins?: Set<string>;
+    actor: {
+      userId: string | null;
+      userEmail?: string;
+      userRole?: string;
+      source: string;
+    };
   }
 ): Promise<ClassroomStudentUpsertResult> {
   const email = googleStudent.profile?.emailAddress?.trim();
@@ -320,15 +327,17 @@ async function upsertStudentFromClassroom(
   }
 
   if (existing) {
-    const updated = await updateStudent(existing.id, {
+    const result = await reactivateInactiveStudentForRosterImport(schoolId, emailLc, {
       firstName: firstName || existing.firstName,
       lastName: lastName || existing.lastName,
       email,
       googleUserId: googleStudent.userId || existing.googleUserId || undefined,
       ...(options.gradeLevel ? { gradeLevel: options.gradeLevel } : {}),
-    });
+    }, options.actor);
+    const updated = result.student || existing;
     return {
       status: "updated",
+      restored: result.reactivated,
       studentId: updated?.id || existing.id,
       googleUserId: googleStudent.userId || updated?.googleUserId || existing.googleUserId || null,
       emailLc,
@@ -464,9 +473,16 @@ router.post("/classroom/import", ...auth, async (req, res, next) => {
     let totalFound = 0;
     let totalImported = 0;
     let totalUpdated = 0;
+    let totalRestored = 0;
     let totalSkipped = 0;
     let importedCourses = 0;
     let updatedCourses = 0;
+    const lifecycleActor = {
+      userId: req.authUser?.id ?? null,
+      userEmail: req.authUser?.email ?? undefined,
+      userRole: res.locals.membershipRole,
+      source: "classpilot_classroom_import",
+    };
 
     for (const selected of selectedCourses) {
       const courseId = selected.googleCourseId;
@@ -511,6 +527,7 @@ router.post("/classroom/import", ...auth, async (req, res, next) => {
 
         let imported = 0;
         let updated = 0;
+        let restored = 0;
         let skipped = 0;
         const studentIds: string[] = [];
         const courseStudentRows: Array<{
@@ -529,12 +546,14 @@ router.post("/classroom/import", ...auth, async (req, res, next) => {
               rules,
               autoGenerateClassPilotPins,
               usedPins,
+              actor: lifecycleActor,
             });
             if (result.status === "imported") {
               imported++;
               if (result.generatedPin) generatedPins.push(result.generatedPin);
             } else if (result.status === "updated") {
               updated++;
+              if (result.restored) restored++;
             } else {
               skipped++;
             }
@@ -599,6 +618,7 @@ router.post("/classroom/import", ...auth, async (req, res, next) => {
         else importedCourses++;
         totalImported += imported;
         totalUpdated += updated;
+        totalRestored += restored;
         totalSkipped += skipped;
         results.push({
           googleCourseId: courseId,
@@ -608,6 +628,7 @@ router.post("/classroom/import", ...auth, async (req, res, next) => {
           studentsFound: googleStudents.length,
           studentsImported: imported,
           studentsUpdated: updated,
+          studentsRestored: restored,
           studentsSkipped: skipped,
           rosterAdded: roster.added.length,
           rosterAlreadyPresent: roster.alreadyPresent.length,
@@ -623,6 +644,7 @@ router.post("/classroom/import", ...auth, async (req, res, next) => {
             googleCourseId: courseId,
             studentsImported: imported,
             studentsUpdated: updated,
+            studentsRestored: restored,
             rosterAdded: roster.added.length,
             rosterAlreadyPresent: roster.alreadyPresent.length,
           },
@@ -633,7 +655,7 @@ router.post("/classroom/import", ...auth, async (req, res, next) => {
       }
     }
 
-    const autoAssigned = await maybeAutoAssignGoPilotFamilies(schoolId, totalImported);
+    const autoAssigned = await maybeAutoAssignGoPilotFamilies(schoolId, totalImported + totalRestored);
     void recordImportRun({
       schoolId,
       userId: req.authUser?.id,
@@ -654,6 +676,7 @@ router.post("/classroom/import", ...auth, async (req, res, next) => {
       totalFound,
       totalImported,
       totalUpdated,
+      totalRestored,
       totalSkipped,
       failures,
       results,
@@ -833,7 +856,9 @@ router.post("/:id/students", ...auth, async (req, res, next) => {
     }
     const requested: string[] = Array.from(new Set(req.body.studentIds.map((id: unknown) => String(id))));
     const students = await getStudentsByIds(requested);
-    const validIds = students.filter((student) => student.schoolId === schoolId).map((student) => student.id);
+    const validIds = students
+      .filter((student) => student.schoolId === schoolId && student.status === "active")
+      .map((student) => student.id);
     const result = await addGroupStudentsDetailed(group.id, validIds);
     const resultIds = new Set([...result.added, ...result.alreadyPresent]);
     const failed = requested

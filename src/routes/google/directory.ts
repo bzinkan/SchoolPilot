@@ -13,7 +13,7 @@ import {
 } from "../../util/gopilotParentContainment.js";
 import {
   createStudent,
-  updateStudent,
+  reactivateInactiveStudentForRosterImport,
   createUser,
   createMembership,
   getStudentByEmail,
@@ -265,13 +265,24 @@ async function hasActiveClassPilotLicense(schoolId: string): Promise<boolean> {
 async function importGoogleUsersAsStudents(
   schoolId: string,
   googleUsers: any[],
-  options: { gradeLevel?: string | null; excludeEmails?: string[]; autoGenerateClassPilotPins?: boolean }
+  options: {
+    gradeLevel?: string | null;
+    excludeEmails?: string[];
+    autoGenerateClassPilotPins?: boolean;
+    actor: {
+      userId: string | null;
+      userEmail?: string;
+      userRole?: string;
+      source: string;
+    };
+  }
 ) {
   const excludeSet = new Set(
     (options.excludeEmails || []).map((email) => String(email).toLowerCase())
   );
   let imported = 0;
   let updated = 0;
+  let restored = 0;
   let skipped = 0;
   const errors: string[] = [];
   const generatedPins: GeneratedClassPilotPin[] = [];
@@ -314,15 +325,16 @@ async function importGoogleUsersAsStudents(
         continue;
       }
       if (existing) {
-        await updateStudent(existing.id, {
+        const result = await reactivateInactiveStudentForRosterImport(schoolId, emailLc, {
           firstName: u.name?.givenName || existing.firstName,
           lastName: u.name?.familyName || existing.lastName,
           email,
           gradeLevel: options.gradeLevel || existing.gradeLevel || undefined,
           googleUserId: u.id || existing.googleUserId || undefined,
           studentIdNumber: studentIdNumber || existing.studentIdNumber || undefined,
-        });
+        }, options.actor);
         updated++;
+        if (result.reactivated) restored++;
       } else {
         const pin = options.autoGenerateClassPilotPins
           ? randomFourDigitClassPilotPin(usedPins)
@@ -348,7 +360,7 @@ async function importGoogleUsersAsStudents(
     }
   }
 
-  return { imported, updated, skipped, errors, generatedPins };
+  return { imported, updated, restored, skipped, errors, generatedPins };
 }
 
 async function getAuthedClient(userId: string, schoolId: string) {
@@ -467,6 +479,12 @@ router.post("/import", ...adminAuth, async (req, res, next) => {
   try {
     const { users, grade, entries, orgUnitPath, gradeLevel, importAll } = req.body;
     const schoolId = res.locals.schoolId!;
+    const lifecycleActor = {
+      userId: req.authUser?.id ?? null,
+      userEmail: req.authUser?.email ?? undefined,
+      userRole: res.locals.membershipRole,
+      source: "google_workspace_import",
+    };
 
     // OU-based import with entries array (ClassPilot Students page)
     if (Array.isArray(entries) && entries.length > 0) {
@@ -474,6 +492,7 @@ router.post("/import", ...adminAuth, async (req, res, next) => {
 
       let totalImported = 0;
       let totalUpdated = 0;
+      let totalRestored = 0;
       let totalSkipped = 0;
       let totalFound = 0;
       const details: unknown[] = [];
@@ -491,17 +510,19 @@ router.post("/import", ...adminAuth, async (req, res, next) => {
           gradeLevel: entry.gradeLevel || entry.grade || null,
           excludeEmails: entry.excludeEmails,
           autoGenerateClassPilotPins,
+          actor: lifecycleActor,
         });
 
         totalImported += result.imported;
         totalUpdated += result.updated;
+        totalRestored += result.restored;
         totalSkipped += result.skipped;
         allErrors.push(...result.errors);
         generatedPins.push(...result.generatedPins);
         details.push({ orgUnitPath: entry.orgUnitPath || "all", ...result });
       }
 
-      const autoAssigned = await maybeAutoAssignGoPilotFamilies(schoolId, totalImported);
+      const autoAssigned = await maybeAutoAssignGoPilotFamilies(schoolId, totalImported + totalRestored);
       // Fire-and-forget: never block/delay the import response on logging.
       void recordImportRun({
         schoolId,
@@ -519,6 +540,7 @@ router.post("/import", ...adminAuth, async (req, res, next) => {
       return res.json({
         imported: totalImported,
         updated: totalUpdated,
+        restored: totalRestored,
         skipped: totalSkipped,
         errors: allErrors,
         details,
@@ -537,8 +559,9 @@ router.post("/import", ...adminAuth, async (req, res, next) => {
       const result = await importGoogleUsersAsStudents(schoolId, googleUsers, {
         gradeLevel: gradeLevel || grade || null,
         autoGenerateClassPilotPins: await hasActiveClassPilotLicense(schoolId),
+        actor: lifecycleActor,
       });
-      const autoAssigned = await maybeAutoAssignGoPilotFamilies(schoolId, result.imported);
+      const autoAssigned = await maybeAutoAssignGoPilotFamilies(schoolId, result.imported + result.restored);
 
       void recordImportRun({
         schoolId,
@@ -565,6 +588,7 @@ router.post("/import", ...adminAuth, async (req, res, next) => {
 
     let imported = 0;
     let updated = 0;
+    let restored = 0;
     let skipped = 0;
     const errors: string[] = [];
     const generatedPins: GeneratedClassPilotPin[] = [];
@@ -596,14 +620,15 @@ router.post("/import", ...adminAuth, async (req, res, next) => {
           continue;
         }
         if (existing) {
-          await updateStudent(existing.id, {
+          const result = await reactivateInactiveStudentForRosterImport(schoolId, emailLc, {
             firstName: u.firstName || existing.firstName,
             lastName: u.lastName || existing.lastName,
             email,
             gradeLevel: grade || u.grade || existing.gradeLevel || undefined,
             googleUserId: u.id || existing.googleUserId || undefined,
-          });
+          }, lifecycleActor);
           updated++;
+          if (result.reactivated) restored++;
         } else {
           const pin = autoGenerateClassPilotPins ? randomFourDigitClassPilotPin(usedPins) : null;
           const student = await createStudent({
@@ -626,7 +651,7 @@ router.post("/import", ...adminAuth, async (req, res, next) => {
       }
     }
 
-    const autoAssigned = await maybeAutoAssignGoPilotFamilies(schoolId, imported);
+    const autoAssigned = await maybeAutoAssignGoPilotFamilies(schoolId, imported + restored);
     void recordImportRun({
       schoolId,
       userId: req.authUser?.id,
@@ -639,7 +664,7 @@ router.post("/import", ...adminAuth, async (req, res, next) => {
       skipped,
       failures: errors,
     });
-    return res.json({ imported, updated, skipped, errors, total: users.length, autoAssigned, generatedPins });
+    return res.json({ imported, updated, restored, skipped, errors, total: users.length, autoAssigned, generatedPins });
   } catch (err: any) {
     return handleGoogleError(err, res, next);
   }
@@ -862,12 +887,19 @@ router.post("/import-orgunits", ...adminAuth, async (req, res, next) => {
 
     let totalImported = 0;
     let totalUpdated = 0;
+    let totalRestored = 0;
     let totalSkipped = 0;
     let totalFound = 0;
     const details: unknown[] = [];
     const allErrors: string[] = [];
     const generatedPins: GeneratedClassPilotPin[] = [];
     const autoGenerateClassPilotPins = await hasActiveClassPilotLicense(schoolId);
+    const lifecycleActor = {
+      userId: req.authUser?.id ?? null,
+      userEmail: req.authUser?.email ?? undefined,
+      userRole: res.locals.membershipRole,
+      source: "google_workspace_orgunit_import",
+    };
 
     for (const entry of orgUnits) {
       const orgUnitPath = typeof entry === "string" ? entry : entry?.orgUnitPath;
@@ -881,17 +913,19 @@ router.post("/import-orgunits", ...adminAuth, async (req, res, next) => {
         gradeLevel,
         excludeEmails: typeof entry === "string" ? undefined : entry?.excludeEmails,
         autoGenerateClassPilotPins,
+        actor: lifecycleActor,
       });
 
       totalImported += result.imported;
       totalUpdated += result.updated;
+      totalRestored += result.restored;
       totalSkipped += result.skipped;
       allErrors.push(...result.errors);
       generatedPins.push(...result.generatedPins);
       details.push({ orgUnitPath: orgUnitPath || "all", ...result });
     }
 
-    const autoAssigned = await maybeAutoAssignGoPilotFamilies(schoolId, totalImported);
+    const autoAssigned = await maybeAutoAssignGoPilotFamilies(schoolId, totalImported + totalRestored);
     void recordImportRun({
       schoolId,
       userId: req.authUser?.id,
@@ -908,6 +942,7 @@ router.post("/import-orgunits", ...adminAuth, async (req, res, next) => {
     return res.json({
       imported: totalImported,
       updated: totalUpdated,
+      restored: totalRestored,
       skipped: totalSkipped,
       details,
       autoAssigned,

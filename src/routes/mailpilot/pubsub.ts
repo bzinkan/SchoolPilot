@@ -133,6 +133,16 @@ async function processActiveWatch(
   notificationHistoryId: string | null,
   watch: NonNullable<Awaited<ReturnType<typeof getMailpilotWatchByEmail>>>
 ): Promise<void> {
+  const activeStudent = await getStudentById(watch.studentId);
+  if (
+    !activeStudent ||
+    activeStudent.schoolId !== watch.schoolId ||
+    activeStudent.status !== "active" ||
+    activeStudent.emailLc !== studentEmail.toLowerCase()
+  ) {
+    return;
+  }
+
   // Verify the school still has email monitoring enabled
   const school = await getSchoolById(watch.schoolId);
   if (!school || !school.mailpilotEntitled || !school.classpilotEmailMonitoring) {

@@ -369,7 +369,11 @@ router.post("/students/:studentId/assign", ...auth, async (req, res, next) => {
   try {
     const studentId = param(req, "studentId");
     const student = await getStudentById(studentId);
-    if (!student || student.schoolId !== res.locals.schoolId) {
+    if (
+      !student ||
+      student.schoolId !== res.locals.schoolId ||
+      student.status !== "active"
+    ) {
       return res.status(404).json({ error: "Student not found" });
     }
     await assignTeacherStudent(req.authUser!.id, studentId);

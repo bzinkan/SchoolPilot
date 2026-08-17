@@ -462,6 +462,14 @@ async function autoCompleteStaleGoPilotSessions() {
             outstanding: sql<number>`COUNT(*) FILTER (WHERE ${dismissalQueue.status} <> 'dismissed')::int`,
           })
           .from(dismissalQueue)
+          .innerJoin(
+            students,
+            and(
+              eq(students.id, dismissalQueue.studentId),
+              eq(students.schoolId, session.schoolId),
+              eq(students.status, "active")
+            )
+          )
           .where(
             and(
               eq(dismissalQueue.schoolId, session.schoolId),
@@ -1377,7 +1385,19 @@ async function renewMailpilotWatches() {
         )
       );
     const entitledSchoolIds = new Set(entitledSchools.map((school) => school.id));
-    const dueForRenewal = allDueForRenewal.filter((watch) => entitledSchoolIds.has(watch.schoolId));
+    const studentIds = Array.from(new Set(allDueForRenewal.map((watch) => watch.studentId)));
+    const activeStudents = await schedulerDb
+      .select({ id: students.id, schoolId: students.schoolId, emailLc: students.emailLc })
+      .from(students)
+      .where(and(inArray(students.id, studentIds), eq(students.status, "active")));
+    const activeStudentKeys = new Set(
+      activeStudents.map((student) => `${student.schoolId}:${student.id}:${student.emailLc || ""}`)
+    );
+    const dueForRenewal = allDueForRenewal.filter(
+      (watch) =>
+        entitledSchoolIds.has(watch.schoolId) &&
+        activeStudentKeys.has(`${watch.schoolId}:${watch.studentId}:${watch.studentEmail.toLowerCase()}`)
+    );
     if (dueForRenewal.length === 0) return;
 
     console.log(`[MailPilot] Renewing ${dueForRenewal.length} Gmail watch(es)`);

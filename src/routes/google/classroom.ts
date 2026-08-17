@@ -8,7 +8,7 @@ import {
   getGoogleOAuthTokenForSchool,
   createStudent,
   getStudentByEmail,
-  updateStudent,
+  reactivateInactiveStudentForRosterImport,
   getProductLicenses,
   autoAssignFamilyGroups,
   getClassroomCoursesBySchool,
@@ -215,6 +215,7 @@ async function hasActiveClassPilotLicense(schoolId: string): Promise<boolean> {
 
 type ClassroomStudentUpsertResult = {
   status: "imported" | "updated" | "skipped";
+  restored?: boolean;
   studentId?: string;
   generatedPin?: GeneratedClassPilotPin;
 };
@@ -228,6 +229,12 @@ async function upsertStudentFromClassroom(
     rules: StudentEmailRules;
     autoGenerateClassPilotPins?: boolean;
     usedPins?: Set<string>;
+    actor: {
+      userId: string | null;
+      userEmail?: string;
+      userRole?: string;
+      source: string;
+    };
   }
 ): Promise<ClassroomStudentUpsertResult> {
   const email = googleStudent.profile?.emailAddress?.trim();
@@ -247,15 +254,19 @@ async function upsertStudentFromClassroom(
   }
 
   if (existing) {
-    await updateStudent(existing.id, {
+    const result = await reactivateInactiveStudentForRosterImport(schoolId, emailLc, {
       firstName: firstName || existing.firstName,
       lastName: lastName || existing.lastName,
       email,
       googleUserId: googleStudent.userId || existing.googleUserId || undefined,
       ...(options.gradeLevel ? { gradeLevel: options.gradeLevel } : {}),
       ...(options.homeroomId ? { homeroomId: options.homeroomId } : {}),
-    });
-    return { status: "updated", studentId: existing.id };
+    }, options.actor);
+    return {
+      status: "updated",
+      restored: result.reactivated,
+      studentId: result.student?.id || existing.id,
+    };
   }
 
   const pin = options.autoGenerateClassPilotPins
@@ -414,6 +425,7 @@ router.post("/sync", ...adminAuth, async (req, res, next) => {
 
     let totalImported = 0;
     let totalUpdated = 0;
+    let totalRestored = 0;
     let totalSkipped = 0;
     let totalFound = 0;
     const results: unknown[] = [];
@@ -422,6 +434,12 @@ router.post("/sync", ...adminAuth, async (req, res, next) => {
     const autoGenerateClassPilotPins = await hasActiveClassPilotLicense(schoolId);
     const generatedPins: GeneratedClassPilotPin[] = [];
     const usedPins = new Set<string>();
+    const lifecycleActor = {
+      userId: req.authUser?.id ?? null,
+      userEmail: req.authUser?.email ?? undefined,
+      userRole: res.locals.membershipRole,
+      source: "google_classroom_sync",
+    };
 
     for (const course of courses) {
       const { courseId, grade, gradeLevel, homeroomId } = course;
@@ -432,6 +450,7 @@ router.post("/sync", ...adminAuth, async (req, res, next) => {
 
         let imported = 0;
         let updated = 0;
+        let restored = 0;
         let skipped = 0;
         for (const gs of googleStudents) {
           // Per-student try/catch so one bad roster row doesn't abort the
@@ -443,12 +462,16 @@ router.post("/sync", ...adminAuth, async (req, res, next) => {
               rules,
               autoGenerateClassPilotPins,
               usedPins,
+              actor: lifecycleActor,
             });
             if (result.status === "imported") {
               imported++;
               if (result.generatedPin) generatedPins.push(result.generatedPin);
             }
-            else if (result.status === "updated") updated++;
+            else if (result.status === "updated") {
+              updated++;
+              if (result.restored) restored++;
+            }
             else skipped++;
           } catch (error: any) {
             skipped++;
@@ -460,6 +483,7 @@ router.post("/sync", ...adminAuth, async (req, res, next) => {
         await recordCourseSync(schoolId, courseId, courseMeta);
         totalImported += imported;
         totalUpdated += updated;
+        totalRestored += restored;
         totalSkipped += skipped;
         results.push({
           courseId,
@@ -467,9 +491,11 @@ router.post("/sync", ...adminAuth, async (req, res, next) => {
           total: googleStudents.length,
           imported,
           updated,
+          restored,
           skipped,
           studentsFound: googleStudents.length,
           studentsImported: imported,
+          studentsRestored: restored,
         });
       } catch (error: any) {
         failures.push(`course ${courseId}: ${error.message}`);
@@ -477,7 +503,7 @@ router.post("/sync", ...adminAuth, async (req, res, next) => {
       }
     }
 
-    const autoAssigned = await maybeAutoAssignGoPilotFamilies(schoolId, totalImported);
+    const autoAssigned = await maybeAutoAssignGoPilotFamilies(schoolId, totalImported + totalRestored);
 
     void recordImportRun({
       schoolId,
@@ -492,7 +518,7 @@ router.post("/sync", ...adminAuth, async (req, res, next) => {
       failures,
     });
     await recordRosterConnectorSync(schoolId);
-    return res.json({ totalImported, totalUpdated, results, autoAssigned, generatedPins });
+    return res.json({ totalImported, totalUpdated, totalRestored, results, autoAssigned, generatedPins });
   } catch (err: any) {
     return handleGoogleError(err, res, next);
   }
@@ -522,12 +548,19 @@ router.post("/courses/:courseId/sync", ...adminAuth, async (req, res, next) => {
 
     let imported = 0;
     let updated = 0;
+    let restored = 0;
     let skipped = 0;
     const failures: string[] = [];
     const autoGenerateClassPilotPins = await hasActiveClassPilotLicense(schoolId);
     const generatedPins: GeneratedClassPilotPin[] = [];
     const syncedStudentIds: string[] = [];
     const usedPins = new Set<string>();
+    const lifecycleActor = {
+      userId: req.authUser?.id ?? null,
+      userEmail: req.authUser?.email ?? undefined,
+      userRole: res.locals.membershipRole,
+      source: "google_classroom_course_sync",
+    };
     for (const gs of googleStudents) {
       try {
         const result = await upsertStudentFromClassroom(schoolId, gs, {
@@ -535,12 +568,16 @@ router.post("/courses/:courseId/sync", ...adminAuth, async (req, res, next) => {
           rules,
           autoGenerateClassPilotPins,
           usedPins,
+          actor: lifecycleActor,
         });
         if (result.status === "imported") {
           imported++;
           if (result.generatedPin) generatedPins.push(result.generatedPin);
         }
-        else if (result.status === "updated") updated++;
+        else if (result.status === "updated") {
+          updated++;
+          if (result.restored) restored++;
+        }
         else skipped++;
         if (result.studentId) syncedStudentIds.push(result.studentId);
       } catch (error: any) {
@@ -559,7 +596,7 @@ router.post("/courses/:courseId/sync", ...adminAuth, async (req, res, next) => {
       );
     }
     await recordCourseSync(schoolId, courseId, courseMeta, gradeId);
-    const autoAssigned = await maybeAutoAssignGoPilotFamilies(schoolId, imported);
+    const autoAssigned = await maybeAutoAssignGoPilotFamilies(schoolId, imported + restored);
 
     void recordImportRun({
       schoolId,
@@ -580,6 +617,7 @@ router.post("/courses/:courseId/sync", ...adminAuth, async (req, res, next) => {
       total: googleStudents.length,
       imported,
       updated,
+      restored,
       skipped,
       autoAssigned,
       generatedPins,

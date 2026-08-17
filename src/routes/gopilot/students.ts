@@ -18,8 +18,11 @@ import {
 import {
   bulkCreateStudents,
   createStudent,
+  deactivateStudentsForRoster,
   getGoPilotStaffStudents,
+  getStudentByEmail,
   getStudentById,
+  reactivateInactiveStudentForRosterImport,
   updateStudent,
 } from "../../services/storage.js";
 import {
@@ -32,6 +35,8 @@ import {
   studentEmailTaken,
 } from "../../services/studentEmailPolicy.js";
 import { logAudit } from "../../services/audit.js";
+import { stopMailpilotMonitoringForStudent } from "../../services/mailpilotProvisioning.js";
+import { revokeClasspilotStudentSocketsAfterRosterRemoval } from "../../realtime/studentSocketRevocation.js";
 
 const router = Router();
 const DISMISSAL_TYPES = new Set(["car", "bus", "walker", "afterschool"]);
@@ -59,6 +64,10 @@ const staffAuth = [
 const managerAuth = [
   ...auth,
   requireGoPilotRole("admin", "school_admin", "office_staff"),
+] as const;
+const lifecycleAuth = [
+  ...auth,
+  requireGoPilotRole("admin", "school_admin"),
 ] as const;
 
 function param(req: { params: Record<string, unknown> }, key: string): string {
@@ -172,6 +181,23 @@ function resolvedRole(req: Request): string | undefined {
   return (req.res?.locals.gopilotRole as string | undefined) ?? undefined;
 }
 
+function mayReactivateStudent(req: Request): boolean {
+  const role = resolvedRole(req);
+  return Boolean(
+    req.authUser?.isSuperAdmin ||
+    role === "super_admin" ||
+    role === "admin" ||
+    role === "school_admin"
+  );
+}
+
+function reactivationDenied(res: any) {
+  return res.status(403).json({
+    error: "Only an administrator may restore a removed student.",
+    code: "STUDENT_REACTIVATION_FORBIDDEN",
+  });
+}
+
 // Explicit role-scoped DTO used by all GoPilot roster surfaces.
 router.get("/", ...staffAuth, async (req, res, next) => {
   try {
@@ -243,11 +269,13 @@ router.post("/", ...managerAuth, async (req, res, next) => {
     }
     const emailError = checkStudentEmail(parsed.data.email, await studentEmailRules(schoolId));
     if (emailError) return res.status(400).json(emailError);
+    const emailLc = parsed.data.email?.trim().toLowerCase();
+    const existing = emailLc ? await getStudentByEmail(schoolId, emailLc) : undefined;
     if (parsed.data.email) {
-      const duplicate = await studentEmailTaken(schoolId, parsed.data.email.toLowerCase());
+      const duplicate = await studentEmailTaken(schoolId, emailLc!, existing?.id);
       if (duplicate) return res.status(409).json({ error: duplicate, code: "STUDENT_EMAIL_TAKEN" });
     }
-    const student = await createStudent({
+    const studentData: InsertStudent = {
       schoolId,
       firstName: parsed.data.firstName.trim(),
       lastName: parsed.data.lastName.trim(),
@@ -260,7 +288,36 @@ router.post("/", ...managerAuth, async (req, res, next) => {
       busRoute: cleanOptional(parsed.data.busRoute),
       externalId,
       status: "active",
-    });
+    };
+    if (existing) {
+      if (existing.status !== "inactive") {
+        return res.status(409).json({
+          error: "A student with this email already exists in this school.",
+          code: "STUDENT_EMAIL_TAKEN",
+        });
+      }
+      if (!mayReactivateStudent(req)) return reactivationDenied(res);
+      const restored = await reactivateInactiveStudentForRosterImport(
+        schoolId,
+        emailLc!,
+        studentData,
+        {
+          userId: req.authUser?.id ?? null,
+          userEmail: req.authUser?.email ?? undefined,
+          userRole: resolvedRole(req),
+          source: "gopilot_roster_add",
+        }
+      );
+      if (!restored.student) {
+        return res.status(409).json({ error: "Student roster changed. Try again.", code: "STUDENT_ROSTER_CHANGED" });
+      }
+      await auditRosterMutation(req, schoolId, "gopilot.student.restored", { studentId: restored.student.id });
+      return res.status(201).json({
+        student: await rosterStudent(schoolId, restored.student.id),
+        restored: restored.reactivated,
+      });
+    }
+    const student = await createStudent(studentData);
     await auditRosterMutation(req, schoolId, "gopilot.student.created", { studentId: student.id });
     return res.status(201).json({ student: await rosterStudent(schoolId, student.id) });
   } catch (error) {
@@ -320,17 +377,47 @@ async function updateHandler(req: Request, res: any, next: any) {
 router.patch("/:studentId", ...managerAuth, updateHandler);
 router.put("/:studentId", ...managerAuth, updateHandler);
 
-router.delete("/:studentId", ...managerAuth, async (req, res, next) => {
+router.delete("/:studentId", ...lifecycleAuth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
     const studentId = param(req, "studentId");
     const existing = await getStudentById(studentId);
-    if (!existing || existing.schoolId !== schoolId || existing.status !== "active") {
+    if (!existing || existing.schoolId !== schoolId) {
       return res.status(404).json({ error: "Student not found" });
     }
-    // Soft removal preserves historical queue, pickup, family, and dismissal data.
-    await updateStudent(studentId, { status: "inactive" });
-    await auditRosterMutation(req, schoolId, "gopilot.student.deactivated", { studentId });
+
+    // Delegate to the canonical lifecycle transaction so ClassPilot sessions
+    // close and the sanitized student.deactivated audit commits atomically.
+    // Already-inactive same-school rows remain a successful idempotent retry.
+    const result = await deactivateStudentsForRoster(schoolId, [studentId], {
+      userId: req.authUser?.id ?? null,
+      userEmail: req.authUser?.email ?? null,
+      userRole: resolvedRole(req) ?? null,
+      source: "gopilot_roster_remove",
+    });
+    if (!result.foundStudentIds.includes(studentId)) {
+      return res.status(404).json({ error: "Student not found" });
+    }
+
+    const [socketRevocation, shutdowns] = await Promise.all([
+      revokeClasspilotStudentSocketsAfterRosterRemoval(schoolId, result.foundStudentIds),
+      Promise.allSettled(
+        result.students.map((student) =>
+          stopMailpilotMonitoringForStudent(schoolId, student.id, student.email)
+        )
+      ),
+    ]);
+    if (!socketRevocation.relayed) {
+      console.warn("[GoPilot] Student socket revocation relay unavailable", {
+        closedLocalCount: socketRevocation.closedLocal,
+      });
+    }
+    const failedShutdowns = shutdowns.filter((shutdown) => shutdown.status === "rejected").length;
+    if (failedShutdowns > 0) {
+      console.warn("[GoPilot] Student removal MailPilot shutdown incomplete", {
+        failedCount: failedShutdowns,
+      });
+    }
     return res.json({ ok: true });
   } catch (error) {
     return next(error);
@@ -409,6 +496,7 @@ async function importHandler(req: Request, res: any, next: any) {
     const emailSets = await existingEmailSets(schoolId);
     const batchEmails = new Set<string>();
     const inserts: InsertStudent[] = [];
+    const restorations: Array<{ emailLc: string; data: InsertStudent }> = [];
     const errors: Array<{ row: number; error: string }> = [];
     for (let index = 0; index < rawRows.length; index++) {
       const normalized = req.file ? normalizeCsvRow(rawRows[index]!) : normalizeStudentBody(rawRows[index]!);
@@ -427,9 +515,37 @@ async function importHandler(req: Request, res: any, next: any) {
       if (emailError) { errors.push({ row: index + 1, error: emailError.error }); continue; }
       const emailLc = parsed.data.email?.trim().toLowerCase();
       if (emailLc) {
-        const duplicate = duplicateEmailError(emailLc, emailSets, batchEmails);
+        const existing = await getStudentByEmail(schoolId, emailLc);
+        if (existing?.status === "inactive" && !mayReactivateStudent(req)) {
+          return reactivationDenied(res);
+        }
+        const duplicate = existing?.status === "inactive"
+          ? (emailSets.staff.has(emailLc)
+              ? "This email is already used by a staff account; each person needs a unique email."
+              : (batchEmails.has(emailLc) ? "Duplicate student email in this import." : null))
+          : duplicateEmailError(emailLc, emailSets, batchEmails);
         if (duplicate) { errors.push({ row: index + 1, error: duplicate }); continue; }
         batchEmails.add(emailLc);
+        if (existing?.status === "inactive") {
+          restorations.push({
+            emailLc,
+            data: {
+              schoolId,
+              firstName: parsed.data.firstName.trim(),
+              lastName: parsed.data.lastName.trim(),
+              email: cleanOptional(parsed.data.email),
+              studentIdNumber: cleanOptional(parsed.data.studentIdNumber),
+              gradeLevel: cleanOptional(parsed.data.gradeLevel),
+              homeroomId: cleanOptional(parsed.data.homeroomId),
+              dismissalType: parsed.data.dismissalType || "car",
+              afterschoolReason: cleanOptional(parsed.data.afterschoolReason),
+              busRoute: cleanOptional(parsed.data.busRoute),
+              externalId,
+              status: "active",
+            },
+          });
+          continue;
+        }
       }
       inserts.push({
         schoolId,
@@ -446,13 +562,34 @@ async function importHandler(req: Request, res: any, next: any) {
         status: "active",
       });
     }
+    let restored = 0;
+    for (const candidate of restorations) {
+      const result = await reactivateInactiveStudentForRosterImport(
+        schoolId,
+        candidate.emailLc,
+        candidate.data,
+        {
+          userId: req.authUser?.id ?? null,
+          userEmail: req.authUser?.email ?? undefined,
+          userRole: resolvedRole(req),
+          source: "gopilot_roster_import",
+        }
+      );
+      if (result.reactivated) restored++;
+    }
     const created = inserts.length ? await bulkCreateStudents(inserts) : [];
     await auditRosterMutation(req, schoolId, "gopilot.student.imported", {
       requestedCount: rawRows.length,
       importedCount: created.length,
+      restoredCount: restored,
       errorCount: errors.length,
     });
-    return res.status(201).json({ imported: created.length, total: rawRows.length, errors: errors.length ? errors : undefined });
+    return res.status(201).json({
+      imported: created.length,
+      restored,
+      total: rawRows.length,
+      errors: errors.length ? errors : undefined,
+    });
   } catch (error) {
     return next(error);
   }

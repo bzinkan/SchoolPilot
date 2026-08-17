@@ -81,7 +81,10 @@ describe("GoPilot dismissal concurrency and data contracts", () => {
       storage.indexOf("export async function callQueueEntry"),
       storage.indexOf("export async function getSessionStats")
     );
-    assert.match(queueOps, /\.for\("update", \{ skipLocked: true \}\)/);
+    assert.match(
+      queueOps,
+      /\.for\("update", \{[^}]*skipLocked: true[^}]*\}\)/
+    );
     assert.match(queueOps, /withActiveDismissalSessionQueueMutation/);
     const sessionGuard = storage.slice(
       storage.indexOf("async function withActiveDismissalSessionQueueMutation"),

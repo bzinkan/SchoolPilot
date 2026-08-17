@@ -3,6 +3,8 @@
 import {
   getStudentsBySchool,
   createStudent,
+  getStudentByEmail,
+  reactivateInactiveStudentForRosterImport,
   markStudentsAbsentBulk,
   getAttendanceBySchool,
   getGroupsBySchool,
@@ -131,12 +133,43 @@ const executors: Record<string, ToolExecutor> = {
   },
 
   create_student: async (args, ctx) => {
-    const student = await createStudent({
+    const email = typeof args.email === "string" ? args.email.trim() : "";
+    const emailLc = email.toLowerCase();
+    let student: Awaited<ReturnType<typeof createStudent>> | undefined;
+    let restored = false;
+
+    // The assistant is an administrator-authorized roster surface. Restore an
+    // exact inactive school/email identity so retained assignments and history
+    // come back with the original student ID.
+    if (emailLc) {
+      const existing = await getStudentByEmail(ctx.schoolId, emailLc);
+      if (existing?.status === "inactive") {
+        const result = await reactivateInactiveStudentForRosterImport(
+          ctx.schoolId,
+          emailLc,
+          {
+            firstName: args.firstName,
+            lastName: args.lastName,
+            gradeLevel: args.gradeLevel || null,
+            email,
+          },
+          {
+            userId: ctx.userId,
+            userRole: ctx.userRole,
+            source: "ai_assistant_create_student",
+          }
+        );
+        student = result.student;
+        restored = result.reactivated;
+      }
+    }
+
+    student ??= await createStudent({
       schoolId: ctx.schoolId,
       firstName: args.firstName,
       lastName: args.lastName,
       gradeLevel: args.gradeLevel || null,
-      email: args.email || null,
+      email: email || null,
     });
     return {
       success: true,
@@ -144,6 +177,7 @@ const executors: Record<string, ToolExecutor> = {
         id: student.id,
         name: `${student.firstName} ${student.lastName}`,
         gradeLevel: student.gradeLevel,
+        restored,
       },
     };
   },
