@@ -1422,7 +1422,6 @@ export default function Dashboard() {
   ));
   const onlineCount = statsMonitoringDisplays.filter((display) => display.kind === 'online').length;
   const idleCount = statsMonitoringDisplays.filter((display) => display.kind === 'idle').length;
-  const monitoringLostCount = statsMonitoringDisplays.filter((display) => display.kind === 'signal_lost').length;
   const offlineCount = statsMonitoringDisplays.filter((display) => display.kind === 'signed_out').length;
   const offTaskCount = statsStudents.filter(isStudentOffTask).length;
 
@@ -2798,7 +2797,7 @@ export default function Dashboard() {
 
         {/* Stats Cards */}
         {canShowStudentWorkspace && (
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
             <div className="p-5 rounded-xl bg-green-500/10 border border-green-500/20 dark:bg-green-500/10 dark:border-green-500/20 transition-all duration-300">
               <div className="flex items-center gap-4">
                 <div className="h-12 w-12 rounded-xl bg-green-500 flex items-center justify-center"><Users className="h-6 w-6 text-white" /></div>
@@ -2815,12 +2814,6 @@ export default function Dashboard() {
               <div className="flex items-center gap-4">
                 <div className="h-12 w-12 rounded-xl bg-slate-500 flex items-center justify-center"><WifiOff className="h-6 w-6 text-white" /></div>
                 <div><p className="text-[28px] font-bold text-foreground" data-testid="text-offline-count">{offlineCount}</p><p className="text-[13px] text-muted-foreground font-medium">Not logged in</p></div>
-              </div>
-            </div>
-            <div className="p-5 rounded-xl bg-orange-500/10 border border-orange-500/20 dark:bg-orange-500/10 dark:border-orange-500/20 transition-all duration-300">
-              <div className="flex items-center gap-4">
-                <div className="h-12 w-12 rounded-xl bg-orange-500 flex items-center justify-center"><WifiOff className="h-6 w-6 text-white" /></div>
-                <div><p className="text-[28px] font-bold text-foreground" data-testid="text-monitoring-lost-count">{monitoringLostCount}</p><p className="text-[13px] text-orange-600 dark:text-orange-400 font-medium">Signal lost — cause unknown</p></div>
               </div>
             </div>
             <div className="p-5 rounded-xl bg-red-500/10 border border-red-500/20 dark:bg-red-500/10 dark:border-red-500/20 transition-all duration-300">
