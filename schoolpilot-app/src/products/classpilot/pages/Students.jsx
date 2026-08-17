@@ -21,7 +21,6 @@ import {
 } from "../../../components/ui/table";
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -47,6 +46,29 @@ import { EditStudentDialog } from "../components/EditStudentDialog";
 import { useClassPilotAuth } from "../../../hooks/useClassPilotAuth";
 import { useLicenses } from "../../../contexts/LicenseContext";
 import GoogleRosterConnectorPanel from "../../../shared/components/GoogleRosterConnectorPanel";
+
+const ACTIVE_ROSTER_QUERY_KEYS = [
+  ["/api/students"],
+  ["/api/roster/students"],
+  ["/api/admin/teacher-students"],
+  ["/api/groups"],
+  ["/api/teacher/groups"],
+  ["classpilot-admin-classes"],
+  ["admin-class-students"],
+];
+
+function invalidateActiveRosterQueries() {
+  return Promise.all(ACTIVE_ROSTER_QUERY_KEYS.map((queryKey) => (
+    queryClient.invalidateQueries({ queryKey, exact: false })
+  )));
+}
+
+function getApiErrorMessage(error, fallback = "Unknown error") {
+  const serverMessage = error?.response?.data?.error || error?.response?.data?.message;
+  return (typeof serverMessage === "string" && serverMessage.trim())
+    ? serverMessage
+    : error?.message || fallback;
+}
 
 // Helper to normalize grade levels
 function normalizeGrade(grade) {
@@ -301,6 +323,7 @@ function StudentsContent() {
   const [classroomImportGrade, setClassroomImportGrade] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedStudents, setSelectedStudents] = useState(new Set());
+  const [showBulkRemoveDialog, setShowBulkRemoveDialog] = useState(false);
   const [showAddStudentDialog, setShowAddStudentDialog] = useState(false);
   const [newStudentName, setNewStudentName] = useState("");
   const [newStudentEmail, setNewStudentEmail] = useState("");
@@ -407,9 +430,6 @@ function StudentsContent() {
   const directoryUsers = directoryData?.users || [];
   const orgUnits = orgUnitsData?.orgUnits || [];
 
-  // Parse error codes from the error (axios errors have response data in error.response.data)
-  const getApiErrorMessage = (error) => error?.response?.data?.error || error?.message || "Unknown error";
-
   const getDirectoryErrorCode = (error) => {
     if (!error) return null;
     const serverCode = error.response?.data?.code;
@@ -500,7 +520,7 @@ function StudentsContent() {
   // Get grades that have students (from imports)
   const gradesWithStudents = Array.from(
     new Set(
-      allStudents
+      activeStudents
         .map(s => normalizeGrade(s.gradeLevel))
         .filter(g => g !== null)
     )
@@ -515,15 +535,15 @@ function StudentsContent() {
 
   // Get student counts per grade for badge display
   const gradeStudentCounts = activeGrades.reduce((acc, grade) => {
-    acc[grade] = allStudents.filter(s => normalizeGrade(s.gradeLevel) === grade).length;
+    acc[grade] = activeStudents.filter(s => normalizeGrade(s.gradeLevel) === grade).length;
     return acc;
   }, {});
 
   // Count students without a grade assigned
-  const studentsWithoutGrade = allStudents.filter(s => normalizeGrade(s.gradeLevel) === null);
+  const studentsWithoutGrade = activeStudents.filter(s => normalizeGrade(s.gradeLevel) === null);
 
   // Filter students by selected grade and search query
-  const filteredStudents = allStudents.filter(student => {
+  const filteredStudents = activeStudents.filter(student => {
     // Grade filter - handle special "__no_grade__" value
     if (selectedGrade === "__no_grade__") {
       if (normalizeGrade(student.gradeLevel) !== null) {
@@ -627,19 +647,18 @@ function StudentsContent() {
     mutationFn: async (studentId) => {
       return await apiRequest("DELETE", `/students/${studentId}`, {});
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/teacher-students"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/groups"], exact: false });
+    onSuccess: async () => {
+      await invalidateActiveRosterQueries();
       toast({
-        title: "Student Deleted",
-        description: "Student has been removed from the system",
+        title: "Student removed",
+        description: "The student was removed from active rosters. Their history is retained.",
       });
       setDeletingStudent(null);
     },
     onError: (error) => {
       toast({
-        title: "Error",
-        description: error.message || "Failed to delete student",
+        title: "Remove failed",
+        description: getApiErrorMessage(error, "Failed to remove student"),
         variant: "destructive",
       });
     },
@@ -650,19 +669,20 @@ function StudentsContent() {
     mutationFn: async (studentIds) => {
       return await apiRequest("POST", "/admin/students/bulk-delete", { studentIds });
     },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/teacher-students"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/groups"], exact: false });
+    onSuccess: async (data) => {
+      await invalidateActiveRosterQueries();
+      const removed = data.deactivated ?? data.deleted ?? selectedStudents.size;
       toast({
-        title: "Bulk Delete Complete",
-        description: `Deleted ${data.deleted} student${data.deleted !== 1 ? 's' : ''}${data.failed > 0 ? `, ${data.failed} failed` : ''}`,
+        title: "Students removed",
+        description: `Removed ${removed} student${removed !== 1 ? "s" : ""} from active rosters. Their history is retained.`,
       });
+      setShowBulkRemoveDialog(false);
       setSelectedStudents(new Set());
     },
     onError: (error) => {
       toast({
-        title: "Error",
-        description: error.message || "Failed to delete students",
+        title: "Remove failed",
+        description: getApiErrorMessage(error, "Failed to remove students"),
         variant: "destructive",
       });
     },
@@ -1788,7 +1808,7 @@ function StudentsContent() {
                   data-testid="button-grade-all"
                 >
                   All
-                  <span className="ml-1 text-xs opacity-70">({allStudents.length})</span>
+                  <span className="ml-1 text-xs opacity-70">({activeStudents.length})</span>
                 </Button>
                 {activeGrades.map((grade) => (
                   <Button
@@ -1872,19 +1892,22 @@ function StudentsContent() {
                 <Button
                   variant="destructive"
                   size="sm"
-                  onClick={() => bulkDeleteMutation.mutate(Array.from(selectedStudents))}
+                  onClick={() => {
+                    bulkDeleteMutation.reset();
+                    setShowBulkRemoveDialog(true);
+                  }}
                   disabled={bulkDeleteMutation.isPending}
                   data-testid="button-bulk-delete"
                 >
                   {bulkDeleteMutation.isPending ? (
                     <>
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Deleting...
+                      Removing...
                     </>
                   ) : (
                     <>
                       <Trash2 className="h-4 w-4 mr-2" />
-                      Delete Selected
+                      Remove Selected
                     </>
                   )}
                 </Button>
@@ -1974,7 +1997,11 @@ function StudentsContent() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => setDeletingStudent(student)}
+                            onClick={() => {
+                              deleteStudentMutation.reset();
+                              setDeletingStudent(student);
+                            }}
+                            aria-label={`Remove ${student.studentName} from active rosters`}
                             data-testid={`button-delete-${student.id}`}
                           >
                             <Trash2 className="h-4 w-4 text-destructive" />
@@ -2000,28 +2027,80 @@ function StudentsContent() {
         />
       )}
 
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog open={!!deletingStudent} onOpenChange={(open) => !open && setDeletingStudent(null)}>
+      {/* Remove Confirmation Dialog */}
+      <AlertDialog
+        open={!!deletingStudent}
+        onOpenChange={(open) => {
+          if (!open && !deleteStudentMutation.isPending) {
+            setDeletingStudent(null);
+            deleteStudentMutation.reset();
+          }
+        }}
+      >
         <AlertDialogContent data-testid="dialog-delete-student">
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Student?</AlertDialogTitle>
+            <AlertDialogTitle>Remove Student?</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete <strong>{deletingStudent?.studentName}</strong>?
-              This will remove them from all classes and delete their activity history.
-              This action cannot be undone.
+              <strong>{deletingStudent?.studentName}</strong> will no longer appear in active school or class rosters. Their class assignments and activity history are retained so IT can add them back later.
             </AlertDialogDescription>
+            {deleteStudentMutation.error ? (
+              <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive" role="alert" data-testid="remove-student-error">
+                {getApiErrorMessage(deleteStudentMutation.error, "Failed to remove student")}
+              </div>
+            ) : null}
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel data-testid="button-cancel-delete">
+            <AlertDialogCancel disabled={deleteStudentMutation.isPending} data-testid="button-cancel-delete">
               Cancel
             </AlertDialogCancel>
-            <AlertDialogAction
+            <Button
+              variant="destructive"
               onClick={() => deletingStudent && deleteStudentMutation.mutate(deletingStudent.id)}
               disabled={deleteStudentMutation.isPending}
               data-testid="button-confirm-delete"
             >
-              {deleteStudentMutation.isPending ? "Deleting..." : "Delete Student"}
-            </AlertDialogAction>
+              {deleteStudentMutation.isPending ? "Removing..." : "Remove Student"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Bulk Remove Confirmation Dialog */}
+      <AlertDialog
+        open={showBulkRemoveDialog}
+        onOpenChange={(open) => {
+          if (!bulkDeleteMutation.isPending) {
+            setShowBulkRemoveDialog(open);
+            if (!open) bulkDeleteMutation.reset();
+          }
+        }}
+      >
+        <AlertDialogContent data-testid="dialog-bulk-remove-students">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove Selected Students?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Remove {selectedStudents.size} selected student{selectedStudents.size !== 1 ? "s" : ""} from active rosters? Their class assignments and activity history are retained so IT can add them back later.
+            </AlertDialogDescription>
+            {bulkDeleteMutation.error ? (
+              <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive" role="alert" data-testid="bulk-remove-students-error">
+                {getApiErrorMessage(bulkDeleteMutation.error, "Failed to remove students")}
+              </div>
+            ) : null}
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={bulkDeleteMutation.isPending} data-testid="button-cancel-bulk-remove">
+              Cancel
+            </AlertDialogCancel>
+            <Button
+              variant="destructive"
+              onClick={() => bulkDeleteMutation.mutate(Array.from(selectedStudents))}
+              disabled={bulkDeleteMutation.isPending || selectedStudents.size === 0}
+              data-testid="button-confirm-bulk-remove"
+            >
+              {bulkDeleteMutation.isPending
+                ? "Removing..."
+                : `Remove ${selectedStudents.size} Student${selectedStudents.size !== 1 ? "s" : ""}`}
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

@@ -331,6 +331,17 @@ async function assertStudentsInSchool(schoolId: string, studentIds: string[]) {
   return students;
 }
 
+async function assertActiveStudentsInSchool(schoolId: string, studentIds: string[]) {
+  const schoolStudents = await assertStudentsInSchool(schoolId, studentIds);
+  if (schoolStudents.some((student) => student.status !== "active")) {
+    throw Object.assign(new Error("One or more students are not active in this school"), {
+      status: 400,
+      code: "CLASSPILOT_STUDENT_INACTIVE",
+    });
+  }
+  return schoolStudents;
+}
+
 async function assertValidAssignmentScope(schoolId: string, scopeType: string, rawScopeValue: unknown) {
   if (!COVERAGE_SCOPE_TYPES.has(scopeType)) {
     throw Object.assign(new Error("A valid coverage scope is required"), { status: 400 });
@@ -350,7 +361,7 @@ async function assertValidAssignmentScope(schoolId: string, scopeType: string, r
     }
   }
   if (scopeType === "students") {
-    await assertStudentsInSchool(schoolId, scopeValue!.split(",").map((id) => id.trim()).filter(Boolean));
+    await assertActiveStudentsInSchool(schoolId, scopeValue!.split(",").map((id) => id.trim()).filter(Boolean));
   }
   return scopeValue;
 }
@@ -368,7 +379,7 @@ async function assertStudentsWithinSetupAccess(
   access: SetupAccess,
   studentIds: string[]
 ) {
-  const students = await assertStudentsInSchool(schoolId, studentIds);
+  const students = await assertActiveStudentsInSchool(schoolId, studentIds);
   if (access.isAdmin || access.isSchoolwide) return students;
   for (const student of students) {
     if (!(await setupAccessCoversStudent(access, student))) {
@@ -954,6 +965,11 @@ async function resolveCoverageCommandTargets(
     selectedRows = activeRows.filter((row) => targetSet.has(row.studentId));
   }
 
+  await assertActiveStudentsInSchool(
+    schoolId,
+    selectedRows.map((row) => row.studentId)
+  );
+
   const now = Date.now();
   const activeWindowMs = 5 * 60 * 1000;
   const targets: ResolvedClasspilotCommandTarget[] = [];
@@ -1209,7 +1225,7 @@ router.post("/coverage/scope-groups", ...auth, async (req, res, next) => {
     const name = String(req.body.name || "").trim();
     if (!name) return res.status(400).json({ error: "name is required" });
     const studentIds = normalizeStudentIds(req.body.studentIds);
-    await assertStudentsInSchool(schoolId, studentIds);
+    await assertActiveStudentsInSchool(schoolId, studentIds);
     const group = await createCoverageScopeGroup({
       group: {
         schoolId,
@@ -1274,7 +1290,7 @@ router.put("/coverage/scope-groups/:id/students", ...auth, async (req, res, next
     const schoolId = res.locals.schoolId!;
     const groupId = String(req.params.id);
     const studentIds = normalizeStudentIds(req.body.studentIds);
-    await assertStudentsInSchool(schoolId, studentIds);
+    await assertActiveStudentsInSchool(schoolId, studentIds);
     const group = await replaceCoverageScopeGroupMembers({ schoolId, groupId, studentIds });
     if (!group) return res.status(404).json({ error: "Testing group not found" });
     await logAudit({
@@ -1669,7 +1685,7 @@ router.post("/coverage/claim", ...auth, async (req, res, next) => {
     if (!staffMembership || staffMembership.status !== "active") {
       return res.status(404).json({ error: "Assigned staff member not found in this school" });
     }
-    const students = await assertStudentsInSchool(schoolId, studentIds);
+    const students = await assertActiveStudentsInSchool(schoolId, studentIds);
 
     let result;
     if (scheduledConflictId) {
@@ -1824,7 +1840,7 @@ router.post("/coverage/send", ...auth, async (req, res, next) => {
     if (!assignedStaffGroupIds.has(group.id)) {
       return res.status(403).json({ error: "Assigned staff member is not paired with this Supervision Group" });
     }
-    await assertStudentsInSchool(schoolId, studentIds);
+    await assertActiveStudentsInSchool(schoolId, studentIds);
     const groupMemberIds = new Set(group.members.map((member: any) => member.studentId));
     if (studentIds.some((studentId) => !groupMemberIds.has(studentId))) {
       return res.status(403).json({ error: "One or more students are outside this Supervision Group" });
@@ -2139,7 +2155,7 @@ router.post("/coverage/contexts", ...auth, async (req, res, next) => {
     }
     const admin = isAdmin(req, res);
     if (studentIds.length === 0 && !admin) return res.status(400).json({ error: "studentIds are required" });
-    const students = await assertStudentsInSchool(schoolId, studentIds);
+    const students = await assertActiveStudentsInSchool(schoolId, studentIds);
     if (!admin) {
       const unassignedRows = await getOnlineUnassignedStudents(schoolId);
       const unassignedIds = new Set(unassignedRows.map((row) => row.student.id));
@@ -2215,7 +2231,7 @@ router.post("/coverage/reroute", ...auth, async (req, res, next) => {
     if (!context || context.status !== "active" || context.endsAt <= new Date()) {
       return res.status(404).json({ error: "Active coverage context not found" });
     }
-    await assertStudentsInSchool(schoolId, studentIds);
+    await assertActiveStudentsInSchool(schoolId, studentIds);
 
     if (!isAdmin(req, res)) {
       const session = await getActiveTeachingSessionForSchool(req.authUser!.id, schoolId);

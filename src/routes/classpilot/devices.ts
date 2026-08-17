@@ -766,6 +766,13 @@ async function completeStudentDeviceLogin(options: {
   if (!options.student) {
     throw new Error("Student required");
   }
+  if (options.student.schoolId !== options.schoolId || options.student.status !== "active") {
+    throw Object.assign(new Error("Student is not enrolled"), {
+      status: 403,
+      code: "STUDENT_INACTIVE",
+      expose: true,
+    });
+  }
 
   const {
     device,
@@ -1546,6 +1553,13 @@ router.post("/extension/register", extensionRegisterLimiter, async (req, res, ne
       // partial match can bind a Chromebook to the wrong student.
       let student = await getStudentByEmail(resolvedSchoolId, studentEmail.toLowerCase());
 
+      if (student && student.status !== "active") {
+        return res.status(403).json({
+          error: "Student not enrolled. Ask your administrator to add this student back before connecting a device.",
+          code: "STUDENT_INACTIVE",
+        });
+      }
+
       if (!student) {
         // POLICY: by default a student must be pre-imported by an IT admin — an
         // unknown email is REJECTED, never auto-created. This is what stops a
@@ -1639,6 +1653,13 @@ router.post("/register-student", extensionRegisterLimiter, async (req, res, next
       // a Chromebook to the wrong student.
       let student = await getStudentByEmail(resolvedSchoolId, emailLc);
 
+      if (student && student.status !== "active") {
+        return res.status(403).json({
+          error: "Student not enrolled. Ask your administrator to add this student back before connecting a device.",
+          code: "STUDENT_INACTIVE",
+        });
+      }
+
       if (!student) {
         if (!regSettings?.autoEnrollStudents) {
           return res.status(403).json({
@@ -1730,6 +1751,9 @@ router.post("/device/:deviceId/active-student", requireDeviceAuth, deviceActionL
     }
     if (student.schoolId !== schoolId) {
       return res.status(403).json({ error: "Student is not in this school" });
+    }
+    if (student.status !== "active") {
+      return res.status(404).json({ error: "Student not found", code: "STUDENT_INACTIVE" });
     }
 
     const linkedStudents = await getStudentsForDevice(deviceId);

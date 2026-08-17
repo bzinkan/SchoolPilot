@@ -189,7 +189,7 @@ router.post("/checkout", kioskLimiter, async (req, res, next) => {
 
     await runWithTenantContext({ schoolId }, async () => {
     const student = await getStudentById(parsed.data.studentId);
-    if (!student || student.schoolId !== schoolId) {
+    if (!student || student.schoolId !== schoolId || student.status !== "active") {
       return res.status(400).json({ error: "Student not found" });
     }
 

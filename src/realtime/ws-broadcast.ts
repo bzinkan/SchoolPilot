@@ -323,6 +323,57 @@ export function closeSocketsForSchool(schoolId: string) {
   }
 }
 
+/**
+ * Immediately revoke every locally connected socket for selected students.
+ * Remove registry authority before starting the close handshake so an
+ * in-flight local broadcast cannot deliver another control to the stale
+ * authenticated binding.
+ */
+export function closeStudentSocketsLocal(
+  schoolId: string,
+  studentIds: readonly string[]
+): number {
+  const sockets = studentSocketsBySchool.get(schoolId);
+  if (!sockets || studentIds.length === 0) return 0;
+  const targets = new Set(studentIds.map(String).filter(Boolean));
+  if (targets.size === 0) return 0;
+
+  let closed = 0;
+  for (const ws of [...sockets]) {
+    const client = wsClients.get(ws);
+    if (
+      !client?.authenticated ||
+      client.role !== "student" ||
+      !client.studentId ||
+      !targets.has(client.studentId)
+    ) {
+      continue;
+    }
+
+    client.authenticated = false;
+    sockets.delete(ws);
+    wsClients.delete(ws);
+    closed += 1;
+    if (ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(JSON.stringify({
+          type: "auth-error",
+          message: "Student session is no longer active",
+        }));
+      } catch {
+        // The registry revocation above is already authoritative.
+      }
+      try {
+        ws.close(1008, "Student session is no longer active");
+      } catch {
+        ws.terminate();
+      }
+    }
+  }
+  if (sockets.size === 0) studentSocketsBySchool.delete(schoolId);
+  return closed;
+}
+
 export function getConnectedStudentDeviceIds(schoolId: string): Set<string> {
   const sockets = studentSocketsBySchool.get(schoolId);
   const deviceIds = new Set<string>();

@@ -870,6 +870,209 @@ export async function updateStudent(
   return student;
 }
 
+export async function getStudentsByExactEmails(
+  schoolId: string,
+  emailLcs: string[]
+): Promise<Student[]> {
+  const normalized = [...new Set(emailLcs.map((email) => email.trim().toLowerCase()).filter(Boolean))];
+  if (normalized.length === 0) return [];
+  return db
+    .select()
+    .from(students)
+    .where(
+      and(
+        eq(students.schoolId, schoolId),
+        inArray(students.emailLc, normalized)
+      )
+    );
+}
+
+export type StudentLifecycleAuditActor = {
+  userId: string | null;
+  userEmail?: string | null;
+  userRole?: string | null;
+  /** Sanitized route/import identifier; never include names, emails, or request bodies. */
+  source: string;
+};
+
+export type StudentRosterDeactivationResult = {
+  foundStudentIds: string[];
+  deactivatedStudentIds: string[];
+  endedSessionCount: number;
+  students: Array<Pick<Student, "id" | "email">>;
+};
+
+/**
+ * Remove students from every active product roster without destroying retained
+ * relationships or history. The school lock serializes this lifecycle change
+ * with PassPilot issuance, while the row locks make retries and concurrent
+ * single/bulk requests idempotent. Audit rows commit in the same transaction
+ * and exist only for real active -> inactive transitions.
+ */
+export async function deactivateStudentsForRoster(
+  schoolId: string,
+  requestedStudentIds: string[],
+  actor: StudentLifecycleAuditActor
+): Promise<StudentRosterDeactivationResult> {
+  const studentIds = [...new Set(requestedStudentIds.map(String).filter(Boolean))].sort();
+  if (studentIds.length === 0) {
+    return {
+      foundStudentIds: [],
+      deactivatedStudentIds: [],
+      endedSessionCount: 0,
+      students: [],
+    };
+  }
+
+  return db.transaction(async (tx) => {
+    await takePasspilotClassLock(tx, schoolId);
+    const lockedStudents = await tx
+      .select({ id: students.id, email: students.email, status: students.status })
+      .from(students)
+      .where(and(eq(students.schoolId, schoolId), inArray(students.id, studentIds)))
+      .orderBy(asc(students.id))
+      .for("update");
+
+    const foundStudentIds = lockedStudents.map((student) => student.id);
+    const deactivatedStudentIds = lockedStudents
+      .filter((student) => student.status === "active")
+      .map((student) => student.id);
+    const now = new Date();
+
+    // Close anomalous leftover sessions even on an idempotent retry of an
+    // already-inactive student. This does not create another lifecycle audit.
+    const endedSessions = foundStudentIds.length === 0
+      ? { rowCount: 0 }
+      : await tx
+          .update(studentSessions)
+          .set({ isActive: false, endedAt: now })
+          .where(
+            and(
+              inArray(studentSessions.studentId, foundStudentIds),
+              eq(studentSessions.isActive, true)
+            )
+          );
+
+    if (deactivatedStudentIds.length > 0) {
+      await tx
+        .update(students)
+        .set({ status: "inactive", updatedAt: now })
+        .where(
+          and(
+            eq(students.schoolId, schoolId),
+            inArray(students.id, deactivatedStudentIds),
+            eq(students.status, "active")
+          )
+        );
+
+      await tx.insert(auditLogs).values(
+        deactivatedStudentIds.map((studentId) => ({
+          schoolId,
+          userId: actor.userId,
+          userEmail: actor.userEmail ?? null,
+          userRole: actor.userRole ?? null,
+          action: "student.deactivated",
+          entityType: "student",
+          entityId: studentId,
+          changes: { status: { from: "active", to: "inactive" } },
+          metadata: { source: actor.source },
+        }))
+      );
+    }
+
+    return {
+      foundStudentIds,
+      deactivatedStudentIds,
+      endedSessionCount: endedSessions.rowCount ?? 0,
+      students: lockedStudents.map(({ id, email }) => ({ id, email })),
+    };
+  });
+}
+
+/**
+ * Exact-email trusted roster upsert. Existing active rows receive the supplied
+ * import refresh; inactive rows are reactivated with the same ID and retained
+ * relationships. PIN fields are preserved unless the caller explicitly
+ * supplies them. No fuzzy matching is permitted.
+ */
+export async function reactivateInactiveStudentForRosterImport(
+  schoolId: string,
+  emailLc: string,
+  updates: Partial<InsertStudent>,
+  actor: StudentLifecycleAuditActor
+): Promise<{ student: Student | undefined; reactivated: boolean }> {
+  const normalizedEmailLc = emailLc.trim().toLowerCase();
+  if (!normalizedEmailLc) return { student: undefined, reactivated: false };
+
+  const normalizedUpdates = normalizeStudentEmailFields(updates);
+  if (
+    normalizedUpdates.emailLc !== undefined &&
+    normalizedUpdates.emailLc !== null &&
+    normalizedUpdates.emailLc !== normalizedEmailLc
+  ) {
+    throw new Error("Roster import email does not match its exact identity key");
+  }
+  const safeUpdates = { ...normalizedUpdates } as Partial<InsertStudent> & Record<string, unknown>;
+  delete safeUpdates.id;
+  delete safeUpdates.schoolId;
+  delete safeUpdates.status;
+  safeUpdates.emailLc = normalizedEmailLc;
+
+  return db.transaction(async (tx) => {
+    await takePasspilotClassLock(tx, schoolId);
+    const [existing] = await tx
+      .select()
+      .from(students)
+      .where(
+        and(
+          eq(students.schoolId, schoolId),
+          eq(students.emailLc, normalizedEmailLc)
+        )
+      )
+      .limit(1)
+      .for("update");
+    if (!existing) return { student: undefined, reactivated: false };
+
+    const reactivated = existing.status !== "active";
+    const now = new Date();
+    if (reactivated) {
+      // A pre-fix race could leave an active session attached to an inactive
+      // record. Never let a roster restore resurrect that credential.
+      await tx
+        .update(studentSessions)
+        .set({ isActive: false, endedAt: now })
+        .where(
+          and(
+            eq(studentSessions.studentId, existing.id),
+            eq(studentSessions.isActive, true)
+          )
+        );
+    }
+    const [student] = await tx
+      .update(students)
+      .set({ ...safeUpdates, status: "active", updatedAt: now })
+      .where(and(eq(students.id, existing.id), eq(students.schoolId, schoolId)))
+      .returning();
+    if (!student) throw new Error("Roster import could not update the matched student");
+
+    if (reactivated) {
+      await tx.insert(auditLogs).values({
+        schoolId,
+        userId: actor.userId,
+        userEmail: actor.userEmail ?? null,
+        userRole: actor.userRole ?? null,
+        action: "student.reactivated",
+        entityType: "student",
+        entityId: student.id,
+        changes: { status: { from: existing.status, to: "active" } },
+        metadata: { source: actor.source },
+      });
+    }
+
+    return { student, reactivated };
+  });
+}
+
 /** Counts-only credential-rotation helper. Caller must bind the school tenant. */
 export async function getEncryptedClasspilotPinBatch(
   schoolId: string,
@@ -918,29 +1121,17 @@ export async function replaceEncryptedClasspilotPin(
   return updated.length === 1;
 }
 
-export async function deleteStudent(id: string, schoolId: string): Promise<boolean> {
-  return db.transaction(async (tx) => {
-    await takePasspilotClassLock(tx, schoolId);
-    const [student] = await tx
-      .select({ id: students.id })
-      .from(students)
-      .where(and(eq(students.id, id), eq(students.schoolId, schoolId)))
-      .limit(1)
-      .for("update");
-    if (!student) return false;
-    await tx
-      .delete(passpilotGradeStudents)
-      .where(
-        and(
-          eq(passpilotGradeStudents.schoolId, schoolId),
-          eq(passpilotGradeStudents.studentId, id)
-        )
-      );
-    const result = await tx
-      .delete(students)
-      .where(and(eq(students.id, id), eq(students.schoolId, schoolId)));
-    return (result.rowCount ?? 0) > 0;
-  });
+export async function deleteStudent(
+  id: string,
+  schoolId: string,
+  actor: StudentLifecycleAuditActor = {
+    userId: null,
+    userRole: "system",
+    source: "storage.deleteStudent",
+  }
+): Promise<boolean> {
+  const result = await deactivateStudentsForRoster(schoolId, [id], actor);
+  return result.foundStudentIds.length === 1;
 }
 
 function legacyGradeMembershipCondition(schoolId: string, gradeId: string): SQL {
@@ -1890,20 +2081,37 @@ export async function deleteUser(id: string): Promise<boolean> {
 export async function getActivePassesBySchool(
   schoolId: string
 ): Promise<Pass[]> {
-  return db
-    .select()
+  const rows = await db
+    .select({ pass: passes })
     .from(passes)
+    .innerJoin(
+      students,
+      and(
+        eq(students.id, passes.studentId),
+        eq(students.schoolId, passes.schoolId),
+        eq(students.status, "active")
+      )
+    )
     .where(and(eq(passes.schoolId, schoolId), eq(passes.status, "active")))
     .orderBy(desc(passes.issuedAt));
+  return rows.map((row) => row.pass);
 }
 
 export async function getActivePassesByGrade(
   schoolId: string,
   gradeId: string
 ): Promise<Pass[]> {
-  return db
-    .select()
+  const rows = await db
+    .select({ pass: passes })
     .from(passes)
+    .innerJoin(
+      students,
+      and(
+        eq(students.id, passes.studentId),
+        eq(students.schoolId, passes.schoolId),
+        eq(students.status, "active")
+      )
+    )
     .where(
       and(
         eq(passes.schoolId, schoolId),
@@ -1912,6 +2120,7 @@ export async function getActivePassesByGrade(
       )
     )
     .orderBy(desc(passes.issuedAt));
+  return rows.map((row) => row.pass);
 }
 
 export async function deleteProductLicenseForSchool(
@@ -1973,9 +2182,17 @@ export async function getActivePassesByClass(
         inArray(passes.gradeId, mappedGrades.map((grade) => grade.id))
       )!
     : eq(passes.classpilotGroupId, classId);
-  return db
-    .select()
+  const rows = await db
+    .select({ pass: passes })
     .from(passes)
+    .innerJoin(
+      students,
+      and(
+        eq(students.id, passes.studentId),
+        eq(students.schoolId, passes.schoolId),
+        eq(students.status, "active")
+      )
+    )
     .where(
       and(
         eq(passes.schoolId, schoolId),
@@ -1984,15 +2201,24 @@ export async function getActivePassesByClass(
       )
     )
     .orderBy(desc(passes.issuedAt));
+  return rows.map((row) => row.pass);
 }
 
 export async function getActivePassForStudent(
   studentId: string,
   schoolId: string
 ): Promise<Pass | undefined> {
-  const [pass] = await db
-    .select()
+  const [row] = await db
+    .select({ pass: passes })
     .from(passes)
+    .innerJoin(
+      students,
+      and(
+        eq(students.id, passes.studentId),
+        eq(students.schoolId, passes.schoolId),
+        eq(students.status, "active")
+      )
+    )
     .where(
       and(
         eq(passes.studentId, studentId),
@@ -2001,7 +2227,7 @@ export async function getActivePassForStudent(
       )
     )
     .limit(1);
-  return pass;
+  return row?.pass;
 }
 
 export async function getPassById(
@@ -2487,9 +2713,17 @@ export async function getKioskStudentState(
     if (!school) {
       throw passpilotClassError("SCHOOL_NOT_FOUND", "School not found.", 404);
     }
-    const [activePass] = await tx
-      .select()
+    const [activePassRow] = await tx
+      .select({ pass: passes })
       .from(passes)
+      .innerJoin(
+        students,
+        and(
+          eq(students.id, passes.studentId),
+          eq(students.schoolId, passes.schoolId),
+          eq(students.status, "active")
+        )
+      )
       .where(
         and(
           eq(passes.schoolId, schoolId),
@@ -2498,6 +2732,7 @@ export async function getKioskStudentState(
         )
       )
       .limit(1);
+    const activePass = activePassRow?.pass;
     if (classSource === "legacy_grades") {
       const configuredClassId = school.kioskGradeId;
       if (!configuredClassId) {
@@ -2653,9 +2888,17 @@ export async function returnKioskPassForStudent(
       .for("update");
     if (!school) return undefined;
 
-    const [activePass] = await tx
-      .select()
+    const [activePassRow] = await tx
+      .select({ pass: passes })
       .from(passes)
+      .innerJoin(
+        students,
+        and(
+          eq(students.id, passes.studentId),
+          eq(students.schoolId, passes.schoolId),
+          eq(students.status, "active")
+        )
+      )
       .where(
         and(
           eq(passes.schoolId, schoolId),
@@ -2664,7 +2907,8 @@ export async function returnKioskPassForStudent(
         )
       )
       .limit(1)
-      .for("update");
+      .for("update", { of: passes });
+    const activePass = activePassRow?.pass;
     if (!activePass) return undefined;
 
     if (source?.value === "legacy_grades" && school.kioskGradeId) {
@@ -3461,18 +3705,18 @@ export async function transitionDismissalSessionStatus(options: {
     }
 
     if (options.nextStatus === "completed") {
-      const [stats] = await tx
-        .select({
-          outstanding: sql<number>`COUNT(*) FILTER (WHERE ${dismissalQueue.status} <> 'dismissed')::int`,
-        })
-        .from(dismissalQueue)
-        .where(
-          and(
-            eq(dismissalQueue.schoolId, options.schoolId),
-            eq(dismissalQueue.sessionId, options.sessionId)
-          )
-        );
-      const outstanding = Number(stats?.outstanding ?? 0);
+      // Retained queue history for a removed student must not prevent staff
+      // from completing a live session. Lock each still-active student row so
+      // this decision serializes with roster deactivation.
+      const outstandingRows = await lockActiveDismissalQueueStudents(
+        tx as unknown as typeof db,
+        {
+          schoolId: options.schoolId,
+          sessionId: options.sessionId,
+          outstandingOnly: true,
+        }
+      );
+      const outstanding = outstandingRows.length;
       if (outstanding > 0) {
         return { outcome: "outstanding" as const, session: current, outstanding };
       }
@@ -3523,11 +3767,28 @@ export async function transitionDismissalSessionStatus(options: {
 
 export async function getQueueBySession(
   sessionId: string,
-  filterStatus?: string
+  filterStatus?: string,
+  options: { activeStudentsOnly?: boolean } = {}
 ): Promise<DismissalQueueEntry[]> {
   const conditions = [eq(dismissalQueue.sessionId, sessionId)];
   if (filterStatus) {
     conditions.push(eq(dismissalQueue.status, filterStatus));
+  }
+  if (options.activeStudentsOnly) {
+    const rows = await db
+      .select({ entry: dismissalQueue })
+      .from(dismissalQueue)
+      .innerJoin(
+        students,
+        and(
+          eq(students.id, dismissalQueue.studentId),
+          eq(students.schoolId, dismissalQueue.schoolId),
+          eq(students.status, "active")
+        )
+      )
+      .where(and(...conditions))
+      .orderBy(dismissalQueue.position, dismissalQueue.checkInTime);
+    return rows.map((row) => row.entry);
   }
   return db
     .select()
@@ -3642,6 +3903,51 @@ async function withActiveDismissalSessionQueueMutation<T>(
   });
 }
 
+type ActiveDismissalQueueStudentLockOptions = {
+  schoolId: string;
+  sessionId: string;
+  queueIds?: string[];
+  outstandingOnly?: boolean;
+};
+
+/**
+ * Locks the active student rows represented by queue entries in deterministic
+ * order. Student deactivation takes the same row locks, so every live queue
+ * mutation is serialized with roster removal instead of relying on a stale
+ * route-level status check.
+ */
+async function lockActiveDismissalQueueStudents(
+  transactionDb: typeof db,
+  options: ActiveDismissalQueueStudentLockOptions
+): Promise<Array<{ queueId: string; studentId: string }>> {
+  const queueIds = options.queueIds
+    ? [...new Set(options.queueIds.map(String))].sort()
+    : undefined;
+  if (queueIds && queueIds.length === 0) return [];
+
+  const conditions = [
+    eq(dismissalQueue.schoolId, options.schoolId),
+    eq(dismissalQueue.sessionId, options.sessionId),
+    eq(students.status, "active"),
+  ];
+  if (queueIds) conditions.push(inArray(dismissalQueue.id, queueIds));
+  if (options.outstandingOnly) conditions.push(ne(dismissalQueue.status, "dismissed"));
+
+  return transactionDb
+    .select({ queueId: dismissalQueue.id, studentId: students.id })
+    .from(dismissalQueue)
+    .innerJoin(
+      students,
+      and(
+        eq(students.id, dismissalQueue.studentId),
+        eq(students.schoolId, dismissalQueue.schoolId)
+      )
+    )
+    .where(and(...conditions))
+    .orderBy(students.id, dismissalQueue.id)
+    .for("update", { of: students });
+}
+
 export async function callQueueEntry(
   id: string,
   zone: string | null,
@@ -3649,6 +3955,12 @@ export async function callQueueEntry(
   sessionId: string
 ): Promise<DismissalQueueEntry | undefined> {
   return withActiveDismissalSessionQueueMutation(schoolId, sessionId, async (transactionDb) => {
+    const activeRows = await lockActiveDismissalQueueStudents(transactionDb, {
+      schoolId,
+      sessionId,
+      queueIds: [id],
+    });
+    if (activeRows.length !== 1) return undefined;
     const [entry] = await transactionDb
       .update(dismissalQueue)
       .set({
@@ -3691,6 +4003,14 @@ export async function callNextBatch(
     const waiting = await transactionDb
       .select({ id: dismissalQueue.id })
       .from(dismissalQueue)
+      .innerJoin(
+        students,
+        and(
+          eq(students.id, dismissalQueue.studentId),
+          eq(students.schoolId, dismissalQueue.schoolId),
+          eq(students.status, "active")
+        )
+      )
       .where(
         and(
           eq(dismissalQueue.sessionId, sessionId),
@@ -3706,10 +4026,16 @@ export async function callNextBatch(
       )
       .orderBy(dismissalQueue.position, dismissalQueue.id)
       .limit(boundedCount)
-      .for("update", { skipLocked: true });
+      .for("update", { of: dismissalQueue, skipLocked: true });
 
     if (waiting.length === 0) return [];
-    const ids = waiting.map((row) => row.id);
+    const lockedActiveRows = await lockActiveDismissalQueueStudents(transactionDb, {
+      schoolId,
+      sessionId,
+      queueIds: waiting.map((row) => row.id),
+    });
+    const ids = lockedActiveRows.map((row) => row.queueId);
+    if (ids.length === 0) return [];
     return transactionDb
       .update(dismissalQueue)
       .set({
@@ -3743,6 +4069,12 @@ export async function releaseQueueEntry(
   sessionId: string
 ): Promise<DismissalQueueEntry | undefined> {
   return withActiveDismissalSessionQueueMutation(schoolId, sessionId, async (transactionDb) => {
+    const activeRows = await lockActiveDismissalQueueStudents(transactionDb, {
+      schoolId,
+      sessionId,
+      queueIds: [id],
+    });
+    if (activeRows.length !== 1) return undefined;
     const [entry] = await transactionDb
       .update(dismissalQueue)
       .set({ status: "released", releasedAt: new Date() })
@@ -3769,6 +4101,14 @@ export async function dismissQueueEntry(
   custodyAlerts: CustodyAlert[];
 }> {
   return withActiveDismissalSessionQueueMutation(schoolId, sessionId, async (transactionDb) => {
+    const activeRows = await lockActiveDismissalQueueStudents(transactionDb, {
+      schoolId,
+      sessionId,
+      queueIds: [id],
+    });
+    if (activeRows.length !== 1) {
+      return { entry: undefined, custodyAlerts: [] };
+    }
     const [current] = await transactionDb
       .select()
       .from(dismissalQueue)
@@ -3852,6 +4192,17 @@ export async function batchDismiss(
 }> {
   return withActiveDismissalSessionQueueMutation(schoolId, sessionId, async (transactionDb) => {
     const requestedIds = [...new Set(queueIds.map(String))];
+    if (requestedIds.length === 0) {
+      return { entries: [], custodyAlertsByQueueId: new Map() };
+    }
+    const activeRows = await lockActiveDismissalQueueStudents(transactionDb, {
+      schoolId,
+      sessionId,
+      queueIds: requestedIds,
+    });
+    if (activeRows.length !== requestedIds.length) {
+      return { entries: [], custodyAlertsByQueueId: new Map() };
+    }
     const current = await transactionDb
       .select()
       .from(dismissalQueue)
@@ -3943,20 +4294,27 @@ export async function batchRelease(
   schoolId: string,
   sessionId: string
 ): Promise<DismissalQueueEntry[]> {
-  return withActiveDismissalSessionQueueMutation(schoolId, sessionId, (transactionDb) =>
-    transactionDb
+  return withActiveDismissalSessionQueueMutation(schoolId, sessionId, async (transactionDb) => {
+    const activeRows = await lockActiveDismissalQueueStudents(transactionDb, {
+      schoolId,
+      sessionId,
+      queueIds,
+    });
+    const activeQueueIds = activeRows.map((row) => row.queueId);
+    if (activeQueueIds.length === 0) return [];
+    return transactionDb
       .update(dismissalQueue)
       .set({ status: "released", releasedAt: new Date() })
       .where(
         and(
-          inArray(dismissalQueue.id, queueIds),
+          inArray(dismissalQueue.id, activeQueueIds),
           eq(dismissalQueue.schoolId, schoolId),
           eq(dismissalQueue.sessionId, sessionId),
           eq(dismissalQueue.status, "called")
         )
       )
-      .returning()
-  );
+      .returning();
+  });
 }
 
 export async function holdQueueEntry(
@@ -3966,6 +4324,12 @@ export async function holdQueueEntry(
   sessionId: string
 ): Promise<DismissalQueueEntry | undefined> {
   return withActiveDismissalSessionQueueMutation(schoolId, sessionId, async (transactionDb) => {
+    const activeRows = await lockActiveDismissalQueueStudents(transactionDb, {
+      schoolId,
+      sessionId,
+      queueIds: [id],
+    });
+    if (activeRows.length !== 1) return undefined;
     const [entry] = await transactionDb
       .update(dismissalQueue)
       .set({ status: "held", holdReason: reason })
@@ -3988,6 +4352,12 @@ export async function delayQueueEntry(
   sessionId: string
 ): Promise<DismissalQueueEntry | undefined> {
   return withActiveDismissalSessionQueueMutation(schoolId, sessionId, async (transactionDb) => {
+    const activeRows = await lockActiveDismissalQueueStudents(transactionDb, {
+      schoolId,
+      sessionId,
+      queueIds: [id],
+    });
+    if (activeRows.length !== 1) return undefined;
     const [entry] = await transactionDb
       .update(dismissalQueue)
       .set({
@@ -4007,17 +4377,38 @@ export async function delayQueueEntry(
   });
 }
 
-export async function getSessionStats(sessionId: string) {
+export async function getSessionStats(
+  sessionId: string,
+  options: { activeStudentsOnly?: boolean } = {}
+) {
+  const selectStats = {
+    waiting: sql<number>`COUNT(*) FILTER (WHERE ${dismissalQueue.status} = 'waiting')::int`,
+    called: sql<number>`COUNT(*) FILTER (WHERE ${dismissalQueue.status} = 'called')::int`,
+    released: sql<number>`COUNT(*) FILTER (WHERE ${dismissalQueue.status} = 'released')::int`,
+    dismissed: sql<number>`COUNT(*) FILTER (WHERE ${dismissalQueue.status} = 'dismissed')::int`,
+    held: sql<number>`COUNT(*) FILTER (WHERE ${dismissalQueue.status} = 'held')::int`,
+    delayed: sql<number>`COUNT(*) FILTER (WHERE ${dismissalQueue.status} = 'delayed')::int`,
+    total: sql<number>`COUNT(*)::int`,
+    avgWaitSeconds: sql<number | null>`AVG(EXTRACT(EPOCH FROM (${dismissalQueue.dismissedAt} - ${dismissalQueue.checkInTime}))) FILTER (WHERE ${dismissalQueue.dismissedAt} IS NOT NULL)`,
+  };
+  if (options.activeStudentsOnly) {
+    const [stats] = await db
+      .select(selectStats)
+      .from(dismissalQueue)
+      .innerJoin(
+        students,
+        and(
+          eq(students.id, dismissalQueue.studentId),
+          eq(students.schoolId, dismissalQueue.schoolId),
+          eq(students.status, "active")
+        )
+      )
+      .where(eq(dismissalQueue.sessionId, sessionId));
+    return stats;
+  }
   const [stats] = await db
     .select({
-      waiting: sql<number>`COUNT(*) FILTER (WHERE ${dismissalQueue.status} = 'waiting')::int`,
-      called: sql<number>`COUNT(*) FILTER (WHERE ${dismissalQueue.status} = 'called')::int`,
-      released: sql<number>`COUNT(*) FILTER (WHERE ${dismissalQueue.status} = 'released')::int`,
-      dismissed: sql<number>`COUNT(*) FILTER (WHERE ${dismissalQueue.status} = 'dismissed')::int`,
-      held: sql<number>`COUNT(*) FILTER (WHERE ${dismissalQueue.status} = 'held')::int`,
-      delayed: sql<number>`COUNT(*) FILTER (WHERE ${dismissalQueue.status} = 'delayed')::int`,
-      total: sql<number>`COUNT(*)::int`,
-      avgWaitSeconds: sql<number | null>`AVG(EXTRACT(EPOCH FROM (${dismissalQueue.dismissedAt} - ${dismissalQueue.checkInTime}))) FILTER (WHERE ${dismissalQueue.dismissedAt} IS NOT NULL)`,
+      ...selectStats,
     })
     .from(dismissalQueue)
     .where(eq(dismissalQueue.sessionId, sessionId));
@@ -6378,7 +6769,12 @@ export async function getStudentsForDevice(
     .select({ student: students })
     .from(studentDevices)
     .innerJoin(students, eq(studentDevices.studentId, students.id))
-    .where(eq(studentDevices.deviceId, deviceId));
+    .where(
+      and(
+        eq(studentDevices.deviceId, deviceId),
+        eq(students.status, "active")
+      )
+    );
   return rows.map((r) => r.student);
 }
 
@@ -6392,7 +6788,8 @@ export async function getActiveStudentForDevice(
     .where(
       and(
         eq(studentSessions.deviceId, deviceId),
-        eq(studentSessions.isActive, true)
+        eq(studentSessions.isActive, true),
+        eq(students.status, "active")
       )
     )
     .limit(1);
@@ -6404,22 +6801,60 @@ export async function setActiveStudentForDevice(
   deviceId: string,
   studentId: string
 ): Promise<StudentSession> {
-  // End any active session for this device
-  await db
-    .update(studentSessions)
-    .set({ isActive: false, endedAt: new Date() })
-    .where(
-      and(
-        eq(studentSessions.deviceId, deviceId),
-        eq(studentSessions.isActive, true)
+  return db.transaction(async (tx) => {
+    // Resolve the lifecycle lock key without locking the student first. The
+    // active check is repeated under the shared school lock and row lock, so a
+    // concurrent roster removal cannot insert a session after deactivation.
+    const [candidate] = await tx
+      .select({ schoolId: students.schoolId })
+      .from(students)
+      .where(eq(students.id, studentId))
+      .limit(1);
+    if (!candidate) {
+      throw Object.assign(new Error("Student is not enrolled"), {
+        status: 403,
+        code: "STUDENT_INACTIVE",
+        expose: true,
+      });
+    }
+
+    await takePasspilotClassLock(tx, candidate.schoolId);
+    const [activeStudent] = await tx
+      .select({ id: students.id })
+      .from(students)
+      .where(
+        and(
+          eq(students.id, studentId),
+          eq(students.schoolId, candidate.schoolId),
+          eq(students.status, "active")
+        )
       )
-    );
-  // Start new session
-  const [session] = await db
-    .insert(studentSessions)
-    .values({ studentId, deviceId })
-    .returning();
-  return session!;
+      .limit(1)
+      .for("update");
+    if (!activeStudent) {
+      throw Object.assign(new Error("Student is not enrolled"), {
+        status: 403,
+        code: "STUDENT_INACTIVE",
+        expose: true,
+      });
+    }
+
+    const now = new Date();
+    await tx
+      .update(studentSessions)
+      .set({ isActive: false, endedAt: now })
+      .where(
+        and(
+          eq(studentSessions.deviceId, deviceId),
+          eq(studentSessions.isActive, true)
+        )
+      );
+    const [session] = await tx
+      .insert(studentSessions)
+      .values({ studentId, deviceId })
+      .returning();
+    return session!;
+  });
 }
 
 // ============================================================================
@@ -6460,6 +6895,7 @@ export async function createHeartbeatAndRefreshPresence(
       INNER JOIN students AS student
         ON student.id = represented.student_id
        AND student.school_id = ${data.schoolId}
+       AND student.status = 'active'
       INNER JOIN devices AS session_device
         ON session_device.device_id = represented.device_id
        AND session_device.school_id = ${data.schoolId}
@@ -7022,28 +7458,55 @@ export async function getEventsByDevice(
 // ============================================================================
 
 export async function startStudentSession(
+  schoolId: string,
   studentId: string,
   deviceId: string
 ): Promise<StudentSession> {
-  // End any active sessions for this student OR this device
-  await db
-    .update(studentSessions)
-    .set({ isActive: false, endedAt: new Date() })
-    .where(
-      and(
-        or(
-          eq(studentSessions.studentId, studentId),
-          eq(studentSessions.deviceId, deviceId)
-        ),
-        eq(studentSessions.isActive, true)
+  return db.transaction(async (tx) => {
+    // Student roster removal/restoration and session issuance take this lock in
+    // the same order. The row-level active check is therefore authoritative at
+    // the point the credential-bearing session is created.
+    await takePasspilotClassLock(tx, schoolId);
+    const [student] = await tx
+      .select({ id: students.id })
+      .from(students)
+      .where(
+        and(
+          eq(students.id, studentId),
+          eq(students.schoolId, schoolId),
+          eq(students.status, "active")
+        )
       )
-    );
+      .limit(1)
+      .for("update");
+    if (!student) {
+      throw Object.assign(new Error("Student is not enrolled"), {
+        status: 403,
+        code: "STUDENT_INACTIVE",
+        expose: true,
+      });
+    }
 
-  const [session] = await db
-    .insert(studentSessions)
-    .values({ studentId, deviceId })
-    .returning();
-  return session!;
+    const now = new Date();
+    await tx
+      .update(studentSessions)
+      .set({ isActive: false, endedAt: now })
+      .where(
+        and(
+          or(
+            eq(studentSessions.studentId, studentId),
+            eq(studentSessions.deviceId, deviceId)
+          ),
+          eq(studentSessions.isActive, true)
+        )
+      );
+
+    const [session] = await tx
+      .insert(studentSessions)
+      .values({ studentId, deviceId })
+      .returning();
+    return session!;
+  });
 }
 
 export async function endStudentSession(
@@ -7076,17 +7539,19 @@ export async function touchStudentSession(
 export async function getActiveSessionByStudent(
   studentId: string
 ): Promise<StudentSession | undefined> {
-  const [session] = await db
-    .select()
+  const [row] = await db
+    .select({ session: studentSessions })
     .from(studentSessions)
+    .innerJoin(students, eq(students.id, studentSessions.studentId))
     .where(
       and(
         eq(studentSessions.studentId, studentId),
-        eq(studentSessions.isActive, true)
+        eq(studentSessions.isActive, true),
+        eq(students.status, "active")
       )
     )
     .limit(1);
-  return session;
+  return row?.session;
 }
 
 export async function getActiveSessionsForStudents(
@@ -7105,6 +7570,7 @@ export async function getActiveSessionsForStudents(
     .where(
       and(
         eq(students.schoolId, schoolId),
+        eq(students.status, "active"),
         eq(devices.schoolId, schoolId),
         inArray(studentSessions.studentId, uniqueStudentIds),
         eq(studentSessions.isActive, true)
@@ -7158,6 +7624,7 @@ export async function getActiveSessions(
     .where(
       and(
         eq(students.schoolId, schoolId),
+        eq(students.status, "active"),
         eq(studentSessions.isActive, true)
       )
     );
@@ -7211,7 +7678,8 @@ export async function resyncClasspilotSessionStudents(
         students,
         and(
           eq(students.id, groupStudents.studentId),
-          eq(students.schoolId, group.schoolId)
+          eq(students.schoolId, group.schoolId),
+          eq(students.status, "active")
         )
       )
       .where(eq(groupStudents.groupId, session.groupId));
@@ -7332,7 +7800,8 @@ export async function resyncActiveClasspilotSessionStudents(
       .from(groupStudents)
       .innerJoin(students, and(
         eq(students.id, groupStudents.studentId),
-        eq(students.schoolId, options.schoolId)
+        eq(students.schoolId, options.schoolId),
+        eq(students.status, "active")
       ))
       .where(eq(groupStudents.groupId, candidate.groupId));
     const existing = await tx
@@ -7625,9 +8094,9 @@ export async function getClasspilotSessionStudents(
 }
 
 /**
- * Return the roster frozen onto a teaching session. Summary generation must
- * use this snapshot rather than the group's current roster: administrators
- * can edit a class after its scheduled occurrence has already begun.
+ * Return the active operational roster frozen onto a teaching session.
+ * Snapshot rows remain retained for reports, but inactive students cannot be
+ * shown or targeted in a still-open classroom workflow.
  */
 export async function getClasspilotSessionStudentRoster(
   schoolId: string,
@@ -7641,11 +8110,12 @@ export async function getClasspilotSessionStudentRoster(
       student: students,
     })
     .from(classpilotSessionStudents)
-    .leftJoin(
+    .innerJoin(
       students,
       and(
         eq(students.id, classpilotSessionStudents.studentId),
-        eq(students.schoolId, schoolId)
+        eq(students.schoolId, schoolId),
+        eq(students.status, "active")
       )
     )
     .where(and(
@@ -11556,7 +12026,12 @@ export async function getGroupStudents(
     })
     .from(groupStudents)
     .innerJoin(students, eq(groupStudents.studentId, students.id))
-    .where(eq(groupStudents.groupId, groupId));
+    .where(
+      and(
+        eq(groupStudents.groupId, groupId),
+        eq(students.status, "active")
+      )
+    );
   return rows.map((r) => ({ ...r.groupStudent, student: r.student }));
 }
 
@@ -11564,7 +12039,13 @@ export async function getGroupStudentIds(groupId: string): Promise<string[]> {
   const rows = await db
     .select({ studentId: groupStudents.studentId })
     .from(groupStudents)
-    .where(eq(groupStudents.groupId, groupId));
+    .innerJoin(students, eq(students.id, groupStudents.studentId))
+    .where(
+      and(
+        eq(groupStudents.groupId, groupId),
+        eq(students.status, "active")
+      )
+    );
   return rows.map((row) => row.studentId);
 }
 
@@ -11702,7 +12183,12 @@ export async function getSubgroupMembers(
     })
     .from(subgroupMembers)
     .innerJoin(students, eq(subgroupMembers.studentId, students.id))
-    .where(eq(subgroupMembers.subgroupId, subgroupId));
+    .where(
+      and(
+        eq(subgroupMembers.subgroupId, subgroupId),
+        eq(students.status, "active")
+      )
+    );
   return rows.map((r) => ({ ...r.member, student: r.student }));
 }
 
@@ -11987,7 +12473,14 @@ export async function getActiveHandsBySession(
   const rows = await db
     .select({ hand: classpilotActiveHands, student: students })
     .from(classpilotActiveHands)
-    .innerJoin(students, eq(classpilotActiveHands.studentId, students.id))
+    .innerJoin(
+      students,
+      and(
+        eq(classpilotActiveHands.studentId, students.id),
+        eq(students.schoolId, schoolId),
+        eq(students.status, "active")
+      )
+    )
     .where(
       and(
         eq(classpilotActiveHands.schoolId, schoolId),
@@ -12003,9 +12496,17 @@ export async function getActiveHandsForStudent(
   schoolId: string,
   studentId: string
 ): Promise<ClasspilotActiveHand[]> {
-  return db
-    .select()
+  const rows = await db
+    .select({ hand: classpilotActiveHands })
     .from(classpilotActiveHands)
+    .innerJoin(
+      students,
+      and(
+        eq(students.id, classpilotActiveHands.studentId),
+        eq(students.schoolId, schoolId),
+        eq(students.status, "active")
+      )
+    )
     .where(
       and(
         eq(classpilotActiveHands.schoolId, schoolId),
@@ -12015,6 +12516,7 @@ export async function getActiveHandsForStudent(
       )
     )
     .orderBy(desc(classpilotActiveHands.raisedAt));
+  return rows.map((row) => row.hand);
 }
 
 export async function upsertClasspilotActiveHand(
@@ -12638,6 +13140,36 @@ export async function lockClasspilotStudentControlAuthorities(
     await dbInstance.execute(
       sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`
     );
+  }
+  return normalized;
+}
+
+async function lockActiveSchoolStudentsForOperationalWrite(
+  schoolId: string,
+  studentIds: readonly string[],
+  dbInstance: typeof db
+): Promise<string[]> {
+  const normalized = [...new Set(studentIds.map(String).map((id) => id.trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+  if (normalized.length === 0) return [];
+  const activeRows = await dbInstance
+    .select({ id: students.id })
+    .from(students)
+    .where(
+      and(
+        eq(students.schoolId, schoolId),
+        inArray(students.id, normalized),
+        eq(students.status, "active")
+      )
+    )
+    .orderBy(students.id)
+    .for("update");
+  if (activeRows.length !== normalized.length) {
+    throw Object.assign(new Error("One or more students are not active in this school"), {
+      status: 409,
+      code: "STUDENT_INACTIVE",
+      expose: true,
+    });
   }
   return normalized;
 }
@@ -13529,7 +14061,14 @@ export async function listCoverageScopeGroups(
   const members = await db
     .select({ member: classpilotCoverageScopeGroupMembers, student: students })
     .from(classpilotCoverageScopeGroupMembers)
-    .innerJoin(students, eq(students.id, classpilotCoverageScopeGroupMembers.studentId))
+    .innerJoin(
+      students,
+      and(
+        eq(students.id, classpilotCoverageScopeGroupMembers.studentId),
+        eq(students.schoolId, schoolId),
+        eq(students.status, "active")
+      )
+    )
     .where(
       and(
         eq(classpilotCoverageScopeGroupMembers.schoolId, schoolId),
@@ -13565,6 +14104,11 @@ export async function createCoverageScopeGroup(options: {
 }): Promise<CoverageScopeGroupWithMembers> {
   const uniqueStudentIds = Array.from(new Set(options.studentIds.filter(Boolean)));
   const created = await db.transaction(async (tx) => {
+    await lockActiveSchoolStudentsForOperationalWrite(
+      options.group.schoolId,
+      uniqueStudentIds,
+      tx as unknown as typeof db
+    );
     const [group] = await tx
       .insert(classpilotCoverageScopeGroups)
       .values(options.group)
@@ -13625,6 +14169,11 @@ export async function replaceCoverageScopeGroupMembers(options: {
   if (!group) return undefined;
 
   await db.transaction(async (tx) => {
+    await lockActiveSchoolStudentsForOperationalWrite(
+      options.schoolId,
+      uniqueStudentIds,
+      tx as unknown as typeof db
+    );
     await tx
       .delete(classpilotCoverageScopeGroupMembers)
       .where(
@@ -13663,6 +14212,14 @@ export async function getCoverageScopeGroupStudentIds(
   const rows = await db
     .select({ studentId: classpilotCoverageScopeGroupMembers.studentId })
     .from(classpilotCoverageScopeGroupMembers)
+    .innerJoin(
+      students,
+      and(
+        eq(students.id, classpilotCoverageScopeGroupMembers.studentId),
+        eq(students.schoolId, schoolId),
+        eq(students.status, "active")
+      )
+    )
     .where(
       and(
         eq(classpilotCoverageScopeGroupMembers.schoolId, schoolId),
@@ -13851,6 +14408,14 @@ export async function getActiveSupervisionForStudents(
       classpilotSupervisionContexts,
       eq(classpilotSupervisionStudents.contextId, classpilotSupervisionContexts.id)
     )
+    .innerJoin(
+      students,
+      and(
+        eq(students.id, classpilotSupervisionStudents.studentId),
+        eq(students.schoolId, schoolId),
+        eq(students.status, "active")
+      )
+    )
     .where(
       and(
         activeSupervisionCondition(schoolId),
@@ -14003,6 +14568,11 @@ export async function claimScheduledCoverageStudents(options: {
         ...uniqueStudentIds,
         ...preExistingAssignments.map((row) => row.studentId),
       ],
+      tx as unknown as typeof db
+    );
+    await lockActiveSchoolStudentsForOperationalWrite(
+      options.schoolId,
+      uniqueStudentIds,
       tx as unknown as typeof db
     );
     const [occurrence] = await tx
@@ -14249,12 +14819,21 @@ export async function listSupervisionStudentsForContexts(
     eq(classpilotSupervisionStudents.schoolId, schoolId),
     inArray(classpilotSupervisionStudents.contextId, contextIds),
   ];
-  if (options.activeOnly) conditions.push(isNull(classpilotSupervisionStudents.releasedAt));
+  if (options.activeOnly) {
+    conditions.push(isNull(classpilotSupervisionStudents.releasedAt));
+    conditions.push(eq(students.status, "active"));
+  }
 
   const rows = await db
     .select({ assignment: classpilotSupervisionStudents, student: students })
     .from(classpilotSupervisionStudents)
-    .innerJoin(students, eq(students.id, classpilotSupervisionStudents.studentId))
+    .innerJoin(
+      students,
+      and(
+        eq(students.id, classpilotSupervisionStudents.studentId),
+        eq(students.schoolId, schoolId)
+      )
+    )
     .where(and(...conditions))
     .orderBy(classpilotSupervisionStudents.assignedAt);
 
@@ -14270,6 +14849,11 @@ export async function createSupervisionContextWithStudents(options: {
   const uniqueStudentIds = Array.from(new Set(options.studentIds.filter(Boolean)));
   return db.transaction(async (tx) => {
     await lockClasspilotStudentControlAuthorities(
+      options.context.schoolId,
+      uniqueStudentIds,
+      tx as unknown as typeof db
+    );
+    await lockActiveSchoolStudentsForOperationalWrite(
       options.context.schoolId,
       uniqueStudentIds,
       tx as unknown as typeof db
@@ -14323,6 +14907,11 @@ export async function assignStudentsToSupervisionContext(options: {
 
   return db.transaction(async (tx) => {
     await lockClasspilotStudentControlAuthorities(
+      options.schoolId,
+      uniqueStudentIds,
+      tx as unknown as typeof db
+    );
+    await lockActiveSchoolStudentsForOperationalWrite(
       options.schoolId,
       uniqueStudentIds,
       tx as unknown as typeof db
@@ -14799,7 +15388,12 @@ export async function getTeacherStudentAssignments(
     })
     .from(teacherStudents)
     .innerJoin(students, eq(teacherStudents.studentId, students.id))
-    .where(eq(teacherStudents.teacherId, teacherId));
+    .where(
+      and(
+        eq(teacherStudents.teacherId, teacherId),
+        eq(students.status, "active")
+      )
+    );
   return rows.map((r) => ({ ...r.assignment, student: r.student }));
 }
 
@@ -14816,7 +15410,13 @@ export async function getTeacherStudentAssignmentsForSchool(
     })
     .from(teacherStudents)
     .innerJoin(students, eq(teacherStudents.studentId, students.id))
-    .where(and(eq(teacherStudents.teacherId, teacherId), eq(students.schoolId, schoolId)));
+    .where(
+      and(
+        eq(teacherStudents.teacherId, teacherId),
+        eq(students.schoolId, schoolId),
+        eq(students.status, "active")
+      )
+    );
   return rows.map((r) => ({ ...r.assignment, student: r.student }));
 }
 
@@ -14826,20 +15426,38 @@ export async function assignTeacherStudent(
 ): Promise<TeacherStudent> {
   // teacher_students.school_id must mirror the linked student's school (RLS
   // WITH CHECK). Derive it from the student so it can never be omitted.
-  const [student] = await db
-    .select({ schoolId: students.schoolId })
-    .from(students)
-    .where(eq(students.id, studentId))
-    .limit(1);
-  if (!student) {
-    throw new Error(`assignTeacherStudent: student ${studentId} not found`);
-  }
-  const [row] = await db
-    .insert(teacherStudents)
-    .values({ teacherId, studentId, schoolId: student.schoolId })
-    .onConflictDoNothing()
-    .returning();
-  return row!;
+  return db.transaction(async (tx) => {
+    const [student] = await tx
+      .select({ schoolId: students.schoolId })
+      .from(students)
+      .where(and(eq(students.id, studentId), eq(students.status, "active")))
+      .limit(1)
+      .for("update");
+    if (!student) {
+      throw Object.assign(new Error("Student is not active"), {
+        status: 409,
+        code: "STUDENT_INACTIVE",
+        expose: true,
+      });
+    }
+    const [row] = await tx
+      .insert(teacherStudents)
+      .values({ teacherId, studentId, schoolId: student.schoolId })
+      .onConflictDoNothing()
+      .returning();
+    if (row) return row;
+    const [existing] = await tx
+      .select()
+      .from(teacherStudents)
+      .where(
+        and(
+          eq(teacherStudents.teacherId, teacherId),
+          eq(teacherStudents.studentId, studentId)
+        )
+      )
+      .limit(1);
+    return existing!;
+  });
 }
 
 export async function unassignTeacherStudent(

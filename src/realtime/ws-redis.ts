@@ -13,6 +13,7 @@ export type WsRedisTarget =
   | { kind: "staff-session"; schoolId: string; sessionId: string }
   | { kind: "students"; schoolId: string; targetDeviceIds?: string[] }
   | { kind: "device"; schoolId: string; deviceId: string }
+  | { kind: "student-disconnect"; schoolId: string; studentIds: string[] }
   | { kind: "role"; schoolId: string; role: "teacher" | "school_admin" | "super_admin" | "student" }
   | CacheInvalidationTarget;
 

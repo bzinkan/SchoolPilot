@@ -5,6 +5,7 @@ import {
   InvalidTokenError,
   TokenExpiredError,
   verifyStudentToken,
+  type StudentTokenPayload,
 } from "../services/deviceJwt.js";
 import { verifyUserToken } from "../services/jwt.js";
 import errorMonitor from "../services/errorMonitor.js";
@@ -20,6 +21,8 @@ import {
   sendToRoleLocal,
   subscribeWsClientToSession,
   unsubscribeWsClientFromSession,
+  closeStudentSocketsLocal,
+  type WSClient,
 } from "./ws-broadcast.js";
 import {
   publishWS,
@@ -86,6 +89,44 @@ function emitWebSocketMetric(metricName: "WebSocketDisconnect" | "WebSocketError
     Environment: environment,
     Service: "api",
     [metricName]: 1,
+  }));
+}
+
+type StudentWebSocketSessionResolver = (
+  payload: StudentTokenPayload
+) => Promise<unknown | undefined>;
+
+/**
+ * Revalidate the exact persisted student/session/device binding for an already
+ * authenticated socket. Student lifecycle changes end the persisted session;
+ * checking it again before every student-originating message prevents a socket
+ * that was open during roster removal from acknowledging commands, mutating
+ * chat delivery, or sending WebRTC signaling afterward.
+ */
+export async function hasActiveStudentWebSocketBinding(
+  client: Pick<
+    WSClient,
+    "role" | "schoolId" | "studentId" | "studentSessionId" | "deviceId"
+  >,
+  resolveSession: StudentWebSocketSessionResolver = (payload) =>
+    runWithTenantContext({ schoolId: payload.schoolId }, () =>
+      resolveActiveStudentTokenSession(payload)
+    )
+): Promise<boolean> {
+  if (client.role !== "student") return true;
+  if (
+    !client.schoolId ||
+    !client.studentId ||
+    !client.studentSessionId ||
+    !client.deviceId
+  ) {
+    return false;
+  }
+  return Boolean(await resolveSession({
+    schoolId: client.schoolId,
+    studentId: client.studentId,
+    sessionId: client.studentSessionId,
+    deviceId: client.deviceId,
   }));
 }
 
@@ -348,6 +389,9 @@ export function setupWebSocket(
         console.log(`[Redis] Delivering ${msgType} to device ${target.deviceId}`);
         sendToDeviceLocal(target.schoolId, target.deviceId, message);
         break;
+      case "student-disconnect":
+        closeStudentSocketsLocal(target.schoolId, target.studentIds);
+        break;
       case "role":
         sendToRoleLocal(target.schoolId, target.role, message);
         break;
@@ -436,6 +480,7 @@ export function setupWebSocket(
   // --- Connection handler ---
   wss.on("connection", (ws) => {
     const client = registerWsClient(ws);
+    let studentPongRevalidation: Promise<void> | null = null;
     const presenceConnectionId = randomUUID();
     let recordedPresence: { schoolId: string; userId: string } | null = null;
     let presenceMutation = Promise.resolve();
@@ -500,6 +545,55 @@ export function setupWebSocket(
     ws.on("pong", () => {
       clientPongPending.set(ws, false);
       refreshStaffPresence();
+      if (
+        studentPongRevalidation ||
+        !client.authenticated ||
+        client.role !== "student" ||
+        !client.schoolId ||
+        !client.studentId
+      ) {
+        return;
+      }
+
+      const binding = {
+        role: client.role,
+        schoolId: client.schoolId,
+        studentId: client.studentId,
+        studentSessionId: client.studentSessionId,
+        deviceId: client.deviceId,
+      } as const;
+      const pending = hasActiveStudentWebSocketBinding(binding)
+        .then((active) => {
+          if (
+            client.schoolId !== binding.schoolId ||
+            client.studentId !== binding.studentId ||
+            client.studentSessionId !== binding.studentSessionId ||
+            client.deviceId !== binding.deviceId
+          ) {
+            return;
+          }
+          if (!active) {
+            closeStudentSocketsLocal(binding.schoolId, [binding.studentId]);
+          }
+        })
+        .catch((error) => {
+          const safeError = studentAuthenticationServiceError(error);
+          errorMonitor.trackError("database_connectivity", safeError, {
+            job: "studentWebSocketPongRevalidation",
+            errorCode: (safeError as NodeJS.ErrnoException).code,
+          }, { persist: false, priority: "high" });
+          // A database outage must not leave a cached authenticated binding
+          // available for outbound controls.
+          client.authenticated = false;
+          removeWsClient(ws);
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.close(1013, "Authentication service unavailable");
+          }
+        });
+      studentPongRevalidation = pending;
+      void pending.finally(() => {
+        if (studentPongRevalidation === pending) studentPongRevalidation = null;
+      });
     });
 
     ws.on("message", async (data) => {
@@ -689,6 +783,36 @@ export function setupWebSocket(
 
         // All remaining message types require authentication
         if (!client.authenticated) return;
+
+        // Authentication is not a one-time authorization grant. Deactivating a
+        // student ends the backing device session, so every subsequent
+        // student-originating message must prove that exact binding is still
+        // active before any chat/classroom/ack/WebRTC mutation can run.
+        if (client.role === "student" && message.type !== "auth") {
+          try {
+            if (!(await hasActiveStudentWebSocketBinding(client))) {
+              ws.send(JSON.stringify({
+                type: "auth-error",
+                message: "Student session is no longer active",
+              }));
+              ws.close(1008, "Student session is no longer active");
+              return;
+            }
+          } catch (error) {
+            const safeError = studentAuthenticationServiceError(error);
+            errorMonitor.trackError("database_connectivity", safeError, {
+              job: "studentWebSocketRevalidation",
+              messageType,
+              errorCode: (safeError as NodeJS.ErrnoException).code,
+            }, { persist: false, priority: "high" });
+            ws.send(JSON.stringify({
+              type: "auth-error",
+              message: "Authentication service unavailable",
+            }));
+            ws.close(1013, "Authentication service unavailable");
+            return;
+          }
+        }
 
         // --- Staff session subscriptions for session-scoped FAB events ---
         if (

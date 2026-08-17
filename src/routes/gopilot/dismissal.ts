@@ -486,7 +486,9 @@ router.get("/sessions/:id/queue", ...auth, async (req, res, next) => {
     }
     const filterStatus = (req.query.status as string) || undefined;
 
-    const entries = await getQueueBySession(sessionId, filterStatus);
+    const entries = await getQueueBySession(sessionId, filterStatus, {
+      activeStudentsOnly: session.status !== "completed",
+    });
     const role = await getRequestGoPilotRole(req, res);
     const teacherHomeroomIds = role === "teacher"
       ? await getTeacherHomeroomIds(req.authUser!.id, schoolId)
@@ -501,6 +503,9 @@ router.get("/sessions/:id/queue", ...auth, async (req, res, next) => {
       entries.map(async (entry) => {
         const student = await getStudentById(entry.studentId);
         if (!student || student.schoolId !== schoolId) return null;
+        // Retained queue rows remain available for completed-session history,
+        // but an inactive student must disappear from every live/paused queue.
+        if (session.status !== "completed" && student.status !== "active") return null;
         if (role === "teacher" && (!student.homeroomId || !teacherHomeroomIds?.has(student.homeroomId))) return null;
         if (!isGoPilotManager(role) && role !== "teacher") return null;
         let homeroomName: string | null = null;
@@ -1330,7 +1335,9 @@ router.get("/sessions/:id/stats", ...staffAuth, async (req, res, next) => {
     if (!session) {
       return res.status(404).json({ error: "Session not found" });
     }
-    const stats = await getSessionStats(sessionId);
+    const stats = await getSessionStats(sessionId, {
+      activeStudentsOnly: session.status !== "completed",
+    });
     return res.json(stats);
   } catch (err) {
     next(err);

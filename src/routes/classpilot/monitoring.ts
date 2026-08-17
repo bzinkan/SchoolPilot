@@ -8,9 +8,12 @@ import {
   searchStudents,
   getStudentsBySchool,
   getStudentById,
+  getStudentByEmail,
+  getStudentsByExactEmails,
   createStudent,
   updateStudent,
-  deleteStudent,
+  deactivateStudentsForRoster,
+  reactivateInactiveStudentForRosterImport,
   bulkCreateStudents,
   getHeartbeatsByStudent,
   getDevicesBySchool,
@@ -21,7 +24,6 @@ import {
 } from "../../services/storage.js";
 import {
   checkStudentEmail,
-  duplicateEmailError,
   existingEmailSets,
   isUniqueViolation,
   studentEmailRules,
@@ -38,11 +40,30 @@ import {
   type GeneratedClassPilotPin,
 } from "../../services/classpilotPins.js";
 import { serializeClasspilotSession } from "../../services/classpilotSessionLifecycle.js";
+import { stopMailpilotMonitoringForStudent } from "../../services/mailpilotProvisioning.js";
+import { revokeClasspilotStudentSocketsAfterRosterRemoval } from "../../realtime/studentSocketRevocation.js";
 
 const router = Router();
 
 function param(req: any, key: string): string {
   return String(req.params[key] ?? "");
+}
+
+function lifecycleActor(req: any, res: any, source: string) {
+  return {
+    userId: req.authUser?.id ?? null,
+    userEmail: req.authUser?.email ?? null,
+    userRole: res.locals.membershipRole ?? null,
+    source,
+  };
+}
+
+function mayManageLifecycle(req: any, res: any): boolean {
+  return Boolean(
+    req.authUser?.isSuperAdmin ||
+    res.locals.membershipRole === "admin" ||
+    res.locals.membershipRole === "school_admin"
+  );
 }
 
 const auth = [
@@ -65,9 +86,8 @@ const adminAuth = [
 router.get("/students", ...auth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
-    const { status, grade, search } = req.query;
-    const filters: Record<string, string> = {};
-    if (status) filters.status = status as string;
+    const { grade, search } = req.query;
+    const filters: Record<string, string> = { status: "active" };
     if (grade) filters.gradeLevel = grade as string;
     if (search) filters.search = search as string;
 
@@ -195,7 +215,29 @@ router.post("/roster/student", ...auth, async (req, res, next) => {
       });
     }
     if (normalizedEmail) {
-      const taken = await studentEmailTaken(schoolId, normalizedEmail.toLowerCase());
+      const emailLc = normalizedEmail.toLowerCase();
+      const existing = await getStudentByEmail(schoolId, emailLc);
+      if (existing && existing.status !== "active" && mayManageLifecycle(req, res)) {
+        const restored = await reactivateInactiveStudentForRosterImport(
+          schoolId,
+          emailLc,
+          {
+            firstName,
+            lastName,
+            email: normalizedEmail,
+            gradeLevel: gradeLevel || null,
+          },
+          lifecycleActor(req, res, "classpilot.roster.student")
+        );
+        if (restored.student) {
+          return res.status(201).json({
+            student: classPilotStudentDto(restored.student),
+            generatedPins: [],
+            restored: restored.reactivated,
+          });
+        }
+      }
+      const taken = await studentEmailTaken(schoolId, emailLc);
       if (taken) {
         return res.status(409).json({ error: taken, code: "STUDENT_EMAIL_TAKEN" });
       }
@@ -240,7 +282,7 @@ router.post("/roster/student", ...auth, async (req, res, next) => {
 });
 
 // POST /api/classpilot/roster/bulk - Bulk import students
-router.post("/roster/bulk", ...auth, requireRole("admin"), async (req, res, next) => {
+router.post("/roster/bulk", ...auth, requireRole("admin", "school_admin"), async (req, res, next) => {
   try {
     const { students: studentData } = req.body;
     if (!Array.isArray(studentData) || studentData.length === 0) {
@@ -249,9 +291,20 @@ router.post("/roster/bulk", ...auth, requireRole("admin"), async (req, res, next
 
     const schoolId = res.locals.schoolId!;
     const rows: InsertStudent[] = [];
+    const toRestore: Array<{ emailLc: string; data: InsertStudent }> = [];
     const errors: { index: number; error: string }[] = [];
     const rules = await studentEmailRules(schoolId);
     const emailSets = await existingEmailSets(schoolId);
+    const existingStudents = await getStudentsByExactEmails(
+      schoolId,
+      studentData.flatMap((student: Record<string, unknown>) => {
+        const email = typeof student?.email === "string" ? student.email.trim().toLowerCase() : "";
+        return email ? [email] : [];
+      })
+    );
+    const existingByEmail = new Map(
+      existingStudents.flatMap((student) => student.emailLc ? [[student.emailLc, student] as const] : [])
+    );
     const batchEmails = new Set<string>();
     const usedPins = new Set<string>();
     const plaintextPins: string[] = [];
@@ -268,27 +321,67 @@ router.post("/roster/bulk", ...auth, requireRole("admin"), async (req, res, next
         errors.push({ index: i, error: emailErr.error });
         continue;
       }
+      let existing: (typeof existingStudents)[number] | undefined;
       if (normalizedEmail) {
         const emailLc = normalizedEmail.toLowerCase();
-        const dupErr = duplicateEmailError(emailLc, emailSets, batchEmails);
-        if (dupErr) {
-          errors.push({ index: i, error: dupErr });
+        if (emailSets.staff.has(emailLc)) {
+          errors.push({
+            index: i,
+            error: "This email is already used by a staff account; each person needs a unique email.",
+          });
+          continue;
+        }
+        if (batchEmails.has(emailLc)) {
+          errors.push({ index: i, error: "Duplicate student email in this import." });
+          continue;
+        }
+        existing = existingByEmail.get(emailLc);
+        if (existing?.status === "active") {
+          errors.push({
+            index: i,
+            error: "Duplicate student email; this address is already in use in this school.",
+          });
           continue;
         }
         batchEmails.add(emailLc);
       }
-      const pin = randomFourDigitClassPilotPin(usedPins);
-      plaintextPins.push(pin);
-      rows.push({
+      const data: InsertStudent = {
         schoolId,
         firstName: s.firstName,
         lastName: s.lastName,
         email: normalizedEmail || null,
         gradeLevel: s.gradeLevel || null,
-        classpilotPinHash: await hashClassPilotPin(pin),
-        classpilotPinEncrypted: encryptClassPilotPin(pin),
         status: "active" as const,
-      });
+      };
+      if (existing && existing.status !== "active" && normalizedEmail) {
+        toRestore.push({
+          emailLc: normalizedEmail.toLowerCase(),
+          data,
+        });
+      } else {
+        const pin = randomFourDigitClassPilotPin(usedPins);
+        plaintextPins.push(pin);
+        rows.push({
+          ...data,
+          classpilotPinHash: await hashClassPilotPin(pin),
+          classpilotPinEncrypted: encryptClassPilotPin(pin),
+        });
+      }
+    }
+
+    const restoredStudents = [];
+    let restoredCount = 0;
+    for (const candidate of toRestore) {
+      const restored = await reactivateInactiveStudentForRosterImport(
+        schoolId,
+        candidate.emailLc,
+        candidate.data,
+        lifecycleActor(req, res, "classpilot.roster.bulk")
+      );
+      if (restored.student) {
+        restoredStudents.push(restored.student);
+        if (restored.reactivated) restoredCount++;
+      }
     }
 
     const created = await bulkCreateStudents(rows);
@@ -296,8 +389,9 @@ router.post("/roster/bulk", ...auth, requireRole("admin"), async (req, res, next
       generatedPinForStudent(student, plaintextPins[index]!)
     );
     return res.json({
-      created: created.length,
-      students: classPilotStudentDtos(created),
+      created: created.length + restoredStudents.length,
+      restored: restoredCount,
+      students: classPilotStudentDtos([...restoredStudents, ...created]),
       errors: errors.length > 0 ? errors : undefined,
       total: studentData.length,
       generatedPins,
@@ -316,6 +410,12 @@ router.post("/roster/bulk", ...auth, requireRole("admin"), async (req, res, next
 // PATCH /api/classpilot/students/:studentId - Update student
 router.patch("/students/:studentId", ...auth, async (req, res, next) => {
   try {
+    if (Object.prototype.hasOwnProperty.call(req.body ?? {}, "status")) {
+      return res.status(400).json({
+        error: "Student status is managed through the Remove Student workflow.",
+        code: "STUDENT_STATUS_MANAGED_SEPARATELY",
+      });
+    }
     const studentId = param(req, "studentId");
     const { firstName, lastName, email, gradeLevel } = req.body;
 
@@ -342,7 +442,7 @@ router.patch("/students/:studentId", ...auth, async (req, res, next) => {
 });
 
 // DELETE /api/classpilot/students/:studentId - Delete student
-router.delete("/students/:studentId", ...auth, requireRole("admin"), async (req, res, next) => {
+router.delete("/students/:studentId", ...auth, requireRole("admin", "school_admin"), async (req, res, next) => {
   try {
     const studentId = param(req, "studentId");
 
@@ -351,18 +451,36 @@ router.delete("/students/:studentId", ...auth, requireRole("admin"), async (req,
     if (!existing || existing.schoolId !== res.locals.schoolId) {
       return res.status(404).json({ error: "Student not found" });
     }
-    await deleteStudent(studentId, res.locals.schoolId!);
-
-    logAudit({
-      schoolId: res.locals.schoolId!,
-      userId: req.authUser!.id,
-      userEmail: req.authUser!.email,
-      userRole: res.locals.membershipRole,
-      action: "student.delete",
-      entityType: "student",
-      entityId: studentId,
-      entityName: `${existing.firstName} ${existing.lastName}`,
-    });
+    const result = await deactivateStudentsForRoster(
+      res.locals.schoolId!,
+      [studentId],
+      lifecycleActor(req, res, "classpilot.students.delete")
+    );
+    try {
+      await revokeClasspilotStudentSocketsAfterRosterRemoval(
+        res.locals.schoolId!,
+        result.foundStudentIds
+      );
+    } catch {
+      console.warn("[Student Removal] ClassPilot socket shutdown failed after deactivation", {
+        schoolId: res.locals.schoolId,
+        studentCount: result.foundStudentIds.length,
+      });
+    }
+    if (result.deactivatedStudentIds.length > 0) {
+      try {
+        await stopMailpilotMonitoringForStudent(
+          res.locals.schoolId!,
+          existing.id,
+          existing.email
+        );
+      } catch {
+        console.warn("[Student Removal] MailPilot shutdown failed after deactivation", {
+          schoolId: res.locals.schoolId,
+          studentId,
+        });
+      }
+    }
 
     return res.json({ ok: true });
   } catch (err) {

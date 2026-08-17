@@ -10,9 +10,12 @@ import {
 } from "../schema/validation.js";
 import {
   getStudentById,
+  getStudentByEmail,
+  getStudentsByExactEmails,
   createStudent,
   updateStudent,
-  deleteStudent,
+  deactivateStudentsForRoster,
+  reactivateInactiveStudentForRosterImport,
   searchStudents,
   getStudentsBySchool,
   bulkCreateStudents,
@@ -23,7 +26,6 @@ import {
 } from "../services/storage.js";
 import {
   checkStudentEmail,
-  duplicateEmailError,
   existingEmailSets,
   isEmailChanging,
   isUniqueViolation,
@@ -44,6 +46,8 @@ import { groupStudents } from "../schema/classpilot.js";
 import { students as studentsTable } from "../schema/students.js";
 import { sharedSchoolRosterStudentDto } from "../util/safeStudent.js";
 import { logAudit } from "../services/audit.js";
+import { stopMailpilotMonitoringForStudent } from "../services/mailpilotProvisioning.js";
+import { revokeClasspilotStudentSocketsAfterRosterRemoval } from "../realtime/studentSocketRevocation.js";
 import {
   encryptClassPilotPin,
   generatedPinForStudent,
@@ -57,6 +61,38 @@ const CLASSPILOT_PIN_HASH_CONCURRENCY = 4;
 
 function param(req: { params: Record<string, unknown> }, key: string): string {
   return String(req.params[key] ?? "");
+}
+
+function studentLifecycleActor(req: Request, res: Response, source: string) {
+  return {
+    userId: req.authUser?.id ?? null,
+    userEmail: req.authUser?.email ?? null,
+    userRole: res.locals.membershipRole ?? null,
+    source,
+  };
+}
+
+function mayManageStudentLifecycle(req: Request, res: Response): boolean {
+  return Boolean(
+    req.authUser?.isSuperAdmin ||
+    res.locals.membershipRole === "admin" ||
+    res.locals.membershipRole === "school_admin"
+  );
+}
+
+function includesLifecycleStatus(value: unknown): boolean {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    Object.prototype.hasOwnProperty.call(value, "status")
+  );
+}
+
+function lifecycleStatusError(res: Response) {
+  return res.status(400).json({
+    error: "Student status is managed through the Remove Student workflow.",
+    code: "STUDENT_STATUS_MANAGED_SEPARATELY",
+  });
 }
 
 router.use(authenticate);
@@ -350,7 +386,7 @@ router.get(
   requireRole("admin", "school_admin", "teacher", "office_staff"),
   async (req, res, next) => {
   try {
-    const { search, gradeLevel, gradeId, homeroomId, status, dismissalType } = req.query as Record<string, string | undefined>;
+    const { search, gradeLevel, gradeId, homeroomId, dismissalType } = req.query as Record<string, string | undefined>;
     if (
       gradeId &&
       (await getPasspilotClassSourceForSchool(res.locals.schoolId!)) === "classpilot_groups"
@@ -368,7 +404,9 @@ router.get(
       gradeLevel,
       gradeId,
       homeroomId,
-      status: status || "active",
+      // This is an operational roster, not a lifecycle/archive surface.
+      // Removed students remain available only to retained historical records.
+      status: "active",
       dismissalType,
     });
 
@@ -383,10 +421,11 @@ router.get(
 router.post(
   "/",
   ...schoolContext,
-  requireRole("admin", "teacher", "office_staff"),
+  requireRole("admin", "school_admin", "teacher", "office_staff"),
   async (req, res, next) => {
     try {
       const body = normalizeStudentBody(req.body);
+      if (includesLifecycleStatus(body)) return lifecycleStatusError(res);
       const writesLegacyGrade = hasExplicitLegacyGradeId(body);
       // Handle grade → gradeLevel (GoPilot sends grade)
       if (body.grade && !body.gradeLevel) { body.gradeLevel = body.grade; delete body.grade; }
@@ -412,17 +451,6 @@ router.post(
         });
       }
 
-      // Uniqueness: one email per person (student or staff) within the school.
-      if (parsed.data.email) {
-        const taken = await studentEmailTaken(
-          res.locals.schoolId!,
-          parsed.data.email.toLowerCase()
-        );
-        if (taken) {
-          return res.status(409).json({ error: taken, code: "STUDENT_EMAIL_TAKEN" });
-        }
-      }
-
       const data: InsertStudent = {
         schoolId: res.locals.schoolId!,
         firstName: parsed.data.firstName,
@@ -436,6 +464,45 @@ router.post(
         dismissalType: parsed.data.dismissalType || "car",
         busRoute: parsed.data.busRoute || null,
       };
+
+      // Exact inactive-email matches are lifecycle restores for IT/admins.
+      // Keep the original ID, relationships, and PIN unless a new PIN was
+      // explicitly supplied. Active matches and non-admin attempts retain the
+      // existing duplicate-email contract.
+      if (parsed.data.email) {
+        const emailLc = parsed.data.email.toLowerCase();
+        const existing = await getStudentByEmail(res.locals.schoolId!, emailLc);
+        if (existing && existing.status !== "active" && mayManageStudentLifecycle(req, res)) {
+          const explicitPin = parsed.data.classpilotPin || undefined;
+          const restored = await reactivateInactiveStudentForRosterImport(
+            res.locals.schoolId!,
+            emailLc,
+            {
+              ...data,
+              gradeId: existing.gradeId,
+              ...(explicitPin
+                ? await classpilotPinHashFromInput(explicitPin)
+                : {}),
+            },
+            studentLifecycleActor(req, res, "students.create")
+          );
+          if (restored.student) {
+            const generatedPins = explicitPin
+              ? [generatedPinForStudent(restored.student, explicitPin)]
+              : [];
+            return res.status(201).json({
+              student: sharedSchoolRosterStudentDto(restored.student),
+              generatedPins,
+              restored: restored.reactivated,
+            });
+          }
+        }
+
+        const taken = await studentEmailTaken(res.locals.schoolId!, emailLc);
+        if (taken) {
+          return res.status(409).json({ error: taken, code: "STUDENT_EMAIL_TAKEN" });
+        }
+      }
 
       const pinPlan = await classpilotPinForStudentCreate(
         parsed.data.classpilotPin,
@@ -468,7 +535,7 @@ router.post(
 router.post(
   "/bulk",
   ...schoolContext,
-  requireRole("admin"),
+  requireRole("admin", "school_admin"),
   async (req, res, next) => {
     try {
       const { students: studentData } = req.body;
@@ -479,9 +546,25 @@ router.post(
       }
 
       const toInsert: InsertStudent[] = [];
+      const toRestore: Array<{
+        emailLc: string;
+        existing: Student;
+        data: InsertStudent;
+        plaintextPin: string | null;
+      }> = [];
       const errors: { index: number; error: string }[] = [];
       const rules = await studentEmailRules(res.locals.schoolId!);
       const emailSets = await existingEmailSets(res.locals.schoolId!);
+      const existingStudents = await getStudentsByExactEmails(
+        res.locals.schoolId!,
+        studentData.flatMap((item: Record<string, unknown>) => {
+          const email = typeof item?.email === "string" ? item.email.trim().toLowerCase() : "";
+          return email ? [email] : [];
+        })
+      );
+      const existingByEmail = new Map(
+        existingStudents.flatMap((student) => student.emailLc ? [[student.emailLc, student] as const] : [])
+      );
       const batchEmails = new Set<string>();
       const autoGenerateClassPilotPins = await hasActiveClassPilotLicense(res.locals.schoolId!);
       const usedPins = new Set<string>();
@@ -504,8 +587,6 @@ router.post(
           });
           continue;
         }
-        if (hasExplicitLegacyGradeId(item)) writesLegacyGrade = true;
-
         // Guardrail: email required for ClassPilot; any email must match domain.
         const emailErr = checkStudentEmail(parsed.data.email, rules);
         if (emailErr) {
@@ -517,22 +598,41 @@ router.post(
         // in this school, or that repeats earlier in the same batch.
         const emailLc = parsed.data.email?.toLowerCase();
         if (emailLc) {
-          const dupErr = duplicateEmailError(emailLc, emailSets, batchEmails);
-          if (dupErr) {
-            errors.push({ index: i, error: dupErr });
+          if (emailSets.staff.has(emailLc)) {
+            errors.push({
+              index: i,
+              error: "This email is already used by a staff account; each person needs a unique email.",
+            });
+            continue;
+          }
+          if (batchEmails.has(emailLc)) {
+            errors.push({ index: i, error: "Duplicate student email in this import." });
             continue;
           }
           batchEmails.add(emailLc);
+          const existing = existingByEmail.get(emailLc);
+          if (existing?.status === "active") {
+            errors.push({
+              index: i,
+              error: "Duplicate student email; this address is already in use in this school.",
+            });
+            continue;
+          }
         }
 
-        const pinPlan = await classpilotPinForStudentCreate(
-          parsed.data.classpilotPin,
-          autoGenerateClassPilotPins,
-          usedPins
-        );
-        plaintextPins.push(pinPlan.plaintextPin);
-
-        toInsert.push({
+        const existing = emailLc ? existingByEmail.get(emailLc) : undefined;
+        const restoring = Boolean(existing && existing.status !== "active");
+        const pinPlan = restoring
+          ? {
+              ...(await classpilotPinHashFromInput(parsed.data.classpilotPin || undefined)),
+              plaintextPin: parsed.data.classpilotPin || null,
+            }
+          : await classpilotPinForStudentCreate(
+              parsed.data.classpilotPin,
+              autoGenerateClassPilotPins,
+              usedPins
+            );
+        const data: InsertStudent = {
           schoolId: res.locals.schoolId!,
           firstName: parsed.data.firstName,
           lastName: parsed.data.lastName,
@@ -546,7 +646,37 @@ router.post(
           busRoute: parsed.data.busRoute || null,
           ...(pinPlan.classpilotPinHash !== undefined ? { classpilotPinHash: pinPlan.classpilotPinHash } : {}),
           ...(pinPlan.classpilotPinEncrypted !== undefined ? { classpilotPinEncrypted: pinPlan.classpilotPinEncrypted } : {}),
-        });
+        };
+        if (restoring && existing && emailLc) {
+          toRestore.push({
+            emailLc,
+            existing,
+            data: { ...data, gradeId: existing.gradeId },
+            plaintextPin: pinPlan.plaintextPin,
+          });
+        } else {
+          if (hasExplicitLegacyGradeId(item)) writesLegacyGrade = true;
+          plaintextPins.push(pinPlan.plaintextPin);
+          toInsert.push(data);
+        }
+      }
+
+      const restoredStudents: Student[] = [];
+      const restoredPins: GeneratedClassPilotPin[] = [];
+      let restoredCount = 0;
+      for (const candidate of toRestore) {
+        const restored = await reactivateInactiveStudentForRosterImport(
+          res.locals.schoolId!,
+          candidate.emailLc,
+          candidate.data,
+          studentLifecycleActor(req, res, "students.bulk")
+        );
+        if (!restored.student) continue;
+        restoredStudents.push(restored.student);
+        if (restored.reactivated) restoredCount++;
+        if (candidate.plaintextPin) {
+          restoredPins.push(generatedPinForStudent(restored.student, candidate.plaintextPin));
+        }
       }
 
       const created = await bulkCreateStudentsWithOptionalLegacyGradeLock(
@@ -554,15 +684,16 @@ router.post(
         toInsert,
         writesLegacyGrade
       );
-      const generatedPins: GeneratedClassPilotPin[] = created
+      const generatedPins: GeneratedClassPilotPin[] = [...restoredPins, ...created
         .map((student, index) => {
           const pin = plaintextPins[index];
           return pin ? generatedPinForStudent(student, pin) : null;
         })
-        .filter((pin): pin is GeneratedClassPilotPin => Boolean(pin));
+        .filter((pin): pin is GeneratedClassPilotPin => Boolean(pin))];
 
       return res.status(201).json({
-        imported: created.length,
+        imported: created.length + restoredStudents.length,
+        restored: restoredCount,
         errors: errors.length > 0 ? errors : undefined,
         total: studentData.length,
         generatedPins,
@@ -595,6 +726,11 @@ const importCsvHandler = async (req: any, res: any, next: any) => {
     }
 
     const toInsert: InsertStudent[] = [];
+    const toRestore: Array<{
+      emailLc: string;
+      data: InsertStudent;
+      plaintextPin: string | null;
+    }> = [];
     const errors: { row: number; error: string }[] = [];
     const rules = await studentEmailRules(res.locals.schoolId!);
     const emailSets = await existingEmailSets(res.locals.schoolId!);
@@ -641,10 +777,26 @@ const importCsvHandler = async (req: any, res: any, next: any) => {
       // Uniqueness: skip rows duplicating an existing student/staff email or an
       // earlier row in the same file.
       const emailLc = email?.toLowerCase();
+      const existing = emailLc
+        ? await getStudentByEmail(res.locals.schoolId!, emailLc)
+        : undefined;
       if (emailLc) {
-        const dupErr = duplicateEmailError(emailLc, emailSets, batchEmails);
-        if (dupErr) {
-          errors.push({ row: i + 1, error: dupErr });
+        if (emailSets.staff.has(emailLc)) {
+          errors.push({
+            row: i + 1,
+            error: "This email is already used by a staff account; each person needs a unique email.",
+          });
+          continue;
+        }
+        if (batchEmails.has(emailLc)) {
+          errors.push({ row: i + 1, error: "Duplicate student email in this import." });
+          continue;
+        }
+        if (existing?.status === "active") {
+          errors.push({
+            row: i + 1,
+            error: "Duplicate student email; this address is already in use in this school.",
+          });
           continue;
         }
         batchEmails.add(emailLc);
@@ -669,15 +821,20 @@ const importCsvHandler = async (req: any, res: any, next: any) => {
         errors.push({ row: i + 1, error: "ClassPilot PIN must be 4 digits" });
         continue;
       }
-      const pinPlan = await classpilotPinForStudentCreate(
-        classpilotPin,
-        autoGenerateClassPilotPins,
-        usedPins
-      );
-      plaintextPins.push(pinPlan.plaintextPin);
+      const restoring = Boolean(existing && existing.status !== "active");
+      const pinPlan = restoring
+        ? {
+            ...(await classpilotPinHashFromInput(classpilotPin || undefined)),
+            plaintextPin: classpilotPin,
+          }
+        : await classpilotPinForStudentCreate(
+            classpilotPin,
+            autoGenerateClassPilotPins,
+            usedPins
+          );
       if (pinPlan.plaintextPin) assignedPinCount++;
 
-      toInsert.push({
+      const data: InsertStudent = {
         schoolId: res.locals.schoolId!,
         firstName,
         lastName,
@@ -689,16 +846,44 @@ const importCsvHandler = async (req: any, res: any, next: any) => {
         busRoute,
         ...(pinPlan.classpilotPinHash !== undefined ? { classpilotPinHash: pinPlan.classpilotPinHash } : {}),
         ...(pinPlan.classpilotPinEncrypted !== undefined ? { classpilotPinEncrypted: pinPlan.classpilotPinEncrypted } : {}),
-      });
+      };
+      if (restoring && existing && emailLc) {
+        toRestore.push({
+          emailLc,
+          data: { ...data, gradeId: existing.gradeId },
+          plaintextPin: pinPlan.plaintextPin,
+        });
+      } else {
+        plaintextPins.push(pinPlan.plaintextPin);
+        toInsert.push(data);
+      }
+    }
+
+    const restoredStudents: Student[] = [];
+    const restoredPins: GeneratedClassPilotPin[] = [];
+    let restoredCount = 0;
+    for (const candidate of toRestore) {
+      const restored = await reactivateInactiveStudentForRosterImport(
+        res.locals.schoolId!,
+        candidate.emailLc,
+        candidate.data,
+        studentLifecycleActor(req, res, "students.csv_import")
+      );
+      if (!restored.student) continue;
+      restoredStudents.push(restored.student);
+      if (restored.reactivated) restoredCount++;
+      if (candidate.plaintextPin) {
+        restoredPins.push(generatedPinForStudent(restored.student, candidate.plaintextPin));
+      }
     }
 
     const created = await bulkCreateStudents(toInsert);
-    const generatedPins: GeneratedClassPilotPin[] = created
+    const generatedPins: GeneratedClassPilotPin[] = [...restoredPins, ...created
       .map((student, index) => {
         const pin = plaintextPins[index];
         return pin ? generatedPinForStudent(student, pin) : null;
       })
-      .filter((pin): pin is GeneratedClassPilotPin => Boolean(pin));
+      .filter((pin): pin is GeneratedClassPilotPin => Boolean(pin))];
 
     if (assignedPinCount > 0) {
       await logAudit({
@@ -710,13 +895,14 @@ const importCsvHandler = async (req: any, res: any, next: any) => {
         entityType: "student",
         metadata: {
           pinCount: assignedPinCount,
-          importedCount: created.length,
+          importedCount: created.length + restoredStudents.length,
         },
       });
     }
 
     return res.status(201).json({
-      imported: created.length,
+      imported: created.length + restoredStudents.length,
+      restored: restoredCount,
       errors: errors.length > 0 ? errors : undefined,
       total: rows.length,
       generatedPins,
@@ -730,7 +916,7 @@ const importCsvHandler = async (req: any, res: any, next: any) => {
 router.post(
   "/import",
   ...schoolContext,
-  requireRole("admin"),
+  requireRole("admin", "school_admin"),
   importCsvHandler
 );
 
@@ -738,7 +924,7 @@ router.post(
 router.post(
   "/import-csv",
   ...schoolContext,
-  requireRole("admin"),
+  requireRole("admin", "school_admin"),
   importCsvHandler
 );
 
@@ -746,13 +932,14 @@ router.post(
 router.put(
   "/bulk-update",
   ...schoolContext,
-  requireRole("admin"),
+  requireRole("admin", "school_admin"),
   async (req, res, next) => {
     try {
       const { updates } = req.body;
       if (!Array.isArray(updates)) {
         return res.status(400).json({ error: "Array of updates required" });
       }
+      if (updates.some(includesLifecycleStatus)) return lifecycleStatusError(res);
       const skipped: { id: string; error: string }[] = [];
       const rules = await studentEmailRules(res.locals.schoolId!);
       const updateItems = updates.filter((item): item is Record<string, unknown> & { id: string } => {
@@ -1013,7 +1200,7 @@ function normalizeStudentBody(raw: Record<string, unknown>): Record<string, unkn
 router.put(
   "/:studentId",
   ...schoolContext,
-  requireRole("admin", "teacher", "office_staff"),
+  requireRole("admin", "school_admin", "teacher", "office_staff"),
   async (req, res, next) => {
     try {
       const existing = await getStudentById(param(req, "studentId"));
@@ -1025,6 +1212,7 @@ router.put(
       }
 
       const normalizedBody = normalizeStudentBody(req.body);
+      if (includesLifecycleStatus(normalizedBody)) return lifecycleStatusError(res);
       const writesLegacyGrade = hasExplicitLegacyGradeId(normalizedBody);
       const parsed = updateStudentSchema.safeParse(normalizedBody);
       if (!parsed.success) {
@@ -1100,7 +1288,7 @@ router.put(
 router.patch(
   "/:studentId",
   ...schoolContext,
-  requireRole("admin", "teacher", "office_staff"),
+  requireRole("admin", "school_admin", "teacher", "office_staff"),
   async (req, res, next) => {
     try {
       const existing = await getStudentById(param(req, "studentId"));
@@ -1112,6 +1300,7 @@ router.patch(
       }
 
       const normalizedBody = normalizeStudentBody(req.body);
+      if (includesLifecycleStatus(normalizedBody)) return lifecycleStatusError(res);
       const writesLegacyGrade = hasExplicitLegacyGradeId(normalizedBody);
       const parsed = updateStudentSchema.safeParse(normalizedBody);
       if (!parsed.success) {
@@ -1187,7 +1376,7 @@ router.patch(
 router.delete(
   "/:studentId",
   ...schoolContext,
-  requireRole("admin"),
+  requireRole("admin", "school_admin"),
   async (req, res, next) => {
     try {
       const existing = await getStudentById(param(req, "studentId"));
@@ -1195,7 +1384,38 @@ router.delete(
         return res.status(404).json({ error: "Student not found" });
       }
 
-      await deleteStudent(param(req, "studentId"), res.locals.schoolId!);
+      const result = await deactivateStudentsForRoster(
+        res.locals.schoolId!,
+        [param(req, "studentId")],
+        studentLifecycleActor(req, res, "students.delete")
+      );
+      try {
+        await revokeClasspilotStudentSocketsAfterRosterRemoval(
+          res.locals.schoolId!,
+          result.foundStudentIds
+        );
+      } catch {
+        console.warn("[Student Removal] ClassPilot socket shutdown failed after deactivation", {
+          schoolId: res.locals.schoolId,
+          studentCount: result.foundStudentIds.length,
+        });
+      }
+      if (result.deactivatedStudentIds.length > 0) {
+        try {
+          await stopMailpilotMonitoringForStudent(
+            res.locals.schoolId!,
+            existing.id,
+            existing.email
+          );
+        } catch {
+          // Roster removal is authoritative. A Gmail/API outage cannot restore
+          // the student's access; the inactive roster prevents future renewal.
+          console.warn("[Student Removal] MailPilot shutdown failed after deactivation", {
+            schoolId: res.locals.schoolId,
+            studentId: existing.id,
+          });
+        }
+      }
       return res.json({ ok: true });
     } catch (err) {
       next(err);

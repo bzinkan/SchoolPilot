@@ -215,3 +215,32 @@ export async function resyncMailpilotMonitoringForSchool(schoolId: string) {
 
   return { added, removed, totalActive: existingWatches.length + added - removed };
 }
+
+/**
+ * Best-effort operational shutdown for a student removed from active rosters.
+ * Historical alerts remain intact; only the live Gmail watch is stopped and
+ * its local renewal/processing row is removed.
+ */
+export async function stopMailpilotMonitoringForStudent(
+  schoolId: string,
+  studentId: string,
+  studentEmail?: string | null
+): Promise<{ stopped: boolean }> {
+  const watches = await getMailpilotWatchesBySchool(schoolId);
+  const normalizedEmail = studentEmail?.trim().toLowerCase() || null;
+  const watch = watches.find(
+    (candidate) =>
+      candidate.studentId === studentId &&
+      (!normalizedEmail || candidate.studentEmail.toLowerCase() === normalizedEmail)
+  );
+  if (!watch) return { stopped: false };
+
+  try {
+    await stopWatch(watch.studentEmail);
+  } catch {
+    // Gmail stop is best effort. Removing the local row still prevents future
+    // renewal and Pub/Sub processing for this inactive student.
+  }
+  await deleteMailpilotWatch(watch.studentEmail);
+  return { stopped: true };
+}
