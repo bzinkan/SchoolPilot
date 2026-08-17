@@ -79,6 +79,28 @@ test('unavailable previews preserve signed-out, delegated, and signal-loss truth
   assert.equal(signalLossPreview.warning, true);
 });
 
+test('the dashboard omits the aggregate signal-loss card while student tiles retain the warning', () => {
+  const dashboardSource = readFileSync(
+    new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
+    'utf8',
+  );
+  assert.doesNotMatch(dashboardSource, /text-monitoring-lost-count/);
+  assert.doesNotMatch(dashboardSource, /monitoringLostCount/);
+  assert.doesNotMatch(dashboardSource, /Signal lost — cause unknown/);
+  assert.match(dashboardSource, /grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6/);
+
+  const tileSource = readFileSync(
+    new URL('../src/products/classpilot/components/StudentTile.jsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(tileSource, /deriveUnavailablePreview/);
+  assert.match(tileSource, /\{unavailablePreview\.reason\}/);
+  assert.equal(
+    deriveUnavailablePreview({ kind: 'signal_lost' }).reason,
+    'Monitoring signal lost — cause unknown',
+  );
+});
+
 test('missing timestamps and explicit server loss fail closed to signal lost', () => {
   const missingTime = monitoredStudent({ realtimeObservedAt: null });
   assert.equal(deriveStudentMonitoringDisplay(missingTime, observedAt).kind, 'signal_lost');
