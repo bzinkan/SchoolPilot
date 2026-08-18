@@ -1,11 +1,13 @@
 import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate.js";
-import { getSchoolById, updateSchool, getProductLicenses } from "../../services/storage.js";
+import {
+  applySchoolBillingPayment,
+  getSchoolById,
+  updateSchool,
+  getProductLicenses,
+} from "../../services/storage.js";
 import { userBelongsToSchool } from "../../services/passpilotAccess.js";
 import { logAudit } from "../../services/audit.js";
-import db from "../../db.js";
-import { schools, productLicenses } from "../../schema/core.js";
-import { eq, and, sql } from "drizzle-orm";
 import { calculateInvoice, PRODUCT_PRICING, type ProductKey } from "../../config/pricing.js";
 
 const router = Router();
@@ -126,21 +128,15 @@ router.post(
             const activeUntil = new Date(now);
             activeUntil.setFullYear(activeUntil.getFullYear() + 1);
 
-            await db
-              .update(schools)
-              .set({
-                stripeCustomerId: session.customer,
-                status: "active",
-                planTier: "basic",
-                planStatus: "active",
-                activeUntil,
-                maxLicenses: studentCount || undefined,
-                lastPaymentAmount: amountPaid,
-                lastPaymentDate: now,
-                totalPaid: sql`COALESCE(${schools.totalPaid}, 0) + ${amountPaid}`,
-                updatedAt: now,
-              })
-              .where(eq(schools.id, schoolId));
+            await applySchoolBillingPayment({
+              schoolId,
+              paidThrough: activeUntil,
+              amountPaid,
+              planTier: "basic",
+              now,
+              studentCount: studentCount || undefined,
+              stripeCustomerId: session.customer ? String(session.customer) : null,
+            });
 
             await logAudit({
               schoolId,
@@ -171,35 +167,16 @@ router.post(
             // Set plan tier based on product count
             const planTier = products.length >= 3 ? "enterprise" : products.length >= 2 ? "pro" : "basic";
 
-            await db
-              .update(schools)
-              .set({
-                status: "active",
-                planTier,
-                planStatus: "active",
-                activeUntil,
-                maxLicenses: studentCount || undefined,
-                stripeSubscriptionId: invoice.subscription || invoice.id,
-                lastPaymentAmount: amountPaid,
-                lastPaymentDate: now,
-                totalPaid: sql`COALESCE(${schools.totalPaid}, 0) + ${amountPaid}`,
-                updatedAt: now,
-              })
-              .where(eq(schools.id, schoolId));
-
-            // Update product license expiry dates
-            for (const product of products) {
-              await db
-                .update(productLicenses)
-                .set({ expiresAt: activeUntil })
-                .where(
-                  and(
-                    eq(productLicenses.schoolId, schoolId),
-                    eq(productLicenses.product, product),
-                    eq(productLicenses.status, "active")
-                  )
-                );
-            }
+            await applySchoolBillingPayment({
+              schoolId,
+              paidThrough: activeUntil,
+              amountPaid,
+              planTier,
+              now,
+              studentCount: studentCount || undefined,
+              stripeSubscriptionId: String(invoice.subscription || invoice.id),
+              products,
+            });
 
             await logAudit({
               schoolId,
@@ -222,7 +199,7 @@ router.post(
           const schoolId = invoice.metadata?.schoolId;
 
           if (schoolId) {
-            await updateSchool(schoolId, { planStatus: "past_due" });
+            await updateSchool(schoolId, { planStatus: "past_due" }, "system");
 
             await logAudit({
               schoolId,
@@ -246,7 +223,7 @@ router.post(
             await updateSchool(schoolId, {
               planStatus: "canceled",
               stripeSubscriptionId: null,
-            });
+            }, "system");
 
             await logAudit({
               schoolId,

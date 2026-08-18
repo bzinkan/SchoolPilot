@@ -25,11 +25,10 @@ import {
   getStudentById,
   getGroupsByTeacherAndSchool,
   getGroupsBySchool,
-  createGroup,
+  upsertClasspilotGroupWithAssignments,
   getMembershipByUserAndSchool,
   getUserById,
   validateStaffEmailDomainForSchool,
-  addGroupTeacher,
   isAuthorizedClasspilotSessionStaff,
 } from "../../services/storage.js";
 import { broadcastToStudentsLocal } from "../../realtime/ws-broadcast.js";
@@ -556,19 +555,22 @@ router.post("/groups", ...auth, async (req, res, next) => {
         actualDomain: domainValidation.actualDomain,
       });
     }
-    const group = await createGroup({
+    const { group } = await upsertClasspilotGroupWithAssignments({
       schoolId: res.locals.schoolId!,
-      teacherId: ownerTeacherId,
-      name,
-      gradeLevel: gradeLevel || undefined,
-      periodLabel: periodLabel || undefined,
-      description: description || undefined,
-      groupType: groupType || "teacher_created",
-      scheduleEnabled: scheduleEnabled || false,
-      blockStartTime: scheduleEnabled ? blockStartTime : undefined,
-      blockEndTime: scheduleEnabled ? blockEndTime : undefined,
+      data: {
+        name,
+        gradeLevel: gradeLevel || undefined,
+        periodLabel: periodLabel || undefined,
+        description: description || undefined,
+        groupType: groupType || "teacher_created",
+        scheduleEnabled: scheduleEnabled || false,
+        blockStartTime: scheduleEnabled ? blockStartTime : null,
+        blockEndTime: scheduleEnabled ? blockEndTime : null,
+      },
+      primaryTeacherId: ownerTeacherId,
+      coTeacherIds: [],
+      scheduleChangeActorId: req.authUser!.id,
     });
-    await addGroupTeacher(group.id, ownerTeacherId, "primary");
     return res.status(201).json({ group });
   } catch (err) {
     next(err);

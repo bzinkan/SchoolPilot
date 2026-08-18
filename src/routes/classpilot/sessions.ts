@@ -31,7 +31,12 @@ import {
   startManualClasspilotSession,
   serializeClasspilotSession,
 } from "../../services/classpilotSessionLifecycle.js";
-import { processScheduledClassAutoStart } from "../../services/classpilotScheduledStart.js";
+import {
+  emitClasspilotScheduleRuntimeMetric,
+  processScheduledClassAutoStart,
+} from "../../services/classpilotScheduledStart.js";
+import { getEffectiveClasspilotScheduleWindow } from "../../services/classpilotScheduleChanges.js";
+import { localDateTimeUtc } from "../../util/schoolTime.js";
 
 const router = Router();
 
@@ -64,22 +69,55 @@ function formatTime(t: string) {
   return `${h12}:${m} ${ampm}`;
 }
 
-async function assertManualStartWindow(group: any) {
+export async function assertManualStartWindow(group: any, now = new Date()) {
   if (!(group as any).scheduleEnabled || !(group as any).blockStartTime || !(group as any).blockEndTime) return;
 
   const school = await getSchoolById(group.schoolId);
   const tz = school?.schoolTimezone || "America/New_York";
-  const now = new Date();
-  const currentTimeHHMM = now.toLocaleString("en-US", {
-    timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false,
-  }).replace(/^24:/, "00:");
   const todayDate = now.toLocaleDateString("en-CA", { timeZone: tz });
   if ((group as any).scheduleSkippedDate === todayDate) {
     throw Object.assign(new Error("Today's scheduled class occurrence has already ended or was skipped."), { status: 409 });
   }
-  const isOutsideWindow = currentTimeHHMM < (group as any).blockStartTime || currentTimeHHMM >= (group as any).blockEndTime;
+  let effectiveWindow: Awaited<ReturnType<typeof getEffectiveClasspilotScheduleWindow>>;
+  try {
+    effectiveWindow = await getEffectiveClasspilotScheduleWindow({
+      schoolId: group.schoolId,
+      group,
+      scheduledDate: todayDate,
+      timeZone: tz,
+    });
+  } catch (error) {
+    if ((error as { code?: string }).code === "SCHEDULE_CHANGE_EXECUTION_INVALID") {
+      emitClasspilotScheduleRuntimeMetric("ScheduleChangeExecutionInvalid", 1, now);
+    }
+    emitClasspilotScheduleRuntimeMetric("EffectiveWindowResolutionFailure", 1, now);
+    throw error;
+  }
+  if (!effectiveWindow) {
+    throw Object.assign(new Error("This class does not have a valid schedule window."), {
+      status: 409,
+      code: "SCHEDULE_WINDOW_UNAVAILABLE",
+    });
+  }
+  if (effectiveWindow.source === "swap") {
+    emitClasspilotScheduleRuntimeMetric("EffectiveWindowResolved", 1, now);
+  }
+  const isOutsideWindow = now < effectiveWindow.scheduledStartAt
+    || now >= effectiveWindow.scheduledEndAt;
   if (isOutsideWindow) {
-    throw Object.assign(new Error(`Class is scheduled for ${formatTime((group as any).blockStartTime)} - ${formatTime((group as any).blockEndTime)}. Cannot start outside the scheduled window.`), { status: 403 });
+    if (
+      effectiveWindow.source === "swap"
+      && group.blockStartTime
+      && group.blockEndTime
+      && now >= localDateTimeUtc(todayDate, group.blockStartTime, tz)
+      && now < localDateTimeUtc(todayDate, group.blockEndTime, tz)
+    ) {
+      emitClasspilotScheduleRuntimeMetric("OriginalWindowStartDenied", 1, now);
+    }
+    throw Object.assign(new Error(`Class is scheduled for ${formatTime(effectiveWindow.blockStartTime)} - ${formatTime(effectiveWindow.blockEndTime)}. Cannot start outside the scheduled window.`), {
+      status: 403,
+      code: effectiveWindow.source === "swap" ? "SCHEDULE_CHANGE_WINDOW_REQUIRED" : "SCHEDULE_WINDOW_REQUIRED",
+    });
   }
 }
 
@@ -315,7 +353,10 @@ router.post("/start", ...auth, async (req, res, next) => {
   try {
     return await startTeachingSessionWithOverlapGuard(req, res);
   } catch (err: any) {
-    if (err?.status) return res.status(err.status).json({ error: err.message });
+    if (err?.status) return res.status(err.status).json({
+      error: err.message,
+      ...(err.code ? { code: err.code } : {}),
+    });
     next(err);
   }
 });
@@ -360,7 +401,10 @@ router.post("/", ...auth, async (req, res, next) => {
   try {
     return await startTeachingSessionWithOverlapGuard(req, res);
   } catch (err: any) {
-    if (err?.status) return res.status(err.status).json({ error: err.message });
+    if (err?.status) return res.status(err.status).json({
+      error: err.message,
+      ...(err.code ? { code: err.code } : {}),
+    });
     next(err);
   }
 });

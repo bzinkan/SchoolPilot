@@ -402,6 +402,7 @@ export function responseBodyFor(
     '/api/coverage/claimed-students': { students: [] },
     '/api/coverage/reroute-targets': { targets: [] },
     '/api/classpilot/scheduled-conflicts': { conflicts: [] },
+    '/api/classpilot/schedule-changes/today': { changes: [] },
     '/api/admin/attendance': { records: [] },
   };
   if (!Object.hasOwn(classpilotResponses, pathname)) {

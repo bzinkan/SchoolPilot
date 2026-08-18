@@ -23,6 +23,7 @@ import {
   unsubscribeWsClientFromSession,
   closeStudentSocketsLocal,
   type WSClient,
+  type WsRole,
 } from "./ws-broadcast.js";
 import {
   publishWS,
@@ -128,6 +129,29 @@ export async function hasActiveStudentWebSocketBinding(
     sessionId: client.studentSessionId,
     deviceId: client.deviceId,
   }));
+}
+
+type StaffMembershipResolver = (
+  userId: string,
+  schoolId: string
+) => Promise<{ role: string } | undefined>;
+
+function staffWebSocketRole(membershipRole: string): Exclude<WsRole, "student"> | null {
+  if (membershipRole === "admin" || membershipRole === "school_admin") return "school_admin";
+  if (membershipRole === "teacher") return "teacher";
+  if (membershipRole === "office_staff") return "office_staff";
+  return null;
+}
+
+/** Revalidate the current active membership before retaining staff authority. */
+export async function activeStaffWebSocketRole(
+  client: Pick<WSClient, "role" | "schoolId" | "userId">,
+  resolveMembership: StaffMembershipResolver = getMembershipByUserAndSchool
+): Promise<Exclude<WsRole, "student"> | null> {
+  if (client.role === "super_admin") return "super_admin";
+  if (!client.schoolId || !client.userId || client.role === "student") return null;
+  const membership = await resolveMembership(client.userId, client.schoolId);
+  return membership ? staffWebSocketRole(membership.role) : null;
 }
 
 export function setupWebSocket(
@@ -481,6 +505,7 @@ export function setupWebSocket(
   wss.on("connection", (ws) => {
     const client = registerWsClient(ws);
     let studentPongRevalidation: Promise<void> | null = null;
+    let staffPongRevalidation: Promise<void> | null = null;
     const presenceConnectionId = randomUUID();
     let recordedPresence: { schoolId: string; userId: string } | null = null;
     let presenceMutation = Promise.resolve();
@@ -545,54 +570,74 @@ export function setupWebSocket(
     ws.on("pong", () => {
       clientPongPending.set(ws, false);
       refreshStaffPresence();
-      if (
-        studentPongRevalidation ||
-        !client.authenticated ||
-        client.role !== "student" ||
-        !client.schoolId ||
-        !client.studentId
-      ) {
+      if (!client.authenticated) return;
+      if (client.role === "student") {
+        if (studentPongRevalidation || !client.schoolId || !client.studentId) return;
+        const binding = {
+          role: client.role,
+          schoolId: client.schoolId,
+          studentId: client.studentId,
+          studentSessionId: client.studentSessionId,
+          deviceId: client.deviceId,
+        } as const;
+        const pending = hasActiveStudentWebSocketBinding(binding)
+          .then((active) => {
+            if (
+              client.schoolId !== binding.schoolId ||
+              client.studentId !== binding.studentId ||
+              client.studentSessionId !== binding.studentSessionId ||
+              client.deviceId !== binding.deviceId
+            ) {
+              return;
+            }
+            if (!active) closeStudentSocketsLocal(binding.schoolId, [binding.studentId]);
+          })
+          .catch((error) => {
+            const safeError = studentAuthenticationServiceError(error);
+            errorMonitor.trackError("database_connectivity", safeError, {
+              job: "studentWebSocketPongRevalidation",
+              errorCode: (safeError as NodeJS.ErrnoException).code,
+            }, { persist: false, priority: "high" });
+            client.authenticated = false;
+            removeWsClient(ws);
+            if (ws.readyState === WebSocket.OPEN) ws.close(1013, "Authentication service unavailable");
+          });
+        studentPongRevalidation = pending;
+        void pending.finally(() => {
+          if (studentPongRevalidation === pending) studentPongRevalidation = null;
+        });
         return;
       }
-
-      const binding = {
-        role: client.role,
-        schoolId: client.schoolId,
-        studentId: client.studentId,
-        studentSessionId: client.studentSessionId,
-        deviceId: client.deviceId,
-      } as const;
-      const pending = hasActiveStudentWebSocketBinding(binding)
-        .then((active) => {
+      if (client.role === "super_admin" || staffPongRevalidation) return;
+      const binding = { role: client.role, schoolId: client.schoolId, userId: client.userId } as const;
+      const pending = activeStaffWebSocketRole(binding)
+        .then((currentRole) => {
           if (
             client.schoolId !== binding.schoolId ||
-            client.studentId !== binding.studentId ||
-            client.studentSessionId !== binding.studentSessionId ||
-            client.deviceId !== binding.deviceId
+            client.userId !== binding.userId ||
+            client.role !== binding.role
           ) {
             return;
           }
-          if (!active) {
-            closeStudentSocketsLocal(binding.schoolId, [binding.studentId]);
+          if (currentRole !== binding.role) {
+            client.authenticated = false;
+            clearStaffPresence();
+            removeWsClient(ws);
+            if (ws.readyState === WebSocket.OPEN) ws.close(1008, "Staff access changed");
           }
         })
         .catch((error) => {
-          const safeError = studentAuthenticationServiceError(error);
-          errorMonitor.trackError("database_connectivity", safeError, {
-            job: "studentWebSocketPongRevalidation",
-            errorCode: (safeError as NodeJS.ErrnoException).code,
+          errorMonitor.trackError("database_connectivity", error as Error, {
+            job: "staffWebSocketPongRevalidation",
           }, { persist: false, priority: "high" });
-          // A database outage must not leave a cached authenticated binding
-          // available for outbound controls.
           client.authenticated = false;
+          clearStaffPresence();
           removeWsClient(ws);
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.close(1013, "Authentication service unavailable");
-          }
+          if (ws.readyState === WebSocket.OPEN) ws.close(1013, "Authentication service unavailable");
         });
-      studentPongRevalidation = pending;
+      staffPongRevalidation = pending;
       void pending.finally(() => {
-        if (studentPongRevalidation === pending) studentPongRevalidation = null;
+        if (staffPongRevalidation === pending) staffPongRevalidation = null;
       });
     });
 
@@ -702,7 +747,12 @@ export function setupWebSocket(
           }
 
           // Staff auth via userToken (JWT-based, no session dependency)
-          if (message.role === "teacher" || message.role === "school_admin" || message.role === "super_admin") {
+          if (
+            message.role === "teacher" ||
+            message.role === "office_staff" ||
+            message.role === "school_admin" ||
+            message.role === "super_admin"
+          ) {
             if (!message.userToken) {
               ws.send(JSON.stringify({ type: "auth-error", message: "User token required" }));
               ws.close();
@@ -721,7 +771,7 @@ export function setupWebSocket(
               }
 
               // Verify role from DB membership instead of trusting client
-              let role: "teacher" | "school_admin" | "super_admin" = "teacher";
+              let role: "teacher" | "office_staff" | "school_admin" | "super_admin";
               if (payload.isSuperAdmin) {
                 role = "super_admin";
               } else {
@@ -731,7 +781,13 @@ export function setupWebSocket(
                   ws.close();
                   return;
                 }
-                role = membership.role === "admin" || membership.role === "school_admin" ? "school_admin" : "teacher";
+                const currentRole = staffWebSocketRole(membership.role);
+                if (!currentRole) {
+                  ws.send(JSON.stringify({ type: "auth-error", message: "Staff access required" }));
+                  ws.close(1008, "Staff access required");
+                  return;
+                }
+                role = currentRole;
               }
 
               authenticateWsClient(ws, {
@@ -747,6 +803,7 @@ export function setupWebSocket(
               const presenceRecorded = recordStaffPresence(schoolId, userId);
               ws.send(JSON.stringify({ type: "auth-success", role }));
               activity.staffAuthenticated += 1;
+              if (role === "office_staff") return;
               void presenceRecorded.then(() =>
                 runWithTenantContext({ schoolId }, async () => {
                   const started = await startActiveScheduledClassesForTeacher({ schoolId, teacherId: userId });
@@ -774,15 +831,44 @@ export function setupWebSocket(
           }
         }
 
+        // Every post-authentication message requires a current persisted role;
+        // a cached teacher role must not survive demotion or deactivation.
+        if (!client.authenticated) return;
+        if (
+          client.role !== "student" &&
+          client.role !== "super_admin" &&
+          message.type !== "auth"
+        ) {
+          try {
+            const currentRole = await activeStaffWebSocketRole(client);
+            if (currentRole !== client.role) {
+              client.authenticated = false;
+              clearStaffPresence();
+              removeWsClient(ws);
+              ws.send(JSON.stringify({ type: "auth-error", message: "Staff access changed" }));
+              ws.close(1008, "Staff access changed");
+              return;
+            }
+          } catch (error) {
+            errorMonitor.trackError("database_connectivity", error as Error, {
+              job: "staffWebSocketMessageRevalidation",
+              messageType,
+            }, { persist: false, priority: "high" });
+            client.authenticated = false;
+            clearStaffPresence();
+            removeWsClient(ws);
+            ws.send(JSON.stringify({ type: "auth-error", message: "Authentication service unavailable" }));
+            ws.close(1013, "Authentication service unavailable");
+            return;
+          }
+        }
+
         // --- Heartbeat handling ---
         if (message.type === "heartbeat" || message.type === "ping") {
           refreshStaffPresence();
           ws.send(JSON.stringify({ type: "pong" }));
           return;
         }
-
-        // All remaining message types require authentication
-        if (!client.authenticated) return;
 
         // Authentication is not a one-time authorization grant. Deactivating a
         // student ends the backing device session, so every subsequent

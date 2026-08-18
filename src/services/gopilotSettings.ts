@@ -2,6 +2,10 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import db from "../db.js";
 import { schools } from "../schema/core.js";
 import { auditLogs, settings } from "../schema/shared.js";
+import {
+  guardClasspilotScheduleChangesForSchoolTimezoneChange,
+  withClasspilotSchedulePostCommitTransaction,
+} from "./storage.js";
 
 export type GoPilotPickupZone = {
   id: string;
@@ -117,7 +121,7 @@ export async function updateGoPilotSettings(
   patch: GoPilotSettingsPatch,
   actor: GoPilotSettingsActor
 ): Promise<UpdateGoPilotSettingsResult | undefined> {
-  return db.transaction(async (tx) => {
+  return withClasspilotSchedulePostCommitTransaction(async (tx) => {
     const [row] = await tx
       .select(settingsSelection)
       .from(schools)
@@ -154,6 +158,14 @@ export async function updateGoPilotSettings(
     }
 
     const now = new Date();
+    await guardClasspilotScheduleChangesForSchoolTimezoneChange({
+      schoolId,
+      currentTimezone: current.schoolTimezone,
+      nextTimezone: next.schoolTimezone,
+      actorId: actor.userId,
+      now,
+      dbInstance: tx as unknown as typeof db,
+    });
     const [saved] = await tx
       .update(schools)
       .set({

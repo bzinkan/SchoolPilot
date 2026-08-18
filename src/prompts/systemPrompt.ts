@@ -43,6 +43,7 @@ const CLASSPILOT_DOCS = `
 - **Flight Paths**: Website allowlists that control which websites students can access during a teaching session. Create a flight path with a name and list of allowed domains, then apply it to student devices.
 - **Block Lists**: Website blocklists that prevent students from accessing specific sites. Works alongside flight paths.
 - **Teaching Sessions**: Start/end class monitoring sessions. When active, student devices are monitored and flight paths are enforced.
+- **Schedule Changes**: Approved one-day time swaps between administrator-linked classes. Only the class times change for that instructional date; teachers, rosters, ownership, and recurring schedules stay the same.
 - **Devices**: Student Chromebook/laptop devices registered to the school via a browser extension. Shows real-time URL activity.
 - **Co-Teachers**: Multiple teachers can be assigned to a single class. The primary teacher owns it; co-teachers have full access.
 - **Student Tiles**: During a session, teachers see a live grid of student devices showing current URLs and activity.
@@ -51,8 +52,10 @@ const CLASSPILOT_DOCS = `
 ## ClassPilot UI Navigation
 - **Dashboard**: school-pilot.net/classpilot — Main teacher dashboard with student device tiles, session controls, and toolbar (flight paths, block lists, screenshots, lock/unlock, messaging)
 - **Settings** (gear icon in top header bar): Teacher settings page with Flight Paths, Block Lists, and session preferences. Both admins and teachers access flight paths and block lists here.
+- **Schedule Changes** (My Settings > Schedule Changes): Teachers request, accept, decline, withdraw, and review one-day class-time swaps for eligible class pairs.
 - **Admin Panel** (button in top header bar): Admin-only page with Staff & Settings tab (manage staff accounts, import from Google, school settings) and Audit Logs tab
 - **Class Management** (within Admin Panel > Staff & Settings): Manage classes, create new classes with optional Class Block scheduling, assign students to classes, sync from Google Classroom
+- **Admin Schedule Changes** (Classes > Schedule Changes): Configure eligible class pairs, approve or deny teacher requests, create direct one-day changes, cancel upcoming changes, and review history. Schedule-change policy is configured in Admin Settings.
 - **Students** (within Admin Panel > Staff & Settings > Student Roster Management): Manage student roster, bulk import via CSV, import from Google Classroom or Google Workspace, add individual students
 - **Attendance** (button in top header bar): Mark students absent/tardy/early dismissal for today
 - **Analytics** (button in top header bar): Admin analytics with usage summary, top websites, hourly activity chart, teacher session stats, and per-class usage

@@ -9,7 +9,6 @@ import {
   addGroupStudentsDetailed,
   archiveGroup,
   autoAssignFamilyGroups,
-  createGroup,
   createStudent,
   findOverlappingScheduledAdminClass,
   getAdminClassSummariesBySchool,
@@ -24,7 +23,6 @@ import {
   groupHasTeachingHistory,
   hardDeleteGroupWithCleanup,
   removeGroupStudent,
-  replaceGroupTeachers,
   reactivateInactiveStudentForRosterImport,
   updateAdminClassWithTeachers,
   upsertAdminClassroomClass,
@@ -611,6 +609,7 @@ router.post("/classroom/import", ...auth, async (req, res, next) => {
           primaryTeacherId,
           coTeacherIds,
           studentIds,
+          scheduleChangeActorId: req.authUser!.id,
         });
         await upsertClassroomCourseStudents(courseStudentRows);
 
@@ -704,22 +703,27 @@ router.post("/", ...auth, async (req, res, next) => {
       blockStartTime: req.body.blockStartTime,
       blockEndTime: req.body.blockEndTime,
     });
-    const group = await createGroup({
+    const { group } = await upsertAdminClassroomClass({
       schoolId,
-      teacherId: primaryTeacherId,
-      name,
-      description: req.body.description ? String(req.body.description) : null,
-      periodLabel: req.body.periodLabel ? String(req.body.periodLabel) : null,
-      gradeLevel: normalizeGrade(req.body.gradeLevel),
-      groupType: "admin_class",
-      status: "active",
-      schoolYear: req.body.schoolYear ? String(req.body.schoolYear) : null,
-      term: req.body.term ? String(req.body.term) : null,
-      scheduleEnabled,
-      blockStartTime: schedule.blockStartTime,
-      blockEndTime: schedule.blockEndTime,
+      data: {
+        schoolId,
+        name,
+        description: req.body.description ? String(req.body.description) : null,
+        periodLabel: req.body.periodLabel ? String(req.body.periodLabel) : null,
+        gradeLevel: normalizeGrade(req.body.gradeLevel),
+        groupType: "admin_class",
+        status: "active",
+        schoolYear: req.body.schoolYear ? String(req.body.schoolYear) : null,
+        term: req.body.term ? String(req.body.term) : null,
+        scheduleEnabled,
+        blockStartTime: schedule.blockStartTime,
+        blockEndTime: schedule.blockEndTime,
+      },
+      primaryTeacherId,
+      coTeacherIds,
+      studentIds: [],
+      scheduleChangeActorId: req.authUser!.id,
     });
-    await replaceGroupTeachers(group.id, primaryTeacherId, coTeacherIds);
     await logAudit({
       ...actor(req, res),
       action: "class.create",
@@ -764,44 +768,66 @@ router.patch("/:id", ...auth, async (req, res, next) => {
       return res.status(404).json({ error: "Class not found" });
     }
     await freezeScheduledOccurrenceIfDue({ group });
-    const name = req.body.name === undefined ? group.name : String(req.body.name || "").trim();
-    if (!name) throw routeError("Class name is required", 400, "NAME_REQUIRED");
-    const primaryTeacherId = String(req.body.primaryTeacherId || req.body.teacherId || group.teacherId);
-    const existingTeachers = req.body.coTeacherIds === undefined
-      ? await getGroupTeacherSummaries(group.id, schoolId)
-      : [];
-    const coTeacherInput = req.body.coTeacherIds === undefined
-      ? existingTeachers
-          .filter((entry) => entry.relationshipRole === "co-teacher")
-          .map((entry) => entry.teacherId)
-      : req.body.coTeacherIds;
-    const coTeacherIds = await validateTeachers(primaryTeacherId, coTeacherInput, schoolId);
-    const scheduleEnabled = req.body.scheduleEnabled === undefined ? group.scheduleEnabled : req.body.scheduleEnabled === true;
-    const schedule = await validateSchedule({
-      schoolId,
-      teacherId: primaryTeacherId,
-      scheduleEnabled,
-      blockStartTime: req.body.blockStartTime ?? group.blockStartTime,
-      blockEndTime: req.body.blockEndTime ?? group.blockEndTime,
-      excludeGroupId: group.id,
-    });
-    const data = {
-      name,
-      description: req.body.description === undefined ? group.description : (req.body.description ? String(req.body.description) : null),
-      periodLabel: req.body.periodLabel === undefined ? group.periodLabel : (req.body.periodLabel ? String(req.body.periodLabel) : null),
-      gradeLevel: req.body.gradeLevel === undefined ? group.gradeLevel : normalizeGrade(req.body.gradeLevel),
-      schoolYear: req.body.schoolYear === undefined ? group.schoolYear : (req.body.schoolYear ? String(req.body.schoolYear) : null),
-      term: req.body.term === undefined ? group.term : (req.body.term ? String(req.body.term) : null),
-      scheduleEnabled,
-      blockStartTime: schedule.blockStartTime,
-      blockEndTime: schedule.blockEndTime,
-      scheduleSkippedDate: null,
-    };
+    const submittedName = req.body.name === undefined
+      ? undefined
+      : String(req.body.name || "").trim();
+    if (submittedName !== undefined && !submittedName) {
+      throw routeError("Class name is required", 400, "NAME_REQUIRED");
+    }
+    const submittedPrimaryTeacherId = req.body.primaryTeacherId !== undefined
+      ? String(req.body.primaryTeacherId || "")
+      : req.body.teacherId !== undefined
+        ? String(req.body.teacherId || "")
+        : undefined;
+    const primaryTeacherId = submittedPrimaryTeacherId ?? group.teacherId;
+    const coTeacherIds = req.body.coTeacherIds === undefined
+      ? undefined
+      : await validateTeachers(primaryTeacherId, req.body.coTeacherIds, schoolId);
+    if (submittedPrimaryTeacherId !== undefined && coTeacherIds === undefined) {
+      await validateTeachers(submittedPrimaryTeacherId, [], schoolId);
+    }
+    const scheduleFieldsSubmitted =
+      req.body.scheduleEnabled !== undefined ||
+      req.body.blockStartTime !== undefined ||
+      req.body.blockEndTime !== undefined;
+    const scheduleEnabled = req.body.scheduleEnabled === undefined
+      ? group.scheduleEnabled
+      : req.body.scheduleEnabled === true;
+    const schedule = submittedPrimaryTeacherId !== undefined || scheduleFieldsSubmitted
+      ? await validateSchedule({
+          schoolId,
+          teacherId: primaryTeacherId,
+          scheduleEnabled,
+          blockStartTime: req.body.blockStartTime ?? group.blockStartTime,
+          blockEndTime: req.body.blockEndTime ?? group.blockEndTime,
+          excludeGroupId: group.id,
+        })
+      : null;
+    const data: Parameters<typeof updateAdminClassWithTeachers>[0]["data"] = {};
+    if (submittedName !== undefined) data.name = submittedName;
+    if (req.body.description !== undefined) {
+      data.description = req.body.description ? String(req.body.description) : null;
+    }
+    if (req.body.periodLabel !== undefined) {
+      data.periodLabel = req.body.periodLabel ? String(req.body.periodLabel) : null;
+    }
+    if (req.body.gradeLevel !== undefined) data.gradeLevel = normalizeGrade(req.body.gradeLevel);
+    if (req.body.schoolYear !== undefined) {
+      data.schoolYear = req.body.schoolYear ? String(req.body.schoolYear) : null;
+    }
+    if (req.body.term !== undefined) data.term = req.body.term ? String(req.body.term) : null;
+    if (scheduleFieldsSubmitted && schedule) {
+      data.scheduleEnabled = scheduleEnabled;
+      data.blockStartTime = schedule.blockStartTime;
+      data.blockEndTime = schedule.blockEndTime;
+      data.scheduleSkippedDate = null;
+    }
     const updated = await updateAdminClassWithTeachers({
       groupId: group.id,
       data,
-      primaryTeacherId,
+      primaryTeacherId: submittedPrimaryTeacherId,
       coTeacherIds,
+      scheduleChangeActorId: req.authUser!.id,
     });
     if (!updated) {
       return res.status(404).json({ error: "Class not found" });
@@ -811,29 +837,38 @@ router.patch("/:id", ...auth, async (req, res, next) => {
       action: "class.update",
       entityType: "class",
       entityId: group.id,
-      entityName: name,
+      entityName: updated.name,
       changes: { before: group, after: updated, coTeacherIds },
     });
-    if (primaryTeacherId !== group.teacherId) {
+    if (submittedPrimaryTeacherId !== undefined && primaryTeacherId !== group.teacherId) {
       await logAudit({
         ...actor(req, res),
         action: "class.primary_teacher_change",
         entityType: "class",
         entityId: group.id,
-        entityName: name,
+        entityName: updated.name,
         changes: { before: group.teacherId, after: primaryTeacherId },
       });
     }
-    if (group.scheduleEnabled !== scheduleEnabled || group.blockStartTime !== schedule.blockStartTime || group.blockEndTime !== schedule.blockEndTime) {
+    if (
+      scheduleFieldsSubmitted &&
+      (group.scheduleEnabled !== updated.scheduleEnabled ||
+        group.blockStartTime !== updated.blockStartTime ||
+        group.blockEndTime !== updated.blockEndTime)
+    ) {
       await logAudit({
         ...actor(req, res),
         action: "class.schedule_change",
         entityType: "class",
         entityId: group.id,
-        entityName: name,
+        entityName: updated.name,
         changes: {
           before: { scheduleEnabled: group.scheduleEnabled, blockStartTime: group.blockStartTime, blockEndTime: group.blockEndTime },
-          after: { scheduleEnabled, blockStartTime: schedule.blockStartTime, blockEndTime: schedule.blockEndTime },
+          after: {
+            scheduleEnabled: updated.scheduleEnabled,
+            blockStartTime: updated.blockStartTime,
+            blockEndTime: updated.blockEndTime,
+          },
         },
       });
     }
@@ -859,7 +894,7 @@ router.post("/:id/students", ...auth, async (req, res, next) => {
     const validIds = students
       .filter((student) => student.schoolId === schoolId && student.status === "active")
       .map((student) => student.id);
-    const result = await addGroupStudentsDetailed(group.id, validIds);
+    const result = await addGroupStudentsDetailed(group.id, validIds, req.authUser!.id);
     const resultIds = new Set([...result.added, ...result.alreadyPresent]);
     const failed = requested
       .filter((id) => !resultIds.has(id))
@@ -916,7 +951,7 @@ router.post("/:id/archive", ...auth, async (req, res, next) => {
       return res.status(404).json({ error: "Class not found" });
     }
     await freezeScheduledOccurrenceIfDue({ group });
-    const archived = await archiveGroup(group.id);
+    const archived = await archiveGroup(group.id, req.authUser!.id);
     if (!archived) {
       return res.status(404).json({ error: "Class not found" });
     }
@@ -954,7 +989,7 @@ router.delete("/:id", ...auth, async (req, res, next) => {
         code: "CLASS_HAS_HISTORY",
       });
     }
-    await hardDeleteGroupWithCleanup(group.id);
+    await hardDeleteGroupWithCleanup(group.id, req.authUser!.id);
     await logAudit({
       ...actor(req, res),
       action: "class.delete",

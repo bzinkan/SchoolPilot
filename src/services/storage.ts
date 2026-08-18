@@ -139,6 +139,9 @@ import {
   teacherSettings,
   teacherStudents,
   dailyUsage,
+  classpilotScheduleChangePairs,
+  classpilotScheduleChanges,
+  classpilotScheduleChangeLegs,
   type Device,
   type InsertDevice,
   type StudentDevice,
@@ -212,6 +215,9 @@ import {
   type InsertTeacherStudent,
   type DailyUsage,
   type InsertDailyUsage,
+  type ClasspilotScheduleChangePair,
+  type ClasspilotScheduleChange,
+  type ClasspilotScheduleChangeLeg,
   groupTeachers,
   type GroupTeacher,
   type InsertGroupTeacher,
@@ -645,6 +651,157 @@ export async function createProductLicense(
   return license!;
 }
 
+export type ApplySchoolBillingPaymentOptions = {
+  schoolId: string;
+  paidThrough: Date;
+  amountPaid: number;
+  planTier: string;
+  now?: Date;
+  studentCount?: number;
+  products?: string[];
+  stripeCustomerId?: string | null;
+  stripeSubscriptionId?: string | null;
+};
+
+/**
+ * Applies a successful billing event under the same school/config/license lock
+ * domain used by schedule-change approvals and entitlement removal. Expiries
+ * are monotonic, so a delayed Stripe event cannot shorten a newer paid term.
+ */
+export async function applySchoolBillingPayment(
+  options: ApplySchoolBillingPaymentOptions
+): Promise<{ school: School; updatedLicenseCount: number } | undefined> {
+  if (!(options.paidThrough instanceof Date) || !Number.isFinite(options.paidThrough.getTime())) {
+    throw new Error("paidThrough must be a valid date");
+  }
+  const now = options.now ?? new Date();
+  const products = Array.from(
+    new Set((options.products ?? []).map((value) => String(value).trim()).filter(Boolean))
+  ).sort();
+  const productsToLock = Array.from(new Set([...products, "CLASSPILOT"])).sort();
+  return withClasspilotSchedulePostCommitTransaction(async (tx) => {
+    const [lockedSchool] = await tx
+      .select()
+      .from(schools)
+      .where(and(eq(schools.id, options.schoolId), isNull(schools.deletedAt)))
+      .limit(1)
+      .for("update");
+    if (!lockedSchool) return undefined;
+    await takePasspilotClassLock(tx, options.schoolId);
+
+    const lockedLicenses = productsToLock.length > 0
+      ? await tx
+          .select({
+            id: productLicenses.id,
+            product: productLicenses.product,
+            expiresAt: productLicenses.expiresAt,
+          })
+          .from(productLicenses)
+          .where(
+            and(
+              eq(productLicenses.schoolId, options.schoolId),
+              eq(productLicenses.status, "active"),
+              inArray(productLicenses.product, productsToLock)
+            )
+          )
+          .orderBy(asc(productLicenses.id))
+          .for("update")
+      : [];
+
+    // NULL is the established unbounded-entitlement sentinel. A payment may
+    // extend a finite horizon, but must never turn an unbounded school/license
+    // into a finite one.
+    const nextSchoolActiveUntil = lockedSchool.activeUntil === null
+      ? null
+      : lockedSchool.activeUntil < options.paidThrough
+        ? options.paidThrough
+        : lockedSchool.activeUntil;
+    const classpilotLicenses = lockedLicenses.filter(
+      (license) => license.product === "CLASSPILOT"
+    );
+    const nextClasspilotExpiries = classpilotLicenses.map((license) => {
+      if (license.expiresAt === null) return null;
+      if (!products.includes("CLASSPILOT")) return license.expiresAt;
+      return license.expiresAt < options.paidThrough
+        ? options.paidThrough
+        : license.expiresAt;
+    });
+    const nextClasspilotExpiry: Date | null | undefined =
+      nextClasspilotExpiries.length === 0
+        ? undefined
+        : nextClasspilotExpiries.some((value) => value === null)
+          ? null
+          : new Date(Math.max(...nextClasspilotExpiries.map((value) => value!.getTime())));
+    const finiteHorizons = [nextSchoolActiveUntil, nextClasspilotExpiry].filter(
+      (value): value is Date => value instanceof Date
+    );
+    // If either existing entitlement dimension is unbounded, only the other
+    // finite dimension can constrain the event. No finite values means the
+    // combined entitlement remains unbounded.
+    const entitlementThrough = finiteHorizons.length > 0
+      ? new Date(Math.min(...finiteHorizons.map((value) => value.getTime())))
+      : undefined;
+    if (entitlementThrough) {
+      await reconcileClasspilotScheduleChangesForEntitlementRemoval({
+        schoolId: options.schoolId,
+        actorId: "system",
+        validUntil: entitlementThrough,
+        reasonCode: "billing_entitlement_horizon_changed",
+        approvedMessage:
+          "The paid-through date cannot end before an approved future schedule change. Cancel it first.",
+        now,
+        dbInstance: tx as unknown as ScheduleChangeDb,
+      });
+    }
+
+    const [savedSchool] = await tx
+      .update(schools)
+      .set({
+        status: "active",
+        planTier: options.planTier,
+        planStatus: "active",
+        activeUntil: nextSchoolActiveUntil,
+        ...(options.studentCount && options.studentCount > 0
+          ? { maxLicenses: options.studentCount }
+          : {}),
+        ...(options.stripeCustomerId !== undefined
+          ? { stripeCustomerId: options.stripeCustomerId }
+          : {}),
+        ...(options.stripeSubscriptionId !== undefined
+          ? { stripeSubscriptionId: options.stripeSubscriptionId }
+          : {}),
+        lastPaymentAmount: Math.max(0, Math.trunc(options.amountPaid || 0)),
+        lastPaymentDate: now,
+        totalPaid: sql`COALESCE(${schools.totalPaid}, 0) + ${Math.max(
+          0,
+          Math.trunc(options.amountPaid || 0)
+        )}`,
+        updatedAt: now,
+      })
+      .where(eq(schools.id, options.schoolId))
+      .returning();
+    if (!savedSchool) return undefined;
+
+    let updatedLicenseCount = 0;
+    const touchedLicenses = lockedLicenses.filter((license) =>
+      products.includes(license.product)
+    );
+    if (touchedLicenses.length > 0) {
+      const result = await tx
+        .update(productLicenses)
+        .set({
+          expiresAt: sql`CASE
+            WHEN ${productLicenses.expiresAt} IS NULL THEN NULL
+            ELSE GREATEST(${productLicenses.expiresAt}, ${options.paidThrough})
+          END`,
+        })
+        .where(inArray(productLicenses.id, touchedLicenses.map((license) => license.id)));
+      updatedLicenseCount = result.rowCount ?? 0;
+    }
+    return { school: savedSchool, updatedLicenseCount };
+  });
+}
+
 // ============================================================================
 // School counts (for super-admin dashboard)
 // ============================================================================
@@ -925,6 +1082,10 @@ export async function deactivateStudentsForRoster(
   }
 
   return db.transaction(async (tx) => {
+    await lockClasspilotScheduleChangeSchool(
+      schoolId,
+      tx as unknown as ScheduleChangeDb
+    );
     await takePasspilotClassLock(tx, schoolId);
     const lockedStudents = await tx
       .select({ id: students.id, email: students.email, status: students.status })
@@ -1018,7 +1179,11 @@ export async function reactivateInactiveStudentForRosterImport(
   delete safeUpdates.status;
   safeUpdates.emailLc = normalizedEmailLc;
 
-  return db.transaction(async (tx) => {
+  return withClasspilotSchedulePostCommitTransaction(async (tx) => {
+    await lockClasspilotScheduleChangeSchool(
+      schoolId,
+      tx as unknown as ScheduleChangeDb
+    );
     await takePasspilotClassLock(tx, schoolId);
     const [existing] = await tx
       .select()
@@ -1036,6 +1201,36 @@ export async function reactivateInactiveStudentForRosterImport(
     const reactivated = existing.status !== "active";
     const now = new Date();
     if (reactivated) {
+      const retainedScheduledGroups = await tx
+        .select({ id: groups.id })
+        .from(groupStudents)
+        .innerJoin(groups, eq(groups.id, groupStudents.groupId))
+        .where(
+          and(
+            eq(groupStudents.studentId, existing.id),
+            eq(groups.schoolId, schoolId),
+            eq(groups.status, "active"),
+            eq(groups.scheduleEnabled, true),
+            isNotNull(groups.blockStartTime),
+            isNotNull(groups.blockEndTime)
+          )
+        )
+        .orderBy(asc(groups.id));
+      await lockScheduleChangeGroups(
+        schoolId,
+        retainedScheduledGroups.map((group) => group.id),
+        tx as unknown as ScheduleChangeDb
+      );
+      for (const group of retainedScheduledGroups) {
+        await assertProspectiveApprovedScheduleChangeAssignmentsSafe({
+          schoolId,
+          groupId: group.id,
+          addedStudentIds: [existing.id],
+          includeInactiveProspectiveStudents: true,
+          actorId: actor.userId,
+          dbInstance: tx as unknown as ScheduleChangeDb,
+        });
+      }
       // A pre-fix race could leave an active session attached to an inactive
       // record. Never let a roster restore resurrect that credential.
       await tx
@@ -1248,8 +1443,10 @@ export async function getAllSchoolIdsForClasspilotPinMigration(): Promise<string
 
 export async function updateSchool(
   id: string,
-  data: Partial<InsertSchool>
+  data: Partial<InsertSchool>,
+  scheduleChangeActorId?: string
 ): Promise<School | undefined> {
+  const now = new Date();
   const passpilotSettingsFields = [
     "name",
     "schoolTimezone",
@@ -1269,9 +1466,20 @@ export async function updateSchool(
   const touchesGopilotSettings = gopilotSettingsFields.some((field) =>
     Object.prototype.hasOwnProperty.call(data, field)
   );
+  const entitlementFields = [
+    "status",
+    "isActive",
+    "planStatus",
+    "activeUntil",
+    "disabledAt",
+    "deletedAt",
+  ] as const;
+  const touchesClasspilotEntitlement = entitlementFields.some((field) =>
+    Object.prototype.hasOwnProperty.call(data, field)
+  );
   const update: PgUpdateSetSource<typeof schools> = {
     ...data,
-    updatedAt: new Date(),
+    updatedAt: now,
     ...(touchesPasspilotSettings
       ? { passpilotSettingsRevision: sql`${schools.passpilotSettingsRevision} + 1` }
       : {}),
@@ -1279,7 +1487,64 @@ export async function updateSchool(
       ? { gopilotSettingsRevision: sql`${schools.gopilotSettingsRevision} + 1` }
       : {}),
   };
-  const school = await db.transaction(async (tx) => {
+  const school = await withClasspilotSchedulePostCommitTransaction(async (tx) => {
+    const [lockedSchool] = await tx
+      .select()
+      .from(schools)
+      .where(eq(schools.id, id))
+      .limit(1)
+      .for("update");
+    if (!lockedSchool) return undefined;
+    await takeClasspilotScheduleConfigLock(
+      tx as unknown as ScheduleChangeDb,
+      id
+    );
+    if (
+      data.schoolTimezone !== undefined &&
+      data.schoolTimezone !== lockedSchool.schoolTimezone
+    ) {
+      await reconcileClasspilotScheduleChangesForEntitlementRemoval({
+        schoolId: id,
+        actorId: scheduleChangeActorId,
+        validUntil: now,
+        affectedWhen: "ends_after",
+        reasonCode: "school_timezone_changed",
+        approvedMessage:
+          "Cancel approved future schedule changes before changing the school timezone.",
+        now,
+        dbInstance: tx as unknown as ScheduleChangeDb,
+      });
+    }
+    if (touchesClasspilotEntitlement) {
+      const nextStatus = data.status ?? lockedSchool.status;
+      const nextIsActive = data.isActive ?? lockedSchool.isActive;
+      const nextPlanStatus = data.planStatus ?? lockedSchool.planStatus;
+      const nextActiveUntil = data.activeUntil === undefined
+        ? lockedSchool.activeUntil
+        : data.activeUntil;
+      const nextDisabledAt = data.disabledAt === undefined
+        ? lockedSchool.disabledAt
+        : data.disabledAt;
+      const nextDeletedAt = data.deletedAt === undefined
+        ? lockedSchool.deletedAt
+        : data.deletedAt;
+      const immediatelyUnavailable =
+        nextStatus !== "active" ||
+        !nextIsActive ||
+        nextPlanStatus === "canceled" ||
+        Boolean(nextDisabledAt) ||
+        Boolean(nextDeletedAt) ||
+        Boolean(nextActiveUntil && nextActiveUntil.getTime() <= now.getTime());
+      if (immediatelyUnavailable || nextActiveUntil) {
+        await reconcileClasspilotScheduleChangesForEntitlementRemoval({
+          schoolId: id,
+          actorId: scheduleChangeActorId,
+          validUntil: immediatelyUnavailable ? now : nextActiveUntil,
+          now,
+          dbInstance: tx as unknown as ScheduleChangeDb,
+        });
+      }
+    }
     const [saved] = await tx
       .update(schools)
       .set(update)
@@ -1415,7 +1680,7 @@ async function persistPasspilotAdminSettings(
   actor: PasspilotAdminSettingsActor,
   contract: "revisioned" | "legacy_alias"
 ): Promise<UpdatePasspilotAdminSettingsResult | undefined> {
-  const result = await db.transaction(async (tx) => {
+  const result = await withClasspilotSchedulePostCommitTransaction(async (tx) => {
     const [currentSchool] = await tx
       .select({
         name: schools.name,
@@ -1430,6 +1695,10 @@ async function persistPasspilotAdminSettings(
       .limit(1)
       .for("update");
     if (!currentSchool) return undefined;
+    await takeClasspilotScheduleConfigLock(
+      tx as unknown as ScheduleChangeDb,
+      schoolId
+    );
 
     const current = passpilotAdminSettingsDto(currentSchool);
     if (expectedRevision !== undefined && current.revision !== expectedRevision) {
@@ -1467,6 +1736,19 @@ async function persistPasspilotAdminSettings(
 
     const revision = current.revision + 1;
     const now = new Date();
+    if (nextTimezone !== current.schoolTimezone) {
+      await reconcileClasspilotScheduleChangesForEntitlementRemoval({
+        schoolId,
+        actorId: actor.userId,
+        validUntil: now,
+        affectedWhen: "ends_after",
+        reasonCode: "school_timezone_changed",
+        approvedMessage:
+          "Cancel approved future schedule changes before changing the school timezone.",
+        now,
+        dbInstance: tx as unknown as ScheduleChangeDb,
+      });
+    }
     const [savedSchool] = await tx
       .update(schools)
       .set({
@@ -1585,19 +1867,13 @@ export async function updatePasspilotAdminSettingsCompatibility(
 }
 
 export async function softDeleteSchool(
-  id: string
+  id: string,
+  scheduleChangeActorId?: string
 ): Promise<School | undefined> {
-  const [school] = await db
-    .update(schools)
-    .set({ deletedAt: new Date(), updatedAt: new Date() })
-    .where(eq(schools.id, id))
-    .returning();
-  if (school) {
-    const target = { kind: "cache-invalidation", schoolId: id, cache: "classpilot-dashboard-school" } as const;
-    dispatchCacheInvalidation(target);
-    await publishCacheInvalidation(target);
-  }
-  return school;
+  // School deletion is an entitlement mutation. Reuse the guarded writer so
+  // approved future swaps block deletion and pending reservations are released
+  // atomically before the school becomes inaccessible.
+  return updateSchool(id, { deletedAt: new Date() }, scheduleChangeActorId);
 }
 
 // ============================================================================
@@ -1725,7 +2001,8 @@ export async function getMembershipByUserAndSchool(
 
 export async function updateMembership(
   id: string,
-  data: Partial<InsertSchoolMembership>
+  data: Partial<InsertSchoolMembership>,
+  scheduleChangeActorId?: string
 ): Promise<SchoolMembership | undefined> {
   const [existing] = await db.select().from(schoolMemberships).where(eq(schoolMemberships.id, id)).limit(1);
   if (existing) {
@@ -1735,20 +2012,23 @@ export async function updateMembership(
       role: data.role || existing.role,
     });
   }
-  const [membership] = await db
-    .update(schoolMemberships)
-    .set(data)
-    .where(eq(schoolMemberships.id, id))
-    .returning();
-  return membership;
+  return updateMembershipWithScheduleChangeGuard({
+    id,
+    data,
+    scheduleChangeActorId,
+  });
 }
 
-export async function deleteMembership(id: string): Promise<boolean> {
-  const result = await db
-    .update(schoolMemberships)
-    .set({ status: "inactive" })
-    .where(eq(schoolMemberships.id, id));
-  return (result.rowCount ?? 0) > 0;
+export async function deleteMembership(
+  id: string,
+  scheduleChangeActorId?: string
+): Promise<boolean> {
+  const membership = await updateMembershipWithScheduleChangeGuard({
+    id,
+    data: { status: "inactive" },
+    scheduleChangeActorId,
+  });
+  return Boolean(membership);
 }
 
 // School-scoped variants — for school-admin (non-super-admin) handlers, so an
@@ -1756,7 +2036,8 @@ export async function deleteMembership(id: string): Promise<boolean> {
 export async function updateMembershipForSchool(
   id: string,
   schoolId: string,
-  data: Partial<InsertSchoolMembership>
+  data: Partial<InsertSchoolMembership>,
+  scheduleChangeActorId?: string
 ): Promise<SchoolMembership | undefined> {
   const [existing] = await db
     .select()
@@ -1770,20 +2051,118 @@ export async function updateMembershipForSchool(
       role: data.role || existing.role,
     });
   }
-  const [membership] = await db
-    .update(schoolMemberships)
-    .set(data)
-    .where(and(eq(schoolMemberships.id, id), eq(schoolMemberships.schoolId, schoolId)))
-    .returning();
-  return membership;
+  return updateMembershipWithScheduleChangeGuard({
+    id,
+    schoolId,
+    data,
+    scheduleChangeActorId,
+  });
 }
 
-export async function deleteMembershipForSchool(id: string, schoolId: string): Promise<boolean> {
-  const result = await db
-    .update(schoolMemberships)
-    .set({ status: "inactive" })
-    .where(and(eq(schoolMemberships.id, id), eq(schoolMemberships.schoolId, schoolId)));
-  return (result.rowCount ?? 0) > 0;
+export async function deleteMembershipForSchool(
+  id: string,
+  schoolId: string,
+  scheduleChangeActorId?: string
+): Promise<boolean> {
+  const membership = await updateMembershipWithScheduleChangeGuard({
+    id,
+    schoolId,
+    data: { status: "inactive" },
+    scheduleChangeActorId,
+  });
+  return Boolean(membership);
+}
+
+async function updateMembershipWithScheduleChangeGuard(options: {
+  id: string;
+  schoolId?: string;
+  data: Partial<InsertSchoolMembership>;
+  scheduleChangeActorId?: string;
+}): Promise<SchoolMembership | undefined> {
+  return withClasspilotSchedulePostCommitTransaction(async (tx) => {
+    const candidateConditions = [eq(schoolMemberships.id, options.id)];
+    if (options.schoolId) {
+      candidateConditions.push(eq(schoolMemberships.schoolId, options.schoolId));
+    }
+    const [candidate] = await tx
+      .select()
+      .from(schoolMemberships)
+      .where(and(...candidateConditions))
+      .limit(1);
+    if (!candidate) return undefined;
+    const transactionDb = tx as unknown as ScheduleChangeDb;
+    await lockClasspilotScheduleChangeSchool(candidate.schoolId, transactionDb);
+    await takeClasspilotScheduleConfigLock(transactionDb, candidate.schoolId);
+
+    const primaryGroups = await tx
+      .select({ id: groups.id })
+      .from(groups)
+      .where(
+        and(
+          eq(groups.schoolId, candidate.schoolId),
+          eq(groups.teacherId, candidate.userId),
+          eq(groups.groupType, "admin_class"),
+          eq(groups.status, "active")
+        )
+      )
+      .orderBy(asc(groups.id));
+    if (primaryGroups.length > 0) {
+      await lockScheduleChangeGroups(
+        candidate.schoolId,
+        primaryGroups.map((group) => group.id),
+        transactionDb
+      );
+    }
+    const [locked] = await tx
+      .select()
+      .from(schoolMemberships)
+      .where(and(...candidateConditions))
+      .limit(1)
+      .for("update");
+    if (!locked) return undefined;
+
+    const eligibleRoles = new Set(["teacher", "admin", "school_admin"]);
+    const nextStatus = options.data.status ?? locked.status;
+    const nextRole = options.data.role ?? locked.role;
+    const nextUserId = options.data.userId ?? locked.userId;
+    const nextSchoolId = options.data.schoolId ?? locked.schoolId;
+    const removesPrimaryEligibility =
+      locked.status === "active" &&
+      eligibleRoles.has(locked.role) &&
+      (nextStatus !== "active" ||
+        !eligibleRoles.has(nextRole) ||
+        nextUserId !== locked.userId ||
+        nextSchoolId !== locked.schoolId);
+    if (removesPrimaryEligibility) {
+      for (const group of primaryGroups) {
+        await assertNoApprovedFutureScheduleChange({
+          schoolId: locked.schoolId,
+          groupId: group.id,
+          dbInstance: transactionDb,
+        });
+      }
+      for (const group of primaryGroups) {
+        await supersedePendingScheduleChangesForGroup({
+          schoolId: locked.schoolId,
+          groupId: group.id,
+          actorId: options.scheduleChangeActorId,
+          reason: "primary_teacher_membership_changed",
+          dbInstance: transactionDb,
+        });
+      }
+    }
+    const [membership] = await tx
+      .update(schoolMemberships)
+      .set(options.data)
+      .where(
+        and(
+          eq(schoolMemberships.id, options.id),
+          eq(schoolMemberships.schoolId, locked.schoolId)
+        )
+      )
+      .returning();
+    return membership;
+  });
 }
 
 // ============================================================================
@@ -2022,21 +2401,114 @@ export async function removeTeacherGrade(
 
 export async function updateProductLicense(
   id: string,
-  data: Partial<InsertProductLicense>
+  data: Partial<InsertProductLicense>,
+  scheduleChangeActorId?: string
 ): Promise<ProductLicense | undefined> {
-  const [license] = await db
-    .update(productLicenses)
-    .set(data)
-    .where(eq(productLicenses.id, id))
-    .returning();
-  return license;
+  return withClasspilotSchedulePostCommitTransaction(async (tx) => {
+    const [candidate] = await tx
+      .select({ schoolId: productLicenses.schoolId })
+      .from(productLicenses)
+      .where(eq(productLicenses.id, id))
+      .limit(1);
+    if (!candidate) return undefined;
+    await lockClasspilotScheduleChangeSchool(
+      candidate.schoolId,
+      tx as unknown as ScheduleChangeDb
+    );
+    await takePasspilotClassLock(tx, candidate.schoolId);
+    const [lockedLicense] = await tx
+      .select()
+      .from(productLicenses)
+      .where(and(eq(productLicenses.id, id), eq(productLicenses.schoolId, candidate.schoolId)))
+      .limit(1)
+      .for("update");
+    if (!lockedLicense) return undefined;
+    if (data.schoolId !== undefined && data.schoolId !== candidate.schoolId) {
+      throw scheduleChangeError(
+        "LICENSE_SCHOOL_IMMUTABLE",
+        "A product license cannot be moved between schools.",
+        400
+      );
+    }
+    if (lockedLicense.product === "CLASSPILOT") {
+      const now = new Date();
+      const nextProduct = data.product ?? lockedLicense.product;
+      const nextStatus = data.status ?? lockedLicense.status;
+      const nextExpiresAt = data.expiresAt === undefined
+        ? lockedLicense.expiresAt
+        : data.expiresAt;
+      const immediatelyUnavailable =
+        nextProduct !== "CLASSPILOT" ||
+        nextStatus !== "active" ||
+        Boolean(nextExpiresAt && nextExpiresAt.getTime() <= now.getTime());
+      if (immediatelyUnavailable || nextExpiresAt) {
+        await reconcileClasspilotScheduleChangesForEntitlementRemoval({
+          schoolId: candidate.schoolId,
+          actorId: scheduleChangeActorId,
+          validUntil: immediatelyUnavailable ? now : nextExpiresAt,
+          now,
+          dbInstance: tx as unknown as ScheduleChangeDb,
+        });
+      }
+    }
+    const [license] = await tx
+      .update(productLicenses)
+      .set(data)
+      .where(and(eq(productLicenses.id, id), eq(productLicenses.schoolId, candidate.schoolId)))
+      .returning();
+    return license;
+  });
 }
 
-export async function deleteProductLicense(id: string): Promise<boolean> {
-  const result = await db
-    .delete(productLicenses)
-    .where(eq(productLicenses.id, id));
-  return (result.rowCount ?? 0) > 0;
+export async function deleteProductLicense(
+  id: string,
+  scheduleChangeActorId?: string
+): Promise<boolean> {
+  return withClasspilotSchedulePostCommitTransaction(async (tx) => {
+    const [candidate] = await tx
+      .select({ schoolId: productLicenses.schoolId })
+      .from(productLicenses)
+      .where(eq(productLicenses.id, id))
+      .limit(1);
+    if (!candidate) return false;
+    await lockClasspilotScheduleChangeSchool(
+      candidate.schoolId,
+      tx as unknown as ScheduleChangeDb
+    );
+    await takePasspilotClassLock(tx, candidate.schoolId);
+    const [license] = await tx
+      .select()
+      .from(productLicenses)
+      .where(and(eq(productLicenses.id, id), eq(productLicenses.schoolId, candidate.schoolId)))
+      .limit(1)
+      .for("update");
+    if (!license) return false;
+    if (license.product === "CLASSPILOT") {
+      await reconcileClasspilotScheduleChangesForEntitlementRemoval({
+        schoolId: candidate.schoolId,
+        actorId: scheduleChangeActorId,
+        validUntil: new Date(),
+        dbInstance: tx as unknown as ScheduleChangeDb,
+      });
+      const [source] = await tx
+        .select({ value: settings.passpilotClassSource })
+        .from(settings)
+        .where(eq(settings.schoolId, candidate.schoolId))
+        .limit(1)
+        .for("update");
+      if (source?.value === "classpilot_groups") {
+        throw passpilotClassError(
+          "CLASSPILOT_REQUIRED_FOR_PASSPILOT_CLASSES",
+          "ClassPilot cannot be removed while PassPilot uses ClassPilot classes. Migrate PassPilot away from canonical classes first.",
+          409
+        );
+      }
+    }
+    const result = await tx
+      .delete(productLicenses)
+      .where(and(eq(productLicenses.id, id), eq(productLicenses.schoolId, candidate.schoolId)));
+    return (result.rowCount ?? 0) > 0;
+  });
 }
 
 // ============================================================================
@@ -2125,9 +2597,14 @@ export async function getActivePassesByGrade(
 
 export async function deleteProductLicenseForSchool(
   schoolId: string,
-  licenseId: string
+  licenseId: string,
+  scheduleChangeActorId?: string
 ): Promise<boolean> {
-  return db.transaction(async (tx) => {
+  return withClasspilotSchedulePostCommitTransaction(async (tx) => {
+    await lockClasspilotScheduleChangeSchool(
+      schoolId,
+      tx as unknown as ScheduleChangeDb
+    );
     await takePasspilotClassLock(tx, schoolId);
     const [license] = await tx
       .select()
@@ -2142,6 +2619,12 @@ export async function deleteProductLicenseForSchool(
       .for("update");
     if (!license) return false;
     if (license.product === "CLASSPILOT") {
+      await reconcileClasspilotScheduleChangesForEntitlementRemoval({
+        schoolId,
+        actorId: scheduleChangeActorId,
+        validUntil: new Date(),
+        dbInstance: tx as unknown as ScheduleChangeDb,
+      });
       const [source] = await tx
         .select({ value: settings.passpilotClassSource })
         .from(settings)
@@ -11478,7 +11961,7 @@ async function withPasspilotGroupMutationLock<T>(
     group: { id: string; schoolId: string }
   ) => Promise<T>
 ): Promise<T> {
-  return db.transaction(async (tx) => {
+  return withClasspilotSchedulePostCommitTransaction(async (tx) => {
     const [candidate] = await tx
       .select({ id: groups.id, schoolId: groups.schoolId })
       .from(groups)
@@ -11487,6 +11970,10 @@ async function withPasspilotGroupMutationLock<T>(
     if (!candidate) {
       throw schoolIsolationError("CLASS_NOT_FOUND", "Class not found", 404);
     }
+    await lockClasspilotScheduleChangeSchool(
+      candidate.schoolId,
+      tx as unknown as ScheduleChangeDb
+    );
     await takePasspilotClassLock(tx, candidate.schoolId);
     const [lockedGroup] = await tx
       .select({ id: groups.id, schoolId: groups.schoolId })
@@ -11559,9 +12046,17 @@ export async function getGroupTeacherSummaries(
 export async function addGroupTeacher(
   groupId: string,
   teacherId: string,
-  role: string = "co-teacher"
+  role: string = "co-teacher",
+  scheduleChangeActorId?: string
 ): Promise<GroupTeacher> {
-  return withPasspilotGroupMutationLock(groupId, async (tx) => {
+  return withPasspilotGroupMutationLock(groupId, async (tx, lockedGroup) => {
+    await assertProspectiveApprovedScheduleChangeAssignmentsSafe({
+      schoolId: lockedGroup.schoolId,
+      groupId,
+      addedTeacherIds: [teacherId],
+      actorId: scheduleChangeActorId,
+      dbInstance: tx as unknown as ScheduleChangeDb,
+    });
     const [row] = await tx
       .insert(groupTeachers)
       .values({ groupId, teacherId, role })
@@ -11574,12 +12069,27 @@ export async function addGroupTeacher(
 export async function replaceGroupTeachers(
   groupId: string,
   primaryTeacherId: string,
-  coTeacherIds: string[]
+  coTeacherIds: string[],
+  scheduleChangeActorId?: string
 ): Promise<void> {
   const uniqueCoTeachers = Array.from(
     new Set(coTeacherIds.filter((id) => id && id !== primaryTeacherId))
   );
-  await withPasspilotGroupMutationLock(groupId, async (tx) => {
+  await withPasspilotGroupMutationLock(groupId, async (tx, lockedGroup) => {
+    const existing = await tx
+      .select({ teacherId: groupTeachers.teacherId })
+      .from(groupTeachers)
+      .where(eq(groupTeachers.groupId, groupId));
+    const existingIds = new Set(existing.map((row) => row.teacherId));
+    await assertProspectiveApprovedScheduleChangeAssignmentsSafe({
+      schoolId: lockedGroup.schoolId,
+      groupId,
+      addedTeacherIds: [primaryTeacherId, ...uniqueCoTeachers].filter(
+        (teacherId) => !existingIds.has(teacherId)
+      ),
+      actorId: scheduleChangeActorId,
+      dbInstance: tx as unknown as ScheduleChangeDb,
+    });
     await tx
       .delete(groupTeachers)
       .where(eq(groupTeachers.groupId, groupId));
@@ -11704,11 +12214,90 @@ export async function getSubgroupByIdAndSchool(
   return row?.subgroup;
 }
 
+async function assertNoLockedRecurringClassScheduleOverlap(options: {
+  schoolId: string;
+  excludeGroupId?: string | null;
+  status: string;
+  scheduleEnabled: boolean;
+  blockStartTime: string | null;
+  blockEndTime: string | null;
+  teacherIds: string[];
+  dbInstance: ScheduleChangeDb;
+}): Promise<void> {
+  const teacherIds = Array.from(new Set(options.teacherIds.filter(Boolean)));
+  if (
+    options.status !== "active" ||
+    !options.scheduleEnabled ||
+    !options.blockStartTime ||
+    !options.blockEndTime ||
+    teacherIds.length === 0
+  ) {
+    return;
+  }
+  const conditions: SQL[] = [
+    eq(groups.schoolId, options.schoolId),
+    eq(groups.status, "active"),
+    eq(groups.scheduleEnabled, true),
+    isNotNull(groups.blockStartTime),
+    isNotNull(groups.blockEndTime),
+    sql`${groups.blockStartTime} < ${options.blockEndTime}`,
+    sql`${groups.blockEndTime} > ${options.blockStartTime}`,
+    or(
+      inArray(groups.teacherId, teacherIds),
+      inArray(groupTeachers.teacherId, teacherIds)
+    )!,
+  ];
+  if (options.excludeGroupId) {
+    conditions.push(ne(groups.id, options.excludeGroupId));
+  }
+  const [conflict] = await options.dbInstance
+    .select({ id: groups.id })
+    .from(groups)
+    .leftJoin(groupTeachers, eq(groupTeachers.groupId, groups.id))
+    .where(and(...conditions))
+    .limit(1);
+  if (conflict) {
+    throw schoolIsolationError(
+      "CLASS_SCHEDULE_CONFLICT",
+      "A selected teacher is already assigned to an overlapping scheduled class.",
+      409
+    );
+  }
+}
+
 export async function createGroup(
   data: InsertGroup
 ): Promise<Group> {
-  const [group] = await db.insert(groups).values(data).returning();
-  return group!;
+  return withClasspilotSchedulePostCommitTransaction(async (tx) => {
+    const transactionDb = tx as unknown as ScheduleChangeDb;
+    await lockClasspilotScheduleChangeSchool(data.schoolId, transactionDb);
+    await takePasspilotClassLock(tx, data.schoolId);
+    await assertNoLockedRecurringClassScheduleOverlap({
+      schoolId: data.schoolId,
+      status: data.status ?? "active",
+      scheduleEnabled: data.scheduleEnabled ?? false,
+      blockStartTime: data.blockStartTime ?? null,
+      blockEndTime: data.blockEndTime ?? null,
+      teacherIds: [data.teacherId],
+      dbInstance: transactionDb,
+    });
+    const [group] = await tx.insert(groups).values(data).returning();
+    if (!group) throw new Error("Class could not be created");
+    if (
+      group.status === "active" &&
+      group.scheduleEnabled &&
+      group.blockStartTime &&
+      group.blockEndTime
+    ) {
+      await assertProspectiveApprovedScheduleChangeAssignmentsSafe({
+        schoolId: data.schoolId,
+        groupId: group.id,
+        addedTeacherIds: [group.teacherId],
+        dbInstance: transactionDb,
+      });
+    }
+    return group;
+  });
 }
 
 export async function findOverlappingScheduledAdminClass(options: {
@@ -11742,9 +12331,66 @@ export async function findOverlappingScheduledAdminClass(options: {
 
 export async function updateGroup(
   groupId: string,
-  data: Partial<InsertGroup>
+  data: Partial<InsertGroup>,
+  scheduleChangeActorId?: string
 ): Promise<Group | undefined> {
   return withPasspilotGroupMutationLock(groupId, async (tx, lockedGroup) => {
+    const [current] = await tx
+      .select()
+      .from(groups)
+      .where(and(eq(groups.id, groupId), eq(groups.schoolId, lockedGroup.schoolId)))
+      .limit(1);
+    if (!current) return undefined;
+    const scheduleIdentityChanged =
+      (data.teacherId !== undefined && data.teacherId !== current.teacherId) ||
+      (data.scheduleEnabled !== undefined && data.scheduleEnabled !== current.scheduleEnabled) ||
+      (data.blockStartTime !== undefined && data.blockStartTime !== current.blockStartTime) ||
+      (data.blockEndTime !== undefined && data.blockEndTime !== current.blockEndTime) ||
+      (data.status !== undefined && data.status !== current.status);
+    if (scheduleIdentityChanged) {
+      const transactionDb = tx as unknown as ScheduleChangeDb;
+      const assignedTeachers = await tx
+        .select({ teacherId: groupTeachers.teacherId })
+        .from(groupTeachers)
+        .where(eq(groupTeachers.groupId, groupId));
+      await assertNoLockedRecurringClassScheduleOverlap({
+        schoolId: lockedGroup.schoolId,
+        excludeGroupId: groupId,
+        status: data.status ?? current.status,
+        scheduleEnabled: data.scheduleEnabled ?? current.scheduleEnabled,
+        blockStartTime:
+          data.blockStartTime !== undefined ? data.blockStartTime : current.blockStartTime,
+        blockEndTime:
+          data.blockEndTime !== undefined ? data.blockEndTime : current.blockEndTime,
+        teacherIds: [
+          data.teacherId ?? current.teacherId,
+          ...assignedTeachers.map((row) => row.teacherId),
+        ],
+        dbInstance: transactionDb,
+      });
+      await assertNoApprovedFutureScheduleChange({
+        schoolId: lockedGroup.schoolId,
+        groupId,
+        prospectiveGroup: {
+          teacherId: data.teacherId ?? current.teacherId,
+          scheduleEnabled: data.scheduleEnabled ?? current.scheduleEnabled,
+          blockStartTime:
+            data.blockStartTime !== undefined ? data.blockStartTime : current.blockStartTime,
+          blockEndTime:
+            data.blockEndTime !== undefined ? data.blockEndTime : current.blockEndTime,
+          status: data.status ?? current.status,
+        },
+        actorId: scheduleChangeActorId,
+        dbInstance: transactionDb,
+      });
+      await supersedePendingScheduleChangesForGroup({
+        schoolId: lockedGroup.schoolId,
+        groupId,
+        actorId: scheduleChangeActorId,
+        reason: "class_configuration_changed",
+        dbInstance: transactionDb,
+      });
+    }
     const [group] = await tx
       .update(groups)
       .set(data)
@@ -11757,38 +12403,151 @@ export async function updateGroup(
 export async function updateAdminClassWithTeachers(options: {
   groupId: string;
   data: Partial<InsertGroup>;
-  primaryTeacherId: string;
-  coTeacherIds: string[];
+  /** Undefined preserves the primary teacher read under the class lock. */
+  primaryTeacherId?: string;
+  /** Undefined preserves co-teachers; an explicit empty array clears them. */
+  coTeacherIds?: string[];
+  scheduleChangeActorId?: string;
 }): Promise<Group | undefined> {
-  const uniqueCoTeachers = Array.from(
-    new Set(options.coTeacherIds.filter((id) => id && id !== options.primaryTeacherId))
-  );
   return withPasspilotGroupMutationLock(options.groupId, async (tx, lockedGroup) => {
+    const [current] = await tx
+      .select()
+      .from(groups)
+      .where(
+        and(eq(groups.id, options.groupId), eq(groups.schoolId, lockedGroup.schoolId))
+      )
+      .limit(1);
+    if (!current) return undefined;
+    const existingTeacherRows = await tx
+      .select({ teacherId: groupTeachers.teacherId, role: groupTeachers.role })
+      .from(groupTeachers)
+      .where(eq(groupTeachers.groupId, options.groupId));
+    const primaryTeacherId = options.primaryTeacherId ?? current.teacherId;
+    const submittedCoTeachers = options.coTeacherIds === undefined
+      ? existingTeacherRows
+          .filter((row) => row.role === "co-teacher")
+          .map((row) => row.teacherId)
+      : options.coTeacherIds;
+    const uniqueCoTeachers = Array.from(
+      new Set(submittedCoTeachers.filter((id) => id && id !== primaryTeacherId))
+    );
+    const intendedTeacherIds = [primaryTeacherId, ...uniqueCoTeachers];
+    const activeMemberships = await tx
+      .select({ userId: schoolMemberships.userId })
+      .from(schoolMemberships)
+      .where(
+        and(
+          eq(schoolMemberships.schoolId, lockedGroup.schoolId),
+          eq(schoolMemberships.status, "active"),
+          inArray(schoolMemberships.role, ["teacher", "admin", "school_admin"]),
+          inArray(schoolMemberships.userId, intendedTeacherIds)
+        )
+      );
+    if (new Set(activeMemberships.map((row) => row.userId)).size !== intendedTeacherIds.length) {
+      throw schoolIsolationError(
+        "CLASS_TEACHER_NOT_FOUND",
+        "One or more teachers are unavailable in this school.",
+        404
+      );
+    }
+    const scheduleIdentityChanged =
+      primaryTeacherId !== current.teacherId ||
+      (options.data.scheduleEnabled !== undefined &&
+        options.data.scheduleEnabled !== current.scheduleEnabled) ||
+      (options.data.blockStartTime !== undefined &&
+        options.data.blockStartTime !== current.blockStartTime) ||
+      (options.data.blockEndTime !== undefined &&
+        options.data.blockEndTime !== current.blockEndTime) ||
+      (options.data.status !== undefined && options.data.status !== current.status);
+    if (
+      scheduleIdentityChanged ||
+      options.primaryTeacherId !== undefined ||
+      options.coTeacherIds !== undefined
+    ) {
+      await assertNoLockedRecurringClassScheduleOverlap({
+        schoolId: lockedGroup.schoolId,
+        excludeGroupId: options.groupId,
+        status: options.data.status ?? current.status,
+        scheduleEnabled: options.data.scheduleEnabled ?? current.scheduleEnabled,
+        blockStartTime:
+          options.data.blockStartTime !== undefined
+            ? options.data.blockStartTime
+            : current.blockStartTime,
+        blockEndTime:
+          options.data.blockEndTime !== undefined
+            ? options.data.blockEndTime
+            : current.blockEndTime,
+        teacherIds: intendedTeacherIds,
+        dbInstance: tx as unknown as ScheduleChangeDb,
+      });
+    }
+    if (scheduleIdentityChanged) {
+      const transactionDb = tx as unknown as ScheduleChangeDb;
+      await assertNoApprovedFutureScheduleChange({
+        schoolId: lockedGroup.schoolId,
+        groupId: options.groupId,
+        prospectiveGroup: {
+          teacherId: primaryTeacherId,
+          scheduleEnabled: options.data.scheduleEnabled ?? current.scheduleEnabled,
+          blockStartTime:
+            options.data.blockStartTime !== undefined
+              ? options.data.blockStartTime
+              : current.blockStartTime,
+          blockEndTime:
+            options.data.blockEndTime !== undefined
+              ? options.data.blockEndTime
+              : current.blockEndTime,
+          status: options.data.status ?? current.status,
+        },
+        prospectiveTeacherIds: intendedTeacherIds,
+        actorId: options.scheduleChangeActorId,
+        dbInstance: transactionDb,
+      });
+      await supersedePendingScheduleChangesForGroup({
+        schoolId: lockedGroup.schoolId,
+        groupId: options.groupId,
+        actorId: options.scheduleChangeActorId,
+        reason: "class_configuration_changed",
+        dbInstance: transactionDb,
+      });
+    }
+    const existingTeacherIds = new Set(existingTeacherRows.map((row) => row.teacherId));
+    await assertProspectiveApprovedScheduleChangeAssignmentsSafe({
+      schoolId: lockedGroup.schoolId,
+      groupId: options.groupId,
+      addedTeacherIds: intendedTeacherIds.filter(
+        (teacherId) => !existingTeacherIds.has(teacherId)
+      ),
+      actorId: options.scheduleChangeActorId,
+      dbInstance: tx as unknown as ScheduleChangeDb,
+    });
     const [group] = await tx
       .update(groups)
       .set({
         ...options.data,
-        teacherId: options.primaryTeacherId,
+        teacherId: primaryTeacherId,
       })
       .where(and(eq(groups.id, options.groupId), eq(groups.schoolId, lockedGroup.schoolId)))
       .returning();
     if (!group) return undefined;
 
-    await tx
-      .delete(groupTeachers)
-      .where(eq(groupTeachers.groupId, options.groupId));
-    await tx.insert(groupTeachers).values([
-      {
-        groupId: options.groupId,
-        teacherId: options.primaryTeacherId,
-        role: "primary",
-      },
-      ...uniqueCoTeachers.map((teacherId) => ({
-        groupId: options.groupId,
-        teacherId,
-        role: "co-teacher",
-      })),
-    ]);
+    if (options.primaryTeacherId !== undefined || options.coTeacherIds !== undefined) {
+      await tx
+        .delete(groupTeachers)
+        .where(eq(groupTeachers.groupId, options.groupId));
+      await tx.insert(groupTeachers).values([
+        {
+          groupId: options.groupId,
+          teacherId: primaryTeacherId,
+          role: "primary",
+        },
+        ...uniqueCoTeachers.map((teacherId) => ({
+          groupId: options.groupId,
+          teacherId,
+          role: "co-teacher",
+        })),
+      ]);
+    }
     return group;
   });
 }
@@ -11796,10 +12555,15 @@ export async function updateAdminClassWithTeachers(options: {
 export async function upsertAdminClassroomClass(options: {
   schoolId: string;
   existingGroupId?: string | null;
-  data: Partial<InsertGroup> & Pick<InsertGroup, "name" | "schoolId" | "groupType">;
-  primaryTeacherId: string;
-  coTeacherIds: string[];
-  studentIds: string[];
+  data: Partial<InsertGroup>;
+  /** Undefined preserves the locked current primary teacher on update. */
+  primaryTeacherId?: string;
+  /** Undefined preserves the locked current co-teachers on update. */
+  coTeacherIds?: string[];
+  studentIds?: string[];
+  replaceStudentRoster?: boolean;
+  requireAdminClass?: boolean;
+  scheduleChangeActorId?: string;
 }): Promise<{
   group: Group;
   roster: {
@@ -11807,34 +12571,181 @@ export async function upsertAdminClassroomClass(options: {
     alreadyPresent: string[];
   };
 }> {
-  const uniqueCoTeachers = Array.from(
-    new Set(options.coTeacherIds.filter((id) => id && id !== options.primaryTeacherId))
-  );
-  const uniqueStudentIds = Array.from(new Set(options.studentIds.filter(Boolean)));
+  const submittedStudentIds = options.studentIds === undefined
+    ? undefined
+    : Array.from(new Set(options.studentIds.filter(Boolean)));
 
-  return db.transaction(async (tx) => {
+  return withClasspilotSchedulePostCommitTransaction(async (tx) => {
+    await lockClasspilotScheduleChangeSchool(
+      options.schoolId,
+      tx as unknown as ScheduleChangeDb
+    );
     await takePasspilotClassLock(tx, options.schoolId);
+    let lockedGroup: Group | undefined;
+    let existingStudentIds: string[] = [];
+    let existingTeacherRows: Array<{ teacherId: string; role: string }> = [];
     if (options.existingGroupId) {
-      const [lockedGroup] = await tx
-        .select({ id: groups.id })
+      const existingConditions: SQL[] = [
+        eq(groups.id, options.existingGroupId),
+        eq(groups.schoolId, options.schoolId),
+      ];
+      if (options.requireAdminClass !== false) {
+        existingConditions.push(eq(groups.groupType, "admin_class"));
+      }
+      [lockedGroup] = await tx
+        .select()
         .from(groups)
-        .where(
-          and(
-            eq(groups.id, options.existingGroupId),
-            eq(groups.schoolId, options.schoolId),
-            eq(groups.groupType, "admin_class")
-          )
-        )
+        .where(and(...existingConditions))
         .limit(1)
         .for("update");
       if (!lockedGroup) {
         throw schoolIsolationError("CLASS_NOT_FOUND", "Class not found", 404);
       }
+      existingStudentIds = (
+        await tx
+          .select({ studentId: groupStudents.studentId })
+          .from(groupStudents)
+          .where(eq(groupStudents.groupId, lockedGroup.id))
+      ).map((row) => row.studentId);
+      existingTeacherRows = await tx
+        .select({ teacherId: groupTeachers.teacherId, role: groupTeachers.role })
+        .from(groupTeachers)
+        .where(eq(groupTeachers.groupId, lockedGroup.id));
+    }
+
+    const primaryTeacherId = options.primaryTeacherId ?? lockedGroup?.teacherId;
+    if (!primaryTeacherId) {
+      throw schoolIsolationError(
+        "CLASS_TEACHER_REQUIRED",
+        "A primary teacher is required when creating a class.",
+        400
+      );
+    }
+    const submittedCoTeachers = options.coTeacherIds === undefined
+      ? existingTeacherRows
+          .filter((row) => row.role === "co-teacher")
+          .map((row) => row.teacherId)
+      : options.coTeacherIds;
+    const uniqueCoTeachers = Array.from(
+      new Set(submittedCoTeachers.filter((id) => id && id !== primaryTeacherId))
+    );
+    const intendedTeacherIds = [primaryTeacherId, ...uniqueCoTeachers];
+    const activeTeacherMemberships = await tx
+      .select({ userId: schoolMemberships.userId })
+      .from(schoolMemberships)
+      .where(
+        and(
+          eq(schoolMemberships.schoolId, options.schoolId),
+          eq(schoolMemberships.status, "active"),
+          inArray(schoolMemberships.role, ["teacher", "admin", "school_admin"]),
+          inArray(schoolMemberships.userId, intendedTeacherIds)
+        )
+      );
+    if (
+      new Set(activeTeacherMemberships.map((membership) => membership.userId)).size !==
+      intendedTeacherIds.length
+    ) {
+      throw schoolIsolationError(
+        "CLASS_TEACHER_NOT_FOUND",
+        "One or more teachers are unavailable in this school.",
+        404
+      );
+    }
+    if (submittedStudentIds !== undefined && submittedStudentIds.length > 0) {
+      const activeStudentRows = await tx
+        .select({ id: students.id })
+        .from(students)
+        .where(
+          and(
+            eq(students.schoolId, options.schoolId),
+            eq(students.status, "active"),
+            inArray(students.id, submittedStudentIds)
+          )
+        );
+      if (new Set(activeStudentRows.map((student) => student.id)).size !== submittedStudentIds.length) {
+        throw schoolIsolationError(
+          "CLASS_STUDENT_NOT_FOUND",
+          "One or more students are unavailable in this school.",
+          404
+        );
+      }
+    }
+    const recurringScheduleIdentityChanged =
+      !lockedGroup ||
+      primaryTeacherId !== lockedGroup.teacherId ||
+      options.coTeacherIds !== undefined ||
+      (options.data.scheduleEnabled !== undefined &&
+        options.data.scheduleEnabled !== lockedGroup.scheduleEnabled) ||
+      (options.data.blockStartTime !== undefined &&
+        options.data.blockStartTime !== lockedGroup.blockStartTime) ||
+      (options.data.blockEndTime !== undefined &&
+        options.data.blockEndTime !== lockedGroup.blockEndTime) ||
+      (options.data.status !== undefined && options.data.status !== lockedGroup.status);
+    if (recurringScheduleIdentityChanged) {
+      await assertNoLockedRecurringClassScheduleOverlap({
+        schoolId: options.schoolId,
+        excludeGroupId: options.existingGroupId,
+        status: options.data.status ?? lockedGroup?.status ?? "active",
+        scheduleEnabled:
+          options.data.scheduleEnabled ?? lockedGroup?.scheduleEnabled ?? false,
+        blockStartTime:
+          options.data.blockStartTime !== undefined
+            ? options.data.blockStartTime
+            : lockedGroup?.blockStartTime ?? null,
+        blockEndTime:
+          options.data.blockEndTime !== undefined
+            ? options.data.blockEndTime
+            : lockedGroup?.blockEndTime ?? null,
+        teacherIds: intendedTeacherIds,
+        dbInstance: tx as unknown as ScheduleChangeDb,
+      });
+    }
+    if (lockedGroup && options.existingGroupId) {
+      const scheduleIdentityChanged =
+        primaryTeacherId !== lockedGroup.teacherId ||
+        (options.data.scheduleEnabled !== undefined &&
+          options.data.scheduleEnabled !== lockedGroup.scheduleEnabled) ||
+        (options.data.blockStartTime !== undefined &&
+          options.data.blockStartTime !== lockedGroup.blockStartTime) ||
+        (options.data.blockEndTime !== undefined &&
+          options.data.blockEndTime !== lockedGroup.blockEndTime) ||
+        (options.data.status !== undefined && options.data.status !== lockedGroup.status);
+      if (scheduleIdentityChanged) {
+        const transactionDb = tx as unknown as ScheduleChangeDb;
+        await assertNoApprovedFutureScheduleChange({
+          schoolId: options.schoolId,
+          groupId: options.existingGroupId,
+          prospectiveGroup: {
+            teacherId: primaryTeacherId,
+            scheduleEnabled: options.data.scheduleEnabled ?? lockedGroup.scheduleEnabled,
+            blockStartTime:
+              options.data.blockStartTime !== undefined
+                ? options.data.blockStartTime
+                : lockedGroup.blockStartTime,
+            blockEndTime:
+              options.data.blockEndTime !== undefined
+                ? options.data.blockEndTime
+                : lockedGroup.blockEndTime,
+            status: options.data.status ?? lockedGroup.status,
+          },
+          prospectiveTeacherIds: intendedTeacherIds,
+          prospectiveStudentIds: submittedStudentIds ?? existingStudentIds,
+          actorId: options.scheduleChangeActorId,
+          dbInstance: transactionDb,
+        });
+        await supersedePendingScheduleChangesForGroup({
+          schoolId: options.schoolId,
+          groupId: options.existingGroupId,
+          actorId: options.scheduleChangeActorId,
+          reason: "class_configuration_changed",
+          dbInstance: transactionDb,
+        });
+      }
     }
     const groupValues = {
       ...options.data,
       schoolId: options.schoolId,
-      teacherId: options.primaryTeacherId,
+      teacherId: primaryTeacherId,
     };
     const [group] = options.existingGroupId
       ? await tx
@@ -11844,7 +12755,9 @@ export async function upsertAdminClassroomClass(options: {
             and(
               eq(groups.id, options.existingGroupId),
               eq(groups.schoolId, options.schoolId),
-              eq(groups.groupType, "admin_class")
+              options.requireAdminClass !== false
+                ? eq(groups.groupType, "admin_class")
+                : undefined
             )
           )
           .returning()
@@ -11860,41 +12773,124 @@ export async function upsertAdminClassroomClass(options: {
       throw schoolIsolationError("CLASS_NOT_FOUND", "Class not found", 404);
     }
 
-    await tx.delete(groupTeachers).where(eq(groupTeachers.groupId, group.id));
-    await tx.insert(groupTeachers).values([
-      {
-        groupId: group.id,
-        teacherId: options.primaryTeacherId,
-        role: "primary",
+    const finalStudentIds = submittedStudentIds === undefined
+      ? existingStudentIds
+      : options.replaceStudentRoster
+        ? submittedStudentIds
+        : Array.from(new Set([...existingStudentIds, ...submittedStudentIds]));
+    const existingTeacherIds = new Set(existingTeacherRows.map((row) => row.teacherId));
+    await assertProspectiveApprovedScheduleChangeAssignmentsSafe({
+      schoolId: options.schoolId,
+      groupId: group.id,
+      prospectiveGroup: {
+        teacherId: group.teacherId,
+        scheduleEnabled: group.scheduleEnabled,
+        blockStartTime: group.blockStartTime,
+        blockEndTime: group.blockEndTime,
+        status: group.status,
       },
-      ...uniqueCoTeachers.map((teacherId) => ({
-        groupId: group.id,
-        teacherId,
-        role: "co-teacher",
-      })),
-    ]);
+      prospectiveTeacherIds: intendedTeacherIds,
+      prospectiveStudentIds: finalStudentIds,
+      addedTeacherIds: intendedTeacherIds.filter((teacherId) => !existingTeacherIds.has(teacherId)),
+      actorId: options.scheduleChangeActorId,
+      dbInstance: tx as unknown as ScheduleChangeDb,
+    });
+
+    const replaceTeachers =
+      !options.existingGroupId ||
+      options.primaryTeacherId !== undefined ||
+      options.coTeacherIds !== undefined;
+    if (replaceTeachers) {
+      await tx.delete(groupTeachers).where(eq(groupTeachers.groupId, group.id));
+      await tx.insert(groupTeachers).values([
+        {
+          groupId: group.id,
+          teacherId: primaryTeacherId,
+          role: "primary",
+        },
+        ...uniqueCoTeachers.map((teacherId) => ({
+          groupId: group.id,
+          teacherId,
+          role: "co-teacher",
+        })),
+      ]);
+    }
 
     let roster = { added: [] as string[], alreadyPresent: [] as string[] };
-    if (uniqueStudentIds.length > 0) {
+    if (submittedStudentIds !== undefined) {
       const beforeRows = await tx
         .select({ studentId: groupStudents.studentId })
         .from(groupStudents)
         .where(eq(groupStudents.groupId, group.id));
       const before = new Set(beforeRows.map((row) => row.studentId));
-      const inserted = await tx
-        .insert(groupStudents)
-        .values(uniqueStudentIds.map((studentId) => ({ groupId: group.id, studentId })))
-        .onConflictDoNothing()
-        .returning({ studentId: groupStudents.studentId });
+      await assertProspectiveApprovedScheduleChangeAssignmentsSafe({
+        schoolId: options.schoolId,
+        groupId: group.id,
+        addedStudentIds: finalStudentIds.filter((id) => !before.has(id)),
+        actorId: options.scheduleChangeActorId,
+        dbInstance: tx as unknown as ScheduleChangeDb,
+      });
+      if (options.replaceStudentRoster) {
+        await tx.delete(groupStudents).where(eq(groupStudents.groupId, group.id));
+      }
+      const inserted = finalStudentIds.length > 0
+        ? await tx
+            .insert(groupStudents)
+            .values(finalStudentIds.map((studentId) => ({ groupId: group.id, studentId })))
+            .onConflictDoNothing()
+            .returning({ studentId: groupStudents.studentId })
+        : [];
       const added = inserted.map((row) => row.studentId);
       const addedSet = new Set(added);
       roster = {
         added,
-        alreadyPresent: uniqueStudentIds.filter((id) => before.has(id) && !addedSet.has(id)),
+        alreadyPresent: finalStudentIds.filter((id) => before.has(id) && !addedSet.has(id)),
       };
     }
 
     return { group, roster };
+  });
+}
+
+/**
+ * Atomic create/update primitive for teacher-created and small ClassPilot
+ * groups. Schedule, teacher junctions, and an optional exact roster commit as
+ * one unit under the same school configuration lock used by swap approval.
+ */
+export async function upsertClasspilotGroupWithAssignments(options: {
+  schoolId: string;
+  existingGroupId?: string | null;
+  data: Partial<InsertGroup>;
+  /** Required on create; undefined preserves the locked primary on update. */
+  primaryTeacherId?: string;
+  /** Undefined preserves the locked co-teachers on update; [] clears them. */
+  coTeacherIds?: string[];
+  studentIds?: string[];
+  scheduleChangeActorId?: string;
+}): Promise<{
+  group: Group;
+  roster: { added: string[]; alreadyPresent: string[] };
+}> {
+  if (!options.existingGroupId && (!options.data.name || !options.data.groupType)) {
+    throw schoolIsolationError(
+      "INVALID_CLASS",
+      "A class name and group type are required.",
+      400
+    );
+  }
+  return upsertAdminClassroomClass({
+    schoolId: options.schoolId,
+    existingGroupId: options.existingGroupId,
+    data: {
+      ...options.data,
+      schoolId: options.schoolId,
+    },
+    primaryTeacherId: options.primaryTeacherId,
+    coTeacherIds: options.coTeacherIds,
+    studentIds: options.studentIds,
+    replaceStudentRoster: options.studentIds !== undefined,
+    requireAdminClass: false,
+    scheduleChangeActorId: options.scheduleChangeActorId,
   });
 }
 
@@ -11906,8 +12902,11 @@ export async function deleteGroup(groupId: string): Promise<boolean> {
   return (result.rowCount ?? 0) > 0;
 }
 
-export async function archiveGroup(groupId: string): Promise<Group | undefined> {
-  return db.transaction(async (tx) => {
+export async function archiveGroup(
+  groupId: string,
+  scheduleChangeActorId?: string
+): Promise<Group | undefined> {
+  return withClasspilotSchedulePostCommitTransaction(async (tx) => {
     const [candidate] = await tx
       .select({ id: groups.id, schoolId: groups.schoolId })
       .from(groups)
@@ -11917,6 +12916,10 @@ export async function archiveGroup(groupId: string): Promise<Group | undefined> 
 
     // Class archiving and PassPilot class cutover use the same lock order so a
     // mapped class cannot become archived between final validation and cutover.
+    await lockClasspilotScheduleChangeSchool(
+      candidate.schoolId,
+      tx as unknown as ScheduleChangeDb
+    );
     await takePasspilotClassLock(tx, candidate.schoolId);
     const [lockedGroup] = await tx
       .select({ id: groups.id })
@@ -11925,6 +12928,20 @@ export async function archiveGroup(groupId: string): Promise<Group | undefined> 
       .limit(1)
       .for("update");
     if (!lockedGroup) return undefined;
+
+    const transactionDb = tx as unknown as ScheduleChangeDb;
+    await assertNoApprovedFutureScheduleChange({
+      schoolId: candidate.schoolId,
+      groupId,
+      dbInstance: transactionDb,
+    });
+    await supersedePendingScheduleChangesForGroup({
+      schoolId: candidate.schoolId,
+      groupId,
+      actorId: scheduleChangeActorId,
+      reason: "class_archived",
+      dbInstance: transactionDb,
+    });
 
     const [group] = await tx
       .update(groups)
@@ -11943,7 +12960,10 @@ export async function groupHasTeachingHistory(groupId: string): Promise<boolean>
   return (row?.value ?? 0) > 0;
 }
 
-export async function hardDeleteGroupWithCleanup(groupId: string): Promise<boolean> {
+export async function hardDeleteGroupWithCleanup(
+  groupId: string,
+  _scheduleChangeActorId?: string
+): Promise<boolean> {
   return db.transaction(async (tx) => {
     const [candidate] = await tx
       .select({ id: groups.id, schoolId: groups.schoolId })
@@ -11951,6 +12971,10 @@ export async function hardDeleteGroupWithCleanup(groupId: string): Promise<boole
       .where(eq(groups.id, groupId))
       .limit(1);
     if (!candidate) return false;
+    await lockClasspilotScheduleChangeSchool(
+      candidate.schoolId,
+      tx as unknown as ScheduleChangeDb
+    );
     await takePasspilotClassLock(tx, candidate.schoolId);
     const [lockedGroup] = await tx
       .select({ id: groups.id })
@@ -11959,6 +12983,28 @@ export async function hardDeleteGroupWithCleanup(groupId: string): Promise<boole
       .limit(1)
       .for("update");
     if (!lockedGroup) return false;
+    const transactionDb = tx as unknown as ScheduleChangeDb;
+    await assertNoApprovedFutureScheduleChange({
+      schoolId: candidate.schoolId,
+      groupId,
+      dbInstance: transactionDb,
+    });
+    const [scheduleChangeHistory] = await tx
+      .select({ value: sql<number>`COUNT(*)::int` })
+      .from(classpilotScheduleChangeLegs)
+      .where(
+        and(
+          eq(classpilotScheduleChangeLegs.schoolId, candidate.schoolId),
+          eq(classpilotScheduleChangeLegs.groupId, groupId)
+        )
+      );
+    if ((scheduleChangeHistory?.value ?? 0) > 0) {
+      throw scheduleChangeError(
+        "CLASS_HAS_SCHEDULE_CHANGE_HISTORY",
+        "Classes with schedule-change history cannot be deleted. Archive the class instead.",
+        409
+      );
+    }
     const [history] = await tx
       .select({ value: sql<number>`COUNT(*)::int` })
       .from(teachingSessions)
@@ -12008,6 +13054,17 @@ export async function hardDeleteGroupWithCleanup(groupId: string): Promise<boole
         .where(inArray(subgroupMembers.subgroupId, subgroupIds));
     }
     await tx.delete(subgroups).where(eq(subgroups.groupId, groupId));
+    await tx
+      .delete(classpilotScheduleChangePairs)
+      .where(
+        and(
+          eq(classpilotScheduleChangePairs.schoolId, candidate.schoolId),
+          or(
+            eq(classpilotScheduleChangePairs.firstGroupId, groupId),
+            eq(classpilotScheduleChangePairs.secondGroupId, groupId)
+          )!
+        )
+      );
     await tx.delete(groupTeachers).where(eq(groupTeachers.groupId, groupId));
     await tx.delete(groupStudents).where(eq(groupStudents.groupId, groupId));
     await tx.delete(groups).where(eq(groups.id, groupId));
@@ -12051,19 +13108,27 @@ export async function getGroupStudentIds(groupId: string): Promise<string[]> {
 
 export async function addGroupStudentsDetailed(
   groupId: string,
-  studentIds: string[]
+  studentIds: string[],
+  scheduleChangeActorId?: string
 ): Promise<{
   added: string[];
   alreadyPresent: string[];
 }> {
   const uniqueIds = Array.from(new Set(studentIds));
   if (uniqueIds.length === 0) return { added: [], alreadyPresent: [] };
-  return withPasspilotGroupMutationLock(groupId, async (tx) => {
+  return withPasspilotGroupMutationLock(groupId, async (tx, lockedGroup) => {
     const beforeRows = await tx
       .select({ studentId: groupStudents.studentId })
       .from(groupStudents)
       .where(eq(groupStudents.groupId, groupId));
     const before = new Set(beforeRows.map((row) => row.studentId));
+    await assertProspectiveApprovedScheduleChangeAssignmentsSafe({
+      schoolId: lockedGroup.schoolId,
+      groupId,
+      addedStudentIds: uniqueIds.filter((id) => !before.has(id)),
+      actorId: scheduleChangeActorId,
+      dbInstance: tx as unknown as ScheduleChangeDb,
+    });
     const inserted = await tx
       .insert(groupStudents)
       .values(uniqueIds.map((studentId) => ({ groupId, studentId })))
@@ -12080,11 +13145,24 @@ export async function addGroupStudentsDetailed(
 
 export async function addGroupStudents(
   groupId: string,
-  studentIds: string[]
+  studentIds: string[],
+  scheduleChangeActorId?: string
 ): Promise<void> {
   if (studentIds.length === 0) return;
   const values = studentIds.map((studentId) => ({ groupId, studentId }));
-  await withPasspilotGroupMutationLock(groupId, async (tx) => {
+  await withPasspilotGroupMutationLock(groupId, async (tx, lockedGroup) => {
+    const existing = await tx
+      .select({ studentId: groupStudents.studentId })
+      .from(groupStudents)
+      .where(eq(groupStudents.groupId, groupId));
+    const existingIds = new Set(existing.map((row) => row.studentId));
+    await assertProspectiveApprovedScheduleChangeAssignmentsSafe({
+      schoolId: lockedGroup.schoolId,
+      groupId,
+      addedStudentIds: studentIds.filter((id) => !existingIds.has(id)),
+      actorId: scheduleChangeActorId,
+      dbInstance: tx as unknown as ScheduleChangeDb,
+    });
     await tx.insert(groupStudents).values(values).onConflictDoNothing();
   });
 }
@@ -12107,9 +13185,22 @@ export async function removeGroupStudent(
 
 export async function setGroupStudents(
   groupId: string,
-  studentIds: string[]
+  studentIds: string[],
+  scheduleChangeActorId?: string
 ): Promise<void> {
-  await withPasspilotGroupMutationLock(groupId, async (tx) => {
+  await withPasspilotGroupMutationLock(groupId, async (tx, lockedGroup) => {
+    const existing = await tx
+      .select({ studentId: groupStudents.studentId })
+      .from(groupStudents)
+      .where(eq(groupStudents.groupId, groupId));
+    const existingIds = new Set(existing.map((row) => row.studentId));
+    await assertProspectiveApprovedScheduleChangeAssignmentsSafe({
+      schoolId: lockedGroup.schoolId,
+      groupId,
+      addedStudentIds: studentIds.filter((id) => !existingIds.has(id)),
+      actorId: scheduleChangeActorId,
+      dbInstance: tx as unknown as ScheduleChangeDb,
+    });
     await tx
       .delete(groupStudents)
       .where(eq(groupStudents.groupId, groupId));
@@ -16217,8 +17308,9 @@ async function takePasspilotClassLock(
   tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
   schoolId: string
 ): Promise<void> {
-  await tx.execute(
-    sql`SELECT pg_advisory_xact_lock(hashtext(${`passpilot-class-source:${schoolId}`}))`
+  await takeClasspilotScheduleConfigLock(
+    tx as unknown as ScheduleChangeDb,
+    schoolId
   );
 }
 
@@ -17134,6 +18226,7 @@ export type ReplaceInstructionalCalendarMonthResult =
       schoolLocalToday: string;
       addedDates: string[];
       removedDates: string[];
+      supersededScheduleChangeIds: string[];
     }
   | {
       status: "conflict";
@@ -17420,7 +18513,7 @@ export async function replaceInstructionalCalendarMonth(
   const nextDates = canonicalInstructionalCalendarDates(month, options.nonInstructionalDates);
   const now = options.now || new Date();
 
-  return dbInstance.transaction(async (tx) => {
+  return withClasspilotSchedulePostCommitTransaction(async (tx) => {
     const transactionDb = tx as unknown as typeof db;
     // Date locks are always taken first and in stable order. Scheduler-created
     // occurrences use the same lock for their single local date, so either the
@@ -17433,12 +18526,17 @@ export async function replaceInstructionalCalendarMonth(
       .select({ schoolTimezone: schools.schoolTimezone })
       .from(schools)
       .where(eq(schools.id, options.schoolId))
-      .limit(1);
+      .limit(1)
+      .for("update");
     if (!school) {
       throw instructionalCalendarError("SCHOOL_NOT_FOUND", "School not found.", 404);
     }
     const schoolTimezone = school.schoolTimezone || "America/New_York";
     const schoolLocalToday = localDateInTimeZone(now, schoolTimezone);
+    await takeClasspilotScheduleConfigLock(
+      transactionDb as unknown as ScheduleChangeDb,
+      options.schoolId
+    );
 
     const [row] = await tx
       .select({ instructionalCalendar: settings.instructionalCalendar })
@@ -17479,6 +18577,74 @@ export async function replaceInstructionalCalendarMonth(
       }
     }
 
+    const addedDates = nextDates.filter((localDate) => !currentSet.has(localDate));
+    const closingChanges = addedDates.length
+      ? await tx
+          .select()
+          .from(classpilotScheduleChanges)
+          .where(
+            and(
+              eq(classpilotScheduleChanges.schoolId, options.schoolId),
+              inArray(classpilotScheduleChanges.scheduledDate, addedDates),
+              inArray(classpilotScheduleChanges.status, [
+                ...CP_SCHEDULE_CHANGE_ACTIVE_STATUSES,
+              ]),
+              eq(classpilotScheduleChanges.reservationActive, true)
+            )
+          )
+          .orderBy(asc(classpilotScheduleChanges.id))
+          .for("update")
+      : [];
+    if (closingChanges.some((change) => change.status === "approved")) {
+      throw instructionalCalendarError(
+        "APPROVED_SCHEDULE_CHANGE_EXISTS",
+        "Cancel approved schedule changes before closing this instructional date.",
+        409
+      );
+    }
+    const supersededScheduleChangeIds = closingChanges
+      .filter((change) =>
+        CP_SCHEDULE_CHANGE_PENDING_STATUSES.includes(
+          change.status as (typeof CP_SCHEDULE_CHANGE_PENDING_STATUSES)[number]
+        )
+      )
+      .map((change) => change.id)
+      .sort();
+    if (supersededScheduleChangeIds.length > 0) {
+      await tx
+        .update(classpilotScheduleChanges)
+        .set({
+          status: "superseded",
+          reservationActive: false,
+          terminalByUserId: options.updatedBy,
+          terminalReason: "instructional_date_closed",
+          terminalAt: now,
+          revision: sql`${classpilotScheduleChanges.revision} + 1`,
+          updatedAt: now,
+        })
+        .where(inArray(classpilotScheduleChanges.id, supersededScheduleChangeIds));
+      await releaseScheduleChangeReservations(
+        supersededScheduleChangeIds,
+        transactionDb as unknown as ScheduleChangeDb
+      );
+      for (const id of supersededScheduleChangeIds) {
+        await tx.insert(auditLogs).values({
+          schoolId: options.schoolId,
+          userId: options.updatedBy,
+          action: "classpilot.schedule_change.superseded",
+          entityType: "classpilot_schedule_change",
+          entityId: id,
+          changes: { status: "superseded" },
+          metadata: { reasonCode: "instructional_date_closed" },
+        });
+      }
+      recordScheduleChangePostCommitNotice(
+        transactionDb as unknown as ScheduleChangeDb,
+        options.schoolId,
+        supersededScheduleChangeIds
+      );
+    }
+
     const updatedAt = now.toISOString();
     const savedMonth: InstructionalCalendarMonthSettings = {
       revision: current.revision + 1,
@@ -17495,7 +18661,6 @@ export async function replaceInstructionalCalendarMonth(
       .set({ instructionalCalendar: nextCalendar })
       .where(eq(settings.schoolId, options.schoolId));
 
-    const addedDates = nextDates.filter((localDate) => !currentSet.has(localDate));
     const removedDates = current.nonInstructionalDates.filter(
       (localDate) => !nextSet.has(localDate)
     );
@@ -17506,8 +18671,9 @@ export async function replaceInstructionalCalendarMonth(
       schoolLocalToday,
       addedDates,
       removedDates,
+      supersededScheduleChangeIds,
     };
-  });
+  }, dbInstance);
 }
 
 // Heartbeats only need the tracking-window fields. Cache that deliberately
@@ -18504,4 +19670,3614 @@ export async function listEvidenceArtifactsForStudent(options: {
     .where(and(...conditions))
     .orderBy(desc(evidenceArtifacts.capturedAt))
     .limit(Math.min(options.limit || 100, 500));
+}
+
+// ============================================================================
+// ClassPilot - One-day schedule changes
+// ============================================================================
+
+export type ClasspilotScheduleChangeStatus =
+  | "pending_counterpart"
+  | "pending_admin"
+  | "approved"
+  | "declined"
+  | "denied"
+  | "cancelled"
+  | "expired"
+  | "superseded";
+
+export type ClasspilotScheduleChangeActor = {
+  userId: string;
+  role: "admin" | "school_admin" | "teacher" | "office_staff";
+  userEmail?: string;
+};
+
+export type ClasspilotScheduleWindowDto = {
+  startTime: string;
+  endTime: string;
+};
+
+export type ClasspilotScheduleChangeClassDto = {
+  id: string;
+  name: string;
+  primaryTeacher: { id: string; name: string };
+  normalWindow: ClasspilotScheduleWindowDto;
+};
+
+export type ClasspilotScheduleChangePairDto = {
+  id: string;
+  status: "active" | "archived";
+  revision: number;
+  firstClass: ClasspilotScheduleChangeClassDto;
+  secondClass: ClasspilotScheduleChangeClassDto;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ClasspilotScheduleChangePolicyDto = {
+  teacherRequestsEnabled: boolean;
+  adminApprovalRequired: boolean;
+  sameDayCutoff: string;
+  reasonRequired: true;
+  schoolTimezone: string;
+  revision: number;
+};
+
+export type ClasspilotScheduleChangeAllowedAction =
+  | "accept"
+  | "decline"
+  | "approve"
+  | "deny"
+  | "withdraw"
+  | "cancel";
+
+export type ClasspilotScheduleChangeDto = {
+  id: string;
+  pairId: string;
+  scheduledDate: string;
+  schoolTimezone: string;
+  status: ClasspilotScheduleChangeStatus;
+  reason: string;
+  revision: number;
+  requestedBy: { id: string; name: string };
+  nextActor: "counterpart_teacher" | "administrator" | null;
+  legs: Array<{
+    class: { id: string; name: string };
+    primaryTeacher: { id: string; name: string };
+    normalWindow: ClasspilotScheduleWindowDto;
+    effectiveWindow: ClasspilotScheduleWindowDto;
+  }>;
+  allowedActions: ClasspilotScheduleChangeAllowedAction[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ClasspilotScheduleChangeBlocker = {
+  code: string;
+  message: string;
+};
+
+type ScheduleChangeDb = typeof db;
+type StorageTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+type ScheduleChangePostCommitNotice = {
+  schoolId: string;
+  changeIds: string[];
+};
+
+const scheduleChangePostCommitCollectors = new WeakMap<
+  object,
+  Map<string, Set<string>>
+>();
+
+function recordScheduleChangePostCommitNotice(
+  dbInstance: ScheduleChangeDb,
+  schoolId: string,
+  changeIds: string[]
+): void {
+  if (changeIds.length === 0) return;
+  const collector = scheduleChangePostCommitCollectors.get(dbInstance as unknown as object);
+  if (!collector) return;
+  const ids = collector.get(schoolId) ?? new Set<string>();
+  for (const id of changeIds) ids.add(id);
+  collector.set(schoolId, ids);
+}
+
+function dispatchScheduleChangePostCommitNotices(
+  notices: ScheduleChangePostCommitNotice[]
+): void {
+  for (const notice of notices) {
+    void import("./classpilotScheduleChanges.js")
+      .then(({ announceClasspilotScheduleChangeIds }) =>
+        announceClasspilotScheduleChangeIds(notice)
+      )
+      .catch((error) => {
+        console.warn(
+          "[ClassPilot schedule changes] Post-commit notification failed:",
+          (error as Error).message
+        );
+      });
+  }
+}
+
+/**
+ * Runs a configuration mutation and publishes automatic workflow transitions
+ * only after PostgreSQL confirms the commit. Helpers called inside the
+ * transaction register IDs against the transaction object; ordinary workflow
+ * actions do not use this wrapper because their routes announce explicitly.
+ */
+export async function withClasspilotSchedulePostCommitTransaction<T>(
+  operation: (tx: StorageTransaction) => Promise<T>,
+  dbInstance: typeof db = db
+): Promise<T> {
+  const committed = await dbInstance.transaction(async (rawTx) => {
+    const tx = rawTx as unknown as StorageTransaction;
+    const key = rawTx as unknown as object;
+    const collector = new Map<string, Set<string>>();
+    scheduleChangePostCommitCollectors.set(key, collector);
+    try {
+      const value = await operation(tx);
+      const notices = [...collector.entries()].map(([schoolId, ids]) => ({
+        schoolId,
+        changeIds: [...ids].sort(),
+      }));
+      return { value, notices };
+    } finally {
+      scheduleChangePostCommitCollectors.delete(key);
+    }
+  });
+  dispatchScheduleChangePostCommitNotices(committed.notices);
+  return committed.value;
+}
+
+/**
+ * Called by alternate school-settings writers after they lock the school row.
+ * It acquires the shared class-configuration lock, rejects a timezone change
+ * while an approved occurrence remains outstanding, and supersedes pending
+ * requests atomically with the caller's school update.
+ */
+export async function guardClasspilotScheduleChangesForSchoolTimezoneChange(
+  options: {
+    schoolId: string;
+    currentTimezone: string;
+    nextTimezone: string;
+    actorId?: string | null;
+    now?: Date;
+    dbInstance: ScheduleChangeDb;
+  }
+): Promise<string[]> {
+  await takeClasspilotScheduleConfigLock(options.dbInstance, options.schoolId);
+  if (options.currentTimezone === options.nextTimezone) return [];
+  const now = options.now ?? new Date();
+  return reconcileClasspilotScheduleChangesForEntitlementRemoval({
+    schoolId: options.schoolId,
+    actorId: options.actorId,
+    validUntil: now,
+    affectedWhen: "ends_after",
+    reasonCode: "school_timezone_changed",
+    approvedMessage:
+      "Cancel approved future schedule changes before changing the school timezone.",
+    now,
+    dbInstance: options.dbInstance,
+  });
+}
+
+const CP_SCHEDULE_CHANGE_PENDING_STATUSES = [
+  "pending_counterpart",
+  "pending_admin",
+] as const;
+const CP_SCHEDULE_CHANGE_ACTIVE_STATUSES = [
+  ...CP_SCHEDULE_CHANGE_PENDING_STATUSES,
+  "approved",
+] as const;
+const CP_SCHEDULE_CHANGE_TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/**
+ * Serializes every school-scoped class configuration, assignment, and
+ * schedule-change approval write. Keeping the established PassPilot lock key
+ * avoids introducing a second lock domain around the same official classes.
+ */
+async function takeClasspilotScheduleConfigLock(
+  dbInstance: ScheduleChangeDb,
+  schoolId: string
+): Promise<void> {
+  await dbInstance.execute(
+    sql`SELECT pg_advisory_xact_lock(hashtext(${`passpilot-class-source:${schoolId}`}))`
+  );
+}
+
+async function lockClasspilotScheduleChangeSchool(
+  schoolId: string,
+  dbInstance: ScheduleChangeDb
+): Promise<string> {
+  const [school] = await dbInstance
+    .select({ schoolTimezone: schools.schoolTimezone })
+    .from(schools)
+    .where(and(eq(schools.id, schoolId), isNull(schools.deletedAt)))
+    .limit(1)
+    .for("update");
+  if (!school) {
+    throw scheduleChangeError(
+      "SCHEDULE_CHANGE_SCHOOL_UNAVAILABLE",
+      "School settings are unavailable.",
+      404
+    );
+  }
+  return school.schoolTimezone || "America/New_York";
+}
+
+export async function assertActiveClasspilotScheduleChangeEntitlement(options: {
+  schoolId: string;
+  now?: Date;
+  /** Entitlement must remain valid strictly beyond this event instant. */
+  through?: Date;
+  dbInstance?: ScheduleChangeDb;
+}): Promise<void> {
+  const dbInstance = options.dbInstance ?? db;
+  const now = options.now ?? new Date();
+  const requiredThrough = options.through && options.through > now
+    ? options.through
+    : now;
+  const [school] = await dbInstance
+    .select({
+      status: schools.status,
+      isActive: schools.isActive,
+      planStatus: schools.planStatus,
+      activeUntil: schools.activeUntil,
+      disabledAt: schools.disabledAt,
+    })
+    .from(schools)
+    .where(and(eq(schools.id, options.schoolId), isNull(schools.deletedAt)))
+    .limit(1)
+    .for("update");
+  const schoolEntitled = Boolean(
+    school &&
+      school.status === "active" &&
+      school.isActive &&
+      school.planStatus !== "canceled" &&
+      !school.disabledAt &&
+      (!school.activeUntil || school.activeUntil.getTime() > requiredThrough.getTime())
+  );
+  if (!schoolEntitled) {
+    throw scheduleChangeError(
+      "SCHEDULE_CHANGE_SCHOOL_INACTIVE",
+      "This school is not active for ClassPilot schedule changes.",
+      409
+    );
+  }
+  const [license] = await dbInstance
+    .select({ id: productLicenses.id })
+    .from(productLicenses)
+    .where(
+      and(
+        eq(productLicenses.schoolId, options.schoolId),
+        eq(productLicenses.product, "CLASSPILOT"),
+        eq(productLicenses.status, "active"),
+        or(isNull(productLicenses.expiresAt), gt(productLicenses.expiresAt, requiredThrough))!
+      )
+    )
+    .limit(1)
+    .for("update");
+  if (!license) {
+    throw scheduleChangeError(
+      "SCHEDULE_CHANGE_LICENSE_REQUIRED",
+      "An active ClassPilot license is required for schedule changes.",
+      409
+    );
+  }
+}
+
+async function reconcileClasspilotScheduleChangesForEntitlementRemoval(options: {
+  schoolId: string;
+  actorId?: string | null;
+  validUntil?: Date | null;
+  affectedWhen?: "starts_at_or_after" | "ends_after" | "ends_at_or_after";
+  reasonCode?: string;
+  approvedMessage?: string;
+  now?: Date;
+  dbInstance: ScheduleChangeDb;
+}): Promise<string[]> {
+  const now = options.now ?? new Date();
+  const policy = await getClasspilotScheduleChangeSettings(
+    options.schoolId,
+    options.dbInstance
+  );
+  const timezone = policy?.schoolTimezone || "America/New_York";
+  const rows = await options.dbInstance
+    .select({
+      id: classpilotScheduleChanges.id,
+      status: classpilotScheduleChanges.status,
+      scheduledDate: classpilotScheduleChanges.scheduledDate,
+      effectiveStartTime: classpilotScheduleChangeLegs.effectiveStartTime,
+      effectiveEndTime: classpilotScheduleChangeLegs.effectiveEndTime,
+    })
+    .from(classpilotScheduleChanges)
+    .innerJoin(
+      classpilotScheduleChangeLegs,
+      and(
+        eq(classpilotScheduleChangeLegs.schoolId, classpilotScheduleChanges.schoolId),
+        eq(classpilotScheduleChangeLegs.scheduleChangeId, classpilotScheduleChanges.id)
+      )
+    )
+    .where(
+      and(
+        eq(classpilotScheduleChanges.schoolId, options.schoolId),
+        inArray(classpilotScheduleChanges.status, [...CP_SCHEDULE_CHANGE_ACTIVE_STATUSES]),
+        eq(classpilotScheduleChanges.reservationActive, true),
+        eq(classpilotScheduleChangeLegs.reservationActive, true)
+      )
+    )
+    .orderBy(asc(classpilotScheduleChanges.id))
+    .for("update");
+  const byId = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const values = byId.get(row.id) ?? [];
+    values.push(row);
+    byId.set(row.id, values);
+  }
+  const affected = [...byId.entries()].filter(([, legs]) => {
+    const cutoff = options.validUntil ?? now;
+    const affectedWhen = options.affectedWhen ?? "ends_at_or_after";
+    if (affectedWhen === "ends_after" || affectedWhen === "ends_at_or_after") {
+      const latest = legs.map((leg) => leg.effectiveEndTime).sort().at(-1);
+      if (!latest) return true;
+      const endsAt = localDateTimeUtc(legs[0]!.scheduledDate, latest, timezone);
+      return affectedWhen === "ends_after"
+        ? endsAt.getTime() > cutoff.getTime()
+        : endsAt.getTime() >= cutoff.getTime();
+    }
+    const earliest = legs.map((leg) => leg.effectiveStartTime).sort()[0];
+    if (!earliest) return true;
+    return localDateTimeUtc(legs[0]!.scheduledDate, earliest, timezone).getTime() >=
+      cutoff.getTime();
+  });
+  if (affected.some(([, legs]) => legs[0]?.status === "approved")) {
+    throw scheduleChangeError(
+      "APPROVED_SCHEDULE_CHANGE_EXISTS",
+      options.approvedMessage ||
+        "Cancel approved future schedule changes before removing ClassPilot access.",
+      409
+    );
+  }
+  const reasonCode = options.reasonCode && /^[a-z0-9_]{1,100}$/.test(options.reasonCode)
+    ? options.reasonCode
+    : "classpilot_entitlement_removed";
+  const pendingIds = affected
+    .filter(([, legs]) =>
+      CP_SCHEDULE_CHANGE_PENDING_STATUSES.includes(
+        legs[0]?.status as (typeof CP_SCHEDULE_CHANGE_PENDING_STATUSES)[number]
+      )
+    )
+    .map(([id]) => id)
+    .sort();
+  if (pendingIds.length === 0) return [];
+  await options.dbInstance
+    .update(classpilotScheduleChanges)
+    .set({
+      status: "superseded",
+      reservationActive: false,
+      terminalByUserId: options.actorId ?? null,
+      terminalReason: reasonCode,
+      terminalAt: now,
+      revision: sql`${classpilotScheduleChanges.revision} + 1`,
+      updatedAt: now,
+    })
+    .where(inArray(classpilotScheduleChanges.id, pendingIds));
+  await releaseScheduleChangeReservations(pendingIds, options.dbInstance);
+  for (const id of pendingIds) {
+    await options.dbInstance.insert(auditLogs).values({
+      schoolId: options.schoolId,
+      userId: options.actorId ?? null,
+      action: "classpilot.schedule_change.superseded",
+      entityType: "classpilot_schedule_change",
+      entityId: id,
+      changes: { status: "superseded" },
+      metadata: { reasonCode },
+    });
+  }
+  recordScheduleChangePostCommitNotice(
+    options.dbInstance,
+    options.schoolId,
+    pendingIds
+  );
+  return pendingIds;
+}
+
+function scheduleChangeError(
+  code: string,
+  message: string,
+  status = 400
+): Error & { code: string; status: number; expose: true } {
+  return Object.assign(new Error(message), {
+    code,
+    status,
+    expose: true as const,
+  });
+}
+
+function isClasspilotScheduleChangeEntitlementError(error: unknown): boolean {
+  const code = (error as { code?: string } | null)?.code;
+  return code === "SCHEDULE_CHANGE_SCHOOL_INACTIVE" ||
+    code === "SCHEDULE_CHANGE_LICENSE_REQUIRED";
+}
+
+function scheduleChangeDisplayName(value: {
+  displayName?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
+} | undefined): string {
+  if (!value) return "Staff member";
+  const direct = value.displayName?.trim();
+  if (direct) return direct;
+  const composed = [value.firstName, value.lastName].filter(Boolean).join(" ").trim();
+  return composed || value.email?.trim() || "Staff member";
+}
+
+function scheduleChangeMinutes(value: string): number {
+  if (!CP_SCHEDULE_CHANGE_TIME_PATTERN.test(value)) {
+    throw scheduleChangeError(
+      "INVALID_SCHEDULE_CHANGE_TIME",
+      "Class schedules must use HH:MM times."
+    );
+  }
+  const [hour = 0, minute = 0] = value.split(":").map(Number);
+  return hour * 60 + minute;
+}
+
+function windowsOverlap(
+  first: ClasspilotScheduleWindowDto,
+  second: ClasspilotScheduleWindowDto
+): boolean {
+  return first.startTime < second.endTime && first.endTime > second.startTime;
+}
+
+function normalizePairGroupIds(firstGroupId: string, secondGroupId: string): [string, string] {
+  if (!firstGroupId || !secondGroupId || firstGroupId === secondGroupId) {
+    throw scheduleChangeError(
+      "INVALID_SCHEDULE_CHANGE_PAIR",
+      "Select two different classes."
+    );
+  }
+  return firstGroupId < secondGroupId
+    ? [firstGroupId, secondGroupId]
+    : [secondGroupId, firstGroupId];
+}
+
+export async function getClasspilotScheduleChangeSettings(
+  schoolId: string,
+  dbInstance: ScheduleChangeDb = db
+): Promise<ClasspilotScheduleChangePolicyDto | undefined> {
+  const [row] = await dbInstance
+    .select({
+      teacherRequestsEnabled:
+        settings.classpilotScheduleChangesTeacherRequestsEnabled,
+      adminApprovalRequired:
+        settings.classpilotScheduleChangesAdminApprovalRequired,
+      sameDayCutoff: settings.classpilotScheduleChangesSameDayCutoff,
+      revision: settings.classpilotScheduleChangesRevision,
+      schoolTimezone: schools.schoolTimezone,
+    })
+    .from(settings)
+    .innerJoin(schools, eq(schools.id, settings.schoolId))
+    .where(and(eq(settings.schoolId, schoolId), isNull(schools.deletedAt)))
+    .limit(1);
+  return row
+    ? {
+        teacherRequestsEnabled: row.teacherRequestsEnabled,
+        adminApprovalRequired: row.adminApprovalRequired,
+        sameDayCutoff: row.sameDayCutoff,
+        reasonRequired: true,
+        schoolTimezone: row.schoolTimezone || "America/New_York",
+        revision: row.revision,
+      }
+    : undefined;
+}
+
+async function lockClasspilotScheduleChangeSettingsRow(
+  schoolId: string,
+  dbInstance: ScheduleChangeDb
+): Promise<string> {
+  const [locked] = await dbInstance
+    .select({ id: settings.id })
+    .from(settings)
+    .where(eq(settings.schoolId, schoolId))
+    .limit(1)
+    .for("update");
+  if (!locked) {
+    throw scheduleChangeError(
+      "SCHEDULE_CHANGE_SETTINGS_UNAVAILABLE",
+      "Schedule-change settings are unavailable.",
+      500
+    );
+  }
+  return locked.id;
+}
+
+export type UpdateClasspilotScheduleChangeSettingsResult =
+  | { status: "saved"; current: ClasspilotScheduleChangePolicyDto; changedFields: string[] }
+  | { status: "conflict"; current: ClasspilotScheduleChangePolicyDto };
+
+export async function updateClasspilotScheduleChangeSettings(options: {
+  schoolId: string;
+  expectedRevision: number;
+  patch: {
+    teacherRequestsEnabled?: boolean;
+    adminApprovalRequired?: boolean;
+    sameDayCutoff?: string;
+  };
+  actor: ClasspilotScheduleChangeActor;
+}): Promise<UpdateClasspilotScheduleChangeSettingsResult> {
+  return db.transaction(async (tx) => {
+    const transactionDb = tx as unknown as ScheduleChangeDb;
+    await lockClasspilotScheduleChangeSchool(options.schoolId, transactionDb);
+    await takeClasspilotScheduleConfigLock(transactionDb, options.schoolId);
+    const lockedSettingsId = await lockClasspilotScheduleChangeSettingsRow(
+      options.schoolId,
+      transactionDb
+    );
+    const current = await getClasspilotScheduleChangeSettings(
+      options.schoolId,
+      transactionDb
+    );
+    if (!current) {
+      throw scheduleChangeError(
+        "SCHEDULE_CHANGE_SETTINGS_UNAVAILABLE",
+        "Schedule-change settings are unavailable.",
+        500
+      );
+    }
+    if (current.revision !== options.expectedRevision) {
+      return { status: "conflict" as const, current };
+    }
+    const nextTeacherRequests =
+      options.patch.teacherRequestsEnabled ?? current.teacherRequestsEnabled;
+    const nextAdminApproval =
+      options.patch.adminApprovalRequired ?? current.adminApprovalRequired;
+    const nextCutoff = options.patch.sameDayCutoff ?? current.sameDayCutoff;
+    if (!CP_SCHEDULE_CHANGE_TIME_PATTERN.test(nextCutoff)) {
+      throw scheduleChangeError(
+        "INVALID_SCHEDULE_CHANGE_CUTOFF",
+        "The same-day cutoff must use HH:MM format."
+      );
+    }
+    const changedFields: string[] = [];
+    if (nextTeacherRequests !== current.teacherRequestsEnabled) {
+      changedFields.push("teacherRequestsEnabled");
+    }
+    if (nextAdminApproval !== current.adminApprovalRequired) {
+      changedFields.push("adminApprovalRequired");
+    }
+    if (nextCutoff !== current.sameDayCutoff) changedFields.push("sameDayCutoff");
+    const nextRevision = current.revision + 1;
+    await tx
+      .update(settings)
+      .set({
+        classpilotScheduleChangesTeacherRequestsEnabled: nextTeacherRequests,
+        classpilotScheduleChangesAdminApprovalRequired: nextAdminApproval,
+        classpilotScheduleChangesSameDayCutoff: nextCutoff,
+        classpilotScheduleChangesRevision: nextRevision,
+      })
+      .where(eq(settings.schoolId, options.schoolId));
+    await tx.insert(auditLogs).values({
+      schoolId: options.schoolId,
+      userId: options.actor.userId,
+      userEmail: options.actor.userEmail ?? null,
+      userRole: options.actor.role,
+      action: "classpilot.schedule_change.settings_updated",
+      entityType: "settings",
+      entityId: lockedSettingsId,
+      changes: { fields: changedFields },
+      metadata: { revision: nextRevision },
+    });
+    return {
+      status: "saved" as const,
+      changedFields,
+      current: {
+        teacherRequestsEnabled: nextTeacherRequests,
+        adminApprovalRequired: nextAdminApproval,
+        sameDayCutoff: nextCutoff,
+        reasonRequired: true,
+        schoolTimezone: current.schoolTimezone,
+        revision: nextRevision,
+      },
+    };
+  });
+}
+
+type LockedScheduleChangeGroup = Pick<
+  Group,
+  | "id"
+  | "schoolId"
+  | "teacherId"
+  | "name"
+  | "groupType"
+  | "status"
+  | "scheduleEnabled"
+  | "blockStartTime"
+  | "blockEndTime"
+>;
+
+async function lockScheduleChangeGroups(
+  schoolId: string,
+  groupIds: string[],
+  dbInstance: ScheduleChangeDb
+): Promise<LockedScheduleChangeGroup[]> {
+  const uniqueIds = Array.from(new Set(groupIds)).sort();
+  if (uniqueIds.length === 0) return [];
+  return dbInstance
+    .select({
+      id: groups.id,
+      schoolId: groups.schoolId,
+      teacherId: groups.teacherId,
+      name: groups.name,
+      groupType: groups.groupType,
+      status: groups.status,
+      scheduleEnabled: groups.scheduleEnabled,
+      blockStartTime: groups.blockStartTime,
+      blockEndTime: groups.blockEndTime,
+    })
+    .from(groups)
+    .where(and(eq(groups.schoolId, schoolId), inArray(groups.id, uniqueIds)))
+    .orderBy(asc(groups.id))
+    .for("update");
+}
+
+async function assertScheduleChangePairGroups(
+  schoolId: string,
+  pairGroups: LockedScheduleChangeGroup[],
+  dbInstance: ScheduleChangeDb
+): Promise<void> {
+  if (pairGroups.length !== 2 || pairGroups.some((group) => group.schoolId !== schoolId)) {
+    throw scheduleChangeError(
+      "SCHEDULE_CHANGE_CLASS_NOT_FOUND",
+      "One or more classes are unavailable.",
+      404
+    );
+  }
+  for (const group of pairGroups) {
+    if (
+      group.status !== "active" ||
+      group.groupType !== "admin_class" ||
+      !group.scheduleEnabled ||
+      !group.blockStartTime ||
+      !group.blockEndTime
+    ) {
+      throw scheduleChangeError(
+        "SCHEDULE_CHANGE_CLASS_INELIGIBLE",
+        "Both classes must be active, scheduled official classes.",
+        409
+      );
+    }
+  }
+  if (pairGroups[0]!.teacherId === pairGroups[1]!.teacherId) {
+    throw scheduleChangeError(
+      "SCHEDULE_CHANGE_DISTINCT_TEACHERS_REQUIRED",
+      "The classes must have different primary teachers.",
+      409
+    );
+  }
+  const firstWindow = {
+    startTime: pairGroups[0]!.blockStartTime!,
+    endTime: pairGroups[0]!.blockEndTime!,
+  };
+  const secondWindow = {
+    startTime: pairGroups[1]!.blockStartTime!,
+    endTime: pairGroups[1]!.blockEndTime!,
+  };
+  const firstDuration =
+    scheduleChangeMinutes(firstWindow.endTime) - scheduleChangeMinutes(firstWindow.startTime);
+  const secondDuration =
+    scheduleChangeMinutes(secondWindow.endTime) - scheduleChangeMinutes(secondWindow.startTime);
+  if (firstDuration <= 0 || firstDuration !== secondDuration) {
+    throw scheduleChangeError(
+      "SCHEDULE_CHANGE_DURATION_MISMATCH",
+      "The two class periods must have the same duration.",
+      409
+    );
+  }
+  if (windowsOverlap(firstWindow, secondWindow)) {
+    throw scheduleChangeError(
+      "SCHEDULE_CHANGE_WINDOWS_OVERLAP",
+      "The two regular class periods must not overlap.",
+      409
+    );
+  }
+  const teacherIds = pairGroups.map((group) => group.teacherId);
+  const memberships = await dbInstance
+    .select({ userId: schoolMemberships.userId, role: schoolMemberships.role })
+    .from(schoolMemberships)
+    .where(
+      and(
+        eq(schoolMemberships.schoolId, schoolId),
+        eq(schoolMemberships.status, "active"),
+        inArray(schoolMemberships.userId, teacherIds),
+        inArray(schoolMemberships.role, ["teacher", "admin", "school_admin"])
+      )
+    );
+  if (new Set(memberships.map((membership) => membership.userId)).size !== 2) {
+    throw scheduleChangeError(
+      "SCHEDULE_CHANGE_TEACHER_INELIGIBLE",
+      "Both primary teachers must have active staff memberships.",
+      409
+    );
+  }
+}
+
+async function loadScheduleChangePairDto(
+  pair: ClasspilotScheduleChangePair,
+  dbInstance: ScheduleChangeDb
+): Promise<ClasspilotScheduleChangePairDto | undefined> {
+  const groupRows = await dbInstance
+    .select({
+      id: groups.id,
+      name: groups.name,
+      teacherId: groups.teacherId,
+      startTime: groups.blockStartTime,
+      endTime: groups.blockEndTime,
+      displayName: users.displayName,
+      firstName: users.firstName,
+      lastName: users.lastName,
+      email: users.email,
+    })
+    .from(groups)
+    .innerJoin(users, eq(users.id, groups.teacherId))
+    .where(
+      and(
+        eq(groups.schoolId, pair.schoolId),
+        inArray(groups.id, [pair.firstGroupId, pair.secondGroupId])
+      )
+    );
+  const byId = new Map(groupRows.map((row) => [row.id, row]));
+  const first = byId.get(pair.firstGroupId);
+  const second = byId.get(pair.secondGroupId);
+  if (!first?.startTime || !first.endTime || !second?.startTime || !second.endTime) {
+    return undefined;
+  }
+  const toClass = (group: typeof first): ClasspilotScheduleChangeClassDto => ({
+    id: group.id,
+    name: group.name,
+    primaryTeacher: {
+      id: group.teacherId,
+      name: scheduleChangeDisplayName(group),
+    },
+    normalWindow: { startTime: group.startTime!, endTime: group.endTime! },
+  });
+  return {
+    id: pair.id,
+    status: pair.status as "active" | "archived",
+    revision: pair.revision,
+    firstClass: toClass(first),
+    secondClass: toClass(second),
+    createdAt: pair.createdAt.toISOString(),
+    updatedAt: pair.updatedAt.toISOString(),
+  };
+}
+
+async function scheduleChangeVisibleGroupIds(
+  schoolId: string,
+  actor: ClasspilotScheduleChangeActor,
+  dbInstance: ScheduleChangeDb
+): Promise<Set<string> | null> {
+  if (actor.role === "admin" || actor.role === "school_admin" || actor.role === "office_staff") {
+    return null;
+  }
+  const rows = await dbInstance
+    .select({ id: groups.id })
+    .from(groups)
+    .leftJoin(groupTeachers, eq(groupTeachers.groupId, groups.id))
+    .where(
+      and(
+        eq(groups.schoolId, schoolId),
+        or(eq(groups.teacherId, actor.userId), eq(groupTeachers.teacherId, actor.userId))!
+      )
+    );
+  return new Set(rows.map((row) => row.id));
+}
+
+export async function listClasspilotScheduleChangePairs(options: {
+  schoolId: string;
+  actor: ClasspilotScheduleChangeActor;
+  includeArchived?: boolean;
+  dbInstance?: ScheduleChangeDb;
+}): Promise<ClasspilotScheduleChangePairDto[]> {
+  const dbInstance = options.dbInstance ?? db;
+  const conditions: SQL[] = [eq(classpilotScheduleChangePairs.schoolId, options.schoolId)];
+  if (!options.includeArchived) {
+    conditions.push(eq(classpilotScheduleChangePairs.status, "active"));
+  }
+  const [pairs, visibleGroups] = await Promise.all([
+    dbInstance
+      .select()
+      .from(classpilotScheduleChangePairs)
+      .where(and(...conditions))
+      .orderBy(asc(classpilotScheduleChangePairs.createdAt)),
+    scheduleChangeVisibleGroupIds(options.schoolId, options.actor, dbInstance),
+  ]);
+  const visiblePairs = visibleGroups
+    ? pairs.filter(
+        (pair) =>
+          visibleGroups.has(pair.firstGroupId) || visibleGroups.has(pair.secondGroupId)
+      )
+    : pairs;
+  const hydrated = await Promise.all(
+    visiblePairs.map((pair) => loadScheduleChangePairDto(pair, dbInstance))
+  );
+  return hydrated.filter((pair): pair is ClasspilotScheduleChangePairDto => Boolean(pair));
+}
+
+export async function createClasspilotScheduleChangePair(options: {
+  schoolId: string;
+  firstGroupId: string;
+  secondGroupId: string;
+  actor: ClasspilotScheduleChangeActor;
+}): Promise<ClasspilotScheduleChangePair> {
+  const [firstGroupId, secondGroupId] = normalizePairGroupIds(
+    options.firstGroupId,
+    options.secondGroupId
+  );
+  return db.transaction(async (tx) => {
+    const transactionDb = tx as unknown as ScheduleChangeDb;
+    await lockClasspilotScheduleChangeSchool(options.schoolId, transactionDb);
+    await takeClasspilotScheduleConfigLock(transactionDb, options.schoolId);
+    await assertActiveClasspilotScheduleChangeEntitlement({
+      schoolId: options.schoolId,
+      dbInstance: transactionDb,
+    });
+    const pairGroups = await lockScheduleChangeGroups(
+      options.schoolId,
+      [firstGroupId, secondGroupId],
+      transactionDb
+    );
+    await assertScheduleChangePairGroups(options.schoolId, pairGroups, transactionDb);
+    const [existing] = await tx
+      .select()
+      .from(classpilotScheduleChangePairs)
+      .where(
+        and(
+          eq(classpilotScheduleChangePairs.schoolId, options.schoolId),
+          eq(classpilotScheduleChangePairs.firstGroupId, firstGroupId),
+          eq(classpilotScheduleChangePairs.secondGroupId, secondGroupId)
+        )
+      )
+      .limit(1)
+      .for("update");
+    const now = new Date();
+    let saved: ClasspilotScheduleChangePair;
+    if (existing?.status === "active") {
+      return existing;
+    }
+    if (existing) {
+      const [reactivated] = await tx
+        .update(classpilotScheduleChangePairs)
+        .set({
+          status: "active",
+          revision: existing.revision + 1,
+          archivedAt: null,
+          archivedBy: null,
+          updatedAt: now,
+        })
+        .where(eq(classpilotScheduleChangePairs.id, existing.id))
+        .returning();
+      saved = reactivated!;
+    } else {
+      const [created] = await tx
+        .insert(classpilotScheduleChangePairs)
+        .values({
+          schoolId: options.schoolId,
+          firstGroupId,
+          secondGroupId,
+          createdBy: options.actor.userId,
+        })
+        .returning();
+      saved = created!;
+    }
+    await tx.insert(auditLogs).values({
+      schoolId: options.schoolId,
+      userId: options.actor.userId,
+      userEmail: options.actor.userEmail ?? null,
+      userRole: options.actor.role,
+      action: "classpilot.schedule_change.pair_enabled",
+      entityType: "classpilot_schedule_change_pair",
+      entityId: saved.id,
+      changes: { status: "active" },
+      metadata: { revision: saved.revision },
+    });
+    return saved;
+  });
+}
+
+async function releaseScheduleChangeReservations(
+  scheduleChangeIds: string[],
+  dbInstance: ScheduleChangeDb
+): Promise<void> {
+  if (scheduleChangeIds.length === 0) return;
+  await dbInstance
+    .update(classpilotScheduleChangeLegs)
+    .set({ reservationActive: false })
+    .where(
+      and(
+        inArray(classpilotScheduleChangeLegs.scheduleChangeId, scheduleChangeIds),
+        eq(classpilotScheduleChangeLegs.reservationActive, true)
+      )
+    );
+}
+
+export type ArchiveClasspilotScheduleChangePairResult =
+  | { status: "saved"; pair: ClasspilotScheduleChangePair }
+  | { status: "conflict"; pair: ClasspilotScheduleChangePair }
+  | { status: "not_found" };
+
+export async function archiveClasspilotScheduleChangePair(options: {
+  schoolId: string;
+  pairId: string;
+  expectedRevision: number;
+  actor: ClasspilotScheduleChangeActor;
+}): Promise<ArchiveClasspilotScheduleChangePairResult> {
+  return withClasspilotSchedulePostCommitTransaction(async (tx) => {
+    await lockClasspilotScheduleChangeSchool(
+      options.schoolId,
+      tx as unknown as ScheduleChangeDb
+    );
+    await takeClasspilotScheduleConfigLock(
+      tx as unknown as ScheduleChangeDb,
+      options.schoolId
+    );
+    const [pair] = await tx
+      .select()
+      .from(classpilotScheduleChangePairs)
+      .where(
+        and(
+          eq(classpilotScheduleChangePairs.schoolId, options.schoolId),
+          eq(classpilotScheduleChangePairs.id, options.pairId)
+        )
+      )
+      .limit(1)
+      .for("update");
+    if (!pair) return { status: "not_found" as const };
+    if (pair.revision !== options.expectedRevision) {
+      return { status: "conflict" as const, pair };
+    }
+    if (pair.status === "archived") return { status: "saved" as const, pair };
+    const approvedRows = await tx
+      .select({
+        scheduledDate: classpilotScheduleChanges.scheduledDate,
+        effectiveEndTime: classpilotScheduleChangeLegs.effectiveEndTime,
+      })
+      .from(classpilotScheduleChanges)
+      .innerJoin(
+        classpilotScheduleChangeLegs,
+        and(
+          eq(classpilotScheduleChangeLegs.scheduleChangeId, classpilotScheduleChanges.id),
+          eq(classpilotScheduleChangeLegs.schoolId, classpilotScheduleChanges.schoolId)
+        )
+      )
+      .where(
+        and(
+          eq(classpilotScheduleChanges.schoolId, options.schoolId),
+          eq(classpilotScheduleChanges.pairId, pair.id),
+          eq(classpilotScheduleChanges.status, "approved")
+        )
+      );
+    const currentPolicy = await getClasspilotScheduleChangeSettings(
+      options.schoolId,
+      tx as unknown as ScheduleChangeDb
+    );
+    const currentTimezone = currentPolicy?.schoolTimezone || "America/New_York";
+    if (
+      approvedRows.some(
+        (row) =>
+          localDateTimeUtc(row.scheduledDate, row.effectiveEndTime, currentTimezone).getTime() >
+          Date.now()
+      )
+    ) {
+      throw scheduleChangeError(
+        "APPROVED_SCHEDULE_CHANGE_EXISTS",
+        "Cancel approved future schedule changes before removing this eligible pair.",
+        409
+      );
+    }
+    const now = new Date();
+    const pending = await tx
+      .select({ id: classpilotScheduleChanges.id })
+      .from(classpilotScheduleChanges)
+      .where(
+        and(
+          eq(classpilotScheduleChanges.schoolId, options.schoolId),
+          eq(classpilotScheduleChanges.pairId, pair.id),
+          inArray(classpilotScheduleChanges.status, [...CP_SCHEDULE_CHANGE_PENDING_STATUSES])
+        )
+      )
+      .for("update");
+    const pendingIds = pending.map((change) => change.id);
+    if (pendingIds.length > 0) {
+      await tx
+        .update(classpilotScheduleChanges)
+        .set({
+          status: "superseded",
+          reservationActive: false,
+          terminalByUserId: options.actor.userId,
+          terminalReason: "eligible_pair_removed",
+          terminalAt: now,
+          revision: sql`${classpilotScheduleChanges.revision} + 1`,
+          updatedAt: now,
+        })
+        .where(inArray(classpilotScheduleChanges.id, pendingIds));
+      await releaseScheduleChangeReservations(
+        pendingIds,
+        tx as unknown as ScheduleChangeDb
+      );
+      await tx.insert(auditLogs).values(
+        pendingIds.map((changeId) => ({
+          schoolId: options.schoolId,
+          userId: options.actor.userId,
+          userEmail: options.actor.userEmail ?? null,
+          userRole: options.actor.role,
+          action: "classpilot.schedule_change.superseded",
+          entityType: "classpilot_schedule_change",
+          entityId: changeId,
+          changes: { status: "superseded" },
+          metadata: { reasonCode: "eligible_pair_removed" },
+        }))
+      );
+      recordScheduleChangePostCommitNotice(
+        tx as unknown as ScheduleChangeDb,
+        options.schoolId,
+        pendingIds
+      );
+    }
+    const [saved] = await tx
+      .update(classpilotScheduleChangePairs)
+      .set({
+        status: "archived",
+        archivedBy: options.actor.userId,
+        archivedAt: now,
+        revision: pair.revision + 1,
+        updatedAt: now,
+      })
+      .where(eq(classpilotScheduleChangePairs.id, pair.id))
+      .returning();
+    await tx.insert(auditLogs).values({
+      schoolId: options.schoolId,
+      userId: options.actor.userId,
+      userEmail: options.actor.userEmail ?? null,
+      userRole: options.actor.role,
+      action: "classpilot.schedule_change.pair_archived",
+      entityType: "classpilot_schedule_change_pair",
+      entityId: pair.id,
+      changes: { status: "archived" },
+      metadata: {
+        revision: saved!.revision,
+        supersededRequestCount: pendingIds.length,
+      },
+    });
+    return { status: "saved" as const, pair: saved! };
+  });
+}
+
+export type ApprovedClasspilotScheduleChangeLeg = {
+  swapId: string;
+  groupId: string;
+  effectiveStartTime: string;
+  effectiveEndTime: string;
+};
+
+export async function loadApprovedScheduleChangeLegsForSchoolDate(options: {
+  schoolId: string;
+  scheduledDate: string;
+  dbInstance?: ScheduleChangeDb;
+}): Promise<ApprovedClasspilotScheduleChangeLeg[]> {
+  const dbInstance = options.dbInstance ?? db;
+  const approvedChanges = await dbInstance
+    .select({
+      swapId: classpilotScheduleChanges.id,
+      pairId: classpilotScheduleChanges.pairId,
+      firstGroupId: classpilotScheduleChangePairs.firstGroupId,
+      secondGroupId: classpilotScheduleChangePairs.secondGroupId,
+      pairStatus: classpilotScheduleChangePairs.status,
+    })
+    .from(classpilotScheduleChanges)
+    .leftJoin(
+      classpilotScheduleChangePairs,
+      and(
+        eq(classpilotScheduleChangePairs.id, classpilotScheduleChanges.pairId),
+        eq(classpilotScheduleChangePairs.schoolId, classpilotScheduleChanges.schoolId)
+      )
+    )
+    .where(
+      and(
+        eq(classpilotScheduleChanges.schoolId, options.schoolId),
+        eq(classpilotScheduleChanges.scheduledDate, options.scheduledDate),
+        eq(classpilotScheduleChanges.status, "approved"),
+        eq(classpilotScheduleChanges.reservationActive, true)
+      )
+    )
+    .orderBy(asc(classpilotScheduleChanges.id));
+  if (approvedChanges.length === 0) return [];
+  const legs = await dbInstance
+    .select()
+    .from(classpilotScheduleChangeLegs)
+    .where(
+      and(
+        eq(classpilotScheduleChangeLegs.schoolId, options.schoolId),
+        eq(classpilotScheduleChangeLegs.scheduledDate, options.scheduledDate),
+        inArray(
+          classpilotScheduleChangeLegs.scheduleChangeId,
+          approvedChanges.map((change) => change.swapId)
+        )
+      )
+    )
+    .orderBy(
+      asc(classpilotScheduleChangeLegs.scheduleChangeId),
+      asc(classpilotScheduleChangeLegs.legOrder)
+    );
+  const reservedGroupIds = new Set<string>();
+  for (const change of approvedChanges) {
+    const changeLegs = legs.filter((leg) => leg.scheduleChangeId === change.swapId);
+    const expectedGroupIds = [change.firstGroupId, change.secondGroupId]
+      .filter((id): id is string => Boolean(id))
+      .sort();
+    const actualGroupIds = changeLegs.map((leg) => leg.groupId).sort();
+    if (
+      change.pairStatus !== "active" ||
+      expectedGroupIds.length !== 2 ||
+      changeLegs.length !== 2 ||
+      changeLegs.some((leg) => !leg.reservationActive) ||
+      expectedGroupIds.some((id, index) => actualGroupIds[index] !== id)
+    ) {
+      throw scheduleChangeError(
+        "SCHEDULE_CHANGE_EXECUTION_INVALID",
+        "The approved schedule change is no longer safe to execute.",
+        409
+      );
+    }
+    for (const groupId of actualGroupIds) {
+      if (reservedGroupIds.has(groupId)) {
+        throw scheduleChangeError(
+          "SCHEDULE_CHANGE_EXECUTION_INVALID",
+          "The approved schedule change is no longer safe to execute.",
+          409
+        );
+      }
+      reservedGroupIds.add(groupId);
+    }
+  }
+  return legs.map((leg) => ({
+    swapId: leg.scheduleChangeId,
+    groupId: leg.groupId,
+    effectiveStartTime: leg.effectiveStartTime,
+    effectiveEndTime: leg.effectiveEndTime,
+  }));
+}
+
+export async function lockAndLoadEffectiveClasspilotScheduleContext(options: {
+  schoolId: string;
+  groupId: string;
+  scheduledDate: string;
+  dbInstance: ScheduleChangeDb;
+}): Promise<{
+  group: Group;
+  schoolTimezone: string;
+  effectiveLeg?: {
+    swapId: string;
+    effectiveStartTime: string;
+    effectiveEndTime: string;
+  };
+  lockedGroupIds: string[];
+} | null> {
+  const schoolTimezone = await lockClasspilotScheduleChangeSchool(
+    options.schoolId,
+    options.dbInstance
+  );
+  await takeClasspilotScheduleConfigLock(options.dbInstance, options.schoolId);
+  try {
+    await assertActiveClasspilotScheduleChangeEntitlement({
+      schoolId: options.schoolId,
+      dbInstance: options.dbInstance,
+    });
+  } catch {
+    throw scheduleChangeError(
+      "SCHEDULE_CHANGE_EXECUTION_INVALID",
+      "The approved schedule change is no longer safe to execute.",
+      409
+    );
+  }
+  const [candidateChange] = await options.dbInstance
+    .select({
+      swapId: classpilotScheduleChanges.id,
+      firstGroupId: classpilotScheduleChangePairs.firstGroupId,
+      secondGroupId: classpilotScheduleChangePairs.secondGroupId,
+    })
+    .from(classpilotScheduleChanges)
+    .leftJoin(
+      classpilotScheduleChangePairs,
+      and(
+        eq(classpilotScheduleChangePairs.id, classpilotScheduleChanges.pairId),
+        eq(classpilotScheduleChangePairs.schoolId, classpilotScheduleChanges.schoolId)
+      )
+    )
+    .where(
+      and(
+        eq(classpilotScheduleChanges.schoolId, options.schoolId),
+        eq(classpilotScheduleChanges.scheduledDate, options.scheduledDate),
+        eq(classpilotScheduleChanges.status, "approved"),
+        eq(classpilotScheduleChanges.reservationActive, true),
+        or(
+          eq(classpilotScheduleChangePairs.firstGroupId, options.groupId),
+          eq(classpilotScheduleChangePairs.secondGroupId, options.groupId)
+        )!
+      )
+    )
+    .limit(1);
+  const groupIds = candidateChange
+    ? [candidateChange.firstGroupId, candidateChange.secondGroupId].filter(
+        (id): id is string => Boolean(id)
+      )
+    : [options.groupId];
+  const lockedGroupIds = Array.from(new Set(groupIds)).sort();
+  const lockedGroups = await options.dbInstance
+    .select()
+    .from(groups)
+    .where(
+      and(
+        eq(groups.schoolId, options.schoolId),
+        inArray(groups.id, lockedGroupIds)
+      )
+    )
+    .orderBy(asc(groups.id))
+    .for("update");
+  const group = lockedGroups.find((row) => row.id === options.groupId);
+  if (!group) return null;
+  // Approval/cancellation shares the caller's school/date lock, while class
+  // configuration writes share these group locks. Re-read after waiting so a
+  // stale pre-lock candidate can never create an occurrence at the old window.
+  const approved = await loadApprovedScheduleChangeLegsForSchoolDate({
+    schoolId: options.schoolId,
+    scheduledDate: options.scheduledDate,
+    dbInstance: options.dbInstance,
+  });
+  const authoritative = approved.find((leg) => leg.groupId === options.groupId);
+  if (authoritative) {
+    try {
+      const [approvedChange] = await options.dbInstance
+        .select()
+        .from(classpilotScheduleChanges)
+        .where(
+          and(
+            eq(classpilotScheduleChanges.schoolId, options.schoolId),
+            eq(classpilotScheduleChanges.id, authoritative.swapId),
+            eq(classpilotScheduleChanges.scheduledDate, options.scheduledDate),
+            eq(classpilotScheduleChanges.status, "approved"),
+            eq(classpilotScheduleChanges.reservationActive, true)
+          )
+        )
+        .limit(1);
+      const [pair, legs] = approvedChange
+        ? await Promise.all([
+            options.dbInstance
+              .select()
+              .from(classpilotScheduleChangePairs)
+              .where(
+                and(
+                  eq(classpilotScheduleChangePairs.schoolId, options.schoolId),
+                  eq(classpilotScheduleChangePairs.id, approvedChange.pairId),
+                  eq(classpilotScheduleChangePairs.status, "active")
+                )
+              )
+              .limit(1)
+              .then((rows) => rows[0]),
+            options.dbInstance
+              .select()
+              .from(classpilotScheduleChangeLegs)
+              .where(
+                and(
+                  eq(classpilotScheduleChangeLegs.schoolId, options.schoolId),
+                  eq(classpilotScheduleChangeLegs.scheduleChangeId, approvedChange.id),
+                  eq(classpilotScheduleChangeLegs.reservationActive, true)
+                )
+              )
+              .orderBy(asc(classpilotScheduleChangeLegs.legOrder)),
+          ])
+        : [undefined, [] as ClasspilotScheduleChangeLeg[]];
+      const groupsById = new Map(lockedGroups.map((row) => [row.id, row]));
+      const expectedGroupIds = pair
+        ? [pair.firstGroupId, pair.secondGroupId].sort()
+        : [];
+      if (
+        !approvedChange ||
+        !pair ||
+        legs.length !== 2 ||
+        expectedGroupIds.length !== lockedGroupIds.length ||
+        expectedGroupIds.some((id, index) => id !== lockedGroupIds[index]) ||
+        !scheduleChangeSnapshotMatches(groupsById, legs)
+      ) {
+        throw new Error("invalid approved schedule-change snapshot");
+      }
+      await assertScheduleChangePairGroups(
+        options.schoolId,
+        lockedGroups as LockedScheduleChangeGroup[],
+        options.dbInstance
+      );
+      const dateStatus = await getInstructionalDateStatus(
+        options.schoolId,
+        options.scheduledDate,
+        options.dbInstance
+      );
+      if (!dateStatus.instructional) {
+        throw new Error("approved schedule change is not on an instructional date");
+      }
+      const pairGroups: [LockedScheduleChangeGroup, LockedScheduleChangeGroup] = [
+        lockedGroups[0]!,
+        lockedGroups[1]!,
+      ];
+      const blockers = await scheduleChangeConflictsForPair({
+        schoolId: options.schoolId,
+        scheduledDate: options.scheduledDate,
+        pairGroups,
+        dbInstance: options.dbInstance,
+      });
+      if (blockers.length > 0) {
+        throw new Error("approved schedule change has an execution conflict");
+      }
+    } catch {
+      throw scheduleChangeError(
+        "SCHEDULE_CHANGE_EXECUTION_INVALID",
+        "The approved schedule change is no longer safe to execute.",
+        409
+      );
+    }
+  }
+  return {
+    group,
+    schoolTimezone,
+    ...(authoritative
+      ? {
+          effectiveLeg: {
+            swapId: authoritative.swapId,
+            effectiveStartTime: authoritative.effectiveStartTime,
+            effectiveEndTime: authoritative.effectiveEndTime,
+          },
+        }
+      : {}),
+    lockedGroupIds,
+  };
+}
+
+export async function expirePendingClasspilotScheduleChangesForSchool(options: {
+  schoolId: string;
+  scheduledDate: string;
+  now: Date;
+  dbInstance?: ScheduleChangeDb;
+}): Promise<{ expiredIds: string[] }> {
+  if (!isValidInstructionalCalendarDate(options.scheduledDate)) {
+    throw scheduleChangeError(
+      "INVALID_SCHEDULE_CHANGE_DATE",
+      "Choose a real date in YYYY-MM-DD format."
+    );
+  }
+  const rootDb = options.dbInstance ?? db;
+  return withInstructionalCalendarDateLock(
+    options.schoolId,
+    options.scheduledDate,
+    async (lockedDb) => {
+      await lockClasspilotScheduleChangeSchool(options.schoolId, lockedDb);
+      await takeClasspilotScheduleConfigLock(lockedDb, options.schoolId);
+      const policy = await getClasspilotScheduleChangeSettings(options.schoolId, lockedDb);
+      if (!policy) return { expiredIds: [] };
+      const pending = await lockedDb
+        .select()
+        .from(classpilotScheduleChanges)
+        .where(
+          and(
+            eq(classpilotScheduleChanges.schoolId, options.schoolId),
+            eq(classpilotScheduleChanges.scheduledDate, options.scheduledDate),
+            inArray(classpilotScheduleChanges.status, [...CP_SCHEDULE_CHANGE_PENDING_STATUSES])
+          )
+        )
+        .orderBy(asc(classpilotScheduleChanges.id));
+      if (pending.length === 0) return { expiredIds: [] };
+      const pendingIds = pending.map((change) => change.id);
+      const legs = await lockedDb
+        .select()
+        .from(classpilotScheduleChangeLegs)
+        .where(
+          and(
+            eq(classpilotScheduleChangeLegs.schoolId, options.schoolId),
+            inArray(classpilotScheduleChangeLegs.scheduleChangeId, pendingIds)
+          )
+        )
+        .orderBy(asc(classpilotScheduleChangeLegs.groupId));
+      const dueIds = pending
+        .filter((change) => {
+          const changeLegs = legs.filter((leg) => leg.scheduleChangeId === change.id);
+          const earliestStart = changeLegs.map((leg) => leg.effectiveStartTime).sort()[0];
+          return Boolean(
+            earliestStart &&
+              options.now.getTime() >=
+                localDateTimeUtc(
+                  change.scheduledDate,
+                  earliestStart,
+                  policy.schoolTimezone
+                ).getTime()
+          );
+        })
+        .map((change) => change.id)
+        .sort();
+      if (dueIds.length === 0) return { expiredIds: [] };
+      const dueGroupIds = Array.from(
+        new Set(
+          legs
+            .filter((leg) => dueIds.includes(leg.scheduleChangeId))
+            .map((leg) => leg.groupId)
+        )
+      ).sort();
+      await lockedDb
+        .select({ id: groups.id })
+        .from(groups)
+        .where(
+          and(eq(groups.schoolId, options.schoolId), inArray(groups.id, dueGroupIds))
+        )
+        .orderBy(asc(groups.id))
+        .for("update");
+      const lockedChanges = await lockedDb
+        .select()
+        .from(classpilotScheduleChanges)
+        .where(
+          and(
+            eq(classpilotScheduleChanges.schoolId, options.schoolId),
+            inArray(classpilotScheduleChanges.id, dueIds),
+            inArray(classpilotScheduleChanges.status, [...CP_SCHEDULE_CHANGE_PENDING_STATUSES])
+          )
+        )
+        .orderBy(asc(classpilotScheduleChanges.id))
+        .for("update");
+      const authoritativeIds = lockedChanges.map((change) => change.id);
+      if (authoritativeIds.length === 0) return { expiredIds: [] };
+      await lockedDb
+        .update(classpilotScheduleChanges)
+        .set({
+          status: "expired",
+          reservationActive: false,
+          terminalReason: "approval_incomplete_at_bell",
+          terminalAt: options.now,
+          revision: sql`${classpilotScheduleChanges.revision} + 1`,
+          updatedAt: options.now,
+        })
+        .where(inArray(classpilotScheduleChanges.id, authoritativeIds));
+      await releaseScheduleChangeReservations(authoritativeIds, lockedDb);
+      for (const id of authoritativeIds) {
+        await lockedDb.insert(auditLogs).values({
+          schoolId: options.schoolId,
+          userId: null,
+          action: "classpilot.schedule_change.expired",
+          entityType: "classpilot_schedule_change",
+          entityId: id,
+          changes: { status: "expired" },
+          metadata: { reasonCode: "approval_incomplete_at_bell" },
+        });
+      }
+      return { expiredIds: authoritativeIds };
+    },
+    rootDb
+  );
+}
+
+export async function listPendingClasspilotScheduleChangeDatesForSchool(options: {
+  schoolId: string;
+  throughDate: string;
+  limit?: number;
+  dbInstance?: ScheduleChangeDb;
+}): Promise<string[]> {
+  if (!isValidInstructionalCalendarDate(options.throughDate)) {
+    throw scheduleChangeError(
+      "INVALID_SCHEDULE_CHANGE_DATE",
+      "Choose a real date in YYYY-MM-DD format."
+    );
+  }
+  const dbInstance = options.dbInstance ?? db;
+  const limit = Math.min(Math.max(options.limit ?? 31, 1), 366);
+  const rows = await dbInstance
+    .selectDistinct({ scheduledDate: classpilotScheduleChanges.scheduledDate })
+    .from(classpilotScheduleChanges)
+    .where(
+      and(
+        eq(classpilotScheduleChanges.schoolId, options.schoolId),
+        inArray(classpilotScheduleChanges.status, [...CP_SCHEDULE_CHANGE_PENDING_STATUSES]),
+        eq(classpilotScheduleChanges.reservationActive, true),
+        sql`${classpilotScheduleChanges.scheduledDate} <= ${options.throughDate}`
+      )
+    )
+    .orderBy(asc(classpilotScheduleChanges.scheduledDate))
+    .limit(limit);
+  return rows
+    .map((row) => row.scheduledDate)
+    .filter(isValidInstructionalCalendarDate);
+}
+
+export async function assertNoApprovedFutureScheduleChange(options: {
+  schoolId: string;
+  groupId: string;
+  now?: Date;
+  dbInstance?: ScheduleChangeDb;
+  prospectiveGroup?: {
+    teacherId: string;
+    scheduleEnabled: boolean;
+    blockStartTime: string | null;
+    blockEndTime: string | null;
+    status: string;
+  };
+  prospectiveTeacherIds?: string[];
+  prospectiveStudentIds?: string[];
+  actorId?: string | null;
+}): Promise<void> {
+  const dbInstance = options.dbInstance ?? db;
+  const now = options.now ?? new Date();
+  const rows = await dbInstance
+    .select({
+      scheduledDate: classpilotScheduleChanges.scheduledDate,
+      effectiveEndTime: classpilotScheduleChangeLegs.effectiveEndTime,
+    })
+    .from(classpilotScheduleChangeLegs)
+    .innerJoin(
+      classpilotScheduleChanges,
+      and(
+        eq(classpilotScheduleChanges.id, classpilotScheduleChangeLegs.scheduleChangeId),
+        eq(classpilotScheduleChanges.schoolId, classpilotScheduleChangeLegs.schoolId)
+      )
+    )
+    .where(
+      and(
+        eq(classpilotScheduleChangeLegs.schoolId, options.schoolId),
+        eq(classpilotScheduleChangeLegs.groupId, options.groupId),
+        eq(classpilotScheduleChanges.status, "approved"),
+        eq(classpilotScheduleChanges.reservationActive, true)
+      )
+    );
+  const policy = await getClasspilotScheduleChangeSettings(options.schoolId, dbInstance);
+  const currentTimezone = policy?.schoolTimezone || "America/New_York";
+  if (
+    rows.some(
+      (row) =>
+        localDateTimeUtc(row.scheduledDate, row.effectiveEndTime, currentTimezone).getTime() >
+        now.getTime()
+    )
+  ) {
+    throw scheduleChangeError(
+      "APPROVED_SCHEDULE_CHANGE_EXISTS",
+      "Cancel the approved schedule change before changing this class.",
+      409
+    );
+  }
+  if (options.prospectiveGroup) {
+    await assertProspectiveApprovedScheduleChangeAssignmentsSafe({
+      schoolId: options.schoolId,
+      groupId: options.groupId,
+      prospectiveGroup: options.prospectiveGroup,
+      prospectiveTeacherIds: options.prospectiveTeacherIds,
+      prospectiveStudentIds: options.prospectiveStudentIds,
+      actorId: options.actorId,
+      now,
+      dbInstance,
+    });
+  }
+}
+
+export async function supersedePendingScheduleChangesForGroup(options: {
+  schoolId: string;
+  groupId: string;
+  actorId?: string | null;
+  reason: string;
+  dbInstance?: ScheduleChangeDb;
+}): Promise<string[]> {
+  const dbInstance = options.dbInstance ?? db;
+  const reasonCode = /^[a-z0-9_]{1,100}$/.test(options.reason)
+    ? options.reason
+    : "class_configuration_changed";
+  const rows = await dbInstance
+    .select({ id: classpilotScheduleChanges.id })
+    .from(classpilotScheduleChangeLegs)
+    .innerJoin(
+      classpilotScheduleChanges,
+      and(
+        eq(classpilotScheduleChanges.id, classpilotScheduleChangeLegs.scheduleChangeId),
+        eq(classpilotScheduleChanges.schoolId, classpilotScheduleChangeLegs.schoolId)
+      )
+    )
+    .where(
+      and(
+        eq(classpilotScheduleChangeLegs.schoolId, options.schoolId),
+        eq(classpilotScheduleChangeLegs.groupId, options.groupId),
+        inArray(classpilotScheduleChanges.status, [...CP_SCHEDULE_CHANGE_PENDING_STATUSES])
+      )
+    )
+    .for("update");
+  const ids = Array.from(new Set(rows.map((row) => row.id))).sort();
+  if (ids.length === 0) return ids;
+  const now = new Date();
+  await dbInstance
+    .update(classpilotScheduleChanges)
+    .set({
+      status: "superseded",
+      reservationActive: false,
+      terminalByUserId: options.actorId ?? null,
+      terminalReason: reasonCode,
+      terminalAt: now,
+      revision: sql`${classpilotScheduleChanges.revision} + 1`,
+      updatedAt: now,
+    })
+    .where(inArray(classpilotScheduleChanges.id, ids));
+  await releaseScheduleChangeReservations(ids, dbInstance);
+  for (const id of ids) {
+    await dbInstance.insert(auditLogs).values({
+      schoolId: options.schoolId,
+      userId: options.actorId ?? null,
+      action: "classpilot.schedule_change.superseded",
+      entityType: "classpilot_schedule_change",
+      entityId: id,
+      changes: { status: "superseded" },
+      metadata: { reasonCode },
+    });
+  }
+  recordScheduleChangePostCommitNotice(dbInstance, options.schoolId, ids);
+  return ids;
+}
+
+async function assertProspectiveApprovedScheduleChangeAssignmentsSafe(options: {
+  schoolId: string;
+  groupId: string;
+  addedTeacherIds?: string[];
+  addedStudentIds?: string[];
+  prospectiveTeacherIds?: string[];
+  prospectiveStudentIds?: string[];
+  includeInactiveProspectiveStudents?: boolean;
+  prospectiveGroup?: {
+    teacherId: string;
+    scheduleEnabled: boolean;
+    blockStartTime: string | null;
+    blockEndTime: string | null;
+    status: string;
+  };
+  actorId?: string | null;
+  now?: Date;
+  dbInstance: ScheduleChangeDb;
+}): Promise<void> {
+  const addedTeachers = new Set((options.addedTeacherIds ?? []).filter(Boolean));
+  const addedStudents = new Set((options.addedStudentIds ?? []).filter(Boolean));
+  if (
+    addedTeachers.size === 0 &&
+    addedStudents.size === 0 &&
+    !options.prospectiveGroup
+  ) return;
+  const [target] = await options.dbInstance
+    .select({
+      id: groups.id,
+      status: groups.status,
+      groupType: groups.groupType,
+      scheduleEnabled: groups.scheduleEnabled,
+      startTime: groups.blockStartTime,
+      endTime: groups.blockEndTime,
+    })
+    .from(groups)
+    .where(and(eq(groups.schoolId, options.schoolId), eq(groups.id, options.groupId)))
+    .limit(1);
+  const targetStatus = options.prospectiveGroup?.status ?? target?.status;
+  const targetScheduleEnabled =
+    options.prospectiveGroup?.scheduleEnabled ?? target?.scheduleEnabled;
+  const targetStartTime = options.prospectiveGroup
+    ? options.prospectiveGroup.blockStartTime
+    : target?.startTime ?? null;
+  const targetEndTime = options.prospectiveGroup
+    ? options.prospectiveGroup.blockEndTime
+    : target?.endTime ?? null;
+  if (
+    !target ||
+    targetStatus !== "active" ||
+    !targetScheduleEnabled ||
+    !targetStartTime ||
+    !targetEndTime
+  ) {
+    return;
+  }
+  const policy = await getClasspilotScheduleChangeSettings(options.schoolId, options.dbInstance);
+  const currentTimezone = policy?.schoolTimezone || "America/New_York";
+  const now = options.now ?? new Date();
+  const activeRows = await options.dbInstance
+    .select({
+      changeId: classpilotScheduleChanges.id,
+      status: classpilotScheduleChanges.status,
+      scheduledDate: classpilotScheduleChanges.scheduledDate,
+      groupId: classpilotScheduleChangeLegs.groupId,
+      effectiveStartTime: classpilotScheduleChangeLegs.effectiveStartTime,
+      effectiveEndTime: classpilotScheduleChangeLegs.effectiveEndTime,
+    })
+    .from(classpilotScheduleChangeLegs)
+    .innerJoin(
+      classpilotScheduleChanges,
+      and(
+        eq(classpilotScheduleChanges.id, classpilotScheduleChangeLegs.scheduleChangeId),
+        eq(classpilotScheduleChanges.schoolId, classpilotScheduleChangeLegs.schoolId)
+      )
+    )
+    .where(
+      and(
+        eq(classpilotScheduleChanges.schoolId, options.schoolId),
+        inArray(classpilotScheduleChanges.status, [...CP_SCHEDULE_CHANGE_ACTIVE_STATUSES]),
+        eq(classpilotScheduleChanges.reservationActive, true),
+        eq(classpilotScheduleChangeLegs.reservationActive, true)
+      )
+    );
+  const futureActive = activeRows.filter(
+    (row) =>
+      localDateTimeUtc(
+        row.scheduledDate,
+        row.effectiveEndTime,
+        currentTimezone
+      ).getTime() > now.getTime()
+  );
+  if (futureActive.length === 0) return;
+  const dates = Array.from(new Set(futureActive.map((row) => row.scheduledDate)));
+  const targetTeacherIds = options.prospectiveGroup
+    ? new Set(
+        options.prospectiveTeacherIds ?? [
+          options.prospectiveGroup.teacherId,
+          ...(
+            await options.dbInstance
+              .select({ teacherId: groupTeachers.teacherId })
+              .from(groupTeachers)
+              .where(eq(groupTeachers.groupId, options.groupId))
+          ).map((row) => row.teacherId),
+        ]
+      )
+    : addedTeachers;
+  const targetStudentIds = options.prospectiveGroup
+    ? new Set(
+        options.prospectiveStudentIds ?? (
+          await options.dbInstance
+            .select({ studentId: groupStudents.studentId })
+            .from(groupStudents)
+            .innerJoin(students, eq(students.id, groupStudents.studentId))
+            .where(
+              and(
+                eq(groupStudents.groupId, options.groupId),
+                eq(students.schoolId, options.schoolId),
+                eq(students.status, "active")
+              )
+            )
+        ).map((row) => row.studentId)
+      )
+    : addedStudents;
+  const schoolGroups = await options.dbInstance
+    .select({
+      id: groups.id,
+      teacherId: groups.teacherId,
+      startTime: groups.blockStartTime,
+      endTime: groups.blockEndTime,
+    })
+    .from(groups)
+    .where(
+      and(
+        eq(groups.schoolId, options.schoolId),
+        eq(groups.status, "active"),
+        eq(groups.scheduleEnabled, true),
+        isNotNull(groups.blockStartTime),
+        isNotNull(groups.blockEndTime)
+      )
+    );
+  const schoolGroupIds = schoolGroups.map((group) => group.id);
+  const teacherRows = targetTeacherIds.size && schoolGroupIds.length
+    ? await options.dbInstance
+        .select({ groupId: groupTeachers.groupId, teacherId: groupTeachers.teacherId })
+        .from(groupTeachers)
+        .where(
+          and(
+            inArray(groupTeachers.groupId, schoolGroupIds),
+            inArray(groupTeachers.teacherId, [...targetTeacherIds])
+          )
+        )
+    : [];
+  const studentRows = targetStudentIds.size && schoolGroupIds.length
+    ? await options.dbInstance
+        .select({ groupId: groupStudents.groupId, studentId: groupStudents.studentId })
+        .from(groupStudents)
+        .innerJoin(students, eq(students.id, groupStudents.studentId))
+        .innerJoin(groups, eq(groups.id, groupStudents.groupId))
+        .where(
+          and(
+            eq(groups.schoolId, options.schoolId),
+            eq(students.schoolId, options.schoolId),
+            options.includeInactiveProspectiveStudents
+              ? undefined
+              : eq(students.status, "active"),
+            inArray(groupStudents.groupId, schoolGroupIds),
+            inArray(groupStudents.studentId, [...targetStudentIds])
+          )
+        )
+    : [];
+  const teacherConflicts = new Map<string, Set<string>>();
+  for (const row of teacherRows) {
+    const values = teacherConflicts.get(row.groupId) ?? new Set<string>();
+    values.add(row.teacherId);
+    teacherConflicts.set(row.groupId, values);
+  }
+  for (const group of schoolGroups) {
+    if (targetTeacherIds.has(group.teacherId)) {
+      const values = teacherConflicts.get(group.id) ?? new Set<string>();
+      values.add(group.teacherId);
+      teacherConflicts.set(group.id, values);
+    }
+  }
+  const studentConflicts = new Map<string, Set<string>>();
+  for (const row of studentRows) {
+    const values = studentConflicts.get(row.groupId) ?? new Set<string>();
+    values.add(row.studentId);
+    studentConflicts.set(row.groupId, values);
+  }
+  const pendingConflictIds = new Set<string>();
+  for (const scheduledDate of dates) {
+    const activeForDate = futureActive.filter((row) => row.scheduledDate === scheduledDate);
+    const effectiveByGroup = new Map(activeForDate.map((row) => [row.groupId, row]));
+    const targetApproved = effectiveByGroup.get(options.groupId);
+    const targetWindow = targetApproved
+      ? {
+          startTime: targetApproved.effectiveStartTime,
+          endTime: targetApproved.effectiveEndTime,
+        }
+      : { startTime: targetStartTime, endTime: targetEndTime };
+    for (const other of schoolGroups) {
+      if (other.id === options.groupId || !other.startTime || !other.endTime) continue;
+      const otherApproved = effectiveByGroup.get(other.id);
+      // Only conflicts introduced around an approved exception are guarded.
+      if (!targetApproved && !otherApproved) continue;
+      const otherWindow = otherApproved
+        ? {
+            startTime: otherApproved.effectiveStartTime,
+            endTime: otherApproved.effectiveEndTime,
+          }
+        : { startTime: other.startTime, endTime: other.endTime };
+      if (!windowsOverlap(targetWindow, otherWindow)) continue;
+      const teacherConflict = (teacherConflicts.get(other.id)?.size ?? 0) > 0;
+      const studentConflict = (studentConflicts.get(other.id)?.size ?? 0) > 0;
+      if (!teacherConflict && !studentConflict) continue;
+      const involved = [targetApproved, otherApproved].filter(
+        (row): row is (typeof activeForDate)[number] => Boolean(row)
+      );
+      if (involved.some((row) => row.status === "approved")) {
+        throw scheduleChangeError(
+          "APPROVED_SCHEDULE_CHANGE_ASSIGNMENT_CONFLICT",
+          teacherConflict
+            ? "Cancel the approved schedule change before changing this class or co-teacher assignment."
+            : "Cancel the approved schedule change before changing this class roster.",
+          409
+        );
+      }
+      for (const row of involved) pendingConflictIds.add(row.changeId);
+    }
+  }
+  if (pendingConflictIds.size > 0) {
+    const ids = [...pendingConflictIds].sort();
+    const now = options.now ?? new Date();
+    await options.dbInstance
+      .update(classpilotScheduleChanges)
+      .set({
+        status: "superseded",
+        reservationActive: false,
+        terminalByUserId: options.actorId ?? null,
+        terminalReason: "assignment_conflict_introduced",
+        terminalAt: now,
+        revision: sql`${classpilotScheduleChanges.revision} + 1`,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          inArray(classpilotScheduleChanges.id, ids),
+          inArray(classpilotScheduleChanges.status, [...CP_SCHEDULE_CHANGE_PENDING_STATUSES])
+        )
+      );
+    await releaseScheduleChangeReservations(ids, options.dbInstance);
+    for (const id of ids) {
+      await options.dbInstance.insert(auditLogs).values({
+        schoolId: options.schoolId,
+        userId: options.actorId ?? null,
+        action: "classpilot.schedule_change.superseded",
+        entityType: "classpilot_schedule_change",
+        entityId: id,
+        changes: { status: "superseded" },
+        metadata: { reasonCode: "assignment_conflict_introduced" },
+      });
+    }
+    recordScheduleChangePostCommitNotice(
+      options.dbInstance,
+      options.schoolId,
+      ids
+    );
+  }
+}
+
+type ValidatedScheduleChangeContext = {
+  pair: ClasspilotScheduleChangePair;
+  groups: [LockedScheduleChangeGroup, LockedScheduleChangeGroup];
+  policy: ClasspilotScheduleChangePolicyDto;
+  firstWindow: ClasspilotScheduleWindowDto;
+  secondWindow: ClasspilotScheduleWindowDto;
+};
+
+async function scheduleChangeConflictsForPair(options: {
+  schoolId: string;
+  scheduledDate: string;
+  pairGroups: [LockedScheduleChangeGroup, LockedScheduleChangeGroup];
+  dbInstance: ScheduleChangeDb;
+}): Promise<ClasspilotScheduleChangeBlocker[]> {
+  const blockers: ClasspilotScheduleChangeBlocker[] = [];
+  const pairIds = new Set(options.pairGroups.map((group) => group.id));
+  const allScheduledGroups = await options.dbInstance
+    .select({
+      id: groups.id,
+      name: groups.name,
+      teacherId: groups.teacherId,
+      startTime: groups.blockStartTime,
+      endTime: groups.blockEndTime,
+    })
+    .from(groups)
+    .where(
+      and(
+        eq(groups.schoolId, options.schoolId),
+        eq(groups.status, "active"),
+        eq(groups.scheduleEnabled, true),
+        isNotNull(groups.blockStartTime),
+        isNotNull(groups.blockEndTime)
+      )
+    );
+  const approvedLegs = await loadApprovedScheduleChangeLegsForSchoolDate({
+    schoolId: options.schoolId,
+    scheduledDate: options.scheduledDate,
+    dbInstance: options.dbInstance,
+  });
+  const approvedByGroup = new Map(approvedLegs.map((leg) => [leg.groupId, leg]));
+  const scheduledIds = allScheduledGroups.map((group) => group.id);
+  const teacherRows = scheduledIds.length
+    ? await options.dbInstance
+        .select({ groupId: groupTeachers.groupId, teacherId: groupTeachers.teacherId })
+        .from(groupTeachers)
+        .where(inArray(groupTeachers.groupId, scheduledIds))
+    : [];
+  const staffByGroup = new Map<string, Set<string>>();
+  for (const group of allScheduledGroups) {
+    staffByGroup.set(group.id, new Set([group.teacherId]));
+  }
+  for (const row of teacherRows) {
+    const staff = staffByGroup.get(row.groupId) ?? new Set<string>();
+    staff.add(row.teacherId);
+    staffByGroup.set(row.groupId, staff);
+  }
+  const studentRows = scheduledIds.length
+    ? await options.dbInstance
+        .select({ groupId: groupStudents.groupId, studentId: groupStudents.studentId })
+        .from(groupStudents)
+        .innerJoin(students, eq(students.id, groupStudents.studentId))
+        .innerJoin(groups, eq(groups.id, groupStudents.groupId))
+        .where(
+          and(
+            eq(groups.schoolId, options.schoolId),
+            eq(students.schoolId, options.schoolId),
+            eq(students.status, "active"),
+            inArray(groupStudents.groupId, scheduledIds)
+          )
+        )
+    : [];
+  const studentsByGroup = new Map<string, Set<string>>();
+  for (const row of studentRows) {
+    const roster = studentsByGroup.get(row.groupId) ?? new Set<string>();
+    roster.add(row.studentId);
+    studentsByGroup.set(row.groupId, roster);
+  }
+
+  const [first, second] = options.pairGroups;
+  const moving = [
+    {
+      group: first,
+      destination: {
+        startTime: second.blockStartTime!,
+        endTime: second.blockEndTime!,
+      },
+    },
+    {
+      group: second,
+      destination: {
+        startTime: first.blockStartTime!,
+        endTime: first.blockEndTime!,
+      },
+    },
+  ];
+  const seen = new Set<string>();
+  for (const candidate of moving) {
+    const candidateStaff = staffByGroup.get(candidate.group.id) ?? new Set([candidate.group.teacherId]);
+    const candidateStudents = studentsByGroup.get(candidate.group.id) ?? new Set<string>();
+    for (const other of allScheduledGroups) {
+      if (pairIds.has(other.id) || !other.startTime || !other.endTime) continue;
+      const approved = approvedByGroup.get(other.id);
+      const otherWindow = approved
+        ? {
+            startTime: approved.effectiveStartTime,
+            endTime: approved.effectiveEndTime,
+          }
+        : { startTime: other.startTime, endTime: other.endTime };
+      if (!windowsOverlap(candidate.destination, otherWindow)) continue;
+      const otherStaff = staffByGroup.get(other.id) ?? new Set([other.teacherId]);
+      const teacherConflict = [...candidateStaff].some((id) => otherStaff.has(id));
+      if (teacherConflict) {
+        const key = `teacher:${candidate.group.id}:${other.id}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          blockers.push({
+            code: "SCHEDULE_CHANGE_TEACHER_CONFLICT",
+            message: `${candidate.group.name} conflicts with ${other.name} for an assigned teacher.`,
+          });
+        }
+      }
+      const otherStudents = studentsByGroup.get(other.id) ?? new Set<string>();
+      const studentConflict = [...candidateStudents].some((id) => otherStudents.has(id));
+      if (studentConflict) {
+        const key = `student:${candidate.group.id}:${other.id}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          blockers.push({
+            code: "SCHEDULE_CHANGE_STUDENT_CONFLICT",
+            message: `${candidate.group.name} conflicts with ${other.name} for one or more students.`,
+          });
+        }
+      }
+    }
+  }
+  return blockers;
+}
+
+async function validateScheduleChangeForDate(options: {
+  schoolId: string;
+  pair: ClasspilotScheduleChangePair;
+  scheduledDate: string;
+  actor: ClasspilotScheduleChangeActor;
+  mode: "teacher_request" | "admin_create" | "approval" | "preview";
+  now: Date;
+  dbInstance: ScheduleChangeDb;
+  lockGroups?: boolean;
+}): Promise<{ context?: ValidatedScheduleChangeContext; blockers: ClasspilotScheduleChangeBlocker[] }> {
+  const blockers: ClasspilotScheduleChangeBlocker[] = [];
+  const policy = await getClasspilotScheduleChangeSettings(options.schoolId, options.dbInstance);
+  if (!policy) {
+    throw scheduleChangeError(
+      "SCHEDULE_CHANGE_SETTINGS_UNAVAILABLE",
+      "Schedule-change settings are unavailable.",
+      500
+    );
+  }
+  if (options.pair.status !== "active") {
+    blockers.push({
+      code: "SCHEDULE_CHANGE_PAIR_INACTIVE",
+      message: "This eligible class pair is no longer active.",
+    });
+  }
+  let pairGroups: LockedScheduleChangeGroup[];
+  if (options.lockGroups) {
+    pairGroups = await lockScheduleChangeGroups(
+      options.schoolId,
+      [options.pair.firstGroupId, options.pair.secondGroupId],
+      options.dbInstance
+    );
+  } else {
+    pairGroups = await options.dbInstance
+      .select({
+        id: groups.id,
+        schoolId: groups.schoolId,
+        teacherId: groups.teacherId,
+        name: groups.name,
+        groupType: groups.groupType,
+        status: groups.status,
+        scheduleEnabled: groups.scheduleEnabled,
+        blockStartTime: groups.blockStartTime,
+        blockEndTime: groups.blockEndTime,
+      })
+      .from(groups)
+      .where(
+        and(
+          eq(groups.schoolId, options.schoolId),
+          inArray(groups.id, [options.pair.firstGroupId, options.pair.secondGroupId])
+        )
+      )
+      .orderBy(asc(groups.id));
+  }
+  try {
+    await assertScheduleChangePairGroups(options.schoolId, pairGroups, options.dbInstance);
+  } catch (error) {
+    const typed = error as { code?: string; message?: string };
+    blockers.push({
+      code: typed.code || "SCHEDULE_CHANGE_CLASS_INELIGIBLE",
+      message: typed.message || "One or more classes are no longer eligible.",
+    });
+  }
+  if (pairGroups.length !== 2) return { blockers };
+  const tuple = pairGroups as [LockedScheduleChangeGroup, LockedScheduleChangeGroup];
+  const firstWindow = {
+    startTime: tuple[0].blockStartTime || "",
+    endTime: tuple[0].blockEndTime || "",
+  };
+  const secondWindow = {
+    startTime: tuple[1].blockStartTime || "",
+    endTime: tuple[1].blockEndTime || "",
+  };
+
+  if (!isValidInstructionalCalendarDate(options.scheduledDate)) {
+    blockers.push({
+      code: "INVALID_SCHEDULE_CHANGE_DATE",
+      message: "Choose a real date in YYYY-MM-DD format.",
+    });
+  } else {
+    const dateStatus = await getInstructionalDateStatus(
+      options.schoolId,
+      options.scheduledDate,
+      options.dbInstance
+    );
+    if (!dateStatus.instructional) {
+      blockers.push({
+        code: "SCHEDULE_CHANGE_NON_INSTRUCTIONAL_DATE",
+        message: "Schedule changes can only be created for instructional days.",
+      });
+    }
+    const localToday = localDateInTimeZone(options.now, policy.schoolTimezone);
+    if (options.scheduledDate < localToday) {
+      blockers.push({
+        code: "SCHEDULE_CHANGE_DATE_PASSED",
+        message: "Past schedule dates cannot be changed.",
+      });
+    }
+    const earliestStart = [firstWindow.startTime, secondWindow.startTime].sort()[0]!;
+    if (
+      options.scheduledDate === localToday &&
+      options.now.getTime() >=
+        localDateTimeUtc(options.scheduledDate, earliestStart, policy.schoolTimezone).getTime()
+    ) {
+      blockers.push({
+        code: "SCHEDULE_CHANGE_ALREADY_STARTED",
+        message: "A schedule change cannot be made after either class period begins.",
+      });
+    }
+    if (
+      options.mode === "teacher_request" &&
+      options.scheduledDate === localToday &&
+      options.now.getTime() >=
+        localDateTimeUtc(
+          options.scheduledDate,
+          policy.sameDayCutoff,
+          policy.schoolTimezone
+        ).getTime()
+    ) {
+      blockers.push({
+        code: "SCHEDULE_CHANGE_CUTOFF_PASSED",
+        message: `Teacher requests close at ${policy.sameDayCutoff} school time.`,
+      });
+    }
+  }
+  if (options.mode === "teacher_request" && !policy.teacherRequestsEnabled) {
+    blockers.push({
+      code: "SCHEDULE_CHANGE_TEACHER_REQUESTS_DISABLED",
+      message: "Teacher schedule-change requests are not enabled.",
+    });
+  }
+  if (options.actor.role === "teacher") {
+    const ownsFirst = tuple[0].teacherId === options.actor.userId;
+    const ownsSecond = tuple[1].teacherId === options.actor.userId;
+    if (!ownsFirst && !ownsSecond) {
+      blockers.push({
+        code: "SCHEDULE_CHANGE_PRIMARY_TEACHER_REQUIRED",
+        message: "Only an affected primary teacher may request this change.",
+      });
+    }
+  }
+  if (options.actor.role === "office_staff") {
+    blockers.push({
+      code: "SCHEDULE_CHANGE_VIEW_ONLY",
+      message: "Office staff have view-only access to schedule changes.",
+    });
+  }
+  const occurrences = await options.dbInstance
+    .select({ id: teachingSessions.id })
+    .from(teachingSessions)
+    .where(
+      and(
+        eq(teachingSessions.schoolId, options.schoolId),
+        eq(teachingSessions.scheduledDate, options.scheduledDate),
+        inArray(teachingSessions.groupId, tuple.map((group) => group.id))
+      )
+    )
+    .limit(1);
+  if (occurrences.length > 0) {
+    blockers.push({
+      code: "SCHEDULE_CHANGE_OCCURRENCE_EXISTS",
+      message: "A class occurrence already exists for this date.",
+    });
+  }
+  if (blockers.length === 0 || options.mode === "preview") {
+    blockers.push(
+      ...(await scheduleChangeConflictsForPair({
+        schoolId: options.schoolId,
+        scheduledDate: options.scheduledDate,
+        pairGroups: tuple,
+        dbInstance: options.dbInstance,
+      }))
+    );
+  }
+  return {
+    blockers,
+    context: {
+      pair: options.pair,
+      groups: tuple,
+      policy,
+      firstWindow,
+      secondWindow,
+    },
+  };
+}
+
+function throwFirstScheduleChangeBlocker(blockers: ClasspilotScheduleChangeBlocker[]): never {
+  const first = blockers[0] ?? {
+    code: "SCHEDULE_CHANGE_INELIGIBLE",
+    message: "This schedule change is no longer eligible.",
+  };
+  throw scheduleChangeError(first.code, first.message, 409);
+}
+
+export async function getClasspilotScheduleChangeEligibility(options: {
+  schoolId: string;
+  scheduledDate: string;
+  actor: ClasspilotScheduleChangeActor;
+  now?: Date;
+}): Promise<{
+  scheduledDate: string;
+  schoolTimezone: string;
+  policy: ClasspilotScheduleChangePolicyDto;
+  pairs: Array<{
+    pairId: string;
+    firstClass: ClasspilotScheduleChangeClassDto;
+    secondClass: ClasspilotScheduleChangeClassDto;
+    preview: {
+      legs: Array<{
+        classId: string;
+        className: string;
+        normalWindow: ClasspilotScheduleWindowDto;
+        effectiveWindow: ClasspilotScheduleWindowDto;
+      }>;
+    };
+    eligible: boolean;
+    blockers: ClasspilotScheduleChangeBlocker[];
+  }>;
+  capabilities: { canRequest: boolean; canCreateDirect: boolean };
+}> {
+  const now = options.now ?? new Date();
+  const policy = await getClasspilotScheduleChangeSettings(options.schoolId);
+  if (!policy) {
+    throw scheduleChangeError(
+      "SCHEDULE_CHANGE_SETTINGS_UNAVAILABLE",
+      "Schedule-change settings are unavailable.",
+      500
+    );
+  }
+  const pairDtos = await listClasspilotScheduleChangePairs({
+    schoolId: options.schoolId,
+    actor: options.actor,
+  });
+  const pairRows = pairDtos.length
+    ? await db
+        .select()
+        .from(classpilotScheduleChangePairs)
+        .where(
+          and(
+            eq(classpilotScheduleChangePairs.schoolId, options.schoolId),
+            inArray(
+              classpilotScheduleChangePairs.id,
+              pairDtos.map((pair) => pair.id)
+            )
+          )
+        )
+    : [];
+  const rowById = new Map(pairRows.map((pair) => [pair.id, pair]));
+  const pairs = await Promise.all(
+    pairDtos.map(async (pairDto) => {
+      const pair = rowById.get(pairDto.id)!;
+      const mode =
+        options.actor.role === "admin" || options.actor.role === "school_admin"
+          ? "admin_create" as const
+          : "teacher_request" as const;
+      const validation = await validateScheduleChangeForDate({
+        schoolId: options.schoolId,
+        pair,
+        scheduledDate: options.scheduledDate,
+        actor: options.actor,
+        mode,
+        now,
+        dbInstance: db,
+      });
+      return {
+        pairId: pairDto.id,
+        firstClass: pairDto.firstClass,
+        secondClass: pairDto.secondClass,
+        preview: {
+          legs: [
+            {
+              classId: pairDto.firstClass.id,
+              className: pairDto.firstClass.name,
+              normalWindow: pairDto.firstClass.normalWindow,
+              effectiveWindow: pairDto.secondClass.normalWindow,
+            },
+            {
+              classId: pairDto.secondClass.id,
+              className: pairDto.secondClass.name,
+              normalWindow: pairDto.secondClass.normalWindow,
+              effectiveWindow: pairDto.firstClass.normalWindow,
+            },
+          ],
+        },
+        eligible: validation.blockers.length === 0,
+        blockers: validation.blockers,
+      };
+    })
+  );
+  return {
+    scheduledDate: options.scheduledDate,
+    schoolTimezone: policy.schoolTimezone,
+    policy,
+    pairs,
+    capabilities: {
+      canRequest: options.actor.role === "teacher" && policy.teacherRequestsEnabled,
+      canCreateDirect:
+        options.actor.role === "admin" || options.actor.role === "school_admin",
+    },
+  };
+}
+
+export async function createClasspilotScheduleChange(options: {
+  schoolId: string;
+  pairId: string;
+  scheduledDate: string;
+  reason: string;
+  actor: ClasspilotScheduleChangeActor;
+  directApprove?: boolean;
+  now?: Date;
+}): Promise<ClasspilotScheduleChange> {
+  const reason = options.reason.trim();
+  if (!reason || reason.length > 500) {
+    throw scheduleChangeError(
+      "INVALID_SCHEDULE_CHANGE_REASON",
+      "Provide a reason between 1 and 500 characters."
+    );
+  }
+  const isAdmin = options.actor.role === "admin" || options.actor.role === "school_admin";
+  if (options.actor.role === "office_staff") {
+    throw scheduleChangeError(
+      "SCHEDULE_CHANGE_VIEW_ONLY",
+      "Office staff have view-only access to schedule changes.",
+      403
+    );
+  }
+  if (options.directApprove && !isAdmin) {
+    throw scheduleChangeError(
+      "SCHEDULE_CHANGE_ADMIN_REQUIRED",
+      "Only administrators may directly approve a schedule change.",
+      403
+    );
+  }
+  const now = options.now ?? new Date();
+  try {
+    return await db.transaction(async (tx) => {
+      const transactionDb = tx as unknown as ScheduleChangeDb;
+      const [candidatePair] = await tx
+        .select()
+        .from(classpilotScheduleChangePairs)
+        .where(
+          and(
+            eq(classpilotScheduleChangePairs.schoolId, options.schoolId),
+            eq(classpilotScheduleChangePairs.id, options.pairId)
+          )
+        )
+        .limit(1);
+      if (!candidatePair) {
+        throw scheduleChangeError(
+          "SCHEDULE_CHANGE_PAIR_NOT_FOUND",
+          "Eligible class pair not found.",
+          404
+        );
+      }
+      if (!isValidInstructionalCalendarDate(options.scheduledDate)) {
+        throw scheduleChangeError(
+          "INVALID_SCHEDULE_CHANGE_DATE",
+          "Choose a real date in YYYY-MM-DD format."
+        );
+      }
+      await lockInstructionalCalendarDate(
+        options.schoolId,
+        options.scheduledDate,
+        transactionDb
+      );
+      await lockClasspilotScheduleChangeSchool(options.schoolId, transactionDb);
+      await takeClasspilotScheduleConfigLock(transactionDb, options.schoolId);
+      // Lock entitlement before policy settings. License-removal transactions
+      // use school -> config -> license -> settings, so matching that order
+      // prevents create/approval from deadlocking with a concurrent removal.
+      await assertActiveClasspilotScheduleChangeEntitlement({
+        schoolId: options.schoolId,
+        now,
+        dbInstance: transactionDb,
+      });
+      await lockClasspilotScheduleChangeSettingsRow(
+        options.schoolId,
+        transactionDb
+      );
+      // Group rows are always locked before the pair/change rows. Class-edit
+      // transactions use the same ordering, preventing a teacher/schedule edit
+      // from racing approval or session creation.
+      await lockScheduleChangeGroups(
+        options.schoolId,
+        [candidatePair.firstGroupId, candidatePair.secondGroupId],
+        transactionDb
+      );
+      const [pair] = await tx
+        .select()
+        .from(classpilotScheduleChangePairs)
+        .where(
+          and(
+            eq(classpilotScheduleChangePairs.schoolId, options.schoolId),
+            eq(classpilotScheduleChangePairs.id, options.pairId)
+          )
+        )
+        .limit(1)
+        .for("update");
+      if (!pair) {
+        throw scheduleChangeError(
+          "SCHEDULE_CHANGE_PAIR_NOT_FOUND",
+          "Eligible class pair not found.",
+          404
+        );
+      }
+      const validation = await validateScheduleChangeForDate({
+        schoolId: options.schoolId,
+        pair,
+        scheduledDate: options.scheduledDate,
+        actor: options.actor,
+        mode: isAdmin ? "admin_create" : "teacher_request",
+        now,
+        dbInstance: transactionDb,
+      });
+      if (!validation.context || validation.blockers.length > 0) {
+        throwFirstScheduleChangeBlocker(validation.blockers);
+      }
+      const entitlementThrough = localDateTimeUtc(
+        options.scheduledDate,
+        [
+          validation.context.firstWindow.endTime,
+          validation.context.secondWindow.endTime,
+        ].sort().at(-1)!,
+        validation.context.policy.schoolTimezone
+      );
+      await assertActiveClasspilotScheduleChangeEntitlement({
+        schoolId: options.schoolId,
+        now,
+        through: entitlementThrough,
+        dbInstance: transactionDb,
+      });
+      const [firstGroup, secondGroup] = validation.context.groups;
+      const requesterGroupId = isAdmin
+        ? null
+        : firstGroup.teacherId === options.actor.userId
+          ? firstGroup.id
+          : secondGroup.id;
+      const counterpartTeacherId = isAdmin
+        ? null
+        : requesterGroupId === firstGroup.id
+          ? secondGroup.teacherId
+          : firstGroup.teacherId;
+      const directApproved = isAdmin;
+      const [change] = await tx
+        .insert(classpilotScheduleChanges)
+        .values({
+          schoolId: options.schoolId,
+          pairId: pair.id,
+          scheduledDate: options.scheduledDate,
+          timezoneSnapshot: validation.context.policy.schoolTimezone,
+          status: directApproved ? "approved" : "pending_counterpart",
+          reason,
+          requestedByUserId: options.actor.userId,
+          requesterGroupId,
+          counterpartTeacherId,
+          requestedByRole: options.actor.role,
+          requiresAdminApproval: validation.context.policy.adminApprovalRequired,
+          approvedByUserId: directApproved ? options.actor.userId : null,
+          approvedAt: directApproved ? now : null,
+        })
+        .returning();
+      const firstWindow = validation.context.firstWindow;
+      const secondWindow = validation.context.secondWindow;
+      await tx.insert(classpilotScheduleChangeLegs).values([
+        {
+          schoolId: options.schoolId,
+          scheduleChangeId: change!.id,
+          scheduledDate: options.scheduledDate,
+          legOrder: 1,
+          groupId: firstGroup.id,
+          primaryTeacherIdSnapshot: firstGroup.teacherId,
+          classNameSnapshot: firstGroup.name,
+          originalStartTime: firstWindow.startTime,
+          originalEndTime: firstWindow.endTime,
+          effectiveStartTime: secondWindow.startTime,
+          effectiveEndTime: secondWindow.endTime,
+        },
+        {
+          schoolId: options.schoolId,
+          scheduleChangeId: change!.id,
+          scheduledDate: options.scheduledDate,
+          legOrder: 2,
+          groupId: secondGroup.id,
+          primaryTeacherIdSnapshot: secondGroup.teacherId,
+          classNameSnapshot: secondGroup.name,
+          originalStartTime: secondWindow.startTime,
+          originalEndTime: secondWindow.endTime,
+          effectiveStartTime: firstWindow.startTime,
+          effectiveEndTime: firstWindow.endTime,
+        },
+      ]);
+      await tx.insert(auditLogs).values({
+        schoolId: options.schoolId,
+        userId: options.actor.userId,
+        userEmail: options.actor.userEmail ?? null,
+        userRole: options.actor.role,
+        action: directApproved
+          ? "classpilot.schedule_change.admin_created"
+          : "classpilot.schedule_change.requested",
+        entityType: "classpilot_schedule_change",
+        entityId: change!.id,
+        changes: { status: change!.status },
+        metadata: {
+          scheduledDate: options.scheduledDate,
+          revision: change!.revision,
+          classCount: 2,
+        },
+      });
+      return change!;
+    });
+  } catch (error) {
+    const pgError = error as { code?: string; constraint?: string };
+    if (
+      pgError.code === "23505" &&
+      pgError.constraint === "cp_schedule_change_legs_active_group_date_unique"
+    ) {
+      throw scheduleChangeError(
+        "SCHEDULE_CHANGE_CLASS_ALREADY_RESERVED",
+        "One of these classes already has a pending or approved change for this date.",
+        409
+      );
+    }
+    throw error;
+  }
+}
+
+async function loadLockedScheduleChangeWithLegs(options: {
+  schoolId: string;
+  changeId: string;
+  dbInstance: ScheduleChangeDb;
+}): Promise<{
+  change: ClasspilotScheduleChange;
+  legs: ClasspilotScheduleChangeLeg[];
+} | undefined> {
+  const [change] = await options.dbInstance
+    .select()
+    .from(classpilotScheduleChanges)
+    .where(
+      and(
+        eq(classpilotScheduleChanges.schoolId, options.schoolId),
+        eq(classpilotScheduleChanges.id, options.changeId)
+      )
+    )
+    .limit(1)
+    .for("update");
+  if (!change) return undefined;
+  const legs = await options.dbInstance
+    .select()
+    .from(classpilotScheduleChangeLegs)
+    .where(
+      and(
+        eq(classpilotScheduleChangeLegs.schoolId, options.schoolId),
+        eq(classpilotScheduleChangeLegs.scheduleChangeId, options.changeId)
+      )
+    )
+    .orderBy(asc(classpilotScheduleChangeLegs.legOrder))
+    .for("update");
+  if (legs.length !== 2) {
+    throw scheduleChangeError(
+      "SCHEDULE_CHANGE_CORRUPT",
+      "The saved schedule change is incomplete.",
+      500
+    );
+  }
+  return { change, legs };
+}
+
+async function markScheduleChangeTerminal(options: {
+  schoolId: string;
+  change: ClasspilotScheduleChange;
+  status: "declined" | "denied" | "cancelled" | "expired" | "superseded";
+  actor: ClasspilotScheduleChangeActor;
+  reason: string;
+  now: Date;
+  dbInstance: ScheduleChangeDb;
+}): Promise<ClasspilotScheduleChange> {
+  const [saved] = await options.dbInstance
+    .update(classpilotScheduleChanges)
+    .set({
+      status: options.status,
+      reservationActive: false,
+      terminalByUserId: options.actor.userId,
+      terminalReason: options.reason,
+      terminalAt: options.now,
+      revision: options.change.revision + 1,
+      updatedAt: options.now,
+    })
+    .where(
+      and(
+        eq(classpilotScheduleChanges.schoolId, options.schoolId),
+        eq(classpilotScheduleChanges.id, options.change.id),
+        eq(classpilotScheduleChanges.revision, options.change.revision)
+      )
+    )
+    .returning();
+  if (!saved) {
+    throw scheduleChangeError(
+      "SCHEDULE_CHANGE_REVISION_CONFLICT",
+      "This schedule change was updated in another session.",
+      409
+    );
+  }
+  await releaseScheduleChangeReservations([options.change.id], options.dbInstance);
+  return saved;
+}
+
+export type ClasspilotScheduleChangeAction =
+  | "accept"
+  | "decline"
+  | "approve"
+  | "deny"
+  | "withdraw"
+  | "cancel";
+
+export type ApplyClasspilotScheduleChangeActionResult =
+  | { status: "saved"; change: ClasspilotScheduleChange }
+  | { status: "revision_conflict"; change: ClasspilotScheduleChange }
+  | { status: "superseded"; change: ClasspilotScheduleChange }
+  | { status: "expired"; change: ClasspilotScheduleChange };
+
+function terminalActionReason(
+  action: ClasspilotScheduleChangeAction,
+  submitted: string | undefined
+): string {
+  if (action === "withdraw") return "withdrawn_by_requester";
+  const defaultReasons: Partial<Record<ClasspilotScheduleChangeAction, string>> = {
+    decline: "declined_by_counterpart",
+    deny: "denied_by_admin",
+    cancel: "cancelled_by_admin",
+  };
+  const reason = submitted?.trim() || defaultReasons[action] || "status_changed";
+  if (reason.length > 500) {
+    throw scheduleChangeError(
+      "INVALID_SCHEDULE_CHANGE_ACTION_REASON",
+      "The action reason must be at most 500 characters."
+    );
+  }
+  return reason;
+}
+
+function scheduleChangeSnapshotMatches(
+  groupsById: Map<string, LockedScheduleChangeGroup>,
+  legs: ClasspilotScheduleChangeLeg[]
+): boolean {
+  return legs.every((leg) => {
+    const group = groupsById.get(leg.groupId);
+    return Boolean(
+      group &&
+        group.status === "active" &&
+        group.groupType === "admin_class" &&
+        group.scheduleEnabled &&
+        group.teacherId === leg.primaryTeacherIdSnapshot &&
+        group.blockStartTime === leg.originalStartTime &&
+        group.blockEndTime === leg.originalEndTime
+    );
+  });
+}
+
+export async function applyClasspilotScheduleChangeAction(options: {
+  schoolId: string;
+  changeId: string;
+  action: ClasspilotScheduleChangeAction;
+  expectedRevision: number;
+  reason?: string;
+  actor: ClasspilotScheduleChangeActor;
+  now?: Date;
+}): Promise<ApplyClasspilotScheduleChangeActionResult> {
+  const now = options.now ?? new Date();
+  const isAdmin = options.actor.role === "admin" || options.actor.role === "school_admin";
+  return db.transaction(async (tx) => {
+    const transactionDb = tx as unknown as ScheduleChangeDb;
+    const [candidate] = await tx
+      .select()
+      .from(classpilotScheduleChanges)
+      .where(
+        and(
+          eq(classpilotScheduleChanges.schoolId, options.schoolId),
+          eq(classpilotScheduleChanges.id, options.changeId)
+        )
+      )
+      .limit(1);
+    if (!candidate) {
+      throw scheduleChangeError(
+        "SCHEDULE_CHANGE_NOT_FOUND",
+        "Schedule change not found.",
+        404
+      );
+    }
+    const candidateLegs = await tx
+      .select({ groupId: classpilotScheduleChangeLegs.groupId })
+      .from(classpilotScheduleChangeLegs)
+      .where(
+        and(
+          eq(classpilotScheduleChangeLegs.schoolId, options.schoolId),
+          eq(classpilotScheduleChangeLegs.scheduleChangeId, candidate.id)
+        )
+      )
+      .orderBy(asc(classpilotScheduleChangeLegs.groupId));
+    if (candidateLegs.length !== 2) {
+      throw scheduleChangeError(
+        "SCHEDULE_CHANGE_CORRUPT",
+        "The saved schedule change is incomplete.",
+        500
+      );
+    }
+    await lockInstructionalCalendarDate(
+      options.schoolId,
+      candidate.scheduledDate,
+      transactionDb
+    );
+    await lockClasspilotScheduleChangeSchool(options.schoolId, transactionDb);
+    await takeClasspilotScheduleConfigLock(transactionDb, options.schoolId);
+    let entitlementUnavailable = false;
+    if (options.action === "accept" || options.action === "approve") {
+      try {
+        await assertActiveClasspilotScheduleChangeEntitlement({
+          schoolId: options.schoolId,
+          now,
+          dbInstance: transactionDb,
+        });
+      } catch (error) {
+        if (!isClasspilotScheduleChangeEntitlementError(error)) throw error;
+        entitlementUnavailable = true;
+      }
+    }
+    await lockClasspilotScheduleChangeSettingsRow(
+      options.schoolId,
+      transactionDb
+    );
+    const lockedGroups = await lockScheduleChangeGroups(
+      options.schoolId,
+      candidateLegs.map((leg) => leg.groupId),
+      transactionDb
+    );
+    const [pair] = await tx
+      .select()
+      .from(classpilotScheduleChangePairs)
+      .where(
+        and(
+          eq(classpilotScheduleChangePairs.schoolId, options.schoolId),
+          eq(classpilotScheduleChangePairs.id, candidate.pairId)
+        )
+      )
+      .limit(1)
+      .for("update");
+    const locked = await loadLockedScheduleChangeWithLegs({
+      schoolId: options.schoolId,
+      changeId: options.changeId,
+      dbInstance: transactionDb,
+    });
+    if (!locked) {
+      throw scheduleChangeError(
+        "SCHEDULE_CHANGE_NOT_FOUND",
+        "Schedule change not found.",
+        404
+      );
+    }
+    if (locked.change.revision !== options.expectedRevision) {
+      return { status: "revision_conflict" as const, change: locked.change };
+    }
+    const groupsById = new Map(lockedGroups.map((group) => [group.id, group]));
+    if (options.actor.role === "teacher") {
+      const groupIds = lockedGroups.map((group) => group.id);
+      const assignments = await tx
+        .select({ teacherId: groupTeachers.teacherId })
+        .from(groupTeachers)
+        .where(
+          and(
+            inArray(groupTeachers.groupId, groupIds),
+            eq(groupTeachers.teacherId, options.actor.userId)
+          )
+        )
+        .limit(1);
+      const relevant =
+        lockedGroups.some((group) => group.teacherId === options.actor.userId) ||
+        assignments.length > 0 ||
+        locked.change.requestedByUserId === options.actor.userId ||
+        locked.change.counterpartTeacherId === options.actor.userId;
+      if (!relevant) {
+        throw scheduleChangeError(
+          "SCHEDULE_CHANGE_NOT_FOUND",
+          "Schedule change not found.",
+          404
+        );
+      }
+    }
+
+    const terminalizeDrift = async (
+      status: "superseded" | "expired",
+      reasonCode: string
+    ): Promise<ApplyClasspilotScheduleChangeActionResult> => {
+      const saved = await markScheduleChangeTerminal({
+        schoolId: options.schoolId,
+        change: locked.change,
+        status,
+        actor: options.actor,
+        reason: reasonCode,
+        now,
+        dbInstance: transactionDb,
+      });
+      await tx.insert(auditLogs).values({
+        schoolId: options.schoolId,
+        userId: options.actor.userId,
+        userEmail: options.actor.userEmail ?? null,
+        userRole: options.actor.role,
+        action: `classpilot.schedule_change.${status}`,
+        entityType: "classpilot_schedule_change",
+        entityId: saved.id,
+        changes: { status },
+        metadata: { reasonCode, revision: saved.revision },
+      });
+      return { status, change: saved };
+    };
+
+    let saved: ClasspilotScheduleChange;
+    if (options.action === "accept") {
+      if (
+        locked.change.status !== "pending_counterpart" ||
+        locked.change.counterpartTeacherId !== options.actor.userId ||
+        options.actor.role === "office_staff"
+      ) {
+        throw scheduleChangeError(
+          "SCHEDULE_CHANGE_ACTION_FORBIDDEN",
+          "You cannot accept this schedule change.",
+          403
+        );
+      }
+      if (entitlementUnavailable) {
+        return terminalizeDrift("superseded", "classpilot_entitlement_unavailable");
+      }
+      if (!pair || pair.status !== "active" || !scheduleChangeSnapshotMatches(groupsById, locked.legs)) {
+        return terminalizeDrift("superseded", "class_configuration_changed");
+      }
+      const validation = await validateScheduleChangeForDate({
+        schoolId: options.schoolId,
+        pair,
+        scheduledDate: locked.change.scheduledDate,
+        actor: options.actor,
+        mode: "approval",
+        now,
+        dbInstance: transactionDb,
+      });
+      if (validation.blockers.length > 0) {
+        const first = validation.blockers[0]!;
+        const expirationCodes = new Set([
+          "SCHEDULE_CHANGE_DATE_PASSED",
+          "SCHEDULE_CHANGE_ALREADY_STARTED",
+          "SCHEDULE_CHANGE_OCCURRENCE_EXISTS",
+        ]);
+        return terminalizeDrift(
+          expirationCodes.has(first.code) ? "expired" : "superseded",
+          first.code.toLowerCase().slice(0, 100)
+        );
+      }
+      try {
+        await assertActiveClasspilotScheduleChangeEntitlement({
+          schoolId: options.schoolId,
+          now,
+          through: localDateTimeUtc(
+            locked.change.scheduledDate,
+            locked.legs.map((leg) => leg.effectiveEndTime).sort().at(-1)!,
+            validation.context?.policy.schoolTimezone || locked.change.timezoneSnapshot
+          ),
+          dbInstance: transactionDb,
+        });
+      } catch (error) {
+        if (!isClasspilotScheduleChangeEntitlementError(error)) throw error;
+        return terminalizeDrift("superseded", "classpilot_entitlement_ends_before_event");
+      }
+      const nextStatus = locked.change.requiresAdminApproval ? "pending_admin" : "approved";
+      const [accepted] = await tx
+        .update(classpilotScheduleChanges)
+        .set({
+          status: nextStatus,
+          acceptedByUserId: options.actor.userId,
+          acceptedAt: now,
+          approvedByUserId: nextStatus === "approved" ? options.actor.userId : null,
+          approvedAt: nextStatus === "approved" ? now : null,
+          revision: locked.change.revision + 1,
+          updatedAt: now,
+        })
+        .where(eq(classpilotScheduleChanges.id, locked.change.id))
+        .returning();
+      saved = accepted!;
+    } else if (options.action === "approve") {
+      if (!isAdmin || locked.change.status !== "pending_admin") {
+        throw scheduleChangeError(
+          "SCHEDULE_CHANGE_ACTION_FORBIDDEN",
+          "Only an administrator may approve this schedule change.",
+          403
+        );
+      }
+      if (entitlementUnavailable) {
+        return terminalizeDrift("superseded", "classpilot_entitlement_unavailable");
+      }
+      if (!pair || pair.status !== "active" || !scheduleChangeSnapshotMatches(groupsById, locked.legs)) {
+        return terminalizeDrift("superseded", "class_configuration_changed");
+      }
+      const validation = await validateScheduleChangeForDate({
+        schoolId: options.schoolId,
+        pair,
+        scheduledDate: locked.change.scheduledDate,
+        actor: options.actor,
+        mode: "approval",
+        now,
+        dbInstance: transactionDb,
+      });
+      if (validation.blockers.length > 0) {
+        const first = validation.blockers[0]!;
+        const expirationCodes = new Set([
+          "SCHEDULE_CHANGE_DATE_PASSED",
+          "SCHEDULE_CHANGE_ALREADY_STARTED",
+          "SCHEDULE_CHANGE_OCCURRENCE_EXISTS",
+        ]);
+        return terminalizeDrift(
+          expirationCodes.has(first.code) ? "expired" : "superseded",
+          first.code.toLowerCase().slice(0, 100)
+        );
+      }
+      try {
+        await assertActiveClasspilotScheduleChangeEntitlement({
+          schoolId: options.schoolId,
+          now,
+          through: localDateTimeUtc(
+            locked.change.scheduledDate,
+            locked.legs.map((leg) => leg.effectiveEndTime).sort().at(-1)!,
+            validation.context?.policy.schoolTimezone || locked.change.timezoneSnapshot
+          ),
+          dbInstance: transactionDb,
+        });
+      } catch (error) {
+        if (!isClasspilotScheduleChangeEntitlementError(error)) throw error;
+        return terminalizeDrift("superseded", "classpilot_entitlement_ends_before_event");
+      }
+      const [approved] = await tx
+        .update(classpilotScheduleChanges)
+        .set({
+          status: "approved",
+          approvedByUserId: options.actor.userId,
+          approvedAt: now,
+          revision: locked.change.revision + 1,
+          updatedAt: now,
+        })
+        .where(eq(classpilotScheduleChanges.id, locked.change.id))
+        .returning();
+      saved = approved!;
+    } else if (options.action === "withdraw") {
+      if (
+        locked.change.requestedByUserId !== options.actor.userId ||
+        !CP_SCHEDULE_CHANGE_PENDING_STATUSES.includes(
+          locked.change.status as (typeof CP_SCHEDULE_CHANGE_PENDING_STATUSES)[number]
+        )
+      ) {
+        throw scheduleChangeError(
+          "SCHEDULE_CHANGE_ACTION_FORBIDDEN",
+          "Only the requester may withdraw a pending schedule change.",
+          403
+        );
+      }
+      saved = await markScheduleChangeTerminal({
+        schoolId: options.schoolId,
+        change: locked.change,
+        status: "cancelled",
+        actor: options.actor,
+        reason: terminalActionReason(options.action, options.reason),
+        now,
+        dbInstance: transactionDb,
+      });
+    } else if (options.action === "decline") {
+      if (
+        locked.change.status !== "pending_counterpart" ||
+        locked.change.counterpartTeacherId !== options.actor.userId ||
+        options.actor.role === "office_staff"
+      ) {
+        throw scheduleChangeError(
+          "SCHEDULE_CHANGE_ACTION_FORBIDDEN",
+          "You cannot decline this schedule change.",
+          403
+        );
+      }
+      saved = await markScheduleChangeTerminal({
+        schoolId: options.schoolId,
+        change: locked.change,
+        status: "declined",
+        actor: options.actor,
+        reason: terminalActionReason(options.action, options.reason),
+        now,
+        dbInstance: transactionDb,
+      });
+    } else if (options.action === "deny") {
+      if (!isAdmin || locked.change.status !== "pending_admin") {
+        throw scheduleChangeError(
+          "SCHEDULE_CHANGE_ACTION_FORBIDDEN",
+          "Only an administrator may deny this schedule change.",
+          403
+        );
+      }
+      saved = await markScheduleChangeTerminal({
+        schoolId: options.schoolId,
+        change: locked.change,
+        status: "denied",
+        actor: options.actor,
+        reason: terminalActionReason(options.action, options.reason),
+        now,
+        dbInstance: transactionDb,
+      });
+    } else {
+      if (!isAdmin || locked.change.status !== "approved") {
+        throw scheduleChangeError(
+          "SCHEDULE_CHANGE_ACTION_FORBIDDEN",
+          "Only an administrator may cancel an approved schedule change.",
+          403
+        );
+      }
+      const earliestStart = locked.legs
+        .map((leg) => leg.effectiveStartTime)
+        .sort()[0]!;
+      const currentPolicy = await getClasspilotScheduleChangeSettings(
+        options.schoolId,
+        transactionDb
+      );
+      const currentTimezone = currentPolicy?.schoolTimezone || "America/New_York";
+      if (
+        now.getTime() >=
+        localDateTimeUtc(
+          locked.change.scheduledDate,
+          earliestStart,
+          currentTimezone
+        ).getTime()
+      ) {
+        throw scheduleChangeError(
+          "SCHEDULE_CHANGE_ALREADY_STARTED",
+          "Approved changes cannot be cancelled after either class period begins.",
+          409
+        );
+      }
+      const [occurrence] = await tx
+        .select({ id: teachingSessions.id })
+        .from(teachingSessions)
+        .where(
+          and(
+            eq(teachingSessions.schoolId, options.schoolId),
+            eq(teachingSessions.scheduledDate, locked.change.scheduledDate),
+            inArray(
+              teachingSessions.groupId,
+              locked.legs.map((leg) => leg.groupId)
+            )
+          )
+        )
+        .limit(1);
+      if (occurrence) {
+        throw scheduleChangeError(
+          "SCHEDULE_CHANGE_OCCURRENCE_EXISTS",
+          "This schedule change has already created a class occurrence.",
+          409
+        );
+      }
+      saved = await markScheduleChangeTerminal({
+        schoolId: options.schoolId,
+        change: locked.change,
+        status: "cancelled",
+        actor: options.actor,
+        reason: terminalActionReason(options.action, options.reason),
+        now,
+        dbInstance: transactionDb,
+      });
+    }
+    await tx.insert(auditLogs).values({
+      schoolId: options.schoolId,
+      userId: options.actor.userId,
+      userEmail: options.actor.userEmail ?? null,
+      userRole: options.actor.role,
+      action: `classpilot.schedule_change.${options.action}`,
+      entityType: "classpilot_schedule_change",
+      entityId: saved.id,
+      changes: { from: locked.change.status, to: saved.status },
+      metadata: { revision: saved.revision, scheduledDate: saved.scheduledDate },
+    });
+    return { status: "saved" as const, change: saved };
+  });
+}
+
+function scheduleChangeAllowedActions(options: {
+  change: ClasspilotScheduleChange;
+  legs: ClasspilotScheduleChangeLeg[];
+  actor: ClasspilotScheduleChangeActor;
+  now: Date;
+  currentTimezone: string;
+}): ClasspilotScheduleChangeAllowedAction[] {
+  const actions: ClasspilotScheduleChangeAllowedAction[] = [];
+  const isAdmin = options.actor.role === "admin" || options.actor.role === "school_admin";
+  if (
+    options.change.status === "pending_counterpart" &&
+    options.change.counterpartTeacherId === options.actor.userId &&
+    options.actor.role !== "office_staff"
+  ) {
+    actions.push("accept", "decline");
+  }
+  if (
+    CP_SCHEDULE_CHANGE_PENDING_STATUSES.includes(
+      options.change.status as (typeof CP_SCHEDULE_CHANGE_PENDING_STATUSES)[number]
+    ) &&
+    options.change.requestedByUserId === options.actor.userId
+  ) {
+    actions.push("withdraw");
+  }
+  if (options.change.status === "pending_admin" && isAdmin) {
+    actions.push("approve", "deny");
+  }
+  if (options.change.status === "approved" && isAdmin) {
+    const earliestStart = options.legs.map((leg) => leg.effectiveStartTime).sort()[0];
+    if (
+      earliestStart &&
+      options.now.getTime() <
+        localDateTimeUtc(
+          options.change.scheduledDate,
+          earliestStart,
+          options.currentTimezone
+        ).getTime()
+    ) {
+      actions.push("cancel");
+    }
+  }
+  return actions;
+}
+
+async function hydrateClasspilotScheduleChanges(options: {
+  schoolId: string;
+  changes: ClasspilotScheduleChange[];
+  actor: ClasspilotScheduleChangeActor;
+  now: Date;
+  schoolTimezone: string;
+  dbInstance: ScheduleChangeDb;
+}): Promise<ClasspilotScheduleChangeDto[]> {
+  if (options.changes.length === 0) return [];
+  const changeIds = options.changes.map((change) => change.id);
+  const legs = await options.dbInstance
+    .select()
+    .from(classpilotScheduleChangeLegs)
+    .where(
+      and(
+        eq(classpilotScheduleChangeLegs.schoolId, options.schoolId),
+        inArray(classpilotScheduleChangeLegs.scheduleChangeId, changeIds)
+      )
+    )
+    .orderBy(
+      asc(classpilotScheduleChangeLegs.scheduleChangeId),
+      asc(classpilotScheduleChangeLegs.legOrder)
+    );
+  const userIds = Array.from(
+    new Set([
+      ...options.changes.map((change) => change.requestedByUserId),
+      ...legs.map((leg) => leg.primaryTeacherIdSnapshot),
+    ])
+  );
+  const userRows = userIds.length
+    ? await options.dbInstance
+        .select({
+          id: users.id,
+          displayName: users.displayName,
+          firstName: users.firstName,
+          lastName: users.lastName,
+          email: users.email,
+        })
+        .from(users)
+        .where(inArray(users.id, userIds))
+    : [];
+  const usersById = new Map(userRows.map((user) => [user.id, user]));
+  const legsByChange = new Map<string, ClasspilotScheduleChangeLeg[]>();
+  for (const leg of legs) {
+    const existing = legsByChange.get(leg.scheduleChangeId) ?? [];
+    existing.push(leg);
+    legsByChange.set(leg.scheduleChangeId, existing);
+  }
+  return options.changes.flatMap((change) => {
+    const changeLegs = legsByChange.get(change.id) ?? [];
+    if (changeLegs.length !== 2) return [];
+    const requester = usersById.get(change.requestedByUserId);
+    return [{
+      id: change.id,
+      pairId: change.pairId,
+      scheduledDate: change.scheduledDate,
+      schoolTimezone: options.schoolTimezone,
+      status: change.status as ClasspilotScheduleChangeStatus,
+      reason: change.reason,
+      revision: change.revision,
+      requestedBy: {
+        id: change.requestedByUserId,
+        name: scheduleChangeDisplayName(requester),
+      },
+      nextActor:
+        change.status === "pending_counterpart"
+          ? "counterpart_teacher"
+          : change.status === "pending_admin"
+            ? "administrator"
+            : null,
+      legs: changeLegs.map((leg) => ({
+        class: { id: leg.groupId, name: leg.classNameSnapshot },
+        primaryTeacher: {
+          id: leg.primaryTeacherIdSnapshot,
+          name: scheduleChangeDisplayName(usersById.get(leg.primaryTeacherIdSnapshot)),
+        },
+        normalWindow: {
+          startTime: leg.originalStartTime,
+          endTime: leg.originalEndTime,
+        },
+        effectiveWindow: {
+          startTime: leg.effectiveStartTime,
+          endTime: leg.effectiveEndTime,
+        },
+      })),
+      allowedActions: scheduleChangeAllowedActions({
+        change,
+        legs: changeLegs,
+        actor: options.actor,
+        now: options.now,
+        currentTimezone: options.schoolTimezone,
+      }),
+      createdAt: change.createdAt.toISOString(),
+      updatedAt: change.updatedAt.toISOString(),
+    }];
+  });
+}
+
+export async function listClasspilotScheduleChanges(options: {
+  schoolId: string;
+  actor: ClasspilotScheduleChangeActor;
+  scope?: "needs_action" | "upcoming" | "history" | "all";
+  now?: Date;
+  limit?: number;
+}): Promise<{ changes: ClasspilotScheduleChangeDto[]; schoolTimezone: string }> {
+  const now = options.now ?? new Date();
+  const policy = await getClasspilotScheduleChangeSettings(options.schoolId);
+  if (!policy) {
+    throw scheduleChangeError(
+      "SCHEDULE_CHANGE_SETTINGS_UNAVAILABLE",
+      "Schedule-change settings are unavailable.",
+      500
+    );
+  }
+  const visibleGroups = await scheduleChangeVisibleGroupIds(
+    options.schoolId,
+    options.actor,
+    db
+  );
+  const queryConditions: SQL[] = [
+    eq(classpilotScheduleChanges.schoolId, options.schoolId),
+  ];
+  if (visibleGroups) {
+    const visibleIds = [...visibleGroups];
+    queryConditions.push(
+      or(
+        eq(classpilotScheduleChanges.requestedByUserId, options.actor.userId),
+        eq(classpilotScheduleChanges.counterpartTeacherId, options.actor.userId),
+        visibleIds.length > 0
+          ? sql`EXISTS (
+              SELECT 1
+              FROM classpilot_schedule_change_legs visible_leg
+              WHERE visible_leg.school_id = ${options.schoolId}
+                AND visible_leg.schedule_change_id = ${classpilotScheduleChanges.id}
+                AND visible_leg.group_id IN (${sql.join(
+                  visibleIds.map((id) => sql`${id}`),
+                  sql`, `
+                )})
+            )`
+          : sql`false`
+      )!
+    );
+  }
+  const localToday = localDateInTimeZone(now, policy.schoolTimezone);
+  const terminalStatuses: ClasspilotScheduleChangeStatus[] = [
+    "declined",
+    "denied",
+    "cancelled",
+    "expired",
+    "superseded",
+  ];
+  const scope = options.scope ?? "upcoming";
+  if (scope === "needs_action") {
+    queryConditions.push(
+      or(
+        and(
+          eq(classpilotScheduleChanges.status, "pending_counterpart"),
+          eq(classpilotScheduleChanges.counterpartTeacherId, options.actor.userId)
+        ),
+        options.actor.role === "admin" || options.actor.role === "school_admin"
+          ? eq(classpilotScheduleChanges.status, "pending_admin")
+          : sql`false`
+      )!
+    );
+  } else if (scope === "history") {
+    queryConditions.push(
+      or(
+        inArray(classpilotScheduleChanges.status, terminalStatuses),
+        lt(classpilotScheduleChanges.scheduledDate, localToday)
+      )!
+    );
+  } else if (scope === "upcoming") {
+    queryConditions.push(
+      and(
+        inArray(classpilotScheduleChanges.status, [
+          ...CP_SCHEDULE_CHANGE_ACTIVE_STATUSES,
+        ]),
+        sql`${classpilotScheduleChanges.scheduledDate} >= ${localToday}`
+      )!
+    );
+  }
+  const rows = await db
+    .select()
+    .from(classpilotScheduleChanges)
+    .where(and(...queryConditions))
+    .orderBy(desc(classpilotScheduleChanges.scheduledDate), desc(classpilotScheduleChanges.createdAt))
+    .limit(Math.min(Math.max(options.limit ?? 250, 1), 500));
+  const hydrated = await hydrateClasspilotScheduleChanges({
+    schoolId: options.schoolId,
+    changes: rows,
+    actor: options.actor,
+    now,
+    schoolTimezone: policy.schoolTimezone,
+    dbInstance: db,
+  });
+  const terminal = new Set<ClasspilotScheduleChangeStatus>([
+    "declined",
+    "denied",
+    "cancelled",
+    "expired",
+    "superseded",
+  ]);
+  const filtered = hydrated.filter((change) => {
+    if (scope === "all") return true;
+    if (scope === "needs_action") {
+      return change.allowedActions.some((action) =>
+        ["accept", "decline", "approve", "deny"].includes(action)
+      );
+    }
+    if (scope === "history") {
+      return terminal.has(change.status) || change.scheduledDate < localToday;
+    }
+    return !terminal.has(change.status) && change.scheduledDate >= localToday;
+  });
+  return { changes: filtered, schoolTimezone: policy.schoolTimezone };
+}
+
+export async function getClasspilotScheduleChangeById(options: {
+  schoolId: string;
+  changeId: string;
+  actor: ClasspilotScheduleChangeActor;
+  now?: Date;
+}): Promise<ClasspilotScheduleChangeDto | undefined> {
+  const [row] = await db
+    .select()
+    .from(classpilotScheduleChanges)
+    .where(
+      and(
+        eq(classpilotScheduleChanges.schoolId, options.schoolId),
+        eq(classpilotScheduleChanges.id, options.changeId)
+      )
+    )
+    .limit(1);
+  if (!row) return undefined;
+  const policy = await getClasspilotScheduleChangeSettings(options.schoolId);
+  if (!policy) return undefined;
+  const [dto] = await hydrateClasspilotScheduleChanges({
+    schoolId: options.schoolId,
+    changes: [row],
+    actor: options.actor,
+    now: options.now ?? new Date(),
+    schoolTimezone: policy.schoolTimezone,
+    dbInstance: db,
+  });
+  if (!dto) return undefined;
+  if (options.actor.role === "teacher") {
+    const visible = await scheduleChangeVisibleGroupIds(options.schoolId, options.actor, db);
+    const involved = dto.legs.some((leg) => visible?.has(leg.class.id));
+    if (
+      !involved &&
+      dto.requestedBy.id !== options.actor.userId &&
+      row.counterpartTeacherId !== options.actor.userId
+    ) {
+      return undefined;
+    }
+  }
+  return dto;
+}
+
+export async function getClasspilotScheduleChangesToday(options: {
+  schoolId: string;
+  actor: ClasspilotScheduleChangeActor;
+  now?: Date;
+}): Promise<{
+  scheduledDate: string;
+  schoolTimezone: string;
+  changes: Array<{
+    id: string;
+    class: { id: string; name: string };
+    normalWindow: ClasspilotScheduleWindowDto;
+    effectiveWindow: ClasspilotScheduleWindowDto;
+  }>;
+  lastAffectedEndAt: string | null;
+}> {
+  const now = options.now ?? new Date();
+  const policy = await getClasspilotScheduleChangeSettings(options.schoolId);
+  if (!policy) {
+    throw scheduleChangeError(
+      "SCHEDULE_CHANGE_SETTINGS_UNAVAILABLE",
+      "Schedule-change settings are unavailable.",
+      500
+    );
+  }
+  const scheduledDate = localDateInTimeZone(now, policy.schoolTimezone);
+  const visibleGroups = await scheduleChangeVisibleGroupIds(
+    options.schoolId,
+    options.actor,
+    db
+  );
+  const todayConditions: SQL[] = [
+    eq(classpilotScheduleChanges.schoolId, options.schoolId),
+    eq(classpilotScheduleChanges.scheduledDate, scheduledDate),
+    eq(classpilotScheduleChanges.status, "approved"),
+    eq(classpilotScheduleChanges.reservationActive, true),
+  ];
+  if (visibleGroups) {
+    const visibleIds = [...visibleGroups];
+    todayConditions.push(
+      visibleIds.length > 0
+        ? sql`EXISTS (
+            SELECT 1
+            FROM classpilot_schedule_change_legs visible_leg
+            WHERE visible_leg.school_id = ${options.schoolId}
+              AND visible_leg.schedule_change_id = ${classpilotScheduleChanges.id}
+              AND visible_leg.group_id IN (${sql.join(
+                visibleIds.map((id) => sql`${id}`),
+                sql`, `
+              )})
+          )`
+        : sql`false`
+    );
+  }
+  const todayRows = await db
+    .select()
+    .from(classpilotScheduleChanges)
+    .where(and(...todayConditions))
+    .orderBy(asc(classpilotScheduleChanges.id));
+  const approved = await hydrateClasspilotScheduleChanges({
+    schoolId: options.schoolId,
+    changes: todayRows,
+    actor: options.actor,
+    now,
+    schoolTimezone: policy.schoolTimezone,
+    dbInstance: db,
+  });
+  let projected = approved.flatMap((change) =>
+    change.legs.map((leg) => ({
+      id: change.id,
+      class: leg.class,
+      normalWindow: leg.normalWindow,
+      effectiveWindow: leg.effectiveWindow,
+    }))
+  );
+  if (options.actor.role === "teacher") {
+    const visibleGroups = await scheduleChangeVisibleGroupIds(
+      options.schoolId,
+      options.actor,
+      db
+    );
+    projected = projected.filter((item) => visibleGroups?.has(item.class.id));
+  }
+  const endInstants = projected.map((item) =>
+    localDateTimeUtc(
+      scheduledDate,
+      item.effectiveWindow.endTime,
+      policy.schoolTimezone
+    )
+  );
+  const lastEnd = endInstants.sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
+  return {
+    scheduledDate,
+    schoolTimezone: policy.schoolTimezone,
+    changes: lastEnd && lastEnd.getTime() > now.getTime() ? projected : [],
+    lastAffectedEndAt: lastEnd?.toISOString() ?? null,
+  };
+}
+
+export async function getClasspilotScheduleChangeNotificationContext(options: {
+  schoolId: string;
+  changeId: string;
+  dbInstance?: ScheduleChangeDb;
+}): Promise<{
+  scheduledDate: string;
+  status: string;
+  classNames: string[];
+  recipientEmails: string[];
+} | undefined> {
+  const dbInstance = options.dbInstance ?? db;
+  const [change] = await dbInstance
+    .select({
+      scheduledDate: classpilotScheduleChanges.scheduledDate,
+      status: classpilotScheduleChanges.status,
+    })
+    .from(classpilotScheduleChanges)
+    .where(
+      and(
+        eq(classpilotScheduleChanges.schoolId, options.schoolId),
+        eq(classpilotScheduleChanges.id, options.changeId)
+      )
+    )
+    .limit(1);
+  if (!change) return undefined;
+  const legRows = await dbInstance
+    .select({
+      className: classpilotScheduleChangeLegs.classNameSnapshot,
+      teacherId: classpilotScheduleChangeLegs.primaryTeacherIdSnapshot,
+    })
+    .from(classpilotScheduleChangeLegs)
+    .where(
+      and(
+        eq(classpilotScheduleChangeLegs.schoolId, options.schoolId),
+        eq(classpilotScheduleChangeLegs.scheduleChangeId, options.changeId)
+      )
+    );
+  const adminRows = await dbInstance
+    .select({ userId: schoolMemberships.userId })
+    .from(schoolMemberships)
+    .where(
+      and(
+        eq(schoolMemberships.schoolId, options.schoolId),
+        eq(schoolMemberships.status, "active"),
+        inArray(schoolMemberships.role, ["admin", "school_admin"])
+      )
+    );
+  const recipientIds = Array.from(
+    new Set([
+      ...legRows.map((leg) => leg.teacherId),
+      ...adminRows.map((membership) => membership.userId),
+    ])
+  );
+  const recipientRows = recipientIds.length
+    ? await dbInstance
+        .select({ email: users.email })
+        .from(users)
+        .where(inArray(users.id, recipientIds))
+    : [];
+  return {
+    scheduledDate: change.scheduledDate,
+    status: change.status,
+    classNames: legRows.map((leg) => leg.className),
+    recipientEmails: Array.from(
+      new Set(recipientRows.map((row) => row.email.trim().toLowerCase()).filter(Boolean))
+    ),
+  };
 }

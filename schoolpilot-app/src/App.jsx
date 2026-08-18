@@ -31,6 +31,8 @@ const CPEmailMonitoringSetup = lazy(() => import('./products/classpilot/pages/Em
 const CPStudents = lazy(() => import('./products/classpilot/pages/Students'));
 const CPSettings = lazy(() => import('./products/classpilot/pages/Settings'));
 const CPMySettings = lazy(() => import('./products/classpilot/pages/MySettings'));
+const CPScheduleChanges = lazy(() => import('./products/classpilot/pages/ScheduleChanges'));
+const CPAdminScheduleChanges = lazy(() => import('./products/classpilot/pages/AdminScheduleChanges'));
 
 // PassPilot pages (lazy-loaded)
 const PPDashboard = lazy(() => import('./products/passpilot/pages/Dashboard'));
@@ -201,6 +203,7 @@ function AppRoutes() {
             <Route path="/classpilot/roster" element={<CPRoster />} />
             <Route path="/classpilot/admin" element={<CPAdmin />} />
             <Route path="/classpilot/admin/classes" element={<CPAdminClasses />} />
+            <Route path="/classpilot/admin/classes/schedule-changes" element={<CPAdminScheduleChanges />} />
             <Route path="/classpilot/admin/analytics" element={<CPAdminAnalytics />} />
             <Route path="/classpilot/admin/attendance" element={<CPAdminAttendance />} />
             <Route path="/classpilot/coverage" element={<CPCoverage />} />
@@ -211,6 +214,7 @@ function AppRoutes() {
             <Route path="/classpilot/students" element={<CPStudents />} />
             <Route path="/classpilot/settings" element={<CPSettings />} />
             <Route path="/classpilot/my-settings" element={<CPMySettings />} />
+            <Route path="/classpilot/my-settings/schedule-changes" element={<CPScheduleChanges />} />
           </>
         )}
 

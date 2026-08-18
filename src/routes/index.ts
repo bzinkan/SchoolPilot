@@ -34,6 +34,7 @@ import coverageRoutes from "./classpilot/coverage.js";
 import scheduledConflictRoutes from "./classpilot/scheduledConflicts.js";
 import instructionalCalendarRoutes from "./classpilot/instructionalCalendar.js";
 import monitoringEventRoutes from "./classpilot/monitoringEvents.js";
+import scheduleChangeRoutes from "./classpilot/scheduleChanges.js";
 import superAdminRoutes from "./admin/superAdmin.js";
 import superAdminMonitoringRoutes from "./admin/monitoring.js";
 import superAdminSoc2Routes from "./admin/soc2.js";
@@ -395,6 +396,7 @@ router.use("/classpilot", scheduledConflictRoutes);
 router.use("/classpilot/teacher", dashboardRoutes);
 router.use("/classpilot", competitiveRoutes);
 router.use("/classpilot", monitoringEventRoutes);
+router.use("/classpilot/schedule-changes", scheduleChangeRoutes);
 
 // Admin - Super admin panel
 router.use("/admin/monitoring", superAdminMonitoringRoutes);

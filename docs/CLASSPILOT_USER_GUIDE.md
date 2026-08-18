@@ -9,14 +9,15 @@
 1. [Overview](#overview)
 2. [Getting Started](#getting-started)
 3. [Dashboard Overview](#dashboard-overview)
-4. [Student Monitoring](#student-monitoring)
-5. [Live Screen Viewing](#live-screen-viewing)
-6. [Remote Classroom Controls](#remote-classroom-controls)
-7. [Roster Management](#roster-management)
-8. [Data & Privacy](#data--privacy)
-9. [Admin Features](#admin-features)
-10. [Chrome Extension](#chrome-extension)
-11. [Troubleshooting](#troubleshooting)
+4. [Schedule Changes](#schedule-changes)
+5. [Student Monitoring](#student-monitoring)
+6. [Live Screen Viewing](#live-screen-viewing)
+7. [Remote Classroom Controls](#remote-classroom-controls)
+8. [Roster Management](#roster-management)
+9. [Data & Privacy](#data--privacy)
+10. [Admin Features](#admin-features)
+11. [Chrome Extension](#chrome-extension)
+12. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -110,6 +111,45 @@ Switch between different grade levels or class groups:
 - Click grade tabs to filter students
 - Add/remove grades via Settings
 - Manage grade assignments in Roster Management
+
+---
+
+## Schedule Changes
+
+ClassPilot can exchange the automatic class times of two eligible classes for
+one instructional date. The change affects only the scheduled times: teachers,
+co-teachers, students, class ownership, and recurring schedules stay the same.
+The regular schedule resumes automatically on the next instructional day.
+
+### Request a Time Swap
+
+1. Open **My Settings**, then select **Schedule Changes**.
+2. Select **Request time swap**.
+3. Choose the instructional date and an eligible class pair.
+4. Enter the reason and review both normal and event-day times.
+5. Select **Send request**.
+
+The other class's primary teacher must accept the request. If the school
+requires administrator approval, the request then moves to the administrator's
+approval queue. A pending request does not change either schedule.
+
+Use **Needs Action**, **Upcoming**, and **History** to review requests. A compact
+Dashboard notice appears only on a day with an approved schedule change.
+
+### Administrator Setup and Approval
+
+- Open **Classes**, then **Schedule Changes**, to configure eligible class
+  pairs, approve or deny requests, create an immediate one-day change, cancel
+  an upcoming approved change, and review history.
+- Open **Admin Settings**, then **Schedule Changes**, to enable teacher
+  requests, require administrator approval, and set the school-local same-day
+  request cutoff.
+- Class pairs must have active automatic schedules with equal-duration,
+  non-overlapping periods.
+- Approved changes cannot be cancelled after either affected block begins.
+
+**Skip Today** applies to the class's event-day time and does not restore its
+normal time or automatically skip the partner class.
 
 ---
 
@@ -589,6 +629,12 @@ Access via **Admin Panel** (admin accounts only)
 - Idle timeout (default: 30 seconds)
 - Domain blocklist
 - Allowed domain whitelist
+
+**Schedule Change Settings:**
+- Enable or disable teacher time-swap requests
+- Require administrator approval after counterpart-teacher acceptance
+- Set the school-local same-day request cutoff
+- Configure eligible class pairs from **Classes > Schedule Changes**
 
 ---
 

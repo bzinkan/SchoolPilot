@@ -9,13 +9,11 @@ import {
   getGroupsByTeacherAndSchool,
   getGroupByIdAndSchool,
   getSubgroupByIdAndSchool,
-  createGroup,
-  updateGroup,
+  upsertClasspilotGroupWithAssignments,
   hardDeleteGroupWithCleanup,
   getGroupStudents,
   addGroupStudents,
   removeGroupStudent,
-  setGroupStudents,
   getStudentsByIds,
   getSubgroupsByGroup,
   createSubgroup,
@@ -145,26 +143,26 @@ router.post("/", ...auth, async (req, res, next) => {
       }
     }
 
-    const group = await createGroup({
+    const exactStudentIds = studentIds === undefined
+      ? undefined
+      : await studentsInSchool(studentIds, res.locals.schoolId!);
+    const { group } = await upsertClasspilotGroupWithAssignments({
       schoolId: res.locals.schoolId!,
-      teacherId: req.authUser!.id,
-      name,
-      description: description || null,
-      periodLabel: periodLabel || null,
-      gradeLevel: gradeLevel || null,
-      groupType: groupType || "teacher_created",
-      scheduleEnabled: scheduleEnabled || false,
-      blockStartTime: scheduleEnabled ? blockStartTime : null,
-      blockEndTime: scheduleEnabled ? blockEndTime : null,
+      data: {
+        name,
+        description: description || null,
+        periodLabel: periodLabel || null,
+        gradeLevel: gradeLevel || null,
+        groupType: groupType || "teacher_created",
+        scheduleEnabled: scheduleEnabled || false,
+        blockStartTime: scheduleEnabled ? blockStartTime : null,
+        blockEndTime: scheduleEnabled ? blockEndTime : null,
+      },
+      primaryTeacherId: req.authUser!.id,
+      coTeacherIds: [],
+      studentIds: exactStudentIds,
+      scheduleChangeActorId: req.authUser!.id,
     });
-
-    // Seed the junction table with the creator as primary teacher
-    await addGroupTeacher(group.id, req.authUser!.id, "primary");
-
-    const validStudentIds = await studentsInSchool(studentIds, res.locals.schoolId!);
-    if (validStudentIds.length > 0) {
-      await addGroupStudents(group.id, validStudentIds);
-    }
 
     return res.status(201).json({ group });
   } catch (err) {
@@ -185,7 +183,7 @@ router.patch("/:id", ...auth, async (req, res, next) => {
     const { name, description, periodLabel, gradeLevel, studentIds,
             scheduleEnabled, blockStartTime, blockEndTime } = req.body;
 
-    const data: Record<string, unknown> = {};
+    const data: Record<string, any> = {};
     if (name !== undefined) data.name = name;
     if (description !== undefined) data.description = description;
     if (periodLabel !== undefined) data.periodLabel = periodLabel;
@@ -214,14 +212,16 @@ router.patch("/:id", ...auth, async (req, res, next) => {
       if (blockEndTime !== undefined) data.blockEndTime = blockEndTime;
     }
 
-    const updated = await updateGroup(id, data);
-    if (!updated) {
-      return res.status(404).json({ error: "Group not found" });
-    }
-
-    if (studentIds !== undefined) {
-      await setGroupStudents(id, await studentsInSchool(studentIds, res.locals.schoolId!));
-    }
+    const exactStudentIds = studentIds === undefined
+      ? undefined
+      : await studentsInSchool(studentIds, res.locals.schoolId!);
+    const { group: updated } = await upsertClasspilotGroupWithAssignments({
+      schoolId: res.locals.schoolId!,
+      existingGroupId: id,
+      data,
+      studentIds: exactStudentIds,
+      scheduleChangeActorId: req.authUser!.id,
+    });
 
     return res.json({ group: updated });
   } catch (err) {
@@ -250,7 +250,7 @@ router.delete("/:id", ...auth, async (req, res, next) => {
         code: "CLASS_HAS_HISTORY",
       });
     }
-    await hardDeleteGroupWithCleanup(param(req, "id"));
+    await hardDeleteGroupWithCleanup(param(req, "id"), req.authUser!.id);
     return res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -293,7 +293,11 @@ router.post("/:id/students", ...auth, async (req, res, next) => {
     }
     if (rejectOfficialClassMutation(req, res, group.groupType)) return;
     await freezeScheduledOccurrenceIfDue({ group });
-    await addGroupStudents(group.id, await studentsInSchool(studentIds, res.locals.schoolId!));
+    await addGroupStudents(
+      group.id,
+      await studentsInSchool(studentIds, res.locals.schoolId!),
+      req.authUser!.id
+    );
     return res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -313,7 +317,7 @@ router.post("/:id/students/:studentId", ...auth, async (req, res, next) => {
     if (valid.length === 0) {
       return res.status(404).json({ error: "Student not found" });
     }
-    await addGroupStudents(group.id, valid);
+    await addGroupStudents(group.id, valid, req.authUser!.id);
     return res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -549,7 +553,8 @@ router.post("/:id/teachers", ...auth, requireRole("admin"), async (req, res, nex
     const teacher = await addGroupTeacher(
       group.id,
       teacherId,
-      role || "co-teacher"
+      role || "co-teacher",
+      req.authUser!.id
     );
     return res.status(201).json({ teacher });
   } catch (err) {

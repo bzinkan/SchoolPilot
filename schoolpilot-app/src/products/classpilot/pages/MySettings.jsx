@@ -17,6 +17,7 @@ import { useToast } from "../../../hooks/use-toast";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
 import { ArrowLeft, User, Settings as SettingsIcon, Save, Plus, Edit, Trash2, Plane, AlertCircle, ShieldBan, UsersRound, UserPlus, UserMinus } from "lucide-react";
 import { ThemeToggle } from "../../../components/ThemeToggle";
+import { TeacherSettingsTabs } from "../components/ScheduleRouteTabs";
 
 const teacherSettingsSchema = z.object({
   maxTabsPerStudent: z.string().optional(),
@@ -461,6 +462,12 @@ export default function MySettings() {
             </div>
             <ThemeToggle />
           </div>
+        </div>
+      </div>
+
+      <div className="border-b bg-card">
+        <div className="max-w-5xl mx-auto px-6 pt-3">
+          <TeacherSettingsTabs />
         </div>
       </div>
 

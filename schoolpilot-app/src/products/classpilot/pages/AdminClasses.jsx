@@ -72,6 +72,7 @@ import { useToast } from "../../../hooks/use-toast";
 import { useClassPilotAuth } from "../../../hooks/useClassPilotAuth";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
 import { EditStudentDialog } from "../components/EditStudentDialog";
+import { AdminClassesTabs } from "../components/ScheduleRouteTabs";
 
 const ADMIN_CLASSES_KEY = ["classpilot-admin-classes"];
 const TEACHABLE_ROLES = new Set(["teacher", "admin", "school_admin"]);
@@ -1145,6 +1146,8 @@ export default function AdminClasses() {
             </Button>
           </div>
         </div>
+
+        <AdminClassesTabs />
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(360px,0.7fr)]">
           <div className="space-y-6">

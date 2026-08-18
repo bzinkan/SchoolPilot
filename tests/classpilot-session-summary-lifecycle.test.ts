@@ -1,4 +1,4 @@
-import { after, before, describe, it, mock } from "node:test";
+import { after, afterEach, before, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -39,6 +39,7 @@ let secondTeacher: any;
 let centralRecipient: any;
 let studentOne: any;
 let studentTwo: any;
+let scheduledGroupIdsCreatedByCurrentTest: string[] = [];
 
 function inSchool(schoolId: string, fn: () => Promise<any>): Promise<any> {
   return runWithTenantContext({ schoolId }, fn);
@@ -126,16 +127,33 @@ async function createClass(options: {
   end?: string;
   roster?: any[];
 }): Promise<any> {
-  const group = await inSchool(school.id, () => storage.createGroup({
+  let group = await inSchool(school.id, () => storage.createGroup({
     schoolId: school.id,
     teacherId: options.teacherId || teacher.id,
     name: `${TAG}_${options.name}`,
     groupType: options.groupType || "admin_class",
     status: "active",
-    scheduleEnabled: !!options.scheduled,
-    blockStartTime: options.scheduled ? options.start || "09:00" : null,
-    blockEndTime: options.scheduled ? options.end || "10:00" : null,
+    scheduleEnabled: false,
+    blockStartTime: null,
+    blockEndTime: null,
   } as any));
+  if (options.scheduled) {
+    // This long-lived scheduler fixture intentionally accumulates many classes
+    // with identical bell windows across independent test cases. Production
+    // writers correctly reject those overlaps, so seed the legacy/direct-write
+    // fixture explicitly and let the runtime tests exercise fail-closed logic.
+    await inSchool(school.id, () => db.execute(sql`
+      UPDATE groups
+      SET schedule_enabled = true,
+          block_start_time = ${options.start || "09:00"},
+          block_end_time = ${options.end || "10:00"}
+      WHERE id = ${group.id} AND school_id = ${school.id}
+    `));
+    group = await inSchool(school.id, () =>
+      storage.getGroupByIdAndSchool(group.id, school.id)
+    );
+    scheduledGroupIdsCreatedByCurrentTest.push(group.id);
+  }
   const roster = options.roster || [studentOne];
   if (roster.length > 0) {
     await inSchool(school.id, () =>
@@ -206,6 +224,64 @@ async function occurrenceCount(groupId: string, scheduledDate: string): Promise<
   return Number(result.rows[0]?.count || 0);
 }
 
+async function seedScheduleChange(options: {
+  firstGroup: any;
+  secondGroup: any;
+  scheduledDate: string;
+  status?: "approved" | "pending_counterpart" | "pending_admin";
+}): Promise<string> {
+  return inSchool(school.id, () => db.transaction(async (tx: any) => {
+    const status = options.status || "approved";
+    const approved = status === "approved";
+    const orderedGroupIds = [options.firstGroup.id, options.secondGroup.id].sort();
+    const pairResult = await tx.execute(sql`
+      INSERT INTO classpilot_schedule_change_pairs (
+        school_id, first_group_id, second_group_id, status, created_by
+      ) VALUES (
+        ${school.id}, ${orderedGroupIds[0]}, ${orderedGroupIds[1]}, 'active', ${centralRecipient.id}
+      )
+      RETURNING id
+    `);
+    const pairId = String(pairResult.rows[0].id);
+    const changeResult = await tx.execute(sql`
+      INSERT INTO classpilot_schedule_changes (
+        school_id, pair_id, scheduled_date, timezone_snapshot, status, reason,
+        requested_by_user_id, requester_group_id, counterpart_teacher_id,
+        requested_by_role, requires_admin_approval, reservation_active,
+        approved_by_user_id, approved_at
+      ) VALUES (
+        ${school.id}, ${pairId}, ${options.scheduledDate}, 'America/New_York',
+        ${status}, 'Event-day class-time exchange', ${centralRecipient.id},
+        ${options.firstGroup.id}, ${options.secondGroup.teacherId}, 'admin', true,
+        true, ${approved ? centralRecipient.id : null}, ${approved ? new Date("2030-12-01T12:00:00.000Z") : null}
+      )
+      RETURNING id
+    `);
+    const changeId = String(changeResult.rows[0].id);
+    await tx.execute(sql`
+      INSERT INTO classpilot_schedule_change_legs (
+        school_id, schedule_change_id, scheduled_date, leg_order, group_id,
+        primary_teacher_id_snapshot, class_name_snapshot,
+        original_start_time, original_end_time,
+        effective_start_time, effective_end_time, reservation_active
+      ) VALUES
+      (
+        ${school.id}, ${changeId}, ${options.scheduledDate}, 1, ${options.firstGroup.id},
+        ${options.firstGroup.teacherId}, ${options.firstGroup.name},
+        ${options.firstGroup.blockStartTime}, ${options.firstGroup.blockEndTime},
+        ${options.secondGroup.blockStartTime}, ${options.secondGroup.blockEndTime}, true
+      ),
+      (
+        ${school.id}, ${changeId}, ${options.scheduledDate}, 2, ${options.secondGroup.id},
+        ${options.secondGroup.teacherId}, ${options.secondGroup.name},
+        ${options.secondGroup.blockStartTime}, ${options.secondGroup.blockEndTime},
+        ${options.firstGroup.blockStartTime}, ${options.firstGroup.blockEndTime}, true
+      )
+    `);
+    return changeId;
+  }));
+}
+
 async function finalizeManualForDelivery(
   name: string,
   finalizedAt: Date,
@@ -229,6 +305,11 @@ async function finalizeManualForDelivery(
 async function cleanup(): Promise<void> {
   if (!school?.id) return;
   await asSystem(async () => {
+    await db.transaction(async (tx: any) => {
+      await tx.execute(sql`DELETE FROM classpilot_schedule_change_legs WHERE school_id = ${school.id}`);
+      await tx.execute(sql`DELETE FROM classpilot_schedule_changes WHERE school_id = ${school.id}`);
+      await tx.execute(sql`DELETE FROM classpilot_schedule_change_pairs WHERE school_id = ${school.id}`);
+    });
     await db.execute(sql`DELETE FROM classpilot_session_summary_deliveries WHERE school_id = ${school.id}`);
     await db.execute(sql`DELETE FROM classpilot_monitoring_events WHERE school_id = ${school.id}`);
     await db.execute(sql`DELETE FROM classpilot_session_student_reports WHERE school_id = ${school.id}`);
@@ -260,6 +341,25 @@ async function cleanup(): Promise<void> {
     await db.execute(sql`DELETE FROM users WHERE email LIKE ${`%@${TAG}.example.edu`}`);
   });
 }
+
+afterEach(async () => {
+  if (!school?.id) return;
+  const scheduledGroupIds = scheduledGroupIdsCreatedByCurrentTest;
+  scheduledGroupIdsCreatedByCurrentTest = [];
+  await inSchool(school.id, () => db.transaction(async (tx: any) => {
+    await tx.execute(sql`DELETE FROM classpilot_schedule_change_legs WHERE school_id = ${school.id}`);
+    await tx.execute(sql`DELETE FROM classpilot_schedule_changes WHERE school_id = ${school.id}`);
+    await tx.execute(sql`DELETE FROM classpilot_schedule_change_pairs WHERE school_id = ${school.id}`);
+    if (scheduledGroupIds.length > 0) {
+      await tx.execute(sql`
+        UPDATE groups
+        SET schedule_enabled = false
+        WHERE school_id = ${school.id}
+          AND id IN (${sql.join(scheduledGroupIds.map((id) => sql`${id}`), sql`, `)})
+      `);
+    }
+  }));
+});
 
 before(async () => {
   const dbModule = await import("../dist/db.js");
@@ -643,10 +743,26 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
       slug: `${TAG}-missing-calendar-settings`,
       schoolTimezone: "America/New_York",
     } as any);
+    const missingSettingsTeacher = await storage.createUser({
+      email: `teacher@missing-calendar.${TAG}.example.edu`,
+      firstName: "Missing",
+      lastName: "Settings",
+    } as any);
     try {
+      await storage.createMembership({
+        userId: missingSettingsTeacher.id,
+        schoolId: missingSettingsSchool.id,
+        role: "teacher",
+        status: "active",
+      } as any);
+      await storage.createProductLicense({
+        schoolId: missingSettingsSchool.id,
+        product: "CLASSPILOT",
+        status: "active",
+      } as any);
       const group = await inSchool(missingSettingsSchool.id, () => storage.createGroup({
         schoolId: missingSettingsSchool.id,
-        teacherId: teacher.id,
+        teacherId: missingSettingsTeacher.id,
         name: `${TAG}_missing_calendar_settings_group`,
         groupType: "admin_class",
         status: "active",
@@ -677,7 +793,10 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
         await db.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id = ${missingSettingsSchool.id})`);
         await db.execute(sql`DELETE FROM groups WHERE school_id = ${missingSettingsSchool.id}`);
         await db.execute(sql`DELETE FROM settings WHERE school_id = ${missingSettingsSchool.id}`);
+        await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${missingSettingsSchool.id}`);
+        await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${missingSettingsSchool.id}`);
         await db.execute(sql`DELETE FROM schools WHERE id = ${missingSettingsSchool.id}`);
+        await db.execute(sql`DELETE FROM users WHERE id = ${missingSettingsTeacher.id}`);
       });
     }
   });
@@ -1078,6 +1197,775 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
       WHERE session.group_id = ${group.id}
     `));
     assert.equal(Number(deliveries.rows[0]?.count || 0), 0);
+  });
+
+  it("suppresses original windows, starts both swapped windows once, and restores the recurring schedule next day", async () => {
+    await setCentralRecipient(null);
+    await saveInstructionalMonth("2031-01", []);
+    const firstGroup = await createClass({
+      name: "swap_runtime_first",
+      teacherId: teacher.id,
+      scheduled: true,
+      start: "09:00",
+      end: "10:00",
+      roster: [],
+    });
+    const secondGroup = await createClass({
+      name: "swap_runtime_second",
+      teacherId: secondTeacher.id,
+      scheduled: true,
+      start: "10:00",
+      end: "11:00",
+      roster: [],
+    });
+    const scheduledDate = "2031-01-09";
+    await seedScheduleChange({ firstGroup, secondGroup, scheduledDate });
+
+    const runtimeLogs: string[] = [];
+    const runtimeLogMock = mock.method(console, "log", (...args: unknown[]) => {
+      runtimeLogs.push(args.map(String).join(" "));
+    });
+    try {
+    const sessionRoutes = await import("../dist/routes/classpilot/sessions.js");
+    await assert.rejects(
+      () => inSchool(school.id, () => sessionRoutes.assertManualStartWindow(
+        firstGroup,
+        new Date("2031-01-09T14:30:00.000Z")
+      )),
+      (error: any) => {
+        assert.equal(error.code, "SCHEDULE_CHANGE_WINDOW_REQUIRED");
+        assert.equal(error.status, 403);
+        return true;
+      }
+    );
+    await assert.doesNotReject(() => inSchool(school.id, () =>
+      sessionRoutes.assertManualStartWindow(
+        firstGroup,
+        new Date("2031-01-09T15:30:00.000Z")
+      )
+    ));
+
+    const originalWindowCandidates = await inSchool(school.id, () =>
+      scheduled.getClasspilotGroupsReadyAtEffectiveWindow({
+        schoolId: school.id,
+        scheduledDate,
+        currentTimeHHMM: "09:30",
+      })
+    );
+    assert.equal(originalWindowCandidates.some((group: any) => group.id === firstGroup.id), false);
+    assert.equal(originalWindowCandidates.some((group: any) => group.id === secondGroup.id), true);
+
+    const suppressed = await inSchool(school.id, () => scheduled.processScheduledClassAutoStart({
+      group: firstGroup,
+      scheduledDate,
+      scheduledTeacherConnectedOverride: true,
+      now: new Date("2031-01-09T14:30:00.000Z"),
+    }));
+    assert.deepEqual(suppressed, { status: "skipped", reason: "outside_schedule_window" });
+    assert.equal(await occurrenceCount(firstGroup.id, scheduledDate), 0);
+
+    const secondStarted = await inSchool(school.id, () => scheduled.processScheduledClassAutoStart({
+      group: secondGroup,
+      scheduledDate,
+      scheduledTeacherConnectedOverride: true,
+      now: new Date("2031-01-09T14:30:00.000Z"),
+    }));
+    assert.equal(secondStarted.status, "started");
+    assert.equal(secondStarted.session.scheduledStartAt.toISOString(), "2031-01-09T14:00:00.000Z");
+    assert.equal(secondStarted.session.scheduledEndAt.toISOString(), "2031-01-09T15:00:00.000Z");
+
+    const [firstAttempt, secondAttempt] = await Promise.all([
+      inSchool(school.id, () => scheduled.processScheduledClassAutoStart({
+        group: firstGroup,
+        scheduledDate,
+        scheduledTeacherConnectedOverride: true,
+        now: new Date("2031-01-09T15:30:00.000Z"),
+      })),
+      inSchool(school.id, () => scheduled.processScheduledClassAutoStart({
+        group: firstGroup,
+        scheduledDate,
+        scheduledTeacherConnectedOverride: true,
+        now: new Date("2031-01-09T15:30:00.000Z"),
+      })),
+    ]);
+    assert.equal(firstAttempt.status, "started");
+    assert.equal(secondAttempt.status, "started");
+    assert.equal(firstAttempt.session.id, secondAttempt.session.id);
+    assert.equal(await occurrenceCount(firstGroup.id, scheduledDate), 1);
+    assert.equal(firstAttempt.session.scheduledStartAt.toISOString(), "2031-01-09T15:00:00.000Z");
+    assert.equal(firstAttempt.session.scheduledEndAt.toISOString(), "2031-01-09T16:00:00.000Z");
+
+    const nextDate = "2031-01-10";
+    const nextDay = await inSchool(school.id, () => scheduled.processScheduledClassAutoStart({
+      group: firstGroup,
+      scheduledDate: nextDate,
+      scheduledTeacherConnectedOverride: true,
+      now: new Date("2031-01-10T14:30:00.000Z"),
+    }));
+    assert.equal(nextDay.status, "started");
+    assert.equal(nextDay.session.scheduledStartAt.toISOString(), "2031-01-10T14:00:00.000Z");
+    assert.equal(nextDay.session.scheduledEndAt.toISOString(), "2031-01-10T15:00:00.000Z");
+    } finally {
+      runtimeLogMock.mock.restore();
+    }
+    const runtimeMetrics = runtimeLogs.flatMap((line) => {
+      try {
+        const parsed = JSON.parse(line);
+        return parsed?._aws?.CloudWatchMetrics?.[0]?.Namespace === "SchoolPilot/ClassPilot"
+          ? [parsed]
+          : [];
+      } catch {
+        return [];
+      }
+    });
+    assert.equal(
+      runtimeMetrics.filter((metric) => metric.OriginalWindowStartDenied === 1).length,
+      1
+    );
+    assert.equal(
+      runtimeMetrics.filter((metric) => metric.SwappedOccurrenceStarted === 1).length,
+      2
+    );
+    assert.ok(
+      runtimeMetrics.some((metric) => metric.EffectiveWindowResolved === 1)
+    );
+    assert.equal(
+      runtimeMetrics.some((metric) => JSON.stringify(metric).includes(firstGroup.id)),
+      false
+    );
+  });
+
+  it("Skip Today freezes the swapped window and never falls back to the recurring window", async () => {
+    await setCentralRecipient(null);
+    await saveInstructionalMonth("2031-01", []);
+    const firstGroup = await createClass({
+      name: "swap_skip_first",
+      scheduled: true,
+      start: "09:00",
+      end: "10:00",
+      roster: [],
+    });
+    const secondGroup = await createClass({
+      name: "swap_skip_second",
+      teacherId: secondTeacher.id,
+      scheduled: true,
+      start: "10:00",
+      end: "11:00",
+      roster: [],
+    });
+    const scheduledDate = "2031-01-13";
+    await seedScheduleChange({ firstGroup, secondGroup, scheduledDate });
+
+    const skipped = await inSchool(school.id, () => scheduled.skipScheduledClassBeforeStart({
+      group: firstGroup,
+      scheduledDate,
+      now: new Date("2031-01-13T14:30:00.000Z"),
+    }));
+    assert.equal(skipped.skipped, true);
+    assert.equal(skipped.session?.scheduledState, "skipped");
+    assert.equal(skipped.session?.scheduledStartAt.toISOString(), "2031-01-13T15:00:00.000Z");
+    assert.equal(skipped.session?.scheduledEndAt.toISOString(), "2031-01-13T16:00:00.000Z");
+
+    const originalWindow = await inSchool(school.id, () => scheduled.processScheduledClassAutoStart({
+      group: firstGroup,
+      scheduledDate,
+      scheduledTeacherConnectedOverride: true,
+      now: new Date("2031-01-13T14:45:00.000Z"),
+    }));
+    assert.equal(originalWindow.status, "skipped");
+    const effectiveWindow = await inSchool(school.id, () => scheduled.processScheduledClassAutoStart({
+      group: firstGroup,
+      scheduledDate,
+      scheduledTeacherConnectedOverride: true,
+      now: new Date("2031-01-13T15:15:00.000Z"),
+    }));
+    assert.equal(effectiveWindow.status, "skipped");
+    assert.equal(await occurrenceCount(firstGroup.id, scheduledDate), 1);
+  });
+
+  it("keeps coverage, reconnect promotion, auto-end, and summaries on the frozen swapped window", async () => {
+    await setCentralRecipient(centralRecipient.id);
+    await saveInstructionalMonth("2031-02", []);
+    const firstGroup = await createClass({
+      name: "swap_frozen_lifecycle_first",
+      scheduled: true,
+      start: "09:00",
+      end: "10:00",
+      roster: [],
+    });
+    const secondGroup = await createClass({
+      name: "swap_frozen_lifecycle_second",
+      teacherId: secondTeacher.id,
+      scheduled: true,
+      start: "10:00",
+      end: "11:00",
+      roster: [],
+    });
+    const scheduledDate = "2031-02-03";
+    await seedScheduleChange({ firstGroup, secondGroup, scheduledDate });
+
+    const unattended = await inSchool(school.id, () => scheduled.processScheduledClassAutoStart({
+      group: firstGroup,
+      scheduledDate,
+      scheduledTeacherConnectedOverride: false,
+      now: new Date("2031-02-03T15:05:00.000Z"),
+    }));
+    assert.equal(unattended.status, "coverage_needed");
+    const occurrence = await inSchool(school.id, () =>
+      storage.getScheduledTeachingSessionOccurrence(school.id, firstGroup.id, scheduledDate)
+    );
+    const conflict = await inSchool(school.id, () =>
+      storage.getScheduledClassConflictByIdAndSchool(unattended.conflictId, school.id)
+    );
+    assert.equal(occurrence.scheduledStartAt.toISOString(), "2031-02-03T15:00:00.000Z");
+    assert.equal(occurrence.scheduledEndAt.toISOString(), "2031-02-03T16:00:00.000Z");
+    assert.equal(conflict.blockStartTime, "10:00");
+    assert.equal(conflict.blockEndTime, "11:00");
+    assert.equal(conflict.conflictPayload.blockStartTime, "10:00");
+    assert.equal(conflict.conflictPayload.blockEndTime, "11:00");
+
+    const reconnected = await inSchool(school.id, () =>
+      scheduled.startActiveScheduledClassesForTeacher({
+        schoolId: school.id,
+        teacherId: teacher.id,
+        now: new Date("2031-02-03T15:10:00.000Z"),
+      })
+    );
+    assert.equal(reconnected.length, 1);
+    assert.equal(reconnected[0].id, occurrence.id);
+    assert.equal(reconnected[0].scheduledStartAt.toISOString(), "2031-02-03T15:00:00.000Z");
+    assert.equal(reconnected[0].scheduledEndAt.toISOString(), "2031-02-03T16:00:00.000Z");
+
+    await scheduler.reconcileClasspilotScheduledSessions(
+      new Date("2031-02-03T16:00:00.000Z"),
+      school.id
+    );
+    const finalized = await inSchool(school.id, () =>
+      storage.getTeachingSessionById(occurrence.id)
+    );
+    assert.equal(finalized.scheduledState, "finalized");
+    assert.equal(finalized.endTime.toISOString(), "2031-02-03T16:00:00.000Z");
+    assert.deepEqual(
+      (await deliveryRows(occurrence.id)).map((row) => row.recipient_kind),
+      ["central", "teacher"]
+    );
+  });
+
+  it("refetches the class after cancellation and blocks a stale recurring-window candidate", async () => {
+    await setCentralRecipient(null);
+    await saveInstructionalMonth("2031-01", []);
+    const firstGroup = await createClass({
+      name: "swap_cancel_stale_first",
+      scheduled: true,
+      start: "09:00",
+      end: "10:00",
+      roster: [],
+    });
+    const secondGroup = await createClass({
+      name: "swap_cancel_stale_second",
+      teacherId: secondTeacher.id,
+      scheduled: true,
+      start: "10:00",
+      end: "11:00",
+      roster: [],
+    });
+    const scheduledDate = "2031-01-15";
+    const changeId = await seedScheduleChange({ firstGroup, secondGroup, scheduledDate });
+
+    const cancelled = await inSchool(school.id, () =>
+      storage.applyClasspilotScheduleChangeAction({
+        schoolId: school.id,
+        changeId,
+        action: "cancel",
+        expectedRevision: 0,
+        reason: "Event cancelled",
+        actor: { userId: centralRecipient.id, role: "admin" },
+        now: new Date("2031-01-15T12:30:00.000Z"),
+      })
+    );
+    assert.equal(cancelled.status, "saved");
+    assert.equal(cancelled.change.status, "cancelled");
+
+    const edited = await inSchool(school.id, () => storage.updateGroup(
+      firstGroup.id,
+      { blockStartTime: "08:00", blockEndTime: "09:00" },
+      centralRecipient.id
+    ));
+    assert.ok(edited);
+
+    // The stale object still says 09:00-10:00. The date/group lock path must
+    // refetch 08:00-09:00 and refuse to create at the obsolete window.
+    const staleAttempt = await inSchool(school.id, () => scheduled.processScheduledClassAutoStart({
+      group: firstGroup,
+      scheduledDate,
+      scheduledTeacherConnectedOverride: true,
+      now: new Date("2031-01-15T14:30:00.000Z"),
+    }));
+    assert.deepEqual(staleAttempt, { status: "skipped", reason: "outside_schedule_window" });
+    assert.equal(await occurrenceCount(firstGroup.id, scheduledDate), 0);
+
+    const currentAttempt = await inSchool(school.id, () => scheduled.processScheduledClassAutoStart({
+      group: edited,
+      scheduledDate,
+      scheduledTeacherConnectedOverride: true,
+      now: new Date("2031-01-15T13:30:00.000Z"),
+    }));
+    assert.equal(currentAttempt.status, "started");
+    assert.equal(currentAttempt.session.scheduledStartAt.toISOString(), "2031-01-15T13:00:00.000Z");
+    assert.equal(currentAttempt.session.scheduledEndAt.toISOString(), "2031-01-15T14:00:00.000Z");
+  });
+
+  it("blocks a school timezone change while an approved future swap is active", async () => {
+    await setCentralRecipient(null);
+    await saveInstructionalMonth("2031-03", []);
+    const firstGroup = await createClass({
+      name: "swap_current_timezone_first",
+      scheduled: true,
+      start: "09:00",
+      end: "10:00",
+      roster: [],
+    });
+    const secondGroup = await createClass({
+      name: "swap_current_timezone_second",
+      teacherId: secondTeacher.id,
+      scheduled: true,
+      start: "10:00",
+      end: "11:00",
+      roster: [],
+    });
+    const scheduledDate = "2031-03-10";
+    const changeId = await seedScheduleChange({ firstGroup, secondGroup, scheduledDate });
+    const stored = await inSchool(school.id, () => db.execute(sql`
+      SELECT timezone_snapshot FROM classpilot_schedule_changes WHERE id = ${changeId}
+    `));
+    assert.equal(stored.rows[0]?.timezone_snapshot, "America/New_York");
+
+    await assert.rejects(
+      () => asSystem(() => storage.updateSchool(school.id, {
+        schoolTimezone: "America/Los_Angeles",
+      })),
+      (error: any) => {
+        assert.equal(error.code, "APPROVED_SCHEDULE_CHANGE_EXISTS");
+        assert.equal(error.status, 409);
+        return true;
+      }
+    );
+
+    const result = await inSchool(school.id, () => scheduled.processScheduledClassAutoStart({
+      group: firstGroup,
+      scheduledDate,
+      scheduledTeacherConnectedOverride: true,
+      now: new Date("2031-03-10T14:30:00.000Z"),
+    }));
+    assert.equal(result.status, "started");
+    assert.equal(result.session.scheduledTimezone, "America/New_York");
+    assert.equal(result.session.scheduledStartAt.toISOString(), "2031-03-10T14:00:00.000Z");
+    assert.equal(result.session.scheduledEndAt.toISOString(), "2031-03-10T15:00:00.000Z");
+  });
+
+  it("linearizes a timezone writer before freezing the swapped occurrence", async () => {
+    await setCentralRecipient(null);
+    await saveInstructionalMonth("2031-03", []);
+    const firstGroup = await createClass({
+      name: "swap_timezone_race_first",
+      scheduled: true,
+      start: "06:00",
+      end: "10:00",
+      roster: [],
+    });
+    const secondGroup = await createClass({
+      name: "swap_timezone_race_second",
+      teacherId: secondTeacher.id,
+      scheduled: true,
+      start: "10:00",
+      end: "14:00",
+      roster: [],
+    });
+    const scheduledDate = "2031-03-11";
+    await seedScheduleChange({ firstGroup, secondGroup, scheduledDate });
+
+    const writer = await pool.connect();
+    let writerCommitted = false;
+    let startPromise: Promise<any> | undefined;
+    try {
+      await writer.query("BEGIN");
+      const pidResult = await writer.query("SELECT pg_backend_pid() AS pid");
+      const writerPid = Number(pidResult.rows[0].pid);
+      await writer.query(
+        "UPDATE schools SET school_timezone = $2, updated_at = NOW() WHERE id = $1",
+        [school.id, "America/Los_Angeles"]
+      );
+
+      startPromise = inSchool(school.id, () => scheduled.processScheduledClassAutoStart({
+        group: firstGroup,
+        scheduledDate,
+        scheduledTeacherConnectedOverride: true,
+        // 13:30 New York and 10:30 Los Angeles are both in the effective
+        // 10:00-14:00 window, so the pre-lock candidate cannot short-circuit.
+        now: new Date("2031-03-11T17:30:00.000Z"),
+      }));
+      await waitFor(async () => {
+        const blocked = await schedulerPool.query(
+          "SELECT count(*)::int AS count FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))",
+          [writerPid]
+        );
+        return Number(blocked.rows[0]?.count || 0) > 0;
+      }, "occurrence preparation did not wait on the authoritative school timezone row");
+
+      await writer.query("COMMIT");
+      writerCommitted = true;
+      const result = await startPromise;
+      assert.equal(result.status, "started");
+      assert.equal(result.session.scheduledTimezone, "America/Los_Angeles");
+      assert.equal(result.session.scheduledStartAt.toISOString(), "2031-03-11T17:00:00.000Z");
+      assert.equal(result.session.scheduledEndAt.toISOString(), "2031-03-11T21:00:00.000Z");
+    } finally {
+      if (!writerCommitted) await writer.query("ROLLBACK").catch(() => undefined);
+      if (!writerCommitted) await startPromise?.catch(() => undefined);
+      writer.release();
+      await asSystem(() => db.execute(sql`
+        UPDATE schools
+        SET school_timezone = 'America/New_York', updated_at = NOW()
+        WHERE id = ${school.id}
+      `));
+    }
+  });
+
+  it("does not tombstone the stale school date when timezone changes during Skip Today", async () => {
+    await setCentralRecipient(null);
+    await saveInstructionalMonth("2031-03", []);
+    const group = await createClass({
+      name: "skip_timezone_date_race",
+      scheduled: true,
+      start: "09:00",
+      end: "10:00",
+      roster: [],
+    });
+    const staleNewYorkDate = "2031-03-12";
+    const now = new Date("2031-03-12T05:30:00.000Z");
+    const writer = await pool.connect();
+    let writerCommitted = false;
+    let skipPromise: Promise<any> | undefined;
+    try {
+      await writer.query("BEGIN");
+      const pidResult = await writer.query("SELECT pg_backend_pid() AS pid");
+      const writerPid = Number(pidResult.rows[0].pid);
+      await writer.query(
+        "UPDATE schools SET school_timezone = $2, updated_at = NOW() WHERE id = $1",
+        [school.id, "America/Los_Angeles"]
+      );
+
+      skipPromise = inSchool(school.id, () => scheduled.skipScheduledClassBeforeStart({
+        group,
+        scheduledDate: staleNewYorkDate,
+        now,
+      }));
+      await waitFor(async () => {
+        const blocked = await schedulerPool.query(
+          "SELECT count(*)::int AS count FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))",
+          [writerPid]
+        );
+        return Number(blocked.rows[0]?.count || 0) > 0;
+      }, "Skip Today did not wait on the authoritative school timezone row");
+
+      await writer.query("COMMIT");
+      writerCommitted = true;
+      assert.deepEqual(await skipPromise, {
+        skipped: false,
+        reason: "school_date_changed",
+      });
+      assert.equal(await occurrenceCount(group.id, staleNewYorkDate), 0);
+      assert.equal(await occurrenceCount(group.id, "2031-03-11"), 0);
+    } finally {
+      if (!writerCommitted) await writer.query("ROLLBACK").catch(() => undefined);
+      if (!writerCommitted) await skipPromise?.catch(() => undefined);
+      writer.release();
+      await asSystem(() => db.execute(sql`
+        UPDATE schools
+        SET school_timezone = 'America/New_York', updated_at = NOW()
+        WHERE id = ${school.id}
+      `));
+    }
+  });
+
+  it("fails closed when an approved swap becomes unsafe before occurrence creation", async () => {
+    await setCentralRecipient(null);
+    await saveInstructionalMonth("2031-04", []);
+    const firstGroup = await createClass({
+      name: "swap_runtime_guard_first",
+      scheduled: true,
+      start: "09:00",
+      end: "10:00",
+      roster: [],
+    });
+    const secondGroup = await createClass({
+      name: "swap_runtime_guard_second",
+      teacherId: secondTeacher.id,
+      scheduled: true,
+      start: "10:00",
+      end: "11:00",
+      roster: [],
+    });
+    const scheduledDate = "2031-04-01";
+    await seedScheduleChange({ firstGroup, secondGroup, scheduledDate });
+
+    // Simulate a legacy/direct writer that bypassed the normal assignment
+    // guards after approval. The locked runtime validator must not execute the
+    // swap or silently fall back to the recurring window.
+    await asSystem(() => db.execute(sql`
+      UPDATE school_memberships
+      SET status = 'inactive'
+      WHERE school_id = ${school.id} AND user_id = ${secondTeacher.id}
+    `));
+    const logs: string[] = [];
+    const logMock = mock.method(console, "log", (...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+    });
+    try {
+      await assert.rejects(
+        inSchool(school.id, () => scheduled.processScheduledClassAutoStart({
+          group: firstGroup,
+          scheduledDate,
+          scheduledTeacherConnectedOverride: true,
+          now: new Date("2031-04-01T14:15:00.000Z"),
+        })),
+        (error: any) => error?.code === "SCHEDULE_CHANGE_EXECUTION_INVALID"
+      );
+    } finally {
+      logMock.mock.restore();
+      await asSystem(() => db.execute(sql`
+        UPDATE school_memberships
+        SET status = 'active'
+        WHERE school_id = ${school.id} AND user_id = ${secondTeacher.id}
+      `));
+    }
+
+    assert.equal(await occurrenceCount(firstGroup.id, scheduledDate), 0);
+    const executionMetrics = logs.flatMap((line) => {
+      try {
+        const parsed = JSON.parse(line);
+        return parsed.ScheduleChangeExecutionInvalid === 1 ? [parsed] : [];
+      } catch {
+        return [];
+      }
+    });
+    assert.equal(executionMetrics.length, 1);
+    assert.equal(JSON.stringify(executionMetrics[0]).includes(firstGroup.id), false);
+    assert.equal(JSON.stringify(executionMetrics[0]).includes(secondTeacher.id), false);
+  });
+
+  it("releases pending reservations but refuses approved execution after license expiry", async () => {
+    await setCentralRecipient(null);
+    await saveInstructionalMonth("2031-04", []);
+    const approvedFirst = await createClass({
+      name: "swap_expired_license_approved_first",
+      scheduled: true,
+      start: "09:00",
+      end: "10:00",
+      roster: [],
+    });
+    const approvedSecond = await createClass({
+      name: "swap_expired_license_approved_second",
+      teacherId: secondTeacher.id,
+      scheduled: true,
+      start: "10:00",
+      end: "11:00",
+      roster: [],
+    });
+    const pendingFirst = await createClass({
+      name: "swap_expired_license_pending_first",
+      scheduled: true,
+      start: "15:00",
+      end: "16:00",
+      roster: [],
+    });
+    const pendingSecond = await createClass({
+      name: "swap_expired_license_pending_second",
+      teacherId: secondTeacher.id,
+      scheduled: true,
+      start: "16:00",
+      end: "17:00",
+      roster: [],
+    });
+    const approvedDate = "2031-04-02";
+    const pendingDate = "2031-04-03";
+    await seedScheduleChange({
+      firstGroup: approvedFirst,
+      secondGroup: approvedSecond,
+      scheduledDate: approvedDate,
+    });
+    const pendingChangeId = await seedScheduleChange({
+      firstGroup: pendingFirst,
+      secondGroup: pendingSecond,
+      scheduledDate: pendingDate,
+      status: "pending_admin",
+    });
+
+    await asSystem(() => db.execute(sql`
+      UPDATE product_licenses
+      SET expires_at = ${new Date("2020-01-01T00:00:00.000Z")}
+      WHERE school_id = ${school.id} AND product = 'CLASSPILOT'
+    `));
+    try {
+      await assert.rejects(
+        inSchool(school.id, () => scheduled.processScheduledClassAutoStart({
+          group: approvedFirst,
+          scheduledDate: approvedDate,
+          scheduledTeacherConnectedOverride: true,
+          now: new Date("2031-04-02T14:15:00.000Z"),
+        })),
+        (error: any) => error?.code === "SCHEDULE_CHANGE_EXECUTION_INVALID"
+      );
+      assert.equal(await occurrenceCount(approvedFirst.id, approvedDate), 0);
+
+      // Expiry is lifecycle cleanup, not product access: even after licensing
+      // lapses, a recovery tick must release old pending reservations.
+      await scheduler.reconcileClasspilotScheduledSessions(
+        new Date("2031-04-04T04:01:00.000Z"),
+        school.id
+      );
+      const pendingState = await inSchool(school.id, () => db.execute(sql`
+        SELECT status, reservation_active
+        FROM classpilot_schedule_changes
+        WHERE id = ${pendingChangeId}
+      `));
+      assert.equal(pendingState.rows[0]?.status, "expired");
+      assert.equal(pendingState.rows[0]?.reservation_active, false);
+    } finally {
+      await asSystem(() => db.execute(sql`
+        UPDATE product_licenses
+        SET expires_at = NULL
+        WHERE school_id = ${school.id} AND product = 'CLASSPILOT'
+      `));
+    }
+  });
+
+  it("expires incomplete swap approvals at the earliest bell once and emits an ID-free metric", async () => {
+    await setCentralRecipient(null);
+    await saveInstructionalMonth("2031-01", []);
+    const firstGroup = await createClass({
+      name: "swap_expiry_first",
+      scheduled: true,
+      start: "09:00",
+      end: "10:00",
+      roster: [],
+    });
+    const secondGroup = await createClass({
+      name: "swap_expiry_second",
+      teacherId: secondTeacher.id,
+      scheduled: true,
+      start: "10:00",
+      end: "11:00",
+      roster: [],
+    });
+    const scheduledDate = "2031-01-14";
+    const changeId = await seedScheduleChange({
+      firstGroup,
+      secondGroup,
+      scheduledDate,
+      status: "pending_counterpart",
+    });
+
+    const logs: string[] = [];
+    const messageStart = sentMessages.length;
+    const logMock = mock.method(console, "log", (...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+    });
+    try {
+      await scheduler.reconcileClasspilotScheduledSessions(
+        new Date("2031-01-14T14:00:00.000Z"),
+        school.id
+      );
+      await scheduler.reconcileClasspilotScheduledSessions(
+        new Date("2031-01-14T14:01:00.000Z"),
+        school.id
+      );
+    } finally {
+      logMock.mock.restore();
+    }
+
+    const state = await inSchool(school.id, () => db.execute(sql`
+      SELECT change.status, change.reservation_active,
+             bool_and(NOT leg.reservation_active) AS legs_released
+      FROM classpilot_schedule_changes AS change
+      JOIN classpilot_schedule_change_legs AS leg
+        ON leg.schedule_change_id = change.id
+      WHERE change.id = ${changeId}
+      GROUP BY change.status, change.reservation_active
+    `));
+    assert.equal(state.rows[0]?.status, "expired");
+    assert.equal(state.rows[0]?.reservation_active, false);
+    assert.equal(state.rows[0]?.legs_released, true);
+
+    const expiryMetrics = logs.flatMap((line) => {
+      try {
+        const parsed = JSON.parse(line);
+        return parsed.ScheduleChangeExpired === 1 ? [parsed] : [];
+      } catch {
+        return [];
+      }
+    });
+    assert.equal(expiryMetrics.length, 1, "idempotent reconcile should emit one expiry metric");
+    assert.equal(expiryMetrics[0].Outcome, "approval_incomplete_at_bell");
+    assert.equal(JSON.stringify(expiryMetrics[0]).includes(changeId), false);
+    await waitFor(
+      async () => sentMessages.slice(messageStart).filter((message) =>
+        message.subject === `ClassPilot schedule change: ${scheduledDate}`
+      ).length === 3,
+      "expired schedule-change staff notifications were not delivered"
+    );
+    const expirationMessages = sentMessages.slice(messageStart).filter((message) =>
+      message.subject === `ClassPilot schedule change: ${scheduledDate}`
+    );
+    assert.equal(new Set(expirationMessages.map((message) => message.to)).size, 3);
+    assert.ok(expirationMessages.every((message) => /now expired/i.test(message.text)));
+    assert.ok(expirationMessages.every((message) => !/Event-day class-time exchange/.test(message.text)));
+  });
+
+  it("expires a prior-date pending swap after a missed scheduler bell", async () => {
+    await setCentralRecipient(null);
+    await saveInstructionalMonth("2031-01", []);
+    const firstGroup = await createClass({
+      name: "swap_expiry_recovery_first",
+      scheduled: true,
+      start: "09:00",
+      end: "10:00",
+      roster: [],
+    });
+    const secondGroup = await createClass({
+      name: "swap_expiry_recovery_second",
+      teacherId: secondTeacher.id,
+      scheduled: true,
+      start: "10:00",
+      end: "11:00",
+      roster: [],
+    });
+    const scheduledDate = "2031-01-16";
+    const changeId = await seedScheduleChange({
+      firstGroup,
+      secondGroup,
+      scheduledDate,
+      status: "pending_admin",
+    });
+
+    // Simulate the worker being unavailable for the entire event date. The
+    // next day's bounded recovery sweep must release the old reservation.
+    await scheduler.reconcileClasspilotScheduledSessions(
+      new Date("2031-01-17T05:01:00.000Z"),
+      school.id
+    );
+    const state = await inSchool(school.id, () => db.execute(sql`
+      SELECT change.status, change.reservation_active,
+             bool_and(NOT leg.reservation_active) AS legs_released
+      FROM classpilot_schedule_changes AS change
+      JOIN classpilot_schedule_change_legs AS leg
+        ON leg.schedule_change_id = change.id
+      WHERE change.id = ${changeId}
+      GROUP BY change.status, change.reservation_active
+    `));
+    assert.equal(state.rows[0]?.status, "expired");
+    assert.equal(state.rows[0]?.reservation_active, false);
+    assert.equal(state.rows[0]?.legs_released, true);
   });
 
   it("creates one frozen occurrence during a delayed in-window tick and preserves schedule, teacher, and roster edits", async () => {
