@@ -64,6 +64,15 @@ import {
   trackTransientCommandResponse,
   transientEntryFeedback,
 } from '../lib/commandDeliveryTruth';
+import {
+  className as scheduleClassName,
+  effectiveWindow,
+  formatWindow as formatScheduleWindow,
+  invalidateScheduleChanges,
+  scheduleChangeApi,
+  scheduleChangeKeys,
+  unwrapToday,
+} from '../lib/scheduleChanges';
 
 const EMPTY_LIST = Object.freeze([]);
 const EMPTY_TILE_MAP = new Map();
@@ -469,6 +478,13 @@ export default function Dashboard() {
   );
   const effectiveSession = isAdmin ? (observedSession || activeSession) : activeSession;
   const activeSchoolId = school?.id || currentUser?.schoolId || null;
+  const { data: todayScheduleChanges = EMPTY_LIST } = useQuery({
+    queryKey: scheduleChangeKeys.today(activeSchoolId),
+    queryFn: scheduleChangeApi.getToday,
+    select: unwrapToday,
+    enabled: Boolean(isTeacher && activeSchoolId),
+    refetchInterval: 60_000,
+  });
   const effectiveSessionId = effectiveSession?.id || null;
   const adminSchoolMode = isAdmin && !effectiveSessionId;
   const aggregatedStudentsQueryKey = useMemo(
@@ -930,6 +946,11 @@ export default function Dashboard() {
               queryClient.invalidateQueries({ queryKey: ['/api/coverage/claimed-students'] });
               queryClient.invalidateQueries({ queryKey: ['/api/sessions/active'], exact: false });
               queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
+            }
+            if (message.type === 'schedule-change-updated' || message.type === 'classpilot-schedule-change-updated') {
+              void invalidateScheduleChanges(activeSchoolIdRef.current);
+              queryClient.invalidateQueries({ queryKey: ['/api/teacher/groups'], exact: false });
+              queryClient.invalidateQueries({ queryKey: ['/api/sessions/active'], exact: false });
             }
             if (message.type === 'ai-classification') {
               queueRealtimeEvent(message);
@@ -2685,6 +2706,22 @@ export default function Dashboard() {
           </div>
         </div>
       </header>
+
+      {isTeacher && todayScheduleChanges.length > 0 ? (
+        <button
+          type="button"
+          onClick={() => navigate("/classpilot/my-settings/schedule-changes")}
+          className="flex w-full items-center justify-center gap-2 border-b border-amber-300 bg-amber-50 px-4 py-2 text-left text-xs font-semibold text-amber-950 transition-colors hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-500 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-100 dark:hover:bg-amber-950/55"
+          data-testid="today-schedule-change-indicator"
+        >
+          <Calendar className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <span>
+            Schedule changed today · {scheduleClassName(todayScheduleChanges[0])} {formatScheduleWindow(effectiveWindow(todayScheduleChanges[0]))}
+            {todayScheduleChanges.length > 1 ? ` · +${todayScheduleChanges.length - 1} more` : ""}
+          </span>
+          <span className="underline underline-offset-2">View</span>
+        </button>
+      ) : null}
 
       {/* Attendance Panel */}
       {showAttendance && (

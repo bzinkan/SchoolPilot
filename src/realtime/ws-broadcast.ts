@@ -1,6 +1,6 @@
 import { WebSocket } from "ws";
 
-export type WsRole = "teacher" | "school_admin" | "super_admin" | "student";
+export type WsRole = "teacher" | "office_staff" | "school_admin" | "super_admin" | "student";
 
 export type WSClient = {
   ws: WebSocket;
@@ -60,7 +60,7 @@ function removeSocket(map: Map<string, Set<WebSocket>>, schoolId: string, ws: We
 }
 
 function isStaffRole(role: WsRole): boolean {
-  return role === "teacher" || role === "school_admin" || role === "super_admin";
+  return role === "teacher" || role === "office_staff" || role === "school_admin" || role === "super_admin";
 }
 
 export function registerWsClient(ws: WebSocket): WSClient {

@@ -4,6 +4,7 @@ import { sql } from "drizzle-orm";
 
 import {
   addGroupStudentsDetailed,
+  addGroupTeacher,
   archiveGroup,
   createGroup,
   createMembership,
@@ -21,6 +22,7 @@ import {
   replaceGroupTeachers,
   updateAdminClassWithTeachers,
   upsertAdminClassroomClass,
+  upsertClasspilotGroupWithAssignments,
   upsertClassroomCourse,
   upsertClassroomCourseStudents,
   getClassroomCourseStudents,
@@ -127,6 +129,58 @@ describe("ClassPilot admin class management storage contracts", () => {
       teachers.map((entry) => [entry.teacherId, entry.relationshipRole]).sort(),
       [[teacherB.id, "primary"], [teacherC.id, "co-teacher"]].sort()
     );
+  });
+
+  it("preserves locked primary, co-teacher, and roster assignments during a concurrent group patch", async () => {
+    const created = await inSchool(school.id, () =>
+      upsertClasspilotGroupWithAssignments({
+        schoolId: school.id,
+        data: {
+          name: `${TAG}_Atomic Teacher Group`,
+          groupType: "teacher_created",
+          status: "active",
+        },
+        primaryTeacherId: teacherA.id,
+        coTeacherIds: [teacherC.id],
+        studentIds: [studentA.id],
+        scheduleChangeActorId: admin.id,
+      })
+    );
+
+    await Promise.all([
+      inSchool(school.id, () =>
+        upsertClasspilotGroupWithAssignments({
+          schoolId: school.id,
+          existingGroupId: created.group.id,
+          data: { name: `${TAG}_Atomic Teacher Group Updated` },
+          // Omitted assignments must be loaded only after the helper owns the
+          // school/config/group locks; a route-side snapshot loses this race.
+          scheduleChangeActorId: admin.id,
+        })
+      ),
+      inSchool(school.id, () =>
+        addGroupTeacher(created.group.id, teacherB.id, "co-teacher", admin.id)
+      ),
+    ]);
+
+    const saved = await inSchool(school.id, () =>
+      getGroupByIdAndSchool(created.group.id, school.id)
+    );
+    assert.equal(saved?.name, `${TAG}_Atomic Teacher Group Updated`);
+    assert.equal(saved?.teacherId, teacherA.id);
+    const teachers = await inSchool(school.id, () =>
+      getGroupTeacherSummaries(created.group.id, school.id)
+    );
+    assert.deepEqual(
+      teachers.map((entry) => [entry.teacherId, entry.relationshipRole]).sort(),
+      [
+        [teacherA.id, "primary"],
+        [teacherB.id, "co-teacher"],
+        [teacherC.id, "co-teacher"],
+      ].sort()
+    );
+    const roster = await inSchool(school.id, () => getGroupStudents(created.group.id));
+    assert.deepEqual(roster.map((row) => row.student.id), [studentA.id]);
   });
 
   it("batch roster assignment is idempotent and reports already-present students", async () => {

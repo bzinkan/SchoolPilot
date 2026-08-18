@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import {
+  CLASSPILOT_SCHEDULE_CHANGE_RLS_TABLES,
   GOPILOT_CHILD_RLS_TABLES,
   REVIEWED_RLS_TABLE_ENABLEMENTS,
   addReviewedRlsTable,
@@ -15,6 +16,7 @@ const deploySource = readFileSync(new URL("../scripts/deploy.sh", import.meta.ur
 const migrationSource = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
 const claudeSource = readFileSync(new URL("../CLAUDE.md", import.meta.url), "utf8");
 const terraformVariables = readFileSync(new URL("../infra/variables.tf", import.meta.url), "utf8");
+const productionTfvars = readFileSync(new URL("../infra/production.tfvars", import.meta.url), "utf8");
 
 function taskDefinition(
   containerName: "api" | "scheduler-worker",
@@ -54,6 +56,7 @@ describe("one-release RLS table enablement", () => {
       "classpilot_student_control_states",
       targetTable,
       ...GOPILOT_CHILD_RLS_TABLES,
+      ...CLASSPILOT_SCHEDULE_CHANGE_RLS_TABLES,
     ]);
     const api = taskDefinition("api");
     const worker = taskDefinition("scheduler-worker");
@@ -130,6 +133,56 @@ describe("one-release RLS table enablement", () => {
     });
   });
 
+  it("adds the exact reviewed ClassPilot schedule-change bundle atomically", () => {
+    const api = taskDefinition("api");
+    const worker = taskDefinition("scheduler-worker");
+    const bundle = CLASSPILOT_SCHEDULE_CHANGE_RLS_TABLES.join(",");
+    assert.deepEqual(
+      verifyLiveRlsEnablementSources({
+        apiTaskDefinition: api,
+        workerTaskDefinition: worker,
+        table: bundle,
+      }),
+      {
+        previousTables: ["students", "teaching_sessions"],
+        addedTables: CLASSPILOT_SCHEDULE_CHANGE_RLS_TABLES,
+      }
+    );
+    for (const definition of [api, worker]) {
+      addReviewedRlsTable(definition, {
+        containerName: definition.containerDefinitions[0].name as "api" | "scheduler-worker",
+        table: bundle,
+      });
+      assert.equal(
+        environmentValue(definition, "RLS_ENABLED_TABLES"),
+        `students,teaching_sessions,${bundle}`
+      );
+    }
+    verifyEnabledRlsCandidates({
+      taskDefinitions: [
+        { taskDefinition: api, containerName: "api" },
+        { taskDefinition: worker, containerName: "scheduler-worker" },
+      ],
+      table: bundle,
+      expectedPreviousTables: ["students", "teaching_sessions"],
+    });
+    for (const invalid of [
+      CLASSPILOT_SCHEDULE_CHANGE_RLS_TABLES[0],
+      CLASSPILOT_SCHEDULE_CHANGE_RLS_TABLES.slice(0, 2).join(","),
+      [...CLASSPILOT_SCHEDULE_CHANGE_RLS_TABLES].reverse().join(","),
+    ]) {
+      assert.throws(
+        () =>
+          verifyLiveRlsEnablementSources({
+            apiTaskDefinition: taskDefinition("api"),
+            workerTaskDefinition: taskDefinition("scheduler-worker"),
+            table: invalid,
+          }),
+        /must match one exact reviewed singleton or ordered bundle/
+      );
+    }
+  });
+
   it("preserves both kill switches by rejecting unsafe or redundant activation", () => {
     assert.throws(
       () =>
@@ -198,6 +251,7 @@ describe("one-release RLS table enablement", () => {
     assert.match(validation, /classpilot_session_summary_deliveries/);
     assert.match(validation, /passpilot_grade_students/);
     assert.match(validation, /authorized_pickups,custody_alerts,dismissal_changes,dismissal_overrides,dismissal_queue,family_group_students,homeroom_teachers/);
+    assert.match(validation, /classpilot_schedule_change_pairs,classpilot_schedule_changes,classpilot_schedule_change_legs/);
     assert.match(validation, /"\$ENV" != "production"/);
     assert.match(validation, /"\$DEPLOY_BACKEND" != true/);
     assert.match(validation, /"\$DEPLOY_FRONTEND" != false/);
@@ -233,6 +287,9 @@ describe("one-release RLS table enablement", () => {
     assert.match(assertion, /classpilot_session_summary_deliveries/);
     assert.match(assertion, /passpilot_grade_students/);
     for (const table of GOPILOT_CHILD_RLS_TABLES) assert.match(assertion, new RegExp(table));
+    for (const table of CLASSPILOT_SCHEDULE_CHANGE_RLS_TABLES) {
+      assert.match(assertion, new RegExp(table));
+    }
     assert.match(assertion, /RLS_GUC_ENABLED !== "true"/);
     assert.match(assertion, /enabledRlsTables\.has\(table\)/);
     assert.match(assertion, /relation\.relrowsecurity/);
@@ -250,6 +307,10 @@ describe("one-release RLS table enablement", () => {
       claudeSource,
       /--enable-rls-table authorized_pickups,custody_alerts,dismissal_changes,dismissal_overrides,dismissal_queue,family_group_students,homeroom_teachers/
     );
+    assert.match(
+      claudeSource,
+      /--enable-rls-table classpilot_schedule_change_pairs,classpilot_schedule_changes,classpilot_schedule_change_legs/
+    );
     assert.match(claudeSource, /Omit the flag on later deploys/);
     assert.match(claudeSource, /per-table kill-switch removal then remains removed/);
     const defaultAllowlist = terraformVariables.match(
@@ -260,6 +321,23 @@ describe("one-release RLS table enablement", () => {
         defaultAllowlist.split(",").includes(table),
         false,
         `${table} must enter production only through the reviewed one-shot rollout`
+      );
+    }
+    for (const table of CLASSPILOT_SCHEDULE_CHANGE_RLS_TABLES) {
+      assert.equal(
+        defaultAllowlist.split(",").includes(table),
+        false,
+        `${table} must enter production only through the reviewed one-shot rollout`
+      );
+    }
+    const productionAllowlist = productionTfvars.match(
+      /^rls_enabled_tables\s*=\s*"([^"]+)"/m
+    )?.[1] ?? "";
+    for (const table of CLASSPILOT_SCHEDULE_CHANGE_RLS_TABLES) {
+      assert.equal(
+        productionAllowlist.split(",").includes(table),
+        false,
+        `${table} must not be preloaded into production.tfvars before live verification`
       );
     }
     assert.match(claudeSource, /separate baseline-adoption change/);

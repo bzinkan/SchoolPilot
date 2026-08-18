@@ -598,6 +598,35 @@ Optional time-based auto-start/end for ClassPilot classes. Schema columns on `gr
 - **Skip-date pattern**: When a teacher manually ends a scheduled class, `schedule_skipped_date` is set to today to prevent the scheduler from restarting it. Resets naturally the next day.
 - **Session summary email**: `buildAndSendSessionSummary()` in `src/routes/classpilot/sessions.ts` is exported and called by both manual end and auto-end. Uses school timezone (not hardcoded ET).
 
+### ClassPilot One-Day Schedule Changes
+ClassPilot can exchange the scheduled time windows of two administrator-linked
+official classes for one instructional date. This is a dated exception, not a
+recurring schedule edit: teachers, co-teachers, rosters, and class ownership do
+not move, and the normal `groups.block_*` schedule resumes the next day.
+
+- **Eligibility:** administrators and school administrators configure exact
+  eligible class pairs. Primary teachers may request and accept; co-teachers and
+  office staff are view-only. Teacher requests default off and require the other
+  primary teacher's acceptance. Administrator approval defaults on.
+- **Authority:** `classpilot_schedule_change_pairs`,
+  `classpilot_schedule_changes`, and `classpilot_schedule_change_legs` are the
+  tenant-scoped workflow and effective-window authority. Never implement a
+  one-day change by updating `groups.block_start_time` or `block_end_time`.
+- **Effective schedule:** every pre-occurrence path—scheduler readiness,
+  automatic/manual start, occurrence freezing, Skip Today, and scheduled
+  conflict projection—must use the shared effective-window resolver. An
+  approved leg suppresses the original window for that class/date.
+- **Frozen history:** approval does not pre-create a teaching session. The
+  canonical occurrence and roster snapshot are created at the effective bell;
+  once created, the occurrence remains immutable. Skip Today skips only that
+  class's effective occurrence and never falls back to the original window.
+- **Concurrency:** request transitions, cancellation, Skip Today, and occurrence
+  creation share the instructional-calendar school/date lock and deterministic
+  class-row locks. Every workflow mutation is revisioned and audited.
+- **UI:** teacher operations live under My Settings → Schedule Changes; admin
+  pairing and operations live under Classes → Schedule Changes; policy lives in
+  Admin Settings. The Teacher Dashboard shows only a compact day-of indicator.
+
 ### Super Admin Features
 - **Broadcast email**: POST `/super-admin/broadcast-email` sends to all school admins via SendGrid
 - **Reset login**: POST `/super-admin/schools/:id/reset-login` generates temp password AND emails it to the admin
@@ -778,6 +807,40 @@ explicit `infra/production.tfvars` value before any later Terraform apply.
 Stage non-production environments separately. Never combine the pre-rollout
 activation and post-rollout Terraform baseline into one static value.
 
+For the first ClassPilot one-day schedule-change release, add and verify the
+three direct-tenant workflow tables as one indivisible reviewed bundle. Do not
+split, reorder, or retain this flag on later releases:
+
+```bash
+./scripts/deploy.sh production --backend --activate-emergency \
+  --enable-rls-table classpilot_schedule_change_pairs,classpilot_schedule_changes,classpilot_schedule_change_legs
+```
+
+Keep Terraform's production allowlist at the deployed baseline until this
+one-shot activation and live catalog verification succeed. Then land the
+observed allowlist in a separate production baseline-adoption change before
+any later Terraform apply. The feature policy defaults off, but already
+approved dated changes must continue to resolve during a frontend rollback.
+After the feature has accepted data, a backend rollback to a pre-schedule-change
+revision is not automatically safe: that code would ignore approved effective
+windows and could start the recurring windows instead. Before selecting such a
+revision, verify that there are zero future approved changes and zero frozen
+occurrences that depend on a swapped window; cancel any future changes before
+the earliest affected bell. If either condition cannot be proved, roll forward
+with a repaired feature-aware revision. The teacher-request kill switch only
+blocks new requests and is not a backend rollback mechanism. An automatic ECS
+circuit-breaker rollback before the candidate serves traffic or stores feature
+data remains safe.
+
+If that safe rollback leaves the live API/worker task definitions without the
+three schedule-change tables in `RLS_ENABLED_TABLES`, the next feature-aware
+backend attempt must repeat the exact three-table one-shot flag after re-running
+the live-source preflight. An ordinary deploy intentionally preserves the live
+allowlist and would otherwise start feature code without admitting those tables.
+Apply the same rule after a deliberate per-table kill-switch removal. Once live
+catalog verification has succeeded and all three tables remain enabled, omit the
+one-shot flag on later releases as usual.
+
 That mode keeps the prior 2048 MiB API serving while the deploy script builds
 and registers the new image. It then uses the newly registered, digest-matched
 2048 MiB revision for the migration task, API service update, and strict
@@ -830,8 +893,10 @@ docker push 135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-
 # point the API and scheduler-worker services at matching revisions. Preferred:
 # `./scripts/deploy.sh --backend` does this automatically (resolve digest →
 # run migration task → render revisions → register → update services).
-# ECR tags are mutable, so never deploy by tag/force-new-deployment — a digest-pinned
-# revision is exact and rollback is just `update-service --task-definition family:prevRev`.
+# ECR tags are mutable, so never deploy by tag/force-new-deployment. A
+# digest-pinned revision is exact; before any manual rollback, apply the
+# feature-specific data compatibility gates above rather than assuming every
+# previous revision can safely interpret current production rows.
 DIGEST=$(MSYS_NO_PATHCONV=1 aws ecr describe-images --repository-name schoolpilot-production-api --image-ids imageTag=latest --query 'imageDetails[0].imageDigest' --output text --region us-east-1)
 # Render: copy current task def JSON, strip read-only fields, set containerDefinitions[0].image
 # to 135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api@$DIGEST,

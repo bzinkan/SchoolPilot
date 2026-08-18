@@ -267,7 +267,10 @@ router.patch(
 // DELETE /api/schools/:schoolId - Soft delete (super admin)
 router.delete("/:schoolId", requireSuperAdmin, async (req, res, next) => {
   try {
-    const school = await softDeleteSchool(param(req, "schoolId"));
+    const school = await softDeleteSchool(
+      param(req, "schoolId"),
+      req.authUser?.id
+    );
     if (!school) {
       return res.status(404).json({ error: "School not found" });
     }

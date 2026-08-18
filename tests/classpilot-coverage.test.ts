@@ -59,6 +59,7 @@ import {
   updateClasspilotCommandTargetAck,
   updateClasspilotCommandSummary,
   updateEnrollmentSettings,
+  updateGroup,
   upsertSettings,
   upsertClasspilotClassroomStates,
   withClasspilotCommandBroadcastLock,
@@ -1005,6 +1006,16 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       }));
     }
 
+    // The following blocks are independent coverage scenarios. Retire the
+    // earlier recurring schedules before creating an all-day class for the
+    // same teacher; production storage now correctly rejects that overlap.
+    await inSchool(school.id, () => updateGroup(connectedGroup.id, {
+      scheduleEnabled: false,
+    } as any));
+    await inSchool(school.id, () => updateGroup(scheduledGroup.id, {
+      scheduleEnabled: false,
+    } as any));
+
     const loginPickupGroup = await inSchool(school.id, () => createGroup({
       schoolId: school.id,
       teacherId: scheduledTeacher.id,
@@ -1044,6 +1055,9 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     const releasedLoginPickupCoverage = await inSchool(school.id, () => getActiveSupervisionForStudent(school.id, scheduledOnlyStudent.id));
     assert.equal(releasedLoginPickupCoverage, undefined);
     await inSchool(school.id, () => endTeachingSession(pickedUp[0].id));
+    await inSchool(school.id, () => updateGroup(loginPickupGroup.id, {
+      scheduleEnabled: false,
+    } as any));
 
     const startAnywayGroup = await inSchool(school.id, () => createGroup({
       schoolId: school.id,
@@ -1104,6 +1118,9 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     );
     assert.equal(endedStarted.status, 200);
     assert.equal(endedStarted.body.finalizationReason, "teacher_end");
+    await inSchool(school.id, () => updateGroup(startAnywayGroup.id, {
+      scheduleEnabled: false,
+    } as any));
 
     const expiringGroup = await inSchool(school.id, () => createGroup({
       schoolId: school.id,

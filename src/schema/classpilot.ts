@@ -11,6 +11,7 @@ import {
   uniqueIndex,
   check,
   jsonb,
+  foreignKey,
 } from "drizzle-orm/pg-core";
 
 // ============================================================================
@@ -249,6 +250,9 @@ export const groups = pgTable(
   },
   (table) => [
     index("groups_school_id_idx").on(table.schoolId),
+    // This must be an inline constraint so Drizzle can create tenant FKs on an
+    // empty database. Startup migrations retain the legacy standalone index.
+    unique("groups_school_id_id_fk_key").on(table.schoolId, table.id),
     index("groups_teacher_id_idx").on(table.teacherId),
     index("groups_status_idx").on(table.status),
     uniqueIndex("groups_school_google_course_unique")
@@ -259,6 +263,239 @@ export const groups = pgTable(
 
 export type Group = typeof groups.$inferSelect;
 export type InsertGroup = typeof groups.$inferInsert;
+
+// ============================================================================
+// Schedule Changes - one-day exchanges of two recurring class windows
+// ============================================================================
+export const classpilotScheduleChangePairs = pgTable(
+  "classpilot_schedule_change_pairs",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    // Stored in stable lexical order so A/B and B/A can never coexist.
+    firstGroupId: text("first_group_id").notNull(),
+    secondGroupId: text("second_group_id").notNull(),
+    status: text("status").notNull().default("active"),
+    revision: integer("revision").notNull().default(0),
+    createdBy: text("created_by").notNull(),
+    archivedBy: text("archived_by"),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (table) => [
+    uniqueIndex("cp_schedule_change_pairs_school_groups_unique").on(
+      table.schoolId,
+      table.firstGroupId,
+      table.secondGroupId
+    ),
+    unique("cp_schedule_change_pairs_school_id_fk_key").on(
+      table.schoolId,
+      table.id
+    ),
+    index("cp_schedule_change_pairs_school_status_idx").on(
+      table.schoolId,
+      table.status
+    ),
+    check(
+      "cp_schedule_change_pairs_group_order_check",
+      sql`${table.firstGroupId} < ${table.secondGroupId}`
+    ),
+    check(
+      "cp_schedule_change_pairs_status_check",
+      sql`${table.status} IN ('active', 'archived')`
+    ),
+    check(
+      "cp_schedule_change_pairs_revision_check",
+      sql`${table.revision} >= 0`
+    ),
+    foreignKey({
+      columns: [table.schoolId, table.firstGroupId],
+      foreignColumns: [groups.schoolId, groups.id],
+      name: "cp_schedule_change_pairs_first_group_school_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.schoolId, table.secondGroupId],
+      foreignColumns: [groups.schoolId, groups.id],
+      name: "cp_schedule_change_pairs_second_group_school_fk",
+    }).onDelete("restrict"),
+  ]
+);
+
+export type ClasspilotScheduleChangePair =
+  typeof classpilotScheduleChangePairs.$inferSelect;
+export type InsertClasspilotScheduleChangePair =
+  typeof classpilotScheduleChangePairs.$inferInsert;
+
+export const classpilotScheduleChanges = pgTable(
+  "classpilot_schedule_changes",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    pairId: varchar("pair_id").notNull(),
+    scheduledDate: text("scheduled_date").notNull(),
+    timezoneSnapshot: text("timezone_snapshot").notNull(),
+    status: text("status").notNull(),
+    reason: text("reason").notNull(),
+    requestedByUserId: text("requested_by_user_id").notNull(),
+    requesterGroupId: text("requester_group_id"),
+    counterpartTeacherId: text("counterpart_teacher_id"),
+    requestedByRole: text("requested_by_role").notNull(),
+    requiresAdminApproval: boolean("requires_admin_approval").notNull(),
+    reservationActive: boolean("reservation_active").notNull().default(true),
+    revision: integer("revision").notNull().default(0),
+    acceptedByUserId: text("accepted_by_user_id"),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    approvedByUserId: text("approved_by_user_id"),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    terminalByUserId: text("terminal_by_user_id"),
+    terminalReason: text("terminal_reason"),
+    terminalAt: timestamp("terminal_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (table) => [
+    uniqueIndex("cp_schedule_changes_school_id_unique").on(
+      table.schoolId,
+      table.id
+    ),
+    unique("cp_schedule_changes_school_id_date_fk_key").on(
+      table.schoolId,
+      table.id,
+      table.scheduledDate
+    ),
+    index("cp_schedule_changes_school_date_status_idx").on(
+      table.schoolId,
+      table.scheduledDate,
+      table.status
+    ),
+    index("cp_schedule_changes_school_requester_idx").on(
+      table.schoolId,
+      table.requestedByUserId
+    ),
+    check(
+      "cp_schedule_changes_status_check",
+      sql`${table.status} IN ('pending_counterpart', 'pending_admin', 'approved', 'declined', 'denied', 'cancelled', 'expired', 'superseded')`
+    ),
+    check(
+      "cp_schedule_changes_reason_check",
+      sql`length(btrim(${table.reason})) BETWEEN 1 AND 500`
+    ),
+    check(
+      "cp_schedule_changes_date_check",
+      sql`${table.scheduledDate} ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'`
+    ),
+    check(
+      "cp_schedule_changes_revision_check",
+      sql`${table.revision} >= 0`
+    ),
+    check(
+      "cp_schedule_changes_reservation_check",
+      sql`(${table.status} IN ('pending_counterpart', 'pending_admin', 'approved')) = ${table.reservationActive}`
+    ),
+    foreignKey({
+      columns: [table.schoolId, table.pairId],
+      foreignColumns: [
+        classpilotScheduleChangePairs.schoolId,
+        classpilotScheduleChangePairs.id,
+      ],
+      name: "cp_schedule_changes_pair_school_fk",
+    }).onDelete("restrict"),
+  ]
+);
+
+export type ClasspilotScheduleChange =
+  typeof classpilotScheduleChanges.$inferSelect;
+export type InsertClasspilotScheduleChange =
+  typeof classpilotScheduleChanges.$inferInsert;
+
+export const classpilotScheduleChangeLegs = pgTable(
+  "classpilot_schedule_change_legs",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    scheduleChangeId: varchar("schedule_change_id").notNull(),
+    scheduledDate: text("scheduled_date").notNull(),
+    legOrder: integer("leg_order").notNull(),
+    groupId: text("group_id").notNull(),
+    primaryTeacherIdSnapshot: text("primary_teacher_id_snapshot").notNull(),
+    classNameSnapshot: text("class_name_snapshot").notNull(),
+    originalStartTime: text("original_start_time").notNull(),
+    originalEndTime: text("original_end_time").notNull(),
+    effectiveStartTime: text("effective_start_time").notNull(),
+    effectiveEndTime: text("effective_end_time").notNull(),
+    reservationActive: boolean("reservation_active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (table) => [
+    uniqueIndex("cp_schedule_change_legs_change_order_unique").on(
+      table.scheduleChangeId,
+      table.legOrder
+    ),
+    uniqueIndex("cp_schedule_change_legs_change_group_unique").on(
+      table.scheduleChangeId,
+      table.groupId
+    ),
+    uniqueIndex("cp_schedule_change_legs_active_group_date_unique")
+      .on(table.schoolId, table.scheduledDate, table.groupId)
+      .where(sql`${table.reservationActive} = true`),
+    index("cp_schedule_change_legs_school_change_idx").on(
+      table.schoolId,
+      table.scheduleChangeId
+    ),
+    index("cp_schedule_change_legs_school_group_date_idx").on(
+      table.schoolId,
+      table.groupId,
+      table.scheduledDate
+    ),
+    check(
+      "cp_schedule_change_legs_order_check",
+      sql`${table.legOrder} IN (1, 2)`
+    ),
+    check(
+      "cp_schedule_change_legs_date_check",
+      sql`${table.scheduledDate} ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'`
+    ),
+    check(
+      "cp_schedule_change_legs_window_check",
+      sql`${table.originalStartTime} ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+        AND ${table.originalEndTime} ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+        AND ${table.effectiveStartTime} ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+        AND ${table.effectiveEndTime} ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+        AND ${table.originalStartTime} < ${table.originalEndTime}
+        AND ${table.effectiveStartTime} < ${table.effectiveEndTime}`
+    ),
+    foreignKey({
+      columns: [table.schoolId, table.scheduleChangeId, table.scheduledDate],
+      foreignColumns: [
+        classpilotScheduleChanges.schoolId,
+        classpilotScheduleChanges.id,
+        classpilotScheduleChanges.scheduledDate,
+      ],
+      name: "cp_schedule_change_legs_change_school_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.schoolId, table.groupId],
+      foreignColumns: [groups.schoolId, groups.id],
+      name: "cp_schedule_change_legs_group_school_fk",
+    }).onDelete("restrict"),
+  ]
+);
+
+export type ClasspilotScheduleChangeLeg =
+  typeof classpilotScheduleChangeLegs.$inferSelect;
+export type InsertClasspilotScheduleChangeLeg =
+  typeof classpilotScheduleChangeLegs.$inferInsert;
 
 // ============================================================================
 // Group Students - Many-to-many

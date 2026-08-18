@@ -22,6 +22,7 @@ import { apiRequest, queryClient } from "../../../lib/queryClient";
 import { ArrowLeft, Download, Shield, Clock, AlertCircle, Layers, Plus, Pencil, Trash2, Star, Users, BookOpen, Copy, RefreshCw, KeyRound, Mail } from "lucide-react";
 import { ThemeToggle } from "../../../components/ThemeToggle";
 import { useClassPilotAuth } from "../../../hooks/useClassPilotAuth";
+import { ScheduleChangePolicyCard } from "../components/ScheduleChangePolicyCard";
 
 // Helper function to normalize domain names
 function normalizeDomain(domain) {
@@ -466,6 +467,11 @@ export default function Settings() {
 
       {/* Main Content */}
       <main className="max-w-4xl mx-auto px-6 py-8 space-y-8">
+        <ScheduleChangePolicyCard
+          schoolId={currentUser?.schoolId}
+          canManage={canManageSchoolSettings}
+        />
+
         {/* General Settings */}
         <Card>
           <CardHeader>

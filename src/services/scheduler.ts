@@ -7,7 +7,7 @@ import {
   getSettingsForSchool,
   getInstructionalDateStatus,
   withInstructionalCalendarDateLock,
-  getScheduledGroupsReadyToStart,
+  getClasspilotScheduleChangeNotificationContext,
   backfillOpenTeachingSessionRosterSnapshots,
   listScheduledSessionsReadyToFinalize,
   listScheduledReportSessionsDueNow,
@@ -15,7 +15,18 @@ import {
   releaseExpiredClasspilotSupervisionContexts,
   expireClasspilotTransientCommandTargets,
 } from "./storage.js";
-import { expireScheduledClassConflictsForSchool, processScheduledClassAutoStart } from "./classpilotScheduledStart.js";
+import {
+  expireScheduledClassConflictsForSchool,
+  getClasspilotGroupsReadyAtEffectiveWindow,
+  processScheduledClassAutoStart,
+} from "./classpilotScheduledStart.js";
+import {
+  broadcastClasspilotScheduleChangeUpdate,
+  emitClasspilotScheduleChangeMetric,
+  expirePendingClasspilotScheduleChangesForSchool,
+  listPendingClasspilotScheduleChangeDatesForSchool,
+  sendClasspilotScheduleChangeEmails,
+} from "./classpilotScheduleChanges.js";
 import {
   drainDueClasspilotSessionSummaries,
   finalizeClasspilotSession,
@@ -28,7 +39,13 @@ import { broadcastGoPilot } from "../realtime/socketio.js";
 import { runSecurityChecks } from "./securityMonitor.js";
 import { schedulerDb, schedulerLockPool, schedulerPool } from "./schedulerDb.js";
 import { schools, productLicenses } from "../schema/core.js";
-import { heartbeats, dailyUsage, teachingSessions, groups } from "../schema/classpilot.js";
+import {
+  heartbeats,
+  dailyUsage,
+  teachingSessions,
+  groups,
+  classpilotScheduleChanges,
+} from "../schema/classpilot.js";
 import { activityLog, dismissalQueue, dismissalSessions } from "../schema/gopilot.js";
 import { students } from "../schema/students.js";
 import { eq, and, gt, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
@@ -999,6 +1016,67 @@ async function purgeExpiredHeartbeats() {
 // ClassPilot - Automatic class block scheduling
 // ============================================================================
 
+async function expireDueClasspilotScheduleChanges(options: {
+  schoolId: string;
+  throughDate: string;
+  now: Date;
+}): Promise<void> {
+  // Keep every reconciliation tick bounded while allowing repeated ticks to
+  // drain older dates after an outage. Dates are returned oldest-first, so a
+  // long backlog always makes progress without starving today's approvals.
+  const backlogDates = await listPendingClasspilotScheduleChangeDatesForSchool({
+    schoolId: options.schoolId,
+    throughDate: options.throughDate,
+    limit: 30,
+    dbInstance: schedulerDb,
+  });
+  const pendingDates = Array.from(new Set([...backlogDates, options.throughDate]));
+  for (const scheduledDate of pendingDates) {
+    try {
+      const expired = await expirePendingClasspilotScheduleChangesForSchool({
+        schoolId: options.schoolId,
+        scheduledDate,
+        now: options.now,
+        dbInstance: schedulerDb,
+      });
+      if (expired.expiredIds.length === 0) continue;
+      for (const _expiredId of expired.expiredIds) {
+        emitClasspilotScheduleChangeMetric("ScheduleChangeExpired", {
+          Outcome: "approval_incomplete_at_bell",
+        });
+      }
+      console.log(
+        `[ClassPilot] Expired ${expired.expiredIds.length} pending schedule change(s)`
+      );
+      await Promise.allSettled(expired.expiredIds.map((changeId) =>
+        broadcastClasspilotScheduleChangeUpdate({
+          schoolId: options.schoolId,
+          changeId,
+          status: "expired",
+          scheduledDate,
+        })
+      ));
+      await Promise.allSettled(expired.expiredIds.map(async (changeId) => {
+        const notification = await getClasspilotScheduleChangeNotificationContext({
+          schoolId: options.schoolId,
+          changeId,
+          dbInstance: schedulerDb,
+        });
+        if (notification) sendClasspilotScheduleChangeEmails(notification);
+      }));
+    } catch (error) {
+      // A damaged historical row must not keep newer dates reserved forever.
+      // Report only a fixed error code; the monitor receives no tenant or row
+      // identifiers from this recovery loop.
+      console.error("[ClassPilot] Pending schedule-change expiry failed:", error);
+      errorMonitor.trackError("scheduler_failure", error as Error, {
+        job: "reconcileClasspilotScheduledSessions",
+        errorCode: "SCHEDULE_CHANGE_EXPIRY_FAILED",
+      });
+    }
+  }
+}
+
 export async function reconcileClasspilotScheduledSessions(now = new Date(), schoolId?: string) {
   try {
     const backfilledSnapshots = await backfillOpenTeachingSessionRosterSnapshots(schedulerDb, schoolId);
@@ -1040,7 +1118,50 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
       }));
     }
 
-    const activeSchoolConditions = [eq(schools.status, "active")];
+    // Pending lifecycle cleanup must continue after a license or school
+    // entitlement expires so reservations cannot remain stuck. Enumerate that
+    // bounded work separately from the stricter occurrence-execution set.
+    const pendingLifecycleConditions = [
+      inArray(classpilotScheduleChanges.status, ["pending_counterpart", "pending_admin"]),
+      eq(classpilotScheduleChanges.reservationActive, true),
+      isNull(schools.deletedAt),
+    ];
+    if (schoolId) pendingLifecycleConditions.push(eq(schools.id, schoolId));
+    const lifecycleSchools = await schedulerDb
+      .selectDistinct({ id: schools.id, schoolTimezone: schools.schoolTimezone })
+      .from(classpilotScheduleChanges)
+      .innerJoin(schools, eq(schools.id, classpilotScheduleChanges.schoolId))
+      .where(and(...pendingLifecycleConditions));
+    for (const school of lifecycleSchools) {
+      const timezone = school.schoolTimezone || "America/New_York";
+      const throughDate = localDateInTimeZone(now, timezone);
+      try {
+        await expireDueClasspilotScheduleChanges({
+          schoolId: school.id,
+          throughDate,
+          now,
+        });
+      } catch (error) {
+        console.error(`[ClassPilot] Failed to expire pending schedule changes for school ${school.id}:`, error);
+        errorMonitor.trackError("scheduler_failure", error as Error, {
+          job: "reconcileClasspilotScheduledSessions",
+          errorCode: "SCHEDULE_CHANGE_EXPIRY_FAILED",
+        });
+      }
+    }
+
+    // Keep candidate discovery aligned with the authoritative entitlement
+    // check used again under the occurrence-creation lock. This prevents an
+    // expired or disabled tenant from reaching the effective-window overlay
+    // merely because its legacy status/license rows still say "active".
+    const activeSchoolConditions = [
+      eq(schools.status, "active"),
+      eq(schools.isActive, true),
+      isNull(schools.deletedAt),
+      isNull(schools.disabledAt),
+      or(isNull(schools.planStatus), sql`${schools.planStatus} <> 'canceled'`),
+      or(isNull(schools.activeUntil), gt(schools.activeUntil, now)),
+    ];
     if (schoolId) activeSchoolConditions.push(eq(schools.id, schoolId));
     const activeSchools = await schedulerDb
       .select({
@@ -1053,7 +1174,8 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
         and(
           eq(productLicenses.schoolId, schools.id),
           eq(productLicenses.product, "CLASSPILOT"),
-          eq(productLicenses.status, "active")
+          eq(productLicenses.status, "active"),
+          or(isNull(productLicenses.expiresAt), gt(productLicenses.expiresAt, now))
         )
       )
       .where(and(...activeSchoolConditions));
@@ -1124,12 +1246,12 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
       }
 
       // 3. Create/promote each currently due canonical occurrence.
-      const readyGroups = (await getScheduledGroupsReadyToStart(
-        school.id,
+      const readyGroups = (await getClasspilotGroupsReadyAtEffectiveWindow({
+        schoolId: school.id,
         currentTimeHHMM,
-        todayDate,
-        schedulerDb
-      )).filter((group) => !frozenGroupIds.has(group.id));
+        scheduledDate: todayDate,
+        dbInstance: schedulerDb,
+      })).filter((group) => !frozenGroupIds.has(group.id));
       if (readyGroups.length > 0) {
         console.log(`[ClassPilot] Auto-start: ${readyGroups.length} group(s) ready`);
       }

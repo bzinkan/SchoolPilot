@@ -445,7 +445,7 @@ router.patch("/schools/:id", ...auth, async (req, res, next) => {
 router.delete("/schools/:id", ...auth, async (req, res, next) => {
   try {
     const id = param(req, "id");
-    await softDeleteSchool(id);
+    await softDeleteSchool(id, req.authUser!.id);
 
     await logAudit({
       schoolId: id,

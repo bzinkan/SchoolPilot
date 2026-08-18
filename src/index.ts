@@ -452,6 +452,547 @@ export async function runStartupMigrations(): Promise<void> {
   }
   console.log("[migration] ClassPilot instructional calendar settings ready");
 
+  // Schedule-change tenant foreign keys depend on the official ClassPilot
+  // groups table. Older databases may predate the later compatibility safety
+  // net, so create/converge the base before any schedule-change index or FK.
+  // This block is deliberately fail-closed.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS groups (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      school_id TEXT NOT NULL,
+      teacher_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      period_label TEXT,
+      grade_level TEXT,
+      group_type TEXT NOT NULL DEFAULT 'teacher_created',
+      parent_group_id TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      archived_at TIMESTAMP,
+      school_year TEXT,
+      term TEXT,
+      google_classroom_course_id TEXT,
+      schedule_enabled BOOLEAN NOT NULL DEFAULT false,
+      block_start_time TEXT,
+      block_end_time TEXT,
+      schedule_skipped_date TEXT,
+      created_at TIMESTAMP NOT NULL DEFAULT now(),
+      CONSTRAINT groups_school_id_id_fk_key UNIQUE (school_id, id)
+    )
+  `);
+  await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'`);
+  await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP`);
+  await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS school_year TEXT`);
+  await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS term TEXT`);
+  await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS google_classroom_course_id TEXT`);
+  await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS schedule_enabled BOOLEAN NOT NULL DEFAULT false`);
+  await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS block_start_time TEXT`);
+  await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS block_end_time TEXT`);
+  await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS schedule_skipped_date TEXT`);
+
+  // One-day ClassPilot schedule changes are additive overlays on recurring
+  // class windows. These settings and tables are required by both the API and
+  // scheduler, so fail the migration task rather than serving a partial model.
+  await pool.query(`
+    ALTER TABLE settings
+      ADD COLUMN IF NOT EXISTS classpilot_schedule_changes_teacher_requests_enabled BOOLEAN NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS classpilot_schedule_changes_admin_approval_required BOOLEAN NOT NULL DEFAULT true,
+      ADD COLUMN IF NOT EXISTS classpilot_schedule_changes_same_day_cutoff TEXT NOT NULL DEFAULT '07:00',
+      ADD COLUMN IF NOT EXISTS classpilot_schedule_changes_revision INTEGER NOT NULL DEFAULT 0
+  `);
+  await pool.query(`
+    ALTER TABLE settings
+      DROP CONSTRAINT IF EXISTS settings_cp_schedule_change_cutoff_check,
+      DROP CONSTRAINT IF EXISTS settings_cp_schedule_change_revision_check
+  `);
+  await pool.query(`
+    ALTER TABLE settings
+      ADD CONSTRAINT settings_cp_schedule_change_cutoff_check
+        CHECK (classpilot_schedule_changes_same_day_cutoff ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'),
+      ADD CONSTRAINT settings_cp_schedule_change_revision_check
+        CHECK (classpilot_schedule_changes_revision >= 0)
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS groups_school_id_id_unique
+    ON groups (school_id, id)
+  `);
+  await pool.query(`
+    DO $groups_school_id_id_fk_key$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'groups_school_id_id_fk_key'
+          AND conrelid = 'groups'::regclass
+      ) THEN
+        ALTER TABLE groups
+          ADD CONSTRAINT groups_school_id_id_fk_key UNIQUE (school_id, id);
+      END IF;
+    END
+    $groups_school_id_id_fk_key$;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS classpilot_schedule_change_pairs (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      school_id TEXT NOT NULL,
+      first_group_id TEXT NOT NULL,
+      second_group_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      revision INTEGER NOT NULL DEFAULT 0,
+      created_by TEXT NOT NULL,
+      archived_by TEXT,
+      archived_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      CONSTRAINT cp_schedule_change_pairs_group_order_check
+        CHECK (first_group_id < second_group_id),
+      CONSTRAINT cp_schedule_change_pairs_status_check
+        CHECK (status IN ('active', 'archived')),
+      CONSTRAINT cp_schedule_change_pairs_revision_check CHECK (revision >= 0),
+      CONSTRAINT cp_schedule_change_pairs_school_id_fk_key UNIQUE (school_id, id),
+      CONSTRAINT cp_schedule_change_pairs_first_group_school_fk
+        FOREIGN KEY (school_id, first_group_id)
+        REFERENCES groups(school_id, id) ON DELETE RESTRICT,
+      CONSTRAINT cp_schedule_change_pairs_second_group_school_fk
+        FOREIGN KEY (school_id, second_group_id)
+        REFERENCES groups(school_id, id) ON DELETE RESTRICT
+    )
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS cp_schedule_change_pairs_school_groups_unique
+    ON classpilot_schedule_change_pairs (school_id, first_group_id, second_group_id)
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS cp_schedule_change_pairs_school_id_unique
+    ON classpilot_schedule_change_pairs (school_id, id)
+  `);
+  await pool.query(`
+    DO $cp_schedule_change_pairs_school_id_fk_key$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'cp_schedule_change_pairs_school_id_fk_key'
+          AND conrelid = 'classpilot_schedule_change_pairs'::regclass
+      ) THEN
+        ALTER TABLE classpilot_schedule_change_pairs
+          ADD CONSTRAINT cp_schedule_change_pairs_school_id_fk_key UNIQUE (school_id, id);
+      END IF;
+    END
+    $cp_schedule_change_pairs_school_id_fk_key$;
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS cp_schedule_change_pairs_school_status_idx
+    ON classpilot_schedule_change_pairs (school_id, status)
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS classpilot_schedule_changes (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      school_id TEXT NOT NULL,
+      pair_id VARCHAR NOT NULL,
+      scheduled_date TEXT NOT NULL,
+      timezone_snapshot TEXT NOT NULL,
+      status TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      requested_by_user_id TEXT NOT NULL,
+      requester_group_id TEXT,
+      counterpart_teacher_id TEXT,
+      requested_by_role TEXT NOT NULL,
+      requires_admin_approval BOOLEAN NOT NULL,
+      reservation_active BOOLEAN NOT NULL DEFAULT true,
+      revision INTEGER NOT NULL DEFAULT 0,
+      accepted_by_user_id TEXT,
+      accepted_at TIMESTAMPTZ,
+      approved_by_user_id TEXT,
+      approved_at TIMESTAMPTZ,
+      terminal_by_user_id TEXT,
+      terminal_reason TEXT,
+      terminal_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      CONSTRAINT cp_schedule_changes_pair_school_fk
+        FOREIGN KEY (school_id, pair_id)
+        REFERENCES classpilot_schedule_change_pairs(school_id, id) ON DELETE RESTRICT,
+      CONSTRAINT cp_schedule_changes_status_check
+        CHECK (status IN ('pending_counterpart', 'pending_admin', 'approved', 'declined', 'denied', 'cancelled', 'expired', 'superseded')),
+      CONSTRAINT cp_schedule_changes_reason_check
+        CHECK (length(btrim(reason)) BETWEEN 1 AND 500),
+      CONSTRAINT cp_schedule_changes_date_check
+        CHECK (scheduled_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'),
+      CONSTRAINT cp_schedule_changes_revision_check CHECK (revision >= 0),
+      CONSTRAINT cp_schedule_changes_school_id_date_fk_key
+        UNIQUE (school_id, id, scheduled_date),
+      CONSTRAINT cp_schedule_changes_reservation_check
+        CHECK ((status IN ('pending_counterpart', 'pending_admin', 'approved')) = reservation_active)
+    )
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS cp_schedule_changes_school_id_unique
+    ON classpilot_schedule_changes (school_id, id)
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS cp_schedule_changes_school_id_date_unique
+    ON classpilot_schedule_changes (school_id, id, scheduled_date)
+  `);
+  await pool.query(`
+    DO $cp_schedule_changes_school_id_date_fk_key$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'cp_schedule_changes_school_id_date_fk_key'
+          AND conrelid = 'classpilot_schedule_changes'::regclass
+      ) THEN
+        ALTER TABLE classpilot_schedule_changes
+          ADD CONSTRAINT cp_schedule_changes_school_id_date_fk_key
+          UNIQUE (school_id, id, scheduled_date);
+      END IF;
+    END
+    $cp_schedule_changes_school_id_date_fk_key$;
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS cp_schedule_changes_school_date_status_idx
+    ON classpilot_schedule_changes (school_id, scheduled_date, status)
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS cp_schedule_changes_school_requester_idx
+    ON classpilot_schedule_changes (school_id, requested_by_user_id)
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS classpilot_schedule_change_legs (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      school_id TEXT NOT NULL,
+      schedule_change_id VARCHAR NOT NULL,
+      scheduled_date TEXT NOT NULL,
+      leg_order INTEGER NOT NULL,
+      group_id TEXT NOT NULL,
+      primary_teacher_id_snapshot TEXT NOT NULL,
+      class_name_snapshot TEXT NOT NULL,
+      original_start_time TEXT NOT NULL,
+      original_end_time TEXT NOT NULL,
+      effective_start_time TEXT NOT NULL,
+      effective_end_time TEXT NOT NULL,
+      reservation_active BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      CONSTRAINT cp_schedule_change_legs_change_school_fk
+        FOREIGN KEY (school_id, schedule_change_id, scheduled_date)
+        REFERENCES classpilot_schedule_changes(school_id, id, scheduled_date) ON DELETE RESTRICT,
+      CONSTRAINT cp_schedule_change_legs_group_school_fk
+        FOREIGN KEY (school_id, group_id)
+        REFERENCES groups(school_id, id) ON DELETE RESTRICT,
+      CONSTRAINT cp_schedule_change_legs_order_check CHECK (leg_order IN (1, 2)),
+      CONSTRAINT cp_schedule_change_legs_date_check
+        CHECK (scheduled_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'),
+      CONSTRAINT cp_schedule_change_legs_window_check CHECK (
+        original_start_time ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+        AND original_end_time ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+        AND effective_start_time ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+        AND effective_end_time ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+        AND original_start_time < original_end_time
+        AND effective_start_time < effective_end_time
+      )
+    )
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS cp_schedule_change_legs_change_order_unique
+    ON classpilot_schedule_change_legs (schedule_change_id, leg_order)
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS cp_schedule_change_legs_change_group_unique
+    ON classpilot_schedule_change_legs (schedule_change_id, group_id)
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS cp_schedule_change_legs_active_group_date_unique
+    ON classpilot_schedule_change_legs (school_id, scheduled_date, group_id)
+    WHERE reservation_active = true
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS cp_schedule_change_legs_school_change_idx
+    ON classpilot_schedule_change_legs (school_id, schedule_change_id)
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS cp_schedule_change_legs_school_group_date_idx
+    ON classpilot_schedule_change_legs (school_id, group_id, scheduled_date)
+  `);
+  // `db:push` may create these tables before startup runs. Add the tenant-aware
+  // foreign keys separately from CREATE TABLE so both creation paths converge.
+  await pool.query(`
+    DO $cp_schedule_change_foreign_keys$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'cp_schedule_change_pairs_first_group_school_fk'
+          AND conrelid = 'classpilot_schedule_change_pairs'::regclass
+      ) THEN
+        ALTER TABLE classpilot_schedule_change_pairs
+          ADD CONSTRAINT cp_schedule_change_pairs_first_group_school_fk
+          FOREIGN KEY (school_id, first_group_id)
+          REFERENCES groups(school_id, id) ON DELETE RESTRICT;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'cp_schedule_change_pairs_second_group_school_fk'
+          AND conrelid = 'classpilot_schedule_change_pairs'::regclass
+      ) THEN
+        ALTER TABLE classpilot_schedule_change_pairs
+          ADD CONSTRAINT cp_schedule_change_pairs_second_group_school_fk
+          FOREIGN KEY (school_id, second_group_id)
+          REFERENCES groups(school_id, id) ON DELETE RESTRICT;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'cp_schedule_changes_pair_school_fk'
+          AND conrelid = 'classpilot_schedule_changes'::regclass
+      ) THEN
+        ALTER TABLE classpilot_schedule_changes
+          ADD CONSTRAINT cp_schedule_changes_pair_school_fk
+          FOREIGN KEY (school_id, pair_id)
+          REFERENCES classpilot_schedule_change_pairs(school_id, id) ON DELETE RESTRICT;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'cp_schedule_change_legs_change_school_fk'
+          AND conrelid = 'classpilot_schedule_change_legs'::regclass
+      ) THEN
+        ALTER TABLE classpilot_schedule_change_legs
+          ADD CONSTRAINT cp_schedule_change_legs_change_school_fk
+          FOREIGN KEY (school_id, schedule_change_id, scheduled_date)
+          REFERENCES classpilot_schedule_changes(school_id, id, scheduled_date) ON DELETE RESTRICT;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'cp_schedule_change_legs_group_school_fk'
+          AND conrelid = 'classpilot_schedule_change_legs'::regclass
+      ) THEN
+        ALTER TABLE classpilot_schedule_change_legs
+          ADD CONSTRAINT cp_schedule_change_legs_group_school_fk
+          FOREIGN KEY (school_id, group_id)
+          REFERENCES groups(school_id, id) ON DELETE RESTRICT;
+      END IF;
+    END
+    $cp_schedule_change_foreign_keys$;
+  `);
+  // Converge db:push-created or partially provisioned tables to the reviewed
+  // production contract. These additions validate existing rows immediately;
+  // invalid tenant links or legacy values abort rollout rather than remaining
+  // as NOT VALID constraints.
+  await pool.query(`
+    ALTER TABLE classpilot_schedule_change_legs
+      DROP CONSTRAINT IF EXISTS cp_schedule_change_legs_change_school_fk,
+      DROP CONSTRAINT IF EXISTS cp_schedule_change_legs_group_school_fk;
+    ALTER TABLE classpilot_schedule_changes
+      DROP CONSTRAINT IF EXISTS cp_schedule_changes_pair_school_fk;
+    ALTER TABLE classpilot_schedule_change_pairs
+      DROP CONSTRAINT IF EXISTS cp_schedule_change_pairs_first_group_school_fk,
+      DROP CONSTRAINT IF EXISTS cp_schedule_change_pairs_second_group_school_fk;
+
+    ALTER TABLE classpilot_schedule_change_pairs
+      DROP CONSTRAINT IF EXISTS cp_schedule_change_pairs_group_order_check,
+      DROP CONSTRAINT IF EXISTS cp_schedule_change_pairs_status_check,
+      DROP CONSTRAINT IF EXISTS cp_schedule_change_pairs_revision_check,
+      ADD CONSTRAINT cp_schedule_change_pairs_group_order_check
+        CHECK (first_group_id < second_group_id),
+      ADD CONSTRAINT cp_schedule_change_pairs_status_check
+        CHECK (status IN ('active', 'archived')),
+      ADD CONSTRAINT cp_schedule_change_pairs_revision_check CHECK (revision >= 0),
+      ADD CONSTRAINT cp_schedule_change_pairs_first_group_school_fk
+        FOREIGN KEY (school_id, first_group_id)
+        REFERENCES groups(school_id, id) ON DELETE RESTRICT,
+      ADD CONSTRAINT cp_schedule_change_pairs_second_group_school_fk
+        FOREIGN KEY (school_id, second_group_id)
+        REFERENCES groups(school_id, id) ON DELETE RESTRICT;
+
+    ALTER TABLE classpilot_schedule_changes
+      DROP CONSTRAINT IF EXISTS cp_schedule_changes_status_check,
+      DROP CONSTRAINT IF EXISTS cp_schedule_changes_reason_check,
+      DROP CONSTRAINT IF EXISTS cp_schedule_changes_date_check,
+      DROP CONSTRAINT IF EXISTS cp_schedule_changes_revision_check,
+      DROP CONSTRAINT IF EXISTS cp_schedule_changes_reservation_check,
+      ADD CONSTRAINT cp_schedule_changes_pair_school_fk
+        FOREIGN KEY (school_id, pair_id)
+        REFERENCES classpilot_schedule_change_pairs(school_id, id) ON DELETE RESTRICT,
+      ADD CONSTRAINT cp_schedule_changes_status_check
+        CHECK (status IN ('pending_counterpart', 'pending_admin', 'approved', 'declined', 'denied', 'cancelled', 'expired', 'superseded')),
+      ADD CONSTRAINT cp_schedule_changes_reason_check
+        CHECK (length(btrim(reason)) BETWEEN 1 AND 500),
+      ADD CONSTRAINT cp_schedule_changes_date_check
+        CHECK (scheduled_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'),
+      ADD CONSTRAINT cp_schedule_changes_revision_check CHECK (revision >= 0),
+      ADD CONSTRAINT cp_schedule_changes_reservation_check
+        CHECK ((status IN ('pending_counterpart', 'pending_admin', 'approved')) = reservation_active);
+
+    ALTER TABLE classpilot_schedule_change_legs
+      DROP CONSTRAINT IF EXISTS cp_schedule_change_legs_order_check,
+      DROP CONSTRAINT IF EXISTS cp_schedule_change_legs_date_check,
+      DROP CONSTRAINT IF EXISTS cp_schedule_change_legs_window_check,
+      ADD CONSTRAINT cp_schedule_change_legs_change_school_fk
+        FOREIGN KEY (school_id, schedule_change_id, scheduled_date)
+        REFERENCES classpilot_schedule_changes(school_id, id, scheduled_date) ON DELETE RESTRICT,
+      ADD CONSTRAINT cp_schedule_change_legs_group_school_fk
+        FOREIGN KEY (school_id, group_id)
+        REFERENCES groups(school_id, id) ON DELETE RESTRICT,
+      ADD CONSTRAINT cp_schedule_change_legs_order_check CHECK (leg_order IN (1, 2)),
+      ADD CONSTRAINT cp_schedule_change_legs_date_check
+        CHECK (scheduled_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'),
+      ADD CONSTRAINT cp_schedule_change_legs_window_check CHECK (
+        original_start_time ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+        AND original_end_time ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+        AND effective_start_time ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+        AND effective_end_time ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+        AND original_start_time < original_end_time
+        AND effective_start_time < effective_end_time
+      );
+  `);
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION classpilot_protect_schedule_change_leg_snapshot()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path = public
+    AS $cp_schedule_change_leg_immutable$
+    BEGIN
+      IF NEW.school_id IS DISTINCT FROM OLD.school_id
+        OR NEW.schedule_change_id IS DISTINCT FROM OLD.schedule_change_id
+        OR NEW.scheduled_date IS DISTINCT FROM OLD.scheduled_date
+        OR NEW.leg_order IS DISTINCT FROM OLD.leg_order
+        OR NEW.group_id IS DISTINCT FROM OLD.group_id
+        OR NEW.primary_teacher_id_snapshot IS DISTINCT FROM OLD.primary_teacher_id_snapshot
+        OR NEW.class_name_snapshot IS DISTINCT FROM OLD.class_name_snapshot
+        OR NEW.original_start_time IS DISTINCT FROM OLD.original_start_time
+        OR NEW.original_end_time IS DISTINCT FROM OLD.original_end_time
+        OR NEW.effective_start_time IS DISTINCT FROM OLD.effective_start_time
+        OR NEW.effective_end_time IS DISTINCT FROM OLD.effective_end_time
+        OR NEW.created_at IS DISTINCT FROM OLD.created_at
+        OR (
+          NEW.reservation_active IS DISTINCT FROM OLD.reservation_active
+          AND NOT (OLD.reservation_active = true AND NEW.reservation_active = false)
+        )
+      THEN
+        RAISE EXCEPTION 'ClassPilot schedule change legs are immutable'
+          USING ERRCODE = '23514';
+      END IF;
+      RETURN NEW;
+    END
+    $cp_schedule_change_leg_immutable$;
+    DROP TRIGGER IF EXISTS cp_schedule_change_legs_immutable_snapshot
+      ON classpilot_schedule_change_legs;
+    CREATE TRIGGER cp_schedule_change_legs_immutable_snapshot
+      BEFORE UPDATE ON classpilot_schedule_change_legs
+      FOR EACH ROW EXECUTE FUNCTION classpilot_protect_schedule_change_leg_snapshot();
+  `);
+  // PostgreSQL cannot express "exactly two child rows" as a normal CHECK.
+  // A deferred constraint trigger validates the invariant at transaction commit,
+  // after the service has inserted both legs atomically.
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION classpilot_validate_schedule_change_leg_count()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path = public
+    AS $cp_schedule_change_leg_count$
+    DECLARE
+      target_change_id TEXT;
+      leg_count INTEGER;
+    BEGIN
+      IF TG_TABLE_NAME = 'classpilot_schedule_changes' THEN
+        target_change_id := COALESCE(NEW.id, OLD.id);
+      ELSE
+        target_change_id := COALESCE(NEW.schedule_change_id, OLD.schedule_change_id);
+      END IF;
+      IF EXISTS (SELECT 1 FROM classpilot_schedule_changes WHERE id = target_change_id) THEN
+        SELECT count(*)::integer INTO leg_count
+        FROM classpilot_schedule_change_legs
+        WHERE schedule_change_id = target_change_id;
+        IF leg_count <> 2 THEN
+          RAISE EXCEPTION 'ClassPilot schedule change must contain exactly two legs'
+            USING ERRCODE = '23514';
+        END IF;
+      END IF;
+      RETURN COALESCE(NEW, OLD);
+    END
+    $cp_schedule_change_leg_count$;
+    DROP TRIGGER IF EXISTS cp_schedule_changes_exactly_two_legs
+      ON classpilot_schedule_changes;
+    CREATE CONSTRAINT TRIGGER cp_schedule_changes_exactly_two_legs
+      AFTER INSERT OR UPDATE ON classpilot_schedule_changes
+      DEFERRABLE INITIALLY DEFERRED
+      FOR EACH ROW EXECUTE FUNCTION classpilot_validate_schedule_change_leg_count();
+    DROP TRIGGER IF EXISTS cp_schedule_change_legs_exactly_two
+      ON classpilot_schedule_change_legs;
+    CREATE CONSTRAINT TRIGGER cp_schedule_change_legs_exactly_two
+      AFTER INSERT OR UPDATE OR DELETE ON classpilot_schedule_change_legs
+      DEFERRABLE INITIALLY DEFERRED
+      FOR EACH ROW EXECUTE FUNCTION classpilot_validate_schedule_change_leg_count();
+  `);
+  const scheduleChangeIndexResult = await pool.query<{
+    indexname: string;
+    indexdef: string;
+  }>(`
+    SELECT indexname, indexdef
+    FROM pg_indexes
+    WHERE schemaname = current_schema()
+      AND tablename IN (
+        'classpilot_schedule_change_pairs',
+        'classpilot_schedule_changes',
+        'classpilot_schedule_change_legs'
+      )
+  `);
+  const scheduleChangeIndexDefinitions = new Map(
+    scheduleChangeIndexResult.rows.map((row) => [
+      row.indexname,
+      row.indexdef.toLowerCase().replace(/\s+/g, " "),
+    ])
+  );
+  const requiredScheduleChangeIndexes: Record<string, string[]> = {
+    cp_schedule_change_pairs_school_groups_unique: [
+      "create unique index",
+      "(school_id, first_group_id, second_group_id)",
+    ],
+    cp_schedule_change_pairs_school_id_unique: [
+      "create unique index",
+      "(school_id, id)",
+    ],
+    cp_schedule_changes_school_id_unique: [
+      "create unique index",
+      "(school_id, id)",
+    ],
+    cp_schedule_changes_school_id_date_unique: [
+      "create unique index",
+      "(school_id, id, scheduled_date)",
+    ],
+    cp_schedule_change_legs_change_order_unique: [
+      "create unique index",
+      "(schedule_change_id, leg_order)",
+    ],
+    cp_schedule_change_legs_change_group_unique: [
+      "create unique index",
+      "(schedule_change_id, group_id)",
+    ],
+    cp_schedule_change_legs_active_group_date_unique: [
+      "create unique index",
+      "(school_id, scheduled_date, group_id)",
+      "where (reservation_active = true)",
+    ],
+  };
+  for (const [indexName, requiredFragments] of Object.entries(requiredScheduleChangeIndexes)) {
+    const definition = scheduleChangeIndexDefinitions.get(indexName);
+    if (!definition || requiredFragments.some((fragment) => !definition.includes(fragment))) {
+      throw new Error(
+        `ClassPilot schedule-change index contract is invalid: ${indexName}`
+      );
+    }
+  }
+  const malformedScheduleChangeResult = await pool.query<{ count: string }>(`
+    SELECT count(*)::text AS count
+    FROM classpilot_schedule_changes change
+    LEFT JOIN classpilot_schedule_change_legs leg
+      ON leg.school_id = change.school_id
+     AND leg.schedule_change_id = change.id
+     AND leg.scheduled_date = change.scheduled_date
+    GROUP BY change.id
+    HAVING count(leg.id) <> 2
+    LIMIT 1
+  `);
+  if (malformedScheduleChangeResult.rows.length > 0) {
+    throw new Error("ClassPilot schedule-change leg-count integrity check failed");
+  }
+  console.log("[migration] ClassPilot schedule-change settings and tables ready");
+
   // PassPilot canonical ClassPilot-class compatibility is required before a
   // dual-license school can switch writes away from the legacy grades model.
   // This block is intentionally fail-closed: partial DDL, invalid mappings, or
@@ -2284,6 +2825,9 @@ export async function runStartupMigrations(): Promise<void> {
       "dismissal_queue",
       "family_group_students",
       "homeroom_teachers",
+      "classpilot_schedule_change_pairs",
+      "classpilot_schedule_changes",
+      "classpilot_schedule_change_legs",
     ]);
     if (
       new Set(requiredRlsTables).size !== requiredRlsTables.length ||

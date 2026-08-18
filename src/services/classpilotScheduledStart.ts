@@ -7,7 +7,7 @@ import {
 } from "../realtime/classpilotStaffPresence.js";
 import type { ClasspilotScheduledConflict, Group, TeachingSession } from "../schema/classpilot.js";
 import type { Student } from "../schema/students.js";
-import { localDateInTimeZone, localDateTimeUtc } from "../util/schoolTime.js";
+import { localDateInTimeZone } from "../util/schoolTime.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
 import {
   dispatchDueClasspilotSessionSummaries,
@@ -16,6 +16,11 @@ import {
   runClasspilotFinalizationSideEffects,
 } from "./classpilotSessionLifecycle.js";
 import { syncClasspilotControlStatesToActiveDevices } from "./classpilotControlStateDelivery.js";
+import {
+  getApprovedScheduleChangeLegsForSchoolDate,
+  getEffectiveClasspilotScheduleWindow,
+  lockAndLoadEffectiveClasspilotScheduleContext,
+} from "./classpilotScheduleChanges.js";
 import {
   createOrReuseScheduledReportSession,
   getActiveClassOwnersForStudents,
@@ -29,6 +34,7 @@ import {
   getInstructionalDateStatus,
   getScheduledClassConflictByIdAndSchool,
   getScheduledClassConflictForSlot,
+  getScheduledGroupsReadyToStart,
   getScheduledTeachingSessionOccurrence,
   getSchoolById,
   getUserById,
@@ -54,8 +60,8 @@ export type ScheduledClassAutoStartResult =
   | { status: "skipped"; reason: string };
 
 type ScheduledOccurrencePreparation =
-  | { occurrence: TeachingSession }
-  | { reason: "non_instructional_day" };
+  | { occurrence: TeachingSession; group?: Group }
+  | { reason: "non_instructional_day" | "missing_schedule_window" | "outside_schedule_window" | "skipped" };
 
 export type ScheduledCoverageStudentPayload = {
   studentId: string;
@@ -121,8 +127,142 @@ function conflictBroadcast(conflictId: string) {
   };
 }
 
-function scheduledBlockStartUtc(scheduledDate: string, blockStartTime: string, timeZone: string): Date {
-  return localDateTimeUtc(scheduledDate, blockStartTime, timeZone);
+function occurrenceTimeHHMM(value: Date, timeZone: string): string {
+  return value.toLocaleString("en-US", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).replace(/^24:/, "00:");
+}
+
+export type ClasspilotScheduleRuntimeMetric =
+  | "EffectiveWindowResolved"
+  | "EffectiveWindowResolutionFailure"
+  | "OriginalWindowStartDenied"
+  | "ScheduleChangePartialPair"
+  | "ScheduleChangeExecutionInvalid"
+  | "SwappedOccurrenceStarted";
+
+/** Emit only fixed-name, count-only schedule runtime metrics. */
+export function emitClasspilotScheduleRuntimeMetric(
+  metricName: ClasspilotScheduleRuntimeMetric,
+  count = 1,
+  now = new Date()
+): void {
+  if (!Number.isFinite(count) || count <= 0) return;
+  console.log(JSON.stringify({
+    _aws: {
+      Timestamp: now.getTime(),
+      CloudWatchMetrics: [{
+        Namespace: "SchoolPilot/ClassPilot",
+        Dimensions: [["Environment"]],
+        Metrics: [{ Name: metricName, Unit: "Count" }],
+      }],
+    },
+    Environment: process.env.APP_ENV || process.env.NODE_ENV || "development",
+    [metricName]: count,
+  }));
+}
+
+function emitEffectiveWindowFailure(error?: unknown): void {
+  if ((error as { code?: string } | undefined)?.code === "SCHEDULE_CHANGE_EXECUTION_INVALID") {
+    emitClasspilotScheduleRuntimeMetric("ScheduleChangeExecutionInvalid");
+  }
+  emitClasspilotScheduleRuntimeMetric("EffectiveWindowResolutionFailure");
+}
+
+function assertCompleteApprovedSwapContext(context: {
+  effectiveLeg?: unknown;
+  lockedGroupIds: string[];
+}): void {
+  if (!context.effectiveLeg || context.lockedGroupIds.length === 2) return;
+  emitClasspilotScheduleRuntimeMetric("ScheduleChangePartialPair");
+  emitClasspilotScheduleRuntimeMetric("ScheduleChangeExecutionInvalid");
+  emitClasspilotScheduleRuntimeMetric("EffectiveWindowResolutionFailure");
+  throw Object.assign(new Error("The approved schedule change is incomplete."), {
+    code: "SCHEDULE_CHANGE_EXECUTION_INVALID",
+    status: 409,
+  });
+}
+
+/**
+ * Candidate selection deliberately overlays approved schedule-change legs in
+ * one batch. The authoritative single-group resolver is called again under the
+ * school/date lock before an occurrence is created, so approval/cancellation
+ * races still have one deterministic winner.
+ */
+export async function getClasspilotGroupsReadyAtEffectiveWindow(options: {
+  schoolId: string;
+  scheduledDate: string;
+  currentTimeHHMM: string;
+  dbInstance?: typeof db;
+}): Promise<Group[]> {
+  let baseCandidates: Group[];
+  let approvedLegs: Awaited<ReturnType<typeof getApprovedScheduleChangeLegsForSchoolDate>>;
+  try {
+    [baseCandidates, approvedLegs] = await Promise.all([
+      getScheduledGroupsReadyToStart(
+        options.schoolId,
+        options.currentTimeHHMM,
+        options.scheduledDate,
+        options.dbInstance
+      ),
+      getApprovedScheduleChangeLegsForSchoolDate({
+        schoolId: options.schoolId,
+        scheduledDate: options.scheduledDate,
+        dbInstance: options.dbInstance,
+      }),
+    ]);
+  } catch (error) {
+    emitEffectiveWindowFailure(error);
+    throw error;
+  }
+  const candidatesById = new Map(baseCandidates.map((group) => [group.id, group]));
+  const approvedLegCounts = new Map<string, number>();
+  for (const leg of approvedLegs) {
+    approvedLegCounts.set(leg.swapId, (approvedLegCounts.get(leg.swapId) || 0) + 1);
+  }
+  const partialPairCount = Array.from(approvedLegCounts.values())
+    .filter((count) => count !== 2).length;
+  if (partialPairCount > 0) {
+    emitClasspilotScheduleRuntimeMetric("ScheduleChangePartialPair", partialPairCount);
+    emitClasspilotScheduleRuntimeMetric("ScheduleChangeExecutionInvalid", partialPairCount);
+    emitClasspilotScheduleRuntimeMetric("EffectiveWindowResolutionFailure", partialPairCount);
+    throw Object.assign(new Error("One or more approved schedule changes are incomplete."), {
+      code: "SCHEDULE_CHANGE_EXECUTION_INVALID",
+      status: 409,
+    });
+  }
+  await Promise.all(approvedLegs.map(async (leg) => {
+    if (candidatesById.has(leg.groupId)) return;
+    const group = await getGroupByIdAndSchool(
+      leg.groupId,
+      options.schoolId,
+      options.dbInstance
+    );
+    if (group) candidatesById.set(group.id, group);
+  }));
+  const approvedByGroupId = new Map(approvedLegs.map((leg) => [leg.groupId, leg]));
+  return Array.from(candidatesById.values())
+    .filter((group) => {
+      if (
+        group.status !== "active"
+        || !group.scheduleEnabled
+        || !group.blockStartTime
+        || !group.blockEndTime
+        || group.scheduleSkippedDate === options.scheduledDate
+      ) return false;
+      const leg = approvedByGroupId.get(group.id);
+      const start = leg?.effectiveStartTime || group.blockStartTime!;
+      const end = leg?.effectiveEndTime || group.blockEndTime!;
+      return start <= options.currentTimeHHMM && end > options.currentTimeHHMM;
+    })
+    .sort((left, right) => {
+      const leftStart = approvedByGroupId.get(left.id)?.effectiveStartTime || left.blockStartTime!;
+      const rightStart = approvedByGroupId.get(right.id)?.effectiveStartTime || right.blockStartTime!;
+      return leftStart.localeCompare(rightStart) || left.id.localeCompare(right.id);
+    });
 }
 
 /**
@@ -135,9 +275,7 @@ function scheduledBlockStartUtc(scheduledDate: string, blockStartTime: string, t
 async function prepareScheduledOccurrence(options: {
   group: Group;
   scheduledDate: string;
-  scheduledTimezone: string;
-  scheduledStartAt: Date;
-  scheduledEndAt: Date;
+  now: Date;
   dbInstance?: typeof db;
 }): Promise<ScheduledOccurrencePreparation> {
   return withInstructionalCalendarDateLock(
@@ -152,8 +290,37 @@ async function prepareScheduledOccurrence(options: {
       );
       if (existing) return { occurrence: existing };
 
-      // This read deliberately happens only after the shared advisory lock is
-      // held and in the same outer transaction as the canonical insert.
+      // Approval/cancellation owns the date lock first, while class mutations
+      // own group locks. Lock the target (and both approved swap groups) in a
+      // deterministic order, then discard the caller's potentially stale row.
+      let context: Awaited<ReturnType<typeof lockAndLoadEffectiveClasspilotScheduleContext>>;
+      try {
+        context = await lockAndLoadEffectiveClasspilotScheduleContext({
+          schoolId: options.group.schoolId,
+          groupId: options.group.id,
+          scheduledDate: options.scheduledDate,
+          dbInstance: lockedDb,
+        });
+      } catch (error) {
+        emitEffectiveWindowFailure(error);
+        throw error;
+      }
+      if (!context) return { reason: "missing_schedule_window" as const };
+      assertCompleteApprovedSwapContext(context);
+      if (context.group.scheduleSkippedDate === options.scheduledDate) {
+        return { reason: "skipped" as const };
+      }
+      if (
+        context.group.status !== "active"
+        || !context.group.scheduleEnabled
+        || !context.group.blockStartTime
+        || !context.group.blockEndTime
+      ) {
+        return { reason: "missing_schedule_window" as const };
+      }
+
+      // This read deliberately happens only after the shared advisory lock and
+      // authoritative group locks are held, in the occurrence transaction.
       const calendarStatus = await getInstructionalDateStatus(
         options.group.schoolId,
         options.scheduledDate,
@@ -163,19 +330,54 @@ async function prepareScheduledOccurrence(options: {
         return { reason: "non_instructional_day" as const };
       }
 
-      const scheduledTeacher = await getUserById(options.group.teacherId, lockedDb);
+      const scheduledTimezone = context.schoolTimezone;
+      // A timezone edit racing candidate discovery cannot freeze an occurrence
+      // under the wrong local date. The next scheduler tick will use the newly
+      // authoritative date and timezone.
+      if (localDateInTimeZone(options.now, scheduledTimezone) !== options.scheduledDate) {
+        return { reason: "outside_schedule_window" as const };
+      }
+
+      let effectiveWindow: Awaited<ReturnType<typeof getEffectiveClasspilotScheduleWindow>>;
+      try {
+        effectiveWindow = await getEffectiveClasspilotScheduleWindow({
+          schoolId: options.group.schoolId,
+          group: context.group,
+          scheduledDate: options.scheduledDate,
+          timeZone: scheduledTimezone,
+          dbInstance: lockedDb,
+        });
+      } catch (error) {
+        emitEffectiveWindowFailure(error);
+        throw error;
+      }
+      if (!effectiveWindow) {
+        emitClasspilotScheduleRuntimeMetric("EffectiveWindowResolutionFailure");
+        return { reason: "missing_schedule_window" as const };
+      }
+      if (effectiveWindow.source === "swap") {
+        emitClasspilotScheduleRuntimeMetric("EffectiveWindowResolved");
+      }
+      if (
+        options.now < effectiveWindow.scheduledStartAt
+        || options.now >= effectiveWindow.scheduledEndAt
+      ) {
+        return { reason: "outside_schedule_window" as const };
+      }
+
+      const scheduledTeacher = await getUserById(context.group.teacherId, lockedDb);
       const occurrence = await createOrReuseScheduledReportSession({
         schoolId: options.group.schoolId,
-        groupId: options.group.id,
-        teacherId: options.group.teacherId,
+        groupId: context.group.id,
+        teacherId: context.group.teacherId,
         scheduledDate: options.scheduledDate,
-        scheduledTimezone: options.scheduledTimezone,
-        scheduledStartAt: options.scheduledStartAt,
-        scheduledEndAt: options.scheduledEndAt,
+        scheduledTimezone: effectiveWindow.timeZone,
+        scheduledStartAt: effectiveWindow.scheduledStartAt,
+        scheduledEndAt: effectiveWindow.scheduledEndAt,
         scheduledTeacherEmail: scheduledTeacher?.email || null,
         scheduledTeacherName: displayName(scheduledTeacher),
       }, lockedDb);
-      return { occurrence };
+      return { occurrence, group: context.group };
     },
     options.dbInstance
   );
@@ -402,6 +604,22 @@ async function startScheduledClass(options: {
     (lockedDb) => startScheduledClassLocked({ ...options, dbInstance: lockedDb }),
     options.dbInstance
   );
+  if (outcome.wasPromoted && outcome.session.scheduledDate) {
+    try {
+      const approvedLegs = await getApprovedScheduleChangeLegsForSchoolDate({
+        schoolId: options.group.schoolId,
+        scheduledDate: outcome.session.scheduledDate,
+        dbInstance: options.dbInstance,
+      });
+      if (approvedLegs.some((leg) => leg.groupId === outcome.session.groupId)) {
+        emitClasspilotScheduleRuntimeMetric("SwappedOccurrenceStarted");
+      }
+    } catch (error) {
+      // The live transition is already committed; observability must never
+      // turn a successful class start into an API/scheduler failure.
+      emitEffectiveWindowFailure(error);
+    }
+  }
   for (const finalization of outcome.finalizations) {
     runClasspilotFinalizationSideEffects(finalization.result, {
       schoolId: options.group.schoolId,
@@ -438,6 +656,7 @@ async function startScheduledClassLocked(options: {
   afterReplacement?: () => Promise<void>;
 }): Promise<{
   session: TeachingSession;
+  wasPromoted: boolean;
   finalizations: Array<{
     result: FinalizeTeachingSessionResult;
     reason: "replacement_start";
@@ -514,7 +733,12 @@ async function startScheduledClassLocked(options: {
       resolvedConflictIds.push(effectiveConflict.id);
     }
   }
-  return { session, finalizations, resolvedConflictIds };
+  return {
+    session,
+    wasPromoted: !!promotedSession,
+    finalizations,
+    resolvedConflictIds,
+  };
 }
 
 export async function startScheduledClassFromConflict(options: {
@@ -572,7 +796,7 @@ export async function processScheduledClassAutoStart(options: {
   afterReplacement?: () => Promise<void>;
 }): Promise<ScheduledClassAutoStartResult> {
   const dbInstance = options.dbInstance;
-  const group = options.group;
+  let group = options.group;
   const school = await getSchoolById(group.schoolId, dbInstance);
   const timeZone = school?.schoolTimezone || "America/New_York";
   const now = options.now || new Date();
@@ -585,38 +809,44 @@ export async function processScheduledClassAutoStart(options: {
   let blockStartTime = group.blockStartTime || "";
   let blockEndTime = group.blockEndTime || "";
   if (!occurrence) {
-    if (!blockStartTime || !blockEndTime) return { status: "skipped", reason: "missing_schedule_window" };
-    const scheduledStartAt = scheduledBlockStartUtc(options.scheduledDate, blockStartTime, timeZone);
-    const scheduledEndAt = scheduledBlockStartUtc(options.scheduledDate, blockEndTime, timeZone);
-    if (now < scheduledStartAt || now >= scheduledEndAt) {
+    if (group.scheduleSkippedDate === options.scheduledDate) {
+      return { status: "skipped", reason: "skipped" };
+    }
+    let effectiveWindow: Awaited<ReturnType<typeof getEffectiveClasspilotScheduleWindow>>;
+    try {
+      effectiveWindow = await getEffectiveClasspilotScheduleWindow({
+        schoolId: group.schoolId,
+        group,
+        scheduledDate: options.scheduledDate,
+        timeZone,
+        dbInstance,
+      });
+    } catch (error) {
+      emitEffectiveWindowFailure(error);
+      throw error;
+    }
+    if (!effectiveWindow) return { status: "skipped", reason: "missing_schedule_window" };
+    blockStartTime = effectiveWindow.blockStartTime;
+    blockEndTime = effectiveWindow.blockEndTime;
+    if (now < effectiveWindow.scheduledStartAt || now >= effectiveWindow.scheduledEndAt) {
       return { status: "skipped", reason: "outside_schedule_window" };
     }
     const prepared = await prepareScheduledOccurrence({
       group,
       scheduledDate: options.scheduledDate,
-      scheduledTimezone: timeZone,
-      scheduledStartAt,
-      scheduledEndAt,
+      now,
       dbInstance,
     });
     if ("reason" in prepared) {
       return { status: "skipped", reason: prepared.reason };
     }
     occurrence = prepared.occurrence;
-  } else if (occurrence.scheduledStartAt && occurrence.scheduledEndAt) {
+    group = prepared.group || group;
+  }
+  if (occurrence.scheduledStartAt && occurrence.scheduledEndAt) {
     const occurrenceTimeZone = occurrence.scheduledTimezone || timeZone;
-    blockStartTime = occurrence.scheduledStartAt.toLocaleString("en-US", {
-      timeZone: occurrenceTimeZone,
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).replace(/^24:/, "00:");
-    blockEndTime = occurrence.scheduledEndAt.toLocaleString("en-US", {
-      timeZone: occurrenceTimeZone,
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).replace(/^24:/, "00:");
+    blockStartTime = occurrenceTimeHHMM(occurrence.scheduledStartAt, occurrenceTimeZone);
+    blockEndTime = occurrenceTimeHHMM(occurrence.scheduledEndAt, occurrenceTimeZone);
   }
   if (occurrence.endTime || occurrence.scheduledState === "finalized" || occurrence.scheduledState === "skipped") {
     return { status: "skipped", reason: occurrence.scheduledState || "finalized" };
@@ -827,23 +1057,30 @@ export async function freezeScheduledOccurrenceIfDue(options: {
   dbInstance?: typeof db;
 }): Promise<TeachingSession | undefined> {
   const { group } = options;
-  if (!group.scheduleEnabled || !group.blockStartTime || !group.blockEndTime) return undefined;
   const now = options.now || new Date();
   const dbInstance = options.dbInstance;
   const school = await getSchoolById(group.schoolId, dbInstance);
   const timeZone = school?.schoolTimezone || "America/New_York";
   const scheduledDate = localDateInTimeZone(now, timeZone);
-  const scheduledStartAt = scheduledBlockStartUtc(scheduledDate, group.blockStartTime, timeZone);
-  const scheduledEndAt = scheduledBlockStartUtc(scheduledDate, group.blockEndTime, timeZone);
-  if (now < scheduledStartAt || now >= scheduledEndAt) return undefined;
-  const prepared = await prepareScheduledOccurrence({
+  let prepared = await prepareScheduledOccurrence({
     group,
     scheduledDate,
-    scheduledTimezone: timeZone,
-    scheduledStartAt,
-    scheduledEndAt,
+    now,
     dbInstance,
   });
+  if ("reason" in prepared && prepared.reason === "outside_schedule_window") {
+    const currentSchool = await getSchoolById(group.schoolId, dbInstance);
+    const currentTimezone = currentSchool?.schoolTimezone || "America/New_York";
+    const currentScheduledDate = localDateInTimeZone(now, currentTimezone);
+    if (currentScheduledDate !== scheduledDate) {
+      prepared = await prepareScheduledOccurrence({
+        group,
+        scheduledDate: currentScheduledDate,
+        now,
+        dbInstance,
+      });
+    }
+  }
   return "occurrence" in prepared ? prepared.occurrence : undefined;
 }
 
@@ -855,11 +1092,9 @@ export async function skipScheduledClassBeforeStart(options: {
 }): Promise<{
   skipped: boolean;
   session?: TeachingSession;
-  reason?: "non_instructional_day";
+  reason?: "non_instructional_day" | "school_date_changed";
 }> {
-  if (!options.group.blockStartTime || !options.group.blockEndTime) return { skipped: false };
-  const school = await getSchoolById(options.group.schoolId, options.dbInstance);
-  const timeZone = school?.schoolTimezone || "America/New_York";
+  const now = options.now ?? new Date();
   return withInstructionalCalendarDateLock(
     options.group.schoolId,
     options.scheduledDate,
@@ -873,6 +1108,26 @@ export async function skipScheduledClassBeforeStart(options: {
       if (existing) {
         return { skipped: existing.scheduledState === "skipped", session: existing };
       }
+      let context: Awaited<ReturnType<typeof lockAndLoadEffectiveClasspilotScheduleContext>>;
+      try {
+        context = await lockAndLoadEffectiveClasspilotScheduleContext({
+          schoolId: options.group.schoolId,
+          groupId: options.group.id,
+          scheduledDate: options.scheduledDate,
+          dbInstance: lockedDb,
+        });
+      } catch (error) {
+        emitEffectiveWindowFailure(error);
+        throw error;
+      }
+      if (!context) return { skipped: false };
+      assertCompleteApprovedSwapContext(context);
+      if (
+        context.group.status !== "active"
+        || !context.group.scheduleEnabled
+        || !context.group.blockStartTime
+        || !context.group.blockEndTime
+      ) return { skipped: false };
       const calendarStatus = await getInstructionalDateStatus(
         options.group.schoolId,
         options.scheduledDate,
@@ -881,18 +1136,42 @@ export async function skipScheduledClassBeforeStart(options: {
       if (!calendarStatus.instructional) {
         return { skipped: false, reason: "non_instructional_day" as const };
       }
-      const teacher = await getUserById(options.group.teacherId, lockedDb);
+      const timeZone = context.schoolTimezone;
+      if (localDateInTimeZone(now, timeZone) !== options.scheduledDate) {
+        return { skipped: false, reason: "school_date_changed" as const };
+      }
+      let effectiveWindow: Awaited<ReturnType<typeof getEffectiveClasspilotScheduleWindow>>;
+      try {
+        effectiveWindow = await getEffectiveClasspilotScheduleWindow({
+          schoolId: options.group.schoolId,
+          group: context.group,
+          scheduledDate: options.scheduledDate,
+          timeZone,
+          dbInstance: lockedDb,
+        });
+      } catch (error) {
+        emitEffectiveWindowFailure(error);
+        throw error;
+      }
+      if (!effectiveWindow) {
+        emitClasspilotScheduleRuntimeMetric("EffectiveWindowResolutionFailure");
+        return { skipped: false };
+      }
+      if (effectiveWindow.source === "swap") {
+        emitClasspilotScheduleRuntimeMetric("EffectiveWindowResolved");
+      }
+      const teacher = await getUserById(context.group.teacherId, lockedDb);
       return skipScheduledTeachingSessionOccurrence({
         schoolId: options.group.schoolId,
-        groupId: options.group.id,
-        teacherId: options.group.teacherId,
+        groupId: context.group.id,
+        teacherId: context.group.teacherId,
         scheduledDate: options.scheduledDate,
-        scheduledTimezone: timeZone,
-        scheduledStartAt: scheduledBlockStartUtc(options.scheduledDate, options.group.blockStartTime!, timeZone),
-        scheduledEndAt: scheduledBlockStartUtc(options.scheduledDate, options.group.blockEndTime!, timeZone),
+        scheduledTimezone: effectiveWindow.timeZone,
+        scheduledStartAt: effectiveWindow.scheduledStartAt,
+        scheduledEndAt: effectiveWindow.scheduledEndAt,
         scheduledTeacherEmail: teacher?.email || null,
         scheduledTeacherName: displayName(teacher),
-        now: options.now,
+        now,
       }, lockedDb);
     },
     options.dbInstance

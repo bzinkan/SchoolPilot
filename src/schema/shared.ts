@@ -108,6 +108,18 @@ export const settings = pgTable("settings", {
     .notNull()
     .default(sql`'{}'::jsonb`)
     .$type<InstructionalCalendarSettings>(),
+  classpilotScheduleChangesTeacherRequestsEnabled: boolean(
+    "classpilot_schedule_changes_teacher_requests_enabled"
+  ).notNull().default(false),
+  classpilotScheduleChangesAdminApprovalRequired: boolean(
+    "classpilot_schedule_changes_admin_approval_required"
+  ).notNull().default(true),
+  classpilotScheduleChangesSameDayCutoff: text(
+    "classpilot_schedule_changes_same_day_cutoff"
+  ).notNull().default("07:00"),
+  classpilotScheduleChangesRevision: integer(
+    "classpilot_schedule_changes_revision"
+  ).notNull().default(0),
 }, (table) => [
   check(
     "settings_passpilot_class_source_check",
@@ -116,6 +128,14 @@ export const settings = pgTable("settings", {
   check(
     "settings_passpilot_class_migration_revision_check",
     sql`${table.passpilotClassMigrationRevision} >= 0`
+  ),
+  check(
+    "settings_cp_schedule_change_cutoff_check",
+    sql`${table.classpilotScheduleChangesSameDayCutoff} ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'`
+  ),
+  check(
+    "settings_cp_schedule_change_revision_check",
+    sql`${table.classpilotScheduleChangesRevision} >= 0`
   ),
 ]);
 

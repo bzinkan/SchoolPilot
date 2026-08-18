@@ -18,6 +18,9 @@ export const REVIEWED_RLS_TABLE_ENABLEMENTS = Object.freeze([
   "dismissal_queue",
   "family_group_students",
   "homeroom_teachers",
+  "classpilot_schedule_change_pairs",
+  "classpilot_schedule_changes",
+  "classpilot_schedule_change_legs",
 ]);
 
 export const GOPILOT_CHILD_RLS_TABLES = Object.freeze([
@@ -28,6 +31,26 @@ export const GOPILOT_CHILD_RLS_TABLES = Object.freeze([
   "dismissal_queue",
   "family_group_students",
   "homeroom_teachers",
+]);
+
+export const CLASSPILOT_SCHEDULE_CHANGE_RLS_TABLES = Object.freeze([
+  "classpilot_schedule_change_pairs",
+  "classpilot_schedule_changes",
+  "classpilot_schedule_change_legs",
+]);
+
+const REVIEWED_RLS_ENABLEMENT_REQUESTS = Object.freeze([
+  Object.freeze(["classpilot_session_summary_deliveries"]),
+  Object.freeze(["passpilot_grade_students"]),
+  Object.freeze([
+    "classpilot_monitoring_events",
+    "classpilot_session_reports",
+    "classpilot_session_staff",
+    "classpilot_session_student_reports",
+    "classpilot_student_control_states",
+  ]),
+  GOPILOT_CHILD_RLS_TABLES,
+  CLASSPILOT_SCHEDULE_CHANGE_RLS_TABLES,
 ]);
 
 function parseAllowlist(raw) {
@@ -94,6 +117,12 @@ function requestedTables(table) {
     if (!REVIEWED_RLS_TABLE_ENABLEMENTS.includes(requested)) {
       throw new Error(`RLS table enablement is not reviewed for: ${requested}`);
     }
+  }
+  const serialized = JSON.stringify(tables);
+  if (!REVIEWED_RLS_ENABLEMENT_REQUESTS.some((request) => JSON.stringify(request) === serialized)) {
+    throw new Error(
+      `RLS table enablement must match one exact reviewed singleton or ordered bundle: ${tables.join(",")}`
+    );
   }
   return tables;
 }

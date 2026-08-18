@@ -173,6 +173,14 @@ router.post("/scheduled-classes/:groupId/skip-today", ...auth, async (req, res, 
     const scheduledDate = now.toLocaleDateString("en-CA", { timeZone });
     const result = await skipScheduledClassBeforeStart({ group, scheduledDate, now });
     if (!result.skipped) {
+      if (result.reason === "school_date_changed") {
+        return res.status(409).json({
+          skipped: false,
+          reason: "school_date_changed",
+          code: "SCHEDULE_DATE_CHANGED_RETRY",
+          error: "The school date changed while this request was processing. Try Skip Today again.",
+        });
+      }
       if (result.reason === "non_instructional_day") {
         return res.json({
           skipped: false,
@@ -234,6 +242,14 @@ router.post("/scheduled-conflicts/:id/skip", ...auth, async (req, res, next) => 
       scheduledDate: conflict.scheduledDate,
     });
     if (!skipped.skipped) {
+      if (skipped.reason === "school_date_changed") {
+        return res.status(409).json({
+          skipped: false,
+          reason: "school_date_changed",
+          code: "SCHEDULE_DATE_CHANGED_RETRY",
+          error: "The school date changed while this request was processing. Try again.",
+        });
+      }
       if (skipped.reason === "non_instructional_day") {
         return res.json({
           skipped: false,

@@ -14,7 +14,7 @@ export type WsRedisTarget =
   | { kind: "students"; schoolId: string; targetDeviceIds?: string[] }
   | { kind: "device"; schoolId: string; deviceId: string }
   | { kind: "student-disconnect"; schoolId: string; studentIds: string[] }
-  | { kind: "role"; schoolId: string; role: "teacher" | "school_admin" | "super_admin" | "student" }
+  | { kind: "role"; schoolId: string; role: "teacher" | "office_staff" | "school_admin" | "super_admin" | "student" }
   | CacheInvalidationTarget;
 
 type WsRedisEnvelope = {
