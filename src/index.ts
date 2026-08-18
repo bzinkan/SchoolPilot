@@ -476,7 +476,8 @@ export async function runStartupMigrations(): Promise<void> {
       block_start_time TEXT,
       block_end_time TEXT,
       schedule_skipped_date TEXT,
-      created_at TIMESTAMP NOT NULL DEFAULT now()
+      created_at TIMESTAMP NOT NULL DEFAULT now(),
+      CONSTRAINT groups_school_id_id_fk_key UNIQUE (school_id, id)
     )
   `);
   await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'`);
@@ -516,6 +517,20 @@ export async function runStartupMigrations(): Promise<void> {
     ON groups (school_id, id)
   `);
   await pool.query(`
+    DO $groups_school_id_id_fk_key$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'groups_school_id_id_fk_key'
+          AND conrelid = 'groups'::regclass
+      ) THEN
+        ALTER TABLE groups
+          ADD CONSTRAINT groups_school_id_id_fk_key UNIQUE (school_id, id);
+      END IF;
+    END
+    $groups_school_id_id_fk_key$;
+  `);
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS classpilot_schedule_change_pairs (
       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
       school_id TEXT NOT NULL,
@@ -533,6 +548,7 @@ export async function runStartupMigrations(): Promise<void> {
       CONSTRAINT cp_schedule_change_pairs_status_check
         CHECK (status IN ('active', 'archived')),
       CONSTRAINT cp_schedule_change_pairs_revision_check CHECK (revision >= 0),
+      CONSTRAINT cp_schedule_change_pairs_school_id_fk_key UNIQUE (school_id, id),
       CONSTRAINT cp_schedule_change_pairs_first_group_school_fk
         FOREIGN KEY (school_id, first_group_id)
         REFERENCES groups(school_id, id) ON DELETE RESTRICT,
@@ -548,6 +564,20 @@ export async function runStartupMigrations(): Promise<void> {
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS cp_schedule_change_pairs_school_id_unique
     ON classpilot_schedule_change_pairs (school_id, id)
+  `);
+  await pool.query(`
+    DO $cp_schedule_change_pairs_school_id_fk_key$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'cp_schedule_change_pairs_school_id_fk_key'
+          AND conrelid = 'classpilot_schedule_change_pairs'::regclass
+      ) THEN
+        ALTER TABLE classpilot_schedule_change_pairs
+          ADD CONSTRAINT cp_schedule_change_pairs_school_id_fk_key UNIQUE (school_id, id);
+      END IF;
+    END
+    $cp_schedule_change_pairs_school_id_fk_key$;
   `);
   await pool.query(`
     CREATE INDEX IF NOT EXISTS cp_schedule_change_pairs_school_status_idx
@@ -588,6 +618,8 @@ export async function runStartupMigrations(): Promise<void> {
       CONSTRAINT cp_schedule_changes_date_check
         CHECK (scheduled_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'),
       CONSTRAINT cp_schedule_changes_revision_check CHECK (revision >= 0),
+      CONSTRAINT cp_schedule_changes_school_id_date_fk_key
+        UNIQUE (school_id, id, scheduled_date),
       CONSTRAINT cp_schedule_changes_reservation_check
         CHECK ((status IN ('pending_counterpart', 'pending_admin', 'approved')) = reservation_active)
     )
@@ -599,6 +631,21 @@ export async function runStartupMigrations(): Promise<void> {
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS cp_schedule_changes_school_id_date_unique
     ON classpilot_schedule_changes (school_id, id, scheduled_date)
+  `);
+  await pool.query(`
+    DO $cp_schedule_changes_school_id_date_fk_key$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'cp_schedule_changes_school_id_date_fk_key'
+          AND conrelid = 'classpilot_schedule_changes'::regclass
+      ) THEN
+        ALTER TABLE classpilot_schedule_changes
+          ADD CONSTRAINT cp_schedule_changes_school_id_date_fk_key
+          UNIQUE (school_id, id, scheduled_date);
+      END IF;
+    END
+    $cp_schedule_changes_school_id_date_fk_key$;
   `);
   await pool.query(`
     CREATE INDEX IF NOT EXISTS cp_schedule_changes_school_date_status_idx

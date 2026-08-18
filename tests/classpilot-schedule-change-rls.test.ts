@@ -208,6 +208,9 @@ describe("ClassPilot schedule-change startup and forced-RLS bundle", {
     const expectedConstraints = [
       "cp_schedule_change_pairs_first_group_school_fk",
       "cp_schedule_change_pairs_second_group_school_fk",
+      "groups_school_id_id_fk_key",
+      "cp_schedule_change_pairs_school_id_fk_key",
+      "cp_schedule_changes_school_id_date_fk_key",
       "cp_schedule_changes_pair_school_fk",
       "cp_schedule_change_legs_change_school_fk",
       "cp_schedule_change_legs_group_school_fk",
