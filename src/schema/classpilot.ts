@@ -250,7 +250,7 @@ export const groups = pgTable(
   },
   (table) => [
     index("groups_school_id_idx").on(table.schoolId),
-    uniqueIndex("groups_school_id_id_unique").on(table.schoolId, table.id),
+    unique("groups_school_id_id_unique").on(table.schoolId, table.id),
     index("groups_teacher_id_idx").on(table.teacherId),
     index("groups_status_idx").on(table.status),
     uniqueIndex("groups_school_google_course_unique")
@@ -291,7 +291,7 @@ export const classpilotScheduleChangePairs = pgTable(
       table.firstGroupId,
       table.secondGroupId
     ),
-    uniqueIndex("cp_schedule_change_pairs_school_id_unique").on(
+    unique("cp_schedule_change_pairs_school_id_unique").on(
       table.schoolId,
       table.id
     ),
@@ -365,7 +365,7 @@ export const classpilotScheduleChanges = pgTable(
       table.schoolId,
       table.id
     ),
-    uniqueIndex("cp_schedule_changes_school_id_date_unique").on(
+    unique("cp_schedule_changes_school_id_date_unique").on(
       table.schoolId,
       table.id,
       table.scheduledDate
