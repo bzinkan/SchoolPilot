@@ -336,8 +336,8 @@ describe("one-release RLS table enablement", () => {
     for (const table of CLASSPILOT_SCHEDULE_CHANGE_RLS_TABLES) {
       assert.equal(
         productionAllowlist.split(",").includes(table),
-        false,
-        `${table} must not be preloaded into production.tfvars before live verification`
+        true,
+        `${table} must remain in production.tfvars after verified live baseline adoption`
       );
     }
     assert.match(claudeSource, /separate baseline-adoption change/);
