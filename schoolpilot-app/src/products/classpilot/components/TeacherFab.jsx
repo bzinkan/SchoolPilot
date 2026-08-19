@@ -29,6 +29,7 @@ function TeacherFab({
   replyPending,
   studentMessagingEnabled = true,
   onToggleStudentMessaging,
+  fabSettingsPending = false,
   chatReplies = {},
   onCloseChat,
   onSendMessage,
@@ -211,6 +212,7 @@ function TeacherFab({
                 <Switch
                   checked={handRaisingEnabled}
                   onCheckedChange={(checked) => onToggleHandRaising(checked)}
+                  disabled={fabSettingsPending}
                   className="data-[state=checked]:bg-white/40 data-[state=unchecked]:bg-white/20"
                 />
               )}
@@ -294,6 +296,7 @@ function TeacherFab({
                 <Switch
                   checked={studentMessagingEnabled}
                   onCheckedChange={(checked) => onToggleStudentMessaging(checked)}
+                  disabled={fabSettingsPending}
                   className="data-[state=checked]:bg-white/40 data-[state=unchecked]:bg-white/20"
                 />
               )}

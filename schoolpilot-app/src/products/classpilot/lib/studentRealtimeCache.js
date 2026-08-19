@@ -3,6 +3,10 @@ const REALTIME_FIELDS = Object.freeze([
   'activeTabTitle',
   'favicon',
   'allOpenTabs',
+  'tabSnapshot',
+  'tabSnapshotRevision',
+  'extensionVersion',
+  'capabilities',
   'screenLocked',
   'isSharing',
   'cameraActive',
@@ -83,6 +87,10 @@ function resetForRealtimeBinding(row, binding) {
     activeTabTitle: '',
     favicon: null,
     allOpenTabs: [],
+    tabSnapshot: null,
+    tabSnapshotRevision: null,
+    extensionVersion: null,
+    capabilities: {},
     screenLocked: false,
     isSharing: false,
     cameraActive: false,
@@ -133,6 +141,12 @@ function prepareRealtimeBinding(row, event) {
       changed: true,
     };
   }
+  // Compare before resetForRealtimeBinding removes the current revision/time.
+  // A previously unseen but older binding can arrive after the real replacement
+  // through Redis and must not retire that newer session.
+  if (!isNewerRealtimeObservation(event, row)) {
+    return { accepted: false, row, changed: false };
+  }
   return {
     accepted: true,
     row: resetForRealtimeBinding(row, incomingBinding),
@@ -151,6 +165,27 @@ function eventObservedAt(event) {
 
 function rowObservedAt(row) {
   return observedTime(row.realtimeObservedAt ?? row.lastSeenAt);
+}
+
+function isNewerRealtimeObservation(incoming, current) {
+  const incomingRevision = finiteRevision(incoming.revision ?? incoming.realtimeRevision);
+  const currentRevision = finiteRevision(current.realtimeRevision);
+  const incomingTime = eventObservedAt(incoming);
+  const currentTime = rowObservedAt(current);
+
+  // Server-observed time spans device/session bindings, whereas a revision may
+  // restart lower when a student moves to a different Chromebook. Prefer time
+  // when both sides provide it, then use the revision as a deterministic
+  // same-time or rollout fallback.
+  if (incomingTime !== null && currentTime !== null && incomingTime !== currentTime) {
+    return incomingTime > currentTime;
+  }
+  if (incomingRevision !== null && currentRevision !== null) {
+    return incomingRevision > currentRevision;
+  }
+  if (incomingTime !== null && currentTime === null) return true;
+  if (incomingRevision !== null && currentRevision === null) return true;
+  return currentRevision === null && currentTime === null;
 }
 
 function sameSchool(event, schoolId) {
@@ -198,6 +233,10 @@ function mapStudentUpdate(row, event) {
   copy('activeTabTitle');
   copy('favicon');
   copy('allOpenTabs');
+  copy('tabSnapshot');
+  copy('tabSnapshotRevision');
+  copy('extensionVersion');
+  copy('capabilities');
   copy('isSharing');
   copy('cameraActive');
   copy('screenshotHealth');
@@ -251,11 +290,13 @@ function mapClassification(row, event) {
   if (classifiedUrl && row.activeTabUrl && String(classifiedUrl) !== String(row.activeTabUrl)) return row;
 
   const classification = normalizedClassification(event);
-  if (!classification) return row;
+  const hasClassificationResult = Object.prototype.hasOwnProperty.call(event, 'aiClassification')
+    || Object.prototype.hasOwnProperty.call(event, 'classification');
+  if (!classification && !hasClassificationResult) return row;
   const next = {
     ...row,
     aiClassification: classification,
-    aiCategory: classification.category ?? row.aiCategory,
+    aiCategory: classification?.category ?? null,
     classificationPending: false,
   };
   const revision = finiteRevision(event.revision ?? event.realtimeRevision);
@@ -277,6 +318,10 @@ function mapSignedOut(row, event) {
     activeTabUrl: '',
     favicon: null,
     allOpenTabs: [],
+    tabSnapshot: null,
+    tabSnapshotRevision: null,
+    extensionVersion: null,
+    capabilities: {},
     isSharing: false,
     cameraActive: false,
     activityFresh: false,
@@ -394,24 +439,32 @@ export function mergeAggregatedStudents(oldData, newData) {
     const serverBinding = normalizedRealtimeBinding(serverRow.realtimeBinding);
     const retired = new Set(retiredRealtimeBindings(oldRow));
 
-    // The server has moved this student to a new authenticated binding. Make
-    // that response authoritative even if its revision counter is lower.
-    if (serverBinding && oldBinding && serverBinding !== oldBinding && !retired.has(serverBinding)) {
-      retired.add(oldBinding);
-      retired.delete(serverBinding);
-      const merged = {
-        ...serverRow,
-        _retiredRealtimeBindings: [...retired].slice(-8),
-      };
+    if (serverBinding && oldBinding && serverBinding !== oldBinding) {
+      if (isNewerRealtimeObservation(serverRow, oldRow)) {
+        // A current aggregate response can recover from a reordered socket
+        // binding, including one that was temporarily marked retired.
+        retired.add(oldBinding);
+        retired.delete(serverBinding);
+        const merged = {
+          ...serverRow,
+          _retiredRealtimeBindings: [...retired].slice(-8),
+        };
+        return shallowEqual(oldRow, merged) ? oldRow : merged;
+      }
+
+      // An older aggregate response was already in flight when the browser
+      // switched. Keep its roster fields, but never restore retired telemetry.
+      const merged = { ...serverRow };
+      for (const field of REALTIME_FIELDS) {
+        if (Object.prototype.hasOwnProperty.call(oldRow, field)) merged[field] = oldRow[field];
+      }
+      if (oldRow._realtimeSignedOut) merged._realtimeSignedOut = true;
+      if (retired.size > 0) merged._retiredRealtimeBindings = [...retired].slice(-8);
       return shallowEqual(oldRow, merged) ? oldRow : merged;
     }
 
-    // A response that names a retired binding was already in flight when the
-    // browser switched. Keep its non-realtime roster fields, but never let it
-    // restore telemetry from the previous session/device.
-    const staleServerBinding = Boolean(serverBinding && retired.has(serverBinding));
     const missingServerBinding = Boolean(oldBinding && !serverBinding);
-    if (staleServerBinding || missingServerBinding) {
+    if (missingServerBinding) {
       const merged = { ...serverRow };
       for (const field of REALTIME_FIELDS) {
         if (Object.prototype.hasOwnProperty.call(oldRow, field)) merged[field] = oldRow[field];

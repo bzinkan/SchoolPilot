@@ -170,6 +170,21 @@ export function installRuntimeTelemetry() {
 }
 
 export class RuntimeErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidUpdate(previousProps) {
+    if (this.state.error && previousProps.resetKey !== this.props.resetKey) {
+      this.setState({ error: null });
+    }
+  }
+
   componentDidCatch(error, info) {
     reportRuntimeError({
       eventType: 'react-boundary',
@@ -182,6 +197,52 @@ export class RuntimeErrorBoundary extends React.Component {
   }
 
   render() {
+    if (this.state.error) {
+      return React.createElement(
+        'main',
+        {
+          className: 'min-h-screen bg-slate-950 px-6 py-16 text-slate-100',
+          role: 'main',
+          'data-testid': 'runtime-error-fallback',
+        },
+        React.createElement(
+          'section',
+          {
+            className: 'mx-auto max-w-lg rounded-xl border border-slate-700 bg-slate-900 p-6 shadow-xl',
+            role: 'alert',
+            'aria-live': 'assertive',
+          },
+          React.createElement('p', { className: 'text-sm font-semibold uppercase tracking-wide text-amber-300' }, 'Dashboard interrupted'),
+          React.createElement('h1', { className: 'mt-2 text-2xl font-semibold' }, 'Schoolpilot could not finish displaying this page.'),
+          React.createElement(
+            'p',
+            { className: 'mt-3 text-sm leading-6 text-slate-300' },
+            'The problem was reported without including student data. Reload the dashboard to reconnect, or return to sign in if the issue continues.',
+          ),
+          React.createElement(
+            'div',
+            { className: 'mt-6 flex flex-wrap gap-3' },
+            React.createElement(
+              'button',
+              {
+                type: 'button',
+                className: 'rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300',
+                onClick: () => window.location.reload(),
+              },
+              'Reload dashboard',
+            ),
+            React.createElement(
+              'a',
+              {
+                className: 'rounded-md border border-slate-600 px-4 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300',
+                href: '/login',
+              },
+              'Go to sign in',
+            ),
+          ),
+        ),
+      );
+    }
     return this.props.children;
   }
 }
