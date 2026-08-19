@@ -277,7 +277,11 @@ finally {
     Remove-Item -LiteralPath $monitorJsonBoundaryPath -Force -ErrorAction SilentlyContinue
 }
 
-foreach ($functionName in @("Get-OptionalValue", "Get-ValidatedLoadSummaryTiming")) {
+foreach ($functionName in @(
+        "Get-OptionalValue", "Get-ValidatedLoadSummaryTiming", "Get-BatchSeriesStatus",
+        "Get-TelemetryAcceptanceWindow", "Add-SparseAcceptanceSourceCoverage",
+        "Test-SparseAcceptanceCoverageReady"
+    )) {
     $definition = $monitorAst.Find({
         param($node)
         $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName
@@ -285,6 +289,39 @@ foreach ($functionName in @("Get-OptionalValue", "Get-ValidatedLoadSummaryTiming
     Assert-Condition ($null -ne $definition) "The rollout monitor must define $functionName."
     Invoke-Expression $definition.Extent.Text
 }
+$sparseCoverageQueryEnd = [DateTimeOffset]::Parse("2026-08-19T23:33:59Z")
+$sparseCoverageSource = "waf_device_blocked"
+$script:StartedAt = $sparseCoverageQueryEnd.AddSeconds(-9)
+$script:TrafficStartedAtUtc = $null
+$script:TrafficStoppedAtUtc = $null
+$script:AcceptanceSourceStatuses = @{}
+$script:AcceptanceSourceCoverage = @{}
+$script:AcceptanceCoverageThroughUtc = $null
+$script:AcceptanceSparseCoverageRequired =
+    [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+$sparseCoverageConfig = [pscustomobject]@{
+    TestTelemetryWindow = $false
+    LoadProgressPath = $null
+    TelemetryExpectedSeconds = 0
+}
+$sparseCoverageBatch = [pscustomobject]@{
+    Status = @{ $sparseCoverageSource = "Complete" }
+    QueryStartUtc = $sparseCoverageQueryEnd.AddMinutes(-15)
+    QueryEndUtc = $sparseCoverageQueryEnd
+    # Simulate an AWS response returning after the next minute has started.
+    CollectedThroughUtc = $sparseCoverageQueryEnd.AddSeconds(2)
+}
+Add-SparseAcceptanceSourceCoverage -MetricBatch $sparseCoverageBatch `
+    -Config $sparseCoverageConfig -SourceName $sparseCoverageSource
+Assert-Condition ($script:AcceptanceCoverageThroughUtc -eq $sparseCoverageQueryEnd -and
+    $script:AcceptanceSourceCoverage[$sparseCoverageSource].Count -eq 1) `
+    "Sparse telemetry coverage must stop at the exact CloudWatch query horizon when the response crosses a minute boundary."
+Assert-Condition (Test-SparseAcceptanceCoverageReady -Config $sparseCoverageConfig) `
+    "Sparse telemetry finalization must not expand beyond the last provider query when wall time advances."
+$script:AcceptanceSourceCoverage[$sparseCoverageSource].Clear()
+Assert-Condition (-not (Test-SparseAcceptanceCoverageReady -Config $sparseCoverageConfig)) `
+    "Sparse telemetry readiness must still reject a genuinely missing covered minute."
+$script:StartedAt = [DateTimeOffset]::UtcNow
 $script:RequiredWorkloadSchemaVersion = "classpilot-tile-batch-v1"
 $script:RequiredWorkloadEndpointShapeSha256 = "8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2"
 $script:RequiredPollAccountingVersion = "staggered-deadline-v1"

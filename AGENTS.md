@@ -10,10 +10,9 @@ changes.
 
 Important boundary: SchoolPilot deploys the API and web app only. The
 ClassPilot Chrome extension is released separately from the `ClassPilot` repo
-through a versioned Chrome Web Store upload. The operator confirmed the live
-Chrome Web Store version on August 19, 2026 as `2.6.0`; the next locally
-prepared, not-yet-published package is `2.6.1`. Confirm the live version again
-immediately before uploading another package.
+through a versioned Chrome Web Store upload. The operator and public listing
+confirmed the live Chrome Web Store version on August 19, 2026 as `2.6.1`.
+Confirm the live version again immediately before uploading a successor.
 
 Windows deploy note: if frontend deploy stops during `npm ci` with an `EPERM`
 unlink error on a native package such as `lightningcss`, it is usually a local

@@ -267,7 +267,7 @@ When a school has multiple products, priority order is: ClassPilot > PassPilot >
   - **Axios instance** from `shared/utils/api.js` — legacy pattern, auto-attaches JWT tokens.
 - **Role-aware hooks**: `useClassPilotAuth`, `usePassPilotAuth`, `useGoPilotAuth` map the generic `activeMembership.role` to product-specific role checks (isAdmin, isTeacher, etc.).
 - **Vite proxy**: The frontend dev server proxies `/api`, `/ws`, and `/gopilot-socket` to the backend on port 4000.
-- **Chrome extension release state**: The ClassPilot Chrome extension is MV3 and lives in the separate `C:\GitHub\ClassPilot` repository. The operator confirmed Chrome Web Store listing `iggbfegfcjkfieoemeolfmfnapepalca` is live at `2.6.0` on August 19, 2026. The locally prepared, not-yet-published package is `2.6.1`; `extension/manifest.json` is the version source of truth. Confirm the listing again immediately before a future upload. Use `console.warn` rather than routine `console.error` because Chrome surfaces the latter as visible extension errors to school IT.
+- **Chrome extension release state**: The ClassPilot Chrome extension is MV3 and lives in the separate `C:\GitHub\ClassPilot` repository. The operator and public listing confirmed Chrome Web Store listing `iggbfegfcjkfieoemeolfmfnapepalca` is live at `2.6.1` on August 19, 2026. The merged `extension/manifest.json` is also `2.6.1` and remains the version source of truth; no higher unpublished package is currently prepared. Confirm the listing again immediately before a future upload. Use `console.warn` rather than routine `console.error` because Chrome surfaces the latter as visible extension errors to school IT.
 - **Canonical packaging**: From the ClassPilot repo root in Git Bash, run `./extension/package-extension.sh`. It reads the manifest, validates the packaged manifest version, and creates the Web Store artifact `dist/ClassPilot-v2.6.1.zip` plus compatibility copy `dist/classpilot-extension.zip`. Inspect the archive for root-level `manifest.json` and `managed_schema.json` before upload. A SchoolPilot deploy never publishes or updates the extension.
 - **Protocol v2 capabilities**: registration/login, heartbeat, and WebSocket auth advertise `classroomStateV1`, `fabStateRevisionV1`, `exactTabCloseV1`, `screenOnlyUnlockV1`, `durableChatAckV1`, `commandAckReceiptV1`, `classroomOverlayRestoreV1`, and `liveViewNegotiationV1`. The public telemetry contract reports a minimum extension version of `2.6.0`, but features must be gated by advertised capabilities rather than version inference alone.
 - **MV3 lifetime rules**: `setInterval` is only an awake-worker optimization. Use `chrome.alarms` for durable periodic work: screenshots have an independent 30-second alarm, and heartbeat has a coalesced 30-second fallback to its roughly 10-second awake interval. Async offscreen/runtime messages must keep the MV3 event alive until ordered side effects, storage, and ACK work settle.
@@ -847,10 +847,11 @@ For this ClassPilot release family, deploy in compatibility-safe stages:
    Frontend controls must remain hidden or safe-disabled until the relevant
    extension capability is advertised; never infer support only from a version.
 3. Release the Chrome extension separately from `C:\GitHub\ClassPilot`. The
-   current Web Store version is operator-confirmed `2.6.0` (August 19, 2026),
-   and the prepared upload is `2.6.1`. Re-check the listing, package with
-   `./extension/package-extension.sh`, inspect `dist/ClassPilot-v2.6.1.zip`,
-   then upload and stage adoption through Chrome Web Store/Google Admin.
+   current Web Store version is independently confirmed `2.6.1` (August 19,
+   2026), with no higher unpublished package prepared. For a successor, first
+   re-check the listing and bump `extension/manifest.json`, then package with
+   `./extension/package-extension.sh`, inspect the versioned archive, and
+   upload and stage adoption through Chrome Web Store/Google Admin.
 4. Omit the one-shot RLS flag on later deploys. `infra/production.tfvars` now
    records the verified 72-table live allowlist; the generic/non-production
    default remains staged separately. A SchoolPilot backend/frontend deploy

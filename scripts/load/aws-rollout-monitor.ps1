@@ -23,6 +23,7 @@ $script:LastMetricTimestamps = @{}
 $script:AcceptanceSeries = @{}
 $script:AcceptanceSourceStatuses = @{}
 $script:AcceptanceSourceCoverage = @{}
+$script:AcceptanceCoverageThroughUtc = $null
 $script:AcceptanceSparseCoverageRequired = [System.Collections.Generic.HashSet[string]]::new(
     [StringComparer]::Ordinal
 )
@@ -2446,11 +2447,18 @@ function Add-SparseAcceptanceSourceCoverage {
         $script:AcceptanceSourceCoverage[$SourceName] =
             [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     }
-    $acceptanceWindow = Get-TelemetryAcceptanceWindow -Config $Config `
-        -CollectedThroughUtc $MetricBatch.CollectedThroughUtc
-    if ($null -eq $acceptanceWindow) { return }
     $queryStart = ([DateTimeOffset]$MetricBatch.QueryStartUtc).ToUniversalTime()
     $queryEnd = ([DateTimeOffset]$MetricBatch.QueryEndUtc).ToUniversalTime()
+    if ($null -eq $script:AcceptanceCoverageThroughUtc -or
+        $queryEnd -gt $script:AcceptanceCoverageThroughUtc) {
+        $script:AcceptanceCoverageThroughUtc = $queryEnd
+    }
+    # Keep the required sparse-source window anchored to the exact provider
+    # query boundary. A later wall-clock minute must not expand acceptance
+    # beyond the telemetry snapshot that was actually requested.
+    $acceptanceWindow = Get-TelemetryAcceptanceWindow -Config $Config `
+        -CollectedThroughUtc $queryEnd
+    if ($null -eq $acceptanceWindow) { return }
     $minuteTicks = [TimeSpan]::TicksPerMinute
     $firstTicks = $queryStart.Ticks - ($queryStart.Ticks % $minuteTicks)
     if ($firstTicks -lt $queryStart.Ticks) { $firstTicks += $minuteTicks }
@@ -2474,8 +2482,9 @@ function Add-SparseAcceptanceSourceCoverage {
 function Test-SparseAcceptanceCoverageReady {
     param($Config)
     if ($script:AcceptanceSparseCoverageRequired.Count -eq 0) { return $true }
+    if ($null -eq $script:AcceptanceCoverageThroughUtc) { return $false }
     $window = Get-TelemetryAcceptanceWindow -Config $Config `
-        -CollectedThroughUtc ([DateTimeOffset]::UtcNow)
+        -CollectedThroughUtc $script:AcceptanceCoverageThroughUtc
     if ($null -eq $window) { return $false }
     $requiredMinutes = [int][math]::Round(
         ($window.EndExclusive - $window.StartInclusive).TotalMinutes
