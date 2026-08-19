@@ -220,15 +220,30 @@ describe("ClassPilot schedule-change API and storage workflow", { concurrency: f
         teacherRequestsEnabled: initial.body.teacherRequestsEnabled,
         adminApprovalRequired: initial.body.adminApprovalRequired,
         sameDayCutoff: initial.body.sameDayCutoff,
+        sameDayCutoffEnforced: initial.body.sameDayCutoffEnforced,
+        reasonRequired: initial.body.reasonRequired,
         revision: initial.body.revision,
       },
       {
         teacherRequestsEnabled: false,
         adminApprovalRequired: true,
         sameDayCutoff: "07:00",
+        sameDayCutoffEnforced: true,
+        reasonRequired: true,
         revision: 0,
       }
     );
+
+    const otherSchoolInitial = await requestJson(
+      "GET",
+      "/classpilot/schedule-changes/settings",
+      admin,
+      undefined,
+      schoolB.id
+    );
+    assert.equal(otherSchoolInitial.status, 200);
+    assert.equal(otherSchoolInitial.body.sameDayCutoffEnforced, true);
+    assert.equal(otherSchoolInitial.body.reasonRequired, true);
 
     const teacherWrite = await requestJson(
       "PATCH",
@@ -248,6 +263,92 @@ describe("ClassPilot schedule-change API and storage workflow", { concurrency: f
     assert.equal(saved.body.teacherRequestsEnabled, true);
     assert.equal(saved.body.revision, 1);
 
+    const toggled = await requestJson(
+      "PATCH",
+      "/classpilot/schedule-changes/settings",
+      admin,
+      {
+        expectedRevision: 1,
+        sameDayCutoffEnforced: false,
+        reasonRequired: false,
+      }
+    );
+    assert.equal(toggled.status, 200);
+    assert.equal(toggled.body.sameDayCutoffEnforced, false);
+    assert.equal(toggled.body.reasonRequired, false);
+    assert.equal(toggled.body.sameDayCutoff, "07:00");
+    assert.equal(toggled.body.revision, 2);
+
+    const audit = await inSchool(schoolA.id, () => db.execute(sql`
+      SELECT changes, metadata
+      FROM audit_logs
+      WHERE school_id = ${schoolA.id}
+        AND action = 'classpilot.schedule_change.settings_updated'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `));
+    assert.deepEqual(audit.rows[0]?.changes, {
+      fields: ["sameDayCutoffEnforced", "reasonRequired"],
+    });
+    assert.deepEqual(audit.rows[0]?.metadata, { revision: 2 });
+
+    const restored = await requestJson(
+      "PATCH",
+      "/classpilot/schedule-changes/settings",
+      admin,
+      {
+        expectedRevision: 2,
+        sameDayCutoffEnforced: true,
+        reasonRequired: true,
+      }
+    );
+    assert.equal(restored.status, 200);
+    assert.equal(restored.body.sameDayCutoffEnforced, true);
+    assert.equal(restored.body.reasonRequired, true);
+    assert.equal(restored.body.revision, 3);
+
+    const invalidCutoffPolicy = await requestJson(
+      "PATCH",
+      "/classpilot/schedule-changes/settings",
+      admin,
+      { expectedRevision: 3, sameDayCutoffEnforced: "false" }
+    );
+    assert.equal(invalidCutoffPolicy.status, 400);
+    assert.equal(invalidCutoffPolicy.body.code, "INVALID_SCHEDULE_CHANGE_CUTOFF_POLICY");
+
+    const invalidReasonPolicy = await requestJson(
+      "PATCH",
+      "/classpilot/schedule-changes/settings",
+      admin,
+      { expectedRevision: 3, reasonRequired: null }
+    );
+    assert.equal(invalidReasonPolicy.status, 400);
+    assert.equal(invalidReasonPolicy.body.code, "INVALID_SCHEDULE_CHANGE_REASON_POLICY");
+
+    const otherSchoolToggle = await requestJson(
+      "PATCH",
+      "/classpilot/schedule-changes/settings",
+      admin,
+      { expectedRevision: 0, reasonRequired: false },
+      schoolB.id
+    );
+    assert.equal(otherSchoolToggle.status, 200);
+    assert.equal(otherSchoolToggle.body.reasonRequired, false);
+    const schoolAUnchanged = await requestJson(
+      "GET",
+      "/classpilot/schedule-changes/settings",
+      admin
+    );
+    assert.equal(schoolAUnchanged.body.reasonRequired, true);
+    const otherSchoolRestore = await requestJson(
+      "PATCH",
+      "/classpilot/schedule-changes/settings",
+      admin,
+      { expectedRevision: 1, reasonRequired: true },
+      schoolB.id
+    );
+    assert.equal(otherSchoolRestore.status, 200);
+
     const stale = await requestJson(
       "PATCH",
       "/classpilot/schedule-changes/settings",
@@ -256,7 +357,7 @@ describe("ClassPilot schedule-change API and storage workflow", { concurrency: f
     );
     assert.equal(stale.status, 409);
     assert.equal(stale.body.code, "SCHEDULE_CHANGE_REVISION_CONFLICT");
-    assert.equal(stale.body.current.revision, 1);
+    assert.equal(stale.body.current.revision, 3);
   });
 
   it("normalizes reversed pairs and completes teacher request, counterpart acceptance, and admin approval", async () => {
@@ -392,6 +493,297 @@ describe("ClassPilot schedule-change API and storage workflow", { concurrency: f
     );
     const retainedSchool = await asSystem(() => storage.getSchoolById(schoolA.id));
     assert.equal(retainedSchool.deletedAt, null);
+  });
+
+  it("enforces the teacher cutoff only when enabled and always preserves the earliest-bell boundary", async () => {
+    const initialPolicy = await requestJson(
+      "GET",
+      "/classpilot/schedule-changes/settings",
+      admin
+    );
+    const cutoffOn = await requestJson(
+      "PATCH",
+      "/classpilot/schedule-changes/settings",
+      admin,
+      {
+        expectedRevision: initialPolicy.body.revision,
+        sameDayCutoff: "07:00",
+        sameDayCutoffEnforced: true,
+        reasonRequired: true,
+      }
+    );
+    assert.equal(cutoffOn.status, 200);
+
+    await assert.rejects(
+      () => inSchool(schoolA.id, () => storage.createClasspilotScheduleChange({
+        schoolId: schoolA.id,
+        pairId,
+        scheduledDate: "2099-05-25",
+        reason: "Request after the policy cutoff",
+        actor: { userId: teacherA.id, userEmail: teacherA.email, role: "teacher" },
+        now: new Date("2099-05-25T12:00:00.000Z"),
+      })),
+      (error: any) => {
+        assert.equal(error.code, "SCHEDULE_CHANGE_CUTOFF_PASSED");
+        return true;
+      }
+    );
+
+    const cutoffOff = await requestJson(
+      "PATCH",
+      "/classpilot/schedule-changes/settings",
+      admin,
+      {
+        expectedRevision: cutoffOn.body.revision,
+        sameDayCutoffEnforced: false,
+      }
+    );
+    assert.equal(cutoffOff.status, 200);
+    assert.equal(cutoffOff.body.sameDayCutoff, "07:00");
+    const afterCutoff = await inSchool(schoolA.id, () =>
+      storage.createClasspilotScheduleChange({
+        schoolId: schoolA.id,
+        pairId,
+        scheduledDate: "2099-05-25",
+        reason: "Same-day event before the first bell",
+        actor: { userId: teacherA.id, userEmail: teacherA.email, role: "teacher" },
+        now: new Date("2099-05-25T12:00:00.000Z"),
+      })
+    );
+    assert.equal(afterCutoff.status, "pending_counterpart");
+
+    await assert.rejects(
+      () => inSchool(schoolA.id, () => storage.createClasspilotScheduleChange({
+        schoolId: schoolA.id,
+        pairId,
+        scheduledDate: "2099-05-26",
+        reason: "Attempt at the first bell",
+        actor: { userId: teacherA.id, userEmail: teacherA.email, role: "teacher" },
+        now: new Date("2099-05-26T13:00:00.000Z"),
+      })),
+      (error: any) => {
+        assert.equal(error.code, "SCHEDULE_CHANGE_ALREADY_STARTED");
+        return true;
+      }
+    );
+
+    await assert.rejects(
+      () => inSchool(schoolA.id, () => storage.createClasspilotScheduleChange({
+        schoolId: schoolA.id,
+        pairId,
+        scheduledDate: "2099-05-28",
+        reason: "Attempt after the first bell",
+        actor: { userId: teacherA.id, userEmail: teacherA.email, role: "teacher" },
+        now: new Date("2099-05-28T13:30:00.000Z"),
+      })),
+      (error: any) => {
+        assert.equal(error.code, "SCHEDULE_CHANGE_ALREADY_STARTED");
+        return true;
+      }
+    );
+
+    const cutoffRestored = await requestJson(
+      "PATCH",
+      "/classpilot/schedule-changes/settings",
+      admin,
+      {
+        expectedRevision: cutoffOff.body.revision,
+        sameDayCutoffEnforced: true,
+      }
+    );
+    assert.equal(cutoffRestored.status, 200);
+    const futureRequest = await inSchool(schoolA.id, () =>
+      storage.createClasspilotScheduleChange({
+        schoolId: schoolA.id,
+        pairId,
+        scheduledDate: "2099-05-27",
+        reason: "Future-date request remains eligible",
+        actor: { userId: teacherA.id, userEmail: teacherA.email, role: "teacher" },
+        now: new Date("2099-05-26T12:00:00.000Z"),
+      })
+    );
+    assert.equal(futureRequest.status, "pending_counterpart");
+  });
+
+  it("makes teacher reasons optional by policy while keeping administrator reasons mandatory", async () => {
+    const initialPolicy = await requestJson(
+      "GET",
+      "/classpilot/schedule-changes/settings",
+      admin
+    );
+    const optionalPolicy = await requestJson(
+      "PATCH",
+      "/classpilot/schedule-changes/settings",
+      admin,
+      {
+        expectedRevision: initialPolicy.body.revision,
+        reasonRequired: false,
+      }
+    );
+    assert.equal(optionalPolicy.status, 200);
+    assert.equal(optionalPolicy.body.reasonRequired, false);
+
+    const omitted = await requestJson(
+      "POST",
+      "/classpilot/schedule-changes",
+      teacherA,
+      { pairId, scheduledDate: "2099-05-11" }
+    );
+    assert.equal(omitted.status, 201);
+    assert.equal(omitted.body.reason, "No reason provided.");
+
+    const blank = await requestJson(
+      "POST",
+      "/classpilot/schedule-changes",
+      teacherA,
+      { pairId, scheduledDate: "2099-05-12", reason: "" }
+    );
+    assert.equal(blank.status, 201);
+    assert.equal(blank.body.reason, "No reason provided.");
+
+    const whitespace = await requestJson(
+      "POST",
+      "/classpilot/schedule-changes",
+      teacherA,
+      { pairId, scheduledDate: "2099-05-13", reason: "   " }
+    );
+    assert.equal(whitespace.status, 201);
+    assert.equal(whitespace.body.reason, "No reason provided.");
+
+    const note = await requestJson(
+      "POST",
+      "/classpilot/schedule-changes",
+      teacherA,
+      { pairId, scheduledDate: "2099-05-14", reason: "  Assembly timing  " }
+    );
+    assert.equal(note.status, 201);
+    assert.equal(note.body.reason, "Assembly timing");
+
+    const storedReasons = await inSchool(schoolA.id, () => db.execute(sql`
+      SELECT id, reason
+      FROM classpilot_schedule_changes
+      WHERE id IN (${omitted.body.id}, ${blank.body.id}, ${whitespace.body.id}, ${note.body.id})
+    `));
+    const reasonById = new Map(storedReasons.rows.map((row: any) => [row.id, row.reason]));
+    assert.equal(reasonById.get(omitted.body.id), "No reason provided.");
+    assert.equal(reasonById.get(blank.body.id), "No reason provided.");
+    assert.equal(reasonById.get(whitespace.body.id), "No reason provided.");
+    assert.equal(reasonById.get(note.body.id), "Assembly timing");
+
+    const overlength = await requestJson(
+      "POST",
+      "/classpilot/schedule-changes",
+      teacherA,
+      { pairId, scheduledDate: "2099-05-15", reason: "x".repeat(501) }
+    );
+    assert.equal(overlength.status, 400);
+    assert.equal(overlength.body.code, "INVALID_SCHEDULE_CHANGE_REASON");
+
+    const nonString = await requestJson(
+      "POST",
+      "/classpilot/schedule-changes",
+      teacherA,
+      { pairId, scheduledDate: "2099-05-18", reason: { note: "event" } }
+    );
+    assert.equal(nonString.status, 400);
+    assert.equal(nonString.body.code, "INVALID_SCHEDULE_CHANGE_REASON");
+
+    const adminWithoutReason = await requestJson(
+      "POST",
+      "/classpilot/schedule-changes",
+      admin,
+      { pairId, scheduledDate: "2099-05-19", directApprove: true }
+    );
+    assert.equal(adminWithoutReason.status, 400);
+    assert.equal(adminWithoutReason.body.code, "INVALID_SCHEDULE_CHANGE_REASON");
+
+    const requiredPolicy = await requestJson(
+      "PATCH",
+      "/classpilot/schedule-changes/settings",
+      admin,
+      {
+        expectedRevision: optionalPolicy.body.revision,
+        reasonRequired: true,
+      }
+    );
+    assert.equal(requiredPolicy.status, 200);
+
+    for (const [scheduledDate, reason] of [
+      ["2099-05-20", undefined],
+      ["2099-05-21", ""],
+      ["2099-05-22", "   "],
+    ] as const) {
+      const required = await requestJson(
+        "POST",
+        "/classpilot/schedule-changes",
+        teacherA,
+        {
+          pairId,
+          scheduledDate,
+          ...(reason === undefined ? {} : { reason }),
+        }
+      );
+      assert.equal(required.status, 400);
+      assert.equal(required.body.code, "INVALID_SCHEDULE_CHANGE_REASON");
+    }
+  });
+
+  it("serializes a reason-policy save against teacher request creation", async () => {
+    const initialPolicy = await requestJson(
+      "GET",
+      "/classpilot/schedule-changes/settings",
+      admin
+    );
+    const optionalPolicy = await requestJson(
+      "PATCH",
+      "/classpilot/schedule-changes/settings",
+      admin,
+      {
+        expectedRevision: initialPolicy.body.revision,
+        reasonRequired: false,
+      }
+    );
+    assert.equal(optionalPolicy.status, 200);
+
+    const [createResult, saveResult] = await Promise.allSettled([
+      inSchool(schoolA.id, () => storage.createClasspilotScheduleChange({
+        schoolId: schoolA.id,
+        pairId,
+        scheduledDate: "2099-05-29",
+        reason: "",
+        actor: { userId: teacherA.id, userEmail: teacherA.email, role: "teacher" },
+      })),
+      inSchool(schoolA.id, () => storage.updateClasspilotScheduleChangeSettings({
+        schoolId: schoolA.id,
+        expectedRevision: optionalPolicy.body.revision,
+        patch: { reasonRequired: true },
+        actor: { userId: admin.id, userEmail: admin.email, role: "admin" },
+      })),
+    ]);
+
+    assert.equal(saveResult.status, "fulfilled");
+    if (saveResult.status === "fulfilled") {
+      assert.equal(saveResult.value.status, "saved");
+      assert.equal(saveResult.value.current.reasonRequired, true);
+    }
+    if (createResult.status === "fulfilled") {
+      assert.equal(createResult.value.reason, "No reason provided.");
+    } else {
+      assert.equal(createResult.reason?.code, "INVALID_SCHEDULE_CHANGE_REASON");
+    }
+
+    const finalPolicy = await requestJson(
+      "GET",
+      "/classpilot/schedule-changes/settings",
+      admin
+    );
+    assert.equal(finalPolicy.body.reasonRequired, true);
+    const blankRows = await inSchool(schoolA.id, () => db.execute(sql`
+      SELECT count(*)::int AS count
+      FROM classpilot_schedule_changes
+      WHERE school_id = ${schoolA.id} AND length(reason) = 0
+    `));
+    assert.equal(Number(blankRows.rows[0]?.count || 0), 0);
   });
 
   it("keeps delayed Stripe payment entitlements monotonic under the approved-swap lock domain", async () => {

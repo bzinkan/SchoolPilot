@@ -607,7 +607,10 @@ not move, and the normal `groups.block_*` schedule resumes the next day.
 - **Eligibility:** administrators and school administrators configure exact
   eligible class pairs. Primary teachers may request and accept; co-teachers and
   office staff are view-only. Teacher requests default off and require the other
-  primary teacher's acceptance. Administrator approval defaults on.
+  primary teacher's acceptance. Administrator approval, the teacher same-day
+  cutoff, and required teacher reasons are independent policies that default on.
+  Disabling the cutoff never bypasses the absolute earliest affected-class start
+  guard, and administrator-created changes always require a reason.
 - **Authority:** `classpilot_schedule_change_pairs`,
   `classpilot_schedule_changes`, and `classpilot_schedule_change_legs` are the
   tenant-scoped workflow and effective-window authority. Never implement a
@@ -625,7 +628,8 @@ not move, and the normal `groups.block_*` schedule resumes the next day.
   class-row locks. Every workflow mutation is revisioned and audited.
 - **UI:** teacher operations live under My Settings → Schedule Changes; admin
   pairing and operations live under Classes → Schedule Changes; policy lives in
-  Admin Settings. The Teacher Dashboard shows only a compact day-of indicator.
+  Admin Settings immediately before Privacy & Compliance. The Teacher Dashboard
+  shows only a compact day-of indicator.
 
 ### Super Admin Features
 - **Broadcast email**: POST `/super-admin/broadcast-email` sends to all school admins via SendGrid

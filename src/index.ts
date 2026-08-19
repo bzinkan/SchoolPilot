@@ -498,6 +498,8 @@ export async function runStartupMigrations(): Promise<void> {
       ADD COLUMN IF NOT EXISTS classpilot_schedule_changes_teacher_requests_enabled BOOLEAN NOT NULL DEFAULT false,
       ADD COLUMN IF NOT EXISTS classpilot_schedule_changes_admin_approval_required BOOLEAN NOT NULL DEFAULT true,
       ADD COLUMN IF NOT EXISTS classpilot_schedule_changes_same_day_cutoff TEXT NOT NULL DEFAULT '07:00',
+      ADD COLUMN IF NOT EXISTS classpilot_schedule_changes_same_day_cutoff_enforced BOOLEAN NOT NULL DEFAULT true,
+      ADD COLUMN IF NOT EXISTS classpilot_schedule_changes_reason_required BOOLEAN NOT NULL DEFAULT true,
       ADD COLUMN IF NOT EXISTS classpilot_schedule_changes_revision INTEGER NOT NULL DEFAULT 0
   `);
   await pool.query(`

@@ -467,11 +467,6 @@ export default function Settings() {
 
       {/* Main Content */}
       <main className="max-w-4xl mx-auto px-6 py-8 space-y-8">
-        <ScheduleChangePolicyCard
-          schoolId={currentUser?.schoolId}
-          canManage={canManageSchoolSettings}
-        />
-
         {/* General Settings */}
         <Card>
           <CardHeader>
@@ -879,6 +874,11 @@ export default function Settings() {
             )}
           </CardContent>
         </Card>
+
+        <ScheduleChangePolicyCard
+          schoolId={currentUser?.schoolId}
+          canManage={canManageSchoolSettings}
+        />
 
         {/* Privacy Notice */}
         <Card className="border-primary/20 bg-primary/5">

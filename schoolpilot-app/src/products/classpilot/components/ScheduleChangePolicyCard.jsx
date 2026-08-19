@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { CalendarClock, Check, Loader2, RefreshCw, Save } from "lucide-react";
 
@@ -21,7 +21,9 @@ function toDraft(settings) {
   return {
     teacherRequestsEnabled: settings?.teacherRequestsEnabled === true,
     adminApprovalRequired: settings?.adminApprovalRequired !== false,
+    sameDayCutoffEnforced: settings?.sameDayCutoffEnforced !== false,
     sameDayCutoff: settings?.sameDayCutoff || "07:00",
+    reasonRequired: settings?.reasonRequired !== false,
     revision: Number.isInteger(settings?.revision) ? settings.revision : 0,
   };
 }
@@ -100,23 +102,61 @@ function PolicyEditor({ schoolId, initialSettings, refetch }) {
               />
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_160px] sm:items-end">
+            <div className="flex items-start justify-between gap-5 border-b pb-5">
+              <div>
+                <Label htmlFor="schedule-change-cutoff-enforced" className="text-sm font-semibold">Enforce same-day cutoff</Label>
+                <p id="schedule-change-cutoff-enforced-description" className="mt-1 max-w-xl text-sm text-muted-foreground">
+                  Close teacher requests at the configured school-local time.
+                </p>
+              </div>
+              <Switch
+                id="schedule-change-cutoff-enforced"
+                checked={draft.sameDayCutoffEnforced}
+                onCheckedChange={(checked) => updateDraft({ sameDayCutoffEnforced: checked })}
+                aria-describedby="schedule-change-cutoff-enforced-description"
+                data-testid="switch-schedule-change-cutoff-enforced"
+              />
+            </div>
+
+            <div className="grid gap-3 border-b pb-5 sm:grid-cols-[minmax(0,1fr)_160px] sm:items-end">
               <div>
                 <Label htmlFor="schedule-change-cutoff" className="text-sm font-semibold">Teacher same-day cutoff</Label>
-                <p className="mt-1 text-sm text-muted-foreground">Teachers cannot submit a request after this school-local time. Administrators remain subject to the affected class start times.</p>
+                <p id="schedule-change-cutoff-description" className="mt-1 text-sm text-muted-foreground">
+                  {draft.sameDayCutoffEnforced
+                    ? "Teachers cannot submit after this time."
+                    : "This saved time will be used again if enforcement is turned on."}
+                  {" "}The earlier affected class start is always the final deadline.
+                </p>
               </div>
               <Input
                 id="schedule-change-cutoff"
                 type="time"
                 value={draft.sameDayCutoff}
                 onChange={(event) => updateDraft({ sameDayCutoff: event.target.value })}
+                disabled={!draft.sameDayCutoffEnforced}
+                aria-describedby="schedule-change-cutoff-description"
                 data-testid="input-schedule-change-cutoff"
               />
             </div>
 
-            <div className="grid gap-2 rounded-md border bg-muted/40 p-3 text-sm sm:grid-cols-2">
-              <p className="flex items-center gap-2"><Check className="h-4 w-4 text-emerald-600" /> Counterpart teacher acceptance is always required</p>
-              <p className="flex items-center gap-2"><Check className="h-4 w-4 text-emerald-600" /> Every request requires a reason</p>
+            <div className="flex items-start justify-between gap-5 border-b pb-5">
+              <div>
+                <Label htmlFor="schedule-change-reason-required" className="text-sm font-semibold">Require a reason</Label>
+                <p id="schedule-change-reason-required-description" className="mt-1 max-w-xl text-sm text-muted-foreground">
+                  Require teachers to explain a request. Administrator-created changes always require a reason.
+                </p>
+              </div>
+              <Switch
+                id="schedule-change-reason-required"
+                checked={draft.reasonRequired}
+                onCheckedChange={(checked) => updateDraft({ reasonRequired: checked })}
+                aria-describedby="schedule-change-reason-required-description"
+                data-testid="switch-schedule-change-reason-required"
+              />
+            </div>
+
+            <div className="rounded-md border bg-muted/40 p-3 text-sm">
+              <p className="flex items-center gap-2"><Check className="h-4 w-4 shrink-0 text-emerald-600" /> Counterpart teacher acceptance is always required</p>
             </div>
 
             {conflict ? (
@@ -132,7 +172,9 @@ function PolicyEditor({ schoolId, initialSettings, refetch }) {
                 onClick={() => mutation.mutate({
                   teacherRequestsEnabled: draft.teacherRequestsEnabled,
                   adminApprovalRequired: draft.adminApprovalRequired,
+                  sameDayCutoffEnforced: draft.sameDayCutoffEnforced,
                   sameDayCutoff: draft.sameDayCutoff,
+                  reasonRequired: draft.reasonRequired,
                   expectedRevision: draft.revision,
                 })}
                 disabled={!dirty || mutation.isPending || !draft.sameDayCutoff}
@@ -154,12 +196,32 @@ export function ScheduleChangePolicyCard({ schoolId, canManage }) {
     enabled: Boolean(schoolId && canManage),
   });
 
+  useEffect(() => {
+    if (!canManage || window.location.hash !== "#schedule-changes") return undefined;
+
+    const frame = window.requestAnimationFrame(() => {
+      const card = document.getElementById("schedule-changes");
+      if (!card) return;
+      card.scrollIntoView({ block: "start" });
+      card.focus({ preventScroll: true });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [canManage]);
+
   if (!canManage) return null;
 
   return (
-    <Card id="schedule-changes" className="scroll-mt-6 border-slate-300 dark:border-slate-700" data-testid="card-schedule-change-policy">
+    <Card
+      id="schedule-changes"
+      role="region"
+      aria-labelledby="schedule-changes-title"
+      tabIndex={-1}
+      className="scroll-mt-6 border-slate-300 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 dark:border-slate-700"
+      data-testid="card-schedule-change-policy"
+    >
       <CardHeader className="border-b border-slate-200 bg-slate-900 text-white dark:border-slate-700">
-        <CardTitle className="flex items-center gap-2 text-base">
+        <CardTitle id="schedule-changes-title" className="flex items-center gap-2 text-base">
           <CalendarClock className="h-5 w-5 text-amber-300" /> Schedule Changes
         </CardTitle>
         <CardDescription className="text-slate-300">

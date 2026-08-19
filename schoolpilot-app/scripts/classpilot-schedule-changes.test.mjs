@@ -79,17 +79,19 @@ function change(overrides = {}) {
   };
 }
 
-function eligibility() {
+function eligibility(policyOverrides = {}) {
   return {
     scheduledDate: SWAP_DATE,
     schoolTimezone: "America/New_York",
     policy: {
       teacherRequestsEnabled: true,
       adminApprovalRequired: true,
+      sameDayCutoffEnforced: true,
       sameDayCutoff: "07:00",
       reasonRequired: true,
       schoolTimezone: "America/New_York",
       revision: 1,
+      ...policyOverrides,
     },
     pairs: [{
       pairId: PAIR_ID,
@@ -156,6 +158,7 @@ test("ClassPilot schedule-change teacher, admin, policy, and mobile workflows", 
     const teacherActions = [];
     let createAttempts = 0;
     let teacherRequestsEnabled = true;
+    let teacherReasonRequired = true;
     await configureBase(teacherPage, "teacher", async (route, request, url) => {
       if (url.pathname === "/api/classpilot/schedule-changes/settings" && request.method() === "GET") {
         await route.fulfill({ json: { ...eligibility().policy, teacherRequestsEnabled } });
@@ -163,7 +166,7 @@ test("ClassPilot schedule-change teacher, admin, policy, and mobile workflows", 
       }
       if (url.pathname === "/api/classpilot/schedule-changes/eligibility" && request.method() === "GET") {
         assert.equal(url.searchParams.get("date"), SWAP_DATE);
-        await route.fulfill({ json: eligibility() });
+        await route.fulfill({ json: eligibility({ reasonRequired: teacherReasonRequired }) });
         return true;
       }
       if (url.pathname === "/api/classpilot/schedule-changes" && request.method() === "GET") {
@@ -213,10 +216,13 @@ test("ClassPilot schedule-change teacher, admin, policy, and mobile workflows", 
     assert.deepEqual(teacherActions, [{ action: "accept", expectedRevision: 3 }]);
 
     await teacherPage.getByTestId("button-request-time-swap").click();
+    assert.equal(await teacherPage.getByTestId("textarea-schedule-change-reason").getAttribute("required"), "", "teacher requests must fail closed until date-specific policy loads");
     await teacherPage.getByTestId("input-schedule-change-date").fill(SWAP_DATE);
     await teacherPage.getByTestId("select-schedule-change-pair").click();
     await teacherPage.getByRole("option", { name: "7th Math ↔ 8th ELA" }).click();
     await teacherPage.getByText("Event day", { exact: true }).first().waitFor();
+    assert.equal(await teacherPage.getByTestId("textarea-schedule-change-reason").getAttribute("required"), "");
+    assert.equal(await teacherPage.getByTestId("button-submit-schedule-change").isDisabled(), true);
     await teacherPage.getByTestId("textarea-schedule-change-reason").fill("Assembly schedule for both grade levels.");
     await teacherPage.getByTestId("button-submit-schedule-change").click();
     await teacherPage.getByTestId("schedule-change-submit-error").waitFor();
@@ -229,6 +235,18 @@ test("ClassPilot schedule-change teacher, admin, policy, and mobile workflows", 
       { pairId: PAIR_ID, scheduledDate: SWAP_DATE, reason: "Assembly schedule for both grade levels." },
       { pairId: PAIR_ID, scheduledDate: SWAP_DATE, reason: "Assembly schedule for both grade levels." },
     ]);
+
+    teacherReasonRequired = false;
+    await teacherPage.getByTestId("button-request-time-swap").click();
+    await teacherPage.getByTestId("input-schedule-change-date").fill(SWAP_DATE);
+    await teacherPage.getByText("Note (optional)", { exact: true }).waitFor();
+    await teacherPage.getByTestId("select-schedule-change-pair").click();
+    await teacherPage.getByRole("option", { name: "7th Math ↔ 8th ELA" }).click();
+    assert.equal(await teacherPage.getByTestId("textarea-schedule-change-reason").getAttribute("required"), null);
+    assert.equal(await teacherPage.getByTestId("button-submit-schedule-change").isEnabled(), true);
+    await teacherPage.getByTestId("button-submit-schedule-change").click();
+    await teacherPage.getByTestId("dialog-schedule-change-request").waitFor({ state: "hidden" });
+    assert.deepEqual(teacherCreates.at(-1), { pairId: PAIR_ID, scheduledDate: SWAP_DATE });
     const mobileWidth = await teacherPage.evaluate(() => ({ document: document.documentElement.scrollWidth, viewport: window.innerWidth }));
     assert.ok(mobileWidth.document <= mobileWidth.viewport + 1, `teacher schedule page overflowed: ${JSON.stringify(mobileWidth)}`);
     if (process.env.CLASSPILOT_SCHEDULE_TEACHER_SCREENSHOT) {
@@ -267,7 +285,7 @@ test("ClassPilot schedule-change teacher, admin, policy, and mobile workflows", 
         return true;
       }
       if (url.pathname === "/api/classpilot/schedule-changes/eligibility" && request.method() === "GET") {
-        await route.fulfill({ json: eligibility() });
+        await route.fulfill({ json: eligibility({ reasonRequired: false }) });
         return true;
       }
       if (url.pathname === "/api/classpilot/schedule-changes" && request.method() === "GET") {
@@ -306,6 +324,9 @@ test("ClassPilot schedule-change teacher, admin, policy, and mobile workflows", 
     await adminPage.getByTestId("input-schedule-change-date").fill(SWAP_DATE);
     await adminPage.getByTestId("select-schedule-change-pair").click();
     await adminPage.getByRole("option", { name: "7th Math ↔ 8th ELA" }).click();
+    await adminPage.getByText("Reason", { exact: true }).waitFor();
+    assert.equal(await adminPage.getByTestId("textarea-schedule-change-reason").getAttribute("required"), "");
+    assert.equal(await adminPage.getByTestId("button-submit-schedule-change").isDisabled(), true, "admin creation must always require a reason");
     await adminPage.getByTestId("textarea-schedule-change-reason").fill("Administrator-created event-day rotation.");
     await adminPage.getByTestId("button-submit-schedule-change").click();
     await adminPage.getByTestId("dialog-schedule-change-request").waitFor({ state: "hidden" });
@@ -354,14 +375,42 @@ test("ClassPilot schedule-change teacher, admin, policy, and mobile workflows", 
 
     await settingsPage.goto(`${baseURL}/classpilot/settings#schedule-changes`);
     await settingsPage.getByTestId("card-schedule-change-policy").waitFor();
+    await settingsPage.waitForFunction(() => document.activeElement?.id === "schedule-changes");
+    assert.equal(await settingsPage.getByTestId("card-schedule-change-policy").evaluate((card) => (
+      card.nextElementSibling?.textContent?.includes("Privacy & Compliance") === true
+    )), true, "Schedule Changes must sit immediately before Privacy & Compliance");
     await settingsPage.getByTestId("switch-teacher-schedule-change-requests").click();
+    await settingsPage.getByTestId("switch-schedule-change-cutoff-enforced").focus();
+    await settingsPage.keyboard.press("Space");
+    assert.equal(await settingsPage.getByTestId("input-schedule-change-cutoff").isDisabled(), true);
+    assert.equal(await settingsPage.getByTestId("input-schedule-change-cutoff").inputValue(), "07:00", "turning enforcement off must retain the saved time");
+    await settingsPage.getByTestId("switch-schedule-change-reason-required").focus();
+    await settingsPage.keyboard.press("Space");
     await settingsPage.getByTestId("button-save-schedule-change-policy").click();
     await settingsPage.getByTestId("schedule-policy-conflict").waitFor();
     assert.equal(await settingsPage.getByTestId("switch-teacher-schedule-change-requests").getAttribute("data-state"), "checked", "409 must preserve the local switch draft");
-    assert.deepEqual(policyPatches, [{ teacherRequestsEnabled: true, adminApprovalRequired: true, sameDayCutoff: "07:00", expectedRevision: 1 }]);
+    assert.equal(await settingsPage.getByTestId("switch-schedule-change-cutoff-enforced").getAttribute("data-state"), "unchecked", "409 must preserve the cutoff draft");
+    assert.equal(await settingsPage.getByTestId("switch-schedule-change-reason-required").getAttribute("data-state"), "unchecked", "409 must preserve the reason draft");
+    assert.deepEqual(policyPatches, [{
+      teacherRequestsEnabled: true,
+      adminApprovalRequired: true,
+      sameDayCutoffEnforced: false,
+      sameDayCutoff: "07:00",
+      reasonRequired: false,
+      expectedRevision: 1,
+    }]);
     await settingsPage.getByRole("button", { name: "Load latest policy" }).click();
     assert.equal(await settingsPage.getByTestId("switch-teacher-schedule-change-requests").getAttribute("data-state"), "unchecked");
+    assert.equal(await settingsPage.getByTestId("switch-schedule-change-cutoff-enforced").getAttribute("data-state"), "checked");
+    assert.equal(await settingsPage.getByTestId("switch-schedule-change-reason-required").getAttribute("data-state"), "checked");
+    assert.equal(await settingsPage.getByTestId("input-schedule-change-cutoff").isEnabled(), true);
     assert.equal(await settingsPage.getByTestId("input-schedule-change-cutoff").inputValue(), "06:30");
+    await settingsPage.setViewportSize({ width: 390, height: 844 });
+    const settingsMobileWidth = await settingsPage.getByTestId("card-schedule-change-policy").evaluate((card) => ({
+      content: card.scrollWidth,
+      card: card.clientWidth,
+    }));
+    assert.ok(settingsMobileWidth.content <= settingsMobileWidth.card + 1, `schedule policy overflowed on mobile: ${JSON.stringify(settingsMobileWidth)}`);
     await settingsPage.close();
   } finally {
     await browser?.close().catch(() => {});

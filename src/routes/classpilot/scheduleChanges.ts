@@ -90,6 +90,17 @@ function requiredString(value: unknown, field: string, max = 500): string {
   return value.trim();
 }
 
+function scheduleChangeReason(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.length > 500) {
+    throw routeError(
+      "INVALID_SCHEDULE_CHANGE_REASON",
+      "reason must be text with at most 500 characters."
+    );
+  }
+  return value;
+}
+
 function assertOnlyKeys(body: unknown, keys: string[]): Record<string, unknown> {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw routeError("INVALID_SCHEDULE_CHANGE_BODY", "A JSON object is required.");
@@ -213,6 +224,8 @@ router.patch("/settings", ...auth, adminRoles, async (req, res, next) => {
       "teacherRequestsEnabled",
       "adminApprovalRequired",
       "sameDayCutoff",
+      "sameDayCutoffEnforced",
+      "reasonRequired",
     ]);
     const revision = expectedRevision(body.expectedRevision);
     if (
@@ -233,6 +246,24 @@ router.patch("/settings", ...auth, adminRoles, async (req, res, next) => {
     ) {
       throw routeError("INVALID_SCHEDULE_CHANGE_CUTOFF", "sameDayCutoff must use HH:MM format.");
     }
+    if (
+      body.sameDayCutoffEnforced !== undefined &&
+      typeof body.sameDayCutoffEnforced !== "boolean"
+    ) {
+      throw routeError(
+        "INVALID_SCHEDULE_CHANGE_CUTOFF_POLICY",
+        "sameDayCutoffEnforced must be boolean."
+      );
+    }
+    if (
+      body.reasonRequired !== undefined &&
+      typeof body.reasonRequired !== "boolean"
+    ) {
+      throw routeError(
+        "INVALID_SCHEDULE_CHANGE_REASON_POLICY",
+        "reasonRequired must be boolean."
+      );
+    }
     const result = await updateClasspilotScheduleChangeSettings({
       schoolId: res.locals.schoolId!,
       expectedRevision: revision,
@@ -240,6 +271,8 @@ router.patch("/settings", ...auth, adminRoles, async (req, res, next) => {
         teacherRequestsEnabled: body.teacherRequestsEnabled as boolean | undefined,
         adminApprovalRequired: body.adminApprovalRequired as boolean | undefined,
         sameDayCutoff: body.sameDayCutoff as string | undefined,
+        sameDayCutoffEnforced: body.sameDayCutoffEnforced as boolean | undefined,
+        reasonRequired: body.reasonRequired as boolean | undefined,
       },
       actor: routeActor,
     });
@@ -424,7 +457,7 @@ router.post("/", ...auth, requireRole("admin", "school_admin", "teacher"), async
       schoolId: res.locals.schoolId!,
       pairId: requiredString(body.pairId, "pairId", 100),
       scheduledDate: requiredString(body.scheduledDate, "scheduledDate", 10),
-      reason: requiredString(body.reason, "reason", 500),
+      reason: scheduleChangeReason(body.reason),
       directApprove: body.directApprove as boolean | undefined,
       actor: routeActor,
     });
