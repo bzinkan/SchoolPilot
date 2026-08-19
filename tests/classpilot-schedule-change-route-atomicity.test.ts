@@ -75,7 +75,7 @@ test("schedule-change realtime keeps office staff view-only", async () => {
   assert.match(refreshHook, /currentUser\.role === "office_staff"[\s\S]*?"office_staff"/);
   assert.match(websocket, /message\.role === "office_staff"/);
   assert.match(websocket, /membershipRole === "office_staff"[^\n]*return "office_staff"/);
-  assert.match(websocket, /Staff access required/);
+  assert.match(websocket, /No active ClassPilot access for this school/);
   assert.match(websocket, /export async function activeStaffWebSocketRole/);
   assert.match(websocket, /currentRole !== client\.role/);
   assert.match(websocket, /staffWebSocketMessageRevalidation/);

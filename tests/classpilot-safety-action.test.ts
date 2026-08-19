@@ -124,7 +124,10 @@ describe("ClassPilot current-heartbeat safety action boundary", () => {
 
     assert.ok(start >= 0 && end > start);
     assert.match(safetyPath, /if \(safetyAction\) \{/);
-    assert.match(safetyPath, /data: safetyAction\.closeTabData/);
+    assert.match(
+      safetyPath,
+      /data:\s*\{\s*\.\.\.safetyAction\.closeTabData,\s*studentId,\s*studentSessionId\s*\}/
+    );
     assert.match(safetyPath, /deliveryPolicy: classpilotCommandDeliveryPolicy\("close-tab"\)/);
     assert.match(safetyPath, /expiresAt: safetyCommandExpiresAt\.toISOString\(\)/);
     assert.match(safetyPath, /const alertSessionId = safetyAction\.teachingSessionId/);

@@ -9,6 +9,7 @@ import {
   aggregateClasspilotSessionUsage,
   createGroup,
   createMembership,
+  createProductLicense,
   createSchool,
   createStudent,
   createTeachingSession,
@@ -95,6 +96,11 @@ before(async () => {
     slug: TAG,
     schoolTimezone: "America/New_York",
   } as any);
+  await createProductLicense({
+    schoolId: school.id,
+    product: "CLASSPILOT",
+    status: "active",
+  } as any);
   admin = await createUser({ email: `admin@${TAG}.example.edu`, firstName: "Ada", lastName: "Admin" } as any);
   teacherA = await createUser({ email: `teacher-a@${TAG}.example.edu`, firstName: "Tara", lastName: "Alpha" } as any);
   teacherB = await createUser({ email: `teacher-b@${TAG}.example.edu`, firstName: "Terry", lastName: "Beta" } as any);
@@ -145,6 +151,7 @@ after(async () => {
       await db.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id = ${school.id})`);
       await db.execute(sql`DELETE FROM groups WHERE school_id = ${school.id}`);
       await db.execute(sql`DELETE FROM students WHERE school_id = ${school.id}`);
+      await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${school.id}`);
       await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${school.id}`);
       await db.execute(sql`DELETE FROM schools WHERE id = ${school.id}`);
       await db.execute(sql`DELETE FROM users WHERE email LIKE ${`%@${TAG}.example.edu`}`);
