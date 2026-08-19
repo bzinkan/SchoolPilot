@@ -191,6 +191,7 @@ after(async () => {
       await db.execute(sql`DELETE FROM mailpilot_watches WHERE school_id IN (${schoolAId}, ${schoolBId})`);
       await db.execute(sql`DELETE FROM student_sessions WHERE student_id IN (SELECT id FROM students WHERE school_id IN (${schoolAId}, ${schoolBId}))`);
       await db.execute(sql`DELETE FROM classpilot_active_hands WHERE school_id IN (${schoolAId}, ${schoolBId})`);
+      await db.execute(sql`DELETE FROM devices WHERE school_id IN (${schoolAId}, ${schoolBId})`);
       await db.execute(sql`DELETE FROM classpilot_session_students WHERE school_id IN (${schoolAId}, ${schoolBId})`);
       await db.execute(sql`DELETE FROM teaching_sessions WHERE school_id IN (${schoolAId}, ${schoolBId})`);
       await db.execute(sql`DELETE FROM subgroup_members WHERE subgroup_id IN (SELECT id FROM subgroups WHERE school_id IN (${schoolAId}, ${schoolBId}))`);
@@ -276,6 +277,10 @@ describe("ClassPilot student roster removal lifecycle", () => {
           (school_id, coverage_group_id, student_id)
         VALUES
           (${schoolAId}, ${coverageGroupId}, ${student.id})
+      `);
+      await db.execute(sql`
+        INSERT INTO devices (device_id, device_name, school_id, class_id)
+        VALUES (${`${TAG}-device-hand`}, 'Retained hand fixture', ${schoolAId}, ${group.id})
       `);
       await db.execute(sql`
         INSERT INTO classpilot_active_hands

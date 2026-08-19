@@ -816,6 +816,12 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
         )
       `);
       await db.execute(sql`
+        INSERT INTO devices (device_id, device_name, school_id, class_id)
+        VALUES (
+          ${`${TAG}-manual-hand-device`}, 'Manual hand fixture', ${school.id}, ${group.id}
+        )
+      `);
+      await db.execute(sql`
         INSERT INTO classpilot_active_hands (
           school_id, teaching_session_id, student_id, device_id
         ) VALUES (
@@ -3799,6 +3805,12 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
         ) VALUES (
           ${school.id}, ${duplicate.id}, ${studentOne.id}, 'screen_lock', 'legacy-duplicate',
           '{}'::jsonb, ${teacher.id}
+        )
+      `);
+      await db.execute(sql`
+        INSERT INTO devices (device_id, device_name, school_id, class_id)
+        VALUES (
+          ${`${TAG}-legacy-duplicate-hand`}, 'Legacy duplicate hand fixture', ${school.id}, ${group.id}
         )
       `);
       await db.execute(sql`
