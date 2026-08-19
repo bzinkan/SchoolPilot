@@ -148,7 +148,7 @@ SchoolPilot is multi-tenant. Beyond the app-code rule of filtering every query b
 - **Out-of-request DB access**: for code that runs OUTSIDE an Express request — WebSocket/Socket.IO handlers, unauthenticated routes (kiosk, device register), detached `.then()`/`.catch()` callbacks that outlive the response — wrap the DB work in **`runWithTenantContext({ schoolId }, fn)`** (or `{ isSuper: true }` for genuinely cross-school reads), from `src/middleware/tenantContext.ts`. It establishes the same tenant ALS scope on a fresh connection.
 - **Kill-switch / rollout**: gated by env on the ECS task def — `RLS_GUC_ENABLED` (master on/off) and `RLS_ENABLED_TABLES` (comma-list of enforced tables). Dropping a table from the list (or `RLS_GUC_ENABLED=false`) disables enforcement on the next deploy — no code change.
 - **Deploy-time allowlist additions**: ordinary backend deploys preserve the live task definition's RLS master switch and per-table allowlist exactly. A reviewed release may use the one-shot `--enable-rls-table <reviewed-table-or-exact-bundle>` flag. That path requires matching live API/worker allowlists with `RLS_GUC_ENABLED=true`, adds only the reviewed table set to the rendered API/emergency/worker definitions, verifies the registered definitions, and makes the migration task fail unless PostgreSQL reports enabled + forced RLS and the `tenant_isolation` policy for every requested table. Omit the flag on later deploys; a deliberate per-table kill-switch removal then remains removed. This path does not require a Terraform apply.
-- **ClassPilot command/FAB state is tenant state**: keep `classpilot_commands`, `classpilot_command_targets`, `classpilot_classroom_states`, `classpilot_student_control_states`, `classpilot_active_hands`, `classpilot_chat_deliveries`, `polls`, `poll_responses`, and `session_settings` school-scoped in production and tests. Startup migrations fail closed on invalid parent bindings and install/verify same-school parent triggers for FAB/chat/poll rows. `classpilot_active_hands` is already baseline; the four-table FAB one-shot bundle later in this file remains exactly `classpilot_chat_deliveries,poll_responses,polls,session_settings`.
+- **ClassPilot command/FAB state is tenant state**: keep `classpilot_commands`, `classpilot_command_targets`, `classpilot_classroom_states`, `classpilot_student_control_states`, `classpilot_active_hands`, `classpilot_chat_deliveries`, `polls`, `poll_responses`, and `session_settings` school-scoped in production and tests. Startup migrations fail closed on invalid parent bindings and install/verify same-school parent triggers for FAB/chat/poll rows. All five FAB/chat/poll tables are in the adopted production baseline; the reviewed re-admission bundle remains exactly `classpilot_chat_deliveries,poll_responses,polls,session_settings` if a deliberate kill-switch removal must later be reversed.
 
 **THE RULE when you add or change DB code:** any path that reads or writes a tenant table MUST run under a tenant context — a GUC-bound request, `schedulerDb` (is_super), or `runWithTenantContext`. A new unauthenticated route, WebSocket handler, detached callback, or boot migration that touches a tenant table on the bare `db`/`pool` will **silently return 0 rows or fail `WITH CHECK`** once that table is enforced. New `INSERT`s must set `school_id` (derive it from the parent/owner — never trust the request body). The cross-tenant regression suite (`tests/cross-tenant-isolation.test.ts`) wraps calls in `inSchool()` / `asSystem()` helpers around `runWithTenantContext` — extend it when you add school-scoped storage functions.
 
@@ -831,10 +831,11 @@ reorder, or retain this flag on later releases:
   --enable-rls-table classpilot_chat_deliveries,poll_responses,polls,session_settings
 ```
 
-Before that one-shot activation succeeds, keep both Terraform allowlists at
-the currently deployed baseline. After the live FORCE RLS, tenant policy, and
-catalog checks pass, adopt the observed allowlist in a separate baseline-only
-change before any later Terraform apply.
+That activation was verified on August 19, 2026, and `infra/production.tfvars`
+now records the exact observed 72-table live allowlist. Ordinary later deploys
+omit the flag. Do not use the Terraform baseline to bypass a deliberate
+per-table kill-switch; reversing one still requires the reviewed one-shot path
+and successful live FORCE RLS, tenant-policy, and catalog checks.
 
 For this ClassPilot release family, deploy in compatibility-safe stages:
 
@@ -850,10 +851,11 @@ For this ClassPilot release family, deploy in compatibility-safe stages:
    and the prepared upload is `2.6.1`. Re-check the listing, package with
    `./extension/package-extension.sh`, inspect `dist/ClassPilot-v2.6.1.zip`,
    then upload and stage adoption through Chrome Web Store/Google Admin.
-4. Omit the one-shot RLS flag on later deploys and adopt the observed live
-   allowlist only as a separate Terraform baseline change. A SchoolPilot
-   backend/frontend deploy never publishes the extension, and disabling a new
-   UI action is safer than falling back to a legacy URL/device contract.
+4. Omit the one-shot RLS flag on later deploys. `infra/production.tfvars` now
+   records the verified 72-table live allowlist; the generic/non-production
+   default remains staged separately. A SchoolPilot backend/frontend deploy
+   never publishes the extension, and disabling a new UI action is safer than
+   falling back to a legacy URL/device contract.
 
 For the single backend-first GoPilot staff-dismissal release, add and verify
 the seven direct-tenant child tables as one indivisible reviewed bundle. Do

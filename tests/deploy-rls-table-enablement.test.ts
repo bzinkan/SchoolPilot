@@ -351,7 +351,7 @@ describe("one-release RLS table enablement", () => {
     assert.match(assertion, /throw new Error/);
   });
 
-  it("documents the one-shot command and later kill-switch preservation", () => {
+  it("documents the reviewed bundle, adopted production baseline, and kill-switch preservation", () => {
     assert.match(
       claudeSource,
       /--enable-rls-table passpilot_grade_students/
@@ -398,9 +398,24 @@ describe("one-release RLS table enablement", () => {
       );
     }
     for (const table of CLASSPILOT_FAB_RLS_TABLES) {
-      assert.equal(defaultAllowlist.split(",").includes(table), false);
-      assert.equal(productionAllowlist.split(",").includes(table), false);
+      assert.equal(
+        defaultAllowlist.split(",").includes(table),
+        false,
+        `${table} must remain outside the generic/non-production default`,
+      );
+      assert.equal(
+        productionAllowlist.split(",").includes(table),
+        true,
+        `${table} must remain in production.tfvars after verified live baseline adoption`,
+      );
     }
-    assert.match(claudeSource, /separate baseline-adoption change/);
+    const productionTables = productionAllowlist.split(",");
+    assert.equal(productionTables.length, 72);
+    assert.equal(new Set(productionTables).size, 72);
+    assert.deepEqual(productionTables.slice(-CLASSPILOT_FAB_RLS_TABLES.length), [
+      ...CLASSPILOT_FAB_RLS_TABLES,
+    ]);
+    assert.match(claudeSource, /exact observed 72-table live/);
+    assert.match(claudeSource, /Do not use the Terraform baseline to bypass/);
   });
 });
