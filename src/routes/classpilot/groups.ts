@@ -4,6 +4,7 @@ import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
 import {
   getGroupsBySchool,
   getGroupsByTeacherAndSchool,
@@ -63,6 +64,7 @@ async function studentsInSchool(studentIds: unknown, schoolId: string): Promise<
 const auth = [
   authenticate,
   requireSchoolContext,
+  requireClasspilotEntitlement,
   requireActiveSchool,
   requireProductLicense("CLASSPILOT"),
   requireRole("admin", "school_admin", "office_staff", "teacher"),

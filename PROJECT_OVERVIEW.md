@@ -58,9 +58,9 @@ The project is built for schools that want a single account, roster, license, an
 
 - Backend routes: `src/routes/classpilot/`.
 - Frontend pages: `schoolpilot-app/src/products/classpilot/`.
-- Main data: devices, student devices, heartbeats, daily usage, groups, group students, teaching sessions, flight paths, block lists, chat, attendance, dashboard tabs, teacher settings.
+- Main data: devices, exact student sessions, heartbeats/realtime status, daily usage, groups and rosters, teaching sessions/staff, revisioned student control state, command targets/results, Flight Paths, block lists, FAB/chat delivery, polls, attendance, and teacher settings.
 - Realtime path: `/ws` raw WebSocket for teacher and student/device messages.
-- External dependency: the Chrome extension lives outside this repo, but this API supports extension registration, heartbeats, screenshots, remote control, and websocket delivery.
+- External dependency: the Chrome extension lives in the separate `C:\GitHub\ClassPilot` repo and is released independently through Chrome Web Store. This API owns registration/exact binding, entitlement, heartbeat/screenshot ingest, command authority/results, FAB/chat/poll persistence, and WebSocket delivery.
 
 ### PassPilot
 
@@ -110,13 +110,13 @@ The project is built for schools that want a single account, roster, license, an
 
 ```text
 Chrome extension
-  -> /api/classpilot/register-student or /extension/register
-  -> /api/classpilot/heartbeat every interval
-  -> /ws for realtime teacher commands
-  -> Redis screenshot cache for screenshot polling
-  -> Postgres heartbeats, devices, student_devices, sessions
+  -> /extension/register or /extension/student-login for exact student binding
+  -> /api/device/heartbeat (canonical /api/classpilot/device/heartbeat)
+  -> /ws for exact-bound classroom/FAB/chat/Live View messages and ACK receipts
+  -> /api/device/screenshot -> Redis latest-screenshot cache
+  -> Postgres heartbeats, commands/targets, control state, FAB/chat, polls, sessions
   -> scheduler rollups to daily_usage
-  -> teacher dashboard and admin analytics
+  -> student-scoped teacher dashboard tiles/results and admin analytics
 ```
 
 ### PassPilot
@@ -145,23 +145,16 @@ Office/teacher/parent UI
 
 ## Incomplete Or Unclear Functionality Noticed
 
-- `GET /api/classpilot/teacher/raised-hands` currently returns an empty stub.
-- `POST /api/compat/invite` returns a timestamp-based stub invite code.
 - `GET /api/compat/export/activity` returns an empty activity array.
-- The AI chat frontend button is disabled in `App.jsx`, while backend chat services and tools still exist and require `ANTHROPIC_API_KEY`.
+- The AI assistant frontend button is disabled in `App.jsx`, while backend AI chat services and tools still exist and require `ANTHROPIC_API_KEY`. This does not disable the active ClassPilot teacher/student classroom FABs.
 - MailPilot is present but env-dependent and likely still needs operational validation for domain-wide delegation and Pub/Sub setup.
 - `src/routes/index.ts` and `src/routes/compat.ts` carry many legacy aliases. Useful for compatibility, but they obscure the canonical API surface.
-- `src/index.ts` on this branch starts migrations in an async IIFE and then continues starting sockets/schedulers/server without awaiting all migrations first.
-- CI has type/build/lint/security scanning, but there is no dedicated automated test suite configured.
-- The ClassPilot Chrome extension is described as a separate repo, so this repo cannot fully validate extension behavior by itself.
+- Production migrations run as an explicit `RUN_MIGRATIONS_ONLY=true` task before API/worker rollout; optional startup migrations are awaited before sockets, schedulers, or the HTTP listener start.
+- Backend, frontend, and extension suites are configured. ClassPilot releases require the SchoolPilot checks plus the separate extension repo's typecheck, Vitest, build, and real-Chrome resilience gate.
+- The ClassPilot extension remains a separately versioned release. The operator confirmed Web Store `2.6.0` on August 19, 2026; local package `2.6.1` is prepared but not published.
 
 ## Missing Clarity Questions
 
-1. Should "MailPilot" be marketed as a fourth named product, or kept as a ClassPilot email-safety add-on?
-2. Should AI chat remain backend-only/disabled in the UI, or should it return behind a feature flag?
-3. Are the `raised-hands`, `invite`, and `export/activity` stubs intended for production replacement, removal, or continued placeholder behavior?
-4. Should startup migrations be the production source of truth, or only a safety net after formal Drizzle migrations?
-5. Should public PassPilot kiosk pages be reachable without a logged-in user whenever the school has an active PassPilot license?
-6. Which product should win default routing for a teacher whose school licenses both ClassPilot and GoPilot?
-7. Should brand copy standardize on "SchoolPilot" or "Schoolpilot" outside legal entity references?
-8. Should this repo document the Chrome extension API contract even though the extension code is separate?
+1. Should AI chat remain backend-only/disabled in the UI, or return behind a deliberate feature flag?
+2. Should the empty ClassPilot `/export/activity` compatibility endpoint be implemented or formally retired?
+3. Should public PassPilot kiosk pages remain reachable without a logged-in user whenever the school has an active PassPilot license?

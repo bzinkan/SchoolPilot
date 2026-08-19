@@ -5,6 +5,7 @@ import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
 import { requireDeviceAuth } from "../../middleware/requireDeviceAuth.js";
 import { logAudit } from "../../services/audit.js";
 import {
@@ -42,6 +43,7 @@ const deviceEventLimiter = rateLimit({
 const staffAuth = [
   authenticate,
   requireSchoolContext,
+  requireClasspilotEntitlement,
   requireActiveSchool,
   requireProductLicense("CLASSPILOT"),
   requireRole("admin", "school_admin", "teacher"),
@@ -95,7 +97,7 @@ function parseEventTypes(value: unknown): string[] | undefined {
   return values.length > 0 && values.every((item) => EVENT_TYPES.has(item)) ? values : undefined;
 }
 
-router.post("/device/events", requireDeviceAuth, deviceEventLimiter, async (req, res, next) => {
+router.post("/device/events", requireDeviceAuth, requireClasspilotEntitlement, deviceEventLimiter, async (req, res, next) => {
   try {
     const values = Array.isArray(req.body?.events) ? req.body.events : null;
     if (!values || values.length < 1 || values.length > 50) {

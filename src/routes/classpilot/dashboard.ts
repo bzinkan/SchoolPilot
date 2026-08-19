@@ -2,9 +2,8 @@ import crypto from "crypto";
 import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
-import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
-import { requireProductLicense } from "../../middleware/requireProductLicense.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
 import { assertClasspilotRetentionHours } from "../../util/classpilotRetention.js";
 import {
   getDashboardTabs,
@@ -18,7 +17,6 @@ import {
   getActiveTeachingSessionForSchool,
   getTeachingSessionByIdAndSchool,
   getActiveHandsBySession,
-  upsertSessionSettings,
   getTeacherStudentAssignmentsForSchool,
   assignTeacherStudent,
   unassignTeacherStudent,
@@ -30,18 +28,20 @@ import {
   getUserById,
   validateStaffEmailDomainForSchool,
   isAuthorizedClasspilotSessionStaff,
+  getActiveSessions,
 } from "../../services/storage.js";
-import { broadcastToStudentsLocal } from "../../realtime/ws-broadcast.js";
-import { publishWS } from "../../realtime/ws-redis.js";
+import { broadcastToStudentsLocal, sendToDeviceLocal } from "../../realtime/ws-broadcast.js";
+import { publishWS, publishWSBatch } from "../../realtime/ws-redis.js";
 import {
   getEffectiveFabToggles,
-  getSessionStudentDeviceIds,
+  updateAndFanoutSessionFabSettings,
 } from "../../services/classpilotFab.js";
 import {
   effectiveSharedChromebookLoginMethod,
   normalizeSharedChromebookLoginMethod,
 } from "../../services/classpilotSharedChromebook.js";
 import { classPilotStudentDto } from "../../util/safeStudent.js";
+import { classpilotSchoolPolicyAuthorityEnvelope } from "../../services/classpilotCommandAuthority.js";
 
 const router = Router();
 
@@ -91,8 +91,7 @@ function safeSchoolSettingsResponse(
 const auth = [
   authenticate,
   requireSchoolContext,
-  requireActiveSchool,
-  requireProductLicense("CLASSPILOT"),
+  requireClasspilotEntitlement,
   requireRole("admin", "school_admin", "office_staff", "teacher"),
 ] as const;
 
@@ -187,6 +186,7 @@ router.get("/settings", ...auth, async (req, res, next) => {
       schoolHandRaisingEnabled: fabToggles.schoolHandRaisingEnabled,
       schoolStudentMessagingEnabled: fabToggles.schoolMessagingEnabled,
       activeSessionId: activeSession?.id || null,
+      sessionFabRevision: fabToggles.lifecycleRevision,
       // School-wide settings (from settings table)
       ...safeSchoolSettingsResponse(schoolSettings, canReadSchoolAdminSettings),
       // Teacher's own blocked domains (for MySettings editable field)
@@ -318,13 +318,33 @@ router.post("/settings", ...auth, async (req, res, next) => {
     if (isAdminSettingsRequest && maxTabsPerStudent !== undefined) {
       const sid = res.locals.schoolId!;
       const maxTabs = maxTabsPerStudent ? parseInt(String(maxTabsPerStudent), 10) : null;
-      const limitMsg = {
-        type: "remote-control",
-        _msgId: crypto.randomUUID(),
-        command: { type: "limit-tabs", data: { maxTabs: (maxTabs && maxTabs > 0) ? maxTabs : null } },
-      };
-      broadcastToStudentsLocal(sid, limitMsg);
-      void publishWS({ kind: "students", schoolId: sid }, limitMsg);
+      const activeBindings = await getActiveSessions(sid);
+      const publications = activeBindings.map((binding) => {
+        const exactBinding = {
+          studentId: binding.studentId,
+          studentSessionId: binding.id,
+        };
+        const limitMsg = {
+          type: "remote-control",
+          _msgId: crypto.randomUUID(),
+          ...exactBinding,
+          command: {
+            type: "limit-tabs",
+            ...exactBinding,
+            ...classpilotSchoolPolicyAuthorityEnvelope(sid, "school_settings"),
+            data: {
+              maxTabs: (maxTabs && maxTabs > 0) ? maxTabs : null,
+              ...exactBinding,
+            },
+          },
+        };
+        sendToDeviceLocal(sid, binding.deviceId, limitMsg);
+        return {
+          target: { kind: "device" as const, schoolId: sid, deviceId: binding.deviceId },
+          message: limitMsg,
+        };
+      });
+      if (publications.length > 0) void publishWSBatch(publications);
     }
 
     if (!isAdminSettingsRequest) {
@@ -407,40 +427,38 @@ router.post("/settings/hand-raising", ...auth, async (req, res, next) => {
     const { enabled } = req.body;
     const schoolId = res.locals.schoolId!;
     const requestedEnabled = enabled !== false;
-    const session = await getActiveTeachingSessionForSchool(req.authUser!.id, schoolId);
-    if (!session) {
-      return res.status(409).json({ error: "No active teaching session" });
+    const teachingSessionId = String(req.body?.teachingSessionId || "").trim();
+    if (!teachingSessionId) {
+      return res.status(400).json({ error: "teachingSessionId is required", code: "TEACHING_SESSION_REQUIRED" });
     }
-
-    const settings = await upsertSessionSettings(session.id, { raiseHandEnabled: requestedEnabled });
-    const toggles = await getEffectiveFabToggles(schoolId, session.id);
-    const targetDeviceIds = await getSessionStudentDeviceIds(session);
-
-    const msg = {
-      type: "remote-control",
-      _msgId: crypto.randomUUID(),
-      command: {
-        type: "hand-raising-toggle",
-        data: {
-          sessionId: session.id,
-          enabled: toggles.handRaisingEnabled,
-          handRaisingEnabled: toggles.handRaisingEnabled,
-        },
-      },
-    };
-    if (targetDeviceIds.length > 0) {
-      broadcastToStudentsLocal(schoolId, msg, undefined, targetDeviceIds);
-      await publishWS({ kind: "students", schoolId, targetDeviceIds }, msg);
+    const session = await getTeachingSessionByIdAndSchool(teachingSessionId, schoolId);
+    const authorized = session && !session.endTime
+      && await isAuthorizedClasspilotSessionStaff(schoolId, session.id, req.authUser!.id);
+    if (!authorized || !session) {
+      return res.status(404).json({ error: "Active class session not found" });
     }
-
+    const result = await updateAndFanoutSessionFabSettings({
+      schoolId,
+      teachingSessionId: session.id,
+      actorId: req.authUser!.id,
+      raiseHandEnabled: requestedEnabled,
+      expectedRevision: Number.isInteger(req.body?.expectedRevision) ? req.body.expectedRevision : undefined,
+    });
     return res.json({
       ok: true,
       sessionId: session.id,
-      settings,
-      handRaisingEnabled: toggles.handRaisingEnabled,
-      enabled: toggles.handRaisingEnabled,
+      settings: result.settings,
+      state: result.state,
+      handRaisingEnabled: result.state.handRaisingEnabled,
+      enabled: result.state.handRaisingEnabled,
+      targetedStudentCount: result.targetedStudentCount,
     });
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.status) return res.status(err.status).json({
+      error: err.message,
+      ...(err.code ? { code: err.code } : {}),
+      ...(err.current ? { current: err.current } : {}),
+    });
     next(err);
   }
 });
@@ -451,40 +469,38 @@ router.post("/settings/student-messaging", ...auth, async (req, res, next) => {
     const { enabled } = req.body;
     const schoolId = res.locals.schoolId!;
     const requestedEnabled = enabled !== false;
-    const session = await getActiveTeachingSessionForSchool(req.authUser!.id, schoolId);
-    if (!session) {
-      return res.status(409).json({ error: "No active teaching session" });
+    const teachingSessionId = String(req.body?.teachingSessionId || "").trim();
+    if (!teachingSessionId) {
+      return res.status(400).json({ error: "teachingSessionId is required", code: "TEACHING_SESSION_REQUIRED" });
     }
-
-    const settings = await upsertSessionSettings(session.id, { chatEnabled: requestedEnabled });
-    const toggles = await getEffectiveFabToggles(schoolId, session.id);
-    const targetDeviceIds = await getSessionStudentDeviceIds(session);
-
-    const msg = {
-      type: "remote-control",
-      _msgId: crypto.randomUUID(),
-      command: {
-        type: "messaging-toggle",
-        data: {
-          sessionId: session.id,
-          enabled: toggles.messagingEnabled,
-          messagingEnabled: toggles.messagingEnabled,
-        },
-      },
-    };
-    if (targetDeviceIds.length > 0) {
-      broadcastToStudentsLocal(schoolId, msg, undefined, targetDeviceIds);
-      await publishWS({ kind: "students", schoolId, targetDeviceIds }, msg);
+    const session = await getTeachingSessionByIdAndSchool(teachingSessionId, schoolId);
+    const authorized = session && !session.endTime
+      && await isAuthorizedClasspilotSessionStaff(schoolId, session.id, req.authUser!.id);
+    if (!authorized || !session) {
+      return res.status(404).json({ error: "Active class session not found" });
     }
-
+    const result = await updateAndFanoutSessionFabSettings({
+      schoolId,
+      teachingSessionId: session.id,
+      actorId: req.authUser!.id,
+      chatEnabled: requestedEnabled,
+      expectedRevision: Number.isInteger(req.body?.expectedRevision) ? req.body.expectedRevision : undefined,
+    });
     return res.json({
       ok: true,
       sessionId: session.id,
-      settings,
-      studentMessagingEnabled: toggles.messagingEnabled,
-      enabled: toggles.messagingEnabled,
+      settings: result.settings,
+      state: result.state,
+      studentMessagingEnabled: result.state.messagingEnabled,
+      enabled: result.state.messagingEnabled,
+      targetedStudentCount: result.targetedStudentCount,
     });
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.status) return res.status(err.status).json({
+      error: err.message,
+      ...(err.code ? { code: err.code } : {}),
+      ...(err.current ? { current: err.current } : {}),
+    });
     next(err);
   }
 });

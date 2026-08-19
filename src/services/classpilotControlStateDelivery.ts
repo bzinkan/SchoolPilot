@@ -7,8 +7,10 @@ import {
   getClasspilotStudentControlStates,
 } from "./storage.js";
 import { serializeClasspilotStudentControlState } from "./classpilotClassroomState.js";
+import { buildStudentFabState } from "./classpilotFab.js";
 
-/** Push the authoritative full snapshot after a class/coverage transition.
+/** Push the authoritative classroom + FAB snapshots after any class/coverage
+ * ownership transition.
  * Delivery is best-effort; auth and heartbeat reconciliation remain the
  * durable fallback for offline students and cross-instance outages. */
 export async function syncClasspilotControlStatesToActiveDevices(
@@ -32,22 +34,63 @@ export async function syncClasspilotControlStatesToActiveDevices(
     }
 
     const publications: PublishWSBatchItem[] = [];
+    let targetedDevices = 0;
     for (const studentId of uniqueStudentIds) {
       const state = stateByStudent.get(studentId);
       const session = latestSessionByStudent.get(studentId);
-      if (!state || !session?.deviceId) continue;
-      const message = {
-        type: "classroom-state-sync",
+      if (!session?.deviceId) continue;
+      targetedDevices += 1;
+      if (state) {
+        const classroomMessage = {
+          type: "classroom-state-sync",
+          _msgId: randomUUID(),
+          studentId,
+          studentSessionId: session.id,
+          classroomState: serializeClasspilotStudentControlState(state),
+        };
+        sendToDeviceLocal(schoolId, session.deviceId, classroomMessage);
+        publications.push({
+          target: { kind: "device", schoolId, deviceId: session.deviceId },
+          message: classroomMessage,
+        });
+      }
+      let fabState: Record<string, unknown>;
+      try {
+        fabState = await buildStudentFabState(schoolId, studentId, {
+          studentSessionId: session.id,
+        });
+      } catch {
+        // Revocation and incomplete legacy data both fail closed. The explicit
+        // disabled snapshot clears a formerly visible FAB immediately; auth
+        // remains the durable recovery/revocation boundary.
+        fabState = {
+          schemaVersion: 1,
+          studentId,
+          studentSessionId: session.id,
+          teachingSessionId: null,
+          activeSessionIds: [],
+          messagingEnabled: false,
+          handRaisingEnabled: false,
+          handRaised: false,
+          lifecycleRevision: 0,
+          revision: 0,
+        };
+      }
+      const fabMessage = {
+        type: "fab-state-sync",
         _msgId: randomUUID(),
-        classroomState: serializeClasspilotStudentControlState(state),
+        data: {
+          ...fabState,
+          reason: "control_ownership_transition",
+        },
       };
-      sendToDeviceLocal(schoolId, session.deviceId, message);
+      sendToDeviceLocal(schoolId, session.deviceId, fabMessage);
       publications.push({
         target: { kind: "device", schoolId, deviceId: session.deviceId },
-        message,
+        message: fabMessage,
       });
     }
     if (publications.length > 0) await publishWSBatch(publications);
-    return publications.length;
+    return targetedDevices;
   });
 }

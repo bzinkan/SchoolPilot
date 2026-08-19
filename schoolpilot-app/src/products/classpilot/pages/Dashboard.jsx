@@ -10,6 +10,7 @@ import StudentDetailDrawer from '../components/StudentDetailDrawer';
 import RemoteControlToolbar from '../components/RemoteControlToolbar';
 import SessionMonitoringReportDialog from '../components/SessionMonitoringReportDialog';
 import TeacherFab from '../components/TeacherFab';
+import CommandResultsDrawer from '../components/CommandResultsDrawer';
 import {
   Dialog,
   DialogContent,
@@ -64,6 +65,20 @@ import {
   trackTransientCommandResponse,
   transientEntryFeedback,
 } from '../lib/commandDeliveryTruth';
+import {
+  combineCommandSettlements,
+  deriveDashboardCapabilities,
+  exactTabCloseCapability,
+  flightPathApplyCapability,
+  mergeCommandUpdateIntoBatches,
+  normalizeSessionFabState,
+  parseTabSelectionKey,
+  resolveCommandTargets,
+  studentSupportsCapability,
+  studentSignOutCommandPayload,
+  sessionFabSettingsPayload,
+  tabSelectionKey,
+} from '../lib/dashboardCommandContext';
 import {
   className as scheduleClassName,
   effectiveWindow,
@@ -234,9 +249,15 @@ export default function Dashboard() {
   const [openTabUrl, setOpenTabUrl] = useState("");
   const [showLockUrlDialog, setShowLockUrlDialog] = useState(false);
   const [lockUrl, setLockUrl] = useState("");
+  const [showTempUnblockDialog, setShowTempUnblockDialog] = useState(false);
+  const [tempUnblockDomain, setTempUnblockDomain] = useState("");
+  const [tempUnblockDuration, setTempUnblockDuration] = useState("5");
+  const [showTabLimitDialog, setShowTabLimitDialog] = useState(false);
+  const [tabLimit, setTabLimit] = useState("");
   const [showCloseTabsDialog, setShowCloseTabsDialog] = useState(false);
   const [selectedTabsToClose, setSelectedTabsToClose] = useState(new Set());
   const [manageTabsStudentIds, setManageTabsStudentIds] = useState(null);
+  const [manageTabsTargetSnapshot, setManageTabsTargetSnapshot] = useState("");
   const [showApplyFlightPathDialog, setShowApplyFlightPathDialog] = useState(false);
   const [selectedFlightPathId, setSelectedFlightPathId] = useState("");
   const [showFlightPathViewerDialog, setShowFlightPathViewerDialog] = useState(false);
@@ -245,6 +266,7 @@ export default function Dashboard() {
   const [showSendMessageDialog, setShowSendMessageDialog] = useState(false);
   const [sendMessageText, setSendMessageText] = useState("");
   const [showSignOutDialog, setShowSignOutDialog] = useState(false);
+  const [signOutTargetSnapshot, setSignOutTargetSnapshot] = useState("");
   const [showBlockListViewerDialog, setShowBlockListViewerDialog] = useState(false);
   const [showAttentionDialog, setShowAttentionDialog] = useState(false);
   const [attentionMessage, setAttentionMessage] = useState("Please look up!");
@@ -270,6 +292,7 @@ export default function Dashboard() {
   const [raisedHands, setRaisedHands] = useState(new Map());
   const [studentMessages, setStudentMessages] = useState([]);
   const [chatReplies, setChatReplies] = useState({});
+  const [sessionFabState, setSessionFabState] = useState(null);
   const [startGroupId, setStartGroupId] = useState("");
   const [adminStartGroupId, setAdminStartGroupId] = useState("");
   const [classStartOverlap, setClassStartOverlap] = useState(null);
@@ -280,6 +303,9 @@ export default function Dashboard() {
   const [skipTodayGroup, setSkipTodayGroup] = useState(null);
   const [logoutPending, setLogoutPending] = useState(false);
   const [quickClaimStudentId, setQuickClaimStudentId] = useState(null);
+  const [commandResultBatches, setCommandResultBatches] = useState([]);
+  const [showCommandResults, setShowCommandResults] = useState(false);
+  const [tileCommandState, setTileCommandState] = useState({});
   const dismissedMessageIds = useRef(new Set());
   const dismissedMessagesInitialized = useRef(false);
   // eslint-disable-next-line react-hooks/refs
@@ -305,7 +331,7 @@ export default function Dashboard() {
   const websocketAuthRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
   const reconnectAttemptsRef = useRef(0);
-  const isMountedRef = useRef(true);
+  const websocketGenerationRef = useRef(0);
   const invalidateTimeoutRef = useRef(null);
   const realtimeFlushTimeoutRef = useRef(null);
   const pendingRealtimeEventsRef = useRef([]);
@@ -346,8 +372,8 @@ export default function Dashboard() {
   }, []);
 
   // WebRTC hook for live video streaming
-  // eslint-disable-next-line react-hooks/refs
-  const webrtc = useWebRTC(wsRef.current, handleLiveStreamStopped);
+  const webrtc = useWebRTC(wsRef, handleLiveStreamStopped);
+  const cleanupLiveViews = webrtc.cleanup;
 
   const { data: settings } = useQuery({
     queryKey: ['/api/settings'],
@@ -472,11 +498,42 @@ export default function Dashboard() {
   const observedSession = isAdmin && adminObservedSessionId
     ? allActiveSessions.find(s => s.id === adminObservedSessionId)
     : null;
-  const isAdminTeaching = isAdmin && (
-    !!activeSession ||
-    (observedSession && observedSession.teacherId === currentUser?.id)
-  );
   const effectiveSession = isAdmin ? (observedSession || activeSession) : activeSession;
+  const dashboardCapabilities = deriveDashboardCapabilities({
+    studentView,
+    isTeacher,
+    isAdmin,
+    currentUserId: currentUser?.id,
+    activeSession,
+    observedSession,
+    coverageCommandTypes: coverageCapabilities.commandTypes || coverageCapabilities.allowedCommandTypes,
+  });
+  useEffect(() => {
+    // `/settings` carries the authoritative per-session FAB revision. Its
+    // query key is intentionally stable for legacy consumers, so refresh it
+    // whenever class ownership moves from none→A, A→B, or A→none.
+    void queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
+  }, [effectiveSession?.id]);
+  useEffect(() => {
+    const sessionId = effectiveSession?.id || null;
+    if (!dashboardCapabilities.canChangeFabSettings || !sessionId || settings?.activeSessionId !== sessionId) {
+      setSessionFabState(null);
+      return;
+    }
+    setSessionFabState(normalizeSessionFabState({
+      teachingSessionId: settings?.activeSessionId,
+      handRaisingEnabled: settings?.handRaisingEnabled,
+      studentMessagingEnabled: settings?.studentMessagingEnabled,
+      revision: settings?.sessionFabRevision,
+    }, sessionId));
+  }, [
+    dashboardCapabilities.canChangeFabSettings,
+    effectiveSession?.id,
+    settings?.activeSessionId,
+    settings?.handRaisingEnabled,
+    settings?.sessionFabRevision,
+    settings?.studentMessagingEnabled,
+  ]);
   const activeSchoolId = school?.id || currentUser?.schoolId || null;
   const { data: todayScheduleChanges = EMPTY_LIST } = useQuery({
     queryKey: scheduleChangeKeys.today(activeSchoolId),
@@ -487,11 +544,24 @@ export default function Dashboard() {
   });
   const effectiveSessionId = effectiveSession?.id || null;
   const adminSchoolMode = isAdmin && !effectiveSessionId;
+  useEffect(() => () => {
+    // A peer-to-peer stream can outlive signaling. Tear it down whenever the
+    // authoritative class context changes, including A→B replacement and
+    // A→none session end.
+    cleanupLiveViews();
+  }, [cleanupLiveViews, effectiveSessionId]);
   const aggregatedStudentsQueryKey = useMemo(
     () => makeAggregatedStudentsQueryKey(activeSchoolId, effectiveSessionId, adminSchoolMode),
     [activeSchoolId, adminSchoolMode, effectiveSessionId],
   );
-  const { data: students = EMPTY_LIST, isLoading: studentsLoading } = useQuery({
+  const {
+    data: students = EMPTY_LIST,
+    isLoading: studentsLoading,
+    isError: studentsQueryError,
+    error: studentsError,
+    isFetching: studentsRefreshing,
+    refetch: refetchStudents,
+  } = useQuery({
     queryKey: aggregatedStudentsQueryKey,
     queryFn: () => apiRequest(
       'GET',
@@ -662,7 +732,11 @@ export default function Dashboard() {
 
   // WebSocket connection with automatic reconnection
   useEffect(() => {
-    isMountedRef.current = true;
+    const generation = websocketGenerationRef.current + 1;
+    websocketGenerationRef.current = generation;
+    let disposed = false;
+    const isCurrentGeneration = () => !disposed && websocketGenerationRef.current === generation;
+    const isCurrentSocket = (socket) => isCurrentGeneration() && wsRef.current === socket;
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
@@ -671,17 +745,26 @@ export default function Dashboard() {
 
     const flushRealtimeEvents = () => {
       realtimeFlushTimeoutRef.current = null;
+      if (!isCurrentGeneration()) return;
       const queued = pendingRealtimeEventsRef.current;
       pendingRealtimeEventsRef.current = [];
       const queryKey = aggregatedStudentsQueryKeyRef.current;
-      if (!queryKey || queued.length === 0) return;
+      if (queued.length === 0) return;
       const events = coalesceStudentRealtimeEvents(queued);
-      queryClient.setQueryData(queryKey, (old) => applyStudentRealtimeEvents(old, events, {
-        schoolId: activeSchoolIdRef.current,
-      }));
+      const scope = { schoolId: activeSchoolIdRef.current };
+      if (queryKey) {
+        queryClient.setQueryData(queryKey, (old) => applyStudentRealtimeEvents(old, events, scope));
+      }
+      // Coverage telemetry is delivered to the assigned staff member, not to a
+      // teaching-session subscription. Update only rows already granted by the
+      // claimed-students response; socket messages can never add visibility.
+      queryClient.setQueryData(['/api/coverage/claimed-students'], (old) => (
+        applyStudentRealtimeEvents(old, events, scope)
+      ));
     };
 
     const queueRealtimeEvent = (message) => {
+      if (!isCurrentGeneration()) return;
       pendingRealtimeEventsRef.current.push(message);
       if (realtimeFlushTimeoutRef.current) return;
       realtimeFlushTimeoutRef.current = setTimeout(flushRealtimeEvents, 100);
@@ -690,13 +773,16 @@ export default function Dashboard() {
     const reconcileLegacyRealtime = () => {
       if (invalidateTimeoutRef.current) clearTimeout(invalidateTimeoutRef.current);
       invalidateTimeoutRef.current = setTimeout(() => {
+        if (!isCurrentGeneration()) return;
         const queryKey = aggregatedStudentsQueryKeyRef.current;
         if (queryKey) queryClient.invalidateQueries({ queryKey, exact: true });
+        queryClient.invalidateQueries({ queryKey: ['/api/coverage/claimed-students'], exact: true });
         invalidateTimeoutRef.current = null;
       }, 300);
     };
 
     const connectWebSocket = () => {
+      if (!isCurrentGeneration()) return;
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
@@ -715,7 +801,7 @@ export default function Dashboard() {
         wsRef.current = socket;
 
         socket.onopen = () => {
-          if (!isMountedRef.current) return;
+          if (!isCurrentSocket(socket)) return;
           console.log("[Dashboard] WebSocket connected successfully");
           setWsConnected(true);
           reconnectAttemptsRef.current = 0;
@@ -737,7 +823,7 @@ export default function Dashboard() {
         };
 
         socket.onmessage = (event) => {
-          if (!isMountedRef.current) return;
+          if (!isCurrentSocket(socket)) return;
           try {
             const message = JSON.parse(event.data);
             if (message.type === 'auth-success') {
@@ -749,6 +835,7 @@ export default function Dashboard() {
             if (message.type === 'auth-error') {
               setWsAuthenticated(false);
               authenticatedSchoolIdRef.current = null;
+              webrtc.cleanup();
             }
             if (message.type === 'classpilot-command-update') {
               const publicCommand = message.command || {};
@@ -759,6 +846,8 @@ export default function Dashboard() {
                 messageSessionId
                 && String(messageSessionId) !== String(effectiveSessionIdRef.current)
               ) return;
+
+              setCommandResultBatches((batches) => mergeCommandUpdateIntoBatches(batches, message));
 
               const before = transientCommandOutcomesRef.current;
               const tracked = trackTransientCommandResponse(
@@ -820,11 +909,30 @@ export default function Dashboard() {
                 reconcileLegacyRealtime();
               }
             }
+            if (message.type === 'live-view-requested') {
+              void webrtc.handleLiveViewRequested(
+                message.studentId,
+                message.teachingSessionId,
+                message.negotiationId,
+              ).then((offerSent) => {
+                if (!offerSent) webrtc.stopLiveView(message.studentId);
+              });
+            }
+            if (message.type === 'live-view-busy' || message.type === 'live-view-unavailable') {
+              webrtc.stopLiveView(message.studentId);
+              toast({
+                title: message.type === 'live-view-busy' ? "Live View In Use" : "Live View Unavailable",
+                description: message.type === 'live-view-busy'
+                  ? "Another authorized teacher is already viewing this student. Try again after they stop."
+                  : "The student device could not accept the live-view request. Try again in a moment.",
+                variant: "destructive",
+              });
+            }
             if (message.type === 'answer') {
-              webrtc.handleAnswer(message.from, message.sdp);
+              webrtc.handleAnswer(message.from, message.sdp, message.negotiationId);
             }
             if (message.type === 'ice') {
-              webrtc.handleIceCandidate(message.from, message.candidate);
+              webrtc.handleIceCandidate(message.from, message.candidate, message.negotiationId);
             }
             if (message.type === 'hand-raised') {
               const eventSessionId = message.sessionId || message.data?.sessionId;
@@ -907,16 +1015,22 @@ export default function Dashboard() {
             }
             if (message.type === 'student-signed-out') {
               webrtc.stopLiveView(message.studentId);
+              // A sign-out tombstone is terminal for the current binding. Drop
+              // any older queued telemetry for the student, then apply the
+              // tombstone immediately to both classroom and coverage caches.
               pendingRealtimeEventsRef.current = pendingRealtimeEventsRef.current.filter((queued) => (
                 queued.studentId !== message.studentId
               ));
+              const scope = { schoolId: activeSchoolIdRef.current };
               const queryKey = aggregatedStudentsQueryKeyRef.current;
               if (queryKey) {
-                queryClient.setQueryData(queryKey, (old) => applyStudentRealtimeEvents(old, [message], {
-                  schoolId: activeSchoolIdRef.current,
-                }));
+                queryClient.setQueryData(queryKey, (old) => applyStudentRealtimeEvents(old, [message], scope));
                 queryClient.invalidateQueries({ queryKey, exact: true });
               }
+              queryClient.setQueryData(['/api/coverage/claimed-students'], (old) => (
+                applyStudentRealtimeEvents(old, [message], scope)
+              ));
+              queryClient.invalidateQueries({ queryKey: ['/api/coverage/claimed-students'], exact: true });
             }
             if (message.type === 'session-ended') {
               const endedOwnSession = Boolean(
@@ -930,6 +1044,7 @@ export default function Dashboard() {
               queryClient.invalidateQueries({ queryKey: ['/api/groups'], exact: false });
               queryClient.invalidateQueries({ queryKey: ['/api/teacher/groups'], exact: false });
               if (endedOwnSession) {
+                webrtc.cleanup();
                 const description = message.summaryDisposition === 'already_queued'
                   ? "The class ended. Its Session Summary was already queued for email."
                   : message.summaryDisposition === 'not_applicable'
@@ -985,8 +1100,10 @@ export default function Dashboard() {
         };
 
         socket.onclose = () => {
-          if (!isMountedRef.current) return;
           if (socket._heartbeatInterval) clearInterval(socket._heartbeatInterval);
+          socket._heartbeatInterval = null;
+          if (!isCurrentSocket(socket)) return;
+          webrtc.cleanup();
           setWsConnected(false);
           setWsAuthenticated(false);
           authenticatedSchoolIdRef.current = null;
@@ -997,11 +1114,12 @@ export default function Dashboard() {
         };
 
         socket.onerror = (error) => {
-          if (!isMountedRef.current) return;
+          if (!isCurrentSocket(socket)) return;
           console.error("[Dashboard] WebSocket error:", error);
           setWsConnected(false);
         };
       } catch (error) {
+        if (!isCurrentGeneration()) return;
         console.error("[Dashboard] Failed to create WebSocket:", error);
         setWsConnected(false);
         reconnectAttemptsRef.current++;
@@ -1016,7 +1134,10 @@ export default function Dashboard() {
     connectWebSocket();
 
     return () => {
-      isMountedRef.current = false;
+      disposed = true;
+      if (websocketGenerationRef.current === generation) {
+        websocketGenerationRef.current = generation + 1;
+      }
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
@@ -1030,8 +1151,15 @@ export default function Dashboard() {
         realtimeFlushTimeoutRef.current = null;
       }
       pendingRealtimeEventsRef.current = [];
-      if (wsRef.current) {
-        wsRef.current.close();
+      const socket = wsRef.current;
+      if (socket && wsRef.current === socket) {
+        if (socket._heartbeatInterval) clearInterval(socket._heartbeatInterval);
+        socket._heartbeatInterval = null;
+        socket.onopen = null;
+        socket.onmessage = null;
+        socket.onerror = null;
+        socket.onclose = null;
+        socket.close();
         wsRef.current = null;
       }
       activeLiveViewTimers.forEach((timer) => clearTimeout(timer));
@@ -1435,7 +1563,9 @@ export default function Dashboard() {
   }, [availablePickupStudents, claimedPickupStudents, freshnessNowMs, scheduledCoverageGroups, screenshotsByStudent, studentView, students]);
 
   const controllableStudents = filteredStudents.filter(isStudentCommandable);
-  const selectableStudents = studentView === "class" ? controllableStudents : filteredStudents;
+  const selectableStudents = dashboardCapabilities.canSelectStudents
+    ? (studentView === "class" ? controllableStudents : filteredStudents)
+    : EMPTY_LIST;
 
   const statsStudents = studentView === "class" ? sessionFilteredStudents : filteredStudents;
   const statsMonitoringDisplays = statsStudents.map((student) => (
@@ -1451,51 +1581,65 @@ export default function Dashboard() {
     return display.kind === 'online' || display.kind === 'idle';
   };
 
-  const getStudentsForCommandTarget = (overrideStudentIds = null) => {
-    const overrideSet = overrideStudentIds ? new Set(overrideStudentIds) : null;
-    const commandableSessionStudents = sessionFilteredStudents.filter(isStudentCommandable);
-    if (overrideSet) return commandableSessionStudents.filter((student) => overrideSet.has(student.studentId));
-    if (selectedStudentIds.size > 0) return commandableSessionStudents.filter((student) => selectedStudentIds.has(student.studentId));
-    if (selectedSubgroupId) return commandableSessionStudents.filter((student) => subgroupMembers.has(student.studentId));
-    return commandableSessionStudents;
-  };
+  const resolveActiveCommandTarget = (overrideStudentIds = null) => resolveCommandTargets({
+    mode: dashboardCapabilities.mode,
+    sessionStudents: sessionFilteredStudents.map((student) => ({
+      ...student,
+      commandable: isStudentCommandable(student),
+    })),
+    claimedStudents: claimedPickupStudents,
+    selectedStudentIds: Array.from(selectedStudentIds),
+    selectedSubgroupId: selectedSubgroupId || null,
+    subgroupStudentIds: Array.from(subgroupMembers),
+    overrideStudentIds,
+  });
 
-  const getClaimedStudentsForCommandTarget = (overrideStudentIds = null) => {
-    const overrideSet = overrideStudentIds ? new Set(overrideStudentIds) : null;
-    if (overrideSet) return claimedPickupStudents.filter((student) => overrideSet.has(student.studentId));
-    if (selectedStudentIds.size > 0) return claimedPickupStudents.filter((student) => selectedStudentIds.has(student.studentId));
-    return filteredClaimedStudents.length > 0 ? filteredClaimedStudents : claimedPickupStudents;
+  const getActiveCommandStudents = (overrideStudentIds = null) => {
+    try {
+      return resolveActiveCommandTarget(overrideStudentIds).targetStudents;
+    } catch {
+      return EMPTY_LIST;
+    }
   };
-
-  const getActiveCommandStudents = (overrideStudentIds = null) => (
-    studentView === "claimed"
-      ? getClaimedStudentsForCommandTarget(overrideStudentIds)
-      : getStudentsForCommandTarget(overrideStudentIds)
+  const getStudentsForCommandTarget = (overrideStudentIds = null) => (
+    dashboardCapabilities.mode === 'owned-class' ? getActiveCommandStudents(overrideStudentIds) : EMPTY_LIST
   );
 
   const targetStudents = studentView === "available" ? filteredStudents : getActiveCommandStudents();
   const connectedTargetCount = targetStudents.filter(isConnectedStudent).length;
-  const unavailableTargetCount = Math.max(0, targetStudents.length - connectedTargetCount);
+  const signalLostTargetCount = targetStudents.filter((student) => deriveStudentMonitoringDisplay(student, freshnessNowMs).kind === 'signal_lost').length;
+  const signedOutTargetCount = Math.max(0, targetStudents.length - connectedTargetCount - signalLostTargetCount);
   const activeClassName = studentView === "available"
     ? "Available"
     : studentView === "claimed"
       ? "Claimed"
       : groups.find(g => g.id === effectiveSession?.groupId)?.name || (effectiveSession ? "Active Class" : "Class");
   const subgroupName = selectedSubgroupId ? subgroups.find(s => s.id === selectedSubgroupId)?.name : null;
-  const targetBannerLabel = selectedStudentIds.size > 0
-    ? `${targetStudents.length} selected ${studentView === "class" ? "controllable " : ""}student${targetStudents.length === 1 ? "" : "s"}`
+  const claimedContextCount = new Set(claimedPickupStudents.map((student) => student.contextId).filter(Boolean)).size;
+  const claimedTargetContextCount = new Set(targetStudents.map((student) => student.contextId).filter(Boolean)).size;
+  const claimedSearchDisclosure = studentView === 'claimed' && filteredClaimedStudents.length !== claimedPickupStudents.length
+    ? ` · ${filteredClaimedStudents.length} currently shown by search`
+    : '';
+  const targetBannerLabel = studentView === 'claimed' && selectedStudentIds.size === 0
+    ? `${targetStudents.length} claimed student${targetStudents.length === 1 ? '' : 's'} in ${claimedTargetContextCount} supervision group${claimedTargetContextCount === 1 ? '' : 's'}${claimedSearchDisclosure}`
+    : selectedStudentIds.size > 0
+    ? `${targetStudents.length} selected ${studentView === "class" ? "controllable " : "claimed "}student${targetStudents.length === 1 ? "" : "s"}${studentView === 'claimed' ? ` in ${claimedTargetContextCount} supervision group${claimedTargetContextCount === 1 ? '' : 's'}` : ''}`
     : selectedSubgroupId && studentView === "class"
       ? `${subgroupName || "Subgroup"} - ${targetStudents.length} student${targetStudents.length === 1 ? "" : "s"}`
       : `All ${targetStudents.length} student${targetStudents.length === 1 ? "" : "s"}`;
-  const targetConnectionLabel = `${connectedTargetCount} connected · ${unavailableTargetCount} not signed in`;
+  const targetConnectionLabel = `${connectedTargetCount} connected · ${signalLostTargetCount} signal lost · ${signedOutTargetCount} signed out`;
+  const targetSupportsScreenOnlyUnlock = targetStudents.length > 0
+    && targetStudents.every((student) => studentSupportsCapability(student, 'screenOnlyUnlockV1'));
+  const bulkUnlockLabel = targetSupportsScreenOnlyUnlock
+    ? 'Unlock Screen Only'
+    : 'Extension update required';
   const selectedSignOutStudents = studentView === "class"
     ? getStudentsForCommandTarget(Array.from(selectedStudentIds))
     : [];
   const signOutSelectedCount = selectedSignOutStudents.length;
   const canSignOutSelectedStudents = studentView === "class" && !!effectiveSession?.id && signOutSelectedCount > 0;
   const canShowStudentWorkspace = isAdmin || (isTeacher && (activeSession || studentView !== "class"));
-  const canUseRemoteControls = studentView === "claimed" || ((isTeacher && activeSession) || (isAdmin && isAdminTeaching));
-  const claimedContextCount = new Set(claimedPickupStudents.map((student) => student.contextId).filter(Boolean)).size;
+  const canUseRemoteControls = dashboardCapabilities.canUseRemoteControls;
   const selectedAvailableStudents = filteredStudents.filter((student) => selectedStudentIds.has(student.studentId));
   const availableGroupSections = (() => {
     const sections = new Map();
@@ -1522,56 +1666,23 @@ export default function Dashboard() {
       .sort((a, b) => a.label.localeCompare(b.label));
   })();
 
-  const commandStudentIdsFromRequest = (request) => {
-    if (request.targetScope === "students") return request.targetStudentIds || [];
-    if (request.targetScope === "subgroup") return getStudentsForCommandTarget().map((student) => student.studentId);
-    return getStudentsForCommandTarget().map((student) => student.studentId);
-  };
-
   const buildCommandRequest = (commandType, commandPayload = {}, options = {}) => {
-    if (!effectiveSession?.id) {
+    if (!dashboardCapabilities.allows(commandType)) {
+      throw new Error(dashboardCapabilities.reason || 'This classroom command is not available in the current view.');
+    }
+    if (!dashboardCapabilities.effectiveSession?.id) {
       throw new Error("Start or select an active class session before sending classroom commands.");
     }
-    const overrideStudentIds = options.studentIds
-      ? [...new Set(options.studentIds.map(String).filter(Boolean))]
-      : null;
+    const target = resolveActiveCommandTarget(options.studentIds ?? null);
     const request = {
-      teachingSessionId: effectiveSession.id,
-      targetScope: "class",
+      teachingSessionId: dashboardCapabilities.effectiveSession.id,
+      targetScope: target.targetScope,
       commandType,
       commandPayload,
     };
-    if (overrideStudentIds) {
-      if (overrideStudentIds.length === 0) throw new Error("Select at least one student.");
-      request.targetScope = "students";
-      request.targetStudentIds = overrideStudentIds;
-    } else if (selectedStudentIds.size > 0) {
-      const selectedCommandStudentIds = getStudentsForCommandTarget().map((student) => student.studentId);
-      if (selectedCommandStudentIds.length === 0) {
-        throw new Error("No controllable students are selected.");
-      }
-      request.targetScope = "students";
-      request.targetStudentIds = selectedCommandStudentIds;
-    } else if (selectedSubgroupId) {
-      request.targetScope = "subgroup";
-      request.subgroupId = selectedSubgroupId;
-    }
-    return request;
-  };
-
-  const makeTabKey = (tab) => JSON.stringify({
-    studentId: tab.studentId,
-    url: tab.url,
-  });
-
-  const parseTabKey = (key) => {
-    try {
-      const parsed = JSON.parse(key);
-      if (!parsed.studentId || !parsed.url) return null;
-      return parsed;
-    } catch {
-      return null;
-    }
+    if (target.targetScope === 'students') request.targetStudentIds = target.targetStudentIds;
+    if (target.targetScope === 'subgroup') request.subgroupId = target.subgroupId;
+    return { request, target };
   };
 
   const manageTabsStudents = getActiveCommandStudents(manageTabsStudentIds);
@@ -1581,9 +1692,16 @@ export default function Dashboard() {
       if (s.allOpenTabs && s.allOpenTabs.length > 0) {
         return s.allOpenTabs
           .filter((tab) => tab.url && !tab.url.startsWith('chrome://'))
-          .map((tab) => ({ url: tab.url, title: tab.title || 'Untitled', studentName: s.studentName, studentId: s.studentId, active: tab.url === s.activeTabUrl }));
-      } else if (s.activeTabUrl && s.activeTabUrl.trim() && !s.activeTabUrl.startsWith('chrome://')) {
-        return [{ url: s.activeTabUrl, title: s.activeTabTitle || 'Untitled', studentName: s.studentName, studentId: s.studentId, active: true }];
+          .map((tab) => ({
+            ...tab,
+            title: tab.title || 'Untitled',
+            studentName: s.studentName,
+            studentId: s.studentId,
+            observedRevision: tab.observedRevision ?? s.tabSnapshotRevision ?? s.tabSnapshot?.revision,
+            capabilities: s.capabilities,
+            extensionCapabilities: s.extensionCapabilities,
+            active: tab.tabRef === s.activeTabRef || tab.url === s.activeTabUrl,
+          }));
       }
       return [];
     })
@@ -1595,9 +1713,9 @@ export default function Dashboard() {
     groups[key].tabs.push(tab);
     return groups;
   }, {});
-  const manageTabsTargetLabel = manageTabsStudentIds?.length === 1
+  const manageTabsTargetLabel = manageTabsTargetSnapshot || (manageTabsStudentIds?.length === 1
     ? (students.find((student) => student.studentId === manageTabsStudentIds[0])?.studentName || "Selected student")
-    : targetBannerLabel;
+    : targetBannerLabel);
 
   // Check for blocked domain violations
   useEffect(() => {
@@ -2005,9 +2123,18 @@ export default function Dashboard() {
   };
 
   const decorateCommandResponse = (data, commandType) => {
+    const commandId = data?.command?.id;
+    const targets = (data?.command?.targets || data?.targets || []).map((target) => ({
+      ...target,
+      ...(commandId && !target.commandId ? { commandId } : {}),
+    }));
+    const enrichedData = {
+      ...data,
+      command: data?.command ? { ...data.command, targets } : data?.command,
+    };
     const tracked = trackTransientCommandResponse(
       transientCommandOutcomesRef.current,
-      data,
+      enrichedData,
       commandType,
     );
     if (tracked !== transientCommandOutcomesRef.current) {
@@ -2015,72 +2142,58 @@ export default function Dashboard() {
       setTransientPendingControls(pendingTransientControls(tracked));
       setTransientCommandVersion((version) => version + 1);
     }
-    const deliveryFeedback = commandDeliveryFeedback(data, commandType);
-    return {
-      ...data,
+    const deliveryFeedback = commandDeliveryFeedback(enrichedData, commandType);
+    const studentNames = [...students, ...claimedPickupStudents].reduce((names, student) => {
+      if (student?.studentId) names[student.studentId] = student.studentName || student.studentEmail || 'Student';
+      return names;
+    }, {});
+    const decorated = {
+      ...enrichedData,
       deliveryFeedback,
       message: deliveryFeedback.description,
+      studentNames,
+      targetLabel: targetBannerLabel,
+      createdAt: new Date().toISOString(),
     };
+    setCommandResultBatches((batches) => [decorated, ...batches].slice(0, 20));
+    return decorated;
   };
 
   const postClassroomCommand = async (commandType, commandPayload, options = {}) => {
-    const request = buildCommandRequest(commandType, commandPayload, options);
+    const { request, target } = buildCommandRequest(commandType, commandPayload, options);
     const data = await apiRequest('POST', '/commands', request);
-    const targetStudentIds = commandStudentIdsFromRequest(request);
     return decorateCommandResponse({
       ...data,
       request,
-      targetStudentIds,
+      targetStudentIds: target.targetStudentIds,
     }, commandType);
   };
 
   const postClaimedCommand = async (commandType, commandPayload, options = {}) => {
-    const targetStudents = getClaimedStudentsForCommandTarget(options.studentIds);
-    if (targetStudents.length === 0) throw new Error("Select at least one claimed student.");
-    const byContext = targetStudents.reduce((map, student) => {
-      if (!student.contextId) return map;
-      const rows = map.get(student.contextId) || [];
-      rows.push(student);
-      map.set(student.contextId, rows);
-      return map;
-    }, new Map());
-    if (byContext.size === 0) throw new Error("Selected students are missing a claimed group.");
-    const rawResults = await Promise.all(Array.from(byContext.entries()).map(([contextId, rows]) =>
-      apiRequest('POST', `/coverage/contexts/${contextId}/commands`, {
+    const target = resolveActiveCommandTarget(options.studentIds ?? null);
+    const settlements = await Promise.allSettled(target.groups.map((group) =>
+      apiRequest('POST', `/coverage/contexts/${group.id}/commands`, {
         targetScope: "students",
-        targetStudentIds: rows.map((student) => student.studentId),
+        targetStudentIds: group.targetStudentIds,
         commandType,
         commandPayload,
       })
     ));
-    const results = rawResults.map((result) => decorateCommandResponse(result, commandType));
-    const targets = results.flatMap((result) => result?.command?.targets || []);
-    const targetStudentIds = targetStudents.map((student) => student.studentId);
-    const aggregateKeys = ['requested', 'attempted', 'acknowledged', 'completed', 'pending', 'expired', 'failed', 'unavailable', 'sent', 'received', 'awaitingAck'];
-    const summary = Object.fromEntries(aggregateKeys.map((key) => [
-      key,
-      results.reduce((total, result) => total + Number(result?.summary?.[key] || 0), 0),
-    ]));
+    const combined = combineCommandSettlements(settlements, target.groups, commandType);
     return decorateCommandResponse({
-      command: {
-        commandType,
-        deliveryPolicy: results[0]?.command?.deliveryPolicy || results[0]?.deliveryPolicy,
-        expiresAt: results.map((result) => result?.command?.expiresAt || result?.expiresAt).filter(Boolean).sort()[0],
-        targets,
-      },
-      summary: {
-        ...summary,
-        requested: summary.requested || targets.length,
-      },
-      targetStudentIds,
+      ...combined,
+      targetStudentIds: target.targetStudentIds,
     }, commandType);
   };
 
-  const postActiveCommand = (commandType, commandPayload, options = {}) => (
-    studentView === "claimed"
+  const postActiveCommand = (commandType, commandPayload, options = {}) => {
+    if (!dashboardCapabilities.allows(commandType)) {
+      throw new Error(dashboardCapabilities.reason || 'This classroom command is not available in the current view.');
+    }
+    return studentView === "claimed"
       ? postClaimedCommand(commandType, commandPayload, options)
-      : postClassroomCommand(commandType, commandPayload, options)
-  );
+      : postClassroomCommand(commandType, commandPayload, options);
+  };
 
   const openTabMutation = useMutation({
     mutationFn: async ({ url }) => postActiveCommand('open-tab', { url }),
@@ -2094,8 +2207,8 @@ export default function Dashboard() {
   });
 
   const closeTabsMutation = useMutation({
-    mutationFn: async ({ closeAll, pattern, specificUrls, tabsToClose, studentIds }) => {
-      const payload = { closeAll, pattern, specificUrls, tabsToClose };
+    mutationFn: async ({ closeAll, tabsToClose, studentIds }) => {
+      const payload = closeAll ? { closeAll: true } : { tabsToClose };
       return postActiveCommand('close-tabs', payload, { studentIds });
     },
     onSuccess: (data) => {
@@ -2103,6 +2216,7 @@ export default function Dashboard() {
       setShowCloseTabsDialog(false);
       setSelectedTabsToClose(new Set());
       setManageTabsStudentIds(null);
+      setManageTabsTargetSnapshot("");
       refreshScreenshotsForDevices();
     },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
@@ -2120,7 +2234,7 @@ export default function Dashboard() {
   });
 
   const unlockScreenMutation = useMutation({
-    mutationFn: async ({ studentIds } = {}) => postActiveCommand('unlock-screen', {}, { studentIds }),
+    mutationFn: async ({ studentIds } = {}) => postActiveCommand('unlock-screen', { screenOnly: true }, { studentIds }),
     onSuccess: (data) => {
       toast(data.deliveryFeedback);
       refreshScreenshotsForDevices();
@@ -2141,9 +2255,14 @@ export default function Dashboard() {
     if (selectedTabsToClose.size === 0) { toast({ variant: "destructive", title: "No Tabs Selected", description: "Please select at least one tab to close" }); return; }
     const tabsToClose = [];
     selectedTabsToClose.forEach(compositeKey => {
-      const parsed = parseTabKey(compositeKey);
+      const parsed = parseTabSelectionKey(compositeKey);
       if (parsed) tabsToClose.push(parsed);
     });
+    if (tabsToClose.length !== selectedTabsToClose.size) {
+      toast({ variant: "destructive", title: "Tabs changed", description: "Refresh the tab list and select the tabs again." });
+      setSelectedTabsToClose(new Set());
+      return;
+    }
     closeTabsMutation.mutate({
       tabsToClose,
       studentIds: [...new Set(tabsToClose.map((tab) => tab.studentId))],
@@ -2152,8 +2271,13 @@ export default function Dashboard() {
   };
 
   const handleCloseSingleTab = (tab) => {
+    const tabKey = tabSelectionKey(tab);
+    if (!tabKey || !exactTabCloseCapability(tab).enabled) {
+      toast({ variant: "destructive", title: "Extension update required", description: exactTabCloseCapability(tab).reason });
+      return;
+    }
     closeTabsMutation.mutate({
-      tabsToClose: [tab],
+      tabsToClose: [parseTabSelectionKey(tabKey)],
       studentIds: [tab.studentId],
     });
   };
@@ -2172,10 +2296,56 @@ export default function Dashboard() {
   };
 
   const handleUnlockScreen = () => {
+    if (!targetSupportsScreenOnlyUnlock) {
+      toast({ variant: 'destructive', title: 'Extension update required', description: 'Screen-only unlock requires ClassPilot extension 2.6.0 or newer on every target.' });
+      return;
+    }
     unlockScreenMutation.mutate({});
   };
 
+  const tempUnblockMutation = useMutation({
+    mutationFn: async ({ domain, durationMinutes }) => postActiveCommand('temp-unblock', { domain, durationMinutes }),
+    onSuccess: (data) => {
+      toast(data.deliveryFeedback);
+      setShowTempUnblockDialog(false);
+      setTempUnblockDomain("");
+    },
+    onError: (error) => toast({ variant: "destructive", title: "Temporary unblock failed", description: error.message }),
+  });
+
+  const tabLimitMutation = useMutation({
+    mutationFn: async ({ maxTabs }) => postActiveCommand('limit-tabs', { maxTabs }),
+    onSuccess: (data) => {
+      toast(data.deliveryFeedback);
+      setShowTabLimitDialog(false);
+      setTabLimit("");
+    },
+    onError: (error) => toast({ variant: "destructive", title: "Tab limit failed", description: error.message }),
+  });
+
+  const handleTempUnblock = () => {
+    const domain = tempUnblockDomain.trim().replace(/^https?:\/\//i, '').replace(/^www\./i, '').split('/')[0];
+    if (!domain) {
+      toast({ variant: "destructive", title: "Domain required", description: "Enter the domain to temporarily unblock." });
+      return;
+    }
+    tempUnblockMutation.mutate({ domain, durationMinutes: Number.parseInt(tempUnblockDuration, 10) || 5 });
+  };
+
+  const handleTabLimit = () => {
+    const maxTabs = Number.parseInt(tabLimit, 10);
+    if (!Number.isInteger(maxTabs) || maxTabs < 1) {
+      toast({ variant: "destructive", title: "Invalid tab limit", description: "Enter at least 1 tab." });
+      return;
+    }
+    tabLimitMutation.mutate({ maxTabs });
+  };
+
   const openManageTabs = (studentIds = null) => {
+    const namedStudent = studentIds?.length === 1
+      ? [...students, ...claimedPickupStudents].find((student) => student.studentId === studentIds[0])
+      : null;
+    setManageTabsTargetSnapshot(namedStudent?.studentName || targetBannerLabel);
     setManageTabsStudentIds(studentIds);
     setSelectedTabsToClose(new Set());
     setShowCloseTabsDialog(true);
@@ -2199,7 +2369,7 @@ export default function Dashboard() {
   });
 
   const removeFlightPathMutation = useMutation({
-    mutationFn: async ({ studentIds } = {}) => postClassroomCommand('remove-flight-path', {}, { studentIds }),
+    mutationFn: async ({ studentIds } = {}) => postActiveCommand('remove-flight-path', {}, { studentIds }),
     onSuccess: (data) => {
       toast(data.deliveryFeedback);
       refreshScreenshotsForDevices();
@@ -2213,6 +2383,11 @@ export default function Dashboard() {
     if (!selectedFlightPathId) { toast({ variant: "destructive", title: "No Flight Path Selected", description: "Please select a flight path to apply" }); return; }
     const flightPath = flightPaths.find(fp => fp.id === selectedFlightPathId);
     if (!flightPath) { toast({ variant: "destructive", title: "Error", description: "Selected flight path not found" }); return; }
+    const applicability = flightPathApplyCapability(flightPath);
+    if (!applicability.enabled) {
+      toast({ variant: "destructive", title: "Flight Path Cannot Be Applied", description: applicability.reason });
+      return;
+    }
     applyFlightPathMutation.mutate({ flightPathId: flightPath.id, allowedDomains: flightPath.allowedDomains || [], flightPathName: flightPath.flightPathName });
   };
 
@@ -2229,7 +2404,7 @@ export default function Dashboard() {
   });
 
   const removeBlockListMutation = useMutation({
-    mutationFn: async ({ studentIds } = {}) => postClassroomCommand('remove-block-list', {}, { studentIds }),
+    mutationFn: async ({ studentIds } = {}) => postActiveCommand('remove-block-list', {}, { studentIds }),
     onSuccess: (data) => {
       toast(data.deliveryFeedback);
       refreshScreenshotsForDevices();
@@ -2243,6 +2418,22 @@ export default function Dashboard() {
   };
 
   const handleRemoveBlockList = () => { removeBlockListMutation.mutate({}); };
+
+  const handleTileCommand = async ({ commandType, commandPayload = {}, studentIds = [] }) => {
+    const studentId = studentIds[0];
+    if (!studentId) return;
+    setTileCommandState((current) => ({ ...current, [studentId]: { pending: true, error: '' } }));
+    try {
+      const data = await postActiveCommand(commandType, commandPayload, { studentIds });
+      toast(data.deliveryFeedback);
+      refreshScreenshotsForDevices();
+      setTileCommandState((current) => ({ ...current, [studentId]: { pending: false, error: '' } }));
+    } catch (error) {
+      const message = error?.message || 'The classroom command could not be sent.';
+      setTileCommandState((current) => ({ ...current, [studentId]: { pending: false, error: message } }));
+      toast({ variant: 'destructive', title: 'Command failed', description: message });
+    }
+  };
 
   const attentionModeMutation = useMutation({
     mutationFn: async ({ active, message }) => postClassroomCommand('attention-mode', { active, message }),
@@ -2336,7 +2527,7 @@ export default function Dashboard() {
       if (studentIds.length === 0) {
         throw new Error("Select at least one student to sign out.");
       }
-      return postClassroomCommand('student-sign-out', { reason: 'teacher_sign_out' }, { studentIds });
+      return postClassroomCommand('student-sign-out', studentSignOutCommandPayload(), { studentIds });
     },
     onSuccess: (data) => {
       const signedOutStudentIds = completedStudentIdsFromCommand(data);
@@ -2400,15 +2591,51 @@ export default function Dashboard() {
   };
 
   const toggleHandRaisingMutation = useMutation({
-    mutationFn: async (enabled) => apiRequest('POST', '/settings/hand-raising', { enabled }),
-    onSuccess: (data) => { queryClient.invalidateQueries({ queryKey: ['/api/settings'] }); toast({ title: data.enabled ? "Hand Raising Enabled" : "Hand Raising Disabled", description: data.enabled ? "Students can now raise their hands" : "Students cannot raise their hands" }); },
-    onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
+    mutationFn: async (enabled) => {
+      if (!dashboardCapabilities.canChangeFabSettings || !effectiveSession?.id) throw new Error('Session settings are available only for your active class.');
+      return apiRequest('PUT', `/classpilot/teaching-sessions/${encodeURIComponent(effectiveSession.id)}/settings`, sessionFabSettingsPayload(
+        sessionFabState,
+        { raiseHandEnabled: enabled },
+      ));
+    },
+    onSuccess: (data) => {
+      const nextState = normalizeSessionFabState(data?.state, effectiveSessionIdRef.current);
+      if (nextState) setSessionFabState(nextState);
+      queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
+      const enabled = data?.state?.handRaisingEnabled === true;
+      toast({ title: enabled ? "Hand Raising Enabled" : "Hand Raising Disabled", description: enabled ? "Students can now raise their hands" : "Students cannot raise their hands" });
+    },
+    onError: (error) => {
+      const current = error?.response?.data?.current || error?.data?.current;
+      const nextState = normalizeSessionFabState(current, effectiveSessionIdRef.current);
+      if (nextState) setSessionFabState(nextState);
+      queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
+      toast({ variant: "destructive", title: "Error", description: error.message });
+    },
   });
 
   const toggleStudentMessagingMutation = useMutation({
-    mutationFn: async (enabled) => apiRequest('POST', '/settings/student-messaging', { enabled }),
-    onSuccess: (data) => { queryClient.invalidateQueries({ queryKey: ['/api/settings'] }); toast({ title: data.enabled ? "Student Messaging Enabled" : "Student Messaging Disabled", description: data.enabled ? "Students can now send messages" : "Students cannot send messages" }); },
-    onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
+    mutationFn: async (enabled) => {
+      if (!dashboardCapabilities.canChangeFabSettings || !effectiveSession?.id) throw new Error('Session settings are available only for your active class.');
+      return apiRequest('PUT', `/classpilot/teaching-sessions/${encodeURIComponent(effectiveSession.id)}/settings`, sessionFabSettingsPayload(
+        sessionFabState,
+        { chatEnabled: enabled },
+      ));
+    },
+    onSuccess: (data) => {
+      const nextState = normalizeSessionFabState(data?.state, effectiveSessionIdRef.current);
+      if (nextState) setSessionFabState(nextState);
+      queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
+      const enabled = data?.state?.messagingEnabled === true;
+      toast({ title: enabled ? "Student Messaging Enabled" : "Student Messaging Disabled", description: enabled ? "Students can now send messages" : "Students cannot send messages" });
+    },
+    onError: (error) => {
+      const current = error?.response?.data?.current || error?.data?.current;
+      const nextState = normalizeSessionFabState(current, effectiveSessionIdRef.current);
+      if (nextState) setSessionFabState(nextState);
+      queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
+      toast({ variant: "destructive", title: "Error", description: error.message });
+    },
   });
 
   // Poll result reads start only after the device-reported ACK activates the
@@ -2514,7 +2741,7 @@ export default function Dashboard() {
                         <button
                           type="button"
                           onClick={() => resyncSessionMutation.mutate({ sessionId: activeSession.id })}
-                          disabled={resyncSessionMutation.isPending}
+                          disabled={dashboardCapabilities.observedOtherClass || resyncSessionMutation.isPending}
                           className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-slate-600 bg-slate-900 text-slate-100 hover:bg-slate-800 transition-colors disabled:opacity-50"
                           data-testid="button-resync-session"
                         >
@@ -2589,14 +2816,14 @@ export default function Dashboard() {
                         <button
                           type="button"
                           onClick={() => resyncSessionMutation.mutate({ sessionId: activeSession.id })}
-                          disabled={resyncSessionMutation.isPending}
+                          disabled={dashboardCapabilities.observedOtherClass || resyncSessionMutation.isPending}
                           className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-slate-600 bg-slate-900 text-slate-100 hover:bg-slate-800 transition-colors disabled:opacity-50"
                           data-testid="button-admin-resync-session"
                         >
                           <RefreshCw className={`h-3.5 w-3.5 ${resyncSessionMutation.isPending ? "animate-spin" : ""}`} /> Resync Class
                         </button>
                       )}
-                      <button onClick={() => setEndClassTarget(activeSession)} disabled={endSessionMutation.isPending} className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50" data-testid="button-admin-end-session">
+                      <button onClick={() => setEndClassTarget(activeSession)} disabled={dashboardCapabilities.observedOtherClass || endSessionMutation.isPending} className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50" data-testid="button-admin-end-session">
                         <X className="h-3.5 w-3.5" /> End Class
                       </button>
                     </>
@@ -2606,7 +2833,7 @@ export default function Dashboard() {
                       <select
                         value={adminStartGroupId}
                         onChange={(event) => setAdminStartGroupId(event.target.value)}
-                        disabled={adminTeachingGroupsLoading || adminTeachingGroups.length === 0 || startSessionMutation.isPending}
+                        disabled={dashboardCapabilities.observedOtherClass || adminTeachingGroupsLoading || adminTeachingGroups.length === 0 || startSessionMutation.isPending}
                         title={adminTeachingGroupsLoading ? "Loading your classes" : adminTeachingGroups.length === 0 ? "No classes assigned to you" : "Choose a class to teach"}
                         aria-label="Select ClassPilot class to teach"
                         data-testid="select-admin-start-session-group"
@@ -2626,7 +2853,7 @@ export default function Dashboard() {
                       </select>
                       <button
                         type="button"
-                        disabled={!adminStartGroupId || adminTeachingGroupsLoading || adminTeachingGroups.length === 0 || startSessionMutation.isPending}
+                        disabled={dashboardCapabilities.observedOtherClass || !adminStartGroupId || adminTeachingGroupsLoading || adminTeachingGroups.length === 0 || startSessionMutation.isPending}
                         onClick={() => startSessionMutation.mutate({ groupId: adminStartGroupId })}
                         title={adminTeachingGroupsLoading ? "Loading your classes" : adminTeachingGroups.length === 0 ? "No classes assigned to you" : "Teach selected class"}
                         data-testid="button-admin-start-session"
@@ -2639,7 +2866,7 @@ export default function Dashboard() {
                         <button
                           type="button"
                           onClick={() => setSkipTodayGroup(selectedAdminStartGroup)}
-                          disabled={skipScheduledClassMutation.isPending}
+                          disabled={dashboardCapabilities.observedOtherClass || skipScheduledClassMutation.isPending}
                           data-testid="button-admin-skip-scheduled-class-today"
                           className="inline-flex h-8 items-center justify-center whitespace-nowrap rounded-md border border-slate-600 bg-slate-900 px-3 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-800 disabled:pointer-events-none disabled:opacity-50"
                         >
@@ -2681,9 +2908,9 @@ export default function Dashboard() {
             {/* Right: Actions */}
             <div className="flex items-center gap-2">
               <ThemeToggle />
-              <button onClick={() => setShowAttendance(!showAttendance)} className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border transition-colors ${showAttendance ? 'bg-primary text-primary-foreground border-primary' : 'bg-transparent border-slate-600 text-slate-400 hover:bg-slate-800'}`} data-testid="button-attendance">
+              {!dashboardCapabilities.observedOtherClass && <button onClick={() => setShowAttendance(!showAttendance)} className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border transition-colors ${showAttendance ? 'bg-primary text-primary-foreground border-primary' : 'bg-transparent border-slate-600 text-slate-400 hover:bg-slate-800'}`} data-testid="button-attendance">
                 <ClipboardCheck className="h-4 w-4" /> Attendance
-              </button>
+              </button>}
               {isTeacher && (
                 <button onClick={() => navigate("/classpilot/my-settings")} className="w-9 h-9 flex items-center justify-center rounded-lg bg-transparent border border-slate-600 text-slate-400 hover:bg-slate-800 transition-colors" data-testid="button-my-settings" title="My Settings">
                   <User className="h-[18px] w-[18px]" />
@@ -2724,7 +2951,7 @@ export default function Dashboard() {
       ) : null}
 
       {/* Attendance Panel */}
-      {showAttendance && (
+      {showAttendance && !dashboardCapabilities.observedOtherClass && (
         <div className="px-6 py-3 border-b border-border bg-background">
           <AttendancePanel
             students={sessionFilteredStudents.map((s) => {
@@ -2744,7 +2971,7 @@ export default function Dashboard() {
         {(isAdmin || isTeacher) && (
           <RemoteControlToolbar
             selectedStudentIds={selectedStudentIds}
-            students={controllableStudents}
+            students={selectableStudents}
             onToggleStudent={toggleStudentSelection}
             onClearSelection={clearSelection}
             selectedGrade={selectedGrade}
@@ -2756,9 +2983,8 @@ export default function Dashboard() {
             pickupView={studentView}
             onPickupViewChange={handleStudentViewChange}
             onOpenCoverage={canManageSupervisionSetup ? () => navigate("/classpilot/coverage") : undefined}
-            canReroute={studentView === "class" && rerouteCoverageTargets.length > 0}
-            onReroute={studentView === "class" ? () => setShowRerouteDialog(true) : undefined}
-            onClassroomCommand={canUseRemoteControls ? postActiveCommand : null}
+            canReroute={dashboardCapabilities.ownedClassSession && rerouteCoverageTargets.length > 0}
+            onReroute={dashboardCapabilities.ownedClassSession ? () => setShowRerouteDialog(true) : undefined}
             canViewHistoricalTelemetry={isAdmin}
           />
         )}
@@ -2832,6 +3058,13 @@ export default function Dashboard() {
           </div>
         )}
 
+        {dashboardCapabilities.observedOtherClass ? (
+          <div className="mb-6 flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-950 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-100" role="status" data-testid="observe-read-only-banner">
+            <Eye className="mt-0.5 h-4 w-4 shrink-0" />
+            <div><p className="font-semibold">Observe mode is read-only</p><p className="mt-1 text-xs opacity-80">Screens and activity can be reviewed, but selections, Live View, device commands, and Teacher FAB tools are disabled for another teacher&apos;s class.</p></div>
+          </div>
+        ) : null}
+
         {/* Stats Cards */}
         {canShowStudentWorkspace && (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
@@ -2889,19 +3122,22 @@ export default function Dashboard() {
         {/* Control Buttons */}
         {canUseRemoteControls && studentView !== "available" && (
           <div className="flex items-center gap-2 flex-wrap mb-4">
-            <Button size="sm" variant="outline" onClick={() => setShowOpenTabDialog(true)} data-testid="button-open-tab" className="text-blue-600 dark:text-blue-400"><MonitorPlay className="h-4 w-4 mr-2" />Open URL</Button>
-            <Button size="sm" variant="outline" onClick={() => openManageTabs(null)} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Tabs</Button>
-            <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={lockScreenMutation.isPending} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Lock Screen</Button>
-            <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={unlockScreenMutation.isPending} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />Unlock Screen</Button>
-            <Button size="sm" variant="outline" onClick={() => setShowApplyFlightPathDialog(true)} data-testid="button-apply-flight-path" className="text-purple-600 dark:text-purple-400"><Layers className="h-4 w-4 mr-2" />Apply Flight Path</Button>
+            {dashboardCapabilities.allows('open-tab') && <Button size="sm" variant="outline" onClick={() => setShowOpenTabDialog(true)} data-testid="button-open-tab" className="text-blue-600 dark:text-blue-400"><MonitorPlay className="h-4 w-4 mr-2" />Open URL</Button>}
+            {dashboardCapabilities.allows('close-tabs') && <Button size="sm" variant="outline" onClick={() => openManageTabs(null)} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Tabs</Button>}
+            {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={lockScreenMutation.isPending} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Lock Current</Button>}
+            {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={() => setShowLockUrlDialog(true)} data-testid="button-lock-url" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Lock URL</Button>}
+            {dashboardCapabilities.allows('unlock-screen') && <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={unlockScreenMutation.isPending || !targetSupportsScreenOnlyUnlock} title={targetSupportsScreenOnlyUnlock ? 'Unlock only the screen lock; Flight Paths remain active' : 'ClassPilot extension 2.6.0 or newer is required on every target'} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />{bulkUnlockLabel}</Button>}
+            {dashboardCapabilities.allows('temp-unblock') && <Button size="sm" variant="outline" onClick={() => setShowTempUnblockDialog(true)} data-testid="button-temp-unblock" className="text-green-700 dark:text-green-400"><Shield className="h-4 w-4 mr-2" />Temporary Unblock</Button>}
+            {dashboardCapabilities.allows('limit-tabs') && <Button size="sm" variant="outline" onClick={() => setShowTabLimitDialog(true)} data-testid="button-tab-limit" className="text-blue-700 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Tab Limit</Button>}
+            {dashboardCapabilities.allows('apply-flight-path') && <Button size="sm" variant="outline" onClick={() => setShowApplyFlightPathDialog(true)} data-testid="button-apply-flight-path" className="text-purple-600 dark:text-purple-400"><Layers className="h-4 w-4 mr-2" />Apply Flight Path</Button>}
             {studentView === "class" && <Button size="sm" variant="outline" onClick={() => setShowFlightPathViewerDialog(true)} data-testid="button-flight-path-status" className="text-purple-600 dark:text-purple-400"><Eye className="h-4 w-4 mr-2" />Flight Path Status</Button>}
-            <Button size="sm" variant="outline" onClick={() => setShowApplyBlockListDialog(true)} data-testid="button-apply-block-list" className="text-red-600 dark:text-red-400"><ShieldBan className="h-4 w-4 mr-2" />Apply Block List</Button>
+            {dashboardCapabilities.allows('apply-block-list') && <Button size="sm" variant="outline" onClick={() => setShowApplyBlockListDialog(true)} data-testid="button-apply-block-list" className="text-red-600 dark:text-red-400"><ShieldBan className="h-4 w-4 mr-2" />Apply Block List</Button>}
             {studentView === "class" && <Button size="sm" variant="outline" onClick={() => setShowBlockListViewerDialog(true)} data-testid="button-block-list-status" className="text-red-600 dark:text-red-400"><Shield className="h-4 w-4 mr-2" />Block List Status</Button>}
             {studentView === "class" && (
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => setShowSignOutDialog(true)}
+                onClick={() => { setSignOutTargetSnapshot(targetBannerLabel); setShowSignOutDialog(true); }}
                 disabled={!canSignOutSelectedStudents || signOutStudentsMutation.isPending}
                 data-testid="button-sign-out-students"
                 className="border-gray-300 bg-gray-200 text-black hover:bg-gray-300 hover:text-black disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-200 disabled:text-black/60 disabled:opacity-40"
@@ -2928,8 +3164,16 @@ export default function Dashboard() {
                 </select>
               </label>
             )}
+            <Button size="sm" variant="outline" onClick={() => setShowCommandResults(true)} data-testid="button-command-results"><ClipboardCheck className="h-4 w-4 mr-2" />Results{commandResultBatches.length > 0 ? ` (${commandResultBatches[0]?.summary?.requested || commandResultBatches[0]?.command?.targets?.length || 0})` : ''}</Button>
           </div>
         )}
+
+        {studentView === 'class' && studentsQueryError && students.length > 0 ? (
+          <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100" role="status" data-testid="students-refresh-error">
+            <span>Showing the last student data because the dashboard refresh failed.</span>
+            <Button type="button" size="sm" variant="outline" onClick={() => refetchStudents()} disabled={studentsRefreshing}><RefreshCw className="mr-2 h-3.5 w-3.5" />Retry</Button>
+          </div>
+        ) : null}
 
         {/* Student Tiles */}
         {studentView === "available" ? (
@@ -3123,6 +3367,13 @@ export default function Dashboard() {
             </Button>
             {groups.length === 0 && <p className="text-xs text-muted-foreground max-w-md mx-auto">You don't have any class groups yet. Contact your administrator to have students assigned to your classes.</p>}
           </div>
+        ) : studentView === "class" && studentsQueryError && students.length === 0 ? (
+          <div className="py-20 text-center" role="alert" data-testid="students-query-error">
+            <div className="h-20 w-20 mx-auto mb-6 rounded-2xl bg-red-500/10 flex items-center justify-center"><AlertTriangle className="h-10 w-10 text-red-500" /></div>
+            <h3 className="text-xl font-semibold mb-2">Student dashboard could not load</h3>
+            <p className="text-sm text-muted-foreground max-w-md mx-auto mb-6">{studentsError?.message || 'Check your connection and try again.'}</p>
+            <Button type="button" variant="outline" onClick={() => refetchStudents()} disabled={studentsRefreshing}><RefreshCw className="mr-2 h-4 w-4" />Try again</Button>
+          </div>
         ) : studentView === "class" && studentsLoading ? (
           <div className="py-20 text-center">
             <div className="h-10 w-10 mx-auto mb-4 animate-spin rounded-full border-4 border-muted border-t-primary" />
@@ -3159,6 +3410,19 @@ export default function Dashboard() {
                 : "";
               const returnToClassPending = returnToClassMutation.isPending &&
                 returnToClassMutation.variables?.studentIds?.includes(student.studentId);
+              const dashboardReadOnly = !dashboardCapabilities.canUseRemoteControls;
+              const tileControlsDisabled = supervisedElsewhere || dashboardReadOnly;
+              const tileDisabledReason = supervisedElsewhere
+                ? disabledReason
+                : dashboardCapabilities.reason;
+              const supportsNegotiatedLiveView = studentSupportsCapability(
+                student,
+                'liveViewNegotiationV1',
+              );
+              const retryTileData = () => {
+                queryClient.invalidateQueries({ queryKey: [TILE_BATCH_QUERY_ROOTS.screenshots], refetchType: 'all' });
+                queryClient.invalidateQueries({ queryKey: [TILE_BATCH_QUERY_ROOTS.history], refetchType: 'all' });
+              };
               return (
                 <div key={`${student.studentId}-${tileRevision}`} className={`relative ${supervisedElsewhere ? "rounded-lg ring-2 ring-slate-300/70 dark:ring-slate-700/70" : ""}`}>
                   {coverageLabel && (
@@ -3173,26 +3437,32 @@ export default function Dashboard() {
                     isOffTask={isStudentOffTask(student)}
                     isAbsent={absentIds.has(student.studentId)}
                     isSelected={selectedStudentIds.has(student.studentId)}
-                    onToggleSelect={supervisedElsewhere ? undefined : () => toggleStudentSelection(student.studentId)}
+                    onToggleSelect={!dashboardCapabilities.canSelectStudents || supervisedElsewhere ? undefined : () => toggleStudentSelection(student.studentId)}
                     liveStream={liveStreams.get(studentRealtimeKey) || null}
                     liveViewPending={liveViewPendingIds.has(studentRealtimeKey)}
-                    onStartLiveView={!supervisedElsewhere && student.isLoggedIn && effectiveSession?.id ? () => handleStartLiveView(studentRealtimeKey) : undefined}
-                    onStopLiveView={!supervisedElsewhere ? () => handleStopLiveView(studentRealtimeKey) : undefined}
+                    onStartLiveView={dashboardCapabilities.canUseLiveView && supportsNegotiatedLiveView && !supervisedElsewhere && student.isLoggedIn && effectiveSession?.id ? () => handleStartLiveView(studentRealtimeKey) : undefined}
+                    onStopLiveView={dashboardCapabilities.canUseLiveView && !supervisedElsewhere ? () => handleStopLiveView(studentRealtimeKey) : undefined}
                     onEndLiveRefresh={() => refreshTile(studentRealtimeKey)}
-                    onAllowDomain={supervisedElsewhere ? undefined : handleAllowDomain}
-                    teachingSessionId={effectiveSession?.id}
-                    onManageTabs={supervisedElsewhere ? undefined : () => openManageTabs([student.studentId])}
-                    controlDisabled={supervisedElsewhere}
-                    disabledReason={disabledReason}
+                    onAllowDomain={tileControlsDisabled ? undefined : handleAllowDomain}
+                    onManageTabs={!tileControlsDisabled && dashboardCapabilities.allows('close-tabs') ? () => openManageTabs([student.studentId]) : undefined}
+                    onCommand={tileControlsDisabled ? undefined : handleTileCommand}
+                    commandPending={tileCommandState[student.studentId]?.pending === true}
+                    commandError={tileCommandState[student.studentId]?.error || ''}
+                    canLockScreen={dashboardCapabilities.allows('lock-screen') && dashboardCapabilities.allows('unlock-screen')}
+                    canRemoveFlightPath={dashboardCapabilities.allows('remove-flight-path')}
+                    controlDisabled={tileControlsDisabled}
+                    disabledReason={tileDisabledReason}
                     supervisionLabel={coverageLabel || "In supervision"}
-                    onReturnToClass={supervisedElsewhere && activeSession ? () => handleReturnToClass(student) : undefined}
+                    onReturnToClass={supervisedElsewhere && dashboardCapabilities.ownedClassSession && activeSession ? () => handleReturnToClass(student) : undefined}
                     returnToClassPending={returnToClassPending}
                     recentHeartbeats={supervisedElsewhere || failedHistoryStudentIds.has(student.studentId) ? EMPTY_LIST : historyByStudent.get(student.studentId) || EMPTY_LIST}
                     screenshotData={supervisedElsewhere || failedScreenshotStudentIds.has(student.studentId) ? null : screenshotsByStudent.get(student.studentId) || null}
+                    screenshotError={!supervisedElsewhere && failedScreenshotStudentIds.has(student.studentId) ? 'The screenshot request failed.' : ''}
+                    historyError={!supervisedElsewhere && failedHistoryStudentIds.has(student.studentId) ? 'The recent-activity request failed.' : ''}
+                    onRetryTileData={retryTileData}
                     flightPaths={flightPaths}
                     monitoringDisplay={monitoringDisplay}
                     freshnessNowMs={freshnessNowMs}
-                    onCommandResult={decorateCommandResponse}
                   />
                 </div>
               );
@@ -3498,7 +3768,7 @@ export default function Dashboard() {
           <DialogHeader>
             <DialogTitle>Sign out selected students?</DialogTitle>
             <DialogDescription>
-              This will sign {signOutSelectedCount} selected student{signOutSelectedCount === 1 ? "" : "s"} out of ClassPilot on their current Chromebook{signOutSelectedCount === 1 ? "" : "s"}. They will need to sign back in before monitoring, messaging, and hand raising resume.
+              Target: {signOutTargetSnapshot || targetBannerLabel}. This will sign {signOutSelectedCount} selected student{signOutSelectedCount === 1 ? "" : "s"} out of ClassPilot on their current Chromebook{signOutSelectedCount === 1 ? "" : "s"}. They will need to sign back in before monitoring, messaging, and hand raising resume.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -3521,7 +3791,7 @@ export default function Dashboard() {
       {/* Open Tab Dialog */}
       <Dialog open={showOpenTabDialog} onOpenChange={setShowOpenTabDialog}>
         <DialogContent data-testid="dialog-open-tab">
-          <DialogHeader><DialogTitle>Open Tab on Student Devices</DialogTitle><DialogDescription>{selectedStudentIds.size > 0 ? `Open a URL on ${selectedStudentIds.size} selected student(s)` : "Open a URL on all student devices"}</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>Open Tab on Student Devices</DialogTitle><DialogDescription>Target: {targetBannerLabel}</DialogDescription></DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label htmlFor="open-tab-url">URL to Open</Label>
@@ -3552,11 +3822,31 @@ export default function Dashboard() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={showTempUnblockDialog} onOpenChange={setShowTempUnblockDialog}>
+        <DialogContent data-testid="dialog-temp-unblock">
+          <DialogHeader><DialogTitle>Temporarily Unblock a Domain</DialogTitle><DialogDescription>{targetBannerLabel}. Access will be restored automatically after the selected time.</DialogDescription></DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2"><Label htmlFor="temp-unblock-domain">Domain</Label><Input id="temp-unblock-domain" placeholder="example.org" value={tempUnblockDomain} onChange={(event) => setTempUnblockDomain(event.target.value)} data-testid="input-temp-unblock-domain" /></div>
+            <div className="space-y-2"><Label htmlFor="temp-unblock-duration">Duration</Label><Select value={tempUnblockDuration} onValueChange={setTempUnblockDuration}><SelectTrigger id="temp-unblock-duration" data-testid="select-temp-unblock-duration"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="5">5 minutes</SelectItem><SelectItem value="10">10 minutes</SelectItem><SelectItem value="15">15 minutes</SelectItem><SelectItem value="30">30 minutes</SelectItem></SelectContent></Select></div>
+          </div>
+          <DialogFooter><Button variant="outline" onClick={() => setShowTempUnblockDialog(false)}>Cancel</Button><Button onClick={handleTempUnblock} disabled={tempUnblockMutation.isPending} data-testid="button-confirm-temp-unblock">Temporarily Unblock</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showTabLimitDialog} onOpenChange={setShowTabLimitDialog}>
+        <DialogContent data-testid="dialog-tab-limit">
+          <DialogHeader><DialogTitle>Set Tab Limit</DialogTitle><DialogDescription>{targetBannerLabel}. Students will be limited to this many open tabs.</DialogDescription></DialogHeader>
+          <div className="space-y-2 py-4"><Label htmlFor="tab-limit">Maximum open tabs</Label><Input id="tab-limit" type="number" min="1" max="100" value={tabLimit} onChange={(event) => setTabLimit(event.target.value)} data-testid="input-tab-limit" /></div>
+          <DialogFooter><Button variant="outline" onClick={() => setShowTabLimitDialog(false)}>Cancel</Button><Button onClick={handleTabLimit} disabled={tabLimitMutation.isPending} data-testid="button-confirm-tab-limit">Apply Limit</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Tabs Dialog */}
       <Dialog open={showCloseTabsDialog} onOpenChange={(open) => {
         setShowCloseTabsDialog(open);
         if (!open) {
           setManageTabsStudentIds(null);
+          setManageTabsTargetSnapshot("");
           setSelectedTabsToClose(new Set());
         }
       }}>
@@ -3568,7 +3858,7 @@ export default function Dashboard() {
             ) : (
               <>
                 <div className="flex items-center gap-2 mb-2">
-                  <Button type="button" variant="outline" size="sm" onClick={() => setSelectedTabsToClose(new Set(openTabs.map(makeTabKey)))} data-testid="button-select-all-tabs" className="h-8"><CheckSquare className="h-3 w-3 mr-1" />Select All</Button>
+                  <Button type="button" variant="outline" size="sm" onClick={() => setSelectedTabsToClose(new Set(openTabs.filter((tab) => exactTabCloseCapability(tab).enabled).map(tabSelectionKey)))} data-testid="button-select-all-tabs" className="h-8"><CheckSquare className="h-3 w-3 mr-1" />Select Exact-Close Tabs</Button>
                   <Button type="button" variant="outline" size="sm" onClick={() => setSelectedTabsToClose(new Set())} data-testid="button-clear-tabs" className="h-8"><XSquare className="h-3 w-3 mr-1" />Clear</Button>
                   <span className="text-xs text-muted-foreground ml-auto">{selectedTabsToClose.size} selected</span>
                 </div>
@@ -3578,20 +3868,22 @@ export default function Dashboard() {
                       <div className="flex items-center justify-between gap-2 px-3 py-2 bg-muted/40">
                         <div className="text-sm font-semibold">{group.studentName || "Unnamed Student"}</div>
                         <Button type="button" variant="ghost" size="sm" className="h-7 text-xs text-destructive hover:text-destructive" onClick={() => closeTabsMutation.mutate({ closeAll: true, studentIds: [group.studentId] })} disabled={closeTabsMutation.isPending}>
-                          Close all
+                          Close all (bulk)
                         </Button>
                       </div>
-                      {group.tabs.map((tab) => {
-                        const compositeKey = makeTabKey(tab);
+                      {group.tabs.map((tab, tabIndex) => {
+                        const exactCapability = exactTabCloseCapability(tab);
+                        const compositeKey = tabSelectionKey(tab);
                         const hostname = (() => { try { return new URL(tab.url).hostname; } catch { return tab.url; } })();
                         return (
-                          <div key={compositeKey} className="flex items-center gap-3 p-3 hover:bg-muted/50 group" data-testid={`tab-row-${tab.studentId}-${encodeURIComponent(tab.url)}`}>
-                            <input type="checkbox" className="h-4 w-4 shrink-0" checked={selectedTabsToClose.has(compositeKey)} onChange={(e) => { const newSet = new Set(selectedTabsToClose); if (e.target.checked) newSet.add(compositeKey); else newSet.delete(compositeKey); setSelectedTabsToClose(newSet); }} data-testid={`checkbox-tab-${encodeURIComponent(tab.url)}`} />
+                          <div key={compositeKey || `${tab.studentId}-legacy-${tabIndex}`} className="flex items-center gap-3 p-3 hover:bg-muted/50 group" data-testid={`tab-row-${tab.studentId}-${tab.tabRef || tabIndex}`}>
+                            <input type="checkbox" className="h-4 w-4 shrink-0" disabled={!exactCapability.enabled} checked={Boolean(compositeKey && selectedTabsToClose.has(compositeKey))} onChange={(e) => { if (!compositeKey) return; const newSet = new Set(selectedTabsToClose); if (e.target.checked) newSet.add(compositeKey); else newSet.delete(compositeKey); setSelectedTabsToClose(newSet); }} title={exactCapability.reason || 'Select this exact tab'} data-testid={`checkbox-tab-${tab.tabRef || tabIndex}`} />
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2"><span className="text-sm font-medium truncate">{tab.title}</span>{tab.active && <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Active</Badge>}</div>
                               <div className="text-xs text-muted-foreground truncate">{hostname}</div>
+                              {!exactCapability.enabled ? <div className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">{exactCapability.reason}</div> : null}
                             </div>
-                            <Button type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0 opacity-50 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive" onClick={() => handleCloseSingleTab(tab)} disabled={closeTabsMutation.isPending} title="Close this tab" data-testid={`button-close-tab-${encodeURIComponent(tab.url)}`}>
+                            <Button type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0 opacity-50 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive" onClick={() => handleCloseSingleTab(tab)} disabled={closeTabsMutation.isPending || !exactCapability.enabled} title={exactCapability.reason || 'Close this exact tab'} data-testid={`button-close-tab-${tab.tabRef || tabIndex}`}>
                               <X className="h-4 w-4" />
                             </Button>
                           </div>
@@ -3606,7 +3898,7 @@ export default function Dashboard() {
           <DialogFooter className="flex-col sm:flex-row gap-2">
             <Button variant="outline" onClick={() => setShowCloseTabsDialog(false)} data-testid="button-close-tabs-dialog">Done</Button>
             {selectedTabsToClose.size > 0 && <Button variant="destructive" onClick={handleCloseTabs} disabled={closeTabsMutation.isPending} data-testid="button-close-selected-tabs"><X className="h-4 w-4 mr-2" />Close Selected ({selectedTabsToClose.size})</Button>}
-            {openTabs.length > 0 && <Button variant="destructive" onClick={() => { closeTabsMutation.mutate({ closeAll: true, studentIds: manageTabsStudents.map((student) => student.studentId) }); }} disabled={closeTabsMutation.isPending} data-testid="button-close-all-tabs"><TabletSmartphone className="h-4 w-4 mr-2" />Close All Tabs</Button>}
+            {openTabs.length > 0 && <Button variant="destructive" onClick={() => { closeTabsMutation.mutate({ closeAll: true, studentIds: manageTabsStudents.map((student) => student.studentId) }); }} disabled={closeTabsMutation.isPending} title="Bulk close remains available for older extension versions" data-testid="button-close-all-tabs"><TabletSmartphone className="h-4 w-4 mr-2" />Close All Tabs (bulk)</Button>}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -3614,14 +3906,26 @@ export default function Dashboard() {
       {/* Apply Flight Path Dialog */}
       <Dialog open={showApplyFlightPathDialog} onOpenChange={setShowApplyFlightPathDialog}>
         <DialogContent data-testid="dialog-apply-flight-path">
-          <DialogHeader><DialogTitle>Apply Flight Path to Students</DialogTitle><DialogDescription>{selectedStudentIds.size > 0 ? `Apply a flight path to ${selectedStudentIds.size} selected student(s)` : "Apply a flight path to all students"}</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>Apply Flight Path to Students</DialogTitle><DialogDescription>Target: {targetBannerLabel}</DialogDescription></DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label htmlFor="flight-path-select">Select Flight Path</Label>
               <Select value={selectedFlightPathId} onValueChange={setSelectedFlightPathId}>
                 <SelectTrigger id="flight-path-select" data-testid="select-flight-path"><SelectValue placeholder="Choose a flight path" /></SelectTrigger>
                 <SelectContent>
-                  {flightPaths.map((fp) => (<SelectItem key={fp.id} value={fp.id} data-testid={`option-flight-path-${fp.id}`}>{fp.flightPathName}</SelectItem>))}
+                  {flightPaths.map((fp) => {
+                    const applicability = flightPathApplyCapability(fp);
+                    return (
+                      <SelectItem
+                        key={fp.id}
+                        value={fp.id}
+                        disabled={!applicability.enabled}
+                        data-testid={`option-flight-path-${fp.id}`}
+                      >
+                        {fp.flightPathName}{applicability.enabled ? '' : ' (add an allowed domain)'}
+                      </SelectItem>
+                    );
+                  })}
                   {flightPaths.length === 0 && <div className="p-2 text-sm text-muted-foreground">No flight paths available</div>}
                 </SelectContent>
               </Select>
@@ -3631,7 +3935,7 @@ export default function Dashboard() {
                   <div className="mt-2 p-3 bg-muted/30 rounded-md">
                     <p className="text-xs font-medium mb-1">Description:</p><p className="text-xs text-muted-foreground mb-2">{fp.description || "No description provided"}</p>
                     <p className="text-xs font-medium mb-1">Allowed Domains ({fp.allowedDomains?.length || 0}):</p>
-                    <div className="flex flex-wrap gap-1">{fp.allowedDomains && fp.allowedDomains.length > 0 ? fp.allowedDomains.map((domain, idx) => (<Badge key={idx} variant="secondary" className="text-xs">{domain}</Badge>)) : <p className="text-xs text-muted-foreground">No restrictions</p>}</div>
+                    <div className="flex flex-wrap gap-1">{fp.allowedDomains && fp.allowedDomains.length > 0 ? fp.allowedDomains.map((domain, idx) => (<Badge key={idx} variant="secondary" className="text-xs">{domain}</Badge>)) : <p className="text-xs text-destructive">Add an allowed domain before applying this Flight Path.</p>}</div>
                   </div>
                 ) : null;
               })()}
@@ -3639,7 +3943,14 @@ export default function Dashboard() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowApplyFlightPathDialog(false)} data-testid="button-cancel-apply-flight-path">Cancel</Button>
-            <Button onClick={handleApplyFlightPath} disabled={applyFlightPathMutation.isPending} data-testid="button-confirm-apply-flight-path"><Layers className="h-4 w-4 mr-2" />Apply Flight Path</Button>
+            <Button
+              onClick={handleApplyFlightPath}
+              disabled={
+                applyFlightPathMutation.isPending
+                || !flightPathApplyCapability(flightPaths.find((fp) => fp.id === selectedFlightPathId)).enabled
+              }
+              data-testid="button-confirm-apply-flight-path"
+            ><Layers className="h-4 w-4 mr-2" />Apply Flight Path</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -3662,7 +3973,7 @@ export default function Dashboard() {
                         {student.flightPathActive && student.isLoggedIn ? (
                           <Button size="sm" variant="ghost" onClick={() => handleRemoveFlightPath(student.studentId)} disabled={removeFlightPathMutation.isPending} data-testid={`button-remove-flight-path-${student.studentId}`} className="h-7 px-2 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"><X className="h-3 w-3 mr-1" />Remove</Button>
                         ) : student.screenLocked && student.isLoggedIn ? (
-                          <Button size="sm" variant="outline" onClick={() => unlockScreenMutation.mutate({ studentIds: [student.studentId] })} disabled={unlockScreenMutation.isPending} data-testid={`button-unlock-screen-${student.studentId}`} className="h-7 px-2 text-xs"><Unlock className="h-3 w-3 mr-1" />Unlock</Button>
+                          <Button size="sm" variant="outline" onClick={() => unlockScreenMutation.mutate({ studentIds: [student.studentId] })} disabled={unlockScreenMutation.isPending || !studentSupportsCapability(student, 'screenOnlyUnlockV1')} title={studentSupportsCapability(student, 'screenOnlyUnlockV1') ? 'Unlock screen only' : 'ClassPilot extension 2.6.0 or newer is required'} data-testid={`button-unlock-screen-${student.studentId}`} className="h-7 px-2 text-xs"><Unlock className="h-3 w-3 mr-1" />{studentSupportsCapability(student, 'screenOnlyUnlockV1') ? 'Unlock Screen' : 'Update Required'}</Button>
                         ) : <span className="text-xs text-muted-foreground">&mdash;</span>}
                       </td>
                     </tr>
@@ -3679,7 +3990,7 @@ export default function Dashboard() {
       {/* Apply Block List Dialog */}
       <Dialog open={showApplyBlockListDialog} onOpenChange={setShowApplyBlockListDialog}>
         <DialogContent data-testid="dialog-apply-block-list">
-          <DialogHeader><DialogTitle>Apply Block List to Students</DialogTitle><DialogDescription>{selectedStudentIds.size > 0 ? `Apply a block list to ${selectedStudentIds.size} selected student(s)` : "Apply a block list to all online students"}</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>Apply Block List to Students</DialogTitle><DialogDescription>Target: {targetBannerLabel}</DialogDescription></DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label htmlFor="block-list-select">Select Block List</Label>
@@ -3902,8 +4213,14 @@ export default function Dashboard() {
         </DialogContent>
       </Dialog>
 
+      <CommandResultsDrawer
+        open={showCommandResults}
+        onOpenChange={setShowCommandResults}
+        batches={commandResultBatches}
+      />
+
       {/* TeacherFab */}
-      {((isTeacher && activeSession) || (isAdmin && isAdminTeaching)) && (
+      {dashboardCapabilities.canUseTeacherFab && (
         <TeacherFab
           attentionActive={attentionActive}
           onAttentionClick={() => setShowAttentionDialog(true)}
@@ -3917,7 +4234,7 @@ export default function Dashboard() {
           pollPending={pollMutation.isPending || closePollMutation.isPending || pollDeliveryPending}
           raisedHands={raisedHands}
           onDismissHand={(studentId) => dismissHandMutation.mutate(studentId)}
-          handRaisingEnabled={settings?.handRaisingEnabled !== false}
+          handRaisingEnabled={sessionFabState?.handRaisingEnabled !== false}
           onToggleHandRaising={(enabled) => toggleHandRaisingMutation.mutate(enabled)}
           studentMessages={studentMessages}
           onMarkMessageRead={markMessageRead}
@@ -3926,8 +4243,9 @@ export default function Dashboard() {
             return replyToMessageMutation.mutateAsync({ sessionId: effectiveSession?.id, studentId, message });
           }}
           replyPending={replyToMessageMutation.isPending}
-          studentMessagingEnabled={settings?.studentMessagingEnabled !== false}
+          studentMessagingEnabled={sessionFabState?.messagingEnabled !== false}
           onToggleStudentMessaging={(enabled) => toggleStudentMessagingMutation.mutate(enabled)}
+          fabSettingsPending={!sessionFabState || toggleHandRaisingMutation.isPending || toggleStudentMessagingMutation.isPending}
           chatReplies={chatReplies}
           onCloseChat={closeChat}
           onSendMessage={() => setShowSendMessageDialog(true)}

@@ -151,17 +151,31 @@ test('a stopped WebRTC stream cannot bypass the signal-loss preview', () => {
     new URL('../src/hooks/useWebRTC.js', import.meta.url),
     'utf8',
   );
-  assert.match(webRtcSource, /export function useWebRTC\(ws, onStreamStopped\)/);
+  assert.match(webRtcSource, /export function useWebRTC\(wsSource, onStreamStopped\)/);
   assert.match(webRtcSource, /event\.track\.onended = \(\) => stopLiveView\(studentId\)/);
   assert.match(webRtcSource, /pc\.connectionState === 'failed'[\s\S]*pc\.connectionState === 'disconnected'[\s\S]*pc\.connectionState === 'closed'/);
   assert.match(webRtcSource, /connectionsRef\.current\.delete\(studentId\);[\s\S]*onStreamStopped\?\.\(studentId\);/);
+  assert.match(webRtcSource, /const signalingSocket = wsArg \|\| currentSocket\(\);/);
+  assert.match(webRtcSource, /Error creating\/sending offer[\s\S]*stopLiveView\(studentId\);[\s\S]*return false;/);
+  assert.match(webRtcSource, /handleLiveViewRequested[\s\S]*negotiationId[\s\S]*type: 'offer'/);
+  assert.match(webRtcSource, /A server authorization can arrive after[\s\S]*type: 'stop-share'[\s\S]*negotiationId/);
+  assert.match(webRtcSource, /if \(!connection\.peerConnection\.remoteDescription\)[\s\S]*connection\.pendingIce\.push\(candidate\)/);
 
   const dashboardSource = readFileSync(
     new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
     'utf8',
   );
-  assert.match(dashboardSource, /useWebRTC\(wsRef\.current, handleLiveStreamStopped\)/);
+  assert.match(dashboardSource, /useWebRTC\(wsRef, handleLiveStreamStopped\)/);
+  assert.match(dashboardSource, /message\.type === 'live-view-requested'[\s\S]*message\.negotiationId/);
+  assert.match(dashboardSource, /message\.type === 'auth-error'[\s\S]*webrtc\.cleanup\(\)/);
+  assert.match(dashboardSource, /socket\.onclose = \(\) => \{[\s\S]*webrtc\.cleanup\(\)/);
+  assert.match(dashboardSource, /A peer-to-peer stream can outlive signaling[\s\S]*cleanupLiveViews\(\)/);
   assert.match(dashboardSource, /message\.type === 'student-signed-out'[\s\S]*webrtc\.stopLiveView\(message\.studentId\)/);
+  assert.match(
+    dashboardSource,
+    /message\.type === 'student-signed-out'[\s\S]*pendingRealtimeEventsRef\.current = pendingRealtimeEventsRef\.current\.filter[\s\S]*setQueryData\(\['\/api\/coverage\/claimed-students'\]/,
+    'signed-out tombstones must evict queued telemetry and update coverage tiles immediately',
+  );
   assert.match(dashboardSource, /for \(const studentId of signedOutStudentIds\)[\s\S]*webrtc\.stopLiveView\(studentId\)/);
 });
 

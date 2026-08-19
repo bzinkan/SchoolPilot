@@ -816,6 +816,12 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
         )
       `);
       await db.execute(sql`
+        INSERT INTO devices (device_id, device_name, school_id, class_id)
+        VALUES (
+          ${`${TAG}-manual-hand-device`}, 'Manual hand fixture', ${school.id}, ${group.id}
+        )
+      `);
+      await db.execute(sql`
         INSERT INTO classpilot_active_hands (
           school_id, teaching_session_id, student_id, device_id
         ) VALUES (
@@ -1814,7 +1820,8 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
           scheduledTeacherConnectedOverride: true,
           now: new Date("2031-04-02T14:15:00.000Z"),
         })),
-        (error: any) => error?.code === "SCHEDULE_CHANGE_EXECUTION_INVALID"
+        (error: any) =>
+          error?.code === "CLASSPILOT_NOT_ENTITLED" && error?.reason === "license_inactive"
       );
       assert.equal(await occurrenceCount(approvedFirst.id, approvedDate), 0);
 
@@ -3801,6 +3808,12 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
         )
       `);
       await db.execute(sql`
+        INSERT INTO devices (device_id, device_name, school_id, class_id)
+        VALUES (
+          ${`${TAG}-legacy-duplicate-hand`}, 'Legacy duplicate hand fixture', ${school.id}, ${group.id}
+        )
+      `);
+      await db.execute(sql`
         INSERT INTO classpilot_active_hands (
           school_id, teaching_session_id, student_id, device_id
         ) VALUES (
@@ -3965,6 +3978,11 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
       firstName: "Bell",
       lastName: "Central",
     } as any);
+    await storage.createProductLicense({
+      schoolId: volumeSchool.id,
+      product: "CLASSPILOT",
+      status: "active",
+    } as any);
     const bellTime = new Date("2031-06-03T15:00:00.000Z");
     try {
       await storage.createMembership({
@@ -4059,6 +4077,7 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
         await db.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id = ${volumeSchool.id})`);
         await db.execute(sql`DELETE FROM groups WHERE school_id = ${volumeSchool.id}`);
         await db.execute(sql`DELETE FROM settings WHERE school_id = ${volumeSchool.id}`);
+        await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${volumeSchool.id}`);
         await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${volumeSchool.id}`);
         await db.execute(sql`DELETE FROM schools WHERE id = ${volumeSchool.id}`);
         await db.execute(sql`DELETE FROM users WHERE id = ${volumeCentral.id}`);

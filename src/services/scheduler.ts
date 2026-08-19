@@ -650,15 +650,6 @@ async function autoEndStaleClassPilotSessions() {
         if (!result?.finalized) continue;
         console.log(`[ClassPilot] Auto-ended stale session ${s.sessionId} for teacher ${s.teacherId} (${reason}, age: ${ageHours.toFixed(1)}h)`);
 
-        // Notify teacher dashboard
-        const update = {
-          type: "session-ended",
-          sessionId: s.sessionId,
-          reason: "safety_timeout",
-          summaryDisposition: result.summaryDisposition,
-        };
-        broadcastToTeachersLocal(s.schoolId, update);
-        void publishWS({ kind: "staff", schoolId: s.schoolId }, update);
       }
     }
   } catch (err) {
@@ -1098,16 +1089,7 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
           finalizedAt: session.scheduledEndAt || now,
           dbInstance: schedulerDb,
         });
-        if (result?.finalized) {
-          const update = {
-            type: "session-ended",
-            sessionId: session.id,
-            reason: "scheduled_end",
-            summaryDisposition: result.summaryDisposition,
-          };
-          broadcastToTeachersLocal(session.schoolId!, update);
-          void publishWS({ kind: "staff", schoolId: session.schoolId! }, update);
-        }
+        // Finalization owns the single session-ended publication.
         } catch (error) {
           console.error(`[ClassPilot] Failed to finalize scheduled occurrence ${session.id}:`, error);
           errorMonitor.trackError("scheduler_failure", error as Error, {

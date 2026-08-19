@@ -36,6 +36,13 @@ test('applies an allowed higher-revision update without appending students', () 
     revision: 4,
     observedAtMs: Date.parse('2026-08-13T12:00:10.000Z'),
     activeTabUrl: 'https://example.test/new',
+    tabSnapshot: { schemaVersion: 1, revision: 11 },
+    tabSnapshotRevision: 11,
+    extensionVersion: '2.6.0',
+    capabilities: {
+      exactTabCloseV1: true,
+      screenOnlyUnlockV1: true,
+    },
     status: 'tracking-disabled',
   }, {
     type: 'student-update',
@@ -49,6 +56,45 @@ test('applies an allowed higher-revision update without appending students', () 
   assert.equal(result[0].activeTabUrl, 'https://example.test/new');
   assert.equal(result[0].status, 'online', 'legacy tracking status must not overwrite aggregate status');
   assert.equal(result[0].realtimeRevision, 4);
+  assert.deepEqual(result[0].tabSnapshot, { schemaVersion: 1, revision: 11 });
+  assert.equal(result[0].tabSnapshotRevision, 11);
+  assert.equal(result[0].extensionVersion, '2.6.0');
+  assert.deepEqual(result[0].capabilities, {
+    exactTabCloseV1: true,
+    screenOnlyUnlockV1: true,
+  });
+});
+
+test('updates an existing claimed-coverage row without granting new roster visibility', () => {
+  const claimed = {
+    students: [{
+      ...base()[0],
+      supervisionContextId: 'coverage-1',
+    }],
+  };
+  const result = applyStudentRealtimeEvents(claimed, [{
+    type: 'student-update',
+    eventVersion: 2,
+    schoolId: 'school-1',
+    studentId: 'student-1',
+    supervisionContextId: 'coverage-1',
+    realtimeBinding: 'binding-a',
+    revision: 4,
+    activeTabUrl: 'https://coverage.example/live',
+  }, {
+    type: 'student-update',
+    eventVersion: 2,
+    schoolId: 'school-1',
+    studentId: 'student-not-claimed',
+    supervisionContextId: 'coverage-1',
+    realtimeBinding: 'binding-x',
+    revision: 1,
+    activeTabUrl: 'https://unauthorized.example',
+  }], { schoolId: 'school-1' });
+
+  assert.equal(result.students.length, 1);
+  assert.equal(result.students[0].activeTabUrl, 'https://coverage.example/live');
+  assert.equal(result.students[0].realtimeRevision, 4);
 });
 
 test('rejects wrong-school, wrong-device, and stale events', () => {
@@ -73,6 +119,38 @@ test('rejects a classification for a page that is no longer active', () => {
     classification: { category: 'non-educational' },
   }], { schoolId: 'school-1' });
   assert.equal(result, original);
+});
+
+test('an explicit null classification completes and clears class and coverage cache rows', () => {
+  const pendingRow = {
+    ...base()[0],
+    classificationPending: true,
+    aiClassification: { category: 'non-educational' },
+    aiCategory: 'non-educational',
+  };
+  const completion = {
+    type: 'ai-classification',
+    eventVersion: 2,
+    schoolId: 'school-1',
+    studentId: 'student-1',
+    realtimeBinding: 'binding-a',
+    revision: 4,
+    activeTabUrl: pendingRow.activeTabUrl,
+    classification: null,
+  };
+
+  const classResult = applyStudentRealtimeEvents([pendingRow], [completion], { schoolId: 'school-1' });
+  const coverageResult = applyStudentRealtimeEvents(
+    { students: [{ ...pendingRow, supervisionContextId: 'coverage-1' }] },
+    [{ ...completion, supervisionContextId: 'coverage-1' }],
+    { schoolId: 'school-1' },
+  );
+  for (const row of [classResult[0], coverageResult.students[0]]) {
+    assert.equal(row.classificationPending, false);
+    assert.equal(row.aiClassification, null);
+    assert.equal(row.aiCategory, null);
+    assert.equal(row.realtimeRevision, 4);
+  }
 });
 
 test('a higher-revision heartbeat is authoritative for observed classroom controls', () => {
@@ -141,6 +219,10 @@ test('a new public binding resets prior telemetry and accepts a lower revision',
     aiClassification: { category: 'non-educational' },
     aiCategory: 'non-educational',
     allOpenTabs: [{ url: 'https://old.example', title: 'Old tab' }],
+    tabSnapshot: { schemaVersion: 1, revision: 99 },
+    tabSnapshotRevision: 99,
+    extensionVersion: '2.6.0',
+    capabilities: { exactTabCloseV1: true, screenOnlyUnlockV1: true },
   }];
   const switched = applyStudentRealtimeEvents(original, [{
     type: 'student-update',
@@ -149,6 +231,7 @@ test('a new public binding resets prior telemetry and accepts a lower revision',
     studentId: 'student-1',
     realtimeBinding: 'binding-b',
     revision: 1,
+    observedAtMs: Date.parse('2026-08-13T12:00:10.000Z'),
     activeTabUrl: 'https://new.example',
     activeTabTitle: 'New session',
   }], { schoolId: 'school-1' });
@@ -158,6 +241,10 @@ test('a new public binding resets prior telemetry and accepts a lower revision',
   assert.equal(switched[0].activeTabUrl, 'https://new.example');
   assert.equal(switched[0].aiClassification, null);
   assert.deepEqual(switched[0].allOpenTabs, []);
+  assert.equal(switched[0].tabSnapshot, null);
+  assert.equal(switched[0].tabSnapshotRevision, null);
+  assert.equal(switched[0].extensionVersion, null);
+  assert.deepEqual(switched[0].capabilities, {});
 
   const delayedOldBinding = applyStudentRealtimeEvents(switched, [{
     type: 'student-update',
@@ -166,9 +253,44 @@ test('a new public binding resets prior telemetry and accepts a lower revision',
     studentId: 'student-1',
     realtimeBinding: 'binding-a',
     revision: 100,
+    observedAtMs: Date.parse('2026-08-13T12:00:05.000Z'),
     activeTabUrl: 'https://stale.example',
   }], { schoolId: 'school-1' });
   assert.equal(delayedOldBinding, switched);
+});
+
+test('a delayed unseen binding cannot displace a newer replacement binding', () => {
+  const fromA = [{
+    ...base()[0],
+    realtimeRevision: 100,
+    realtimeObservedAt: '2026-08-13T12:00:00.000Z',
+  }];
+  const onC = applyStudentRealtimeEvents(fromA, [{
+    type: 'student-update',
+    eventVersion: 2,
+    schoolId: 'school-1',
+    studentId: 'student-1',
+    realtimeBinding: 'binding-c',
+    revision: 300,
+    observedAtMs: Date.parse('2026-08-13T12:00:30.000Z'),
+    activeTabUrl: 'https://current-c.example',
+  }], { schoolId: 'school-1' });
+  const delayedB = applyStudentRealtimeEvents(onC, [{
+    type: 'student-update',
+    eventVersion: 2,
+    schoolId: 'school-1',
+    studentId: 'student-1',
+    realtimeBinding: 'binding-b',
+    revision: 200,
+    observedAtMs: Date.parse('2026-08-13T12:00:20.000Z'),
+    activeTabUrl: 'https://delayed-b.example',
+  }], { schoolId: 'school-1' });
+
+  assert.equal(delayedB, onC);
+  assert.equal(delayedB[0].realtimeBinding, 'binding-c');
+  assert.equal(delayedB[0].realtimeRevision, 300);
+  assert.equal(delayedB[0].activeTabUrl, 'https://current-c.example');
+  assert.equal(delayedB[0]._retiredRealtimeBindings.includes('binding-c'), false);
 });
 
 test('rejects a v2 message with no public binding', () => {
@@ -260,7 +382,12 @@ test('an unchanged or empty HTTP reconciliation preserves the cached reference',
 });
 
 test('a binding change makes the server response authoritative', () => {
-  const serverData = [{ ...base()[0], realtimeBinding: 'binding-b', realtimeRevision: 1 }];
+  const serverData = [{
+    ...base()[0],
+    realtimeBinding: 'binding-b',
+    realtimeRevision: 1,
+    realtimeObservedAt: '2026-08-13T12:00:10.000Z',
+  }];
   const merged = mergeAggregatedStudents(base(), serverData);
   assert.equal(merged[0].realtimeBinding, 'binding-b');
   assert.equal(merged[0].realtimeRevision, 1);
@@ -274,12 +401,14 @@ test('an in-flight HTTP response for a retired binding cannot undo a websocket s
     studentId: 'student-1',
     realtimeBinding: 'binding-b',
     revision: 1,
+    observedAtMs: Date.parse('2026-08-13T12:00:10.000Z'),
     activeTabUrl: 'https://socket.example',
   }], { schoolId: 'school-1' });
   const staleServer = [{
     ...base()[0],
     realtimeBinding: 'binding-a',
     realtimeRevision: 100,
+    realtimeObservedAt: '2026-08-13T12:00:05.000Z',
     activeTabUrl: 'https://stale-http.example',
     studentName: 'Updated Name',
   }];
@@ -288,6 +417,31 @@ test('an in-flight HTTP response for a retired binding cannot undo a websocket s
   assert.equal(merged[0].realtimeRevision, 1);
   assert.equal(merged[0].activeTabUrl, 'https://socket.example');
   assert.equal(merged[0].studentName, 'Updated Name');
+});
+
+test('a newer aggregate recovers a current binding that was previously retired', () => {
+  const poisoned = [{
+    ...base()[0],
+    realtimeBinding: 'binding-b',
+    realtimeRevision: 200,
+    realtimeObservedAt: '2026-08-13T12:00:20.000Z',
+    activeTabUrl: 'https://incorrect-b.example',
+    _retiredRealtimeBindings: ['binding-a', 'binding-c'],
+  }];
+  const authoritative = [{
+    ...base()[0],
+    realtimeBinding: 'binding-c',
+    realtimeRevision: 300,
+    realtimeObservedAt: '2026-08-13T12:00:30.000Z',
+    activeTabUrl: 'https://current-c.example',
+  }];
+
+  const recovered = mergeAggregatedStudents(poisoned, authoritative);
+  assert.equal(recovered[0].realtimeBinding, 'binding-c');
+  assert.equal(recovered[0].realtimeRevision, 300);
+  assert.equal(recovered[0].activeTabUrl, 'https://current-c.example');
+  assert.equal(recovered[0]._retiredRealtimeBindings.includes('binding-c'), false);
+  assert.equal(recovered[0]._retiredRealtimeBindings.includes('binding-b'), true);
 });
 
 test('delegated aggregate state suppresses sockets until REST explicitly clears it', () => {

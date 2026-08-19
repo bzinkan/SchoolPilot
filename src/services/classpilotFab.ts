@@ -1,16 +1,25 @@
+import crypto from "crypto";
 import type { TeachingSession } from "../schema/classpilot.js";
 import type { Student } from "../schema/students.js";
 import type { Settings } from "../schema/shared.js";
 import {
   getActiveHandsForStudent,
+  getActiveClassOwnersForStudents,
+  getActiveSessionsForStudents,
   getActiveSupervisionForStudent,
+  getActiveSupervisionForStudents,
   getActiveTeachingSessionsForStudent,
-  getGroupStudents,
+  getClasspilotSessionStudentRoster,
+  getClasspilotFabAuthoritySnapshot,
   getSessionSettings,
   getSettingsForSchool,
   getStudentById,
-  getStudentDevices,
+  upsertSessionSettings,
 } from "./storage.js";
+import { sendToDeviceLocal } from "../realtime/ws-broadcast.js";
+import { publishWSBatch } from "../realtime/ws-redis.js";
+import { assertClasspilotEntitled } from "./classpilotEntitlement.js";
+import { classpilotCommandAuthorityEnvelope } from "./classpilotCommandAuthority.js";
 
 export type FabFeature = "chat" | "hand";
 
@@ -43,9 +52,10 @@ export async function getEffectiveFabToggles(
   schoolHandRaisingEnabled: boolean;
   sessionMessagingEnabled: boolean;
   sessionHandRaisingEnabled: boolean;
+  lifecycleRevision: number;
 }> {
   const schoolSettings = knownSchoolSettings ?? await getSettingsForSchool(schoolId);
-  const sessionSettings = sessionId ? await getSessionSettings(sessionId) : undefined;
+  const sessionSettings = sessionId ? await getSessionSettings(schoolId, sessionId) : undefined;
   const schoolMessagingEnabled = schoolSettings?.studentMessagingEnabled !== false;
   const schoolHandRaisingEnabled = schoolSettings?.handRaisingEnabled !== false;
   const sessionMessagingEnabled = sessionSettings?.chatEnabled !== false;
@@ -58,6 +68,7 @@ export async function getEffectiveFabToggles(
     schoolHandRaisingEnabled,
     sessionMessagingEnabled,
     sessionHandRaisingEnabled,
+    lifecycleRevision: sessionSettings?.lifecycleRevision ?? 0,
   };
 }
 
@@ -66,6 +77,7 @@ export async function resolveStudentFabSessions(options: {
   studentId: string;
   feature: FabFeature;
 }): Promise<{ student: Student; sessions: TeachingSession[] }> {
+  await assertClasspilotEntitled(options.schoolId);
   const student = await getStudentById(options.studentId);
   if (!student || student.schoolId !== options.schoolId) {
     throw new FabContractError(404, "student_not_found", "Student not found");
@@ -99,11 +111,23 @@ export async function resolveStudentFabSessions(options: {
 export async function buildStudentFabState(
   schoolId: string,
   studentId: string,
-  options: { schoolSettings?: Settings } = {}
+  options: { schoolSettings?: Settings; studentSessionId?: string | null } = {}
 ) {
-  const supervision = await getActiveSupervisionForStudent(schoolId, studentId);
+  const authority = await getClasspilotFabAuthoritySnapshot(schoolId, studentId);
+  const supervision = authority.supervision;
+  const studentSessionId = options.studentSessionId !== undefined
+    ? options.studentSessionId
+    : authority.studentSession?.id ?? null;
+  const ownershipRevision = authority.ownershipRevision;
   if (supervision) {
     return {
+      schemaVersion: 1,
+      studentId,
+      studentSessionId,
+      ownershipRevision,
+      teachingSessionId: null,
+      lifecycleRevision: 0,
+      revision: 0,
       activeSessionIds: [],
       messagingEnabled: false,
       handRaisingEnabled: false,
@@ -118,8 +142,10 @@ export async function buildStudentFabState(
     };
   }
 
-  const sessions = await getActiveTeachingSessionsForStudent(schoolId, studentId);
-  const activeHands = await getActiveHandsForStudent(schoolId, studentId);
+  const sessions = authority.teachingSession ? [authority.teachingSession] : [];
+  const authoritativeSessionIds = new Set(sessions.map((session) => session.id));
+  const activeHands = (await getActiveHandsForStudent(schoolId, studentId))
+    .filter((hand) => authoritativeSessionIds.has(hand.teachingSessionId));
 
   let messagingEnabled = false;
   let handRaisingEnabled = false;
@@ -128,6 +154,7 @@ export async function buildStudentFabState(
     messagingEnabled: boolean;
     handRaisingEnabled: boolean;
     handRaised: boolean;
+    lifecycleRevision: number;
   }> = [];
 
   for (const session of sessions) {
@@ -144,10 +171,18 @@ export async function buildStudentFabState(
       messagingEnabled: toggles.messagingEnabled,
       handRaisingEnabled: toggles.handRaisingEnabled,
       handRaised,
+      lifecycleRevision: toggles.lifecycleRevision,
     });
   }
 
   return {
+    schemaVersion: 1,
+    studentId,
+    studentSessionId,
+    ownershipRevision,
+    teachingSessionId: sessions.length === 1 ? sessions[0]!.id : null,
+    lifecycleRevision: sessionStates.reduce((revision, state) => Math.max(revision, state.lifecycleRevision), 0),
+    revision: sessionStates.reduce((revision, state) => Math.max(revision, state.lifecycleRevision), 0),
     activeSessionIds: sessions.map((session) => session.id),
     messagingEnabled,
     handRaisingEnabled,
@@ -155,7 +190,6 @@ export async function buildStudentFabState(
     activeHands: activeHands.map((hand) => ({
       sessionId: hand.teachingSessionId,
       studentId: hand.studentId,
-      deviceId: hand.deviceId,
       raisedAt: hand.raisedAt,
       expiresAt: hand.expiresAt,
     })),
@@ -164,11 +198,150 @@ export async function buildStudentFabState(
 }
 
 export async function getSessionStudentDeviceIds(session: TeachingSession): Promise<string[]> {
-  const roster = await getGroupStudents(session.groupId);
-  const deviceIds = new Set<string>();
-  for (const row of roster) {
-    const devices = await getStudentDevices(row.studentId);
-    devices.forEach((device) => deviceIds.add(device.deviceId));
+  if (!session.schoolId) return [];
+  const bindings = await getSessionStudentBindings(session.schoolId, session.id);
+  return bindings.map((binding) => binding.deviceId);
+}
+
+export async function getSessionStudentBindings(
+  schoolId: string,
+  teachingSessionId: string
+): Promise<Array<{ studentId: string; studentSessionId: string; deviceId: string }>> {
+  const roster = await getClasspilotSessionStudentRoster(schoolId, teachingSessionId);
+  const studentIds = roster.map((row) => row.studentId);
+  if (studentIds.length === 0) return [];
+  const supervision = await getActiveSupervisionForStudents(schoolId, studentIds);
+  const owners = await getActiveClassOwnersForStudents(schoolId, studentIds);
+  const sessions = await getActiveSessionsForStudents(schoolId, studentIds);
+  const covered = new Set(supervision.map((entry) => entry.studentId));
+  const ownerByStudent = new Map(owners.map((owner) => [owner.studentId, owner.session.id]));
+  const bindingByStudent = new Map(sessions.map((session) => [session.studentId, session]));
+  return studentIds.flatMap((studentId) => {
+    const binding = bindingByStudent.get(studentId);
+    if (
+      covered.has(studentId) ||
+      ownerByStudent.get(studentId) !== teachingSessionId ||
+      !binding
+    ) return [];
+    return [{ studentId, studentSessionId: binding.id, deviceId: binding.deviceId }];
+  });
+}
+
+export async function updateAndFanoutSessionFabSettings(options: {
+  schoolId: string;
+  teachingSessionId: string;
+  actorId: string;
+  chatEnabled?: boolean;
+  raiseHandEnabled?: boolean;
+  expectedRevision?: number;
+}) {
+  let settings;
+  try {
+    settings = await upsertSessionSettings(
+      options.schoolId,
+      options.teachingSessionId,
+      {
+        ...(options.chatEnabled !== undefined ? { chatEnabled: options.chatEnabled } : {}),
+        ...(options.raiseHandEnabled !== undefined ? { raiseHandEnabled: options.raiseHandEnabled } : {}),
+      },
+      { expectedRevision: options.expectedRevision, actorId: options.actorId }
+    );
+  } catch (error: any) {
+    if (error?.code === "FAB_REVISION_STALE") {
+      const toggles = await getEffectiveFabToggles(options.schoolId, options.teachingSessionId);
+      error.current = {
+        schemaVersion: 1,
+        teachingSessionId: options.teachingSessionId,
+        activeSessionIds: [options.teachingSessionId],
+        messagingEnabled: toggles.messagingEnabled,
+        handRaisingEnabled: toggles.handRaisingEnabled,
+        revision: toggles.lifecycleRevision,
+        lifecycleRevision: toggles.lifecycleRevision,
+      };
+    }
+    throw error;
   }
-  return [...deviceIds];
+  const toggles = await getEffectiveFabToggles(options.schoolId, options.teachingSessionId);
+  const bindings = await getSessionStudentBindings(options.schoolId, options.teachingSessionId);
+  const publications = [];
+  for (const binding of bindings) {
+    // Ownership revision is student-specific and monotonic across class,
+    // coverage, replacement, and empty-state transitions. Always rebuild the
+    // authoritative full state instead of synthesizing a per-session snapshot.
+    const fullState = await buildStudentFabState(options.schoolId, binding.studentId, {
+      studentSessionId: binding.studentSessionId,
+    });
+    const payload = {
+      type: "fab-state-sync",
+      _msgId: crypto.randomUUID(),
+      sessionId: options.teachingSessionId,
+      data: fullState,
+    };
+    sendToDeviceLocal(options.schoolId, binding.deviceId, payload);
+    publications.push({
+      target: { kind: "device" as const, schoolId: options.schoolId, deviceId: binding.deviceId },
+      message: payload,
+    });
+    const legacyCommands = [
+      ...(options.chatEnabled !== undefined ? [{
+        type: "messaging-toggle",
+        data: {
+          sessionId: options.teachingSessionId,
+          studentId: binding.studentId,
+          studentSessionId: binding.studentSessionId,
+          enabled: toggles.messagingEnabled,
+          messagingEnabled: toggles.messagingEnabled,
+          revision: settings.lifecycleRevision,
+        },
+      }] : []),
+      ...(options.raiseHandEnabled !== undefined ? [{
+        type: "hand-raising-toggle",
+        data: {
+          sessionId: options.teachingSessionId,
+          studentId: binding.studentId,
+          studentSessionId: binding.studentSessionId,
+          enabled: toggles.handRaisingEnabled,
+          handRaisingEnabled: toggles.handRaisingEnabled,
+          revision: settings.lifecycleRevision,
+        },
+      }] : []),
+    ];
+    for (const command of legacyCommands) {
+      const authority = classpilotCommandAuthorityEnvelope({
+        teachingSessionId: options.teachingSessionId,
+        supervisionContextId: null,
+      });
+      const legacyPayload = {
+        type: "remote-control",
+        _msgId: crypto.randomUUID(),
+        studentId: binding.studentId,
+        studentSessionId: binding.studentSessionId,
+        command: {
+          ...command,
+          studentId: binding.studentId,
+          studentSessionId: binding.studentSessionId,
+          ...authority,
+        },
+      };
+      sendToDeviceLocal(options.schoolId, binding.deviceId, legacyPayload);
+      publications.push({
+        target: { kind: "device" as const, schoolId: options.schoolId, deviceId: binding.deviceId },
+        message: legacyPayload,
+      });
+    }
+  }
+  if (publications.length > 0) await publishWSBatch(publications);
+  return {
+    settings,
+    state: {
+      schemaVersion: 1,
+      teachingSessionId: options.teachingSessionId,
+      activeSessionIds: [options.teachingSessionId],
+      messagingEnabled: toggles.messagingEnabled,
+      handRaisingEnabled: toggles.handRaisingEnabled,
+      revision: settings.lifecycleRevision,
+      lifecycleRevision: settings.lifecycleRevision,
+    },
+    targetedStudentCount: bindings.length,
+  };
 }

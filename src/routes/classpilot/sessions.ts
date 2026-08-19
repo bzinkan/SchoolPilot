@@ -1,9 +1,8 @@
 import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
-import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
-import { requireProductLicense } from "../../middleware/requireProductLicense.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
 import {
   getActiveClassOwnersForStudents,
   getActiveSessionByStudent,
@@ -12,7 +11,6 @@ import {
   getClasspilotSessionStudents,
   getTeachingSessionByIdAndSchool,
   getSessionSettings,
-  upsertSessionSettings,
   getGroupByIdAndSchool,
   getScheduledTeachingSessionOccurrence,
   getGroupTeachers,
@@ -37,6 +35,7 @@ import {
 } from "../../services/classpilotScheduledStart.js";
 import { getEffectiveClasspilotScheduleWindow } from "../../services/classpilotScheduleChanges.js";
 import { localDateTimeUtc } from "../../util/schoolTime.js";
+import { updateAndFanoutSessionFabSettings } from "../../services/classpilotFab.js";
 
 const router = Router();
 
@@ -47,8 +46,7 @@ function param(req: any, key: string): string {
 const auth = [
   authenticate,
   requireSchoolContext,
-  requireActiveSchool,
-  requireProductLicense("CLASSPILOT"),
+  requireClasspilotEntitlement,
   requireRole("admin", "school_admin", "office_staff", "teacher"),
 ] as const;
 
@@ -425,7 +423,7 @@ router.get("/active", ...auth, async (req, res, next) => {
       return res.json({ session: null });
     }
 
-    const settings = await getSessionSettings(session.id);
+    const settings = await getSessionSettings(res.locals.schoolId!, session.id);
     return res.json({ session: serializeClasspilotSession(session), settings });
   } catch (err) {
     next(err);
@@ -441,7 +439,7 @@ router.get("/:id", ...auth, async (req, res, next) => {
     }
     await assertCanManageTeachingSession(req, res, session);
 
-    const settings = await getSessionSettings(session.id);
+    const settings = await getSessionSettings(res.locals.schoolId!, session.id);
     return res.json({ session: serializeClasspilotSession(session), settings });
   } catch (err) {
     next(err);
@@ -591,6 +589,13 @@ router.put("/:id/settings", ...auth, async (req, res, next) => {
       return res.status(404).json({ error: "Session not found" });
     }
     await assertCanManageTeachingSession(req, res, owned);
+    if (!(await isAuthorizedClasspilotSessionStaff(
+      res.locals.schoolId!,
+      sessionId,
+      req.authUser!.id
+    ))) {
+      return res.status(404).json({ error: "Session not found" });
+    }
     if (owned.endTime || owned.sessionMode !== "live") {
       return res.status(409).json({
         error: "Settings can only be changed for an active live class session",
@@ -598,14 +603,34 @@ router.put("/:id/settings", ...auth, async (req, res, next) => {
       });
     }
     const { chatEnabled, raiseHandEnabled } = req.body;
-
-    const data: Record<string, unknown> = {};
-    if (chatEnabled !== undefined) data.chatEnabled = chatEnabled;
-    if (raiseHandEnabled !== undefined) data.raiseHandEnabled = raiseHandEnabled;
-
-    const settings = await upsertSessionSettings(sessionId, data);
-    return res.json({ settings });
-  } catch (err) {
+    if (chatEnabled !== undefined && typeof chatEnabled !== "boolean") {
+      return res.status(400).json({ error: "chatEnabled must be a boolean" });
+    }
+    if (raiseHandEnabled !== undefined && typeof raiseHandEnabled !== "boolean") {
+      return res.status(400).json({ error: "raiseHandEnabled must be a boolean" });
+    }
+    if (chatEnabled === undefined && raiseHandEnabled === undefined) {
+      return res.status(400).json({ error: "At least one session setting is required" });
+    }
+    const result = await updateAndFanoutSessionFabSettings({
+      schoolId: res.locals.schoolId!,
+      teachingSessionId: sessionId,
+      actorId: req.authUser!.id,
+      chatEnabled,
+      raiseHandEnabled,
+      expectedRevision: Number.isInteger(req.body?.expectedRevision) ? req.body.expectedRevision : undefined,
+    });
+    return res.json({
+      settings: result.settings,
+      state: result.state,
+      targetedStudentCount: result.targetedStudentCount,
+    });
+  } catch (err: any) {
+    if (err?.status) return res.status(err.status).json({
+      error: err.message,
+      ...(err.code ? { code: err.code } : {}),
+      ...(err.current ? { current: err.current } : {}),
+    });
     next(err);
   }
 });

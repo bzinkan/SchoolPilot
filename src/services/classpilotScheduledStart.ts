@@ -16,6 +16,7 @@ import {
   runClasspilotFinalizationSideEffects,
 } from "./classpilotSessionLifecycle.js";
 import { syncClasspilotControlStatesToActiveDevices } from "./classpilotControlStateDelivery.js";
+import { assertClasspilotEntitled } from "./classpilotEntitlement.js";
 import {
   getApprovedScheduleChangeLegsForSchoolDate,
   getEffectiveClasspilotScheduleWindow,
@@ -282,6 +283,11 @@ async function prepareScheduledOccurrence(options: {
     options.group.schoolId,
     options.scheduledDate,
     async (lockedDb) => {
+      // Linearize occurrence creation with immediate school/license
+      // revocation. The shared row locks make either the start or revocation
+      // commit first; a stale candidate read can never create an occurrence
+      // after revocation has committed.
+      await assertClasspilotEntitled(options.group.schoolId, lockedDb, { lock: true });
       const existing = await getScheduledTeachingSessionOccurrence(
         options.group.schoolId,
         options.group.id,
@@ -664,6 +670,9 @@ async function startScheduledClassLocked(options: {
   resolvedConflictIds: string[];
 }> {
   const dbInstance = options.dbInstance;
+  // Promotion is the mutation linearization point, so entitlement must be
+  // re-read under the same start transaction and held through commit.
+  await assertClasspilotEntitled(options.group.schoolId, dbInstance, { lock: true });
   const finalizations: Array<{
     result: FinalizeTeachingSessionResult;
     reason: "replacement_start";
@@ -797,6 +806,7 @@ export async function processScheduledClassAutoStart(options: {
 }): Promise<ScheduledClassAutoStartResult> {
   const dbInstance = options.dbInstance;
   let group = options.group;
+  await assertClasspilotEntitled(group.schoolId, dbInstance);
   const school = await getSchoolById(group.schoolId, dbInstance);
   const timeZone = school?.schoolTimezone || "America/New_York";
   const now = options.now || new Date();
@@ -969,6 +979,10 @@ export async function startActiveScheduledClassesForTeacher(options: {
   teacherId: string;
   now?: Date;
 }): Promise<TeachingSession[]> {
+  // Staff-login pickup is asynchronous and can run after the socket's auth
+  // decision. Recheck here; startScheduledClassLocked performs the final
+  // transaction-bound check before promotion.
+  await assertClasspilotEntitled(options.schoolId);
   const now = options.now || new Date();
   const school = await getSchoolById(options.schoolId);
   const timeZone = school?.schoolTimezone || "America/New_York";

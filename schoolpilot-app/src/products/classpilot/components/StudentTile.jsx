@@ -1,12 +1,9 @@
 import { useState, useEffect, useRef } from "react";
-import { useMutation } from "@tanstack/react-query";
 import { Card } from "../../../components/ui/card";
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Monitor, ExternalLink, AlertTriangle, Lock, Unlock, Layers, Maximize2, X, List, RotateCcw } from "lucide-react";
 import { Checkbox } from "../../../components/ui/checkbox";
-import { useToast } from "../../../hooks/use-toast";
-import { apiRequest } from "../../../lib/queryClient";
 import VideoPortal from "./VideoPortal";
 import {
   deriveScreenshotDisplay,
@@ -15,7 +12,11 @@ import {
   formatAbsoluteObservedAt,
   lastObservedDomain,
 } from "../lib/studentMonitoringDisplay";
-import { commandDeliveryFeedback } from "../lib/commandDeliveryTruth";
+import {
+  studentSupportsCapability,
+  studentTileFlightPathReleaseCommand,
+  studentTileScreenToggleCommand,
+} from "../lib/dashboardCommandContext";
 
 const EMPTY_LIST = Object.freeze([]);
 
@@ -57,8 +58,12 @@ function StudentTile({
   onStopLiveView,
   liveViewPending = false,
   onAllowDomain,
-  teachingSessionId,
   onManageTabs,
+  onCommand,
+  commandPending = false,
+  commandError = "",
+  canLockScreen = true,
+  canRemoveFlightPath = true,
   controlDisabled = false,
   disabledReason = "",
   supervisionLabel = "",
@@ -66,13 +71,14 @@ function StudentTile({
   returnToClassPending = false,
   recentHeartbeats = EMPTY_LIST,
   screenshotData = null,
+  screenshotError = "",
+  historyError = "",
+  onRetryTileData,
   flightPaths = EMPTY_LIST,
   monitoringDisplay,
   freshnessNowMs,
-  onCommandResult,
 }) {
   const [expanded, setExpanded] = useState(false);
-  const { toast } = useToast();
   const tileVideoSlotRef = useRef(null);
   const videoElementRef = useRef(null);
   const lastAutoExpandedStreamRef = useRef(null);
@@ -84,6 +90,10 @@ function StudentTile({
   const unavailablePreview = deriveUnavailablePreview(effectiveMonitoringDisplay);
   const observedDomain = lastObservedDomain(student);
   const absoluteLastObservedAt = formatAbsoluteObservedAt(effectiveMonitoringDisplay.observedAtMs);
+  const supportsScreenOnlyUnlock = studentSupportsCapability(student, 'screenOnlyUnlockV1');
+  const unlockLabel = supportsScreenOnlyUnlock
+    ? "Unlock this student's screen only"
+    : "Extension update required for screen-only unlock";
 
   // Create video element once and attach stream
   useEffect(() => {
@@ -209,87 +219,6 @@ function StudentTile({
   const isBlocked = currentTelemetry && isBlockedDomain(student.activeTabUrl, blockedDomains);
   const classroomNoiseSuppressed = Boolean(student.classroomNoiseSuppressed || isAbsent || student.suppressionReason);
   const effectiveIsOffTask = currentTelemetry && isOffTask && !classroomNoiseSuppressed;
-
-  // Unblock mutation for flight path
-  const unblockForClassMutation = useMutation({
-    mutationFn: async () => {
-      if (!teachingSessionId) {
-        throw new Error("Start a class session before sending commands.");
-      }
-      return await apiRequest("POST", "/commands", {
-        teachingSessionId,
-        targetScope: "students",
-        targetStudentIds: [student.studentId],
-        commandType: "unlock-screen",
-        commandPayload: {},
-      });
-    },
-    onSuccess: (data) => {
-      const result = onCommandResult?.(data, 'unlock-screen') || data;
-      toast(result.deliveryFeedback || commandDeliveryFeedback(result, 'unlock-screen'));
-    },
-  });
-
-  // Lock to current screen mutation
-  const lockToCurrentScreenMutation = useMutation({
-    mutationFn: async () => {
-      if (!student.activeTabUrl) {
-        throw new Error("No active tab to lock to");
-      }
-      if (!currentTelemetry) {
-        throw new Error("The current page is unavailable while the monitoring signal is lost.");
-      }
-      if (!teachingSessionId) {
-        throw new Error("Start a class session before sending commands.");
-      }
-      return await apiRequest("POST", "/commands", {
-        teachingSessionId,
-        targetScope: "students",
-        targetStudentIds: [student.studentId],
-        commandType: "lock-screen",
-        commandPayload: { url: student.activeTabUrl },
-      });
-    },
-    onSuccess: (data) => {
-      const result = onCommandResult?.(data, 'lock-screen') || data;
-      toast(result.deliveryFeedback || commandDeliveryFeedback(result, 'lock-screen'));
-    },
-    onError: (error) => {
-      toast({
-        variant: "destructive",
-        title: "Failed to lock screen",
-        description: error.message || "An error occurred",
-      });
-    },
-  });
-
-  // Unlock screen mutation
-  const unlockScreenMutation = useMutation({
-    mutationFn: async () => {
-      if (!teachingSessionId) {
-        throw new Error("Start a class session before sending commands.");
-      }
-      return await apiRequest("POST", "/commands", {
-        teachingSessionId,
-        targetScope: "students",
-        targetStudentIds: [student.studentId],
-        commandType: "unlock-screen",
-        commandPayload: {},
-      });
-    },
-    onSuccess: (data) => {
-      const result = onCommandResult?.(data, 'unlock-screen') || data;
-      toast(result.deliveryFeedback || commandDeliveryFeedback(result, 'unlock-screen'));
-    },
-    onError: (error) => {
-      toast({
-        variant: "destructive",
-        title: "Failed to save screen unlock",
-        description: error.message || "An error occurred",
-      });
-    },
-  });
-
 
   const getStatusLabel = (status) => {
     if (isAbsent) return 'Absent';
@@ -444,20 +373,17 @@ function StudentTile({
               variant="ghost"
               size="icon"
               className="h-7 w-7"
-              disabled={controlDisabled || (!currentTelemetry && !student.screenLocked) || lockToCurrentScreenMutation.isPending || unlockScreenMutation.isPending}
+              disabled={controlDisabled || !canLockScreen || !onCommand || (student.screenLocked && !supportsScreenOnlyUnlock) || (!currentTelemetry && !student.screenLocked) || commandPending}
               onClick={(e) => {
                 e.stopPropagation();
                 if (controlDisabled) return;
-                if (student.screenLocked) {
-                  unlockScreenMutation.mutate();
-                } else {
-                  lockToCurrentScreenMutation.mutate();
-                }
+                const command = studentTileScreenToggleCommand(student);
+                if (command) onCommand?.(command);
               }}
               title={controlDisabled
                 ? disabledReason || "Student is currently in supervision"
                 : student.screenLocked
-                  ? "Save an unlock restriction"
+                  ? unlockLabel
                   : currentTelemetry
                     ? "Save a lock restriction for the current screen"
                     : "Current screen unavailable while monitoring signal is lost"}
@@ -483,6 +409,12 @@ function StudentTile({
             </p>
           </div>
         )}
+
+        {commandError && !controlDisabled ? (
+          <div className="rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200" role="alert">
+            {commandError}
+          </div>
+        ) : null}
 
         {/* Alert Badges */}
         {(effectiveIsOffTask || isBlocked || isBlockedByFlightPath || student.flightPathActive || (currentTelemetry && student.aiClassification?.safetyAlert) || classroomNoiseSuppressed) && (
@@ -539,7 +471,7 @@ function StudentTile({
                 </Badge>
               )}
             </div>
-            {isBlockedByFlightPath && (
+            {isBlockedByFlightPath && canRemoveFlightPath && (
               <div className="flex gap-2">
                 <p className="text-xs text-muted-foreground truncate flex-1">
                   {student.activeTabUrl}
@@ -550,11 +482,13 @@ function StudentTile({
                   className="h-7 px-3 text-xs bg-blue-600 hover:bg-blue-700 text-white"
                   onClick={(e) => {
                     e.stopPropagation();
-                    unblockForClassMutation.mutate();
+                    const command = studentTileFlightPathReleaseCommand(student);
+                    if (command) onCommand?.(command);
                   }}
+                  disabled={!onCommand || commandPending}
                   data-testid={`button-unblock-${student.studentId}`}
                 >
-                  Unblock for class
+                  Remove Flight Path
                 </Button>
               </div>
             )}
@@ -598,6 +532,19 @@ function StudentTile({
                   )}
                 </>
               )}
+            </div>
+          </div>
+        ) : screenshotError ? (
+          <div className="flex aspect-video items-center justify-center rounded-lg border border-red-200 bg-red-50/70 text-center dark:border-red-900 dark:bg-red-950/20" role="alert" data-testid={`screenshot-error-${student.studentId}`}>
+            <div className="px-4">
+              <AlertTriangle className="mx-auto mb-2 h-6 w-6 text-red-600 dark:text-red-400" />
+              <p className="text-sm font-semibold text-foreground">Couldn&apos;t load screen preview</p>
+              <p className="mt-1 text-xs text-muted-foreground">{screenshotError}</p>
+              {onRetryTileData ? (
+                <Button type="button" size="sm" variant="outline" className="mt-3" onClick={(event) => { event.stopPropagation(); onRetryTileData(); }}>
+                  Try again
+                </Button>
+              ) : null}
             </div>
           </div>
         ) : screenshotDisplay.fresh ? (
@@ -665,6 +612,13 @@ function StudentTile({
             </div>
           </div>
         )}
+
+        {historyError ? (
+          <div className="flex items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100" role="status" data-testid={`history-error-${student.studentId}`}>
+            <span>Recent activity could not be refreshed.</span>
+            {onRetryTileData ? <button type="button" className="font-semibold underline" onClick={(event) => { event.stopPropagation(); onRetryTileData(); }}>Retry</button> : null}
+          </div>
+        ) : null}
 
         {/* Mini History Icons */}
         {recentDomains.length > 0 && (

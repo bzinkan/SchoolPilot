@@ -1,10 +1,8 @@
 import crypto from "crypto";
 import {
   clearClasspilotClassroomStates,
-  closePoll,
   createClasspilotCommandWithTargets,
   createMessage,
-  createPoll,
   endStudentSession,
   getBlockListById,
   getClasspilotCommandByIdAndSchool,
@@ -15,7 +13,9 @@ import {
   persistClasspilotControlCommandState,
   replaceClasspilotSupervisionControlSnapshots,
   type ClasspilotCommandWithTargets,
+  type ClasspilotCommandPollMutation,
 } from "./storage.js";
+import { validateClasspilotCommandPayload } from "./classpilotCommandValidation.js";
 import { broadcastToStaffSessionLocal, sendToDeviceLocal } from "../realtime/ws-broadcast.js";
 import {
   publishWS,
@@ -26,6 +26,8 @@ import {
 import { removeDeviceStatus } from "../realtime/student-statuses.js";
 import {
   markClasspilotRealtimeSignedOut,
+  readClasspilotRealtimeStatusBatch,
+  classpilotRealtimeFresh,
 } from "./classpilotRealtimeStatus.js";
 import {
   applyClasspilotControlCommand,
@@ -45,6 +47,7 @@ import type {
   ClasspilotClassroomState,
   ClasspilotStudentControlState,
 } from "../schema/classpilot.js";
+import { classpilotCommandAuthorityEnvelope } from "./classpilotCommandAuthority.js";
 
 export type ClasspilotCommandTargetScope = "class" | "subgroup" | "students" | "context";
 
@@ -57,6 +60,7 @@ export type ResolvedClasspilotCommandTarget = {
   /** Whether this command's scope currently owns the student's desired state. */
   stateAuthorized?: boolean;
   unavailableReason?: string;
+  durableAuthorityRevision?: number;
 };
 
 export const COVERAGE_COMMAND_TYPES = new Set([
@@ -129,23 +133,35 @@ export async function normalizeCommandPayload(
   schoolId: string,
   teacherId: string,
   teachingSessionId?: string | null
-) {
+): Promise<{
+  extensionType: string;
+  payload: Record<string, any>;
+  extra?: {
+    pollMutation?: ClasspilotCommandPollMutation;
+    pollCloseAuthority?: {
+      targetScope: ClasspilotCommandTargetScope;
+      subgroupId: string | null;
+      targets: ResolvedClasspilotCommandTarget[];
+    };
+  };
+}> {
+  const validated = validateClasspilotCommandPayload(commandType, payload ?? {});
   switch (commandType) {
     case "open-tab":
-      return { extensionType: "open-tab", payload: { ...payload, url: ensureHttpUrl(payload?.url) } };
+      return { extensionType: "open-tab", payload: validated };
     case "lock-screen":
-      return { extensionType: "lock-screen", payload: { ...payload, url: payload?.url === "CURRENT_URL" ? "CURRENT_URL" : ensureHttpUrl(payload?.url) } };
+      return { extensionType: "lock-screen", payload: validated };
     case "close-tabs":
-      return { extensionType: "close-tab", payload: { ...payload } };
+      return { extensionType: "close-tab", payload: validated };
     case "unlock-screen":
     case "remove-flight-path":
     case "remove-block-list":
-      return { extensionType: commandType, payload: { ...payload } };
+      return { extensionType: commandType, payload: validated };
     case "attention-mode":
     case "timer":
     case "temp-unblock":
     case "limit-tabs":
-      return { extensionType: commandType, payload: { ...payload } };
+      return { extensionType: commandType, payload: validated };
     case "student-sign-out":
       if (!teachingSessionId) {
         throw Object.assign(new Error("Student sign-out requires an active class session"), { status: 400 });
@@ -153,19 +169,27 @@ export async function normalizeCommandPayload(
       return {
         extensionType: "student-sign-out",
         payload: {
-          ...payload,
+          ...validated,
           reason: "teacher_sign_out",
           sessionId: teachingSessionId,
         },
       };
     case "apply-flight-path": {
-      const flightPathId = String(payload?.flightPathId || "").trim();
-      const flightPath = flightPathId ? await getFlightPathById(flightPathId, schoolId) : undefined;
+      const flightPathId = String(validated.flightPathId || "").trim();
+      const flightPath = flightPathId
+        ? await getFlightPathById(flightPathId, schoolId, teacherId)
+        : undefined;
       if (!flightPath) throw Object.assign(new Error("Flight Path not found"), { status: 404 });
       const allowedDomains = requireRuleListWithinExtensionLimit(
         flightPath.allowedDomains,
         "Flight Path"
       );
+      if (allowedDomains.length === 0) {
+        throw Object.assign(new Error("Flight Path has no allowed domains"), {
+          status: 409,
+          code: "FLIGHT_PATH_EMPTY",
+        });
+      }
       return {
         extensionType: "apply-flight-path",
         payload: {
@@ -176,8 +200,10 @@ export async function normalizeCommandPayload(
       };
     }
     case "apply-block-list": {
-      const blockListId = String(payload?.blockListId || "").trim();
-      const blockList = blockListId ? await getBlockListById(blockListId, schoolId) : undefined;
+      const blockListId = String(validated.blockListId || "").trim();
+      const blockList = blockListId
+        ? await getBlockListById(blockListId, schoolId, teacherId)
+        : undefined;
       if (!blockList) throw Object.assign(new Error("Block List not found"), { status: 404 });
       const blockedDomains = requireRuleListWithinExtensionLimit(
         blockList.blockedDomains,
@@ -196,40 +222,212 @@ export async function normalizeCommandPayload(
       if (!teachingSessionId) {
         throw Object.assign(new Error("Poll commands require an active class session"), { status: 400 });
       }
-      const action = payload?.action || "start";
+      const action = validated.action || "start";
       if (action === "start") {
-        const question = String(payload?.question || "").trim();
-        const options = Array.isArray(payload?.options) ? payload.options.map((o: unknown) => String(o).trim()).filter(Boolean) : [];
-        if (!question || options.length < 2) {
-          throw Object.assign(new Error("Poll question and at least two options are required"), { status: 400 });
-        }
-        const poll = await createPoll({ sessionId: teachingSessionId, teacherId, question, options });
+        const question = String(validated.question);
+        const options = validated.options as string[];
+        const pollId = crypto.randomUUID();
         return {
           extensionType: "poll",
-          payload: { action: "start", pollId: poll.id, question, options },
-          extra: { poll },
+          payload: { action: "start", pollId, question, options },
+          extra: { pollMutation: { action: "start" as const, pollId, question, options } },
         };
       }
-      const pollId = String(payload?.pollId || "").trim();
-      const poll = pollId ? await getPollById(pollId) : undefined;
+      const pollId = String(validated.pollId || "").trim();
+      const poll = pollId ? await getPollById(pollId, schoolId) : undefined;
       if (!poll || poll.sessionId !== teachingSessionId) {
         throw Object.assign(new Error("Poll not found for this class session"), { status: 404 });
       }
-      const closed = await closePoll(pollId);
+      if (!poll.startCommandId) {
+        throw Object.assign(new Error("Poll is missing its frozen target authority"), {
+          status: 409,
+          code: "POLL_TARGET_AUTHORITY_MISSING",
+        });
+      }
+      const startCommand = await getClasspilotCommandByIdAndSchool(poll.startCommandId, schoolId);
+      if (!startCommand || startCommand.teachingSessionId !== teachingSessionId) {
+        throw Object.assign(new Error("Poll start authority is unavailable"), {
+          status: 409,
+          code: "POLL_TARGET_AUTHORITY_MISSING",
+        });
+      }
       return {
         extensionType: "poll",
         payload: { action: "close", pollId },
-        extra: { poll: closed || poll },
+        extra: {
+          pollMutation: { action: "close" as const, pollId },
+          pollCloseAuthority: {
+            targetScope: startCommand.targetScope as ClasspilotCommandTargetScope,
+            subgroupId: startCommand.subgroupId,
+            targets: startCommand.targets.map((target) => {
+              const available = target.status !== "unavailable"
+                && !!target.studentSessionId
+                && !!target.deviceId;
+              return {
+                studentId: target.studentId,
+                studentName: target.studentId,
+                studentSessionId: available ? target.studentSessionId : null,
+                deviceId: available ? target.deviceId : null,
+                available,
+                stateAuthorized: available,
+                unavailableReason: available
+                  ? undefined
+                  : "Student was unavailable when the poll started",
+              };
+            }),
+          },
+        },
       };
     }
     case "teacher-message": {
-      const message = String(payload?.message || "").trim();
-      if (!message) throw Object.assign(new Error("message is required"), { status: 400 });
-      return { extensionType: "teacher-message", payload: { message } };
+      return { extensionType: "teacher-message", payload: validated };
     }
     default:
       throw Object.assign(new Error(`Unsupported commandType: ${commandType}`), { status: 400 });
   }
+}
+
+type ExactTabOutcome = {
+  studentId: string;
+  tabRef: string;
+  status: "accepted" | "stale_tab_ref" | "unsupported" | "unavailable";
+};
+
+async function authorizeExactTabClose(options: {
+  schoolId: string;
+  payload: Record<string, any>;
+  targets: ResolvedClasspilotCommandTarget[];
+}): Promise<{ targets: ResolvedClasspilotCommandTarget[]; outcomes: ExactTabOutcome[] }> {
+  const selected = Array.isArray(options.payload.tabsToClose)
+    ? options.payload.tabsToClose as Array<{ studentId: string; tabRef: string; observedRevision: number }>
+    : [];
+  if (selected.length === 0) return { targets: options.targets, outcomes: [] };
+  const targetStudentIds = new Set(options.targets.map((target) => target.studentId));
+  if (selected.some((row) => !targetStudentIds.has(row.studentId))) {
+    throw Object.assign(new Error("An exact tab selection is outside the requested student targets"), {
+      status: 400,
+      code: "TAB_TARGET_OUTSIDE_COMMAND_SCOPE",
+    });
+  }
+
+  const bindings = options.targets
+    .filter((target) => target.available && target.studentSessionId && target.deviceId)
+    .map((target) => ({
+      studentId: target.studentId,
+      studentSessionId: target.studentSessionId!,
+      deviceId: target.deviceId!,
+    }));
+  const snapshots = await readClasspilotRealtimeStatusBatch(options.schoolId, bindings);
+  const rowsByStudent = new Map<string, typeof selected>();
+  for (const row of selected) {
+    const rows = rowsByStudent.get(row.studentId) || [];
+    rows.push(row);
+    rowsByStudent.set(row.studentId, rows);
+  }
+  const outcomes: ExactTabOutcome[] = [];
+  const targets = options.targets.map((target) => {
+    const rows = rowsByStudent.get(target.studentId) || [];
+    if (rows.length === 0) return target;
+    if (!target.available || !target.deviceId || !target.studentSessionId) {
+      outcomes.push(...rows.map((row) => ({
+        studentId: target.studentId,
+        tabRef: row.tabRef,
+        status: "unavailable" as const,
+      })));
+      return target;
+    }
+    const read = snapshots.get(target.studentId);
+    const snapshot = read?.status === "hit" ? read.snapshot : null;
+    const capabilities = new Set(snapshot?.extensionCapabilities || []);
+    if (!snapshot || !classpilotRealtimeFresh(snapshot)) {
+      outcomes.push(...rows.map((row) => ({
+        studentId: target.studentId,
+        tabRef: row.tabRef,
+        status: "stale_tab_ref" as const,
+      })));
+      return {
+        ...target,
+        available: false,
+        studentSessionId: null,
+        deviceId: null,
+        unavailableReason: "stale_tab_ref",
+      };
+    }
+    if (!capabilities.has("exactTabCloseV1")) {
+      outcomes.push(...rows.map((row) => ({
+        studentId: target.studentId,
+        tabRef: row.tabRef,
+        status: "unsupported" as const,
+      })));
+      return {
+        ...target,
+        available: false,
+        studentSessionId: null,
+        deviceId: null,
+        unavailableReason: "exact_tab_close_unsupported",
+      };
+    }
+    const currentRevision = snapshot.tabSnapshotRevision;
+    const currentRefs = new Set(snapshot.allOpenTabs.map((tab) => tab.tabRef).filter(Boolean));
+    const stale = rows.some((row) =>
+      !currentRevision || row.observedRevision !== currentRevision || !currentRefs.has(row.tabRef)
+    );
+    outcomes.push(...rows.map((row) => ({
+      studentId: target.studentId,
+      tabRef: row.tabRef,
+      status: (!currentRevision || row.observedRevision !== currentRevision || !currentRefs.has(row.tabRef))
+        ? "stale_tab_ref" as const
+        : "accepted" as const,
+    })));
+    return stale ? {
+      ...target,
+      available: false,
+      studentSessionId: null,
+      deviceId: null,
+      unavailableReason: "stale_tab_ref",
+    } : target;
+  });
+  return { targets, outcomes };
+}
+
+async function authorizeScreenOnlyUnlock(options: {
+  schoolId: string;
+  targets: ResolvedClasspilotCommandTarget[];
+}): Promise<ResolvedClasspilotCommandTarget[]> {
+  const bindings = options.targets
+    .filter((target) => target.available && target.studentSessionId && target.deviceId)
+    .map((target) => ({
+      studentId: target.studentId,
+      studentSessionId: target.studentSessionId!,
+      deviceId: target.deviceId!,
+    }));
+  const snapshots = await readClasspilotRealtimeStatusBatch(options.schoolId, bindings);
+  return options.targets.map((target) => {
+    if (!target.available || !target.studentSessionId || !target.deviceId) {
+      return {
+        ...target,
+        stateAuthorized: false,
+        unavailableReason: "screen_only_unlock_requires_capable_online_extension",
+      };
+    }
+    const read = snapshots.get(target.studentId);
+    const snapshot = read?.status === "hit" ? read.snapshot : null;
+    if (
+      !snapshot ||
+      !classpilotRealtimeFresh(snapshot) ||
+      !new Set(snapshot.extensionCapabilities || []).has("screenOnlyUnlockV1")
+    ) {
+      return {
+        ...target,
+        available: false,
+        stateAuthorized: false,
+        studentSessionId: null,
+        deviceId: null,
+        unavailableReason: "screen_only_unlock_unsupported",
+      };
+    }
+    return target;
+  });
 }
 
 function payloadForTarget(
@@ -241,31 +439,43 @@ function payloadForTarget(
     policy: ClasspilotCommandDeliveryPolicy;
     expiresAt: Date | null;
   },
-  classroomState?: ReturnType<typeof serializeClasspilotStudentControlState>
+  classroomState: ReturnType<typeof serializeClasspilotStudentControlState> | undefined,
+  commandAuthority: ReturnType<typeof classpilotCommandAuthorityEnvelope>
 ) {
   const deliveryEnvelope = {
     deliveryPolicy: delivery.policy,
     expiresAt: delivery.expiresAt?.toISOString() || null,
   };
+  // Shared Chromebooks can change student identity while a device-targeted
+  // WebSocket/Redis frame is in flight. Every side-effecting envelope carries
+  // the exact frozen public binding so the extension rejects a delayed frame
+  // before applying it. Device ids remain transport-only.
+  const bindingEnvelope = {
+    studentId: target.studentId,
+    studentSessionId: target.studentSessionId,
+  };
   if (commandType === "close-tabs" && Array.isArray(payload?.tabsToClose)) {
     const ownTabs = payload.tabsToClose.filter((tab: any) =>
-      String(tab.studentId || "") === target.studentId ||
-      (tab.deviceId && target.deviceId && String(tab.deviceId) === target.deviceId)
+      String(tab.studentId || "") === target.studentId
     );
     if (!payload.closeAll && ownTabs.length === 0) return null;
     return {
       type: "remote-control",
       _msgId: crypto.randomUUID(),
       commandId: payload.commandId,
+      ...bindingEnvelope,
       ...deliveryEnvelope,
       command: {
         type: extensionType,
         commandId: payload.commandId,
+        ...bindingEnvelope,
         ...deliveryEnvelope,
+        ...commandAuthority,
         data: {
           ...payload,
           tabsToClose: undefined,
-          specificUrls: ownTabs.map((tab: any) => String(tab.url || "").trim()).filter(Boolean),
+          tabRefs: ownTabs.map((tab: any) => tab.tabRef),
+          snapshotRevision: ownTabs[0]?.observedRevision,
         },
       },
       ...(classroomState ? { classroomState } : {}),
@@ -278,7 +488,12 @@ function payloadForTarget(
       _msgId: payload.messageId || crypto.randomUUID(),
       messageId: payload.messageId || undefined,
       commandId: payload.commandId,
+      ...bindingEnvelope,
       ...deliveryEnvelope,
+      ...commandAuthority,
+      ...(target.durableAuthorityRevision !== undefined
+        ? { ownershipRevision: target.durableAuthorityRevision }
+        : {}),
       message: payload.message,
       fromName: "Teacher",
     };
@@ -288,11 +503,14 @@ function payloadForTarget(
     type: "remote-control",
     _msgId: crypto.randomUUID(),
     commandId: payload.commandId,
+    ...bindingEnvelope,
     ...deliveryEnvelope,
     command: {
       type: extensionType,
       commandId: payload.commandId,
+      ...bindingEnvelope,
       ...deliveryEnvelope,
+      ...commandAuthority,
       data: { ...payload },
     },
     ...(classroomState ? { classroomState } : {}),
@@ -413,7 +631,9 @@ async function persistActiveState(options: {
       schoolId: options.schoolId,
       teachingSessionId: options.teachingSessionId,
       studentIds: targetStudentIds,
-      stateTypes: ["screen-lock", "flight-path"],
+      stateTypes: options.payload.screenOnly === true
+        ? ["screen-lock"]
+        : ["screen-lock", "flight-path"],
       commandId: options.commandId,
     });
   }
@@ -580,6 +800,24 @@ export async function executeClasspilotCommand(options: {
     options.teachingSessionId || null
   );
   const commandPayload = { ...normalized.payload };
+  // Poll close is bound to the immutable start-command target rows. Dashboard
+  // selection is presentation state and must never widen, narrow, or redirect
+  // the students whose poll overlay is being closed.
+  const authoritativeRequestedTargets = normalized.extra?.pollCloseAuthority?.targets
+    ?? options.targets;
+  const exactTabAuthorization = options.commandType === "close-tabs"
+    ? await authorizeExactTabClose({
+        schoolId: options.schoolId,
+        payload: commandPayload,
+        targets: authoritativeRequestedTargets,
+      })
+    : { targets: authoritativeRequestedTargets, outcomes: [] as ExactTabOutcome[] };
+  const effectiveTargets = options.commandType === "unlock-screen" && commandPayload.screenOnly === true
+    ? await authorizeScreenOnlyUnlock({
+        schoolId: options.schoolId,
+        targets: exactTabAuthorization.targets,
+      })
+    : exactTabAuthorization.targets;
   const issuedAt = new Date();
   const deliveryPolicy = classpilotCommandDeliveryPolicy(options.commandType);
   const expiresAt = classpilotCommandExpiresAt(options.commandType, issuedAt);
@@ -590,15 +828,19 @@ export async function executeClasspilotCommand(options: {
       teachingSessionId: options.teachingSessionId || null,
       supervisionContextId: options.supervisionContextId || null,
       teacherId: options.actorId,
-      targetScope: options.targetScope,
-      subgroupId: options.subgroupId || null,
+      targetScope: normalized.extra?.pollCloseAuthority
+        ? normalized.extra.pollCloseAuthority.targetScope
+        : options.targetScope,
+      subgroupId: normalized.extra?.pollCloseAuthority
+        ? normalized.extra.pollCloseAuthority.subgroupId
+        : options.subgroupId || null,
       commandType: options.commandType,
       commandPayload,
-      requestedCount: options.targets.length,
-      unavailableCount: options.targets.filter((target) => !target.available).length,
+      requestedCount: effectiveTargets.length,
+      unavailableCount: effectiveTargets.filter((target) => !target.available).length,
       expiresAt,
     },
-    options.targets.map((target) => ({
+    effectiveTargets.map((target) => ({
       schoolId: options.schoolId,
       teachingSessionId: options.teachingSessionId || null,
       supervisionContextId: options.supervisionContextId || null,
@@ -608,11 +850,62 @@ export async function executeClasspilotCommand(options: {
       deviceId: target.deviceId,
       status: target.available ? "requested" : "unavailable",
       errorMessage: target.available ? null : target.unavailableReason || "Student unavailable",
-    }))
+    })),
+    {
+      authority: options.teachingSessionId ? {
+        schoolId: options.schoolId,
+        actorId: options.actorId,
+        teachingSessionId: options.teachingSessionId,
+      } : options.supervisionContextId ? {
+        schoolId: options.schoolId,
+        actorId: options.actorId,
+        supervisionContextId: options.supervisionContextId,
+        actorMayUseAdminAuthority: options.supervisionActorIsAdmin === true,
+      } : undefined,
+      pollMutation: normalized.extra?.pollMutation,
+    }
   );
+  const committedCommandPayload = created.commandPayload
+    && typeof created.commandPayload === "object"
+    && !Array.isArray(created.commandPayload)
+    ? created.commandPayload as Record<string, unknown>
+    : commandPayload;
+
+  const committedTargetByStudent = new Map(
+    created.targets.map((target) => [target.studentId, target])
+  );
+  const committedTargets = effectiveTargets.map((target) => {
+    const persisted = committedTargetByStudent.get(target.studentId);
+    if (!persisted) {
+      return {
+        ...target,
+        available: false,
+        stateAuthorized: false,
+        studentSessionId: null,
+        deviceId: null,
+        unavailableReason: "Command target was not committed",
+      };
+    }
+    const authorityChanged = persisted.errorMessage?.includes("authority changed before dispatch") === true;
+    return {
+      ...target,
+      studentSessionId: persisted.studentSessionId,
+      deviceId: persisted.deviceId,
+      available: persisted.status !== "unavailable",
+      stateAuthorized: authorityChanged ? false : target.stateAuthorized,
+      unavailableReason: persisted.errorMessage || target.unavailableReason,
+      durableAuthorityRevision:
+        persisted.result
+        && typeof persisted.result === "object"
+        && !Array.isArray(persisted.result)
+        && Number.isSafeInteger((persisted.result as Record<string, unknown>).durableAuthorityRevision)
+          ? Number((persisted.result as Record<string, unknown>).durableAuthorityRevision)
+          : undefined,
+    };
+  });
 
   const shouldPersistBeforeDelivery = deliveryPolicy === "persistent_control";
-  const stateAuthorizedTargets = options.targets.filter((target) => target.stateAuthorized !== false);
+  const stateAuthorizedTargets = committedTargets.filter((target) => target.stateAuthorized !== false);
   const durableMessageIdByStudent = new Map<string, string>();
   if (deliveryPolicy === "durable_message") {
     // The pending-message inbox is the durable authority. Persist once for
@@ -621,6 +914,9 @@ export async function executeClasspilotCommand(options: {
       const message = await createMessage({
         fromUserId: options.actorId,
         toStudentId: target.studentId,
+        commandId: created.id,
+        teachingSessionId: created.teachingSessionId,
+        supervisionContextId: created.supervisionContextId,
         message: commandPayload.message,
         isAnnouncement: false,
       }, options.schoolId);
@@ -657,6 +953,9 @@ export async function executeClasspilotCommand(options: {
     row.studentId,
     serializeClasspilotStudentControlState(row),
   ]));
+  // Delivery authority is copied from the transactionally persisted command
+  // header. It must never be recomputed from mutable dashboard selection state.
+  const commandAuthority = classpilotCommandAuthorityEnvelope(created);
 
   const sentTargets: ResolvedClasspilotCommandTarget[] = [];
   const deliveryCandidates: ResolvedClasspilotCommandTarget[] = [];
@@ -664,15 +963,15 @@ export async function executeClasspilotCommand(options: {
   const localDeliveryStartedAt = performance.now();
   let localDeliverySucceeded = false;
   try {
-    for (const target of options.targets.filter((target) => target.available && target.deviceId)) {
+    for (const target of committedTargets.filter((target) => target.available && target.deviceId)) {
       const message = payloadForTarget(options.commandType, normalized.extensionType, {
-        ...commandPayload,
+        ...committedCommandPayload,
         commandId: created.id,
         messageId: durableMessageIdByStudent.get(target.studentId),
       }, target, {
         policy: deliveryPolicy,
         expiresAt,
-      }, classroomStateByStudent.get(target.studentId));
+      }, classroomStateByStudent.get(target.studentId), commandAuthority);
       if (!message) continue;
 
       // Keep both arrays in the caller's exact target order. Local delivery is
@@ -755,12 +1054,23 @@ export async function executeClasspilotCommand(options: {
   }
   const command = await getClasspilotCommandByIdAndSchool(created.id, options.schoolId);
   if (!command) throw Object.assign(new Error("Command was created but could not be loaded"), { status: 500 });
-  const targetOrder = new Map(options.targets.map((target, index) => [target.studentId, index]));
+  const targetOrder = new Map(effectiveTargets.map((target, index) => [target.studentId, index]));
   command.targets.sort((left, right) =>
     (targetOrder.get(left.studentId) ?? Number.MAX_SAFE_INTEGER)
     - (targetOrder.get(right.studentId) ?? Number.MAX_SAFE_INTEGER)
   );
   const summary = commandSummary(command);
+  // Internal poll mutation/authority metadata includes exact binding rows and
+  // must never cross the teacher API boundary. Preserve the established public
+  // `extra.poll` response using only the persisted poll resource.
+  const responseExtra = normalized.extra?.pollMutation
+    ? {
+        poll: await getPollById(
+          normalized.extra.pollMutation.pollId,
+          options.schoolId
+        ),
+      }
+    : null;
   return {
     command,
     deliveryPolicy,
@@ -772,6 +1082,9 @@ export async function executeClasspilotCommand(options: {
       revision: state.revision,
       health: state.enforcementHealth,
     })),
-    extra: normalized.extra || null,
+    ...(exactTabAuthorization.outcomes.length > 0
+      ? { tabOutcomes: exactTabAuthorization.outcomes }
+      : {}),
+    extra: responseExtra,
   };
 }

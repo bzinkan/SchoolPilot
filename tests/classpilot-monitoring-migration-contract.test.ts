@@ -212,7 +212,7 @@ test("delegated supervision owns a revisioned snapshot and restores class author
   assert.match(storage, /const contextWasExtended[\s\S]*activeContextAssignments[\s\S]*replaceClasspilotSupervisionControlSnapshots/);
   assert.match(storage, /revision: sql`\$\{classpilotStudentControlStates\.revision\} \+ 1`/);
   assert.match(dispatcher, /persistActiveSupervisionState/);
-  assert.match(dispatcher, /stateAuthorizedTargets = options\.targets\.filter/);
+  assert.match(dispatcher, /stateAuthorizedTargets = committedTargets\.filter/);
   assert.match(dispatcher, /supervisionContextId: options\.supervisionContextId/);
   assert.match(coverage, /syncClasspilotControlStatesToActiveDevices/);
   assert.ok(

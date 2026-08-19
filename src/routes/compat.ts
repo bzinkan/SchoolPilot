@@ -204,6 +204,32 @@ function realtimeStatusFromHeartbeat(
   return snapshot;
 }
 
+function publicClasspilotExtensionContract(
+  snapshot: ClasspilotRealtimeStatus | null | undefined
+) {
+  const extensionCapabilities = new Set(snapshot?.extensionCapabilities || []);
+  const tabSnapshotRevision = snapshot
+    ? snapshot.tabSnapshotRevision ?? snapshot.revision
+    : null;
+  return {
+    tabSnapshot: tabSnapshotRevision === null
+      ? null
+      : { schemaVersion: 1, revision: tabSnapshotRevision },
+    tabSnapshotRevision,
+    extensionVersion: snapshot?.extensionVersion ?? null,
+    capabilities: {
+      exactTabCloseV1: extensionCapabilities.has("exactTabCloseV1"),
+      screenOnlyUnlockV1: extensionCapabilities.has("screenOnlyUnlockV1"),
+      fabStateRevisionV1: extensionCapabilities.has("fabStateRevisionV1"),
+      durableChatAckV1: extensionCapabilities.has("durableChatAckV1"),
+      commandAckReceiptV1: extensionCapabilities.has("commandAckReceiptV1"),
+      classroomOverlayRestoreV1: extensionCapabilities.has("classroomOverlayRestoreV1"),
+      liveViewNegotiationV1: extensionCapabilities.has("liveViewNegotiationV1"),
+      minExtensionVersion: "2.6.0",
+    },
+  };
+}
+
 async function loadAuthorizedRealtimeStatuses(
   schoolId: string,
   bindings: AuthorizedRealtimeBinding[]
@@ -1217,6 +1243,7 @@ router.get("/students-aggregated", ...classPilotStaffAuth, async (req, res, next
         : scopedRealtimeClassroomState
           ? visibleRealtime?.enforcementHealth || "unsupported"
           : "unsupported";
+      const publicExtensionContract = publicClasspilotExtensionContract(visibleRealtime);
 
       return {
         studentId: student.id,
@@ -1238,6 +1265,7 @@ router.get("/students-aggregated", ...classPilotStaffAuth, async (req, res, next
         activeTabUrl: visibleRealtime?.activeTabUrl || "",
         favicon: visibleRealtime?.favicon,
         allOpenTabs: visibleRealtime?.allOpenTabs,
+        ...publicExtensionContract,
         isSharing: visibleRealtime?.classroomControls.isSharing || false,
         screenLocked: visibleRealtime?.classroomControls.screenLocked || false,
         flightPathActive: visibleRealtime?.classroomControls.flightPathActive || false,

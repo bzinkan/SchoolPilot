@@ -33,6 +33,7 @@ import { Textarea } from "../../../components/ui/textarea";
 import { Badge } from "../../../components/ui/badge";
 import { useToast } from "../../../hooks/use-toast";
 import { useClassPilotAuth } from "../../../hooks/useClassPilotAuth";
+import { flightPathApplyCapability } from "../lib/dashboardCommandContext";
 
 const coverageTypes = [
   ["state_testing", "State Testing"],
@@ -441,15 +442,26 @@ export default function Coverage() {
     () => coverageStudents.filter((student) => !student.releasedAt),
     [coverageStudents]
   );
+  const allActiveCoverageStudents = useMemo(
+    () => (contextStudentsQuery.data || []).filter((student) => !student.releasedAt),
+    [contextStudentsQuery.data]
+  );
   const activeCoverageStudentIds = useMemo(
-    () => new Set(activeCoverageStudents.map((student) => student.studentId)),
-    [activeCoverageStudents]
+    () => new Set(allActiveCoverageStudents.map((student) => student.studentId)),
+    [allActiveCoverageStudents]
   );
   const selectedCoverageStudentIds = useMemo(
     () => Array.from(selectedCoverageIds).filter((studentId) => activeCoverageStudentIds.has(studentId)),
     [activeCoverageStudentIds, selectedCoverageIds]
   );
-  const commandTargetCount = selectedCoverageStudentIds.length || activeCoverageStudents.length;
+  const commandTargetStudents = useMemo(() => {
+    if (selectedCoverageStudentIds.length === 0) return allActiveCoverageStudents;
+    const selected = new Set(selectedCoverageStudentIds);
+    return allActiveCoverageStudents.filter((student) => selected.has(student.studentId));
+  }, [allActiveCoverageStudents, selectedCoverageStudentIds]);
+  const commandTargetCount = commandTargetStudents.length;
+  const commandTargetsSupportScreenOnlyUnlock = commandTargetStudents.length > 0
+    && commandTargetStudents.every((student) => student.capabilities?.screenOnlyUnlockV1 === true);
   const assignmentScopeCount =
     (assignmentForm.schoolwide ? 1 : 0) +
     assignmentForm.gradeValues.length +
@@ -509,9 +521,9 @@ export default function Coverage() {
   });
 
   const commandMutation = useMutation({
-    mutationFn: ({ contextId, commandType, commandPayload }) => apiRequest("POST", `/coverage/contexts/${contextId}/commands`, {
-      targetScope: selectedCoverageStudentIds.length > 0 ? "students" : "context",
-      targetStudentIds: selectedCoverageStudentIds,
+    mutationFn: ({ contextId, commandType, commandPayload, targetScope, targetStudentIds }) => apiRequest("POST", `/coverage/contexts/${contextId}/commands`, {
+      targetScope,
+      targetStudentIds,
       commandType,
       commandPayload,
     }),
@@ -868,7 +880,14 @@ export default function Coverage() {
       toast({ variant: "destructive", title: "No active students in coverage" });
       return;
     }
-    commandMutation.mutate({ contextId: selectedContext.id, commandType, commandPayload });
+    const targetStudentIds = [...selectedCoverageStudentIds];
+    commandMutation.mutate({
+      contextId: selectedContext.id,
+      commandType,
+      commandPayload,
+      targetScope: targetStudentIds.length > 0 ? "students" : "context",
+      targetStudentIds,
+    });
   };
 
   const openReleaseDialog = ({ contextId, studentIds, title }) => {
@@ -988,9 +1007,15 @@ export default function Coverage() {
                       <Lock className="h-4 w-4 mr-2" />
                       Lock
                     </Button>
-                    <Button size="sm" variant="outline" onClick={() => sendCoverageCommand("unlock-screen", {})} disabled={commandTargetCount === 0 || commandMutation.isPending}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => sendCoverageCommand("unlock-screen", { screenOnly: true })}
+                      disabled={commandTargetCount === 0 || commandMutation.isPending || !commandTargetsSupportScreenOnlyUnlock}
+                      title={commandTargetsSupportScreenOnlyUnlock ? "Unlock screen only" : "Extension update required for screen-only unlock"}
+                    >
                       <Unlock className="h-4 w-4 mr-2" />
-                      Unlock
+                      {commandTargetsSupportScreenOnlyUnlock ? "Unlock Screen Only" : "Extension update required"}
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => setCommandDialog("teacher-message")} disabled={commandTargetCount === 0}>
                       <MessageSquare className="h-4 w-4 mr-2" />
@@ -1023,7 +1048,7 @@ export default function Coverage() {
                       <Search className="h-4 w-4 absolute left-3 top-3 text-muted-foreground" />
                       <Input className="pl-9" placeholder="Search claimed students" value={coverageSearch} onChange={(e) => setCoverageSearch(e.target.value)} />
                     </div>
-                    <Button variant="outline" size="sm" onClick={() => setSelectedCoverageIds(new Set(activeCoverageStudents.map((student) => student.studentId)))} disabled={activeCoverageStudents.length === 0}>
+                    <Button variant="outline" size="sm" onClick={() => setSelectedCoverageIds(new Set(allActiveCoverageStudents.map((student) => student.studentId)))} disabled={allActiveCoverageStudents.length === 0}>
                       Select All
                     </Button>
                     <Button variant="ghost" size="sm" onClick={() => setSelectedCoverageIds(new Set())} disabled={selectedCoverageStudentIds.length === 0}>
@@ -1738,10 +1763,26 @@ export default function Coverage() {
                   <SelectTrigger><SelectValue placeholder="Select flight path" /></SelectTrigger>
                   <SelectContent>
                     {(flightPathsQuery.data || []).map((flightPath) => (
-                      <SelectItem key={flightPath.id} value={flightPath.id}>{flightPath.flightPathName}</SelectItem>
+                      <SelectItem
+                        key={flightPath.id}
+                        value={flightPath.id}
+                        disabled={!flightPathApplyCapability(flightPath).enabled}
+                      >
+                        {flightPath.flightPathName}
+                        {flightPathApplyCapability(flightPath).enabled ? "" : " (add an allowed domain)"}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                {selectedFlightPathId
+                  && !flightPathApplyCapability(
+                    (flightPathsQuery.data || []).find((flightPath) => flightPath.id === selectedFlightPathId),
+                  ).enabled
+                  && (
+                    <p className="text-sm text-destructive">
+                      Add at least one allowed domain before applying this Flight Path.
+                    </p>
+                  )}
               </div>
             )}
             {commandDialog === "apply-block-list" && (
@@ -1773,7 +1814,16 @@ export default function Coverage() {
               </Button>
             )}
             {commandDialog === "apply-flight-path" && (
-              <Button onClick={() => sendCoverageCommand("apply-flight-path", { flightPathId: selectedFlightPathId })} disabled={commandMutation.isPending || !selectedFlightPathId}>
+              <Button
+                onClick={() => sendCoverageCommand("apply-flight-path", { flightPathId: selectedFlightPathId })}
+                disabled={
+                  commandMutation.isPending
+                  || !selectedFlightPathId
+                  || !flightPathApplyCapability(
+                    (flightPathsQuery.data || []).find((flightPath) => flightPath.id === selectedFlightPathId),
+                  ).enabled
+                }
+              >
                 Apply
               </Button>
             )}

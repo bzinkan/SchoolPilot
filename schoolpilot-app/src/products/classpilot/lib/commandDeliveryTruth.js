@@ -82,6 +82,18 @@ function plural(count, singular, pluralValue = `${singular}s`) {
   return `${count} ${count === 1 ? singular : pluralValue}`;
 }
 
+export function commandOutcomeBreakdown(value) {
+  const summary = value?.requested === undefined ? normalizeCommandSummary(value) : value;
+  return [
+    summary.completed > 0 ? `${summary.completed} completed` : null,
+    summary.received > 0 ? `${summary.received} received` : null,
+    summary.pending > 0 ? `${summary.pending} pending` : null,
+    summary.failed > 0 ? `${summary.failed} failed` : null,
+    summary.unavailable > 0 ? `${summary.unavailable} unavailable` : null,
+    summary.expired > 0 ? `${summary.expired} expired` : null,
+  ].filter(Boolean).join(', ');
+}
+
 function formattedExpiry(expiresAt) {
   const time = Date.parse(expiresAt || '');
   if (!Number.isFinite(time)) return null;
@@ -117,14 +129,17 @@ export function commandDeliveryFeedback(value, commandType = value?.command?.com
   }
 
   if (policy === 'durable_message') {
+    const breakdown = commandOutcomeBreakdown(summary);
     return {
       title: summary.completed > 0 ? 'Acknowledged' : 'Message queued',
       description: summary.completed > 0
-        ? `${plural(summary.completed, 'message')} received a device-reported completion acknowledgement.`
+        ? `${breakdown}. Device acknowledgements are self-reported and are not tamper proof.`
         : [
             'The message is retained in the student inbox and will be delivered when the student reconnects.',
+            breakdown ? `Current outcomes: ${breakdown}.` : null,
             summary.unavailable > 0 ? `${plural(summary.unavailable, 'student is', 'students are')} currently unavailable.` : null,
           ].filter(Boolean).join(' '),
+      variant: summary.failed > 0 ? 'destructive' : undefined,
     };
   }
 
@@ -159,31 +174,25 @@ export function commandDeliveryFeedback(value, commandType = value?.command?.com
     };
   }
 
-  if (summary.failed > 0 && summary.awaitingAck === 0) {
+  if (
+    summary.acknowledged === 0
+    && summary.completed === 0
+    && summary.awaitingAck === 0
+    && (summary.failed > 0 || summary.unavailable > 0 || summary.expired > 0)
+  ) {
+    const breakdown = commandOutcomeBreakdown(summary);
     return {
-      title: 'Failed',
-      description: `${plural(summary.failed, 'target')} reported a failed device outcome. Device acknowledgements are self-reported and are not tamper proof.`,
-      variant: 'destructive',
-    };
-  }
-  if (summary.unavailable > 0 && summary.attempted === 0 && summary.awaitingAck === 0) {
-    return {
-      title: 'Student unavailable',
-      description: `${plural(summary.unavailable, 'student was', 'students were')} unavailable for delivery.`,
-      variant: 'destructive',
-    };
-  }
-  if (summary.expired > 0 && summary.awaitingAck === 0) {
-    return {
-      title: 'Not delivered',
-      description: `${plural(summary.expired, 'target')} did not acknowledge the action before it expired. It will not be replayed later.`,
+      title: summary.failed > 0 ? 'Failed' : summary.expired > 0 ? 'Not delivered' : 'Student unavailable',
+      description: `${breakdown}. The action was not confirmed and will not be replayed later.`,
       variant: 'destructive',
     };
   }
   if (summary.completed > 0 || summary.acknowledged > 0) {
+    const breakdown = commandOutcomeBreakdown(summary);
     return {
-      title: 'Acknowledged',
-      description: `${plural(summary.acknowledged || summary.completed, 'target')} acknowledged the action. This acknowledgement is device-reported and is not tamper proof.`,
+      title: summary.failed > 0 || summary.unavailable > 0 || summary.expired > 0 ? 'Partially delivered' : 'Acknowledged',
+      description: `${breakdown || `${summary.acknowledged || summary.completed} acknowledged`}. Device acknowledgements are self-reported and are not tamper proof.`,
+      variant: summary.failed > 0 || summary.expired > 0 ? 'destructive' : undefined,
     };
   }
 

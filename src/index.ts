@@ -1671,6 +1671,62 @@ export async function runStartupMigrations(): Promise<void> {
 
   // ClassPilot FAB production state: session-scoped chat + recoverable raised hands.
   try {
+    await pool.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS command_id VARCHAR`);
+    await pool.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS teaching_session_id VARCHAR`);
+    await pool.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS supervision_context_id VARCHAR`);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS messages_command_student_unique
+      ON messages (command_id, to_student_id)
+      WHERE command_id IS NOT NULL AND to_student_id IS NOT NULL
+    `);
+    const invalidCommandMessageParents = await schedulerPool.query<{ count: number }>(`
+      SELECT count(*)::integer AS count
+      FROM messages message
+      LEFT JOIN classpilot_commands command
+        ON command.id = message.command_id
+       AND command.school_id = message.school_id
+       AND command.command_type = 'teacher-message'
+       AND command.teaching_session_id IS NOT DISTINCT FROM message.teaching_session_id
+       AND command.supervision_context_id IS NOT DISTINCT FROM message.supervision_context_id
+      LEFT JOIN classpilot_command_targets target
+        ON target.command_id = message.command_id
+       AND target.school_id = message.school_id
+       AND target.student_id = message.to_student_id
+      WHERE message.command_id IS NOT NULL
+        AND (command.id IS NULL OR target.id IS NULL)
+    `);
+    if (Number(invalidCommandMessageParents.rows[0]?.count || 0) !== 0) {
+      throw new Error("ClassPilot teacher-message command parent verification failed");
+    }
+    await pool.query(`
+      CREATE OR REPLACE FUNCTION classpilot_validate_command_message_parents()
+      RETURNS trigger LANGUAGE plpgsql AS $classpilot_command_message_parents$
+      BEGIN
+        IF NEW.command_id IS NOT NULL AND NOT EXISTS (
+          SELECT 1
+          FROM classpilot_commands command
+          JOIN classpilot_command_targets target
+            ON target.command_id = command.id
+           AND target.school_id = command.school_id
+           AND target.student_id = NEW.to_student_id
+          WHERE command.id = NEW.command_id
+            AND command.school_id = NEW.school_id
+            AND command.command_type = 'teacher-message'
+            AND command.teaching_session_id IS NOT DISTINCT FROM NEW.teaching_session_id
+            AND command.supervision_context_id IS NOT DISTINCT FROM NEW.supervision_context_id
+        ) THEN
+          RAISE EXCEPTION 'teacher message must match its command target and authority'
+            USING ERRCODE = '23514';
+        END IF;
+        RETURN NEW;
+      END
+      $classpilot_command_message_parents$;
+      DROP TRIGGER IF EXISTS classpilot_validate_command_message_parents ON messages;
+      CREATE TRIGGER classpilot_validate_command_message_parents
+        BEFORE INSERT OR UPDATE OF school_id, command_id, to_student_id, teaching_session_id, supervision_context_id
+        ON messages
+        FOR EACH ROW EXECUTE FUNCTION classpilot_validate_command_message_parents();
+    `);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS chat_messages (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1705,6 +1761,7 @@ export async function runStartupMigrations(): Promise<void> {
       WHERE cm.session_id = ts.id
         AND cm.school_id IS NULL
     `);
+    await pool.query(`ALTER TABLE chat_messages ALTER COLUMN school_id SET NOT NULL`);
     await pool.query(`CREATE INDEX IF NOT EXISTS chat_messages_session_id_idx ON chat_messages (session_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS chat_messages_school_session_idx ON chat_messages (school_id, session_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS chat_messages_school_student_idx ON chat_messages (school_id, student_id)`);
@@ -1729,9 +1786,497 @@ export async function runStartupMigrations(): Promise<void> {
       ON classpilot_active_hands (teaching_session_id, student_id)
       WHERE cleared_at IS NULL
     `);
-    console.log("[migration] ClassPilot FAB chat and active hand tables ready");
+    const invalidActiveHandParents = await schedulerPool.query<{ count: number }>(`
+      SELECT count(*)::integer AS count
+      FROM classpilot_active_hands hand
+      LEFT JOIN teaching_sessions session
+        ON session.id = hand.teaching_session_id AND session.school_id = hand.school_id
+      LEFT JOIN students student
+        ON student.id = hand.student_id AND student.school_id = hand.school_id
+      LEFT JOIN devices device
+        ON device.device_id = hand.device_id AND device.school_id = hand.school_id
+      WHERE session.id IS NULL
+         OR student.id IS NULL
+         OR (
+           device.device_id IS NULL
+           AND (
+             hand.cleared_at IS NULL
+             OR EXISTS (SELECT 1 FROM devices any_device WHERE any_device.device_id = hand.device_id)
+           )
+         )
+    `);
+    if (Number(invalidActiveHandParents.rows[0]?.count || 0) !== 0) {
+      throw new Error("ClassPilot active-hand parent tenant verification failed");
+    }
+    await pool.query(`
+      CREATE OR REPLACE FUNCTION classpilot_validate_active_hand_parents()
+      RETURNS trigger LANGUAGE plpgsql AS $classpilot_active_hand_parents$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM teaching_sessions session
+          JOIN students student
+            ON student.id = NEW.student_id AND student.school_id = NEW.school_id
+          WHERE session.id = NEW.teaching_session_id
+            AND session.school_id = NEW.school_id
+        ) THEN
+          RAISE EXCEPTION 'active hand session and student must belong to the same school'
+            USING ERRCODE = '23514';
+        END IF;
+        IF (
+          TG_OP = 'INSERT'
+          OR NEW.cleared_at IS NULL
+          OR NEW.device_id IS DISTINCT FROM OLD.device_id
+          OR NEW.school_id IS DISTINCT FROM OLD.school_id
+        ) AND NOT EXISTS (
+          SELECT 1 FROM devices device
+          WHERE device.device_id = NEW.device_id AND device.school_id = NEW.school_id
+        ) THEN
+          RAISE EXCEPTION 'active hand device must belong to the same school'
+            USING ERRCODE = '23514';
+        END IF;
+        IF NEW.cleared_at IS NOT NULL
+           AND EXISTS (SELECT 1 FROM devices any_device WHERE any_device.device_id = NEW.device_id)
+           AND NOT EXISTS (
+             SELECT 1 FROM devices device
+             WHERE device.device_id = NEW.device_id AND device.school_id = NEW.school_id
+           ) THEN
+          RAISE EXCEPTION 'cleared hand device cannot belong to another school'
+            USING ERRCODE = '23514';
+        END IF;
+        RETURN NEW;
+      END
+      $classpilot_active_hand_parents$;
+      DROP TRIGGER IF EXISTS classpilot_validate_active_hand_parents ON classpilot_active_hands;
+      CREATE TRIGGER classpilot_validate_active_hand_parents
+        BEFORE INSERT OR UPDATE OF school_id, teaching_session_id, student_id, device_id, cleared_at
+        ON classpilot_active_hands
+        FOR EACH ROW EXECUTE FUNCTION classpilot_validate_active_hand_parents();
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS session_settings (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        session_id VARCHAR NOT NULL UNIQUE,
+        chat_enabled BOOLEAN DEFAULT true,
+        raise_hand_enabled BOOLEAN DEFAULT true,
+        lifecycle_revision INTEGER NOT NULL DEFAULT 1,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`ALTER TABLE session_settings ADD COLUMN IF NOT EXISTS school_id TEXT`);
+    await pool.query(`ALTER TABLE session_settings ADD COLUMN IF NOT EXISTS lifecycle_revision INTEGER NOT NULL DEFAULT 1`);
+    await pool.query(`ALTER TABLE session_settings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`);
+    await pool.query(`UPDATE session_settings SET lifecycle_revision = 1 WHERE lifecycle_revision < 1`);
+    await schedulerPool.query(`
+      UPDATE session_settings setting
+      SET school_id = session.school_id
+      FROM teaching_sessions session
+      WHERE setting.session_id = session.id
+        AND setting.school_id IS NULL
+    `);
+    const invalidSessionSettingParents = await schedulerPool.query<{ count: number }>(`
+      SELECT count(*)::integer AS count
+      FROM session_settings setting
+      LEFT JOIN teaching_sessions session
+        ON session.id = setting.session_id AND session.school_id = setting.school_id
+      WHERE session.id IS NULL
+    `);
+    if (Number(invalidSessionSettingParents.rows[0]?.count || 0) !== 0) {
+      throw new Error("ClassPilot session-setting parent tenant verification failed");
+    }
+    await pool.query(`ALTER TABLE session_settings ALTER COLUMN school_id SET NOT NULL`);
+    await pool.query(`ALTER TABLE session_settings DROP CONSTRAINT IF EXISTS session_settings_revision_check`);
+    await pool.query(`ALTER TABLE session_settings ADD CONSTRAINT session_settings_revision_check CHECK (lifecycle_revision > 0)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS session_settings_school_session_idx ON session_settings (school_id, session_id)`);
+    await pool.query(`
+      CREATE OR REPLACE FUNCTION classpilot_bind_session_setting_school()
+      RETURNS trigger LANGUAGE plpgsql AS $classpilot_session_setting$
+      DECLARE expected_school TEXT;
+      BEGIN
+        SELECT school_id INTO expected_school FROM teaching_sessions WHERE id = NEW.session_id;
+        IF expected_school IS NULL OR (NEW.school_id IS NOT NULL AND NEW.school_id <> expected_school) THEN
+          RAISE EXCEPTION 'session setting tenant does not match teaching session' USING ERRCODE = '23514';
+        END IF;
+        NEW.school_id := expected_school;
+        NEW.lifecycle_revision := GREATEST(COALESCE(NEW.lifecycle_revision, 1), 1);
+        NEW.updated_at := COALESCE(NEW.updated_at, clock_timestamp());
+        RETURN NEW;
+      END
+      $classpilot_session_setting$;
+      DROP TRIGGER IF EXISTS classpilot_bind_session_setting_school ON session_settings;
+      CREATE TRIGGER classpilot_bind_session_setting_school
+        BEFORE INSERT OR UPDATE OF school_id, session_id ON session_settings
+        FOR EACH ROW EXECUTE FUNCTION classpilot_bind_session_setting_school();
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS classpilot_chat_deliveries (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        chat_message_id VARCHAR NOT NULL,
+        teaching_session_id VARCHAR NOT NULL,
+        student_id TEXT NOT NULL,
+        state TEXT NOT NULL DEFAULT 'queued',
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        lease_owner TEXT,
+        lease_expires_at TIMESTAMPTZ,
+        last_attempt_at TIMESTAMPTZ,
+        last_attempt_student_session_id VARCHAR,
+        last_attempt_device_id TEXT,
+        expires_at TIMESTAMPTZ NOT NULL,
+        delivered_at TIMESTAMPTZ,
+        failed_at TIMESTAMPTZ,
+        last_error TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CONSTRAINT classpilot_chat_deliveries_attempt_check CHECK (attempt_count >= 0),
+        CONSTRAINT classpilot_chat_deliveries_state_check CHECK (state IN ('queued','leased','attempted','retry','delivered','failed','expired'))
+      )
+    `);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS classpilot_chat_deliveries_message_unique ON classpilot_chat_deliveries (chat_message_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_chat_deliveries_due_idx ON classpilot_chat_deliveries (state, next_attempt_at)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_chat_deliveries_school_student_idx ON classpilot_chat_deliveries (school_id, student_id, state)`);
+    const invalidChatDeliveryParents = await schedulerPool.query<{ count: number }>(`
+      SELECT count(*)::integer AS count
+      FROM classpilot_chat_deliveries delivery
+      LEFT JOIN chat_messages message
+        ON message.id = delivery.chat_message_id
+       AND message.school_id = delivery.school_id
+       AND message.session_id = delivery.teaching_session_id
+       AND message.student_id = delivery.student_id
+      LEFT JOIN teaching_sessions session
+        ON session.id = delivery.teaching_session_id AND session.school_id = delivery.school_id
+      LEFT JOIN students student
+        ON student.id = delivery.student_id AND student.school_id = delivery.school_id
+      WHERE message.id IS NULL OR session.id IS NULL OR student.id IS NULL
+    `);
+    if (Number(invalidChatDeliveryParents.rows[0]?.count || 0) !== 0) {
+      throw new Error("ClassPilot chat-delivery parent tenant verification failed");
+    }
+    await pool.query(`
+      CREATE OR REPLACE FUNCTION classpilot_validate_chat_delivery_parents()
+      RETURNS trigger LANGUAGE plpgsql AS $classpilot_chat_delivery_parents$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM chat_messages message
+          JOIN teaching_sessions session
+            ON session.id = NEW.teaching_session_id AND session.school_id = NEW.school_id
+          JOIN students student
+            ON student.id = NEW.student_id AND student.school_id = NEW.school_id
+          WHERE message.id = NEW.chat_message_id
+            AND message.school_id = NEW.school_id
+            AND message.session_id = NEW.teaching_session_id
+            AND message.student_id = NEW.student_id
+        ) THEN
+          RAISE EXCEPTION 'chat delivery parents must belong to the same school and binding'
+            USING ERRCODE = '23514';
+        END IF;
+        RETURN NEW;
+      END
+      $classpilot_chat_delivery_parents$;
+      DROP TRIGGER IF EXISTS classpilot_validate_chat_delivery_parents ON classpilot_chat_deliveries;
+      CREATE TRIGGER classpilot_validate_chat_delivery_parents
+        BEFORE INSERT OR UPDATE OF school_id, chat_message_id, teaching_session_id, student_id
+        ON classpilot_chat_deliveries
+        FOR EACH ROW EXECUTE FUNCTION classpilot_validate_chat_delivery_parents();
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS polls (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        session_id VARCHAR NOT NULL,
+        teacher_id TEXT NOT NULL,
+        start_command_id VARCHAR,
+        close_command_id VARCHAR,
+        question TEXT NOT NULL,
+        options TEXT[] NOT NULL,
+        is_active BOOLEAN DEFAULT true,
+        expires_at TIMESTAMPTZ,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        closed_at TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`ALTER TABLE polls ADD COLUMN IF NOT EXISTS school_id TEXT`);
+    await pool.query(`ALTER TABLE polls ADD COLUMN IF NOT EXISTS start_command_id VARCHAR`);
+    await pool.query(`ALTER TABLE polls ADD COLUMN IF NOT EXISTS close_command_id VARCHAR`);
+    await pool.query(`ALTER TABLE polls ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE polls ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`);
+    await pool.query(`UPDATE polls SET is_active = false WHERE is_active IS NULL`);
+    await pool.query(`ALTER TABLE polls ALTER COLUMN is_active SET DEFAULT true`);
+    await pool.query(`ALTER TABLE polls ALTER COLUMN is_active SET NOT NULL`);
+    await schedulerPool.query(`
+      UPDATE polls poll SET school_id = session.school_id
+      FROM teaching_sessions session
+      WHERE poll.session_id = session.id AND poll.school_id IS NULL
+    `);
+    await pool.query(`
+      CREATE OR REPLACE FUNCTION classpilot_bind_poll_school()
+      RETURNS trigger LANGUAGE plpgsql AS $classpilot_poll_school$
+      DECLARE
+        expected_school TEXT;
+        start_command_matches BOOLEAN;
+        close_command_matches BOOLEAN;
+      BEGIN
+        SELECT school_id INTO expected_school FROM teaching_sessions WHERE id = NEW.session_id;
+        IF expected_school IS NULL OR (NEW.school_id IS NOT NULL AND NEW.school_id <> expected_school) THEN
+          RAISE EXCEPTION 'poll tenant does not match teaching session' USING ERRCODE = '23514';
+        END IF;
+        NEW.school_id := expected_school;
+        IF NEW.is_active AND NEW.start_command_id IS NULL THEN
+          RAISE EXCEPTION 'active poll requires start command authority' USING ERRCODE = '23514';
+        END IF;
+        IF NEW.start_command_id IS NOT NULL THEN
+          SELECT EXISTS (
+            SELECT 1 FROM classpilot_commands command
+            WHERE command.id = NEW.start_command_id
+              AND command.school_id = expected_school
+              AND command.teaching_session_id = NEW.session_id
+              AND command.supervision_context_id IS NULL
+              AND command.teacher_id = NEW.teacher_id
+              AND command.command_type = 'poll'
+              AND command.command_payload->>'action' = 'start'
+          ) INTO start_command_matches;
+          IF NOT start_command_matches THEN
+            RAISE EXCEPTION 'poll command authority does not match its session' USING ERRCODE = '23514';
+          END IF;
+        END IF;
+        IF NEW.close_command_id IS NOT NULL THEN
+          SELECT EXISTS (
+            SELECT 1 FROM classpilot_commands command
+            WHERE command.id = NEW.close_command_id
+              AND command.school_id = expected_school
+              AND command.teaching_session_id = NEW.session_id
+              AND command.supervision_context_id IS NULL
+              AND command.command_type = 'poll'
+              AND command.command_payload->>'action' = 'close'
+          ) INTO close_command_matches;
+          IF NOT close_command_matches THEN
+            RAISE EXCEPTION 'poll command authority does not match its session' USING ERRCODE = '23514';
+          END IF;
+        END IF;
+        NEW.updated_at := COALESCE(NEW.updated_at, clock_timestamp());
+        RETURN NEW;
+      END
+      $classpilot_poll_school$;
+      DROP TRIGGER IF EXISTS classpilot_bind_poll_school ON polls;
+      CREATE TRIGGER classpilot_bind_poll_school
+        BEFORE INSERT OR UPDATE OF school_id, session_id, teacher_id, start_command_id, close_command_id, is_active ON polls
+        FOR EACH ROW EXECUTE FUNCTION classpilot_bind_poll_school();
+    `);
+    await schedulerPool.query(`
+      UPDATE polls
+      SET is_active = false, closed_at = COALESCE(closed_at, now()), updated_at = now()
+      WHERE is_active = true AND start_command_id IS NULL
+    `);
+    await schedulerPool.query(`
+      WITH ranked AS (
+        SELECT id, row_number() OVER (
+          PARTITION BY school_id, session_id ORDER BY created_at DESC, id DESC
+        ) AS ordinal
+        FROM polls WHERE is_active = true
+      )
+      UPDATE polls poll SET is_active = false, closed_at = COALESCE(poll.closed_at, now()), updated_at = now()
+      FROM ranked WHERE poll.id = ranked.id AND ranked.ordinal > 1
+    `);
+    await pool.query(`ALTER TABLE polls ALTER COLUMN school_id SET NOT NULL`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS polls_school_session_idx ON polls (school_id, session_id)`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS polls_active_session_unique ON polls (school_id, session_id) WHERE is_active = true`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS polls_start_command_unique ON polls (start_command_id) WHERE start_command_id IS NOT NULL`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS polls_close_command_unique ON polls (close_command_id) WHERE close_command_id IS NOT NULL`);
+    const invalidPollParents = await schedulerPool.query<{ count: number }>(`
+      SELECT count(*)::integer AS count
+      FROM polls poll
+      LEFT JOIN teaching_sessions session
+        ON session.id = poll.session_id AND session.school_id = poll.school_id
+      LEFT JOIN classpilot_commands start_command
+        ON start_command.id = poll.start_command_id
+       AND start_command.school_id = poll.school_id
+       AND start_command.teaching_session_id = poll.session_id
+       AND start_command.supervision_context_id IS NULL
+       AND start_command.teacher_id = poll.teacher_id
+       AND start_command.command_type = 'poll'
+       AND start_command.command_payload->>'action' = 'start'
+      LEFT JOIN classpilot_commands close_command
+        ON close_command.id = poll.close_command_id
+       AND close_command.school_id = poll.school_id
+       AND close_command.teaching_session_id = poll.session_id
+       AND close_command.supervision_context_id IS NULL
+       AND close_command.command_type = 'poll'
+       AND close_command.command_payload->>'action' = 'close'
+      WHERE session.id IS NULL
+         OR (poll.is_active AND poll.start_command_id IS NULL)
+         OR (poll.start_command_id IS NOT NULL AND start_command.id IS NULL)
+         OR (poll.close_command_id IS NOT NULL AND close_command.id IS NULL)
+    `);
+    if (Number(invalidPollParents.rows[0]?.count || 0) !== 0) {
+      throw new Error("ClassPilot poll parent authority verification failed");
+    }
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS poll_responses (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        poll_id VARCHAR NOT NULL,
+        student_id TEXT NOT NULL,
+        device_id TEXT,
+        selected_option INTEGER NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        superseded_at TIMESTAMPTZ,
+        superseded_by_response_id VARCHAR
+      )
+    `);
+    await pool.query(`ALTER TABLE poll_responses ADD COLUMN IF NOT EXISTS school_id TEXT`);
+    await pool.query(`ALTER TABLE poll_responses ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`);
+    await pool.query(`ALTER TABLE poll_responses ADD COLUMN IF NOT EXISTS superseded_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE poll_responses ADD COLUMN IF NOT EXISTS superseded_by_response_id VARCHAR`);
+    await schedulerPool.query(`
+      UPDATE poll_responses response SET school_id = poll.school_id
+      FROM polls poll WHERE response.poll_id = poll.id AND response.school_id IS NULL
+    `);
+    // device_id is optional provenance. Old releases hard-deleted devices
+    // without detaching historical responses, so normalize only missing
+    // provenance before installing the fail-closed validator. A device that
+    // still exists in another school remains visible to the audit and fails.
+    await schedulerPool.query(`
+      UPDATE poll_responses response
+      SET device_id = NULL, updated_at = now()
+      WHERE response.device_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM devices device
+          WHERE device.device_id = response.device_id
+        )
+    `);
+    await pool.query(`
+      CREATE OR REPLACE FUNCTION classpilot_bind_poll_response_school()
+      RETURNS trigger LANGUAGE plpgsql AS $classpilot_poll_response_school$
+      DECLARE expected_school TEXT;
+      BEGIN
+        SELECT school_id INTO expected_school FROM polls WHERE id = NEW.poll_id;
+        IF expected_school IS NULL OR (NEW.school_id IS NOT NULL AND NEW.school_id <> expected_school) THEN
+          RAISE EXCEPTION 'poll response tenant does not match poll' USING ERRCODE = '23514';
+        END IF;
+        NEW.school_id := expected_school;
+        IF NOT EXISTS (
+          SELECT 1 FROM students student
+          WHERE student.id = NEW.student_id AND student.school_id = expected_school
+        ) THEN
+          RAISE EXCEPTION 'poll response student does not belong to the poll school' USING ERRCODE = '23514';
+        END IF;
+        IF NEW.device_id IS NOT NULL AND NOT EXISTS (
+          SELECT 1 FROM devices device
+          WHERE device.device_id = NEW.device_id AND device.school_id = expected_school
+        ) THEN
+          RAISE EXCEPTION 'poll response device does not belong to the poll school' USING ERRCODE = '23514';
+        END IF;
+        NEW.updated_at := COALESCE(NEW.updated_at, clock_timestamp());
+        RETURN NEW;
+      END
+      $classpilot_poll_response_school$;
+      DROP TRIGGER IF EXISTS classpilot_bind_poll_response_school ON poll_responses;
+      CREATE TRIGGER classpilot_bind_poll_response_school
+        BEFORE INSERT OR UPDATE OF school_id, poll_id, student_id, device_id ON poll_responses
+        FOR EACH ROW EXECUTE FUNCTION classpilot_bind_poll_response_school();
+    `);
+    await schedulerPool.query(`
+      WITH ranked AS (
+        SELECT id, first_value(id) OVER (
+          PARTITION BY poll_id, student_id ORDER BY created_at, id
+        ) AS keeper_id,
+        row_number() OVER (
+          PARTITION BY poll_id, student_id ORDER BY created_at, id
+        ) AS ordinal
+        FROM poll_responses WHERE superseded_at IS NULL
+      )
+      UPDATE poll_responses response
+      SET superseded_at = now(), superseded_by_response_id = ranked.keeper_id, updated_at = now()
+      FROM ranked WHERE response.id = ranked.id AND ranked.ordinal > 1
+    `);
+    await pool.query(`ALTER TABLE poll_responses ALTER COLUMN school_id SET NOT NULL`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS poll_responses_school_poll_idx ON poll_responses (school_id, poll_id)`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS poll_responses_poll_student_active_unique ON poll_responses (poll_id, student_id) WHERE superseded_at IS NULL`);
+    const invalidPollResponseParents = await schedulerPool.query<{ count: number }>(`
+      SELECT count(*)::integer AS count
+      FROM poll_responses response
+      LEFT JOIN polls poll
+        ON poll.id = response.poll_id AND poll.school_id = response.school_id
+      LEFT JOIN students student
+        ON student.id = response.student_id AND student.school_id = response.school_id
+      LEFT JOIN devices device
+        ON device.device_id = response.device_id AND device.school_id = response.school_id
+      WHERE poll.id IS NULL
+         OR student.id IS NULL
+         OR (response.device_id IS NOT NULL AND device.device_id IS NULL)
+    `);
+    if (Number(invalidPollResponseParents.rows[0]?.count || 0) !== 0) {
+      throw new Error("ClassPilot poll-response parent tenant verification failed");
+    }
+    const requiredFabColumns = await pool.query<{ table_name: string; column_name: string }>(`
+      SELECT table_name, column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND (table_name, column_name) IN (
+          ('chat_messages','school_id'),
+          ('messages','command_id'),
+          ('messages','teaching_session_id'),
+          ('messages','supervision_context_id'),
+          ('session_settings','school_id'),
+          ('session_settings','lifecycle_revision'),
+          ('classpilot_chat_deliveries','chat_message_id'),
+          ('classpilot_chat_deliveries','last_attempt_student_session_id'),
+          ('polls','school_id'),
+          ('polls','start_command_id'),
+          ('polls','close_command_id'),
+          ('poll_responses','school_id'),
+          ('poll_responses','superseded_at')
+        )
+    `);
+    if (requiredFabColumns.rowCount !== 13) {
+      throw new Error("ClassPilot FAB release-critical column verification failed");
+    }
+    const requiredFabIndexes = await pool.query<{ indexname: string }>(`
+      SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND indexname = ANY($1::text[])
+    `, [[
+      "classpilot_chat_deliveries_message_unique",
+      "classpilot_chat_deliveries_due_idx",
+      "classpilot_chat_deliveries_school_student_idx",
+      "polls_school_session_idx",
+      "polls_active_session_unique",
+      "polls_start_command_unique",
+      "polls_close_command_unique",
+      "poll_responses_school_poll_idx",
+      "poll_responses_poll_student_active_unique",
+      "session_settings_school_session_idx",
+      "messages_command_student_unique",
+    ]]);
+    if (requiredFabIndexes.rowCount !== 11) {
+      throw new Error("ClassPilot FAB release-critical index verification failed");
+    }
+    const requiredFabTriggers = await pool.query<{ tgname: string }>(`
+      SELECT tgname FROM pg_trigger
+      WHERE NOT tgisinternal AND tgname = ANY($1::text[])
+    `, [[
+      "classpilot_bind_session_setting_school",
+      "classpilot_validate_active_hand_parents",
+      "classpilot_validate_chat_delivery_parents",
+      "classpilot_bind_poll_school",
+      "classpilot_bind_poll_response_school",
+      "classpilot_validate_command_message_parents",
+    ]]);
+    if (requiredFabTriggers.rowCount !== 6) {
+      throw new Error("ClassPilot FAB release-critical trigger verification failed");
+    }
+    console.log("[migration] ClassPilot FAB, chat outbox, and poll tables ready");
   } catch (err) {
-    console.warn("[migration] ClassPilot FAB migration skipped:", (err as Error).message);
+    console.error("[migration] FATAL: ClassPilot FAB release-critical migration failed:", (err as Error).message);
+    throw err;
   }
 
   // ClassPilot supervision coverage. These school-scoped tables support the
@@ -2819,6 +3364,11 @@ export async function runStartupMigrations(): Promise<void> {
       "classpilot_session_staff",
       "classpilot_session_student_reports",
       "classpilot_student_control_states",
+      "classpilot_active_hands",
+      "classpilot_chat_deliveries",
+      "poll_responses",
+      "polls",
+      "session_settings",
       "passpilot_grade_students",
       "authorized_pickups",
       "custody_alerts",
@@ -3673,67 +4223,208 @@ export async function runStartupMigrations(): Promise<void> {
     console.warn("[migration] emailLc backfill skipped:", (err as Error).message);
   }
 
-  // Clean up duplicate students created by extension (keep the admin-imported one with gradeId)
-  // First reassign heartbeats and student_devices so data isn't orphaned, then delete.
+  // Clean up duplicate students created by extension (keep the admin-imported
+  // one with gradeId). This is one transaction because a partially reassigned
+  // identity is worse than retaining the duplicate. FAB/chat/poll children
+  // are merged before deletion so this late migration cannot create orphans
+  // after the earlier fail-closed parent audits have already passed.
+  const duplicateStudentCleanupClient = await schedulerPool.connect();
   try {
+    await duplicateStudentCleanupClient.query("BEGIN");
+    await duplicateStudentCleanupClient.query(`
+      CREATE TEMP TABLE classpilot_duplicate_student_cleanup
+      ON COMMIT DROP AS
+      SELECT DISTINCT ON (duplicate.id)
+        keeper.id AS keeper_id,
+        duplicate.id AS dup_id
+      FROM students keeper
+      JOIN students duplicate
+        ON keeper.email_lc = duplicate.email_lc
+       AND keeper.school_id = duplicate.school_id
+       AND keeper.id <> duplicate.id
+      WHERE keeper.grade_id IS NOT NULL
+        AND duplicate.grade_id IS NULL
+        -- Existing immutable ClassPilot history has more involved uniqueness
+        -- contracts. Retain those rare duplicates for an explicit repair
+        -- instead of deleting a referenced parent during startup.
+        AND NOT EXISTS (SELECT 1 FROM classpilot_session_students row WHERE row.student_id = duplicate.id)
+        AND NOT EXISTS (SELECT 1 FROM classpilot_student_control_states row WHERE row.student_id = duplicate.id)
+        AND NOT EXISTS (SELECT 1 FROM classpilot_supervision_students row WHERE row.student_id = duplicate.id)
+        AND NOT EXISTS (SELECT 1 FROM classpilot_command_targets row WHERE row.student_id = duplicate.id)
+        AND NOT EXISTS (SELECT 1 FROM classpilot_classroom_states row WHERE row.student_id = duplicate.id)
+        AND NOT EXISTS (SELECT 1 FROM classpilot_monitoring_events row WHERE row.student_id = duplicate.id)
+        AND NOT EXISTS (SELECT 1 FROM classpilot_session_student_reports row WHERE row.student_id = duplicate.id)
+      ORDER BY duplicate.id, keeper.created_at, keeper.id
+    `);
+    await duplicateStudentCleanupClient.query(`
+      SELECT student.id
+      FROM students student
+      JOIN (
+        SELECT keeper_id AS id FROM classpilot_duplicate_student_cleanup
+        UNION
+        SELECT dup_id AS id FROM classpilot_duplicate_student_cleanup
+      ) affected ON affected.id = student.id
+      ORDER BY student.id
+      FOR UPDATE OF student
+    `);
     // Reassign heartbeats from duplicate (no gradeId) to surviving (has gradeId) student
     // RLS-exempt pool: cross-school cleanup DML with no request GUC.
-    await schedulerPool.query(`
-      UPDATE heartbeats SET student_id = keeper.id
-      FROM (
-        SELECT s1.id, s2.id AS dup_id
-        FROM students s1
-        JOIN students s2 ON s1.email_lc = s2.email_lc AND s1.school_id = s2.school_id AND s1.id != s2.id
-        WHERE s1.grade_id IS NOT NULL AND s2.grade_id IS NULL
-      ) keeper
-      WHERE heartbeats.student_id = keeper.dup_id
+    await duplicateStudentCleanupClient.query(`
+      UPDATE heartbeats SET student_id = mapping.keeper_id
+      FROM classpilot_duplicate_student_cleanup mapping
+      WHERE heartbeats.student_id = mapping.dup_id
     `);
     // Reassign student_devices without tripping the unique(student_id, device_id) constraint
-    await schedulerPool.query(`
+    await duplicateStudentCleanupClient.query(`
       INSERT INTO student_devices (student_id, device_id, first_seen_at, last_seen_at)
-      SELECT keeper.id, student_devices.device_id, MIN(student_devices.first_seen_at), MAX(student_devices.last_seen_at)
+      SELECT mapping.keeper_id, student_devices.device_id, MIN(student_devices.first_seen_at), MAX(student_devices.last_seen_at)
       FROM student_devices
-      JOIN (
-        SELECT s1.id, s2.id AS dup_id
-        FROM students s1
-        JOIN students s2 ON s1.email_lc = s2.email_lc AND s1.school_id = s2.school_id AND s1.id != s2.id
-        WHERE s1.grade_id IS NOT NULL AND s2.grade_id IS NULL
-      ) keeper ON student_devices.student_id = keeper.dup_id
-      GROUP BY keeper.id, student_devices.device_id
+      JOIN classpilot_duplicate_student_cleanup mapping
+        ON student_devices.student_id = mapping.dup_id
+      GROUP BY mapping.keeper_id, student_devices.device_id
       ON CONFLICT (student_id, device_id) DO NOTHING
     `);
-    await schedulerPool.query(`
+    await duplicateStudentCleanupClient.query(`
       DELETE FROM student_devices
-      USING (
-        SELECT s1.id, s2.id AS dup_id
-        FROM students s1
-        JOIN students s2 ON s1.email_lc = s2.email_lc AND s1.school_id = s2.school_id AND s1.id != s2.id
-        WHERE s1.grade_id IS NOT NULL AND s2.grade_id IS NULL
-      ) keeper
-      WHERE student_devices.student_id = keeper.dup_id
+      USING classpilot_duplicate_student_cleanup mapping
+      WHERE student_devices.student_id = mapping.dup_id
     `);
-    // Reassign student_sessions
-    await schedulerPool.query(`
-      UPDATE student_sessions SET student_id = keeper.id
-      FROM (
-        SELECT s1.id, s2.id AS dup_id
-        FROM students s1
-        JOIN students s2 ON s1.email_lc = s2.email_lc AND s1.school_id = s2.school_id AND s1.id != s2.id
-        WHERE s1.grade_id IS NOT NULL AND s2.grade_id IS NULL
-      ) keeper
-      WHERE student_sessions.student_id = keeper.dup_id
+    // One active session is allowed per canonical student. Rank the keeper and
+    // duplicate identities together before re-parenting so a normal historic
+    // duplicate cannot abort startup on the partial unique index. The freshest
+    // binding remains authoritative; older bindings are ended atomically.
+    await duplicateStudentCleanupClient.query(`
+      WITH ranked AS (
+        SELECT session.id,
+               row_number() OVER (
+                 PARTITION BY COALESCE(mapping.keeper_id, session.student_id)
+                 ORDER BY session.last_seen_at DESC, session.started_at DESC, session.id DESC
+               ) AS ordinal
+        FROM student_sessions session
+        LEFT JOIN classpilot_duplicate_student_cleanup mapping
+          ON mapping.dup_id = session.student_id
+        WHERE session.is_active = true
+          AND (
+            mapping.dup_id IS NOT NULL
+            OR EXISTS (
+              SELECT 1 FROM classpilot_duplicate_student_cleanup keeper
+              WHERE keeper.keeper_id = session.student_id
+            )
+          )
+      )
+      UPDATE student_sessions session
+      SET is_active = false,
+          ended_at = COALESCE(session.ended_at, now())
+      FROM ranked
+      WHERE session.id = ranked.id AND ranked.ordinal > 1
+    `);
+    // Reassign student_sessions after active collisions are terminal.
+    await duplicateStudentCleanupClient.query(`
+      UPDATE student_sessions SET student_id = mapping.keeper_id
+      FROM classpilot_duplicate_student_cleanup mapping
+      WHERE student_sessions.student_id = mapping.dup_id
+    `);
+    // Resolve partial-unique active-hand collisions before re-parenting every
+    // retained active and cleared hand row.
+    await duplicateStudentCleanupClient.query(`
+      WITH ranked AS (
+        SELECT hand.id,
+               first_value(hand.id) OVER (
+                 PARTITION BY COALESCE(mapping.keeper_id, hand.student_id), hand.teaching_session_id
+                 ORDER BY hand.raised_at, hand.id
+               ) AS keeper_hand_id,
+               row_number() OVER (
+                 PARTITION BY COALESCE(mapping.keeper_id, hand.student_id), hand.teaching_session_id
+                 ORDER BY hand.raised_at, hand.id
+               ) AS ordinal
+        FROM classpilot_active_hands hand
+        LEFT JOIN classpilot_duplicate_student_cleanup mapping ON mapping.dup_id = hand.student_id
+        WHERE hand.cleared_at IS NULL
+          AND (
+            mapping.dup_id IS NOT NULL
+            OR EXISTS (
+              SELECT 1 FROM classpilot_duplicate_student_cleanup keeper
+              WHERE keeper.keeper_id = hand.student_id
+            )
+          )
+      )
+      UPDATE classpilot_active_hands hand
+      SET cleared_at = now(), updated_at = now()
+      FROM ranked
+      WHERE hand.id = ranked.id AND ranked.ordinal > 1
+    `);
+    await duplicateStudentCleanupClient.query(`
+      UPDATE classpilot_active_hands hand SET student_id = mapping.keeper_id, updated_at = now()
+      FROM classpilot_duplicate_student_cleanup mapping
+      WHERE hand.student_id = mapping.dup_id
+    `);
+    // Poll answers are first-write-wins. Rank both identities together, mark
+    // later active answers superseded, then re-parent without violating the
+    // partial unique index.
+    await duplicateStudentCleanupClient.query(`
+      WITH ranked AS (
+        SELECT response.id,
+               first_value(response.id) OVER (
+                 PARTITION BY response.poll_id, COALESCE(mapping.keeper_id, response.student_id)
+                 ORDER BY response.created_at, response.id
+               ) AS keeper_response_id,
+               row_number() OVER (
+                 PARTITION BY response.poll_id, COALESCE(mapping.keeper_id, response.student_id)
+                 ORDER BY response.created_at, response.id
+               ) AS ordinal
+        FROM poll_responses response
+        LEFT JOIN classpilot_duplicate_student_cleanup mapping ON mapping.dup_id = response.student_id
+        WHERE response.superseded_at IS NULL
+          AND (
+            mapping.dup_id IS NOT NULL
+            OR EXISTS (
+              SELECT 1 FROM classpilot_duplicate_student_cleanup keeper
+              WHERE keeper.keeper_id = response.student_id
+            )
+          )
+      )
+      UPDATE poll_responses response
+      SET superseded_at = now(),
+          superseded_by_response_id = ranked.keeper_response_id,
+          updated_at = now()
+      FROM ranked
+      WHERE response.id = ranked.id AND ranked.ordinal > 1
+    `);
+    await duplicateStudentCleanupClient.query(`
+      UPDATE poll_responses response SET student_id = mapping.keeper_id, updated_at = now()
+      FROM classpilot_duplicate_student_cleanup mapping
+      WHERE response.student_id = mapping.dup_id
+    `);
+    // The delivery trigger requires exact message/session/student identity, so
+    // re-parent the message immediately before its outbox row in this txn.
+    await duplicateStudentCleanupClient.query(`
+      UPDATE chat_messages message SET student_id = mapping.keeper_id
+      FROM classpilot_duplicate_student_cleanup mapping
+      WHERE message.student_id = mapping.dup_id
+    `);
+    await duplicateStudentCleanupClient.query(`
+      UPDATE classpilot_chat_deliveries delivery
+      SET student_id = mapping.keeper_id, updated_at = now()
+      FROM classpilot_duplicate_student_cleanup mapping
+      WHERE delivery.student_id = mapping.dup_id
     `);
     // Now delete the orphaned duplicates
-    await schedulerPool.query(`
-      DELETE FROM students WHERE id IN (
-        SELECT s2.id FROM students s1
-        JOIN students s2 ON s1.email_lc = s2.email_lc AND s1.school_id = s2.school_id AND s1.id != s2.id
-        WHERE s1.grade_id IS NOT NULL AND s2.grade_id IS NULL
-      )
+    await duplicateStudentCleanupClient.query(`
+      DELETE FROM students student
+      USING classpilot_duplicate_student_cleanup mapping
+      WHERE student.id = mapping.dup_id
     `);
+    await duplicateStudentCleanupClient.query("COMMIT");
     console.log("[migration] Cleaned up duplicate extension-created students (with data reassignment)");
   } catch (err) {
-    console.warn("[migration] Duplicate student cleanup skipped:", (err as Error).message);
+    await duplicateStudentCleanupClient.query("ROLLBACK").catch(() => {});
+    // This is legacy hygiene, not a release schema dependency. Atomic rollback
+    // preserves every original identity/child row when an unenumerated legacy
+    // FK or uniqueness collision is encountered; retain it for explicit repair
+    // without leaving the partial child rewrites that caused the old orphan bug.
+    console.warn("[migration] Duplicate student cleanup rolled back; retained original rows:", (err as Error).message);
+  } finally {
+    duplicateStudentCleanupClient.release();
   }
 
   // Error logs — durable copy of every tracked error (the ErrorMonitor only
