@@ -44,6 +44,7 @@ import {
   getMessagesBySchool,
   getMessageByIdAndSchool,
   deleteMessage,
+  createProductLicense,
 } from "../dist/services/storage.js";
 import {
   scopedDeviceTargets,
@@ -97,6 +98,7 @@ before(async () => {
   schoolB = await createSchool({ name: `${TAG}_B`, domain: `${TAG}-b.example.edu`, slug: `${TAG}-b` } as any);
   schoolShared = await createSchool({ name: `${TAG}_Shared`, domain: `${TAG}-a.example.edu`, slug: `${TAG}-shared` } as any);
   teacher = await createUser({ email: `${TAG}-teacher@example.edu`, firstName: "T", lastName: "Teacher" } as any);
+  await createProductLicense({ schoolId: schoolA.id, product: "CLASSPILOT", status: "active" } as any);
 });
 
 after(async () => {
@@ -128,6 +130,7 @@ after(async () => {
       await db.execute(sql`DELETE FROM passpilot_grade_students WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
       await db.execute(sql`DELETE FROM grades WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
       await db.execute(sql`DELETE FROM students WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
+      await db.execute(sql`DELETE FROM product_licenses WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
       await db.execute(sql`DELETE FROM schools WHERE name LIKE 'xtest_%'`);
       await db.execute(sql`DELETE FROM users WHERE email LIKE 'xtest_%@example.edu'`);
       await db.execute(sql`DELETE FROM users WHERE email LIKE ${`${TAG}%@%`}`);
