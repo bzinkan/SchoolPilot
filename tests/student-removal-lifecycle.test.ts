@@ -189,6 +189,8 @@ after(async () => {
       await db.execute(sql`DROP TRIGGER IF EXISTS ${sql.raw(`${TAG}_rollback_trigger`)} ON students`);
       await db.execute(sql`DROP FUNCTION IF EXISTS ${sql.raw(`${TAG}_rollback_guard`)}()`);
       await db.execute(sql`DELETE FROM mailpilot_watches WHERE school_id IN (${schoolAId}, ${schoolBId})`);
+      await db.execute(sql`DELETE FROM poll_responses WHERE school_id IN (${schoolAId}, ${schoolBId})`);
+      await db.execute(sql`DELETE FROM polls WHERE school_id IN (${schoolAId}, ${schoolBId})`);
       await db.execute(sql`DELETE FROM student_sessions WHERE student_id IN (SELECT id FROM students WHERE school_id IN (${schoolAId}, ${schoolBId}))`);
       await db.execute(sql`DELETE FROM classpilot_active_hands WHERE school_id IN (${schoolAId}, ${schoolBId})`);
       await db.execute(sql`DELETE FROM devices WHERE school_id IN (${schoolAId}, ${schoolBId})`);
@@ -245,6 +247,7 @@ describe("ClassPilot student roster removal lifecycle", () => {
     const subgroupId = `${TAG}_subgroup`;
     const coverageGroupId = `${TAG}_coverage_group`;
     const retainedPassId = `${TAG}_retained_pass`;
+    const retainedPollId = `${TAG}_retained_poll`;
     await inSchool(schoolAId, async () => {
       await db.execute(sql`
         INSERT INTO teaching_sessions
@@ -287,6 +290,19 @@ describe("ClassPilot student roster removal lifecycle", () => {
           (school_id, teaching_session_id, student_id, device_id)
         VALUES
           (${schoolAId}, ${teachingSessionId}, ${student.id}, ${`${TAG}-device-hand`})
+      `);
+      await db.execute(sql`
+        INSERT INTO polls
+          (id, school_id, session_id, teacher_id, question, options, is_active)
+        VALUES
+          (${retainedPollId}, ${schoolAId}, ${teachingSessionId}, ${teacher.id},
+           'Retained answer', ARRAY['Yes', 'No']::text[], false)
+      `);
+      await db.execute(sql`
+        INSERT INTO poll_responses
+          (school_id, poll_id, student_id, selected_option)
+        VALUES
+          (${schoolAId}, ${retainedPollId}, ${student.id}, 0)
       `);
       await db.execute(sql`
         INSERT INTO passes
@@ -375,12 +391,14 @@ describe("ClassPilot student roster removal lifecycle", () => {
       SELECT
         (SELECT count(*)::int FROM subgroup_members WHERE subgroup_id = ${subgroupId}) AS subgroup_count,
         (SELECT count(*)::int FROM classpilot_coverage_scope_group_members WHERE coverage_group_id = ${coverageGroupId}) AS coverage_count,
-        (SELECT count(*)::int FROM classpilot_active_hands WHERE teaching_session_id = ${teachingSessionId}) AS hand_count
+        (SELECT count(*)::int FROM classpilot_active_hands WHERE teaching_session_id = ${teachingSessionId}) AS hand_count,
+        (SELECT count(*)::int FROM poll_responses WHERE poll_id = ${retainedPollId} AND student_id = ${student.id}) AS poll_response_count
     `));
     assert.deepEqual(retainedOperationalRows.rows[0], {
       subgroup_count: 1,
       coverage_count: 1,
       hand_count: 1,
+      poll_response_count: 1,
     });
     await assert.rejects(
       inSchool(schoolAId, () => assignTeacherStudent(teacher.id, student.id)),

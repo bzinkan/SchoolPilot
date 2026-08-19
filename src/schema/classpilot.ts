@@ -13,6 +13,7 @@ import {
   jsonb,
   foreignKey,
 } from "drizzle-orm/pg-core";
+import { students } from "./students.js";
 
 // ============================================================================
 // Devices - ClassPilot Chromebook registration
@@ -1246,9 +1247,15 @@ export const pollResponses = pgTable(
   (table) => [
     index("poll_responses_poll_id_idx").on(table.pollId),
     index("poll_responses_school_poll_idx").on(table.schoolId, table.pollId),
+    index("poll_responses_school_student_idx").on(table.schoolId, table.studentId),
     uniqueIndex("poll_responses_poll_student_active_unique")
       .on(table.pollId, table.studentId)
       .where(sql`superseded_at IS NULL`),
+    foreignKey({
+      columns: [table.schoolId, table.studentId],
+      foreignColumns: [students.schoolId, students.id],
+      name: "poll_responses_school_student_fk",
+    }).onDelete("restrict"),
   ]
 );
 

@@ -2137,6 +2137,33 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`ALTER TABLE poll_responses ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`);
     await pool.query(`ALTER TABLE poll_responses ADD COLUMN IF NOT EXISTS superseded_at TIMESTAMPTZ`);
     await pool.query(`ALTER TABLE poll_responses ADD COLUMN IF NOT EXISTS superseded_by_response_id VARCHAR`);
+    // Older releases could hard-delete a student while retaining their poll
+    // response. With the identity parent gone, that answer can no longer be
+    // attributed or repaired, so remove only this proven legacy orphan before
+    // the parent trigger is (re)installed. Keep every row that exposes another
+    // invariant violation: a response bound to a missing/mismatched poll, an
+    // existing student in another school, or an existing cross-school device
+    // remains for the fail-closed catalog audit below.
+    const removedLegacyOrphanPollResponses = await schedulerPool.query(`
+      DELETE FROM poll_responses response
+      USING polls poll
+      WHERE response.poll_id = poll.id
+        AND (response.school_id IS NULL OR response.school_id = poll.school_id)
+        AND NOT EXISTS (
+          SELECT 1 FROM students any_student
+          WHERE any_student.id = response.student_id
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM devices cross_school_device
+          WHERE cross_school_device.device_id = response.device_id
+            AND cross_school_device.school_id <> poll.school_id
+        )
+    `);
+    if ((removedLegacyOrphanPollResponses.rowCount ?? 0) > 0) {
+      console.log(
+        `[migration] Removed ${removedLegacyOrphanPollResponses.rowCount} legacy poll responses whose student no longer exists`
+      );
+    }
     await schedulerPool.query(`
       UPDATE poll_responses response SET school_id = poll.school_id
       FROM polls poll WHERE response.poll_id = poll.id AND response.school_id IS NULL
@@ -2201,6 +2228,7 @@ export async function runStartupMigrations(): Promise<void> {
     `);
     await pool.query(`ALTER TABLE poll_responses ALTER COLUMN school_id SET NOT NULL`);
     await pool.query(`CREATE INDEX IF NOT EXISTS poll_responses_school_poll_idx ON poll_responses (school_id, poll_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS poll_responses_school_student_idx ON poll_responses (school_id, student_id)`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS poll_responses_poll_student_active_unique ON poll_responses (poll_id, student_id) WHERE superseded_at IS NULL`);
     const invalidPollResponseParents = await schedulerPool.query<{ count: number }>(`
       SELECT count(*)::integer AS count
@@ -2218,6 +2246,30 @@ export async function runStartupMigrations(): Promise<void> {
     if (Number(invalidPollResponseParents.rows[0]?.count || 0) !== 0) {
       throw new Error("ClassPilot poll-response parent tenant verification failed");
     }
+    // Child validation prevents bad response writes; the composite FK also
+    // prevents a future raw student hard-delete from recreating the legacy
+    // orphan class. Supported roster removal is a soft deactivation, and the
+    // duplicate-student migration reparents responses before deleting a row.
+    await schedulerPool.query(`
+      DO $classpilot_poll_response_student_fk$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = 'poll_responses_school_student_fk'
+            AND conrelid = 'poll_responses'::regclass
+        ) THEN
+          ALTER TABLE poll_responses
+            ADD CONSTRAINT poll_responses_school_student_fk
+            FOREIGN KEY (school_id, student_id)
+            REFERENCES students (school_id, id)
+            ON DELETE RESTRICT
+            NOT VALID;
+        END IF;
+      END
+      $classpilot_poll_response_student_fk$;
+      ALTER TABLE poll_responses
+        VALIDATE CONSTRAINT poll_responses_school_student_fk;
+    `);
     const requiredFabColumns = await pool.query<{ table_name: string; column_name: string }>(`
       SELECT table_name, column_name
       FROM information_schema.columns
@@ -2252,12 +2304,23 @@ export async function runStartupMigrations(): Promise<void> {
       "polls_start_command_unique",
       "polls_close_command_unique",
       "poll_responses_school_poll_idx",
+      "poll_responses_school_student_idx",
       "poll_responses_poll_student_active_unique",
       "session_settings_school_session_idx",
       "messages_command_student_unique",
     ]]);
-    if (requiredFabIndexes.rowCount !== 11) {
+    if (requiredFabIndexes.rowCount !== 12) {
       throw new Error("ClassPilot FAB release-critical index verification failed");
+    }
+    const requiredFabConstraints = await pool.query<{ conname: string }>(`
+      SELECT conname FROM pg_constraint
+      WHERE conrelid = 'poll_responses'::regclass
+        AND conname = 'poll_responses_school_student_fk'
+        AND contype = 'f'
+        AND convalidated = true
+    `);
+    if (requiredFabConstraints.rowCount !== 1) {
+      throw new Error("ClassPilot FAB release-critical constraint verification failed");
     }
     const requiredFabTriggers = await pool.query<{ tgname: string }>(`
       SELECT tgname FROM pg_trigger
