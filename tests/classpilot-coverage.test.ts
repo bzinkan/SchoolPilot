@@ -7,21 +7,30 @@ import { sql } from "drizzle-orm";
 import db, { pool } from "../dist/db.js";
 import { runWithTenantContext } from "../dist/middleware/tenantContext.js";
 import { signUserToken } from "../dist/services/jwt.js";
+import { createStudentToken } from "../dist/services/deviceJwt.js";
 import {
   addGroupStudentsDetailed,
+  acknowledgeClasspilotStudentControlState,
   createCoverageAssignment,
   createCoverageScopeGroup,
+  createFlightPath,
+  deleteFlightPath,
+  createBlockList,
+  deleteBlockList,
   createClasspilotCommandWithTargets,
   createDevice,
+  deleteDevice,
   createGroup,
   createMembership,
   createProductLicense,
+  createPollResponseFirstWrite,
   createSchool,
   createStudent,
   createSupervisionContextWithStudents,
   createTeachingSession,
   createOrReuseScheduledReportSession,
   createUser,
+  endStudentSession,
   endTeachingSession,
   expireClasspilotTransientCommandTargets,
   getActiveClassOwnersForStudents,
@@ -38,6 +47,8 @@ import {
   getClasspilotStudentControlState,
   getClasspilotCommandByIdAndSchool,
   getActiveClasspilotClassroomStates,
+  getActiveHandsForStudent,
+  getActiveHandsBySession,
   getPendingMessagesForStudent,
   getRecentMessagesForStudent,
   getGroupStudents,
@@ -60,11 +71,19 @@ import {
   updateClasspilotCommandSummary,
   updateEnrollmentSettings,
   updateGroup,
+  upsertClasspilotActiveHand,
+  upsertSessionSettings,
+  clearClasspilotActiveHand,
   upsertSettings,
   upsertClasspilotClassroomStates,
   withClasspilotCommandBroadcastLock,
+  withClasspilotSupervisionTelemetryAuthority,
 } from "../dist/services/storage.js";
-import { executeClasspilotCommand } from "../dist/services/classpilotCommandDispatcher.js";
+import { buildStudentFabState } from "../dist/services/classpilotFab.js";
+import {
+  executeClasspilotCommand,
+  normalizeCommandPayload,
+} from "../dist/services/classpilotCommandDispatcher.js";
 import {
   expireScheduledClassConflictsForSchool,
   processScheduledClassAutoStart,
@@ -158,6 +177,15 @@ async function ensureCoverageTables() {
   await db.execute(sql`ALTER TABLE teaching_sessions ADD COLUMN IF NOT EXISTS scheduled_conflict_id TEXT`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS teaching_sessions_session_mode_idx ON teaching_sessions (session_mode)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS teaching_sessions_scheduled_conflict_idx ON teaching_sessions (scheduled_conflict_id)`);
+  await db.execute(sql`ALTER TABLE messages ADD COLUMN IF NOT EXISTS school_id TEXT`);
+  await db.execute(sql`ALTER TABLE messages ADD COLUMN IF NOT EXISTS command_id VARCHAR`);
+  await db.execute(sql`ALTER TABLE messages ADD COLUMN IF NOT EXISTS teaching_session_id VARCHAR`);
+  await db.execute(sql`ALTER TABLE messages ADD COLUMN IF NOT EXISTS supervision_context_id VARCHAR`);
+  await db.execute(sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS messages_command_student_unique
+    ON messages (command_id, to_student_id)
+    WHERE command_id IS NOT NULL AND to_student_id IS NOT NULL
+  `);
 
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS classpilot_commands (
@@ -439,6 +467,13 @@ after(async () => {
         await db.execute(sql`DELETE FROM classpilot_coverage_scope_groups WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM classpilot_scheduled_conflicts WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM classpilot_session_summary_deliveries WHERE school_id = ${school.id}`);
+        await db.execute(sql`DELETE FROM poll_responses WHERE school_id = ${school.id}`);
+        await db.execute(sql`DELETE FROM polls WHERE school_id = ${school.id}`);
+        await db.execute(sql`DELETE FROM classpilot_chat_deliveries WHERE school_id = ${school.id}`);
+        await db.execute(sql`DELETE FROM chat_messages WHERE school_id = ${school.id}`);
+        await db.execute(sql`DELETE FROM messages WHERE school_id = ${school.id}`);
+        await db.execute(sql`DELETE FROM classpilot_active_hands WHERE school_id = ${school.id}`);
+        await db.execute(sql`DELETE FROM session_settings WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM classpilot_command_targets WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM classpilot_commands WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM student_sessions WHERE student_id IN (SELECT id FROM students WHERE school_id = ${school.id}) OR device_id LIKE ${`${TAG}-%`}`);
@@ -469,6 +504,347 @@ after(async () => {
 });
 
 describe("ClassPilot supervision coverage storage contracts", () => {
+  it("returns immediate 403 for revoked staff and device ingest entitlements", async () => {
+    const studentToken = createStudentToken({
+      schoolId: school.id,
+      studentId: studentDeviceGuard.id,
+      deviceId: deviceGuard,
+      sessionId: sessionGuard.id,
+      studentEmail: studentDeviceGuard.email,
+    });
+    const deviceAuth = { authorization: `Bearer ${studentToken}` };
+    try {
+      await asSystem(() => db.execute(sql`
+        UPDATE schools SET disabled_at = now() WHERE id = ${school.id}
+      `));
+      const disabledScreenshot = await requestJson(
+        "POST",
+        "/classpilot/device/screenshot",
+        { screenshot: "data:image/jpeg;base64,AA==" },
+        deviceAuth
+      );
+      assert.equal(disabledScreenshot.status, 403);
+      assert.equal(disabledScreenshot.body.code, "CLASSPILOT_NOT_ENTITLED");
+      const disabledStatus = await requestJson(
+        "POST",
+        "/classpilot/school/status",
+        { studentToken }
+      );
+      assert.equal(disabledStatus.status, 403);
+      assert.equal(disabledStatus.body.code, "CLASSPILOT_NOT_ENTITLED");
+      assert.equal(disabledStatus.body.reason, "school_inactive");
+      assert.equal(disabledStatus.body.planStatus, "inactive");
+      const publicDisabledStatus = await requestJson(
+        "POST",
+        "/classpilot/school/status",
+        { studentEmail: studentDeviceGuard.email }
+      );
+      assert.equal(publicDisabledStatus.status, 200);
+      assert.deepEqual(publicDisabledStatus.body, {
+        schoolActive: false,
+        schoolSessionVersion: 1,
+      });
+      const disabledExtensionRegistration = await requestJson(
+        "POST",
+        "/classpilot/extension/register",
+        {
+          deviceId: `${TAG}-disabled-extension-register`,
+          studentEmail: studentDeviceGuard.email,
+          schoolId: school.id,
+        }
+      );
+      assert.equal(disabledExtensionRegistration.status, 403);
+      assert.equal(disabledExtensionRegistration.body.code, "CLASSPILOT_NOT_ENTITLED");
+      assert.equal(disabledExtensionRegistration.body.reason, "school_inactive");
+      const disabledEmailIdLogin = await requestJson(
+        "POST",
+        "/classpilot/extension/student-login",
+        {
+          deviceId: `${TAG}-disabled-email-id-login`,
+          studentEmail: studentDeviceGuard.email,
+          studentIdNumber: "does-not-matter",
+        }
+      );
+      assert.equal(disabledEmailIdLogin.status, 403);
+      assert.equal(disabledEmailIdLogin.body.code, "CLASSPILOT_NOT_ENTITLED");
+      const disabledPinLogin = await requestJson(
+        "POST",
+        "/classpilot/extension/student-login",
+        {
+          deviceId: `${TAG}-disabled-pin-login`,
+          schoolId: school.id,
+          studentId: studentDeviceGuard.id,
+          pin: "0000",
+        }
+      );
+      assert.equal(disabledPinLogin.status, 403);
+      assert.equal(disabledPinLogin.body.code, "CLASSPILOT_NOT_ENTITLED");
+
+      await asSystem(() => db.execute(sql`
+        UPDATE schools SET disabled_at = NULL, is_active = false WHERE id = ${school.id}
+      `));
+      const inactiveCommand = await requestJson("POST", "/commands", {}, authFor(teacher, school.id));
+      assert.equal(inactiveCommand.status, 403);
+      assert.equal(inactiveCommand.body.code, "CLASSPILOT_NOT_ENTITLED");
+
+      await asSystem(() => db.execute(sql`
+        UPDATE schools SET is_active = true, status = 'inactive' WHERE id = ${school.id}
+      `));
+      const inactiveStatus = await requestJson("POST", "/commands", {}, authFor(teacher, school.id));
+      assert.equal(inactiveStatus.status, 403);
+      assert.equal(inactiveStatus.body.code, "CLASSPILOT_NOT_ENTITLED");
+
+      await asSystem(async () => {
+        await db.execute(sql`UPDATE schools SET status = 'active' WHERE id = ${school.id}`);
+        await db.execute(sql`
+          UPDATE product_licenses
+          SET status = 'inactive'
+          WHERE school_id = ${school.id} AND product = 'CLASSPILOT'
+        `);
+      });
+      const unlicensedEvent = await requestJson(
+        "POST",
+        "/classpilot/device/event",
+        {},
+        deviceAuth
+      );
+      assert.equal(unlicensedEvent.status, 403);
+      assert.equal(unlicensedEvent.body.code, "CLASSPILOT_NOT_ENTITLED");
+      const unlicensedStatus = await requestJson(
+        "POST",
+        "/classpilot/school/status",
+        { studentToken }
+      );
+      assert.equal(unlicensedStatus.status, 403);
+      assert.equal(unlicensedStatus.body.code, "CLASSPILOT_NOT_ENTITLED");
+      assert.equal(unlicensedStatus.body.reason, "license_inactive");
+      assert.equal(unlicensedStatus.body.planStatus, "inactive");
+      const unlicensedLegacyRegistration = await requestJson(
+        "POST",
+        "/classpilot/register-student",
+        {
+          deviceId: `${TAG}-unlicensed-legacy-register`,
+          studentEmail: studentDeviceGuard.email,
+          schoolId: school.id,
+        }
+      );
+      assert.equal(unlicensedLegacyRegistration.status, 403);
+      assert.equal(unlicensedLegacyRegistration.body.code, "CLASSPILOT_NOT_ENTITLED");
+      assert.equal(unlicensedLegacyRegistration.body.reason, "license_inactive");
+    } finally {
+      await asSystem(async () => {
+        await db.execute(sql`
+          UPDATE schools
+          SET disabled_at = NULL, is_active = true, status = 'active'
+          WHERE id = ${school.id}
+        `);
+        await db.execute(sql`
+          UPDATE product_licenses
+          SET status = 'active'
+          WHERE school_id = ${school.id} AND product = 'CLASSPILOT'
+        `);
+      });
+    }
+  });
+
+  it("raises one active hand idempotently under concurrent retries", async () => {
+    const group = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: teacher.id,
+      name: `${TAG}_Concurrent_Hand`,
+      groupType: "admin_class",
+      status: "active",
+    } as any));
+    await inSchool(school.id, () => addGroupStudentsDetailed(group.id, [studentUnassigned.id]));
+    const session = await inSchool(school.id, () => createTeachingSession({
+      groupId: group.id,
+      teacherId: teacher.id,
+    }));
+    const expiresAt = new Date(Date.now() + 60_000);
+    try {
+      const attempts = await Promise.all(Array.from({ length: 16 }, () =>
+        inSchool(school.id, () => upsertClasspilotActiveHand({
+          schoolId: school.id,
+          teachingSessionId: session.id,
+          studentId: studentUnassigned.id,
+          deviceId: deviceUnassigned,
+          raisedAt: new Date(),
+          expiresAt,
+          clearedAt: null,
+        }))
+      ));
+      assert.equal(new Set(attempts.map((row) => row.id)).size, 1);
+      const active = await inSchool(school.id, () =>
+        getActiveHandsForStudent(school.id, studentUnassigned.id)
+      );
+      assert.equal(active.length, 1);
+      assert.equal(active[0]?.teachingSessionId, session.id);
+    } finally {
+      await inSchool(school.id, () => clearClasspilotActiveHand({
+        schoolId: school.id,
+        teachingSessionId: session.id,
+        studentId: studentUnassigned.id,
+      }));
+      await inSchool(school.id, () => endTeachingSession(session.id));
+    }
+  });
+
+  it("clears a raised hand when classroom ownership moves to a replacement session", async () => {
+    const groupA = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: teacher.id,
+      name: `${TAG}_Hand_Owner_A`,
+      groupType: "admin_class",
+      status: "active",
+    } as any));
+    const groupB = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: admin.id,
+      name: `${TAG}_Hand_Owner_B`,
+      groupType: "admin_class",
+      status: "active",
+    } as any));
+    await inSchool(school.id, () => addGroupStudentsDetailed(groupA.id, [studentUnassigned.id]));
+    await inSchool(school.id, () => addGroupStudentsDetailed(groupB.id, [studentUnassigned.id]));
+    const sessionA = await inSchool(school.id, () => createTeachingSession({
+      groupId: groupA.id,
+      teacherId: teacher.id,
+    }));
+    let sessionB: Awaited<ReturnType<typeof createTeachingSession>> | undefined;
+    try {
+      const hand = await inSchool(school.id, () => upsertClasspilotActiveHand({
+        schoolId: school.id,
+        teachingSessionId: sessionA.id,
+        studentId: studentUnassigned.id,
+        deviceId: deviceUnassigned,
+        expiresAt: new Date(Date.now() + 60_000),
+      } as any));
+      assert.equal(hand.clearedAt, null);
+
+      sessionB = await inSchool(school.id, () => createTeachingSession({
+        groupId: groupB.id,
+        teacherId: admin.id,
+      }));
+      const [studentHands, formerTeacherHands, fab] = await inSchool(school.id, () => Promise.all([
+        getActiveHandsForStudent(school.id, studentUnassigned.id),
+        getActiveHandsBySession(school.id, sessionA.id),
+        buildStudentFabState(school.id, studentUnassigned.id),
+      ]));
+      assert.deepEqual(studentHands, []);
+      assert.deepEqual(formerTeacherHands, []);
+      assert.equal(fab.handRaised, false);
+      assert.deepEqual(fab.activeHands, []);
+      assert.deepEqual(fab.activeSessionIds, [sessionB.id]);
+      const retained = await inSchool(school.id, () => db.execute(sql`
+        SELECT cleared_at FROM classpilot_active_hands WHERE id = ${hand.id}
+      `));
+      assert.ok((retained.rows[0] as any)?.cleared_at);
+    } finally {
+      if (sessionB) await inSchool(school.id, () => endTeachingSession(sessionB!.id));
+      await inSchool(school.id, () => endTeachingSession(sessionA.id));
+    }
+  });
+
+  it("clears active hands before device deletion while retaining historical hand rows", async () => {
+    const handDeviceId = `${TAG}-historical-hand-device`;
+    await inSchool(school.id, () => createDevice({
+      deviceId: handDeviceId,
+      schoolId: school.id,
+      classId: "default",
+      deviceName: "Historical Hand",
+    } as any));
+    const group = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: teacher.id,
+      name: `${TAG}_Historical_Hand`,
+      groupType: "admin_class",
+      status: "active",
+    } as any));
+    await inSchool(school.id, () => addGroupStudentsDetailed(group.id, [studentUnassigned.id]));
+    const session = await inSchool(school.id, () => createTeachingSession({
+      groupId: group.id,
+      teacherId: teacher.id,
+    }));
+    try {
+      const hand = await inSchool(school.id, () => upsertClasspilotActiveHand({
+        schoolId: school.id,
+        teachingSessionId: session.id,
+        studentId: studentUnassigned.id,
+        deviceId: handDeviceId,
+      } as any));
+      assert.equal(hand.clearedAt, null);
+      assert.equal(await inSchool(school.id, () => deleteDevice(handDeviceId)), true);
+      const retained = await inSchool(school.id, () => db.execute(sql`
+        SELECT cleared_at
+        FROM classpilot_active_hands
+        WHERE id = ${hand.id}
+      `));
+      assert.ok((retained.rows[0] as any)?.cleared_at);
+    } finally {
+      await inSchool(school.id, () => endTeachingSession(session.id));
+    }
+  });
+
+  it("returns 404 semantics for another teacher's Flight Path or block list", async () => {
+    const foreignFlightPath = await inSchool(school.id, () => createFlightPath({
+      schoolId: school.id,
+      teacherId: admin.id,
+      flightPathName: `${TAG}_Foreign_Flight_Path`,
+      allowedDomains: ["example.edu"],
+    }));
+    const foreignBlockList = await inSchool(school.id, () => createBlockList({
+      schoolId: school.id,
+      teacherId: admin.id,
+      name: `${TAG}_Foreign_Block_List`,
+      blockedDomains: ["blocked.example"],
+    }));
+    try {
+      await assert.rejects(
+        () => inSchool(school.id, () => normalizeCommandPayload(
+          "apply-flight-path",
+          { flightPathId: foreignFlightPath.id },
+          school.id,
+          teacher.id
+        )),
+        (error: any) => error?.status === 404 && error?.message === "Flight Path not found"
+      );
+      await assert.rejects(
+        () => inSchool(school.id, () => normalizeCommandPayload(
+          "apply-block-list",
+          { blockListId: foreignBlockList.id },
+          school.id,
+          teacher.id
+        )),
+        (error: any) => error?.status === 404 && error?.message === "Block List not found"
+      );
+    } finally {
+      await inSchool(school.id, () => deleteFlightPath(foreignFlightPath.id, school.id));
+      await inSchool(school.id, () => deleteBlockList(foreignBlockList.id, school.id));
+    }
+  });
+
+  it("rejects applying an empty draft Flight Path with a stable resource error", async () => {
+    const emptyFlightPath = await inSchool(school.id, () => createFlightPath({
+      schoolId: school.id,
+      teacherId: teacher.id,
+      flightPathName: `${TAG}_Empty_Flight_Path`,
+      allowedDomains: [],
+    }));
+    try {
+      await assert.rejects(
+        () => inSchool(school.id, () => normalizeCommandPayload(
+          "apply-flight-path",
+          { flightPathId: emptyFlightPath.id },
+          school.id,
+          teacher.id
+        )),
+        (error: any) => error?.status === 409 && error?.code === "FLIGHT_PATH_EMPTY"
+      );
+    } finally {
+      await inSchool(school.id, () => deleteFlightPath(emptyFlightPath.id, school.id));
+    }
+  });
+
   it("batch-loads active student sessions within the requested school", async () => {
     const sessions = await inSchool(school.id, () => getActiveSessionsForStudents(
       school.id,
@@ -1275,7 +1651,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.equal(oldCommand.body.summary.requested, 1);
     assert.equal(oldCommand.body.summary.unavailable, 1);
     assert.equal(oldCommand.body.summary.sent, 0);
-    assert.match(oldCommand.body.command.targets[0].errorMessage, /active in/);
+    assert.match(oldCommand.body.command.targets[0].errorMessage, /active in|authority changed before dispatch/);
 
     const newCommand = await requestJson("POST", "/commands", {
       teachingSessionId: newSession.id,
@@ -2306,6 +2682,382 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     }));
   });
 
+  it("publishes claimed-student telemetry only to the exact active assigned staff binding", async () => {
+    const context = await inSchool(school.id, () => createSupervisionContextWithStudents({
+      context: {
+        schoolId: school.id,
+        contextType: "office",
+        name: "Coverage Telemetry Authority",
+        status: "active",
+        assignedStaffId: coverageStaff.id,
+        createdBy: admin.id,
+        endsAt: new Date(Date.now() + 60 * 60 * 1000),
+      },
+      studentIds: [studentUnassigned.id],
+      assignedBy: admin.id,
+      source: "admin_reroute",
+    }));
+    try {
+      const [binding, control] = await inSchool(school.id, () => Promise.all([
+        getActiveSessionByStudent(studentUnassigned.id),
+        getClasspilotStudentControlState(school.id, studentUnassigned.id),
+      ]));
+      assert.ok(binding);
+      assert.equal(control?.supervisionContextId, context.id);
+      let recipient: string | undefined;
+      const accepted = await inSchool(school.id, () =>
+        withClasspilotSupervisionTelemetryAuthority({
+          schoolId: school.id,
+          supervisionContextId: context.id,
+          studentId: studentUnassigned.id,
+          studentSessionId: binding!.id,
+          deviceId: binding!.deviceId,
+          controlRevision: control!.revision,
+        }, (target) => {
+          recipient = target.assignedStaffId;
+          return "published";
+        })
+      );
+      assert.equal(accepted, "published");
+      assert.equal(recipient, coverageStaff.id);
+      const staleRevision = await inSchool(school.id, () =>
+        withClasspilotSupervisionTelemetryAuthority({
+          schoolId: school.id,
+          supervisionContextId: context.id,
+          studentId: studentUnassigned.id,
+          studentSessionId: binding!.id,
+          deviceId: binding!.deviceId,
+          controlRevision: control!.revision - 1,
+        }, () => "must-not-publish")
+      );
+      assert.equal(staleRevision, undefined);
+      await inSchool(school.id, () => endStudentSession(binding!.id));
+      const signedOut = await inSchool(school.id, () =>
+        withClasspilotSupervisionTelemetryAuthority({
+          schoolId: school.id,
+          supervisionContextId: context.id,
+          studentId: studentUnassigned.id,
+          studentSessionId: binding!.id,
+          deviceId: binding!.deviceId,
+          controlRevision: control!.revision,
+          allowEndedBinding: true,
+        }, (target) => target.assignedStaffId)
+      );
+      assert.equal(signedOut, coverageStaff.id, "the exact just-ended binding can publish its tombstone");
+      await inSchool(school.id, () => setActiveStudentForDevice(deviceUnassigned, studentUnassigned.id));
+      const staleSignedOut = await inSchool(school.id, () =>
+        withClasspilotSupervisionTelemetryAuthority({
+          schoolId: school.id,
+          supervisionContextId: context.id,
+          studentId: studentUnassigned.id,
+          studentSessionId: binding!.id,
+          deviceId: binding!.deviceId,
+          controlRevision: control!.revision,
+          allowEndedBinding: true,
+        }, () => "must-not-publish")
+      );
+      assert.equal(staleSignedOut, undefined, "a replacement binding suppresses an old offline tombstone");
+      await inSchool(school.id, () => releaseSupervisionStudents({
+        schoolId: school.id,
+        contextId: context.id,
+        releaseReason: "test_release",
+      }));
+      const afterRelease = await inSchool(school.id, () =>
+        withClasspilotSupervisionTelemetryAuthority({
+          schoolId: school.id,
+          supervisionContextId: context.id,
+          studentId: studentUnassigned.id,
+          studentSessionId: binding!.id,
+          deviceId: binding!.deviceId,
+          controlRevision: control!.revision,
+        }, () => "must-not-publish")
+      );
+      assert.equal(afterRelease, undefined);
+    } finally {
+      await inSchool(school.id, () => releaseSupervisionStudents({
+        schoolId: school.id,
+        contextId: context.id,
+        releaseReason: "test_cleanup",
+      }));
+    }
+  });
+
+  it("revalidates coverage actor, frozen membership, and exact binding in the command transaction", async () => {
+    const context = await inSchool(school.id, () => createSupervisionContextWithStudents({
+      context: {
+        schoolId: school.id,
+        contextType: "office",
+        name: "Coverage Command Authority Race",
+        status: "active",
+        assignedStaffId: coverageStaff.id,
+        createdBy: admin.id,
+        endsAt: new Date(Date.now() + 60 * 60 * 1000),
+      },
+      studentIds: [studentUnassigned.id, studentCoverage.id],
+      assignedBy: admin.id,
+      source: "admin_reroute",
+    }));
+    try {
+      const [unassignedBinding, coverageBinding] = await inSchool(school.id, () =>
+        Promise.all([
+          getActiveSessionByStudent(studentUnassigned.id),
+          getActiveSessionByStudent(studentCoverage.id),
+        ])
+      );
+      assert.ok(unassignedBinding && coverageBinding);
+
+      await assert.rejects(
+        () => inSchool(school.id, () => executeClasspilotCommand({
+          schoolId: school.id,
+          actorId: teacher.id,
+          supervisionContextId: context.id,
+          targetScope: "students",
+          commandType: "open-tab",
+          rawCommandPayload: { url: "https://example.com/unauthorized" },
+          targets: [{
+            studentId: studentUnassigned.id,
+            studentName: "Unassigned Student",
+            studentSessionId: unassignedBinding!.id,
+            deviceId: unassignedBinding!.deviceId,
+            available: true,
+          }],
+          supervisionActorIsAdmin: false,
+        })),
+        (error: any) => error?.code === "COMMAND_ACTOR_AUTHORITY_STALE"
+      );
+
+      const adminCommand = await inSchool(school.id, () => executeClasspilotCommand({
+        schoolId: school.id,
+        actorId: admin.id,
+        supervisionContextId: context.id,
+        targetScope: "students",
+        commandType: "open-tab",
+        rawCommandPayload: { url: "https://example.com/admin" },
+        targets: [{
+          studentId: studentCoverage.id,
+          studentName: "Coverage Student",
+          studentSessionId: coverageBinding!.id,
+          deviceId: coverageBinding!.deviceId,
+          available: true,
+        }],
+        supervisionActorIsAdmin: true,
+      }));
+      assert.equal(adminCommand.command.targets[0]?.status, "sent");
+
+      await inSchool(school.id, () => releaseSupervisionStudents({
+        schoolId: school.id,
+        contextId: context.id,
+        studentIds: [studentUnassigned.id],
+        releaseReason: "race_before_commit",
+      }));
+      const staleTarget = await inSchool(school.id, () => executeClasspilotCommand({
+        schoolId: school.id,
+        actorId: coverageStaff.id,
+        supervisionContextId: context.id,
+        targetScope: "students",
+        commandType: "open-tab",
+        rawCommandPayload: { url: "https://example.com/stale" },
+        targets: [{
+          studentId: studentUnassigned.id,
+          studentName: "Unassigned Student",
+          studentSessionId: unassignedBinding!.id,
+          deviceId: unassignedBinding!.deviceId,
+          available: true,
+        }],
+        supervisionActorIsAdmin: false,
+      }));
+      assert.equal(staleTarget.command.targets[0]?.status, "unavailable");
+      assert.equal(staleTarget.command.targets[0]?.deviceId, null);
+      assert.match(staleTarget.command.targets[0]?.errorMessage || "", /authority changed before dispatch/);
+      assert.equal(staleTarget.summary.attempted, 0);
+    } finally {
+      await inSchool(school.id, () => releaseSupervisionStudents({
+        schoolId: school.id,
+        contextId: context.id,
+        releaseReason: "test_release",
+      }));
+    }
+  });
+
+  it("revalidates immutable teaching-session staff inside command creation", async () => {
+    const group = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: teacher.id,
+      name: `${TAG}_Command_Actor_Race`,
+      groupType: "admin_class",
+      status: "active",
+    } as any));
+    await inSchool(school.id, () => addGroupStudentsDetailed(group.id, [studentUnassigned.id]));
+    const teachingSession = await inSchool(school.id, () => createTeachingSession({
+      groupId: group.id,
+      teacherId: teacher.id,
+    }));
+    try {
+      const binding = await inSchool(school.id, () => getActiveSessionByStudent(studentUnassigned.id));
+      assert.ok(binding);
+      await assert.rejects(
+        () => inSchool(school.id, () => executeClasspilotCommand({
+          schoolId: school.id,
+          actorId: coverageStaff.id,
+          teachingSessionId: teachingSession.id,
+          targetScope: "students",
+          commandType: "open-tab",
+          rawCommandPayload: { url: "https://example.com/not-session-staff" },
+          targets: [{
+            studentId: studentUnassigned.id,
+            studentName: "Unassigned Student",
+            studentSessionId: binding!.id,
+            deviceId: binding!.deviceId,
+            available: true,
+          }],
+        })),
+        (error: any) => error?.code === "COMMAND_ACTOR_AUTHORITY_STALE"
+      );
+    } finally {
+      await inSchool(school.id, () => endTeachingSession(teachingSession.id));
+    }
+  });
+
+  it("linearizes command and FAB settings mutations behind entitlement revocation", async () => {
+    const group = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: teacher.id,
+      name: `${TAG}_Entitlement_Race`,
+      groupType: "admin_class",
+      status: "active",
+    } as any));
+    await inSchool(school.id, () => addGroupStudentsDetailed(group.id, [studentDeviceGuard.id]));
+    const teachingSession = await inSchool(school.id, () => createTeachingSession({
+      groupId: group.id,
+      teacherId: teacher.id,
+    }));
+    const binding = await inSchool(school.id, () => getActiveSessionByStudent(studentDeviceGuard.id));
+    assert.ok(binding);
+    const revocation = await pool.connect();
+    try {
+      await revocation.query("BEGIN");
+      await revocation.query(`
+        UPDATE product_licenses
+        SET status = 'inactive'
+        WHERE school_id = $1 AND product = 'CLASSPILOT'
+      `, [school.id]);
+
+      const commandAttempt = inSchool(school.id, () => executeClasspilotCommand({
+        schoolId: school.id,
+        actorId: teacher.id,
+        teachingSessionId: teachingSession.id,
+        targetScope: "students",
+        commandType: "open-tab",
+        rawCommandPayload: { url: "https://example.com/revocation-race" },
+        targets: [{
+          studentId: studentDeviceGuard.id,
+          studentName: "Device Guard",
+          studentSessionId: binding!.id,
+          deviceId: binding!.deviceId,
+          available: true,
+        }],
+      }));
+      const settingsAttempt = inSchool(school.id, () => upsertSessionSettings(
+        school.id,
+        teachingSession.id,
+        { chatEnabled: false },
+        { actorId: teacher.id }
+      ));
+
+      // Both mutations are now queued behind the revocation row lock. Once
+      // revocation commits, their in-transaction uncached checks must observe
+      // it and reject instead of committing after cleanup.
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      await revocation.query("COMMIT");
+      const [commandResult, settingsResult] = await Promise.allSettled([
+        commandAttempt,
+        settingsAttempt,
+      ]);
+      assert.equal(commandResult.status, "rejected");
+      assert.equal(settingsResult.status, "rejected");
+      assert.equal(commandResult.status === "rejected" ? (commandResult.reason as any)?.code : null, "CLASSPILOT_NOT_ENTITLED");
+      assert.equal(settingsResult.status === "rejected" ? (settingsResult.reason as any)?.code : null, "CLASSPILOT_NOT_ENTITLED");
+    } finally {
+      await revocation.query("ROLLBACK").catch(() => {});
+      revocation.release();
+      await asSystem(() => db.execute(sql`
+        UPDATE product_licenses
+        SET status = 'active'
+        WHERE school_id = ${school.id} AND product = 'CLASSPILOT'
+      `).then(() => undefined));
+      await inSchool(school.id, () => endTeachingSession(teachingSession.id));
+    }
+  });
+
+  it("does not persist a durable offline command after teaching authority moves to coverage", async () => {
+    const offlineStudent = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Offline",
+      lastName: "Authority Race",
+      email: `offline-authority-race@${TAG}.example.edu`,
+      emailLc: `offline-authority-race@${TAG}.example.edu`,
+      status: "active",
+    } as any));
+    const group = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: teacher.id,
+      name: `${TAG}_Offline_Authority_Race`,
+      groupType: "admin_class",
+      status: "active",
+    } as any));
+    await inSchool(school.id, () => addGroupStudentsDetailed(group.id, [offlineStudent.id]));
+    const teachingSession = await inSchool(school.id, () => createTeachingSession({
+      groupId: group.id,
+      teacherId: teacher.id,
+    }));
+    const context = await inSchool(school.id, () => createSupervisionContextWithStudents({
+      context: {
+        schoolId: school.id,
+        contextType: "office",
+        name: "Offline Durable Authority Race",
+        status: "active",
+        assignedStaffId: coverageStaff.id,
+        createdBy: admin.id,
+        endsAt: new Date(Date.now() + 60 * 60 * 1000),
+      },
+      studentIds: [offlineStudent.id],
+      assignedBy: admin.id,
+      source: "admin_reroute",
+    }));
+    try {
+      // This target represents an offline roster snapshot resolved immediately
+      // before the coverage claim committed.
+      const result = await inSchool(school.id, () => executeClasspilotCommand({
+        schoolId: school.id,
+        actorId: teacher.id,
+        teachingSessionId: teachingSession.id,
+        targetScope: "students",
+        commandType: "teacher-message",
+        rawCommandPayload: { message: "Must not cross the ownership transition" },
+        targets: [{
+          studentId: offlineStudent.id,
+          studentName: "Offline Authority Race",
+          studentSessionId: null,
+          deviceId: null,
+          available: false,
+          stateAuthorized: true,
+          unavailableReason: "Student is not signed in to the extension",
+        }],
+      }));
+      assert.equal(result.command.targets[0]?.status, "unavailable");
+      assert.match(result.command.targets[0]?.errorMessage || "", /authority changed before dispatch/);
+      const messages = await inSchool(school.id, () => getRecentMessagesForStudent(offlineStudent.id, 10));
+      assert.equal(messages.length, 0);
+    } finally {
+      await inSchool(school.id, () => releaseSupervisionStudents({
+        schoolId: school.id,
+        contextId: context.id,
+        releaseReason: "test_release",
+      }));
+      await inSchool(school.id, () => endTeachingSession(teachingSession.id));
+    }
+  });
+
   it("keeps a completed command target terminal when sent and received updates arrive late", async () => {
     const created = await inSchool(school.id, () => createClasspilotCommandWithTargets(
       {
@@ -2673,10 +3425,23 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       gradeLevel: "8",
       status: "active",
     } as any));
+    const messageGroup = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: teacher.id,
+      name: `${TAG}_Durable_Message`,
+      groupType: "admin_class",
+      status: "active",
+    } as any));
+    await inSchool(school.id, () => addGroupStudentsDetailed(messageGroup.id, [offlineStudent.id]));
+    const teachingSession = await inSchool(school.id, () => createTeachingSession({
+      groupId: messageGroup.id,
+      teacherId: teacher.id,
+    }));
     const text = `Queued while offline ${TAG}`;
     const result = await inSchool(school.id, () => executeClasspilotCommand({
       schoolId: school.id,
       actorId: teacher.id,
+      teachingSessionId: teachingSession.id,
       targetScope: "students",
       commandType: "teacher-message",
       rawCommandPayload: { message: text },
@@ -2708,18 +3473,187 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     );
     assert.equal(legacyFiveMinuteWindow.some((message) => message.message === text), false);
 
-    const pending = await inSchool(school.id, () => getPendingMessagesForStudent({
+    const recoveryDeviceId = `${TAG}-offline-message-recovery`;
+    await inSchool(school.id, () => createDevice({
+      deviceId: recoveryDeviceId,
+      schoolId: school.id,
+      classId: "default",
+      deviceName: "Offline Message Recovery",
+    } as any));
+    await inSchool(school.id, () => linkStudentDevice({
+      studentId: offlineStudent.id,
+      deviceId: recoveryDeviceId,
+    }));
+    const recoverySession = await inSchool(school.id, () =>
+      setActiveStudentForDevice(recoveryDeviceId, offlineStudent.id)
+    );
+    const inboxOptions = {
       schoolId: school.id,
       studentId: offlineStudent.id,
-    }));
+      studentSessionId: recoverySession.id,
+      deviceId: recoveryDeviceId,
+    };
+    const pending = await inSchool(school.id, () => getPendingMessagesForStudent(inboxOptions));
     const recovered = pending.find((message) => message.message === text);
     assert.ok(recovered);
+    assert.equal(recovered.commandId, result.command.id);
+    assert.equal(recovered.teachingSessionId, teachingSession.id);
+    assert.equal(recovered.supervisionContextId, null);
     const excluded = await inSchool(school.id, () => getPendingMessagesForStudent({
-      schoolId: school.id,
-      studentId: offlineStudent.id,
+      ...inboxOptions,
       excludeMessageIds: [recovered.id],
     }));
     assert.equal(excluded.some((message) => message.id === recovered.id), false);
+
+    const retryableFailure = await inSchool(school.id, () => updateClasspilotCommandTargetAck({
+      commandId: result.command.id,
+      schoolId: school.id,
+      studentId: offlineStudent.id,
+      studentSessionId: recoverySession.id,
+      deviceId: recoveryDeviceId,
+      ackState: "failed",
+      errorMessage: "Temporary local inbox write failure",
+    }));
+    assert.ok(["sent", "received"].includes(retryableFailure?.status || ""));
+    const retried = await inSchool(school.id, () => getPendingMessagesForStudent(inboxOptions));
+    assert.equal(retried.some((message) => message.id === recovered.id), true);
+
+    const completed = await inSchool(school.id, () => updateClasspilotCommandTargetAck({
+      commandId: result.command.id,
+      schoolId: school.id,
+      studentId: offlineStudent.id,
+      studentSessionId: recoverySession.id,
+      deviceId: recoveryDeviceId,
+      ackState: "completed",
+      result: { messageId: recovered.id, recovered: true },
+    }));
+    assert.equal(completed?.status, "completed");
+    await inSchool(school.id, () => updateClasspilotCommandSummary(result.command.id));
+    const completedCommand = await inSchool(school.id, () =>
+      getClasspilotCommandByIdAndSchool(result.command.id, school.id)
+    );
+    assert.equal(completedCommand?.status, "completed");
+    assert.equal(completedCommand?.completedCount, 1);
+    const afterCompleted = await inSchool(school.id, () => getPendingMessagesForStudent(inboxOptions));
+    assert.equal(afterCompleted.some((message) => message.id === recovered.id), false);
+
+    const staleText = `Must not return after session end ${TAG}`;
+    const stale = await inSchool(school.id, () => executeClasspilotCommand({
+      schoolId: school.id,
+      actorId: teacher.id,
+      teachingSessionId: teachingSession.id,
+      targetScope: "students",
+      commandType: "teacher-message",
+      rawCommandPayload: { message: staleText },
+      targets: [{
+        studentId: offlineStudent.id,
+        studentName: "Offline Message",
+        studentSessionId: recoverySession.id,
+        deviceId: recoveryDeviceId,
+        available: true,
+      }],
+    }));
+    await inSchool(school.id, () => endTeachingSession(teachingSession.id));
+    const staleFailure = await inSchool(school.id, () => updateClasspilotCommandTargetAck({
+      commandId: stale.command.id,
+      schoolId: school.id,
+      studentId: offlineStudent.id,
+      studentSessionId: recoverySession.id,
+      deviceId: recoveryDeviceId,
+      ackState: "failed",
+      errorMessage: "Teacher message belongs to an inactive teaching session",
+    }));
+    assert.equal(staleFailure?.status, "failed");
+    const afterAuthorityEnded = await inSchool(school.id, () =>
+      getPendingMessagesForStudent(inboxOptions)
+    );
+    assert.equal(afterAuthorityEnded.some((message) => message.commandId === stale.command.id), false);
+    await inSchool(school.id, () => deleteDevice(recoveryDeviceId));
+  });
+
+  it("completes an offline persistent-control command from authoritative state reconciliation", async () => {
+    const offlineStudent = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Offline",
+      lastName: "Control",
+      email: `offline-control@${TAG}.example.edu`,
+      emailLc: `offline-control@${TAG}.example.edu`,
+      gradeLevel: "8",
+      status: "active",
+    } as any));
+    const group = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: teacher.id,
+      name: `${TAG}_Offline_Control`,
+      groupType: "admin_class",
+      status: "active",
+    } as any));
+    await inSchool(school.id, () => addGroupStudentsDetailed(group.id, [offlineStudent.id]));
+    const teachingSession = await inSchool(school.id, () => createTeachingSession({
+      groupId: group.id,
+      teacherId: teacher.id,
+    }));
+    const result = await inSchool(school.id, () => executeClasspilotCommand({
+      schoolId: school.id,
+      actorId: teacher.id,
+      teachingSessionId: teachingSession.id,
+      targetScope: "students",
+      commandType: "lock-screen",
+      rawCommandPayload: { url: "https://example.edu/locked" },
+      targets: [{
+        studentId: offlineStudent.id,
+        studentName: "Offline Control",
+        studentSessionId: null,
+        deviceId: null,
+        available: false,
+        stateAuthorized: true,
+        unavailableReason: "Student is not signed in to the extension",
+      }],
+    }));
+    assert.equal(result.command.targets[0]?.status, "unavailable");
+    const control = await inSchool(school.id, () =>
+      getClasspilotStudentControlState(school.id, offlineStudent.id)
+    );
+    assert.equal(control?.sourceCommandId, result.command.id);
+
+    const recoveryDeviceId = `${TAG}-offline-control-recovery`;
+    await inSchool(school.id, () => createDevice({
+      deviceId: recoveryDeviceId,
+      schoolId: school.id,
+      classId: "default",
+      deviceName: "Offline Control Recovery",
+    } as any));
+    await inSchool(school.id, () => linkStudentDevice({
+      studentId: offlineStudent.id,
+      deviceId: recoveryDeviceId,
+    }));
+    const recoverySession = await inSchool(school.id, () =>
+      setActiveStudentForDevice(recoveryDeviceId, offlineStudent.id)
+    );
+    const acknowledged = await inSchool(school.id, () =>
+      acknowledgeClasspilotStudentControlState({
+        schoolId: school.id,
+        studentId: offlineStudent.id,
+        studentSessionId: recoverySession.id,
+        deviceId: recoveryDeviceId,
+        appliedRevision: control!.revision,
+        outcome: "applied",
+      })
+    );
+    assert.equal(acknowledged?.sourceCommandId, result.command.id);
+    const completed = await inSchool(school.id, () =>
+      getClasspilotCommandByIdAndSchool(result.command.id, school.id)
+    );
+    assert.equal(completed?.status, "completed");
+    assert.equal(completed?.targets[0]?.studentSessionId, recoverySession.id);
+    assert.equal(completed?.targets[0]?.deviceId, recoveryDeviceId);
+    assert.deepEqual(completed?.targets[0]?.result, {
+      classroomStateRevision: control!.revision,
+      outcome: "applied",
+      reconciliation: true,
+    });
+    await inSchool(school.id, () => endTeachingSession(teachingSession.id));
+    await inSchool(school.id, () => deleteDevice(recoveryDeviceId));
   });
 
   it("never represents transient timer or poll dispatch as active classroom state", async () => {
@@ -2797,6 +3731,52 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.ok(timer.expiresAt);
     assert.ok(poll.expiresAt);
     assert.ok(poll.extra?.poll?.id);
+    const pollPayload = poll.command.commandPayload as Record<string, unknown>;
+    assert.equal(pollPayload.pollExpiresAt, pollPayload.expiresAt);
+    assert.equal(
+      pollPayload.pollExpiresAt,
+      poll.extra?.poll?.expiresAt?.toISOString()
+    );
+    assert.ok(
+      Date.parse(String(pollPayload.pollExpiresAt)) > Date.now() + 2 * 60 * 60 * 1000,
+      "the authoritative poll lifecycle must outlive the old two-hour extension default"
+    );
+    await assert.rejects(
+      () => inSchool(school.id, () => createPollResponseFirstWrite({
+        schoolId: school.id,
+        pollId: poll.extra.poll.id,
+        studentId: studentDeviceGuard.id,
+        studentSessionId: "replacement-session-not-targeted",
+        deviceId: "replacement-device-not-targeted",
+        selectedOption: 0,
+      })),
+      (error: any) => error?.code === "POLL_TARGET_NOT_AUTHORIZED"
+    );
+    const response = await inSchool(school.id, () => createPollResponseFirstWrite({
+      schoolId: school.id,
+      pollId: poll.extra.poll.id,
+      studentId: studentDeviceGuard.id,
+      studentSessionId: sessionGuard.id,
+      deviceId: deviceGuard,
+      selectedOption: 0,
+    }));
+    assert.equal(response.disposition, "created");
+    await assert.rejects(
+      () => inSchool(school.id, () => executeClasspilotCommand({
+        schoolId: school.id,
+        actorId: teacher.id,
+        teachingSessionId: teachingSession.id,
+        targetScope: "students",
+        commandType: "poll",
+        rawCommandPayload: {
+          action: "start",
+          question: "Second active poll?",
+          options: ["Yes", "No"],
+        },
+        targets: [target],
+      })),
+      (error: any) => error?.status === 409 && error?.code === "POLL_ALREADY_ACTIVE"
+    );
     const close = await inSchool(school.id, () => executeClasspilotCommand({
       schoolId: school.id,
       actorId: teacher.id,
@@ -2804,8 +3784,11 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       targetScope: "students",
       commandType: "poll",
       rawCommandPayload: { action: "close", pollId: poll.extra.poll.id },
-      targets: [target],
+      // Dashboard selection is intentionally empty here. Close must derive the
+      // immutable target set from the original poll-start command.
+      targets: [],
     }));
+    assert.deepEqual(close.command.targets.map((row) => row.studentId), [studentDeviceGuard.id]);
     assert.equal(close.extra?.poll?.isActive, false, "the poll resource closes server-side");
     assert.equal(close.summary.completed, 0, "dispatch is not device completion");
     assert.equal(close.summary.pending, 1);

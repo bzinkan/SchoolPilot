@@ -1064,11 +1064,17 @@ export type InsertClasspilotMonitoringEvent = typeof classpilotMonitoringEvents.
 // ============================================================================
 export const sessionSettings = pgTable("session_settings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  schoolId: text("school_id").notNull(),
   sessionId: varchar("session_id").notNull().unique(),
   chatEnabled: boolean("chat_enabled").default(true),
   raiseHandEnabled: boolean("raise_hand_enabled").default(true),
+  lifecycleRevision: integer("lifecycle_revision").notNull().default(1),
   createdAt: timestamp("created_at").notNull().default(sql`now()`),
-});
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`now()`),
+}, (table) => [
+  index("session_settings_school_session_idx").on(table.schoolId, table.sessionId),
+  check("session_settings_revision_check", sql`${table.lifecycleRevision} > 0`),
+]);
 
 export type SessionSetting = typeof sessionSettings.$inferSelect;
 export type InsertSessionSetting = typeof sessionSettings.$inferInsert;
@@ -1111,6 +1117,50 @@ export type ChatMessage = typeof chatMessages.$inferSelect;
 export type InsertChatMessage = typeof chatMessages.$inferInsert;
 
 // ============================================================================
+// Chat Deliveries - Durable teacher-to-student reply outbox
+// ============================================================================
+export const classpilotChatDeliveries = pgTable(
+  "classpilot_chat_deliveries",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    chatMessageId: varchar("chat_message_id").notNull(),
+    teachingSessionId: varchar("teaching_session_id").notNull(),
+    studentId: text("student_id").notNull(),
+    state: text("state")
+      .notNull()
+      .default("queued")
+      .$type<"queued" | "leased" | "attempted" | "retry" | "delivered" | "failed" | "expired">(),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().default(sql`now()`),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+    lastAttemptStudentSessionId: varchar("last_attempt_student_session_id"),
+    lastAttemptDeviceId: text("last_attempt_device_id"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    failedAt: timestamp("failed_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`now()`),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`now()`),
+  },
+  (table) => [
+    uniqueIndex("classpilot_chat_deliveries_message_unique").on(table.chatMessageId),
+    index("classpilot_chat_deliveries_due_idx").on(table.state, table.nextAttemptAt),
+    index("classpilot_chat_deliveries_school_student_idx").on(table.schoolId, table.studentId, table.state),
+    check("classpilot_chat_deliveries_attempt_check", sql`${table.attemptCount} >= 0`),
+    check(
+      "classpilot_chat_deliveries_state_check",
+      sql`${table.state} IN ('queued', 'leased', 'attempted', 'retry', 'delivered', 'failed', 'expired')`
+    ),
+  ]
+);
+
+export type ClasspilotChatDelivery = typeof classpilotChatDeliveries.$inferSelect;
+export type InsertClasspilotChatDelivery = typeof classpilotChatDeliveries.$inferInsert;
+
+// ============================================================================
 // Active Hands - Recoverable per-session raised hand state
 // ============================================================================
 export const classpilotActiveHands = pgTable(
@@ -1145,16 +1195,31 @@ export const polls = pgTable(
   "polls",
   {
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
     sessionId: varchar("session_id").notNull(),
     teacherId: text("teacher_id").notNull(),
+    startCommandId: varchar("start_command_id"),
+    closeCommandId: varchar("close_command_id"),
     question: text("question").notNull(),
     options: text("options").array().notNull(),
-    isActive: boolean("is_active").default(true),
+    isActive: boolean("is_active").notNull().default(true),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
     closedAt: timestamp("closed_at"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`now()`),
   },
   (table) => [
     index("polls_session_id_idx").on(table.sessionId),
+    index("polls_school_session_idx").on(table.schoolId, table.sessionId),
+    uniqueIndex("polls_active_session_unique")
+      .on(table.schoolId, table.sessionId)
+      .where(sql`is_active = true`),
+    uniqueIndex("polls_start_command_unique")
+      .on(table.startCommandId)
+      .where(sql`start_command_id IS NOT NULL`),
+    uniqueIndex("polls_close_command_unique")
+      .on(table.closeCommandId)
+      .where(sql`close_command_id IS NOT NULL`),
   ]
 );
 
@@ -1168,14 +1233,22 @@ export const pollResponses = pgTable(
   "poll_responses",
   {
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
     pollId: varchar("poll_id").notNull(),
     studentId: text("student_id").notNull(),
     deviceId: text("device_id"),
     selectedOption: integer("selected_option").notNull(),
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`now()`),
+    supersededAt: timestamp("superseded_at", { withTimezone: true }),
+    supersededByResponseId: varchar("superseded_by_response_id"),
   },
   (table) => [
     index("poll_responses_poll_id_idx").on(table.pollId),
+    index("poll_responses_school_poll_idx").on(table.schoolId, table.pollId),
+    uniqueIndex("poll_responses_poll_student_active_unique")
+      .on(table.pollId, table.studentId)
+      .where(sql`superseded_at IS NULL`),
   ]
 );
 
@@ -1594,11 +1667,17 @@ export const messages = pgTable("messages", {
   // Derived from the addressed student or active school context. Legacy rows may
   // be null and are hidden once RLS is enabled.
   schoolId: text("school_id"),
+  commandId: varchar("command_id"),
+  teachingSessionId: varchar("teaching_session_id"),
+  supervisionContextId: varchar("supervision_context_id"),
   message: text("message").notNull(),
   isAnnouncement: boolean("is_announcement").default(false),
   timestamp: timestamp("timestamp").notNull().default(sql`now()`),
 }, (table) => [
   index("messages_school_id_idx").on(table.schoolId),
+  uniqueIndex("messages_command_student_unique")
+    .on(table.commandId, table.toStudentId)
+    .where(sql`command_id IS NOT NULL AND to_student_id IS NOT NULL`),
 ]);
 
 export type MessageRecord = typeof messages.$inferSelect;

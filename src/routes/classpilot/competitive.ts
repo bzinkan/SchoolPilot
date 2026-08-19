@@ -6,6 +6,7 @@ import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
 import { studentDevices, studentSessions } from "../../schema/classpilot.js";
 import { dismissalQueue, dismissalSessions } from "../../schema/gopilot.js";
 import { importRuns } from "../../schema/shared.js";
@@ -62,6 +63,7 @@ const router = Router();
 const staffAuth = [
   authenticate,
   requireSchoolContext,
+  requireClasspilotEntitlement,
   requireActiveSchool,
   requireProductLicense("CLASSPILOT"),
   requireRole("admin", "school_admin", "office_staff", "teacher"),

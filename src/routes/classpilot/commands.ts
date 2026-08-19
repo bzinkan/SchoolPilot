@@ -1,9 +1,8 @@
 import { Router, type Request, type Response } from "express";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
-import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
-import { requireProductLicense } from "../../middleware/requireProductLicense.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
 import {
   getActiveClasspilotClassroomStates,
   getActiveClassOwnersForStudents,
@@ -31,8 +30,7 @@ const router = Router();
 const auth = [
   authenticate,
   requireSchoolContext,
-  requireActiveSchool,
-  requireProductLicense("CLASSPILOT"),
+  requireClasspilotEntitlement,
   requireRole("admin", "school_admin", "office_staff", "teacher"),
 ] as const;
 
@@ -46,8 +44,6 @@ function normalizeTargetScope(value: unknown): ClassroomTargetScope | null {
 async function resolveTargets(req: Request, res: Response, body: any): Promise<ResolvedClasspilotCommandTarget[]> {
   const schoolId = res.locals.schoolId as string;
   const userId = req.authUser!.id;
-  const role = res.locals.membershipRole as string | undefined;
-  const isAdmin = req.authUser?.isSuperAdmin || role === "admin" || role === "school_admin";
   const teachingSessionId = String(body.teachingSessionId || "").trim();
   if (!teachingSessionId) throw Object.assign(new Error("teachingSessionId is required"), { status: 400 });
 
@@ -56,7 +52,7 @@ async function resolveTargets(req: Request, res: Response, body: any): Promise<R
   if ((session as any).sessionMode && (session as any).sessionMode !== "live") {
     throw Object.assign(new Error("This scheduled reporting block is not a live class session"), { status: 403 });
   }
-  if (!isAdmin && !(await isAuthorizedClasspilotSessionStaff(schoolId, teachingSessionId, userId))) {
+  if (!(await isAuthorizedClasspilotSessionStaff(schoolId, teachingSessionId, userId))) {
     throw Object.assign(new Error("Active class session not found"), { status: 404 });
   }
 
@@ -178,13 +174,24 @@ router.post("/commands", ...auth, async (req, res, next) => {
     const teacherId = req.authUser!.id;
     const commandType = String(req.body.commandType || "").trim();
     const teachingSessionId = String(req.body.teachingSessionId || "").trim();
-    const targetScope = normalizeTargetScope(req.body.targetScope);
+    const pollAction = commandType === "poll"
+      ? String(req.body.commandPayload?.action || "start").trim()
+      : "";
+    const isPollClose = commandType === "poll" && pollAction === "close";
+    // Closing a poll always derives its target set from the immutable poll
+    // start command. Ignore mutable Dashboard selection fields at this boundary
+    // while still using the class resolver for staff/session authorization.
+    const targetScope = isPollClose ? "class" : normalizeTargetScope(req.body.targetScope);
     if (!targetScope) return res.status(400).json({ error: "targetScope must be class, subgroup, or students" });
     if (commandType === "student-sign-out" && targetScope !== "students") {
       return res.status(400).json({ error: "student-sign-out requires explicit targetStudentIds" });
     }
 
-    const targets = await resolveTargets(req, res, req.body);
+    const targets = await resolveTargets(
+      req,
+      res,
+      isPollClose ? { ...req.body, targetScope: "class" } : req.body
+    );
     const result = await executeClasspilotCommand({
       schoolId,
       actorId: teacherId,
@@ -199,7 +206,12 @@ router.post("/commands", ...auth, async (req, res, next) => {
 
     return res.status(201).json({ ...result, command: publicClasspilotCommand(result.command) });
   } catch (err: any) {
-    if (err?.status) return res.status(err.status).json({ error: err.message });
+    if (err?.status) return res.status(err.status).json({
+      error: err.message,
+      ...(err.code ? { code: err.code } : {}),
+      ...(err.fieldErrors ? { fieldErrors: err.fieldErrors } : {}),
+      ...(err.current ? { current: err.current } : {}),
+    });
     next(err);
   }
 });

@@ -31,6 +31,32 @@ import {
   type FinalizeTeachingSessionResult,
 } from "./storage.js";
 import { serializeClasspilotStudentControlState } from "./classpilotClassroomState.js";
+import { getSessionStudentBindings } from "./classpilotFab.js";
+import { syncClasspilotControlStatesToActiveDevices } from "./classpilotControlStateDelivery.js";
+import { stopActiveClasspilotLiveViewNegotiations } from "./classpilotLiveViewStop.js";
+
+export async function publishClasspilotSessionFabStates(options: {
+  schoolId: string;
+  teachingSessionId: string;
+  event: "started" | "ended";
+  reason?: TeachingSessionFinalizationReason;
+}): Promise<void> {
+  // Starts use the frozen roster plus current owner/no-coverage authority.
+  // Ends recompute the full state for the former frozen roster so a replacement
+  // class remains present. A bare device `session-ended` event is deliberately
+  // not emitted: legacy consumers translate it to an empty session list and
+  // can race after this authoritative snapshot. Staff receive their separate
+  // lifecycle event in runClasspilotFinalizationSideEffects.
+  const roster = await getClasspilotSessionStudents(options.teachingSessionId);
+  const frozenStudentIds = [...new Set(roster.map((row) => row.studentId))];
+  const startBindings = options.event === "started"
+    ? await getSessionStudentBindings(options.schoolId, options.teachingSessionId)
+    : [];
+  const studentIds = options.event === "started"
+    ? startBindings.map((binding) => binding.studentId)
+    : frozenStudentIds;
+  await syncClasspilotControlStatesToActiveDevices(options.schoolId, studentIds);
+}
 
 async function publishControlStateRows(
   schoolId: string,
@@ -50,7 +76,12 @@ async function publishControlStateRows(
       ...serializeClasspilotStudentControlState(state),
       ...(teachingSessionIdOverride ? { teachingSessionId: teachingSessionIdOverride } : {}),
     };
-    const message = { type: "classroom-state", classroomState };
+    const message = {
+      type: "classroom-state",
+      studentId: state.studentId,
+      studentSessionId: studentSession.id,
+      classroomState,
+    };
     sendToDeviceLocal(schoolId, studentSession.deviceId, message);
     await publishWS(
       { kind: "device", schoolId, deviceId: studentSession.deviceId },
@@ -64,12 +95,11 @@ export async function pushClasspilotSessionControlStates(
   teachingSessionId: string
 ): Promise<void> {
   await runWithTenantContext({ schoolId }, async () => {
-    const roster = await getClasspilotSessionStudents(teachingSessionId);
-    const states = await getClasspilotStudentControlStates(
+    await publishClasspilotSessionFabStates({
       schoolId,
-      roster.map((row) => row.studentId)
-    );
-    await publishControlStateRows(schoolId, states);
+      teachingSessionId,
+      event: "started",
+    });
   });
 }
 
@@ -240,12 +270,37 @@ export function runClasspilotFinalizationSideEffects(
   }
 ): void {
   if (result.finalized) {
+    void stopActiveClasspilotLiveViewNegotiations({
+      schoolId: options.schoolId,
+      teachingSessionId: result.session.id,
+      reason: "session-ended",
+    }).catch((err) => {
+      console.warn(`[ClassPilot] Live-view cleanup failed for ${result.session.id}:`, err);
+    });
     // Usage is frozen with the coverage rows and derived gap events by the
     // immutable report worker. Keeping that write inside one transaction is
     // what prevents email retries from observing a different raw heartbeat set.
     emitLifecycleMetric("SessionFinalized", 1, {
       LifecycleKind: result.session.scheduledDate ? "scheduled" : "manual",
       FinalizationReason: options.reason,
+    });
+    const endedUpdate = {
+      type: "session-ended",
+      sessionId: result.session.id,
+      reason: options.reason,
+      summaryDisposition: result.summaryDisposition,
+    };
+    broadcastToTeachersLocal(options.schoolId, endedUpdate);
+    void publishWS({ kind: "staff", schoolId: options.schoolId }, endedUpdate);
+    void runWithTenantContext({ schoolId: options.schoolId }, () =>
+      publishClasspilotSessionFabStates({
+        schoolId: options.schoolId,
+        teachingSessionId: result.session.id,
+        event: "ended",
+        reason: options.reason,
+      })
+    ).catch((err) => {
+      console.warn(`[ClassPilot] Student FAB finalization push failed for ${result.session.id}:`, err);
     });
     for (const conflictId of result.resolvedConflictIds) {
       const update = { type: "scheduled-class-conflict-updated", conflictId };

@@ -131,12 +131,15 @@ export function applyClasspilotControlCommand(
         active: true,
         url: payload.url ? String(payload.url).slice(0, 4_096) : null,
       };
-      // A URL lock supersedes Flight Path enforcement for the target.
-      restrictions.flightPath = { active: false, allowedDomains: [] };
+      // Screen Lock overlays the independently configured Flight Path. The
+      // lock wins while active, and a canonical screen-only unlock reveals
+      // the retained path instead of silently widening browsing access.
       break;
     case "unlock-screen":
       restrictions.screenLock = { active: false };
-      restrictions.flightPath = { active: false, allowedDomains: [] };
+      if (payload.screenOnly !== true) {
+        restrictions.flightPath = { active: false, allowedDomains: [] };
+      }
       break;
     case "apply-flight-path":
       restrictions.screenLock = { active: false };

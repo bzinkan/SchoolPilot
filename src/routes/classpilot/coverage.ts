@@ -1,9 +1,8 @@
 import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
-import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
-import { requireProductLicense } from "../../middleware/requireProductLicense.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
 import {
   CLASSPILOT_REALTIME_EXPIRED_AFTER_MS,
   CLASSPILOT_REALTIME_STALE_AFTER_MS,
@@ -74,8 +73,7 @@ const router = Router();
 const auth = [
   authenticate,
   requireSchoolContext,
-  requireActiveSchool,
-  requireProductLicense("CLASSPILOT"),
+  requireClasspilotEntitlement,
   requireRole("admin", "school_admin", "office_staff", "teacher"),
 ] as const;
 
@@ -221,12 +219,28 @@ async function activeStatusFor(row: OnlineUnassignedStudent) {
     activeTabTitle: rt?.activeTabTitle || "",
     activeTabUrl: rt?.activeTabUrl || "",
     allOpenTabs: sanitizeTabs(rt?.allOpenTabs || []),
+    tabSnapshot: rt ? { schemaVersion: 1, revision: rt.tabSnapshotRevision ?? rt.revision } : null,
+    tabSnapshotRevision: rt?.tabSnapshotRevision ?? rt?.revision ?? null,
+    extensionVersion: rt?.extensionVersion ?? null,
+    capabilities: coverageRealtimeCapabilities(rt),
     screenshotHealth: rt?.screenshotHealth,
+  };
+}
+
+function coverageRealtimeCapabilities(status: ClasspilotRealtimeStatus | null) {
+  const capabilities = new Set(status?.extensionCapabilities || []);
+  return {
+    exactTabCloseV1: capabilities.has("exactTabCloseV1"),
+    screenOnlyUnlockV1: capabilities.has("screenOnlyUnlockV1"),
+    fabStateRevisionV1: capabilities.has("fabStateRevisionV1"),
+    liveViewNegotiationV1: capabilities.has("liveViewNegotiationV1"),
+    minExtensionVersion: "2.6.0",
   };
 }
 
 function sanitizeTabs(tabs: any[]) {
   return tabs.map((tab) => ({
+    ...(tab.tabRef ? { tabRef: tab.tabRef } : {}),
     title: tab.title || "",
     url: tab.url || "",
     favIconUrl: tab.favIconUrl || tab.favicon || "",
@@ -259,6 +273,10 @@ async function activeStatusForStudent(schoolId: string, student: any) {
     activeTabTitle: rt?.activeTabTitle || "",
     activeTabUrl: rt?.activeTabUrl || "",
     allOpenTabs: sanitizeTabs(rt?.allOpenTabs || []),
+    tabSnapshot: rt ? { schemaVersion: 1, revision: rt.tabSnapshotRevision ?? rt.revision } : null,
+    tabSnapshotRevision: rt?.tabSnapshotRevision ?? rt?.revision ?? null,
+    extensionVersion: rt?.extensionVersion ?? null,
+    capabilities: coverageRealtimeCapabilities(rt),
     screenshotHealth: rt?.screenshotHealth,
   };
 }
@@ -741,6 +759,10 @@ async function availableStudentPayload(
     activeTabUrl: status.activeTabUrl,
     allOpenTabs: status.allOpenTabs,
     screenshotHealth: status.screenshotHealth,
+    tabSnapshot: status.tabSnapshot,
+    tabSnapshotRevision: status.tabSnapshotRevision,
+    extensionVersion: status.extensionVersion,
+    capabilities: status.capabilities,
     matchingGroups: matchingGroups.map((group) => ({
       id: group.id,
       name: group.name,
@@ -771,6 +793,10 @@ async function scheduledCoverageStudentPayload(
     activeTabUrl: status.activeTabUrl,
     allOpenTabs: status.allOpenTabs,
     screenshotHealth: status.screenshotHealth,
+    tabSnapshot: status.tabSnapshot,
+    tabSnapshotRevision: status.tabSnapshotRevision,
+    extensionVersion: status.extensionVersion,
+    capabilities: status.capabilities,
     matchingGroups: [],
     matchingScopes: [],
     matchingScheduledCoverage: scheduledCoverage,
@@ -930,6 +956,10 @@ async function contextStudentPayload(schoolId: string, rows: any[]) {
       activeTabUrl: status.activeTabUrl,
       allOpenTabs: status.allOpenTabs,
       screenshotHealth: status.screenshotHealth,
+      tabSnapshot: status.tabSnapshot,
+      tabSnapshotRevision: status.tabSnapshotRevision,
+      extensionVersion: status.extensionVersion,
+      capabilities: status.capabilities,
     });
   }
   return payload;
@@ -1019,6 +1049,10 @@ router.get("/coverage/unassigned", ...auth, async (req, res, next) => {
           activeTabUrl: status.activeTabUrl,
           allOpenTabs: status.allOpenTabs,
           screenshotHealth: status.screenshotHealth,
+          tabSnapshot: status.tabSnapshot,
+          tabSnapshotRevision: status.tabSnapshotRevision,
+          extensionVersion: status.extensionVersion,
+          capabilities: status.capabilities,
         };
       }));
     return res.json({ students });
@@ -1544,6 +1578,10 @@ router.get("/coverage/claimed-students", ...auth, async (req, res, next) => {
         activeTabUrl: status.activeTabUrl,
         allOpenTabs: status.allOpenTabs,
         screenshotHealth: status.screenshotHealth,
+        tabSnapshot: status.tabSnapshot,
+        tabSnapshotRevision: status.tabSnapshotRevision,
+        extensionVersion: status.extensionVersion,
+        capabilities: status.capabilities,
         supervisionGroup: group ? { id: group.id, name: group.name } : null,
         assignedStaff: staff ? { id: staff.id, displayName: staffName(staff) } : null,
       };

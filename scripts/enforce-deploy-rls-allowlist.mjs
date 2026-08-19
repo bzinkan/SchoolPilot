@@ -10,6 +10,10 @@ export const REVIEWED_RLS_TABLE_ENABLEMENTS = Object.freeze([
   "classpilot_session_staff",
   "classpilot_session_student_reports",
   "classpilot_student_control_states",
+  "classpilot_chat_deliveries",
+  "poll_responses",
+  "polls",
+  "session_settings",
   "passpilot_grade_students",
   "authorized_pickups",
   "custody_alerts",
@@ -39,6 +43,13 @@ export const CLASSPILOT_SCHEDULE_CHANGE_RLS_TABLES = Object.freeze([
   "classpilot_schedule_change_legs",
 ]);
 
+export const CLASSPILOT_FAB_RLS_TABLES = Object.freeze([
+  "classpilot_chat_deliveries",
+  "poll_responses",
+  "polls",
+  "session_settings",
+]);
+
 const REVIEWED_RLS_ENABLEMENT_REQUESTS = Object.freeze([
   Object.freeze(["classpilot_session_summary_deliveries"]),
   Object.freeze(["passpilot_grade_students"]),
@@ -49,6 +60,7 @@ const REVIEWED_RLS_ENABLEMENT_REQUESTS = Object.freeze([
     "classpilot_session_student_reports",
     "classpilot_student_control_states",
   ]),
+  CLASSPILOT_FAB_RLS_TABLES,
   GOPILOT_CHILD_RLS_TABLES,
   CLASSPILOT_SCHEDULE_CHANGE_RLS_TABLES,
 ]);

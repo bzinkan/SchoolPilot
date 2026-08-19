@@ -62,6 +62,38 @@ describe("ClassPilot full classroom state", () => {
     assert.equal(result.tabLimit, 2);
   });
 
+  it("screen-only unlock preserves the active Flight Path", () => {
+    const previous = normalizeClasspilotRestrictions({
+      screenLock: { active: true, url: "https://example.test" },
+      flightPath: { active: true, allowedDomains: ["example.test"], name: "Research" },
+    });
+    const result = applyClasspilotControlCommand(previous, "unlock-screen", { screenOnly: true });
+    assert.equal(result.screenLock.active, false);
+    assert.deepEqual(result.flightPath, {
+      active: true,
+      allowedDomains: ["example.test"],
+      name: "Research",
+    });
+  });
+
+  it("preserves Flight Path through a screen-lock overlay sequence", () => {
+    const flightPath = applyClasspilotControlCommand(emptyClasspilotRestrictions(), "apply-flight-path", {
+      allowedDomains: ["khanacademy.org", "ixl.com"],
+      flightPathName: "Math",
+    });
+    const locked = applyClasspilotControlCommand(flightPath, "lock-screen", {
+      url: "https://classroom.example/attention",
+    });
+    assert.equal(locked.screenLock.active, true);
+    assert.equal(locked.flightPath.active, true);
+    assert.deepEqual(locked.flightPath.allowedDomains, ["khanacademy.org", "ixl.com"]);
+
+    const unlocked = applyClasspilotControlCommand(locked, "unlock-screen", { screenOnly: true });
+    assert.equal(unlocked.screenLock.active, false);
+    assert.equal(unlocked.flightPath.active, true);
+    assert.deepEqual(unlocked.flightPath.allowedDomains, ["khanacademy.org", "ixl.com"]);
+  });
+
   it("bounds temporary allows and supplies an expiry", () => {
     const now = new Date("2026-08-13T12:00:00.000Z");
     const result = applyClasspilotControlCommand(emptyClasspilotRestrictions(), "temp-unblock", {

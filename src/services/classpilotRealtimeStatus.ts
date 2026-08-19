@@ -60,6 +60,7 @@ type RedisCommand = (args: string[]) => Promise<unknown | undefined>;
 export type ClasspilotActivityState = "active" | "idle" | "off" | "unknown";
 
 export type ClasspilotRealtimeTab = {
+  tabRef?: string;
   url: string;
   title: string;
   favicon?: string;
@@ -88,6 +89,7 @@ export type ClasspilotRealtimeStatus = {
   studentSessionId: string;
   deviceId: string;
   revision: number;
+  tabSnapshotRevision?: number;
   heartbeatId: string | null;
   observedAt: number;
   activeTabUrl: string;
@@ -110,6 +112,7 @@ export type ClasspilotRealtimeStatus = {
   aiClassification?: ClasspilotRealtimeClassification;
   classificationPending: boolean;
   extensionVersion?: string;
+  extensionCapabilities?: string[];
   chromeVersion?: string;
   signOutReason?: string;
 };
@@ -135,6 +138,7 @@ export type ClasspilotRealtimeWriteInput = {
   activeTabTitle?: unknown;
   favicon?: unknown;
   allOpenTabs?: unknown;
+  tabSnapshotRevision?: unknown;
   trackingStatus?: unknown;
   screenLocked?: unknown;
   flightPathActive?: unknown;
@@ -144,6 +148,7 @@ export type ClasspilotRealtimeWriteInput = {
   screenshotHealth?: unknown;
   classificationPending?: boolean;
   extensionVersion?: unknown;
+  extensionCapabilities?: unknown;
   chromeVersion?: unknown;
   classroomState?: ClasspilotClassroomStateSnapshot;
   enforcementHealth?: "synced" | "pending" | "failed" | "unsupported" | "expired";
@@ -319,6 +324,8 @@ function normalizeTabs(value: unknown): {
       url: boundedString(tab.url, 4_096),
       title: boundedString(tab.title, 512),
     };
+    const tabRef = optionalString(tab.tabRef, 128);
+    if (tabRef) normalized.tabRef = tabRef;
     const favicon = normalizeFavicon(tab.favicon ?? tab.favIconUrl);
     if (favicon) normalized.favicon = favicon;
     if (typeof tab.active === "boolean") normalized.active = tab.active;
@@ -401,6 +408,9 @@ function validDecodedTab(value: unknown): boolean {
   const tab = value as Record<string, unknown>;
   return typeof tab.url === "string" && tab.url.length <= 4_096 &&
     typeof tab.title === "string" && tab.title.length <= 512 &&
+    (tab.tabRef === undefined || (
+      typeof tab.tabRef === "string" && tab.tabRef.length > 0 && tab.tabRef.length <= 128
+    )) &&
     (tab.favicon === undefined || (
       typeof tab.favicon === "string" &&
       tab.favicon.length <= 4_096 &&
@@ -435,6 +445,11 @@ function decodeSnapshot(raw: unknown): ClasspilotRealtimeStatus | undefined {
     typeof row.revision !== "number" ||
     !Number.isSafeInteger(row.revision) ||
     Number(row.revision) < 1 ||
+    (row.tabSnapshotRevision !== undefined && (
+      typeof row.tabSnapshotRevision !== "number" ||
+      !Number.isSafeInteger(row.tabSnapshotRevision) ||
+      Number(row.tabSnapshotRevision) < 1
+    )) ||
     !(row.heartbeatId === null || typeof row.heartbeatId === "string") ||
     typeof row.observedAt !== "number" ||
     !Number.isFinite(row.observedAt) ||
@@ -483,11 +498,15 @@ function decodeSnapshot(raw: unknown): ClasspilotRealtimeStatus | undefined {
     studentSessionId: row.studentSessionId as string,
     deviceId: row.deviceId as string,
     revision: row.revision as number,
+    ...(Number.isSafeInteger(row.tabSnapshotRevision) && Number(row.tabSnapshotRevision) > 0
+      ? { tabSnapshotRevision: Number(row.tabSnapshotRevision) }
+      : {}),
     heartbeatId: row.heartbeatId as string | null,
     observedAt: row.observedAt as number,
     activeTabUrl: row.activeTabUrl as string,
     activeTabTitle: row.activeTabTitle as string,
     allOpenTabs: (row.allOpenTabs as Array<Record<string, unknown>>).map((tab) => ({
+      ...(typeof tab.tabRef === "string" ? { tabRef: tab.tabRef } : {}),
       url: tab.url as string,
       title: tab.title as string,
       ...(typeof tab.favicon === "string" ? { favicon: tab.favicon } : {}),
@@ -518,6 +537,12 @@ function decodeSnapshot(raw: unknown): ClasspilotRealtimeStatus | undefined {
   }
   if (typeof row.extensionVersion === "string") {
     snapshot.extensionVersion = boundedString(row.extensionVersion, 64);
+  }
+  if (Array.isArray(row.extensionCapabilities)) {
+    snapshot.extensionCapabilities = row.extensionCapabilities
+      .filter((value): value is string => typeof value === "string" && value.length > 0)
+      .slice(0, 32)
+      .map((value) => boundedString(value, 64));
   }
   if (typeof row.chromeVersion === "string") {
     snapshot.chromeVersion = boundedString(row.chromeVersion, 128);
@@ -569,6 +594,9 @@ function activeSnapshot(input: ClasspilotRealtimeWriteInput, now: number): Class
     studentSessionId: input.studentSessionId,
     deviceId: input.deviceId,
     revision: proposedRevision(now),
+    ...(Number.isSafeInteger(Number(input.tabSnapshotRevision)) && Number(input.tabSnapshotRevision) > 0
+      ? { tabSnapshotRevision: Number(input.tabSnapshotRevision) }
+      : {}),
     heartbeatId: input.heartbeatId,
     observedAt: Math.max(Math.trunc(input.observedAt ?? now), 0),
     activeTabUrl: boundedString(input.activeTabUrl, 4_096),
@@ -589,11 +617,18 @@ function activeSnapshot(input: ClasspilotRealtimeWriteInput, now: number): Class
   const activeFlightPathName = optionalString(input.activeFlightPathName, 256);
   const screenshotHealth = normalizeScreenshotHealth(input.screenshotHealth);
   const extensionVersion = optionalString(input.extensionVersion, 64);
+  const extensionCapabilities = Array.isArray(input.extensionCapabilities)
+    ? [...new Set(input.extensionCapabilities
+        .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+        .map((value) => value.trim().slice(0, 64)))]
+        .slice(0, 32)
+    : [];
   const chromeVersion = optionalString(input.chromeVersion, 128);
   if (favicon) snapshot.favicon = favicon;
   if (activeFlightPathName) snapshot.classroomControls.activeFlightPathName = activeFlightPathName;
   if (screenshotHealth) snapshot.screenshotHealth = screenshotHealth;
   if (extensionVersion) snapshot.extensionVersion = extensionVersion;
+  if (extensionCapabilities.length > 0) snapshot.extensionCapabilities = extensionCapabilities;
   if (chromeVersion) snapshot.chromeVersion = chromeVersion;
   if (input.classroomState) snapshot.classroomState = input.classroomState;
   if (input.enforcementHealth) snapshot.enforcementHealth = input.enforcementHealth;

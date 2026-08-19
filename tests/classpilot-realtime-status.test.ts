@@ -334,4 +334,40 @@ describe("ClassPilot cluster-safe realtime status", () => {
     assert.match(devices, /publishRevisionedRealtimeUpdate/);
     assert.match(devices, /realtimeBinding:\s*classpilotPublicRealtimeBinding\(snapshot\.studentSessionId\)/);
   });
+
+  it("publishes exact-tab and extension capabilities without device identifiers", () => {
+    const compat = readFileSync(
+      new URL("../src/routes/compat.ts", import.meta.url),
+      "utf8"
+    );
+    const contractStart = compat.indexOf("function publicClasspilotExtensionContract");
+    const contractEnd = compat.indexOf("async function loadAuthorizedRealtimeStatuses", contractStart);
+    const contract = compat.slice(contractStart, contractEnd);
+    const aggregateStart = compat.indexOf('router.get("/students-aggregated"');
+    const aggregateEnd = compat.indexOf("// Export (ClassPilot)", aggregateStart);
+    const aggregate = compat.slice(aggregateStart, aggregateEnd);
+    const serializerStart = aggregate.indexOf("return {", aggregate.indexOf("const publicExtensionContract"));
+    const serializer = aggregate.slice(serializerStart, aggregate.indexOf("return res.json(aggregated)"));
+
+    assert.ok(contractStart >= 0 && contractEnd > contractStart);
+    assert.match(contract, /tabSnapshot:.*[\s\S]*schemaVersion: 1, revision: tabSnapshotRevision/);
+    assert.match(contract, /tabSnapshotRevision,/);
+    assert.match(contract, /extensionVersion: snapshot\?\.extensionVersion \?\? null/);
+    for (const capability of [
+      "exactTabCloseV1",
+      "screenOnlyUnlockV1",
+      "fabStateRevisionV1",
+      "durableChatAckV1",
+      "commandAckReceiptV1",
+      "classroomOverlayRestoreV1",
+      "liveViewNegotiationV1",
+    ]) {
+      assert.match(contract, new RegExp(`${capability}: extensionCapabilities\\.has\\("${capability}"\\)`));
+    }
+    assert.match(contract, /minExtensionVersion: "2\.6\.0"/);
+    assert.doesNotMatch(contract, /deviceId|studentSessionId|schoolId/);
+    assert.match(aggregate, /publicClasspilotExtensionContract\(visibleRealtime\)/);
+    assert.match(serializer, /\.\.\.publicExtensionContract/);
+    assert.doesNotMatch(serializer, /\bdeviceId\s*:/);
+  });
 });

@@ -1,4 +1,4 @@
-import { WebSocketServer, WebSocket } from "ws";
+import { WebSocketServer, WebSocket, type RawData } from "ws";
 import type { Server } from "http";
 import { randomUUID } from "crypto";
 import {
@@ -42,11 +42,13 @@ import {
   updateClasspilotCommandTargetAck,
   getTeachingSessionByIdAndSchool,
   isAuthorizedClasspilotSessionStaff,
+  withClasspilotTeachingTelemetryAuthority,
+  getAuthorizedClasspilotSessionStaffIds,
   getClasspilotStudentControlState,
   getActiveSessionsForStudents,
   acknowledgeClasspilotStudentControlState,
-  updateChatMessageDelivery,
-  getChatMessageByIdAndSchool,
+  acknowledgeTeacherChatDelivery,
+  claimDueTeacherChatDeliveriesForBinding,
 } from "../services/storage.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
 import {
@@ -71,6 +73,28 @@ import {
   classpilotCommandDeliveryPolicy,
   summarizeClasspilotCommandTargets,
 } from "../services/classpilotCommandDelivery.js";
+import {
+  assertClasspilotEntitled,
+  resolveClasspilotEntitlement,
+} from "../services/classpilotEntitlement.js";
+import { registerClasspilotCommandUpdateScheduler } from "../services/classpilotCommandUpdateScheduler.js";
+import {
+  CLASSPILOT_WS_MAX_PAYLOAD_BYTES,
+  normalizeClasspilotSignalingIdentifier,
+  sanitizeClasspilotSignalingMessage,
+} from "../services/classpilotSignaling.js";
+import {
+  CLASSPILOT_WS_MAX_PENDING_FRAMES,
+  CLASSPILOT_LIVE_VIEW_SETUP_TTL_MS,
+  claimClasspilotLiveViewNegotiation,
+  classpilotLiveViewNegotiationAuthority,
+  classpilotLiveViewRequester,
+  consumeClasspilotWsFrame,
+  createClasspilotWsFrameBucket,
+  releaseClasspilotLiveViewNegotiation,
+  verifyClasspilotLiveViewNegotiation,
+} from "../services/classpilotLiveViewNegotiation.js";
+import { stopActiveClasspilotLiveViewNegotiations } from "../services/classpilotLiveViewStop.js";
 
 // Ping/pong keepalive constants
 const WS_PING_INTERVAL_MS = 30_000; // 30 seconds
@@ -97,6 +121,11 @@ type StudentWebSocketSessionResolver = (
   payload: StudentTokenPayload
 ) => Promise<unknown | undefined>;
 
+const defaultStudentWebSocketSessionResolver: StudentWebSocketSessionResolver = (payload) =>
+  runWithTenantContext({ schoolId: payload.schoolId }, () =>
+    resolveActiveStudentTokenSession(payload)
+  );
+
 /**
  * Revalidate the exact persisted student/session/device binding for an already
  * authenticated socket. Student lifecycle changes end the persisted session;
@@ -109,10 +138,7 @@ export async function hasActiveStudentWebSocketBinding(
     WSClient,
     "role" | "schoolId" | "studentId" | "studentSessionId" | "deviceId"
   >,
-  resolveSession: StudentWebSocketSessionResolver = (payload) =>
-    runWithTenantContext({ schoolId: payload.schoolId }, () =>
-      resolveActiveStudentTokenSession(payload)
-    )
+  resolveSession: StudentWebSocketSessionResolver = defaultStudentWebSocketSessionResolver
 ): Promise<boolean> {
   if (client.role !== "student") return true;
   if (
@@ -123,18 +149,33 @@ export async function hasActiveStudentWebSocketBinding(
   ) {
     return false;
   }
-  return Boolean(await resolveSession({
+  const active = Boolean(await resolveSession({
     schoolId: client.schoolId,
     studentId: client.studentId,
     sessionId: client.studentSessionId,
     deviceId: client.deviceId,
   }));
+  if (!active) return false;
+  // Unit callers may inject a binding resolver; production uses the default
+  // path and additionally revalidates school + license on every message/pong.
+  if (resolveSession !== defaultStudentWebSocketSessionResolver) return true;
+  return (await runWithTenantContext(
+    { schoolId: client.schoolId },
+    () => resolveClasspilotEntitlement(client.schoolId!)
+  )).entitled;
 }
 
 type StaffMembershipResolver = (
   userId: string,
   schoolId: string
 ) => Promise<{ role: string } | undefined>;
+
+type StaffEntitlementResolver = (
+  schoolId: string
+) => Promise<{ entitled: boolean }>;
+
+const defaultStaffEntitlementResolver: StaffEntitlementResolver = (schoolId) =>
+  runWithTenantContext({ schoolId }, () => resolveClasspilotEntitlement(schoolId));
 
 function staffWebSocketRole(membershipRole: string): Exclude<WsRole, "student"> | null {
   if (membershipRole === "admin" || membershipRole === "school_admin") return "school_admin";
@@ -143,13 +184,20 @@ function staffWebSocketRole(membershipRole: string): Exclude<WsRole, "student"> 
   return null;
 }
 
-/** Revalidate the current active membership before retaining staff authority. */
+/**
+ * Revalidate both the school entitlement and current membership before
+ * retaining staff authority. Super-admin is a user authorization bypass, not
+ * a product-entitlement bypass: a disabled/unlicensed school must not retain a
+ * live ClassPilot control channel for any role.
+ */
 export async function activeStaffWebSocketRole(
   client: Pick<WSClient, "role" | "schoolId" | "userId">,
-  resolveMembership: StaffMembershipResolver = getMembershipByUserAndSchool
+  resolveMembership: StaffMembershipResolver = getMembershipByUserAndSchool,
+  resolveEntitlement: StaffEntitlementResolver = defaultStaffEntitlementResolver
 ): Promise<Exclude<WsRole, "student"> | null> {
-  if (client.role === "super_admin") return "super_admin";
   if (!client.schoolId || !client.userId || client.role === "student") return null;
+  if (!(await resolveEntitlement(client.schoolId)).entitled) return null;
+  if (client.role === "super_admin") return "super_admin";
   const membership = await resolveMembership(client.userId, client.schoolId);
   return membership ? staffWebSocketRole(membership.role) : null;
 }
@@ -158,7 +206,10 @@ export function setupWebSocket(
   httpServer: Server,
   options: { presenceStore?: ClasspilotStaffPresenceStore } = {}
 ): WebSocketServer {
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({
+    noServer: true,
+    maxPayload: CLASSPILOT_WS_MAX_PAYLOAD_BYTES,
+  });
   const presenceStore = options.presenceStore ?? classpilotStaffPresenceStore;
 
   let activity = { connected: 0, studentAuthenticated: 0, staffAuthenticated: 0 };
@@ -177,6 +228,7 @@ export function setupWebSocket(
 
   // Track ping/pong state per client
   const clientPingTimers = new Map<WebSocket, NodeJS.Timeout>();
+  const clientPongTimers = new Map<WebSocket, NodeJS.Timeout>();
   const clientPongPending = new Map<WebSocket, boolean>();
   const MAX_CONCURRENT_COMMAND_UPDATE_PUBLICATIONS = 2;
   const COMMAND_UPDATE_PUBLISH_TIMEOUT_MS = 1_500;
@@ -383,8 +435,10 @@ export function setupWebSocket(
     commandUpdateStates.set(key, state);
     armCommandUpdate(state);
   };
+  registerClasspilotCommandUpdateScheduler(scheduleCommandUpdate);
 
   wss.once("close", () => {
+    registerClasspilotCommandUpdateScheduler(null);
     commandUpdateQueueClosed = true;
     commandUpdateQueue.length = 0;
     for (const state of commandUpdateStates.values()) {
@@ -396,6 +450,20 @@ export function setupWebSocket(
   // --- Redis cross-instance message delivery ---
   const deliverRedisMessage = (target: WsRedisTarget, message: unknown) => {
     const msgType = (message as { type?: string })?.type ?? "unknown";
+    const sessionId = (message as { sessionId?: unknown })?.sessionId;
+    if (
+      target.kind === "staff"
+      && msgType === "session-ended"
+      && typeof sessionId === "string"
+      && sessionId.length > 0
+      && sessionId.length <= 128
+    ) {
+      void stopActiveClasspilotLiveViewNegotiations({
+        schoolId: target.schoolId,
+        teachingSessionId: sessionId,
+        reason: "session-ended",
+      });
+    }
     switch (target.kind) {
       case "staff":
         broadcastToTeachersLocal(target.schoolId, message);
@@ -472,8 +540,7 @@ export function setupWebSocket(
   function startPingInterval(ws: WebSocket) {
     const timer = setInterval(() => {
       if (ws.readyState !== WebSocket.OPEN) {
-        clearInterval(timer);
-        clientPingTimers.delete(ws);
+        stopPingInterval(ws);
         return;
       }
 
@@ -487,7 +554,20 @@ export function setupWebSocket(
       // Send ping and mark pong as pending
       clientPongPending.set(ws, true);
       ws.ping();
+
+      const previousPongTimer = clientPongTimers.get(ws);
+      if (previousPongTimer) clearTimeout(previousPongTimer);
+      const pongTimer = setTimeout(() => {
+        clientPongTimers.delete(ws);
+        if (clientPongPending.get(ws) && ws.readyState === WebSocket.OPEN) {
+          console.log("[WebSocket] Client exceeded pong timeout, closing connection");
+          ws.terminate();
+        }
+      }, WS_PONG_TIMEOUT_MS);
+      pongTimer.unref();
+      clientPongTimers.set(ws, pongTimer);
     }, WS_PING_INTERVAL_MS);
+    timer.unref();
 
     clientPingTimers.set(ws, timer);
   }
@@ -498,14 +578,41 @@ export function setupWebSocket(
       clearInterval(timer);
       clientPingTimers.delete(ws);
     }
+    const pongTimer = clientPongTimers.get(ws);
+    if (pongTimer) {
+      clearTimeout(pongTimer);
+      clientPongTimers.delete(ws);
+    }
     clientPongPending.delete(ws);
   }
 
   // --- Connection handler ---
   wss.on("connection", (ws) => {
     const client = registerWsClient(ws);
+    const frameBucket = createClasspilotWsFrameBucket();
+    let pendingFrames = 0;
+    let frameQueue: Promise<void> = Promise.resolve();
     let studentPongRevalidation: Promise<void> | null = null;
     let staffPongRevalidation: Promise<void> | null = null;
+    const ownedLiveViewNegotiations = new Map<string, {
+      schoolId: string;
+      requesterUserId: string;
+    }>();
+    const forgetOwnedLiveView = (negotiationId: string): void => {
+      ownedLiveViewNegotiations.delete(negotiationId);
+    };
+    const stopOwnedLiveViews = (reason: string): void => {
+      const owned = [...ownedLiveViewNegotiations.entries()];
+      ownedLiveViewNegotiations.clear();
+      for (const [negotiationId, authority] of owned) {
+        void stopActiveClasspilotLiveViewNegotiations({
+          schoolId: authority.schoolId,
+          requesterUserId: authority.requesterUserId,
+          negotiationIds: [negotiationId],
+          reason,
+        });
+      }
+    };
     const presenceConnectionId = randomUUID();
     let recordedPresence: { schoolId: string; userId: string } | null = null;
     let presenceMutation = Promise.resolve();
@@ -569,6 +676,11 @@ export function setupWebSocket(
     // Handle pong responses
     ws.on("pong", () => {
       clientPongPending.set(ws, false);
+      const pongTimer = clientPongTimers.get(ws);
+      if (pongTimer) {
+        clearTimeout(pongTimer);
+        clientPongTimers.delete(ws);
+      }
       refreshStaffPresence();
       if (!client.authenticated) return;
       if (client.role === "student") {
@@ -608,7 +720,7 @@ export function setupWebSocket(
         });
         return;
       }
-      if (client.role === "super_admin" || staffPongRevalidation) return;
+      if (staffPongRevalidation) return;
       const binding = { role: client.role, schoolId: client.schoolId, userId: client.userId } as const;
       const pending = activeStaffWebSocketRole(binding)
         .then((currentRole) => {
@@ -641,7 +753,7 @@ export function setupWebSocket(
       });
     });
 
-    ws.on("message", async (data) => {
+    const handleMessage = async (data: RawData): Promise<void> => {
       let messageType = "unknown";
       try {
         const message = JSON.parse(data.toString());
@@ -681,11 +793,19 @@ export function setupWebSocket(
                 const bootstrap = await runWithTenantContext({ schoolId }, async () => {
                   const activeSession = await resolveActiveStudentTokenSession(payload);
                   if (!activeSession) return null;
+                  if (!(await resolveClasspilotEntitlement(schoolId)).entitled) return null;
                   const schoolSettings = await getSettingsForSchool(schoolId);
                   const fab = await buildStudentFabState(schoolId, payload.studentId, {
                     schoolSettings,
+                    studentSessionId: activeSession.id,
                   });
                   const classroomStateRow = await getClasspilotStudentControlState(schoolId, payload.studentId);
+                  const teacherReplies = await claimDueTeacherChatDeliveriesForBinding({
+                    schoolId,
+                    studentId: payload.studentId,
+                    studentSessionId: activeSession.id,
+                    deviceId,
+                  });
                   return {
                     schoolSettings,
                     fab,
@@ -693,6 +813,7 @@ export function setupWebSocket(
                     classroomState: classroomStateRow
                       ? serializeClasspilotStudentControlState(classroomStateRow)
                       : null,
+                    teacherReplies,
                   };
                 });
                 if (!bootstrap) {
@@ -713,6 +834,13 @@ export function setupWebSocket(
                 ws.send(JSON.stringify({
                   type: "auth-success",
                   role: "student",
+                  schoolId,
+                  studentId: payload.studentId,
+                  studentSessionId: bootstrap.studentSessionId,
+                  exactBinding: {
+                    studentId: payload.studentId,
+                    studentSessionId: bootstrap.studentSessionId,
+                  },
                   settings: {
                     maxTabsPerStudent: bootstrap.schoolSettings?.maxTabsPerStudent
                       ? parseInt(bootstrap.schoolSettings.maxTabsPerStudent, 10) : null,
@@ -724,6 +852,19 @@ export function setupWebSocket(
                   // would leave the former student's persisted restrictions.
                   classroomState: bootstrap.classroomState,
                 }));
+                for (const { message: teacherMessage } of bootstrap.teacherReplies) {
+                  ws.send(JSON.stringify({
+                    type: "teacher-message",
+                    _msgId: teacherMessage.id,
+                    chatMessageId: teacherMessage.id,
+                    messageId: teacherMessage.id,
+                    sessionId: teacherMessage.sessionId,
+                    studentId: payload.studentId,
+                    studentSessionId: bootstrap.studentSessionId,
+                    message: teacherMessage.content,
+                    fromName: "Teacher",
+                  }));
+                }
                 activity.studentAuthenticated += 1;
               } catch (error) {
                 const safeError = studentAuthenticationServiceError(error);
@@ -770,24 +911,22 @@ export function setupWebSocket(
                 return;
               }
 
-              // Verify role from DB membership instead of trusting client
-              let role: "teacher" | "office_staff" | "school_admin" | "super_admin";
-              if (payload.isSuperAdmin) {
-                role = "super_admin";
-              } else {
-                const membership = await getMembershipByUserAndSchool(userId, schoolId);
-                if (!membership) {
-                  ws.send(JSON.stringify({ type: "auth-error", message: "No access to this school" }));
-                  ws.close();
-                  return;
-                }
-                const currentRole = staffWebSocketRole(membership.role);
-                if (!currentRole) {
-                  ws.send(JSON.stringify({ type: "auth-error", message: "Staff access required" }));
-                  ws.close(1008, "Staff access required");
-                  return;
-                }
-                role = currentRole;
+              // Verify current product entitlement and role from server state
+              // instead of trusting the client-provided role. Super-admin may
+              // select a school without membership, but never bypasses a
+              // disabled or unlicensed ClassPilot school.
+              const role = await activeStaffWebSocketRole({
+                role: payload.isSuperAdmin ? "super_admin" : message.role,
+                userId,
+                schoolId,
+              });
+              if (!role) {
+                ws.send(JSON.stringify({
+                  type: "auth-error",
+                  message: "No active ClassPilot access for this school",
+                }));
+                ws.close(1008, "ClassPilot access unavailable");
+                return;
               }
 
               authenticateWsClient(ws, {
@@ -806,6 +945,7 @@ export function setupWebSocket(
               if (role === "office_staff") return;
               void presenceRecorded.then(() =>
                 runWithTenantContext({ schoolId }, async () => {
+                  await assertClasspilotEntitled(schoolId);
                   const started = await startActiveScheduledClassesForTeacher({ schoolId, teacherId: userId });
                   if (started.length > 0) {
                     broadcastScheduledClassUpdate(schoolId, {
@@ -836,7 +976,6 @@ export function setupWebSocket(
         if (!client.authenticated) return;
         if (
           client.role !== "student" &&
-          client.role !== "super_admin" &&
           message.type !== "auth"
         ) {
           try {
@@ -952,28 +1091,37 @@ export function setupWebSocket(
           const deliveryStatus = rawStatus === "failed" ? "failed" : rawStatus === "delivered" ? "delivered" : null;
           if (!messageId || !deliveryStatus) return;
 
-          const chatMessage = await runWithTenantContext({ schoolId: client.schoolId }, async () => {
-            await updateChatMessageDelivery({
-              messageId,
+          const acknowledged = await runWithTenantContext({ schoolId: client.schoolId }, () =>
+            acknowledgeTeacherChatDelivery({
+              chatMessageId: messageId,
               schoolId: client.schoolId!,
+              studentId: client.studentId!,
+              studentSessionId: client.studentSessionId!,
               deviceId: client.deviceId!,
-              deliveryStatus,
+              status: deliveryStatus,
               errorMessage: message.error || message.errorMessage || null,
-            });
-            return getChatMessageByIdAndSchool(messageId, client.schoolId!);
-          });
+            })
+          );
 
-          if (chatMessage?.sessionId) {
+          if (acknowledged?.message.sessionId) {
             const payload = {
               type: "chat-message-delivery",
-              sessionId: chatMessage.sessionId,
+              sessionId: acknowledged.message.sessionId,
               messageId,
-              studentId: chatMessage.studentId,
-              deliveryStatus,
-              errorMessage: message.error || message.errorMessage || null,
+              studentId: acknowledged.message.studentId,
+              deliveryStatus: acknowledged.message.deliveryStatus,
+              errorMessage: acknowledged.message.errorMessage,
             };
-            broadcastToStaffSessionLocal(client.schoolId, chatMessage.sessionId, payload);
-            void publishWS({ kind: "staff-session", schoolId: client.schoolId, sessionId: chatMessage.sessionId }, payload);
+            broadcastToStaffSessionLocal(client.schoolId, acknowledged.message.sessionId, payload);
+            void publishWS({ kind: "staff-session", schoolId: client.schoolId, sessionId: acknowledged.message.sessionId }, payload);
+          }
+          if (message.ackId) {
+            ws.send(JSON.stringify({
+              type: "chat-message-ack-receipt",
+              ackId: String(message.ackId),
+              messageId,
+              accepted: !!acknowledged,
+            }));
           }
           return;
         }
@@ -999,7 +1147,7 @@ export function setupWebSocket(
                   ? "unsupported"
                   : null;
           if (Number.isSafeInteger(appliedRevision) && appliedRevision >= 0 && outcome) {
-            await runWithTenantContext({ schoolId: client.schoolId }, () =>
+            const acknowledgedState = await runWithTenantContext({ schoolId: client.schoolId }, () =>
               acknowledgeClasspilotStudentControlState({
                 schoolId: client.schoolId!,
                 studentId: client.studentId!,
@@ -1010,6 +1158,9 @@ export function setupWebSocket(
                 error: message.error ? String(message.error) : null,
               })
             );
+            if (acknowledgedState?.sourceCommandId) {
+              scheduleCommandUpdate(client.schoolId, acknowledgedState.sourceCommandId);
+            }
           }
           return;
         }
@@ -1052,6 +1203,12 @@ export function setupWebSocket(
           }
           ws.send(JSON.stringify({
             type: "classroom-state-sync",
+            studentId: client.studentId,
+            studentSessionId: client.studentSessionId,
+            exactBinding: {
+              studentId: client.studentId,
+              studentSessionId: client.studentSessionId,
+            },
             classroomState: reconciliation.state,
           }));
           return;
@@ -1126,82 +1283,307 @@ export function setupWebSocket(
           }
 
           if (target) scheduleCommandUpdate(client.schoolId, commandId);
+          if (message.ackId) {
+            ws.send(JSON.stringify({
+              type: "command-ack-receipt",
+              ackId: String(message.ackId).slice(0, 128),
+              commandId,
+              accepted: !!target,
+            }));
+          }
           return;
         }
 
         const resolveLiveTarget = async () => {
           if (!client.schoolId || !client.userId) return null;
-          const studentId = String(message.studentId || message.toStudentId || "").trim();
-          const teachingSessionId = String(message.teachingSessionId || "").trim();
+          const studentId = normalizeClasspilotSignalingIdentifier(
+            message.studentId || message.toStudentId
+          );
+          const teachingSessionId = normalizeClasspilotSignalingIdentifier(
+            message.teachingSessionId
+          );
           if (!studentId || !teachingSessionId || !client.subscribedSessionIds.has(teachingSessionId)) {
             return null;
           }
           return runWithTenantContext({ schoolId: client.schoolId }, async () => {
+            // An admin may subscribe to observe a session, but subscriptions are
+            // never mutation authority. Live control/signaling requires immutable
+            // primary/co-teacher assignment just like canonical HTTP commands.
+            if (!(await isAuthorizedClasspilotSessionStaff(
+              client.schoolId!,
+              teachingSessionId,
+              client.userId!
+            ))) {
+              return null;
+            }
             const [controlState, activeSessions] = await Promise.all([
               getClasspilotStudentControlState(client.schoolId!, studentId),
               getActiveSessionsForStudents(client.schoolId!, [studentId]),
             ]);
             if (controlState?.teachingSessionId !== teachingSessionId) return null;
             const active = activeSessions.find((row) => row.studentId === studentId);
-            return active ? { studentId, teachingSessionId, deviceId: active.deviceId } : null;
+                    return active ? {
+                      studentId,
+                      teachingSessionId,
+                      controlRevision: controlState!.revision,
+                      studentSessionId: active.id,
+              deviceId: active.deviceId,
+            } : null;
           });
         };
 
         // --- WebRTC signaling: authorized student IDs on the teacher side ---
         if (message.type === "offer" || message.type === "answer" || message.type === "ice") {
           if (!client.schoolId) return;
+          const signaling = sanitizeClasspilotSignalingMessage(message.type, message);
+          if (!signaling) return;
           if (client.role === "student") {
             if (message.to !== "teacher" || !client.studentId) return;
+            const fromStudentId = normalizeClasspilotSignalingIdentifier(client.studentId);
+            if (!fromStudentId) return;
             const state = await runWithTenantContext({ schoolId: client.schoolId }, () =>
               getClasspilotStudentControlState(client.schoolId!, client.studentId!)
             );
-            const sessionId = state?.teachingSessionId;
+            const sessionId = normalizeClasspilotSignalingIdentifier(state?.teachingSessionId);
             if (!sessionId) return;
+            const negotiationId = String(message.negotiationId || "").trim();
+            const requesterUserId = classpilotLiveViewRequester(negotiationId, {
+              schoolId: client.schoolId,
+              studentId: client.studentId,
+              studentSessionId: client.studentSessionId!,
+              deviceId: client.deviceId!,
+              teachingSessionId: sessionId,
+            });
+            if (!requesterUserId) return;
+            const requesterAuthorized = await runWithTenantContext(
+              { schoolId: client.schoolId },
+              () => isAuthorizedClasspilotSessionStaff(
+                client.schoolId!,
+                sessionId,
+                requesterUserId
+              )
+            );
+            if (!requesterAuthorized) return;
             const payload = {
               type: message.type,
-              from: client.studentId,
-              ...(message.sdp ? { sdp: message.sdp } : {}),
-              ...(message.candidate ? { candidate: message.candidate } : {}),
+              from: fromStudentId,
+              negotiationId,
+              ...signaling,
             };
-            broadcastToStaffSessionLocal(client.schoolId, sessionId, payload);
-            void publishWS({ kind: "staff-session", schoolId: client.schoolId, sessionId }, payload);
+            sendToStaffUserLocal(client.schoolId, requesterUserId, payload);
+            void publishWS({
+              kind: "staff-user",
+              schoolId: client.schoolId,
+              userId: requesterUserId,
+            }, payload);
             return;
           }
           const target = await resolveLiveTarget();
-          if (!target) return;
+          if (!target || !client.userId) return;
+          const negotiationId = String(message.negotiationId || "").trim();
+          if (!verifyClasspilotLiveViewNegotiation(negotiationId, {
+            schoolId: client.schoolId,
+            studentId: target.studentId,
+            studentSessionId: target.studentSessionId,
+            deviceId: target.deviceId,
+            teachingSessionId: target.teachingSessionId,
+            requesterUserId: client.userId,
+          })) return;
           const payload = {
             type: message.type,
             from: "teacher",
-            ...(message.sdp ? { sdp: message.sdp } : {}),
-            ...(message.candidate ? { candidate: message.candidate } : {}),
+            negotiationId,
+            studentId: target.studentId,
+            studentSessionId: target.studentSessionId,
+            ...signaling,
           };
           sendToDeviceLocal(client.schoolId, target.deviceId, payload);
           void publishWS({ kind: "device", schoolId: client.schoolId, deviceId: target.deviceId }, payload);
           return;
         }
 
+        // A student capture/peer failure releases the exact signed claim so a
+        // teacher can retry immediately instead of waiting for the live-view
+        // lease. The negotiation embeds the original session/requester, so
+        // release remains possible after a concurrent classroom scope change.
+        if (message.type === "stop-share" && client.role === "student") {
+          if (
+            message.to !== "teacher"
+            || !client.schoolId
+            || !client.studentId
+            || !client.studentSessionId
+            || !client.deviceId
+          ) return;
+          const negotiationId = String(message.negotiationId || "").trim();
+          const authority = classpilotLiveViewNegotiationAuthority(negotiationId, {
+            schoolId: client.schoolId,
+            studentId: client.studentId,
+            studentSessionId: client.studentSessionId,
+            deviceId: client.deviceId,
+          });
+          if (!authority) return;
+          await releaseClasspilotLiveViewNegotiation(
+            { schoolId: client.schoolId, studentId: client.studentId },
+            negotiationId
+          );
+          const payload = {
+            type: "stop-share",
+            from: client.studentId,
+            negotiationId,
+            reason: String(message.reason || "student_stream_stopped").slice(0, 64),
+          };
+          sendToStaffUserLocal(client.schoolId, authority.requesterUserId, payload);
+          void publishWS({
+            kind: "staff-user",
+            schoolId: client.schoolId,
+            userId: authority.requesterUserId,
+          }, payload);
+          return;
+        }
+
         // --- Remote control: request-stream ---
         if (message.type === "request-stream" && (client.role === "teacher" || client.role === "school_admin" || client.role === "super_admin")) {
           const target = await resolveLiveTarget();
-          if (!target || !client.schoolId) return;
-          const payload = { type: "request-stream", from: "teacher" };
-          const deliveredLocally = sendToDeviceLocal(client.schoolId, target.deviceId, payload);
-          void publishWS({ kind: "device", schoolId: client.schoolId, deviceId: target.deviceId }, payload);
-          ws.send(JSON.stringify({
-            type: "live-view-requested",
-            studentId: target.studentId,
-            deliveredLocally,
-          }));
+          if (!target || !client.schoolId || !client.userId) return;
+          const outcome = await runWithTenantContext({ schoolId: client.schoolId }, () =>
+            withClasspilotTeachingTelemetryAuthority({
+              schoolId: client.schoolId!,
+              teachingSessionId: target.teachingSessionId,
+              studentId: target.studentId,
+              studentSessionId: target.studentSessionId,
+              deviceId: target.deviceId,
+              controlRevision: target.controlRevision,
+              actorId: client.userId!,
+            }, async () => {
+              const negotiation = await claimClasspilotLiveViewNegotiation({
+                schoolId: client.schoolId!,
+                studentId: target.studentId,
+                studentSessionId: target.studentSessionId,
+                deviceId: target.deviceId,
+                teachingSessionId: target.teachingSessionId,
+                requesterUserId: client.userId!,
+              });
+              if (negotiation.status !== "claimed") return {
+                status: negotiation.status,
+                studentId: target.studentId,
+              } as const;
+              // Register socket ownership immediately after the claim, before
+              // any device delivery or await. If the requester disconnects
+              // while Redis coordination is in flight, the closed-socket check
+              // below releases the just-created claim without starting capture.
+              ownedLiveViewNegotiations.set(negotiation.negotiationId, {
+                schoolId: client.schoolId!,
+                requesterUserId: client.userId!,
+              });
+              if (ws.readyState !== WebSocket.OPEN) {
+                forgetOwnedLiveView(negotiation.negotiationId);
+                await releaseClasspilotLiveViewNegotiation(
+                  { schoolId: client.schoolId!, studentId: target.studentId },
+                  negotiation.negotiationId
+                );
+                return { status: "requester_unavailable", studentId: target.studentId } as const;
+              }
+              const payload = {
+                type: "request-stream",
+                from: "teacher",
+                negotiationId: negotiation.negotiationId,
+                teachingSessionId: target.teachingSessionId,
+                studentId: target.studentId,
+                studentSessionId: target.studentSessionId,
+                setupExpiresAt: new Date(
+                  Date.now() + CLASSPILOT_LIVE_VIEW_SETUP_TTL_MS
+                ).toISOString(),
+                expiresAt: new Date(negotiation.expiresAt).toISOString(),
+              };
+              const deliveredLocally = sendToDeviceLocal(client.schoolId!, target.deviceId, payload);
+              const published = await publishWS(
+                { kind: "device", schoolId: client.schoolId!, deviceId: target.deviceId },
+                payload
+              );
+              if (!deliveredLocally && !published) {
+                forgetOwnedLiveView(negotiation.negotiationId);
+                await releaseClasspilotLiveViewNegotiation(
+                  { schoolId: client.schoolId!, studentId: target.studentId },
+                  negotiation.negotiationId
+                );
+                return { status: "delivery_unavailable", studentId: target.studentId } as const;
+              }
+              return {
+                status: "claimed",
+                studentId: target.studentId,
+                teachingSessionId: target.teachingSessionId,
+                negotiationId: negotiation.negotiationId,
+                expiresAt: negotiation.expiresAt,
+                deliveredLocally,
+              } as const;
+            })
+          );
+          // Undefined means ownership, exact binding, entitlement, or actor
+          // authority changed while the Redis claim was being acquired.
+          if (!outcome) return;
+          if (outcome.status !== "claimed") {
+            if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({
+              type: outcome.status === "busy" ? "live-view-busy" : "live-view-unavailable",
+              code: outcome.status === "busy"
+                ? "LIVE_VIEW_BUSY"
+                : outcome.status === "delivery_unavailable"
+                  ? "LIVE_VIEW_DELIVERY_UNAVAILABLE"
+                  : outcome.status === "requester_unavailable"
+                    ? "LIVE_VIEW_REQUESTER_UNAVAILABLE"
+                  : "LIVE_VIEW_COORDINATION_UNAVAILABLE",
+              studentId: outcome.studentId,
+            }));
+            return;
+          }
+          if (ws.readyState !== WebSocket.OPEN) {
+            stopOwnedLiveViews("requester-disconnected-before-receipt");
+            return;
+          }
+          try {
+            ws.send(JSON.stringify({
+              type: "live-view-requested",
+              studentId: outcome.studentId,
+              teachingSessionId: outcome.teachingSessionId,
+              negotiationId: outcome.negotiationId,
+              setupExpiresAt: new Date(
+                Date.now() + CLASSPILOT_LIVE_VIEW_SETUP_TTL_MS
+              ).toISOString(),
+              expiresAt: new Date(outcome.expiresAt).toISOString(),
+              deliveredLocally: outcome.deliveredLocally,
+            }));
+          } catch {
+            stopOwnedLiveViews("requester-receipt-failed");
+          }
           return;
         }
 
         // --- Remote control: stop-share ---
         if (message.type === "stop-share" && (client.role === "teacher" || client.role === "school_admin" || client.role === "super_admin")) {
           const target = await resolveLiveTarget();
-          if (!target || !client.schoolId) return;
-          const payload = { type: "stop-share", from: "teacher" };
+          if (!target || !client.schoolId || !client.userId) return;
+          const negotiationId = String(message.negotiationId || "").trim();
+          if (!verifyClasspilotLiveViewNegotiation(negotiationId, {
+            schoolId: client.schoolId,
+            studentId: target.studentId,
+            studentSessionId: target.studentSessionId,
+            deviceId: target.deviceId,
+            teachingSessionId: target.teachingSessionId,
+            requesterUserId: client.userId,
+          })) return;
+          const payload = {
+            type: "stop-share",
+            from: "teacher",
+            negotiationId,
+            studentId: target.studentId,
+            studentSessionId: target.studentSessionId,
+          };
           sendToDeviceLocal(client.schoolId, target.deviceId, payload);
           void publishWS({ kind: "device", schoolId: client.schoolId, deviceId: target.deviceId }, payload);
+          await releaseClasspilotLiveViewNegotiation(
+            { schoolId: client.schoolId, studentId: target.studentId },
+            negotiationId
+          );
+          forgetOwnedLiveView(negotiationId);
           return;
         }
       } catch (error) {
@@ -1215,10 +1597,33 @@ export function setupWebSocket(
           });
         }
       }
+    };
+
+    ws.on("message", (data) => {
+      if (!consumeClasspilotWsFrame(frameBucket)) {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "rate-limit", code: "WS_FRAME_RATE_EXCEEDED" }));
+          ws.close(1008, "WebSocket frame rate exceeded");
+        }
+        return;
+      }
+      if (pendingFrames >= CLASSPILOT_WS_MAX_PENDING_FRAMES) {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "rate-limit", code: "WS_FRAME_QUEUE_EXCEEDED" }));
+          ws.close(1008, "WebSocket frame queue exceeded");
+        }
+        return;
+      }
+      pendingFrames += 1;
+      const processFrame = () => handleMessage(data);
+      frameQueue = frameQueue
+        .then(processFrame, processFrame)
+        .finally(() => { pendingFrames -= 1; });
     });
 
     ws.on("close", () => {
       stopPingInterval(ws);
+      stopOwnedLiveViews("requester-disconnected");
       clearStaffPresence();
       removeWsClient(ws);
       emitWebSocketMetric("WebSocketDisconnect");
@@ -1230,6 +1635,7 @@ export function setupWebSocket(
       emitWebSocketMetric("WebSocketError");
       errorMonitor.trackError("websocket_error", error);
       stopPingInterval(ws);
+      stopOwnedLiveViews("requester-transport-error");
       clearStaffPresence();
       removeWsClient(ws);
     });

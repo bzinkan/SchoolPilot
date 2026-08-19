@@ -47,5 +47,8 @@ test("heartbeat and WebSocket reconciliation carry authoritative explicit-null s
   assert.match(websocket, /message\.type === "classroom-state-request"/);
   assert.match(websocket, /session\.id === client\.studentSessionId/);
   assert.match(websocket, /session\.deviceId === client\.deviceId/);
-  assert.match(websocket, /type: "classroom-state-sync",\s*classroomState: reconciliation\.state/);
+  assert.match(
+    websocket,
+    /type: "classroom-state-sync",[\s\S]*?studentId: client\.studentId,[\s\S]*?studentSessionId: client\.studentSessionId,[\s\S]*?exactBinding:[\s\S]*?classroomState: reconciliation\.state/
+  );
 });

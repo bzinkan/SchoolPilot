@@ -1,10 +1,8 @@
-import crypto from "crypto";
 import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
-import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
-import { requireProductLicense } from "../../middleware/requireProductLicense.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
 import {
   getFlightPathsBySchool,
   getFlightPathsByTeacherAndSchool,
@@ -19,11 +17,6 @@ import {
   updateBlockList,
   deleteBlockList,
 } from "../../services/storage.js";
-import {
-  sendToDeviceLocal,
-} from "../../realtime/ws-broadcast.js";
-import { publishWS } from "../../realtime/ws-redis.js";
-import { scopedDeviceTargets } from "../../services/classpilotDeviceScope.js";
 
 const router = Router();
 
@@ -34,16 +27,14 @@ function param(req: any, key: string): string {
 const auth = [
   authenticate,
   requireSchoolContext,
-  requireActiveSchool,
-  requireProductLicense("CLASSPILOT"),
+  requireClasspilotEntitlement,
   requireRole("admin", "school_admin", "office_staff", "teacher"),
 ] as const;
 
 const adminAuth = [
   authenticate,
   requireSchoolContext,
-  requireActiveSchool,
-  requireProductLicense("CLASSPILOT"),
+  requireClasspilotEntitlement,
   requireRole("admin", "school_admin"),
 ] as const;
 
@@ -55,24 +46,26 @@ function canManageOwnedResource(req: any, res: any, teacherId: string | null): b
     || teacherId === req.authUser?.id;
 }
 
-function allowedEntryFromUrl(rawUrl: string): string | null {
+/**
+ * The currently deployed extension enforces Flight Path allow entries at the
+ * hostname level. Keep Classroom imports on that same contract: returning an
+ * apparent per-video URL here would silently widen it to all of YouTube when
+ * the extension normalizes the rule.
+ */
+export function allowedEntryFromUrl(rawUrl: string): string | null {
   try {
     const url = new URL(rawUrl);
-    const host = url.hostname.replace(/^www\./, "");
-    if (host === "youtube.com" || host === "youtu.be" || host.endsWith(".youtube.com")) {
-      const videoId = url.hostname === "youtu.be"
-        ? url.pathname.replace(/^\//, "")
-        : url.searchParams.get("v");
-      if (videoId) return `https://www.youtube.com/watch?v=${videoId}`;
-    }
-    return host;
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return url.hostname.replace(/^www\./, "").toLowerCase() || null;
   } catch {
-    const trimmed = String(rawUrl || "").trim();
-    return trimmed || null;
+    // Classroom resources are URLs. Do not pass arbitrary path-like strings
+    // through as domain rules and accidentally promise a narrower policy than
+    // the extension can enforce.
+    return null;
   }
 }
 
-function extractAllowedEntries(resources: any[], fallbackLinks: string[] = []): string[] {
+export function extractAllowedEntries(resources: any[], fallbackLinks: string[] = []): string[] {
   const entries = new Set<string>();
   for (const url of fallbackLinks) {
     const entry = allowedEntryFromUrl(url);
@@ -199,87 +192,13 @@ router.delete("/block-lists/:id", ...auth, async (req, res, next) => {
 });
 
 // POST /api/classpilot/block-lists/:id/apply - Apply block list to devices
-router.post("/block-lists/:id/apply", ...adminAuth, async (req, res, next) => {
-  try {
-    const schoolId = res.locals.schoolId!;
-    const bl = await getBlockListById(param(req, "id"), schoolId);
-    if (!bl) {
-      return res.status(404).json({ error: "Block list not found" });
-    }
-
-    const { deviceIds, targetDeviceIds } = req.body;
-    let resolvedDeviceIds = deviceIds || targetDeviceIds;
-    if (!Array.isArray(resolvedDeviceIds) || resolvedDeviceIds.length === 0) {
-      return res.status(400).json({
-        error: "Explicit targetDeviceIds are required. Use /classpilot/commands for class-scoped teacher commands.",
-      });
-    }
-    const message = {
-      type: "remote-control",
-      _msgId: crypto.randomUUID(),
-      command: { type: "apply-block-list", data: { blockListId: bl.id, blockListName: bl.name, blockedDomains: bl.blockedDomains } },
-    };
-
-    let sentTo = 0;
-    let rejectedDeviceCount = 0;
-    if (Array.isArray(resolvedDeviceIds) && resolvedDeviceIds.length > 0) {
-      const scoped = await scopedDeviceTargets(resolvedDeviceIds, schoolId);
-      if (scoped.deviceIds.length === 0) {
-        return res.status(404).json({ error: "No accessible devices", rejectedDeviceCount: scoped.rejectedDeviceCount });
-      }
-      resolvedDeviceIds = scoped.deviceIds;
-      rejectedDeviceCount = scoped.rejectedDeviceCount;
-      for (const deviceId of resolvedDeviceIds) {
-        sendToDeviceLocal(schoolId, deviceId, message);
-        sentTo++;
-      }
-      await publishWS({ kind: "students", schoolId, targetDeviceIds: resolvedDeviceIds }, message);
-    } else {
-      return res.status(400).json({ error: "No target devices resolved" });
-    }
-
-    return res.json({ success: true, sentTo, rejectedDeviceCount, message: `Applied "${bl.name}" to ${sentTo} device(s)` });
-  } catch (err) {
-    next(err);
-  }
+const retiredBlockListDeviceTargeting = (_req: any, res: any) => res.status(410).json({
+  error: "Direct device-ID block-list endpoints are retired",
+  code: "LEGACY_DEVICE_TARGETING_RETIRED",
+  replacement: "/api/classpilot/commands",
 });
-
-// POST /api/classpilot/block-lists/remove - Remove block list from devices
-router.post("/block-lists/remove", ...adminAuth, async (req, res, next) => {
-  try {
-    const schoolId = res.locals.schoolId!;
-    const { deviceIds, targetDeviceIds } = req.body;
-    let resolvedDeviceIds = deviceIds || targetDeviceIds;
-    if (!Array.isArray(resolvedDeviceIds) || resolvedDeviceIds.length === 0) {
-      return res.status(400).json({
-        error: "Explicit targetDeviceIds are required. Use /classpilot/commands for class-scoped teacher commands.",
-      });
-    }
-    const message = { type: "remote-control", _msgId: crypto.randomUUID(), command: { type: "remove-block-list", data: {} } };
-
-    let sentTo = 0;
-    let rejectedDeviceCount = 0;
-    if (Array.isArray(resolvedDeviceIds) && resolvedDeviceIds.length > 0) {
-      const scoped = await scopedDeviceTargets(resolvedDeviceIds, schoolId);
-      if (scoped.deviceIds.length === 0) {
-        return res.status(404).json({ error: "No accessible devices", rejectedDeviceCount: scoped.rejectedDeviceCount });
-      }
-      resolvedDeviceIds = scoped.deviceIds;
-      rejectedDeviceCount = scoped.rejectedDeviceCount;
-      for (const deviceId of resolvedDeviceIds) {
-        sendToDeviceLocal(schoolId, deviceId, message);
-        sentTo++;
-      }
-      await publishWS({ kind: "students", schoolId, targetDeviceIds: resolvedDeviceIds }, message);
-    } else {
-      return res.status(400).json({ error: "No target devices resolved" });
-    }
-
-    return res.json({ ok: true, sentTo, rejectedDeviceCount });
-  } catch (err) {
-    next(err);
-  }
-});
+router.post("/block-lists/:id/apply", ...adminAuth, retiredBlockListDeviceTargeting);
+router.post("/block-lists/remove", ...adminAuth, retiredBlockListDeviceTargeting);
 
 // ============================================================================
 // Flight Paths
@@ -373,8 +292,10 @@ router.post("/from-classroom", ...auth, async (req, res, next) => {
       flightPath: fp,
       extracted: {
         allowedDomains,
+        domainLevelEntries: allowedDomains,
         resourceCount: selectedResources.length,
-        youtubeExactUrls: allowedDomains.filter((entry) => entry.startsWith("https://www.youtube.com/watch")),
+        enforcementLevel: "hostname",
+        warning: "Classroom resource links are enforced at the website hostname level, not as individual pages or videos.",
       },
     });
   } catch (err) {
