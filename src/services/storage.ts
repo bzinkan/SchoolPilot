@@ -171,7 +171,6 @@ import {
   type Poll,
   type InsertPoll,
   type PollResponse,
-  type InsertPollResponse,
   type ClasspilotCommand,
   type InsertClasspilotCommand,
   type ClasspilotCommandTarget,
@@ -14633,13 +14632,6 @@ export async function getPollResponses(
       isNull(pollResponses.supersededAt)
     ))
     .orderBy(pollResponses.createdAt);
-}
-
-export async function createPollResponse(
-  data: InsertPollResponse
-): Promise<PollResponse> {
-  const [resp] = await db.insert(pollResponses).values(data).returning();
-  return resp!;
 }
 
 export type CreatePollResponseResult =

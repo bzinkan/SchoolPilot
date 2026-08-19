@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import pg from "pg";
 
@@ -587,6 +588,107 @@ test(
         clearedSwapRejected,
         true,
         "clearing an active hand must reject a hidden cross-school device swap",
+      );
+
+      // Exercise the exact startup cleanup SQL against legacy rows that could
+      // only predate the parent trigger. It may remove an answer whose student
+      // identity is globally gone, but it must leave cross-tenant evidence for
+      // the migration's fail-closed parent audit.
+      await client.query("RESET ROLE");
+      const restrictedStudentId = `${token}_student_delete_restricted`;
+      const restrictedResponseId = `${token}_response_delete_restricted`;
+      await client.query(
+        `
+          INSERT INTO students (id, school_id, first_name, last_name)
+          VALUES ($1, $2, 'Delete', 'Restricted')
+        `,
+        [restrictedStudentId, ids.schoolA],
+      );
+      await client.query(
+        `
+          INSERT INTO poll_responses
+            (id, school_id, poll_id, student_id, selected_option)
+          VALUES ($1, $2, $3, $4, 0)
+        `,
+        [restrictedResponseId, ids.schoolA, ids.pollA, restrictedStudentId],
+      );
+      await expectDatabaseError(
+        "poll response FK blocks a future raw student hard-delete",
+        "DELETE FROM students WHERE id = $1",
+        [restrictedStudentId],
+        "23503",
+        /poll_responses_school_student_fk/i,
+      );
+      await client.query(
+        "ALTER TABLE poll_responses DISABLE TRIGGER ALL",
+      );
+      const missingStudentId = `${token}_student_deleted`;
+      const crossDeviceMissingStudentId = `${token}_student_deleted_cross_device`;
+      const legacyResponseIds = {
+        missingStudent: `${token}_response_missing_student`,
+        crossStudent: `${token}_response_cross_student`,
+        crossDevice: `${token}_response_cross_device`,
+      };
+      await client.query(
+        `
+          INSERT INTO poll_responses
+            (id, school_id, poll_id, student_id, device_id, selected_option)
+          VALUES
+            ($1, $2, $3, $4, NULL, 0),
+            ($5, $2, $3, $6, NULL, 0),
+            ($7, $2, $3, $8, $9, 0)
+        `,
+        [
+          legacyResponseIds.missingStudent,
+          ids.schoolA,
+          ids.pollA,
+          missingStudentId,
+          legacyResponseIds.crossStudent,
+          ids.studentB,
+          legacyResponseIds.crossDevice,
+          crossDeviceMissingStudentId,
+          ids.deviceB,
+        ],
+      );
+      const startupSource = await readFile(
+        new URL("../src/index.ts", import.meta.url),
+        "utf8",
+      );
+      const cleanupSql = startupSource.match(
+        /const removedLegacyOrphanPollResponses = await schedulerPool\.query\(`([\s\S]*?)`\);/,
+      )?.[1];
+      assert.ok(cleanupSql, "startup migration must expose the legacy poll-response cleanup SQL");
+      const cleanupResult = await client.query(cleanupSql);
+      assert.equal(cleanupResult.rowCount, 1, "only the irreparable missing-student row is removed");
+      const survivingLegacyRows = await client.query<{ id: string }>(
+        `SELECT id FROM poll_responses WHERE id = ANY($1::text[]) ORDER BY id`,
+        [[...Object.values(legacyResponseIds)]],
+      );
+      assert.deepEqual(
+        survivingLegacyRows.rows.map((row) => row.id),
+        [legacyResponseIds.crossDevice, legacyResponseIds.crossStudent].sort(),
+        "existing cross-school parent evidence must survive cleanup for fail-closed audit",
+      );
+      const invalidSurvivors = await client.query<{ count: number }>(`
+        SELECT count(*)::integer AS count
+        FROM poll_responses response
+        LEFT JOIN polls poll
+          ON poll.id = response.poll_id AND poll.school_id = response.school_id
+        LEFT JOIN students student
+          ON student.id = response.student_id AND student.school_id = response.school_id
+        LEFT JOIN devices device
+          ON device.device_id = response.device_id AND device.school_id = response.school_id
+        WHERE response.id = ANY($1::text[])
+          AND (
+            poll.id IS NULL
+            OR student.id IS NULL
+            OR (response.device_id IS NOT NULL AND device.device_id IS NULL)
+          )
+      `, [[legacyResponseIds.crossStudent, legacyResponseIds.crossDevice]]);
+      assert.equal(
+        invalidSurvivors.rows[0]?.count,
+        2,
+        "the existing parent audit must still block both cross-school rows",
       );
     } finally {
       if (transactionStarted) {
