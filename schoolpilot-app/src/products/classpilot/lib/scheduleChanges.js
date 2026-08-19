@@ -33,6 +33,7 @@ export function unwrapSettings(data) {
   return {
     teacherRequestsEnabled: settings.teacherRequestsEnabled === true,
     adminApprovalRequired: settings.adminApprovalRequired !== false,
+    sameDayCutoffEnforced: settings.sameDayCutoffEnforced !== false,
     sameDayCutoff: settings.sameDayCutoff || "07:00",
     reasonRequired: settings.reasonRequired !== false,
     schoolTimezone: settings.schoolTimezone || null,

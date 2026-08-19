@@ -291,6 +291,9 @@ export function ScheduleChangeRequestDialog({
   const previewLegs = selectedPair
     ? (selectedPair.legs?.length === 2 ? selectedPair.legs : pairPreviewLegs(selectedPair))
     : [];
+  const reasonRequired = mode === "admin"
+    || eligibilityQuery.data?.policy?.reasonRequired !== false;
+  const trimmedReason = reason.trim();
 
   const reset = () => {
     setScheduledDate("");
@@ -306,19 +309,20 @@ export function ScheduleChangeRequestDialog({
 
   const submit = async (event) => {
     event.preventDefault();
-    if (!selectedPair || !scheduledDate || !reason.trim()) return;
+    if (!selectedPair || !scheduledDate || (reasonRequired && !trimmedReason)) return;
     setError("");
     try {
-      await onSubmit({
+      const payload = {
         pairId: selectedPair.id ?? selectedPair.pairId,
         scheduledDate,
-        reason: reason.trim(),
-      });
+      };
+      if (trimmedReason || reasonRequired) payload.reason = trimmedReason;
+      await onSubmit(payload);
       reset();
       onOpenChange(false);
     } catch (submitError) {
       setError(isRevisionConflict(submitError)
-        ? "This schedule changed while you were reviewing it. Your date and reason are still here; refresh the eligible pairs and try again."
+        ? "This schedule changed while you were reviewing it. Your date, class pair, and note are still here; refresh the eligible pairs and try again."
         : scheduleChangeError(submitError));
     }
   };
@@ -392,18 +396,22 @@ export function ScheduleChangeRequestDialog({
           ) : null}
 
           <div className="space-y-2">
-            <Label htmlFor="schedule-change-reason">Reason</Label>
+            <Label htmlFor="schedule-change-reason">{reasonRequired ? "Reason" : "Note (optional)"}</Label>
             <Textarea
               id="schedule-change-reason"
               value={reason}
               onChange={(event) => { setReason(event.target.value); setError(""); }}
               maxLength={500}
-              placeholder="e.g., Grade-level assembly changes the Math and ELA rotation."
+              placeholder={reasonRequired
+                ? "e.g., Grade-level assembly changes the Math and ELA rotation."
+                : "Add context for the other teacher, if helpful."}
               className="min-h-24 resize-y"
-              required
+              required={reasonRequired}
               data-testid="textarea-schedule-change-reason"
             />
-            <p className="text-xs text-muted-foreground">Visible to the affected teachers and school administrators.</p>
+            <p className="text-xs text-muted-foreground">
+              {reasonRequired ? "Required" : "Optional"} for this request and visible to the affected teachers and school administrators.
+            </p>
           </div>
 
           {error ? (
@@ -426,7 +434,7 @@ export function ScheduleChangeRequestDialog({
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => changeOpen(false)} disabled={isPending}>Cancel</Button>
-            <Button type="submit" disabled={!selectedPair || !reason.trim() || isPending} data-testid="button-submit-schedule-change">
+            <Button type="submit" disabled={!selectedPair || (reasonRequired && !trimmedReason) || isPending} data-testid="button-submit-schedule-change">
               {isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               {mode === "admin" ? "Create approved change" : "Send request"}
             </Button>

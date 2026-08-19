@@ -117,6 +117,12 @@ export const settings = pgTable("settings", {
   classpilotScheduleChangesSameDayCutoff: text(
     "classpilot_schedule_changes_same_day_cutoff"
   ).notNull().default("07:00"),
+  classpilotScheduleChangesSameDayCutoffEnforced: boolean(
+    "classpilot_schedule_changes_same_day_cutoff_enforced"
+  ).notNull().default(true),
+  classpilotScheduleChangesReasonRequired: boolean(
+    "classpilot_schedule_changes_reason_required"
+  ).notNull().default(true),
   classpilotScheduleChangesRevision: integer(
     "classpilot_schedule_changes_revision"
   ).notNull().default(0),

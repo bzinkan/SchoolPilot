@@ -126,7 +126,8 @@ The regular schedule resumes automatically on the next instructional day.
 1. Open **My Settings**, then select **Schedule Changes**.
 2. Select **Request time swap**.
 3. Choose the instructional date and an eligible class pair.
-4. Enter the reason and review both normal and event-day times.
+4. Enter the required reason or an optional note, according to the school's
+   policy, and review both normal and event-day times.
 5. Select **Send request**.
 
 The other class's primary teacher must accept the request. If the school
@@ -142,8 +143,13 @@ Dashboard notice appears only on a day with an approved schedule change.
   pairs, approve or deny requests, create an immediate one-day change, cancel
   an upcoming approved change, and review history.
 - Open **Admin Settings**, then **Schedule Changes**, to enable teacher
-  requests, require administrator approval, and set the school-local same-day
-  request cutoff.
+  requests, require administrator approval, enforce the school-local same-day
+  request cutoff, and require a reason from teachers. These controls are
+  independent.
+- If cutoff enforcement is off, teachers may request a same-day change until
+  the earlier affected class begins. No setting permits a mid-period swap.
+- Administrators must provide a reason when creating an immediate approved
+  change, even when teacher reasons are optional.
 - Class pairs must have active automatic schedules with equal-duration,
   non-overlapping periods.
 - Approved changes cannot be cancelled after either affected block begins.
@@ -633,7 +639,9 @@ Access via **Admin Panel** (admin accounts only)
 **Schedule Change Settings:**
 - Enable or disable teacher time-swap requests
 - Require administrator approval after counterpart-teacher acceptance
-- Set the school-local same-day request cutoff
+- Enforce or disable the school-local same-day request cutoff while retaining
+  its saved time
+- Require a reason from teachers or allow an optional note
 - Configure eligible class pairs from **Classes > Schedule Changes**
 
 ---

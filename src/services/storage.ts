@@ -19718,7 +19718,8 @@ export type ClasspilotScheduleChangePolicyDto = {
   teacherRequestsEnabled: boolean;
   adminApprovalRequired: boolean;
   sameDayCutoff: string;
-  reasonRequired: true;
+  sameDayCutoffEnforced: boolean;
+  reasonRequired: boolean;
   schoolTimezone: string;
   revision: number;
 };
@@ -19870,6 +19871,7 @@ const CP_SCHEDULE_CHANGE_ACTIVE_STATUSES = [
   "approved",
 ] as const;
 const CP_SCHEDULE_CHANGE_TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+const CP_SCHEDULE_CHANGE_NO_REASON = "No reason provided.";
 
 /**
  * Serializes every school-scoped class configuration, assignment, and
@@ -20154,6 +20156,9 @@ export async function getClasspilotScheduleChangeSettings(
       adminApprovalRequired:
         settings.classpilotScheduleChangesAdminApprovalRequired,
       sameDayCutoff: settings.classpilotScheduleChangesSameDayCutoff,
+      sameDayCutoffEnforced:
+        settings.classpilotScheduleChangesSameDayCutoffEnforced,
+      reasonRequired: settings.classpilotScheduleChangesReasonRequired,
       revision: settings.classpilotScheduleChangesRevision,
       schoolTimezone: schools.schoolTimezone,
     })
@@ -20166,7 +20171,8 @@ export async function getClasspilotScheduleChangeSettings(
         teacherRequestsEnabled: row.teacherRequestsEnabled,
         adminApprovalRequired: row.adminApprovalRequired,
         sameDayCutoff: row.sameDayCutoff,
-        reasonRequired: true,
+        sameDayCutoffEnforced: row.sameDayCutoffEnforced,
+        reasonRequired: row.reasonRequired,
         schoolTimezone: row.schoolTimezone || "America/New_York",
         revision: row.revision,
       }
@@ -20204,9 +20210,29 @@ export async function updateClasspilotScheduleChangeSettings(options: {
     teacherRequestsEnabled?: boolean;
     adminApprovalRequired?: boolean;
     sameDayCutoff?: string;
+    sameDayCutoffEnforced?: boolean;
+    reasonRequired?: boolean;
   };
   actor: ClasspilotScheduleChangeActor;
 }): Promise<UpdateClasspilotScheduleChangeSettingsResult> {
+  if (
+    options.patch.sameDayCutoffEnforced !== undefined &&
+    typeof options.patch.sameDayCutoffEnforced !== "boolean"
+  ) {
+    throw scheduleChangeError(
+      "INVALID_SCHEDULE_CHANGE_CUTOFF_POLICY",
+      "sameDayCutoffEnforced must be boolean."
+    );
+  }
+  if (
+    options.patch.reasonRequired !== undefined &&
+    typeof options.patch.reasonRequired !== "boolean"
+  ) {
+    throw scheduleChangeError(
+      "INVALID_SCHEDULE_CHANGE_REASON_POLICY",
+      "reasonRequired must be boolean."
+    );
+  }
   return db.transaction(async (tx) => {
     const transactionDb = tx as unknown as ScheduleChangeDb;
     await lockClasspilotScheduleChangeSchool(options.schoolId, transactionDb);
@@ -20234,6 +20260,10 @@ export async function updateClasspilotScheduleChangeSettings(options: {
     const nextAdminApproval =
       options.patch.adminApprovalRequired ?? current.adminApprovalRequired;
     const nextCutoff = options.patch.sameDayCutoff ?? current.sameDayCutoff;
+    const nextCutoffEnforced =
+      options.patch.sameDayCutoffEnforced ?? current.sameDayCutoffEnforced;
+    const nextReasonRequired =
+      options.patch.reasonRequired ?? current.reasonRequired;
     if (!CP_SCHEDULE_CHANGE_TIME_PATTERN.test(nextCutoff)) {
       throw scheduleChangeError(
         "INVALID_SCHEDULE_CHANGE_CUTOFF",
@@ -20248,6 +20278,12 @@ export async function updateClasspilotScheduleChangeSettings(options: {
       changedFields.push("adminApprovalRequired");
     }
     if (nextCutoff !== current.sameDayCutoff) changedFields.push("sameDayCutoff");
+    if (nextCutoffEnforced !== current.sameDayCutoffEnforced) {
+      changedFields.push("sameDayCutoffEnforced");
+    }
+    if (nextReasonRequired !== current.reasonRequired) {
+      changedFields.push("reasonRequired");
+    }
     const nextRevision = current.revision + 1;
     await tx
       .update(settings)
@@ -20255,6 +20291,8 @@ export async function updateClasspilotScheduleChangeSettings(options: {
         classpilotScheduleChangesTeacherRequestsEnabled: nextTeacherRequests,
         classpilotScheduleChangesAdminApprovalRequired: nextAdminApproval,
         classpilotScheduleChangesSameDayCutoff: nextCutoff,
+        classpilotScheduleChangesSameDayCutoffEnforced: nextCutoffEnforced,
+        classpilotScheduleChangesReasonRequired: nextReasonRequired,
         classpilotScheduleChangesRevision: nextRevision,
       })
       .where(eq(settings.schoolId, options.schoolId));
@@ -20276,7 +20314,8 @@ export async function updateClasspilotScheduleChangeSettings(options: {
         teacherRequestsEnabled: nextTeacherRequests,
         adminApprovalRequired: nextAdminApproval,
         sameDayCutoff: nextCutoff,
-        reasonRequired: true,
+        sameDayCutoffEnforced: nextCutoffEnforced,
+        reasonRequired: nextReasonRequired,
         schoolTimezone: current.schoolTimezone,
         revision: nextRevision,
       },
@@ -21841,6 +21880,7 @@ async function validateScheduleChangeForDate(options: {
     }
     if (
       options.mode === "teacher_request" &&
+      policy.sameDayCutoffEnforced &&
       options.scheduledDate === localToday &&
       options.now.getTime() >=
         localDateTimeUtc(
@@ -22036,18 +22076,26 @@ export async function createClasspilotScheduleChange(options: {
   schoolId: string;
   pairId: string;
   scheduledDate: string;
-  reason: string;
+  reason?: unknown;
   actor: ClasspilotScheduleChangeActor;
   directApprove?: boolean;
   now?: Date;
 }): Promise<ClasspilotScheduleChange> {
-  const reason = options.reason.trim();
-  if (!reason || reason.length > 500) {
+  if (options.reason !== undefined && typeof options.reason !== "string") {
     throw scheduleChangeError(
       "INVALID_SCHEDULE_CHANGE_REASON",
-      "Provide a reason between 1 and 500 characters."
+      "The schedule-change reason must be text."
     );
   }
+  if (typeof options.reason === "string" && options.reason.length > 500) {
+    throw scheduleChangeError(
+      "INVALID_SCHEDULE_CHANGE_REASON",
+      "The schedule-change reason must be at most 500 characters."
+    );
+  }
+  const submittedReason = typeof options.reason === "string"
+    ? options.reason.trim()
+    : "";
   const isAdmin = options.actor.role === "admin" || options.actor.role === "school_admin";
   if (options.actor.role === "office_staff") {
     throw scheduleChangeError(
@@ -22147,6 +22195,14 @@ export async function createClasspilotScheduleChange(options: {
       if (!validation.context || validation.blockers.length > 0) {
         throwFirstScheduleChangeBlocker(validation.blockers);
       }
+      const reasonRequired = isAdmin || validation.context.policy.reasonRequired;
+      if (reasonRequired && !submittedReason) {
+        throw scheduleChangeError(
+          "INVALID_SCHEDULE_CHANGE_REASON",
+          "Provide a reason between 1 and 500 characters."
+        );
+      }
+      const reason = submittedReason || CP_SCHEDULE_CHANGE_NO_REASON;
       const entitlementThrough = localDateTimeUtc(
         options.scheduledDate,
         [
