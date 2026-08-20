@@ -187,7 +187,11 @@ export default function KioskPage() {
           const body = await response.json().catch(() => ({}));
           if (response.status === 404 && body.code === "PASSPILOT_KIOSK_SESSION_EXPIRED") {
             handleSessionExpired();
+            return null;
           }
+          // A style flip must reach kiosks parked on config errors (e.g. the
+          // class-inactive 409, which carries kioskStyle for this hop).
+          redirectForKioskStyle(body.kioskStyle);
           return null;
         })
         .then((data) => {

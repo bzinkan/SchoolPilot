@@ -781,12 +781,15 @@ router.get("/config", kioskLimiter, async (req, res, next) => {
             manager: true,
           });
           if (!roster) {
+            // kioskStyle rides the 409 too: a kiosk parked on this error still
+            // polls config and must observe an admin style flip.
             return res.status(409).json({
               error:
                 "The configured kiosk class is no longer active. Ask your teacher to send a new class to this kiosk.",
               code: "PASSPILOT_KIOSK_CLASS_INACTIVE",
               source: "classpilot_groups",
               session: { id: session.id, status: session.status },
+              kioskStyle: school.kioskStyle,
             });
           }
         }
@@ -828,6 +831,7 @@ router.get("/config", kioskLimiter, async (req, res, next) => {
           error: "The configured kiosk class is no longer active. Ask an administrator to select an active ClassPilot class.",
           code: "PASSPILOT_KIOSK_CLASS_INACTIVE",
           source: "classpilot_groups",
+          kioskStyle: school.kioskStyle,
         });
       }
     }

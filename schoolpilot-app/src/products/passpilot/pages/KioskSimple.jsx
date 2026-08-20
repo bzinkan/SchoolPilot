@@ -228,6 +228,7 @@ export default function KioskSimplePage() {
           const error = new Error(body.error || "The kiosk configuration is unavailable.");
           error.code = body.code || null;
           error.source = body.source || null;
+          error.kioskStyle = body.kioskStyle;
           throw error;
         })
         .then(data => {
@@ -259,6 +260,10 @@ export default function KioskSimplePage() {
           setConfigLoaded(true);
         })
         .catch((error) => {
+          // A style flip must reach parked kiosks even when config is a 409
+          // (e.g. the configured class went inactive) — the error rides
+          // kioskStyle for exactly this hop.
+          if (redirectForKioskStyle(error?.kioskStyle)) return;
           configAvailableRef.current = false;
           if (error?.source) setClassSource(error.source);
           setSelectedGradeId(null);
@@ -292,6 +297,7 @@ export default function KioskSimplePage() {
           }
           const error = new Error(body.error || "The kiosk configuration is unavailable.");
           error.code = body.code || null;
+          error.kioskStyle = body.kioskStyle;
           throw error;
         })
         .then((data) => {
@@ -325,6 +331,8 @@ export default function KioskSimplePage() {
           if (data.kioskName !== undefined) setKioskName(data.kioskName ?? null);
         })
         .catch((error) => {
+          // A style flip must reach kiosks parked on the class-inactive 409.
+          if (redirectForKioskStyle(error?.kioskStyle)) return;
           if (error?.code === "PASSPILOT_KIOSK_CLASS_INACTIVE") {
             setConfigError({ code: error.code, message: error.message });
             setSelectedGradeId(null);
