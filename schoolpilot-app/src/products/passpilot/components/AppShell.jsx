@@ -13,7 +13,10 @@ import {
   Monitor,
   ScanBarcode,
   Pencil,
+  Hash,
 } from 'lucide-react';
+import ClaimKioskDialog from './ClaimKioskDialog';
+import { useKioskSessions } from '../useKioskSessions';
 import { Avatar, AvatarFallback, AvatarImage } from '../../../components/ui/avatar';
 import { Button } from '../../../components/ui/button';
 import { ThemeToggle } from '../../../components/ThemeToggle';
@@ -47,6 +50,8 @@ export default function AppShell({ children, currentTab }) {
   const [kioskNameInput, setKioskNameInput] = useState('');
   const [isKioskNameDialogOpen, setIsKioskNameDialogOpen] = useState(false);
   const [pendingKioskAction, setPendingKioskAction] = useState(null);
+  const [isClaimKioskDialogOpen, setIsClaimKioskDialogOpen] = useState(false);
+  const { kioskSessions, legacyKioskServer } = useKioskSessions();
 
   const kioskName = user?.kioskName || null;
 
@@ -173,6 +178,32 @@ export default function AppShell({ children, currentTab }) {
                 <ScanBarcode className="mr-2 h-4 w-4" />
                 Badge / ID Kiosk{kioskName ? ` (${kioskName})` : ''}
               </DropdownMenuItem>
+              {!legacyKioskServer && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={() => setIsClaimKioskDialogOpen(true)}
+                    data-testid="menu-claim-kiosk"
+                  >
+                    <Hash className="mr-2 h-4 w-4" />
+                    Claim student-device kiosk&hellip;
+                  </DropdownMenuItem>
+                </>
+              )}
+              {kioskSessions.length > 0 && (
+                <>
+                  <DropdownMenuSeparator />
+                  <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                    Active kiosks
+                  </div>
+                  {kioskSessions.slice(0, 4).map((session) => (
+                    <DropdownMenuItem key={session.id} disabled>
+                      <Monitor className="mr-2 h-4 w-4" />
+                      {session.className || 'No class'} &middot; kiosk
+                    </DropdownMenuItem>
+                  ))}
+                </>
+              )}
               {kioskName && (
                 <>
                   <DropdownMenuSeparator />
@@ -252,6 +283,11 @@ export default function AppShell({ children, currentTab }) {
       </nav>
 
       {/* Kiosk Name Dialog */}
+      <ClaimKioskDialog
+        open={isClaimKioskDialogOpen}
+        onOpenChange={setIsClaimKioskDialogOpen}
+      />
+
       <Dialog open={isKioskNameDialogOpen} onOpenChange={setIsKioskNameDialogOpen}>
         <DialogContent>
           <DialogHeader>
