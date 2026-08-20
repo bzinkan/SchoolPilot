@@ -59,6 +59,7 @@ describe("one-release RLS table enablement", () => {
       targetTable,
       ...GOPILOT_CHILD_RLS_TABLES,
       ...CLASSPILOT_SCHEDULE_CHANGE_RLS_TABLES,
+      "passpilot_kiosk_sessions",
     ]);
     const api = taskDefinition("api");
     const worker = taskDefinition("scheduler-worker");
