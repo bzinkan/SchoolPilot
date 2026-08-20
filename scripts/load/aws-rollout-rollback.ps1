@@ -2226,7 +2226,8 @@ $heartbeatStartInfo.UseShellExecute = $false
 $heartbeatStartInfo.CreateNoWindow = $true
 foreach ($argument in $heartbeatArguments) { [void]$heartbeatStartInfo.ArgumentList.Add([string]$argument) }
 $heartbeatProcess = [Diagnostics.Process]::Start($heartbeatStartInfo)
-$heartbeatStartupDeadline = [DateTimeOffset]::UtcNow.AddSeconds(10)
+$heartbeatStartupSeconds = if ($config.resolvedTestMode) { 60 } else { 10 }
+$heartbeatStartupDeadline = [DateTimeOffset]::UtcNow.AddSeconds($heartbeatStartupSeconds)
 while (-not (Test-Path -LiteralPath $rollbackHeartbeatPath) -and -not $heartbeatProcess.HasExited -and [DateTimeOffset]::UtcNow -lt $heartbeatStartupDeadline) {
     Start-Sleep -Milliseconds 100
 }

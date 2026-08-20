@@ -13,7 +13,7 @@ $testClock = [Diagnostics.Stopwatch]::StartNew()
 $script:AssertionCount = 0
 # GitHub's Windows runners can spend more than 15 seconds launching the
 # short-lived PowerShell/AWS-mock children used by this suite. Keep one
-# test-only startup bound that matches the existing slow-sample allowance.
+# test-only startup bounds that match the existing slow-sample allowance.
 $script:MonitorStartupDeadlineSeconds = 60
 $script:MonitorCompletionWatchdogMilliseconds = 90000
 $previousRolloutTestSentinel = $env:SCHOOLPILOT_ROLLOUT_TEST_MODE
@@ -241,6 +241,9 @@ $rollbackScriptSource = Get-Content -LiteralPath $rollbackScript -Raw
 Assert-Condition ($rollbackScriptSource -match '(?m)^\s*Application\s*=\s*3600\s*$') "Application rollback must retain the approved 3,600-second recovery deadline."
 Assert-Condition ($rollbackScriptSource -notmatch 'services-stable') "Rollback automation must not use the fixed AWS ECS services-stable waiter."
 Assert-Condition ($rollbackScriptSource -match 'singleton-one-replacement-slot') "Singleton API rollback must declare its bounded availability-preserving replacement mode."
+Assert-Condition ($rollbackScriptSource -match [regex]::Escape(
+        '$heartbeatStartupSeconds = if ($config.resolvedTestMode) { 60 } else { 10 }'
+    )) "Rollback heartbeat startup must keep the 10-second production bound and use 60 seconds only in test mode."
 Assert-Condition ((Get-Content -LiteralPath $albModule -Raw) -match '(?m)^\s*deregistration_delay\s*=\s*300\s*$') "The API target group must explicitly declare the current 300-second drain."
 
 $monitorTokens = $null
