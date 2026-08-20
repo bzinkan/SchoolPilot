@@ -842,6 +842,60 @@ export async function runStartupMigrations(): Promise<void> {
         AND effective_start_time < effective_end_time
       );
   `);
+  // PassPilot per-device kiosk sessions: replaces the school-global kiosk slot
+  // (schools.kiosk_grade_id / kiosk_classpilot_group_id) with one row per kiosk
+  // device, bound to a specific teacher via a claim code. No FKs to
+  // grades/groups/users on purpose — sessions are ephemeral device bindings and
+  // class/teacher liveness is validated at claim/read time, mirroring the
+  // school-row kiosk columns this table supersedes.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS passpilot_kiosk_sessions (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      school_id TEXT NOT NULL,
+      claim_code TEXT NOT NULL,
+      teacher_id TEXT,
+      class_source TEXT,
+      grade_id TEXT,
+      classpilot_group_id TEXT,
+      status TEXT NOT NULL DEFAULT 'unclaimed',
+      revision INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      claimed_at TIMESTAMPTZ,
+      last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      released_at TIMESTAMPTZ,
+      CONSTRAINT pp_kiosk_sessions_status_check
+        CHECK (status IN ('unclaimed', 'active', 'released')),
+      CONSTRAINT pp_kiosk_sessions_revision_check CHECK (revision >= 0),
+      CONSTRAINT pp_kiosk_sessions_class_source_check
+        CHECK (class_source IS NULL OR class_source IN ('legacy_grades', 'classpilot_groups')),
+      CONSTRAINT pp_kiosk_sessions_single_class_check
+        CHECK (NOT (grade_id IS NOT NULL AND classpilot_group_id IS NOT NULL)),
+      CONSTRAINT pp_kiosk_sessions_unclaimed_shape_check
+        CHECK (status <> 'unclaimed' OR (
+          teacher_id IS NULL AND class_source IS NULL
+          AND grade_id IS NULL AND classpilot_group_id IS NULL
+        )),
+      CONSTRAINT pp_kiosk_sessions_active_shape_check
+        CHECK (status <> 'active' OR (teacher_id IS NOT NULL AND (
+          (class_source IS NULL AND grade_id IS NULL AND classpilot_group_id IS NULL) OR
+          (class_source = 'legacy_grades' AND grade_id IS NOT NULL AND classpilot_group_id IS NULL) OR
+          (class_source = 'classpilot_groups' AND classpilot_group_id IS NOT NULL AND grade_id IS NULL)
+        ))),
+      CONSTRAINT pp_kiosk_sessions_school_id_fk_key UNIQUE (school_id, id)
+    )
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS pp_kiosk_sessions_school_claim_code_unique
+    ON passpilot_kiosk_sessions (school_id, claim_code) WHERE status <> 'released'
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS pp_kiosk_sessions_school_teacher_status_idx
+    ON passpilot_kiosk_sessions (school_id, teacher_id, status)
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS pp_kiosk_sessions_school_status_last_seen_idx
+    ON passpilot_kiosk_sessions (school_id, status, last_seen_at)
+  `);
   await pool.query(`
     CREATE OR REPLACE FUNCTION classpilot_protect_schedule_change_leg_snapshot()
     RETURNS trigger
@@ -3443,6 +3497,7 @@ export async function runStartupMigrations(): Promise<void> {
       "classpilot_schedule_change_pairs",
       "classpilot_schedule_changes",
       "classpilot_schedule_change_legs",
+      "passpilot_kiosk_sessions",
     ]);
     if (
       new Set(requiredRlsTables).size !== requiredRlsTables.length ||

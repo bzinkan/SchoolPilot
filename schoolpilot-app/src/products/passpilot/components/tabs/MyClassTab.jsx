@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../../../../components
 import { Button } from "../../../../components/ui/button";
 import { useToast } from "../../../../hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "../../../../lib/queryClient";
+import { queryClient } from "../../../../lib/queryClient";
 import { usePassPilotAuth } from "../../../../hooks/usePassPilotAuth";
 import { formatTimeFull, startOfTodayInTimezone } from "../../../../lib/date-utils";
 import { Users, Clock, UserCheck, Timer, Heart, AlertTriangle, ChevronDown, Edit3, X, Search, Bath, Triangle, Monitor, ClipboardCheck, BarChart3, Download } from "lucide-react";
@@ -49,7 +49,11 @@ function MyClassTab() {
   const [selectedStudentForCustom, setSelectedStudentForCustom] = useState(null);
   const [isCustomReasonDialogOpen, setIsCustomReasonDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [kioskGradeId, setKioskGradeId] = useState(null);
+  const [isClaimKioskDialogOpen, setIsClaimKioskDialogOpen] = useState(false);
+  const [claimCodeInput, setClaimCodeInput] = useState('');
+  const [claimTargetClassId, setClaimTargetClassId] = useState(null);
+  const [claimError, setClaimError] = useState(null);
+  const [claimSubmitting, setClaimSubmitting] = useState(false);
   const [showAttendance, setShowAttendance] = useState(false);
   const [showPassData, setShowPassData] = useState(false);
   const [timePeriod, setTimePeriod] = useState('today');
@@ -65,16 +69,28 @@ function MyClassTab() {
   const sourceResolved = classInventoryQuery.isSuccess;
   const canonical = sourceResolved && isCanonicalPassPilotSource(classInventoryQuery.data?.source);
 
-  const kioskConfigQuery = useQuery({
+  // Per-teacher kiosk sessions: the kiosk devices this teacher has claimed.
+  // Kiosks are teacher-bound (not school-global) — Send to Kiosk targets
+  // exactly this teacher's kiosks. A 404 means the server predates kiosk
+  // sessions (deploy skew): fall back to the legacy school-global flow. The
+  // 15s poll keeps probing, so the UI upgrades itself once the server does.
+  const kioskSessionsQuery = useQuery({
+    queryKey: ['passpilot', 'kiosk-sessions'],
+    queryFn: () => passPilotClassRequest('GET', '/passpilot/kiosk/sessions/mine'),
+    enabled: sourceResolved,
+    refetchInterval: 15000,
+    retry: (failureCount, error) => error?.response?.status !== 404 && failureCount < 1,
+  });
+  const legacyKioskServer = kioskSessionsQuery.error?.response?.status === 404;
+  const kioskSessions = kioskSessionsQuery.data?.sessions || [];
+
+  const legacyKioskConfigQuery = useQuery({
     queryKey: ['passpilot', 'kiosk-config', canonical ? 'classpilot_groups' : 'legacy_grades'],
     queryFn: () => passPilotClassRequest('GET', '/kiosk-config'),
-    enabled: sourceResolved,
+    enabled: sourceResolved && legacyKioskServer,
   });
-
-  React.useEffect(() => {
-    if (!kioskConfigQuery.isSuccess) return;
-    setKioskGradeId(kioskConfigQuery.data?.classId || kioskConfigQuery.data?.gradeId || null);
-  }, [kioskConfigQuery.data, kioskConfigQuery.isSuccess]);
+  const legacyKioskClassId =
+    legacyKioskConfigQuery.data?.classId || legacyKioskConfigQuery.data?.gradeId || null;
 
   const myClasses = classInventoryQuery.data?.classes || [];
   const requestedClassId = searchParams.get('classId') || '';
@@ -316,33 +332,103 @@ function MyClassTab() {
     }
   };
 
-  const handleSendToKiosk = async (gradeId) => {
+  const invalidateKioskSessions = () => {
+    queryClient.invalidateQueries({ queryKey: ['passpilot', 'kiosk-sessions'] });
+  };
+
+  const openClaimDialog = (gradeId) => {
+    setClaimTargetClassId(gradeId);
+    setClaimCodeInput('');
+    setClaimError(null);
+    setIsClaimKioskDialogOpen(true);
+  };
+
+  // Legacy school-global toggle for servers that predate kiosk sessions.
+  const handleLegacySendToKiosk = async (gradeId) => {
     try {
-      if (canonical) await passPilotClassRequest('PUT', '/kiosk-config', { classId: gradeId });
-      else await apiRequest('PUT', '/kiosk-config', { gradeId });
-      setKioskGradeId(gradeId);
-      queryClient.setQueryData(
-        ['passpilot', 'kiosk-config', canonical ? 'classpilot_groups' : 'legacy_grades'],
-        (current = {}) => ({ ...current, classId: gradeId, gradeId: canonical ? null : gradeId })
-      );
-      toast({ title: "Kiosk Updated", description: "Kiosk is now showing this grade." });
+      const nextId = legacyKioskClassId === gradeId ? null : gradeId;
+      await passPilotClassRequest('PUT', '/kiosk-config', canonical ? { classId: nextId } : { gradeId: nextId });
+      queryClient.invalidateQueries({ queryKey: ['passpilot', 'kiosk-config'] });
+      toast({
+        title: nextId ? "Kiosk Updated" : "Kiosk Cleared",
+        description: nextId ? "Kiosk is now showing this class." : "The kiosk class selection was cleared.",
+      });
     } catch {
       toast({ title: "Error", description: "Failed to update kiosk.", variant: "destructive" });
     }
   };
 
-  const handleClearKiosk = async () => {
+  // No claimed kiosks → prompt for the claim code shown on the kiosk screen.
+  // Otherwise retarget ALL of this teacher's kiosks to the chosen class.
+  const handleSendToKiosk = async (gradeId) => {
+    if (legacyKioskServer) {
+      await handleLegacySendToKiosk(gradeId);
+      return;
+    }
+    if (kioskSessions.length === 0) {
+      openClaimDialog(gradeId);
+      return;
+    }
     try {
-      if (canonical) await passPilotClassRequest('PUT', '/kiosk-config', { classId: null });
-      else await apiRequest('PUT', '/kiosk-config', { gradeId: null });
-      setKioskGradeId(null);
-      queryClient.setQueryData(
-        ['passpilot', 'kiosk-config', canonical ? 'classpilot_groups' : 'legacy_grades'],
-        (current = {}) => ({ ...current, classId: null, gradeId: null })
-      );
-      toast({ title: "Kiosk Cleared", description: "The kiosk class selection was cleared." });
+      const data = await passPilotClassRequest('POST', '/passpilot/kiosk/sessions/retarget', {
+        classId: gradeId,
+      });
+      invalidateKioskSessions();
+      if ((data?.updated ?? 0) === 0) {
+        // The session list was stale — every kiosk died since the last poll.
+        openClaimDialog(gradeId);
+        return;
+      }
+      toast({
+        title: "Kiosk Updated",
+        description:
+          (data?.updated ?? 0) > 1
+            ? `${data.updated} kiosks are now showing this class.`
+            : "Your kiosk is now showing this class.",
+      });
     } catch {
-      toast({ title: "Error", description: "Failed to clear kiosk.", variant: "destructive" });
+      toast({ title: "Error", description: "Failed to update kiosk.", variant: "destructive" });
+    }
+  };
+
+  const handleClaimKiosk = async () => {
+    const code = claimCodeInput.replace(/\D/g, '');
+    if (code.length !== 6 || !claimTargetClassId) return;
+    setClaimSubmitting(true);
+    setClaimError(null);
+    try {
+      await passPilotClassRequest('POST', '/passpilot/kiosk/sessions/claim', {
+        claimCode: code,
+        classId: claimTargetClassId,
+      });
+      invalidateKioskSessions();
+      setIsClaimKioskDialogOpen(false);
+      setClaimCodeInput('');
+      toast({ title: "Kiosk Claimed", description: "The kiosk is now showing this class." });
+    } catch (error) {
+      setClaimError(
+        error?.response?.status === 404
+          ? "Code not found or expired — check the kiosk screen for the current code."
+          : (error?.response?.data?.error || "Failed to claim kiosk.")
+      );
+    } finally {
+      setClaimSubmitting(false);
+    }
+  };
+
+  const handleReleaseKiosk = async (sessionId) => {
+    try {
+      await passPilotClassRequest('DELETE', `/passpilot/kiosk/sessions/${sessionId}`);
+      invalidateKioskSessions();
+      toast({ title: "Kiosk Released", description: "The kiosk is showing its claim code again." });
+    } catch (error) {
+      invalidateKioskSessions();
+      if (error?.response?.status === 404) {
+        // Already dead (TTL, released elsewhere) — the desired state holds.
+        toast({ title: "Kiosk Released", description: "That kiosk session had already ended." });
+      } else {
+        toast({ title: "Error", description: "Failed to release kiosk.", variant: "destructive" });
+      }
     }
   };
 
@@ -688,20 +774,36 @@ function MyClassTab() {
             })}
             {currentActiveGrade && (
                 <Button
-                  variant={kioskGradeId === currentActiveGrade.id ? "default" : "outline"}
+                  variant={
+                    (legacyKioskServer
+                      ? legacyKioskClassId === currentActiveGrade.id
+                      : kioskSessions.length > 0 &&
+                        kioskSessions.every((s) => s.classId === currentActiveGrade.id))
+                      ? "default"
+                      : "outline"
+                  }
                   size="sm"
-                  onClick={() => {
-                    if (kioskGradeId === currentActiveGrade.id) {
-                      handleClearKiosk();
-                    } else {
-                      handleSendToKiosk(currentActiveGrade.id);
-                    }
-                  }}
+                  onClick={() => handleSendToKiosk(currentActiveGrade.id)}
                   className="flex items-center gap-1.5"
-                  title={kioskGradeId === currentActiveGrade.id ? "Click to clear kiosk" : "Send this class to kiosk"}
+                  title={
+                    legacyKioskServer
+                      ? "Send this class to the school kiosk"
+                      : kioskSessions.length === 0
+                        ? "Claim a kiosk with the code shown on its screen"
+                        : "Send this class to your kiosks"
+                  }
                 >
                   <Monitor className="w-4 h-4" />
-                  {kioskGradeId === currentActiveGrade.id ? "On Kiosk" : "Send to Kiosk"}
+                  {legacyKioskServer
+                    ? legacyKioskClassId === currentActiveGrade.id
+                      ? "On Kiosk"
+                      : "Send to Kiosk"
+                    : kioskSessions.length > 0 &&
+                        kioskSessions.every((s) => s.classId === currentActiveGrade.id)
+                      ? kioskSessions.length === 1
+                        ? "On Kiosk"
+                        : `On ${kioskSessions.length} Kiosks`
+                      : "Send to Kiosk"}
                 </Button>
             )}
           </div>
@@ -729,6 +831,41 @@ function MyClassTab() {
             </div>
           )}
         </div>
+        {kioskSessions.length > 0 && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {kioskSessions.map((kioskSession) => (
+              <span
+                key={kioskSession.id}
+                className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs text-muted-foreground"
+              >
+                <Monitor className="w-3.5 h-3.5" />
+                {kioskSession.className || "No class"} · kiosk
+                <button
+                  type="button"
+                  onClick={() => handleReleaseKiosk(kioskSession.id)}
+                  className="ml-1 hover:text-foreground"
+                  title="Release this kiosk (it will show a new claim code)"
+                  aria-label="Release kiosk"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </span>
+            ))}
+            <button
+              type="button"
+              onClick={() => {
+                if (!currentActiveGrade) return;
+                setClaimTargetClassId(currentActiveGrade.id);
+                setClaimCodeInput('');
+                setClaimError(null);
+                setIsClaimKioskDialogOpen(true);
+              }}
+              className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+            >
+              Claim another kiosk
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Attendance Panel */}
@@ -1194,6 +1331,57 @@ function MyClassTab() {
                 data-testid="button-submit-custom-reason"
               >
                 Mark Out
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Claim Kiosk dialog: enter the 6-digit code shown on the kiosk screen */}
+      <Dialog open={isClaimKioskDialogOpen} onOpenChange={setIsClaimKioskDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Claim a kiosk</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Enter the 6-digit code shown on the kiosk screen. The kiosk will
+              be bound to you and show this class.
+            </p>
+            <div className="space-y-1">
+              <Label htmlFor="kiosk-claim-code">Kiosk code</Label>
+              <Input
+                id="kiosk-claim-code"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={7}
+                placeholder="123 456"
+                value={claimCodeInput}
+                onChange={(e) => setClaimCodeInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleClaimKiosk();
+                }}
+                data-testid="input-kiosk-claim-code"
+                autoFocus
+              />
+            </div>
+            {claimError && (
+              <p className="text-sm text-destructive" role="alert">{claimError}</p>
+            )}
+            <div className="flex justify-end space-x-2">
+              <Button
+                variant="outline"
+                onClick={() => setIsClaimKioskDialogOpen(false)}
+                data-testid="button-cancel-kiosk-claim"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleClaimKiosk}
+                disabled={claimSubmitting || claimCodeInput.replace(/\D/g, '').length !== 6}
+                data-testid="button-submit-kiosk-claim"
+              >
+                Claim Kiosk
               </Button>
             </div>
           </div>

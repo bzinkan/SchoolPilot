@@ -1,4 +1,5 @@
 import { eq, and, desc, asc, gt, lt, ilike, or, isNull, isNotNull, inArray, notInArray, getTableColumns, sql, ne, type SQL, type SQLWrapper } from "drizzle-orm";
+import { randomInt } from "node:crypto";
 import { PgDialect, type PgUpdateSetSource } from "drizzle-orm/pg-core";
 import db from "../db.js";
 import { getTenantStore, rlsGucEnabled } from "../db/tenantContext.js";
@@ -53,10 +54,12 @@ import {
   teacherGrades,
   passpilotGradeStudents,
   passes,
+  passpilotKioskSessions,
   type Grade,
   type InsertGrade,
   type Pass,
   type InsertPass,
+  type KioskSession,
 } from "../schema/passpilot.js";
 import {
   homerooms,
@@ -2940,6 +2943,9 @@ export type LegacyPasspilotClassAuthorization = {
   manager?: boolean;
   kiosk?: boolean;
   expectedKioskClassId?: string | null;
+  // Per-device kiosk session: when set (with kiosk: true), the checkout is
+  // validated against the session row instead of the school-global kiosk slot.
+  kioskSessionId?: string | null;
 };
 
 async function assertLegacyPasspilotClassAuthorization(
@@ -3104,22 +3110,31 @@ export async function createLegacyPass(
       );
     }
     if (authorization?.kiosk) {
-      const [school] = await tx
-        .select({ kioskGradeId: schools.kioskGradeId })
-        .from(schools)
-        .where(eq(schools.id, data.schoolId))
-        .limit(1)
-        .for("update");
-      if (
-        !school ||
-        school.kioskGradeId !== (authorization.expectedKioskClassId ?? null) ||
-        (school.kioskGradeId !== null && school.kioskGradeId !== resolvedGradeId)
-      ) {
-        throw passpilotClassError(
-          "PASSPILOT_KIOSK_CLASS_CHANGED",
-          "The configured kiosk class changed. Reload the kiosk before checking out.",
-          409
-        );
+      if (authorization.kioskSessionId) {
+        // Per-device kiosk session: validate against the session row in-tx so
+        // a concurrent retarget/release cannot slip a pass into the old class.
+        await assertKioskSessionCheckoutTarget(tx, data.schoolId, authorization.kioskSessionId, {
+          source: "legacy_grades",
+          classId: resolvedGradeId ?? null,
+        });
+      } else {
+        const [school] = await tx
+          .select({ kioskGradeId: schools.kioskGradeId })
+          .from(schools)
+          .where(eq(schools.id, data.schoolId))
+          .limit(1)
+          .for("update");
+        if (
+          !school ||
+          school.kioskGradeId !== (authorization.expectedKioskClassId ?? null) ||
+          (school.kioskGradeId !== null && school.kioskGradeId !== resolvedGradeId)
+        ) {
+          throw passpilotClassError(
+            "PASSPILOT_KIOSK_CLASS_CHANGED",
+            "The configured kiosk class changed. Reload the kiosk before checking out.",
+            409
+          );
+        }
       }
     } else if (!authorization.manager) {
       if (!resolvedGradeId) {
@@ -3170,7 +3185,10 @@ export async function returnPass(
 export async function getKioskStudentState(
   schoolId: string,
   studentId: string,
-  canonicalCapability: boolean
+  canonicalCapability: boolean,
+  // Per-device kiosk session: resolve the configured class from the session
+  // instead of the school-global kiosk slot.
+  override?: KioskConfiguredClassOverride
 ): Promise<{
   source: PasspilotClassSource;
   configuredClassId: string | null;
@@ -3187,6 +3205,13 @@ export async function getKioskStudentState(
       .limit(1)
       .for("update");
     const classSource = source?.value ?? "legacy_grades";
+    if (override && override.source !== classSource) {
+      throw passpilotClassError(
+        "PASSPILOT_CLASS_SOURCE_CHANGED",
+        "PassPilot class configuration changed. Reload the kiosk.",
+        409
+      );
+    }
     const [school] = await tx
       .select({
         kioskGradeId: schools.kioskGradeId,
@@ -3220,7 +3245,7 @@ export async function getKioskStudentState(
       .limit(1);
     const activePass = activePassRow?.pass;
     if (classSource === "legacy_grades") {
-      const configuredClassId = school.kioskGradeId;
+      const configuredClassId = override?.configuredClassId ?? school.kioskGradeId;
       if (!configuredClassId) {
         return {
           source: classSource,
@@ -3267,7 +3292,8 @@ export async function getKioskStudentState(
         426
       );
     }
-    if (!school?.classId) {
+    const canonicalConfiguredId = override?.configuredClassId ?? school.classId;
+    if (!canonicalConfiguredId) {
       throw passpilotClassError(
         "PASSPILOT_KIOSK_CLASS_REQUIRED",
         "A kiosk class must be selected before looking up students.",
@@ -3279,7 +3305,7 @@ export async function getKioskStudentState(
       .from(groups)
       .where(
         and(
-          eq(groups.id, school.classId),
+          eq(groups.id, canonicalConfiguredId),
           eq(groups.schoolId, schoolId),
           eq(groups.groupType, "admin_class"),
           eq(groups.status, "active")
@@ -3353,7 +3379,10 @@ export async function getKioskStudentState(
 export async function returnKioskPassForStudent(
   schoolId: string,
   studentId: string,
-  canonicalCapability: boolean
+  canonicalCapability: boolean,
+  // Per-device kiosk session: resolve the configured class from the session
+  // instead of the school-global kiosk slot.
+  override?: KioskConfiguredClassOverride
 ): Promise<Pass | undefined> {
   return db.transaction(async (tx) => {
     await takePasspilotClassLock(tx, schoolId);
@@ -3363,6 +3392,13 @@ export async function returnKioskPassForStudent(
       .where(eq(settings.schoolId, schoolId))
       .limit(1)
       .for("update");
+    if (override && override.source !== (source?.value ?? "legacy_grades")) {
+      throw passpilotClassError(
+        "PASSPILOT_CLASS_SOURCE_CHANGED",
+        "PassPilot class configuration changed. Reload the kiosk.",
+        409
+      );
+    }
     const [school] = await tx
       .select({
         kioskGradeId: schools.kioskGradeId,
@@ -3397,8 +3433,12 @@ export async function returnKioskPassForStudent(
     const activePass = activePassRow?.pass;
     if (!activePass) return undefined;
 
-    if (source?.value === "legacy_grades" && school.kioskGradeId) {
-      if (activePass.gradeId !== school.kioskGradeId) {
+    const legacyConfiguredGradeId =
+      override?.source === "legacy_grades"
+        ? override.configuredClassId
+        : school.kioskGradeId;
+    if (source?.value === "legacy_grades" && legacyConfiguredGradeId) {
+      if (activePass.gradeId !== legacyConfiguredGradeId) {
         throw passpilotClassError(
           "PASSPILOT_KIOSK_PASS_CLASS_MISMATCH",
           "This pass belongs to a different class and cannot be returned from this kiosk.",
@@ -3413,7 +3453,8 @@ export async function returnKioskPassForStudent(
           426
         );
       }
-      const configuredClassId = school.kioskClasspilotGroupId;
+      const configuredClassId =
+        override?.configuredClassId ?? school.kioskClasspilotGroupId;
       if (!configuredClassId) {
         throw passpilotClassError(
           "PASSPILOT_KIOSK_CLASS_REQUIRED",
@@ -3458,6 +3499,502 @@ export async function returnKioskPassForStudent(
       .returning();
     return pass;
   });
+}
+
+// ============================================================================
+// PassPilot kiosk sessions (per-device, teacher-bound)
+// ============================================================================
+// A kiosk device boots into an UNCLAIMED session showing a 6-digit claim code.
+// A teacher claims it from their authenticated PassPilot session, binding
+// (teacher, class) to the device. Multiple sessions per teacher are allowed;
+// "Send to Kiosk" retargets all of them. The legacy school-global kiosk slot
+// remains untouched for headerless (old) kiosk clients.
+
+export type KioskConfiguredClassOverride = {
+  source: PasspilotClassSource;
+  configuredClassId: string;
+};
+
+export type KioskClassTarget = {
+  source: PasspilotClassSource;
+  classId: string;
+};
+
+export type KioskSessionAuthorization = {
+  actorUserId: string;
+  manager: boolean;
+};
+
+// TTLs: unclaimed codes rotate every 2h even on an idle tab; a polling kiosk
+// stays alive indefinitely (config polls touch last_seen_at) while a closed
+// tab ages out within a day. Released rows are kept briefly for diagnostics.
+const KIOSK_SESSION_UNCLAIMED_TTL = sql`interval '2 hours'`;
+const KIOSK_SESSION_ACTIVE_IDLE_TTL = sql`interval '20 hours'`;
+const KIOSK_SESSION_RELEASED_RETENTION = sql`interval '24 hours'`;
+
+function kioskSessionLiveCondition(): SQL {
+  return sql`((${passpilotKioskSessions.status} = 'unclaimed' AND ${passpilotKioskSessions.createdAt} > now() - ${KIOSK_SESSION_UNCLAIMED_TTL}) OR (${passpilotKioskSessions.status} = 'active' AND ${passpilotKioskSessions.lastSeenAt} > now() - ${KIOSK_SESSION_ACTIVE_IDLE_TTL}))`;
+}
+
+// In-tx class validation for kiosk session claims/retargets. Caller must hold
+// the passpilot class lock and have verified the school's class source matches
+// target.source. Mirrors the authorization blocks of updateCanonicalKioskClass
+// and updateLegacyKioskClass.
+async function assertKioskSessionClassTarget(
+  tx: PasspilotClassTransaction,
+  schoolId: string,
+  target: KioskClassTarget,
+  authorization: KioskSessionAuthorization
+): Promise<void> {
+  if (target.source === "classpilot_groups") {
+    const [group] = await tx
+      .select({ id: groups.id })
+      .from(groups)
+      .leftJoin(groupTeachers, eq(groupTeachers.groupId, groups.id))
+      .where(
+        and(
+          eq(groups.id, target.classId),
+          eq(groups.schoolId, schoolId),
+          eq(groups.groupType, "admin_class"),
+          eq(groups.status, "active"),
+          authorization.manager
+            ? sql`true`
+            : or(
+                eq(groups.teacherId, authorization.actorUserId),
+                eq(groupTeachers.teacherId, authorization.actorUserId)
+              )!
+        )
+      )
+      .limit(1)
+      .for("update", { of: groups });
+    if (!group) {
+      throw passpilotClassError(
+        "PASSPILOT_CLASS_ACCESS_DENIED",
+        "Class not found or access denied.",
+        403
+      );
+    }
+    return;
+  }
+  const [grade] = await tx
+    .select({ id: grades.id, migrationState: grades.migrationState })
+    .from(grades)
+    .where(and(eq(grades.id, target.classId), eq(grades.schoolId, schoolId)))
+    .limit(1);
+  if (!grade) {
+    throw passpilotClassError("PASSPILOT_LEGACY_CLASS_NOT_FOUND", "Class not found.", 404);
+  }
+  if (grade.migrationState === "history_only") {
+    throw passpilotClassError(
+      "PASSPILOT_HISTORY_CLASS_READ_ONLY",
+      "This legacy class is history-only and cannot be selected for the kiosk.",
+      409
+    );
+  }
+  if (!authorization.manager) {
+    await assertLegacyPasspilotClassAuthorization(tx, schoolId, target.classId, {
+      actorUserId: authorization.actorUserId,
+      manager: false,
+    });
+  }
+}
+
+async function lockAndAssertKioskClassSource(
+  tx: PasspilotClassTransaction,
+  schoolId: string,
+  expected: PasspilotClassSource
+): Promise<void> {
+  const [settingsRow] = await tx
+    .select({ source: settings.passpilotClassSource })
+    .from(settings)
+    .where(eq(settings.schoolId, schoolId))
+    .limit(1)
+    .for("update");
+  if ((settingsRow?.source ?? "legacy_grades") !== expected) {
+    throw passpilotClassError(
+      "PASSPILOT_CLASS_SOURCE_CHANGED",
+      "PassPilot class configuration changed. Reload before updating the kiosk.",
+      409
+    );
+  }
+}
+
+// In-tx checkout validation against the session row (called by
+// createLegacyPass/createCanonicalPass when authorization.kioskSessionId is
+// set). FOR UPDATE makes checkout race-safe against concurrent
+// retarget/release.
+async function assertKioskSessionCheckoutTarget(
+  tx: PasspilotClassTransaction,
+  schoolId: string,
+  kioskSessionId: string,
+  target: { source: PasspilotClassSource; classId: string | null }
+): Promise<void> {
+  const [session] = await tx
+    .select({
+      status: passpilotKioskSessions.status,
+      classSource: passpilotKioskSessions.classSource,
+      gradeId: passpilotKioskSessions.gradeId,
+      classpilotGroupId: passpilotKioskSessions.classpilotGroupId,
+    })
+    .from(passpilotKioskSessions)
+    .where(
+      and(
+        eq(passpilotKioskSessions.id, kioskSessionId),
+        eq(passpilotKioskSessions.schoolId, schoolId)
+      )
+    )
+    .limit(1)
+    .for("update");
+  if (!session || session.status !== "active") {
+    throw passpilotClassError(
+      "PASSPILOT_KIOSK_SESSION_EXPIRED",
+      "This kiosk session has expired. Reload the kiosk.",
+      404
+    );
+  }
+  const sessionClassId =
+    target.source === "classpilot_groups" ? session.classpilotGroupId : session.gradeId;
+  if (session.classSource !== target.source || !sessionClassId || sessionClassId !== target.classId) {
+    throw passpilotClassError(
+      "PASSPILOT_KIOSK_CLASS_CHANGED",
+      "The configured kiosk class changed. Reload the kiosk before checking out.",
+      409
+    );
+  }
+  await tx
+    .update(passpilotKioskSessions)
+    .set({ lastSeenAt: sql`now()` })
+    .where(
+      and(
+        eq(passpilotKioskSessions.id, kioskSessionId),
+        eq(passpilotKioskSessions.schoolId, schoolId)
+      )
+    );
+}
+
+async function sweepExpiredKioskSessions(schoolId: string): Promise<void> {
+  await db
+    .delete(passpilotKioskSessions)
+    .where(
+      and(
+        eq(passpilotKioskSessions.schoolId, schoolId),
+        or(
+          and(
+            eq(passpilotKioskSessions.status, "unclaimed"),
+            sql`${passpilotKioskSessions.createdAt} < now() - ${KIOSK_SESSION_UNCLAIMED_TTL}`
+          ),
+          and(
+            eq(passpilotKioskSessions.status, "active"),
+            sql`${passpilotKioskSessions.lastSeenAt} < now() - ${KIOSK_SESSION_ACTIVE_IDLE_TTL}`
+          ),
+          and(
+            eq(passpilotKioskSessions.status, "released"),
+            sql`${passpilotKioskSessions.releasedAt} < now() - ${KIOSK_SESSION_RELEASED_RETENTION}`
+          )
+        )!
+      )
+    );
+}
+
+function generateKioskClaimCode(): string {
+  return randomInt(0, 1_000_000).toString().padStart(6, "0");
+}
+
+// Drizzle wraps driver errors (DrizzleQueryError with the pg error on .cause),
+// so the unique-violation code must be checked on both levels.
+function isUniqueViolation(err: any): boolean {
+  return err?.code === "23505" || err?.cause?.code === "23505";
+}
+
+export async function createKioskSession(schoolId: string): Promise<KioskSession> {
+  // Lazy reaping: kiosk bootstrap is the natural per-school heartbeat.
+  await sweepExpiredKioskSessions(schoolId);
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      const [session] = await db
+        .insert(passpilotKioskSessions)
+        .values({ schoolId, claimCode: generateKioskClaimCode() })
+        .returning();
+      return session!;
+    } catch (err: any) {
+      // Partial unique index on (school_id, claim_code) — regenerate and retry.
+      if (!isUniqueViolation(err)) throw err;
+    }
+  }
+  throw passpilotClassError(
+    "PASSPILOT_KIOSK_SESSION_CODE_EXHAUSTED",
+    "Could not allocate a kiosk code. Try again.",
+    503
+  );
+}
+
+// Self-claimed session for kiosks launched from the teacher's own logged-in
+// app: no claim-code step. Class is optional — a classless active session
+// waits for the teacher's first "Send to Kiosk".
+export async function createSelfClaimedKioskSession(
+  schoolId: string,
+  target: KioskClassTarget | null,
+  authorization: KioskSessionAuthorization
+): Promise<KioskSession> {
+  await sweepExpiredKioskSessions(schoolId);
+  return db.transaction(async (tx) => {
+    await takePasspilotClassLock(tx, schoolId);
+    if (target) {
+      await lockAndAssertKioskClassSource(tx, schoolId, target.source);
+      await assertKioskSessionClassTarget(tx, schoolId, target, authorization);
+    }
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      try {
+        // Nested transaction = savepoint: a unique-violation must not abort
+        // the outer transaction, or the retry would fail with 25P02.
+        const session = await tx.transaction(async (sp) => {
+          const [row] = await sp
+            .insert(passpilotKioskSessions)
+            .values({
+              schoolId,
+              claimCode: generateKioskClaimCode(),
+              teacherId: authorization.actorUserId,
+              status: "active",
+              classSource: target?.source ?? null,
+              gradeId: target?.source === "legacy_grades" ? target.classId : null,
+              classpilotGroupId:
+                target?.source === "classpilot_groups" ? target.classId : null,
+              claimedAt: sql`now()`,
+            })
+            .returning();
+          return row!;
+        });
+        return session;
+      } catch (err: any) {
+        if (!isUniqueViolation(err)) throw err;
+      }
+    }
+    throw passpilotClassError(
+      "PASSPILOT_KIOSK_SESSION_CODE_EXHAUSTED",
+      "Could not allocate a kiosk code. Try again.",
+      503
+    );
+  });
+}
+
+export async function getLiveKioskSessionById(
+  schoolId: string,
+  sessionId: string
+): Promise<KioskSession | undefined> {
+  const [session] = await db
+    .select()
+    .from(passpilotKioskSessions)
+    .where(
+      and(
+        eq(passpilotKioskSessions.id, sessionId),
+        eq(passpilotKioskSessions.schoolId, schoolId),
+        kioskSessionLiveCondition()
+      )
+    )
+    .limit(1);
+  return session;
+}
+
+export async function touchKioskSessionLastSeen(
+  schoolId: string,
+  sessionId: string
+): Promise<void> {
+  // 60s write-suppression: the 5s config poll must not write every poll.
+  await db
+    .update(passpilotKioskSessions)
+    .set({ lastSeenAt: sql`now()` })
+    .where(
+      and(
+        eq(passpilotKioskSessions.id, sessionId),
+        eq(passpilotKioskSessions.schoolId, schoolId),
+        ne(passpilotKioskSessions.status, "released"),
+        sql`${passpilotKioskSessions.lastSeenAt} < now() - interval '60 seconds'`
+      )
+    );
+}
+
+export async function claimKioskSessionByCode(
+  schoolId: string,
+  claimCode: string,
+  target: KioskClassTarget,
+  authorization: KioskSessionAuthorization
+): Promise<KioskSession> {
+  return db.transaction(async (tx) => {
+    await takePasspilotClassLock(tx, schoolId);
+    await lockAndAssertKioskClassSource(tx, schoolId, target.source);
+    await assertKioskSessionClassTarget(tx, schoolId, target, authorization);
+    const [existing] = await tx
+      .select({ id: passpilotKioskSessions.id })
+      .from(passpilotKioskSessions)
+      .where(
+        and(
+          eq(passpilotKioskSessions.schoolId, schoolId),
+          eq(passpilotKioskSessions.claimCode, claimCode),
+          eq(passpilotKioskSessions.status, "unclaimed"),
+          sql`${passpilotKioskSessions.createdAt} > now() - ${KIOSK_SESSION_UNCLAIMED_TTL}`
+        )
+      )
+      .limit(1)
+      .for("update");
+    if (!existing) {
+      throw passpilotClassError(
+        "PASSPILOT_KIOSK_SESSION_CODE_NOT_FOUND",
+        "Kiosk code not found or expired. Check the kiosk screen for the current code.",
+        404
+      );
+    }
+    const [session] = await tx
+      .update(passpilotKioskSessions)
+      .set({
+        teacherId: authorization.actorUserId,
+        classSource: target.source,
+        gradeId: target.source === "legacy_grades" ? target.classId : null,
+        classpilotGroupId:
+          target.source === "classpilot_groups" ? target.classId : null,
+        status: "active",
+        claimedAt: sql`now()`,
+        lastSeenAt: sql`now()`,
+        revision: sql`${passpilotKioskSessions.revision} + 1`,
+      })
+      .where(
+        and(
+          eq(passpilotKioskSessions.id, existing.id),
+          eq(passpilotKioskSessions.schoolId, schoolId)
+        )
+      )
+      .returning();
+    return session!;
+  });
+}
+
+export async function retargetKioskSessionsForTeacher(
+  schoolId: string,
+  teacherId: string,
+  target: KioskClassTarget,
+  authorization: KioskSessionAuthorization
+): Promise<KioskSession[]> {
+  return db.transaction(async (tx) => {
+    await takePasspilotClassLock(tx, schoolId);
+    await lockAndAssertKioskClassSource(tx, schoolId, target.source);
+    await assertKioskSessionClassTarget(tx, schoolId, target, authorization);
+    return tx
+      .update(passpilotKioskSessions)
+      .set({
+        classSource: target.source,
+        gradeId: target.source === "legacy_grades" ? target.classId : null,
+        classpilotGroupId:
+          target.source === "classpilot_groups" ? target.classId : null,
+        revision: sql`${passpilotKioskSessions.revision} + 1`,
+      })
+      .where(
+        and(
+          eq(passpilotKioskSessions.schoolId, schoolId),
+          eq(passpilotKioskSessions.teacherId, teacherId),
+          eq(passpilotKioskSessions.status, "active")
+        )
+      )
+      .returning();
+  });
+}
+
+export async function updateKioskSessionClass(
+  schoolId: string,
+  sessionId: string,
+  target: KioskClassTarget,
+  authorization: KioskSessionAuthorization
+): Promise<KioskSession | undefined> {
+  return db.transaction(async (tx) => {
+    await takePasspilotClassLock(tx, schoolId);
+    await lockAndAssertKioskClassSource(tx, schoolId, target.source);
+    await assertKioskSessionClassTarget(tx, schoolId, target, authorization);
+    const [session] = await tx
+      .update(passpilotKioskSessions)
+      .set({
+        classSource: target.source,
+        gradeId: target.source === "legacy_grades" ? target.classId : null,
+        classpilotGroupId:
+          target.source === "classpilot_groups" ? target.classId : null,
+        revision: sql`${passpilotKioskSessions.revision} + 1`,
+      })
+      .where(
+        and(
+          eq(passpilotKioskSessions.id, sessionId),
+          eq(passpilotKioskSessions.schoolId, schoolId),
+          eq(passpilotKioskSessions.status, "active"),
+          authorization.manager
+            ? sql`true`
+            : eq(passpilotKioskSessions.teacherId, authorization.actorUserId)
+        )
+      )
+      .returning();
+    return session;
+  });
+}
+
+export async function releaseKioskSession(
+  schoolId: string,
+  sessionId: string,
+  authorization: KioskSessionAuthorization
+): Promise<KioskSession | undefined> {
+  const [session] = await db
+    .update(passpilotKioskSessions)
+    .set({
+      status: "released",
+      releasedAt: sql`now()`,
+      revision: sql`${passpilotKioskSessions.revision} + 1`,
+    })
+    .where(
+      and(
+        eq(passpilotKioskSessions.id, sessionId),
+        eq(passpilotKioskSessions.schoolId, schoolId),
+        ne(passpilotKioskSessions.status, "released"),
+        authorization.manager
+          ? sql`true`
+          : eq(passpilotKioskSessions.teacherId, authorization.actorUserId)
+      )
+    )
+    .returning();
+  return session;
+}
+
+// System-initiated release (no actor authorization): used when a session's
+// teacher membership disappears or the class model cuts over mid-session.
+export async function forceReleaseKioskSession(
+  schoolId: string,
+  sessionId: string
+): Promise<void> {
+  await db
+    .update(passpilotKioskSessions)
+    .set({
+      status: "released",
+      releasedAt: sql`now()`,
+      revision: sql`${passpilotKioskSessions.revision} + 1`,
+    })
+    .where(
+      and(
+        eq(passpilotKioskSessions.id, sessionId),
+        eq(passpilotKioskSessions.schoolId, schoolId),
+        ne(passpilotKioskSessions.status, "released")
+      )
+    );
+}
+
+export async function getActiveKioskSessionsForTeacher(
+  schoolId: string,
+  teacherId: string
+): Promise<KioskSession[]> {
+  return db
+    .select()
+    .from(passpilotKioskSessions)
+    .where(
+      and(
+        eq(passpilotKioskSessions.schoolId, schoolId),
+        eq(passpilotKioskSessions.teacherId, teacherId),
+        eq(passpilotKioskSessions.status, "active"),
+        kioskSessionLiveCondition()
+      )
+    )
+    .orderBy(asc(passpilotKioskSessions.claimedAt));
 }
 
 export async function cancelPass(
@@ -18994,6 +19531,9 @@ export async function createCanonicalPass(
     actorUserId?: string | null;
     manager?: boolean;
     kiosk?: boolean;
+    // Per-device kiosk session: when set (with kiosk: true), the checkout is
+    // validated against the session row instead of the school-global slot.
+    kioskSessionId?: string | null;
   } = {}
 ): Promise<Pass> {
   return db.transaction(async (tx) => {
@@ -19013,18 +19553,25 @@ export async function createCanonicalPass(
     }
 
     if (authorization.kiosk) {
-      const [school] = await tx
-        .select({ kioskClasspilotGroupId: schools.kioskClasspilotGroupId })
-        .from(schools)
-        .where(eq(schools.id, data.schoolId))
-        .limit(1)
-        .for("update");
-      if (!school?.kioskClasspilotGroupId || school.kioskClasspilotGroupId !== data.classId) {
-        throw passpilotClassError(
-          "PASSPILOT_KIOSK_CLASS_CHANGED",
-          "The configured kiosk class changed. Reload the kiosk before checking out.",
-          409
-        );
+      if (authorization.kioskSessionId) {
+        await assertKioskSessionCheckoutTarget(tx, data.schoolId, authorization.kioskSessionId, {
+          source: "classpilot_groups",
+          classId: data.classId,
+        });
+      } else {
+        const [school] = await tx
+          .select({ kioskClasspilotGroupId: schools.kioskClasspilotGroupId })
+          .from(schools)
+          .where(eq(schools.id, data.schoolId))
+          .limit(1)
+          .for("update");
+        if (!school?.kioskClasspilotGroupId || school.kioskClasspilotGroupId !== data.classId) {
+          throw passpilotClassError(
+            "PASSPILOT_KIOSK_CLASS_CHANGED",
+            "The configured kiosk class changed. Reload the kiosk before checking out.",
+            409
+          );
+        }
       }
     }
 

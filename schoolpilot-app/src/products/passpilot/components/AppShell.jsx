@@ -60,6 +60,32 @@ export default function AppShell({ children, currentTab }) {
     }
   };
 
+  // Self-launched kiosks are auto-claimed by the launching teacher: create a
+  // session bound to them and pass it in the URL, so the kiosk never shows a
+  // claim code on the teacher's own device. Falls back to a plain URL (kiosk
+  // bootstraps its own unclaimed session) if the server predates sessions.
+  //
+  // The tab must be opened synchronously inside the click's user activation —
+  // window.open after an awaited network call gets popup-blocked in stricter
+  // browsers. If the popup is blocked we bail BEFORE creating a session so no
+  // orphaned active sessions accumulate.
+  const openKiosk = async (type, preOpenedWindow = null) => {
+    const base =
+      type === 'simple'
+        ? `/passpilot/kiosk/simple?school=${school.id}`
+        : `/passpilot/kiosk?school=${school.id}`;
+    const kioskWindow = preOpenedWindow ?? window.open('', '_blank');
+    if (!kioskWindow) return;
+    let url = base;
+    try {
+      const data = await passPilotClassRequest('POST', '/passpilot/kiosk/sessions/self', {});
+      if (data?.session?.id) url = `${base}&session=${encodeURIComponent(data.session.id)}`;
+    } catch {
+      // Older server or transient failure — the kiosk page handles both.
+    }
+    kioskWindow.location = url;
+  };
+
   const handleKioskClick = (type) => {
     if (!school?.id) return;
     if (!kioskName) {
@@ -67,28 +93,23 @@ export default function AppShell({ children, currentTab }) {
       setKioskNameInput('');
       setIsKioskNameDialogOpen(true);
     } else {
-      const url =
-        type === 'simple'
-          ? `/passpilot/kiosk/simple?school=${school.id}`
-          : `/passpilot/kiosk?school=${school.id}`;
-      window.open(url, '_blank');
+      openKiosk(type);
     }
   };
 
   const handleKioskNameSubmit = async () => {
     const name = kioskNameInput.trim();
     if (!name || !school?.id) return;
+    const isRename = pendingKioskAction === 'rename';
+    // Open the tab before any await so the user activation is still valid.
+    const kioskWindow = isRename ? null : window.open('', '_blank');
     await saveKioskName(name);
     setIsKioskNameDialogOpen(false);
-    if (pendingKioskAction === 'rename') {
+    if (isRename) {
       setPendingKioskAction(null);
       return;
     }
-    const url =
-      pendingKioskAction === 'simple'
-        ? `/passpilot/kiosk/simple?school=${school.id}`
-        : `/passpilot/kiosk?school=${school.id}`;
-    window.open(url, '_blank');
+    await openKiosk(pendingKioskAction, kioskWindow);
     setPendingKioskAction(null);
   };
 

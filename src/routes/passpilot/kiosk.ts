@@ -4,7 +4,13 @@ import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
-import { kioskLookupSchema, kioskCheckoutSchema } from "../../schema/validation.js";
+import {
+  kioskLookupSchema,
+  kioskCheckoutSchema,
+  kioskClaimSchema,
+  kioskRetargetSchema,
+  kioskSelfSessionSchema,
+} from "../../schema/validation.js";
 import { runWithTenantContext } from "../../middleware/tenantContext.js";
 
 // Count only failed public kiosk requests toward the strict per-IP budget.
@@ -40,7 +46,20 @@ import {
   updateLegacyKioskClass,
   updateUser,
   getSettingsForSchool,
+  getMembershipByUserAndSchool,
+  createKioskSession,
+  createSelfClaimedKioskSession,
+  getLiveKioskSessionById,
+  touchKioskSessionLastSeen,
+  claimKioskSessionByCode,
+  retargetKioskSessionsForTeacher,
+  updateKioskSessionClass,
+  releaseKioskSession,
+  forceReleaseKioskSession,
+  getActiveKioskSessionsForTeacher,
+  type KioskClassTarget,
 } from "../../services/storage.js";
+import type { KioskSession } from "../../schema/passpilot.js";
 import { isWithinTrackingWindow } from "../../services/schoolHours.js";
 import { comparePassword } from "../../util/password.js";
 import {
@@ -110,6 +129,188 @@ async function validateKiosk(schoolId: string, kioskPin?: string) {
 }
 
 // ============================================================================
+// Per-device kiosk sessions (teacher-bound)
+// ============================================================================
+// A kiosk presents X-Kiosk-Session on every call. Absent header → the legacy
+// school-global code paths below run unchanged (old clients). A dead session
+// is 404 PASSPILOT_KIOSK_SESSION_EXPIRED — NEVER 401, which kiosk clients
+// reserve for a bad PIN (they clear the stored PIN on 401).
+
+function getKioskSessionId(req: { headers: Record<string, unknown> }): string | null {
+  const value = req.headers["x-kiosk-session"];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function respondKioskSessionExpired(res: any) {
+  return res.status(404).json({
+    error: "This kiosk session has expired.",
+    code: "PASSPILOT_KIOSK_SESSION_EXPIRED",
+  });
+}
+
+function respondKioskSessionUnclaimed(res: any) {
+  return res.status(409).json({
+    error: "This kiosk has not been claimed by a teacher yet.",
+    code: "PASSPILOT_KIOSK_SESSION_UNCLAIMED",
+  });
+}
+
+function kioskSessionClassId(session: KioskSession): string | null {
+  return session.classSource === "classpilot_groups"
+    ? session.classpilotGroupId
+    : session.classSource === "legacy_grades"
+      ? session.gradeId
+      : null;
+}
+
+// Resolve + fully validate a presented kiosk session for data-serving
+// endpoints: dead → 404 EXPIRED, unclaimed → 409 UNCLAIMED, teacher no longer
+// active staff → force-release + 404 (never leave an ownerless kiosk).
+// Returns undefined when no session header is present (legacy school-global
+// path), null when a response has already been sent, else the session +
+// teacher kiosk name.
+async function requireActiveKioskSession(
+  req: { headers: Record<string, unknown> },
+  res: any,
+  schoolId: string
+): Promise<{ session: KioskSession; kioskName: string | null } | null | undefined> {
+  const sessionId = getKioskSessionId(req);
+  if (!sessionId) return undefined;
+  const session = await getLiveKioskSessionById(schoolId, sessionId);
+  if (!session) {
+    respondKioskSessionExpired(res);
+    return null;
+  }
+  if (session.status !== "active") {
+    respondKioskSessionUnclaimed(res);
+    return null;
+  }
+  const identity = session.teacherId
+    ? await kioskSessionTeacherIdentity(schoolId, session.teacherId)
+    : null;
+  if (!identity) {
+    await forceReleaseKioskSession(schoolId, session.id);
+    respondKioskSessionExpired(res);
+    return null;
+  }
+  return { session, kioskName: identity.kioskName };
+}
+
+// Teacher display name for kiosk headers/pass labels: the per-teacher kiosk
+// name when set, falling back to the account display name. Returns null
+// membership when the teacher is no longer active staff at the school.
+async function kioskSessionTeacherIdentity(schoolId: string, teacherId: string) {
+  const membership = await getMembershipByUserAndSchool(teacherId, schoolId);
+  if (!membership || membership.status !== "active") return null;
+  const user = await getUserById(teacherId);
+  return {
+    kioskName: (membership as any).kioskName || user?.displayName || null,
+  };
+}
+
+async function kioskSessionClassName(
+  schoolId: string,
+  session: KioskSession
+): Promise<string | null> {
+  const classId = kioskSessionClassId(session);
+  if (!classId) return null;
+  if (session.classSource === "classpilot_groups") {
+    const group = await getCanonicalClassForSchool(classId, schoolId);
+    return group?.name ?? null;
+  }
+  const allGrades = await getGradesBySchool(schoolId);
+  return allGrades.find((g) => g.id === classId)?.name ?? null;
+}
+
+// Session payload for kiosk devices (public, PIN-gated callers).
+async function kioskSessionDeviceView(schoolId: string, session: KioskSession) {
+  if (session.status !== "active") {
+    return {
+      id: session.id,
+      status: session.status,
+      claimCode: session.claimCode,
+      source: null,
+      classId: null,
+      gradeId: null,
+      className: null,
+      kioskName: null,
+    };
+  }
+  const identity = session.teacherId
+    ? await kioskSessionTeacherIdentity(schoolId, session.teacherId)
+    : null;
+  const classId = kioskSessionClassId(session);
+  return {
+    id: session.id,
+    status: session.status,
+    claimCode: null,
+    source: session.classSource,
+    classId,
+    gradeId: session.classSource === "legacy_grades" ? classId : null,
+    className: await kioskSessionClassName(schoolId, session),
+    kioskName: identity?.kioskName ?? null,
+  };
+}
+
+// Session payload for the authenticated teacher UI.
+async function kioskSessionTeacherView(schoolId: string, session: KioskSession) {
+  const classId = kioskSessionClassId(session);
+  return {
+    id: session.id,
+    status: session.status,
+    source: session.classSource,
+    classId,
+    gradeId: session.classSource === "legacy_grades" ? classId : null,
+    className: await kioskSessionClassName(schoolId, session),
+    claimedAt: session.claimedAt,
+    lastSeenAt: session.lastSeenAt,
+    createdAt: session.createdAt,
+  };
+}
+
+async function resolveKioskClassTarget(
+  req: Parameters<typeof hasPasspilotCanonicalClassCapability>[0],
+  res: any,
+  schoolId: string,
+  classId: string
+): Promise<KioskClassTarget | null> {
+  const source = await getPasspilotClassSourceForSchool(schoolId);
+  if (source === "classpilot_groups" && !requireKioskClassCapability(req, res)) {
+    return null;
+  }
+  return { source, classId };
+}
+
+// POST /api/passpilot/kiosk/session - Create or resume a kiosk device session.
+// Public (PIN-gated). Idempotent: a live presented session is returned as-is,
+// so PIN re-entry or a page reload never rotates the claim code.
+router.post("/session", kioskLimiter, async (req, res, next) => {
+  try {
+    const schoolId = getKioskSchoolId(req);
+    if (!schoolId) {
+      return res.status(400).json({ error: "School ID required (x-school-id header)" });
+    }
+    const kioskPin = req.headers["x-kiosk-pin"] as string | undefined;
+    const { error, status } = await validateKiosk(schoolId, kioskPin);
+    if (error) return res.status(status).json({ error });
+
+    await runWithTenantContext({ schoolId }, async () => {
+      const presentedId = getKioskSessionId(req);
+      if (presentedId) {
+        const existing = await getLiveKioskSessionById(schoolId, presentedId);
+        if (existing) {
+          return res.json({ session: await kioskSessionDeviceView(schoolId, existing) });
+        }
+      }
+      const session = await createKioskSession(schoolId);
+      return res.status(201).json({ session: await kioskSessionDeviceView(schoolId, session) });
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ============================================================================
 // Public kiosk endpoints (no auth required, school ID from header)
 // ============================================================================
 
@@ -131,6 +332,19 @@ router.post("/lookup", kioskLimiter, async (req, res, next) => {
     }
 
     await runWithTenantContext({ schoolId }, async () => {
+    const resolved = await requireActiveKioskSession(req, res, schoolId);
+    if (resolved === null) return;
+    let sessionOverride: { source: "legacy_grades" | "classpilot_groups"; configuredClassId: string } | undefined;
+    if (resolved) {
+      const sessionClassId = kioskSessionClassId(resolved.session);
+      if (!resolved.session.classSource || !sessionClassId) {
+        return res.status(409).json({
+          error: "A class must be sent to this kiosk before looking up students.",
+          code: "PASSPILOT_KIOSK_CLASS_REQUIRED",
+        });
+      }
+      sessionOverride = { source: resolved.session.classSource, configuredClassId: sessionClassId };
+    }
     const student = await getStudentByIdNumber(schoolId, parsed.data.studentIdNumber);
     if (!student) {
       return res.json({ error: "Student not found", student: null, activePass: null });
@@ -139,7 +353,8 @@ router.post("/lookup", kioskLimiter, async (req, res, next) => {
     const kioskState = await getKioskStudentState(
       schoolId,
       student.id,
-      hasPasspilotCanonicalClassCapability(req)
+      hasPasspilotCanonicalClassCapability(req),
+      sessionOverride
     );
     if (!kioskState.enrolled) {
       return res.json({ error: "Student not found", student: null, activePass: null });
@@ -211,37 +426,63 @@ router.post("/checkout", kioskLimiter, async (req, res, next) => {
     const passDuration = school.defaultPassDuration || 5;
     const expiresAt = new Date(Date.now() + passDuration * 60 * 1000);
 
-    // Get kiosk name from activating user
+    // Per-device session (teacher-bound) when the kiosk presents one;
+    // otherwise the legacy school-global slot.
+    const resolved = await requireActiveKioskSession(req, res, schoolId);
+    if (resolved === null) return;
+    const kioskSession: KioskSession | null = resolved?.session ?? null;
+
+    // Kiosk label + pass attribution.
     let kioskName: string | null = null;
-    if (school.kioskActivatedByUserId) {
+    let attributedTeacherId: string | null = null;
+    if (resolved && kioskSession) {
+      kioskName = resolved.kioskName;
+      attributedTeacherId = kioskSession.teacherId;
+    } else if (school.kioskActivatedByUserId) {
       const activatingUser = await getUserById(school.kioskActivatedByUserId);
       if (activatingUser) {
         kioskName = activatingUser.displayName || null;
       }
+      attributedTeacherId = school.kioskActivatedByUserId;
     }
 
-    // Look up class name from kioskGradeId
+    // Resolve the configured kiosk class.
     let className: string | null = null;
     const classSource = await getPasspilotClassSourceForSchool(schoolId);
     if (classSource === "classpilot_groups" && !requireKioskClassCapability(req, res)) return;
-    const selectedClassId = classSource === "classpilot_groups"
-      ? school.kioskClasspilotGroupId
-      : (parsed.data.classId || school.kioskGradeId);
+    const sessionConfiguredClassId = kioskSession ? kioskSessionClassId(kioskSession) : null;
+    if (kioskSession && (!kioskSession.classSource || !sessionConfiguredClassId)) {
+      return res.status(409).json({
+        error: "A class must be sent to this kiosk before checkout.",
+        code: "PASSPILOT_KIOSK_CLASS_REQUIRED",
+      });
+    }
+    if (kioskSession && kioskSession.classSource !== classSource) {
+      // Class-model cutover mid-session: invalidate rather than remap silently.
+      await forceReleaseKioskSession(schoolId, kioskSession.id);
+      return respondKioskSessionExpired(res);
+    }
+    const selectedClassId = kioskSession
+      ? sessionConfiguredClassId
+      : classSource === "classpilot_groups"
+        ? school.kioskClasspilotGroupId
+        : (parsed.data.classId || school.kioskGradeId);
     if (classSource === "classpilot_groups") {
       if (!selectedClassId) {
         return res.status(400).json({ error: "A kiosk class must be selected before checkout" });
       }
-      if (
-        parsed.data.classId &&
-        parsed.data.classId !== school.kioskClasspilotGroupId
-      ) {
+      if (parsed.data.classId && parsed.data.classId !== selectedClassId) {
         return res.status(400).json({ error: "Checkout class does not match the configured kiosk class" });
       }
       const group = await getCanonicalClassForSchool(selectedClassId, schoolId);
       if (!group) return res.status(400).json({ error: "Kiosk class is not active" });
       className = group.name;
     } else if (selectedClassId) {
-      if (school.kioskGradeId && selectedClassId !== school.kioskGradeId) {
+      const expectedLegacyClassId = kioskSession ? selectedClassId : school.kioskGradeId;
+      if (
+        (kioskSession && parsed.data.classId && parsed.data.classId !== selectedClassId) ||
+        (!kioskSession && school.kioskGradeId && selectedClassId !== expectedLegacyClassId)
+      ) {
         return res.status(400).json({
           error: "Checkout class does not match the configured kiosk class",
           code: "PASSPILOT_KIOSK_CLASS_CHANGED",
@@ -261,7 +502,7 @@ router.post("/checkout", kioskLimiter, async (req, res, next) => {
       const commonPass = {
           schoolId,
           studentId: student.id,
-          teacherId: school.kioskActivatedByUserId || null,
+          teacherId: attributedTeacherId,
           destination: parsed.data.destination,
           customDestination:
             parsed.data.destination === "custom"
@@ -276,17 +517,20 @@ router.post("/checkout", kioskLimiter, async (req, res, next) => {
       pass = classSource === "classpilot_groups"
         ? await createCanonicalPass(
             { ...commonPass, classId: selectedClassId! },
-            { kiosk: true }
+            { kiosk: true, kioskSessionId: kioskSession?.id ?? null }
           )
         : await createLegacyPass(
             { ...commonPass, gradeId: selectedClassId || null },
-            {
-              kiosk: true,
-              expectedKioskClassId: school.kioskGradeId || null,
-            }
+            kioskSession
+              ? { kiosk: true, kioskSessionId: kioskSession.id }
+              : {
+                  kiosk: true,
+                  expectedKioskClassId: school.kioskGradeId || null,
+                }
           );
     } catch (err: any) {
-      if (err?.code === "23505") {
+      // Drizzle may wrap the pg error (DrizzleQueryError with .cause).
+      if (err?.code === "23505" || err?.cause?.code === "23505") {
         return res.status(409).json({ error: "Student already has an active pass" });
       }
       throw err;
@@ -317,10 +561,24 @@ router.post("/checkin", kioskLimiter, async (req, res, next) => {
     }
 
     await runWithTenantContext({ schoolId }, async () => {
+    const resolved = await requireActiveKioskSession(req, res, schoolId);
+    if (resolved === null) return;
+    let sessionOverride: { source: "legacy_grades" | "classpilot_groups"; configuredClassId: string } | undefined;
+    if (resolved) {
+      const sessionClassId = kioskSessionClassId(resolved.session);
+      if (!resolved.session.classSource || !sessionClassId) {
+        return res.status(409).json({
+          error: "A class must be sent to this kiosk before returning passes.",
+          code: "PASSPILOT_KIOSK_CLASS_REQUIRED",
+        });
+      }
+      sessionOverride = { source: resolved.session.classSource, configuredClassId: sessionClassId };
+    }
     const pass = await returnKioskPassForStudent(
       schoolId,
       studentId,
-      hasPasspilotCanonicalClassCapability(req)
+      hasPasspilotCanonicalClassCapability(req),
+      sessionOverride
     );
     if (!pass) {
       return res.status(400).json({ error: "No active pass found" });
@@ -377,13 +635,34 @@ router.get("/students", kioskLimiter, async (req, res, next) => {
     const { error, status, school } = await validateKiosk(schoolId, kioskPin);
     if (error || !school) return res.status(status).json({ error });
 
+    const resolved = await runWithTenantContext({ schoolId }, () =>
+      requireActiveKioskSession(req, res, schoolId)
+    );
+    if (resolved === null) return;
+    const kioskSession: KioskSession | null = resolved?.session ?? null;
     const source = await runWithTenantContext({ schoolId }, () =>
       getPasspilotClassSourceForSchool(schoolId)
     );
     if (source === "classpilot_groups" && !requireKioskClassCapability(req, res)) return;
-    const configuredClassId = source === "classpilot_groups"
-      ? school.kioskClasspilotGroupId
-      : school.kioskGradeId;
+    if (kioskSession?.classSource && kioskSession.classSource !== source) {
+      // Class-model cutover mid-session: invalidate rather than remap silently.
+      const sessionToRelease = kioskSession;
+      await runWithTenantContext({ schoolId }, () =>
+        forceReleaseKioskSession(schoolId, sessionToRelease.id)
+      );
+      return respondKioskSessionExpired(res);
+    }
+    const configuredClassId = kioskSession
+      ? kioskSessionClassId(kioskSession)
+      : source === "classpilot_groups"
+        ? school.kioskClasspilotGroupId
+        : school.kioskGradeId;
+    if (kioskSession && !configuredClassId) {
+      return res.status(409).json({
+        error: "A class must be sent to this kiosk before students can be loaded.",
+        code: "PASSPILOT_KIOSK_CLASS_REQUIRED",
+      });
+    }
     if (configuredClassId && classId !== configuredClassId) {
       return res.status(409).json({
         error: "The selected class does not match the configured kiosk class.",
@@ -450,6 +729,74 @@ router.get("/config", kioskLimiter, async (req, res, next) => {
     const kioskPin = req.headers["x-kiosk-pin"] as string | undefined;
     const { error, status, school } = await validateKiosk(schoolId, kioskPin);
     if (error || !school) return res.status(status).json({ error });
+
+    const sessionId = getKioskSessionId(req);
+    if (sessionId) {
+      // Per-device session branch: config comes from the session, not the
+      // school-global slot. Returns className directly so session-mode kiosks
+      // never need the /grades endpoint.
+      return await runWithTenantContext({ schoolId }, async () => {
+        const session = await getLiveKioskSessionById(schoolId, sessionId);
+        if (!session) return respondKioskSessionExpired(res);
+        if (session.status !== "active") {
+          return res.json({
+            session: await kioskSessionDeviceView(schoolId, session),
+            source: null,
+            classId: null,
+            gradeId: null,
+            className: null,
+            kioskName: null,
+            kioskEnabled: school.kioskEnabled,
+            kioskRequiresApproval: school.kioskRequiresApproval,
+            defaultPassDuration: school.defaultPassDuration,
+          });
+        }
+        await touchKioskSessionLastSeen(schoolId, session.id);
+        const identity = session.teacherId
+          ? await kioskSessionTeacherIdentity(schoolId, session.teacherId)
+          : null;
+        if (!identity) {
+          // Teacher is no longer active staff — never leave an ownerless kiosk.
+          await forceReleaseKioskSession(schoolId, session.id);
+          return respondKioskSessionExpired(res);
+        }
+        const classSource = await getPasspilotClassSourceForSchool(schoolId);
+        if (session.classSource && session.classSource !== classSource) {
+          // Class-model cutover mid-session: invalidate, teacher re-claims.
+          await forceReleaseKioskSession(schoolId, session.id);
+          return respondKioskSessionExpired(res);
+        }
+        if (classSource === "classpilot_groups" && !requireKioskClassCapability(req, res)) return;
+        const classId = kioskSessionClassId(session);
+        if (session.classSource === "classpilot_groups" && classId) {
+          const roster = await getPasspilotClassRoster(schoolId, classId, {
+            userId: "kiosk",
+            manager: true,
+          });
+          if (!roster) {
+            return res.status(409).json({
+              error:
+                "The configured kiosk class is no longer active. Ask your teacher to send a new class to this kiosk.",
+              code: "PASSPILOT_KIOSK_CLASS_INACTIVE",
+              source: "classpilot_groups",
+              session: { id: session.id, status: session.status },
+            });
+          }
+        }
+        const view = await kioskSessionDeviceView(schoolId, session);
+        return res.json({
+          session: { id: session.id, status: session.status },
+          source: view.source,
+          classId: view.classId,
+          gradeId: view.gradeId,
+          className: view.className,
+          kioskName: view.kioskName,
+          kioskEnabled: school.kioskEnabled,
+          kioskRequiresApproval: school.kioskRequiresApproval,
+          defaultPassDuration: school.defaultPassDuration,
+        });
+      });
+    }
 
     let kioskName: string | null = null;
     if (school.kioskActivatedByUserId) {
@@ -553,5 +900,180 @@ router.put(
     }
   }
 );
+
+// ============================================================================
+// Authenticated teacher endpoints for per-device kiosk sessions
+// ============================================================================
+// Same middleware chain as PUT /config. These ride the web client's CSRF
+// token — they are intentionally NOT in the CSRF exempt list.
+
+// Failed claim attempts count against a strict per-IP budget (same shape as
+// kioskLimiter): with a 1M code space and an authenticated caller required,
+// brute force is impractical.
+const kioskClaimLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  max: 30,
+  message: { error: "Too many kiosk claim attempts, please try again later" },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+});
+
+const kioskSessionTeacherAuth = [
+  authenticate,
+  requireSchoolContext,
+  requireActiveSchool,
+  requireProductLicense("PASSPILOT"),
+  requirePassPilotRole("admin", "school_admin", "office_staff", "teacher"),
+] as const;
+
+// POST /api/passpilot/kiosk/sessions/claim - Bind an unclaimed kiosk (by code)
+// to the requesting teacher and a class they may run.
+router.post(
+  "/sessions/claim",
+  kioskClaimLimiter,
+  ...kioskSessionTeacherAuth,
+  async (req, res, next) => {
+    try {
+      const schoolId = res.locals.schoolId!;
+      const parsed = kioskClaimSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      }
+      const role = await getRequestPassPilotRole(req, res);
+      const target = await resolveKioskClassTarget(req, res, schoolId, parsed.data.classId);
+      if (!target) return;
+      if (!(await canAccessPasspilotClass(req.authUser!, schoolId, parsed.data.classId, role))) {
+        return res.status(403).json({ error: "Insufficient permissions" });
+      }
+      const session = await claimKioskSessionByCode(schoolId, parsed.data.claimCode, target, {
+        actorUserId: req.authUser!.id,
+        manager: isPassPilotManager(role),
+      });
+      return res.json({ session: await kioskSessionTeacherView(schoolId, session) });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// POST /api/passpilot/kiosk/sessions/self - Auto-claimed session for kiosks
+// launched from the teacher's own logged-in app (no code step). classId is
+// optional: a classless active session waits for the first Send to Kiosk.
+router.post("/sessions/self", ...kioskSessionTeacherAuth, async (req, res, next) => {
+  try {
+    const schoolId = res.locals.schoolId!;
+    const parsed = kioskSelfSessionSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+    }
+    const role = await getRequestPassPilotRole(req, res);
+    let target: KioskClassTarget | null = null;
+    if (parsed.data.classId) {
+      target = await resolveKioskClassTarget(req, res, schoolId, parsed.data.classId);
+      if (!target) return;
+      if (!(await canAccessPasspilotClass(req.authUser!, schoolId, parsed.data.classId, role))) {
+        return res.status(403).json({ error: "Insufficient permissions" });
+      }
+    }
+    const session = await createSelfClaimedKioskSession(schoolId, target, {
+      actorUserId: req.authUser!.id,
+      manager: isPassPilotManager(role),
+    });
+    return res.status(201).json({ session: await kioskSessionTeacherView(schoolId, session) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/passpilot/kiosk/sessions/mine - The requesting teacher's live kiosks.
+router.get("/sessions/mine", ...kioskSessionTeacherAuth, async (req, res, next) => {
+  try {
+    const schoolId = res.locals.schoolId!;
+    const sessions = await getActiveKioskSessionsForTeacher(schoolId, req.authUser!.id);
+    return res.json({
+      sessions: await Promise.all(
+        sessions.map((session) => kioskSessionTeacherView(schoolId, session))
+      ),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/passpilot/kiosk/sessions/retarget - Point ALL of the requesting
+// teacher's kiosks at a class ("Send to Kiosk").
+router.post("/sessions/retarget", ...kioskSessionTeacherAuth, async (req, res, next) => {
+  try {
+    const schoolId = res.locals.schoolId!;
+    const parsed = kioskRetargetSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+    }
+    const role = await getRequestPassPilotRole(req, res);
+    const target = await resolveKioskClassTarget(req, res, schoolId, parsed.data.classId);
+    if (!target) return;
+    if (!(await canAccessPasspilotClass(req.authUser!, schoolId, parsed.data.classId, role))) {
+      return res.status(403).json({ error: "Insufficient permissions" });
+    }
+    const sessions = await retargetKioskSessionsForTeacher(schoolId, req.authUser!.id, target, {
+      actorUserId: req.authUser!.id,
+      manager: isPassPilotManager(role),
+    });
+    return res.json({
+      updated: sessions.length,
+      sessions: await Promise.all(
+        sessions.map((session) => kioskSessionTeacherView(schoolId, session))
+      ),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/passpilot/kiosk/sessions/:id - Retarget a single kiosk.
+router.put("/sessions/:id", ...kioskSessionTeacherAuth, async (req, res, next) => {
+  try {
+    const schoolId = res.locals.schoolId!;
+    const parsed = kioskRetargetSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+    }
+    const role = await getRequestPassPilotRole(req, res);
+    const target = await resolveKioskClassTarget(req, res, schoolId, parsed.data.classId);
+    if (!target) return;
+    if (!(await canAccessPasspilotClass(req.authUser!, schoolId, parsed.data.classId, role))) {
+      return res.status(403).json({ error: "Insufficient permissions" });
+    }
+    const session = await updateKioskSessionClass(schoolId, param(req, "id"), target, {
+      actorUserId: req.authUser!.id,
+      manager: isPassPilotManager(role),
+    });
+    if (!session) {
+      return res.status(404).json({ error: "Kiosk session not found" });
+    }
+    return res.json({ session: await kioskSessionTeacherView(schoolId, session) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/passpilot/kiosk/sessions/:id - Release a kiosk (owner or manager).
+router.delete("/sessions/:id", ...kioskSessionTeacherAuth, async (req, res, next) => {
+  try {
+    const schoolId = res.locals.schoolId!;
+    const role = await getRequestPassPilotRole(req, res);
+    const session = await releaseKioskSession(schoolId, param(req, "id"), {
+      actorUserId: req.authUser!.id,
+      manager: isPassPilotManager(role),
+    });
+    if (!session) {
+      return res.status(404).json({ error: "Kiosk session not found" });
+    }
+    return res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
 
 export default router;

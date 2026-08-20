@@ -104,6 +104,19 @@ export const kioskCheckoutSchema = z.object({
   customDestination: z.string().optional(),
 });
 
+export const kioskClaimSchema = z.object({
+  claimCode: z.string().regex(/^\d{6}$/, "Kiosk code must be 6 digits"),
+  classId: z.string().min(1),
+});
+
+export const kioskRetargetSchema = z.object({
+  classId: z.string().min(1),
+});
+
+export const kioskSelfSessionSchema = z.object({
+  classId: z.string().min(1).nullable().optional(),
+});
+
 export const createGradeSchema = z.object({
   name: z.string().min(1, "Class name is required"),
   displayOrder: z.number().optional(),
