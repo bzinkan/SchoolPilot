@@ -601,7 +601,9 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
     await kioskSwitch.press("Space");
     assert.equal(await kioskSwitch.getAttribute("aria-checked"), "false");
     await settingsPage.getByLabel("School Name", { exact: true }).fill("Verified Kiosk School");
-    await settingsPage.getByLabel("School Timezone", { exact: true }).selectOption("America/Chicago");
+    // The timezone field is a Radix Select (combobox button), not a native <select>.
+    await settingsPage.getByLabel("School Timezone", { exact: true }).click();
+    await settingsPage.getByRole("option", { name: "Central (America/Chicago)", exact: true }).click();
 
     const saveSettingsButton = settingsPage.getByRole("button", { name: "Save Settings", exact: true });
     await saveSettingsButton.evaluate((button) => {
@@ -624,8 +626,8 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
     await reloadedKioskSwitch.waitFor();
     assert.equal(await reloadedKioskSwitch.getAttribute("aria-checked"), "false");
     assert.equal(
-      await settingsPage.getByLabel("School Timezone", { exact: true }).inputValue(),
-      "America/Chicago",
+      (await settingsPage.getByLabel("School Timezone", { exact: true }).textContent()).trim(),
+      "Central (America/Chicago)",
     );
     assert.equal(
       await settingsPage.getByLabel("School Name", { exact: true }).inputValue(),

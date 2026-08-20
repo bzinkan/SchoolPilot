@@ -94,6 +94,9 @@ export default function KioskPage() {
     try {
       const res = await fetch("/api/passpilot/kiosk/lookup", {
         method: "POST",
+        // Never ride a staff session cookie from this shared device — kiosk
+        // endpoints authenticate via the PIN headers only.
+        credentials: "omit",
         headers: kioskHeaders(),
         body: JSON.stringify({ studentIdNumber: idInput.trim() }),
       });
@@ -132,6 +135,9 @@ export default function KioskPage() {
     try {
       const res = await fetch("/api/passpilot/kiosk/checkout", {
         method: "POST",
+        // Never ride a staff session cookie from this shared device — kiosk
+        // endpoints authenticate via the PIN headers only.
+        credentials: "omit",
         headers: kioskHeaders(),
         body: JSON.stringify({
           studentId: student.id,
@@ -161,6 +167,9 @@ export default function KioskPage() {
     try {
       const res = await fetch("/api/passpilot/kiosk/checkin", {
         method: "POST",
+        // Never ride a staff session cookie from this shared device — kiosk
+        // endpoints authenticate via the PIN headers only.
+        credentials: "omit",
         headers: kioskHeaders(),
         body: JSON.stringify({ studentId: student.id }),
       });

@@ -32,6 +32,11 @@ import type { RequestHandler } from "express";
  *   - /api/stripe/* webhooks — verified by Stripe-Signature instead
  *   - /api/extension/* and /api/classpilot/device/* — JWT-bearer authenticated
  *     (these would also be skipped by the bearer-token rule, listed for clarity)
+ *   - /api/passpilot/kiosk/lookup|checkout|checkin (and the legacy /api/kiosk/*
+ *     aliases) — public kiosk endpoints authenticated by X-School-Id +
+ *     X-Kiosk-Pin (validateKiosk in routes/passpilot/kiosk.ts). They never read
+ *     the session, so a staff cookie present on the kiosk device has no CSRF
+ *     vector. The session-authenticated PUT /kiosk config routes stay protected.
  */
 
 const CSRF_EXEMPT_PATHS = [
@@ -47,9 +52,27 @@ const CSRF_EXEMPT_PATHS = [
   "/admin/billing/webhook", // Stripe webhook — verified by signature
 ];
 
+// Public PassPilot kiosk endpoints: authenticated by X-School-Id + X-Kiosk-Pin
+// (validateKiosk in routes/passpilot/kiosk.ts), never by the session cookie.
+// A staff login in the same browser must not force CSRF onto requests that
+// ignore the session. Matched exactly — no sub-path exemption — so the
+// session-authenticated PUT /passpilot/kiosk/config (and compat PUT
+// /kiosk-config) stay protected, and any future kiosk sub-route must opt in
+// here deliberately.
+const CSRF_EXEMPT_EXACT_PATHS = new Set([
+  "/passpilot/kiosk/lookup",
+  "/passpilot/kiosk/checkout",
+  "/passpilot/kiosk/checkin",
+  // Legacy alias mounts (routes/index.ts also mounts the kiosk router at /kiosk)
+  "/kiosk/lookup",
+  "/kiosk/checkout",
+  "/kiosk/checkin",
+]);
+
 const STATE_CHANGING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 function isPathExempt(path: string): boolean {
+  if (CSRF_EXEMPT_EXACT_PATHS.has(path)) return true;
   return CSRF_EXEMPT_PATHS.some((p) => path === p || path.startsWith(p + "/"));
 }
 
