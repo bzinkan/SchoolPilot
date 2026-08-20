@@ -59,6 +59,7 @@ import {
   getHeartbeatTileHistoryBatchSqlShapeIdentity,
   type ClassPilotHistoryTileAccess,
   updateClasspilotCommandTargetAck,
+  getProductLicenses,
 } from "../../services/storage.js";
 import { sendSafetyAlertEmail } from "../../services/email.js";
 import {
@@ -1255,11 +1256,26 @@ router.get("/extension/login-config", extensionConfigLimiter, async (req, res, n
       }
       const loginMethod = effectiveSharedChromebookLoginMethod(regSettings);
 
+      // PassPilot kiosk launch support: the extension's auth gate offers a
+      // "PassPilot Kiosk" button only when the kiosk would actually work.
+      // Mirrors validateKiosk in routes/passpilot/kiosk.ts (active license +
+      // kiosk enabled + PIN configured). schoolId lets the gate build the
+      // kiosk URL — safe to return here: the caller already presented the
+      // school's enrollment key, and the UUID appears in kiosk URLs/QR codes.
+      const licenses = await getProductLicenses(school.id);
+      const passpilotActive = licenses.some(
+        (l) => l.product === "PASSPILOT" && l.status === "active"
+      );
+      const passpilotKioskAvailable =
+        passpilotActive && school.kioskEnabled !== false && Boolean(school.kioskPinHash);
+
       return res.json({
         sharedSignInEnabled: true,
         loginMethod,
         pinLoginEnabled: loginMethod === "name_pin",
         schoolName: regSettings.schoolName || school.name,
+        schoolId: school.id,
+        passpilotKioskAvailable,
       });
     });
   } catch (err) {

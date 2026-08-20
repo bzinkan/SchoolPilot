@@ -5,6 +5,7 @@ import { Input } from "../../../components/ui/input";
 import { Badge } from "../../../components/ui/badge";
 import { ArrowLeftRight, LogIn, X } from "lucide-react";
 import { PASSPILOT_CLASS_MODEL_HEADER } from "../classData";
+import { kioskPinStore } from "../kioskPinStore";
 
 const DESTINATIONS = [
   { value: "bathroom", label: "Bathroom", emoji: "\u{1F6BB}" },
@@ -28,7 +29,7 @@ export default function KioskPage() {
   const [activePass, setActivePass] = useState(null);
   const [message, setMessage] = useState("");
   const [schoolId] = useState(() => new URLSearchParams(window.location.search).get("school") ?? "");
-  const [kioskPin, setKioskPin] = useState(() => localStorage.getItem(KIOSK_PIN_KEY) ?? "");
+  const [kioskPin, setKioskPin] = useState(() => kioskPinStore().getItem(KIOSK_PIN_KEY) ?? "");
   const [pinInput, setPinInput] = useState("");
   const inputRef = useRef(null);
   const timeoutRef = useRef();
@@ -41,13 +42,13 @@ export default function KioskPage() {
   });
 
   const savePin = (pin) => {
-    localStorage.setItem(KIOSK_PIN_KEY, pin);
+    kioskPinStore().setItem(KIOSK_PIN_KEY, pin);
     setKioskPin(pin);
     setPinInput("");
   };
 
   const clearPin = () => {
-    localStorage.removeItem(KIOSK_PIN_KEY);
+    kioskPinStore().removeItem(KIOSK_PIN_KEY);
     setKioskPin("");
   };
 
