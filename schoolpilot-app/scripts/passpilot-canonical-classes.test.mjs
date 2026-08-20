@@ -358,6 +358,7 @@ function freshState(overrides = {}) {
       kioskEnabled: true,
       kioskRequiresApproval: false,
       kioskPinConfigured: true,
+      kioskStyle: "simple",
       revision: 4,
     },
     settingsGetCount: 0,
@@ -516,6 +517,14 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
     // The Kiosk Mode dropdown claims student-device kiosks from anywhere,
     // with an explicit class picker (no class context in the top bar).
     await canonicalPage.getByRole("button", { name: "Kiosk Mode" }).click();
+    // The launcher is a single style-agnostic item — the kiosk page redirects
+    // itself to the school's admin-chosen style.
+    await canonicalPage.getByTestId("menu-open-kiosk").waitFor();
+    assert.equal(
+      await canonicalPage.getByRole("menuitem", { name: /Simple Kiosk|Badge \/ ID Kiosk/ }).count(),
+      0,
+      "the per-style kiosk launch items must be collapsed into one Open Kiosk item",
+    );
     await canonicalPage.getByTestId("menu-claim-kiosk").click();
     await canonicalPage.getByTestId("select-kiosk-claim-class").click();
     await canonicalPage.getByRole("option", { name: "Grade 4 Homeroom", exact: true }).click();
@@ -672,6 +681,8 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
     // The timezone field is a Radix Select (combobox button), not a native <select>.
     await settingsPage.getByLabel("School Timezone", { exact: true }).click();
     await settingsPage.getByRole("option", { name: "Central (America/Chicago)", exact: true }).click();
+    await settingsPage.getByLabel("Kiosk Style", { exact: true }).click();
+    await settingsPage.getByRole("option", { name: "Badge / ID — students scan or type their ID", exact: true }).click();
 
     const saveSettingsButton = settingsPage.getByRole("button", { name: "Save Settings", exact: true });
     await saveSettingsButton.evaluate((button) => {
@@ -685,6 +696,7 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
       name: "Verified Kiosk School",
       schoolTimezone: "America/Chicago",
       kioskEnabled: false,
+      kioskStyle: "badge",
     });
     assert.ok(settingsState.settingsGetCount >= 2, "save must be verified through an authoritative GET");
     await settingsPage.locator("header").getByText("Verified Kiosk School", { exact: true }).waitFor();
@@ -696,6 +708,10 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
     assert.equal(
       (await settingsPage.getByLabel("School Timezone", { exact: true }).textContent()).trim(),
       "Central (America/Chicago)",
+    );
+    assert.equal(
+      (await settingsPage.getByLabel("Kiosk Style", { exact: true }).textContent()).trim(),
+      "Badge / ID — students scan or type their ID",
     );
     assert.equal(
       await settingsPage.getByLabel("School Name", { exact: true }).inputValue(),
@@ -942,6 +958,56 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
     await staleKioskPage.getByText(/configured ClassPilot class is no longer active/).waitFor();
     assert.equal(await staleKioskPage.getByText("No students in this class", { exact: true }).count(), 0);
     assert.ok(staleKioskHeaders.every((value) => value === "classpilot-groups-v1"));
+
+    // The kiosk style is school-wide: a simple kiosk on a badge school hops to
+    // the badge page, carrying its session id (session keys are page-scoped).
+    const styleRedirectPage = await browser.newPage();
+    await styleRedirectPage.addInitScript(() => {
+      window.localStorage.setItem("pp_kiosk_pin", "1234");
+    });
+    const styleSessionHeaders = [];
+    await styleRedirectPage.route("**/api/passpilot/kiosk/**", async (route) => {
+      const request = route.request();
+      const pathname = new URL(request.url()).pathname;
+      if (pathname.endsWith("/session")) {
+        styleSessionHeaders.push(request.headers()["x-kiosk-session"] || null);
+        await route.fulfill({
+          status: 201,
+          json: {
+            session: { id: "style-session", status: "unclaimed", claimCode: "111222" },
+            kioskStyle: "badge",
+          },
+        });
+        return;
+      }
+      if (pathname.endsWith("/config")) {
+        await route.fulfill({
+          json: {
+            session: { id: "style-session", status: "unclaimed", claimCode: "111222" },
+            source: null,
+            classId: null,
+            gradeId: null,
+            className: null,
+            kioskName: null,
+            kioskEnabled: true,
+            kioskRequiresApproval: false,
+            defaultPassDuration: 5,
+            kioskStyle: "badge",
+          },
+        });
+        return;
+      }
+      await route.fulfill({ status: 500, json: { error: "Unexpected kiosk request" } });
+    });
+    await styleRedirectPage.goto(`${baseUrl}/passpilot/kiosk/simple?school=${SCHOOL_ID}`);
+    await styleRedirectPage.waitForURL("**/passpilot/kiosk?**");
+    await styleRedirectPage.getByTestId("kiosk-claim-code").waitFor();
+    await styleRedirectPage.getByText("111 222", { exact: true }).waitFor();
+    assert.equal(
+      styleSessionHeaders.at(-1),
+      "style-session",
+      "the badge page must resume the redirected session instead of minting a new one",
+    );
 
     await officePage.goto(`${baseUrl}/passpilot/setup`);
     await officePage.waitForURL("**/passpilot/my-class**");

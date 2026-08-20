@@ -11,7 +11,6 @@ import {
   Settings,
   LogOut,
   Monitor,
-  ScanBarcode,
   Pencil,
   Hash,
 } from 'lucide-react';
@@ -74,11 +73,11 @@ export default function AppShell({ children, currentTab }) {
   // window.open after an awaited network call gets popup-blocked in stricter
   // browsers. If the popup is blocked we bail BEFORE creating a session so no
   // orphaned active sessions accumulate.
-  const openKiosk = async (type, preOpenedWindow = null) => {
-    const base =
-      type === 'simple'
-        ? `/passpilot/kiosk/simple?school=${school.id}`
-        : `/passpilot/kiosk?school=${school.id}`;
+  // The kiosk style (simple vs badge) is a school-wide admin setting; the
+  // kiosk page self-redirects to the school's style, so the launcher always
+  // opens the simple URL and needs no style knowledge.
+  const openKiosk = async (preOpenedWindow = null) => {
+    const base = `/passpilot/kiosk/simple?school=${school.id}`;
     const kioskWindow = preOpenedWindow ?? window.open('', '_blank');
     if (!kioskWindow) return;
     let url = base;
@@ -91,14 +90,14 @@ export default function AppShell({ children, currentTab }) {
     kioskWindow.location = url;
   };
 
-  const handleKioskClick = (type) => {
+  const handleKioskClick = () => {
     if (!school?.id) return;
     if (!kioskName) {
-      setPendingKioskAction(type);
+      setPendingKioskAction('open');
       setKioskNameInput('');
       setIsKioskNameDialogOpen(true);
     } else {
-      openKiosk(type);
+      openKiosk();
     }
   };
 
@@ -114,7 +113,7 @@ export default function AppShell({ children, currentTab }) {
       setPendingKioskAction(null);
       return;
     }
-    await openKiosk(pendingKioskAction, kioskWindow);
+    await openKiosk(kioskWindow);
     setPendingKioskAction(null);
   };
 
@@ -170,13 +169,9 @@ export default function AppShell({ children, currentTab }) {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => handleKioskClick('simple')}>
-                <Users className="mr-2 h-4 w-4" />
-                Simple Kiosk{kioskName ? ` (${kioskName})` : ''}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleKioskClick('badge')}>
-                <ScanBarcode className="mr-2 h-4 w-4" />
-                Badge / ID Kiosk{kioskName ? ` (${kioskName})` : ''}
+              <DropdownMenuItem onClick={handleKioskClick} data-testid="menu-open-kiosk">
+                <Monitor className="mr-2 h-4 w-4" />
+                Open Kiosk{kioskName ? ` (${kioskName})` : ''}
               </DropdownMenuItem>
               {!legacyKioskServer && (
                 <>

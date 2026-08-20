@@ -1064,7 +1064,8 @@ export async function runStartupMigrations(): Promise<void> {
   await pool.query(`
     ALTER TABLE schools
       ADD COLUMN IF NOT EXISTS kiosk_classpilot_group_id VARCHAR,
-      ADD COLUMN IF NOT EXISTS passpilot_settings_revision INTEGER NOT NULL DEFAULT 0
+      ADD COLUMN IF NOT EXISTS passpilot_settings_revision INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS kiosk_style TEXT NOT NULL DEFAULT 'simple'
   `);
   await pool.query(`
     ALTER TABLE grades
@@ -1185,6 +1186,11 @@ export async function runStartupMigrations(): Promise<void> {
     WHERE passpilot_settings_revision IS NULL
   `);
   await schedulerPool.query(`
+    UPDATE schools
+    SET kiosk_style = 'simple'
+    WHERE kiosk_style IS NULL
+  `);
+  await schedulerPool.query(`
     UPDATE grades
     SET
       migration_state = COALESCE(migration_state, 'pending'),
@@ -1218,7 +1224,9 @@ export async function runStartupMigrations(): Promise<void> {
   await pool.query(`
     ALTER TABLE schools
       ALTER COLUMN passpilot_settings_revision SET DEFAULT 0,
-      ALTER COLUMN passpilot_settings_revision SET NOT NULL
+      ALTER COLUMN passpilot_settings_revision SET NOT NULL,
+      ALTER COLUMN kiosk_style SET DEFAULT 'simple',
+      ALTER COLUMN kiosk_style SET NOT NULL
   `);
 
   await pool.query(`
@@ -1278,9 +1286,19 @@ export async function runStartupMigrations(): Promise<void> {
           ADD CONSTRAINT schools_passpilot_settings_revision_check
           CHECK (passpilot_settings_revision >= 0) NOT VALID;
       END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'schools_kiosk_style_check'
+          AND conrelid = 'schools'::regclass
+      ) THEN
+        ALTER TABLE schools
+          ADD CONSTRAINT schools_kiosk_style_check
+          CHECK (kiosk_style IN ('simple', 'badge')) NOT VALID;
+      END IF;
     END
     $passpilot_constraints$;
   `);
+  await pool.query(`ALTER TABLE schools VALIDATE CONSTRAINT schools_kiosk_style_check`);
   await pool.query(`ALTER TABLE settings VALIDATE CONSTRAINT settings_passpilot_class_source_check`);
   await pool.query(`ALTER TABLE settings VALIDATE CONSTRAINT settings_passpilot_class_migration_revision_check`);
   await pool.query(`ALTER TABLE grades VALIDATE CONSTRAINT grades_migration_state_check`);

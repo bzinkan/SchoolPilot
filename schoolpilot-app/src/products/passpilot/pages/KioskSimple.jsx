@@ -100,6 +100,23 @@ export default function KioskSimplePage() {
     return r;
   }, []);
 
+  // Kiosk style is a school-wide admin setting. This page only renders the
+  // "simple" style — when the server reports "badge", hop to the badge page,
+  // carrying the school, the live session (its key is page-scoped, so it must
+  // travel by URL), and the gate-launch storage rule. Strict match: old
+  // servers omit kioskStyle and must never trigger a redirect.
+  const redirectForKioskStyle = useCallback((style) => {
+    if (style !== "badge") return false;
+    const params = new URLSearchParams({ school: schoolId });
+    const sessionId = sessionIdRef.current || kioskPinStore().getItem(KIOSK_SESSION_KEY);
+    if (sessionId) params.set("session", sessionId);
+    if (new URLSearchParams(window.location.search).get("launch") === "gate") {
+      params.set("launch", "gate");
+    }
+    window.location.replace(`/passpilot/kiosk?${params.toString()}`);
+    return true;
+  }, [schoolId]);
+
   // Session died (TTL, release, teacher removed): drop it and re-bootstrap,
   // which mints a fresh claim code.
   const handleSessionExpired = useCallback(() => {
@@ -156,6 +173,7 @@ export default function KioskSimplePage() {
         if (cancelled || !data?.session?.id) return;
         kioskPinStore().setItem(KIOSK_SESSION_KEY, data.session.id);
         sessionIdRef.current = data.session.id;
+        if (redirectForKioskStyle(data.kioskStyle)) return;
         setBootstrapError(null);
         setSession(data.session);
         // The bootstrap response already carries the class for an active
@@ -174,7 +192,7 @@ export default function KioskSimplePage() {
     bootstrap();
     const interval = setInterval(bootstrap, 5000);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [schoolId, kioskPin, sessionMode, kioskHeaders, checkPinRejected]);
+  }, [schoolId, kioskPin, sessionMode, kioskHeaders, checkPinRejected, redirectForKioskStyle]);
 
   const fetchClasses = useCallback(() => {
     if (!schoolId || !kioskPin) return Promise.resolve();
@@ -213,6 +231,7 @@ export default function KioskSimplePage() {
           throw error;
         })
         .then(data => {
+          if (redirectForKioskStyle(data?.kioskStyle)) return;
           const recovered = configAvailableRef.current === false;
           configAvailableRef.current = true;
           if (recovered) fetchClasses();
@@ -255,7 +274,7 @@ export default function KioskSimplePage() {
     poll();
     const interval = setInterval(poll, 5000);
     return () => clearInterval(interval);
-  }, [schoolId, kioskPin, sessionMode, kioskHeaders, checkPinRejected, fetchClasses]);
+  }, [schoolId, kioskPin, sessionMode, kioskHeaders, checkPinRejected, fetchClasses, redirectForKioskStyle]);
 
   // Session-mode config poll: the session (not the school) carries the class,
   // teacher kiosk name, and claim state.
@@ -277,6 +296,7 @@ export default function KioskSimplePage() {
         })
         .then((data) => {
           if (!data) return;
+          if (redirectForKioskStyle(data.kioskStyle)) return;
           setConfigLoaded(true);
           setConfigError(null);
           if (data.session) {
@@ -318,7 +338,7 @@ export default function KioskSimplePage() {
     poll();
     const interval = setInterval(poll, 5000);
     return () => clearInterval(interval);
-  }, [schoolId, kioskPin, sessionMode, kioskHeaders, checkPinRejected, handleSessionExpired]);
+  }, [schoolId, kioskPin, sessionMode, kioskHeaders, checkPinRejected, handleSessionExpired, redirectForKioskStyle]);
 
   // Poll students when grade selected
   useEffect(() => {

@@ -99,6 +99,23 @@ export default function KioskPage() {
     setMessage("");
   }, []);
 
+  // Kiosk style is a school-wide admin setting. This page only renders the
+  // "badge" style — when the server reports "simple", hop to the simple page,
+  // carrying the school, the live session (its key is page-scoped, so it must
+  // travel by URL), and the gate-launch storage rule. Strict match: old
+  // servers omit kioskStyle and must never trigger a redirect.
+  const redirectForKioskStyle = useCallback((style) => {
+    if (style !== "simple") return false;
+    const params = new URLSearchParams({ school: schoolId });
+    const sessionId = sessionIdRef.current || kioskPinStore().getItem(KIOSK_SESSION_KEY);
+    if (sessionId) params.set("session", sessionId);
+    if (new URLSearchParams(window.location.search).get("launch") === "gate") {
+      params.set("launch", "gate");
+    }
+    window.location.replace(`/passpilot/kiosk/simple?${params.toString()}`);
+    return true;
+  }, [schoolId]);
+
   // Per-device kiosk session bootstrap (see KioskSimple.jsx for the flow).
   // A plain 404 from an older server → legacy school-global behavior.
   useEffect(() => {
@@ -142,6 +159,7 @@ export default function KioskPage() {
         if (cancelled || !data?.session?.id) return;
         kioskPinStore().setItem(KIOSK_SESSION_KEY, data.session.id);
         sessionIdRef.current = data.session.id;
+        if (redirectForKioskStyle(data.kioskStyle)) return;
         setBootstrapError(null);
         setSession(data.session);
         setSessionMode(true);
@@ -174,6 +192,7 @@ export default function KioskPage() {
         })
         .then((data) => {
           if (!data?.session) return;
+          if (redirectForKioskStyle(data.kioskStyle)) return;
           setSession({
             id: data.session.id,
             status: data.session.status,

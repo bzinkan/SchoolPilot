@@ -42,6 +42,7 @@ function samePassPilotSettings(left, right) {
     && left?.kioskEnabled === right?.kioskEnabled
     && left?.kioskRequiresApproval === right?.kioskRequiresApproval
     && left?.kioskPinConfigured === right?.kioskPinConfigured
+    && left?.kioskStyle === right?.kioskStyle
     && left?.revision === right?.revision;
 }
 
@@ -2686,6 +2687,7 @@ function SettingsTab() {
 function SettingsForm({ settings, settingsQueryKey, refetchUser }) {
   const [name, setName] = useState(settings.name);
   const [kioskEnabled, setKioskEnabled] = useState(settings.kioskEnabled);
+  const [kioskStyle, setKioskStyle] = useState(settings.kioskStyle);
   const [schoolTimezone, setSchoolTimezone] = useState(settings.schoolTimezone);
   const [kioskPin, setKioskPin] = useState("");
   const [saving, setSaving] = useState(false);
@@ -2700,6 +2702,7 @@ function SettingsForm({ settings, settingsQueryKey, refetchUser }) {
   const dirty = trimmedName !== settings.name
     || schoolTimezone !== settings.schoolTimezone
     || kioskEnabled !== settings.kioskEnabled
+    || kioskStyle !== settings.kioskStyle
     || !!kioskPin;
 
   const verifySavedSettings = async (candidate) => {
@@ -2749,6 +2752,7 @@ function SettingsForm({ settings, settingsQueryKey, refetchUser }) {
       if (trimmedName !== settings.name) payload.name = trimmedName;
       if (schoolTimezone !== settings.schoolTimezone) payload.schoolTimezone = schoolTimezone;
       if (kioskEnabled !== settings.kioskEnabled) payload.kioskEnabled = kioskEnabled;
+      if (kioskStyle !== settings.kioskStyle) payload.kioskStyle = kioskStyle;
       if (kioskPin) payload.kioskPin = kioskPin;
 
       const saved = await apiRequest("PATCH", PASS_PILOT_SETTINGS_PATH, payload);
@@ -2851,6 +2855,31 @@ function SettingsForm({ settings, settingsQueryKey, refetchUser }) {
               aria-describedby="passpilot-kiosk-enabled-description"
               disabled={saving || !!pendingVerification}
             />
+          </div>
+
+          <div className="space-y-1">
+            <Label htmlFor="passpilot-kiosk-style">Kiosk Style</Label>
+            <p id="passpilot-kiosk-style-description" className="text-xs text-muted-foreground">
+              School-wide. Every kiosk device switches to the selected style automatically.
+            </p>
+            <Select
+              value={kioskStyle}
+              onValueChange={setKioskStyle}
+              disabled={saving || !!pendingVerification}
+            >
+              <SelectTrigger
+                id="passpilot-kiosk-style"
+                className="w-full"
+                aria-describedby="passpilot-kiosk-style-description"
+                data-testid="select-kiosk-style"
+              >
+                <SelectValue placeholder="Select kiosk style..." />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="simple">Simple — students tap their name</SelectItem>
+                <SelectItem value="badge">Badge / ID — students scan or type their ID</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="space-y-1">

@@ -60,6 +60,10 @@ export const schools = pgTable("schools", {
   // bcrypt hash of the kiosk PIN — never store or return the plaintext.
   // Required for the public kiosk endpoints (see routes/passpilot/kiosk.ts).
   kioskPinHash: text("kiosk_pin_hash"),
+  // School-wide kiosk presentation: 'simple' (tap your name on a roster) or
+  // 'badge' (scan/type a student ID). Admin-managed via the revision-guarded
+  // PassPilot settings API; kiosk pages self-redirect to match.
+  kioskStyle: text("kiosk_style").notNull().default("simple").$type<"simple" | "badge">(),
   // Optimistic-concurrency token for the narrow PassPilot admin settings API.
   // It is intentionally separate from the class-migration revision.
   passpilotSettingsRevision: integer("passpilot_settings_revision").notNull().default(0),
@@ -104,6 +108,10 @@ export const schools = pgTable("schools", {
   check(
     "schools_passpilot_settings_revision_check",
     sql`${table.passpilotSettingsRevision} >= 0`
+  ),
+  check(
+    "schools_kiosk_style_check",
+    sql`${table.kioskStyle} IN ('simple', 'badge')`
   ),
   check(
     "schools_gopilot_settings_revision_check",

@@ -291,19 +291,25 @@ router.post("/session", kioskLimiter, async (req, res, next) => {
       return res.status(400).json({ error: "School ID required (x-school-id header)" });
     }
     const kioskPin = req.headers["x-kiosk-pin"] as string | undefined;
-    const { error, status } = await validateKiosk(schoolId, kioskPin);
-    if (error) return res.status(status).json({ error });
+    const { error, status, school } = await validateKiosk(schoolId, kioskPin);
+    if (error || !school) return res.status(status).json({ error });
 
     await runWithTenantContext({ schoolId }, async () => {
       const presentedId = getKioskSessionId(req);
       if (presentedId) {
         const existing = await getLiveKioskSessionById(schoolId, presentedId);
         if (existing) {
-          return res.json({ session: await kioskSessionDeviceView(schoolId, existing) });
+          return res.json({
+            session: await kioskSessionDeviceView(schoolId, existing),
+            kioskStyle: school.kioskStyle,
+          });
         }
       }
       const session = await createKioskSession(schoolId);
-      return res.status(201).json({ session: await kioskSessionDeviceView(schoolId, session) });
+      return res.status(201).json({
+        session: await kioskSessionDeviceView(schoolId, session),
+        kioskStyle: school.kioskStyle,
+      });
     });
   } catch (err) {
     next(err);
@@ -749,6 +755,7 @@ router.get("/config", kioskLimiter, async (req, res, next) => {
             kioskEnabled: school.kioskEnabled,
             kioskRequiresApproval: school.kioskRequiresApproval,
             defaultPassDuration: school.defaultPassDuration,
+            kioskStyle: school.kioskStyle,
           });
         }
         await touchKioskSessionLastSeen(schoolId, session.id);
@@ -794,6 +801,7 @@ router.get("/config", kioskLimiter, async (req, res, next) => {
           kioskEnabled: school.kioskEnabled,
           kioskRequiresApproval: school.kioskRequiresApproval,
           defaultPassDuration: school.defaultPassDuration,
+          kioskStyle: school.kioskStyle,
         });
       });
     }
@@ -831,6 +839,7 @@ router.get("/config", kioskLimiter, async (req, res, next) => {
       kioskEnabled: school.kioskEnabled,
       kioskRequiresApproval: school.kioskRequiresApproval,
       defaultPassDuration: school.defaultPassDuration,
+      kioskStyle: school.kioskStyle,
     });
   } catch (err) {
     next(err);

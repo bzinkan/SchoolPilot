@@ -57,6 +57,7 @@ function rejectPasspilotKioskSettingsBypass(req: any, res: any): boolean {
     !Object.prototype.hasOwnProperty.call(body, "kioskEnabled")
     && !Object.prototype.hasOwnProperty.call(body, "kioskRequiresApproval")
     && !Object.prototype.hasOwnProperty.call(body, "kioskPin")
+    && !Object.prototype.hasOwnProperty.call(body, "kioskStyle")
   ) {
     return false;
   }

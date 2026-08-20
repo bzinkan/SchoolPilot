@@ -102,6 +102,11 @@ before(async () => {
     .catch(() => false);
   if (!schemaReady) return;
 
+  await pool.query(`
+    ALTER TABLE schools
+    ADD COLUMN IF NOT EXISTS kiosk_style TEXT NOT NULL DEFAULT 'simple'
+  `);
+
   schoolA = await storage.createSchool({
     name: `${TAG}_A`,
     domain: `${TAG}-a.example.edu`,
@@ -271,6 +276,7 @@ describe("PassPilot per-device kiosk sessions", { concurrency: false }, () => {
     sessionOne = created.body.session;
     assert.equal(sessionOne.status, "unclaimed");
     assert.match(sessionOne.claimCode, /^\d{6}$/);
+    assert.equal(created.body.kioskStyle, "simple");
 
     const resumed = await requestJson("POST", "/passpilot/kiosk/session", {}, kioskHeaders(schoolA.id, sessionOne.id));
     assert.equal(resumed.status, 200);
@@ -291,6 +297,7 @@ describe("PassPilot per-device kiosk sessions", { concurrency: false }, () => {
     assert.equal(config.body.session.status, "unclaimed");
     assert.equal(config.body.session.claimCode, sessionOne.claimCode);
     assert.equal(config.body.classId, null);
+    assert.equal(config.body.kioskStyle, "simple");
 
     const students = await requestJson("GET", `/passpilot/kiosk/students?school=${schoolA.id}&gradeId=${gradeA.id}`, undefined, kioskHeaders(schoolA.id, sessionOne.id));
     assert.equal(students.status, 409);
@@ -334,6 +341,22 @@ describe("PassPilot per-device kiosk sessions", { concurrency: false }, () => {
     assert.equal(config.body.classId, gradeA.id);
     assert.equal(config.body.className, "Class A");
     assert.equal(config.body.kioskName, "Room 204");
+    assert.equal(config.body.kioskStyle, "simple");
+
+    // The school-wide kiosk style rides every config response so open kiosks
+    // self-redirect when an admin flips it.
+    await asSystem(() =>
+      db.execute(sql`UPDATE schools SET kiosk_style = 'badge' WHERE id = ${schoolA.id}`)
+    );
+    try {
+      const badgeConfig = await requestJson("GET", `/passpilot/kiosk/config?school=${schoolA.id}`, undefined, kioskHeaders(schoolA.id, sessionOne.id));
+      assert.equal(badgeConfig.status, 200);
+      assert.equal(badgeConfig.body.kioskStyle, "badge");
+    } finally {
+      await asSystem(() =>
+        db.execute(sql`UPDATE schools SET kiosk_style = 'simple' WHERE id = ${schoolA.id}`)
+      );
+    }
 
     const roster = await requestJson("GET", `/passpilot/kiosk/students?school=${schoolA.id}&gradeId=${gradeA.id}`, undefined, kioskHeaders(schoolA.id, sessionOne.id));
     assert.equal(roster.status, 200);
