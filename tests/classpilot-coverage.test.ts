@@ -1303,6 +1303,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.equal(flatAvailableIds.has(scheduledOnlyStudent.id), false);
     assert.equal(staffQueue.body.scheduledCoverageGroups.length, 1);
     assert.equal(staffQueue.body.scheduledCoverageGroups[0].id, conflict.id);
+    assert.equal(staffQueue.body.scheduledCoverageGroups[0].canStartClass, false);
     const scheduledCoverageIds = new Set(staffQueue.body.scheduledCoverageGroups[0].students.map((student: any) => student.studentId));
     assert.equal(scheduledCoverageIds.has(scheduledOnlyStudent.id), true);
     expectNoDeviceIds(staffQueue.body.scheduledCoverageGroups[0]);
@@ -1311,6 +1312,15 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.equal(scheduledTeacherList.status, 200);
     assert.equal(scheduledTeacherList.body.conflicts.length, 1);
     assert.equal(scheduledTeacherList.body.conflicts[0].canStartAnyway, true);
+    const scheduledTeacherQueue = await requestJson("GET", "/coverage/available-students", undefined, authFor(scheduledTeacher, school.id));
+    assert.equal(scheduledTeacherQueue.status, 200);
+    assert.equal(scheduledTeacherQueue.body.scheduledCoverageGroups.length, 1);
+    assert.equal(scheduledTeacherQueue.body.scheduledCoverageGroups[0].canStartClass, true);
+
+    const adminQueue = await requestJson("GET", "/coverage/available-students", undefined, authFor(admin, school.id));
+    assert.equal(adminQueue.status, 200);
+    assert.equal(adminQueue.body.scheduledCoverageGroups.length, 1);
+    assert.equal(adminQueue.body.scheduledCoverageGroups[0].canStartClass, true);
 
     const scheduledCoTeacherList = await requestJson("GET", "/classpilot/scheduled-conflicts", undefined, authFor(scheduledCoTeacher, school.id));
     assert.equal(scheduledCoTeacherList.status, 200);
@@ -1334,6 +1344,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     const coTeacherQueue = await requestJson("GET", "/coverage/available-students", undefined, authFor(scheduledCoTeacher, school.id));
     assert.equal(coTeacherQueue.status, 200);
     assert.equal(coTeacherQueue.body.scheduledCoverageGroups.length, 1);
+    assert.equal(coTeacherQueue.body.scheduledCoverageGroups[0].canStartClass, false);
     assert.equal(
       coTeacherQueue.body.scheduledCoverageGroups[0].students.some(
         (student: any) => student.studentId === scheduledOnlyStudent.id

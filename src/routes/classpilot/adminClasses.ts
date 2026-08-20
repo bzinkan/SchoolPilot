@@ -606,7 +606,7 @@ router.post("/classroom/import", ...auth, async (req, res, next) => {
             scheduleEnabled: existingClass?.scheduleEnabled === true,
             blockStartTime: schedule.blockStartTime,
             blockEndTime: schedule.blockEndTime,
-            scheduleSkippedDate: null,
+            scheduleSkippedDate: existingClass?.scheduleSkippedDate ?? null,
           },
           primaryTeacherId,
           coTeacherIds,
@@ -805,6 +805,13 @@ router.patch("/:id", ...auth, async (req, res, next) => {
           excludeGroupId: group.id,
         })
       : null;
+    const recurringScheduleChanged = Boolean(
+      scheduleFieldsSubmitted &&
+      schedule &&
+      (group.scheduleEnabled !== scheduleEnabled ||
+        group.blockStartTime !== schedule.blockStartTime ||
+        group.blockEndTime !== schedule.blockEndTime)
+    );
     const data: Parameters<typeof updateAdminClassWithTeachers>[0]["data"] = {};
     if (submittedName !== undefined) data.name = submittedName;
     if (req.body.description !== undefined) {
@@ -822,7 +829,7 @@ router.patch("/:id", ...auth, async (req, res, next) => {
       data.scheduleEnabled = scheduleEnabled;
       data.blockStartTime = schedule.blockStartTime;
       data.blockEndTime = schedule.blockEndTime;
-      data.scheduleSkippedDate = null;
+      if (recurringScheduleChanged) data.scheduleSkippedDate = null;
     }
     const updated = await updateAdminClassWithTeachers({
       groupId: group.id,
@@ -853,14 +860,11 @@ router.patch("/:id", ...auth, async (req, res, next) => {
       });
     }
     if (
-      scheduleFieldsSubmitted &&
-      (group.scheduleEnabled !== updated.scheduleEnabled ||
-        group.blockStartTime !== updated.blockStartTime ||
-        group.blockEndTime !== updated.blockEndTime)
+      recurringScheduleChanged
     ) {
       await logAudit({
         ...actor(req, res),
-        action: "class.schedule_change",
+        action: "class.recurring_schedule_updated",
         entityType: "class",
         entityId: group.id,
         entityName: updated.name,

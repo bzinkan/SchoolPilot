@@ -2732,6 +2732,78 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
     assert.equal(await occurrenceCount(group.id, "2031-01-13"), 1);
   });
 
+  it("marks only material scheduled-conflict reconciliations for dashboard refresh", async () => {
+    await setCentralRecipient(null);
+    const group = await createClass({ name: "conflict_refresh_dedup", scheduled: true });
+    const occurrence = await inSchool(school.id, () =>
+      storage.createOrReuseScheduledReportSession({
+        schoolId: school.id,
+        groupId: group.id,
+        teacherId: teacher.id,
+        scheduledDate: "2031-01-29",
+        scheduledTimezone: "America/New_York",
+        scheduledStartAt: new Date("2031-01-29T14:00:00.000Z"),
+        scheduledEndAt: new Date("2031-01-29T15:00:00.000Z"),
+        scheduledTeacherEmail: teacher.email,
+        scheduledTeacherName: "Terry Teacher",
+      })
+    );
+    const baseConflict = {
+      teachingSessionId: occurrence.id,
+      schoolId: school.id,
+      groupId: group.id,
+      teacherId: teacher.id,
+      scheduledDate: "2031-01-29",
+      blockStartTime: "09:00",
+      blockEndTime: "10:00",
+      status: "coverage_needed",
+      conflictPayload: {
+        claimableCount: 1,
+        claimableStudents: [{
+          studentId: "student-with-nullable-fields",
+          studentEmail: undefined,
+          gradeLevel: undefined,
+        }],
+      },
+      scheduledTeacherConnected: false,
+    } as any;
+
+    const created = await inSchool(school.id, () =>
+      storage.upsertScheduledClassConflictForOccurrence(baseConflict)
+    );
+    assert.equal(created.materiallyChanged, true);
+
+    const unchanged = await inSchool(school.id, () =>
+      storage.upsertScheduledClassConflictForOccurrence(baseConflict)
+    );
+    assert.equal(unchanged.conflict.id, created.conflict.id);
+    assert.equal(unchanged.materiallyChanged, false);
+
+    const payloadChanged = await inSchool(school.id, () =>
+      storage.upsertScheduledClassConflictForOccurrence({
+        ...baseConflict,
+        conflictPayload: { claimableCount: 0 },
+      })
+    );
+    assert.equal(payloadChanged.materiallyChanged, true);
+
+    const statusChanged = await inSchool(school.id, () =>
+      storage.upsertScheduledClassConflictForOccurrence({
+        ...baseConflict,
+        status: "claimed",
+        conflictPayload: { claimableCount: 0 },
+      })
+    );
+    assert.equal(statusChanged.materiallyChanged, true);
+
+    await inSchool(school.id, () => lifecycle.finalizeClasspilotSession({
+      schoolId: school.id,
+      sessionId: occurrence.id,
+      reason: "teacher_end",
+      finalizedAt: new Date("2031-01-29T14:10:00.000Z"),
+    }));
+  });
+
   it("keeps conflict attachment, live promotion, and teacher start linearized against finalization", async () => {
     await setCentralRecipient(null);
     const attachGroup = await createClass({ name: "conflict_attach_barrier", scheduled: true });

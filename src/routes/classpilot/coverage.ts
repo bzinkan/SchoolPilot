@@ -854,6 +854,7 @@ async function scheduledCoverageGroupsForRequest(req: any, res: any, activeAssig
       scheduledDate: conflict.scheduledDate,
       blockStartTime: conflict.blockStartTime,
       blockEndTime: conflict.blockEndTime,
+      canStartClass: isAdmin(req, res) || conflict.teacherId === req.authUser!.id,
       claimableCount: visibleStudents.length,
       totalClaimableCount: scheduledPayload.claimableCount,
       monitoredCount: scheduledPayload.monitoredCount,

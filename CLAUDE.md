@@ -236,7 +236,7 @@ Admin Class Management lets schools set `blockStartTime`/`blockEndTime` per grou
 - **Manual start is BLOCKED outside the scheduled window** for all teachers (primary + co-teachers) — returns 403 with times shown
 - Manual end **during** the window does NOT set `scheduleSkippedDate` (teacher might restart accidentally)
 - Manual end **after** the window sets `scheduleSkippedDate = today` to prevent scheduler from restarting
-- Admin updating schedule times **clears** `scheduleSkippedDate` — required so stale skips from earlier ends don't block the new window
+- An actual admin recurring-schedule change **clears** `scheduleSkippedDate` so a stale skip cannot block the new window. No-op class edits and Google Classroom imports preserve it.
 
 ### Security Monitor
 `src/services/securityMonitor.ts` runs every 5 minutes from the scheduler as a deterministic rule-based breach detector. Reads `audit_logs`, writes detections to `security_events` table, emails `security@school-pilot.net`, and forwards only severity/type/event id to the generic `security_event` monitor category. NEVER takes destructive action autonomously — read-only + alerting only. Current rules: failed auth spike, bulk student writes, off-hours admin burst, cross-school access. 30-minute dedup prevents alert spam. When adding rules, use `schedulerDb` and keep them deterministic (no LLM inference for security decisions). Sensitive details belong in `security_events`, not generic Telegram/error-monitor text. See `docs/WISP.md` for the Written Information Security Program this supports.
@@ -625,6 +625,7 @@ Optional time-based auto-start/end for ClassPilot classes. Schema columns on `gr
 
 - **Scheduler** (`src/services/scheduler.ts`): `autoStartClassBlocks()` and `autoEndClassBlocks()` run every 60s. Skips weekends. Uses school timezone.
 - **Skip-date pattern**: When a teacher manually ends a scheduled class, `schedule_skipped_date` is set to today to prevent the scheduler from restarting it. Resets naturally the next day.
+- **Recurring schedule boundary**: Class Management creates and edits the recurring `groups.schedule_*` / `groups.block_*` configuration. These writes are audited as `class.recurring_schedule_updated`; they do not create a dated schedule-change/swap record. No-op class edits and Google Classroom imports preserve `schedule_skipped_date`.
 - **Session summary email**: `buildAndSendSessionSummary()` in `src/routes/classpilot/sessions.ts` is exported and called by both manual end and auto-end. Uses school timezone (not hardcoded ET).
 
 ### ClassPilot One-Day Schedule Changes

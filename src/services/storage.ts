@@ -1,5 +1,6 @@
 import { eq, and, desc, asc, gt, lt, ilike, or, isNull, isNotNull, inArray, notInArray, getTableColumns, sql, ne, type SQL, type SQLWrapper } from "drizzle-orm";
 import { randomInt } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { PgDialect, type PgUpdateSetSource } from "drizzle-orm/pg-core";
 import db from "../db.js";
 import { getTenantStore, rlsGucEnabled } from "../db/tenantContext.js";
@@ -11612,13 +11613,21 @@ export async function upsertScheduledClassConflictForOccurrence(
 ): Promise<{
   conflict: ClasspilotScheduledConflict;
   occurrenceActive: boolean;
+  materiallyChanged: boolean;
   restoredStudentIds: string[];
 }> {
   return dbInstance.transaction(async (tx) => {
     const transactionDb = tx as unknown as typeof db;
     const restoredStudentIds: string[] = [];
     const [existingConflict] = await tx
-      .select({ id: classpilotScheduledConflicts.id })
+      .select({
+        id: classpilotScheduledConflicts.id,
+        teacherId: classpilotScheduledConflicts.teacherId,
+        blockEndTime: classpilotScheduledConflicts.blockEndTime,
+        status: classpilotScheduledConflicts.status,
+        conflictPayload: classpilotScheduledConflicts.conflictPayload,
+        scheduledTeacherConnected: classpilotScheduledConflicts.scheduledTeacherConnected,
+      })
       .from(classpilotScheduledConflicts)
       .where(and(
         eq(classpilotScheduledConflicts.schoolId, data.schoolId),
@@ -11662,9 +11671,21 @@ export async function upsertScheduledClassConflictForOccurrence(
       && occurrence.scheduledState === "active"
       && occurrence.sessionMode === SCHEDULED_REPORT_SESSION_MODE;
     const { teachingSessionId: _teachingSessionId, ...conflictData } = data;
+    const serializedConflictPayload = JSON.stringify(data.conflictPayload ?? {});
+    const normalizedConflictPayload = serializedConflictPayload === undefined
+      ? null
+      : JSON.parse(serializedConflictPayload);
+    const nextStatus = occurrenceActive ? data.status || "coverage_needed" : "ended";
+    const materiallyChanged = !existingConflict
+      || existingConflict.teacherId !== data.teacherId
+      || existingConflict.blockEndTime !== (data.blockEndTime || null)
+      || existingConflict.status !== nextStatus
+      || existingConflict.scheduledTeacherConnected !== (data.scheduledTeacherConnected || false)
+      || !isDeepStrictEqual(existingConflict.conflictPayload, normalizedConflictPayload);
     const conflict = await upsertScheduledClassConflict({
       ...conflictData,
-      status: occurrenceActive ? data.status : "ended",
+      conflictPayload: normalizedConflictPayload,
+      status: nextStatus,
       resolvedAt: occurrenceActive ? null : occurrence.endTime || new Date(),
       resolution: occurrenceActive
         ? null
@@ -11721,7 +11742,7 @@ export async function upsertScheduledClassConflictForOccurrence(
         }
       }
     }
-    return { conflict, occurrenceActive, restoredStudentIds };
+    return { conflict, occurrenceActive, materiallyChanged, restoredStudentIds };
   });
 }
 

@@ -12,6 +12,8 @@ const TEACHER_ID = "22222222-2222-4222-8222-222222222222";
 const OTHER_TEACHER_ID = "33333333-3333-4333-8333-333333333333";
 const PAIR_ID = "44444444-4444-4444-8444-444444444444";
 const CHANGE_ID = "55555555-5555-4555-8555-555555555555";
+const SCHEDULED_CONFLICT_ID = "66666666-6666-4666-8666-666666666666";
+const SCHEDULED_STUDENT_ID = "77777777-7777-4777-8777-777777777777";
 const SWAP_DATE = "2026-09-10";
 
 function auth(role) {
@@ -159,6 +161,7 @@ test("ClassPilot schedule-change teacher, admin, policy, and mobile workflows", 
     let createAttempts = 0;
     let teacherRequestsEnabled = true;
     let teacherReasonRequired = true;
+    let scheduledConflictFetches = 0;
     await configureBase(teacherPage, "teacher", async (route, request, url) => {
       if (url.pathname === "/api/classpilot/schedule-changes/settings" && request.method() === "GET") {
         await route.fulfill({ json: { ...eligibility().policy, teacherRequestsEnabled } });
@@ -185,6 +188,49 @@ test("ClassPilot schedule-change teacher, admin, policy, and mobile workflows", 
             class: legs[0].class,
             normalWindow: legs[0].normalWindow,
             effectiveWindow: legs[0].effectiveWindow,
+          }],
+        } });
+        return true;
+      }
+      if (url.pathname === "/api/classpilot/scheduled-conflicts" && request.method() === "GET") {
+        scheduledConflictFetches += 1;
+        await route.fulfill({ json: {
+          conflicts: Array.from({ length: 12 }, (_, index) => ({
+            id: `${SCHEDULED_CONFLICT_ID}-${index}`,
+            message: `Global conflict ${index + 1}`,
+            status: "coverage_needed",
+            canStartAnyway: true,
+          })),
+        } });
+        return true;
+      }
+      if (url.pathname === "/api/coverage/available-students" && request.method() === "GET") {
+        await route.fulfill({ json: {
+          students: [],
+          scheduledCoverageGroups: [{
+            id: SCHEDULED_CONFLICT_ID,
+            kind: "scheduled_coverage",
+            label: "Scheduled Supervision Needed: 6th Science",
+            className: "6th Science",
+            teacherName: "Taylor Teacher",
+            scheduledTeacher: { id: TEACHER_ID, displayName: "Taylor Teacher" },
+            scheduledDate: SWAP_DATE,
+            blockStartTime: "11:00",
+            blockEndTime: "11:45",
+            canStartClass: true,
+            claimableCount: 1,
+            totalClaimableCount: 1,
+            monitoredCount: 0,
+            claimedCount: 0,
+            students: [{
+              studentId: SCHEDULED_STUDENT_ID,
+              studentName: "Sam Scheduled",
+              gradeLevel: "6",
+              status: "online",
+              lastSeenAt: new Date().toISOString(),
+              activeTabTitle: "Science Notes",
+              activeTabUrl: "https://classroom.example.edu/science",
+            }],
           }],
         } });
         return true;
@@ -260,6 +306,16 @@ test("ClassPilot schedule-change teacher, admin, policy, and mobile workflows", 
     await teacherPage.getByTestId("today-schedule-change-indicator").waitFor();
     assert.match(await teacherPage.getByTestId("today-schedule-change-indicator").innerText(), /Schedule changed today · 7th Math 10:00 AM–10:45 AM/);
     assert.equal(await teacherPage.getByTestId("button-request-time-swap").count(), 0, "the Dashboard must not expose schedule-change creation controls");
+    await teacherPage.getByTestId("button-view-available-students").waitFor();
+    assert.equal(scheduledConflictFetches, 0, "the Dashboard must not fetch the global scheduled-conflict feed");
+    assert.equal(await teacherPage.getByTestId("scheduled-class-conflicts").count(), 0, "scheduled supervision must not render as a global alert stack");
+    assert.equal(await teacherPage.getByTestId(`section-scheduled-coverage-${SCHEDULED_CONFLICT_ID}`).count(), 0, "scheduled supervision must stay hidden outside Available");
+    await teacherPage.getByTestId("button-view-available-students").click();
+    await teacherPage.getByTestId(`section-scheduled-coverage-${SCHEDULED_CONFLICT_ID}`).waitFor();
+    await teacherPage.getByTestId(`button-start-scheduled-coverage-${SCHEDULED_CONFLICT_ID}`).waitFor();
+    await teacherPage.getByTestId(`button-claim-scheduled-coverage-${SCHEDULED_CONFLICT_ID}`).waitFor();
+    await teacherPage.getByTestId("button-view-class-students").click();
+    assert.equal(await teacherPage.getByTestId(`section-scheduled-coverage-${SCHEDULED_CONFLICT_ID}`).count(), 0, "scheduled supervision must disappear outside Available");
     await teacherPage.close();
 
     const adminPage = await browser.newPage({ viewport: { width: 1280, height: 900 } });
