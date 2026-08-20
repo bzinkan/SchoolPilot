@@ -2594,16 +2594,16 @@ function AssignmentsTab() {
         <CardContent className="space-y-4">
           <div className="space-y-1">
             <Label>Select Teacher</Label>
-            <select
-              className="w-full border rounded-md px-3 py-2 text-sm"
-              value={selectedTeacherId}
-              onChange={(e) => setSelectedTeacherId(e.target.value)}
-            >
-              <option value="">Choose a teacher...</option>
-              {(teachers ?? []).map((t) => (
-                <option key={t.id} value={t.id}>{t.displayName || t.email}</option>
-              ))}
-            </select>
+            <Select value={selectedTeacherId || undefined} onValueChange={setSelectedTeacherId}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Choose a teacher..." />
+              </SelectTrigger>
+              <SelectContent>
+                {(teachers ?? []).map((t) => (
+                  <SelectItem key={t.id} value={t.id}>{t.displayName || t.email}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {selectedTeacherId && (
@@ -2811,20 +2811,23 @@ function SettingsForm({ settings, settingsQueryKey, refetchUser }) {
 
           <div className="space-y-1">
             <Label htmlFor="passpilot-school-timezone">School Timezone</Label>
-            <select
-              id="passpilot-school-timezone"
-              className="w-full border rounded-md px-3 py-2 text-sm"
+            <Select
               value={schoolTimezone}
-              onChange={(event) => setSchoolTimezone(event.target.value)}
+              onValueChange={setSchoolTimezone}
               disabled={saving || !!pendingVerification}
             >
-              <option value="America/New_York">Eastern (America/New_York)</option>
-              <option value="America/Chicago">Central (America/Chicago)</option>
-              <option value="America/Denver">Mountain (America/Denver)</option>
-              <option value="America/Los_Angeles">Pacific (America/Los_Angeles)</option>
-              <option value="America/Anchorage">Alaska (America/Anchorage)</option>
-              <option value="Pacific/Honolulu">Hawaii (Pacific/Honolulu)</option>
-            </select>
+              <SelectTrigger id="passpilot-school-timezone" className="w-full">
+                <SelectValue placeholder="Select timezone..." />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="America/New_York">Eastern (America/New_York)</SelectItem>
+                <SelectItem value="America/Chicago">Central (America/Chicago)</SelectItem>
+                <SelectItem value="America/Denver">Mountain (America/Denver)</SelectItem>
+                <SelectItem value="America/Los_Angeles">Pacific (America/Los_Angeles)</SelectItem>
+                <SelectItem value="America/Anchorage">Alaska (America/Anchorage)</SelectItem>
+                <SelectItem value="Pacific/Honolulu">Hawaii (Pacific/Honolulu)</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="border-t pt-5">

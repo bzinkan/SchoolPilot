@@ -88,7 +88,7 @@ export default function KioskSimplePage() {
 
   const fetchClasses = useCallback(() => {
     if (!schoolId || !kioskPin) return Promise.resolve();
-    return fetch(`/api/passpilot/kiosk/grades?school=${schoolId}`, { headers: kioskHeaders() })
+    return fetch(`/api/passpilot/kiosk/grades?school=${schoolId}`, { credentials: "omit", headers: kioskHeaders() })
       .then(checkPinRejected)
       .then(r => r.ok ? r.json() : { classes: [] })
       .then(data => {
@@ -111,7 +111,7 @@ export default function KioskSimplePage() {
   useEffect(() => {
     if (!schoolId || !kioskPin) return;
     const poll = () => {
-      fetch(`/api/passpilot/kiosk/config?school=${schoolId}`, { headers: kioskHeaders() })
+      fetch(`/api/passpilot/kiosk/config?school=${schoolId}`, { credentials: "omit", headers: kioskHeaders() })
         .then(checkPinRejected)
         .then(async (response) => {
           if (response.ok) return response.json();
@@ -172,7 +172,7 @@ export default function KioskSimplePage() {
     let active = true;
     const poll = () => {
       const classParam = isCanonicalPassPilotSource(classSource) ? "classId" : "gradeId";
-      fetch(`/api/passpilot/kiosk/students?school=${schoolId}&${classParam}=${encodeURIComponent(selectedGradeId)}`, { headers: kioskHeaders() })
+      fetch(`/api/passpilot/kiosk/students?school=${schoolId}&${classParam}=${encodeURIComponent(selectedGradeId)}`, { credentials: "omit", headers: kioskHeaders() })
         .then(checkPinRejected)
         .then(async (response) => {
           if (response.ok) return response.json();
@@ -210,6 +210,9 @@ export default function KioskSimplePage() {
     try {
       const res = await fetch("/api/passpilot/kiosk/checkout", {
         method: "POST",
+        // Never ride a staff session cookie from this shared device — kiosk
+        // endpoints authenticate via the PIN headers only.
+        credentials: "omit",
         headers: kioskHeaders(),
         body: JSON.stringify({
           studentId,
@@ -231,7 +234,7 @@ export default function KioskSimplePage() {
     }
     setLoading(false);
     const classParam = isCanonicalPassPilotSource(classSource) ? "classId" : "gradeId";
-    fetch(`/api/passpilot/kiosk/students?school=${schoolId}&${classParam}=${encodeURIComponent(selectedGradeId)}`, { headers: kioskHeaders() })
+    fetch(`/api/passpilot/kiosk/students?school=${schoolId}&${classParam}=${encodeURIComponent(selectedGradeId)}`, { credentials: "omit", headers: kioskHeaders() })
       .then(r => r.ok ? r.json() : { students: [] })
       .then(data => setStudents(data.students || data || []))
       .catch(() => {});
@@ -242,6 +245,7 @@ export default function KioskSimplePage() {
     try {
       const res = await fetch("/api/passpilot/kiosk/checkin", {
         method: "POST",
+        credentials: "omit",
         headers: kioskHeaders(),
         body: JSON.stringify({ studentId }),
       });
@@ -258,7 +262,7 @@ export default function KioskSimplePage() {
     }
     setLoading(false);
     const classParam = isCanonicalPassPilotSource(classSource) ? "classId" : "gradeId";
-    fetch(`/api/passpilot/kiosk/students?school=${schoolId}&${classParam}=${encodeURIComponent(selectedGradeId)}`, { headers: kioskHeaders() })
+    fetch(`/api/passpilot/kiosk/students?school=${schoolId}&${classParam}=${encodeURIComponent(selectedGradeId)}`, { credentials: "omit", headers: kioskHeaders() })
       .then(r => r.ok ? r.json() : { students: [] })
       .then(data => setStudents(data.students || data || []))
       .catch(() => {});
