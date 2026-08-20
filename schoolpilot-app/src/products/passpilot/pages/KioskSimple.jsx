@@ -36,7 +36,9 @@ function getDestinationLabel(dest, custom) {
 const KIOSK_PIN_KEY = "pp_kiosk_pin";
 // Per-device kiosk session id (teacher-bound). Shares the PIN's storage rule:
 // sessionStorage in gate-launch mode so nothing persists in a student profile.
-const KIOSK_SESSION_KEY = "pp_kiosk_session";
+// Page-scoped key so a simple and a badge kiosk on one device never clobber
+// each other's session.
+const KIOSK_SESSION_KEY = "pp_kiosk_session_simple";
 
 export default function KioskSimplePage() {
   const [schoolId] = useState(() => new URLSearchParams(window.location.search).get("school") ?? "");
@@ -59,6 +61,7 @@ export default function KioskSimplePage() {
   // server without session support).
   const [session, setSession] = useState(null);
   const [sessionMode, setSessionMode] = useState(null);
+  const [bootstrapError, setBootstrapError] = useState(null);
   const inactivityRef = useRef();
   const feedbackRef = useRef();
   const scrollContainerRef = useRef(null);
@@ -142,12 +145,27 @@ export default function KioskSimplePage() {
           setSessionMode(false);
           return;
         }
-        if (!res.ok) return; // transient — the interval retries
+        if (!res.ok) {
+          // Surface why the kiosk can't start (disabled, unlicensed, bad
+          // school id) instead of spinning silently; the interval retries.
+          const body = await res.json().catch(() => ({}));
+          if (!cancelled) setBootstrapError(body?.error || `Kiosk unavailable (${res.status})`);
+          return;
+        }
         const data = await res.json().catch(() => null);
         if (cancelled || !data?.session?.id) return;
         kioskPinStore().setItem(KIOSK_SESSION_KEY, data.session.id);
         sessionIdRef.current = data.session.id;
+        setBootstrapError(null);
         setSession(data.session);
+        // The bootstrap response already carries the class for an active
+        // (self-launched or resumed) session — apply it so a claimed kiosk
+        // never flashes the waiting screen while the first config poll runs.
+        if (data.session.status === "active") {
+          setClassSource(data.session.source || null);
+          setSelectedGradeId(data.session.classId || null);
+          setKioskName(data.session.kioskName ?? null);
+        }
         setSessionMode(true);
       } catch {
         // Connection error — the interval retries.
@@ -479,7 +497,12 @@ export default function KioskSimplePage() {
   if (sessionMode === null) {
     return (
       <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center p-8">
-        <p className="text-xl text-gray-400">Connecting kiosk&hellip;</p>
+        <div className="text-center space-y-4">
+          <p className="text-xl text-gray-400">Connecting kiosk&hellip;</p>
+          {bootstrapError && (
+            <p className="text-red-300" role="alert">{bootstrapError}</p>
+          )}
+        </div>
       </div>
     );
   }

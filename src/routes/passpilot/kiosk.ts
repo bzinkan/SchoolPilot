@@ -163,6 +163,39 @@ function kioskSessionClassId(session: KioskSession): string | null {
       : null;
 }
 
+// Resolve + fully validate a presented kiosk session for data-serving
+// endpoints: dead → 404 EXPIRED, unclaimed → 409 UNCLAIMED, teacher no longer
+// active staff → force-release + 404 (never leave an ownerless kiosk).
+// Returns undefined when no session header is present (legacy school-global
+// path), null when a response has already been sent, else the session +
+// teacher kiosk name.
+async function requireActiveKioskSession(
+  req: { headers: Record<string, unknown> },
+  res: any,
+  schoolId: string
+): Promise<{ session: KioskSession; kioskName: string | null } | null | undefined> {
+  const sessionId = getKioskSessionId(req);
+  if (!sessionId) return undefined;
+  const session = await getLiveKioskSessionById(schoolId, sessionId);
+  if (!session) {
+    respondKioskSessionExpired(res);
+    return null;
+  }
+  if (session.status !== "active") {
+    respondKioskSessionUnclaimed(res);
+    return null;
+  }
+  const identity = session.teacherId
+    ? await kioskSessionTeacherIdentity(schoolId, session.teacherId)
+    : null;
+  if (!identity) {
+    await forceReleaseKioskSession(schoolId, session.id);
+    respondKioskSessionExpired(res);
+    return null;
+  }
+  return { session, kioskName: identity.kioskName };
+}
+
 // Teacher display name for kiosk headers/pass labels: the per-teacher kiosk
 // name when set, falling back to the account display name. Returns null
 // membership when the teacher is no longer active staff at the school.
@@ -299,20 +332,18 @@ router.post("/lookup", kioskLimiter, async (req, res, next) => {
     }
 
     await runWithTenantContext({ schoolId }, async () => {
-    const sessionId = getKioskSessionId(req);
+    const resolved = await requireActiveKioskSession(req, res, schoolId);
+    if (resolved === null) return;
     let sessionOverride: { source: "legacy_grades" | "classpilot_groups"; configuredClassId: string } | undefined;
-    if (sessionId) {
-      const session = await getLiveKioskSessionById(schoolId, sessionId);
-      if (!session) return respondKioskSessionExpired(res);
-      if (session.status !== "active") return respondKioskSessionUnclaimed(res);
-      const sessionClassId = kioskSessionClassId(session);
-      if (!session.classSource || !sessionClassId) {
+    if (resolved) {
+      const sessionClassId = kioskSessionClassId(resolved.session);
+      if (!resolved.session.classSource || !sessionClassId) {
         return res.status(409).json({
           error: "A class must be sent to this kiosk before looking up students.",
           code: "PASSPILOT_KIOSK_CLASS_REQUIRED",
         });
       }
-      sessionOverride = { source: session.classSource, configuredClassId: sessionClassId };
+      sessionOverride = { source: resolved.session.classSource, configuredClassId: sessionClassId };
     }
     const student = await getStudentByIdNumber(schoolId, parsed.data.studentIdNumber);
     if (!student) {
@@ -397,26 +428,15 @@ router.post("/checkout", kioskLimiter, async (req, res, next) => {
 
     // Per-device session (teacher-bound) when the kiosk presents one;
     // otherwise the legacy school-global slot.
-    const sessionId = getKioskSessionId(req);
-    let kioskSession: KioskSession | null = null;
-    if (sessionId) {
-      kioskSession = (await getLiveKioskSessionById(schoolId, sessionId)) ?? null;
-      if (!kioskSession) return respondKioskSessionExpired(res);
-      if (kioskSession.status !== "active") return respondKioskSessionUnclaimed(res);
-    }
+    const resolved = await requireActiveKioskSession(req, res, schoolId);
+    if (resolved === null) return;
+    const kioskSession: KioskSession | null = resolved?.session ?? null;
 
     // Kiosk label + pass attribution.
     let kioskName: string | null = null;
     let attributedTeacherId: string | null = null;
-    if (kioskSession) {
-      const identity = kioskSession.teacherId
-        ? await kioskSessionTeacherIdentity(schoolId, kioskSession.teacherId)
-        : null;
-      if (!identity) {
-        await forceReleaseKioskSession(schoolId, kioskSession.id);
-        return respondKioskSessionExpired(res);
-      }
-      kioskName = identity.kioskName;
+    if (resolved && kioskSession) {
+      kioskName = resolved.kioskName;
       attributedTeacherId = kioskSession.teacherId;
     } else if (school.kioskActivatedByUserId) {
       const activatingUser = await getUserById(school.kioskActivatedByUserId);
@@ -509,7 +529,8 @@ router.post("/checkout", kioskLimiter, async (req, res, next) => {
                 }
           );
     } catch (err: any) {
-      if (err?.code === "23505") {
+      // Drizzle may wrap the pg error (DrizzleQueryError with .cause).
+      if (err?.code === "23505" || err?.cause?.code === "23505") {
         return res.status(409).json({ error: "Student already has an active pass" });
       }
       throw err;
@@ -540,20 +561,18 @@ router.post("/checkin", kioskLimiter, async (req, res, next) => {
     }
 
     await runWithTenantContext({ schoolId }, async () => {
-    const sessionId = getKioskSessionId(req);
+    const resolved = await requireActiveKioskSession(req, res, schoolId);
+    if (resolved === null) return;
     let sessionOverride: { source: "legacy_grades" | "classpilot_groups"; configuredClassId: string } | undefined;
-    if (sessionId) {
-      const session = await getLiveKioskSessionById(schoolId, sessionId);
-      if (!session) return respondKioskSessionExpired(res);
-      if (session.status !== "active") return respondKioskSessionUnclaimed(res);
-      const sessionClassId = kioskSessionClassId(session);
-      if (!session.classSource || !sessionClassId) {
+    if (resolved) {
+      const sessionClassId = kioskSessionClassId(resolved.session);
+      if (!resolved.session.classSource || !sessionClassId) {
         return res.status(409).json({
           error: "A class must be sent to this kiosk before returning passes.",
           code: "PASSPILOT_KIOSK_CLASS_REQUIRED",
         });
       }
-      sessionOverride = { source: session.classSource, configuredClassId: sessionClassId };
+      sessionOverride = { source: resolved.session.classSource, configuredClassId: sessionClassId };
     }
     const pass = await returnKioskPassForStudent(
       schoolId,
@@ -616,16 +635,11 @@ router.get("/students", kioskLimiter, async (req, res, next) => {
     const { error, status, school } = await validateKiosk(schoolId, kioskPin);
     if (error || !school) return res.status(status).json({ error });
 
-    const sessionId = getKioskSessionId(req);
-    let kioskSession: KioskSession | null = null;
-    if (sessionId) {
-      kioskSession =
-        (await runWithTenantContext({ schoolId }, () =>
-          getLiveKioskSessionById(schoolId, sessionId)
-        )) ?? null;
-      if (!kioskSession) return respondKioskSessionExpired(res);
-      if (kioskSession.status !== "active") return respondKioskSessionUnclaimed(res);
-    }
+    const resolved = await runWithTenantContext({ schoolId }, () =>
+      requireActiveKioskSession(req, res, schoolId)
+    );
+    if (resolved === null) return;
+    const kioskSession: KioskSession | null = resolved?.session ?? null;
     const source = await runWithTenantContext({ schoolId }, () =>
       getPasspilotClassSourceForSchool(schoolId)
     );

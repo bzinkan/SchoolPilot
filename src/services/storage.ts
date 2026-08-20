@@ -3700,6 +3700,12 @@ function generateKioskClaimCode(): string {
   return randomInt(0, 1_000_000).toString().padStart(6, "0");
 }
 
+// Drizzle wraps driver errors (DrizzleQueryError with the pg error on .cause),
+// so the unique-violation code must be checked on both levels.
+function isUniqueViolation(err: any): boolean {
+  return err?.code === "23505" || err?.cause?.code === "23505";
+}
+
 export async function createKioskSession(schoolId: string): Promise<KioskSession> {
   // Lazy reaping: kiosk bootstrap is the natural per-school heartbeat.
   await sweepExpiredKioskSessions(schoolId);
@@ -3712,7 +3718,7 @@ export async function createKioskSession(schoolId: string): Promise<KioskSession
       return session!;
     } catch (err: any) {
       // Partial unique index on (school_id, claim_code) — regenerate and retry.
-      if (err?.code !== "23505") throw err;
+      if (!isUniqueViolation(err)) throw err;
     }
   }
   throw passpilotClassError(
@@ -3739,23 +3745,28 @@ export async function createSelfClaimedKioskSession(
     }
     for (let attempt = 0; attempt < 20; attempt += 1) {
       try {
-        const [session] = await tx
-          .insert(passpilotKioskSessions)
-          .values({
-            schoolId,
-            claimCode: generateKioskClaimCode(),
-            teacherId: authorization.actorUserId,
-            status: "active",
-            classSource: target?.source ?? null,
-            gradeId: target?.source === "legacy_grades" ? target.classId : null,
-            classpilotGroupId:
-              target?.source === "classpilot_groups" ? target.classId : null,
-            claimedAt: sql`now()`,
-          })
-          .returning();
-        return session!;
+        // Nested transaction = savepoint: a unique-violation must not abort
+        // the outer transaction, or the retry would fail with 25P02.
+        const session = await tx.transaction(async (sp) => {
+          const [row] = await sp
+            .insert(passpilotKioskSessions)
+            .values({
+              schoolId,
+              claimCode: generateKioskClaimCode(),
+              teacherId: authorization.actorUserId,
+              status: "active",
+              classSource: target?.source ?? null,
+              gradeId: target?.source === "legacy_grades" ? target.classId : null,
+              classpilotGroupId:
+                target?.source === "classpilot_groups" ? target.classId : null,
+              claimedAt: sql`now()`,
+            })
+            .returning();
+          return row!;
+        });
+        return session;
       } catch (err: any) {
-        if (err?.code !== "23505") throw err;
+        if (!isUniqueViolation(err)) throw err;
       }
     }
     throw passpilotClassError(

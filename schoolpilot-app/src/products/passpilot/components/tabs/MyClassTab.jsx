@@ -71,14 +71,26 @@ function MyClassTab() {
 
   // Per-teacher kiosk sessions: the kiosk devices this teacher has claimed.
   // Kiosks are teacher-bound (not school-global) — Send to Kiosk targets
-  // exactly this teacher's kiosks.
+  // exactly this teacher's kiosks. A 404 means the server predates kiosk
+  // sessions (deploy skew): fall back to the legacy school-global flow. The
+  // 15s poll keeps probing, so the UI upgrades itself once the server does.
   const kioskSessionsQuery = useQuery({
     queryKey: ['passpilot', 'kiosk-sessions'],
     queryFn: () => passPilotClassRequest('GET', '/passpilot/kiosk/sessions/mine'),
     enabled: sourceResolved,
     refetchInterval: 15000,
+    retry: (failureCount, error) => error?.response?.status !== 404 && failureCount < 1,
   });
+  const legacyKioskServer = kioskSessionsQuery.error?.response?.status === 404;
   const kioskSessions = kioskSessionsQuery.data?.sessions || [];
+
+  const legacyKioskConfigQuery = useQuery({
+    queryKey: ['passpilot', 'kiosk-config', canonical ? 'classpilot_groups' : 'legacy_grades'],
+    queryFn: () => passPilotClassRequest('GET', '/kiosk-config'),
+    enabled: sourceResolved && legacyKioskServer,
+  });
+  const legacyKioskClassId =
+    legacyKioskConfigQuery.data?.classId || legacyKioskConfigQuery.data?.gradeId || null;
 
   const myClasses = classInventoryQuery.data?.classes || [];
   const requestedClassId = searchParams.get('classId') || '';
@@ -324,14 +336,37 @@ function MyClassTab() {
     queryClient.invalidateQueries({ queryKey: ['passpilot', 'kiosk-sessions'] });
   };
 
+  const openClaimDialog = (gradeId) => {
+    setClaimTargetClassId(gradeId);
+    setClaimCodeInput('');
+    setClaimError(null);
+    setIsClaimKioskDialogOpen(true);
+  };
+
+  // Legacy school-global toggle for servers that predate kiosk sessions.
+  const handleLegacySendToKiosk = async (gradeId) => {
+    try {
+      const nextId = legacyKioskClassId === gradeId ? null : gradeId;
+      await passPilotClassRequest('PUT', '/kiosk-config', canonical ? { classId: nextId } : { gradeId: nextId });
+      queryClient.invalidateQueries({ queryKey: ['passpilot', 'kiosk-config'] });
+      toast({
+        title: nextId ? "Kiosk Updated" : "Kiosk Cleared",
+        description: nextId ? "Kiosk is now showing this class." : "The kiosk class selection was cleared.",
+      });
+    } catch {
+      toast({ title: "Error", description: "Failed to update kiosk.", variant: "destructive" });
+    }
+  };
+
   // No claimed kiosks → prompt for the claim code shown on the kiosk screen.
   // Otherwise retarget ALL of this teacher's kiosks to the chosen class.
   const handleSendToKiosk = async (gradeId) => {
+    if (legacyKioskServer) {
+      await handleLegacySendToKiosk(gradeId);
+      return;
+    }
     if (kioskSessions.length === 0) {
-      setClaimTargetClassId(gradeId);
-      setClaimCodeInput('');
-      setClaimError(null);
-      setIsClaimKioskDialogOpen(true);
+      openClaimDialog(gradeId);
       return;
     }
     try {
@@ -339,6 +374,11 @@ function MyClassTab() {
         classId: gradeId,
       });
       invalidateKioskSessions();
+      if ((data?.updated ?? 0) === 0) {
+        // The session list was stale — every kiosk died since the last poll.
+        openClaimDialog(gradeId);
+        return;
+      }
       toast({
         title: "Kiosk Updated",
         description:
@@ -381,8 +421,14 @@ function MyClassTab() {
       await passPilotClassRequest('DELETE', `/passpilot/kiosk/sessions/${sessionId}`);
       invalidateKioskSessions();
       toast({ title: "Kiosk Released", description: "The kiosk is showing its claim code again." });
-    } catch {
-      toast({ title: "Error", description: "Failed to release kiosk.", variant: "destructive" });
+    } catch (error) {
+      invalidateKioskSessions();
+      if (error?.response?.status === 404) {
+        // Already dead (TTL, released elsewhere) — the desired state holds.
+        toast({ title: "Kiosk Released", description: "That kiosk session had already ended." });
+      } else {
+        toast({ title: "Error", description: "Failed to release kiosk.", variant: "destructive" });
+      }
     }
   };
 
@@ -729,8 +775,10 @@ function MyClassTab() {
             {currentActiveGrade && (
                 <Button
                   variant={
-                    kioskSessions.length > 0 &&
-                    kioskSessions.every((s) => s.classId === currentActiveGrade.id)
+                    (legacyKioskServer
+                      ? legacyKioskClassId === currentActiveGrade.id
+                      : kioskSessions.length > 0 &&
+                        kioskSessions.every((s) => s.classId === currentActiveGrade.id))
                       ? "default"
                       : "outline"
                   }
@@ -738,18 +786,24 @@ function MyClassTab() {
                   onClick={() => handleSendToKiosk(currentActiveGrade.id)}
                   className="flex items-center gap-1.5"
                   title={
-                    kioskSessions.length === 0
-                      ? "Claim a kiosk with the code shown on its screen"
-                      : "Send this class to your kiosks"
+                    legacyKioskServer
+                      ? "Send this class to the school kiosk"
+                      : kioskSessions.length === 0
+                        ? "Claim a kiosk with the code shown on its screen"
+                        : "Send this class to your kiosks"
                   }
                 >
                   <Monitor className="w-4 h-4" />
-                  {kioskSessions.length > 0 &&
-                  kioskSessions.every((s) => s.classId === currentActiveGrade.id)
-                    ? kioskSessions.length === 1
+                  {legacyKioskServer
+                    ? legacyKioskClassId === currentActiveGrade.id
                       ? "On Kiosk"
-                      : `On ${kioskSessions.length} Kiosks`
-                    : "Send to Kiosk"}
+                      : "Send to Kiosk"
+                    : kioskSessions.length > 0 &&
+                        kioskSessions.every((s) => s.classId === currentActiveGrade.id)
+                      ? kioskSessions.length === 1
+                        ? "On Kiosk"
+                        : `On ${kioskSessions.length} Kiosks`
+                      : "Send to Kiosk"}
                 </Button>
             )}
           </div>

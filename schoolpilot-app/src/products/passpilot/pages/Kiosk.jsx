@@ -23,7 +23,9 @@ const INACTIVITY_TIMEOUT = 10000; // 10 seconds
 const KIOSK_PIN_KEY = "pp_kiosk_pin";
 // Per-device kiosk session id (teacher-bound). Shares the PIN's storage rule:
 // sessionStorage in gate-launch mode so nothing persists in a student profile.
-const KIOSK_SESSION_KEY = "pp_kiosk_session";
+// Page-scoped key so a simple and a badge kiosk on one device never clobber
+// each other's session.
+const KIOSK_SESSION_KEY = "pp_kiosk_session_badge";
 
 export default function KioskPage() {
   const [state, setState] = useState("scan");
@@ -38,6 +40,7 @@ export default function KioskPage() {
   // true = session flow, false = legacy school-global flow (older server).
   const [session, setSession] = useState(null);
   const [sessionMode, setSessionMode] = useState(null);
+  const [bootstrapError, setBootstrapError] = useState(null);
   const inputRef = useRef(null);
   const timeoutRef = useRef();
   const sessionIdRef = useRef(null);
@@ -129,11 +132,17 @@ export default function KioskPage() {
           setSessionMode(false);
           return;
         }
-        if (!res.ok) return; // transient — the interval retries
+        if (!res.ok) {
+          // Surface why the kiosk can't start instead of spinning silently.
+          const body = await res.json().catch(() => ({}));
+          if (!cancelled) setBootstrapError(body?.error || `Kiosk unavailable (${res.status})`);
+          return;
+        }
         const data = await res.json().catch(() => null);
         if (cancelled || !data?.session?.id) return;
         kioskPinStore().setItem(KIOSK_SESSION_KEY, data.session.id);
         sessionIdRef.current = data.session.id;
+        setBootstrapError(null);
         setSession(data.session);
         setSessionMode(true);
       } catch {
@@ -360,7 +369,12 @@ export default function KioskPage() {
   if (sessionMode === null) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center p-8">
-        <p className="text-xl text-gray-400">Connecting kiosk&hellip;</p>
+        <div className="text-center space-y-4">
+          <p className="text-xl text-gray-400">Connecting kiosk&hellip;</p>
+          {bootstrapError && (
+            <p className="text-red-300" role="alert">{bootstrapError}</p>
+          )}
+        </div>
       </div>
     );
   }
@@ -381,6 +395,23 @@ export default function KioskPage() {
           <p className="text-gray-300 text-lg">
             Teacher: open PassPilot &rarr; My Class &rarr; Send to Kiosk and
             enter this code to claim this kiosk for your class.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Claimed but no class yet (self-launched without a class): scanning would
+  // 409 on every badge, so wait for the teacher's Send to Kiosk instead.
+  if (sessionMode === true && session?.status === "active" && !session?.classId) {
+    return (
+      <div className="min-h-screen bg-black text-white flex items-center justify-center p-8">
+        <div className="max-w-lg text-center space-y-4">
+          <h1 className="text-3xl font-bold text-blue-400">
+            {session?.kioskName ? `${session.kioskName} — PassPilot Kiosk` : "PassPilot Kiosk"}
+          </h1>
+          <p className="text-gray-300 text-lg">
+            Waiting for a class — press Send to Kiosk in PassPilot to choose one.
           </p>
         </div>
       </div>

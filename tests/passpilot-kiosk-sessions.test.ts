@@ -22,6 +22,10 @@ let server: Server;
 let baseUrl: string;
 let schoolA: any;
 let schoolB: any;
+let schoolC: any;
+let teacherC: any;
+let canonicalGroup: any;
+let studentC: any;
 let adminA: any;
 let adminB: any;
 let teacherA: any;
@@ -132,6 +136,20 @@ before(async () => {
   await storage.createMembership({ schoolId: schoolA.id, userId: teacherB.id, role: "teacher", status: "active" } as any);
   await storage.createMembership({ schoolId: schoolA.id, userId: unrelatedTeacher.id, role: "teacher", status: "active" } as any);
 
+  // Canonical (ClassPilot-groups) school for canonical-mode session coverage.
+  schoolC = await storage.createSchool({
+    name: `${TAG}_C`,
+    domain: `${TAG}-c.example.edu`,
+    slug: `${TAG}-c`,
+  } as any);
+  teacherC = await storage.createUser({
+    email: `teacher-c@${TAG}-c.example.edu`,
+    firstName: "Teacher",
+    lastName: "C",
+    displayName: "Ms. C",
+  } as any);
+  await storage.createMembership({ schoolId: schoolC.id, userId: teacherC.id, role: "teacher", status: "active" } as any);
+
   const pinHash = await hashPassword(KIOSK_PIN);
   for (const school of [schoolA, schoolB]) {
     await storage.createProductLicense({ schoolId: school.id, product: "PASSPILOT", status: "active" } as any);
@@ -143,6 +161,30 @@ before(async () => {
       db.execute(sql`UPDATE schools SET kiosk_enabled = true, kiosk_pin_hash = ${pinHash} WHERE id = ${school.id}`)
     );
   }
+  await storage.createProductLicense({ schoolId: schoolC.id, product: "PASSPILOT", status: "active" } as any);
+  await inSchool(schoolC.id, async () => {
+    await storage.upsertSettings(schoolC.id, {
+      schoolName: schoolC.name,
+      passpilotClassSource: "classpilot_groups",
+    });
+    canonicalGroup = await storage.createGroup({
+      schoolId: schoolC.id,
+      teacherId: teacherC.id,
+      name: "Homeroom 6C",
+      groupType: "admin_class",
+      status: "active",
+    } as any);
+    studentC = await storage.createStudent({
+      schoolId: schoolC.id,
+      firstName: "Canonical",
+      lastName: "Student",
+      status: "active",
+    } as any);
+    await storage.addGroupStudents(canonicalGroup.id, [studentC.id]);
+  });
+  await asSystem(() =>
+    db.execute(sql`UPDATE schools SET kiosk_enabled = true, kiosk_pin_hash = ${pinHash} WHERE id = ${schoolC.id}`)
+  );
 
   await inSchool(schoolB.id, async () => {
     gradeC = await storage.createGrade({ schoolId: schoolB.id, name: "Class C" } as any);
@@ -175,14 +217,17 @@ after(async () => {
         server.close((error) => error ? reject(error) : resolve())
       );
     }
-    if (schemaReady && schoolA?.id && schoolB?.id) {
+    if (schemaReady && schoolA?.id && schoolB?.id && schoolC?.id) {
       await asSystem(async () => {
-        const ids = sql.join([schoolA.id, schoolB.id].map((id) => sql`${id}`), sql`, `);
+        const ids = sql.join([schoolA.id, schoolB.id, schoolC.id].map((id) => sql`${id}`), sql`, `);
         await db.execute(sql`DELETE FROM audit_logs WHERE school_id IN (${ids})`);
         await db.execute(sql`DELETE FROM passes WHERE school_id IN (${ids})`);
         await db.execute(sql`DELETE FROM passpilot_kiosk_sessions WHERE school_id IN (${ids})`);
         await db.execute(sql`DELETE FROM teacher_grades WHERE grade_id IN (SELECT id FROM grades WHERE school_id IN (${ids}))`);
         await db.execute(sql`DELETE FROM passpilot_grade_students WHERE school_id IN (${ids})`);
+        await db.execute(sql`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (${ids}))`);
+        await db.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (${ids}))`);
+        await db.execute(sql`DELETE FROM groups WHERE school_id IN (${ids})`);
         await db.execute(sql`DELETE FROM grades WHERE school_id IN (${ids})`);
         await db.execute(sql`DELETE FROM students WHERE school_id IN (${ids})`);
         await db.execute(sql`DELETE FROM settings WHERE school_id IN (${ids})`);
@@ -412,19 +457,105 @@ describe("PassPilot per-device kiosk sessions", { concurrency: false }, () => {
     assert.equal(claim.status, 404);
   });
 
-  it("auto-releases sessions when the teacher's membership is deactivated", async (t) => {
+  it("auto-releases sessions when the teacher's membership is deactivated (every endpoint)", async (t) => {
     if (!schemaReady) return t.skip("migration not applied");
-    const self = await requestJson("POST", "/passpilot/kiosk/sessions/self", { classId: gradeB.id }, authFor(teacherB, schoolA.id));
-    assert.equal(self.status, 201);
+    // Two sessions so lookup and config paths each get a fresh dead-teacher session.
+    const selfOne = await requestJson("POST", "/passpilot/kiosk/sessions/self", { classId: gradeB.id }, authFor(teacherB, schoolA.id));
+    const selfTwo = await requestJson("POST", "/passpilot/kiosk/sessions/self", { classId: gradeB.id }, authFor(teacherB, schoolA.id));
+    assert.equal(selfOne.status, 201);
+    assert.equal(selfTwo.status, 201);
     await asSystem(() =>
       db.execute(sql`UPDATE school_memberships SET status = 'inactive' WHERE school_id = ${schoolA.id} AND user_id = ${teacherB.id}`)
     );
-    const config = await requestJson("GET", `/passpilot/kiosk/config?school=${schoolA.id}`, undefined, kioskHeaders(schoolA.id, self.body.session.id));
+    // /lookup and /checkin must enforce teacher liveness just like /config and
+    // /checkout — an ownerless session must not keep serving student data.
+    const lookup = await requestJson("POST", "/passpilot/kiosk/lookup", { studentIdNumber: "12345" }, kioskHeaders(schoolA.id, selfOne.body.session.id));
+    assert.equal(lookup.status, 404);
+    assert.equal(lookup.body.code, "PASSPILOT_KIOSK_SESSION_EXPIRED");
+    const config = await requestJson("GET", `/passpilot/kiosk/config?school=${schoolA.id}`, undefined, kioskHeaders(schoolA.id, selfTwo.body.session.id));
     assert.equal(config.status, 404);
     assert.equal(config.body.code, "PASSPILOT_KIOSK_SESSION_EXPIRED");
     await asSystem(() =>
       db.execute(sql`UPDATE school_memberships SET status = 'active' WHERE school_id = ${schoolA.id} AND user_id = ${teacherB.id}`)
     );
+  });
+
+  it("supports the full canonical (ClassPilot-groups) session flow", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    const created = await requestJson("POST", "/passpilot/kiosk/session", {}, kioskHeaders(schoolC.id));
+    assert.equal(created.status, 201);
+    const kioskSession = created.body.session;
+
+    const claimed = await requestJson("POST", "/passpilot/kiosk/sessions/claim", { claimCode: kioskSession.claimCode, classId: canonicalGroup.id }, authFor(teacherC, schoolC.id));
+    assert.equal(claimed.status, 200);
+    assert.equal(claimed.body.session.source, "classpilot_groups");
+    assert.equal(claimed.body.session.classId, canonicalGroup.id);
+
+    const config = await requestJson("GET", `/passpilot/kiosk/config?school=${schoolC.id}`, undefined, kioskHeaders(schoolC.id, kioskSession.id));
+    assert.equal(config.status, 200);
+    assert.equal(config.body.source, "classpilot_groups");
+    assert.equal(config.body.classId, canonicalGroup.id);
+    assert.equal(config.body.className, "Homeroom 6C");
+    assert.equal(config.body.kioskName, "Ms. C");
+
+    const roster = await requestJson("GET", `/passpilot/kiosk/students?school=${schoolC.id}&classId=${canonicalGroup.id}`, undefined, kioskHeaders(schoolC.id, kioskSession.id));
+    assert.equal(roster.status, 200);
+    assert.ok(roster.body.students.some((s: any) => s.id === studentC.id));
+
+    // Canonical checkout via the session: exercises the in-transaction
+    // classpilotGroupId comparison in assertKioskSessionCheckoutTarget.
+    const checkout = await requestJson("POST", "/passpilot/kiosk/checkout", { studentId: studentC.id, destination: "bathroom", classId: canonicalGroup.id }, kioskHeaders(schoolC.id, kioskSession.id));
+    assert.equal(checkout.status, 201);
+    assert.equal(checkout.body.pass.teacherId, teacherC.id);
+    assert.equal(checkout.body.pass.classId, canonicalGroup.id);
+    assert.equal(checkout.body.pass.notes, "Homeroom 6C Ms. C");
+
+    const checkin = await requestJson("POST", "/passpilot/kiosk/checkin", { studentId: studentC.id }, kioskHeaders(schoolC.id, kioskSession.id));
+    assert.equal(checkin.status, 200);
+    assert.equal(checkin.body.pass.status, "returned");
+  });
+
+  it("scopes single-session retarget (PUT /sessions/:id) to owner or manager", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    const self = await requestJson("POST", "/passpilot/kiosk/sessions/self", { classId: gradeB.id }, authFor(teacherA, schoolA.id));
+    assert.equal(self.status, 201);
+    const sessionId = self.body.session.id;
+
+    // Non-owner teacher must get 404, never a silent cross-teacher retarget.
+    const foreign = await requestJson("PUT", `/passpilot/kiosk/sessions/${sessionId}`, { classId: gradeB.id }, authFor(teacherB, schoolA.id));
+    assert.equal(foreign.status, 404);
+
+    // The owner can retarget a single kiosk.
+    const own = await requestJson("PUT", `/passpilot/kiosk/sessions/${sessionId}`, { classId: gradeA.id }, authFor(teacherA, schoolA.id));
+    assert.equal(own.status, 200);
+    assert.equal(own.body.session.classId, gradeA.id);
+
+    // Managers may retarget any teacher's kiosk.
+    const manager = await requestJson("PUT", `/passpilot/kiosk/sessions/${sessionId}`, { classId: gradeB.id }, authFor(adminA, schoolA.id));
+    assert.equal(manager.status, 200);
+    assert.equal(manager.body.session.classId, gradeB.id);
+
+    await requestJson("DELETE", `/passpilot/kiosk/sessions/${sessionId}`, {}, authFor(adminA, schoolA.id));
+  });
+
+  it("expires idle active sessions after the last-seen TTL and sweeps them", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    const self = await requestJson("POST", "/passpilot/kiosk/sessions/self", { classId: gradeB.id }, authFor(teacherA, schoolA.id));
+    assert.equal(self.status, 201);
+    const idleId = self.body.session.id;
+    await asSystem(() =>
+      db.execute(sql`UPDATE passpilot_kiosk_sessions SET last_seen_at = now() - interval '21 hours' WHERE id = ${idleId}`)
+    );
+    const config = await requestJson("GET", `/passpilot/kiosk/config?school=${schoolA.id}`, undefined, kioskHeaders(schoolA.id, idleId));
+    assert.equal(config.status, 404);
+    assert.equal(config.body.code, "PASSPILOT_KIOSK_SESSION_EXPIRED");
+
+    // The next bootstrap sweeps the idle corpse entirely.
+    await requestJson("POST", "/passpilot/kiosk/session", {}, kioskHeaders(schoolA.id));
+    const remaining = await asSystem(() =>
+      db.execute(sql`SELECT count(*)::int AS n FROM passpilot_kiosk_sessions WHERE id = ${idleId}`)
+    );
+    assert.equal(remaining.rows[0].n, 0);
   });
 
   it("blocks everything when kiosk mode is disabled and resumes after re-enable", async (t) => {

@@ -64,11 +64,18 @@ export default function AppShell({ children, currentTab }) {
   // session bound to them and pass it in the URL, so the kiosk never shows a
   // claim code on the teacher's own device. Falls back to a plain URL (kiosk
   // bootstraps its own unclaimed session) if the server predates sessions.
-  const openKiosk = async (type) => {
+  //
+  // The tab must be opened synchronously inside the click's user activation —
+  // window.open after an awaited network call gets popup-blocked in stricter
+  // browsers. If the popup is blocked we bail BEFORE creating a session so no
+  // orphaned active sessions accumulate.
+  const openKiosk = async (type, preOpenedWindow = null) => {
     const base =
       type === 'simple'
         ? `/passpilot/kiosk/simple?school=${school.id}`
         : `/passpilot/kiosk?school=${school.id}`;
+    const kioskWindow = preOpenedWindow ?? window.open('', '_blank');
+    if (!kioskWindow) return;
     let url = base;
     try {
       const data = await passPilotClassRequest('POST', '/passpilot/kiosk/sessions/self', {});
@@ -76,7 +83,7 @@ export default function AppShell({ children, currentTab }) {
     } catch {
       // Older server or transient failure — the kiosk page handles both.
     }
-    window.open(url, '_blank');
+    kioskWindow.location = url;
   };
 
   const handleKioskClick = (type) => {
@@ -93,13 +100,16 @@ export default function AppShell({ children, currentTab }) {
   const handleKioskNameSubmit = async () => {
     const name = kioskNameInput.trim();
     if (!name || !school?.id) return;
+    const isRename = pendingKioskAction === 'rename';
+    // Open the tab before any await so the user activation is still valid.
+    const kioskWindow = isRename ? null : window.open('', '_blank');
     await saveKioskName(name);
     setIsKioskNameDialogOpen(false);
-    if (pendingKioskAction === 'rename') {
+    if (isRename) {
       setPendingKioskAction(null);
       return;
     }
-    await openKiosk(pendingKioskAction);
+    await openKiosk(pendingKioskAction, kioskWindow);
     setPendingKioskAction(null);
   };
 
