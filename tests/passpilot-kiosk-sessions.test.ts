@@ -246,13 +246,16 @@ after(async () => {
 });
 
 describe("PassPilot per-device kiosk sessions", { concurrency: false }, () => {
-  it("keeps schema, startup, RLS review, and CSRF contracts aligned", () => {
+  it("keeps schema, startup, RLS review, deploy-allowlist, and CSRF contracts aligned", () => {
     const schema = readFileSync(new URL("../src/schema/passpilot.ts", import.meta.url), "utf8");
     const startup = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
     const csrf = readFileSync(new URL("../src/middleware/csrfProtection.ts", import.meta.url), "utf8");
+    const deployment = readFileSync(new URL("../scripts/enforce-deploy-rls-allowlist.mjs", import.meta.url), "utf8");
     assert.match(schema, /passpilotKioskSessions = pgTable\(/);
     assert.match(startup, /CREATE TABLE IF NOT EXISTS passpilot_kiosk_sessions/);
     assert.match(startup, /"passpilot_kiosk_sessions",/);
+    assert.match(deployment, /"passpilot_kiosk_sessions"/);
+    assert.match(deployment, /Object\.freeze\(\["passpilot_kiosk_sessions"\]\)/);
     assert.match(csrf, /"\/passpilot\/kiosk\/session"/);
     assert.match(csrf, /"\/kiosk\/session"/);
   });
