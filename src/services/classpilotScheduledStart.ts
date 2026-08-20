@@ -970,7 +970,9 @@ export async function processScheduledClassAutoStart(options: {
   if (!conflictResult.occurrenceActive) {
     return { status: "skipped", reason: "finalized" };
   }
-  broadcastScheduledConflictUpdate(group.schoolId, conflict.id);
+  if (conflictResult.materiallyChanged) {
+    broadcastScheduledConflictUpdate(group.schoolId, conflict.id);
+  }
   return { status: status === "claimed" ? "claimed" : "coverage_needed", conflictId: conflict.id };
 }
 

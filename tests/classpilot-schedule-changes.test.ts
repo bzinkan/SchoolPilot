@@ -904,6 +904,69 @@ describe("ClassPilot schedule-change API and storage workflow", { concurrency: f
     assert.deepEqual(status.rows[0], { status: "superseded", reservation_active: false });
   });
 
+  it("keeps recurring Class Management writes outside swaps and preserves no-op skips", async () => {
+    const created = await requestJson(
+      "POST",
+      "/classpilot/admin/classes",
+      admin,
+      {
+        name: `${TAG}_Recurring Boundary`,
+        primaryTeacherId: teacherC.id,
+        scheduleEnabled: false,
+      }
+    );
+    assert.equal(created.status, 201);
+    const groupId = created.body.class.id;
+    await inSchool(schoolA.id, () => storage.updateGroup(groupId, {
+      scheduleSkippedDate: "2099-05-08",
+    }));
+
+    const noOp = await requestJson(
+      "PATCH",
+      `/classpilot/admin/classes/${groupId}`,
+      admin,
+      {
+        name: `${TAG}_Recurring Boundary Renamed`,
+        scheduleEnabled: false,
+        blockStartTime: null,
+        blockEndTime: null,
+      }
+    );
+    assert.equal(noOp.status, 200);
+    const afterNoOp = await inSchool(schoolA.id, () => storage.getGroupByIdAndSchool(groupId, schoolA.id));
+    assert.equal(afterNoOp.scheduleSkippedDate, "2099-05-08");
+
+    const enabled = await requestJson(
+      "PATCH",
+      `/classpilot/admin/classes/${groupId}`,
+      admin,
+      {
+        scheduleEnabled: true,
+        blockStartTime: "20:00",
+        blockEndTime: "20:30",
+      }
+    );
+    assert.equal(enabled.status, 200);
+    const afterScheduleChange = await inSchool(schoolA.id, () => storage.getGroupByIdAndSchool(groupId, schoolA.id));
+    assert.equal(afterScheduleChange.scheduleSkippedDate, null);
+
+    const swapLegs = await inSchool(schoolA.id, () => db.execute(sql`
+      SELECT count(*)::int AS count
+      FROM classpilot_schedule_change_legs
+      WHERE school_id = ${schoolA.id} AND group_id = ${groupId}
+    `));
+    assert.equal(Number(swapLegs.rows[0]?.count || 0), 0);
+    const scheduleAudits = await inSchool(schoolA.id, () => db.execute(sql`
+      SELECT action
+      FROM audit_logs
+      WHERE school_id = ${schoolA.id} AND entity_id = ${groupId}
+      ORDER BY created_at
+    `));
+    const actions = scheduleAudits.rows.map((row: any) => row.action);
+    assert.equal(actions.includes("class.recurring_schedule_updated"), true);
+    assert.equal(actions.includes("class.schedule_change"), false);
+  });
+
   it("fails closed when reactivation would introduce a conflict into an approved swap", async () => {
     const reactivationFirst = await createScheduledClass({
       name: "Reactivation First",

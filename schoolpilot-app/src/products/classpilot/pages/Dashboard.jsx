@@ -486,14 +486,6 @@ export default function Dashboard() {
     refetchInterval: 10000,
   });
 
-  const { data: scheduledClassConflicts = EMPTY_LIST } = useQuery({
-    queryKey: ['/api/classpilot/scheduled-conflicts'],
-    queryFn: () => apiRequest('GET', '/classpilot/scheduled-conflicts'),
-    select: (data) => data?.conflicts || [],
-    enabled: isAdmin || isTeacher,
-    refetchInterval: 15000,
-  });
-
   // Admin observe mode logic
   const observedSession = isAdmin && adminObservedSessionId
     ? allActiveSessions.find(s => s.id === adminObservedSessionId)
@@ -1056,7 +1048,6 @@ export default function Dashboard() {
               }
             }
             if (message.type === 'scheduled-class-conflict-updated') {
-              queryClient.invalidateQueries({ queryKey: ['/api/classpilot/scheduled-conflicts'] });
               queryClient.invalidateQueries({ queryKey: ['/api/coverage/available-students'] });
               queryClient.invalidateQueries({ queryKey: ['/api/coverage/claimed-students'] });
               queryClient.invalidateQueries({ queryKey: ['/api/sessions/active'], exact: false });
@@ -1891,7 +1882,9 @@ export default function Dashboard() {
   const startScheduledConflictMutation = useMutation({
     mutationFn: async (conflictId) => apiRequest('POST', `/classpilot/scheduled-conflicts/${encodeURIComponent(conflictId)}/start-anyway`, {}),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/classpilot/scheduled-conflicts'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/coverage/available-students'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/coverage/claimed-students'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/coverage/contexts'] });
       queryClient.invalidateQueries({ queryKey: ['/api/sessions/active'], exact: false });
       queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
       queryClient.invalidateQueries({ queryKey: ['/api/groups'], exact: false });
@@ -1900,7 +1893,6 @@ export default function Dashboard() {
     },
     onError: (error) => {
       if (error.response?.data?.code === "SCHEDULED_CONFLICT_EXPIRED") {
-        queryClient.invalidateQueries({ queryKey: ['/api/classpilot/scheduled-conflicts'] });
         queryClient.invalidateQueries({ queryKey: ['/api/coverage/available-students'] });
         queryClient.invalidateQueries({ queryKey: ['/api/coverage/claimed-students'] });
         queryClient.invalidateQueries({ queryKey: ['/api/coverage/contexts'] });
@@ -1914,17 +1906,6 @@ export default function Dashboard() {
     },
   });
 
-  const skipScheduledConflictMutation = useMutation({
-    mutationFn: async (conflictId) => apiRequest('POST', `/classpilot/scheduled-conflicts/${encodeURIComponent(conflictId)}/skip`, {}),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/classpilot/scheduled-conflicts'] });
-      toast({ title: "Scheduled Class Skipped", description: "This scheduled class will not auto-start again today." });
-    },
-    onError: (error) => {
-      toast({ variant: "destructive", title: "Could not skip scheduled class", description: error.response?.data?.error || error.message });
-    },
-  });
-
   const skipScheduledClassMutation = useMutation({
     mutationFn: async (groupId) => (
       apiRequest('POST', `/classpilot/scheduled-classes/${encodeURIComponent(groupId)}/skip-today`, {})
@@ -1932,7 +1913,6 @@ export default function Dashboard() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/groups'], exact: false });
       queryClient.invalidateQueries({ queryKey: ['/api/teacher/groups'], exact: false });
-      queryClient.invalidateQueries({ queryKey: ['/api/classpilot/scheduled-conflicts'] });
       setSkipTodayGroup(null);
       toast({
         title: "Scheduled Class Skipped",
@@ -2006,7 +1986,6 @@ export default function Dashboard() {
     },
     onError: (error) => {
       if (error.response?.data?.code === "SCHEDULED_CONFLICT_EXPIRED") {
-        queryClient.invalidateQueries({ queryKey: ['/api/classpilot/scheduled-conflicts'] });
         queryClient.invalidateQueries({ queryKey: ['/api/coverage/available-students'] });
         queryClient.invalidateQueries({ queryKey: ['/api/coverage/claimed-students'] });
         queryClient.invalidateQueries({ queryKey: ['/api/coverage/contexts'] });
@@ -2989,75 +2968,6 @@ export default function Dashboard() {
           />
         )}
 
-        {scheduledClassConflicts.length > 0 && (
-          <div className="mb-6 space-y-3" data-testid="scheduled-class-conflicts">
-            {scheduledClassConflicts.map((conflict) => (
-              <div
-                key={conflict.id}
-                className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-slate-950 shadow-sm dark:border-amber-800 dark:bg-amber-950/30 dark:text-slate-100"
-                data-testid={`scheduled-class-conflict-${conflict.id}`}
-              >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 text-sm font-semibold">
-                      <Calendar className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-                      Scheduled supervision needed
-                    </div>
-                    <p className="mt-1 text-sm text-slate-700 dark:text-slate-300">{conflict.message}</p>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      <Badge variant="secondary" className="bg-white/80 text-slate-800 dark:bg-slate-900/60 dark:text-slate-200">
-                        Reporting active
-                      </Badge>
-                      {!conflict.scheduledTeacherConnected && (
-                        <Badge variant="secondary" className="bg-white/80 text-slate-800 dark:bg-slate-900/60 dark:text-slate-200">
-                          Teacher offline
-                        </Badge>
-                      )}
-                    </div>
-                    {(conflict.overlap?.monitoredGroups || conflict.overlap?.groups || []).length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {(conflict.overlap?.monitoredGroups || conflict.overlap?.groups || []).map((group) => (
-                          <Badge key={group.sessionId} variant="secondary" className="bg-white/80 text-slate-800 dark:bg-slate-900/60 dark:text-slate-200">
-                            {group.teacherName} - {group.className} - {group.affectedCount} student{group.affectedCount === 1 ? "" : "s"}
-                          </Badge>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  {conflict.status === "expired" ? (
-                    <p className="shrink-0 rounded-md bg-white/80 px-3 py-2 text-sm font-medium text-slate-700 dark:bg-slate-900/60 dark:text-slate-200">
-                      This scheduled block has ended.
-                    </p>
-                  ) : conflict.canStartAnyway && (
-                    <div className="flex shrink-0 items-center gap-2">
-                      {conflict.canSkip && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => skipScheduledConflictMutation.mutate(conflict.id)}
-                          disabled={skipScheduledConflictMutation.isPending || startScheduledConflictMutation.isPending}
-                          data-testid={`button-skip-scheduled-conflict-${conflict.id}`}
-                        >
-                          Skip Today
-                        </Button>
-                      )}
-                      <Button
-                        size="sm"
-                        onClick={() => startScheduledConflictMutation.mutate(conflict.id)}
-                        disabled={startScheduledConflictMutation.isPending || skipScheduledConflictMutation.isPending}
-                        data-testid={`button-start-scheduled-conflict-${conflict.id}`}
-                        className="bg-amber-400 text-slate-950 hover:bg-amber-300"
-                      >
-                        Start Class
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
         {dashboardCapabilities.observedOtherClass ? (
           <div className="mb-6 flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-950 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-100" role="status" data-testid="observe-read-only-banner">
             <Eye className="mt-0.5 h-4 w-4 shrink-0" />
@@ -3227,16 +3137,29 @@ export default function Dashboard() {
                           {section.blockStartTime && section.blockEndTime ? ` (${section.blockStartTime}-${section.blockEndTime})` : ""}
                         </p>
                       </div>
-                      <Button
-                        size="sm"
-                        onClick={() => handleClaimStudents(section.students)}
-                        disabled={claimPickupMutation.isPending || section.students.length === 0}
-                        data-testid={`button-claim-scheduled-coverage-${section.id}`}
-                        className="bg-amber-400 text-slate-950 hover:bg-amber-300"
-                      >
-                        <Users className="h-4 w-4 mr-2" />
-                        Claim Group
-                      </Button>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {section.canStartClass && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => startScheduledConflictMutation.mutate(section.id)}
+                            disabled={startScheduledConflictMutation.isPending}
+                            data-testid={`button-start-scheduled-coverage-${section.id}`}
+                          >
+                            Start Class
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          onClick={() => handleClaimStudents(section.students)}
+                          disabled={claimPickupMutation.isPending || section.students.length === 0}
+                          data-testid={`button-claim-scheduled-coverage-${section.id}`}
+                          className="bg-amber-400 text-slate-950 hover:bg-amber-300"
+                        >
+                          <Users className="h-4 w-4 mr-2" />
+                          Claim Group
+                        </Button>
+                      </div>
                     </div>
                     <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-2 xl:grid-cols-3">
                       {section.students.map((student) => (
