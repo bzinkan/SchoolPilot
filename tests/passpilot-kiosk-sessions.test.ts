@@ -102,6 +102,11 @@ before(async () => {
     .catch(() => false);
   if (!schemaReady) return;
 
+  await pool.query(`
+    ALTER TABLE schools
+    ADD COLUMN IF NOT EXISTS kiosk_style TEXT NOT NULL DEFAULT 'simple'
+  `);
+
   schoolA = await storage.createSchool({
     name: `${TAG}_A`,
     domain: `${TAG}-a.example.edu`,
@@ -271,6 +276,7 @@ describe("PassPilot per-device kiosk sessions", { concurrency: false }, () => {
     sessionOne = created.body.session;
     assert.equal(sessionOne.status, "unclaimed");
     assert.match(sessionOne.claimCode, /^\d{6}$/);
+    assert.equal(created.body.kioskStyle, "simple");
 
     const resumed = await requestJson("POST", "/passpilot/kiosk/session", {}, kioskHeaders(schoolA.id, sessionOne.id));
     assert.equal(resumed.status, 200);
@@ -291,6 +297,7 @@ describe("PassPilot per-device kiosk sessions", { concurrency: false }, () => {
     assert.equal(config.body.session.status, "unclaimed");
     assert.equal(config.body.session.claimCode, sessionOne.claimCode);
     assert.equal(config.body.classId, null);
+    assert.equal(config.body.kioskStyle, "simple");
 
     const students = await requestJson("GET", `/passpilot/kiosk/students?school=${schoolA.id}&gradeId=${gradeA.id}`, undefined, kioskHeaders(schoolA.id, sessionOne.id));
     assert.equal(students.status, 409);
@@ -334,6 +341,40 @@ describe("PassPilot per-device kiosk sessions", { concurrency: false }, () => {
     assert.equal(config.body.classId, gradeA.id);
     assert.equal(config.body.className, "Class A");
     assert.equal(config.body.kioskName, "Room 204");
+    assert.equal(config.body.kioskStyle, "simple");
+
+    // The school-wide kiosk style rides every config and session response so
+    // open kiosks self-redirect when an admin flips it. Assert the flipped
+    // (non-default) value on each branch a redirected device actually hits:
+    // claimed /config, unclaimed /config, POST /session create, and POST
+    // /session resume (the exact response a kiosk presenting its carried
+    // session id receives after the hop).
+    await asSystem(() =>
+      db.execute(sql`UPDATE schools SET kiosk_style = 'badge' WHERE id = ${schoolA.id}`)
+    );
+    try {
+      const badgeConfig = await requestJson("GET", `/passpilot/kiosk/config?school=${schoolA.id}`, undefined, kioskHeaders(schoolA.id, sessionOne.id));
+      assert.equal(badgeConfig.status, 200);
+      assert.equal(badgeConfig.body.kioskStyle, "badge");
+
+      const badgeCreated = await requestJson("POST", "/passpilot/kiosk/session", {}, kioskHeaders(schoolA.id));
+      assert.equal(badgeCreated.status, 201);
+      assert.equal(badgeCreated.body.kioskStyle, "badge");
+
+      const badgeResumed = await requestJson("POST", "/passpilot/kiosk/session", {}, kioskHeaders(schoolA.id, badgeCreated.body.session.id));
+      assert.equal(badgeResumed.status, 200);
+      assert.equal(badgeResumed.body.session.id, badgeCreated.body.session.id);
+      assert.equal(badgeResumed.body.kioskStyle, "badge");
+
+      const badgeUnclaimed = await requestJson("GET", `/passpilot/kiosk/config?school=${schoolA.id}`, undefined, kioskHeaders(schoolA.id, badgeCreated.body.session.id));
+      assert.equal(badgeUnclaimed.status, 200);
+      assert.equal(badgeUnclaimed.body.session.status, "unclaimed");
+      assert.equal(badgeUnclaimed.body.kioskStyle, "badge");
+    } finally {
+      await asSystem(() =>
+        db.execute(sql`UPDATE schools SET kiosk_style = 'simple' WHERE id = ${schoolA.id}`)
+      );
+    }
 
     const roster = await requestJson("GET", `/passpilot/kiosk/students?school=${schoolA.id}&gradeId=${gradeA.id}`, undefined, kioskHeaders(schoolA.id, sessionOne.id));
     assert.equal(roster.status, 200);
@@ -518,6 +559,23 @@ describe("PassPilot per-device kiosk sessions", { concurrency: false }, () => {
     const checkin = await requestJson("POST", "/passpilot/kiosk/checkin", { studentId: studentC.id }, kioskHeaders(schoolC.id, kioskSession.id));
     assert.equal(checkin.status, 200);
     assert.equal(checkin.body.pass.status, "returned");
+
+    // The class-inactive 409 must still carry the school kiosk style: parked
+    // kiosks only ever see this response, and it is their sole signal to hop
+    // after an admin flips the style.
+    await asSystem(() =>
+      db.execute(sql`UPDATE groups SET status = 'archived' WHERE id = ${canonicalGroup.id}`)
+    );
+    try {
+      const inactive = await requestJson("GET", `/passpilot/kiosk/config?school=${schoolC.id}`, undefined, kioskHeaders(schoolC.id, kioskSession.id));
+      assert.equal(inactive.status, 409);
+      assert.equal(inactive.body.code, "PASSPILOT_KIOSK_CLASS_INACTIVE");
+      assert.equal(inactive.body.kioskStyle, "simple");
+    } finally {
+      await asSystem(() =>
+        db.execute(sql`UPDATE groups SET status = 'active' WHERE id = ${canonicalGroup.id}`)
+      );
+    }
   });
 
   it("scopes single-session retarget (PUT /sessions/:id) to owner or manager", async (t) => {

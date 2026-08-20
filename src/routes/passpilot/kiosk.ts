@@ -291,19 +291,25 @@ router.post("/session", kioskLimiter, async (req, res, next) => {
       return res.status(400).json({ error: "School ID required (x-school-id header)" });
     }
     const kioskPin = req.headers["x-kiosk-pin"] as string | undefined;
-    const { error, status } = await validateKiosk(schoolId, kioskPin);
-    if (error) return res.status(status).json({ error });
+    const { error, status, school } = await validateKiosk(schoolId, kioskPin);
+    if (error || !school) return res.status(status).json({ error });
 
     await runWithTenantContext({ schoolId }, async () => {
       const presentedId = getKioskSessionId(req);
       if (presentedId) {
         const existing = await getLiveKioskSessionById(schoolId, presentedId);
         if (existing) {
-          return res.json({ session: await kioskSessionDeviceView(schoolId, existing) });
+          return res.json({
+            session: await kioskSessionDeviceView(schoolId, existing),
+            kioskStyle: school.kioskStyle,
+          });
         }
       }
       const session = await createKioskSession(schoolId);
-      return res.status(201).json({ session: await kioskSessionDeviceView(schoolId, session) });
+      return res.status(201).json({
+        session: await kioskSessionDeviceView(schoolId, session),
+        kioskStyle: school.kioskStyle,
+      });
     });
   } catch (err) {
     next(err);
@@ -749,6 +755,7 @@ router.get("/config", kioskLimiter, async (req, res, next) => {
             kioskEnabled: school.kioskEnabled,
             kioskRequiresApproval: school.kioskRequiresApproval,
             defaultPassDuration: school.defaultPassDuration,
+            kioskStyle: school.kioskStyle,
           });
         }
         await touchKioskSessionLastSeen(schoolId, session.id);
@@ -774,12 +781,15 @@ router.get("/config", kioskLimiter, async (req, res, next) => {
             manager: true,
           });
           if (!roster) {
+            // kioskStyle rides the 409 too: a kiosk parked on this error still
+            // polls config and must observe an admin style flip.
             return res.status(409).json({
               error:
                 "The configured kiosk class is no longer active. Ask your teacher to send a new class to this kiosk.",
               code: "PASSPILOT_KIOSK_CLASS_INACTIVE",
               source: "classpilot_groups",
               session: { id: session.id, status: session.status },
+              kioskStyle: school.kioskStyle,
             });
           }
         }
@@ -794,6 +804,7 @@ router.get("/config", kioskLimiter, async (req, res, next) => {
           kioskEnabled: school.kioskEnabled,
           kioskRequiresApproval: school.kioskRequiresApproval,
           defaultPassDuration: school.defaultPassDuration,
+          kioskStyle: school.kioskStyle,
         });
       });
     }
@@ -820,6 +831,7 @@ router.get("/config", kioskLimiter, async (req, res, next) => {
           error: "The configured kiosk class is no longer active. Ask an administrator to select an active ClassPilot class.",
           code: "PASSPILOT_KIOSK_CLASS_INACTIVE",
           source: "classpilot_groups",
+          kioskStyle: school.kioskStyle,
         });
       }
     }
@@ -831,6 +843,7 @@ router.get("/config", kioskLimiter, async (req, res, next) => {
       kioskEnabled: school.kioskEnabled,
       kioskRequiresApproval: school.kioskRequiresApproval,
       defaultPassDuration: school.defaultPassDuration,
+      kioskStyle: school.kioskStyle,
     });
   } catch (err) {
     next(err);

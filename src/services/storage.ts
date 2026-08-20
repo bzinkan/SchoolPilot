@@ -1587,12 +1587,15 @@ export async function updateSchool(
   return school;
 }
 
+export type PasspilotKioskStyle = "simple" | "badge";
+
 export type PasspilotAdminSettingsDto = {
   name: string;
   schoolTimezone: string;
   kioskEnabled: boolean;
   kioskRequiresApproval: boolean;
   kioskPinConfigured: boolean;
+  kioskStyle: PasspilotKioskStyle;
   revision: number;
 };
 
@@ -1602,6 +1605,7 @@ export type PasspilotAdminSettingsPatch = {
   kioskEnabled?: boolean;
   kioskRequiresApproval?: boolean;
   kioskPinHash?: string | null;
+  kioskStyle?: PasspilotKioskStyle;
 };
 
 export type PasspilotAdminSettingsActor = {
@@ -1627,6 +1631,7 @@ function passpilotAdminSettingsDto(school: Pick<
   | "kioskEnabled"
   | "kioskRequiresApproval"
   | "kioskPinHash"
+  | "kioskStyle"
   | "passpilotSettingsRevision"
 >): PasspilotAdminSettingsDto {
   return {
@@ -1635,6 +1640,7 @@ function passpilotAdminSettingsDto(school: Pick<
     kioskEnabled: school.kioskEnabled,
     kioskRequiresApproval: school.kioskRequiresApproval,
     kioskPinConfigured: Boolean(school.kioskPinHash),
+    kioskStyle: school.kioskStyle,
     revision: school.passpilotSettingsRevision,
   };
 }
@@ -1653,6 +1659,7 @@ export async function getPasspilotAdminSettings(
       kioskEnabled: schools.kioskEnabled,
       kioskRequiresApproval: schools.kioskRequiresApproval,
       kioskPinHash: schools.kioskPinHash,
+      kioskStyle: schools.kioskStyle,
       passpilotSettingsRevision: schools.passpilotSettingsRevision,
     })
     .from(schools)
@@ -1695,6 +1702,7 @@ async function persistPasspilotAdminSettings(
         kioskEnabled: schools.kioskEnabled,
         kioskRequiresApproval: schools.kioskRequiresApproval,
         kioskPinHash: schools.kioskPinHash,
+        kioskStyle: schools.kioskStyle,
         passpilotSettingsRevision: schools.passpilotSettingsRevision,
       })
       .from(schools)
@@ -1719,6 +1727,7 @@ async function persistPasspilotAdminSettings(
       patch.kioskRequiresApproval ?? current.kioskRequiresApproval;
     const nextKioskPinHash =
       patch.kioskPinHash === undefined ? currentSchool.kioskPinHash : patch.kioskPinHash;
+    const nextKioskStyle = patch.kioskStyle ?? current.kioskStyle;
 
     // Public kiosk routes deliberately fail closed without a PIN. Do not let
     // an administrator create a misleading "enabled" configuration that can
@@ -1734,6 +1743,7 @@ async function persistPasspilotAdminSettings(
     if (nextKioskRequiresApproval !== current.kioskRequiresApproval) {
       changedFields.push("kioskRequiresApproval");
     }
+    if (nextKioskStyle !== current.kioskStyle) changedFields.push("kioskStyle");
     const kioskPinChange = patch.kioskPinHash === undefined
       ? null
       : patch.kioskPinHash === null
@@ -1764,6 +1774,7 @@ async function persistPasspilotAdminSettings(
         kioskEnabled: nextKioskEnabled,
         kioskRequiresApproval: nextKioskRequiresApproval,
         kioskPinHash: nextKioskPinHash,
+        kioskStyle: nextKioskStyle,
         passpilotSettingsRevision: revision,
         ...(nextTimezone !== current.schoolTimezone
           ? { gopilotSettingsRevision: sql`${schools.gopilotSettingsRevision} + 1` }
@@ -1777,6 +1788,7 @@ async function persistPasspilotAdminSettings(
         kioskEnabled: schools.kioskEnabled,
         kioskRequiresApproval: schools.kioskRequiresApproval,
         kioskPinHash: schools.kioskPinHash,
+        kioskStyle: schools.kioskStyle,
         passpilotSettingsRevision: schools.passpilotSettingsRevision,
       });
     if (!savedSchool) return undefined;

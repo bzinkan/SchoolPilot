@@ -32,6 +32,7 @@ const DTO_KEYS = [
   "kioskEnabled",
   "kioskPinConfigured",
   "kioskRequiresApproval",
+  "kioskStyle",
   "name",
   "revision",
   "schoolTimezone",
@@ -116,7 +117,8 @@ before(async () => {
 
   await pool.query(`
     ALTER TABLE schools
-    ADD COLUMN IF NOT EXISTS passpilot_settings_revision INTEGER NOT NULL DEFAULT 0
+    ADD COLUMN IF NOT EXISTS passpilot_settings_revision INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS kiosk_style TEXT NOT NULL DEFAULT 'simple'
   `);
 
   schoolA = await storage.createSchool({
@@ -220,6 +222,10 @@ describe("PassPilot admin settings backend", { concurrency: false }, () => {
     assert.match(schemaSource, /passpilotSettingsRevision:\s*integer\("passpilot_settings_revision"\)/);
     assert.match(migrationSource, /ADD COLUMN IF NOT EXISTS passpilot_settings_revision INTEGER NOT NULL DEFAULT 0/);
     assert.match(migrationSource, /schools_passpilot_settings_revision_check/);
+    assert.match(schemaSource, /kioskStyle:\s*text\("kiosk_style"\)/);
+    assert.match(migrationSource, /ADD COLUMN IF NOT EXISTS kiosk_style TEXT NOT NULL DEFAULT 'simple'/);
+    assert.match(migrationSource, /schools_kiosk_style_check/);
+    assert.match(migrationSource, /CHECK \(kiosk_style IN \('simple', 'badge'\)\) NOT VALID/);
     assert.match(routeIndexSource, /router\.use\("\/passpilot\/admin\/settings", passpilotSettingsRoutes\)/);
     assert.match(routeIndexSource, /router\.use\("\/admin\/settings", passpilotActiveGradeLevelsCompatibilityRouter\)/);
     assert.match(routeIndexSource, /router\.use\("\/admin\/settings", passpilotLegacySettingsCompatibilityRouter\)/);
@@ -314,6 +320,7 @@ describe("PassPilot admin settings backend", { concurrency: false }, () => {
       ["PUT", { kioskEnabled: true }],
       ["PATCH", { kioskPin: "2468" }],
       ["PATCH", { kioskRequiresApproval: true }],
+      ["PATCH", { kioskStyle: "badge" }],
     ] as const) {
       const genericSchoolAttempt = await requestJson(
         method,
@@ -348,6 +355,7 @@ describe("PassPilot admin settings backend", { concurrency: false }, () => {
       { expectedRevision: 0, name: "   " },
       { expectedRevision: 0, kioskPin: "123" },
       { expectedRevision: 0, activeGradeLevels: "[\"K\"]" },
+      { expectedRevision: 0, kioskStyle: "kiosk" },
       { kioskEnabled: false },
     ];
     for (const body of invalidBodies) {
@@ -465,6 +473,7 @@ describe("PassPilot admin settings backend", { concurrency: false }, () => {
       kioskEnabled: true,
       kioskRequiresApproval: true,
       kioskPinConfigured: true,
+      kioskStyle: "simple",
       revision: 1,
     });
 
@@ -623,6 +632,7 @@ describe("PassPilot admin settings backend", { concurrency: false }, () => {
       kioskEnabled: true,
       kioskRequiresApproval: true,
       kioskPinConfigured: true,
+      kioskStyle: "simple",
       revision: 1,
     });
 
@@ -698,6 +708,53 @@ describe("PassPilot admin settings backend", { concurrency: false }, () => {
       SELECT kiosk_pin_hash FROM schools WHERE id = ${schoolA.id}
     `));
     assert.equal(afterClear.rows[0].kiosk_pin_hash, null);
+  });
+
+  it("saves the school-wide kiosk style through the revisioned contract and audits it", async () => {
+    const headers = authFor(adminA, schoolA.id);
+    const current = await requestJson(
+      "GET",
+      "/passpilot/admin/settings",
+      undefined,
+      headers
+    );
+    assert.equal(current.status, 200);
+    assert.equal(current.body.kioskStyle, "simple");
+
+    const saved = await requestJson(
+      "PATCH",
+      "/passpilot/admin/settings",
+      { expectedRevision: current.body.revision, kioskStyle: "badge" },
+      headers
+    );
+    assert.equal(saved.status, 200, JSON.stringify(saved.body));
+    assertExactDto(saved.body);
+    assert.equal(saved.body.kioskStyle, "badge");
+    assert.equal(saved.body.revision, current.body.revision + 1);
+
+    const persisted = await asSystem(() => db.execute(sql`
+      SELECT kiosk_style FROM schools WHERE id = ${schoolA.id}
+    `));
+    assert.equal(persisted.rows[0].kiosk_style, "badge");
+
+    const audit = await asSystem(() => db.execute(sql`
+      SELECT changes
+      FROM audit_logs
+      WHERE school_id = ${schoolA.id}
+        AND action = 'passpilot.settings.update'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `));
+    assert.deepEqual(audit.rows[0].changes, { fields: ["kioskStyle"], kioskPin: null });
+
+    const restored = await requestJson(
+      "PATCH",
+      "/passpilot/admin/settings",
+      { expectedRevision: saved.body.revision, kioskStyle: "simple" },
+      headers
+    );
+    assert.equal(restored.status, 200, JSON.stringify(restored.body));
+    assert.equal(restored.body.kioskStyle, "simple");
   });
 
   it("forces a stale settings draft to conflict after an alternate school writer", async () => {

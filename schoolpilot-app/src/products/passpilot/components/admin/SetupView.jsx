@@ -42,6 +42,7 @@ function samePassPilotSettings(left, right) {
     && left?.kioskEnabled === right?.kioskEnabled
     && left?.kioskRequiresApproval === right?.kioskRequiresApproval
     && left?.kioskPinConfigured === right?.kioskPinConfigured
+    && left?.kioskStyle === right?.kioskStyle
     && left?.revision === right?.revision;
 }
 
@@ -2686,8 +2687,16 @@ function SettingsTab() {
 function SettingsForm({ settings, settingsQueryKey, refetchUser }) {
   const [name, setName] = useState(settings.name);
   const [kioskEnabled, setKioskEnabled] = useState(settings.kioskEnabled);
+  const [kioskStyle, setKioskStyle] = useState(settings.kioskStyle);
   const [schoolTimezone, setSchoolTimezone] = useState(settings.schoolTimezone);
   const [kioskPin, setKioskPin] = useState("");
+  // Deploy-skew guard: an old server omits kioskStyle from the DTO. Hide the
+  // control and never include the field in a save (its .strict() schema would
+  // reject the whole payload). The ?? fallback also covers a tab that
+  // initialized before a backend upgrade delivered the field at an unchanged
+  // revision (the form's remount key never reruns the useState initializer).
+  const kioskStyleSupported = settings.kioskStyle !== undefined;
+  const effectiveKioskStyle = kioskStyle ?? settings.kioskStyle;
   const [saving, setSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [conflict, setConflict] = useState(null);
@@ -2700,6 +2709,7 @@ function SettingsForm({ settings, settingsQueryKey, refetchUser }) {
   const dirty = trimmedName !== settings.name
     || schoolTimezone !== settings.schoolTimezone
     || kioskEnabled !== settings.kioskEnabled
+    || (kioskStyleSupported && effectiveKioskStyle !== settings.kioskStyle)
     || !!kioskPin;
 
   const verifySavedSettings = async (candidate) => {
@@ -2749,6 +2759,9 @@ function SettingsForm({ settings, settingsQueryKey, refetchUser }) {
       if (trimmedName !== settings.name) payload.name = trimmedName;
       if (schoolTimezone !== settings.schoolTimezone) payload.schoolTimezone = schoolTimezone;
       if (kioskEnabled !== settings.kioskEnabled) payload.kioskEnabled = kioskEnabled;
+      if (kioskStyleSupported && effectiveKioskStyle !== settings.kioskStyle) {
+        payload.kioskStyle = effectiveKioskStyle;
+      }
       if (kioskPin) payload.kioskPin = kioskPin;
 
       const saved = await apiRequest("PATCH", PASS_PILOT_SETTINGS_PATH, payload);
@@ -2852,6 +2865,33 @@ function SettingsForm({ settings, settingsQueryKey, refetchUser }) {
               disabled={saving || !!pendingVerification}
             />
           </div>
+
+          {kioskStyleSupported ? (
+            <div className="space-y-1">
+              <Label htmlFor="passpilot-kiosk-style">Kiosk Style</Label>
+              <p id="passpilot-kiosk-style-description" className="text-xs text-muted-foreground">
+                School-wide. Every kiosk device switches to the selected style automatically.
+              </p>
+              <Select
+                value={effectiveKioskStyle}
+                onValueChange={setKioskStyle}
+                disabled={saving || !!pendingVerification}
+              >
+                <SelectTrigger
+                  id="passpilot-kiosk-style"
+                  className="w-full"
+                  aria-describedby="passpilot-kiosk-style-description"
+                  data-testid="select-kiosk-style"
+                >
+                  <SelectValue placeholder="Select kiosk style..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="simple">Simple — students tap their name</SelectItem>
+                  <SelectItem value="badge">Badge / ID — students scan or type their ID</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
 
           <div className="space-y-1">
             <Label htmlFor="passpilot-kiosk-pin">Kiosk PIN</Label>

@@ -35,6 +35,7 @@ const patchSettingsSchema = z
       .regex(/^\d{4,8}$/, "Kiosk PIN must be 4-8 digits")
       .nullable()
       .optional(),
+    kioskStyle: z.enum(["simple", "badge"]).optional(),
   })
   .strict()
   .refine(
@@ -43,7 +44,8 @@ const patchSettingsSchema = z
       value.schoolTimezone !== undefined ||
       value.kioskEnabled !== undefined ||
       value.kioskRequiresApproval !== undefined ||
-      value.kioskPin !== undefined,
+      value.kioskPin !== undefined ||
+      value.kioskStyle !== undefined,
     { message: "Provide at least one setting to update" }
   );
 
