@@ -8,9 +8,9 @@
 > enrollment, real screenshot capture, 10-second heartbeat, class-scoped
 > command/received/completed ACK, forced reconnect, and cross-school isolation
 > smoke checks. The public Chrome Web Store listing
-> `iggbfegfcjkfieoemeolfmfnapepalca` was operator-confirmed August 19, 2026 at
-> live version `2.6.0`. The separately prepared ClassPilot package is `2.6.1`
-> and has not been published. Re-check the listing at smoke-test time; do not
+> `iggbfegfcjkfieoemeolfmfnapepalca` was confirmed by the operator and public
+> listing on August 19, 2026 at live version `2.6.1`; no higher package is
+> currently prepared. Re-check the listing at smoke-test time; do not
 > package or upload the extension from this SchoolPilot repository.
 
 ### Medium engineering acceptance — terminal and paused

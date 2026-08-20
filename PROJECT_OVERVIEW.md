@@ -151,7 +151,7 @@ Office/teacher/parent UI
 - `src/routes/index.ts` and `src/routes/compat.ts` carry many legacy aliases. Useful for compatibility, but they obscure the canonical API surface.
 - Production migrations run as an explicit `RUN_MIGRATIONS_ONLY=true` task before API/worker rollout; optional startup migrations are awaited before sockets, schedulers, or the HTTP listener start.
 - Backend, frontend, and extension suites are configured. ClassPilot releases require the SchoolPilot checks plus the separate extension repo's typecheck, Vitest, build, and real-Chrome resilience gate.
-- The ClassPilot extension remains a separately versioned release. The operator confirmed Web Store `2.6.0` on August 19, 2026; local package `2.6.1` is prepared but not published.
+- The ClassPilot extension remains a separately versioned release. The operator and public listing confirmed Web Store `2.6.1` live on August 19, 2026; no higher unpublished package is currently prepared.
 
 ## Missing Clarity Questions
 
