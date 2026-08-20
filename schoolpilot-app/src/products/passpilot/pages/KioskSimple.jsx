@@ -312,7 +312,7 @@ export default function KioskSimplePage() {
             className="w-full h-14 text-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-xl font-semibold transition-colors"
             disabled={!pinInput.trim()}
             onClick={() => {
-              localStorage.setItem(KIOSK_PIN_KEY, pinInput.trim());
+              kioskPinStore().setItem(KIOSK_PIN_KEY, pinInput.trim());
               setKioskPin(pinInput.trim());
               setPinInput("");
             }}
