@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { ArrowLeft, Bath, Heart, Triangle, Clock } from "lucide-react";
 import { isCanonicalPassPilotSource, PASSPILOT_CLASS_MODEL_HEADER } from "../classData";
+import { kioskPinStore } from "../kioskPinStore";
 
 const DESTINATIONS = [
   { value: "bathroom", label: "General/Restroom", icon: Bath, color: "text-blue-400" },
@@ -36,7 +37,7 @@ const KIOSK_PIN_KEY = "pp_kiosk_pin";
 
 export default function KioskSimplePage() {
   const [schoolId] = useState(() => new URLSearchParams(window.location.search).get("school") ?? "");
-  const [kioskPin, setKioskPin] = useState(() => localStorage.getItem(KIOSK_PIN_KEY) ?? "");
+  const [kioskPin, setKioskPin] = useState(() => kioskPinStore().getItem(KIOSK_PIN_KEY) ?? "");
   const [pinInput, setPinInput] = useState("");
   const [grades, setGrades] = useState([]);
   const [classSource, setClassSource] = useState(null);
@@ -80,7 +81,7 @@ export default function KioskSimplePage() {
   // 401 = wrong PIN: clear it so the PIN screen re-prompts
   const checkPinRejected = useCallback((r) => {
     if (r.status === 401) {
-      localStorage.removeItem(KIOSK_PIN_KEY);
+      kioskPinStore().removeItem(KIOSK_PIN_KEY);
       setKioskPin("");
     }
     return r;
@@ -300,7 +301,7 @@ export default function KioskSimplePage() {
             onChange={(e) => setPinInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && pinInput.trim()) {
-                localStorage.setItem(KIOSK_PIN_KEY, pinInput.trim());
+                kioskPinStore().setItem(KIOSK_PIN_KEY, pinInput.trim());
                 setKioskPin(pinInput.trim());
                 setPinInput("");
               }

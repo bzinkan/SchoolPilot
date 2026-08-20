@@ -577,6 +577,8 @@ describe("multi-school readiness route hardening", () => {
     assert.equal(pinConfig.status, 200);
     assert.equal(pinConfig.body.loginMethod, "name_pin");
     assert.equal(pinConfig.body.pinLoginEnabled, true);
+    assert.equal(pinConfig.body.schoolId, schoolA.id);
+    assert.equal(pinConfig.body.passpilotKioskAvailable, false);
 
     await inSchool(schoolA.id, () =>
       upsertSettings(schoolA.id, {
@@ -594,6 +596,57 @@ describe("multi-school readiness route hardening", () => {
     assert.equal(emailConfig.status, 200);
     assert.equal(emailConfig.body.loginMethod, "email_id");
     assert.equal(emailConfig.body.pinLoginEnabled, false);
+  });
+
+  it("extension login-config reports PassPilot kiosk availability only when the kiosk would work", async () => {
+    await inSchool(schoolA.id, () =>
+      upsertSettings(schoolA.id, {
+        enrollmentKey: schoolAEnrollmentKey,
+        enrollmentKeyRequired: true,
+        sharedChromebookSignInEnabled: true,
+      } as any)
+    );
+
+    const fetchConfig = () =>
+      requestJson(
+        "GET",
+        `/classpilot/extension/login-config?schoolSlug=${schoolA.slug}`,
+        undefined,
+        { "x-classpilot-enrollment-key": schoolAEnrollmentKey }
+      );
+
+    // schoolA has no PASSPILOT license (Super Admin toggle off) → no kiosk launch.
+    const withoutLicense = await fetchConfig();
+    assert.equal(withoutLicense.status, 200);
+    assert.equal(withoutLicense.body.schoolId, schoolA.id);
+    assert.equal(withoutLicense.body.passpilotKioskAvailable, false);
+
+    try {
+      await createProductLicense({ schoolId: schoolA.id, product: "PASSPILOT", status: "active" } as any);
+
+      // License alone is not enough — the kiosk must be enabled with a PIN set.
+      const licenseOnly = await fetchConfig();
+      assert.equal(licenseOnly.status, 200);
+      assert.equal(licenseOnly.body.passpilotKioskAvailable, false);
+
+      await asSystem(async () => {
+        await db.execute(
+          sql`UPDATE schools SET kiosk_enabled = true, kiosk_pin_hash = 'test-hash' WHERE id = ${schoolA.id}`
+        );
+      });
+      const available = await fetchConfig();
+      assert.equal(available.status, 200);
+      assert.equal(available.body.passpilotKioskAvailable, true);
+    } finally {
+      await asSystem(async () => {
+        await db.execute(
+          sql`DELETE FROM product_licenses WHERE school_id = ${schoolA.id} AND product = 'PASSPILOT'`
+        );
+        await db.execute(
+          sql`UPDATE schools SET kiosk_enabled = false, kiosk_pin_hash = NULL WHERE id = ${schoolA.id}`
+        );
+      });
+    }
   });
 
   it("admin student creation auto-generates ClassPilot PINs but not Student ID Numbers", async () => {
