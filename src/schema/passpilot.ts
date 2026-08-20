@@ -7,6 +7,7 @@ import {
   integer,
   index,
   unique,
+  uniqueIndex,
   check,
   foreignKey,
 } from "drizzle-orm/pg-core";
@@ -173,3 +174,80 @@ export const passes = pgTable(
 
 export type Pass = typeof passes.$inferSelect;
 export type InsertPass = typeof passes.$inferInsert;
+
+// ============================================================================
+// Kiosk sessions - PassPilot (per-device, teacher-bound)
+// ============================================================================
+// Replaces the school-global kiosk slot (schools.kiosk_grade_id /
+// kiosk_classpilot_group_id) with one row per kiosk device. A kiosk boots
+// unclaimed with a 6-digit claim code; a teacher claims it from their
+// authenticated session, binding (teacher, class). No FKs to
+// grades/groups/users — sessions are ephemeral device bindings; class and
+// teacher liveness are validated at claim/read time.
+export const passpilotKioskSessions = pgTable(
+  "passpilot_kiosk_sessions",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    claimCode: text("claim_code").notNull(),
+    teacherId: text("teacher_id"),
+    classSource: text("class_source").$type<
+      "legacy_grades" | "classpilot_groups" | null
+    >(),
+    gradeId: text("grade_id"),
+    classpilotGroupId: text("classpilot_group_id"),
+    status: text("status")
+      .notNull()
+      .default("unclaimed")
+      .$type<"unclaimed" | "active" | "released">(),
+    revision: integer("revision").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    releasedAt: timestamp("released_at", { withTimezone: true }),
+  },
+  (table) => [
+    unique("pp_kiosk_sessions_school_id_fk_key").on(table.schoolId, table.id),
+    uniqueIndex("pp_kiosk_sessions_school_claim_code_unique")
+      .on(table.schoolId, table.claimCode)
+      .where(sql`${table.status} <> 'released'`),
+    index("pp_kiosk_sessions_school_teacher_status_idx").on(
+      table.schoolId,
+      table.teacherId,
+      table.status
+    ),
+    index("pp_kiosk_sessions_school_status_last_seen_idx").on(
+      table.schoolId,
+      table.status,
+      table.lastSeenAt
+    ),
+    check(
+      "pp_kiosk_sessions_status_check",
+      sql`${table.status} IN ('unclaimed', 'active', 'released')`
+    ),
+    check("pp_kiosk_sessions_revision_check", sql`${table.revision} >= 0`),
+    check(
+      "pp_kiosk_sessions_class_source_check",
+      sql`${table.classSource} IS NULL OR ${table.classSource} IN ('legacy_grades', 'classpilot_groups')`
+    ),
+    check(
+      "pp_kiosk_sessions_single_class_check",
+      sql`NOT (${table.gradeId} IS NOT NULL AND ${table.classpilotGroupId} IS NOT NULL)`
+    ),
+    check(
+      "pp_kiosk_sessions_unclaimed_shape_check",
+      sql`${table.status} <> 'unclaimed' OR (${table.teacherId} IS NULL AND ${table.classSource} IS NULL AND ${table.gradeId} IS NULL AND ${table.classpilotGroupId} IS NULL)`
+    ),
+    check(
+      "pp_kiosk_sessions_active_shape_check",
+      sql`${table.status} <> 'active' OR (${table.teacherId} IS NOT NULL AND ((${table.classSource} IS NULL AND ${table.gradeId} IS NULL AND ${table.classpilotGroupId} IS NULL) OR (${table.classSource} = 'legacy_grades' AND ${table.gradeId} IS NOT NULL AND ${table.classpilotGroupId} IS NULL) OR (${table.classSource} = 'classpilot_groups' AND ${table.classpilotGroupId} IS NOT NULL AND ${table.gradeId} IS NULL)))`
+    ),
+  ]
+);
+
+export type KioskSession = typeof passpilotKioskSessions.$inferSelect;
+export type InsertKioskSession = typeof passpilotKioskSessions.$inferInsert;

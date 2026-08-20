@@ -60,6 +60,25 @@ export default function AppShell({ children, currentTab }) {
     }
   };
 
+  // Self-launched kiosks are auto-claimed by the launching teacher: create a
+  // session bound to them and pass it in the URL, so the kiosk never shows a
+  // claim code on the teacher's own device. Falls back to a plain URL (kiosk
+  // bootstraps its own unclaimed session) if the server predates sessions.
+  const openKiosk = async (type) => {
+    const base =
+      type === 'simple'
+        ? `/passpilot/kiosk/simple?school=${school.id}`
+        : `/passpilot/kiosk?school=${school.id}`;
+    let url = base;
+    try {
+      const data = await passPilotClassRequest('POST', '/passpilot/kiosk/sessions/self', {});
+      if (data?.session?.id) url = `${base}&session=${encodeURIComponent(data.session.id)}`;
+    } catch {
+      // Older server or transient failure — the kiosk page handles both.
+    }
+    window.open(url, '_blank');
+  };
+
   const handleKioskClick = (type) => {
     if (!school?.id) return;
     if (!kioskName) {
@@ -67,11 +86,7 @@ export default function AppShell({ children, currentTab }) {
       setKioskNameInput('');
       setIsKioskNameDialogOpen(true);
     } else {
-      const url =
-        type === 'simple'
-          ? `/passpilot/kiosk/simple?school=${school.id}`
-          : `/passpilot/kiosk?school=${school.id}`;
-      window.open(url, '_blank');
+      openKiosk(type);
     }
   };
 
@@ -84,11 +99,7 @@ export default function AppShell({ children, currentTab }) {
       setPendingKioskAction(null);
       return;
     }
-    const url =
-      pendingKioskAction === 'simple'
-        ? `/passpilot/kiosk/simple?school=${school.id}`
-        : `/passpilot/kiosk?school=${school.id}`;
-    window.open(url, '_blank');
+    await openKiosk(pendingKioskAction);
     setPendingKioskAction(null);
   };
 

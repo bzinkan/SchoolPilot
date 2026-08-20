@@ -63,10 +63,14 @@ const CSRF_EXEMPT_EXACT_PATHS = new Set([
   "/passpilot/kiosk/lookup",
   "/passpilot/kiosk/checkout",
   "/passpilot/kiosk/checkin",
+  // Kiosk device session bootstrap (public, PIN-gated). The authenticated
+  // /kiosk/sessions/* teacher endpoints are intentionally NOT exempt.
+  "/passpilot/kiosk/session",
   // Legacy alias mounts (routes/index.ts also mounts the kiosk router at /kiosk)
   "/kiosk/lookup",
   "/kiosk/checkout",
   "/kiosk/checkin",
+  "/kiosk/session",
 ]);
 
 const STATE_CHANGING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);

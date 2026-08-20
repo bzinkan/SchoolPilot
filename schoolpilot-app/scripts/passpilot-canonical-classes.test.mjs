@@ -273,6 +273,39 @@ async function installApiMocks(page, state) {
       });
       return;
     }
+    if (pathname === "/api/passpilot/kiosk/sessions/mine") {
+      await route.fulfill({ json: { sessions: state.kioskSessions } });
+      return;
+    }
+    if (pathname === "/api/passpilot/kiosk/sessions/claim") {
+      const payload = request.postDataJSON();
+      state.kioskClaims.push(payload);
+      const session = {
+        id: `kiosk-session-${state.kioskClaims.length}`,
+        status: "active",
+        classId: payload.classId,
+        className: "Class Two",
+      };
+      state.kioskSessions = [...state.kioskSessions, session];
+      await route.fulfill({ json: { session } });
+      return;
+    }
+    if (pathname === "/api/passpilot/kiosk/sessions/retarget") {
+      const payload = request.postDataJSON();
+      state.kioskRetargets.push(payload);
+      state.kioskSessions = state.kioskSessions.map((session) => ({
+        ...session,
+        classId: payload.classId,
+      }));
+      await route.fulfill({ json: { updated: state.kioskSessions.length, sessions: state.kioskSessions } });
+      return;
+    }
+    if (pathname.startsWith("/api/passpilot/kiosk/sessions/") && request.method() === "DELETE") {
+      const sessionId = pathname.split("/").pop();
+      state.kioskSessions = state.kioskSessions.filter((session) => session.id !== sessionId);
+      await route.fulfill({ json: { ok: true } });
+      return;
+    }
     if (pathname === "/api/grades" || pathname === "/api/my-classes") {
       await route.fulfill({ json: { grades: [{ id: "legacy-grade", name: "Legacy Advisory" }] } });
       return;
@@ -312,6 +345,9 @@ function freshState(overrides = {}) {
     passHistoryRequests: [],
     kioskClassId: "class-two",
     kioskWrites: [],
+    kioskSessions: [],
+    kioskClaims: [],
+    kioskRetargets: [],
     emptyCanonical: false,
     rosterFailuresRemaining: 0,
     historyFailuresRemaining: 0,
@@ -451,13 +487,25 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
 
     await canonicalPage.goto(`${baseUrl}/passpilot/my-class?classId=class-two`);
     await canonicalPage.getByText("Taylor Student", { exact: true }).waitFor();
-    await canonicalPage.getByRole("button", { name: "On Kiosk", exact: true }).waitFor();
-    await canonicalPage.getByRole("button", { name: "On Kiosk", exact: true }).click();
+    // No claimed kiosks yet: Send to Kiosk opens the claim-code dialog.
     await canonicalPage.getByRole("button", { name: "Send to Kiosk", exact: true }).waitFor();
-    assert.deepEqual(canonicalState.kioskWrites[0], { classId: null });
     await canonicalPage.getByRole("button", { name: "Send to Kiosk", exact: true }).click();
+    await canonicalPage.getByTestId("input-kiosk-claim-code").fill("123456");
+    await canonicalPage.getByTestId("button-submit-kiosk-claim").click();
     await canonicalPage.getByRole("button", { name: "On Kiosk", exact: true }).waitFor();
-    assert.deepEqual(canonicalState.kioskWrites[1], { classId: "class-two" });
+    assert.deepEqual(canonicalState.kioskClaims[0], { claimCode: "123456", classId: "class-two" });
+    // With a claimed kiosk, the button retargets the teacher's kiosks.
+    await canonicalPage.getByRole("button", { name: "On Kiosk", exact: true }).click();
+    await canonicalPage.waitForFunction(() => document.body.textContent.includes("Kiosk Updated"));
+    assert.deepEqual(canonicalState.kioskRetargets[0], { classId: "class-two" });
+    // Releasing via the kiosk chip returns to the unclaimed state.
+    await canonicalPage.getByLabel("Release kiosk").click();
+    await canonicalPage.getByRole("button", { name: "Send to Kiosk", exact: true }).waitFor();
+    // Re-claim so the reload path below still sees an active kiosk.
+    await canonicalPage.getByRole("button", { name: "Send to Kiosk", exact: true }).click();
+    await canonicalPage.getByTestId("input-kiosk-claim-code").fill("654321");
+    await canonicalPage.getByTestId("button-submit-kiosk-claim").click();
+    await canonicalPage.getByRole("button", { name: "On Kiosk", exact: true }).waitFor();
 
     await canonicalPage.reload();
     await canonicalPage.getByText("Taylor Student", { exact: true }).waitFor();
@@ -846,6 +894,12 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
       const request = route.request();
       const pathname = new URL(request.url()).pathname;
       staleKioskHeaders.push(request.headers()["x-passpilot-class-model"] || null);
+      if (pathname.endsWith("/session")) {
+        // Legacy server without per-device kiosk sessions: the kiosk must
+        // feature-detect the 404 and stay on the school-global flow.
+        await route.fulfill({ status: 404, json: { error: "Not found" } });
+        return;
+      }
       if (pathname.endsWith("/grades")) {
         await route.fulfill({ json: { source: "classpilot_groups", classes: [] } });
         return;
