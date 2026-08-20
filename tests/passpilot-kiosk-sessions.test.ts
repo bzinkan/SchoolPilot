@@ -256,6 +256,8 @@ describe("PassPilot per-device kiosk sessions", { concurrency: false }, () => {
     assert.match(startup, /"passpilot_kiosk_sessions",/);
     assert.match(deployment, /"passpilot_kiosk_sessions"/);
     assert.match(deployment, /Object\.freeze\(\["passpilot_kiosk_sessions"\]\)/);
+    const deployScript = readFileSync(new URL("../scripts/deploy.sh", import.meta.url), "utf8");
+    assert.match(deployScript, /\|passpilot_kiosk_sessions\|/);
     assert.match(csrf, /"\/passpilot\/kiosk\/session"/);
     assert.match(csrf, /"\/kiosk\/session"/);
   });
