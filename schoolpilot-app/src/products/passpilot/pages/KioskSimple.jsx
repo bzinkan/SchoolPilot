@@ -521,8 +521,9 @@ export default function KioskSimplePage() {
             </p>
           </div>
           <p className="text-gray-300 text-lg">
-            Teacher: open PassPilot &rarr; My Class &rarr; Send to Kiosk and
-            enter this code to claim this kiosk for your class.
+            Teacher: open PassPilot &rarr; Kiosk Mode &rarr; Claim
+            student-device kiosk (or My Class &rarr; Send to Kiosk) and enter
+            this code to claim this kiosk for your class.
           </p>
         </div>
       </div>

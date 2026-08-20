@@ -494,10 +494,16 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
     await canonicalPage.getByTestId("button-submit-kiosk-claim").click();
     await canonicalPage.getByRole("button", { name: "On Kiosk", exact: true }).waitFor();
     assert.deepEqual(canonicalState.kioskClaims[0], { claimCode: "123456", classId: "class-two" });
-    // With a claimed kiosk, the button retargets the teacher's kiosks.
+    // With a claimed kiosk, the button is an explicit menu: retarget or enter a code.
     await canonicalPage.getByRole("button", { name: "On Kiosk", exact: true }).click();
+    await canonicalPage.getByTestId("menu-send-to-kiosks").click();
     await canonicalPage.waitForFunction(() => document.body.textContent.includes("Kiosk Updated"));
     assert.deepEqual(canonicalState.kioskRetargets[0], { classId: "class-two" });
+    // The menu always offers direct code entry as well.
+    await canonicalPage.getByRole("button", { name: "On Kiosk", exact: true }).click();
+    await canonicalPage.getByTestId("menu-enter-kiosk-code").click();
+    await canonicalPage.getByTestId("input-kiosk-claim-code").waitFor();
+    await canonicalPage.getByTestId("button-cancel-kiosk-claim").click();
     // Releasing via the kiosk chip returns to the unclaimed state.
     await canonicalPage.getByLabel("Release kiosk").click();
     await canonicalPage.getByRole("button", { name: "Send to Kiosk", exact: true }).waitFor();
@@ -505,6 +511,20 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
     await canonicalPage.getByRole("button", { name: "Send to Kiosk", exact: true }).click();
     await canonicalPage.getByTestId("input-kiosk-claim-code").fill("654321");
     await canonicalPage.getByTestId("button-submit-kiosk-claim").click();
+    await canonicalPage.getByRole("button", { name: "On Kiosk", exact: true }).waitFor();
+
+    // The Kiosk Mode dropdown claims student-device kiosks from anywhere,
+    // with an explicit class picker (no class context in the top bar).
+    await canonicalPage.getByRole("button", { name: "Kiosk Mode" }).click();
+    await canonicalPage.getByTestId("menu-claim-kiosk").click();
+    await canonicalPage.getByTestId("select-kiosk-claim-class").click();
+    await canonicalPage.getByRole("option", { name: "Grade 4 Homeroom", exact: true }).click();
+    await canonicalPage.getByTestId("input-kiosk-claim-code").fill("222333");
+    await canonicalPage.getByTestId("button-submit-kiosk-claim").click();
+    await canonicalPage.waitForFunction(() => document.body.textContent.includes("Kiosk Claimed"));
+    assert.deepEqual(canonicalState.kioskClaims[2], { claimCode: "222333", classId: "class-two" });
+    // Release one of the two class-two kiosks; the survivor keeps On Kiosk.
+    await canonicalPage.getByLabel("Release kiosk").last().click();
     await canonicalPage.getByRole("button", { name: "On Kiosk", exact: true }).waitFor();
 
     await canonicalPage.reload();
