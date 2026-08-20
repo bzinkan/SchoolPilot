@@ -88,6 +88,7 @@ function Reset-AcceptanceState {
     $script:AcceptanceSeries = @{}
     $script:AcceptanceSourceStatuses = @{}
     $script:AcceptanceSourceCoverage = @{}
+    $script:AcceptanceCoverageThroughUtc = $null
     $script:AcceptanceSparseCoverageRequired =
         [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($entry in @(
@@ -713,6 +714,7 @@ $script:TrafficStoppedAtUtc = $trafficStart.AddMinutes(30)
 $script:AcceptanceSeries = @{}
 $script:AcceptanceSourceStatuses = @{}
 $script:AcceptanceSourceCoverage = @{}
+$script:AcceptanceCoverageThroughUtc = $null
 $script:AcceptanceSparseCoverageRequired =
     [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 $script:NatSamples = [System.Collections.Generic.List[object]]::new()
@@ -790,6 +792,7 @@ $assertions++
 $script:AcceptanceSeries = @{}
 $script:AcceptanceSourceStatuses = @{}
 $script:AcceptanceSourceCoverage = @{}
+$script:AcceptanceCoverageThroughUtc = $null
 $script:AcceptanceSparseCoverageRequired =
     [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 $script:TrafficStoppedAtUtc = $trafficStart.AddMinutes(90)
@@ -848,6 +851,7 @@ Assert-Condition ((Test-AcceptanceWindowSeriesBreach -MetricBatch $delayedBreach
 $assertions++
 $script:AcceptanceSourceStatuses = @{}
 $script:AcceptanceSourceCoverage = @{}
+$script:AcceptanceCoverageThroughUtc = $null
 $script:AcceptanceSparseCoverageRequired =
     [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 $agedPartial = [pscustomobject]@{
