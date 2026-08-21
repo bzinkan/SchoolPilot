@@ -26,6 +26,7 @@ export const REVIEWED_RLS_TABLE_ENABLEMENTS = Object.freeze([
   "classpilot_schedule_changes",
   "classpilot_schedule_change_legs",
   "passpilot_kiosk_sessions",
+  "passpilot_kiosk_devices",
 ]);
 
 export const GOPILOT_CHILD_RLS_TABLES = Object.freeze([
@@ -65,6 +66,7 @@ const REVIEWED_RLS_ENABLEMENT_REQUESTS = Object.freeze([
   GOPILOT_CHILD_RLS_TABLES,
   CLASSPILOT_SCHEDULE_CHANGE_RLS_TABLES,
   Object.freeze(["passpilot_kiosk_sessions"]),
+  Object.freeze(["passpilot_kiosk_devices"]),
 ]);
 
 function parseAllowlist(raw) {

@@ -896,6 +896,47 @@ export async function runStartupMigrations(): Promise<void> {
     CREATE INDEX IF NOT EXISTS pp_kiosk_sessions_school_status_last_seen_idx
     ON passpilot_kiosk_sessions (school_id, status, last_seen_at)
   `);
+  // Durable kiosk-device identity: nullable device_id on sessions links each
+  // ephemeral session to the passpilot_kiosk_devices binding below.
+  await pool.query(`
+    ALTER TABLE passpilot_kiosk_sessions ADD COLUMN IF NOT EXISTS device_id TEXT
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS pp_kiosk_sessions_school_device_idx
+    ON passpilot_kiosk_sessions (school_id, device_id) WHERE device_id IS NOT NULL
+  `);
+  // PassPilot kiosk device memory: one row per physical kiosk device
+  // remembering which teacher (and class) last ran a kiosk there, so the
+  // device can offer a one-tap PIN-gated resume instead of a fresh claim
+  // code. The id is client-generated, hence the composite (school_id, id)
+  // primary key — ids are scoped per school so a hostile client can never
+  // squat another tenant's device id. Non-authoritative memory: teacher
+  // membership and class authorization are re-validated on every resume.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS passpilot_kiosk_devices (
+      id VARCHAR NOT NULL,
+      school_id TEXT NOT NULL,
+      teacher_id TEXT NOT NULL,
+      class_source TEXT,
+      grade_id TEXT,
+      classpilot_group_id TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      last_used_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      CONSTRAINT pp_kiosk_devices_pkey PRIMARY KEY (school_id, id),
+      CONSTRAINT pp_kiosk_devices_class_source_check
+        CHECK (class_source IS NULL OR class_source IN ('legacy_grades', 'classpilot_groups')),
+      CONSTRAINT pp_kiosk_devices_class_shape_check
+        CHECK (
+          (class_source IS NULL AND grade_id IS NULL AND classpilot_group_id IS NULL) OR
+          (class_source = 'legacy_grades' AND grade_id IS NOT NULL AND classpilot_group_id IS NULL) OR
+          (class_source = 'classpilot_groups' AND classpilot_group_id IS NOT NULL AND grade_id IS NULL)
+        )
+    )
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS pp_kiosk_devices_school_last_used_idx
+    ON passpilot_kiosk_devices (school_id, last_used_at)
+  `);
   await pool.query(`
     CREATE OR REPLACE FUNCTION classpilot_protect_schedule_change_leg_snapshot()
     RETURNS trigger
@@ -3516,6 +3557,7 @@ export async function runStartupMigrations(): Promise<void> {
       "classpilot_schedule_changes",
       "classpilot_schedule_change_legs",
       "passpilot_kiosk_sessions",
+      "passpilot_kiosk_devices",
     ]);
     if (
       new Set(requiredRlsTables).size !== requiredRlsTables.length ||

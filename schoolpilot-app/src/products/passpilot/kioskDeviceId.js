@@ -1,0 +1,25 @@
+// Durable kiosk-device identity (pp_kiosk_device), sent as X-Kiosk-Device on
+// kiosk session bootstrap/resume so the server can remember which teacher
+// runs kiosks on this physical device.
+//
+// ALWAYS localStorage — deliberately including launch=gate mode. The gate
+// rule in kioskPinStore exists to keep the staff PIN out of a shared student
+// profile; this id is a non-secret opaque UUID that grants nothing without
+// the school kiosk PIN (it only selects WHICH teacher's kiosk a PIN-holder
+// can resume), and persisting it is exactly what makes next-morning resume
+// work on shared devices. One shared key for both kiosk pages: one physical
+// device, one identity.
+//
+// try/catch → null: storage-blocked browsers just lose the resume feature.
+export function getKioskDeviceId() {
+  try {
+    let id = window.localStorage.getItem("pp_kiosk_device");
+    if (!id) {
+      id = crypto.randomUUID();
+      window.localStorage.setItem("pp_kiosk_device", id);
+    }
+    return id;
+  } catch {
+    return null;
+  }
+}

@@ -56,11 +56,13 @@ import {
   passpilotGradeStudents,
   passes,
   passpilotKioskSessions,
+  passpilotKioskDevices,
   type Grade,
   type InsertGrade,
   type Pass,
   type InsertPass,
   type KioskSession,
+  type KioskDeviceBinding,
 } from "../schema/passpilot.js";
 import {
   homerooms,
@@ -3544,9 +3546,17 @@ export type KioskSessionAuthorization = {
 const KIOSK_SESSION_UNCLAIMED_TTL = sql`interval '2 hours'`;
 const KIOSK_SESSION_ACTIVE_IDLE_TTL = sql`interval '20 hours'`;
 const KIOSK_SESSION_RELEASED_RETENTION = sql`interval '24 hours'`;
+// Device bindings are long-lived by design (that is the feature): a kiosk
+// device remembers its teacher across the daily session churn. Rolling 60
+// days from last use, refreshed on every claim/retarget/resume.
+const KIOSK_DEVICE_BINDING_TTL = sql`interval '60 days'`;
 
 function kioskSessionLiveCondition(): SQL {
   return sql`((${passpilotKioskSessions.status} = 'unclaimed' AND ${passpilotKioskSessions.createdAt} > now() - ${KIOSK_SESSION_UNCLAIMED_TTL}) OR (${passpilotKioskSessions.status} = 'active' AND ${passpilotKioskSessions.lastSeenAt} > now() - ${KIOSK_SESSION_ACTIVE_IDLE_TTL}))`;
+}
+
+function kioskDeviceBindingLiveCondition(): SQL {
+  return sql`${passpilotKioskDevices.lastUsedAt} > now() - ${KIOSK_DEVICE_BINDING_TTL}`;
 }
 
 // In-tx class validation for kiosk session claims/retargets. Caller must hold
@@ -3707,6 +3717,148 @@ async function sweepExpiredKioskSessions(schoolId: string): Promise<void> {
         )!
       )
     );
+  // Device bindings ride the same per-school heartbeat.
+  await db
+    .delete(passpilotKioskDevices)
+    .where(
+      and(
+        eq(passpilotKioskDevices.schoolId, schoolId),
+        sql`${passpilotKioskDevices.lastUsedAt} < now() - ${KIOSK_DEVICE_BINDING_TTL}`
+      )
+    );
+}
+
+// Remember which teacher (and class) runs kiosks on a physical device.
+// Callers pass their transaction so the binding can never reference a
+// session mutation that did not commit. Class columns mirror the session's
+// class shape; target null = classless binding (still resumable).
+async function upsertKioskDeviceBinding(
+  executor: PasspilotClassTransaction | typeof db,
+  schoolId: string,
+  deviceId: string,
+  teacherId: string,
+  target: KioskClassTarget | null
+): Promise<void> {
+  await executor
+    .insert(passpilotKioskDevices)
+    .values({
+      id: deviceId,
+      schoolId,
+      teacherId,
+      classSource: target?.source ?? null,
+      gradeId: target?.source === "legacy_grades" ? target.classId : null,
+      classpilotGroupId:
+        target?.source === "classpilot_groups" ? target.classId : null,
+    })
+    .onConflictDoUpdate({
+      target: [passpilotKioskDevices.schoolId, passpilotKioskDevices.id],
+      set: {
+        teacherId,
+        classSource: target?.source ?? null,
+        gradeId: target?.source === "legacy_grades" ? target.classId : null,
+        classpilotGroupId:
+          target?.source === "classpilot_groups" ? target.classId : null,
+        lastUsedAt: sql`now()`,
+      },
+    });
+}
+
+function kioskSessionClassTarget(session: {
+  classSource: "legacy_grades" | "classpilot_groups" | null;
+  gradeId: string | null;
+  classpilotGroupId: string | null;
+}): KioskClassTarget | null {
+  if (session.classSource === "legacy_grades" && session.gradeId) {
+    return { source: "legacy_grades", classId: session.gradeId };
+  }
+  if (session.classSource === "classpilot_groups" && session.classpilotGroupId) {
+    return { source: "classpilot_groups", classId: session.classpilotGroupId };
+  }
+  return null;
+}
+
+export async function getLiveKioskDeviceBinding(
+  schoolId: string,
+  deviceId: string
+): Promise<KioskDeviceBinding | undefined> {
+  const [binding] = await db
+    .select()
+    .from(passpilotKioskDevices)
+    .where(
+      and(
+        eq(passpilotKioskDevices.schoolId, schoolId),
+        eq(passpilotKioskDevices.id, deviceId),
+        kioskDeviceBindingLiveCondition()
+      )
+    )
+    .limit(1);
+  return binding;
+}
+
+export async function deleteKioskDeviceBinding(
+  schoolId: string,
+  deviceId: string
+): Promise<void> {
+  await db
+    .delete(passpilotKioskDevices)
+    .where(
+      and(
+        eq(passpilotKioskDevices.schoolId, schoolId),
+        eq(passpilotKioskDevices.id, deviceId)
+      )
+    );
+}
+
+// The device presents X-Kiosk-Device on bootstrap. Stamp the session with it
+// and — when the session is already teacher-bound (the /sessions/self
+// handoff: the teacher's browser created the session, then opened the kiosk
+// URL on the device) — remember the binding.
+export async function adoptKioskSessionDevice(
+  schoolId: string,
+  sessionId: string,
+  deviceId: string
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    const [session] = await tx
+      .select({
+        deviceId: passpilotKioskSessions.deviceId,
+        status: passpilotKioskSessions.status,
+        teacherId: passpilotKioskSessions.teacherId,
+        classSource: passpilotKioskSessions.classSource,
+        gradeId: passpilotKioskSessions.gradeId,
+        classpilotGroupId: passpilotKioskSessions.classpilotGroupId,
+      })
+      .from(passpilotKioskSessions)
+      .where(
+        and(
+          eq(passpilotKioskSessions.id, sessionId),
+          eq(passpilotKioskSessions.schoolId, schoolId)
+        )
+      )
+      .limit(1)
+      .for("update");
+    if (!session) return;
+    if (session.deviceId !== deviceId) {
+      await tx
+        .update(passpilotKioskSessions)
+        .set({ deviceId })
+        .where(
+          and(
+            eq(passpilotKioskSessions.id, sessionId),
+            eq(passpilotKioskSessions.schoolId, schoolId)
+          )
+        );
+    }
+    if (session.status === "active" && session.teacherId) {
+      await upsertKioskDeviceBinding(
+        tx,
+        schoolId,
+        deviceId,
+        session.teacherId,
+        kioskSessionClassTarget(session)
+      );
+    }
+  });
 }
 
 function generateKioskClaimCode(): string {
@@ -3719,14 +3871,17 @@ function isUniqueViolation(err: any): boolean {
   return err?.code === "23505" || err?.cause?.code === "23505";
 }
 
-export async function createKioskSession(schoolId: string): Promise<KioskSession> {
+export async function createKioskSession(
+  schoolId: string,
+  deviceId: string | null = null
+): Promise<KioskSession> {
   // Lazy reaping: kiosk bootstrap is the natural per-school heartbeat.
   await sweepExpiredKioskSessions(schoolId);
   for (let attempt = 0; attempt < 20; attempt += 1) {
     try {
       const [session] = await db
         .insert(passpilotKioskSessions)
-        .values({ schoolId, claimCode: generateKioskClaimCode() })
+        .values({ schoolId, claimCode: generateKioskClaimCode(), deviceId })
         .returning();
       return session!;
     } catch (err: any) {
@@ -3777,6 +3932,117 @@ export async function createSelfClaimedKioskSession(
             .returning();
           return row!;
         });
+        return session;
+      } catch (err: any) {
+        if (!isUniqueViolation(err)) throw err;
+      }
+    }
+    throw passpilotClassError(
+      "PASSPILOT_KIOSK_SESSION_CODE_EXHAUSTED",
+      "Could not allocate a kiosk code. Try again.",
+      503
+    );
+  });
+}
+
+// One-tap PIN-gated resume from a remembered device binding: mints a fresh
+// ACTIVE session for the binding's teacher without a claim code. The bound
+// teacher is the acting user for class authorization — the device may resume
+// exactly what that teacher could claim today. Class staleness (archived,
+// history-only, access revoked, source cutover) degrades to a classless
+// resume rather than failing: the "waiting for a class" state is first-class
+// and the teacher is one Send-to-Kiosk tap away.
+export async function createResumedKioskSession(
+  schoolId: string,
+  deviceId: string
+): Promise<KioskSession> {
+  await sweepExpiredKioskSessions(schoolId);
+  return db.transaction(async (tx) => {
+    await takePasspilotClassLock(tx, schoolId);
+    // Re-read under the lock: concurrent resume taps or a concurrent
+    // teacher-side mutation must serialize against this transaction.
+    const [binding] = await tx
+      .select()
+      .from(passpilotKioskDevices)
+      .where(
+        and(
+          eq(passpilotKioskDevices.schoolId, schoolId),
+          eq(passpilotKioskDevices.id, deviceId),
+          kioskDeviceBindingLiveCondition()
+        )
+      )
+      .limit(1)
+      .for("update");
+    if (!binding) {
+      throw passpilotClassError(
+        "PASSPILOT_KIOSK_DEVICE_UNKNOWN",
+        "This device has no remembered kiosk. Use a claim code instead.",
+        404
+      );
+    }
+    let target = kioskSessionClassTarget(binding);
+    if (target) {
+      try {
+        await lockAndAssertKioskClassSource(tx, schoolId, target.source);
+        await assertKioskSessionClassTarget(tx, schoolId, target, {
+          actorUserId: binding.teacherId,
+          manager: false,
+        });
+      } catch {
+        target = null;
+      }
+    }
+    // One live session per device: the waiting-screen session whose code was
+    // showing (and any still-live active session whose id the device lost)
+    // gets released, freeing its claim code via the partial unique index.
+    await tx
+      .update(passpilotKioskSessions)
+      .set({
+        status: "released",
+        releasedAt: sql`now()`,
+        revision: sql`${passpilotKioskSessions.revision} + 1`,
+      })
+      .where(
+        and(
+          eq(passpilotKioskSessions.schoolId, schoolId),
+          eq(passpilotKioskSessions.deviceId, deviceId),
+          ne(passpilotKioskSessions.status, "released")
+        )
+      );
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      try {
+        // Nested transaction = savepoint: a unique-violation must not abort
+        // the outer transaction, or the retry would fail with 25P02.
+        const session = await tx.transaction(async (sp) => {
+          const [row] = await sp
+            .insert(passpilotKioskSessions)
+            .values({
+              schoolId,
+              claimCode: generateKioskClaimCode(),
+              teacherId: binding.teacherId,
+              status: "active",
+              deviceId,
+              classSource: target?.source ?? null,
+              gradeId: target?.source === "legacy_grades" ? target.classId : null,
+              classpilotGroupId:
+                target?.source === "classpilot_groups" ? target.classId : null,
+              claimedAt: sql`now()`,
+            })
+            .returning();
+          return row!;
+        });
+        // Refresh the rolling TTL; leave the remembered class untouched even
+        // when this resume degraded to classless — an archived class may
+        // come back.
+        await tx
+          .update(passpilotKioskDevices)
+          .set({ lastUsedAt: sql`now()` })
+          .where(
+            and(
+              eq(passpilotKioskDevices.schoolId, schoolId),
+              eq(passpilotKioskDevices.id, deviceId)
+            )
+          );
         return session;
       } catch (err: any) {
         if (!isUniqueViolation(err)) throw err;
@@ -3876,6 +4142,15 @@ export async function claimKioskSessionByCode(
         )
       )
       .returning();
+    if (session!.deviceId) {
+      await upsertKioskDeviceBinding(
+        tx,
+        schoolId,
+        session!.deviceId,
+        authorization.actorUserId,
+        target
+      );
+    }
     return session!;
   });
 }
@@ -3890,7 +4165,7 @@ export async function retargetKioskSessionsForTeacher(
     await takePasspilotClassLock(tx, schoolId);
     await lockAndAssertKioskClassSource(tx, schoolId, target.source);
     await assertKioskSessionClassTarget(tx, schoolId, target, authorization);
-    return tx
+    const sessions = await tx
       .update(passpilotKioskSessions)
       .set({
         classSource: target.source,
@@ -3907,6 +4182,12 @@ export async function retargetKioskSessionsForTeacher(
         )
       )
       .returning();
+    for (const session of sessions) {
+      if (session.deviceId) {
+        await upsertKioskDeviceBinding(tx, schoolId, session.deviceId, teacherId, target);
+      }
+    }
+    return sessions;
   });
 }
 
@@ -3940,6 +4221,17 @@ export async function updateKioskSessionClass(
         )
       )
       .returning();
+    if (session?.deviceId && session.teacherId) {
+      // Bind to the SESSION's teacher, not the actor — a manager retargeting
+      // another teacher's kiosk must not rebind the device to themselves.
+      await upsertKioskDeviceBinding(
+        tx,
+        schoolId,
+        session.deviceId,
+        session.teacherId,
+        target
+      );
+    }
     return session;
   });
 }

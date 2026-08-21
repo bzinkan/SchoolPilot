@@ -10,6 +10,7 @@ import {
   uniqueIndex,
   check,
   foreignKey,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 import { students } from "./students.js";
 
@@ -200,6 +201,11 @@ export const passpilotKioskSessions = pgTable(
       .notNull()
       .default("unclaimed")
       .$type<"unclaimed" | "active" | "released">(),
+    // Durable kiosk-device identity presented via X-Kiosk-Device. Nullable —
+    // old clients never send one. Links the ephemeral session to the durable
+    // passpilot_kiosk_devices binding so teacher-side claims/retargets know
+    // which device to remember.
+    deviceId: text("device_id"),
     revision: integer("revision").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -225,6 +231,9 @@ export const passpilotKioskSessions = pgTable(
       table.status,
       table.lastSeenAt
     ),
+    index("pp_kiosk_sessions_school_device_idx")
+      .on(table.schoolId, table.deviceId)
+      .where(sql`${table.deviceId} IS NOT NULL`),
     check(
       "pp_kiosk_sessions_status_check",
       sql`${table.status} IN ('unclaimed', 'active', 'released')`
@@ -251,3 +260,54 @@ export const passpilotKioskSessions = pgTable(
 
 export type KioskSession = typeof passpilotKioskSessions.$inferSelect;
 export type InsertKioskSession = typeof passpilotKioskSessions.$inferInsert;
+
+// ============================================================================
+// Kiosk device bindings - PassPilot (durable device → teacher memory)
+// ============================================================================
+// One row per physical kiosk device: remembers which teacher (and class) last
+// ran a kiosk there so the device can offer a one-tap PIN-gated resume the
+// next morning, instead of a fresh claim code. The id is CLIENT-generated
+// (crypto.randomUUID in localStorage) — hence the composite primary key: ids
+// are scoped per school so a hostile client can never squat another tenant's
+// device id. Non-authoritative memory only: teacher membership and class
+// authorization are re-validated on every resume; no FKs by design.
+export const passpilotKioskDevices = pgTable(
+  "passpilot_kiosk_devices",
+  {
+    id: varchar("id").notNull(),
+    schoolId: text("school_id").notNull(),
+    teacherId: text("teacher_id").notNull(),
+    classSource: text("class_source").$type<
+      "legacy_grades" | "classpilot_groups" | null
+    >(),
+    gradeId: text("grade_id"),
+    classpilotGroupId: text("classpilot_group_id"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (table) => [
+    primaryKey({
+      name: "pp_kiosk_devices_pkey",
+      columns: [table.schoolId, table.id],
+    }),
+    index("pp_kiosk_devices_school_last_used_idx").on(
+      table.schoolId,
+      table.lastUsedAt
+    ),
+    check(
+      "pp_kiosk_devices_class_source_check",
+      sql`${table.classSource} IS NULL OR ${table.classSource} IN ('legacy_grades', 'classpilot_groups')`
+    ),
+    check(
+      "pp_kiosk_devices_class_shape_check",
+      sql`(${table.classSource} IS NULL AND ${table.gradeId} IS NULL AND ${table.classpilotGroupId} IS NULL) OR (${table.classSource} = 'legacy_grades' AND ${table.gradeId} IS NOT NULL AND ${table.classpilotGroupId} IS NULL) OR (${table.classSource} = 'classpilot_groups' AND ${table.classpilotGroupId} IS NOT NULL AND ${table.gradeId} IS NULL)`
+    ),
+  ]
+);
+
+export type KioskDeviceBinding = typeof passpilotKioskDevices.$inferSelect;
+export type InsertKioskDeviceBinding = typeof passpilotKioskDevices.$inferInsert;
