@@ -1041,4 +1041,54 @@ describe("PassPilot kiosk device memory", { concurrency: false }, () => {
     assert.equal(resumed.body.session.className, "Homeroom 6C");
     assert.equal(resumed.body.session.kioskName, "Ms. C");
   });
+
+  it("claims teacher-only (no class): kiosk shows the teacher and waits for Send to Kiosk", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    const DEV6 = "66666666-6666-4666-8666-666666666666";
+    const boot = await requestJson("POST", "/passpilot/kiosk/session", {}, deviceHeaders(schoolA.id, DEV6));
+    assert.equal(boot.status, 201);
+
+    // Claim with ONLY the code — binds the teacher, no class.
+    const claimed = await requestJson(
+      "POST",
+      "/passpilot/kiosk/sessions/claim",
+      { claimCode: boot.body.session.claimCode },
+      authFor(teacherA, schoolA.id)
+    );
+    assert.equal(claimed.status, 200, JSON.stringify(claimed.body));
+    assert.equal(claimed.body.session.status, "active");
+    assert.equal(claimed.body.session.classId, null);
+
+    // The kiosk shows the teacher's name while classless, and data endpoints
+    // stay closed until a class arrives.
+    const config = await requestJson("GET", `/passpilot/kiosk/config?school=${schoolA.id}`, undefined, deviceHeaders(schoolA.id, DEV6, boot.body.session.id));
+    assert.equal(config.status, 200);
+    assert.equal(config.body.session.status, "active");
+    assert.equal(config.body.classId, null);
+    assert.equal(config.body.kioskName, "Room 204");
+    const checkout = await requestJson("POST", "/passpilot/kiosk/checkout", { studentId: studentA.id, destination: "bathroom" }, deviceHeaders(schoolA.id, DEV6, boot.body.session.id));
+    assert.equal(checkout.status, 409);
+    assert.equal(checkout.body.code, "PASSPILOT_KIOSK_CLASS_REQUIRED");
+
+    // The binding remembers the teacher with no class; the resume offer shows
+    // the name alone.
+    const binding = await bindingRow(schoolA.id, DEV6);
+    assert.equal(binding.teacher_id, teacherA.id);
+    assert.equal(binding.class_source, null);
+    const fresh = await requestJson("POST", "/passpilot/kiosk/session", {}, deviceHeaders(schoolA.id, DEV6));
+    assert.deepEqual(fresh.body.resume, { kioskName: "Room 204", className: null });
+
+    // Send to Kiosk (single-session retarget) puts a class on it and
+    // refreshes the remembered class.
+    const retarget = await requestJson(
+      "PUT",
+      `/passpilot/kiosk/sessions/${claimed.body.session.id}`,
+      { classId: gradeA.id },
+      authFor(teacherA, schoolA.id)
+    );
+    assert.equal(retarget.status, 200, JSON.stringify(retarget.body));
+    const afterRetarget = await bindingRow(schoolA.id, DEV6);
+    assert.equal(afterRetarget.grade_id, gradeA.id);
+    assert.equal(afterRetarget.teacher_id, teacherA.id);
+  });
 });

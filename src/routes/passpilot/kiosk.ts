@@ -1057,7 +1057,10 @@ const kioskSessionTeacherAuth = [
 ] as const;
 
 // POST /api/passpilot/kiosk/sessions/claim - Bind an unclaimed kiosk (by code)
-// to the requesting teacher and a class they may run.
+// to the requesting teacher. classId is optional: without it the kiosk shows
+// the teacher's name and waits for Send to Kiosk (same contract as
+// /sessions/self); with it (the My Class entry point) the class shows
+// immediately.
 router.post(
   "/sessions/claim",
   kioskClaimLimiter,
@@ -1070,10 +1073,13 @@ router.post(
         return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       }
       const role = await getRequestPassPilotRole(req, res);
-      const target = await resolveKioskClassTarget(req, res, schoolId, parsed.data.classId);
-      if (!target) return;
-      if (!(await canAccessPasspilotClass(req.authUser!, schoolId, parsed.data.classId, role))) {
-        return res.status(403).json({ error: "Insufficient permissions" });
+      let target: KioskClassTarget | null = null;
+      if (parsed.data.classId) {
+        target = await resolveKioskClassTarget(req, res, schoolId, parsed.data.classId);
+        if (!target) return;
+        if (!(await canAccessPasspilotClass(req.authUser!, schoolId, parsed.data.classId, role))) {
+          return res.status(403).json({ error: "Insufficient permissions" });
+        }
       }
       const session = await claimKioskSessionByCode(schoolId, parsed.data.claimCode, target, {
         actorUserId: req.authUser!.id,

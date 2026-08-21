@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { ArrowLeft, Bath, Heart, Triangle, Clock } from "lucide-react";
 import { isCanonicalPassPilotSource, PASSPILOT_CLASS_MODEL_HEADER } from "../classData";
 import { kioskPinStore } from "../kioskPinStore";
-import { getKioskDeviceId } from "../kioskDeviceId";
+import { getKioskDeviceId, adoptKioskDeviceId } from "../kioskDeviceId";
 
 const DESTINATIONS = [
   { value: "bathroom", label: "General/Restroom", icon: Bath, color: "text-blue-400" },
@@ -152,14 +152,20 @@ export default function KioskSimplePage() {
       try {
         const urlParams = new URLSearchParams(window.location.search);
         const urlSessionId = urlParams.get("session");
-        if (urlSessionId) {
-          kioskPinStore().setItem(KIOSK_SESSION_KEY, urlSessionId);
+        // ?device= arrives from the ClassPilot extension on managed
+        // Chromebooks: a durable device identity that survives the profile
+        // wipes that erase localStorage. Adopt it before minting a random id.
+        const urlDeviceId = urlParams.get("device");
+        const adoptedDeviceId = urlDeviceId ? adoptKioskDeviceId(urlDeviceId) : null;
+        if (urlSessionId || urlDeviceId) {
+          if (urlSessionId) kioskPinStore().setItem(KIOSK_SESSION_KEY, urlSessionId);
           urlParams.delete("session");
+          urlParams.delete("device");
           const query = urlParams.toString();
           window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
         }
         const storedId = kioskPinStore().getItem(KIOSK_SESSION_KEY);
-        const deviceId = getKioskDeviceId();
+        const deviceId = adoptedDeviceId || getKioskDeviceId();
         const res = await fetch("/api/passpilot/kiosk/session", {
           method: "POST",
           credentials: "omit",

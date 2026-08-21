@@ -4105,13 +4105,18 @@ export async function touchKioskSessionLastSeen(
 export async function claimKioskSessionByCode(
   schoolId: string,
   claimCode: string,
-  target: KioskClassTarget,
+  target: KioskClassTarget | null,
   authorization: KioskSessionAuthorization
 ): Promise<KioskSession> {
   return db.transaction(async (tx) => {
     await takePasspilotClassLock(tx, schoolId);
-    await lockAndAssertKioskClassSource(tx, schoolId, target.source);
-    await assertKioskSessionClassTarget(tx, schoolId, target, authorization);
+    // target null = teacher-bound classless claim (the kiosk shows the
+    // teacher's name and waits for Send to Kiosk), mirroring
+    // createSelfClaimedKioskSession.
+    if (target) {
+      await lockAndAssertKioskClassSource(tx, schoolId, target.source);
+      await assertKioskSessionClassTarget(tx, schoolId, target, authorization);
+    }
     const [existing] = await tx
       .select({ id: passpilotKioskSessions.id })
       .from(passpilotKioskSessions)
@@ -4136,10 +4141,10 @@ export async function claimKioskSessionByCode(
       .update(passpilotKioskSessions)
       .set({
         teacherId: authorization.actorUserId,
-        classSource: target.source,
-        gradeId: target.source === "legacy_grades" ? target.classId : null,
+        classSource: target?.source ?? null,
+        gradeId: target?.source === "legacy_grades" ? target.classId : null,
         classpilotGroupId:
-          target.source === "classpilot_groups" ? target.classId : null,
+          target?.source === "classpilot_groups" ? target.classId : null,
         status: "active",
         claimedAt: sql`now()`,
         lastSeenAt: sql`now()`,
