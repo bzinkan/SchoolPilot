@@ -231,8 +231,13 @@ export default function KioskPage() {
   useEffect(() => {
     if (!schoolId || !kioskPin || sessionMode !== true || !sessionIdRef.current) return;
     const poll = () => {
+      // Fence every response to the session it was sent for (see KioskSimple):
+      // a stale 404 for the resume-released session must not wipe the freshly
+      // stored resumed session.
+      const polledSessionId = sessionIdRef.current;
       fetch(`/api/passpilot/kiosk/config?school=${schoolId}`, { credentials: "omit", headers: kioskHeaders() })
         .then(async (response) => {
+          if (polledSessionId !== sessionIdRef.current) return null;
           if (response.status === 401) {
             clearPin();
             return null;
@@ -240,7 +245,7 @@ export default function KioskPage() {
           if (response.ok) return response.json();
           const body = await response.json().catch(() => ({}));
           if (response.status === 404 && body.code === "PASSPILOT_KIOSK_SESSION_EXPIRED") {
-            handleSessionExpired();
+            if (polledSessionId === sessionIdRef.current) handleSessionExpired();
             return null;
           }
           // A style flip must reach kiosks parked on config errors (e.g. the
@@ -250,6 +255,7 @@ export default function KioskPage() {
         })
         .then((data) => {
           if (!data?.session) return;
+          if (polledSessionId !== sessionIdRef.current) return;
           if (redirectForKioskStyle(data.kioskStyle)) return;
           setSession({
             id: data.session.id,

@@ -343,13 +343,19 @@ export default function KioskSimplePage() {
   useEffect(() => {
     if (!schoolId || !kioskPin || sessionMode !== true || !sessionIdRef.current) return;
     const poll = () => {
+      // Fence every response to the session it was sent for: a resume
+      // force-releases the old session server-side, so an in-flight poll for
+      // it comes back 404 EXPIRED — and must not wipe the freshly stored
+      // resumed session.
+      const polledSessionId = sessionIdRef.current;
       fetch(`/api/passpilot/kiosk/config?school=${schoolId}`, { credentials: "omit", headers: kioskHeaders() })
         .then(checkPinRejected)
         .then(async (response) => {
+          if (polledSessionId !== sessionIdRef.current) return null;
           if (response.ok) return response.json();
           const body = await response.json().catch(() => ({}));
           if (response.status === 404 && body.code === "PASSPILOT_KIOSK_SESSION_EXPIRED") {
-            handleSessionExpired();
+            if (polledSessionId === sessionIdRef.current) handleSessionExpired();
             return null;
           }
           const error = new Error(body.error || "The kiosk configuration is unavailable.");
@@ -359,6 +365,7 @@ export default function KioskSimplePage() {
         })
         .then((data) => {
           if (!data) return;
+          if (polledSessionId !== sessionIdRef.current) return;
           if (redirectForKioskStyle(data.kioskStyle)) return;
           setConfigLoaded(true);
           setConfigError(null);
@@ -410,6 +417,7 @@ export default function KioskSimplePage() {
     if (!schoolId || !selectedGradeId || !kioskPin) return;
     let active = true;
     const poll = () => {
+      const polledSessionId = sessionIdRef.current;
       const classParam = isCanonicalPassPilotSource(classSource) ? "classId" : "gradeId";
       fetch(`/api/passpilot/kiosk/students?school=${schoolId}&${classParam}=${encodeURIComponent(selectedGradeId)}`, { credentials: "omit", headers: kioskHeaders() })
         .then(checkPinRejected)
@@ -417,7 +425,7 @@ export default function KioskSimplePage() {
           if (response.ok) return response.json();
           const body = await response.json().catch(() => ({}));
           if (response.status === 404 && body.code === "PASSPILOT_KIOSK_SESSION_EXPIRED") {
-            handleSessionExpired();
+            if (polledSessionId === sessionIdRef.current) handleSessionExpired();
             return null;
           }
           throw new Error(body.error || "The kiosk roster is unavailable.");

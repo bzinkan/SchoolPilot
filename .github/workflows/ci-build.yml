@@ -223,6 +223,7 @@ jobs:
           tests/gopilot-rls-isolation.test.ts
           tests/passpilot-canonical-runtime.test.ts
           tests/passpilot-legacy-multiclass.test.ts
+          tests/passpilot-kiosk-sessions.test.ts
 
       - name: Collect SOC 2 evidence
         if: always()

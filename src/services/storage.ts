@@ -3819,6 +3819,11 @@ export async function adoptKioskSessionDevice(
   deviceId: string
 ): Promise<void> {
   await db.transaction(async (tx) => {
+    // Advisory lock first: every binding writer (claim/retarget/update/resume)
+    // serializes on it, which also prevents a lock-order inversion against
+    // createResumedKioskSession (binding row → session rows) that could
+    // otherwise deadlock with this function's session row → binding row order.
+    await takePasspilotClassLock(tx, schoolId);
     const [session] = await tx
       .select({
         deviceId: passpilotKioskSessions.deviceId,
@@ -3838,6 +3843,11 @@ export async function adoptKioskSessionDevice(
       .limit(1)
       .for("update");
     if (!session) return;
+    // A session already bound to a DIFFERENT device keeps its binding: the
+    // legitimate /sessions/self handoff always starts device-less, so an
+    // overwrite here could only be a second device replaying a leaked session
+    // id (e.g. from the handoff URL) to steal the durable teacher binding.
+    if (session.deviceId && session.deviceId !== deviceId) return;
     if (session.deviceId !== deviceId) {
       await tx
         .update(passpilotKioskSessions)
