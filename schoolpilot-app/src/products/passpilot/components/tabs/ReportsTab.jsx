@@ -6,14 +6,23 @@ import { Label } from "../../../../components/ui/label";
 import { Input } from "../../../../components/ui/input";
 import { useQuery } from "@tanstack/react-query";
 import { useToast } from "../../../../hooks/use-toast";
-import { apiRequest } from "../../../../lib/queryClient";
 import { usePassPilotAuth } from "../../../../hooks/usePassPilotAuth";
 import { formatTime, formatHour, formatDateTime, startOfTodayInTimezone } from "../../../../lib/date-utils";
 import {
   fetchAllPassPilotHistory,
   isCanonicalPassPilotSource,
+  passPilotClassRequest,
   usePassPilotHistoryClasses,
 } from "../../classData";
+import { getCurrentSchoolWeekRange, getPassIssuerLabel } from "../../passData";
+import { encodePassPilotCsv } from "../../passCsv";
+
+const DEFAULT_REPORT_FILTERS = Object.freeze({
+  dateRange: 'today',
+  grade: 'all',
+  teacher: 'all',
+  passType: 'all',
+});
 
 function reportClassFilterValue(item) {
   const type = item?.filterKey?.type
@@ -28,24 +37,75 @@ function reportClassLabel(item) {
   return item.name;
 }
 
+function reportIssuerLabel(issuer) {
+  const displayName = issuer?.displayName || issuer?.name || "Former staff member";
+  if (
+    issuer?.status !== "former"
+    || /^Former staff member$/i.test(displayName)
+    || /\(Former staff\)$/i.test(displayName)
+  ) {
+    return displayName;
+  }
+  return `${displayName} (Former staff)`;
+}
+
 function ReportsTab() {
-  const { school } = usePassPilotAuth();
+  const { school, isSchoolwideManager } = usePassPilotAuth();
   const tz = school?.schoolTimezone ?? "America/New_York";
   const { toast } = useToast();
-  const classInventoryQuery = usePassPilotHistoryClasses();
+  const classInventoryQuery = usePassPilotHistoryClasses(Boolean(school?.id), school?.id);
   const canonical = classInventoryQuery.isSuccess
     && isCanonicalPassPilotSource(classInventoryQuery.data?.source);
-  const [filters, setFilters] = useState({
-    dateRange: 'today',
-    grade: 'all',
-    teacher: 'all',
-    passType: 'all',
-  });
+  const schoolId = school?.id || '';
+  const [scopedFilters, setScopedFilters] = useState(() => ({
+    schoolId,
+    values: DEFAULT_REPORT_FILTERS,
+  }));
+  const filters = scopedFilters.schoolId === schoolId
+    ? scopedFilters.values
+    : DEFAULT_REPORT_FILTERS;
+  const updateFilters = (updates) => {
+    setScopedFilters({
+      schoolId,
+      values: { ...filters, ...updates },
+    });
+  };
 
   const [customDateRange, setCustomDateRange] = useState({
     startDate: '',
     endDate: ''
   });
+
+  const {
+    data: issuers = [],
+    isLoading: issuersLoading,
+    isError: issuersError,
+    refetch: refetchIssuers,
+  } = useQuery({
+    queryKey: ['/api/passpilot/passes/issuers', school?.id],
+    queryFn: () => passPilotClassRequest('GET', '/passpilot/passes/issuers'),
+    select: (data) => Array.isArray(data?.issuers) ? data.issuers : [],
+    enabled: Boolean(isSchoolwideManager && school?.id),
+  });
+  const requestedIssuerId = filters.teacher;
+  const requestedIssuerIsValid = requestedIssuerId === 'all'
+    || issuers.some((issuer) => issuer.id === requestedIssuerId);
+  const effectiveIssuerId = isSchoolwideManager && requestedIssuerIsValid
+    ? requestedIssuerId
+    : isSchoolwideManager
+      ? null
+      : 'all';
+  const issuerSelectionInvalid = Boolean(
+    isSchoolwideManager
+    && requestedIssuerId !== 'all'
+    && !issuersLoading
+    && !issuersError
+    && !requestedIssuerIsValid
+  );
+
+  const currentWeekRange = filters.dateRange === 'week'
+    ? getCurrentSchoolWeekRange(tz)
+    : null;
 
   const calculateDuration = (issuedAt, returnedAt) => {
     if (!returnedAt) return null;
@@ -61,7 +121,20 @@ function ReportsTab() {
     isError: passesError,
     refetch: refetchPasses,
   } = useQuery({
-    queryKey: ['/api/passes/history', canonical ? 'classpilot_groups' : 'legacy_grades', JSON.stringify(filters), JSON.stringify(customDateRange)],
+    queryKey: [
+      '/api/passes/history',
+      school?.id,
+      isSchoolwideManager ? 'schoolwide' : 'assigned',
+      canonical ? 'classpilot_groups' : 'legacy_grades',
+      tz,
+      filters.dateRange,
+      currentWeekRange?.anchor || null,
+      currentWeekRange?.start.toISOString() || null,
+      filters.grade,
+      effectiveIssuerId,
+      filters.passType,
+      JSON.stringify(customDateRange),
+    ],
     refetchInterval: 30000,
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -75,10 +148,12 @@ function ReportsTab() {
             dateStart = startOfTodayInTimezone(tz);
             params.append('dateStart', dateStart.toISOString());
             break;
-          case 'week':
-            dateStart.setDate(now.getDate() - 7);
-            params.append('dateStart', dateStart.toISOString());
+          case 'week': {
+            const weekRange = getCurrentSchoolWeekRange(tz, now);
+            params.append('dateStart', weekRange.start.toISOString());
+            params.append('dateEnd', weekRange.end.toISOString());
             break;
+          }
           case 'month':
             dateStart.setMonth(now.getMonth() - 1);
             params.append('dateStart', dateStart.toISOString());
@@ -107,13 +182,17 @@ function ReportsTab() {
           params.append(filterType, filterValue);
         }
       }
-      if (filters.teacher && filters.teacher !== 'all') params.append('teacherId', filters.teacher);
+      if (isSchoolwideManager && effectiveIssuerId && effectiveIssuerId !== 'all') {
+        params.append('teacherId', effectiveIssuerId);
+      }
       if (filters.passType && filters.passType !== 'all') params.append('passType', filters.passType);
 
       const url = `/passes/history${params.toString() ? '?' + params.toString() : ''}`;
       return fetchAllPassPilotHistory(url);
     },
-    enabled: classInventoryQuery.isSuccess,
+    enabled: classInventoryQuery.isSuccess
+      && Boolean(school?.id)
+      && effectiveIssuerId !== null,
     gcTime: 0,
   });
 
@@ -123,19 +202,13 @@ function ReportsTab() {
   ));
   const canonicalHistoryClasses = reportClasses.filter((item) => !legacyHistoryClasses.includes(item));
 
-  const { data: teachers = [] } = useQuery({
-    queryKey: ['/api/teachers'],
-    queryFn: () => apiRequest('GET', '/teachers'),
-    select: (data) => Array.isArray(data) ? data : (data?.teachers ?? data?.staff ?? []),
-  });
-
   const handleExportCSV = () => {
     if (!passes || passes.length === 0) {
       toast({ title: "No Data", description: "No pass data available to export.", variant: "destructive" });
       return;
     }
 
-    const csvHeaders = ["Student Name", "Class", "Teacher", "Pass Type", "Destination", "Checkout Time", "Return Time", "Duration (min)"];
+    const csvHeaders = ["Student Name", "Class", "Issued By", "Pass Type", "Destination", "Checkout Time", "Return Time", "Duration (min)"];
     const csvRows = passes.map((pass) => {
       const isReturned = pass.returnedAt || pass.status === 'returned';
       const calculatedDuration = isReturned ? calculateDuration(pass.issuedAt, pass.returnedAt) : null;
@@ -143,7 +216,7 @@ function ReportsTab() {
       return [
         `${pass.student?.firstName ?? ''} ${pass.student?.lastName ?? ''}`.trim() || "Unknown",
         pass.className || pass.classNameSnapshot || pass.student?.grade || "Unknown",
-        `${pass.teacher?.firstName ?? ''} ${pass.teacher?.lastName ?? ''}`.trim() || "Unknown",
+        getPassIssuerLabel(pass),
         pass.destination || 'General',
         pass.customDestination || pass.destination || 'General',
         formatDateTime(pass.issuedAt, tz),
@@ -152,10 +225,7 @@ function ReportsTab() {
       ];
     });
 
-    const BOM = '\uFEFF';
-    const csvContent = BOM + [csvHeaders, ...csvRows]
-      .map(row => row.map(field => `"${String(field).replace(/"/g, '""')}"`).join(","))
-      .join("\r\n");
+    const csvContent = encodePassPilotCsv([csvHeaders, ...csvRows]);
 
     const blob = new Blob([csvContent], { type: "application/vnd.ms-excel;charset=utf-8;" });
     const url = window.URL.createObjectURL(blob);
@@ -290,7 +360,7 @@ function ReportsTab() {
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
             <div>
               <Label htmlFor="dateRange">Date Range</Label>
-              <Select value={filters.dateRange} onValueChange={(value) => setFilters({ ...filters, dateRange: value })}>
+              <Select value={filters.dateRange} onValueChange={(value) => updateFilters({ dateRange: value })}>
                 <SelectTrigger id="dateRange"><SelectValue placeholder="Select date range" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="today">Today</SelectItem>
@@ -316,7 +386,7 @@ function ReportsTab() {
 
             <div>
               <Label htmlFor="reportClass">Class</Label>
-              <Select value={filters.grade} onValueChange={(value) => setFilters({ ...filters, grade: value })}>
+              <Select value={filters.grade} onValueChange={(value) => updateFilters({ grade: value })}>
                 <SelectTrigger id="reportClass"><SelectValue placeholder="All Classes" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Classes</SelectItem>
@@ -344,22 +414,64 @@ function ReportsTab() {
               </Select>
             </div>
 
-            <div>
-              <Label>Teacher</Label>
-              <Select value={filters.teacher} onValueChange={(value) => setFilters({ ...filters, teacher: value })}>
-                <SelectTrigger><SelectValue placeholder="All Teachers" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Teachers</SelectItem>
-                  {teachers.map((teacher) => (
-                    <SelectItem key={teacher.id} value={teacher.id}>{teacher.name || teacher.displayName}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {isSchoolwideManager ? (
+              <div>
+                <Label htmlFor="reportIssuer">Issued By</Label>
+                <Select
+                  value={effectiveIssuerId || requestedIssuerId}
+                  onValueChange={(value) => updateFilters({ teacher: value })}
+                  disabled={issuersLoading || issuersError}
+                >
+                  <SelectTrigger
+                    id="reportIssuer"
+                    aria-describedby={issuersLoading || issuersError || issuerSelectionInvalid ? "reportIssuerStatus" : undefined}
+                  >
+                    <SelectValue placeholder="All Issuers" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Issuers</SelectItem>
+                    {issuers.map((issuer) => (
+                      <SelectItem key={issuer.id} value={issuer.id}>{reportIssuerLabel(issuer)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {issuersLoading ? (
+                  <p id="reportIssuerStatus" className="mt-1 text-xs text-muted-foreground" aria-live="polite">
+                    Loading issuers…
+                  </p>
+                ) : issuersError ? (
+                  <div id="reportIssuerStatus" className="mt-1 flex items-center gap-2 text-xs text-destructive" role="alert">
+                    <span>Issuer options couldn’t be loaded.</span>
+                    <Button
+                      type="button"
+                      variant="link"
+                      size="sm"
+                      className="h-auto p-0 text-xs"
+                      onClick={() => refetchIssuers()}
+                    >
+                      Retry
+                    </Button>
+                  </div>
+                ) : issuerSelectionInvalid ? (
+                  <div id="reportIssuerStatus" className="mt-1 flex items-center gap-2 text-xs text-destructive" role="alert">
+                    <span>The selected issuer is no longer available.</span>
+                    <Button
+                      type="button"
+                      variant="link"
+                      size="sm"
+                      className="h-auto p-0 text-xs"
+                      onClick={() => updateFilters({ teacher: 'all' })}
+                    >
+                      Show all issuers
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
 
             <div>
               <Label>Pass Type</Label>
-              <Select value={filters.passType} onValueChange={(value) => setFilters({ ...filters, passType: value })}>
+              <Select value={filters.passType} onValueChange={(value) => updateFilters({ passType: value })}>
                 <SelectTrigger><SelectValue placeholder="All Types" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Types</SelectItem>
@@ -370,6 +482,12 @@ function ReportsTab() {
               </Select>
             </div>
           </div>
+          {currentWeekRange ? (
+            <p className="mt-3 text-xs text-muted-foreground" data-testid="report-week-range">
+              Current school week:{' '}
+              <span className="font-medium text-foreground">{currentWeekRange.label}</span>
+            </p>
+          ) : null}
         </CardContent>
       </Card>
 

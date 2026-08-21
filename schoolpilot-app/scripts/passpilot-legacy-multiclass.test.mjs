@@ -8,6 +8,7 @@ import { preview } from "vite";
 
 const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SCHOOL_ID = "44444444-4444-4444-8444-444444444444";
+const PASS_DATA_NOW = "2026-08-19T15:00:00.000Z";
 
 const sharedStudent = {
   id: "student-shared",
@@ -28,6 +29,21 @@ const secondStudent = {
   gradeLevel: "5",
   gradeId: "class-b",
 };
+
+const legacyPassHistory = [{
+  id: "legacy-returned-pass",
+  schoolId: SCHOOL_ID,
+  studentId: sharedStudent.id,
+  gradeId: "class-b",
+  student: { id: sharedStudent.id, firstName: sharedStudent.firstName, lastName: sharedStudent.lastName },
+  teacherId: "teacher-a",
+  teacher: { id: "teacher-a", firstName: "Teacher", lastName: "A", name: "Teacher A" },
+  destination: "bathroom",
+  status: "returned",
+  issuedAt: "2026-08-19T13:00:00.000Z",
+  returnedAt: "2026-08-19T13:03:00.000Z",
+  issuedVia: "teacher",
+}];
 
 function authResponse() {
   return {
@@ -70,6 +86,7 @@ function freshState() {
     kioskAvailable: true,
     kioskGradeRequests: 0,
     kioskConfigFailures: 0,
+    passHistoryRequests: [],
   };
 }
 
@@ -145,6 +162,11 @@ async function installApiMocks(context, state) {
     }
     if (pathname === "/api/passes/active") {
       await route.fulfill({ json: { passes: [] } });
+      return;
+    }
+    if (pathname === "/api/passes/history") {
+      state.passHistoryRequests.push(url.search);
+      await route.fulfill({ json: { passes: legacyPassHistory, hasMore: false, nextCursor: null } });
       return;
     }
     if (pathname === "/api/kiosk-config") {
@@ -231,6 +253,7 @@ test("legacy PassPilot supports shared students with class-scoped roster writes"
     await installApiMocks(context, state);
 
     const page = await context.newPage();
+    await page.clock.setFixedTime(new Date(PASS_DATA_NOW));
     await page.goto(`${baseUrl}/passpilot/setup?section=classes`);
     await page.getByRole("heading", { name: "School Setup" }).waitFor();
 
@@ -256,9 +279,44 @@ test("legacy PassPilot supports shared students with class-scoped roster writes"
     await page.waitForFunction(() => document.body.textContent?.includes("Pass created"));
     assert.equal(state.passWrites.at(-1)?.classId, "class-b", "pass issuance must capture the selected legacy class");
 
+    await page.getByTestId("button-tab-roster").click();
+    await page.waitForURL((url) => url.pathname === "/passpilot/classes");
+    await page.getByTestId("button-tab-myclass").click();
+    await page.waitForURL((url) => (
+      url.pathname === "/passpilot/my-class" && url.searchParams.get("classId") === "class-b"
+    ));
+    await page.getByTestId("button-checkout-student-shared").waitFor();
+    assert.equal(
+      new URL(page.url()).searchParams.get("classId"),
+      "class-b",
+      "My Class must restore the remembered legacy class after a tab change",
+    );
+
     await page.reload();
     await page.getByTestId("button-checkout-student-shared").waitFor();
     assert.equal(new URL(page.url()).searchParams.get("classId"), "class-b", "legacy class selection must survive refresh");
+
+    await page.getByRole("button", { name: "Pass Data", exact: true }).click();
+    await page.getByRole("button", { name: /Shared Student.*pass/ }).click();
+    await page.getByText("Total Returned Time", { exact: true }).waitFor();
+    const legacyWeekRequest = page.waitForRequest((request) => {
+      const requestUrl = new URL(request.url());
+      return requestUrl.pathname === "/api/passes/history"
+        && requestUrl.searchParams.get("dateStart") === "2026-08-17T04:00:00.000Z";
+    });
+    await page.getByRole("button", { name: "This Week", exact: true }).click();
+    const legacyWeekUrl = new URL((await legacyWeekRequest).url());
+    assert.equal(legacyWeekUrl.searchParams.get("dateEnd"), PASS_DATA_NOW);
+    assert.equal(legacyWeekUrl.searchParams.get("gradeId"), "class-b");
+    assert.equal(legacyWeekUrl.searchParams.get("classId"), null);
+    const legacyDetail = page.getByTestId("pass-detail-legacy-returned-pass");
+    await legacyDetail.waitFor();
+    assert.match(await legacyDetail.innerText(), /Teacher A/);
+    assert.match(await legacyDetail.innerText(), /Returned/);
+    assert.match(await legacyDetail.innerText(), /3 min/);
+    assert.match(await legacyDetail.innerText(), /Issued By/);
+    assert.match(await legacyDetail.innerText(), /Duration/);
+    assert.match(await legacyDetail.innerText(), /Status/);
 
     const kioskPage = await context.newPage();
     await kioskPage.goto(`${baseUrl}/passpilot/kiosk/simple?school=${SCHOOL_ID}`);

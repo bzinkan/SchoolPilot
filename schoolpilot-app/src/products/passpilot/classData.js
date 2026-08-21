@@ -4,7 +4,17 @@ import api from "../../shared/utils/api";
 
 export const PASSPILOT_CLASSES_QUERY_KEY = ["passpilot", "classes"];
 export const PASSPILOT_HISTORY_CLASSES_QUERY_KEY = ["passpilot", "classes", "history"];
-export const passPilotClassRosterQueryKey = (classId) => ["passpilot", "class-students", classId];
+export const passPilotClassesQueryKey = (schoolId) => (
+  schoolId ? [...PASSPILOT_CLASSES_QUERY_KEY, schoolId] : PASSPILOT_CLASSES_QUERY_KEY
+);
+export const passPilotHistoryClassesQueryKey = (schoolId) => (
+  schoolId ? [...PASSPILOT_HISTORY_CLASSES_QUERY_KEY, schoolId] : PASSPILOT_HISTORY_CLASSES_QUERY_KEY
+);
+export const passPilotClassRosterQueryKey = (classId, schoolId) => (
+  schoolId
+    ? ["passpilot", "class-students", classId, schoolId]
+    : ["passpilot", "class-students", classId]
+);
 export const PASSPILOT_CLASS_MODEL_HEADER = {
   "X-PassPilot-Class-Model": "classpilot-groups-v1",
 };
@@ -110,27 +120,27 @@ export function normalizePassPilotClassesResponse(data) {
   };
 }
 
-export function useCanonicalPassPilotClasses(enabled = true) {
+export function useCanonicalPassPilotClasses(enabled = true, schoolId = "") {
   return useQuery({
-    queryKey: PASSPILOT_CLASSES_QUERY_KEY,
+    queryKey: passPilotClassesQueryKey(schoolId),
     queryFn: () => passPilotClassRequest("GET", "/passpilot/classes"),
     select: normalizePassPilotClassesResponse,
     enabled,
   });
 }
 
-export function usePassPilotHistoryClasses(enabled = true) {
+export function usePassPilotHistoryClasses(enabled = true, schoolId = "") {
   return useQuery({
-    queryKey: PASSPILOT_HISTORY_CLASSES_QUERY_KEY,
+    queryKey: passPilotHistoryClassesQueryKey(schoolId),
     queryFn: () => passPilotClassRequest("GET", "/passpilot/classes?scope=history"),
     select: normalizePassPilotClassesResponse,
     enabled,
   });
 }
 
-export function usePassPilotClassRoster(classId, enabled = true) {
+export function usePassPilotClassRoster(classId, enabled = true, schoolId = "") {
   return useQuery({
-    queryKey: passPilotClassRosterQueryKey(classId),
+    queryKey: passPilotClassRosterQueryKey(classId, schoolId),
     queryFn: () => passPilotClassRequest(
       "GET",
       `/passpilot/classes/${encodeURIComponent(classId)}/students`,

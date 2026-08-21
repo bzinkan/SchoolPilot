@@ -6,9 +6,21 @@ import { fileURLToPath } from "node:url";
 
 import { chromium } from "playwright";
 import { preview } from "vite";
+import {
+  passPilotSelectedClassStorageKey,
+  readPassPilotSelectedClassId,
+  resolvePassPilotSelectedClassId,
+  writePassPilotSelectedClassId,
+} from "../src/products/passpilot/selectedClassSession.js";
 
 const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SCHOOL_ID = "33333333-3333-4333-8333-333333333333";
+const PASS_DATA_NOW = "2026-08-19T15:00:00.000Z";
+
+const classTwoStudents = [
+  { id: "student-two", firstName: "Taylor", lastName: "Student", studentIdNumber: "2002" },
+  { id: "student-zero", firstName: "Zero", lastName: "Minutes", studentIdNumber: "2003" },
+];
 
 const officialClasses = [
   {
@@ -37,6 +49,21 @@ const officialClasses = [
   },
 ];
 
+const reportIssuers = [
+  { id: "issuer-amy", displayName: "Amy Adams", status: "active" },
+  { id: "issuer-andrew", displayName: "Andrew Burba", status: "active" },
+  { id: "issuer-brian", displayName: "Brian Zinkan", status: "active" },
+  { id: "issuer-cayla", displayName: "Cayla Couch", status: "active" },
+  { id: "issuer-joanne", displayName: "Joanne Browarsky", status: "active" },
+  { id: "issuer-mary", displayName: "Mary Englert", status: "active" },
+  { id: "issuer-mike", displayName: "Mike Mohr", status: "active" },
+  { id: "issuer-nanci", displayName: "Nanci Mays", status: "active" },
+  { id: "issuer-suzanne", displayName: "Suzanne Wendell", status: "active" },
+  { id: "issuer-xavier", displayName: "Xavier Young", status: "active" },
+  { id: "issuer-yvonne", displayName: "Yvonne Allen", status: "active" },
+  { id: "issuer-former", displayName: "Retired Rita", status: "former" },
+];
+
 function reportPass(id, firstName, destination) {
   const issuedAt = new Date(Date.now() - 10 * 60_000).toISOString();
   const returnedAt = new Date(Date.now() - 5 * 60_000).toISOString();
@@ -52,6 +79,116 @@ function reportPass(id, firstName, destination) {
     status: "returned",
     issuedAt,
     returnedAt,
+  };
+}
+
+function passDataPass({
+  id,
+  status,
+  issuedAt,
+  returnedAt = null,
+  issuedVia = "teacher",
+  teacherId = "issuer-brian",
+  teacher = { id: "issuer-brian", firstName: "Brian", lastName: "Zinkan", name: "Brian Zinkan" },
+  destination = "bathroom",
+  customDestination = null,
+}) {
+  return {
+    id,
+    schoolId: SCHOOL_ID,
+    studentId: "student-two",
+    classpilotGroupId: "class-two",
+    className: "Grade 4 Homeroom",
+    classNameSnapshot: "Grade 4 Homeroom",
+    student: { id: "student-two", firstName: "Taylor", lastName: "Student" },
+    teacherId,
+    teacher,
+    destination,
+    customDestination,
+    status,
+    issuedAt,
+    returnedAt,
+    issuedVia,
+  };
+}
+
+const passDataHistoryPages = {
+  first: {
+    passes: [
+      passDataPass({
+        id: "active-kiosk",
+        status: "active",
+        issuedAt: "2026-08-19T14:55:00.000Z",
+        issuedVia: "kiosk",
+      }),
+      passDataPass({
+        id: "returned-teacher",
+        status: "returned",
+        issuedAt: "2026-08-19T14:00:00.000Z",
+        returnedAt: "2026-08-19T14:04:00.000Z",
+      }),
+      passDataPass({
+        id: "returned-malformed",
+        status: "returned",
+        issuedAt: "2026-08-19T13:30:00.000Z",
+        returnedAt: "2026-08-19T13:29:00.000Z",
+        destination: "other_classroom",
+      }),
+      passDataPass({
+        id: "expired-former",
+        status: "expired",
+        issuedAt: "2026-08-19T13:00:00.000Z",
+        teacherId: "former-staff-id",
+        teacher: null,
+        destination: "office",
+      }),
+    ],
+    hasMore: true,
+    nextCursor: "pass-data-page-2",
+  },
+  "pass-data-page-2": {
+    passes: [
+      passDataPass({
+        id: "returned-unattributed-kiosk",
+        status: "returned",
+        issuedAt: "2026-08-19T12:00:00.000Z",
+        returnedAt: "2026-08-19T12:01:00.000Z",
+        issuedVia: "kiosk",
+        teacherId: null,
+        teacher: null,
+        destination: "nurse",
+      }),
+      passDataPass({
+        id: "returned-named-kiosk",
+        status: "returned",
+        issuedAt: "2026-08-18T16:00:00.000Z",
+        returnedAt: "2026-08-18T16:02:00.000Z",
+        issuedVia: "kiosk",
+      }),
+      passDataPass({
+        id: "canceled-teacher",
+        status: "canceled",
+        issuedAt: "2026-08-18T15:00:00.000Z",
+        destination: "counselor",
+      }),
+    ],
+    hasMore: false,
+    nextCursor: null,
+  },
+};
+
+const allPassDataPasses = Object.values(passDataHistoryPages).flatMap((page) => page.passes);
+
+function passDataHistoryForRequest(url) {
+  if (url.searchParams.get("dateStart") === "2026-08-17T04:00:00.000Z") {
+    return passDataHistoryPages;
+  }
+  return {
+    first: {
+      passes: allPassDataPasses.filter((pass) => pass.issuedAt.startsWith("2026-08-19")),
+      hasMore: false,
+      nextCursor: null,
+    },
   };
 }
 
@@ -93,6 +230,7 @@ async function installApiMocks(page, state) {
       || pathname === "/api/passes"
       || pathname === "/api/passes/active"
       || pathname === "/api/passes/history"
+      || pathname === "/api/passpilot/passes/issuers"
       || pathname === "/api/kiosk-config"
     ) {
       state.classModelHeaders.push({
@@ -219,9 +357,32 @@ async function installApiMocks(page, state) {
         json: {
           source: "classpilot_groups",
           class: officialClasses[1],
-          students: [{ id: "student-two", firstName: "Taylor", lastName: "Student", studentIdNumber: "2002" }],
+          students: state.classTwoStudents,
         },
       });
+      return;
+    }
+    if (pathname === "/api/passpilot/classes/class-one/students") {
+      await route.fulfill({
+        json: {
+          source: "classpilot_groups",
+          class: officialClasses[0],
+          students: [{ id: "student-one", firstName: "Jordan", lastName: "Student", studentIdNumber: "2001" }],
+        },
+      });
+      return;
+    }
+    if (pathname === "/api/passpilot/passes/issuers") {
+      state.issuerRequests.push({
+        schoolId: request.headers()["x-school-id"] || null,
+        classModel: request.headers()["x-passpilot-class-model"] || null,
+      });
+      if (state.issuerFailuresRemaining > 0) {
+        state.issuerFailuresRemaining -= 1;
+        await route.fulfill({ status: 500, json: { error: "Issuer list temporarily unavailable" } });
+        return;
+      }
+      await route.fulfill({ json: { issuers: state.reportIssuers } });
       return;
     }
     if (pathname === "/api/passes" && request.method() === "POST") {
@@ -244,8 +405,11 @@ async function installApiMocks(page, state) {
         return;
       }
       if (state.historyPages) {
+        const historyPages = typeof state.historyPages === "function"
+          ? state.historyPages(url)
+          : state.historyPages;
         const cursor = url.searchParams.get("cursor") || "first";
-        const page = state.historyPages[cursor];
+        const page = historyPages[cursor];
         if (!page) {
           await route.fulfill({ status: 400, json: { error: "Unexpected history cursor" } });
           return;
@@ -345,6 +509,9 @@ function freshState(overrides = {}) {
     passWrites: [],
     classModelHeaders: [],
     passHistoryRequests: [],
+    reportIssuers,
+    issuerRequests: [],
+    issuerFailuresRemaining: 0,
     kioskClassId: "class-two",
     kioskWrites: [],
     kioskSessions: [],
@@ -354,6 +521,7 @@ function freshState(overrides = {}) {
     rosterFailuresRemaining: 0,
     historyFailuresRemaining: 0,
     historyPages: null,
+    classTwoStudents,
     settings: {
       name: "Browser Test School",
       schoolTimezone: "America/New_York",
@@ -371,6 +539,66 @@ function freshState(overrides = {}) {
   };
 }
 
+test("PassPilot selected-class session state is versioned, scoped, and fail-safe", () => {
+  const values = new Map();
+  const storage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: (key) => values.delete(key),
+  };
+  const classes = [{ id: "class-one" }, { id: "class-two" }];
+  const firstKey = passPilotSelectedClassStorageKey("user-one", "school-one");
+
+  assert.match(firstKey, /^passpilot:selected-class:v1:/);
+  assert.notEqual(firstKey, passPilotSelectedClassStorageKey("user-two", "school-one"));
+  assert.notEqual(firstKey, passPilotSelectedClassStorageKey("user-one", "school-two"));
+
+  writePassPilotSelectedClassId("user-one", "school-one", "class-two", storage);
+  assert.equal(values.get(firstKey), "class-two", "storage must contain only the selected class ID");
+  assert.equal(readPassPilotSelectedClassId("user-one", "school-one", storage), "class-two");
+  assert.equal(readPassPilotSelectedClassId("user-two", "school-one", storage), "");
+
+  assert.equal(resolvePassPilotSelectedClassId(classes, "class-two", "class-one"), "class-two");
+  assert.equal(resolvePassPilotSelectedClassId(classes, "retired-class", "class-two"), "class-two");
+  assert.equal(resolvePassPilotSelectedClassId(classes, "retired-class", "also-retired"), "class-one");
+  assert.equal(resolvePassPilotSelectedClassId([], "retired-class", "also-retired"), "");
+
+  writePassPilotSelectedClassId("user-one", "school-one", "", storage);
+  assert.equal(values.has(firstKey), false, "an empty class inventory must clear stale session state");
+
+  const deniedStorage = {
+    getItem: () => { throw new Error("denied"); },
+    setItem: () => { throw new Error("denied"); },
+    removeItem: () => { throw new Error("denied"); },
+  };
+  assert.equal(readPassPilotSelectedClassId("user-one", "school-one", deniedStorage), "");
+  assert.doesNotThrow(() => writePassPilotSelectedClassId("user-one", "school-one", "class-one", deniedStorage));
+
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const deniedWindow = {};
+  Object.defineProperty(deniedWindow, "sessionStorage", {
+    configurable: true,
+    get: () => { throw new Error("denied"); },
+  });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: deniedWindow,
+  });
+  try {
+    writePassPilotSelectedClassId("denied-user", "denied-school", "class-two");
+    assert.equal(
+      readPassPilotSelectedClassId("denied-user", "denied-school"),
+      "class-two",
+      "the default in-memory cache must survive denied sessionStorage access",
+    );
+    writePassPilotSelectedClassId("denied-user", "denied-school", "");
+    assert.equal(readPassPilotSelectedClassId("denied-user", "denied-school"), "");
+  } finally {
+    if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
+    else delete globalThis.window;
+  }
+});
+
 test("cross-product pass widgets advertise canonical capability and do not mask load errors as zero passes", async () => {
   for (const relativePath of [
     "src/shell/widgets/PassWidget.jsx",
@@ -381,6 +609,33 @@ test("cross-product pass widgets advertise canonical capability and do not mask 
     assert.match(source, /Passes unavailable/);
     assert.doesNotMatch(source, /api\.get\(['"]\/passpilot\/passes\/active/);
   }
+
+  const miniView = await readFile(
+    path.join(APP_ROOT, "src/products/classpilot/components/sidebar/PassPilotMiniView.jsx"),
+    "utf8",
+  );
+  assert.match(miniView, /navigate\('\/passpilot\/passes'\)/, "View All Passes must retain its explicit deep link");
+  assert.match(miniView, /window\.open\('\/passpilot', '_blank'\)/, "generic PassPilot entry must use the default route");
+
+  const classData = await readFile(path.join(APP_ROOT, "src/products/passpilot/classData.js"), "utf8");
+  const myClass = await readFile(
+    path.join(APP_ROOT, "src/products/passpilot/components/tabs/MyClassTab.jsx"),
+    "utf8",
+  );
+  assert.match(classData, /passPilotClassesQueryKey\(schoolId\)/);
+  assert.match(classData, /passPilotHistoryClassesQueryKey\(schoolId\)/);
+  assert.match(classData, /passPilotClassRosterQueryKey\(classId, schoolId\)/);
+  assert.match(myClass, /useCanonicalPassPilotClasses\(!!schoolId, schoolId\)/);
+  assert.match(myClass, /const sourceResolved = !!schoolId && classInventoryQuery\.isSuccess/);
+  assert.match(myClass, /if \(!sourceResolved \|\| !userId \|\| !schoolId\) return/);
+  assert.match(myClass, /\['\/api\/passes\/active', schoolId,/);
+  assert.match(myClass, /['"]\/api\/passes\/history['"],\s*schoolId,/);
+
+  const reports = await readFile(
+    path.join(APP_ROOT, "src/products/passpilot/components/tabs/ReportsTab.jsx"),
+    "utf8",
+  );
+  assert.match(reports, /csvHeaders = \["Student Name", "Class", "Issued By"/);
 });
 
 test("PassPilot canonical classes use the persisted source and preserve the legacy path before cutover", { timeout: 90_000 }, async () => {
@@ -488,7 +743,44 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
     await canonicalPage.getByTestId("canonical-passpilot-classes").waitFor();
     assert.equal(new URL(canonicalPage.url()).pathname, "/passpilot/classes");
 
+    await canonicalPage.goto(`${baseUrl}/passpilot`);
+    await canonicalPage.waitForURL((url) => (
+      url.pathname === "/passpilot/my-class" && url.searchParams.get("classId") === "class-one"
+    ));
+    assert.equal(
+      await canonicalPage.getByTestId("button-tab-myclass").getAttribute("aria-current"),
+      "page",
+      "the generic PassPilot entry must land on My Class",
+    );
+
     await canonicalPage.goto(`${baseUrl}/passpilot/my-class?classId=class-two`);
+    await canonicalPage.getByText("Taylor Student", { exact: true }).waitFor();
+    const selectedClassKey = passPilotSelectedClassStorageKey("admin-one", SCHOOL_ID);
+    assert.equal(
+      await canonicalPage.evaluate((key) => window.sessionStorage.getItem(key), selectedClassKey),
+      "class-two",
+      "a valid direct link must override and update the remembered class",
+    );
+
+    await canonicalPage.getByTestId("button-tab-roster").click();
+    await canonicalPage.getByRole("heading", { name: "Classes", exact: true }).waitFor();
+    const restoredRosterRequest = canonicalPage.waitForRequest((request) => (
+      new URL(request.url()).pathname === "/api/passpilot/classes/class-two/students"
+    ));
+    await canonicalPage.getByTestId("button-tab-myclass").click();
+    await restoredRosterRequest;
+    await canonicalPage.getByText("Taylor Student", { exact: true }).waitFor();
+    assert.equal(new URL(canonicalPage.url()).searchParams.get("classId"), "class-two");
+    assert.equal(
+      await canonicalPage.evaluate((key) => window.sessionStorage.getItem(key), selectedClassKey),
+      "class-two",
+      "My Class must restore the remembered canonical class after a tab change",
+    );
+
+    await canonicalPage.goto(`${baseUrl}/passpilot/my-class?classId=retired-class`);
+    await canonicalPage.waitForURL((url) => (
+      url.pathname === "/passpilot/my-class" && url.searchParams.get("classId") === "class-two"
+    ));
     await canonicalPage.getByText("Taylor Student", { exact: true }).waitFor();
     // No claimed kiosks yet: Send to Kiosk opens the claim-code dialog.
     await canonicalPage.getByRole("button", { name: "Send to Kiosk", exact: true }).waitFor();
@@ -561,6 +853,8 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
     assert.deepEqual(canonicalState.rosterRequests, [
       "/api/passpilot/classes/class-two/students",
       "/api/passpilot/classes/class-two/students",
+      "/api/passpilot/classes/class-two/students",
+      "/api/passpilot/classes/class-two/students",
     ]);
     await canonicalPage.getByTestId("button-checkout-student-two").click();
     await canonicalPage.getByRole("menuitem", { name: "General/Restroom" }).click();
@@ -612,6 +906,119 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
     await myClassHistoryFailurePage.getByRole("button", { name: "Retry", exact: true }).click();
     await myClassHistoryFailurePage.getByText(/Total:/).waitFor();
     assert.equal(myClassHistoryFailureState.passHistoryRequests.length, 3);
+
+    const passDataContext = await browser.newContext({ timezoneId: "America/Los_Angeles" });
+    const passDataPage = await passDataContext.newPage();
+    await passDataPage.clock.setFixedTime(new Date(PASS_DATA_NOW));
+    const passDataState = freshState({ historyPages: passDataHistoryForRequest });
+    await installApiMocks(passDataPage, passDataState);
+    await passDataPage.goto(`${baseUrl}/passpilot/my-class?classId=class-two`);
+    await passDataPage.getByText("Taylor Student", { exact: true }).waitFor();
+    const todayHistoryRequest = passDataPage.waitForRequest((request) => {
+      const requestUrl = new URL(request.url());
+      return requestUrl.pathname === "/api/passes/history" && !requestUrl.searchParams.has("cursor");
+    });
+    await passDataPage.getByRole("button", { name: "Pass Data", exact: true }).click();
+    const todayRequestUrl = new URL((await todayHistoryRequest).url());
+    assert.equal(todayRequestUrl.searchParams.get("dateStart"), "2026-08-19T04:00:00.000Z");
+    assert.equal(todayRequestUrl.searchParams.get("dateEnd"), PASS_DATA_NOW);
+    assert.equal(todayRequestUrl.searchParams.get("classId"), "class-two");
+    assert.equal(todayRequestUrl.searchParams.get("gradeId"), null);
+    await passDataPage.getByText("Today: Wednesday, Aug 19, 2026", { exact: true }).waitFor();
+    await passDataPage.getByRole("button", { name: /Zero Minutes.*0 passes/ }).waitFor();
+    await passDataPage.getByRole("button", { name: /Taylor Student.*passes/ }).click();
+    await passDataPage.getByText("Total Returned Time", { exact: true }).waitFor();
+
+    const todayDetails = passDataPage.getByTestId("pass-detail-list");
+    await todayDetails.waitFor();
+    assert.equal(await todayDetails.locator('article[data-testid^="pass-detail-"]').count(), 5);
+    assert.match(await passDataPage.getByTestId("pass-detail-returned-teacher").innerText(), /Brian Zinkan/);
+    assert.match(await passDataPage.getByTestId("pass-detail-returned-teacher").innerText(), /Returned/);
+    assert.match(await passDataPage.getByTestId("pass-detail-returned-teacher").innerText(), /4 min/);
+    assert.match(await passDataPage.getByTestId("pass-detail-returned-malformed").innerText(), /Returned/);
+    assert.match(await passDataPage.getByTestId("pass-detail-returned-malformed").innerText(), /Duration\s+Unavailable/);
+    assert.match(await passDataPage.getByTestId("pass-detail-active-kiosk").innerText(), /Brian Zinkan \(Kiosk\)/);
+    assert.match(await passDataPage.getByTestId("pass-detail-active-kiosk").innerText(), /Still out/);
+    assert.match(await passDataPage.getByTestId("pass-detail-active-kiosk").innerText(), /Duration\s+Pending/);
+    assert.match(await passDataPage.getByTestId("pass-detail-expired-former").innerText(), /Former staff member/);
+    assert.match(await passDataPage.getByTestId("pass-detail-expired-former").innerText(), /Expired/);
+    assert.match(await passDataPage.getByTestId("pass-detail-expired-former").innerText(), /Duration\s+Unavailable/);
+    assert.match(await passDataPage.getByTestId("pass-detail-returned-unattributed-kiosk").innerText(), /Unattributed kiosk/);
+    assert.match(await passDataPage.getByTestId("pass-detail-returned-unattributed-kiosk").innerText(), /1 min/);
+    await passDataPage.getByText("Returned passes only are included in time totals and averages.", { exact: true }).waitFor();
+    assert.match(
+      await passDataPage.getByText("Total Returned Time", { exact: true }).locator("..").innerText(),
+      /5 min/,
+    );
+
+    const weekHistoryRequest = passDataPage.waitForRequest((request) => {
+      const requestUrl = new URL(request.url());
+      return requestUrl.pathname === "/api/passes/history"
+        && requestUrl.searchParams.get("dateStart") === "2026-08-17T04:00:00.000Z"
+        && !requestUrl.searchParams.has("cursor");
+    });
+    await passDataPage.getByRole("button", { name: "This Week", exact: true }).click();
+    const weekRequest = new URL((await weekHistoryRequest).url());
+    assert.equal(weekRequest.searchParams.get("dateEnd"), PASS_DATA_NOW);
+    assert.equal(weekRequest.searchParams.get("classId"), "class-two");
+    assert.equal(weekRequest.searchParams.get("gradeId"), null);
+    await passDataPage.getByText("Current school week: Aug 17–19, 2026", { exact: true }).waitFor();
+    await passDataPage.getByTestId("pass-detail-returned-named-kiosk").waitFor();
+    assert.equal(await passDataPage.getByTestId("pass-detail-list").locator('article[data-testid^="pass-detail-"]').count(), 7);
+    assert.match(await passDataPage.getByTestId("pass-detail-returned-named-kiosk").innerText(), /Brian Zinkan \(Kiosk\)/);
+    assert.match(await passDataPage.getByTestId("pass-detail-returned-named-kiosk").innerText(), /2 min/);
+    assert.match(await passDataPage.getByTestId("pass-detail-canceled-teacher").innerText(), /Canceled/);
+    assert.match(await passDataPage.getByTestId("pass-detail-canceled-teacher").innerText(), /Duration\s+Unavailable/);
+    assert.deepEqual(
+      await passDataPage.getByTestId("pass-detail-list").locator('article[data-testid^="pass-detail-"]').evaluateAll(
+        (rows) => rows.map((row) => row.getAttribute("data-testid")),
+      ),
+      [
+        "pass-detail-active-kiosk",
+        "pass-detail-returned-teacher",
+        "pass-detail-returned-malformed",
+        "pass-detail-expired-former",
+        "pass-detail-returned-unattributed-kiosk",
+        "pass-detail-returned-named-kiosk",
+        "pass-detail-canceled-teacher",
+      ],
+      "the selected student's complete weekly history must preserve newest-first API order across pages",
+    );
+    assert.match(
+      await passDataPage.getByText("Total Returned Time", { exact: true }).locator("..").innerText(),
+      /7 min/,
+    );
+    assert.equal(
+      passDataState.passHistoryRequests.filter((search) => new URLSearchParams(search).has("cursor")).length,
+      1,
+      "My Class must merge every page before presenting weekly details",
+    );
+
+    const studentCsvDownload = passDataPage.waitForEvent("download");
+    await passDataPage.getByRole("button", { name: "Export CSV", exact: true }).click();
+    const studentCsvPath = await (await studentCsvDownload).path();
+    assert.ok(studentCsvPath, "the selected-student CSV must have a readable download path");
+    const studentCsv = await readFile(studentCsvPath, "utf8");
+    assert.match(studentCsv, /Total Returned Time: 7 min/);
+    assert.match(studentCsv, /"Date","Checked Out","Returned","Destination","Issued By","Status","Duration"/);
+    assert.match(studentCsv, /Brian Zinkan \(Kiosk\)/);
+    assert.match(studentCsv, /Unattributed kiosk/);
+    assert.match(studentCsv, /Former staff member/);
+    assert.match(studentCsv, /"Still out","Pending"/);
+    assert.match(studentCsv, /"Canceled","Unavailable"/);
+
+    await passDataPage.getByRole("button", { name: "This Month", exact: true }).click();
+    await passDataPage.getByRole("heading", { name: "Destinations", exact: true }).waitFor();
+    assert.equal(await passDataPage.getByTestId("pass-detail-list").count(), 0, "monthly student data must stay summarized");
+    await passDataPage.getByRole("button", { name: "This Year", exact: true }).click();
+    await passDataPage.getByRole("heading", { name: "Destinations", exact: true }).waitFor();
+    assert.equal(await passDataPage.getByTestId("pass-detail-list").count(), 0, "yearly student data must stay summarized");
+
+    await passDataPage.getByTestId("tab-grade-Grade 3 Homeroom").click();
+    await passDataPage.waitForURL((url) => url.searchParams.get("classId") === "class-one");
+    await passDataPage.getByTestId("button-checkout-student-one").waitFor();
+    assert.equal(await passDataPage.getByTestId("pass-detail-list").count(), 0, "changing class must clear the selected student detail");
+    await passDataContext.close();
 
     const legacyPage = await browser.newPage();
     const legacyState = freshState({ source: "legacy_grades" });
@@ -846,19 +1253,93 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
     const teacherState = freshState({ role: "teacher" });
     await installApiMocks(teacherPage, teacherState);
     await teacherPage.goto(`${baseUrl}/passpilot/setup`);
-    await teacherPage.waitForURL("**/passpilot/my-class**");
+    await teacherPage.waitForURL((url) => (
+      url.pathname === "/passpilot/my-class" && url.searchParams.get("classId") === "class-two"
+    ));
     assert.equal(new URL(teacherPage.url()).pathname, "/passpilot/my-class");
+    assert.equal(
+      await teacherPage.evaluate(
+        (key) => window.sessionStorage.getItem(key),
+        passPilotSelectedClassStorageKey("teacher-two", SCHOOL_ID),
+      ),
+      "class-two",
+      "a teacher with one class must persist that accessible class for this school",
+    );
+    await teacherPage.goto(`${baseUrl}/passpilot/reports`);
+    await teacherPage.getByText("Total Passes", { exact: true }).waitFor();
+    assert.equal(await teacherPage.getByLabel("Issued By").count(), 0, "teachers must not see the school-wide issuer filter");
+    await teacherPage.waitForTimeout(50);
+    assert.equal(teacherState.issuerRequests.length, 0, "teachers must not request the manager-only issuer endpoint");
+
+    const weekReportContext = await browser.newContext({ timezoneId: "America/Los_Angeles" });
+    const weekReportPage = await weekReportContext.newPage();
+    await weekReportPage.clock.setFixedTime(new Date(PASS_DATA_NOW));
+    const weekReportState = freshState();
+    await installApiMocks(weekReportPage, weekReportState);
+    await weekReportPage.goto(`${baseUrl}/passpilot/reports`);
+    await weekReportPage.getByText("Total Passes", { exact: true }).waitFor();
+    const reportWeekRequest = weekReportPage.waitForRequest((request) => {
+      const requestUrl = new URL(request.url());
+      return requestUrl.pathname === "/api/passes/history"
+        && requestUrl.searchParams.get("dateStart") === "2026-08-17T04:00:00.000Z";
+    });
+    await weekReportPage.getByLabel("Date Range").click();
+    await weekReportPage.getByRole("option", { name: "This Week", exact: true }).click();
+    const reportWeekUrl = new URL((await reportWeekRequest).url());
+    assert.equal(reportWeekUrl.searchParams.get("dateEnd"), PASS_DATA_NOW);
+    assert.equal(
+      (await weekReportPage.getByTestId("report-week-range").innerText()).replace(/\s+/g, " ").trim(),
+      "Current school week: Aug 17–19, 2026",
+    );
+    await weekReportContext.close();
 
     const officePage = await browser.newPage();
     const officeState = freshState({ role: "office_staff", emptyCanonical: true });
     await installApiMocks(officePage, officeState);
-    await officePage.goto(`${baseUrl}/passpilot/classes`);
+    const officeSelectedClassKey = passPilotSelectedClassStorageKey("admin-one", SCHOOL_ID);
+    await officePage.addInitScript(({ storageKey }) => {
+      window.sessionStorage.setItem(storageKey, "retired-class");
+    }, { storageKey: officeSelectedClassKey });
+    await officePage.goto(`${baseUrl}/passpilot/my-class?classId=stale-query-class`);
+    await officePage.getByRole("heading", { name: "No official classes yet", exact: true }).waitFor();
+    await officePage.waitForURL((url) => (
+      url.pathname === "/passpilot/my-class" && !url.searchParams.has("classId")
+    ));
+    assert.equal(
+      await officePage.evaluate((key) => window.sessionStorage.getItem(key), officeSelectedClassKey),
+      null,
+      "a zero-class inventory must clear stale session selection",
+    );
+    await officePage.getByTestId("button-tab-roster").click();
+    await officePage.waitForURL((url) => url.pathname === "/passpilot/classes");
     await officePage.getByRole("heading", { name: "Classes", exact: true }).waitFor();
     await officePage.getByText("No official classes yet", { exact: true }).waitFor();
     assert.equal(await officePage.getByText("No ClassPilot classes are assigned to you", { exact: true }).count(), 0);
     assert.equal(await officePage.getByTestId("manage-classpilot-classes").count(), 0);
     await officePage.getByRole("link", { name: "Reports" }).click();
     await officePage.waitForURL("**/passpilot/reports");
+    const reportIssuerSelect = officePage.getByLabel("Issued By");
+    await reportIssuerSelect.click();
+    const brianIssuerOption = officePage.getByRole("option", { name: "Brian Zinkan", exact: true });
+    await brianIssuerOption.waitFor();
+    const issuerOptionLabels = await officePage.getByRole("option").allTextContents();
+    assert.equal(issuerOptionLabels.length, officeState.reportIssuers.length + 1, "the issuer menu must render every returned staff member");
+    assert.ok(issuerOptionLabels.includes("Yvonne Allen"), "the alphabetically last active issuer must not be truncated by the menu");
+    assert.equal(issuerOptionLabels.at(-1), "Retired Rita (Former staff)", "former staff must sort after active issuers");
+    assert.ok(issuerOptionLabels.includes("Retired Rita (Former staff)"), "former staff must be labeled distinctly");
+    const brianHistoryRequest = officePage.waitForRequest((request) => {
+      const requestUrl = new URL(request.url());
+      return requestUrl.pathname === "/api/passes/history"
+        && requestUrl.searchParams.get("teacherId") === "issuer-brian";
+    });
+    await brianIssuerOption.click();
+    const filteredByBrianRequest = await brianHistoryRequest;
+    assert.equal(new URL(filteredByBrianRequest.url()).searchParams.get("teacherId"), "issuer-brian");
+    assert.equal(officeState.issuerRequests.length, 1);
+    assert.deepEqual(officeState.issuerRequests[0], {
+      schoolId: SCHOOL_ID,
+      classModel: "classpilot-groups-v1",
+    });
     const reportClassSelect = officePage.getByLabel("Class");
     await reportClassSelect.click();
     await officePage.getByText("Legacy class history", { exact: true }).waitFor();
@@ -877,6 +1358,21 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
     });
     await officePage.getByRole("option", { name: "Archived Science (Archived)" }).click();
     await archivedClassRequest;
+
+    const issuerFailurePage = await browser.newPage();
+    const issuerFailureState = freshState({ issuerFailuresRemaining: 2 });
+    await installApiMocks(issuerFailurePage, issuerFailureState);
+    await issuerFailurePage.goto(`${baseUrl}/passpilot/reports`);
+    await issuerFailurePage.getByText("Issuer options couldn’t be loaded.", { exact: true }).waitFor();
+    assert.equal(await issuerFailurePage.getByLabel("Issued By").isDisabled(), true);
+    const issuerRetryResponse = issuerFailurePage.waitForResponse((response) => (
+      new URL(response.url()).pathname === "/api/passpilot/passes/issuers" && response.status() === 200
+    ));
+    await issuerFailurePage.getByRole("button", { name: "Retry", exact: true }).click();
+    await issuerRetryResponse;
+    await issuerFailurePage.waitForFunction(() => !document.querySelector("#reportIssuer")?.disabled);
+    await issuerFailurePage.getByLabel("Issued By").click();
+    await issuerFailurePage.getByRole("option", { name: "Brian Zinkan", exact: true }).waitFor();
 
     const reportFailurePage = await browser.newPage();
     const reportFailureState = freshState({ historyFailuresRemaining: 2 });

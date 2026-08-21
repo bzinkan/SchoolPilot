@@ -2672,6 +2672,102 @@ export async function deleteProductLicenseForSchool(
   });
 }
 
+export type PasspilotReportIssuer = {
+  id: string;
+  displayName: string;
+  status: "active" | "former";
+};
+
+const PASSPILOT_REPORT_ISSUER_ROLES = [
+  "teacher",
+  "office_staff",
+  "admin",
+  "school_admin",
+] as const;
+
+function resolvePasspilotIssuerDisplayName(value: {
+  displayName?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
+}): string {
+  const displayName = value.displayName?.trim();
+  if (displayName) return displayName;
+  const fullName = [value.firstName, value.lastName]
+    .map((part) => part?.trim())
+    .filter(Boolean)
+    .join(" ");
+  return fullName || value.email?.trim() || "Former staff member";
+}
+
+/**
+ * Returns everyone who can currently issue PassPilot passes plus retained
+ * historical issuers. Memberships are global auth rows, while passes are
+ * tenant data, so both query branches explicitly bind to the requested school.
+ */
+export async function getPasspilotReportIssuers(
+  schoolId: string
+): Promise<PasspilotReportIssuer[]> {
+  const activeStaffRows = await db
+    .select({
+      id: schoolMemberships.userId,
+      displayName: users.displayName,
+      firstName: users.firstName,
+      lastName: users.lastName,
+      email: users.email,
+    })
+    .from(schoolMemberships)
+    .innerJoin(users, eq(users.id, schoolMemberships.userId))
+    .where(
+      and(
+        eq(schoolMemberships.schoolId, schoolId),
+        eq(schoolMemberships.status, "active"),
+        inArray(schoolMemberships.role, PASSPILOT_REPORT_ISSUER_ROLES)
+      )
+    );
+
+  const historicalIssuerRows = await db
+    .selectDistinct({
+      id: passes.teacherId,
+      displayName: users.displayName,
+      firstName: users.firstName,
+      lastName: users.lastName,
+      email: users.email,
+    })
+    .from(passes)
+    .leftJoin(users, eq(users.id, passes.teacherId))
+    .where(
+      and(
+        eq(passes.schoolId, schoolId),
+        isNotNull(passes.teacherId)
+      )
+    );
+
+  const issuers = new Map<string, PasspilotReportIssuer>();
+  for (const row of activeStaffRows) {
+    issuers.set(row.id, {
+      id: row.id,
+      displayName: resolvePasspilotIssuerDisplayName(row),
+      status: "active",
+    });
+  }
+  for (const row of historicalIssuerRows) {
+    if (!row.id || issuers.has(row.id)) continue;
+    issuers.set(row.id, {
+      id: row.id,
+      displayName: resolvePasspilotIssuerDisplayName(row),
+      status: "former",
+    });
+  }
+
+  return [...issuers.values()].sort((left, right) => {
+    if (left.status !== right.status) return left.status === "active" ? -1 : 1;
+    return left.displayName.localeCompare(right.displayName, "en", {
+      sensitivity: "base",
+    }) || left.id.localeCompare(right.id);
+  });
+}
+
 export async function getActivePassesByClass(
   schoolId: string,
   classId: string

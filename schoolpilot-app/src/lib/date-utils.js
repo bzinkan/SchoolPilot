@@ -1,4 +1,5 @@
-import { formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNow, startOfDay } from 'date-fns';
+import { fromZonedTime, toZonedTime } from 'date-fns-tz';
 
 /**
  * Format time as "9:30 AM"
@@ -89,32 +90,11 @@ export function formatRelative(date) {
 /**
  * Get midnight of today in the given timezone, returned as a UTC Date.
  */
-export function startOfTodayInTimezone(timezone) {
-  const now = new Date();
-  // Get today's date components in the target timezone
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: timezone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(now);
+export function startOfTodayInTimezone(timezone, now = new Date()) {
+  if (!(now instanceof Date) || !Number.isFinite(now.getTime())) {
+    throw new TypeError('now must be a valid Date');
+  }
 
-  const year = parts.find((p) => p.type === 'year').value;
-  const month = parts.find((p) => p.type === 'month').value;
-  const day = parts.find((p) => p.type === 'day').value;
-
-  // Build an ISO string for midnight in that timezone, then convert to UTC
-  // We use a temporary date to find the UTC offset at midnight in the target timezone
-  const midnightStr = `${year}-${month}-${day}T00:00:00`;
-
-  // Create date assuming local, then adjust: find the offset for that timezone
-  const tempDate = new Date(midnightStr);
-  const utcStr = tempDate.toLocaleString('en-US', { timeZone: 'UTC' });
-  const tzStr = tempDate.toLocaleString('en-US', { timeZone: timezone });
-  const utcDate = new Date(utcStr);
-  const tzDate = new Date(tzStr);
-  const offsetMs = utcDate - tzDate;
-
-  // Midnight in the target timezone expressed as a UTC Date
-  return new Date(tempDate.getTime() + offsetMs);
+  const schoolNow = toZonedTime(now, timezone);
+  return fromZonedTime(startOfDay(schoolNow), timezone);
 }
