@@ -1071,6 +1071,137 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
     await gateRedirectPage.getByTestId("kiosk-claim-code").waitFor();
     await gateRedirectPage.getByText("444 555", { exact: true }).waitFor();
 
+    // Device memory: a remembered device offers a one-tap teacher resume on
+    // the waiting screen, with the claim code kept as the fallback beneath.
+    const resumePage = await browser.newPage();
+    await resumePage.addInitScript(() => {
+      window.localStorage.setItem("pp_kiosk_pin", "1234");
+    });
+    const resumeDeviceHeaders = [];
+    let resumeOutcome = "success"; // flipped to "gone" for the 404 fallback leg
+    await resumePage.route("**/api/passpilot/kiosk/**", async (route) => {
+      const request = route.request();
+      const pathname = new URL(request.url()).pathname;
+      if (pathname.endsWith("/session/resume")) {
+        resumeDeviceHeaders.push(request.headers()["x-kiosk-device"] || null);
+        if (resumeOutcome === "gone") {
+          await route.fulfill({
+            status: 404,
+            json: { error: "No remembered kiosk.", code: "PASSPILOT_KIOSK_DEVICE_UNKNOWN" },
+          });
+          return;
+        }
+        await route.fulfill({
+          status: 201,
+          json: {
+            session: {
+              id: "resumed-session",
+              status: "active",
+              claimCode: null,
+              source: "classpilot_groups",
+              classId: "class-two",
+              gradeId: null,
+              className: "Grade 4 Homeroom",
+              kioskName: "Mr. Zinkan",
+            },
+            kioskStyle: "simple",
+          },
+        });
+        return;
+      }
+      if (pathname.endsWith("/session")) {
+        resumeDeviceHeaders.push(request.headers()["x-kiosk-device"] || null);
+        await route.fulfill({
+          status: 201,
+          json: {
+            session: { id: "resume-boot-session", status: "unclaimed", claimCode: "777888" },
+            kioskStyle: "simple",
+            resume: { kioskName: "Mr. Zinkan", className: "Grade 4 Homeroom" },
+          },
+        });
+        return;
+      }
+      if (pathname.endsWith("/config")) {
+        const sessionId = request.headers()["x-kiosk-session"];
+        if (sessionId === "resumed-session") {
+          await route.fulfill({
+            json: {
+              session: { id: "resumed-session", status: "active" },
+              source: "classpilot_groups",
+              classId: "class-two",
+              gradeId: null,
+              className: "Grade 4 Homeroom",
+              kioskName: "Mr. Zinkan",
+              kioskEnabled: true,
+              kioskRequiresApproval: false,
+              defaultPassDuration: 5,
+              kioskStyle: "simple",
+            },
+          });
+          return;
+        }
+        await route.fulfill({
+          json: {
+            session: { id: "resume-boot-session", status: "unclaimed", claimCode: "777888" },
+            source: null,
+            classId: null,
+            gradeId: null,
+            className: null,
+            kioskName: null,
+            kioskEnabled: true,
+            kioskRequiresApproval: false,
+            defaultPassDuration: 5,
+            kioskStyle: "simple",
+          },
+        });
+        return;
+      }
+      if (pathname.endsWith("/students")) {
+        await route.fulfill({ json: { students: [] } });
+        return;
+      }
+      await route.fulfill({ status: 500, json: { error: "Unexpected kiosk request" } });
+    });
+    await resumePage.goto(`${baseUrl}/passpilot/kiosk/simple?school=${SCHOOL_ID}`);
+    const resumeButton = resumePage.getByTestId("kiosk-resume-button");
+    await resumeButton.waitFor();
+    assert.match(
+      (await resumeButton.textContent()) || "",
+      /Resume: Mr\. Zinkan — Grade 4 Homeroom/,
+    );
+    // The claim code stays available beneath the offer.
+    await resumePage.getByTestId("kiosk-claim-code").waitFor();
+    await resumePage.getByText("777 888", { exact: true }).waitFor();
+    const bootDeviceId = resumeDeviceHeaders.at(-1);
+    assert.ok(bootDeviceId, "bootstrap must send X-Kiosk-Device");
+    await resumeButton.click();
+    // Resumed session renders the active kiosk header for the teacher.
+    await resumePage.getByText("Grade 4 Homeroom — Mr. Zinkan", { exact: true }).waitFor();
+    assert.equal(
+      resumeDeviceHeaders.at(-1),
+      bootDeviceId,
+      "resume must present the same durable device id as bootstrap",
+    );
+    // Durability: the device id survives a reload (fallback leg also proves
+    // a failed resume clears the button but keeps the claim code).
+    resumeOutcome = "gone";
+    await resumePage.reload();
+    await resumePage.getByTestId("kiosk-resume-button").waitFor();
+    assert.equal(resumeDeviceHeaders.at(-1), bootDeviceId, "device id must survive reload");
+    await resumePage.getByTestId("kiosk-resume-button").click();
+    await resumePage.getByTestId("kiosk-resume-button").waitFor({ state: "detached" });
+    await resumePage.getByTestId("kiosk-claim-code").waitFor();
+    // Gate mode: the device id deliberately lives in localStorage even while
+    // the PIN is sessionStorage-scoped.
+    const gateStorage = await gateRedirectPage.evaluate(() => ({
+      deviceInLocal: window.localStorage.getItem("pp_kiosk_device"),
+      pinInLocal: window.localStorage.getItem("pp_kiosk_pin"),
+      pinInSession: window.sessionStorage.getItem("pp_kiosk_pin"),
+    }));
+    assert.ok(gateStorage.deviceInLocal, "gate-launched kiosks must persist the device id in localStorage");
+    assert.equal(gateStorage.pinInLocal, null, "gate mode must never write the PIN to localStorage");
+    assert.equal(gateStorage.pinInSession, "1234");
+
     await officePage.goto(`${baseUrl}/passpilot/setup`);
     await officePage.waitForURL("**/passpilot/my-class**");
 

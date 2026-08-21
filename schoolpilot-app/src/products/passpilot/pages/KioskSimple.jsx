@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { ArrowLeft, Bath, Heart, Triangle, Clock } from "lucide-react";
 import { isCanonicalPassPilotSource, PASSPILOT_CLASS_MODEL_HEADER } from "../classData";
 import { kioskPinStore } from "../kioskPinStore";
+import { getKioskDeviceId } from "../kioskDeviceId";
 
 const DESTINATIONS = [
   { value: "bathroom", label: "General/Restroom", icon: Bath, color: "text-blue-400" },
@@ -62,12 +63,20 @@ export default function KioskSimplePage() {
   const [session, setSession] = useState(null);
   const [sessionMode, setSessionMode] = useState(null);
   const [bootstrapError, setBootstrapError] = useState(null);
+  // Device-memory resume offer from the bootstrap response: the remembered
+  // teacher this device can rejoin with one tap (claim code stays the
+  // fallback).
+  const [resumeOffer, setResumeOffer] = useState(null);
   const inactivityRef = useRef();
   const feedbackRef = useRef();
   const scrollContainerRef = useRef(null);
   const legacyConfiguredClassRef = useRef(undefined);
   const configAvailableRef = useRef(null);
   const sessionIdRef = useRef(null);
+  // Blocks the 5s bootstrap interval while a resume is in flight — a
+  // concurrent bootstrap would mint a fresh unclaimed session (the resume
+  // force-releases the old one) and clobber the stored session id.
+  const resumingRef = useRef(false);
 
   // Close destination picker on inactivity (10s), but keep grade selected
   const resetInactivity = useCallback(() => {
@@ -118,11 +127,12 @@ export default function KioskSimplePage() {
   }, [schoolId]);
 
   // Session died (TTL, release, teacher removed): drop it and re-bootstrap,
-  // which mints a fresh claim code.
+  // which mints a fresh claim code (and recomputes the resume offer).
   const handleSessionExpired = useCallback(() => {
     kioskPinStore().removeItem(KIOSK_SESSION_KEY);
     sessionIdRef.current = null;
     setSession(null);
+    setResumeOffer(null);
     setSelectedGradeId(null);
     setStudents([]);
     setStudentsClassId(null);
@@ -138,6 +148,7 @@ export default function KioskSimplePage() {
     if (!schoolId || !kioskPin || sessionMode !== null) return;
     let cancelled = false;
     const bootstrap = async () => {
+      if (resumingRef.current) return;
       try {
         const urlParams = new URLSearchParams(window.location.search);
         const urlSessionId = urlParams.get("session");
@@ -148,12 +159,14 @@ export default function KioskSimplePage() {
           window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
         }
         const storedId = kioskPinStore().getItem(KIOSK_SESSION_KEY);
+        const deviceId = getKioskDeviceId();
         const res = await fetch("/api/passpilot/kiosk/session", {
           method: "POST",
           credentials: "omit",
           headers: {
             ...kioskHeaders(),
             ...(storedId ? { "X-Kiosk-Session": storedId } : {}),
+            ...(deviceId ? { "X-Kiosk-Device": deviceId } : {}),
           },
         });
         if (cancelled) return;
@@ -176,6 +189,8 @@ export default function KioskSimplePage() {
         if (redirectForKioskStyle(data.kioskStyle)) return;
         setBootstrapError(null);
         setSession(data.session);
+        // ?? null: old servers omit the resume field entirely.
+        setResumeOffer(data.session.status === "unclaimed" ? (data.resume ?? null) : null);
         // The bootstrap response already carries the class for an active
         // (self-launched or resumed) session — apply it so a claimed kiosk
         // never flashes the waiting screen while the first config poll runs.
@@ -193,6 +208,48 @@ export default function KioskSimplePage() {
     const interval = setInterval(bootstrap, 5000);
     return () => { cancelled = true; clearInterval(interval); };
   }, [schoolId, kioskPin, sessionMode, kioskHeaders, checkPinRejected, redirectForKioskStyle]);
+
+  // One-tap resume: mint a fresh active session for the remembered teacher.
+  // Any failure just clears the offer — the claim code beneath it remains the
+  // fallback. 401 flows through the shared PIN-rejection handling.
+  const handleResume = useCallback(async () => {
+    if (resumingRef.current) return;
+    resumingRef.current = true;
+    try {
+      const deviceId = getKioskDeviceId();
+      const res = await fetch("/api/passpilot/kiosk/session/resume", {
+        method: "POST",
+        credentials: "omit",
+        headers: {
+          ...kioskHeaders(),
+          ...(deviceId ? { "X-Kiosk-Device": deviceId } : {}),
+        },
+      });
+      checkPinRejected(res);
+      if (!res.ok) {
+        setResumeOffer(null);
+        return;
+      }
+      const data = await res.json().catch(() => null);
+      if (!data?.session?.id) {
+        setResumeOffer(null);
+        return;
+      }
+      kioskPinStore().setItem(KIOSK_SESSION_KEY, data.session.id);
+      sessionIdRef.current = data.session.id;
+      if (redirectForKioskStyle(data.kioskStyle)) return;
+      setResumeOffer(null);
+      setSession(data.session);
+      setClassSource(data.session.source || null);
+      setSelectedGradeId(data.session.classId || null);
+      setKioskName(data.session.kioskName ?? null);
+      setSessionMode(true);
+    } catch {
+      // Connection error — keep the offer; the teacher can tap again.
+    } finally {
+      resumingRef.current = false;
+    }
+  }, [kioskHeaders, checkPinRejected, redirectForKioskStyle]);
 
   const fetchClasses = useCallback(() => {
     if (!schoolId || !kioskPin) return Promise.resolve();
@@ -286,13 +343,19 @@ export default function KioskSimplePage() {
   useEffect(() => {
     if (!schoolId || !kioskPin || sessionMode !== true || !sessionIdRef.current) return;
     const poll = () => {
+      // Fence every response to the session it was sent for: a resume
+      // force-releases the old session server-side, so an in-flight poll for
+      // it comes back 404 EXPIRED — and must not wipe the freshly stored
+      // resumed session.
+      const polledSessionId = sessionIdRef.current;
       fetch(`/api/passpilot/kiosk/config?school=${schoolId}`, { credentials: "omit", headers: kioskHeaders() })
         .then(checkPinRejected)
         .then(async (response) => {
+          if (polledSessionId !== sessionIdRef.current) return null;
           if (response.ok) return response.json();
           const body = await response.json().catch(() => ({}));
           if (response.status === 404 && body.code === "PASSPILOT_KIOSK_SESSION_EXPIRED") {
-            handleSessionExpired();
+            if (polledSessionId === sessionIdRef.current) handleSessionExpired();
             return null;
           }
           const error = new Error(body.error || "The kiosk configuration is unavailable.");
@@ -302,6 +365,7 @@ export default function KioskSimplePage() {
         })
         .then((data) => {
           if (!data) return;
+          if (polledSessionId !== sessionIdRef.current) return;
           if (redirectForKioskStyle(data.kioskStyle)) return;
           setConfigLoaded(true);
           setConfigError(null);
@@ -353,6 +417,7 @@ export default function KioskSimplePage() {
     if (!schoolId || !selectedGradeId || !kioskPin) return;
     let active = true;
     const poll = () => {
+      const polledSessionId = sessionIdRef.current;
       const classParam = isCanonicalPassPilotSource(classSource) ? "classId" : "gradeId";
       fetch(`/api/passpilot/kiosk/students?school=${schoolId}&${classParam}=${encodeURIComponent(selectedGradeId)}`, { credentials: "omit", headers: kioskHeaders() })
         .then(checkPinRejected)
@@ -360,7 +425,7 @@ export default function KioskSimplePage() {
           if (response.ok) return response.json();
           const body = await response.json().catch(() => ({}));
           if (response.status === 404 && body.code === "PASSPILOT_KIOSK_SESSION_EXPIRED") {
-            handleSessionExpired();
+            if (polledSessionId === sessionIdRef.current) handleSessionExpired();
             return null;
           }
           throw new Error(body.error || "The kiosk roster is unavailable.");
@@ -387,7 +452,12 @@ export default function KioskSimplePage() {
   };
 
   const scrollToTop = () => {
+    // The roster can scroll either the inner container (viewport-constrained
+    // flex layout) or the document itself (min-h-screen lets the page grow on
+    // small kiosk displays) — reset both so the next student always starts at
+    // the top of the list.
     scrollContainerRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const handleCheckout = async (studentId, destination) => {
@@ -450,6 +520,7 @@ export default function KioskSimplePage() {
         }
       } else {
         showFeedback("success", "Welcome back!");
+        scrollToTop();
       }
     } catch {
       showFeedback("error", "Connection error");
@@ -535,15 +606,28 @@ export default function KioskSimplePage() {
     );
   }
 
-  // Waiting screen: unclaimed session shows its claim code and nothing else.
+  // Waiting screen: unclaimed session shows its claim code — and, when this
+  // device remembers a teacher, a one-tap resume button above it.
   if (sessionMode === true && session?.status === "unclaimed") {
     const code = session.claimCode || "";
     return (
       <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center p-8">
         <div className="max-w-lg w-full text-center space-y-8">
           <h1 className="text-3xl font-bold text-blue-400">PassPilot Kiosk</h1>
+          {resumeOffer && (
+            <button
+              onClick={handleResume}
+              className="w-full py-6 px-4 bg-blue-600 hover:bg-blue-500 rounded-2xl text-2xl font-semibold transition-colors"
+              data-testid="kiosk-resume-button"
+            >
+              Resume: {resumeOffer.kioskName || "your kiosk"}
+              {resumeOffer.className ? ` — ${resumeOffer.className}` : ""}
+            </button>
+          )}
           <div>
-            <p className="text-gray-400 mb-3 text-lg">Kiosk code</p>
+            <p className="text-gray-400 mb-3 text-lg">
+              {resumeOffer ? "Or claim with the kiosk code" : "Kiosk code"}
+            </p>
             <p className="text-7xl font-bold tracking-[0.2em] tabular-nums" data-testid="kiosk-claim-code">
               {code ? `${code.slice(0, 3)} ${code.slice(3)}` : "••• •••"}
             </p>

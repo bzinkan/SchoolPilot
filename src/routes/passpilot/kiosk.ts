@@ -49,6 +49,10 @@ import {
   getMembershipByUserAndSchool,
   createKioskSession,
   createSelfClaimedKioskSession,
+  createResumedKioskSession,
+  adoptKioskSessionDevice,
+  getLiveKioskDeviceBinding,
+  deleteKioskDeviceBinding,
   getLiveKioskSessionById,
   touchKioskSessionLastSeen,
   claimKioskSessionByCode,
@@ -59,6 +63,7 @@ import {
   getActiveKioskSessionsForTeacher,
   type KioskClassTarget,
 } from "../../services/storage.js";
+import { logAudit } from "../../services/audit.js";
 import type { KioskSession } from "../../schema/passpilot.js";
 import { isWithinTrackingWindow } from "../../services/schoolHours.js";
 import { comparePassword } from "../../util/password.js";
@@ -141,6 +146,20 @@ function getKioskSessionId(req: { headers: Record<string, unknown> }): string | 
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+// Durable device identity (X-Kiosk-Device): a client-generated UUID that
+// keys the passpilot_kiosk_devices binding. Strictly validated and lowercased
+// — a malformed header means "no device id" (feature silently off), never an
+// error, so a garbled header cannot break a kiosk.
+const KIOSK_DEVICE_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function getKioskDeviceId(req: { headers: Record<string, unknown> }): string | null {
+  const value = req.headers["x-kiosk-device"];
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return KIOSK_DEVICE_ID_PATTERN.test(trimmed) ? trimmed.toLowerCase() : null;
+}
+
 function respondKioskSessionExpired(res: any) {
   return res.status(404).json({
     error: "This kiosk session has expired.",
@@ -155,7 +174,13 @@ function respondKioskSessionUnclaimed(res: any) {
   });
 }
 
-function kioskSessionClassId(session: KioskSession): string | null {
+// Minimal class-column shape shared by kiosk sessions and device bindings.
+type KioskClassColumns = Pick<
+  KioskSession,
+  "classSource" | "gradeId" | "classpilotGroupId"
+>;
+
+function kioskSessionClassId(session: KioskClassColumns): string | null {
   return session.classSource === "classpilot_groups"
     ? session.classpilotGroupId
     : session.classSource === "legacy_grades"
@@ -210,7 +235,7 @@ async function kioskSessionTeacherIdentity(schoolId: string, teacherId: string) 
 
 async function kioskSessionClassName(
   schoolId: string,
-  session: KioskSession
+  session: KioskClassColumns
 ): Promise<string | null> {
   const classId = kioskSessionClassId(session);
   if (!classId) return null;
@@ -220,6 +245,33 @@ async function kioskSessionClassName(
   }
   const allGrades = await getGradesBySchool(schoolId);
   return allGrades.find((g) => g.id === classId)?.name ?? null;
+}
+
+// Resume offer for the bootstrap response: shown on the waiting screen so a
+// remembered device can rejoin its teacher with one tap instead of a claim
+// code. Self-healing: a binding whose teacher is no longer active staff is
+// deleted on sight (mirrors the force-release-on-null convention). Class
+// staleness only degrades the display — the actual class decision is made at
+// resume time, the single source of truth.
+async function kioskDeviceResumeOffer(
+  schoolId: string,
+  deviceId: string | null
+): Promise<{ kioskName: string | null; className: string | null } | null> {
+  if (!deviceId) return null;
+  const binding = await getLiveKioskDeviceBinding(schoolId, deviceId);
+  if (!binding) return null;
+  const identity = await kioskSessionTeacherIdentity(schoolId, binding.teacherId);
+  if (!identity) {
+    await deleteKioskDeviceBinding(schoolId, deviceId);
+    return null;
+  }
+  let className: string | null = null;
+  try {
+    className = await kioskSessionClassName(schoolId, binding);
+  } catch {
+    className = null;
+  }
+  return { kioskName: identity.kioskName, className };
 }
 
 // Session payload for kiosk devices (public, PIN-gated callers).
@@ -295,17 +347,81 @@ router.post("/session", kioskLimiter, async (req, res, next) => {
     if (error || !school) return res.status(status).json({ error });
 
     await runWithTenantContext({ schoolId }, async () => {
+      const deviceId = getKioskDeviceId(req);
       const presentedId = getKioskSessionId(req);
       if (presentedId) {
         const existing = await getLiveKioskSessionById(schoolId, presentedId);
         if (existing) {
+          if (deviceId) {
+            // Stamp the device on the session; an active session (the
+            // /sessions/self handoff) also writes the durable binding here.
+            await adoptKioskSessionDevice(schoolId, existing.id, deviceId);
+          }
           return res.json({
             session: await kioskSessionDeviceView(schoolId, existing),
             kioskStyle: school.kioskStyle,
+            resume:
+              existing.status === "unclaimed"
+                ? await kioskDeviceResumeOffer(schoolId, deviceId)
+                : null,
           });
         }
       }
-      const session = await createKioskSession(schoolId);
+      const session = await createKioskSession(schoolId, deviceId);
+      return res.status(201).json({
+        session: await kioskSessionDeviceView(schoolId, session),
+        kioskStyle: school.kioskStyle,
+        resume: await kioskDeviceResumeOffer(schoolId, deviceId),
+      });
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/passpilot/kiosk/session/resume - One-tap resume from a remembered
+// device binding. Public (PIN-gated) like /session — it deliberately lives
+// under the /session namespace: the authenticated /sessions/* teacher
+// endpoints remain CSRF-protected. The PIN is the security boundary (staff
+// present); the device id only selects WHICH teacher's kiosk to mint.
+router.post("/session/resume", kioskLimiter, async (req, res, next) => {
+  try {
+    const schoolId = getKioskSchoolId(req);
+    if (!schoolId) {
+      return res.status(400).json({ error: "School ID required (x-school-id header)" });
+    }
+    const kioskPin = req.headers["x-kiosk-pin"] as string | undefined;
+    const { error, status, school } = await validateKiosk(schoolId, kioskPin);
+    if (error || !school) return res.status(status).json({ error });
+
+    await runWithTenantContext({ schoolId }, async () => {
+      const deviceId = getKioskDeviceId(req);
+      if (!deviceId) {
+        return res.status(404).json({
+          error: "This device has no remembered kiosk. Use a claim code instead.",
+          code: "PASSPILOT_KIOSK_DEVICE_UNKNOWN",
+        });
+      }
+      // Offer-time teacher check with binding self-healing; the transaction
+      // in createResumedKioskSession re-validates under lock.
+      const offer = await kioskDeviceResumeOffer(schoolId, deviceId);
+      if (!offer) {
+        return res.status(404).json({
+          error: "This device has no remembered kiosk. Use a claim code instead.",
+          code: "PASSPILOT_KIOSK_DEVICE_UNKNOWN",
+        });
+      }
+      const session = await createResumedKioskSession(schoolId, deviceId);
+      // Device-initiated mint of a teacher-bound session with no teacher
+      // interaction: worth an audit trail even though kiosk routes are
+      // otherwise unaudited. Best-effort by design.
+      await logAudit({
+        schoolId,
+        action: "passpilot.kiosk.session_resumed",
+        entityType: "passpilot_kiosk_session",
+        entityId: session.id,
+        changes: { deviceId, teacherId: session.teacherId },
+      });
       return res.status(201).json({
         session: await kioskSessionDeviceView(schoolId, session),
         kioskStyle: school.kioskStyle,

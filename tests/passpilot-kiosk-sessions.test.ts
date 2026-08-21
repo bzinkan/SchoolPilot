@@ -102,10 +102,51 @@ before(async () => {
     .catch(() => false);
   if (!schemaReady) return;
 
+  // Self-provision schema the tests need (mirrors the src/index.ts inline
+  // migration) so older local DBs run without a server boot. Tolerant of a
+  // restricted role: in the RLS-enabled CI job the suite runs as the
+  // non-owner tenant user and the schema already exists via drizzle push —
+  // DDL failures there are expected and harmless.
+  try {
   await pool.query(`
     ALTER TABLE schools
     ADD COLUMN IF NOT EXISTS kiosk_style TEXT NOT NULL DEFAULT 'simple'
   `);
+  await pool.query(`
+    ALTER TABLE passpilot_kiosk_sessions ADD COLUMN IF NOT EXISTS device_id TEXT
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS pp_kiosk_sessions_school_device_idx
+    ON passpilot_kiosk_sessions (school_id, device_id) WHERE device_id IS NOT NULL
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS passpilot_kiosk_devices (
+      id VARCHAR NOT NULL,
+      school_id TEXT NOT NULL,
+      teacher_id TEXT NOT NULL,
+      class_source TEXT,
+      grade_id TEXT,
+      classpilot_group_id TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      last_used_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      CONSTRAINT pp_kiosk_devices_pkey PRIMARY KEY (school_id, id),
+      CONSTRAINT pp_kiosk_devices_class_source_check
+        CHECK (class_source IS NULL OR class_source IN ('legacy_grades', 'classpilot_groups')),
+      CONSTRAINT pp_kiosk_devices_class_shape_check
+        CHECK (
+          (class_source IS NULL AND grade_id IS NULL AND classpilot_group_id IS NULL) OR
+          (class_source = 'legacy_grades' AND grade_id IS NOT NULL AND classpilot_group_id IS NULL) OR
+          (class_source = 'classpilot_groups' AND classpilot_group_id IS NOT NULL AND grade_id IS NULL)
+        )
+    )
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS pp_kiosk_devices_school_last_used_idx
+    ON passpilot_kiosk_devices (school_id, last_used_at)
+  `);
+  } catch {
+    // Restricted-role run (RLS CI job): schema is already provisioned.
+  }
 
   schoolA = await storage.createSchool({
     name: `${TAG}_A`,
@@ -228,6 +269,7 @@ after(async () => {
         await db.execute(sql`DELETE FROM audit_logs WHERE school_id IN (${ids})`);
         await db.execute(sql`DELETE FROM passes WHERE school_id IN (${ids})`);
         await db.execute(sql`DELETE FROM passpilot_kiosk_sessions WHERE school_id IN (${ids})`);
+        await db.execute(sql`DELETE FROM passpilot_kiosk_devices WHERE school_id IN (${ids})`);
         await db.execute(sql`DELETE FROM teacher_grades WHERE grade_id IN (SELECT id FROM grades WHERE school_id IN (${ids}))`);
         await db.execute(sql`DELETE FROM passpilot_grade_students WHERE school_id IN (${ids})`);
         await db.execute(sql`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (${ids}))`);
@@ -265,6 +307,15 @@ describe("PassPilot per-device kiosk sessions", { concurrency: false }, () => {
     assert.match(deployScript, /\|passpilot_kiosk_sessions\|/);
     assert.match(csrf, /"\/passpilot\/kiosk\/session"/);
     assert.match(csrf, /"\/kiosk\/session"/);
+    // Device-memory table rides the same contract set.
+    assert.match(schema, /passpilotKioskDevices = pgTable\(/);
+    assert.match(startup, /CREATE TABLE IF NOT EXISTS passpilot_kiosk_devices/);
+    assert.match(startup, /ADD COLUMN IF NOT EXISTS device_id TEXT/);
+    assert.match(startup, /"passpilot_kiosk_devices",/);
+    assert.match(deployment, /Object\.freeze\(\["passpilot_kiosk_devices"\]\)/);
+    assert.match(deployScript, /\|passpilot_kiosk_devices\|/);
+    assert.match(csrf, /"\/passpilot\/kiosk\/session\/resume"/);
+    assert.match(csrf, /"\/kiosk\/session\/resume"/);
   });
 
   let sessionOne: any;
@@ -650,5 +701,344 @@ describe("PassPilot per-device kiosk sessions", { concurrency: false }, () => {
         db.execute(sql`UPDATE settings SET passpilot_class_source = 'legacy_grades' WHERE school_id = ${schoolA.id}`)
       );
     }
+  });
+});
+
+// ============================================================================
+// Kiosk device memory: durable device → teacher bindings + one-tap resume
+// ============================================================================
+const DEV1 = "11111111-1111-4111-8111-111111111111";
+const DEV4 = "44444444-4444-4444-8444-444444444444";
+
+function deviceHeaders(
+  schoolId: string,
+  deviceId: string | null,
+  sessionId?: string
+): Record<string, string> {
+  return {
+    ...kioskHeaders(schoolId, sessionId),
+    ...(deviceId ? { "x-kiosk-device": deviceId } : {}),
+  };
+}
+
+async function bindingRow(schoolId: string, deviceId: string): Promise<any | undefined> {
+  const result = await asSystem(() =>
+    db.execute(sql`SELECT * FROM passpilot_kiosk_devices WHERE school_id = ${schoolId} AND id = ${deviceId}`)
+  );
+  return (result as any).rows[0];
+}
+
+describe("PassPilot kiosk device memory", { concurrency: false }, () => {
+  let bootSession: any;
+  let handoffSessionId: string;
+
+  it("stamps device_id on bootstrap and offers no resume without a binding", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    const created = await requestJson("POST", "/passpilot/kiosk/session", {}, deviceHeaders(schoolA.id, DEV1));
+    assert.equal(created.status, 201);
+    assert.equal(created.body.resume, null);
+    bootSession = created.body.session;
+    const stored = await asSystem(() =>
+      db.execute(sql`SELECT device_id FROM passpilot_kiosk_sessions WHERE id = ${bootSession.id}`)
+    );
+    assert.equal((stored as any).rows[0].device_id, DEV1);
+  });
+
+  it("writes the binding on claim; a fresh boot offers the remembered teacher", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    const claimed = await requestJson(
+      "POST",
+      "/passpilot/kiosk/sessions/claim",
+      { claimCode: bootSession.claimCode, classId: gradeA.id },
+      authFor(teacherA, schoolA.id)
+    );
+    assert.equal(claimed.status, 200);
+    const binding = await bindingRow(schoolA.id, DEV1);
+    assert.ok(binding, "claim must upsert the device binding");
+    assert.equal(binding.teacher_id, teacherA.id);
+    assert.equal(binding.class_source, "legacy_grades");
+    assert.equal(binding.grade_id, gradeA.id);
+
+    // Next morning: no stored session, same device.
+    const fresh = await requestJson("POST", "/passpilot/kiosk/session", {}, deviceHeaders(schoolA.id, DEV1));
+    assert.equal(fresh.status, 201);
+    assert.equal(fresh.body.session.status, "unclaimed");
+    assert.deepEqual(fresh.body.resume, { kioskName: "Room 204", className: "Class A" });
+
+    // Header value is case-normalized before lookup.
+    const upper = await requestJson("POST", "/passpilot/kiosk/session", {}, deviceHeaders(schoolA.id, DEV1.toUpperCase(), fresh.body.session.id));
+    assert.equal(upper.status, 200);
+    assert.deepEqual(upper.body.resume, { kioskName: "Room 204", className: "Class A" });
+  });
+
+  it("one-tap resume mints an active session and releases the device's other sessions", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    const before = await bindingRow(schoolA.id, DEV1);
+    const resumed = await requestJson("POST", "/passpilot/kiosk/session/resume", undefined, deviceHeaders(schoolA.id, DEV1));
+    assert.equal(resumed.status, 201, JSON.stringify(resumed.body));
+    assert.equal(resumed.body.session.status, "active");
+    assert.equal(resumed.body.session.kioskName, "Room 204");
+    assert.equal(resumed.body.session.className, "Class A");
+    assert.equal(resumed.body.session.classId, gradeA.id);
+    assert.equal(resumed.body.kioskStyle, "simple");
+
+    const live = await asSystem(() =>
+      db.execute(sql`SELECT count(*)::integer AS count FROM passpilot_kiosk_sessions WHERE school_id = ${schoolA.id} AND device_id = ${DEV1} AND status <> 'released'`)
+    );
+    assert.equal((live as any).rows[0].count, 1, "exactly one live session per device after resume");
+    const after = await bindingRow(schoolA.id, DEV1);
+    assert.ok(new Date(after.last_used_at) > new Date(before.last_used_at), "resume refreshes the rolling TTL");
+
+    // The resume is the feature's main abuse surface (a PIN holder minting a
+    // teacher-bound session with no teacher present) — it must leave a
+    // forensic trail.
+    const audit = await asSystem(() =>
+      db.execute(sql`SELECT changes FROM audit_logs WHERE school_id = ${schoolA.id} AND action = 'passpilot.kiosk.session_resumed' AND entity_id = ${resumed.body.session.id}`)
+    );
+    assert.equal((audit as any).rows.length, 1, "resume must write an audit entry");
+    assert.equal((audit as any).rows[0].changes.deviceId, DEV1);
+    assert.equal((audit as any).rows[0].changes.teacherId, teacherA.id);
+  });
+
+  it("requires the PIN for resume and leaks nothing on failure", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    const badPin = await requestJson("POST", "/passpilot/kiosk/session/resume", undefined, {
+      "x-school-id": schoolA.id,
+      "x-kiosk-pin": "0000",
+      "x-kiosk-device": DEV1,
+      "x-passpilot-class-model": "classpilot-groups-v1",
+    });
+    assert.equal(badPin.status, 401);
+    assert.doesNotMatch(JSON.stringify(badPin.body), /Room 204|Class A/);
+  });
+
+  it("returns DEVICE_UNKNOWN for unknown, malformed, or missing device ids", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    for (const deviceId of ["99999999-9999-4999-8999-999999999999", "not-a-uuid", null]) {
+      const resumed = await requestJson("POST", "/passpilot/kiosk/session/resume", undefined, deviceHeaders(schoolA.id, deviceId));
+      assert.equal(resumed.status, 404, String(deviceId));
+      assert.equal(resumed.body.code, "PASSPILOT_KIOSK_DEVICE_UNKNOWN");
+    }
+  });
+
+  it("self-heals the binding when the teacher is no longer active staff", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    await asSystem(() =>
+      db.execute(sql`UPDATE school_memberships SET status = 'inactive' WHERE school_id = ${schoolA.id} AND user_id = ${teacherA.id}`)
+    );
+    try {
+      const resumed = await requestJson("POST", "/passpilot/kiosk/session/resume", undefined, deviceHeaders(schoolA.id, DEV1));
+      assert.equal(resumed.status, 404);
+      assert.equal(resumed.body.code, "PASSPILOT_KIOSK_DEVICE_UNKNOWN");
+      assert.equal(await bindingRow(schoolA.id, DEV1), undefined, "stale binding must be deleted");
+      const boot = await requestJson("POST", "/passpilot/kiosk/session", {}, deviceHeaders(schoolA.id, DEV1));
+      assert.equal(boot.body.resume, null);
+    } finally {
+      await asSystem(() =>
+        db.execute(sql`UPDATE school_memberships SET status = 'active' WHERE school_id = ${schoolA.id} AND user_id = ${teacherA.id}`)
+      );
+    }
+  });
+
+  it("degrades to a classless resume when the remembered class goes stale", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    // Rebuild the binding (deleted by the previous self-heal case).
+    const boot = await requestJson("POST", "/passpilot/kiosk/session", {}, deviceHeaders(schoolA.id, DEV1));
+    const claimed = await requestJson(
+      "POST",
+      "/passpilot/kiosk/sessions/claim",
+      { claimCode: boot.body.session.claimCode, classId: gradeA.id },
+      authFor(teacherA, schoolA.id)
+    );
+    assert.equal(claimed.status, 200);
+
+    // History-only legacy class → classless resume, binding class untouched.
+    const priorState = await asSystem(() =>
+      db.execute(sql`SELECT migration_state FROM grades WHERE id = ${gradeA.id}`)
+    );
+    const originalMigrationState = (priorState as any).rows[0].migration_state;
+    await asSystem(() =>
+      db.execute(sql`UPDATE grades SET migration_state = 'history_only' WHERE id = ${gradeA.id}`)
+    );
+    try {
+      const resumed = await requestJson("POST", "/passpilot/kiosk/session/resume", undefined, deviceHeaders(schoolA.id, DEV1));
+      assert.equal(resumed.status, 201, JSON.stringify(resumed.body));
+      assert.equal(resumed.body.session.status, "active");
+      assert.equal(resumed.body.session.classId, null);
+      assert.equal(resumed.body.session.className, null);
+    } finally {
+      await asSystem(() =>
+        db.execute(sql`UPDATE grades SET migration_state = ${originalMigrationState} WHERE id = ${gradeA.id}`)
+      );
+    }
+    const binding = await bindingRow(schoolA.id, DEV1);
+    assert.equal(binding.grade_id, gradeA.id, "degraded resume must not erase the remembered class");
+
+    // Class-source cutover → classless resume too.
+    await asSystem(() =>
+      db.execute(sql`UPDATE settings SET passpilot_class_source = 'classpilot_groups' WHERE school_id = ${schoolA.id}`)
+    );
+    try {
+      const resumed = await requestJson("POST", "/passpilot/kiosk/session/resume", undefined, deviceHeaders(schoolA.id, DEV1));
+      assert.equal(resumed.status, 201);
+      assert.equal(resumed.body.session.classId, null);
+    } finally {
+      await asSystem(() =>
+        db.execute(sql`UPDATE settings SET passpilot_class_source = 'legacy_grades' WHERE school_id = ${schoolA.id}`)
+      );
+    }
+  });
+
+  it("stops offering after the 60-day rolling TTL and sweeps the binding", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    await asSystem(() =>
+      db.execute(sql`UPDATE passpilot_kiosk_devices SET last_used_at = now() - interval '61 days' WHERE school_id = ${schoolA.id} AND id = ${DEV1}`)
+    );
+    const boot = await requestJson("POST", "/passpilot/kiosk/session", {}, deviceHeaders(schoolA.id, DEV1));
+    assert.equal(boot.body.resume, null);
+    // The bootstrap's lazy sweep must have deleted the idle binding.
+    assert.equal(await bindingRow(schoolA.id, DEV1), undefined);
+    const resumed = await requestJson("POST", "/passpilot/kiosk/session/resume", undefined, deviceHeaders(schoolA.id, DEV1));
+    assert.equal(resumed.status, 404);
+  });
+
+  it("scopes bindings per school: another tenant's PIN cannot resume this device", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    // Fresh binding at school A.
+    const boot = await requestJson("POST", "/passpilot/kiosk/session", {}, deviceHeaders(schoolA.id, DEV1));
+    const claimed = await requestJson(
+      "POST",
+      "/passpilot/kiosk/sessions/claim",
+      { claimCode: boot.body.session.claimCode, classId: gradeA.id },
+      authFor(teacherA, schoolA.id)
+    );
+    assert.equal(claimed.status, 200);
+
+    const crossResume = await requestJson("POST", "/passpilot/kiosk/session/resume", undefined, deviceHeaders(schoolB.id, DEV1));
+    assert.equal(crossResume.status, 404);
+    assert.equal(crossResume.body.code, "PASSPILOT_KIOSK_DEVICE_UNKNOWN");
+    const crossBoot = await requestJson("POST", "/passpilot/kiosk/session", {}, deviceHeaders(schoolB.id, DEV1));
+    assert.equal(crossBoot.body.resume, null);
+  });
+
+  it("adopts the device on the self-launch handoff and binds the session's teacher", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    const self = await requestJson("POST", "/passpilot/kiosk/sessions/self", { classId: gradeB.id }, authFor(teacherB, schoolA.id));
+    assert.equal(self.status, 201);
+    handoffSessionId = self.body.session.id;
+    const handoff = await requestJson("POST", "/passpilot/kiosk/session", {}, deviceHeaders(schoolA.id, DEV4, self.body.session.id));
+    assert.equal(handoff.status, 200);
+    const stored = await asSystem(() =>
+      db.execute(sql`SELECT device_id FROM passpilot_kiosk_sessions WHERE id = ${self.body.session.id}`)
+    );
+    assert.equal((stored as any).rows[0].device_id, DEV4);
+    const binding = await bindingRow(schoolA.id, DEV4);
+    assert.equal(binding.teacher_id, teacherB.id);
+    assert.equal(binding.grade_id, gradeB.id);
+
+    // No membership kiosk name → account display name fallback in the offer.
+    const fresh = await requestJson("POST", "/passpilot/kiosk/session", {}, deviceHeaders(schoolA.id, DEV4));
+    assert.deepEqual(fresh.body.resume, { kioskName: "Mr. B", className: "Class B" });
+
+    // Idempotent re-adoption must not corrupt the binding.
+    const again = await requestJson("POST", "/passpilot/kiosk/session", {}, deviceHeaders(schoolA.id, DEV4, self.body.session.id));
+    assert.equal(again.status, 200);
+    assert.equal((await bindingRow(schoolA.id, DEV4)).teacher_id, teacherB.id);
+  });
+
+  it("refreshes the binding on retargets without rebinding to a manager actor", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    // Target the device-adopted handoff session specifically — teacherB also
+    // has older device-less self sessions from the sibling suite.
+    assert.ok(handoffSessionId, "handoff test must have run first");
+    const managerRetarget = await requestJson(
+      "PUT",
+      `/passpilot/kiosk/sessions/${handoffSessionId}`,
+      { classId: gradeA.id },
+      authFor(adminA, schoolA.id)
+    );
+    assert.equal(managerRetarget.status, 200, JSON.stringify(managerRetarget.body));
+    const binding = await bindingRow(schoolA.id, DEV4);
+    assert.equal(binding.teacher_id, teacherB.id, "manager retarget must keep the session's teacher");
+    assert.equal(binding.grade_id, gradeA.id, "manager retarget must refresh the remembered class");
+
+    // Bulk retarget-all refreshes the binding too (the loop over returned
+    // sessions with device ids).
+    const bulk = await requestJson(
+      "POST",
+      "/passpilot/kiosk/sessions/retarget",
+      { classId: gradeB.id },
+      authFor(teacherB, schoolA.id)
+    );
+    assert.equal(bulk.status, 200, JSON.stringify(bulk.body));
+    const afterBulk = await bindingRow(schoolA.id, DEV4);
+    assert.equal(afterBulk.teacher_id, teacherB.id);
+    assert.equal(afterBulk.grade_id, gradeB.id, "bulk retarget must refresh the remembered class");
+  });
+
+  it("degrades to a classless resume when the bound teacher loses class access", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    // DEV1 is bound to teacherA/gradeA (re-established by the cross-school
+    // test). Remove teacherA's access to gradeA — the class stays alive for
+    // everyone else, so this pins the {actorUserId: teacher, manager: false}
+    // authorization contract specifically.
+    await asSystem(() =>
+      db.execute(sql`DELETE FROM teacher_grades WHERE teacher_id = ${teacherA.id} AND grade_id = ${gradeA.id}`)
+    );
+    try {
+      const resumed = await requestJson("POST", "/passpilot/kiosk/session/resume", undefined, deviceHeaders(schoolA.id, DEV1));
+      assert.equal(resumed.status, 201, JSON.stringify(resumed.body));
+      assert.equal(resumed.body.session.status, "active");
+      assert.equal(resumed.body.session.classId, null, "revoked class access must degrade to classless");
+    } finally {
+      await asSystem(() =>
+        db.execute(sql`INSERT INTO teacher_grades (teacher_id, grade_id) VALUES (${teacherA.id}, ${gradeA.id})`)
+      );
+    }
+  });
+
+  it("serializes concurrent resume taps to exactly one live session", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    const [first, second] = await Promise.all([
+      requestJson("POST", "/passpilot/kiosk/session/resume", undefined, deviceHeaders(schoolA.id, DEV1)),
+      requestJson("POST", "/passpilot/kiosk/session/resume", undefined, deviceHeaders(schoolA.id, DEV1)),
+    ]);
+    assert.equal(first.status, 201, JSON.stringify(first.body));
+    assert.equal(second.status, 201, JSON.stringify(second.body));
+    const live = await asSystem(() =>
+      db.execute(sql`SELECT count(*)::integer AS count FROM passpilot_kiosk_sessions WHERE school_id = ${schoolA.id} AND device_id = ${DEV1} AND status <> 'released'`)
+    );
+    assert.equal((live as any).rows[0].count, 1, "concurrent resumes must leave exactly one live session");
+  });
+
+  it("supports the full canonical (ClassPilot-groups) device-memory flow", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    const DEV5 = "55555555-5555-4555-8555-555555555555";
+    const boot = await requestJson("POST", "/passpilot/kiosk/session", {}, deviceHeaders(schoolC.id, DEV5));
+    assert.equal(boot.status, 201);
+    assert.equal(boot.body.resume, null);
+    const claimed = await requestJson(
+      "POST",
+      "/passpilot/kiosk/sessions/claim",
+      { claimCode: boot.body.session.claimCode, classId: canonicalGroup.id },
+      authFor(teacherC, schoolC.id)
+    );
+    assert.equal(claimed.status, 200, JSON.stringify(claimed.body));
+    const binding = await bindingRow(schoolC.id, DEV5);
+    assert.equal(binding.teacher_id, teacherC.id);
+    assert.equal(binding.class_source, "classpilot_groups");
+    assert.equal(binding.classpilot_group_id, canonicalGroup.id);
+    assert.equal(binding.grade_id, null);
+
+    const fresh = await requestJson("POST", "/passpilot/kiosk/session", {}, deviceHeaders(schoolC.id, DEV5));
+    assert.deepEqual(fresh.body.resume, { kioskName: "Ms. C", className: "Homeroom 6C" });
+
+    const resumed = await requestJson("POST", "/passpilot/kiosk/session/resume", undefined, deviceHeaders(schoolC.id, DEV5));
+    assert.equal(resumed.status, 201, JSON.stringify(resumed.body));
+    assert.equal(resumed.body.session.status, "active");
+    assert.equal(resumed.body.session.source, "classpilot_groups");
+    assert.equal(resumed.body.session.classId, canonicalGroup.id);
+    assert.equal(resumed.body.session.className, "Homeroom 6C");
+    assert.equal(resumed.body.session.kioskName, "Ms. C");
   });
 });

@@ -6,6 +6,7 @@ import { Badge } from "../../../components/ui/badge";
 import { ArrowLeftRight, LogIn, X } from "lucide-react";
 import { PASSPILOT_CLASS_MODEL_HEADER } from "../classData";
 import { kioskPinStore } from "../kioskPinStore";
+import { getKioskDeviceId } from "../kioskDeviceId";
 
 const DESTINATIONS = [
   { value: "bathroom", label: "Bathroom", emoji: "\u{1F6BB}" },
@@ -41,9 +42,15 @@ export default function KioskPage() {
   const [session, setSession] = useState(null);
   const [sessionMode, setSessionMode] = useState(null);
   const [bootstrapError, setBootstrapError] = useState(null);
+  // Device-memory resume offer from the bootstrap response (see KioskSimple).
+  const [resumeOffer, setResumeOffer] = useState(null);
   const inputRef = useRef(null);
   const timeoutRef = useRef();
   const sessionIdRef = useRef(null);
+  // Blocks the 5s bootstrap interval while a resume is in flight — a
+  // concurrent bootstrap would mint a fresh unclaimed session (the resume
+  // force-releases the old one) and clobber the stored session id.
+  const resumingRef = useRef(false);
 
   const kioskHeaders = () => ({
     "Content-Type": "application/json",
@@ -92,6 +99,7 @@ export default function KioskPage() {
     kioskPinStore().removeItem(KIOSK_SESSION_KEY);
     sessionIdRef.current = null;
     setSession(null);
+    setResumeOffer(null);
     setSessionMode(null);
     setState("scan");
     setStudent(null);
@@ -122,6 +130,7 @@ export default function KioskPage() {
     if (!schoolId || !kioskPin || sessionMode !== null) return;
     let cancelled = false;
     const bootstrap = async () => {
+      if (resumingRef.current) return;
       try {
         const urlParams = new URLSearchParams(window.location.search);
         const urlSessionId = urlParams.get("session");
@@ -132,12 +141,14 @@ export default function KioskPage() {
           window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
         }
         const storedId = kioskPinStore().getItem(KIOSK_SESSION_KEY);
+        const deviceId = getKioskDeviceId();
         const res = await fetch("/api/passpilot/kiosk/session", {
           method: "POST",
           credentials: "omit",
           headers: {
             ...kioskHeaders(),
             ...(storedId ? { "X-Kiosk-Session": storedId } : {}),
+            ...(deviceId ? { "X-Kiosk-Device": deviceId } : {}),
           },
         });
         if (cancelled) return;
@@ -162,6 +173,8 @@ export default function KioskPage() {
         if (redirectForKioskStyle(data.kioskStyle)) return;
         setBootstrapError(null);
         setSession(data.session);
+        // ?? null: old servers omit the resume field entirely.
+        setResumeOffer(data.session.status === "unclaimed" ? (data.resume ?? null) : null);
         setSessionMode(true);
       } catch {
         // Connection error — the interval retries.
@@ -173,12 +186,58 @@ export default function KioskPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schoolId, kioskPin, sessionMode]);
 
+  // One-tap resume for the remembered teacher (see KioskSimple.handleResume).
+  const handleResume = useCallback(async () => {
+    if (resumingRef.current) return;
+    resumingRef.current = true;
+    try {
+      const deviceId = getKioskDeviceId();
+      const res = await fetch("/api/passpilot/kiosk/session/resume", {
+        method: "POST",
+        credentials: "omit",
+        headers: {
+          ...kioskHeaders(),
+          ...(deviceId ? { "X-Kiosk-Device": deviceId } : {}),
+        },
+      });
+      if (res.status === 401) {
+        clearPin();
+        return;
+      }
+      if (!res.ok) {
+        setResumeOffer(null);
+        return;
+      }
+      const data = await res.json().catch(() => null);
+      if (!data?.session?.id) {
+        setResumeOffer(null);
+        return;
+      }
+      kioskPinStore().setItem(KIOSK_SESSION_KEY, data.session.id);
+      sessionIdRef.current = data.session.id;
+      if (redirectForKioskStyle(data.kioskStyle)) return;
+      setResumeOffer(null);
+      setSession(data.session);
+      setSessionMode(true);
+    } catch {
+      // Connection error — keep the offer; the teacher can tap again.
+    } finally {
+      resumingRef.current = false;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [schoolId, kioskPin]);
+
   // Session-mode config poll: tracks claim state, class, and kiosk name.
   useEffect(() => {
     if (!schoolId || !kioskPin || sessionMode !== true || !sessionIdRef.current) return;
     const poll = () => {
+      // Fence every response to the session it was sent for (see KioskSimple):
+      // a stale 404 for the resume-released session must not wipe the freshly
+      // stored resumed session.
+      const polledSessionId = sessionIdRef.current;
       fetch(`/api/passpilot/kiosk/config?school=${schoolId}`, { credentials: "omit", headers: kioskHeaders() })
         .then(async (response) => {
+          if (polledSessionId !== sessionIdRef.current) return null;
           if (response.status === 401) {
             clearPin();
             return null;
@@ -186,7 +245,7 @@ export default function KioskPage() {
           if (response.ok) return response.json();
           const body = await response.json().catch(() => ({}));
           if (response.status === 404 && body.code === "PASSPILOT_KIOSK_SESSION_EXPIRED") {
-            handleSessionExpired();
+            if (polledSessionId === sessionIdRef.current) handleSessionExpired();
             return null;
           }
           // A style flip must reach kiosks parked on config errors (e.g. the
@@ -196,6 +255,7 @@ export default function KioskPage() {
         })
         .then((data) => {
           if (!data?.session) return;
+          if (polledSessionId !== sessionIdRef.current) return;
           if (redirectForKioskStyle(data.kioskStyle)) return;
           setSession({
             id: data.session.id,
@@ -402,15 +462,28 @@ export default function KioskPage() {
     );
   }
 
-  // Waiting screen: unclaimed session shows its claim code and nothing else.
+  // Waiting screen: unclaimed session shows its claim code — and, when this
+  // device remembers a teacher, a one-tap resume button above it.
   if (sessionMode === true && session?.status === "unclaimed") {
     const code = session.claimCode || "";
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center p-8">
         <div className="max-w-lg w-full text-center space-y-8">
           <h1 className="text-3xl font-bold text-blue-400">PassPilot Kiosk</h1>
+          {resumeOffer && (
+            <button
+              onClick={handleResume}
+              className="w-full py-6 px-4 bg-blue-600 hover:bg-blue-500 rounded-2xl text-2xl font-semibold transition-colors"
+              data-testid="kiosk-resume-button"
+            >
+              Resume: {resumeOffer.kioskName || "your kiosk"}
+              {resumeOffer.className ? ` — ${resumeOffer.className}` : ""}
+            </button>
+          )}
           <div>
-            <p className="text-gray-400 mb-3 text-lg">Kiosk code</p>
+            <p className="text-gray-400 mb-3 text-lg">
+              {resumeOffer ? "Or claim with the kiosk code" : "Kiosk code"}
+            </p>
             <p className="text-7xl font-bold tracking-[0.2em] tabular-nums" data-testid="kiosk-claim-code">
               {code ? `${code.slice(0, 3)} ${code.slice(3)}` : "••• •••"}
             </p>
