@@ -27,13 +27,14 @@ export function useKioskSessions({ enabled = true } = {}) {
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: KIOSK_SESSIONS_QUERY_KEY });
 
-  // Bind an unclaimed kiosk (the 6-digit code on its screen) to this teacher
-  // and a class. Throws on failure (404 = wrong/expired code).
-  const claimKiosk = async ({ claimCode, classId }) => {
+  // Bind an unclaimed kiosk (the 6-digit code on its screen) to this teacher.
+  // classId is optional: without it the kiosk shows the teacher's name and
+  // waits for Send to Kiosk. Throws on failure (404 = wrong/expired code).
+  const claimKiosk = async ({ claimCode, classId = null }) => {
     const data = await passPilotClassRequest(
       "POST",
       "/passpilot/kiosk/sessions/claim",
-      { claimCode, classId }
+      { claimCode, ...(classId ? { classId } : {}) }
     );
     invalidate();
     return data;

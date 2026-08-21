@@ -280,11 +280,12 @@ async function installApiMocks(page, state) {
     if (pathname === "/api/passpilot/kiosk/sessions/claim") {
       const payload = request.postDataJSON();
       state.kioskClaims.push(payload);
+      // classId is optional: a teacher-only claim yields a classless session.
       const session = {
         id: `kiosk-session-${state.kioskClaims.length}`,
         status: "active",
-        classId: payload.classId,
-        className: "Class Two",
+        classId: payload.classId ?? null,
+        className: payload.classId ? "Class Two" : null,
       };
       state.kioskSessions = [...state.kioskSessions, session];
       await route.fulfill({ json: { session } });
@@ -296,6 +297,7 @@ async function installApiMocks(page, state) {
       state.kioskSessions = state.kioskSessions.map((session) => ({
         ...session,
         classId: payload.classId,
+        className: "Class Two",
       }));
       await route.fulfill({ json: { updated: state.kioskSessions.length, sessions: state.kioskSessions } });
       return;
@@ -526,12 +528,29 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
       "the per-style kiosk launch items must be collapsed into one Open Kiosk item",
     );
     await canonicalPage.getByTestId("menu-claim-kiosk").click();
-    await canonicalPage.getByTestId("select-kiosk-claim-class").click();
-    await canonicalPage.getByRole("option", { name: "Grade 4 Homeroom", exact: true }).click();
+    // Teacher-bound claim: no class picker — the code alone binds the kiosk
+    // to the teacher; a class arrives later via Send to Kiosk.
+    await canonicalPage.getByTestId("input-kiosk-claim-code").waitFor();
+    assert.equal(
+      await canonicalPage.getByTestId("select-kiosk-claim-class").count(),
+      0,
+      "the claim dialog must not offer a class picker",
+    );
     await canonicalPage.getByTestId("input-kiosk-claim-code").fill("222333");
     await canonicalPage.getByTestId("button-submit-kiosk-claim").click();
     await canonicalPage.waitForFunction(() => document.body.textContent.includes("Kiosk Claimed"));
-    assert.deepEqual(canonicalState.kioskClaims[2], { claimCode: "222333", classId: "class-two" });
+    assert.deepEqual(canonicalState.kioskClaims[2], { claimCode: "222333" });
+    // The classless kiosk appears under Active kiosks with no class.
+    await canonicalPage.getByRole("button", { name: "Kiosk Mode" }).click();
+    await canonicalPage.getByRole("menuitem", { name: "No class · kiosk" }).waitFor();
+    await canonicalPage.keyboard.press("Escape");
+    // A classless kiosk flips the trigger back to "Send to Kiosk" (not every
+    // kiosk shows the current class). Sending retargets ALL kiosks —
+    // including the freshly claimed classless one — onto the current class.
+    await canonicalPage.getByRole("button", { name: "Send to Kiosk", exact: true }).click();
+    await canonicalPage.getByTestId("menu-send-to-kiosks").click();
+    await canonicalPage.waitForFunction(() => document.body.textContent.includes("Kiosk Updated"));
+    await canonicalPage.getByRole("button", { name: "On 2 Kiosks", exact: true }).waitFor();
     // Release one of the two class-two kiosks; the survivor keeps On Kiosk.
     await canonicalPage.getByLabel("Release kiosk").last().click();
     await canonicalPage.getByRole("button", { name: "On Kiosk", exact: true }).waitFor();
@@ -1070,6 +1089,81 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
     // gate mode, requires launch=gate to have survived the redirect.
     await gateRedirectPage.getByTestId("kiosk-claim-code").waitFor();
     await gateRedirectPage.getByText("444 555", { exact: true }).waitFor();
+
+    // Managed-device identity: the ClassPilot extension appends ?device= to
+    // the kiosk launch URL. The page adopts it over any random localStorage
+    // id (normalized lowercase), strips it from the URL, and it survives
+    // reloads — this is what makes kiosk memory outlive profile wipes.
+    const FIXED_DEVICE = "abcdefab-1234-4abc-8def-abcdefabcdef";
+    const devicePage = await browser.newPage();
+    await devicePage.addInitScript(() => {
+      // Init scripts re-run on reload — seed the pre-existing random id only
+      // once so the reload leg actually observes the adopted value.
+      window.localStorage.setItem("pp_kiosk_pin", "1234");
+      if (!window.localStorage.getItem("pp_kiosk_device")) {
+        window.localStorage.setItem("pp_kiosk_device", "99999999-9999-4999-8999-999999999999");
+      }
+    });
+    const deviceHeadersSeen = [];
+    await devicePage.route("**/api/passpilot/kiosk/**", async (route) => {
+      const request = route.request();
+      const pathname = new URL(request.url()).pathname;
+      if (pathname.endsWith("/session")) {
+        deviceHeadersSeen.push(request.headers()["x-kiosk-device"] || null);
+        await route.fulfill({
+          status: 201,
+          json: {
+            session: { id: "device-session", status: "unclaimed", claimCode: "999000" },
+            kioskStyle: "simple",
+            resume: null,
+          },
+        });
+        return;
+      }
+      if (pathname.endsWith("/config")) {
+        await route.fulfill({
+          json: {
+            session: { id: "device-session", status: "unclaimed", claimCode: "999000" },
+            source: null,
+            classId: null,
+            gradeId: null,
+            className: null,
+            kioskName: null,
+            kioskEnabled: true,
+            kioskRequiresApproval: false,
+            defaultPassDuration: 5,
+            kioskStyle: "simple",
+          },
+        });
+        return;
+      }
+      await route.fulfill({ status: 500, json: { error: "Unexpected kiosk request" } });
+    });
+    await devicePage.goto(`${baseUrl}/passpilot/kiosk/simple?school=${SCHOOL_ID}&device=${FIXED_DEVICE.toUpperCase()}`);
+    await devicePage.getByTestId("kiosk-claim-code").waitFor();
+    assert.equal(
+      deviceHeadersSeen.at(-1),
+      FIXED_DEVICE,
+      "the URL-provided device id must win over the stored random id, normalized lowercase",
+    );
+    assert.ok(!devicePage.url().includes("device="), "the device param must be stripped from the URL");
+    await devicePage.reload();
+    await devicePage.getByTestId("kiosk-claim-code").waitFor();
+    assert.equal(
+      deviceHeadersSeen.at(-1),
+      FIXED_DEVICE,
+      "the adopted id must persist in localStorage across reload",
+    );
+    // A malformed ?device= is rejected: the page falls back to the stored id
+    // and never persists URL garbage as the device identity.
+    await devicePage.goto(`${baseUrl}/passpilot/kiosk/simple?school=${SCHOOL_ID}&device=garbage-not-a-uuid`);
+    await devicePage.getByTestId("kiosk-claim-code").waitFor();
+    assert.equal(
+      deviceHeadersSeen.at(-1),
+      FIXED_DEVICE,
+      "a malformed device param must fall back to the stored id",
+    );
+    assert.ok(!devicePage.url().includes("device="), "the malformed param is still stripped");
 
     // Device memory: a remembered device offers a one-tap teacher resume on
     // the waiting screen, with the claim code kept as the fallback beneath.

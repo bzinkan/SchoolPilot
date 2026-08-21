@@ -106,7 +106,10 @@ export const kioskCheckoutSchema = z.object({
 
 export const kioskClaimSchema = z.object({
   claimCode: z.string().regex(/^\d{6}$/, "Kiosk code must be 6 digits"),
-  classId: z.string().min(1),
+  // Optional: a claim without a class binds the kiosk to the teacher only
+  // (the kiosk shows the teacher's name and waits for Send to Kiosk). The
+  // My Class entry point still claims with its class in one step.
+  classId: z.string().min(1).nullable().optional(),
 });
 
 export const kioskRetargetSchema = z.object({

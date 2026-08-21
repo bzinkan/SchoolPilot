@@ -1041,4 +1041,105 @@ describe("PassPilot kiosk device memory", { concurrency: false }, () => {
     assert.equal(resumed.body.session.className, "Homeroom 6C");
     assert.equal(resumed.body.session.kioskName, "Ms. C");
   });
+
+  it("claims teacher-only (no class): kiosk shows the teacher and waits for Send to Kiosk", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    const DEV6 = "66666666-6666-4666-8666-666666666666";
+    const boot = await requestJson("POST", "/passpilot/kiosk/session", {}, deviceHeaders(schoolA.id, DEV6));
+    assert.equal(boot.status, 201);
+
+    // Claim with ONLY the code — binds the teacher, no class.
+    const claimed = await requestJson(
+      "POST",
+      "/passpilot/kiosk/sessions/claim",
+      { claimCode: boot.body.session.claimCode },
+      authFor(teacherA, schoolA.id)
+    );
+    assert.equal(claimed.status, 200, JSON.stringify(claimed.body));
+    assert.equal(claimed.body.session.status, "active");
+    assert.equal(claimed.body.session.classId, null);
+
+    // The kiosk shows the teacher's name while classless, and data endpoints
+    // stay closed until a class arrives.
+    const config = await requestJson("GET", `/passpilot/kiosk/config?school=${schoolA.id}`, undefined, deviceHeaders(schoolA.id, DEV6, boot.body.session.id));
+    assert.equal(config.status, 200);
+    assert.equal(config.body.session.status, "active");
+    assert.equal(config.body.classId, null);
+    assert.equal(config.body.kioskName, "Room 204");
+    const checkout = await requestJson("POST", "/passpilot/kiosk/checkout", { studentId: studentA.id, destination: "bathroom" }, deviceHeaders(schoolA.id, DEV6, boot.body.session.id));
+    assert.equal(checkout.status, 409);
+    assert.equal(checkout.body.code, "PASSPILOT_KIOSK_CLASS_REQUIRED");
+
+    // The binding remembers the teacher with no class; the resume offer shows
+    // the name alone.
+    const binding = await bindingRow(schoolA.id, DEV6);
+    assert.equal(binding.teacher_id, teacherA.id);
+    assert.equal(binding.class_source, null);
+    const fresh = await requestJson("POST", "/passpilot/kiosk/session", {}, deviceHeaders(schoolA.id, DEV6));
+    assert.deepEqual(fresh.body.resume, { kioskName: "Room 204", className: null });
+
+    // Send to Kiosk (single-session retarget) puts a class on it and
+    // refreshes the remembered class.
+    const retarget = await requestJson(
+      "PUT",
+      `/passpilot/kiosk/sessions/${claimed.body.session.id}`,
+      { classId: gradeA.id },
+      authFor(teacherA, schoolA.id)
+    );
+    assert.equal(retarget.status, 200, JSON.stringify(retarget.body));
+    const afterRetarget = await bindingRow(schoolA.id, DEV6);
+    assert.equal(afterRetarget.grade_id, gradeA.id);
+    assert.equal(afterRetarget.teacher_id, teacherA.id);
+  });
+
+  it("migrates a live session to an upgraded device id only with proof of the old one", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    const DEVR = "77777777-7777-4777-8777-777777777777"; // random pre-adoption id
+    const DEVM = "88888888-8888-4888-8888-888888888888"; // managed id
+    const DEVX = "99999999-9999-4999-8999-999999999998"; // attacker id
+    const boot = await requestJson("POST", "/passpilot/kiosk/session", {}, deviceHeaders(schoolA.id, DEVR));
+    assert.equal(boot.status, 201);
+    const sessionId = boot.body.session.id;
+
+    // No proof → the anti-steal guard keeps the original stamp.
+    const steal = await requestJson("POST", "/passpilot/kiosk/session", {}, deviceHeaders(schoolA.id, DEVX, sessionId));
+    assert.equal(steal.status, 200);
+    let stored = await asSystem(() =>
+      db.execute(sql`SELECT device_id FROM passpilot_kiosk_sessions WHERE id = ${sessionId}`)
+    );
+    assert.equal((stored as any).rows[0].device_id, DEVR, "a foreign device must not re-stamp the session");
+
+    // Wrong proof → still refused.
+    const wrongProof = await requestJson("POST", "/passpilot/kiosk/session", {}, {
+      ...deviceHeaders(schoolA.id, DEVX, sessionId),
+      "x-kiosk-device-prev": DEVM,
+    });
+    assert.equal(wrongProof.status, 200);
+    stored = await asSystem(() =>
+      db.execute(sql`SELECT device_id FROM passpilot_kiosk_sessions WHERE id = ${sessionId}`)
+    );
+    assert.equal((stored as any).rows[0].device_id, DEVR);
+
+    // Correct proof (the session's current id) → migrated to the managed id.
+    const migrate = await requestJson("POST", "/passpilot/kiosk/session", {}, {
+      ...deviceHeaders(schoolA.id, DEVM, sessionId),
+      "x-kiosk-device-prev": DEVR,
+    });
+    assert.equal(migrate.status, 200);
+    stored = await asSystem(() =>
+      db.execute(sql`SELECT device_id FROM passpilot_kiosk_sessions WHERE id = ${sessionId}`)
+    );
+    assert.equal((stored as any).rows[0].device_id, DEVM, "same-device proof must migrate the stamp");
+
+    // A claim after migration keys the binding to the managed id.
+    const claimed = await requestJson(
+      "POST",
+      "/passpilot/kiosk/sessions/claim",
+      { claimCode: boot.body.session.claimCode },
+      authFor(teacherA, schoolA.id)
+    );
+    assert.equal(claimed.status, 200, JSON.stringify(claimed.body));
+    assert.ok(await bindingRow(schoolA.id, DEVM), "binding must be keyed to the migrated id");
+    assert.equal(await bindingRow(schoolA.id, DEVX), undefined);
+  });
 });

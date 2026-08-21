@@ -3816,7 +3816,8 @@ export async function deleteKioskDeviceBinding(
 export async function adoptKioskSessionDevice(
   schoolId: string,
   sessionId: string,
-  deviceId: string
+  deviceId: string,
+  previousDeviceId: string | null = null
 ): Promise<void> {
   await db.transaction(async (tx) => {
     // Advisory lock first: every binding writer (claim/retarget/update/resume)
@@ -3847,7 +3848,16 @@ export async function adoptKioskSessionDevice(
     // legitimate /sessions/self handoff always starts device-less, so an
     // overwrite here could only be a second device replaying a leaked session
     // id (e.g. from the handoff URL) to steal the durable teacher binding.
-    if (session.deviceId && session.deviceId !== deviceId) return;
+    // Exception: presenting the session's CURRENT id as X-Kiosk-Device-Prev
+    // proves same-device continuity — the page upgraded its random id to the
+    // managed one — so the session migrates to the new identity.
+    if (
+      session.deviceId &&
+      session.deviceId !== deviceId &&
+      session.deviceId !== previousDeviceId
+    ) {
+      return;
+    }
     if (session.deviceId !== deviceId) {
       await tx
         .update(passpilotKioskSessions)
@@ -4105,13 +4115,18 @@ export async function touchKioskSessionLastSeen(
 export async function claimKioskSessionByCode(
   schoolId: string,
   claimCode: string,
-  target: KioskClassTarget,
+  target: KioskClassTarget | null,
   authorization: KioskSessionAuthorization
 ): Promise<KioskSession> {
   return db.transaction(async (tx) => {
     await takePasspilotClassLock(tx, schoolId);
-    await lockAndAssertKioskClassSource(tx, schoolId, target.source);
-    await assertKioskSessionClassTarget(tx, schoolId, target, authorization);
+    // target null = teacher-bound classless claim (the kiosk shows the
+    // teacher's name and waits for Send to Kiosk), mirroring
+    // createSelfClaimedKioskSession.
+    if (target) {
+      await lockAndAssertKioskClassSource(tx, schoolId, target.source);
+      await assertKioskSessionClassTarget(tx, schoolId, target, authorization);
+    }
     const [existing] = await tx
       .select({ id: passpilotKioskSessions.id })
       .from(passpilotKioskSessions)
@@ -4136,10 +4151,10 @@ export async function claimKioskSessionByCode(
       .update(passpilotKioskSessions)
       .set({
         teacherId: authorization.actorUserId,
-        classSource: target.source,
-        gradeId: target.source === "legacy_grades" ? target.classId : null,
+        classSource: target?.source ?? null,
+        gradeId: target?.source === "legacy_grades" ? target.classId : null,
         classpilotGroupId:
-          target.source === "classpilot_groups" ? target.classId : null,
+          target?.source === "classpilot_groups" ? target.classId : null,
         status: "active",
         claimedAt: sql`now()`,
         lastSeenAt: sql`now()`,

@@ -160,6 +160,16 @@ function getKioskDeviceId(req: { headers: Record<string, unknown> }): string | n
   return KIOSK_DEVICE_ID_PATTERN.test(trimmed) ? trimmed.toLowerCase() : null;
 }
 
+// Same-device continuity proof (X-Kiosk-Device-Prev): when a page adopts the
+// managed device id over a previously minted random one, it presents the
+// replaced id once so a live session stamped with the old id can migrate.
+function getKioskPrevDeviceId(req: { headers: Record<string, unknown> }): string | null {
+  const value = req.headers["x-kiosk-device-prev"];
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return KIOSK_DEVICE_ID_PATTERN.test(trimmed) ? trimmed.toLowerCase() : null;
+}
+
 function respondKioskSessionExpired(res: any) {
   return res.status(404).json({
     error: "This kiosk session has expired.",
@@ -355,7 +365,12 @@ router.post("/session", kioskLimiter, async (req, res, next) => {
           if (deviceId) {
             // Stamp the device on the session; an active session (the
             // /sessions/self handoff) also writes the durable binding here.
-            await adoptKioskSessionDevice(schoolId, existing.id, deviceId);
+            await adoptKioskSessionDevice(
+              schoolId,
+              existing.id,
+              deviceId,
+              getKioskPrevDeviceId(req)
+            );
           }
           return res.json({
             session: await kioskSessionDeviceView(schoolId, existing),
@@ -1057,7 +1072,10 @@ const kioskSessionTeacherAuth = [
 ] as const;
 
 // POST /api/passpilot/kiosk/sessions/claim - Bind an unclaimed kiosk (by code)
-// to the requesting teacher and a class they may run.
+// to the requesting teacher. classId is optional: without it the kiosk shows
+// the teacher's name and waits for Send to Kiosk (same contract as
+// /sessions/self); with it (the My Class entry point) the class shows
+// immediately.
 router.post(
   "/sessions/claim",
   kioskClaimLimiter,
@@ -1070,10 +1088,13 @@ router.post(
         return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       }
       const role = await getRequestPassPilotRole(req, res);
-      const target = await resolveKioskClassTarget(req, res, schoolId, parsed.data.classId);
-      if (!target) return;
-      if (!(await canAccessPasspilotClass(req.authUser!, schoolId, parsed.data.classId, role))) {
-        return res.status(403).json({ error: "Insufficient permissions" });
+      let target: KioskClassTarget | null = null;
+      if (parsed.data.classId) {
+        target = await resolveKioskClassTarget(req, res, schoolId, parsed.data.classId);
+        if (!target) return;
+        if (!(await canAccessPasspilotClass(req.authUser!, schoolId, parsed.data.classId, role))) {
+          return res.status(403).json({ error: "Insufficient permissions" });
+        }
       }
       const session = await claimKioskSessionByCode(schoolId, parsed.data.claimCode, target, {
         actorUserId: req.authUser!.id,

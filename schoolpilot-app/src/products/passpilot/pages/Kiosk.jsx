@@ -6,7 +6,7 @@ import { Badge } from "../../../components/ui/badge";
 import { ArrowLeftRight, LogIn, X } from "lucide-react";
 import { PASSPILOT_CLASS_MODEL_HEADER } from "../classData";
 import { kioskPinStore } from "../kioskPinStore";
-import { getKioskDeviceId } from "../kioskDeviceId";
+import { getKioskDeviceId, adoptKioskDeviceId } from "../kioskDeviceId";
 
 const DESTINATIONS = [
   { value: "bathroom", label: "Bathroom", emoji: "\u{1F6BB}" },
@@ -134,14 +134,20 @@ export default function KioskPage() {
       try {
         const urlParams = new URLSearchParams(window.location.search);
         const urlSessionId = urlParams.get("session");
-        if (urlSessionId) {
-          kioskPinStore().setItem(KIOSK_SESSION_KEY, urlSessionId);
+        // ?device= arrives from the ClassPilot extension on managed
+        // Chromebooks: a durable device identity that survives the profile
+        // wipes that erase localStorage. Adopt it before minting a random id.
+        const urlDeviceId = urlParams.get("device");
+        const adoption = urlDeviceId ? adoptKioskDeviceId(urlDeviceId) : null;
+        if (urlSessionId || urlDeviceId) {
+          if (urlSessionId) kioskPinStore().setItem(KIOSK_SESSION_KEY, urlSessionId);
           urlParams.delete("session");
+          urlParams.delete("device");
           const query = urlParams.toString();
           window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
         }
         const storedId = kioskPinStore().getItem(KIOSK_SESSION_KEY);
-        const deviceId = getKioskDeviceId();
+        const deviceId = adoption?.id || getKioskDeviceId();
         const res = await fetch("/api/passpilot/kiosk/session", {
           method: "POST",
           credentials: "omit",
@@ -149,6 +155,10 @@ export default function KioskPage() {
             ...kioskHeaders(),
             ...(storedId ? { "X-Kiosk-Session": storedId } : {}),
             ...(deviceId ? { "X-Kiosk-Device": deviceId } : {}),
+            // Same-device continuity proof: when adoption replaced a stored
+            // random id, present it once so the server migrates a live
+            // session (and its future binding) to the managed id.
+            ...(adoption?.previousId ? { "X-Kiosk-Device-Prev": adoption.previousId } : {}),
           },
         });
         if (cancelled) return;
