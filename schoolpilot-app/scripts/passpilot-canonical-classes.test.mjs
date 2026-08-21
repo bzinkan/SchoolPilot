@@ -1154,6 +1154,16 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
       FIXED_DEVICE,
       "the adopted id must persist in localStorage across reload",
     );
+    // A malformed ?device= is rejected: the page falls back to the stored id
+    // and never persists URL garbage as the device identity.
+    await devicePage.goto(`${baseUrl}/passpilot/kiosk/simple?school=${SCHOOL_ID}&device=garbage-not-a-uuid`);
+    await devicePage.getByTestId("kiosk-claim-code").waitFor();
+    assert.equal(
+      deviceHeadersSeen.at(-1),
+      FIXED_DEVICE,
+      "a malformed device param must fall back to the stored id",
+    );
+    assert.ok(!devicePage.url().includes("device="), "the malformed param is still stripped");
 
     // Device memory: a remembered device offers a one-tap teacher resume on
     // the waiting screen, with the claim code kept as the fallback beneath.

@@ -1091,4 +1091,55 @@ describe("PassPilot kiosk device memory", { concurrency: false }, () => {
     assert.equal(afterRetarget.grade_id, gradeA.id);
     assert.equal(afterRetarget.teacher_id, teacherA.id);
   });
+
+  it("migrates a live session to an upgraded device id only with proof of the old one", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    const DEVR = "77777777-7777-4777-8777-777777777777"; // random pre-adoption id
+    const DEVM = "88888888-8888-4888-8888-888888888888"; // managed id
+    const DEVX = "99999999-9999-4999-8999-999999999998"; // attacker id
+    const boot = await requestJson("POST", "/passpilot/kiosk/session", {}, deviceHeaders(schoolA.id, DEVR));
+    assert.equal(boot.status, 201);
+    const sessionId = boot.body.session.id;
+
+    // No proof → the anti-steal guard keeps the original stamp.
+    const steal = await requestJson("POST", "/passpilot/kiosk/session", {}, deviceHeaders(schoolA.id, DEVX, sessionId));
+    assert.equal(steal.status, 200);
+    let stored = await asSystem(() =>
+      db.execute(sql`SELECT device_id FROM passpilot_kiosk_sessions WHERE id = ${sessionId}`)
+    );
+    assert.equal((stored as any).rows[0].device_id, DEVR, "a foreign device must not re-stamp the session");
+
+    // Wrong proof → still refused.
+    const wrongProof = await requestJson("POST", "/passpilot/kiosk/session", {}, {
+      ...deviceHeaders(schoolA.id, DEVX, sessionId),
+      "x-kiosk-device-prev": DEVM,
+    });
+    assert.equal(wrongProof.status, 200);
+    stored = await asSystem(() =>
+      db.execute(sql`SELECT device_id FROM passpilot_kiosk_sessions WHERE id = ${sessionId}`)
+    );
+    assert.equal((stored as any).rows[0].device_id, DEVR);
+
+    // Correct proof (the session's current id) → migrated to the managed id.
+    const migrate = await requestJson("POST", "/passpilot/kiosk/session", {}, {
+      ...deviceHeaders(schoolA.id, DEVM, sessionId),
+      "x-kiosk-device-prev": DEVR,
+    });
+    assert.equal(migrate.status, 200);
+    stored = await asSystem(() =>
+      db.execute(sql`SELECT device_id FROM passpilot_kiosk_sessions WHERE id = ${sessionId}`)
+    );
+    assert.equal((stored as any).rows[0].device_id, DEVM, "same-device proof must migrate the stamp");
+
+    // A claim after migration keys the binding to the managed id.
+    const claimed = await requestJson(
+      "POST",
+      "/passpilot/kiosk/sessions/claim",
+      { claimCode: boot.body.session.claimCode },
+      authFor(teacherA, schoolA.id)
+    );
+    assert.equal(claimed.status, 200, JSON.stringify(claimed.body));
+    assert.ok(await bindingRow(schoolA.id, DEVM), "binding must be keyed to the migrated id");
+    assert.equal(await bindingRow(schoolA.id, DEVX), undefined);
+  });
 });

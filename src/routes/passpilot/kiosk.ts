@@ -160,6 +160,16 @@ function getKioskDeviceId(req: { headers: Record<string, unknown> }): string | n
   return KIOSK_DEVICE_ID_PATTERN.test(trimmed) ? trimmed.toLowerCase() : null;
 }
 
+// Same-device continuity proof (X-Kiosk-Device-Prev): when a page adopts the
+// managed device id over a previously minted random one, it presents the
+// replaced id once so a live session stamped with the old id can migrate.
+function getKioskPrevDeviceId(req: { headers: Record<string, unknown> }): string | null {
+  const value = req.headers["x-kiosk-device-prev"];
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return KIOSK_DEVICE_ID_PATTERN.test(trimmed) ? trimmed.toLowerCase() : null;
+}
+
 function respondKioskSessionExpired(res: any) {
   return res.status(404).json({
     error: "This kiosk session has expired.",
@@ -355,7 +365,12 @@ router.post("/session", kioskLimiter, async (req, res, next) => {
           if (deviceId) {
             // Stamp the device on the session; an active session (the
             // /sessions/self handoff) also writes the durable binding here.
-            await adoptKioskSessionDevice(schoolId, existing.id, deviceId);
+            await adoptKioskSessionDevice(
+              schoolId,
+              existing.id,
+              deviceId,
+              getKioskPrevDeviceId(req)
+            );
           }
           return res.json({
             session: await kioskSessionDeviceView(schoolId, existing),

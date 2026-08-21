@@ -3816,7 +3816,8 @@ export async function deleteKioskDeviceBinding(
 export async function adoptKioskSessionDevice(
   schoolId: string,
   sessionId: string,
-  deviceId: string
+  deviceId: string,
+  previousDeviceId: string | null = null
 ): Promise<void> {
   await db.transaction(async (tx) => {
     // Advisory lock first: every binding writer (claim/retarget/update/resume)
@@ -3847,7 +3848,16 @@ export async function adoptKioskSessionDevice(
     // legitimate /sessions/self handoff always starts device-less, so an
     // overwrite here could only be a second device replaying a leaked session
     // id (e.g. from the handoff URL) to steal the durable teacher binding.
-    if (session.deviceId && session.deviceId !== deviceId) return;
+    // Exception: presenting the session's CURRENT id as X-Kiosk-Device-Prev
+    // proves same-device continuity — the page upgraded its random id to the
+    // managed one — so the session migrates to the new identity.
+    if (
+      session.deviceId &&
+      session.deviceId !== deviceId &&
+      session.deviceId !== previousDeviceId
+    ) {
+      return;
+    }
     if (session.deviceId !== deviceId) {
       await tx
         .update(passpilotKioskSessions)
