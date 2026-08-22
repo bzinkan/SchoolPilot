@@ -1,4 +1,8 @@
-export default function ImportInClassPilotNotice({ canLink, onGoToClassPilot }) {
+export default function ImportInClassPilotNotice({
+  canLink,
+  onGoToClassPilot,
+  unavailableMessage = "Open ClassPilot on the web to import students.",
+}) {
   return (
     <div
       className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-amber-950 shadow-sm dark:border-amber-700/60 dark:bg-amber-950/30 dark:text-amber-100"
@@ -12,7 +16,7 @@ export default function ImportInClassPilotNotice({ canLink, onGoToClassPilot }) 
           </p>
           {!canLink && (
             <p className="mt-2 text-xs font-medium text-amber-800 dark:text-amber-200">
-              Open ClassPilot on the web to import students.
+              {unavailableMessage}
             </p>
           )}
         </div>

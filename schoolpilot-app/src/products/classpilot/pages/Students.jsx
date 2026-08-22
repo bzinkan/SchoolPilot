@@ -329,6 +329,7 @@ function StudentsContent() {
   const [newStudentEmail, setNewStudentEmail] = useState("");
   const [newStudentGrade, setNewStudentGrade] = useState("");
   const [generatedPins, setGeneratedPins] = useState([]);
+  const [studentPendingClassAssignment, setStudentPendingClassAssignment] = useState(null);
   const [showAddGradeDialog, setShowAddGradeDialog] = useState(false);
   const [manualGrades, setManualGrades] = useState([]); // Manually added grade categories
   const [showBulkGradeDialog, setShowBulkGradeDialog] = useState(false);
@@ -754,6 +755,12 @@ function StudentsContent() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/teacher-students"] });
       setGeneratedPins(data.generatedPins || []);
+      if (data.student?.id) {
+        setStudentPendingClassAssignment({
+          id: data.student.id,
+          name: data.student.studentName || newStudentName.trim() || data.student.email || "Student",
+        });
+      }
       toast({
         title: "Student Added",
         description: data.generatedPins?.length
@@ -768,7 +775,7 @@ function StudentsContent() {
     onError: (error) => {
       toast({
         title: "Error",
-        description: error.message || "Failed to add student",
+        description: getApiErrorMessage(error, "Failed to add student"),
         variant: "destructive",
       });
     },
@@ -1764,6 +1771,48 @@ function StudentsContent() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {studentPendingClassAssignment && (
+        <div
+          role="status"
+          className="flex flex-col gap-4 rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-900 dark:bg-blue-950/30 sm:flex-row sm:items-center sm:justify-between"
+          data-testid="student-class-assignment-offer"
+        >
+          <div className="flex items-start gap-3">
+            <GraduationCap className="mt-0.5 h-5 w-5 shrink-0 text-blue-600 dark:text-blue-400" />
+            <div>
+              <p className="font-medium">Student ready for class assignment</p>
+              <p className="text-sm text-muted-foreground">
+                {studentPendingClassAssignment.name} was added to the school roster. Assign them to an official class when you are ready.
+              </p>
+            </div>
+          </div>
+          <div className="flex shrink-0 gap-2">
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => {
+                const params = new URLSearchParams({
+                  assignStudentId: studentPendingClassAssignment.id,
+                  returnTo: "/classpilot/students",
+                });
+                navigate(`/classpilot/admin/classes?${params.toString()}`);
+              }}
+              data-testid="button-assign-new-student-to-class"
+            >
+              Assign to official class
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => setStudentPendingClassAssignment(null)}
+            >
+              Not now
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Student Roster */}
       <Card>

@@ -449,7 +449,7 @@ router.get("/teachers", ...passPilotAuth, async (req, res, next) => {
 // Admin teacher/user management (PassPilot & ClassPilot call /admin/teachers)
 // ============================================================================
 
-router.get("/admin/teachers", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
+router.get("/admin/teachers", ...schoolAuth, requireRole("admin", "school_admin"), async (req, res, next) => {
   try {
     // Return all staff who can teach (office_staff acts as teacher in PassPilot/ClassPilot)
     const allStaff = await getUsersBySchool(res.locals.schoolId!);
@@ -797,7 +797,7 @@ router.post("/admin/classroom/create-class", ...schoolAuth, requireRole("admin")
   }
 });
 
-router.get("/admin/teacher-students", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
+router.get("/admin/teacher-students", ...schoolAuth, requireRole("admin", "school_admin"), async (req, res, next) => {
   try {
     const students = await getStudentsBySchool(res.locals.schoolId!);
     // Include studentName/studentEmail for ClassPilot frontend compatibility

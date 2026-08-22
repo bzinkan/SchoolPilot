@@ -49,6 +49,47 @@ const officialClasses = [
   },
 ];
 
+function defaultMigrationInventory() {
+  const comparison = {
+    classpilotGroupId: "class-one",
+    className: "Grade 3 Homeroom",
+    rosterAddedCount: 1,
+    rosterRemovedCount: 1,
+    teacherAddedCount: 1,
+    teacherRemovedCount: 0,
+    rosterAdded: [{ id: "student-one", name: "Jordan Student", detail: "jordan@example.edu" }],
+    rosterRemoved: [{ id: "legacy-student", name: "Legacy Student", detail: "Grade 3" }],
+    teacherAdded: [{ id: "teacher-one", name: "Mary Englert", detail: "mary@example.edu" }],
+    teacherRemoved: [],
+  };
+  return {
+    source: "legacy_grades",
+    revision: 2,
+    kioskGradeId: null,
+    kioskClasspilotGroupId: null,
+    canonicalClasses: officialClasses,
+    items: [{
+      id: "legacy-grade",
+      legacyGradeId: "legacy-grade",
+      name: "Legacy Advisory",
+      classpilotGroupId: null,
+      migrationState: "pending",
+      mappingRevision: 2,
+      studentCount: 1,
+      teacherCount: 0,
+      teacherNames: [],
+      activePassCount: 0,
+      historicalPassCount: 4,
+      suggestedClasspilotGroupId: "class-one",
+      suggestedClassName: "Grade 3 Homeroom",
+      autoLinkEligible: false,
+      conflictReasons: ["roster_mismatch", "teacher_mismatch"],
+      comparison,
+      comparisons: [comparison],
+    }],
+  };
+}
+
 const reportIssuers = [
   { id: "issuer-amy", displayName: "Amy Adams", status: "active" },
   { id: "issuer-andrew", displayName: "Andrew Burba", status: "active" },
@@ -192,7 +233,7 @@ function passDataHistoryForRequest(url) {
   };
 }
 
-function authResponse(role = "admin", school = {}) {
+function authResponse(role = "admin", school = {}, licenses = { classPilot: true, passPilot: true, goPilot: false }) {
   return {
     user: {
       id: role === "teacher" ? "teacher-two" : "admin-one",
@@ -203,7 +244,7 @@ function authResponse(role = "admin", school = {}) {
     },
     token: "passpilot-canonical-browser-token",
     activeSchoolId: SCHOOL_ID,
-    licenses: { classPilot: true, passPilot: true, goPilot: false },
+    licenses,
     memberships: [{
       id: `${role}-membership`,
       schoolId: SCHOOL_ID,
@@ -240,7 +281,7 @@ async function installApiMocks(page, state) {
     }
 
     if (pathname === "/api/auth/me") {
-      await route.fulfill({ json: authResponse(state.role, state.settings) });
+      await route.fulfill({ json: authResponse(state.role, state.settings, state.licenses) });
       return;
     }
     if (pathname === "/api/auth/csrf") {
@@ -294,6 +335,53 @@ async function installApiMocks(page, state) {
         };
         await new Promise((resolve) => setTimeout(resolve, 75));
         await route.fulfill({ json: state.settings });
+        return;
+      }
+    }
+    if (pathname.startsWith("/api/passpilot/admin/class-migration")) {
+      if (request.method() === "GET") {
+        await route.fulfill({ json: state.migration });
+        return;
+      }
+      if (request.method() === "PUT") {
+        const payload = request.postDataJSON();
+        state.migrationWrites.push({ pathname, payload });
+        if (state.migrationConflictsRemaining > 0) {
+          state.migrationConflictsRemaining -= 1;
+          if (state.migrationConflictReplacement) {
+            state.migration = state.migrationConflictReplacement;
+          }
+          await route.fulfill({
+            status: 409,
+            json: {
+              error: "The class mapping changed in another session. Reload before saving.",
+              code: "PASSPILOT_CLASS_MIGRATION_CONFLICT",
+            },
+          });
+          return;
+        }
+        const legacyGradeId = decodeURIComponent(pathname.split("/").pop());
+        state.migration = {
+          ...state.migration,
+          revision: state.migration.revision + 1,
+          items: state.migration.items.map((item) => item.legacyGradeId === legacyGradeId
+            ? {
+                ...item,
+                classpilotGroupId: payload.action === "link" ? payload.classpilotGroupId : null,
+                migrationState: payload.action === "link" ? "confirmed" : "history_only",
+                mappingRevision: state.migration.revision + 1,
+              }
+            : item),
+        };
+        await route.fulfill({ json: state.migration });
+        return;
+      }
+      if (request.method() === "POST" && pathname.endsWith("/complete")) {
+        const payload = request.postDataJSON();
+        state.migrationCompleteWrites.push(payload);
+        state.source = "classpilot_groups";
+        state.migration = { ...state.migration, source: "classpilot_groups", revision: state.migration.revision + 1 };
+        await route.fulfill({ json: state.migration });
         return;
       }
     }
@@ -481,6 +569,17 @@ async function installApiMocks(page, state) {
       return;
     }
     if (pathname === "/api/students") {
+      if (request.method() === "POST") {
+        const payload = request.postDataJSON();
+        state.studentWrites.push(payload);
+        const failure = state.studentWriteFailures.shift();
+        if (failure) {
+          await route.fulfill({ status: failure.status, json: { error: failure.error, code: failure.code } });
+          return;
+        }
+        await route.fulfill({ json: { student: { id: `student-created-${state.studentWrites.length}`, ...payload } } });
+        return;
+      }
       await route.fulfill({ json: { students: [{ id: "legacy-student", firstName: "Legacy", lastName: "Student", gradeId: "legacy-grade" }] } });
       return;
     }
@@ -488,8 +587,27 @@ async function installApiMocks(page, state) {
       await route.fulfill({ json: { records: [] } });
       return;
     }
+    if (
+      pathname.startsWith("/api/classpilot/admin/classes/")
+      && pathname.endsWith("/students")
+      && request.method() === "POST"
+    ) {
+      const classId = pathname.split("/").at(-2);
+      const payload = request.postDataJSON();
+      state.adminClassAssignments.push({ classId, payload });
+      await route.fulfill({ json: { added: payload.studentIds.length, alreadyPresent: 0, failed: [] } });
+      return;
+    }
     if (pathname === "/api/classpilot/admin/classes") {
-      await route.fulfill({ json: { classes: [] } });
+      await route.fulfill({ json: { classes: state.adminClasses } });
+      return;
+    }
+    if (pathname === "/api/admin/teacher-students") {
+      await route.fulfill({ json: { students: state.adminStudents } });
+      return;
+    }
+    if (pathname === "/api/admin/teachers") {
+      await route.fulfill({ json: { teachers: [] } });
       return;
     }
     if (pathname === "/api/classpilot/admin/staff") {
@@ -504,6 +622,7 @@ async function installApiMocks(page, state) {
 function freshState(overrides = {}) {
   return {
     role: "admin",
+    licenses: { classPilot: true, passPilot: true, goPilot: false },
     source: "classpilot_groups",
     rosterRequests: [],
     passWrites: [],
@@ -522,6 +641,16 @@ function freshState(overrides = {}) {
     historyFailuresRemaining: 0,
     historyPages: null,
     classTwoStudents,
+    migration: defaultMigrationInventory(),
+    migrationWrites: [],
+    migrationCompleteWrites: [],
+    migrationConflictsRemaining: 0,
+    migrationConflictReplacement: null,
+    adminClasses: [],
+    adminStudents: [],
+    adminClassAssignments: [],
+    studentWrites: [],
+    studentWriteFailures: [],
     settings: {
       name: "Browser Test School",
       schoolTimezone: "America/New_York",
@@ -636,6 +765,35 @@ test("cross-product pass widgets advertise canonical capability and do not mask 
     "utf8",
   );
   assert.match(reports, /csvHeaders = \["Student Name", "Class", "Issued By"/);
+
+  const compatibilityRoutes = await readFile(path.join(APP_ROOT, "../src/routes/compat.ts"), "utf8");
+  assert.match(
+    compatibilityRoutes,
+    /router\.get\("\/admin\/teachers",[\s\S]*?requireRole\("admin", "school_admin"\)/,
+    "school administrators must be able to load the teacher choices used by official class management",
+  );
+  assert.match(
+    compatibilityRoutes,
+    /router\.get\("\/admin\/teacher-students",[\s\S]*?requireRole\("admin", "school_admin"\)/,
+    "school administrators must be able to load the shared students used by official class assignment",
+  );
+
+  const authContext = await readFile(path.join(APP_ROOT, "src/contexts/AuthContext.jsx"), "utf8");
+  assert.match(
+    authContext,
+    /const switchSchool = \(schoolId\) => \{[\s\S]*?setLicenses\(\{\}\);[\s\S]*?setLoading\(true\);[\s\S]*?selectActiveSchool\(schoolId\)/,
+    "tenant switching must hide the prior school's licensed product controls before changing school context",
+  );
+
+  const legacyRoster = await readFile(
+    path.join(APP_ROOT, "src/products/passpilot/components/tabs/RosterTab.jsx"),
+    "utf8",
+  );
+  assert.match(
+    legacyRoster,
+    /apiRequest\('PUT', `\/students\/\$\{editingStudent\.id\}`,[\s\S]*?studentIdNumber: studentForm\.studentId/,
+    "standalone PassPilot edits must send the canonical studentIdNumber field",
+  );
 });
 
 test("PassPilot canonical classes use the persisted source and preserve the legacy path before cutover", { timeout: 90_000 }, async () => {
@@ -1028,40 +1186,209 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
     await legacyPage.getByText("Legacy Advisory", { exact: true }).waitFor();
     assert.equal(await legacyPage.getByTestId("canonical-passpilot-classes").count(), 0);
 
-    for (const source of ["legacy_grades", "classpilot_groups"]) {
-      const removedClassSourcePage = await browser.newPage();
-      const removedClassSourceState = freshState({ source });
-      await installApiMocks(removedClassSourcePage, removedClassSourceState);
-      await removedClassSourcePage.goto(`${baseUrl}/passpilot/setup?section=class-source`);
-      await removedClassSourcePage.waitForFunction(() => {
-        const current = new URL(window.location.href);
-        return current.pathname === "/passpilot/setup" && !current.searchParams.has("section");
-      });
-      const teachersTab = removedClassSourcePage.getByRole("tab", { name: "Teachers", exact: true });
-      await teachersTab.waitFor();
-      assert.equal(await teachersTab.getAttribute("aria-selected"), "true");
-      assert.equal(
-        await removedClassSourcePage.getByRole("tab", { name: "Class Source", exact: true }).count(),
-        0,
-      );
-      assert.equal(await removedClassSourcePage.getByTestId("passpilot-class-source-setup").count(), 0);
-      assert.equal(
-        removedClassSourceState.classModelHeaders.filter(
-          (entry) => entry.pathname.startsWith("/api/passpilot/admin/class-migration"),
-        ).length,
-        0,
-        "the removed Class Source surface must not call migration APIs",
-      );
-      assert.equal(
-        await removedClassSourcePage.getByRole("tab", { name: "Classes", exact: true }).count(),
-        source === "legacy_grades" ? 1 : 0,
-      );
-      assert.equal(
-        await removedClassSourcePage.getByRole("tab", { name: "Class Assignments", exact: true }).count(),
-        source === "legacy_grades" ? 1 : 0,
-      );
-      await removedClassSourcePage.close();
-    }
+    const ownedRosterPage = await browser.newPage();
+    await installApiMocks(ownedRosterPage, freshState({ source: "legacy_grades" }));
+    await ownedRosterPage.goto(`${baseUrl}/passpilot/setup?section=students`);
+    await ownedRosterPage.getByText("School Student Directory", { exact: true }).waitFor();
+    assert.equal(await ownedRosterPage.getByTestId("import-in-classpilot-notice").isVisible(), true);
+    assert.equal(await ownedRosterPage.getByRole("button", { name: "Refresh roster", exact: true }).isVisible(), true);
+    assert.equal(await ownedRosterPage.getByRole("button", { name: "Add Student", exact: true }).count(), 0);
+    assert.equal(await ownedRosterPage.getByRole("button", { name: "Bulk Add", exact: true }).count(), 0);
+    assert.equal(await ownedRosterPage.getByRole("button", { name: "Import", exact: true }).count(), 0);
+    await ownedRosterPage.getByRole("tab", { name: "Classes", exact: true }).click();
+    await ownedRosterPage.getByRole("button", { name: "Add Class", exact: true }).waitFor();
+    assert.equal(await ownedRosterPage.getByRole("button", { name: "Assign existing students", exact: true }).isVisible(), true);
+    assert.equal(await ownedRosterPage.getByRole("button", { name: "Add Student", exact: true }).count(), 0);
+    await ownedRosterPage.getByRole("button", { name: "View Legacy Advisory roster", exact: true }).click();
+    const setupRosterDialog = ownedRosterPage.getByRole("dialog", { name: "PassPilot Class Roster — Legacy Advisory" });
+    await setupRosterDialog.getByRole("button", { name: "Refresh roster", exact: true }).waitFor();
+    assert.equal(await setupRosterDialog.getByRole("button", { name: "Assign existing students", exact: true }).isVisible(), true);
+    await ownedRosterPage.close();
+
+    const standaloneRosterPage = await browser.newPage();
+    const standaloneRosterState = freshState({
+      source: "legacy_grades",
+      licenses: { classPilot: false, passPilot: true, goPilot: false },
+      studentWriteFailures: [
+        { status: 400, code: "STUDENT_EMAIL_DOMAIN_MISMATCH", error: "Student email must use the school domain." },
+        { status: 409, code: "STUDENT_EMAIL_CONFLICT", error: "A student with this email already exists." },
+      ],
+    });
+    await installApiMocks(standaloneRosterPage, standaloneRosterState);
+    await standaloneRosterPage.goto(`${baseUrl}/passpilot/setup?section=students`);
+    assert.equal(await standaloneRosterPage.getByTestId("import-in-classpilot-notice").count(), 0);
+    await standaloneRosterPage.getByRole("button", { name: "Add Student", exact: true }).click();
+    const addStudentDialog = standaloneRosterPage.getByRole("dialog", { name: "Add Student", exact: true });
+    await addStudentDialog.getByPlaceholder("John", { exact: true }).fill("Arielle");
+    await addStudentDialog.getByPlaceholder("Doe", { exact: true }).fill("Danner");
+    const emailInput = addStudentDialog.getByPlaceholder("john.doe@school.edu", { exact: true });
+    await emailInput.fill("arielle@other.invalid");
+    await addStudentDialog.getByPlaceholder("12345", { exact: true }).fill("A-2539");
+    await addStudentDialog.getByRole("button", { name: "Add Student", exact: true }).click();
+    await standaloneRosterPage.getByText("Student email must use the school domain.", { exact: false }).waitFor();
+    await emailInput.fill("existing@example.edu");
+    await addStudentDialog.getByRole("button", { name: "Add Student", exact: true }).click();
+    await standaloneRosterPage.getByText("A student with this email already exists.", { exact: false }).waitFor();
+    await emailInput.fill("");
+    await addStudentDialog.getByRole("button", { name: "Add Student", exact: true }).click();
+    await standaloneRosterPage.getByText("Student added", { exact: true }).waitFor();
+    assert.deepEqual(standaloneRosterState.studentWrites.at(-1), {
+      firstName: "Arielle",
+      lastName: "Danner",
+      studentIdNumber: "A-2539",
+    });
+    await standaloneRosterPage.close();
+
+    const replacementComparison = {
+      classpilotGroupId: "class-two",
+      className: "Grade 4 Homeroom",
+      rosterAddedCount: 1,
+      rosterRemovedCount: 1,
+      teacherAddedCount: 1,
+      teacherRemovedCount: 0,
+      rosterAdded: [{ id: "student-two", name: "Taylor Student", detail: "taylor@example.edu" }],
+      rosterRemoved: [{ id: "legacy-student", name: "Legacy Student", detail: "Grade 3" }],
+      teacherAdded: [{ id: "teacher-two", name: "Cayla Couch", detail: "cayla@example.edu" }],
+      teacherRemoved: [],
+    };
+    const conflictReplacement = defaultMigrationInventory();
+    conflictReplacement.revision = 7;
+    conflictReplacement.items = conflictReplacement.items.map((item) => ({
+      ...item,
+      mappingRevision: 7,
+      suggestedClasspilotGroupId: "class-two",
+      suggestedClassName: "Grade 4 Homeroom",
+      comparison: replacementComparison,
+      comparisons: [replacementComparison],
+    }));
+    const conflictPage = await browser.newPage();
+    const conflictState = freshState({
+      source: "legacy_grades",
+      migrationConflictsRemaining: 1,
+      migrationConflictReplacement: conflictReplacement,
+    });
+    await installApiMocks(conflictPage, conflictState);
+    await conflictPage.goto(`${baseUrl}/passpilot/setup?section=class-source`);
+    await conflictPage.getByTestId("passpilot-class-source-setup").waitFor();
+    await conflictPage.getByLabel("Acknowledge roster differences for Legacy Advisory").click();
+    const reviewConfirmation = conflictPage
+      .getByText("I reviewed every mapping and understand that ClassPilot rosters and teachers become authoritative.", { exact: true })
+      .locator("..").getByRole("checkbox");
+    const clientConfirmation = conflictPage
+      .getByText("I confirmed the SchoolPilot web app, PassPilot Android app, and kiosks are updated for ClassPilot classes.", { exact: true })
+      .locator("..").getByRole("checkbox");
+    await reviewConfirmation.click();
+    await clientConfirmation.click();
+    await conflictPage.getByRole("button", { name: "Confirm official class", exact: true }).click();
+    await conflictPage.getByRole("button", { name: "Confirm class link", exact: true }).click();
+    await conflictPage.getByText("This review changed in another session", { exact: true }).waitFor();
+    await conflictPage.getByRole("button", { name: "Load latest revision", exact: true }).click();
+    await conflictPage.waitForFunction(() => (
+      document.querySelector('[id="class-match-legacy-grade"]')?.textContent?.includes("Grade 4 Homeroom")
+    ));
+    assert.equal(await reviewConfirmation.getAttribute("data-state"), "unchecked");
+    assert.equal(await clientConfirmation.getAttribute("data-state"), "unchecked");
+    assert.equal(
+      await conflictPage.getByRole("button", { name: "Confirm official class", exact: true }).isDisabled(),
+      true,
+      "a refreshed roster difference must be acknowledged again",
+    );
+    await conflictPage.close();
+
+    const inactiveMapping = defaultMigrationInventory();
+    inactiveMapping.items = inactiveMapping.items.map((item) => ({
+      ...item,
+      classpilotGroupId: "archived-class",
+      suggestedClasspilotGroupId: null,
+      suggestedClassName: null,
+      migrationState: "confirmed",
+      comparison: null,
+      comparisons: [],
+    }));
+    const inactiveMappingPage = await browser.newPage();
+    await installApiMocks(inactiveMappingPage, freshState({ source: "legacy_grades", migration: inactiveMapping }));
+    await inactiveMappingPage.goto(`${baseUrl}/passpilot/setup?section=class-source`);
+    await inactiveMappingPage.getByText("Official class unavailable", { exact: true }).waitFor();
+    assert.equal(
+      await inactiveMappingPage.getByRole("button", { name: "Confirm official class", exact: true }).isDisabled(),
+      true,
+      "a stale mapped class ID must not be submitted as an active target",
+    );
+    assert.equal(
+      await inactiveMappingPage.getByRole("button", { name: "Switch to ClassPilot classes", exact: true }).isDisabled(),
+      true,
+      "an archived mapped class must reopen review and block cutover",
+    );
+    await inactiveMappingPage.close();
+
+    const classSourcePage = await browser.newPage();
+    const classSourceState = freshState({ source: "legacy_grades" });
+    await installApiMocks(classSourcePage, classSourceState);
+    await classSourcePage.goto(`${baseUrl}/passpilot/setup?section=class-source`);
+    await classSourcePage.getByTestId("passpilot-class-source-setup").waitFor();
+    assert.equal(
+      await classSourcePage.getByRole("tab", { name: "Class Source", exact: true }).getAttribute("aria-selected"),
+      "true",
+    );
+    assert.equal(await classSourcePage.getByRole("tab", { name: "Classes", exact: true }).count(), 1);
+    assert.equal(await classSourcePage.getByRole("tab", { name: "Class Assignments", exact: true }).count(), 1);
+    assert.ok(
+      classSourceState.classModelHeaders.some(
+        (entry) => entry.pathname === "/api/passpilot/admin/class-migration"
+          && entry.value === "classpilot-groups-v1",
+      ),
+      "the guided migration inventory must send the canonical class-model capability",
+    );
+
+    await classSourcePage.getByLabel("Acknowledge roster differences for Legacy Advisory").click();
+    await classSourcePage.getByRole("button", { name: "Confirm official class", exact: true }).click();
+    await classSourcePage.getByRole("button", { name: "Confirm class link", exact: true }).click();
+    await classSourcePage.getByText("Linked to Grade 3 Homeroom", { exact: true }).waitFor();
+    assert.deepEqual(classSourceState.migrationWrites, [{
+      pathname: "/api/passpilot/admin/class-migration/legacy-grade",
+      payload: {
+        expectedRevision: 2,
+        action: "link",
+        classpilotGroupId: "class-one",
+      },
+    }]);
+
+    await classSourcePage.getByText("I reviewed every mapping and understand that ClassPilot rosters and teachers become authoritative.", { exact: true }).click();
+    await classSourcePage.getByText("I confirmed the SchoolPilot web app, PassPilot Android app, and kiosks are updated for ClassPilot classes.", { exact: true }).click();
+    const cutoverButton = classSourcePage.getByRole("button", { name: "Switch to ClassPilot classes", exact: true });
+    assert.equal(await cutoverButton.isEnabled(), true);
+    await classSourcePage.getByRole("button", { name: "Change decision", exact: true }).click();
+    await classSourcePage.locator("#class-match-legacy-grade").click();
+    await classSourcePage.getByRole("option", { name: /Grade 4 Homeroom/ }).click();
+    assert.equal(await cutoverButton.isDisabled(), true, "an unsaved mapping draft must block irreversible cutover");
+    await classSourcePage.getByRole("button", { name: "Cancel change", exact: true }).click();
+    await classSourcePage.getByText("Linked to Grade 3 Homeroom", { exact: true }).waitFor();
+    assert.equal(await cutoverButton.isEnabled(), true, "canceling a draft must restore the saved mapping");
+    await cutoverButton.click();
+    await classSourcePage.getByRole("button", { name: "Confirm irreversible cutover", exact: true }).click();
+    await classSourcePage.waitForURL((url) => url.pathname === "/passpilot/classes");
+    await classSourcePage.getByTestId("canonical-passpilot-classes").waitFor();
+    assert.deepEqual(classSourceState.migrationCompleteWrites, [{
+      expectedRevision: 3,
+      classModelAcknowledged: true,
+    }]);
+
+    const canonicalClassSourcePage = await browser.newPage();
+    const canonicalClassSourceState = freshState({ source: "classpilot_groups" });
+    await installApiMocks(canonicalClassSourcePage, canonicalClassSourceState);
+    await canonicalClassSourcePage.goto(`${baseUrl}/passpilot/setup?section=class-source`);
+    await canonicalClassSourcePage.waitForFunction(() => {
+      const current = new URL(window.location.href);
+      return current.pathname === "/passpilot/setup" && !current.searchParams.has("section");
+    });
+    assert.equal(await canonicalClassSourcePage.getByRole("tab", { name: "Class Source", exact: true }).count(), 0);
+    assert.equal(
+      canonicalClassSourceState.classModelHeaders.filter(
+        (entry) => entry.pathname.startsWith("/api/passpilot/admin/class-migration"),
+      ).length,
+      0,
+      "canonical schools must not reopen or call the legacy migration surface",
+    );
 
     const legacyClassSourceHashPage = await browser.newPage();
     const legacyClassSourceHashState = freshState({ source: "legacy_grades" });
@@ -1070,19 +1397,11 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
     await legacyClassSourceHashPage.waitForFunction(() => {
       const current = new URL(window.location.href);
       return current.pathname === "/passpilot/setup"
-        && !current.searchParams.has("section")
+        && current.searchParams.get("section") === "class-source"
         && current.hash === "";
     });
-    assert.equal(
-      await legacyClassSourceHashPage.getByRole("tab", { name: "Class Source", exact: true }).count(),
-      0,
-    );
-    assert.equal(
-      legacyClassSourceHashState.classModelHeaders.filter(
-        (entry) => entry.pathname.startsWith("/api/passpilot/admin/class-migration"),
-      ).length,
-      0,
-    );
+    await legacyClassSourceHashPage.getByTestId("passpilot-class-source-setup").waitFor();
+    assert.equal(await legacyClassSourceHashPage.getByRole("tab", { name: "Class Source", exact: true }).count(), 1);
 
     const settingsPage = await browser.newPage();
     const settingsState = freshState({ source: "legacy_grades" });
@@ -1794,6 +2113,72 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
 
     await officePage.goto(`${baseUrl}/passpilot/setup`);
     await officePage.waitForURL("**/passpilot/my-class**");
+
+    const assignmentPage = await browser.newPage();
+    const assignmentState = freshState({
+      adminClasses: officialClasses,
+      adminStudents: [
+        { id: "student-a", studentName: "Arielle Danner", studentEmail: "adanner@example.edu", gradeLevel: "5", status: "active" },
+        { id: "student-b", studentName: "Taylor Student", studentEmail: "taylor@example.edu", gradeLevel: "5", status: "active" },
+      ],
+    });
+    await installApiMocks(assignmentPage, assignmentState);
+    await assignmentPage.goto(
+      `${baseUrl}/classpilot/admin/classes?assignStudentId=student-a&returnTo=%2Fclasspilot%2Fstudents`,
+    );
+    const studentACheckbox = assignmentPage.getByTestId("checkbox-student-student-a");
+    const studentBCheckbox = assignmentPage.getByTestId("checkbox-student-student-b");
+    await studentACheckbox.waitFor();
+    await assignmentPage.waitForFunction(() => document.activeElement?.getAttribute("data-testid") === "checkbox-student-student-a");
+    assert.equal(await studentACheckbox.getAttribute("data-state"), "checked");
+    assert.equal(await assignmentPage.getByTestId("button-assign-students").isDisabled(), true, "the administrator must choose a class explicitly");
+
+    await assignmentPage.evaluate(() => {
+      window.history.pushState({}, "", "/classpilot/admin/classes?assignStudentId=student-b&returnTo=%2Fclasspilot%2Fstudents");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await assignmentPage.waitForFunction(() => (
+      document.querySelector('[data-testid="checkbox-student-student-b"]')?.getAttribute("data-state") === "checked"
+      && document.querySelector('[data-testid="checkbox-student-student-a"]')?.getAttribute("data-state") !== "checked"
+    ));
+
+    await assignmentPage.getByTestId("select-class").click();
+    await assignmentPage.getByRole("option", { name: /Grade 3 Homeroom/ }).click();
+    await assignmentPage.getByTestId("button-assign-students").click();
+    await assignmentPage.getByText("1 added, 0 already assigned, 0 failed.", { exact: true }).waitFor();
+    assert.deepEqual(assignmentState.adminClassAssignments, [{
+      classId: "class-one",
+      payload: { studentIds: ["student-b"] },
+    }]);
+    assert.equal(await studentBCheckbox.getAttribute("data-state"), "checked", "the handoff student stays selected for a second class");
+
+    await assignmentPage.getByTestId("select-class").click();
+    await assignmentPage.getByRole("option", { name: /Grade 4 Homeroom/ }).click();
+    await assignmentPage.getByTestId("button-assign-students").click();
+    await assignmentPage.waitForFunction(() => document.body.textContent?.includes("Roster updated"));
+    assert.deepEqual(assignmentState.adminClassAssignments.at(-1), {
+      classId: "class-two",
+      payload: { studentIds: ["student-b"] },
+    });
+
+    await assignmentPage.evaluate(() => {
+      window.history.pushState({}, "", "/classpilot/admin/classes?assignStudentId=missing-student&returnTo=%2Fclasspilot%2Fstudents");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await assignmentPage.getByText("Student unavailable", { exact: true }).waitFor();
+    assert.equal(await studentBCheckbox.getAttribute("data-state"), "unchecked", "an invalid handoff must clear an earlier selection");
+
+    await assignmentPage.evaluate(() => {
+      window.history.pushState({}, "", "/classpilot/admin/classes?returnTo=%2Fclasspilot%2Fstudents");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+      window.history.pushState({}, "", "/classpilot/admin/classes?assignStudentId=student-b&returnTo=%2Fclasspilot%2Fstudents");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await assignmentPage.waitForFunction(() => (
+      document.querySelector('[data-testid="checkbox-student-student-b"]')?.getAttribute("data-state") === "checked"
+    ));
+    assert.equal(await assignmentPage.getByTestId("button-back-student-roster").isVisible(), true);
+    await assignmentPage.close();
 
     const roundTripPage = await browser.newPage();
     await installApiMocks(roundTripPage, freshState());

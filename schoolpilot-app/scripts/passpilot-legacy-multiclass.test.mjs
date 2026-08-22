@@ -258,8 +258,8 @@ test("legacy PassPilot supports shared students with class-scoped roster writes"
     await page.getByRole("heading", { name: "School Setup" }).waitFor();
 
     const scienceCard = classCard(page, "Science Lab");
-    await scienceCard.getByRole("button", { name: "Assign Students" }).click();
-    const assignDialog = page.getByRole("dialog", { name: "Assign Students to Science Lab" });
+    await scienceCard.getByRole("button", { name: "Assign existing students" }).click();
+    const assignDialog = page.getByRole("dialog", { name: "Assign existing students to Science Lab" });
     await assignDialog.getByText("Students can belong to multiple classes.", { exact: false }).waitFor();
     const sharedCheckbox = assignDialog.getByRole("checkbox", { name: /Student, Shared/ });
     assert.equal(await sharedCheckbox.isVisible(), true, "a student in another class must remain assignable");
@@ -365,7 +365,7 @@ test("legacy PassPilot supports shared students with class-scoped roster writes"
     await page.goto(`${baseUrl}/passpilot/classes`);
     await page.getByRole("heading", { name: "My Classes" }).waitFor();
     await classCard(page, "Science Lab").getByRole("button", { name: "View Science Lab roster" }).click();
-    const rosterDialog = page.getByRole("dialog", { name: "Science Lab - Full Roster" });
+    const rosterDialog = page.getByRole("dialog", { name: "PassPilot Class Roster — Science Lab" });
     await rosterDialog.getByRole("button", { name: "Remove Shared Student from Science Lab" }).click();
     await page.waitForFunction(() => document.body.textContent?.includes("Student removed from class"));
     assert.deepEqual(state.membershipDeletes, [{ classId: "class-b", studentId: "student-shared" }]);
