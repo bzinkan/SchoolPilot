@@ -221,6 +221,11 @@ export function AuthProvider({ children }) {
   };
 
   const switchSchool = (schoolId) => {
+    // Product entitlements belong to the selected tenant. Hide product UI
+    // synchronously so controls from the previous school cannot be used while
+    // the new tenant's /auth/me response is still in flight.
+    setLicenses({});
+    setLoading(true);
     selectActiveSchool(schoolId);
     queryClient.clear();
     // Refetch to get new school's licenses

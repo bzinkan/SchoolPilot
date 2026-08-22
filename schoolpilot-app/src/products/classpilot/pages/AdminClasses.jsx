@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -81,6 +81,12 @@ const NONE = "__none__";
 const ALL = "__all__";
 const UNGRADED = "__ungraded__";
 const CLASSROOM_IMPORT_ENABLED = import.meta.env.VITE_CLASSPILOT_CLASSROOM_IMPORT_ENABLED === "true";
+const RETURN_TARGETS = new Map([
+  ["/classpilot/students", { label: "Back to Student Roster", testId: "button-back-student-roster" }],
+  ["/passpilot/classes", { label: "Back to PassPilot", testId: "button-back-passpilot" }],
+  ["/passpilot/setup", { label: "Back to PassPilot", testId: "button-back-passpilot" }],
+  ["/passpilot/setup?section=class-source", { label: "Back to PassPilot", testId: "button-back-passpilot" }],
+]);
 
 function getErrorMessage(error) {
   return error?.response?.data?.error || error?.message || "Something went wrong";
@@ -874,19 +880,23 @@ export default function AdminClasses() {
   const [assignGradeFilter, setAssignGradeFilter] = useState(ALL);
   const [selectedClassId, setSelectedClassId] = useState("");
   const [selectedStudents, setSelectedStudents] = useState(new Set());
+  const [assignmentHandoffStudentId, setAssignmentHandoffStudentId] = useState("");
   const [expandedClasses, setExpandedClasses] = useState(new Set());
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [classroomImportOpen, setClassroomImportOpen] = useState(false);
   const [editingClass, setEditingClass] = useState(null);
   const [archiveTarget, setArchiveTarget] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const assignmentPanelRef = useRef(null);
+  const requestedStudentCheckboxRef = useRef(null);
+  const handledAssignStudentIdRef = useRef("");
 
   const isAdmin = currentUser?.isSuperAdmin || currentUser?.role === "admin" || currentUser?.role === "school_admin";
-  const requestedReturnTo = new URLSearchParams(location.search).get("returnTo");
-  const safeReturnTo = requestedReturnTo === "/passpilot/classes"
-    || requestedReturnTo === "/passpilot/setup"
-    || requestedReturnTo?.startsWith("/passpilot/setup?")
-    ? requestedReturnTo
+  const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const requestedAssignStudentId = searchParams.get("assignStudentId") || "";
+  const requestedReturnTo = searchParams.get("returnTo") || "";
+  const safeReturnTarget = RETURN_TARGETS.has(requestedReturnTo)
+    ? { path: requestedReturnTo, ...RETURN_TARGETS.get(requestedReturnTo) }
     : null;
 
   const queryFilters = useMemo(() => {
@@ -945,10 +955,14 @@ export default function AdminClasses() {
 
   const assignStudentsMutation = useMutation({
     mutationFn: ({ classId, studentIds }) => apiRequest("POST", `/classpilot/admin/classes/${classId}/students`, { studentIds }),
-    onSuccess: (result) => {
+    onSuccess: (result, variables) => {
       queryClient.invalidateQueries({ queryKey: ADMIN_CLASSES_KEY });
-      queryClient.invalidateQueries({ queryKey: ["admin-class-students", selectedClassId] });
-      setSelectedStudents(new Set());
+      queryClient.invalidateQueries({ queryKey: ["admin-class-students", variables.classId] });
+      const keepHandoffSelected = assignmentHandoffStudentId
+        && variables.studentIds.includes(assignmentHandoffStudentId);
+      setSelectedStudents(
+        keepHandoffSelected ? new Set([assignmentHandoffStudentId]) : new Set(),
+      );
       toast({
         title: "Roster updated",
         description: `${result.added || 0} added, ${result.alreadyPresent || 0} already assigned, ${(result.failed || []).length} failed.`,
@@ -987,6 +1001,52 @@ export default function AdminClasses() {
   const classes = useMemo(() => classesQuery.data || [], [classesQuery.data]);
   const teachers = useMemo(() => teachersQuery.data || [], [teachersQuery.data]);
   const students = useMemo(() => studentsQuery.data || [], [studentsQuery.data]);
+  const assignmentHandoffStudent = assignmentHandoffStudentId
+    ? students.find((student) => student.id === assignmentHandoffStudentId)
+    : null;
+
+  useEffect(() => {
+    if (!requestedAssignStudentId) {
+      handledAssignStudentIdRef.current = "";
+      return undefined;
+    }
+    if (!studentsQuery.isSuccess || studentsQuery.isFetching) return undefined;
+
+    const requestedStudent = students.find((student) => student.id === requestedAssignStudentId);
+    const requestStateKey = `${requestedAssignStudentId}:${requestedStudent ? "active" : "unavailable"}`;
+
+    let focusFrame;
+    const selectionFrame = requestAnimationFrame(() => {
+      if (handledAssignStudentIdRef.current === requestStateKey) return;
+      handledAssignStudentIdRef.current = requestStateKey;
+
+      if (!requestedStudent) {
+        setAssignmentHandoffStudentId("");
+        setSelectedStudents(new Set());
+        toast({
+          title: "Student unavailable",
+          description: "That student is no longer active in this school roster. Return to the Student Roster and try again.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      setAssignmentHandoffStudentId(requestedStudent.id);
+      setAssignGradeFilter(ALL);
+      setSelectedClassId("");
+      setSelectedStudents(new Set([requestedStudent.id]));
+
+      focusFrame = requestAnimationFrame(() => {
+        assignmentPanelRef.current?.scrollIntoView?.({ block: "center" });
+        requestedStudentCheckboxRef.current?.focus?.();
+      });
+    });
+
+    return () => {
+      cancelAnimationFrame(selectionFrame);
+      if (focusFrame !== undefined) cancelAnimationFrame(focusFrame);
+    };
+  }, [requestedAssignStudentId, students, studentsQuery.isFetching, studentsQuery.isSuccess, toast]);
 
   const sortedClasses = useMemo(() => {
     const copy = [...classes];
@@ -1059,6 +1119,9 @@ export default function AdminClasses() {
   };
 
   const toggleStudentSelection = (studentId) => {
+    if (studentId === assignmentHandoffStudentId && selectedStudents.has(studentId)) {
+      setAssignmentHandoffStudentId("");
+    }
     setSelectedStudents((previous) => {
       const next = new Set(previous);
       if (next.has(studentId)) next.delete(studentId);
@@ -1134,10 +1197,14 @@ export default function AdminClasses() {
           </div>
           <div className="flex items-center gap-2">
             <ThemeToggle />
-            {safeReturnTo ? (
-              <Button variant="outline" onClick={() => navigate(safeReturnTo)} data-testid="button-back-passpilot">
+            {safeReturnTarget ? (
+              <Button
+                variant="outline"
+                onClick={() => navigate(safeReturnTarget.path)}
+                data-testid={safeReturnTarget.testId}
+              >
                 <ArrowLeft className="mr-2 h-4 w-4" />
-                Back to PassPilot
+                {safeReturnTarget.label}
               </Button>
             ) : null}
             <Button variant="outline" onClick={() => navigate("/classpilot/admin")} data-testid="button-back-admin">
@@ -1273,12 +1340,25 @@ export default function AdminClasses() {
             </Card>
           </div>
 
-          <Card>
+          <Card ref={assignmentPanelRef} data-testid="assign-students-panel">
             <CardHeader>
               <CardTitle>Assign Students to Class</CardTitle>
               <CardDescription>Select a class and add roster members in one batch.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {assignmentHandoffStudent ? (
+                <div
+                  role="status"
+                  className="rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-900 dark:bg-blue-950/30"
+                >
+                  <p className="text-sm font-medium">
+                    {assignmentHandoffStudent.studentName || displayName(assignmentHandoffStudent)} is selected
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Choose an official class and click Assign. No class is inferred from grade, and the student stays selected so you can repeat this for another class.
+                  </p>
+                </div>
+              ) : null}
               <div className="grid gap-2">
                 <Label>Select Class</Label>
                 <Select value={selectedClassId || NONE} onValueChange={(value) => setSelectedClassId(value === NONE ? "" : value)}>
@@ -1327,7 +1407,10 @@ export default function AdminClasses() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => setSelectedStudents(new Set())}
+                    onClick={() => {
+                      setSelectedStudents(new Set());
+                      setAssignmentHandoffStudentId("");
+                    }}
                     disabled={selectedStudents.size === 0}
                   >
                     Clear Selection
@@ -1338,8 +1421,14 @@ export default function AdminClasses() {
                   {assignFilteredStudents.length === 0 ? (
                     <p className="py-6 text-center text-sm text-muted-foreground">No students match this grade filter.</p>
                   ) : assignFilteredStudents.map((student) => (
-                    <div key={student.id} className="flex items-center gap-2 rounded-md p-2 hover:bg-muted/60">
+                    <div
+                      key={student.id}
+                      className={`flex items-center gap-2 rounded-md p-2 hover:bg-muted/60 ${
+                        student.id === assignmentHandoffStudentId ? "bg-blue-50 dark:bg-blue-950/30" : ""
+                      }`}
+                    >
                       <Checkbox
+                        ref={student.id === assignmentHandoffStudentId ? requestedStudentCheckboxRef : undefined}
                         id={`student-${student.id}`}
                         checked={selectedStudents.has(student.id)}
                         onCheckedChange={() => toggleStudentSelection(student.id)}

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { lazy, Suspense, useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useTeachers, useGrades } from "../../../../hooks/use-students";
@@ -35,6 +35,13 @@ import {
 
 const GRADE_LEVELS = ["K", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"];
 const PASS_PILOT_SETTINGS_PATH = "/passpilot/admin/settings";
+const ClassSourceSetup = lazy(() => import("./ClassSourceSetup"));
+
+function apiErrorMessage(error, fallback = "Try again.") {
+  const data = error?.response?.data;
+  if (data?.error && data?.code) return `${data.error} (${data.code})`;
+  return data?.error || data?.code || error?.message || fallback;
+}
 
 function samePassPilotSettings(left, right) {
   return left?.name === right?.name
@@ -48,12 +55,16 @@ function samePassPilotSettings(left, right) {
 
 export function SetupView() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const { isAdmin } = usePassPilotAuth();
+  const { consolidated: managedByClassPilot } = useStudentImportHome();
   const classesQuery = useCanonicalPassPilotClasses();
   const canonical = classesQuery.isSuccess && isCanonicalPassPilotSource(classesQuery.data?.source);
+  const showClassSource = isAdmin && managedByClassPilot && !canonical;
   const availableTabs = [
     "teachers",
     "students",
     ...(!canonical ? ["classes", "assignments"] : []),
+    ...(showClassSource ? ["class-source"] : []),
     "settings",
   ];
   const requestedTab = searchParams.get("section") || "teachers";
@@ -110,16 +121,27 @@ export function SetupView() {
           <TabsTrigger value="students">Student Roster</TabsTrigger>
           {!canonical ? <TabsTrigger value="classes">Classes</TabsTrigger> : null}
           {!canonical ? <TabsTrigger value="assignments">Class Assignments</TabsTrigger> : null}
+          {showClassSource ? <TabsTrigger value="class-source">Class Source</TabsTrigger> : null}
           <TabsTrigger value="settings">Settings</TabsTrigger>
         </TabsList>
         <TabsContent value="teachers"><TeachersTab /></TabsContent>
-        <TabsContent value="students"><StudentRosterTab canonical={canonical} /></TabsContent>
+        <TabsContent value="students"><StudentRosterTab managedByClassPilot={managedByClassPilot} /></TabsContent>
         {!canonical ? (
           <TabsContent value="classes">
-            <ClassesTab classRecords={classesQuery.data?.classes ?? []} />
+            <ClassesTab
+              classRecords={classesQuery.data?.classes ?? []}
+              managedByClassPilot={managedByClassPilot}
+            />
           </TabsContent>
         ) : null}
         {!canonical ? <TabsContent value="assignments"><AssignmentsTab /></TabsContent> : null}
+        {showClassSource ? (
+          <TabsContent value="class-source">
+            <Suspense fallback={<Skeleton className="mt-4 h-72 w-full" />}>
+              <ClassSourceSetup />
+            </Suspense>
+          </TabsContent>
+        ) : null}
         <TabsContent value="settings"><SettingsTab /></TabsContent>
       </Tabs>
     </div>
@@ -485,10 +507,10 @@ function TeachersTab() {
   );
 }
 
-function StudentRosterTab({ canonical = false }) {
+function StudentRosterTab({ managedByClassPilot = false }) {
   const navigate = useNavigate();
   const { canLinkToClassPilot, importPath } = useStudentImportHome();
-  const consolidated = canonical;
+  const canManageRoster = !managedByClassPilot;
   const { school } = usePassPilotAuth();
   const [filterGrade, setFilterGrade] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -540,11 +562,24 @@ function StudentRosterTab({ canonical = false }) {
   const [bulkGradeOpen, setBulkGradeOpen] = useState(false);
   const [bulkAssignGrade, setBulkAssignGrade] = useState("");
 
-  const { data: students, isLoading } = useQuery({
+  const studentsQuery = useQuery({
     queryKey: ["students"],
     queryFn: () => apiRequest("GET", "/students"),
     select: (data) => Array.isArray(data) ? data : (data?.students ?? []),
   });
+  const students = studentsQuery.data;
+  const isLoading = studentsQuery.isLoading;
+
+  const refreshStudents = async () => {
+    const result = await studentsQuery.refetch();
+    if (result.error) {
+      toast({
+        title: "Roster wasn’t refreshed",
+        description: apiErrorMessage(result.error, "Check your connection and try again."),
+        variant: "destructive",
+      });
+    }
+  };
 
   const addStudent = useMutation({
     mutationFn: (data) =>
@@ -559,7 +594,11 @@ function StudentRosterTab({ canonical = false }) {
       setStudentIdNumber("");
       setGradeLevel("");
     },
-    onError: (err) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+    onError: (err) => toast({
+      title: "Student wasn’t added",
+      description: apiErrorMessage(err, "Check the student details and try again."),
+      variant: "destructive",
+    }),
   });
 
   const bulkAddStudents = useMutation({
@@ -927,7 +966,7 @@ function StudentRosterTab({ canonical = false }) {
 
   return (
     <div className="space-y-4 mt-4">
-      {consolidated && (
+      {managedByClassPilot && (
         <ImportInClassPilotNotice
           canLink={canLinkToClassPilot}
           onGoToClassPilot={() => navigate(importPath)}
@@ -936,15 +975,25 @@ function StudentRosterTab({ canonical = false }) {
 
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <CardTitle className="text-xl">Current Student Roster</CardTitle>
+              <CardTitle className="text-xl">School Student Directory</CardTitle>
               <p className="text-sm text-muted-foreground mt-1">
                 {filteredCount} student{filteredCount !== 1 ? "s" : ""}{selectedGradeLabel ? ` in ${selectedGradeLabel}` : ""}
               </p>
             </div>
-            {!consolidated && (
-              <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={refreshStudents}
+                disabled={studentsQuery.isFetching}
+              >
+                <RefreshCw className={`mr-2 h-4 w-4 ${studentsQuery.isFetching ? "animate-spin motion-reduce:animate-none" : ""}`} aria-hidden="true" />
+                {studentsQuery.isFetching ? "Refreshing…" : "Refresh roster"}
+              </Button>
+              {canManageRoster && (
+                <>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button variant="outline">
@@ -976,8 +1025,9 @@ function StudentRosterTab({ canonical = false }) {
                   <Plus className="h-4 w-4 mr-1" />
                   Add Student
                 </Button>
-              </div>
-            )}
+                </>
+              )}
+            </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -985,10 +1035,12 @@ function StudentRosterTab({ canonical = false }) {
           <div>
             <div className="flex items-center justify-between mb-2">
               <p className="text-sm font-medium">Filter by Grade</p>
-              <Button variant="outline" size="sm" onClick={() => setAddGradesOpen(true)}>
-                <Plus className="h-3 w-3 mr-1" />
-                Add Grades
-              </Button>
+              {canManageRoster && (
+                <Button variant="outline" size="sm" onClick={() => setAddGradesOpen(true)}>
+                  <Plus className="h-3 w-3 mr-1" />
+                  Add Grades
+                </Button>
+              )}
             </div>
             <div className="flex flex-wrap gap-2">
               <Button
@@ -1038,7 +1090,7 @@ function StudentRosterTab({ canonical = false }) {
           </div>
 
           {/* Bulk actions bar */}
-          {selectedIds.size > 0 && (
+          {canManageRoster && selectedIds.size > 0 && (
             <div className="flex items-center gap-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
               <span className="text-sm font-medium">{selectedIds.size} selected</span>
               {filtered.length > paginatedStudents.length && selectedIds.size < filtered.length && (
@@ -1059,7 +1111,7 @@ function StudentRosterTab({ canonical = false }) {
           {filtered.length === 0 ? (
             <div className="py-8 text-center text-muted-foreground">
               {(students ?? []).length === 0
-                ? consolidated
+                ? !canManageRoster
                   ? "No students yet. Import students in ClassPilot to fill this roster."
                   : "No students added yet."
                 : "No students match the current filter."}
@@ -1070,12 +1122,15 @@ function StudentRosterTab({ canonical = false }) {
                 <table className="w-full">
                   <thead>
                     <tr className="border-b bg-muted/30">
-                      <th className="py-3 px-3 w-10">
-                        <Checkbox
-                          checked={allPageSelected ? true : somePageSelected ? "indeterminate" : false}
-                          onCheckedChange={toggleSelectAll}
-                        />
-                      </th>
+                      {canManageRoster && (
+                        <th className="py-3 px-3 w-10">
+                          <Checkbox
+                            checked={allPageSelected ? true : somePageSelected ? "indeterminate" : false}
+                            onCheckedChange={toggleSelectAll}
+                            aria-label="Select all students on this page"
+                          />
+                        </th>
+                      )}
                       <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">Name</th>
                       <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">Grade</th>
                       <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">Actions</th>
@@ -1084,12 +1139,15 @@ function StudentRosterTab({ canonical = false }) {
                   <tbody>
                     {paginatedStudents.map((student) => (
                       <tr key={student.id} className={`border-b last:border-b-0 hover:bg-muted/20 ${selectedIds.has(student.id) ? "bg-blue-50/50" : ""}`}>
-                        <td className="py-3 px-3">
-                          <Checkbox
-                            checked={selectedIds.has(student.id)}
-                            onCheckedChange={() => toggleSelect(student.id)}
-                          />
-                        </td>
+                        {canManageRoster && (
+                          <td className="py-3 px-3">
+                            <Checkbox
+                              checked={selectedIds.has(student.id)}
+                              onCheckedChange={() => toggleSelect(student.id)}
+                              aria-label={`Select ${student.firstName} ${student.lastName}`}
+                            />
+                          </td>
+                        )}
                         <td className="py-3 px-4">
                           <span className="font-medium">{student.firstName} {student.lastName}</span>
                         </td>
@@ -1098,10 +1156,10 @@ function StudentRosterTab({ canonical = false }) {
                         </td>
                         <td className="py-3 px-4 text-right">
                           <div className="flex items-center justify-end gap-1">
-                            {consolidated && (
+                            {!canManageRoster && (
                               <span className="text-xs text-muted-foreground">Managed in ClassPilot</span>
                             )}
-                            {!consolidated && (
+                            {canManageRoster && (
                               <>
                                 <Button
                                   variant="ghost"
@@ -1174,7 +1232,7 @@ function StudentRosterTab({ canonical = false }) {
       </Card>
 
       {/* Add Student Dialog */}
-      <Dialog open={!consolidated && addOpen} onOpenChange={setAddOpen}>
+      <Dialog open={canManageRoster && addOpen} onOpenChange={setAddOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Add Student</DialogTitle></DialogHeader>
           <div className="space-y-3">
@@ -1227,7 +1285,7 @@ function StudentRosterTab({ canonical = false }) {
       </Dialog>
 
       {/* Bulk Add Dialog */}
-      <Dialog open={!consolidated && bulkOpen} onOpenChange={setBulkOpen}>
+      <Dialog open={canManageRoster && bulkOpen} onOpenChange={setBulkOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Bulk Add Students</DialogTitle></DialogHeader>
           <div className="space-y-3">
@@ -1265,7 +1323,7 @@ function StudentRosterTab({ canonical = false }) {
       </Dialog>
 
       {/* Edit Student Dialog */}
-      <Dialog open={!consolidated && editStudentOpen} onOpenChange={setEditStudentOpen}>
+      <Dialog open={canManageRoster && editStudentOpen} onOpenChange={setEditStudentOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Edit Student</DialogTitle></DialogHeader>
           <div className="space-y-3">
@@ -1300,7 +1358,7 @@ function StudentRosterTab({ canonical = false }) {
       </Dialog>
 
       {/* Bulk Assign Grade Dialog */}
-      <Dialog open={bulkGradeOpen} onOpenChange={setBulkGradeOpen}>
+      <Dialog open={canManageRoster && bulkGradeOpen} onOpenChange={setBulkGradeOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Assign Grade to {selectedIds.size} Student{selectedIds.size !== 1 ? "s" : ""}</DialogTitle></DialogHeader>
           <div className="space-y-3">
@@ -1327,7 +1385,7 @@ function StudentRosterTab({ canonical = false }) {
       </Dialog>
 
       {/* Add Grades Dialog */}
-      <Dialog open={addGradesOpen} onOpenChange={setAddGradesOpen}>
+      <Dialog open={canManageRoster && addGradesOpen} onOpenChange={setAddGradesOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Add Grade Levels</DialogTitle></DialogHeader>
           <div className="space-y-3">
@@ -1382,7 +1440,7 @@ function StudentRosterTab({ canonical = false }) {
       </Dialog>
 
       {/* CSV Import Dialog */}
-      <Dialog open={!consolidated && csvImportOpen} onOpenChange={(open) => { setCsvImportOpen(open); if (!open) { setCsvFile(null); setCsvPreview([]); setCsvGradeLevel(""); setImportResult(null); } }}>
+      <Dialog open={canManageRoster && csvImportOpen} onOpenChange={(open) => { setCsvImportOpen(open); if (!open) { setCsvFile(null); setCsvPreview([]); setCsvGradeLevel(""); setImportResult(null); } }}>
         <DialogContent className="max-w-2xl">
           <DialogHeader><DialogTitle>Import Students from CSV</DialogTitle></DialogHeader>
           <div className="space-y-4">
@@ -1465,7 +1523,7 @@ function StudentRosterTab({ canonical = false }) {
       </Dialog>
 
       {/* Google Workspace Directory Import Dialog */}
-      <Dialog open={!consolidated && googleDirOpen} onOpenChange={(open) => {
+      <Dialog open={canManageRoster && googleDirOpen} onOpenChange={(open) => {
         setGoogleDirOpen(open);
         if (!open) {
           setOrgUnits([]); setSelectedOUs(new Set()); setExpandedOU(null);
@@ -1679,7 +1737,7 @@ function StudentRosterTab({ canonical = false }) {
       </Dialog>
 
       {/* Google Classroom Import Dialog */}
-      <Dialog open={!consolidated && classroomOpen} onOpenChange={(open) => { setClassroomOpen(open); if (!open) { setClassroomCourses([]); setClassroomSelectedCourse(""); setClassroomGradeLevel(""); setImportResult(null); setClassroomConnectorRequired(false); } }}>
+      <Dialog open={canManageRoster && classroomOpen} onOpenChange={(open) => { setClassroomOpen(open); if (!open) { setClassroomCourses([]); setClassroomSelectedCourse(""); setClassroomGradeLevel(""); setImportResult(null); setClassroomConnectorRequired(false); } }}>
         <DialogContent className="max-w-2xl">
           <DialogHeader><DialogTitle>Import from Google Classroom</DialogTitle></DialogHeader>
           <div className="space-y-4">
@@ -1757,10 +1815,12 @@ function StudentRosterTab({ canonical = false }) {
   );
 }
 
-function ClassesTab({ classRecords }) {
+function ClassesTab({ classRecords, managedByClassPilot = false }) {
   // ClassesTab is omitted after canonical cutover. While it is mounted, the
-  // legacy grade roster remains the authoritative PassPilot write surface.
-  const consolidated = false;
+  // legacy grade roster remains the authoritative membership write surface,
+  // while an active ClassPilot license separately owns student identities.
+  const navigate = useNavigate();
+  const { canLinkToClassPilot, importPath } = useStudentImportHome();
   const { data: grades, isLoading } = useGrades();
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -1819,7 +1879,7 @@ function ClassesTab({ classRecords }) {
       setAddOpen(false);
       setClassName("");
     },
-    onError: (err) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+    onError: (err) => toast({ title: "Class wasn’t added", description: apiErrorMessage(err), variant: "destructive" }),
   });
 
   const updateClass = useMutation({
@@ -1830,7 +1890,7 @@ function ClassesTab({ classRecords }) {
       toast({ title: "Class updated" });
       setEditOpen(false);
     },
-    onError: (err) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+    onError: (err) => toast({ title: "Class wasn’t updated", description: apiErrorMessage(err), variant: "destructive" }),
   });
 
   const deleteClass = useMutation({
@@ -1841,7 +1901,7 @@ function ClassesTab({ classRecords }) {
       queryClient.invalidateQueries({ queryKey: PASSPILOT_CLASSES_QUERY_KEY });
       toast({ title: "Class deleted" });
     },
-    onError: (err) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+    onError: (err) => toast({ title: "Class wasn’t deleted", description: apiErrorMessage(err), variant: "destructive" }),
   });
 
   const addStudent = useMutation({
@@ -1856,7 +1916,7 @@ function ClassesTab({ classRecords }) {
       setStudentName("");
       setStudentGradeLevel("");
     },
-    onError: (err) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+    onError: (err) => toast({ title: "Student wasn’t added", description: apiErrorMessage(err), variant: "destructive" }),
   });
 
   const bulkAddStudents = useMutation({
@@ -1883,7 +1943,7 @@ function ClassesTab({ classRecords }) {
       setBulkNames("");
       setBulkGradeLevel("");
     },
-    onError: (err) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+    onError: (err) => toast({ title: "Students weren’t added", description: apiErrorMessage(err), variant: "destructive" }),
   });
 
   const currentRosterIds = new Set(classRoster.map((student) => student.id));
@@ -1980,8 +2040,14 @@ function ClassesTab({ classRecords }) {
 
   return (
     <div className="space-y-4 mt-4">
+      {managedByClassPilot ? (
+        <ImportInClassPilotNotice
+          canLink={canLinkToClassPilot}
+          onGoToClassPilot={() => navigate(importPath)}
+        />
+      ) : null}
       <div className="flex justify-end gap-2">
-        {!consolidated && (
+        {!managedByClassPilot && (
           <Button variant="outline" onClick={() => { setGcSyncOpen(true); loadGcCourses(); }}>
             <GraduationCap className="h-4 w-4 mr-1" />
             Sync from Google Classroom
@@ -2057,7 +2123,7 @@ function ClassesTab({ classRecords }) {
                   {studentCountMap.get(grade.id) ?? 0} student{(studentCountMap.get(grade.id) ?? 0) !== 1 ? "s" : ""}
                 </p>
                 <div className="flex gap-1 mt-2">
-                  {!consolidated && (
+                  {!managedByClassPilot && (
                     <>
                       <Button
                         size="sm"
@@ -2083,7 +2149,7 @@ function ClassesTab({ classRecords }) {
                     onClick={() => { setAssignGradeId(grade.id); setAssignGradeName(grade.name); setAssignGradeLevel(""); setAssignSelected(new Set()); setAssignSearch(""); setAssignOpen(true); }}
                     className="h-6 text-xs px-2"
                   >
-                    Assign Students
+                    Assign existing students
                   </Button>
                 </div>
               </CardContent>
@@ -2136,7 +2202,19 @@ function ClassesTab({ classRecords }) {
       <Dialog open={viewOpen} onOpenChange={setViewOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{viewingGrade?.name} - Roster</DialogTitle>
+            <div className="flex items-center justify-between gap-3">
+              <DialogTitle>PassPilot Class Roster — {viewingGrade?.name}</DialogTitle>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => classRosterQuery.refetch()}
+                disabled={classRosterQuery.isFetching}
+              >
+                <RefreshCw className={`mr-2 h-4 w-4 ${classRosterQuery.isFetching ? "animate-spin motion-reduce:animate-none" : ""}`} aria-hidden="true" />
+                {classRosterQuery.isFetching ? "Refreshing…" : "Refresh roster"}
+              </Button>
+            </div>
           </DialogHeader>
           <div className="max-h-96 overflow-y-auto">
             {classRosterQuery.isLoading ? (
@@ -2157,32 +2235,39 @@ function ClassesTab({ classRecords }) {
               <div className="text-center py-8">
                 <Users className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
                 <p className="text-muted-foreground">
-                  {consolidated ? "No students assigned yet. Assign students from the shared ClassPilot roster." : "No students in this class yet."}
+                  {managedByClassPilot ? "No students assigned yet. Assign an existing student from the shared school directory." : "No students in this class yet."}
                 </p>
-                {!consolidated && (
-                  <div className="flex gap-2 justify-center mt-4">
+                <div className="flex flex-wrap gap-2 justify-center mt-4">
+                  {!managedByClassPilot ? (
+                    <>
                     <Button size="sm" onClick={() => { if (viewingGrade) { setAddStudentGradeId(viewingGrade.id); setAddStudentGradeName(viewingGrade.name); setViewOpen(false); setAddStudentOpen(true); } }}>Add Student</Button>
                     <Button size="sm" variant="outline" onClick={() => { if (viewingGrade) { setBulkGradeId(viewingGrade.id); setBulkGradeName(viewingGrade.name); setViewOpen(false); setBulkOpen(true); } }}>Bulk Add</Button>
-                    <Button size="sm" variant="outline" onClick={() => { if (viewingGrade) { setAssignGradeId(viewingGrade.id); setAssignGradeName(viewingGrade.name); setAssignGradeLevel(""); setAssignSelected(new Set()); setAssignSearch(""); setViewOpen(false); setAssignOpen(true); } }}>
-                      Assign Students
-                    </Button>
-                  </div>
-                )}
+                    </>
+                  ) : null}
+                  <Button size="sm" variant="outline" onClick={() => { if (viewingGrade) { setAssignGradeId(viewingGrade.id); setAssignGradeName(viewingGrade.name); setAssignGradeLevel(""); setAssignSelected(new Set()); setAssignSearch(""); setViewOpen(false); setAssignOpen(true); } }}>
+                    Assign existing students
+                  </Button>
+                </div>
               </div>
             ) : (
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <p className="text-sm text-muted-foreground">{viewingStudents.length} student{viewingStudents.length !== 1 ? "s" : ""}</p>
-                  {!consolidated && (
-                    <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
+                    {!managedByClassPilot ? (
+                      <>
                       <Button size="sm" onClick={() => { if (viewingGrade) { setAddStudentGradeId(viewingGrade.id); setAddStudentGradeName(viewingGrade.name); setViewOpen(false); setAddStudentOpen(true); } }}>
                         <Plus className="w-4 h-4 mr-1" />Add Student
                       </Button>
                       <Button size="sm" variant="outline" onClick={() => { if (viewingGrade) { setBulkGradeId(viewingGrade.id); setBulkGradeName(viewingGrade.name); setViewOpen(false); setBulkOpen(true); } }}>
                         <Users className="w-4 h-4 mr-1" />Bulk Add
                       </Button>
-                    </div>
-                  )}
+                      </>
+                    ) : null}
+                    <Button size="sm" variant="outline" onClick={() => { if (viewingGrade) { setAssignGradeId(viewingGrade.id); setAssignGradeName(viewingGrade.name); setAssignGradeLevel(""); setAssignSelected(new Set()); setAssignSearch(""); setViewOpen(false); setAssignOpen(true); } }}>
+                      Assign existing students
+                    </Button>
+                  </div>
                 </div>
                 {viewingStudents.map((student) => (
                   <div key={student.id} className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
@@ -2227,7 +2312,7 @@ function ClassesTab({ classRecords }) {
       </Dialog>
 
       {/* Add Student to Class Dialog */}
-      <Dialog open={!consolidated && addStudentOpen} onOpenChange={setAddStudentOpen}>
+      <Dialog open={!managedByClassPilot && addStudentOpen} onOpenChange={setAddStudentOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Add Student to {addStudentGradeName}</DialogTitle></DialogHeader>
           <div className="space-y-3">
@@ -2258,7 +2343,7 @@ function ClassesTab({ classRecords }) {
       </Dialog>
 
       {/* Bulk Add Students to Class Dialog */}
-      <Dialog open={!consolidated && bulkOpen} onOpenChange={setBulkOpen}>
+      <Dialog open={!managedByClassPilot && bulkOpen} onOpenChange={setBulkOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Bulk Add Students to {bulkGradeName}</DialogTitle></DialogHeader>
           <div className="space-y-3">
@@ -2296,7 +2381,7 @@ function ClassesTab({ classRecords }) {
       {/* Assign Existing Students Dialog */}
       <Dialog open={assignOpen} onOpenChange={setAssignOpen}>
         <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle>Assign Students to {assignGradeName}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Assign existing students to {assignGradeName}</DialogTitle></DialogHeader>
           <div className="space-y-3">
             {(() => {
               const gradeTabs = [...new Set(assignableStudents.map((s) => s.gradeLevel).filter(Boolean))]
@@ -2433,7 +2518,7 @@ function ClassesTab({ classRecords }) {
       </Dialog>
 
       {/* Google Classroom Sync Dialog */}
-      <Dialog open={!consolidated && gcSyncOpen} onOpenChange={(open) => {
+      <Dialog open={!managedByClassPilot && gcSyncOpen} onOpenChange={(open) => {
         setGcSyncOpen(open);
         if (!open) { setGcCourses([]); setGcSelected(new Set()); setGcCourseMapping({}); setGcResult(null); }
       }}>

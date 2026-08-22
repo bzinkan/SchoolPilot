@@ -18,6 +18,11 @@ function needsGoogleRosterConnector(err) {
   );
 }
 
+function hasAssignedHomeroom(student) {
+  const homeroomId = student?.homeroomId ?? student?.homeroom_id ?? student?.homeroom;
+  return typeof homeroomId === 'string' ? homeroomId.trim().length > 0 : Boolean(homeroomId);
+}
+
 export default function StudentRoster({ students, schoolId, onImport, onRefresh, onAdd, onUpdate, onDelete, onBulkDelete }) {
   const navigate = useNavigate();
   const { consolidated, canLinkToClassPilot, importPath } = useStudentImportHome();
@@ -29,6 +34,8 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
   const [editingId, setEditingId] = useState(null);
   const [editData, setEditData] = useState({});
   const [isImporting, setIsImporting] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState('');
   const [bulkGrade, setBulkGrade] = useState('');
   const [showWorkspaceModal, setShowWorkspaceModal] = useState(false);
   const [wsOrgUnits, setWsOrgUnits] = useState([]);
@@ -62,7 +69,6 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
   const paged = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   // Reset page when filter changes
-  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { setPage(1); }, [gradeFilter, searchTerm]);
 
   // Grade counts
@@ -111,6 +117,20 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
     setWsLoading(false);
   };
 
+  const handleRefresh = async () => {
+    if (!onRefresh || isRefreshing) return;
+    setIsRefreshing(true);
+    setRefreshError('');
+    try {
+      await onRefresh();
+    } catch (err) {
+      console.error('Failed to refresh GoPilot roster:', err);
+      setRefreshError('The roster could not be refreshed. Check your connection, then try again.');
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
   const toggleSelect = (id) => {
     setSelectedIds(prev => {
       const n = new Set(prev);
@@ -143,7 +163,6 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
   const saveEdit = async () => {
     const payload = consolidated
       ? {
-          grade: editData.grade,
           dismissal_type: editData.dismissal_type,
           afterschool_reason: editData.afterschool_reason,
           bus_route: editData.bus_route,
@@ -155,6 +174,33 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
 
   return (
     <div className="space-y-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">School Student Directory</h2>
+          <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
+            {consolidated
+              ? 'Names, emails, and grades come from ClassPilot. Manage dismissal details here and assign homerooms in Homeroom Assignments.'
+              : 'Manage student identity, grade, and GoPilot dismissal details for this school.'}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={handleRefresh}
+          disabled={isRefreshing || !onRefresh}
+          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+        >
+          <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin motion-reduce:animate-none' : ''}`} aria-hidden="true" />
+          {isRefreshing ? 'Refreshing...' : 'Refresh roster'}
+        </button>
+      </div>
+
+      {refreshError && (
+        <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300" role="alert">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          <span>{refreshError} Use <strong>Refresh roster</strong> to retry.</span>
+        </div>
+      )}
+
       {consolidated && (
         <ImportInClassPilotNotice
           canLink={canLinkToClassPilot}
@@ -245,7 +291,7 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
       </div>
 
       {/* Bulk Actions */}
-      {selectedIds.size > 0 && (
+      {!consolidated && selectedIds.size > 0 && (
         <div className="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-lg p-3 flex items-center gap-3">
           <span className="text-sm font-medium text-indigo-700 dark:text-indigo-400">{selectedIds.size} selected</span>
           <div className="flex items-center gap-2">
@@ -266,14 +312,12 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
               Assign Grade
             </button>
           </div>
-          {!consolidated && (
-            <button
-              onClick={() => { onBulkDelete([...selectedIds]); setSelectedIds(new Set()); }}
-              className="flex items-center gap-1 px-3 py-1.5 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700"
-            >
-              <Trash2 className="w-4 h-4" /> Delete Selected
-            </button>
-          )}
+          <button
+            onClick={() => { onBulkDelete([...selectedIds]); setSelectedIds(new Set()); }}
+            className="flex items-center gap-1 px-3 py-1.5 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700"
+          >
+            <Trash2 className="w-4 h-4" /> Delete Selected
+          </button>
           <button onClick={() => setSelectedIds(new Set())} className="text-sm text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200">
             Clear Selection
           </button>
@@ -285,14 +329,17 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
         <table className="w-full text-sm min-w-[600px]">
           <thead className="bg-gray-50 dark:bg-slate-800 border-b dark:border-slate-700">
             <tr>
-              <th className="w-10 p-3">
-                <input
-                  type="checkbox"
-                  checked={paged.length > 0 && selectedIds.size === paged.length}
-                  onChange={toggleSelectAll}
-                  className="rounded"
-                />
-              </th>
+              {!consolidated && (
+                <th className="w-10 p-3">
+                  <input
+                    type="checkbox"
+                    checked={paged.length > 0 && selectedIds.size === paged.length}
+                    onChange={toggleSelectAll}
+                    className="rounded"
+                    aria-label="Select all students on this page"
+                  />
+                </th>
+              )}
               <th className="text-left p-3 font-medium text-gray-600 dark:text-slate-300">Name</th>
               <th className="text-left p-3 font-medium text-gray-600 dark:text-slate-300">Email</th>
               <th className="text-left p-3 font-medium text-gray-600 dark:text-slate-300">Grade</th>
@@ -303,11 +350,11 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
           <tbody className="divide-y dark:divide-slate-700">
             {paged.length === 0 ? (
               <tr>
-                <td colSpan={6} className="text-center py-12 text-gray-400 dark:text-slate-500">
+                <td colSpan={consolidated ? 5 : 6} className="text-center py-12 text-gray-400 dark:text-slate-500">
                   <Users className="w-12 h-12 mx-auto mb-2 text-gray-300 dark:text-slate-600" />
                   <p>No students found</p>
                   <p className="text-sm">
-                    {consolidated ? 'Import students in ClassPilot to fill this GoPilot roster' : 'Import students via CSV or add them manually'}
+                    {consolidated ? 'Add or import students in ClassPilot, then refresh this directory.' : 'Import students via CSV or add them manually'}
                   </p>
                 </td>
               </tr>
@@ -315,10 +362,17 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
               paged.map(student => (
                 editingId === student.id ? (
                   <tr key={student.id} className="bg-yellow-50 dark:bg-yellow-900/20">
-                    <td className="p-3"></td>
+                    {!consolidated && <td className="p-3"></td>}
                     <td className="p-3">
                       {consolidated ? (
-                        <span className="font-medium dark:text-white">{editData.first_name} {editData.last_name}</span>
+                        <div>
+                          <span className="font-medium dark:text-white">{editData.first_name} {editData.last_name}</span>
+                          {!hasAssignedHomeroom(student) && (
+                            <span className="mt-1 block w-fit rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
+                              Needs GoPilot setup
+                            </span>
+                          )}
+                        </div>
                       ) : (
                         <div className="flex gap-2">
                           <input value={editData.first_name} onChange={e => setEditData(d => ({ ...d, first_name: e.target.value }))}
@@ -337,11 +391,15 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
                       )}
                     </td>
                     <td className="p-3">
-                      <select value={editData.grade} onChange={e => setEditData(d => ({ ...d, grade: e.target.value }))}
-                        className="border dark:border-slate-600 rounded px-2 py-1 dark:bg-slate-800 dark:text-white">
-                        <option value="">--</option>
-                        {GRADES.map(g => <option key={g} value={g}>{g}</option>)}
-                      </select>
+                      {consolidated ? (
+                        <span className="text-gray-500 dark:text-slate-400">{editData.grade || '—'}</span>
+                      ) : (
+                        <select value={editData.grade} onChange={e => setEditData(d => ({ ...d, grade: e.target.value }))}
+                          className="border dark:border-slate-600 rounded px-2 py-1 dark:bg-slate-800 dark:text-white">
+                          <option value="">--</option>
+                          {GRADES.map(g => <option key={g} value={g}>{g}</option>)}
+                        </select>
+                      )}
                     </td>
                     <td className="p-3">
                       <select value={editData.dismissal_type} onChange={e => setEditData(d => ({ ...d, dismissal_type: e.target.value }))}
@@ -357,28 +415,45 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
                           placeholder="Activity (optional)"
                           className="border dark:border-slate-600 rounded px-2 py-1 mt-1 w-full dark:bg-slate-800 dark:text-white text-sm" />
                       )}
+                      {editData.dismissal_type === 'bus' && (
+                        <input value={editData.bus_route || ''}
+                          onChange={e => setEditData(d => ({ ...d, bus_route: e.target.value }))}
+                          placeholder="Bus route or number"
+                          aria-label="Bus route or number"
+                          className="border dark:border-slate-600 rounded px-2 py-1 mt-1 w-full dark:bg-slate-800 dark:text-white text-sm" />
+                      )}
                     </td>
                     <td className="p-3 text-right">
-                      <button onClick={saveEdit} className="text-green-600 hover:text-green-800 mr-2"><Save className="w-4 h-4" /></button>
-                      <button onClick={() => setEditingId(null)} className="text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300"><X className="w-4 h-4" /></button>
+                      <button onClick={saveEdit} aria-label={consolidated ? 'Save GoPilot setup' : 'Save student'} className="text-green-600 hover:text-green-800 mr-2"><Save className="w-4 h-4" /></button>
+                      <button onClick={() => setEditingId(null)} aria-label="Cancel editing" className="text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300"><X className="w-4 h-4" /></button>
                     </td>
                   </tr>
                 ) : (
                   <tr key={student.id} className="hover:bg-gray-50 dark:hover:bg-slate-800">
-                    <td className="p-3">
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.has(student.id)}
-                        onChange={() => toggleSelect(student.id)}
-                        className="rounded"
-                      />
-                    </td>
+                    {!consolidated && (
+                      <td className="p-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(student.id)}
+                          onChange={() => toggleSelect(student.id)}
+                          className="rounded"
+                          aria-label={`Select ${student.firstName || ''} ${student.lastName || ''}`.trim()}
+                        />
+                      </td>
+                    )}
                     <td className="p-3">
                       <div className="flex items-center gap-2">
                         <div className="w-8 h-8 bg-indigo-100 dark:bg-indigo-900/30 rounded-full flex items-center justify-center text-indigo-600 dark:text-indigo-400 text-xs font-medium">
                           {(student.firstName || '?')[0]}{(student.lastName || '?')[0]}
                         </div>
-                        <span className="font-medium dark:text-white">{student.firstName} {student.lastName}</span>
+                        <div>
+                          <span className="font-medium dark:text-white">{student.firstName} {student.lastName}</span>
+                          {!hasAssignedHomeroom(student) && (
+                            <span className="mt-1 block w-fit rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200" title="Assign this student from Homeroom Assignments">
+                              Needs GoPilot setup
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td className="p-3 text-gray-500 dark:text-slate-400">{student.email || '—'}</td>
@@ -389,8 +464,13 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
                       </span>
                     </td>
                     <td className="p-3 text-right">
-                      <button onClick={() => startEdit(student)} className="text-gray-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 mr-2">
+                      <button
+                        onClick={() => startEdit(student)}
+                        aria-label={consolidated ? `Edit GoPilot setup for ${student.firstName} ${student.lastName}` : `Edit ${student.firstName} ${student.lastName}`}
+                        className={`inline-flex items-center gap-1.5 text-gray-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400 ${consolidated ? 'rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium dark:border-slate-600' : 'mr-2'}`}
+                      >
                         <Edit className="w-4 h-4" />
+                        {consolidated && <span>GoPilot setup</span>}
                       </button>
                       {!consolidated && (
                         <button onClick={() => onDelete(student.id)} className="text-gray-400 dark:text-slate-500 hover:text-red-600 dark:hover:text-red-400">
