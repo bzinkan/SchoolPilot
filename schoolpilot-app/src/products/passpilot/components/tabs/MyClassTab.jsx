@@ -34,6 +34,20 @@ import {
   useCanonicalPassPilotClasses,
   usePassPilotClassRoster,
 } from "../../classData";
+import {
+  readPassPilotSelectedClassId,
+  resolvePassPilotSelectedClassId,
+  writePassPilotSelectedClassId,
+} from "../../selectedClassSession";
+import {
+  formatPassDuration,
+  getCurrentSchoolWeekRange,
+  getPassActualDurationMs,
+  getPassDestinationLabel,
+  getPassIssuerLabel,
+  getPassStatusLabel,
+} from "../../passData";
+import { encodePassPilotCsv } from "../../passCsv";
 import { useKioskSessions } from "../../useKioskSessions";
 import ClaimKioskDialog from "../ClaimKioskDialog";
 
@@ -44,6 +58,51 @@ const DESTINATION_LABELS = {
   counselor: 'Counselor',
   other_classroom: 'Other Classroom',
 };
+
+const PASS_DETAIL_PERIODS = new Set(['today', 'week']);
+
+function schoolLocalDateKey(value, timezone) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'unknown';
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const part = (type) => parts.find((item) => item.type === type)?.value || '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+function formatSchoolLocalDate(value, timezone, options = {}) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Unknown date';
+  return date.toLocaleDateString('en-US', {
+    timeZone: timezone,
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    ...options,
+  });
+}
+
+function getPassDurationLabel(pass) {
+  const durationMs = getPassActualDurationMs(pass);
+  if (durationMs !== null) return formatPassDuration(durationMs);
+  return getPassStatusLabel(pass) === 'Still out' ? 'Pending' : 'Unavailable';
+}
+
+function downloadCsv(fileName, content) {
+  const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
 
 function MyClassTab() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -56,16 +115,26 @@ function MyClassTab() {
   const [showAttendance, setShowAttendance] = useState(false);
   const [showPassData, setShowPassData] = useState(false);
   const [timePeriod, setTimePeriod] = useState('today');
-  const [selectedPassDataStudent, setSelectedPassDataStudent] = useState(null); // { id, name }
+  const [selectedPassDataStudent, setSelectedPassDataStudent] = useState(null); // { id, name, classId, schoolId }
+  const [currentTime, setCurrentTime] = useState(() => new Date());
 
-  const { isAdmin, isSchoolwideManager, school } = usePassPilotAuth();
+  const { isAdmin, isSchoolwideManager, school, user } = usePassPilotAuth();
   const { canLinkToClassPilot } = useStudentImportHome();
+  const userId = user?.id || '';
+  const schoolId = school?.id || '';
   const tz = school?.schoolTimezone ?? "America/New_York";
   const { toast } = useToast();
   const { absentIds } = useAbsentStudents();
 
-  const classInventoryQuery = useCanonicalPassPilotClasses();
-  const sourceResolved = classInventoryQuery.isSuccess;
+  React.useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const classInventoryQuery = useCanonicalPassPilotClasses(!!schoolId, schoolId);
+  const sourceResolved = !!schoolId && classInventoryQuery.isSuccess;
   const canonical = sourceResolved && isCanonicalPassPilotSource(classInventoryQuery.data?.source);
 
   const { kioskSessions, legacyKioskServer, retargetKiosks, releaseKiosk } =
@@ -81,30 +150,54 @@ function MyClassTab() {
 
   const myClasses = classInventoryQuery.data?.classes || [];
   const requestedClassId = searchParams.get('classId') || '';
-  const requestedClassIsAvailable = myClasses.some((item) => item.id === requestedClassId);
-  const activeGradeId = requestedClassIsAvailable ? requestedClassId : (myClasses[0]?.id || '');
+  const storedClassId = readPassPilotSelectedClassId(userId, schoolId);
+  const activeGradeId = resolvePassPilotSelectedClassId(
+    myClasses,
+    requestedClassId,
+    storedClassId,
+  );
+  const activePassDataStudent = selectedPassDataStudent?.classId === activeGradeId
+    && selectedPassDataStudent?.schoolId === schoolId
+    ? selectedPassDataStudent
+    : null;
 
   const setActiveGradeId = (classId) => {
+    if (!sourceResolved || !myClasses.some((item) => item.id === classId)) return;
+    setSelectedPassDataStudent(null);
+    writePassPilotSelectedClassId(userId, schoolId, classId);
     const next = new URLSearchParams(searchParams);
     next.set('classId', classId);
     setSearchParams(next);
   };
 
-  // Auto-select first class if none selected
+  // Keep direct links authoritative, then repair missing/stale URL and session
+  // state from the remembered class or the first currently accessible class.
   React.useEffect(() => {
-    if (sourceResolved && activeGradeId && requestedClassId !== activeGradeId) {
-      const next = new URLSearchParams(searchParams);
-      next.set('classId', activeGradeId);
-      setSearchParams(next, { replace: true });
-    }
-  }, [activeGradeId, requestedClassId, searchParams, setSearchParams, sourceResolved]);
+    if (!sourceResolved || !userId || !schoolId) return;
+
+    writePassPilotSelectedClassId(userId, schoolId, activeGradeId);
+    if (requestedClassId === activeGradeId && (activeGradeId || !searchParams.has('classId'))) return;
+
+    const next = new URLSearchParams(searchParams);
+    if (activeGradeId) next.set('classId', activeGradeId);
+    else next.delete('classId');
+    setSearchParams(next, { replace: true });
+  }, [activeGradeId, requestedClassId, schoolId, searchParams, setSearchParams, sourceResolved, userId]);
+
+  React.useEffect(() => {
+    setSelectedPassDataStudent((current) => (
+      current && (current.classId !== activeGradeId || current.schoolId !== schoolId)
+        ? null
+        : current
+    ));
+  }, [activeGradeId, schoolId]);
 
   const {
     data: students = [],
     isLoading: studentsLoading,
     isError: studentsError,
     refetch: refetchStudents,
-  } = usePassPilotClassRoster(activeGradeId, sourceResolved && !!activeGradeId);
+  } = usePassPilotClassRoster(activeGradeId, sourceResolved && !!activeGradeId, schoolId);
 
   const {
     data: passes = [],
@@ -112,7 +205,7 @@ function MyClassTab() {
     isError: passesError,
     refetch: refetchPasses,
   } = useQuery({
-    queryKey: ['/api/passes/active', canonical ? 'classpilot_groups' : 'legacy_grades'],
+    queryKey: ['/api/passes/active', schoolId, canonical ? 'classpilot_groups' : 'legacy_grades'],
     queryFn: () => passPilotClassRequest('GET', '/passes/active'),
     select: (data) => Array.isArray(data) ? data : (data?.passes ?? []),
     refetchInterval: 3000,
@@ -120,31 +213,44 @@ function MyClassTab() {
     enabled: sourceResolved,
   });
 
-  // Pass Data: fetch history for analytics
-  const passDataDateStart = useMemo(() => {
+  // Pass Data: fetch history for analytics. The school-local day anchor keeps
+  // Today/This Week stable between 30-second refreshes while still rolling the
+  // window over at the school's midnight rather than the device's midnight.
+  const currentSchoolDateAnchor = schoolLocalDateKey(currentTime, tz);
+  const passDataRange = useMemo(() => {
     const now = new Date();
     switch (timePeriod) {
       case 'today':
-        return startOfTodayInTimezone(tz).toISOString();
-      case 'week': {
-        const d = new Date(now);
-        d.setDate(d.getDate() - 7);
-        return d.toISOString();
-      }
+        return {
+          start: startOfTodayInTimezone(tz, now),
+          end: now,
+          anchor: currentSchoolDateAnchor,
+          label: formatSchoolLocalDate(now, tz, { weekday: 'long' }),
+        };
+      case 'week':
+        return getCurrentSchoolWeekRange(tz, now);
       case 'month': {
         const d = new Date(now);
         d.setMonth(d.getMonth() - 1);
-        return d.toISOString();
+        return { start: d, end: now, anchor: d.toISOString(), label: '' };
       }
       case 'year': {
         const d = new Date(now);
         d.setFullYear(d.getFullYear() - 1);
-        return d.toISOString();
+        return { start: d, end: now, anchor: d.toISOString(), label: '' };
       }
       default:
-        return startOfTodayInTimezone(tz).toISOString();
+        return {
+          start: startOfTodayInTimezone(tz, now),
+          end: now,
+          anchor: currentSchoolDateAnchor,
+          label: formatSchoolLocalDate(now, tz, { weekday: 'long' }),
+        };
     }
-  }, [timePeriod, tz]);
+  }, [currentSchoolDateAnchor, timePeriod, tz]);
+  const passDataDateStart = passDataRange.start.toISOString();
+  const passDataDateEnd = passDataRange.end.toISOString();
+  const showIndividualPassDetails = PASS_DETAIL_PERIODS.has(timePeriod);
 
   const {
     data: passHistory = [],
@@ -152,14 +258,31 @@ function MyClassTab() {
     isError: historyError,
     refetch: refetchHistory,
   } = useQuery({
-    queryKey: ['/api/passes/history', activeGradeId, passDataDateStart],
+    queryKey: [
+      '/api/passes/history',
+      schoolId,
+      activeGradeId,
+      timePeriod,
+      passDataRange.anchor,
+      passDataDateStart,
+      passDataDateEnd,
+    ],
     queryFn: async () => {
+      const requestNow = new Date();
+      const requestRange = timePeriod === 'week'
+        ? getCurrentSchoolWeekRange(tz, requestNow)
+        : timePeriod === 'today'
+          ? { start: startOfTodayInTimezone(tz, requestNow), end: requestNow }
+          : passDataRange;
       const params = new URLSearchParams();
-      params.append('dateStart', passDataDateStart);
+      params.append('dateStart', requestRange.start.toISOString());
+      params.append('dateEnd', requestRange.end.toISOString());
       if (activeGradeId) params.append(canonical ? 'classId' : 'gradeId', activeGradeId);
       return fetchAllPassPilotHistory(`/passes/history?${params.toString()}`);
     },
-    enabled: showPassData && !!activeGradeId,
+    enabled: showPassData && sourceResolved && !!activeGradeId,
+    refetchInterval: showPassData && showIndividualPassDetails ? 30_000 : false,
+    refetchIntervalInBackground: false,
     gcTime: 0,
   });
 
@@ -204,23 +327,26 @@ function MyClassTab() {
     let totalDuration = 0;
     let completedCount = 0;
     passHistory.forEach(pass => {
-      if (pass.returnedAt && pass.issuedAt) {
-        const diff = (new Date(pass.returnedAt).getTime() - new Date(pass.issuedAt).getTime()) / 60000;
-        if (diff > 0) {
-          totalDuration += diff;
-          completedCount++;
-        }
-      }
+      const durationMs = getPassActualDurationMs(pass);
+      if (durationMs === null) return;
+      totalDuration += durationMs / 60000;
+      completedCount++;
     });
     const avgDuration = completedCount > 0 ? Math.round(totalDuration / completedCount) : 0;
 
     return { allStudents, topDestinations, total: passHistory.length, avgDuration };
   }, [passHistory, students]);
 
-  // Per-student destinations when a student is selected
+  // Per-student aggregates and the school-local daily groups used by the
+  // Today/This Week detail view.
   const selectedStudentStats = useMemo(() => {
-    if (!selectedPassDataStudent) return null;
-    const studentPasses = passHistory.filter(p => p.studentId === selectedPassDataStudent.id);
+    if (!activePassDataStudent) return null;
+    const studentPasses = passHistory
+      .filter((pass) => pass.studentId === activePassDataStudent.id)
+      .sort((left, right) => {
+        const issuedDifference = new Date(right.issuedAt).getTime() - new Date(left.issuedAt).getTime();
+        return issuedDifference || String(right.id || '').localeCompare(String(left.id || ''));
+      });
     const destCounts = new Map();
     studentPasses.forEach(pass => {
       const dest = pass.customDestination || DESTINATION_LABELS[pass.destination] || pass.destination || 'General';
@@ -230,48 +356,100 @@ function MyClassTab() {
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count);
 
-    let totalDuration = 0;
-    let completedCount = 0;
+    let totalReturnedDurationMs = 0;
+    let returnedCount = 0;
     studentPasses.forEach(pass => {
-      if (pass.returnedAt && pass.issuedAt) {
-        const diff = (new Date(pass.returnedAt).getTime() - new Date(pass.issuedAt).getTime()) / 60000;
-        if (diff > 0) { totalDuration += diff; completedCount++; }
-      }
+      const durationMs = getPassActualDurationMs(pass);
+      if (durationMs === null) return;
+      totalReturnedDurationMs += durationMs;
+      returnedCount += 1;
     });
-    const avgDuration = completedCount > 0 ? Math.round(totalDuration / completedCount) : 0;
+    const averageReturnedDurationMs = returnedCount > 0
+      ? totalReturnedDurationMs / returnedCount
+      : null;
 
-    return { total: studentPasses.length, destinations, avgDuration };
-  }, [selectedPassDataStudent, passHistory]);
+    const passGroups = [];
+    const groupsByDay = new Map();
+    studentPasses.forEach((pass) => {
+      const dayKey = schoolLocalDateKey(pass.issuedAt, tz);
+      let group = groupsByDay.get(dayKey);
+      if (!group) {
+        group = {
+          key: dayKey,
+          label: formatSchoolLocalDate(pass.issuedAt, tz, { weekday: 'long' }),
+          passes: [],
+        };
+        groupsByDay.set(dayKey, group);
+        passGroups.push(group);
+      }
+      group.passes.push(pass);
+    });
+
+    return {
+      total: studentPasses.length,
+      destinations,
+      totalReturnedDurationMs,
+      averageReturnedDurationMs,
+      returnedCount,
+      passGroups,
+    };
+  }, [activePassDataStudent, passHistory, tz]);
 
   const handlePassDataExportCSV = () => {
-    const BOM = '\uFEFF';
-    let csv = BOM;
-    const period = timePeriod === 'today' ? 'Today' : timePeriod === 'week' ? 'This_Week' : timePeriod === 'month' ? 'This_Month' : 'This_Year';
+    const periodLabel = timePeriod === 'today'
+      ? 'Today'
+      : timePeriod === 'week'
+        ? 'This Week'
+        : timePeriod === 'month'
+          ? 'This Month'
+          : 'This Year';
+    const periodFileLabel = periodLabel.replace(/\s+/g, '_');
     const gradeName = currentActiveGrade?.name || 'Class';
+    let csvRows;
 
-    if (!selectedPassDataStudent) {
-      csv += '"Student","Total Passes","Avg Duration (min)"\n';
-      (passDataStats?.allStudents || []).forEach(s => {
-        csv += `"${s.name}","${s.count}",""\n`;
-      });
+    if (!activePassDataStudent) {
+      csvRows = [
+        ['Student', 'Total Passes', 'Avg Duration (min)'],
+        ...(passDataStats?.allStudents || []).map((student) => [student.name, student.count, '']),
+      ];
+    } else if (showIndividualPassDetails) {
+      const detailRows = (selectedStudentStats?.passGroups || []).flatMap((group) => (
+        group.passes.map((pass) => {
+          const actualDurationMs = getPassActualDurationMs(pass);
+          return [
+            formatSchoolLocalDate(pass.issuedAt, tz),
+            pass.issuedAt ? formatTimeFull(pass.issuedAt, tz) : '',
+            actualDurationMs !== null ? formatTimeFull(pass.returnedAt, tz) : '',
+            getPassDestinationLabel(pass),
+            getPassIssuerLabel(pass),
+            getPassStatusLabel(pass),
+            getPassDurationLabel(pass),
+          ];
+        })
+      ));
+      csvRows = [
+        [`Student: ${activePassDataStudent.name}`],
+        [`Period: ${periodLabel}`],
+        [`Date range: ${passDataRange.label}`],
+        [`Total Returned Time: ${formatPassDuration(selectedStudentStats?.totalReturnedDurationMs ?? 0)}`],
+        [],
+        ['Date', 'Checked Out', 'Returned', 'Destination', 'Issued By', 'Status', 'Duration'],
+        ...detailRows,
+      ];
     } else {
-      csv += `"Student: ${selectedPassDataStudent.name}"\n"Period: ${period}"\n\n`;
-      csv += '"Destination","Passes"\n';
-      (selectedStudentStats?.destinations || []).forEach(d => {
-        csv += `"${d.name}","${d.count}"\n`;
-      });
+      csvRows = [
+        [`Student: ${activePassDataStudent.name}`],
+        [`Period: ${periodFileLabel}`],
+        [],
+        ['Destination', 'Passes'],
+        ...(selectedStudentStats?.destinations || []).map((destination) => [destination.name, destination.count]),
+      ];
     }
 
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    const fileName = selectedPassDataStudent
-      ? `PassPilot_${selectedPassDataStudent.name.replace(/\s+/g, '_')}_${period}.csv`
-      : `PassPilot_${gradeName.replace(/\s+/g, '_')}_${period}.csv`;
-    a.download = fileName;
-    a.click();
-    URL.revokeObjectURL(url);
+    const fileName = activePassDataStudent
+      ? `PassPilot_${activePassDataStudent.name.replace(/\s+/g, '_')}_${periodFileLabel}.csv`
+      : `PassPilot_${gradeName.replace(/\s+/g, '_')}_${periodFileLabel}.csv`;
+    downloadCsv(fileName, encodePassPilotCsv(csvRows));
   };
 
   const isLoading = studentsLoading
@@ -291,8 +469,11 @@ function MyClassTab() {
 
       queryClient.invalidateQueries({ queryKey: ['/api/passes/active'] });
       queryClient.invalidateQueries({ queryKey: ['/api/passes'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/passes/history', schoolId] });
       queryClient.invalidateQueries({ queryKey: ['/api/students'] });
-      if (activeGradeId) queryClient.invalidateQueries({ queryKey: passPilotClassRosterQueryKey(activeGradeId) });
+      if (activeGradeId) queryClient.invalidateQueries({
+        queryKey: passPilotClassRosterQueryKey(activeGradeId, schoolId),
+      });
 
       const reasonText = customReasonText ? customReasonText : (
         passType === 'nurse' ? 'Nurse' :
@@ -403,8 +584,11 @@ function MyClassTab() {
       await passPilotClassRequest('PUT', `/passes/${passId}/return`, {});
       queryClient.invalidateQueries({ queryKey: ['/api/passes/active'] });
       queryClient.invalidateQueries({ queryKey: ['/api/passes'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/passes/history', schoolId] });
       queryClient.invalidateQueries({ queryKey: ['/api/students'] });
-      if (activeGradeId) queryClient.invalidateQueries({ queryKey: passPilotClassRosterQueryKey(activeGradeId) });
+      if (activeGradeId) queryClient.invalidateQueries({
+        queryKey: passPilotClassRosterQueryKey(activeGradeId, schoolId),
+      });
 
       toast({
         title: "Student returned",
@@ -506,16 +690,6 @@ function MyClassTab() {
         return 'bg-blue-100 text-blue-700 border-blue-200';
     }
   };
-
-  // Use state to force re-render every few seconds for real-time updates
-  const [currentTime, setCurrentTime] = useState(new Date());
-
-  React.useEffect(() => {
-    const interval = setInterval(() => {
-      setCurrentTime(new Date());
-    }, 3000);
-    return () => clearInterval(interval);
-  }, []);
 
   const formatDuration = (issuedAt) => {
     if (!issuedAt) return '0 min';
@@ -905,19 +1079,25 @@ function MyClassTab() {
                     </Button>
                   ))}
                 </div>
+                {showIndividualPassDetails ? (
+                  <p className="text-xs text-muted-foreground">
+                    {timePeriod === 'week' ? 'Current school week' : 'Today'}:{' '}
+                    <span className="font-medium text-foreground">{passDataRange.label}</span>
+                  </p>
+                ) : null}
 
                 {/* Class / Student Tab Switcher */}
                 <div className="flex items-center gap-2 border-b pb-2">
                   <Button
-                    variant={!selectedPassDataStudent ? "default" : "ghost"}
+                    variant={!activePassDataStudent ? "default" : "ghost"}
                     size="sm"
                     onClick={() => setSelectedPassDataStudent(null)}
                   >
                     Class
                   </Button>
-                  {selectedPassDataStudent && (
+                  {activePassDataStudent && (
                     <Button variant="default" size="sm" className="pointer-events-none">
-                      {selectedPassDataStudent.name}
+                      {activePassDataStudent.name}
                     </Button>
                   )}
                 </div>
@@ -931,7 +1111,7 @@ function MyClassTab() {
                       Retry
                     </Button>
                   </div>
-                ) : !selectedPassDataStudent ? (
+                ) : !activePassDataStudent ? (
                   /* ========== CLASS VIEW ========== */
                   <>
                     {/* Summary Stats */}
@@ -960,7 +1140,12 @@ function MyClassTab() {
                               type="button"
                               key={s.id || i}
                               className="flex w-full items-center justify-between rounded bg-muted/50 px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                              onClick={() => setSelectedPassDataStudent({ id: s.id, name: s.name })}
+                              onClick={() => setSelectedPassDataStudent({
+                                id: s.id,
+                                name: s.name,
+                                classId: activeGradeId,
+                                schoolId,
+                              })}
                             >
                               <span className="flex items-center gap-2">
                                 <span className="text-muted-foreground font-mono w-4 text-right">{i + 1}.</span>
@@ -1000,16 +1185,27 @@ function MyClassTab() {
                 ) : (
                   /* ========== STUDENT VIEW ========== */
                   <>
-                    <div className="flex items-center gap-6 text-sm">
+                    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
                       <span className="font-medium text-foreground">
                         Total: <span className="text-blue-600">{selectedStudentStats?.total || 0} passes</span>
                       </span>
-                      {(selectedStudentStats?.avgDuration || 0) > 0 && (
-                        <span className="font-medium text-foreground">
-                          Avg Duration: <span className="text-blue-600">{selectedStudentStats.avgDuration} min</span>
+                      <span className="font-medium text-foreground">
+                        <span>Total Returned Time</span>:{' '}
+                        <span className="text-blue-600">
+                          {formatPassDuration(selectedStudentStats?.totalReturnedDurationMs ?? 0)}
                         </span>
-                      )}
+                      </span>
+                      <span className="font-medium text-foreground">
+                        <span>Average Returned Time</span>:{' '}
+                        <span className="text-blue-600">
+                          {formatPassDuration(selectedStudentStats?.averageReturnedDurationMs ?? null)}
+                        </span>
+                      </span>
                     </div>
+                    <p className="text-xs text-muted-foreground">
+                      <span className="font-medium text-foreground">Returned passes only</span>{' '}
+                      are included in time totals and averages.
+                    </p>
 
                     <div className="space-y-2">
                       <h4 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
@@ -1030,6 +1226,75 @@ function MyClassTab() {
                         ))}
                       </div>
                     </div>
+
+                    {showIndividualPassDetails ? (
+                      <div className="space-y-3" data-testid="pass-detail-list">
+                        <h4 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                          <Timer className="h-4 w-4 text-blue-600" />
+                          Pass Details
+                        </h4>
+                        {(!selectedStudentStats || selectedStudentStats.passGroups.length === 0) ? (
+                          <p className="py-2 text-sm text-muted-foreground">No pass details this period</p>
+                        ) : selectedStudentStats.passGroups.map((group) => (
+                          <section key={group.key} className="space-y-1.5" data-testid={`pass-detail-day-${group.key}`}>
+                            <h5 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                              {group.label}
+                            </h5>
+                            <div className="divide-y rounded-md border bg-card">
+                              {group.passes.map((pass) => {
+                                const statusLabel = getPassStatusLabel(pass);
+                                const actualDurationMs = getPassActualDurationMs(pass);
+                                const statusClass = statusLabel === 'Returned'
+                                  ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300'
+                                  : statusLabel === 'Still out'
+                                    ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+                                    : 'bg-muted text-muted-foreground';
+                                return (
+                                  <article
+                                    key={pass.id}
+                                    className="grid gap-3 p-3 text-sm sm:grid-cols-2 xl:grid-cols-6"
+                                    data-testid={`pass-detail-${pass.id}`}
+                                  >
+                                    <div>
+                                      <p className="text-xs text-muted-foreground">Checked Out</p>
+                                      <p className="font-medium text-foreground">
+                                        {pass.issuedAt ? formatTimeFull(pass.issuedAt, tz) : '—'}
+                                      </p>
+                                    </div>
+                                    <div>
+                                      <p className="text-xs text-muted-foreground">Returned</p>
+                                      <p className="font-medium text-foreground">
+                                        {actualDurationMs !== null ? formatTimeFull(pass.returnedAt, tz) : '—'}
+                                      </p>
+                                    </div>
+                                    <div>
+                                      <p className="text-xs text-muted-foreground">Destination</p>
+                                      <p className="font-medium text-foreground">{getPassDestinationLabel(pass)}</p>
+                                    </div>
+                                    <div>
+                                      <p className="text-xs text-muted-foreground">Issued By</p>
+                                      <p className="font-medium text-foreground">{getPassIssuerLabel(pass)}</p>
+                                    </div>
+                                    <div>
+                                      <p className="text-xs text-muted-foreground">Duration</p>
+                                      <p className="font-medium text-foreground">
+                                        {getPassDurationLabel(pass)}
+                                      </p>
+                                    </div>
+                                    <div className="xl:text-right">
+                                      <p className="mb-1 text-xs text-muted-foreground">Status</p>
+                                      <span className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${statusClass}`}>
+                                        {statusLabel}
+                                      </span>
+                                    </div>
+                                  </article>
+                                );
+                              })}
+                            </div>
+                          </section>
+                        ))}
+                      </div>
+                    ) : null}
                   </>
                 )}
 

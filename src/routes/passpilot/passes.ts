@@ -21,6 +21,7 @@ import {
   getSettingsForSchool,
   getAbsentStudentIds,
   createStudentTimelineEvent,
+  getPasspilotReportIssuers,
 } from "../../services/storage.js";
 import { isWithinTrackingWindow } from "../../services/schoolHours.js";
 import type { Pass } from "../../schema/passpilot.js";
@@ -102,7 +103,13 @@ async function enrichPasses(rawPasses: Pass[], schoolId: string) {
 
   // Collect unique teacher IDs
   const teacherIds = [...new Set(rawPasses.map((p) => p.teacherId).filter(Boolean))] as string[];
-  const teacherMap = new Map<string, { id: string; firstName: string; lastName: string; displayName: string | null }>();
+  const teacherMap = new Map<string, {
+    id: string;
+    firstName: string;
+    lastName: string;
+    displayName: string | null;
+    email: string;
+  }>();
   for (const tid of teacherIds) {
     const user = await getUserById(tid);
     if (user) teacherMap.set(tid, user);
@@ -115,6 +122,17 @@ async function enrichPasses(rawPasses: Pass[], schoolId: string) {
     const classId = pass.classpilotGroupId || grade?.classpilotGroupId || pass.gradeId || null;
     const className = pass.classNameSnapshot || grade?.name || null;
     const classSource = pass.classpilotGroupId ? "classpilot_groups" : "legacy_grades";
+
+    const teacherFullName = teacher
+      ? [teacher.firstName, teacher.lastName]
+          .map((part) => part?.trim())
+          .filter(Boolean)
+          .join(" ")
+      : "";
+    const teacherDisplayName = teacher?.displayName?.trim()
+      || teacherFullName
+      || teacher?.email?.trim()
+      || "Former staff member";
 
     return {
       ...pass,
@@ -142,7 +160,7 @@ async function enrichPasses(rawPasses: Pass[], schoolId: string) {
             id: teacher.id,
             firstName: teacher.firstName,
             lastName: teacher.lastName,
-            name: teacher.displayName || `${teacher.firstName} ${teacher.lastName}`,
+            name: teacherDisplayName,
           }
         : null,
     };
@@ -218,6 +236,20 @@ router.get("/active", async (req, res, next) => {
     next(err);
   }
 });
+
+// GET /api/passpilot/passes/issuers - School-wide report issuer filter
+router.get(
+  "/issuers",
+  requirePassPilotRole("admin", "school_admin", "office_staff"),
+  async (_req, res, next) => {
+    try {
+      const issuers = await getPasspilotReportIssuers(res.locals.schoolId!);
+      return res.json({ issuers });
+    } catch (err) {
+      return next(err);
+    }
+  }
+);
 
 // GET /api/passpilot/passes/history - Pass history with filtering
 router.get("/history", async (req, res, next) => {

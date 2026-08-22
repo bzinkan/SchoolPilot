@@ -9,7 +9,7 @@ import SetupView from '../components/admin/SetupView';
 import BillingView from '../components/admin/BillingView';
 
 export default function Dashboard() {
-  const { isLoading, user, isAdmin, isSchoolwideManager } = usePassPilotAuth();
+  const { isLoading, user, isAdmin, isSchoolwideManager, isTeacher } = usePassPilotAuth();
   const location = useLocation();
 
   if (isLoading) {
@@ -40,7 +40,7 @@ export default function Dashboard() {
   };
   const currentTab = tabBySegment[routeSegment];
   if (!currentTab) return <Navigate to="/passpilot/my-class" replace />;
-  if (currentTab === 'reports' && !isSchoolwideManager) {
+  if (currentTab === 'reports' && !isTeacher && !isSchoolwideManager) {
     return <Navigate to="/passpilot/my-class" replace />;
   }
   if (!isAdmin && ['setup', 'billing'].includes(currentTab)) {

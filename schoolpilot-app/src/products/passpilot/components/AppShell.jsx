@@ -39,12 +39,12 @@ const navItems = [
   { label: 'Passes', icon: <ClipboardList className="h-5 w-5" />, id: 'passes', to: '/passpilot/passes' },
   { label: 'My Class', icon: <BookOpen className="h-5 w-5" />, id: 'myclass', to: '/passpilot/my-class' },
   { label: 'Classes', icon: <Users className="h-5 w-5" />, id: 'roster', to: '/passpilot/classes' },
-  { label: 'Reports', icon: <BarChart3 className="h-5 w-5" />, id: 'reports', to: '/passpilot/reports', managerOnly: true },
+  { label: 'Reports', icon: <BarChart3 className="h-5 w-5" />, id: 'reports', to: '/passpilot/reports', staffOnly: true },
   { label: 'Set Up', icon: <Settings className="h-5 w-5" />, id: 'setup', to: '/passpilot/setup', adminOnly: true },
 ];
 
 export default function AppShell({ children, currentTab }) {
-  const { user, school, isAdmin, isSchoolwideManager, logout, refetchUser } = usePassPilotAuth();
+  const { user, school, isAdmin, isSchoolwideManager, isTeacher, logout, refetchUser } = usePassPilotAuth();
   const { hasClassPilot, hasGoPilot } = useLicenses();
   const [kioskNameInput, setKioskNameInput] = useState('');
   const [isKioskNameDialogOpen, setIsKioskNameDialogOpen] = useState(false);
@@ -120,6 +120,7 @@ export default function AppShell({ children, currentTab }) {
   const visibleNav = navItems.filter((item) => (
     (!item.adminOnly || isAdmin)
     && (!item.managerOnly || isSchoolwideManager)
+    && (!item.staffOnly || isTeacher || isSchoolwideManager)
   ));
 
   const initials = user?.displayName

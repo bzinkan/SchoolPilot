@@ -168,7 +168,7 @@ export default function PassPilotMiniView() {
               View All Passes
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); window.open('/passpilot/passes', '_blank'); }}
+              onClick={(e) => { e.stopPropagation(); window.open('/passpilot', '_blank'); }}
               className="p-1.5 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
               title="Open PassPilot in new tab"
             >
