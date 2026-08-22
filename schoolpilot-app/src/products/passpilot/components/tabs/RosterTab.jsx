@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../../components/ui/card";
 import { Button } from "../../../../components/ui/button";
@@ -25,6 +25,37 @@ import {
 } from "../../classData";
 
 const GRADE_LEVELS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
+const EMPTY_STUDENTS = Object.freeze([]);
+const NO_GRADE_FILTER = "__no_grade__";
+const MAX_ASSIGNMENT_SIZE = 1000;
+
+function getStudentGradeFilterValue(student) {
+  const gradeLevel = String(student?.gradeLevel ?? "").trim();
+  return gradeLevel || NO_GRADE_FILTER;
+}
+
+function formatGradeFilterLabel(gradeLevel) {
+  if (gradeLevel === NO_GRADE_FILTER) return "No grade";
+  if (gradeLevel === "K") return "Kindergarten";
+  return `Grade ${gradeLevel}`;
+}
+
+function compareGradeLevels(left, right) {
+  if (left === NO_GRADE_FILTER) return 1;
+  if (right === NO_GRADE_FILTER) return -1;
+  const leftIndex = GRADE_LEVELS.indexOf(left);
+  const rightIndex = GRADE_LEVELS.indexOf(right);
+  if (leftIndex !== -1 || rightIndex !== -1) {
+    if (leftIndex === -1) return 1;
+    if (rightIndex === -1) return -1;
+    return leftIndex - rightIndex;
+  }
+  return left.localeCompare(right, undefined, { numeric: true });
+}
+
+function getStudentDisplayName(student) {
+  return student?.name || `${student?.firstName ?? ""} ${student?.lastName ?? ""}`.trim();
+}
 
 function getApiErrorMessage(error, fallback = "Request failed") {
   const responseError = error?.response?.data?.error;
@@ -54,6 +85,7 @@ function LegacyRosterTab({ classRecords }) {
   const [assigningGrade, setAssigningGrade] = useState(null);
   const [assignSelected, setAssignSelected] = useState(new Set());
   const [assignSearch, setAssignSearch] = useState("");
+  const [assignGradeLevel, setAssignGradeLevel] = useState("");
   const [bulkGrade, setBulkGrade] = useState('');
   const [bulkGradeLevel, setBulkGradeLevel] = useState('');
   const [newClassName, setNewClassName] = useState('');
@@ -83,22 +115,73 @@ function LegacyRosterTab({ classRecords }) {
     enabled: !isAdmin,
   });
 
-  const { data: students = [], isLoading: studentsLoading } = useQuery({
+  const studentsQuery = useQuery({
     queryKey: ['/api/students'],
     queryFn: () => apiRequest('GET', '/students'),
     select: (data) => Array.isArray(data) ? data : (data?.students ?? []),
   });
+  const students = studentsQuery.data ?? EMPTY_STUDENTS;
 
   const rosterClassId = assigningGrade?.id || (showViewGradeModal ? viewingGrade?.id : "");
   const classRosterQuery = usePassPilotClassRoster(
     rosterClassId,
     !!assigningGrade || (showViewGradeModal && !!viewingGrade),
   );
-  const classRoster = classRosterQuery.data ?? [];
-  const currentRosterIds = new Set(classRoster.map((student) => student.id));
-  const assignableStudents = students.filter((student) => !currentRosterIds.has(student.id));
+  const classRoster = classRosterQuery.data ?? EMPTY_STUDENTS;
+  const assignableStudents = useMemo(() => {
+    const currentRosterIds = new Set(classRoster.map((student) => student.id));
+    return students.filter((student) => !currentRosterIds.has(student.id));
+  }, [classRoster, students]);
+  const assignableStudentIds = useMemo(
+    () => new Set(assignableStudents.map((student) => student.id)),
+    [assignableStudents],
+  );
+  const selectedAssignableStudentIds = useMemo(
+    () => [...assignSelected].filter((studentId) => assignableStudentIds.has(studentId)),
+    [assignSelected, assignableStudentIds],
+  );
+  const assignGradeOptions = useMemo(() => {
+    const counts = new Map();
+    for (const student of assignableStudents) {
+      const gradeLevel = getStudentGradeFilterValue(student);
+      counts.set(gradeLevel, (counts.get(gradeLevel) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .sort(([left], [right]) => compareGradeLevels(left, right))
+      .map(([value, count]) => ({ value, count, label: formatGradeFilterLabel(value) }));
+  }, [assignableStudents]);
+  const visibleAssignableStudents = useMemo(() => {
+    const query = assignSearch.trim().toLowerCase();
+    return assignableStudents
+      .filter((student) => !assignGradeLevel || getStudentGradeFilterValue(student) === assignGradeLevel)
+      .filter((student) => !query || getStudentDisplayName(student).toLowerCase().includes(query))
+      .sort((left, right) => getStudentDisplayName(left).localeCompare(getStudentDisplayName(right)));
+  }, [assignGradeLevel, assignSearch, assignableStudents]);
+  const allVisibleSelected = visibleAssignableStudents.length > 0
+    && visibleAssignableStudents.every((student) => assignSelected.has(student.id));
+  const unselectedVisibleCount = visibleAssignableStudents.reduce(
+    (count, student) => count + (assignSelected.has(student.id) ? 0 : 1),
+    0,
+  );
+  const selectAllWouldExceedLimit = !allVisibleSelected
+    && selectedAssignableStudentIds.length + unselectedVisibleCount > MAX_ASSIGNMENT_SIZE;
 
-  const isLoading = studentsLoading;
+  const isLoading = studentsQuery.isLoading;
+
+  const openAssignStudents = (grade, closeRoster = false) => {
+    void Promise.all([
+      studentsQuery.refetch(),
+      queryClient.invalidateQueries({
+        queryKey: passPilotClassRosterQueryKey(grade.id),
+        exact: true,
+      }),
+    ]);
+    setAssigningGrade(grade);
+    setAssignSelected(new Set());
+    setAssignSearch("");
+    setAssignGradeLevel("");
+    if (closeRoster) setShowViewGradeModal(false);
+  };
 
   const assignStudents = useMutation({
     mutationFn: ({ classId, studentIds }) => addStudentsToPassPilotClass(classId, studentIds),
@@ -108,6 +191,7 @@ function LegacyRosterTab({ classRecords }) {
       setAssigningGrade(null);
       setAssignSelected(new Set());
       setAssignSearch("");
+      setAssignGradeLevel("");
       toast({ title: "Students assigned" });
     },
     onError: (error) => toast({
@@ -459,7 +543,7 @@ function LegacyRosterTab({ classRecords }) {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => { setAssigningGrade(grade); setAssignSelected(new Set()); setAssignSearch(""); }}
+                          onClick={() => openAssignStudents(grade)}
                           className="h-6 text-xs px-2"
                         >
                           Assign existing students
@@ -572,17 +656,28 @@ function LegacyRosterTab({ classRecords }) {
             setAssigningGrade(null);
             setAssignSelected(new Set());
             setAssignSearch("");
+            setAssignGradeLevel("");
           }
         }}
       >
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
           <DialogHeader><DialogTitle>Assign existing students to {assigningGrade?.name}</DialogTitle></DialogHeader>
-          {studentsLoading || classRosterQuery.isLoading ? (
+          {studentsQuery.isFetching || classRosterQuery.isFetching ? (
             <p className="py-8 text-center text-sm text-muted-foreground" aria-live="polite">Loading students…</p>
-          ) : classRosterQuery.isError ? (
+          ) : studentsQuery.isError || classRosterQuery.isError ? (
             <div className="py-8 text-center" role="alert">
               <p className="text-sm font-medium">Students couldn’t be loaded.</p>
-              <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => classRosterQuery.refetch()}>Retry</Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-3"
+                onClick={() => {
+                  void Promise.all([studentsQuery.refetch(), classRosterQuery.refetch()]);
+                }}
+              >
+                Retry
+              </Button>
             </div>
           ) : assignableStudents.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">
@@ -593,6 +688,34 @@ function LegacyRosterTab({ classRecords }) {
               <p className="rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
                 Students can belong to multiple classes. Adding them here won’t remove them from another class.
               </p>
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Filter by grade</p>
+                <div className="flex flex-wrap gap-1" role="group" aria-label="Filter students by grade">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={assignGradeLevel === "" ? "default" : "outline"}
+                    className="h-7 rounded-full px-3 text-xs"
+                    aria-pressed={assignGradeLevel === ""}
+                    onClick={() => setAssignGradeLevel("")}
+                  >
+                    All ({assignableStudents.length})
+                  </Button>
+                  {assignGradeOptions.map((grade) => (
+                    <Button
+                      key={grade.value}
+                      type="button"
+                      size="sm"
+                      variant={assignGradeLevel === grade.value ? "default" : "outline"}
+                      className="h-7 rounded-full px-3 text-xs"
+                      aria-pressed={assignGradeLevel === grade.value}
+                      onClick={() => setAssignGradeLevel(grade.value)}
+                    >
+                      {grade.label} ({grade.count})
+                    </Button>
+                  ))}
+                </div>
+              </div>
               <Label htmlFor="assign-student-search" className="sr-only">Search students</Label>
               <Input
                 id="assign-student-search"
@@ -600,31 +723,81 @@ function LegacyRosterTab({ classRecords }) {
                 onChange={(event) => setAssignSearch(event.target.value)}
                 placeholder="Search students..."
               />
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm text-muted-foreground" aria-live="polite">
+                  {visibleAssignableStudents.length} student{visibleAssignableStudents.length === 1 ? "" : "s"} shown · {selectedAssignableStudentIds.length} selected
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {selectedAssignableStudentIds.length > 0 ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => setAssignSelected(new Set())}
+                    >
+                      Clear selection
+                    </Button>
+                  ) : null}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2 text-xs"
+                    disabled={visibleAssignableStudents.length === 0 || selectAllWouldExceedLimit}
+                    onClick={() => {
+                      setAssignSelected((previous) => {
+                        const next = new Set(
+                          [...previous].filter((studentId) => assignableStudentIds.has(studentId)),
+                        );
+                        for (const student of visibleAssignableStudents) {
+                          if (allVisibleSelected) next.delete(student.id);
+                          else if (next.size < MAX_ASSIGNMENT_SIZE) next.add(student.id);
+                        }
+                        return next;
+                      });
+                    }}
+                  >
+                    {allVisibleSelected
+                      ? `Deselect all ${visibleAssignableStudents.length}`
+                      : `Select all ${visibleAssignableStudents.length}`}
+                  </Button>
+                </div>
+              </div>
+              {selectedAssignableStudentIds.length >= MAX_ASSIGNMENT_SIZE || selectAllWouldExceedLimit ? (
+                <p className="text-xs text-muted-foreground" role="status">
+                  A maximum of {MAX_ASSIGNMENT_SIZE.toLocaleString()} students can be assigned at once. Narrow the grade or search filter if needed.
+                </p>
+              ) : null}
               <div className="max-h-72 divide-y overflow-y-auto rounded-md border">
-                {assignableStudents
-                  .filter((student) => {
-                    const query = assignSearch.trim().toLowerCase();
-                    if (!query) return true;
-                    return `${student.name ?? ""} ${student.firstName ?? ""} ${student.lastName ?? ""}`.toLowerCase().includes(query);
-                  })
-                  .map((student) => {
-                    const name = student.name || `${student.firstName ?? ""} ${student.lastName ?? ""}`.trim();
+                {visibleAssignableStudents.length === 0 ? (
+                  <p className="px-3 py-8 text-center text-sm text-muted-foreground">
+                    No students match this grade and search.
+                  </p>
+                ) : visibleAssignableStudents.map((student) => {
+                    const name = getStudentDisplayName(student);
+                    const isSelected = assignSelected.has(student.id);
                     return (
                       <label key={student.id} className="flex cursor-pointer items-center gap-3 px-3 py-2 hover:bg-muted/50">
                         <input
                           type="checkbox"
-                          checked={assignSelected.has(student.id)}
+                          checked={isSelected}
+                          disabled={!isSelected && selectedAssignableStudentIds.length >= MAX_ASSIGNMENT_SIZE}
                           onChange={() => {
                             setAssignSelected((previous) => {
-                              const next = new Set(previous);
+                              const next = new Set(
+                                [...previous].filter((studentId) => assignableStudentIds.has(studentId)),
+                              );
                               if (next.has(student.id)) next.delete(student.id);
-                              else next.add(student.id);
+                              else if (next.size < MAX_ASSIGNMENT_SIZE) next.add(student.id);
                               return next;
                             });
                           }}
                         />
                         <span className="min-w-0 flex-1 truncate text-sm font-medium">{name}</span>
-                        {student.gradeLevel ? <span className="text-xs text-muted-foreground">Grade {student.gradeLevel}</span> : null}
+                        <span className="text-xs text-muted-foreground">
+                          {formatGradeFilterLabel(getStudentGradeFilterValue(student))}
+                        </span>
                       </label>
                     );
                   })}
@@ -632,12 +805,12 @@ function LegacyRosterTab({ classRecords }) {
               <Button
                 type="button"
                 className="w-full"
-                disabled={assignStudents.isPending || assignSelected.size === 0}
-                onClick={() => assignStudents.mutate({ classId: assigningGrade.id, studentIds: [...assignSelected] })}
+                disabled={assignStudents.isPending || selectedAssignableStudentIds.length === 0 || selectedAssignableStudentIds.length > MAX_ASSIGNMENT_SIZE}
+                onClick={() => assignStudents.mutate({ classId: assigningGrade.id, studentIds: selectedAssignableStudentIds })}
               >
                 {assignStudents.isPending
                   ? "Assigning..."
-                  : `Assign ${assignSelected.size} Student${assignSelected.size === 1 ? "" : "s"}`}
+                  : `Assign ${selectedAssignableStudentIds.length} Student${selectedAssignableStudentIds.length === 1 ? "" : "s"}`}
               </Button>
             </div>
           )}
@@ -702,24 +875,13 @@ function LegacyRosterTab({ classRecords }) {
         <Dialog open={showViewGradeModal} onOpenChange={setShowViewGradeModal}>
           <DialogContent className="max-w-4xl">
             <DialogHeader>
-              <div className="flex items-center justify-between gap-3">
-                <DialogTitle>PassPilot Class Roster — {viewingGrade.name}</DialogTitle>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => classRosterQuery.refetch()}
-                  disabled={classRosterQuery.isFetching}
-                >
-                  {classRosterQuery.isFetching ? "Refreshing…" : "Refresh roster"}
-                </Button>
-              </div>
+              <DialogTitle>PassPilot Class Roster — {viewingGrade.name}</DialogTitle>
             </DialogHeader>
             <div className="max-h-96 overflow-y-auto">
               {(() => {
                 const gradeStudents = classRoster;
 
-                if (classRosterQuery.isLoading) {
+                if (classRosterQuery.isFetching) {
                   return <p className="py-8 text-center text-sm text-muted-foreground" aria-live="polite">Loading class roster…</p>;
                 }
 
@@ -746,7 +908,7 @@ function LegacyRosterTab({ classRecords }) {
                           <Button onClick={() => { setBulkGrade(viewingGrade.id); setBulkGradeLevel(''); setShowViewGradeModal(false); setShowBulkAddStudentsModal(true); }} size="sm" variant="outline">Bulk Add Students</Button>
                           </>
                         )}
-                        <Button onClick={() => { setAssigningGrade(viewingGrade); setAssignSelected(new Set()); setAssignSearch(""); setShowViewGradeModal(false); }} size="sm" variant="outline">Assign existing students</Button>
+                        <Button onClick={() => openAssignStudents(viewingGrade, true)} size="sm" variant="outline">Assign existing students</Button>
                       </div>
                     </div>
                   );
@@ -763,7 +925,7 @@ function LegacyRosterTab({ classRecords }) {
                           <Button onClick={() => { setBulkGrade(viewingGrade.id); setBulkGradeLevel(''); setShowViewGradeModal(false); setShowBulkAddStudentsModal(true); }} size="sm" variant="outline"><Users className="w-4 h-4 mr-2" />Bulk Add</Button>
                           </>
                         )}
-                        <Button onClick={() => { setAssigningGrade(viewingGrade); setAssignSelected(new Set()); setAssignSearch(""); setShowViewGradeModal(false); }} size="sm" variant="outline">Assign existing students</Button>
+                        <Button onClick={() => openAssignStudents(viewingGrade, true)} size="sm" variant="outline">Assign existing students</Button>
                       </div>
                     </div>
                     {gradeStudents.map((student) => (

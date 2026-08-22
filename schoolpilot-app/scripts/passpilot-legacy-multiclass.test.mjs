@@ -30,6 +30,16 @@ const secondStudent = {
   gradeId: "class-b",
 };
 
+const sixthGradeStudent = {
+  id: "student-sixth",
+  firstName: "Sixth",
+  lastName: "Student",
+  name: "Sixth Student",
+  studentIdNumber: "6001",
+  gradeLevel: "6",
+  gradeId: null,
+};
+
 const legacyPassHistory = [{
   id: "legacy-returned-pass",
   schoolId: SCHOOL_ID,
@@ -78,6 +88,8 @@ function freshState() {
       ["class-a", [sharedStudent]],
       ["class-b", [secondStudent]],
     ]),
+    students: [sharedStudent, secondStudent],
+    studentRequests: 0,
     membershipWrites: [],
     membershipDeletes: [],
     passWrites: [],
@@ -118,7 +130,8 @@ async function installApiMocks(context, state) {
       return;
     }
     if (pathname === "/api/students" && request.method() === "GET") {
-      await route.fulfill({ json: [sharedStudent, secondStudent] });
+      state.studentRequests += 1;
+      await route.fulfill({ json: state.students });
       return;
     }
 
@@ -135,7 +148,7 @@ async function installApiMocks(context, state) {
         state.membershipWrites.push({ classId, ...payload });
         const roster = state.rosters.get(classId) || [];
         for (const id of payload.studentIds || []) {
-          const student = [sharedStudent, secondStudent].find((item) => item.id === id);
+          const student = state.students.find((item) => item.id === id);
           if (student && !roster.some((item) => item.id === id)) roster.push(student);
         }
         state.rosters.set(classId, roster);
@@ -364,12 +377,53 @@ test("legacy PassPilot supports shared students with class-scoped roster writes"
 
     await page.goto(`${baseUrl}/passpilot/classes`);
     await page.getByRole("heading", { name: "My Classes" }).waitFor();
-    await classCard(page, "Science Lab").getByRole("button", { name: "View Science Lab roster" }).click();
+    const studentRequestsBeforeAssign = state.studentRequests;
+    state.students.push(sixthGradeStudent);
+    await classCard(page, "Fifth Grade").getByRole("button", { name: "Assign existing students" }).click();
+    const bulkAssignDialog = page.getByRole("dialog", { name: "Assign existing students to Fifth Grade" });
+    await bulkAssignDialog.getByRole("button", { name: "Grade 6 (1)", exact: true }).waitFor();
+    assert.ok(state.studentRequests > studentRequestsBeforeAssign, "opening assignment must refresh the shared student directory");
+    await bulkAssignDialog.getByRole("button", { name: "Grade 5 (1)", exact: true }).click();
+    assert.equal(await bulkAssignDialog.getByRole("checkbox", { name: /Second Student/ }).isVisible(), true);
+    assert.equal(await bulkAssignDialog.getByRole("checkbox", { name: /Sixth Student/ }).count(), 0);
+    await bulkAssignDialog.getByRole("button", { name: "Select all 1", exact: true }).click();
+    assert.equal(await bulkAssignDialog.getByRole("checkbox", { name: /Second Student/ }).isChecked(), true);
+    assert.equal(await bulkAssignDialog.getByRole("button", { name: "Assign 1 Student", exact: true }).isEnabled(), true);
+    await bulkAssignDialog.getByRole("button", { name: "Assign 1 Student", exact: true }).click();
+    await page.getByText("Students assigned", { exact: true }).waitFor();
+    await bulkAssignDialog.waitFor({ state: "hidden" });
+    assert.deepEqual(state.membershipWrites.at(-1), { classId: "class-a", studentIds: ["student-second"] });
+    assert.deepEqual(state.rosters.get("class-a").map((item) => item.id), ["student-shared", "student-second"]);
+
+    const scienceRosterCard = classCard(page, "Science Lab");
+    const firstRosterRequest = page.waitForRequest((request) => (
+      new URL(request.url()).pathname === "/api/passpilot/classes/class-b/students"
+      && request.method() === "GET"
+    ));
+    await scienceRosterCard.getByRole("button", { name: "View Science Lab roster" }).click();
+    await firstRosterRequest;
     const rosterDialog = page.getByRole("dialog", { name: "PassPilot Class Roster — Science Lab" });
+    await rosterDialog.getByText("Shared Student", { exact: true }).waitFor();
+    assert.equal(await rosterDialog.getByRole("button", { name: "Refresh roster", exact: true }).count(), 0);
+    await page.keyboard.press("Escape");
+    await rosterDialog.waitFor({ state: "hidden" });
+
+    state.rosters.get("class-b").push(sixthGradeStudent);
+    const secondRosterRequest = page.waitForRequest((request) => (
+      new URL(request.url()).pathname === "/api/passpilot/classes/class-b/students"
+      && request.method() === "GET"
+    ));
+    await scienceRosterCard.getByRole("button", { name: "View Science Lab roster" }).click();
+    await secondRosterRequest;
+    await rosterDialog.getByText("Sixth Student", { exact: true }).waitFor();
     await rosterDialog.getByRole("button", { name: "Remove Shared Student from Science Lab" }).click();
     await page.waitForFunction(() => document.body.textContent?.includes("Student removed from class"));
     assert.deepEqual(state.membershipDeletes, [{ classId: "class-b", studentId: "student-shared" }]);
-    assert.deepEqual(state.rosters.get("class-a").map((item) => item.id), ["student-shared"]);
+    assert.deepEqual(
+      state.rosters.get("class-a").map((item) => item.id),
+      ["student-shared", "student-second"],
+      "removing a student from Science Lab must leave every Fifth Grade membership unchanged",
+    );
 
     await context.close();
   } finally {
