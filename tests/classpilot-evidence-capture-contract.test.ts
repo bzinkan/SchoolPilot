@@ -104,6 +104,13 @@ describe("ClassPilot exact safety capture persistence contract", () => {
       new URL("../src/services/scheduler.ts", import.meta.url),
       "utf8"
     );
+    const expiryStart = scheduler.indexOf(
+      "export async function expireClasspilotEvidenceCaptureRequests"
+    );
+    const expiryEnd = scheduler.indexOf("// Import-run history retention", expiryStart);
+    assert.notEqual(expiryStart, -1);
+    assert.notEqual(expiryEnd, -1);
+    const expiryJob = scheduler.slice(expiryStart, expiryEnd);
     const ambientWriteStart = devicesRoute.indexOf("await createEvidenceArtifact({");
     assert.notEqual(ambientWriteStart, -1);
     const ambientWrite = devicesRoute.slice(ambientWriteStart, ambientWriteStart + 1_500);
@@ -120,9 +127,13 @@ describe("ClassPilot exact safety capture persistence contract", () => {
     assert.match(captureService, /exactScreenshotArtifactAuthority\(input, now\)/);
     assert.match(captureService, /exactScreenshotArtifactAuthority\(input, input\.capturedAt\)/);
     assert.match(
-      scheduler,
+      expiryJob,
       /INSERT INTO evidence_artifacts \([\s\S]{0,200}school_id, device_id, student_id, student_session_id, binding_version[\s\S]{0,300}due\.school_id,[\s\S]{0,50}due\.device_id,[\s\S]{0,50}due\.student_id,[\s\S]{0,50}due\.student_session_id/
     );
+    assert.match(expiryJob, /encode\(sha256\([\s\S]*convert_to\(due\.school_id, 'UTF8'\)/);
+    assert.match(expiryJob, /decode\('00', 'hex'\)/);
+    assert.doesNotMatch(expiryJob, /\bdigest\(/);
+    assert.doesNotMatch(expiryJob, /chr\(0\)/);
   });
 
   it("is included in the production RLS allowlist and fail-closed review registry", () => {

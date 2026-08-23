@@ -29,6 +29,7 @@ const DB_SERIAL = new Set([
   "classpilot-coverage-hydration.test.ts",
   "classpilot-coverage.test.ts",
   "classpilot-entitlement.test.ts",
+  "classpilot-evidence-expiry-digest.test.ts",
   "classpilot-flight-path-import-contract.test.ts",
   "classpilot-heartbeat-presence.test.ts",
   "classpilot-instructional-calendar.test.ts",
