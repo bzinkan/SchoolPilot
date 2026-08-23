@@ -18,10 +18,12 @@ export default function ClassPilotSidebar({ isOpen, onToggle }) {
           transition-all duration-300 overflow-hidden
           ${isOpen ? 'w-80' : 'w-0 border-r-0'}`}
       >
-        <div className="flex-1 overflow-y-auto w-80">
-          {hasPassPilot && <PassPilotMiniView />}
-          {hasGoPilot && <GoPilotMiniView />}
-        </div>
+        {isOpen ? (
+          <div className="flex-1 overflow-y-auto w-80">
+            {hasPassPilot && <PassPilotMiniView />}
+            {hasGoPilot && <GoPilotMiniView />}
+          </div>
+        ) : null}
       </aside>
 
       {/* Toggle button - always visible on lg+ screens */}

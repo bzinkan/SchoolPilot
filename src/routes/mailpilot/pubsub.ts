@@ -75,7 +75,7 @@ router.post("/push", async (req, res) => {
     const json = Buffer.from(messageData, "base64").toString("utf8");
     decoded = JSON.parse(json);
   } catch (err) {
-    console.warn("[MailPilot] Failed to decode Pub/Sub payload:", err);
+    console.warn("[MailPilot] Failed to decode Pub/Sub payload");
     return res.status(204).end();
   }
 
@@ -89,7 +89,7 @@ router.post("/push", async (req, res) => {
   res.status(204).end();
 
   processNotification(emailAddress, notificationHistoryId).catch((err) => {
-    console.error("[MailPilot] processNotification failed:", err);
+    console.error("[MailPilot] Notification processing failed");
     errorMonitor.trackError("scheduler_failure", err as Error, {
       job: "mailpilot_pubsub",
       messageType: "gmail_pubsub",
@@ -105,7 +105,7 @@ async function processNotification(
   // yet, so this read must bypass RLS (app.is_super) via schedulerDb.
   const watch = await getMailpilotWatchByEmail(studentEmail, schedulerDb);
   if (!watch) {
-    console.warn(`[MailPilot] Received notification for unknown mailbox: ${studentEmail}`);
+    console.warn("[MailPilot] Received notification for an unknown mailbox");
     return;
   }
   if (watch.status !== "active") {
@@ -146,13 +146,13 @@ async function processActiveWatch(
   // Verify the school still has email monitoring enabled
   const school = await getSchoolById(watch.schoolId);
   if (!school || !school.mailpilotEntitled || !school.classpilotEmailMonitoring) {
-    console.log(`[MailPilot] School ${watch.schoolId} no longer has monitoring enabled — skipping`);
+    console.log("[MailPilot] Monitoring is no longer enabled for the resolved tenant; skipping");
     return;
   }
 
   const startHistoryId = watch.historyId || notificationHistoryId;
   if (!startHistoryId) {
-    console.warn(`[MailPilot] No historyId cursor for ${studentEmail} — re-bootstrapping watch`);
+    console.warn("[MailPilot] Missing history cursor; re-bootstrapping watch");
     try {
       const result = await startWatch(studentEmail);
       await upsertMailpilotWatch({
@@ -178,7 +178,7 @@ async function processActiveWatch(
   } catch (err: any) {
     if (err?.message === "history_expired") {
       // Re-bootstrap: start a new watch to get a fresh historyId
-      console.warn(`[MailPilot] History expired for ${studentEmail} — re-bootstrapping`);
+      console.warn("[MailPilot] History cursor expired; re-bootstrapping watch");
       try {
         const result = await startWatch(studentEmail);
         await upsertMailpilotWatch({
@@ -221,7 +221,7 @@ async function processActiveWatch(
       if (processed === "alert") alertsRaised++;
     } catch (err) {
       errors++;
-      console.error(`[MailPilot] Message processing failed (${msgId}):`, err);
+      console.error("[MailPilot] Message processing failed");
     }
   }
 
@@ -342,7 +342,7 @@ async function processSingleMessage(
         });
       }
     } catch (err) {
-      console.error("[MailPilot] Admin notification failed:", err);
+    console.error("[MailPilot] Admin notification failed");
       errorMonitor.trackError("email_failure", err as Error, { job: "mailpilot_admin_alert", schoolId });
     }
   }

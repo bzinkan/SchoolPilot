@@ -2,6 +2,7 @@ import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
 import { requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
 import {
   getFlightPathsBySchool,
@@ -39,10 +40,7 @@ const adminAuth = [
 ] as const;
 
 function canManageOwnedResource(req: any, res: any, teacherId: string | null): boolean {
-  const role = res.locals.membershipRole as string | undefined;
-  return req.authUser?.isSuperAdmin
-    || role === "admin"
-    || role === "school_admin"
+  return requestHasAnySchoolRole(req, res, ["admin", "school_admin"])
     || teacherId === req.authUser?.id;
 }
 

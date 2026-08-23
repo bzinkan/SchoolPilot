@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { safeErrorMetadata } from "../../util/safeLogging.js";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
@@ -27,6 +28,7 @@ import {
   sendClasspilotScheduleChangeEmails,
 } from "../../services/classpilotScheduleChanges.js";
 import { isValidInstructionalCalendarDate } from "../../services/storage.js";
+import { selectRequestSchoolRole } from "../../services/schoolAuthorization.js";
 
 const router = Router();
 
@@ -56,12 +58,15 @@ function routeError(code: string, message: string, status = 400) {
 }
 
 function actor(req: any, res: any): ClasspilotScheduleChangeActor {
-  const membershipRole = String(res.locals.membershipRole || "");
-  const role = ROLE_VALUES.has(membershipRole)
-    ? membershipRole
-    : req.authUser?.isSuperAdmin
-      ? "admin"
-      : "";
+  // Schedule changes grant teacher actions that office_staff alone does not.
+  // Select from all active roles with feature-specific authority priority;
+  // keep membershipRole untouched as the legacy display role.
+  const role = selectRequestSchoolRole(req, res, [
+    "admin",
+    "school_admin",
+    "teacher",
+    "office_staff",
+  ]) || "";
   if (!req.authUser?.id || !ROLE_VALUES.has(role)) {
     throw routeError("SCHEDULE_CHANGE_STAFF_CONTEXT_REQUIRED", "Staff context required.", 403);
   }
@@ -147,7 +152,10 @@ async function announceChange(options: {
   revision: number;
 }): Promise<void> {
   void broadcastClasspilotScheduleChangeUpdate(options).catch((error) => {
-    console.warn("[ClassPilot schedule changes] Realtime update failed:", (error as Error).message);
+    console.warn(
+      "[ClassPilot schedule changes] Realtime update failed:",
+      safeErrorMetadata(error)
+    );
   });
   let notification: Awaited<ReturnType<typeof getClasspilotScheduleChangeNotificationContext>>;
   try {
@@ -156,7 +164,10 @@ async function announceChange(options: {
       changeId: options.changeId,
     });
   } catch (error) {
-    console.warn("[ClassPilot schedule changes] Notification lookup failed:", (error as Error).message);
+    console.warn(
+      "[ClassPilot schedule changes] Notification lookup failed:",
+      safeErrorMetadata(error)
+    );
     return;
   }
   if (notification) sendClasspilotScheduleChangeEmails(notification);

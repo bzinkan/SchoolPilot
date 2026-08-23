@@ -22,6 +22,12 @@
     "audit:gopilot": "node dist/cli/auditGopilotContainment.js",
     "check:classpilot-tile-auth-plans": "node --env-file-if-exists=.env dist/cli/checkClasspilotTileAuthorizationPlans.js --execute",
     "check": "tsc --noEmit",
+    "check:tests": "node scripts/check-test-types.mjs",
+    "check:test-casts": "node scripts/check-test-cast-ratchet.mjs",
+    "test:unit": "node scripts/run-test-lane.mjs unit",
+    "test:db-serial": "node scripts/run-test-lane.mjs db",
+    "test:rls-serial": "node scripts/run-test-lane.mjs rls",
+    "test:infrastructure": "node scripts/run-test-lane.mjs infrastructure",
     "soc2:check": "node scripts/soc2/check-governance-evidence.mjs",
     "soc2:privileged-access-evidence": "node scripts/soc2/collect-privileged-access-evidence.mjs",
     "soc2:privileged-access-private-evidence-kit": "node scripts/soc2/privileged-access-private-evidence-kit.mjs",
@@ -38,6 +44,7 @@
     "soc2:approval-issue": "node scripts/soc2/github-approval-issue.mjs issue-body",
     "soc2:approval-decision": "node scripts/soc2/approval-queue.mjs decision",
     "load:classpilot": "node scripts/load/classpilot-load-test.mjs",
+    "load:kiosk": "node scripts/load/passpilot-kiosk-load-test.mjs",
     "test": "node --env-file-if-exists=.env --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 \"tests/**/*.test.ts\""
   },
   "dependencies": {

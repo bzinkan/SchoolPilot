@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Clock, Edit, GraduationCap, Laptop, Plus, Search, Trash2, UserPlus, Users, Wifi, WifiOff, X } from "lucide-react";
@@ -19,6 +19,8 @@ import { queryClient, apiRequest } from "../../../lib/queryClient";
 
 const NO_GRADE_VALUE = "__no_grade__";
 const STANDARD_GRADES = ["PK", "K", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"];
+const ROSTER_PAGE_SIZE = 100;
+const ROSTER_MAX_PAGE_SIZE = 200;
 const ACTIVE_ROSTER_QUERY_KEYS = [
   ["/api/students"],
   ["/api/roster/students"],
@@ -156,26 +158,52 @@ export default function RosterPage() {
   const [studentForm, setStudentForm] = useState(blankStudentForm());
   const [deviceForm, setDeviceForm] = useState(blankDeviceForm());
   const [newGrade, setNewGrade] = useState("");
+  const [studentCursor, setStudentCursor] = useState(null);
+  const [studentCursorHistory, setStudentCursorHistory] = useState([]);
+  const deferredSearchQuery = useDeferredValue(searchQuery.trim());
+  const resetStudentPagination = () => {
+    setStudentCursor(null);
+    setStudentCursorHistory([]);
+  };
 
-  const { data: students = [], isLoading: studentsLoading } = useQuery({
-    queryKey: ["/api/students"],
-    queryFn: () => apiRequest("GET", "/students"),
+  const { data: rosterPage, isLoading: studentsLoading } = useQuery({
+    queryKey: ["/api/classpilot/roster/students", {
+      cursor: studentCursor,
+      limit: ROSTER_PAGE_SIZE,
+      search: deferredSearchQuery,
+    }],
+    queryFn: ({ signal }) => {
+      const params = new URLSearchParams({ limit: String(ROSTER_PAGE_SIZE) });
+      if (studentCursor) params.set("cursor", studentCursor);
+      if (deferredSearchQuery) params.set("search", deferredSearchQuery);
+      return apiRequest("GET", `/classpilot/roster/students?${params}`, undefined, { signal });
+    },
     select: (data) => {
       const roster = Array.isArray(data) ? data : data?.students ?? [];
-      return roster.filter((student) => !student.status || student.status === "active");
+      return {
+        students: roster.filter((student) => !student.status || student.status === "active"),
+        pageInfo: data?.pageInfo || {
+          limit: ROSTER_PAGE_SIZE,
+          hasNextPage: Boolean(data?.hasMore),
+          nextCursor: data?.nextCursor || null,
+        },
+      };
     },
+    enabled: activeTab === "students",
   });
+  const students = useMemo(() => rosterPage?.students || [], [rosterPage?.students]);
 
   const { data: devices = [], isLoading: devicesLoading } = useQuery({
     queryKey: ["/api/devices"],
     queryFn: () => apiRequest("GET", "/devices"),
     select: (data) => Array.isArray(data) ? data : data?.devices ?? [],
-    enabled: isAdmin,
+    enabled: isAdmin && activeTab === "extensions",
   });
 
   const { data: settings } = useQuery({
     queryKey: ["/api/settings"],
     queryFn: () => apiRequest("GET", "/settings"),
+    enabled: activeTab === "students",
   });
 
   const manualGrades = useMemo(
@@ -201,26 +229,28 @@ export default function RosterPage() {
   }, [students]);
 
   const filteredStudents = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
     return students
       .filter((student) => {
         const grade = normalizeGrade(student.gradeLevel);
         if (selectedGrade === NO_GRADE_VALUE && grade) return false;
         if (selectedGrade !== "All" && selectedGrade !== NO_GRADE_VALUE && grade !== selectedGrade) return false;
-        if (!query) return true;
-        return [
-          fullName(student),
-          student.email,
-          student.gradeLevel,
-          student.studentIdNumber,
-        ].filter(Boolean).some((value) => String(value).toLowerCase().includes(query));
+        return true;
       })
       .sort((a, b) => {
         const byGrade = gradeSortValue(a.gradeLevel) - gradeSortValue(b.gradeLevel);
         if (byGrade !== 0) return byGrade;
         return fullName(a).localeCompare(fullName(b));
       });
-  }, [searchQuery, selectedGrade, students]);
+  }, [selectedGrade, students]);
+  const studentPageSize = Math.min(ROSTER_PAGE_SIZE, ROSTER_MAX_PAGE_SIZE);
+  const currentStudentPage = studentCursorHistory.length;
+  const visibleStudents = filteredStudents;
+  const visibleStudentStart = filteredStudents.length === 0
+    ? 0
+    : (currentStudentPage * studentPageSize) + 1;
+  const visibleStudentEnd = visibleStudentStart + Math.max(0, filteredStudents.length - 1);
+  const hasNextStudentPage = rosterPage?.pageInfo?.hasNextPage === true
+    && Boolean(rosterPage?.pageInfo?.nextCursor);
 
   const sortedDevices = useMemo(() => {
     return [...devices].sort((a, b) => {
@@ -236,7 +266,7 @@ export default function RosterPage() {
     [devices]
   );
   const staleCount = Math.max(0, devices.length - connectedCount);
-  const isLoading = studentsLoading || devicesLoading;
+  const isLoading = activeTab === "students" ? studentsLoading : devicesLoading;
   const ungradedCount = gradeCounts[NO_GRADE_VALUE] || 0;
 
   const createStudentMutation = useMutation({
@@ -501,7 +531,7 @@ export default function RosterPage() {
             </div>
             <div className="flex items-center gap-2">
               <ThemeToggle />
-              {isAdmin && (
+              {isAdmin && activeTab === "students" && (
                 <>
                   <Button
                     variant="outline"
@@ -528,8 +558,8 @@ export default function RosterPage() {
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-8">
-        <div className="grid gap-4 md:grid-cols-4 mb-6">
-          {isAdmin && <Card>
+        <div className="mb-6 grid gap-4 md:grid-cols-2">
+          {activeTab === "students" && isAdmin && <Card>
             <CardContent className="p-5 flex items-center gap-4">
               <div className="h-11 w-11 rounded-md bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300 flex items-center justify-center">
                 <Users className="h-5 w-5" />
@@ -540,7 +570,7 @@ export default function RosterPage() {
               </div>
             </CardContent>
           </Card>}
-          {isAdmin && <Card>
+          {activeTab === "students" && isAdmin && <Card>
             <CardContent className="p-5 flex items-center gap-4">
               <div className="h-11 w-11 rounded-md bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300 flex items-center justify-center">
                 <GraduationCap className="h-5 w-5" />
@@ -551,7 +581,7 @@ export default function RosterPage() {
               </div>
             </CardContent>
           </Card>}
-          <Card>
+          {activeTab === "extensions" && <Card>
             <CardContent className="p-5 flex items-center gap-4">
               <div className="h-11 w-11 rounded-md bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 flex items-center justify-center">
                 <Wifi className="h-5 w-5" />
@@ -561,8 +591,8 @@ export default function RosterPage() {
                 <p className="text-2xl font-bold">{connectedCount}</p>
               </div>
             </CardContent>
-          </Card>
-          <Card>
+          </Card>}
+          {activeTab === "extensions" && <Card>
             <CardContent className="p-5 flex items-center gap-4">
               <div className="h-11 w-11 rounded-md bg-slate-100 text-slate-700 dark:bg-slate-900 dark:text-slate-300 flex items-center justify-center">
                 <Laptop className="h-5 w-5" />
@@ -572,7 +602,7 @@ export default function RosterPage() {
                 <p className="text-2xl font-bold">{staleCount}</p>
               </div>
             </CardContent>
-          </Card>
+          </Card>}
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -592,7 +622,10 @@ export default function RosterPage() {
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    resetStudentPagination();
+                  }}
                   placeholder="Search students..."
                   className="pl-9"
                   data-testid="input-search-students"
@@ -602,11 +635,14 @@ export default function RosterPage() {
           </div>
 
           <TabsContent value="students" className="space-y-6">
-            <Tabs value={selectedGrade} onValueChange={setSelectedGrade}>
+            <Tabs value={selectedGrade} onValueChange={(grade) => {
+              setSelectedGrade(grade);
+              resetStudentPagination();
+            }}>
               <TabsList className="flex-wrap h-auto">
                 <TabsTrigger value="All" data-testid="tab-grade-all">
                   All Grades
-                  <Badge variant="secondary" className="ml-2">{students.length}</Badge>
+                  <Badge variant="secondary" className="ml-2">{students.length} on page</Badge>
                 </TabsTrigger>
                 {activeGrades.map((grade) => (
                   <TabsTrigger key={grade} value={grade} data-testid={`tab-grade-${grade}`}>
@@ -628,7 +664,7 @@ export default function RosterPage() {
                 <CardTitle className="flex items-center justify-between gap-3">
                   <span>Students</span>
                   <span className="text-sm font-normal text-muted-foreground">
-                    {filteredStudents.length} shown
+                    {visibleStudentStart}-{visibleStudentEnd} shown
                   </span>
                 </CardTitle>
               </CardHeader>
@@ -654,7 +690,7 @@ export default function RosterPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {filteredStudents.map((student) => (
+                      {visibleStudents.map((student) => (
                         <TableRow key={student.id} data-testid={`row-student-${student.id}`}>
                           <TableCell className="font-medium" data-testid={`text-student-name-${student.id}`}>
                             {fullName(student)}
@@ -700,6 +736,43 @@ export default function RosterPage() {
                       ))}
                     </TableBody>
                   </Table>
+                )}
+                {(currentStudentPage > 0 || hasNextStudentPage) && (
+                  <div className="mt-4 flex items-center justify-between gap-3 border-t pt-4">
+                    <p className="text-sm text-muted-foreground">
+                      Page {currentStudentPage + 1}
+                    </p>
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={currentStudentPage === 0}
+                        onClick={() => {
+                          setStudentCursorHistory((history) => {
+                            setStudentCursor(history.at(-1) || null);
+                            return history.slice(0, -1);
+                          });
+                        }}
+                        data-testid="button-roster-previous-page"
+                      >
+                        Previous
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={!hasNextStudentPage}
+                        onClick={() => {
+                          setStudentCursorHistory((history) => [...history, studentCursor]);
+                          setStudentCursor(rosterPage.pageInfo.nextCursor);
+                        }}
+                        data-testid="button-roster-next-page"
+                      >
+                        Next
+                      </Button>
+                    </div>
+                  </div>
                 )}
               </CardContent>
             </Card>

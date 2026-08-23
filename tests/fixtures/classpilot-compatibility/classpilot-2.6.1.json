@@ -1,0 +1,123 @@
+{
+  "fixtureSchemaVersion": 1,
+  "release": {
+    "version": "2.6.1",
+    "sourceCommit": "6564deb946d9df90f3ce42e6be6f7ea472f7576c",
+    "sourceRepository": "ClassPilot",
+    "sourceFiles": [
+      "extension/manifest.json",
+      "extension/service-worker.js"
+    ]
+  },
+  "requests": {
+    "registration": {
+      "transport": "http",
+      "method": "POST",
+      "path": "/api/extension/register",
+      "body": {
+        "deviceId": "fixture-managed-device",
+        "deviceName": null,
+        "studentEmail": "student@example.edu",
+        "studentName": "Fixture Student",
+        "schoolId": "fixture-school",
+        "schoolSlug": "fixture-school",
+        "enrollmentKey": "fixture-enrollment-key",
+        "clientProtocolVersion": 2,
+        "extensionVersion": "2.6.1",
+        "capabilities": [
+          "classroomStateV1",
+          "fabStateRevisionV1",
+          "exactTabCloseV1",
+          "screenOnlyUnlockV1",
+          "durableChatAckV1",
+          "commandAckReceiptV1",
+          "classroomOverlayRestoreV1",
+          "liveViewNegotiationV1"
+        ]
+      }
+    },
+    "heartbeat": {
+      "transport": "http",
+      "method": "POST",
+      "path": "/api/device/heartbeat",
+      "body": {
+        "studentEmail": "student@example.edu",
+        "deviceId": "fixture-managed-device",
+        "activeTabTitle": "Fixture Lesson",
+        "activeTabUrl": "https://lesson.example.edu/unit-1",
+        "favicon": "https://lesson.example.edu/favicon.ico",
+        "allOpenTabs": [
+          {
+            "tabRef": "tab_fixturelesson",
+            "url": "https://lesson.example.edu/unit-1",
+            "title": "Fixture Lesson"
+          }
+        ],
+        "activeTabRef": "tab_fixturelesson",
+        "tabSnapshotRevision": 7,
+        "tabSnapshot": {
+          "schemaVersion": 1,
+          "revision": 7
+        },
+        "screenLocked": false,
+        "flightPathActive": false,
+        "activeFlightPathName": null,
+        "isSharing": false,
+        "cameraActive": false,
+        "status": "active",
+        "clientProtocolVersion": 2,
+        "extensionVersion": "2.6.1",
+        "capabilities": [
+          "classroomStateV1",
+          "fabStateRevisionV1",
+          "exactTabCloseV1",
+          "screenOnlyUnlockV1",
+          "durableChatAckV1",
+          "commandAckReceiptV1",
+          "classroomOverlayRestoreV1",
+          "liveViewNegotiationV1"
+        ],
+        "chromeVersion": "fixture-chromium",
+        "classroomStateRevision": 4,
+        "appliedClassroomStateRevision": 4,
+        "classroomStateOutcome": "applied",
+        "classroomStateSessionId": "fixture-teaching-session",
+        "requestClassroomState": false,
+        "fabStateRevision": 3,
+        "requestFabState": false,
+        "screenshotHealth": {
+          "lastAttemptAt": 1000,
+          "lastSuccessAt": 1000,
+          "lastErrorAt": null,
+          "lastError": null,
+          "lastErrorCode": null,
+          "attempts": 2,
+          "successes": 2,
+          "alarmActive": true
+        }
+      }
+    },
+    "websocketAuth": {
+      "transport": "websocket",
+      "path": "/ws",
+      "body": {
+        "type": "auth",
+        "role": "student",
+        "deviceId": "fixture-managed-device",
+        "clientProtocolVersion": 2,
+        "extensionVersion": "2.6.1",
+        "capabilities": [
+          "classroomStateV1",
+          "fabStateRevisionV1",
+          "exactTabCloseV1",
+          "screenOnlyUnlockV1",
+          "durableChatAckV1",
+          "commandAckReceiptV1",
+          "classroomOverlayRestoreV1",
+          "liveViewNegotiationV1"
+        ],
+        "studentToken": "fixture-not-a-real-token"
+      }
+    }
+  }
+}

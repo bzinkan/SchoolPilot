@@ -8,6 +8,7 @@ import { NativeProvider, useNative } from './contexts/NativeContext';
 import { SocketProvider } from './contexts/SocketContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import Spinner from './shared/components/Spinner';
+import { hasGoPilotRole } from './shared/utils/schoolRoles';
 import { Toaster } from './components/ui/toaster';
 import './products/classpilot/calendarHistoryGuard';
 // import { AIChatButton } from './components/chat/AIChatButton'; // AI Chat FAB — disabled, using backend-only monitoring
@@ -78,6 +79,57 @@ function PageLoader() {
   );
 }
 
+function SchoolSelectionGate() {
+  const { memberships, switchSchool, logout } = useAuth();
+  const [selectingSchoolId, setSelectingSchoolId] = useState(null);
+  const [error, setError] = useState('');
+
+  const selectSchool = async (schoolId) => {
+    setSelectingSchoolId(schoolId);
+    setError('');
+    try {
+      await switchSchool(schoolId);
+    } catch (selectionError) {
+      setError(selectionError.response?.data?.error || 'Could not select that school. Please try again.');
+      setSelectingSchoolId(null);
+    }
+  };
+
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-slate-950 px-4 py-10 text-white">
+      <section className="w-full max-w-lg rounded-2xl border border-white/10 bg-slate-900 p-6 shadow-2xl">
+        <h1 className="text-2xl font-semibold">Choose a school</h1>
+        <p className="mt-2 text-sm text-slate-300">
+          Your account belongs to more than one school. Select the school you want to work in.
+        </p>
+        <div className="mt-6 grid gap-3" role="list">
+          {memberships.map((membership) => (
+            <button
+              key={membership.schoolId}
+              type="button"
+              onClick={() => selectSchool(membership.schoolId)}
+              disabled={Boolean(selectingSchoolId)}
+              className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-left transition hover:border-amber-300/70 hover:bg-white/10 disabled:cursor-wait disabled:opacity-60"
+            >
+              <span className="block font-medium">{membership.schoolName}</span>
+              <span className="mt-1 block text-xs text-slate-400">
+                {(membership.roles || [membership.role]).join(', ')}
+              </span>
+              {selectingSchoolId === membership.schoolId && (
+                <span className="mt-2 block text-xs text-amber-300">Opening school…</span>
+              )}
+            </button>
+          ))}
+        </div>
+        {error && <p className="mt-4 text-sm text-red-300" role="alert">{error}</p>}
+        <button type="button" onClick={logout} className="mt-6 text-sm text-slate-400 underline hover:text-white">
+          Sign out
+        </button>
+      </section>
+    </main>
+  );
+}
+
 function ImpersonationBanner() {
   const { user, stopImpersonating } = useAuth();
   const navigate = useNavigate();
@@ -123,22 +175,21 @@ function ImpersonationBanner() {
 }
 
 function AppRoutes() {
-  const { user, loading, activeMembership } = useAuth();
+  const { user, loading, activeMembership, schoolSelectionRequired } = useAuth();
   const { hasClassPilot, hasPassPilot, hasGoPilot, roleBasedDefaultPath } = useLicenses();
   const { isNative, product } = useNative();
 
   const isSuperAdmin = user?.isSuperAdmin === true;
   const superAdminDefault = '/super-admin/schools';
-  const gopilotRole = activeMembership?.gopilotRole || activeMembership?.role;
-  const canManageGoPilot = ['admin', 'school_admin', 'office_staff'].includes(gopilotRole);
-  const canTeachGoPilot = gopilotRole === 'teacher';
+  const canManageGoPilot = hasGoPilotRole(activeMembership, 'admin', 'school_admin', 'office_staff');
+  const canTeachGoPilot = hasGoPilotRole(activeMembership, 'teacher');
   const hasGoPilotStaffAccess = canManageGoPilot || canTeachGoPilot;
 
   // On native, override default destination based on product
   let defaultDest;
   if (isNative && (product === 'gopilot' || (product === null && hasGoPilot))) {
     if (!hasGoPilotStaffAccess) defaultDest = '/gopilot/unavailable';
-    else if (canTeachGoPilot) defaultDest = '/gopilot/teacher';
+    else if (canTeachGoPilot && !canManageGoPilot) defaultDest = '/gopilot/teacher';
     else defaultDest = '/gopilot';
   } else if (isNative && product === 'passpilot') {
     defaultDest = '/passpilot';
@@ -152,6 +203,10 @@ function AppRoutes() {
         <Spinner size="lg" />
       </div>
     );
+  }
+
+  if (user && schoolSelectionRequired && !activeMembership) {
+    return <SchoolSelectionGate />;
   }
 
   return (

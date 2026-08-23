@@ -117,7 +117,7 @@ export async function startMailpilotMonitoringForSchool(
         started++;
       } catch (err: any) {
         failed++;
-        console.error(`[MailPilot] startWatch failed for ${student.email}:`, err?.message || err);
+        console.error("[MailPilot] startWatch failed");
       }
     }
   }
@@ -139,7 +139,7 @@ export async function stopMailpilotMonitoringForSchool(schoolId: string) {
       try {
         await stopWatch(watch.studentEmail);
       } catch (err) {
-        console.warn(`[MailPilot] stopWatch failed for ${watch.studentEmail}:`, (err as Error).message);
+        console.warn("[MailPilot] stopWatch failed");
       }
       await deleteMailpilotWatch(watch.studentEmail);
       stopped++;
@@ -207,7 +207,7 @@ export async function resyncMailpilotMonitoringForSchool(schoolId: string) {
         });
         added++;
       } catch (err) {
-        console.error(`[MailPilot] resync startWatch failed for ${student.email}:`, (err as Error).message);
+        console.error("[MailPilot] resync startWatch failed");
       }
     }
   }

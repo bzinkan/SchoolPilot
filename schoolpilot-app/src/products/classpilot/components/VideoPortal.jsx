@@ -4,56 +4,46 @@ import { Button } from "../../../components/ui/button";
 import { Maximize, Minimize, X, ZoomIn, ZoomOut, RotateCcw, Camera } from "lucide-react";
 import { useToast } from "../../../hooks/use-toast";
 
-function VideoPortal({ studentName, onClose, onStopLiveView }) {
-  const containerRef = useRef(null);
+function VideoPortal({ stream, studentName, onClose, onStopLiveView }) {
+  const videoContainerRef = useRef(null);
+  const videoRef = useRef(null);
   const [zoom, setZoom] = useState(1);
   const { toast } = useToast();
 
-  // Create portal container on first render
-  if (!containerRef.current) {
-    const el = document.createElement("div");
-    el.className = "fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm";
-    // Only close when clicking the overlay background, not child elements
-    el.onclick = (e) => {
-      if (e.target === el) {
-        onClose();
-      }
-    };
-    document.body.appendChild(el);
-    containerRef.current = el;
-  }
-
   useEffect(() => {
-    // Prevent body scroll when modal is open
+    const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-
     return () => {
-      // Restore scroll and cleanup DOM on unmount
-      document.body.style.overflow = '';
-
-      if (containerRef.current) {
-        document.body.removeChild(containerRef.current);
-      }
+      document.body.style.overflow = previousOverflow;
     };
   }, []);
 
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return undefined;
+    video.srcObject = stream || null;
+    return () => {
+      if (video.srcObject === stream) video.srcObject = null;
+    };
+  }, [stream]);
+
   const handleFullscreen = async () => {
-    const videoSlot = document.querySelector("#portal-video-slot");
-    if (!videoSlot) return;
+    const videoContainer = videoContainerRef.current;
+    if (!videoContainer) return;
 
     try {
       if (!document.fullscreenElement) {
-        await videoSlot.requestFullscreen();
+        await videoContainer.requestFullscreen();
       } else {
         await document.exitFullscreen();
       }
     } catch (error) {
-      console.error('Fullscreen error:', error);
+      console.warn('Fullscreen error:', error);
     }
   };
 
   const handlePictureInPicture = async () => {
-    const video = document.querySelector("#portal-video-slot video");
+    const video = videoRef.current;
     if (!video) return;
 
     try {
@@ -63,24 +53,12 @@ function VideoPortal({ studentName, onClose, onStopLiveView }) {
         await document.exitPictureInPicture();
       }
     } catch (error) {
-      console.error('Picture-in-Picture error:', error);
+      console.warn('Picture-in-Picture error:', error);
     }
   };
 
-  const handleZoomIn = () => {
-    setZoom(prev => Math.min(prev + 0.25, 3)); // Max 3x zoom
-  };
-
-  const handleZoomOut = () => {
-    setZoom(prev => Math.max(prev - 0.25, 0.5)); // Min 0.5x zoom
-  };
-
-  const handleResetZoom = () => {
-    setZoom(1);
-  };
-
   const handleScreenshot = () => {
-    const video = document.querySelector("#portal-video-slot video");
+    const video = videoRef.current;
     if (!video) {
       toast({
         variant: "destructive",
@@ -91,20 +69,14 @@ function VideoPortal({ studentName, onClose, onStopLiveView }) {
     }
 
     try {
-      // Create canvas to capture frame
       const canvas = document.createElement('canvas');
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
 
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        throw new Error('Failed to get canvas context');
-      }
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Failed to get canvas context');
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      // Draw current video frame to canvas
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-      // Convert to blob and download
       canvas.toBlob((blob) => {
         if (!blob) {
           toast({
@@ -116,12 +88,12 @@ function VideoPortal({ studentName, onClose, onStopLiveView }) {
         }
 
         const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${studentName}_screenshot_${new Date().toISOString().replace(/[:.]/g, '-')}.png`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = `${studentName}_screenshot_${new Date().toISOString().replace(/[:.]/g, '-')}.png`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
         URL.revokeObjectURL(url);
 
         toast({
@@ -129,9 +101,8 @@ function VideoPortal({ studentName, onClose, onStopLiveView }) {
           description: `Saved screenshot of ${studentName}'s screen`,
         });
       }, 'image/png');
-
     } catch (error) {
-      console.error('Screenshot error:', error);
+      console.warn('Screenshot error:', error);
       toast({
         variant: "destructive",
         title: "Screenshot failed",
@@ -147,139 +118,100 @@ function VideoPortal({ studentName, onClose, onStopLiveView }) {
 
   return createPortal(
     <div
-      className="relative w-full max-w-7xl rounded-2xl bg-neutral-900 dark:bg-neutral-950 p-4 shadow-2xl"
-      onClick={(e) => e.stopPropagation()} // Prevent closing when clicking inside
-      data-testid="video-portal"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+      onClick={onClose}
+      data-testid="video-portal-overlay"
     >
-      {/* Header */}
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <h2 className="text-lg font-semibold text-white">
-            Live View - {studentName}
-          </h2>
+      <div
+        className="relative w-full max-w-7xl rounded-2xl bg-neutral-900 p-4 shadow-2xl dark:bg-neutral-950"
+        onClick={(event) => event.stopPropagation()}
+        data-testid="video-portal"
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-white">Live View - {studentName}</h2>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            className="text-white hover:bg-white/10"
+            data-testid="button-close-portal"
+          >
+            <X className="h-5 w-5" />
+          </Button>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onClose}
-          className="text-white hover:bg-white/10"
-          data-testid="button-close-portal"
-        >
-          <X className="h-5 w-5" />
-        </Button>
-      </div>
 
-      {/* Video Container - video element will be moved here */}
-      <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-black">
-        <div
-          id="portal-video-slot"
-          className="absolute inset-0 [&>video]:h-full [&>video]:w-full [&>video]:object-contain transition-transform duration-200"
-          style={{ transform: `scale(${zoom})` }}
-          data-testid="portal-video-slot"
-        />
+        <div ref={videoContainerRef} className="relative aspect-video w-full overflow-hidden rounded-xl bg-black">
+          <video
+            ref={videoRef}
+            autoPlay
+            muted
+            playsInline
+            className="absolute inset-0 h-full w-full object-contain transition-transform duration-200"
+            style={{ transform: `scale(${zoom})` }}
+            data-testid="portal-video"
+          />
+          {zoom !== 1 ? (
+            <div className="absolute left-2 top-2 rounded bg-black/70 px-2 py-1 text-sm text-white">
+              {Math.round(zoom * 100)}%
+            </div>
+          ) : null}
+        </div>
 
-        {/* Zoom indicator */}
-        {zoom !== 1 && (
-          <div className="absolute top-2 left-2 bg-black/70 text-white px-2 py-1 rounded text-sm">
-            {Math.round(zoom * 100)}%
+        <div className="mt-3 flex flex-wrap justify-center gap-2">
+          <div className="flex gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setZoom((current) => Math.max(current - 0.25, 0.5))}
+              disabled={zoom <= 0.5}
+              className="text-white hover:bg-white/10"
+              data-testid="button-zoom-out"
+            >
+              <ZoomOut className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setZoom(1)}
+              disabled={zoom === 1}
+              className="text-white hover:bg-white/10"
+              data-testid="button-zoom-reset"
+            >
+              <RotateCcw className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setZoom((current) => Math.min(current + 0.25, 3))}
+              disabled={zoom >= 3}
+              className="text-white hover:bg-white/10"
+              data-testid="button-zoom-in"
+            >
+              <ZoomIn className="h-4 w-4" />
+            </Button>
           </div>
-        )}
-      </div>
 
-      {/* Controls */}
-      <div className="mt-3 flex flex-wrap gap-2 justify-center">
-        {/* Zoom Controls */}
-        <div className="flex gap-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleZoomOut}
-            disabled={zoom <= 0.5}
-            className="text-white hover:bg-white/10"
-            data-testid="button-zoom-out"
-          >
-            <ZoomOut className="h-4 w-4" />
+          <Button variant="ghost" size="sm" onClick={handleScreenshot} className="text-white hover:bg-white/10" data-testid="button-screenshot">
+            <Camera className="mr-2 h-4 w-4" />Screenshot
           </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleResetZoom}
-            disabled={zoom === 1}
-            className="text-white hover:bg-white/10"
-            data-testid="button-zoom-reset"
-          >
-            <RotateCcw className="h-4 w-4" />
+          <Button variant="ghost" size="sm" onClick={handleFullscreen} className="text-white hover:bg-white/10" data-testid="button-fullscreen">
+            <Maximize className="mr-2 h-4 w-4" />Fullscreen
           </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleZoomIn}
-            disabled={zoom >= 3}
-            className="text-white hover:bg-white/10"
-            data-testid="button-zoom-in"
-          >
-            <ZoomIn className="h-4 w-4" />
+          <Button variant="ghost" size="sm" onClick={handlePictureInPicture} className="text-white hover:bg-white/10" data-testid="button-pip">
+            <Minimize className="mr-2 h-4 w-4" />PiP
           </Button>
+          <Button variant="default" size="sm" onClick={onClose} data-testid="button-back-to-grid">
+            Back to Grid
+          </Button>
+          {onStopLiveView ? (
+            <Button variant="destructive" size="sm" onClick={handleStopLiveView} data-testid="button-stop-live-view">
+              <X className="mr-2 h-4 w-4" />Stop Live View
+            </Button>
+          ) : null}
         </div>
-
-        {/* Screenshot */}
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleScreenshot}
-          className="text-white hover:bg-white/10"
-          data-testid="button-screenshot"
-        >
-          <Camera className="h-4 w-4 mr-2" />
-          Screenshot
-        </Button>
-
-        {/* Fullscreen & PiP */}
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleFullscreen}
-          className="text-white hover:bg-white/10"
-          data-testid="button-fullscreen"
-        >
-          <Maximize className="h-4 w-4 mr-2" />
-          Fullscreen
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handlePictureInPicture}
-          className="text-white hover:bg-white/10"
-          data-testid="button-pip"
-        >
-          <Minimize className="h-4 w-4 mr-2" />
-          PiP
-        </Button>
-
-        {/* Back to Grid */}
-        <Button
-          variant="default"
-          size="sm"
-          onClick={onClose}
-          data-testid="button-back-to-grid"
-        >
-          Back to Grid
-        </Button>
-
-        {onStopLiveView && (
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={handleStopLiveView}
-            data-testid="button-stop-live-view"
-          >
-            <X className="h-4 w-4 mr-2" />
-            Stop Live View
-          </Button>
-        )}
       </div>
     </div>,
-    containerRef.current
+    document.body,
   );
 }
 

@@ -2,71 +2,33 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+import rlsRegistry from "../src/config/rlsRegistry.json" with { type: "json" };
 
-export const REVIEWED_RLS_TABLE_ENABLEMENTS = Object.freeze([
-  "classpilot_session_summary_deliveries",
-  "classpilot_monitoring_events",
-  "classpilot_session_reports",
-  "classpilot_session_staff",
-  "classpilot_session_student_reports",
-  "classpilot_student_control_states",
-  "classpilot_chat_deliveries",
-  "poll_responses",
-  "polls",
-  "session_settings",
-  "passpilot_grade_students",
-  "authorized_pickups",
-  "custody_alerts",
-  "dismissal_changes",
-  "dismissal_overrides",
-  "dismissal_queue",
-  "family_group_students",
-  "homeroom_teachers",
-  "classpilot_schedule_change_pairs",
-  "classpilot_schedule_changes",
-  "classpilot_schedule_change_legs",
-  "passpilot_kiosk_sessions",
-  "passpilot_kiosk_devices",
-]);
+function frozenRegistryRequest(name) {
+  const request = rlsRegistry.reviewedEnablementRequests[name];
+  if (!Array.isArray(request) || request.length === 0) {
+    throw new Error(`Missing reviewed RLS enablement request: ${name}`);
+  }
+  return Object.freeze([...request]);
+}
 
-export const GOPILOT_CHILD_RLS_TABLES = Object.freeze([
-  "authorized_pickups",
-  "custody_alerts",
-  "dismissal_changes",
-  "dismissal_overrides",
-  "dismissal_queue",
-  "family_group_students",
-  "homeroom_teachers",
-]);
+export const GOPILOT_CHILD_RLS_TABLES = frozenRegistryRequest("gopilotStaffDismissal");
 
-export const CLASSPILOT_SCHEDULE_CHANGE_RLS_TABLES = Object.freeze([
-  "classpilot_schedule_change_pairs",
-  "classpilot_schedule_changes",
-  "classpilot_schedule_change_legs",
-]);
+export const CLASSPILOT_SCHEDULE_CHANGE_RLS_TABLES = frozenRegistryRequest(
+  "classpilotScheduleChanges"
+);
 
-export const CLASSPILOT_FAB_RLS_TABLES = Object.freeze([
-  "classpilot_chat_deliveries",
-  "poll_responses",
-  "polls",
-  "session_settings",
-]);
+export const CLASSPILOT_FAB_RLS_TABLES = frozenRegistryRequest("classpilotFabReadmission");
+export const SCHOOLPILOT_270_ADDITIVE_RLS_TABLES = frozenRegistryRequest(
+  "schoolPilot270AdditivePersistence"
+);
 
 const REVIEWED_RLS_ENABLEMENT_REQUESTS = Object.freeze([
-  Object.freeze(["classpilot_session_summary_deliveries"]),
-  Object.freeze(["passpilot_grade_students"]),
-  Object.freeze([
-    "classpilot_monitoring_events",
-    "classpilot_session_reports",
-    "classpilot_session_staff",
-    "classpilot_session_student_reports",
-    "classpilot_student_control_states",
-  ]),
-  CLASSPILOT_FAB_RLS_TABLES,
-  GOPILOT_CHILD_RLS_TABLES,
-  CLASSPILOT_SCHEDULE_CHANGE_RLS_TABLES,
-  Object.freeze(["passpilot_kiosk_sessions"]),
-  Object.freeze(["passpilot_kiosk_devices"]),
+  ...Object.keys(rlsRegistry.reviewedEnablementRequests).map(frozenRegistryRequest),
+]);
+
+export const REVIEWED_RLS_TABLE_ENABLEMENTS = Object.freeze([
+  ...new Set(REVIEWED_RLS_ENABLEMENT_REQUESTS.flat()),
 ]);
 
 function parseAllowlist(raw) {
@@ -226,6 +188,10 @@ function argumentValue(args, name) {
 function main() {
   const [mode, ...args] = process.argv.slice(2);
   const table = argumentValue(args, "--table");
+  if (mode === "validate-request") {
+    process.stdout.write(JSON.stringify({ tables: requestedTables(table) }));
+    return;
+  }
   if (mode === "add") {
     const path = argumentValue(args, "--task-definition");
     const containerName = argumentValue(args, "--container");
@@ -291,7 +257,7 @@ function main() {
     });
     return;
   }
-  throw new Error("Expected add, preflight, or verify-candidates mode");
+  throw new Error("Expected validate-request, add, preflight, or verify-candidates mode");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

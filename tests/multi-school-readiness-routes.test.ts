@@ -335,6 +335,7 @@ after(async () => {
       await db.execute(sql`DELETE FROM devices WHERE device_id LIKE ${`${TAG}-%`}`);
       await db.execute(sql`DELETE FROM audit_logs WHERE user_email LIKE ${`${TAG}%@%`}`);
       await db.execute(sql`DELETE FROM student_timeline_events WHERE school_id IN (${schoolA.id}, ${schoolB.id})`);
+      await db.execute(sql`DELETE FROM classpilot_session_usage WHERE school_id IN (${schoolA.id}, ${schoolB.id})`);
       await db.execute(sql`DELETE FROM dismissal_overrides WHERE session_id IN (SELECT id FROM dismissal_sessions WHERE school_id IN (${schoolA.id}, ${schoolB.id}))`);
       await db.execute(sql`DELETE FROM dismissal_changes WHERE session_id IN (SELECT id FROM dismissal_sessions WHERE school_id IN (${schoolA.id}, ${schoolB.id}))`);
       await db.execute(sql`DELETE FROM dismissal_queue WHERE session_id IN (SELECT id FROM dismissal_sessions WHERE school_id IN (${schoolA.id}, ${schoolB.id}))`);
@@ -367,6 +368,139 @@ after(async () => {
 });
 
 describe("multi-school readiness route hardening", () => {
+  it("serves privacy-safe Student Data aggregates and additive cursor roster pages", async () => {
+    const foreignStudent = await inSchool(schoolB.id, () => createStudent({
+      schoolId: schoolB.id,
+      firstName: "Foreign",
+      lastName: `${TAG} Student`,
+      email: `foreign.student@${TAG}-b.example.edu`,
+      status: "active",
+    }));
+    const timeZone = schoolA.schoolTimezone || "America/New_York";
+    const localDate = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+    await asSystem(async () => {
+      await db.execute(sql`
+        INSERT INTO classpilot_session_usage (
+          school_id, teaching_session_id, group_id, student_id, local_date,
+          total_seconds, heartbeat_count, top_domains, computed_at
+        ) VALUES (
+          ${schoolA.id}, ${`${TAG}-student-data-session-a`}, ${`${TAG}-student-data-group-a`},
+          ${teacherAStudent.id}, ${localDate}, 20, 2,
+          ${JSON.stringify([{ domain: "https://www.example.com/private?token=secret", seconds: 9999 }])}::jsonb,
+          now()
+        ), (
+          ${schoolB.id}, ${`${TAG}-student-data-session-b`}, ${`${TAG}-student-data-group-b`},
+          ${foreignStudent.id}, ${localDate}, 40, 4,
+          ${JSON.stringify([{ domain: "foreign.example/private", seconds: 40 }])}::jsonb,
+          now()
+        )
+      `);
+    });
+
+    const auth = authFor(adminUser, schoolA.id);
+    const legacyRoster = await requestJson("GET", "/classpilot/roster/students", undefined, auth);
+    assert.equal(legacyRoster.status, 200, JSON.stringify(legacyRoster.body));
+    assert.ok(Array.isArray(legacyRoster.body.students));
+    assert.equal(legacyRoster.body.pageInfo, undefined, "no-query clients retain the legacy shape");
+
+    const firstPage = await requestJson(
+      "GET",
+      "/classpilot/roster/students?limit=2",
+      undefined,
+      auth
+    );
+    assert.equal(firstPage.status, 200, JSON.stringify(firstPage.body));
+    assert.equal(firstPage.body.students.length, 2);
+    assert.equal(firstPage.body.pageInfo.limit, 2);
+    assert.equal(firstPage.body.pageInfo.hasNextPage, true);
+    assert.ok(firstPage.body.nextCursor);
+    assert.doesNotMatch(JSON.stringify(firstPage.body), /deviceId|classpilotPin/i);
+
+    const secondPage = await requestJson(
+      "GET",
+      `/classpilot/roster/students?limit=2&cursor=${encodeURIComponent(firstPage.body.nextCursor)}`,
+      undefined,
+      auth
+    );
+    assert.equal(secondPage.status, 200, JSON.stringify(secondPage.body));
+    const firstIds = new Set(firstPage.body.students.map((student: any) => student.id));
+    assert.ok(secondPage.body.students.every((student: any) => !firstIds.has(student.id)));
+
+    const searchPage = await requestJson(
+      "GET",
+      `/classpilot/roster/students?search=${encodeURIComponent(teacherAStudent.email)}&limit=100`,
+      undefined,
+      auth
+    );
+    assert.equal(searchPage.status, 200, JSON.stringify(searchPage.body));
+    assert.deepEqual(searchPage.body.students.map((student: any) => student.id), [teacherAStudent.id]);
+    const invalidCursor = await requestJson(
+      "GET",
+      "/classpilot/roster/students?cursor=not-a-cursor",
+      undefined,
+      auth
+    );
+    assert.equal(invalidCursor.status, 400);
+
+    const forbidden = await requestJson(
+      "GET",
+      "/classpilot/student-data?period=today",
+      undefined,
+      authFor(teacherA, schoolA.id)
+    );
+    assert.equal(forbidden.status, 403);
+
+    const aggregate = await requestJson(
+      "GET",
+      "/classpilot/student-data?period=today",
+      undefined,
+      auth
+    );
+    assert.equal(aggregate.status, 200, JSON.stringify(aggregate.body));
+    assert.equal(aggregate.body.studentsTruncated, false);
+    assert.equal(aggregate.body.activitySource, "heartbeats");
+    assert.equal(aggregate.body.screenshotsUsedForTimeCalculations, false);
+    const studentAggregate = aggregate.body.students.find(
+      (student: any) => student.studentId === teacherAStudent.id
+    );
+    assert.equal(studentAggregate.monitoredSeconds, 20);
+    assert.deepEqual(studentAggregate.topDomains, [{ domain: "example.com", seconds: 20 }]);
+    assert.doesNotMatch(
+      JSON.stringify(aggregate.body),
+      /private|token=secret|foreign\.example|deviceId|classpilotPin/i
+    );
+
+    const repeated = await requestJson(
+      "GET",
+      "/classpilot/student-data?period=today",
+      undefined,
+      auth
+    );
+    assert.equal(repeated.status, 200);
+    assert.equal(repeated.body.revision, aggregate.body.revision);
+    const selected = await requestJson(
+      "GET",
+      `/classpilot/student-data?period=today&studentId=${teacherAStudent.id}`,
+      undefined,
+      auth
+    );
+    assert.equal(selected.status, 200, JSON.stringify(selected.body));
+    assert.equal(selected.body.student.studentId, teacherAStudent.id);
+    assert.equal(selected.body.students.length, 1);
+    const foreignTarget = await requestJson(
+      "GET",
+      `/classpilot/student-data?period=today&studentId=${foreignStudent.id}`,
+      undefined,
+      auth
+    );
+    assert.equal(foreignTarget.status, 404);
+  });
+
   it("denies the device aggregate to a GoPilot-only retained parent while preserving dual-product base-admin access", async () => {
     const suffix = `${TAG}-aggregate-gate`;
     const gopilotOnlySchool = await createSchool({
@@ -938,7 +1072,11 @@ describe("multi-school readiness route hardening", () => {
     assert.equal(manualIdentity?.capabilities.manageDismissal, true);
     assert.equal(importedIdentity?.capabilities.manageDismissal, true);
     assert.equal(duplicateIdentity?.primaryRole, "teacher");
-    assert.equal(duplicateIdentity?.capabilities.parentStudentAccess, false);
+    assert.equal(
+      duplicateIdentity?.capabilities.parentStudentAccess,
+      true,
+      "authorization must honor every active role, not only the display primary role"
+    );
   });
 
   it("GoPilot staff setup writes sanitized create, update, and removal audits", async () => {

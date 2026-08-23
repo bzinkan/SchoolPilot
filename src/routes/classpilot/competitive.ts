@@ -57,6 +57,10 @@ import {
   toPublicClasspilotAiDecision,
   toPublicClasspilotTimelineEvent,
 } from "../../services/classpilotPublicAiDecision.js";
+import {
+  requestHasAnySchoolRole,
+  selectRequestSchoolRole,
+} from "../../services/schoolAuthorization.js";
 
 const router = Router();
 
@@ -73,7 +77,12 @@ const adminAuth = [...staffAuth, requireRole("admin", "school_admin")] as const;
 
 function roleFrom(res: any, req: any): string {
   if (req.authUser?.isSuperAdmin) return "super_admin";
-  return String(res.locals.membershipRole || "");
+  return selectRequestSchoolRole(req, res, [
+    "admin",
+    "school_admin",
+    "office_staff",
+    "teacher",
+  ]) || "";
 }
 
 function isAdminRole(role: string): boolean {
@@ -124,8 +133,10 @@ async function canViewStudent(req: any, res: any, studentId: string): Promise<{ 
   const schoolId = res.locals.schoolId!;
   const student = await getStudentById(studentId);
   if (!student || student.schoolId !== schoolId) return { allowed: false, role };
-  if (isAdminRole(role) || role === "office_staff") return { allowed: true, student, role };
-  if (role === "teacher") {
+  if (requestHasAnySchoolRole(req, res, ["admin", "school_admin", "office_staff"])) {
+    return { allowed: true, student, role };
+  }
+  if (requestHasAnySchoolRole(req, res, ["teacher"])) {
     const groups = await getGroupsByTeacher(req.authUser!.id);
     for (const group of groups) {
       if (group.schoolId !== schoolId) continue;
@@ -522,7 +533,7 @@ router.get("/ai-decisions", ...staffAuth, async (req, res, next) => {
     if (studentId) {
       const access = await canViewStudent(req, res, studentId);
       if (!access.allowed) return res.status(403).json({ error: "Insufficient permissions" });
-    } else if (!isAdminRole(roleFrom(res, req))) {
+    } else if (!requestHasAnySchoolRole(req, res, ["admin", "school_admin"])) {
       return res.status(400).json({ error: "studentId is required" });
     }
     const decisions = await listClasspilotAiDecisions({
@@ -612,6 +623,27 @@ router.get("/safety-cases", ...adminAuth, async (_req, res, next) => {
   }
 });
 
+function evidenceArtifactForExport(artifact: any) {
+  const {
+    deviceId: _deviceId,
+    studentSessionId: _studentSessionId,
+    bindingVersion: _bindingVersion,
+    metadata,
+    ...publicArtifact
+  } = artifact;
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return { ...publicArtifact, metadata: metadata ?? null };
+  }
+  const {
+    deviceId: _metadataDeviceId,
+    device_id: _deviceIdSnake,
+    studentSessionId: _metadataStudentSessionId,
+    bindingVersion: _metadataBindingVersion,
+    ...publicMetadata
+  } = metadata as Record<string, unknown>;
+  return { ...publicArtifact, metadata: publicMetadata };
+}
+
 // POST /api/classpilot/evidence-packets
 router.post("/evidence-packets", ...adminAuth, async (req, res, next) => {
   try {
@@ -630,7 +662,9 @@ router.post("/evidence-packets", ...adminAuth, async (req, res, next) => {
       role: "admin",
       fullEmail: true,
     });
-    const artifacts = await listEvidenceArtifactsForStudent({ schoolId, studentId, caseId, from: fromDate, to: toDate });
+    const artifacts = (
+      await listEvidenceArtifactsForStudent({ schoolId, studentId, caseId, from: fromDate, to: toDate })
+    ).map(evidenceArtifactForExport);
     const manifest = {
       packetGeneratedAt: new Date().toISOString(),
       generatedBy: req.authUser!.id,
@@ -779,9 +813,10 @@ router.get("/evidence-packets/:id/download", ...adminAuth, async (req, res, next
       return res.status(404).json({ error: "Evidence packet not found" });
     }
     const manifest = artifact.content ? JSON.parse(artifact.content) : {};
+    const exportArtifacts = (manifest.artifacts || []).map(evidenceArtifactForExport);
     const summaryManifest = {
       ...manifest,
-      artifacts: (manifest.artifacts || []).map((a: any) => ({ ...a, content: a.content ? "[included in artifacts/]" : null })),
+      artifacts: exportArtifacts.map((a: any) => ({ ...a, content: a.content ? "[included in artifacts/]" : null })),
     };
     const timelineRows = (manifest.events || []).map((e: any) => ({
       occurredAt: e.occurredAt,
@@ -796,7 +831,7 @@ router.get("/evidence-packets/:id/download", ...adminAuth, async (req, res, next
       { name: "summary.json", content: JSON.stringify(summaryManifest, null, 2) },
       { name: "timeline.csv", content: toCsv(timelineRows) },
       { name: "report.html", content: report },
-      ...artifactZipFiles(manifest.artifacts || []),
+      ...artifactZipFiles(exportArtifacts),
     ]);
     res.setHeader("Content-Type", "application/zip");
     res.setHeader("Content-Disposition", `attachment; filename=classpilot-evidence-${artifact.id}.zip`);

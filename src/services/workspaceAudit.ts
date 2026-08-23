@@ -105,7 +105,7 @@ async function resolvePolicy(
       return null;
     }
     const policyValue = resolved.value?.value as Record<string, unknown> | undefined;
-    console.log(`[workspaceAudit] resolve ${schemaName}: OK, value:`, JSON.stringify(policyValue));
+    console.log(`[workspaceAudit] resolve ${schemaName}: OK`);
     return {
       value: policyValue ?? null,
       sourceKey: resolved.sourceKey?.targetResource ?? undefined,
@@ -116,7 +116,7 @@ async function resolvePolicy(
     // record the error and produce an "Unknown" finding so the user at least
     // sees the check list. The audit only aborts entirely if NO data at all
     // can be read (e.g., user revoked the OAuth grant).
-    console.log(`[workspaceAudit] resolve ${schemaName}: FAILED:`, (err as Error).message);
+    console.log(`[workspaceAudit] resolve ${schemaName}: FAILED`);
     return {
       value: null,
       raw: null,
@@ -207,7 +207,7 @@ export async function runWorkspaceAudit(userId: string, schoolId: string): Promi
   let orgUnitsCount: number | null = null;
   let deviceCount: number | null = null;
 
-  console.log("[workspaceAudit] starting for userId:", userId);
+  console.log("[workspaceAudit] starting authorized audit");
 
   // Metadata calls (customer.get / orgunits.list / chromeosdevices.list) are
   // best-effort: permission failures here record an error and continue with
@@ -221,9 +221,9 @@ export async function runWorkspaceAudit(userId: string, schoolId: string): Promi
     const directory = google.admin({ version: "directory_v1", auth });
     const customer = await directory.customers.get({ customerKey: "my_customer" });
     customerDomain = customer.data.customerDomain ?? null;
-    console.log("[workspaceAudit] customer.get OK, domain:", customerDomain);
+    console.log("[workspaceAudit] customer.get OK");
   } catch (err: unknown) {
-    console.log("[workspaceAudit] customer.get FAILED (non-fatal):", (err as Error).message);
+    console.log("[workspaceAudit] customer.get FAILED (non-fatal)");
     errors.push(`Could not read customer info: ${(err as Error).message}`);
   }
 
@@ -249,9 +249,9 @@ export async function runWorkspaceAudit(userId: string, schoolId: string): Promi
     const candidate =
       root?.orgUnitId ?? childOfRoot?.parentOrgUnitId ?? "";
     rootOrgUnitId = String(candidate).replace(/^id:/, "") || null;
-    console.log("[workspaceAudit] derived rootOrgUnitId:", rootOrgUnitId);
+    console.log("[workspaceAudit] derived root organizational unit");
   } catch (err: unknown) {
-    console.log("[workspaceAudit] orgunits.list FAILED (non-fatal):", (err as Error).message);
+    console.log("[workspaceAudit] orgunits.list FAILED (non-fatal)");
     errors.push(`Could not list org units: ${(err as Error).message}`);
   }
 
@@ -267,7 +267,7 @@ export async function runWorkspaceAudit(userId: string, schoolId: string): Promi
       ?? 0;
     console.log("[workspaceAudit] chromeosdevices.list OK, count:", deviceCount);
   } catch (err: unknown) {
-    console.log("[workspaceAudit] chromeosdevices.list FAILED (non-fatal):", (err as Error).message);
+    console.log("[workspaceAudit] chromeosdevices.list FAILED (non-fatal)");
     errors.push(`Could not list Chrome devices: ${(err as Error).message}`);
   }
 

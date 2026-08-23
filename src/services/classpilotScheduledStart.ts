@@ -1,4 +1,5 @@
 import type db from "../db.js";
+import { safeErrorMetadata } from "../util/safeLogging.js";
 import { broadcastToTeachersLocal } from "../realtime/ws-broadcast.js";
 import { publishWS } from "../realtime/ws-redis.js";
 import {
@@ -26,7 +27,7 @@ import {
   createOrReuseScheduledReportSession,
   getActiveClassOwnersForStudents,
   getActiveScheduledReportSessionForConflict,
-  getActiveSessionByStudent,
+  getActiveSessionsForStudents,
   getActiveSupervisionForStudents,
   getActiveTeachingSessionForSchool,
   getClasspilotSessionStudentRoster,
@@ -455,13 +456,21 @@ export async function buildScheduledCoveragePayload(options: {
     : await getGroupStudents(group.id, options.dbInstance);
   const studentIds = rows.map((row) => row.studentId);
   const scheduledTeacherId = occurrence?.teacherId || group.teacherId;
-  const [teacher, owners, activeSupervision] = await Promise.all([
+  const [teacher, owners, activeSupervision, activeSessions] = await Promise.all([
     getUserById(scheduledTeacherId, options.dbInstance),
     getActiveClassOwnersForStudents(schoolId, studentIds, options.dbInstance),
     getActiveSupervisionForStudents(schoolId, studentIds, options.dbInstance),
+    getActiveSessionsForStudents(schoolId, studentIds, options.dbInstance),
   ]);
   const ownerByStudent = new Map(owners.map((owner) => [owner.studentId, owner]));
   const supervisionByStudent = new Map(activeSupervision.map((entry) => [entry.studentId, entry.context]));
+  const activeSessionByStudent = new Map<string, (typeof activeSessions)[number]>();
+  for (const session of activeSessions) {
+    const current = activeSessionByStudent.get(session.studentId);
+    if (!current || session.lastSeenAt > current.lastSeenAt) {
+      activeSessionByStudent.set(session.studentId, session);
+    }
+  }
   const scheduledContexts = options.scheduledConflictId
     ? await listActiveSupervisionContextsForScheduledConflict(schoolId, options.scheduledConflictId, options.dbInstance)
     : [];
@@ -503,7 +512,7 @@ export async function buildScheduledCoveragePayload(options: {
             ? row.studentNameSnapshot
             : row.studentId,
         };
-    const activeSession = await getActiveSessionByStudent(row.studentId);
+    const activeSession = activeSessionByStudent.get(row.studentId);
     const lastSeenAt = activeSession?.lastSeenAt?.getTime?.() || 0;
     const isOnline = !!activeSession
       && lastSeenAt > 0
@@ -640,7 +649,10 @@ async function startScheduledClass(options: {
           limit: 2,
         })
       ).catch((error) => {
-        console.warn(`[SessionSummary] Replacement delivery deferred for ${finalization.result.session.id}:`, error);
+        console.warn(
+          "[SessionSummary] Replacement delivery deferred:",
+          safeErrorMetadata(error)
+        );
       });
     }
   }
@@ -648,7 +660,10 @@ async function startScheduledClass(options: {
     broadcastScheduledConflictUpdate(options.group.schoolId, conflictId);
   }
   void pushClasspilotSessionControlStates(options.group.schoolId, outcome.session.id).catch((error) => {
-    console.warn(`[ClassPilot] Scheduled classroom-state push failed for ${outcome.session.id}:`, error);
+    console.warn(
+      "[ClassPilot] Scheduled classroom-state push failed:",
+      safeErrorMetadata(error)
+    );
   });
   return outcome.session;
 }

@@ -50,6 +50,7 @@ import {
 import { encodePassPilotCsv } from "../../passCsv";
 import { useKioskSessions } from "../../useKioskSessions";
 import ClaimKioskDialog from "../ClaimKioskDialog";
+import LivePassDuration from "../LivePassDuration";
 
 const DESTINATION_LABELS = {
   bathroom: 'Bathroom',
@@ -92,6 +93,36 @@ function getPassDurationLabel(pass) {
   return getPassStatusLabel(pass) === 'Still out' ? 'Pending' : 'Unavailable';
 }
 
+function useSchoolDateAnchor(timezone) {
+  const [anchorState, setAnchorState] = useState(() => ({
+    timezone,
+    value: schoolLocalDateKey(new Date(), timezone),
+  }));
+
+  React.useEffect(() => {
+    let timeoutId;
+    const schedule = () => {
+      const now = new Date();
+      const todayStart = startOfTodayInTimezone(timezone, now);
+      const nextStart = startOfTodayInTimezone(
+        timezone,
+        new Date(todayStart.getTime() + (36 * 60 * 60 * 1_000)),
+      );
+      const delay = Math.max(1_000, nextStart.getTime() - now.getTime() + 1_000);
+      timeoutId = window.setTimeout(() => {
+        setAnchorState({ timezone, value: schoolLocalDateKey(new Date(), timezone) });
+        schedule();
+      }, delay);
+    };
+    schedule();
+    return () => window.clearTimeout(timeoutId);
+  }, [timezone]);
+
+  return anchorState.timezone === timezone
+    ? anchorState.value
+    : schoolLocalDateKey(new Date(), timezone);
+}
+
 function downloadCsv(fileName, content) {
   const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
@@ -116,7 +147,6 @@ function MyClassTab() {
   const [showPassData, setShowPassData] = useState(false);
   const [timePeriod, setTimePeriod] = useState('today');
   const [selectedPassDataStudent, setSelectedPassDataStudent] = useState(null); // { id, name, classId, schoolId }
-  const [currentTime, setCurrentTime] = useState(() => new Date());
 
   const { isAdmin, isSchoolwideManager, school, user } = usePassPilotAuth();
   const { canLinkToClassPilot } = useStudentImportHome();
@@ -125,13 +155,6 @@ function MyClassTab() {
   const tz = school?.schoolTimezone ?? "America/New_York";
   const { toast } = useToast();
   const { absentIds } = useAbsentStudents();
-
-  React.useEffect(() => {
-    const interval = setInterval(() => {
-      setCurrentTime(new Date());
-    }, 3000);
-    return () => clearInterval(interval);
-  }, []);
 
   const classInventoryQuery = useCanonicalPassPilotClasses(!!schoolId, schoolId);
   const sourceResolved = !!schoolId && classInventoryQuery.isSuccess;
@@ -209,6 +232,7 @@ function MyClassTab() {
     queryFn: () => passPilotClassRequest('GET', '/passes/active'),
     select: (data) => Array.isArray(data) ? data : (data?.passes ?? []),
     refetchInterval: 3000,
+    structuralSharing: true,
     gcTime: 0,
     enabled: sourceResolved,
   });
@@ -216,7 +240,7 @@ function MyClassTab() {
   // Pass Data: fetch history for analytics. The school-local day anchor keeps
   // Today/This Week stable between 30-second refreshes while still rolling the
   // window over at the school's midnight rather than the device's midnight.
-  const currentSchoolDateAnchor = schoolLocalDateKey(currentTime, tz);
+  const currentSchoolDateAnchor = useSchoolDateAnchor(tz);
   const passDataRange = useMemo(() => {
     const now = new Date();
     switch (timePeriod) {
@@ -689,15 +713,6 @@ function MyClassTab() {
       default:
         return 'bg-blue-100 text-blue-700 border-blue-200';
     }
-  };
-
-  const formatDuration = (issuedAt) => {
-    if (!issuedAt) return '0 min';
-    const issued = new Date(issuedAt);
-    if (isNaN(issued.getTime())) return '0 min';
-    const diffMs = currentTime.getTime() - issued.getTime();
-    const diffMinutes = Math.floor(diffMs / (1000 * 60));
-    return `${Math.max(1, diffMinutes)} min`;
   };
 
   if (isLoading) {
@@ -1374,7 +1389,7 @@ function MyClassTab() {
                               </span>
                             </div>
                             <p className="text-sm text-muted-foreground">
-                              {pass.customDestination || `Out for ${formatDuration(pass.issuedAt)}`} • Since {pass.issuedAt ? formatTimeFull(pass.issuedAt, tz) : 'Unknown time'}
+                              {pass.customDestination || <>Out for <LivePassDuration issuedAt={pass.issuedAt} /></>} • Since {pass.issuedAt ? formatTimeFull(pass.issuedAt, tz) : 'Unknown time'}
                             </p>
                           </div>
                         </div>

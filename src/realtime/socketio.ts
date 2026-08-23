@@ -5,9 +5,9 @@ import { getUserById } from "../services/storage.js";
 import {
   getHomeroomForSchool,
   getTeacherHomeroomIds,
+  goPilotIdentityHasAnyRole,
   hasAnyActiveGoPilotStaffMembership,
   hasActiveGoPilotLicense,
-  isGoPilotManager,
   resolveGoPilotIdentity,
 } from "../services/gopilotAccess.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
@@ -75,7 +75,7 @@ export function setupSocketIO(httpServer: HttpServer): Server {
 
   io.on("connection", (socket) => {
     const userId = socket.data.userId;
-    console.log(`[Socket.io] Connected: user ${userId}`);
+    console.log("[Socket.io] Authenticated client connected");
 
     socket.on("join:school", async ({ schoolId, homeroomId }) => {
       try {
@@ -93,11 +93,13 @@ export function setupSocketIO(httpServer: HttpServer): Server {
           return;
         }
 
-        const role = socket.data.isSuperAdmin
-          ? "super_admin"
-          : identity!.primaryRole;
+        const manager = socket.data.isSuperAdmin || !!identity && goPilotIdentityHasAnyRole(
+          identity,
+          ["admin", "school_admin", "office_staff"]
+        );
+        const teacher = !!identity && goPilotIdentityHasAnyRole(identity, ["teacher"]);
 
-        if (role === "parent") {
+        if (!manager && !teacher) {
           socket.emit("join:error", {
             error: "GoPilot parent portal is disabled",
             code: "GOPILOT_PARENT_PORTAL_DISABLED",
@@ -107,8 +109,11 @@ export function setupSocketIO(httpServer: HttpServer): Server {
           return;
         }
 
-        if (!socket.data.isSuperAdmin && !(await hasActiveGoPilotLicense(requestedSchoolId))) {
-          socket.emit("join:error", { error: "Product license required" });
+        if (!(await hasActiveGoPilotLicense(requestedSchoolId))) {
+          socket.emit("join:error", {
+            error: "School is not entitled to GoPilot",
+            code: "GOPILOT_NOT_ENTITLED",
+          });
           return;
         }
 
@@ -116,13 +121,13 @@ export function setupSocketIO(httpServer: HttpServer): Server {
         // context for the per-school access checks (students/homerooms reads) — RLS
         // would otherwise hide every row and deny legitimate parents/teachers.
         await runWithTenantContext({ schoolId: requestedSchoolId }, async () => {
-          if (isGoPilotManager(role)) {
+          if (manager) {
             joinValidatedSchoolRoom(socket, requestedSchoolId);
             socket.join(`school:${requestedSchoolId}:office`);
             return;
           }
 
-          if (role === "teacher") {
+          if (teacher) {
             const requestedHomeroomId = typeof homeroomId === "string" ? homeroomId : "";
             if (!requestedHomeroomId) {
               socket.emit("join:error", { error: "Homeroom context required" });
@@ -148,7 +153,7 @@ export function setupSocketIO(httpServer: HttpServer): Server {
     });
 
     socket.on("disconnect", () => {
-      console.log(`[Socket.io] Disconnected: user ${userId}`);
+      console.log("[Socket.io] Authenticated client disconnected");
     });
   });
 

@@ -15,5 +15,6 @@ describe("AI chat SSE latency guard", () => {
     const uses = source.match(/^\s*startSse\(res/gm) || [];
     assert.equal(uses.length, 2);
     assert.doesNotMatch(source, /"Cache-Control": "no-cache",\s*Connection: "keep-alive"/);
+    assert.match(source, /"Cache-Control": "no-store, no-transform"/);
   });
 });

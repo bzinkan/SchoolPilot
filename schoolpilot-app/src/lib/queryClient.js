@@ -1,8 +1,8 @@
 import { QueryClient } from '@tanstack/react-query';
 import api from '../shared/utils/api';
 
-async function apiRequest(method, url, data) {
-  const res = await api({ method, url, data });
+async function apiRequest(method, url, data, config = {}) {
+  const res = await api({ ...config, method, url, data });
   return res.data;
 }
 

@@ -1,10 +1,11 @@
 import type { ErrorRequestHandler } from "express";
 import errorMonitor from "../services/errorMonitor.js";
+import { safeErrorMetadata } from "../util/safeLogging.js";
 
 export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
   const reqId = req.requestId;
   // Prefix the log with the correlation id so it's greppable in CloudWatch.
-  console.error(`Error [req:${reqId ?? "n/a"}]:`, err);
+  console.error(`Error [req:${reqId ?? "n/a"}]:`, safeErrorMetadata(err));
 
   // Track in error monitor for alerting
   const status = err.status || err.statusCode || 500;

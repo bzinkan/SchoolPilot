@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { safeErrorMetadata } from "../../util/safeLogging.js";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireRole } from "../../middleware/requireRole.js";
@@ -36,6 +37,7 @@ import {
 import { getEffectiveClasspilotScheduleWindow } from "../../services/classpilotScheduleChanges.js";
 import { localDateTimeUtc } from "../../util/schoolTime.js";
 import { updateAndFanoutSessionFabSettings } from "../../services/classpilotFab.js";
+import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
 
 const router = Router();
 
@@ -125,13 +127,12 @@ function kickSummaryDispatch(schoolId: string, teachingSessionId: string) {
   ).catch((error) => {
     // The durable scheduler outbox remains authoritative if the immediate kick
     // cannot run; never fail or duplicate an already committed End response.
-    console.warn(`[SessionSummary] Immediate dispatch deferred for ${teachingSessionId}:`, error);
+    console.warn("[SessionSummary] Immediate dispatch deferred:", safeErrorMetadata(error));
   });
 }
 
 async function assertCanManageTeachingSession(req: any, res: any, session: any): Promise<void> {
-  const role = res.locals.membershipRole as string | undefined;
-  const isAdmin = req.authUser?.isSuperAdmin || role === "admin" || role === "school_admin";
+  const isAdmin = requestHasAnySchoolRole(req, res, ["admin", "school_admin"]);
   if (isAdmin) return;
   if (await isAuthorizedClasspilotSessionStaff(
     res.locals.schoolId!, session.id, req.authUser!.id
@@ -285,8 +286,7 @@ async function startTeachingSessionWithOverlapGuard(req: any, res: any) {
     await assertManualStartWindow(group);
   }
 
-  const role = res.locals.membershipRole as string | undefined;
-  const admin = req.authUser?.isSuperAdmin || role === "admin" || role === "school_admin";
+  const admin = requestHasAnySchoolRole(req, res, ["admin", "school_admin"]);
   const scheduledTeacherId = occurrence?.teacherId || group.teacherId;
   const coTeachers = await getGroupTeachers(group.id);
   const assignedToActor = scheduledPath
@@ -558,8 +558,7 @@ router.post("/:id/end", ...auth, async (req, res, next) => {
       return res.status(404).json({ error: "Session not found" });
     }
     await assertCanManageTeachingSession(req, res, owned);
-    const role = res.locals.membershipRole as string | undefined;
-    const adminEnd = req.authUser?.isSuperAdmin || role === "admin" || role === "school_admin";
+    const adminEnd = requestHasAnySchoolRole(req, res, ["admin", "school_admin"]);
     const finalizationReason = owned.scheduledDate
       ? adminEnd && owned.teacherId !== req.authUser!.id ? "admin_end" as const : "teacher_end" as const
       : "manual_end" as const;

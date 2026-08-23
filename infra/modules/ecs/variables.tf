@@ -84,3 +84,11 @@ variable "telegram_bot_token_parameter_arn" {
   type    = string
   default = ""
 }
+variable "classpilot_turn_hosts" {
+  type    = string
+  default = ""
+}
+variable "classpilot_turn_rest_secret_arn" {
+  type    = string
+  default = ""
+}

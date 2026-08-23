@@ -6,6 +6,7 @@ import { randomUUID, createHash } from "crypto";
 import { readFileSync } from "fs";
 import { sendEmail } from "./email.js";
 import { captureError, flushSentry } from "./sentry.js";
+import { safeErrorMetadata } from "../util/safeLogging.js";
 import {
   createDefaultMonitorAggregation,
   type MonitorAggregationAdapter,
@@ -132,8 +133,6 @@ type MonitorCorrelation = {
   method?: string;
   path?: string;
   statusCode?: number;
-  schoolId?: string;
-  userId?: string;
 };
 
 type FingerprintFields = {
@@ -321,18 +320,6 @@ export function sanitizeMonitorString(input: string): string {
     .replace(IPV4_RE, "[ip]");
 }
 
-function persistenceErrorSummary(err: unknown): string {
-  const error = err as NodeJS.ErrnoException & { cause?: unknown };
-  const cause = error?.cause as (NodeJS.ErrnoException & { message?: string }) | undefined;
-  const parts = [
-    error?.message,
-    error?.code ? `code=${error.code}` : undefined,
-    cause?.message ? `cause=${cause.message}` : undefined,
-    cause?.code ? `causeCode=${cause.code}` : undefined,
-  ].filter(Boolean);
-  return limit(sanitizeMonitorString(parts.join(" | ") || String(err)), 700);
-}
-
 function normalizeOptionalString(value: unknown, max = MAX_SAFE_CONTEXT_CHARS): string | undefined {
   if (value === undefined || value === null) return undefined;
   const sanitized = limit(sanitizeMonitorString(String(value)), max).trim();
@@ -480,8 +467,6 @@ export function normalizeMonitorEvent(
     method: normalizeOptionalString(context.method)?.toUpperCase(),
     path: normalizeMonitorPath(context.path),
     statusCode: normalizeStatusCode(context),
-    schoolId: normalizeOptionalString(context.schoolId),
-    userId: normalizeOptionalString(context.userId),
   };
   const safeContext = safeContextFrom(context);
   const { fingerprint, fields } = fingerprintFieldsFrom(category, sanitizedStack, correlation, safeContext);
@@ -514,8 +499,6 @@ function contextPairs(event: NormalizedMonitorEvent): string[] {
   add("method", event.correlation.method);
   add("path", event.correlation.path);
   add("status", event.correlation.statusCode);
-  add("schoolId", event.correlation.schoolId);
-  add("userId", event.correlation.userId);
   add("fingerprint", event.fingerprint);
   if (event.context) {
     for (const [key, value] of Object.entries(event.context)) add(key, value);
@@ -565,13 +548,15 @@ async function persistErrorLog(event: NormalizedMonitorEvent): Promise<PersistRe
       method: event.correlation.method ?? null,
       path: event.correlation.path ?? null,
       statusCode: event.correlation.statusCode ?? null,
-      schoolId: event.correlation.schoolId ?? null,
-      userId: event.correlation.userId ?? null,
+      // Identifier-bearing legacy columns remain nullable for schema
+      // compatibility, but operational telemetry never populates them.
+      schoolId: null,
+      userId: null,
       context: event.context ?? null,
     });
     return "persisted";
   } catch (err) {
-    console.error("[ErrorMonitor] Failed to persist error_log:", persistenceErrorSummary(err));
+    console.error("[ErrorMonitor] Failed to persist error_log:", safeErrorMetadata(err));
     return "failed";
   } finally {
     inFlightPersists--;
@@ -763,7 +748,7 @@ export class ErrorMonitor {
         this.persist(event)
           .then((result) => this.recordPersistResult(event, result ?? "persisted"))
           .catch((err) => {
-            console.error("[ErrorMonitor] Persist task failed:", err);
+            console.error("[ErrorMonitor] Persist task failed:", safeErrorMetadata(err));
             this.recordPersistResult(event, "failed");
           })
       );
@@ -772,8 +757,6 @@ export class ErrorMonitor {
     this.capture(event.sentryError, {
       category: event.category,
       requestId: event.correlation.requestId,
-      schoolId: event.correlation.schoolId,
-      userId: event.correlation.userId,
       fingerprint: event.fingerprint,
       release: event.runtime.release,
       instanceId: event.runtime.instanceId,
@@ -940,7 +923,7 @@ export class ErrorMonitor {
   private trackTask(task: Promise<unknown>): void {
     const tracked = task
       .catch((err) => {
-        console.error("[ErrorMonitor] Background monitor task failed:", err);
+        console.error("[ErrorMonitor] Background monitor task failed:", safeErrorMetadata(err));
       })
       .then(() => undefined)
       .finally(() => this.pending.delete(tracked));

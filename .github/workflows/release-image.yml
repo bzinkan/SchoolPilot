@@ -1,0 +1,135 @@
+name: Immutable Release Image
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: immutable-release-image-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  build-sign-publish:
+    name: Build, scan, sign, and publish once
+    if: >-
+      vars.IMMUTABLE_RELEASE_IMAGE_ENABLED == 'true' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    environment: release-image
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || 'schoolpilot-production-api' }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER || 'schoolpilot-production-cluster' }}
+      API_SERVICE: ${{ vars.API_SERVICE || 'schoolpilot-production-api' }}
+      WORKER_SERVICE: ${{ vars.WORKER_SERVICE || 'schoolpilot-production-scheduler-worker' }}
+      APPLICATION_SHA: ${{ github.event.workflow_run.head_sha }}
+
+    steps:
+      - name: Checkout the exact green commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Configure short-lived AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.AWS_RELEASE_IMAGE_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build the release image once
+        env:
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+          image_ref="$ECR_REGISTRY/$ECR_REPOSITORY:$APPLICATION_SHA"
+          docker build \
+            --label "org.opencontainers.image.revision=$APPLICATION_SHA" \
+            --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --tag "$image_ref" .
+          echo "IMAGE_REF=$image_ref" >> "$GITHUB_ENV"
+
+      - name: Block fixable high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_REF }}
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Generate CycloneDX SBOM from the exact local image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_REF }}
+          format: cyclonedx
+          output: schoolpilot-api.sbom.cdx.json
+          exit-code: '0'
+
+      - name: Push and resolve the immutable digest
+        id: publish
+        run: |
+          set -euo pipefail
+          docker push "$IMAGE_REF"
+          digest="$(aws ecr describe-images \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids "imageTag=$APPLICATION_SHA" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "IMAGE_DIGEST_REF=${IMAGE_REF%:*}@$digest" >> "$GITHUB_ENV"
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.10.0
+
+      - name: Keyless-sign image and attest its SBOM
+        run: |
+          set -euo pipefail
+          cosign sign --yes "$IMAGE_DIGEST_REF"
+          cosign attest --yes \
+            --type cyclonedx \
+            --predicate schoolpilot-api.sbom.cdx.json \
+            "$IMAGE_DIGEST_REF"
+
+      - name: Record active rollback digests
+        id: rollback
+        run: |
+          set -euo pipefail
+          services="$(aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" \
+            --services "$API_SERVICE" "$WORKER_SERVICE")"
+          api_td="$(jq -r '.services[] | select(.serviceName == env.API_SERVICE) | .taskDefinition' <<<"$services")"
+          worker_td="$(jq -r '.services[] | select(.serviceName == env.WORKER_SERVICE) | .taskDefinition' <<<"$services")"
+          api_image="$(aws ecs describe-task-definition --task-definition "$api_td" --query 'taskDefinition.containerDefinitions[?name==`api`].image | [0]' --output text)"
+          worker_image="$(aws ecs describe-task-definition --task-definition "$worker_td" --query 'taskDefinition.containerDefinitions[?name==`scheduler-worker`].image | [0]' --output text)"
+          jq -n \
+            --arg schemaVersion '1' \
+            --arg applicationSha "$APPLICATION_SHA" \
+            --arg imageDigest '${{ steps.publish.outputs.digest }}' \
+            --arg imageRef "$IMAGE_DIGEST_REF" \
+            --arg apiRollbackImage "$api_image" \
+            --arg workerRollbackImage "$worker_image" \
+            --arg workflowRun "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            '{schemaVersion: ($schemaVersion|tonumber), applicationSha: $applicationSha, imageDigest: $imageDigest, imageRef: $imageRef, previous: {api: $apiRollbackImage, worker: $workerRollbackImage}, workflowRun: $workflowRun}' \
+            > schoolpilot-release-image.json
+
+      - name: Upload immutable release evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: schoolpilot-release-image-${{ env.APPLICATION_SHA }}
+          path: |
+            schoolpilot-release-image.json
+            schoolpilot-api.sbom.cdx.json
+          if-no-files-found: error
+          retention-days: 90

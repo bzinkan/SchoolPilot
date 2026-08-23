@@ -1,62 +1,132 @@
 /**
- * One-time authorization code exchange for OAuth callbacks.
+ * Distributed one-time authorization-code exchange for OAuth callbacks.
  *
- * Replaces the previous flow which redirected with `?token=<JWT>` in the URL.
- * That pattern leaked the JWT to:
- *   - Browser history (anyone with device access could grab it)
- *   - HTTP Referer headers sent to third parties on subsequent navigation
- *   - Server access logs (CloudFront, ALB, third-party analytics)
- *   - Native app deep-link logs on Android/iOS (visible to other apps with package
- *     visibility on some configurations)
+ * Production codes are stored in Redis so an OAuth callback handled by one
+ * API task can be exchanged on any other task. Redis keys are HMAC-derived;
+ * neither the bearer code nor its JWT is ever written to logs. GETDEL makes
+ * consumption atomic across the fleet.
  *
- * New flow:
- *   1. After successful OAuth, server creates a short-lived random code (60s TTL),
- *      stores the JWT in memory keyed by code.
- *   2. Server redirects with `?code=<one_time_code>` instead.
- *   3. Client POSTs the code to /auth/exchange-code, gets JWT in response BODY.
- *   4. Code is invalidated immediately on first use; expires after 60s if unused.
- *
- * Why in-memory now: single ECS task currently. When scaling to multi-instance,
- * move to Redis with the same SETEX-style key TTL. The interface here is
- * intentionally Redis-shaped to make that swap trivial.
+ * Development and tests may use the bounded in-process fallback only when
+ * Redis is not configured. Production fails closed instead of issuing a code
+ * that another task could not consume.
  */
 import crypto from "crypto";
+import { redisCommand } from "../middleware/rateLimiter.js";
 
 interface CodeRecord {
   token: string;
   expiresAt: number;
 }
 
-const CODE_TTL_MS = 60 * 1000; // 60 seconds — long enough for a network round-trip, short enough to limit damage if logged
-const codeStore = new Map<string, CodeRecord>();
+const CODE_TTL_SECONDS = 60;
+const CODE_TTL_MS = CODE_TTL_SECONDS * 1_000;
+const MAX_LOCAL_CODES = 1_024;
+const localCodeStore = new Map<string, CodeRecord>();
 
-// Periodic cleanup of expired codes. Do not make this maintenance timer the
-// reason a migration/test process remains alive after all servers are closed.
-const authCodeCleanupTimer = setInterval(() => {
-  const now = Date.now();
-  for (const [code, record] of codeStore) {
-    if (record.expiresAt < now) codeStore.delete(code);
-  }
-}, 30 * 1000);
-authCodeCleanupTimer.unref?.();
-
-/**
- * Stash a JWT under a fresh one-time code. Returns the code (URL-safe random).
- */
-export function issueAuthCode(token: string): string {
-  const code = crypto.randomBytes(32).toString("base64url");
-  codeStore.set(code, { token, expiresAt: Date.now() + CODE_TTL_MS });
-  return code;
+function productionMode(): boolean {
+  return process.env.NODE_ENV === "production";
 }
 
-/**
- * Exchange a code for the stored JWT. Code is invalidated on first use.
- * Returns null if the code is unknown, expired, or already used.
- */
-export function consumeAuthCode(code: string): string | null {
-  const record = codeStore.get(code);
+function redisConfigured(): boolean {
+  return Boolean(process.env.REDIS_URL);
+}
+
+function hmacSecret(): string {
+  const secret =
+    process.env.AUTH_CODE_HMAC_SECRET ||
+    process.env.SESSION_SECRET ||
+    process.env.JWT_SECRET;
+  if (!secret && productionMode()) {
+    throw new Error("AUTH_CODE_HMAC_SECRET is required in production");
+  }
+  return secret || "schoolpilot-development-auth-code-secret";
+}
+
+function redisKey(code: string): string {
+  const digest = crypto
+    .createHmac("sha256", hmacSecret())
+    .update(code)
+    .digest("base64url");
+  const prefix = process.env.REDIS_PREFIX ?? "schoolpilot";
+  return `${prefix}:auth-code:${digest}`;
+}
+
+function pruneLocalStore(now = Date.now()): void {
+  for (const [code, record] of localCodeStore) {
+    if (record.expiresAt <= now) localCodeStore.delete(code);
+  }
+  while (localCodeStore.size >= MAX_LOCAL_CODES) {
+    const oldest = localCodeStore.keys().next().value as string | undefined;
+    if (!oldest) break;
+    localCodeStore.delete(oldest);
+  }
+}
+
+/** Stash a JWT under a fresh URL-safe one-time code. */
+export async function issueAuthCode(token: string): Promise<string> {
+  if (typeof token !== "string" || token.length === 0) {
+    throw new TypeError("A non-empty token is required");
+  }
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const code = crypto.randomBytes(32).toString("base64url");
+    if (redisConfigured()) {
+      let result: unknown;
+      try {
+        result = await redisCommand(
+          ["SET", redisKey(code), token, "EX", String(CODE_TTL_SECONDS), "NX"],
+          { readyTimeoutMs: 1_000 }
+        );
+      } catch {
+        throw new Error("One-time authorization code service unavailable");
+      }
+      if (result === "OK") return code;
+      if (result === null) continue;
+      throw new Error("One-time authorization code service unavailable");
+    }
+
+    if (productionMode()) {
+      throw new Error("One-time authorization code service unavailable");
+    }
+    pruneLocalStore();
+    localCodeStore.set(code, {
+      token,
+      expiresAt: Date.now() + CODE_TTL_MS,
+    });
+    return code;
+  }
+
+  throw new Error("Unable to allocate a one-time authorization code");
+}
+
+/** Atomically exchange a code for its JWT. */
+export async function consumeAuthCode(code: string): Promise<string | null> {
+  if (typeof code !== "string" || code.length === 0) return null;
+
+  if (redisConfigured()) {
+    let result: unknown;
+    try {
+      result = await redisCommand(["GETDEL", redisKey(code)], {
+        readyTimeoutMs: 1_000,
+      });
+    } catch {
+      throw new Error("One-time authorization code service unavailable");
+    }
+    if (typeof result === "string") return result;
+    if (result === null) return null;
+    throw new Error("One-time authorization code service unavailable");
+  }
+
+  if (productionMode()) {
+    throw new Error("One-time authorization code service unavailable");
+  }
+  const record = localCodeStore.get(code);
   if (!record) return null;
-  codeStore.delete(code); // single-use
-  if (record.expiresAt < Date.now()) return null;
-  return record.token;
+  localCodeStore.delete(code);
+  return record.expiresAt > Date.now() ? record.token : null;
+}
+
+export function resetAuthCodeStoreForTests(): void {
+  if (process.env.NODE_ENV === "production") return;
+  localCodeStore.clear();
 }

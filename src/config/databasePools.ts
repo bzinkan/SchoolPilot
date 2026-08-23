@@ -1,4 +1,11 @@
-import { intEnv, schedulerEnabled } from "./runtime.js";
+import {
+  intEnv,
+  legacyMigrationsOnly,
+  migrationsOnStartup,
+  migrationsOnly,
+  schedulerEnabled,
+} from "./runtime.js";
+import capacityProfile from "./databaseCapacity.json" with { type: "json" };
 
 export type DatabaseProcessRole = "api" | "worker";
 
@@ -6,14 +13,28 @@ const DEFAULT_POOL_IDLE_TIMEOUT_MS = 10_000;
 const API_MAIN_POOL_IDLE_TIMEOUT_MS = 75_000;
 
 export const DATABASE_POOL_CAPS = Object.freeze({
-  api: Object.freeze({ main: 18, session: 2, scheduler: 1, schedulerLock: 1 }),
-  worker: Object.freeze({ main: 2, session: 1, scheduler: 5, schedulerLock: 8 }),
+  // API tasks do not own scheduler pools. schedulerDb exposes lazy fail-closed
+  // proxies so an accidental scheduler query in an API process cannot silently
+  // consume connections outside this reviewed capacity model.
+  api: Object.freeze(capacityProfile.api),
+  worker: Object.freeze(capacityProfile.worker),
 });
+
+export const DATABASE_CAPACITY_PROFILE = Object.freeze(capacityProfile);
 
 export function databaseProcessRole(
   env: NodeJS.ProcessEnv = process.env
 ): DatabaseProcessRole {
   return schedulerEnabled(env) ? "worker" : "api";
+}
+
+export function schedulerDatabaseAllowed(
+  env: NodeJS.ProcessEnv = process.env
+): boolean {
+  return databaseProcessRole(env) === "worker" ||
+    migrationsOnly(env) ||
+    migrationsOnStartup(env) ||
+    legacyMigrationsOnly(env);
 }
 
 export function databasePoolLimits(env: NodeJS.ProcessEnv = process.env) {
@@ -128,8 +149,8 @@ export function databasePoolIdleTimeouts(
 }
 
 export function maximumLaunchDatabaseConnections(
-  apiTasks = 6,
-  workerTasks = 1
+  apiTasks = capacityProfile.apiMaxTasks,
+  workerTasks = capacityProfile.workerTasks
 ): number {
   const api = DATABASE_POOL_CAPS.api;
   const worker = DATABASE_POOL_CAPS.worker;

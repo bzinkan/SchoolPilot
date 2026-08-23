@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Button } from "../../../components/ui/button";
@@ -113,6 +113,7 @@ const settingsSchema = z.object({
   aiSafetyEmailsEnabled: z.boolean().optional(),
   autoBlockUnsafeUrls: z.boolean().optional(),
   sharedChromebookSignInEnabled: z.boolean().optional(),
+  centralEmailRecipientUserId: z.string().optional(),
 });
 
 export default function Settings() {
@@ -132,7 +133,6 @@ export default function Settings() {
   const [selectedCourseId, setSelectedCourseId] = useState("");
   const [selectedResourceIds, setSelectedResourceIds] = useState(new Set());
   const [classroomFlightPathName, setClassroomFlightPathName] = useState("");
-  const [centralRecipientUserId, setCentralRecipientUserId] = useState("none");
 
 
   const { data: settings, isLoading } = useQuery({
@@ -186,6 +186,7 @@ export default function Settings() {
       aiSafetyEmailsEnabled: settings?.aiSafetyEmailsEnabled !== false,
       autoBlockUnsafeUrls: settings?.autoBlockUnsafeUrls !== false,
       sharedChromebookSignInEnabled: settings?.sharedChromebookSignInEnabled === true,
+      centralEmailRecipientUserId: settings?.centralEmailRecipientUserId || "none",
     },
   });
 
@@ -202,8 +203,8 @@ export default function Settings() {
         aiSafetyEmailsEnabled: settings.aiSafetyEmailsEnabled !== false,
         autoBlockUnsafeUrls: settings.autoBlockUnsafeUrls !== false,
         sharedChromebookSignInEnabled: settings.sharedChromebookSignInEnabled === true,
+        centralEmailRecipientUserId: settings.centralEmailRecipientUserId || "none",
       });
-      setCentralRecipientUserId(settings.centralEmailRecipientUserId || "none");
     }
   }, [settings, form]);
 
@@ -211,9 +212,11 @@ export default function Settings() {
     mutationFn: async ({ formData: data, submittedCentralRecipientUserId }) => {
       // Convert days to hours for storage
       const retentionHours = String(parseInt(data.retentionDays) * 24);
+      const settingsData = { ...data };
+      delete settingsData.centralEmailRecipientUserId;
 
       const payload = {
-        ...data,
+        ...settingsData,
         retentionHours,
         maxTabsPerStudent: data.maxTabsPerStudent || null,
         blockedDomains: data.blockedDomains
@@ -400,7 +403,14 @@ export default function Settings() {
     });
   };
 
-  const sharedSignInEnabled = form.watch("sharedChromebookSignInEnabled");
+  const sharedSignInEnabled = useWatch({
+    control: form.control,
+    name: "sharedChromebookSignInEnabled",
+  });
+  const centralRecipientUserId = useWatch({
+    control: form.control,
+    name: "centralEmailRecipientUserId",
+  }) || "none";
   const managedPolicy = buildManagedPolicy(enrollmentKeySettings);
   const setupKey = enrollmentKeySettings?.key || "";
   const centralRecipientOptions = buildCentralRecipientOptions(
@@ -410,10 +420,12 @@ export default function Settings() {
   );
 
   const handleCentralRecipientChange = (nextUserId) => {
-    setCentralRecipientUserId((currentUserId) => {
-      const normalizedUserId = typeof nextUserId === "string" ? nextUserId.trim() : "";
-      return normalizedUserId || currentUserId;
-    });
+    const normalizedUserId = typeof nextUserId === "string" ? nextUserId.trim() : "";
+    if (normalizedUserId) {
+      form.setValue("centralEmailRecipientUserId", normalizedUserId, {
+        shouldDirty: true,
+      });
+    }
   };
 
   const copyText = async (text, label) => {

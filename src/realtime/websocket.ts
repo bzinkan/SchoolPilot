@@ -1,6 +1,8 @@
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import type { Server } from "http";
 import { randomUUID } from "crypto";
+import { safeErrorMetadata } from "../util/safeLogging.js";
+import { negotiateClasspilotSurfaceProtocol } from "../services/classpilotProtocol.js";
 import {
   InvalidTokenError,
   TokenExpiredError,
@@ -78,6 +80,7 @@ import {
   resolveClasspilotEntitlement,
 } from "../services/classpilotEntitlement.js";
 import { registerClasspilotCommandUpdateScheduler } from "../services/classpilotCommandUpdateScheduler.js";
+import { classpilotAckEnvelopeMatchesBinding } from "../services/classpilotAckBinding.js";
 import {
   CLASSPILOT_WS_MAX_PAYLOAD_BYTES,
   normalizeClasspilotSignalingIdentifier,
@@ -95,10 +98,77 @@ import {
   verifyClasspilotLiveViewNegotiation,
 } from "../services/classpilotLiveViewNegotiation.js";
 import { stopActiveClasspilotLiveViewNegotiations } from "../services/classpilotLiveViewStop.js";
+import { resolveClasspilotStaffWebSocketAuthorization } from "../services/classpilotWebSocketAuthorization.js";
+import { registerCacheInvalidationHandler } from "./cacheInvalidation.js";
 
 // Ping/pong keepalive constants
 const WS_PING_INTERVAL_MS = 30_000; // 30 seconds
 const WS_PONG_TIMEOUT_MS = 10_000;  // 10 seconds to respond
+export const CLASSPILOT_PASSIVE_AUTH_TTL_MS = 30_000;
+const MAX_PASSIVE_AUTH_SCHOOLS = 4_096;
+const MAX_PASSIVE_AUTH_INFLIGHT = 4_096;
+
+const passiveAuthorizationGenerationBySchool = new Map<string, number>();
+const passiveAuthorizationInflight = new Map<string, Promise<boolean>>();
+
+function passiveAuthorizationGeneration(schoolId: string): number {
+  return passiveAuthorizationGenerationBySchool.get(schoolId) ?? 0;
+}
+
+export function invalidatePassiveWebSocketAuthorizationLocal(schoolId: string): void {
+  const next = passiveAuthorizationGeneration(schoolId) + 1;
+  passiveAuthorizationGenerationBySchool.delete(schoolId);
+  passiveAuthorizationGenerationBySchool.set(schoolId, next);
+  if (passiveAuthorizationGenerationBySchool.size > MAX_PASSIVE_AUTH_SCHOOLS) {
+    const oldest = passiveAuthorizationGenerationBySchool.keys().next().value;
+    if (oldest) passiveAuthorizationGenerationBySchool.delete(oldest);
+  }
+}
+
+registerCacheInvalidationHandler((target) => {
+  if (target.cache === "classpilot-passive-authorization") {
+    invalidatePassiveWebSocketAuthorizationLocal(target.schoolId);
+  }
+});
+
+export function hasFreshPassiveWebSocketAuthorization(
+  client: Pick<
+    WSClient,
+    "schoolId" | "passiveAuthorizationExpiresAt" | "passiveAuthorizationGeneration"
+  >,
+  now = Date.now()
+): boolean {
+  return Boolean(
+    client.schoolId &&
+    client.passiveAuthorizationExpiresAt &&
+    client.passiveAuthorizationExpiresAt > now &&
+    client.passiveAuthorizationGeneration === passiveAuthorizationGeneration(client.schoolId)
+  );
+}
+
+function rememberPassiveWebSocketAuthorization(client: WSClient, now = Date.now()): void {
+  if (!client.schoolId) return;
+  client.passiveAuthorizationGeneration = passiveAuthorizationGeneration(client.schoolId);
+  client.passiveAuthorizationExpiresAt = now + CLASSPILOT_PASSIVE_AUTH_TTL_MS;
+}
+
+async function singleFlightPassiveAuthorization(
+  key: string,
+  load: () => Promise<boolean>
+): Promise<{ authorized: boolean; joined: boolean; bypassed: boolean }> {
+  const existing = passiveAuthorizationInflight.get(key);
+  if (existing) return { authorized: await existing, joined: true, bypassed: false };
+  if (passiveAuthorizationInflight.size >= MAX_PASSIVE_AUTH_INFLIGHT) {
+    return { authorized: await load(), joined: false, bypassed: true };
+  }
+  const pending = load().finally(() => {
+    if (passiveAuthorizationInflight.get(key) === pending) {
+      passiveAuthorizationInflight.delete(key);
+    }
+  });
+  passiveAuthorizationInflight.set(key, pending);
+  return { authorized: await pending, joined: false, bypassed: false };
+}
 
 function emitWebSocketMetric(metricName: "WebSocketDisconnect" | "WebSocketError") {
   const environment = process.env.APP_ENV || process.env.NODE_ENV || "development";
@@ -196,6 +266,16 @@ export async function activeStaffWebSocketRole(
   resolveEntitlement: StaffEntitlementResolver = defaultStaffEntitlementResolver
 ): Promise<Exclude<WsRole, "student"> | null> {
   if (!client.schoolId || !client.userId || client.role === "student") return null;
+  if (
+    resolveMembership === getMembershipByUserAndSchool &&
+    resolveEntitlement === defaultStaffEntitlementResolver
+  ) {
+    return resolveClasspilotStaffWebSocketAuthorization({
+      schoolId: client.schoolId,
+      userId: client.userId,
+      isSuperAdmin: client.role === "super_admin",
+    });
+  }
   if (!(await resolveEntitlement(client.schoolId)).entitled) return null;
   if (client.role === "super_admin") return "super_admin";
   const membership = await resolveMembership(client.userId, client.schoolId);
@@ -212,11 +292,34 @@ export function setupWebSocket(
   });
   const presenceStore = options.presenceStore ?? classpilotStaffPresenceStore;
 
-  let activity = { connected: 0, studentAuthenticated: 0, staffAuthenticated: 0 };
+  let activity = {
+    connected: 0,
+    studentAuthenticated: 0,
+    staffAuthenticated: 0,
+    passiveAuthorizationCacheHits: 0,
+    passiveAuthorizationLoads: 0,
+    passiveAuthorizationJoins: 0,
+    passiveAuthorizationBypasses: 0,
+    passiveAuthorizationDenied: 0,
+  };
   const activityTimer = setInterval(() => {
     const snapshot = activity;
-    activity = { connected: 0, studentAuthenticated: 0, staffAuthenticated: 0 };
-    if (snapshot.connected === 0 && snapshot.studentAuthenticated === 0 && snapshot.staffAuthenticated === 0) return;
+    activity = {
+      connected: 0,
+      studentAuthenticated: 0,
+      staffAuthenticated: 0,
+      passiveAuthorizationCacheHits: 0,
+      passiveAuthorizationLoads: 0,
+      passiveAuthorizationJoins: 0,
+      passiveAuthorizationBypasses: 0,
+      passiveAuthorizationDenied: 0,
+    };
+    if (
+      snapshot.connected === 0 &&
+      snapshot.studentAuthenticated === 0 &&
+      snapshot.staffAuthenticated === 0 &&
+      snapshot.passiveAuthorizationLoads === 0
+    ) return;
     console.log(JSON.stringify({
       type: "websocket_activity",
       intervalSeconds: 60,
@@ -478,7 +581,7 @@ export function setupWebSocket(
         broadcastToStudentsLocal(target.schoolId, message, undefined, target.targetDeviceIds);
         break;
       case "device":
-        console.log(`[Redis] Delivering ${msgType} to device ${target.deviceId}`);
+        console.log(`[Redis] Delivering exact-bound ${msgType}`);
         sendToDeviceLocal(target.schoolId, target.deviceId, message);
         break;
       case "student-disconnect":
@@ -515,7 +618,7 @@ export function setupWebSocket(
     }
 
     if (!isClassPilotWebSocketPath(pathname)) {
-      console.warn("[WebSocket] Rejected upgrade for invalid path:", pathname);
+      console.warn("[WebSocket] Rejected upgrade for invalid path");
       socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
       socket.destroy();
       return;
@@ -525,7 +628,7 @@ export function setupWebSocket(
     const origin = request.headers.origin;
     const isExtensionOrigin = origin?.startsWith("chrome-extension://");
     if (wsAllowlist.length > 0 && origin && !isExtensionOrigin && !wsAllowlist.includes(origin)) {
-      console.warn("[WebSocket] Rejected upgrade from unauthorized origin:", origin);
+      console.warn("[WebSocket] Rejected upgrade from unauthorized origin");
       socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
       socket.destroy();
       return;
@@ -668,6 +771,63 @@ export function setupWebSocket(
         )
       );
     };
+    const validatePassiveAuthorization = async (): Promise<boolean> => {
+      if (!client.authenticated || !client.schoolId) return false;
+      if (hasFreshPassiveWebSocketAuthorization(client)) {
+        activity.passiveAuthorizationCacheHits += 1;
+        return true;
+      }
+
+      const binding = client.role === "student"
+        ? {
+            role: client.role,
+            schoolId: client.schoolId,
+            studentId: client.studentId,
+            studentSessionId: client.studentSessionId,
+            deviceId: client.deviceId,
+            userId: undefined,
+          }
+        : {
+            role: client.role,
+            schoolId: client.schoolId,
+            studentId: undefined,
+            studentSessionId: undefined,
+            deviceId: undefined,
+            userId: client.userId,
+          };
+      const generation = passiveAuthorizationGeneration(binding.schoolId);
+      const key = binding.role === "student"
+        ? `student:${binding.schoolId}:${binding.studentId ?? ""}:${binding.studentSessionId ?? ""}:${binding.deviceId ?? ""}`
+        : `staff:${binding.schoolId}:${binding.userId ?? ""}:${binding.role}`;
+      const outcome = await singleFlightPassiveAuthorization(key, async () => {
+        if (binding.role === "student") {
+          return hasActiveStudentWebSocketBinding(binding);
+        }
+        return (await activeStaffWebSocketRole(binding)) === binding.role;
+      });
+      if (outcome.joined) activity.passiveAuthorizationJoins += 1;
+      else if (outcome.bypassed) activity.passiveAuthorizationBypasses += 1;
+      else activity.passiveAuthorizationLoads += 1;
+
+      const bindingUnchanged =
+        client.authenticated &&
+        client.role === binding.role &&
+        client.schoolId === binding.schoolId &&
+        client.studentId === binding.studentId &&
+        client.studentSessionId === binding.studentSessionId &&
+        client.deviceId === binding.deviceId &&
+        client.userId === binding.userId;
+      if (!outcome.authorized || !bindingUnchanged) {
+        activity.passiveAuthorizationDenied += 1;
+        return false;
+      }
+      // An invalidation racing the query prevents caching its result. The
+      // passive frame is harmless, and the next ping immediately reloads.
+      if (passiveAuthorizationGeneration(binding.schoolId) === generation) {
+        rememberPassiveWebSocketAuthorization(client);
+      }
+      return true;
+    };
     activity.connected += 1;
 
     // Start ping/pong keepalive
@@ -685,24 +845,11 @@ export function setupWebSocket(
       if (!client.authenticated) return;
       if (client.role === "student") {
         if (studentPongRevalidation || !client.schoolId || !client.studentId) return;
-        const binding = {
-          role: client.role,
-          schoolId: client.schoolId,
-          studentId: client.studentId,
-          studentSessionId: client.studentSessionId,
-          deviceId: client.deviceId,
-        } as const;
-        const pending = hasActiveStudentWebSocketBinding(binding)
+        const pending = validatePassiveAuthorization()
           .then((active) => {
-            if (
-              client.schoolId !== binding.schoolId ||
-              client.studentId !== binding.studentId ||
-              client.studentSessionId !== binding.studentSessionId ||
-              client.deviceId !== binding.deviceId
-            ) {
-              return;
+            if (!active && client.schoolId && client.studentId) {
+              closeStudentSocketsLocal(client.schoolId, [client.studentId]);
             }
-            if (!active) closeStudentSocketsLocal(binding.schoolId, [binding.studentId]);
           })
           .catch((error) => {
             const safeError = studentAuthenticationServiceError(error);
@@ -721,17 +868,9 @@ export function setupWebSocket(
         return;
       }
       if (staffPongRevalidation) return;
-      const binding = { role: client.role, schoolId: client.schoolId, userId: client.userId } as const;
-      const pending = activeStaffWebSocketRole(binding)
-        .then((currentRole) => {
-          if (
-            client.schoolId !== binding.schoolId ||
-            client.userId !== binding.userId ||
-            client.role !== binding.role
-          ) {
-            return;
-          }
-          if (currentRole !== binding.role) {
+      const pending = validatePassiveAuthorization()
+        .then((authorized) => {
+          if (!authorized) {
             client.authenticated = false;
             clearStaffPresence();
             removeWsClient(ws);
@@ -831,15 +970,31 @@ export function setupWebSocket(
                   studentSessionId: bootstrap.studentSessionId,
                 });
 
+                const protocol = negotiateClasspilotSurfaceProtocol({
+                  surface: "websocket_auth",
+                  payload: message,
+                  scope: {
+                    serverOrigin: process.env.PUBLIC_BASE_URL,
+                    schoolId,
+                    deviceId,
+                    studentId: payload.studentId,
+                    studentSessionId: bootstrap.studentSessionId,
+                  },
+                });
+
                 ws.send(JSON.stringify({
                   type: "auth-success",
                   role: "student",
                   schoolId,
                   studentId: payload.studentId,
                   studentSessionId: bootstrap.studentSessionId,
+                  ...protocol,
                   exactBinding: {
+                    schoolId,
+                    deviceId,
                     studentId: payload.studentId,
                     studentSessionId: bootstrap.studentSessionId,
+                    controlRevision: bootstrap.classroomState?.revision ?? 0,
                   },
                   settings: {
                     maxTabsPerStudent: bootstrap.schoolSettings?.maxTabsPerStudent
@@ -955,7 +1110,10 @@ export function setupWebSocket(
                   }
                 })
               ).catch((error) => {
-                console.error("[WebSocket] Scheduled class pickup on staff login failed:", error);
+                console.error(
+                  "[WebSocket] Scheduled class pickup on staff login failed:",
+                  safeErrorMetadata(error)
+                );
                 errorMonitor.trackError("scheduler_failure", error as Error, {
                   job: "scheduledClassLoginPickup",
                   schoolId,
@@ -963,7 +1121,7 @@ export function setupWebSocket(
                 });
               });
             } catch (error) {
-              console.error("[WebSocket] Staff auth error:", error);
+              console.error("[WebSocket] Staff auth error:", safeErrorMetadata(error));
               ws.send(JSON.stringify({ type: "auth-error", message: "Authentication failed" }));
               ws.close();
               return;
@@ -974,13 +1132,16 @@ export function setupWebSocket(
         // Every post-authentication message requires a current persisted role;
         // a cached teacher role must not survive demotion or deactivation.
         if (!client.authenticated) return;
+        const passiveMessage = message.type === "heartbeat" || message.type === "ping";
         if (
           client.role !== "student" &&
           message.type !== "auth"
         ) {
           try {
-            const currentRole = await activeStaffWebSocketRole(client);
-            if (currentRole !== client.role) {
+            const authorized = passiveMessage
+              ? await validatePassiveAuthorization()
+              : (await activeStaffWebSocketRole(client)) === client.role;
+            if (!authorized) {
               client.authenticated = false;
               clearStaffPresence();
               removeWsClient(ws);
@@ -1002,20 +1163,16 @@ export function setupWebSocket(
           }
         }
 
-        // --- Heartbeat handling ---
-        if (message.type === "heartbeat" || message.type === "ping") {
-          refreshStaffPresence();
-          ws.send(JSON.stringify({ type: "pong" }));
-          return;
-        }
-
         // Authentication is not a one-time authorization grant. Deactivating a
         // student ends the backing device session, so every subsequent
         // student-originating message must prove that exact binding is still
         // active before any chat/classroom/ack/WebRTC mutation can run.
         if (client.role === "student" && message.type !== "auth") {
           try {
-            if (!(await hasActiveStudentWebSocketBinding(client))) {
+            const authorized = passiveMessage
+              ? await validatePassiveAuthorization()
+              : await hasActiveStudentWebSocketBinding(client);
+            if (!authorized) {
               ws.send(JSON.stringify({
                 type: "auth-error",
                 message: "Student session is no longer active",
@@ -1037,6 +1194,16 @@ export function setupWebSocket(
             ws.close(1013, "Authentication service unavailable");
             return;
           }
+        }
+
+        // --- Passive heartbeat handling ---
+        // Only this non-mutating path may use the bounded 30-second cache.
+        // Every command, ACK, chat, subscription, and signaling frame above
+        // still performed a fresh authoritative check.
+        if (passiveMessage) {
+          refreshStaffPresence();
+          ws.send(JSON.stringify({ type: "pong" }));
+          return;
         }
 
         // --- Staff session subscriptions for session-scoped FAB events ---
@@ -1206,8 +1373,11 @@ export function setupWebSocket(
             studentId: client.studentId,
             studentSessionId: client.studentSessionId,
             exactBinding: {
+              schoolId: client.schoolId,
+              deviceId: client.deviceId,
               studentId: client.studentId,
               studentSessionId: client.studentSessionId,
+              controlRevision: reconciliation.state?.revision ?? 0,
             },
             classroomState: reconciliation.state,
           }));
@@ -1231,6 +1401,23 @@ export function setupWebSocket(
               message.data?.commandId ||
               ""
           ).trim();
+          if (!classpilotAckEnvelopeMatchesBinding(message, {
+            schoolId: client.schoolId,
+            studentId: client.studentId,
+            studentSessionId: client.studentSessionId,
+            deviceId: client.deviceId,
+          })) {
+            if (message.ackId) {
+              ws.send(JSON.stringify({
+                type: "command-ack-receipt",
+                ackId: String(message.ackId).slice(0, 128),
+                commandId,
+                accepted: false,
+                code: "COMMAND_ACK_BINDING_MISMATCH",
+              }));
+            }
+            return;
+          }
           const rawAckState = String(
             message.ackState ||
               message.status ||
@@ -1587,7 +1774,7 @@ export function setupWebSocket(
           return;
         }
       } catch (error) {
-        console.error("[WebSocket] Message error:", error);
+        console.error("[WebSocket] Message error:", safeErrorMetadata(error));
         if (!(error instanceof SyntaxError)) {
           emitWebSocketMetric("WebSocketError");
           errorMonitor.trackError("websocket_error", error, {
@@ -1631,7 +1818,7 @@ export function setupWebSocket(
     });
 
     ws.on("error", (error) => {
-      console.error("[WebSocket] Error:", error);
+      console.error("[WebSocket] Error:", safeErrorMetadata(error));
       emitWebSocketMetric("WebSocketError");
       errorMonitor.trackError("websocket_error", error);
       stopPingInterval(ws);

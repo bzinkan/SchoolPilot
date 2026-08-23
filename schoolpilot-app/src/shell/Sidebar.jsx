@@ -4,6 +4,7 @@ import { useLicenses } from '../contexts/LicenseContext';
 import { PRODUCT_CONFIG } from '../shared/utils/constants';
 import PassWidget from './widgets/PassWidget';
 import GoWidget from './widgets/GoWidget';
+import { hasMembershipRole } from '../shared/utils/schoolRoles';
 
 const NAV_ITEMS = {
   CLASSPILOT: [
@@ -41,8 +42,7 @@ export default function Sidebar({ open, onClose }) {
 
   const isSuperAdmin = user?.isSuperAdmin === true;
   const isSuperAdminView = location.pathname.startsWith('/super-admin');
-  const memberRole = activeMembership?.role;
-  const isAdmin = memberRole === 'admin' || memberRole === 'school_admin';
+  const isAdmin = hasMembershipRole(activeMembership, 'admin', 'school_admin');
 
   // Determine active product
   const activeProduct =

@@ -531,6 +531,10 @@ export const evidenceArtifacts = pgTable(
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
     schoolId: text("school_id").notNull(),
     studentId: text("student_id").notNull(),
+    // Internal authority metadata. Public evidence-packet serializers omit it.
+    deviceId: text("device_id"),
+    studentSessionId: varchar("student_session_id"),
+    bindingVersion: text("binding_version"),
     caseId: text("case_id"),
     sourceType: text("source_type").notNull(),
     sourceId: text("source_id"),
@@ -545,11 +549,33 @@ export const evidenceArtifacts = pgTable(
   },
   (table) => [
     index("evidence_artifacts_school_student_idx").on(table.schoolId, table.studentId),
+    index("evidence_artifacts_exact_binding_idx").on(
+      table.schoolId,
+      table.studentId,
+      table.studentSessionId,
+      table.capturedAt
+    ),
+    index("evidence_artifacts_exact_authority_idx").on(
+      table.schoolId,
+      table.deviceId,
+      table.studentId,
+      table.studentSessionId,
+      table.capturedAt
+    ),
     index("evidence_artifacts_case_idx").on(table.caseId),
     index("evidence_artifacts_source_idx").on(table.sourceType, table.sourceId),
     index("evidence_artifacts_purge_idx")
       .on(table.capturedAt)
       .where(sql`artifact_type = 'screenshot' AND content IS NOT NULL`),
+    check(
+      "evidence_artifacts_screenshot_exact_authority_check",
+      sql`${table.artifactType} <> 'screenshot' OR (
+        ${table.deviceId} IS NOT NULL
+        AND ${table.studentSessionId} IS NOT NULL
+        AND ${table.bindingVersion} IS NOT NULL
+        AND ${table.capturedAt} IS NOT NULL
+      )`
+    ),
   ]
 );
 

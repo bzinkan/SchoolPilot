@@ -138,6 +138,8 @@ before(async () => {
   } as any);
   await createProductLicense({ schoolId: schoolAId, product: "CLASSPILOT", status: "active" } as any);
   await createProductLicense({ schoolId: schoolBId, product: "CLASSPILOT", status: "active" } as any);
+  await createProductLicense({ schoolId: schoolAId, product: "GOPILOT", status: "active" } as any);
+  await createProductLicense({ schoolId: schoolBId, product: "GOPILOT", status: "active" } as any);
 
   admin = await createUser({
     id: `${TAG}_admin`,
@@ -670,6 +672,71 @@ describe("ClassPilot student roster removal lifecycle", () => {
       })
     );
     assert.equal(completed.outcome, "updated");
+  });
+
+  it("fails closed when GoPilot entitlement is revoked before a start or resume", async () => {
+    const session = await inSchool(schoolAId, () =>
+      getOrCreateSession(schoolAId, "2099-12-30")
+    );
+    const activated = await inSchool(schoolAId, () =>
+      transitionDismissalSessionStatus({
+        sessionId: session.id,
+        schoolId: schoolAId,
+        nextStatus: "active",
+        actorId: admin.id,
+      })
+    );
+    assert.equal(activated.outcome, "updated");
+    const paused = await inSchool(schoolAId, () =>
+      transitionDismissalSessionStatus({
+        sessionId: session.id,
+        schoolId: schoolAId,
+        nextStatus: "paused",
+        actorId: admin.id,
+      })
+    );
+    assert.equal(paused.outcome, "updated");
+
+    await asSystem(() => db.execute(sql`
+      UPDATE product_licenses
+      SET status = 'suspended'
+      WHERE school_id = ${schoolAId} AND product = 'GOPILOT'
+    `));
+    try {
+      await assert.rejects(
+        () => inSchool(schoolAId, () =>
+          transitionDismissalSessionStatus({
+            sessionId: session.id,
+            schoolId: schoolAId,
+            nextStatus: "active",
+            actorId: admin.id,
+          })
+        ),
+        (error: any) => {
+          assert.equal(error?.code, "GOPILOT_NOT_ENTITLED");
+          assert.equal(error?.reason, "license_inactive");
+          return true;
+        }
+      );
+
+      // Cleanup remains possible after revocation so a school is never left
+      // with an operational dismissal session it cannot close.
+      const completed = await inSchool(schoolAId, () =>
+        transitionDismissalSessionStatus({
+          sessionId: session.id,
+          schoolId: schoolAId,
+          nextStatus: "completed",
+          actorId: admin.id,
+        })
+      );
+      assert.equal(completed.outcome, "updated");
+    } finally {
+      await asSystem(() => db.execute(sql`
+        UPDATE product_licenses
+        SET status = 'active'
+        WHERE school_id = ${schoolAId} AND product = 'GOPILOT'
+      `));
+    }
   });
 
   it("enforces lifecycle roles and restores exact inactive emails through unified routes", async () => {

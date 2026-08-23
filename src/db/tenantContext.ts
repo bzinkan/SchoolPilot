@@ -24,6 +24,11 @@ export function getTenantStore(): TenantStore | undefined {
   return tenantALS.getStore();
 }
 
+/** Run long-lived/provider work after the request-scoped DB lease is released. */
+export function runWithoutTenantContext<T>(fn: () => T): T {
+  return tenantALS.exit(fn);
+}
+
 // Master kill-switch. When not "true", the whole mechanism is inert: the Proxy
 // `db` always returns the global pool and the middleware is a no-op. Lets us
 // disable RLS request-binding instantly without a code change.

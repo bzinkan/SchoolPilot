@@ -134,20 +134,21 @@ const statusLabel = (sessionStatus) => ({
 }[sessionStatus] || sessionStatus);
 
 export default function DismissalDashboard() {
-  const { logout, currentSchool, currentRole } = useGoPilotAuth();
+  const { logout, currentSchool, currentRole, currentRoles } = useGoPilotAuth();
   const socket = useSocket();
   const navigate = useNavigate();
   const { hasClassPilot, hasPassPilot } = useLicenses();
   const { isNative } = useNative();
-  const canManageSetup = currentRole === 'admin' || currentRole === 'school_admin';
-  const canManageArrivals = canManageSetup || currentRole === 'office_staff';
+  const canManageSetup = currentRoles.some((role) => role === 'admin' || role === 'school_admin');
+  const canManageArrivals = canManageSetup || currentRoles.includes('office_staff');
+  const teacherOnly = currentRoles.includes('teacher') && !canManageArrivals;
 
   // Teachers should see their homeroom view, not the admin dashboard
   useEffect(() => {
-    if (currentRole === 'teacher') {
+    if (teacherOnly) {
       navigate('/gopilot/teacher', { replace: true });
     }
-  }, [currentRole, navigate]);
+  }, [teacherOnly, navigate]);
 
   const [currentTime, setCurrentTime] = useState(new Date());
   const [session, setSession] = useState(null);

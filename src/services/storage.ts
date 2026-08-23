@@ -1,5 +1,6 @@
 import { eq, and, desc, asc, gt, lt, ilike, or, isNull, isNotNull, inArray, notInArray, getTableColumns, sql, ne, type SQL, type SQLWrapper } from "drizzle-orm";
 import { randomInt } from "node:crypto";
+import { safeErrorMetadata } from "../util/safeLogging.js";
 import { isDeepStrictEqual } from "node:util";
 import { PgDialect, type PgUpdateSetSource } from "drizzle-orm/pg-core";
 import db from "../db.js";
@@ -13,6 +14,10 @@ import {
 import { createLocalDateFormatter, localDateInTimeZone, localDateTimeUtc } from "../util/schoolTime.js";
 import { classpilotRetentionExpiresAt } from "../util/classpilotRetention.js";
 import {
+  classpilotSessionReportV2Mode,
+  classpilotSessionReportVersionForNewRow,
+} from "../config/classpilotSessionReportRollout.js";
+import {
   emptyClasspilotRestrictions,
   restrictionsFromClassroomStates,
 } from "./classpilotClassroomState.js";
@@ -22,6 +27,9 @@ import {
 } from "./classpilotReportAuthorization.js";
 import { isPersistentClasspilotControl } from "./classpilotCommandDelivery.js";
 import { assertClasspilotEntitled } from "./classpilotEntitlement.js";
+import { assertGopilotEntitled } from "./gopilotEntitlement.js";
+import { isExactIdempotentStudentMessage } from "./classpilotStudentChat.js";
+import { assertClasspilotScreenshotEvidenceAuthority } from "./classpilotEvidenceAuthority.js";
 import {
   assertClasspilotHistoryFallbackPiStatementDiscoverable,
   createClasspilotHistoryFallbackSqlShapeIdentity,
@@ -50,6 +58,7 @@ import {
   type StudentAttendance,
   type InsertStudentAttendance,
 } from "../schema/students.js";
+
 import {
   grades,
   teacherGrades,
@@ -151,6 +160,7 @@ import {
   classpilotScheduleChangePairs,
   classpilotScheduleChanges,
   classpilotScheduleChangeLegs,
+  classpilotEvidenceCaptureRequests,
   type Device,
   type InsertDevice,
   type StudentDevice,
@@ -408,6 +418,16 @@ export async function resolveSchoolForStudent(
   return school ? { school, isSharedDomain: true } : undefined;
 }
 
+async function invalidateClasspilotPassiveAuthorization(schoolId: string): Promise<void> {
+  const target = {
+    kind: "cache-invalidation",
+    schoolId,
+    cache: "classpilot-passive-authorization",
+  } as const;
+  dispatchCacheInvalidation(target);
+  await publishCacheInvalidation(target);
+}
+
 function generateSlug(name: string): string {
   return name
     .toLowerCase()
@@ -630,6 +650,7 @@ export async function createMembership(
     .insert(schoolMemberships)
     .values(data)
     .returning();
+  await invalidateClasspilotPassiveAuthorization(data.schoolId);
   return membership!;
 }
 
@@ -657,6 +678,9 @@ export async function createProductLicense(
     .insert(productLicenses)
     .values(data)
     .returning();
+  if (data.product === "CLASSPILOT") {
+    await invalidateClasspilotPassiveAuthorization(data.schoolId);
+  }
   return license!;
 }
 
@@ -688,7 +712,7 @@ export async function applySchoolBillingPayment(
     new Set((options.products ?? []).map((value) => String(value).trim()).filter(Boolean))
   ).sort();
   const productsToLock = Array.from(new Set([...products, "CLASSPILOT"])).sort();
-  return withClasspilotSchedulePostCommitTransaction(async (tx) => {
+  const result = await withClasspilotSchedulePostCommitTransaction(async (tx) => {
     const [lockedSchool] = await tx
       .select()
       .from(schools)
@@ -809,6 +833,8 @@ export async function applySchoolBillingPayment(
     }
     return { school: savedSchool, updatedLicenseCount };
   });
+  if (result) await invalidateClasspilotPassiveAuthorization(options.schoolId);
+  return result;
 }
 
 // ============================================================================
@@ -1090,7 +1116,7 @@ export async function deactivateStudentsForRoster(
     };
   }
 
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     await lockClasspilotScheduleChangeSchool(
       schoolId,
       tx as unknown as ScheduleChangeDb
@@ -1157,6 +1183,10 @@ export async function deactivateStudentsForRoster(
       students: lockedStudents.map(({ id, email }) => ({ id, email })),
     };
   });
+  if (result.endedSessionCount > 0 || result.deactivatedStudentIds.length > 0) {
+    await invalidateClasspilotPassiveAuthorization(schoolId);
+  }
+  return result;
 }
 
 /**
@@ -1188,7 +1218,7 @@ export async function reactivateInactiveStudentForRosterImport(
   delete safeUpdates.status;
   safeUpdates.emailLc = normalizedEmailLc;
 
-  return withClasspilotSchedulePostCommitTransaction(async (tx) => {
+  const result = await withClasspilotSchedulePostCommitTransaction(async (tx) => {
     await lockClasspilotScheduleChangeSchool(
       schoolId,
       tx as unknown as ScheduleChangeDb
@@ -1275,6 +1305,8 @@ export async function reactivateInactiveStudentForRosterImport(
 
     return { student, reactivated };
   });
+  if (result.reactivated) await invalidateClasspilotPassiveAuthorization(schoolId);
+  return result;
 }
 
 /** Counts-only credential-rotation helper. Caller must bind the school tenant. */
@@ -1582,9 +1614,14 @@ export async function updateSchool(
     return saved;
   });
   if (school) {
-    const target = { kind: "cache-invalidation", schoolId: id, cache: "classpilot-dashboard-school" } as const;
-    dispatchCacheInvalidation(target);
-    await publishCacheInvalidation(target);
+    const targets = [
+      { kind: "cache-invalidation", schoolId: id, cache: "classpilot-dashboard-school" },
+      { kind: "cache-invalidation", schoolId: id, cache: "classpilot-passive-authorization" },
+    ] as const;
+    for (const target of targets) {
+      dispatchCacheInvalidation(target);
+      await publishCacheInvalidation(target);
+    }
   }
   return school;
 }
@@ -2100,7 +2137,8 @@ async function updateMembershipWithScheduleChangeGuard(options: {
   data: Partial<InsertSchoolMembership>;
   scheduleChangeActorId?: string;
 }): Promise<SchoolMembership | undefined> {
-  return withClasspilotSchedulePostCommitTransaction(async (tx) => {
+  let previousSchoolId: string | undefined;
+  const membership = await withClasspilotSchedulePostCommitTransaction(async (tx) => {
     const candidateConditions = [eq(schoolMemberships.id, options.id)];
     if (options.schoolId) {
       candidateConditions.push(eq(schoolMemberships.schoolId, options.schoolId));
@@ -2111,6 +2149,7 @@ async function updateMembershipWithScheduleChangeGuard(options: {
       .where(and(...candidateConditions))
       .limit(1);
     if (!candidate) return undefined;
+    previousSchoolId = candidate.schoolId;
     const transactionDb = tx as unknown as ScheduleChangeDb;
     await lockClasspilotScheduleChangeSchool(candidate.schoolId, transactionDb);
     await takeClasspilotScheduleConfigLock(transactionDb, candidate.schoolId);
@@ -2184,6 +2223,13 @@ async function updateMembershipWithScheduleChangeGuard(options: {
       .returning();
     return membership;
   });
+  const affectedSchools = new Set(
+    [previousSchoolId, membership?.schoolId].filter((value): value is string => Boolean(value))
+  );
+  for (const schoolId of affectedSchools) {
+    await invalidateClasspilotPassiveAuthorization(schoolId);
+  }
+  return membership;
 }
 
 // ============================================================================
@@ -2425,13 +2471,15 @@ export async function updateProductLicense(
   data: Partial<InsertProductLicense>,
   scheduleChangeActorId?: string
 ): Promise<ProductLicense | undefined> {
-  return withClasspilotSchedulePostCommitTransaction(async (tx) => {
+  let schoolId: string | undefined;
+  const license = await withClasspilotSchedulePostCommitTransaction(async (tx) => {
     const [candidate] = await tx
       .select({ schoolId: productLicenses.schoolId })
       .from(productLicenses)
       .where(eq(productLicenses.id, id))
       .limit(1);
     if (!candidate) return undefined;
+    schoolId = candidate.schoolId;
     await lockClasspilotScheduleChangeSchool(
       candidate.schoolId,
       tx as unknown as ScheduleChangeDb
@@ -2479,19 +2527,23 @@ export async function updateProductLicense(
       .returning();
     return license;
   });
+  if (license && schoolId) await invalidateClasspilotPassiveAuthorization(schoolId);
+  return license;
 }
 
 export async function deleteProductLicense(
   id: string,
   scheduleChangeActorId?: string
 ): Promise<boolean> {
-  return withClasspilotSchedulePostCommitTransaction(async (tx) => {
+  let schoolId: string | undefined;
+  const deleted = await withClasspilotSchedulePostCommitTransaction(async (tx) => {
     const [candidate] = await tx
       .select({ schoolId: productLicenses.schoolId })
       .from(productLicenses)
       .where(eq(productLicenses.id, id))
       .limit(1);
     if (!candidate) return false;
+    schoolId = candidate.schoolId;
     await lockClasspilotScheduleChangeSchool(
       candidate.schoolId,
       tx as unknown as ScheduleChangeDb
@@ -2530,6 +2582,8 @@ export async function deleteProductLicense(
       .where(and(eq(productLicenses.id, id), eq(productLicenses.schoolId, candidate.schoolId)));
     return (result.rowCount ?? 0) > 0;
   });
+  if (deleted && schoolId) await invalidateClasspilotPassiveAuthorization(schoolId);
+  return deleted;
 }
 
 // ============================================================================
@@ -5126,6 +5180,18 @@ export async function transitionDismissalSessionStatus(options: {
   actorId?: string | null;
 }): Promise<DismissalSessionTransitionResult> {
   return db.transaction(async (tx) => {
+    // Starting or resuming dismissal is an operational action. Recheck the
+    // canonical school + GoPilot license decision under the same transaction
+    // that mutates the session so a concurrent revocation wins the race.
+    // Pause/completion remain available for safe cleanup after revocation.
+    if (options.nextStatus === "active") {
+      await assertGopilotEntitled(
+        options.schoolId,
+        tx as unknown as typeof db,
+        { lock: "update" }
+      );
+    }
+
     const [current] = await tx
       .select()
       .from(dismissalSessions)
@@ -8268,7 +8334,8 @@ export async function setActiveStudentForDevice(
   deviceId: string,
   studentId: string
 ): Promise<StudentSession> {
-  return db.transaction(async (tx) => {
+  let schoolId: string | undefined;
+  const session = await db.transaction(async (tx) => {
     // Resolve the lifecycle lock key without locking the student first. The
     // active check is repeated under the shared school lock and row lock, so a
     // concurrent roster removal cannot insert a session after deactivation.
@@ -8284,6 +8351,7 @@ export async function setActiveStudentForDevice(
         expose: true,
       });
     }
+    schoolId = candidate.schoolId;
 
     await takePasspilotClassLock(tx, candidate.schoolId);
     const [activeStudent] = await tx
@@ -8322,6 +8390,8 @@ export async function setActiveStudentForDevice(
       .returning();
     return session!;
   });
+  if (schoolId) await invalidateClasspilotPassiveAuthorization(schoolId);
+  return session;
 }
 
 // ============================================================================
@@ -8929,7 +8999,7 @@ export async function startStudentSession(
   studentId: string,
   deviceId: string
 ): Promise<StudentSession> {
-  return db.transaction(async (tx) => {
+  const session = await db.transaction(async (tx) => {
     // Student roster removal/restoration and session issuance take this lock in
     // the same order. The row-level active check is therefore authoritative at
     // the point the credential-bearing session is created.
@@ -8974,17 +9044,33 @@ export async function startStudentSession(
       .returning();
     return session!;
   });
+  await invalidateClasspilotPassiveAuthorization(schoolId);
+  return session;
 }
 
 export async function endStudentSession(
   sessionId: string
 ): Promise<StudentSession | undefined> {
-  const [session] = await db
-    .update(studentSessions)
-    .set({ isActive: false, endedAt: new Date() })
-    .where(eq(studentSessions.id, sessionId))
-    .returning();
-  return session;
+  const result = await db.transaction(async (tx) => {
+    const [binding] = await tx
+      .select({ schoolId: students.schoolId })
+      .from(studentSessions)
+      .innerJoin(students, eq(students.id, studentSessions.studentId))
+      .where(eq(studentSessions.id, sessionId))
+      .limit(1)
+      .for("update");
+    if (!binding) return { session: undefined, schoolId: undefined };
+    const [session] = await tx
+      .update(studentSessions)
+      .set({ isActive: false, endedAt: new Date() })
+      .where(eq(studentSessions.id, sessionId))
+      .returning();
+    return { session, schoolId: binding.schoolId };
+  });
+  if (result.session && result.schoolId) {
+    await invalidateClasspilotPassiveAuthorization(result.schoolId);
+  }
+  return result.session;
 }
 
 export async function touchStudentSession(
@@ -9040,7 +9126,8 @@ export async function getActiveSessionsForStudents(
         eq(students.status, "active"),
         eq(devices.schoolId, schoolId),
         inArray(studentSessions.studentId, uniqueStudentIds),
-        eq(studentSessions.isActive, true)
+        eq(studentSessions.isActive, true),
+        isNull(studentSessions.endedAt)
       )
     );
   return rows.map((row) => row.session);
@@ -10524,6 +10611,7 @@ export async function finalizeTeachingSession(
         await tx.insert(classpilotMonitoringEvents).values(clearEvents).onConflictDoNothing();
       }
     }
+    const reportVersion = classpilotSessionReportVersionForNewRow();
     await tx
       .insert(classpilotSessionReports)
       .values({
@@ -10533,8 +10621,11 @@ export async function finalizeTeachingSession(
         windowStart: session.startTime,
         windowEnd: endTime,
         timezone: timezoneSnapshot,
-        coverageAlgorithmVersion: "heartbeat-coverage-v1",
-        eventSchemaVersion: 1,
+        reportVersion,
+        coverageAlgorithmVersion: reportVersion === 2
+          ? "heartbeat-coverage-v2"
+          : "heartbeat-coverage-v1",
+        eventSchemaVersion: reportVersion === 2 ? 2 : 1,
         authorizationMarker,
         trackingPolicy: {
           enableTrackingHours: schoolSettings?.enableTrackingHours === true,
@@ -10929,7 +11020,31 @@ export type ClasspilotSessionReportInput = {
     endedAt: Date | null;
     lastSeenAt: Date;
   }>;
-  heartbeats: Array<{ studentId: string | null; timestamp: Date; activeTabUrl: string | null }>;
+  heartbeats: Array<{
+    id: string;
+    studentId: string | null;
+    timestamp: Date;
+    activeTabUrl: string | null;
+    aiCategory: string | null;
+    safetyAlert: string | null;
+  }>;
+  aiDecisions: Array<{
+    id: string;
+    heartbeatId: string | null;
+    studentId: string | null;
+    domain: string | null;
+    category: string | null;
+    safetyAlert: string | null;
+    teacherIntentSource: string | null;
+    reviewStatus: string | null;
+    createdAt: Date;
+  }>;
+  evidenceArtifacts: Array<{
+    studentId: string;
+    studentSessionId: string | null;
+    sourceId: string | null;
+    status: string;
+  }>;
   exclusions: Array<{
     studentId: string;
     start: Date;
@@ -10982,6 +11097,8 @@ export async function getClasspilotSessionReportInput(
       roster: [],
       authenticatedSessions: [],
       heartbeats: [],
+      aiDecisions: [],
+      evidenceArtifacts: [],
       exclusions: [],
       monitoringEvents: [],
       trackingPolicy: {
@@ -11048,6 +11165,72 @@ export async function getClasspilotSessionReportInput(
         ne(classpilotMonitoringEvents.eventType, "monitoring_gap")
       )),
   ]);
+  const heartbeatIds = heartbeatRows.map((heartbeat) => heartbeat.id);
+  const needsV2Input = report.reportVersion >= 2
+    || classpilotSessionReportV2Mode() === "shadow";
+  const [aiDecisions, ambientEvidenceArtifacts, safetyCaptureEvidenceArtifacts] = needsV2Input
+    && heartbeatIds.length > 0
+    ? await Promise.all([
+        dbInstance
+          .select({
+            id: classpilotAiDecisions.id,
+            heartbeatId: classpilotAiDecisions.heartbeatId,
+            studentId: classpilotAiDecisions.studentId,
+            domain: classpilotAiDecisions.domain,
+            category: classpilotAiDecisions.category,
+            safetyAlert: classpilotAiDecisions.safetyAlert,
+            teacherIntentSource: classpilotAiDecisions.teacherIntentSource,
+            reviewStatus: classpilotAiDecisions.reviewStatus,
+            createdAt: classpilotAiDecisions.createdAt,
+          })
+          .from(classpilotAiDecisions)
+          .where(and(
+            eq(classpilotAiDecisions.schoolId, report.schoolId),
+            inArray(classpilotAiDecisions.heartbeatId, heartbeatIds)
+          ))
+          .orderBy(
+            classpilotAiDecisions.heartbeatId,
+            desc(classpilotAiDecisions.createdAt),
+            desc(classpilotAiDecisions.id)
+          ),
+        dbInstance
+          .select({
+            studentId: evidenceArtifacts.studentId,
+            studentSessionId: evidenceArtifacts.studentSessionId,
+            sourceId: evidenceArtifacts.sourceId,
+            status: evidenceArtifacts.status,
+          })
+          .from(evidenceArtifacts)
+          .where(and(
+            eq(evidenceArtifacts.schoolId, report.schoolId),
+            eq(evidenceArtifacts.sourceType, "classpilot_screenshot"),
+            inArray(evidenceArtifacts.sourceId, heartbeatIds)
+          )),
+        dbInstance
+          .select({
+            studentId: evidenceArtifacts.studentId,
+            studentSessionId: evidenceArtifacts.studentSessionId,
+            // Normalize the exact request linkage back to the heartbeat key
+            // consumed by immutable report materialization.
+            sourceId: classpilotEvidenceCaptureRequests.heartbeatId,
+            status: evidenceArtifacts.status,
+          })
+          .from(classpilotEvidenceCaptureRequests)
+          .innerJoin(evidenceArtifacts, and(
+            eq(evidenceArtifacts.id, classpilotEvidenceCaptureRequests.artifactId),
+            eq(evidenceArtifacts.schoolId, classpilotEvidenceCaptureRequests.schoolId),
+            eq(evidenceArtifacts.deviceId, classpilotEvidenceCaptureRequests.deviceId),
+            eq(evidenceArtifacts.studentId, classpilotEvidenceCaptureRequests.studentId),
+            eq(evidenceArtifacts.studentSessionId, classpilotEvidenceCaptureRequests.studentSessionId),
+            eq(evidenceArtifacts.sourceType, "classpilot_safety_capture"),
+            eq(evidenceArtifacts.sourceId, classpilotEvidenceCaptureRequests.id)
+          ))
+          .where(and(
+            eq(classpilotEvidenceCaptureRequests.schoolId, report.schoolId),
+            inArray(classpilotEvidenceCaptureRequests.heartbeatId, heartbeatIds)
+          )),
+      ])
+    : [[], [], []];
   return {
     session,
     roster: roster.map((row) => ({
@@ -11057,6 +11240,11 @@ export async function getClasspilotSessionReportInput(
     })),
     authenticatedSessions,
     heartbeats: heartbeatRows,
+    aiDecisions,
+    evidenceArtifacts: [
+      ...ambientEvidenceArtifacts,
+      ...safetyCaptureEvidenceArtifacts,
+    ],
     exclusions: supervisionRows.map((row) => ({
       studentId: row.studentId,
       start: row.assignedAt > row.startsAt ? row.assignedAt : row.startsAt,
@@ -11097,6 +11285,23 @@ export type MaterializedClasspilotStudentReport = {
   }>;
   eventCounts: Record<string, number>;
   topDomains: Array<{ domain: string; seconds: number; visits: number }>;
+  unclassifiedSeconds: number;
+  offTaskSeconds: number;
+  offTaskEventCount: number;
+  offTaskEvents: Array<{
+    domain: string;
+    category: "non-educational";
+    start: string;
+    end: string;
+    seconds: number;
+  }>;
+  safetyAlerts: Array<{
+    category: string;
+    domain: string | null;
+    occurredAt: string;
+    evidenceAvailability: "available" | "unavailable";
+    reviewStatus: "Automated" | "Confirmed" | "Dismissed" | "Escalated";
+  }>;
 };
 
 export type MaterializedClasspilotSessionBoundaryEvent = {
@@ -11217,6 +11422,13 @@ export async function completeClasspilotSessionReport(
         gapIntervals: student.gapIntervals,
         eventCounts: student.eventCounts,
         topDomains: student.topDomains,
+        ...(locked.reportVersion >= 2 ? {
+          unclassifiedSeconds: student.unclassifiedSeconds ?? 0,
+          offTaskSeconds: student.offTaskSeconds ?? 0,
+          offTaskEventCount: student.offTaskEventCount ?? 0,
+          offTaskEvents: student.offTaskEvents ?? [],
+          safetyAlerts: student.safetyAlerts ?? [],
+        } : {}),
       })));
       const gapEvents = options.students.flatMap((student) => student.gapIntervals.map((gap, index) => ({
         schoolId: locked.schoolId,
@@ -11296,6 +11508,24 @@ export async function completeClasspilotSessionReport(
         totalEligibleSeconds: options.students.reduce((sum, student) => sum + student.eligibleSeconds, 0),
         totalObservedSeconds: options.students.reduce((sum, student) => sum + student.observedSeconds, 0),
         totalGapSeconds: options.students.reduce((sum, student) => sum + student.gapSeconds, 0),
+        ...(locked.reportVersion >= 2 ? {
+          totalUnclassifiedSeconds: options.students.reduce(
+            (sum, student) => sum + (student.unclassifiedSeconds ?? 0),
+            0
+          ),
+          totalOffTaskSeconds: options.students.reduce(
+            (sum, student) => sum + (student.offTaskSeconds ?? 0),
+            0
+          ),
+          totalOffTaskEventCount: options.students.reduce(
+            (sum, student) => sum + (student.offTaskEventCount ?? 0),
+            0
+          ),
+          totalSafetyAlertCount: options.students.reduce(
+            (sum, student) => sum + (student.safetyAlerts?.length ?? 0),
+            0
+          ),
+        } : {}),
         leaseOwner: null,
         leaseExpiresAt: null,
         lastError: null,
@@ -11704,7 +11934,10 @@ export async function reconcileLegacyOpenScheduledSessions(
           recipients: [],
         }, dbInstance);
       } else {
-        console.warn(`[ClassPilot] Legacy scheduled occurrence ${row.session.id} could not be adopted:`, error);
+        console.warn(
+          "[ClassPilot] Legacy scheduled occurrence could not be adopted:",
+          safeErrorMetadata(error)
+        );
       }
     }
   }
@@ -13115,6 +13348,30 @@ export async function getGroupTeachers(
     .orderBy(groupTeachers.role, groupTeachers.assignedAt);
 }
 
+export async function getGroupTeacherIdsForGroups(
+  schoolId: string,
+  groupIds: string[]
+): Promise<Map<string, Set<string>>> {
+  const uniqueGroupIds = [...new Set(groupIds.map(String).filter(Boolean))];
+  const result = new Map<string, Set<string>>(
+    uniqueGroupIds.map((groupId) => [groupId, new Set<string>()])
+  );
+  if (uniqueGroupIds.length === 0) return result;
+  const rows = await db
+    .select({ groupId: groupTeachers.groupId, teacherId: groupTeachers.teacherId })
+    .from(groupTeachers)
+    .innerJoin(
+      groups,
+      and(
+        eq(groups.id, groupTeachers.groupId),
+        eq(groups.schoolId, schoolId)
+      )
+    )
+    .where(inArray(groupTeachers.groupId, uniqueGroupIds));
+  for (const row of rows) result.get(row.groupId)?.add(row.teacherId);
+  return result;
+}
+
 export async function getGroupTeacherSummaries(
   groupId: string,
   schoolId: string
@@ -14223,6 +14480,38 @@ export async function getGroupStudentIds(groupId: string): Promise<string[]> {
   return rows.map((row) => row.studentId);
 }
 
+export async function getGroupStudentIdsForGroups(
+  schoolId: string,
+  groupIds: string[]
+): Promise<Map<string, Set<string>>> {
+  const uniqueGroupIds = [...new Set(groupIds.map(String).filter(Boolean))];
+  const result = new Map<string, Set<string>>(
+    uniqueGroupIds.map((groupId) => [groupId, new Set<string>()])
+  );
+  if (uniqueGroupIds.length === 0) return result;
+  const rows = await db
+    .select({ groupId: groupStudents.groupId, studentId: groupStudents.studentId })
+    .from(groupStudents)
+    .innerJoin(
+      groups,
+      and(
+        eq(groups.id, groupStudents.groupId),
+        eq(groups.schoolId, schoolId)
+      )
+    )
+    .innerJoin(
+      students,
+      and(
+        eq(students.id, groupStudents.studentId),
+        eq(students.schoolId, schoolId),
+        eq(students.status, "active")
+      )
+    )
+    .where(inArray(groupStudents.groupId, uniqueGroupIds));
+  for (const row of rows) result.get(row.groupId)?.add(row.studentId);
+  return result;
+}
+
 export async function addGroupStudentsDetailed(
   groupId: string,
   studentIds: string[],
@@ -14704,13 +14993,16 @@ export async function createAuthorizedClasspilotStudentMessage(options: {
   studentSessionId: string;
   deviceId: string;
   content: string;
-}): Promise<{ student: Student; teachingSession: TeachingSession; message: ChatMessage }> {
+  clientMessageId?: string | null;
+}): Promise<{ student: Student; teachingSession: TeachingSession; message: ChatMessage; created: boolean }> {
   return withAuthorizedStudentFabMutation({ ...options, feature: "chat" }, async (transactionDb, authority) => {
     const [message] = await transactionDb.insert(chatMessages).values({
       schoolId: options.schoolId,
       sessionId: authority.teachingSession.id,
       studentId: options.studentId,
+      studentSessionId: options.studentSessionId,
       deviceId: options.deviceId,
+      clientMessageId: options.clientMessageId || null,
       senderId: options.studentId,
       senderType: "student",
       recipientId: null,
@@ -14718,8 +15010,36 @@ export async function createAuthorizedClasspilotStudentMessage(options: {
       messageType: "message",
       deliveryStatus: "delivered",
       deliveredAt: new Date(),
-    }).returning();
-    return { ...authority, message: message! };
+    }).onConflictDoNothing().returning();
+    if (message) return { ...authority, message, created: true };
+    if (!options.clientMessageId) {
+      throw classpilotFabMutationError(409, "student_message_conflict", "Student message could not be stored");
+    }
+    const [existing] = await transactionDb
+      .select()
+      .from(chatMessages)
+      .where(and(
+        eq(chatMessages.schoolId, options.schoolId),
+        eq(chatMessages.studentId, options.studentId),
+        eq(chatMessages.studentSessionId, options.studentSessionId),
+        eq(chatMessages.clientMessageId, options.clientMessageId)
+      ))
+      .limit(1);
+    if (!existing || !isExactIdempotentStudentMessage(existing, {
+      schoolId: options.schoolId,
+      teachingSessionId: authority.teachingSession.id,
+      studentId: options.studentId,
+      studentSessionId: options.studentSessionId,
+      content: options.content,
+      clientMessageId: options.clientMessageId,
+    })) {
+      throw classpilotFabMutationError(
+        409,
+        "client_message_conflict",
+        "clientMessageId was already used for different message content"
+      );
+    }
+    return { ...authority, message: existing, created: false };
   });
 }
 
@@ -16368,7 +16688,7 @@ export async function updateClasspilotCommandTargetAck(options: {
           and authenticated_session.ended_at is null
       )`,
     ];
-    let [binding] = await tx
+    const [binding] = await tx
       .select({
         target: getTableColumns(classpilotCommandTargets),
         commandExpiresAt: classpilotCommands.expiresAt,
@@ -16381,78 +16701,10 @@ export async function updateClasspilotCommandTargetAck(options: {
       .where(and(...identityConditions))
       .limit(1)
       .for("update");
-    // Durable teacher messages are intentionally queued even when their
-    // frozen target had no live binding. A later authenticated heartbeat may
-    // deliver that exact command-linked inbox row on a replacement/current
-    // binding; rebind only this durable message target before applying its
-    // monotonic ACK. Every other command retains the strict original binding.
-    if (!binding) {
-      const [recoverable] = await tx
-        .select({
-          target: getTableColumns(classpilotCommandTargets),
-          commandExpiresAt: classpilotCommands.expiresAt,
-          commandType: classpilotCommands.commandType,
-          commandTeachingSessionId: classpilotCommands.teachingSessionId,
-          commandSupervisionContextId: classpilotCommands.supervisionContextId,
-        })
-        .from(classpilotCommandTargets)
-        .innerJoin(classpilotCommands, eq(classpilotCommands.id, classpilotCommandTargets.commandId))
-        .where(and(
-          eq(classpilotCommandTargets.commandId, options.commandId),
-          eq(classpilotCommandTargets.schoolId, options.schoolId),
-          eq(classpilotCommandTargets.studentId, options.studentId),
-          inArray(classpilotCommandTargets.status, ["unavailable", "requested", "sent", "received"]),
-          eq(classpilotCommands.id, options.commandId),
-          eq(classpilotCommands.schoolId, options.schoolId),
-          eq(classpilotCommands.commandType, "teacher-message"),
-          sql`exists (
-            select 1 from ${messages} as durable_message
-            where durable_message.school_id = ${options.schoolId}
-              and durable_message.command_id = ${options.commandId}
-              and durable_message.to_student_id = ${options.studentId}
-              and durable_message.teaching_session_id is not distinct from ${classpilotCommands.teachingSessionId}
-              and durable_message.supervision_context_id is not distinct from ${classpilotCommands.supervisionContextId}
-          )`,
-          sql`exists (
-            select 1
-            from ${studentSessions} as authenticated_session
-            join ${students} as authenticated_student
-              on authenticated_student.id = authenticated_session.student_id
-             and authenticated_student.school_id = ${options.schoolId}
-            join ${devices} as authenticated_device
-              on authenticated_device.device_id = authenticated_session.device_id
-             and authenticated_device.school_id = ${options.schoolId}
-            where authenticated_session.id = ${options.studentSessionId}
-              and authenticated_session.student_id = ${options.studentId}
-              and authenticated_session.device_id = ${options.deviceId}
-              and authenticated_session.is_active = true
-              and authenticated_session.ended_at is null
-          )`
-        ))
-        .limit(1)
-        .for("update");
-      if (recoverable) {
-        if (!(await hasCurrentClasspilotStudentControlAuthority({
-          schoolId: options.schoolId,
-          studentId: options.studentId,
-          teachingSessionId: recoverable.commandTeachingSessionId,
-          supervisionContextId: recoverable.commandSupervisionContextId,
-        }, transactionDb))) return undefined;
-        const [reboundTarget] = await tx
-          .update(classpilotCommandTargets)
-          .set({
-            studentSessionId: options.studentSessionId,
-            deviceId: options.deviceId,
-            status: "sent",
-            sentAt: sql<Date>`coalesce(${classpilotCommandTargets.sentAt}, ${now})`,
-            errorMessage: null,
-            updatedAt: now,
-          })
-          .where(eq(classpilotCommandTargets.id, recoverable.target.id))
-          .returning();
-        if (reboundTarget) binding = { ...recoverable, target: reboundTarget };
-      }
-    }
+    // ACKs never create or replace authority. Durable offline messages acquire
+    // their first exact binding when a heartbeat claims them below; this path
+    // may only advance the command target already frozen to the authenticated
+    // school/student/session/device tuple.
     if (!binding) return undefined;
 
     const target = binding.target;
@@ -18037,6 +18289,50 @@ export async function getCoverageScopeGroupStudentIds(
   return rows.map((row) => row.studentId);
 }
 
+export async function getCoverageScopeGroupStudentIdsForGroups(
+  schoolId: string,
+  groupIds: string[]
+): Promise<Map<string, Set<string>>> {
+  const uniqueGroupIds = [...new Set(groupIds.map(String).filter(Boolean))];
+  const result = new Map<string, Set<string>>(
+    uniqueGroupIds.map((groupId) => [groupId, new Set<string>()])
+  );
+  if (uniqueGroupIds.length === 0) return result;
+  const rows = await db
+    .select({
+      groupId: classpilotCoverageScopeGroupMembers.coverageGroupId,
+      studentId: classpilotCoverageScopeGroupMembers.studentId,
+    })
+    .from(classpilotCoverageScopeGroupMembers)
+    .innerJoin(
+      classpilotCoverageScopeGroups,
+      and(
+        eq(
+          classpilotCoverageScopeGroups.id,
+          classpilotCoverageScopeGroupMembers.coverageGroupId
+        ),
+        eq(classpilotCoverageScopeGroups.schoolId, schoolId),
+        eq(classpilotCoverageScopeGroups.active, true)
+      )
+    )
+    .innerJoin(
+      students,
+      and(
+        eq(students.id, classpilotCoverageScopeGroupMembers.studentId),
+        eq(students.schoolId, schoolId),
+        eq(students.status, "active")
+      )
+    )
+    .where(
+      and(
+        eq(classpilotCoverageScopeGroupMembers.schoolId, schoolId),
+        inArray(classpilotCoverageScopeGroupMembers.coverageGroupId, uniqueGroupIds)
+      )
+    );
+  for (const row of rows) result.get(row.groupId)?.add(row.studentId);
+  return result;
+}
+
 export async function getActiveCoverageAssignmentsForScopeGroup(
   schoolId: string,
   groupId: string
@@ -18049,6 +18345,26 @@ export async function getActiveCoverageAssignmentsForScopeGroup(
         eq(classpilotCoverageAssignments.schoolId, schoolId),
         eq(classpilotCoverageAssignments.scopeType, "coverage_group"),
         eq(classpilotCoverageAssignments.scopeValue, groupId),
+        eq(classpilotCoverageAssignments.active, true)
+      )
+    )
+    .orderBy(classpilotCoverageAssignments.createdAt);
+}
+
+export async function getActiveCoverageAssignmentsForScopeGroups(
+  schoolId: string,
+  groupIds: string[]
+): Promise<ClasspilotCoverageAssignment[]> {
+  const uniqueGroupIds = [...new Set(groupIds.map(String).filter(Boolean))];
+  if (uniqueGroupIds.length === 0) return [];
+  return db
+    .select()
+    .from(classpilotCoverageAssignments)
+    .where(
+      and(
+        eq(classpilotCoverageAssignments.schoolId, schoolId),
+        eq(classpilotCoverageAssignments.scopeType, "coverage_group"),
+        inArray(classpilotCoverageAssignments.scopeValue, uniqueGroupIds),
         eq(classpilotCoverageAssignments.active, true)
       )
     )
@@ -19265,11 +19581,19 @@ export async function getOnlineUnassignedStudents(
     .select({ student: students, studentSession: studentSessions })
     .from(studentSessions)
     .innerJoin(students, eq(students.id, studentSessions.studentId))
+    .innerJoin(
+      devices,
+      and(
+        eq(devices.deviceId, studentSessions.deviceId),
+        eq(devices.schoolId, schoolId)
+      )
+    )
     .where(
       and(
         eq(students.schoolId, schoolId),
         eq(students.status, "active"),
         eq(studentSessions.isActive, true),
+        isNull(studentSessions.endedAt),
         sql`${studentSessions.lastSeenAt} >= ${cutoff}`
       )
     )
@@ -19299,11 +19623,19 @@ export async function getOnlineUnassignedStudents(
   const activeCoverage = await getActiveSupervisionForStudents(schoolId, studentIds);
   const inTemporaryCoverage = new Set(activeCoverage.map((row) => row.studentId));
 
-  return onlineRows.filter(
-    (row) =>
-      !inActiveClass.has(row.student.id) &&
-      !inTemporaryCoverage.has(row.student.id)
-  );
+  const seenStudents = new Set<string>();
+  return onlineRows.filter((row) => {
+    if (
+      seenStudents.has(row.student.id) ||
+      inActiveClass.has(row.student.id) ||
+      inTemporaryCoverage.has(row.student.id)
+    ) return false;
+    // onlineRows is ordered newest-first. If a damaged/legacy data set has
+    // more than one active session, expose one exact newest binding rather
+    // than duplicate a student or mix session/device authority.
+    seenStudents.add(row.student.id);
+    return true;
+  });
 }
 
 // ============================================================================
@@ -19676,6 +20008,13 @@ export async function getPendingMessagesForStudent(options: {
             AND inbox_target.status IN ('unavailable', 'requested', 'sent', 'received')
             AND inbox_command.command_type = 'teacher-message'
             AND (inbox_command.expires_at IS NULL OR inbox_command.expires_at > now())
+            AND (
+              (inbox_target.student_session_id = ${options.studentSessionId}
+                AND inbox_target.device_id = ${options.deviceId})
+              OR (inbox_target.status = 'unavailable'
+                AND inbox_target.student_session_id IS NULL
+                AND inbox_target.device_id IS NULL)
+            )
             AND (inbox_target.result ->> 'durableAuthorityRevision')::integer
               = ${controlState?.revision ?? -1}
             AND inbox_command.teaching_session_id IS NOT DISTINCT FROM ${messages.teachingSessionId}
@@ -19692,12 +20031,38 @@ export async function getPendingMessagesForStudent(options: {
     if (excludedIds.length > 0) {
       conditions.push(notInArray(messages.id, excludedIds));
     }
-    return tx
+    const pending = await tx
       .select()
       .from(messages)
       .where(and(...conditions))
       .orderBy(desc(messages.timestamp))
       .limit(CLASSPILOT_PENDING_MESSAGE_BATCH_LIMIT);
+
+    const commandIds = [...new Set(
+      pending.map((message) => message.commandId).filter((id): id is string => !!id)
+    )];
+    if (commandIds.length > 0) {
+      const claimedAt = new Date();
+      await tx
+        .update(classpilotCommandTargets)
+        .set({
+          studentSessionId: options.studentSessionId,
+          deviceId: options.deviceId,
+          status: "sent",
+          sentAt: sql<Date>`coalesce(${classpilotCommandTargets.sentAt}, ${claimedAt})`,
+          errorMessage: null,
+          updatedAt: claimedAt,
+        })
+        .where(and(
+          eq(classpilotCommandTargets.schoolId, options.schoolId),
+          eq(classpilotCommandTargets.studentId, options.studentId),
+          inArray(classpilotCommandTargets.commandId, commandIds),
+          eq(classpilotCommandTargets.status, "unavailable"),
+          isNull(classpilotCommandTargets.studentSessionId),
+          isNull(classpilotCommandTargets.deviceId)
+        ));
+    }
+    return pending;
   });
 }
 
@@ -22643,6 +23008,15 @@ export async function updateClasspilotAiDecisionReview(
 export async function createEvidenceArtifact(
   data: InsertEvidenceArtifact
 ): Promise<EvidenceArtifact> {
+  assertClasspilotScreenshotEvidenceAuthority({
+    artifactType: data.artifactType,
+    schoolId: data.schoolId,
+    deviceId: data.deviceId,
+    studentId: data.studentId,
+    studentSessionId: data.studentSessionId,
+    bindingVersion: data.bindingVersion,
+    capturedAt: data.capturedAt,
+  });
   const [row] = await db.insert(evidenceArtifacts).values(data).returning();
   return row!;
 }

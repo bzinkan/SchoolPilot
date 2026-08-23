@@ -2,6 +2,7 @@ import db from "../db.js";
 import { schedulerDb } from "./schedulerDb.js";
 import { auditLogs } from "../schema/shared.js";
 import { desc, eq, and, sql, count } from "drizzle-orm";
+import { safeErrorMetadata } from "../util/safeLogging.js";
 
 export async function logAudit(entry: {
   schoolId?: string | null;
@@ -35,7 +36,7 @@ export async function logAudit(entry: {
       metadata: entry.metadata ?? null,
     });
   } catch (error) {
-    console.error("[Audit] Failed to log:", error);
+    console.error("[Audit] Failed to log:", safeErrorMetadata(error));
   }
 }
 

@@ -1,7 +1,10 @@
 export type CacheInvalidationTarget = {
   kind: "cache-invalidation";
   schoolId: string;
-  cache: "heartbeat-tracking-settings" | "classpilot-dashboard-school";
+  cache:
+    | "heartbeat-tracking-settings"
+    | "classpilot-dashboard-school"
+    | "classpilot-passive-authorization";
 };
 
 type CacheInvalidationHandler = (target: CacheInvalidationTarget) => void;

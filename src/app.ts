@@ -20,6 +20,7 @@ import {
   SESSION_COOKIE_NAME,
   sessionCookieOptions,
 } from "./config/sessionCookie.js";
+import { isSensitiveNoStorePath } from "./util/noStorePath.js";
 
 const PgStore = connectPgSimple(session);
 const isProduction = process.env.NODE_ENV === "production";
@@ -31,20 +32,46 @@ export function skipsWebSession(
   // canonical `/api/classpilot/...` paths and the legacy `/api/...` aliases so
   // the device/student boundary is expressed once.
   let path = req.path.startsWith("/api") ? req.path.slice(4) || "/" : req.path;
-  if (path.startsWith("/classpilot/")) path = path.slice("/classpilot".length);
   const method = req.method.toUpperCase();
+  const classpilotKioskLaunchTicketRequest =
+    method === "POST" && /^\/classpilot\/kiosk\/launch-ticket\/?$/.test(path);
+  if (path.startsWith("/classpilot/")) path = path.slice("/classpilot".length);
 
   const devicePath = path.startsWith("/device/");
   const staffScreenshotRead =
     method === "GET" && /^\/device\/screenshot\/[^/]+\/?$/.test(path);
   const studentPollResponse =
     method === "POST" && /^\/polls\/[^/]+\/respond\/?$/.test(path);
+  const rawPublicKioskPath = path.startsWith("/passpilot/kiosk/")
+    ? path.slice("/passpilot/kiosk".length)
+    : path.startsWith("/kiosk/")
+      ? path.slice("/kiosk".length)
+      : null;
+  const publicKioskPath =
+    rawPublicKioskPath && rawPublicKioskPath.length > 1 && rawPublicKioskPath.endsWith("/")
+      ? rawPublicKioskPath.slice(0, -1)
+      : rawPublicKioskPath;
+  const publicKioskRequest = publicKioskPath !== null && (
+    (method === "GET" && ["/grades", "/students", "/config", "/snapshot"].includes(publicKioskPath)) ||
+    (method === "POST" && [
+      "/auth",
+      "/launch-ticket/redeem",
+      "/session",
+      "/session/resume",
+      "/lookup",
+      "/checkout",
+      "/checkin",
+      "/client-health",
+    ].includes(publicKioskPath))
+  );
 
   return (
     (devicePath && !staffScreenshotRead) ||
     path.startsWith("/extension/") ||
     path.startsWith("/student/") ||
+    classpilotKioskLaunchTicketRequest ||
     studentPollResponse ||
+    publicKioskRequest ||
     (method === "POST" && path === "/checkin/respond") ||
     path === "/school/status" ||
     (method === "POST" && path === "/register") ||
@@ -70,13 +97,35 @@ export function createApp() {
   // Security headers
   app.use(
     helmet({
-      contentSecurityPolicy: false, // CSP handled by CloudFront/frontend
+      // This process serves JSON rather than application documents. A strict
+      // non-document CSP prevents an accidentally rendered error or proxy
+      // response from becoming an executable origin.
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'none'"],
+          baseUri: ["'none'"],
+          formAction: ["'none'"],
+          frameAncestors: ["'none'"],
+        },
+      },
       hsts: isProduction
-        ? { maxAge: 31536000, includeSubDomains: true, preload: true }
+        ? { maxAge: 31536000, includeSubDomains: true, preload: false }
         : false,
+      referrerPolicy: { policy: "no-referrer" },
+      xFrameOptions: { action: "deny" },
       crossOriginEmbedderPolicy: false, // Allow loading cross-origin resources
     })
   );
+  app.use((req, res, next) => {
+    res.setHeader(
+      "Permissions-Policy",
+      "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+    );
+    if (isSensitiveNoStorePath(req.path)) {
+      res.setHeader("Cache-Control", "no-store");
+    }
+    next();
+  });
 
   // CORS — allow all configured frontend origins + Capacitor native origins
   const allowlist = (process.env.CORS_ALLOWLIST || "")

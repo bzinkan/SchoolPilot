@@ -435,13 +435,10 @@ router.get("/users", ...adminAuth, async (req, res, next) => {
         "[googleDirectory] users.list returned zero users",
         JSON.stringify({
           requestId: req.requestId,
-          schoolId,
-          orgUnitPath: optionalString(orgUnitPath) || null,
           source: response.source,
           customerUserCount: response.customerUserCount,
           domainFallbackAttempted: response.domainFallbackAttempted,
           domainUserCount: response.domainUserCount,
-          queriedDomain: response.queriedDomain,
         })
       );
     }

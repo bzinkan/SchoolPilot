@@ -199,7 +199,7 @@ variable "enable_container_insights" {
 variable "db_pool_max" {
   description = "Maximum Postgres connections per API task"
   type        = number
-  default     = 20
+  default     = 16
 }
 
 variable "scheduler_db_pool_max" {
@@ -209,9 +209,9 @@ variable "scheduler_db_pool_max" {
 }
 
 variable "rls_enabled_tables" {
-  description = "Comma-separated tenant table allowlist for PostgreSQL RLS"
+  description = "Comma-separated tenant table allowlist for PostgreSQL RLS; defaults to the SchoolPilot 2.7.0 post-expand inventory in src/config/rlsRegistry.json"
   type        = string
-  default     = "activity_log,audit_logs,block_lists,bus_routes,chat_messages,classpilot_active_hands,classpilot_ai_decisions,classpilot_classroom_states,classpilot_command_targets,classpilot_commands,classpilot_coverage_assignments,classpilot_coverage_scope_group_members,classpilot_coverage_scope_groups,classpilot_scheduled_conflicts,classpilot_session_students,classpilot_session_summary_deliveries,classpilot_session_usage,classpilot_supervision_contexts,classpilot_supervision_students,classroom_course_students,classroom_courses,daily_usage,dashboard_tabs,devices,dismissal_sessions,email_alerts,email_scan_log,error_logs,evidence_artifacts,family_groups,flight_paths,google_roster_connectors,grades,groups,heartbeats,homerooms,import_runs,mailpilot_watches,messages,parent_student,passes,passpilot_grade_students,security_events,settings,student_attendance,student_groups,student_safety_cases,student_timeline_events,students,subgroups,teacher_students,teaching_sessions,walker_zones"
+  default     = "activity_log,audit_logs,block_lists,bus_routes,chat_messages,classpilot_active_hands,classpilot_ai_decisions,classpilot_classroom_states,classpilot_command_targets,classpilot_commands,classpilot_coverage_assignments,classpilot_coverage_scope_group_members,classpilot_coverage_scope_groups,classpilot_scheduled_conflicts,classpilot_session_students,classpilot_session_usage,classpilot_supervision_contexts,classpilot_supervision_students,classroom_course_students,classroom_courses,daily_usage,dashboard_tabs,devices,dismissal_sessions,email_alerts,email_scan_log,error_logs,evidence_artifacts,family_groups,flight_paths,google_roster_connectors,grades,groups,heartbeats,homerooms,import_runs,mailpilot_watches,messages,parent_student,passes,security_events,settings,student_attendance,student_groups,student_safety_cases,student_timeline_events,students,subgroups,teacher_students,teaching_sessions,walker_zones,classpilot_session_summary_deliveries,passpilot_grade_students,authorized_pickups,custody_alerts,dismissal_changes,dismissal_overrides,dismissal_queue,family_group_students,homeroom_teachers,classpilot_monitoring_events,classpilot_session_reports,classpilot_session_staff,classpilot_session_student_reports,classpilot_student_control_states,classpilot_schedule_change_pairs,classpilot_schedule_changes,classpilot_schedule_change_legs,classpilot_chat_deliveries,poll_responses,polls,session_settings,classpilot_evidence_capture_requests,passpilot_kiosk_devices,passpilot_kiosk_sessions"
 }
 
 variable "alerts_sns_topic_arn" {
@@ -309,4 +309,37 @@ variable "telegram_bot_token_parameter_arn" {
   description = "Existing SecureString SSM parameter ARN for TELEGRAM_BOT_TOKEN"
   type        = string
   default     = ""
+}
+
+# --- ClassPilot TURN (dark until explicitly enabled) ---
+
+variable "enable_classpilot_turn" {
+  description = "Provision the two-node AWS coturn service and expose its secret to ECS"
+  type        = bool
+  default     = false
+}
+
+variable "classpilot_turn_tls_email" {
+  description = "Operational email supplied to Let's Encrypt for TURN certificate renewal notices"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "classpilot_turn_instance_type" {
+  description = "EC2 instance type for each of the two coturn nodes"
+  type        = string
+  default     = "t3.small"
+}
+
+variable "classpilot_turn_relay_port_min" {
+  description = "First port in the bounded coturn relay range"
+  type        = number
+  default     = 49152
+}
+
+variable "classpilot_turn_relay_port_max" {
+  description = "Last port in the bounded coturn relay range"
+  type        = number
+  default     = 49252
 }

@@ -4527,10 +4527,10 @@ function Get-CertificationTaskPreflight {
             [string]$_.ResourceId -eq $resourceId -and [string]$_.ScalableDimension -eq "ecs:service:DesiredCount"
         })
         if ($scalableTargets.Count -ne 1 -or [int]$scalableTargets[0].MinCapacity -ne 6 -or
-            [int]$scalableTargets[0].MaxCapacity -ne 8) {
-            throw "Night Waf/500 and Waf/800 require the exact API scalable target min=6/max=8."
+            [int]$scalableTargets[0].MaxCapacity -ne 6) {
+            throw "Night Waf/500 and Waf/800 require the exact API scalable target min=6/max=6."
         }
-        $nightScalableTarget = [ordered]@{resourceId=$resourceId;minCapacity=6;maxCapacity=8}
+        $nightScalableTarget = [ordered]@{resourceId=$resourceId;minCapacity=6;maxCapacity=6}
     }
 
     # Every stage, including MonitorOnly and dynamic endurance, must begin from

@@ -1,5 +1,6 @@
 import "express-session";
 import type { User as SchemaUser, School as SchemaSchool } from "../schema/core.js";
+import type { SchoolRole, VerifiedSchoolIdentity } from "../services/schoolIdentity.js";
 
 declare module "express-session" {
   interface SessionData {
@@ -36,6 +37,12 @@ declare global {
       schoolId?: string;
       school?: SchemaSchool;
       schoolActive?: boolean;
+      // Canonical authorization identity. membershipRole remains the
+      // deterministic legacy display role and must not be used as a gate.
+      schoolIdentity?: VerifiedSchoolIdentity;
+      verifiedSchoolIdentity?: VerifiedSchoolIdentity;
+      membershipRole?: SchoolRole | "super_admin";
+      membershipRoles?: Array<SchoolRole | "super_admin">;
       // Device auth (ClassPilot)
       studentId?: string;
       deviceId?: string;

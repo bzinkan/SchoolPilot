@@ -147,8 +147,11 @@ test('native credentials fail closed in registered secure storage', async () => 
 
 test('GoPilot sockets require an effective staff role', async () => {
   const socket = await read('src/contexts/SocketContext.jsx');
-  assert.match(socket, /activeMembership\?\.gopilotRole \|\| activeMembership\?\.role/);
-  assert.match(socket, /\['admin', 'school_admin', 'office_staff', 'teacher'\]\.includes/);
+  assert.match(socket, /import \{ hasGoPilotRole \} from ['"]\.\.\/shared\/utils\/schoolRoles['"]/);
+  assert.match(
+    socket,
+    /hasGoPilotRole\(\s*activeMembership,\s*'admin',\s*'school_admin',\s*'office_staff',\s*'teacher',?\s*\)/s,
+  );
   assert.match(socket, /!hasGoPilotStaffRole/);
 });
 

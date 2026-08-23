@@ -102,6 +102,21 @@ describe("ClassPilot cluster-safe realtime status", () => {
     assert.ok(Buffer.byteLength(JSON.stringify(result.snapshot), "utf8") <= CLASSPILOT_REALTIME_MAX_BYTES);
   });
 
+  it("keeps server-accepted capabilities separate from raw legacy declarations", async () => {
+    const store = createClasspilotRealtimeStatusStore(async () => undefined, () => 1_000_000);
+    const result = await store.write(heartbeat({
+      extensionCapabilities: ["exactTabCloseV1", "screenshotObservationLeaseV1"],
+      acceptedCapabilities: ["screenshotObservationLeaseV1"],
+    }));
+    assert.deepEqual(result.snapshot?.extensionCapabilities, [
+      "exactTabCloseV1",
+      "screenshotObservationLeaseV1",
+    ]);
+    assert.deepEqual(result.snapshot?.acceptedCapabilities, [
+      "screenshotObservationLeaseV1",
+    ]);
+  });
+
   it("guards local classification patches by exact heartbeat and session", async () => {
     let clock = 1_000_000;
     const store = createClasspilotRealtimeStatusStore(async () => undefined, () => clock++);
@@ -333,6 +348,14 @@ describe("ClassPilot cluster-safe realtime status", () => {
     assert.match(devices, /patchClasspilotRealtimeClassification\(\{[\s\S]*?heartbeatId: heartbeat\.id/);
     assert.match(devices, /publishRevisionedRealtimeUpdate/);
     assert.match(devices, /realtimeBinding:\s*classpilotPublicRealtimeBinding\(snapshot\.studentSessionId\)/);
+    assert.match(devices, /acceptedCapabilities:\s*protocol\.acceptedCapabilities/);
+
+    const screenshotStart = devices.indexOf('router.post("/device/screenshot"');
+    const screenshotEnd = devices.indexOf('// POST /api/classpilot/tiles/screenshots', screenshotStart);
+    const screenshot = devices.slice(screenshotStart, screenshotEnd);
+    assert.match(screenshot, /realtime\.snapshot\.acceptedCapabilities/);
+    assert.match(screenshot, /SCREENSHOT_CAPABILITY_HEARTBEAT_REQUIRED/);
+    assert.doesNotMatch(screenshot, /screenshotClientProtocolVersion|screenshotCapabilities/);
   });
 
   it("publishes exact-tab and extension capabilities without device identifiers", () => {

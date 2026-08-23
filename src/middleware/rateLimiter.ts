@@ -10,6 +10,7 @@ import {
 import { usesDeviceScopedApiLimit } from "../util/apiRateLimitRoutes.js";
 import { createRedisReadyWaiter } from "../util/redisReadyWaiter.js";
 import { verifyUserToken } from "../services/jwt.js";
+import { safeErrorMetadata } from "../util/safeLogging.js";
 
 // Shared Redis backing for all limiters so counts survive deploys and are
 // shared across ECS tasks. Dedicated client (not the ws-redis publisher) to
@@ -27,11 +28,11 @@ if (redisUrl) {
   // a listener; timeout rejection still flows to passOnStoreError.
   waitForReady = createRedisReadyWaiter(redisClient);
   redisClient.on("error", (err) =>
-    console.warn("[RateLimit] Redis error:", (err as Error).message)
+    console.warn("[RateLimit] Redis error:", safeErrorMetadata(err))
   );
   redisClient
     .connect()
-    .catch((err) => console.warn("[RateLimit] Redis connect failed:", err.message));
+    .catch((err) => console.warn("[RateLimit] Redis connect failed:", safeErrorMetadata(err)));
 }
 
 export function redisStore(prefix: string): Store | undefined {

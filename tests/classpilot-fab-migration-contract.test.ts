@@ -11,7 +11,7 @@ const REQUIRED_FAB_TABLES = [
 ] as const;
 
 test("ClassPilot FAB/chat/poll startup migration is fail-closed and RLS-wired", async () => {
-  const [startup, schema, storage, workflow, deploy, allowlistHelper, guidance] = await Promise.all([
+  const [startup, schema, storage, workflow, deploy, allowlistHelper, guidance, registrySource] = await Promise.all([
     readFile(new URL("../src/index.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/schema/classpilot.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/services/storage.ts", import.meta.url), "utf8"),
@@ -19,6 +19,7 @@ test("ClassPilot FAB/chat/poll startup migration is fail-closed and RLS-wired", 
     readFile(new URL("../scripts/deploy.sh", import.meta.url), "utf8"),
     readFile(new URL("../scripts/enforce-deploy-rls-allowlist.mjs", import.meta.url), "utf8"),
     readFile(new URL("../CLAUDE.md", import.meta.url), "utf8"),
+    readFile(new URL("../src/config/rlsRegistry.json", import.meta.url), "utf8"),
   ]);
   for (const table of REQUIRED_FAB_TABLES) {
     assert.match(startup, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
@@ -26,11 +27,16 @@ test("ClassPilot FAB/chat/poll startup migration is fail-closed and RLS-wired", 
     assert.match(workflow, new RegExp(`(?:^|,)${table}(?:,|$)`));
   }
   const oneShotFabBundle = "classpilot_chat_deliveries,poll_responses,polls,session_settings";
-  assert.match(deploy, new RegExp(oneShotFabBundle));
+  const registry = JSON.parse(registrySource) as {
+    reviewedEnablementRequests: { classpilotFabReadmission: string[] };
+  };
+  assert.deepEqual(
+    registry.reviewedEnablementRequests.classpilotFabReadmission,
+    oneShotFabBundle.split(",")
+  );
+  assert.match(deploy, /enforce-deploy-rls-allowlist\.mjs/);
   assert.match(allowlistHelper, /CLASSPILOT_FAB_RLS_TABLES/);
-  for (const table of REQUIRED_FAB_TABLES.slice(1)) {
-    assert.match(allowlistHelper, new RegExp(`"${table}"`));
-  }
+  assert.match(allowlistHelper, /rlsRegistry\.reviewedEnablementRequests/);
   assert.match(guidance, new RegExp(oneShotFabBundle));
   assert.match(startup, /FATAL: ClassPilot FAB release-critical migration failed/);
   assert.match(startup, /throw err/);

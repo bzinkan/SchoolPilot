@@ -41,6 +41,7 @@ import {
   getActiveSessionsForStudents,
   getActiveSupervisionForStudent,
   getCoverageScopeGroupStudentIds,
+  getCoverageScopeGroupStudentIdsForGroups,
   getCentralEmailRecipientForSchool,
   getClasspilotSessionStudents,
   getClasspilotSessionStudentRoster,
@@ -52,6 +53,8 @@ import {
   getPendingMessagesForStudent,
   getRecentMessagesForStudent,
   getGroupStudents,
+  getGroupStudentIdsForGroups,
+  getGroupTeacherIdsForGroups,
   getSettingsForSchool,
   getOnlineUnassignedStudents,
   addCentralEmailRecipientForSchool,
@@ -80,6 +83,7 @@ import {
   withClasspilotSupervisionTelemetryAuthority,
 } from "../dist/services/storage.js";
 import { buildStudentFabState } from "../dist/services/classpilotFab.js";
+import { snapshotClasspilotCoverageHydrationMetrics } from "../dist/services/classpilotCoverageHydration.js";
 import {
   executeClasspilotCommand,
   normalizeCommandPayload,
@@ -862,6 +866,68 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     ));
     assert.deepEqual(wrongSchool, []);
     assert.deepEqual(await inSchool(school.id, () => getActiveSessionsForStudents(school.id, [])), []);
+  });
+
+  it("batch-loads direct and supervision-group membership within one exact school", async () => {
+    const directGroup = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: teacher.id,
+      name: `${TAG}_Bulk_Membership`,
+      groupType: "admin_class",
+      status: "active",
+    }));
+    await inSchool(school.id, () => addGroupStudentsDetailed(
+      directGroup.id,
+      [studentUnassigned.id, studentDeviceGuard.id]
+    ));
+    await inSchool(school.id, () => addGroupTeacher(
+      directGroup.id,
+      coverageStaff.id,
+      "co_teacher"
+    ));
+    const coverageGroup = await inSchool(school.id, () => createCoverageScopeGroup({
+      group: {
+        schoolId: school.id,
+        name: `${TAG}_Bulk_Coverage_Membership`,
+        createdBy: admin.id,
+      },
+      studentIds: [studentCoverage.id],
+    }));
+
+    const direct = await inSchool(school.id, () => getGroupStudentIdsForGroups(
+      school.id,
+      [directGroup.id, directGroup.id]
+    ));
+    assert.deepEqual(
+      direct.get(directGroup.id),
+      new Set([studentUnassigned.id, studentDeviceGuard.id])
+    );
+    const teachers = await inSchool(school.id, () => getGroupTeacherIdsForGroups(
+      school.id,
+      [directGroup.id, directGroup.id]
+    ));
+    assert.deepEqual(teachers.get(directGroup.id), new Set([coverageStaff.id]));
+    const coverage = await inSchool(school.id, () => getCoverageScopeGroupStudentIdsForGroups(
+      school.id,
+      [coverageGroup.id, coverageGroup.id]
+    ));
+    assert.deepEqual(coverage.get(coverageGroup.id), new Set([studentCoverage.id]));
+
+    const wrongSchoolDirect = await inSchool(school.id, () => getGroupStudentIdsForGroups(
+      "not-the-requested-school",
+      [directGroup.id]
+    ));
+    assert.deepEqual(wrongSchoolDirect.get(directGroup.id), new Set());
+    const wrongSchoolTeachers = await inSchool(school.id, () => getGroupTeacherIdsForGroups(
+      "not-the-requested-school",
+      [directGroup.id]
+    ));
+    assert.deepEqual(wrongSchoolTeachers.get(directGroup.id), new Set());
+    const wrongSchoolCoverage = await inSchool(school.id, () => getCoverageScopeGroupStudentIdsForGroups(
+      "not-the-requested-school",
+      [coverageGroup.id]
+    ));
+    assert.deepEqual(wrongSchoolCoverage.get(coverageGroup.id), new Set());
   });
 
   it("lists online unassigned students and excludes active class or temporary coverage students", async () => {
@@ -2337,6 +2403,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.ok(groupRes.body.group.staff.some((staff: any) => staff.id === scopedCoverageStaff.id));
     expectNoDeviceIds(groupRes.body);
 
+    snapshotClasspilotCoverageHydrationMetrics({ reset: true });
     const staffQueue = await requestJson("GET", "/coverage/available-students", undefined, staffAuth);
     assert.equal(staffQueue.status, 200);
     const staffQueueIds = new Set(staffQueue.body.students.map((student: any) => student.studentId));
@@ -2345,6 +2412,9 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       student.matchingGroups.some((group: any) => group.id === groupRes.body.group.id)
     ));
     expectNoDeviceIds(staffQueue.body);
+    const hydrationMetrics = snapshotClasspilotCoverageHydrationMetrics();
+    assert.ok(hydrationMetrics.sessionSqlStatements <= 1);
+    assert.ok(hydrationMetrics.realtimeRedisCommands <= 2);
 
     const teacherQueue = await requestJson("GET", "/coverage/available-students", undefined, teacherAuth);
     assert.equal(teacherQueue.status, 200);
@@ -3510,6 +3580,12 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.equal(recovered.commandId, result.command.id);
     assert.equal(recovered.teachingSessionId, teachingSession.id);
     assert.equal(recovered.supervisionContextId, null);
+    const claimedCommand = await inSchool(school.id, () =>
+      getClasspilotCommandByIdAndSchool(result.command.id, school.id)
+    );
+    assert.equal(claimedCommand?.targets[0]?.studentSessionId, recoverySession.id);
+    assert.equal(claimedCommand?.targets[0]?.deviceId, recoveryDeviceId);
+    assert.equal(claimedCommand?.targets[0]?.status, "sent");
     const excluded = await inSchool(school.id, () => getPendingMessagesForStudent({
       ...inboxOptions,
       excludeMessageIds: [recovered.id],

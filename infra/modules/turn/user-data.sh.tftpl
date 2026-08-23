@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+apt-get update
+apt-get install -y --no-install-recommends awscli ca-certificates certbot coturn curl jq python3-certbot-dns-route53
+
+install -d -m 0750 -o turnserver -g turnserver /var/log/turnserver
+turn_secret="$(aws secretsmanager get-secret-value --region '${aws_region}' --secret-id '${rest_secret_arn}' --query SecretString --output text)"
+test -n "$turn_secret"
+
+certbot certonly --non-interactive --agree-tos --dns-route53 \
+  --email '${tls_email}' --domain '${hostname}' --keep-until-expiring
+
+install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
+printf '%s\n' '#!/usr/bin/env bash' 'systemctl restart coturn' \
+  >/etc/letsencrypt/renewal-hooks/deploy/restart-coturn
+chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/restart-coturn
+
+cat >/etc/turnserver.conf <<EOF
+listening-port=3478
+tls-listening-port=443
+fingerprint
+use-auth-secret
+static-auth-secret=$turn_secret
+realm=${realm}
+server-name=${hostname}
+external-ip=${public_ip}
+min-port=${relay_port_min}
+max-port=${relay_port_max}
+cert=/etc/letsencrypt/live/${hostname}/fullchain.pem
+pkey=/etc/letsencrypt/live/${hostname}/privkey.pem
+no-tlsv1
+no-tlsv1_1
+no-cli
+no-loopback-peers
+no-multicast-peers
+stale-nonce=600
+total-quota=1200
+user-quota=12
+log-file=/var/log/turnserver/turn.log
+simple-log
+EOF
+unset turn_secret
+chown root:turnserver /etc/turnserver.conf
+chmod 0640 /etc/turnserver.conf
+
+sed -i 's/^#\?TURNSERVER_ENABLED=.*/TURNSERVER_ENABLED=1/' /etc/default/coturn
+systemctl enable --now coturn certbot.timer
+
+# Coturn writes final per-session usage as numeric rb/sb byte counters. This
+# bounded incremental collector emits only their sum; it never forwards realm,
+# username, peer address, credential, negotiation, or other log content.
+install -d -m 0750 -o root -g root /var/lib/classpilot-turn-metrics
+printf '%s' '${relay_metrics_script_base64}' | base64 --decode \
+  >/usr/local/bin/classpilot-turn-relay-metrics.py
+chmod 0750 /usr/local/bin/classpilot-turn-relay-metrics.py
+
+cat >/etc/systemd/system/classpilot-turn-relay-metrics.service <<'EOF'
+[Unit]
+Description=Publish identifier-free ClassPilot TURN relay byte totals
+After=network-online.target coturn.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Environment=AWS_REGION=${aws_region}
+Environment=METRIC_NAMESPACE=${metric_namespace}
+ExecStart=/usr/local/bin/classpilot-turn-relay-metrics.py
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/classpilot-turn-metrics
+ReadOnlyPaths=/var/log/turnserver
+EOF
+
+cat >/etc/systemd/system/classpilot-turn-relay-metrics.timer <<'EOF'
+[Unit]
+Description=Collect ClassPilot TURN relay byte totals every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=10s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+cat >/etc/logrotate.d/coturn-schoolpilot <<'EOF'
+/var/log/turnserver/turn.log {
+  daily
+  rotate 7
+  compress
+  missingok
+  notifempty
+  copytruncate
+}
+EOF
+
+systemctl daemon-reload
+systemctl enable --now classpilot-turn-relay-metrics.timer
+
+curl --fail --silent --show-error --location \
+  https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb \
+  --output /tmp/amazon-cloudwatch-agent.deb
+dpkg -i /tmp/amazon-cloudwatch-agent.deb
+cat >/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'EOF'
+{
+  "agent": { "metrics_collection_interval": 60, "run_as_user": "root" },
+  "metrics": {
+    "namespace": "${metric_namespace}",
+    "append_dimensions": { "Node": "${node_name}" },
+    "aggregation_dimensions": [["Node"]],
+    "metrics_collected": {
+      "net": { "measurement": ["bytes_sent", "bytes_recv"], "metrics_collection_interval": 60 }
+    }
+  }
+}
+EOF
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+  -a fetch-config -m ec2 \
+  -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s

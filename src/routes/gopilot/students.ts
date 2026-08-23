@@ -5,7 +5,7 @@ import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { rejectDisabledGoPilotParent } from "../../middleware/rejectDisabledGoPilotParent.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
-import { requireProductLicense } from "../../middleware/requireProductLicense.js";
+import { requireGopilotEntitlement } from "../../middleware/requireGopilotEntitlement.js";
 import { createStudentSchema, updateStudentSchema } from "../../schema/validation.js";
 import type { InsertStudent } from "../../schema/students.js";
 import {
@@ -54,8 +54,8 @@ const auth = [
   authenticate,
   requireSchoolContext,
   rejectDisabledGoPilotParent,
+  requireGopilotEntitlement,
   requireActiveSchool,
-  requireProductLicense("GOPILOT"),
 ] as const;
 const staffAuth = [
   ...auth,

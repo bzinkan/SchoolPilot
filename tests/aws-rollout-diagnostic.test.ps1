@@ -2137,7 +2137,7 @@ $replacementLock = Enter-DiagnosticRunLock $lockConfig
 Exit-DiagnosticRunLock $replacementLock
 
 $script:restoreCalls = [System.Collections.Generic.List[object]]::new()
-$script:restoredScaling = [ordered]@{minCapacity=1;maxCapacity=8;suspendedState=[ordered]@{DynamicScalingInSuspended=$false;DynamicScalingOutSuspended=$false;ScheduledScalingSuspended=$false};scheduledActionsSha256='schedule';scalingPoliciesSha256='policy'}
+$script:restoredScaling = [ordered]@{minCapacity=1;maxCapacity=6;suspendedState=[ordered]@{DynamicScalingInSuspended=$false;DynamicScalingOutSuspended=$false;ScheduledScalingSuspended=$false};scheduledActionsSha256='schedule';scalingPoliciesSha256='policy'}
 $script:restoredServices = [ordered]@{api=[ordered]@{desired=2;running=2};worker=[ordered]@{desired=1;running=1}}
 function Set-ScalingTarget {
     param($Config,[int]$Minimum,[int]$Maximum,$SuspendedState)
@@ -2172,8 +2172,8 @@ $script:traceRestoreTargetHealth = $false
 Assert-Condition ($restoreResult.restored -eq $true) 'Exact scaling restoration should produce successful terminal evidence.'
 Assert-Condition ($script:restoreCalls.Count -eq 2) 'Restoration must hold scaling while desired capacity converges, then restore the original suspended state.'
 $expectedRestoreEvents = @(
-    'scaling:1:8:True','aws:ecs:update-service','aws:ecs:wait','target-health','target-health',
-    'scaling:1:8:False','scaling-snapshot','service-posture','target-health'
+    'scaling:1:6:True','aws:ecs:update-service','aws:ecs:wait','target-health','target-health',
+    'scaling:1:6:False','scaling-snapshot','service-posture','target-health'
 )
 Assert-Condition (($script:restoreEvents -join '|') -ceq ($expectedRestoreEvents -join '|')) `
     'Restoration must hold scaling through ECS stabilization and ALB draining, then restore and reverify the exact posture.'

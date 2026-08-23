@@ -55,6 +55,7 @@ import {
   randomFourDigitClassPilotPin,
   type GeneratedClassPilotPin,
 } from "../services/classpilotPins.js";
+import { requestHasAnySchoolRole } from "../services/schoolAuthorization.js";
 
 const router = Router();
 const CLASSPILOT_PIN_HASH_CONCURRENCY = 4;
@@ -73,11 +74,7 @@ function studentLifecycleActor(req: Request, res: Response, source: string) {
 }
 
 function mayManageStudentLifecycle(req: Request, res: Response): boolean {
-  return Boolean(
-    req.authUser?.isSuperAdmin ||
-    res.locals.membershipRole === "admin" ||
-    res.locals.membershipRole === "school_admin"
-  );
+  return requestHasAnySchoolRole(req, res, ["admin", "school_admin"]);
 }
 
 function includesLifecycleStatus(value: unknown): boolean {
@@ -1396,7 +1393,6 @@ router.delete(
         );
       } catch {
         console.warn("[Student Removal] ClassPilot socket shutdown failed after deactivation", {
-          schoolId: res.locals.schoolId,
           studentCount: result.foundStudentIds.length,
         });
       }
@@ -1410,10 +1406,7 @@ router.delete(
         } catch {
           // Roster removal is authoritative. A Gmail/API outage cannot restore
           // the student's access; the inactive roster prevents future renewal.
-          console.warn("[Student Removal] MailPilot shutdown failed after deactivation", {
-            schoolId: res.locals.schoolId,
-            studentId: existing.id,
-          });
+          console.warn("[Student Removal] MailPilot shutdown failed after deactivation");
         }
       }
       return res.json({ ok: true });

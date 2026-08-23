@@ -112,7 +112,7 @@ router.post(
       try {
         event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret);
       } catch (err: any) {
-        console.error("[Stripe] Webhook signature verification failed:", err.message);
+      console.error("[Stripe] Webhook signature verification failed");
         return res.status(400).json({ error: "Webhook signature invalid" });
       }
 
@@ -147,7 +147,7 @@ router.post(
               metadata: { sessionId: session.id, amountPaid, studentCount },
             });
 
-            console.log(`[Stripe] Checkout completed for school ${schoolId}: $${(amountPaid / 100).toFixed(2)}, ${studentCount} students`);
+            console.log(JSON.stringify({ event: "stripe_checkout_completed", amountCents: amountPaid, studentCount }));
           }
           break;
         }
@@ -187,9 +187,9 @@ router.post(
               metadata: { invoiceId: invoice.id, amountPaid, studentCount, products },
             });
 
-            console.log(`[Stripe] Invoice paid for school ${schoolId}: $${(amountPaid / 100).toFixed(2)} (${products.join(", ")})`);
+            console.log(JSON.stringify({ event: "stripe_invoice_paid", amountCents: amountPaid, productCount: products.length }));
           } else {
-            console.log(`[Stripe] Invoice paid (no schoolId): customer ${invoice.customer}`);
+            console.log("[Stripe] Invoice paid without a resolved tenant");
           }
           break;
         }
@@ -210,7 +210,7 @@ router.post(
               metadata: { invoiceId: invoice.id },
             });
 
-            console.log(`[Stripe] Payment failed for school ${schoolId}`);
+            console.log("[Stripe] Payment failed for a resolved tenant");
           }
           break;
         }
@@ -234,7 +234,7 @@ router.post(
             });
           }
 
-          console.log(`[Stripe] Subscription cancelled: ${subscription.customer}`);
+          console.log("[Stripe] Subscription cancelled");
           break;
         }
       }

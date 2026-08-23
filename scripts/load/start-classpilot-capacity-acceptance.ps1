@@ -979,7 +979,7 @@ function Assert-ProductionScalingContract {
         [int](Get-Value $target "ScaleOutCooldown" -1) -ne 60 -or
         [string](Get-Value $metric "PredefinedMetricType" "") -cne
             "ECSServiceAverageCPUUtilization" -or
-        [int]$Scaling.maxCapacity -ne 8 -or [int]$Scaling.minCapacity -notin @(1, 6) -or
+        [int]$Scaling.maxCapacity -ne 6 -or [int]$Scaling.minCapacity -notin @(1, 6) -or
         $Scaling.suspendedState.DynamicScalingInSuspended -ne $false -or
         $Scaling.suspendedState.DynamicScalingOutSuspended -ne $false -or
         $Scaling.suspendedState.ScheduledScalingSuspended -ne $false) {
@@ -991,7 +991,7 @@ function Assert-HeldCapacityPosture {
     param($Services, $Targets, $Scaling)
     $baselineSemantics = [ordered]@{
         minCapacity = 1
-        maxCapacity = 8
+        maxCapacity = 6
         suspendedState = [ordered]@{
             DynamicScalingInSuspended = $false
             DynamicScalingOutSuspended = $false
@@ -1007,7 +1007,7 @@ function Assert-HeldCapacityPosture {
         [int]$Services.worker.pending -ne 0 -or
         [int]$Targets.total -ne 6 -or [int]$Targets.healthy -ne 6 -or
         [int]$Targets.nonHealthy -ne 0 -or
-        [int]$Scaling.minCapacity -ne 6 -or [int]$Scaling.maxCapacity -ne 8 -or
+        [int]$Scaling.minCapacity -ne 6 -or [int]$Scaling.maxCapacity -ne 6 -or
         $Scaling.suspendedState.DynamicScalingInSuspended -ne $false -or
         $Scaling.suspendedState.DynamicScalingOutSuspended -ne $true -or
         $Scaling.suspendedState.ScheduledScalingSuspended -ne $false) {
@@ -4048,7 +4048,7 @@ function Get-RunRecoveryBaseline {
     $api = @($services | Where-Object serviceName -ceq $Config.Resources.apiService)
     $worker = @($services | Where-Object serviceName -ceq $Config.Resources.workerService)
     if (@($response.failures).Count -ne 0 -or $api.Count -ne 1 -or $worker.Count -ne 1 -or
-        [int]$api[0].desiredCount -lt 1 -or [int]$api[0].desiredCount -gt 8 -or
+        [int]$api[0].desiredCount -lt 1 -or [int]$api[0].desiredCount -gt 6 -or
         [int]$worker[0].desiredCount -ne 1) {
         throw "The run recovery service baseline could not be uniquely bound."
     }

@@ -3,13 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { ChevronDown, ChevronRight, ExternalLink, Car } from 'lucide-react';
 import api from '../../../../shared/utils/api';
 import { useAuth } from '../../../../contexts/AuthContext';
+import { hasGoPilotRole } from '../../../../shared/utils/schoolRoles';
 
 export default function GoPilotMiniView() {
   const { activeMembership } = useAuth();
   const gopilotPath = useMemo(() => {
-    const role = activeMembership?.gopilotRole || activeMembership?.role;
-    return role === 'teacher' ? '/gopilot/teacher' : '/gopilot';
-  }, [activeMembership?.gopilotRole, activeMembership?.role]);
+    const teacherOnly = hasGoPilotRole(activeMembership, 'teacher')
+      && !hasGoPilotRole(activeMembership, 'admin', 'school_admin', 'office_staff');
+    return teacherOnly ? '/gopilot/teacher' : '/gopilot';
+  }, [activeMembership]);
   const [sessionInfo, setSessionInfo] = useState(null);
   const [stats, setStats] = useState(null);
   const [countdown, setCountdown] = useState('');

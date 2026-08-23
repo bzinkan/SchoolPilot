@@ -31,12 +31,12 @@ redis_replica_count = 0
 # ECS — scheduler work remains isolated; API runs single-task in pilot mode
 ecs_desired_count = 1
 # Six 512/2048 live API tasks are pre-warmed for the weekday arrival wave. The
-# ordinary minimum remains one, and target tracking may scale up to eight. The
+# ordinary minimum remains one, and target tracking may scale up to six. The
 # live emergency revision remains selected independently because ECS task
 # definitions are deliberately ignored by this staged Terraform profile.
 enable_api_arrival_capacity     = true
 api_arrival_min_capacity        = 6
-api_max_capacity                = 8
+api_max_capacity                = 6
 api_arrival_scale_up_schedule   = "cron(45 5 ? * MON-FRI *)"
 api_arrival_scale_down_schedule = "cron(0 10 ? * MON-FRI *)"
 api_arrival_schedule_timezone   = "America/New_York"
@@ -45,7 +45,7 @@ ecs_memory                      = 1024
 worker_desired_count            = 1
 worker_cpu                      = 256
 worker_memory                   = 512
-db_pool_max                     = 20
+db_pool_max                     = 16
 scheduler_db_pool_max           = 5
 # Staged value: switch to false only after five stable live school days.
 enable_container_insights = true
@@ -73,9 +73,13 @@ alerts_sns_topic_arn = "arn:aws:sns:us-east-1:135775632425:schoolpilot-productio
 anthropic_api_key_parameter_arn  = "arn:aws:ssm:us-east-1:135775632425:parameter/schoolpilot/production/ANTHROPIC_API_KEY"
 telegram_bot_token_parameter_arn = "arn:aws:ssm:us-east-1:135775632425:parameter/schoolpilot/production/TELEGRAM_BOT_TOKEN"
 
-# PostgreSQL RLS allowlist baseline adopted from the observed live task
-# definitions (API standard :156 / emergency :56 / worker :71) after the
-# verified one-shot ClassPilot FAB/chat/poll rollout on 2026-08-19. Matches the
-# exact 72-table RLS_ENABLED_TABLES value on all three services; do not edit
-# outside a reviewed rollout.
-rls_enabled_tables = "activity_log,audit_logs,block_lists,bus_routes,chat_messages,classpilot_active_hands,classpilot_ai_decisions,classpilot_classroom_states,classpilot_command_targets,classpilot_commands,classpilot_coverage_assignments,classpilot_coverage_scope_group_members,classpilot_coverage_scope_groups,classpilot_scheduled_conflicts,classpilot_session_students,classpilot_session_usage,classpilot_supervision_contexts,classpilot_supervision_students,classroom_course_students,classroom_courses,daily_usage,dashboard_tabs,devices,dismissal_sessions,email_alerts,email_scan_log,error_logs,evidence_artifacts,family_groups,flight_paths,google_roster_connectors,grades,groups,heartbeats,homerooms,import_runs,mailpilot_watches,messages,parent_student,passes,security_events,settings,student_attendance,student_groups,student_safety_cases,student_timeline_events,students,subgroups,teacher_students,teaching_sessions,walker_zones,classpilot_session_summary_deliveries,passpilot_grade_students,authorized_pickups,custody_alerts,dismissal_changes,dismissal_overrides,dismissal_queue,family_group_students,homeroom_teachers,classpilot_monitoring_events,classpilot_session_reports,classpilot_session_staff,classpilot_session_student_reports,classpilot_student_control_states,classpilot_schedule_change_pairs,classpilot_schedule_changes,classpilot_schedule_change_legs,classpilot_chat_deliveries,poll_responses,polls,session_settings"
+# Phase-2 dark infrastructure. Set both values in the reviewed TURN activation
+# change after DNS/TLS monitoring readiness has been confirmed.
+enable_classpilot_turn    = false
+classpilot_turn_tls_email = ""
+
+# SchoolPilot 2.7.0 post-expand RLS target. The immutable registry separately
+# preserves the exact 72-table live inventory observed on 2026-08-19; this
+# 75-table target adds only evidence-capture requests and the two kiosk tables.
+# Admission still follows the reviewed migration/catalog gate before apply.
+rls_enabled_tables = "activity_log,audit_logs,block_lists,bus_routes,chat_messages,classpilot_active_hands,classpilot_ai_decisions,classpilot_classroom_states,classpilot_command_targets,classpilot_commands,classpilot_coverage_assignments,classpilot_coverage_scope_group_members,classpilot_coverage_scope_groups,classpilot_scheduled_conflicts,classpilot_session_students,classpilot_session_usage,classpilot_supervision_contexts,classpilot_supervision_students,classroom_course_students,classroom_courses,daily_usage,dashboard_tabs,devices,dismissal_sessions,email_alerts,email_scan_log,error_logs,evidence_artifacts,family_groups,flight_paths,google_roster_connectors,grades,groups,heartbeats,homerooms,import_runs,mailpilot_watches,messages,parent_student,passes,security_events,settings,student_attendance,student_groups,student_safety_cases,student_timeline_events,students,subgroups,teacher_students,teaching_sessions,walker_zones,classpilot_session_summary_deliveries,passpilot_grade_students,authorized_pickups,custody_alerts,dismissal_changes,dismissal_overrides,dismissal_queue,family_group_students,homeroom_teachers,classpilot_monitoring_events,classpilot_session_reports,classpilot_session_staff,classpilot_session_student_reports,classpilot_student_control_states,classpilot_schedule_change_pairs,classpilot_schedule_changes,classpilot_schedule_change_legs,classpilot_chat_deliveries,poll_responses,polls,session_settings,classpilot_evidence_capture_requests,passpilot_kiosk_devices,passpilot_kiosk_sessions"

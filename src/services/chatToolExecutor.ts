@@ -667,7 +667,7 @@ export async function executeTool(
   try {
     return await executor(args, ctx);
   } catch (err: any) {
-    console.error(`[ChatTool] Error executing ${toolName}:`, err);
+    console.error(`[ChatTool] Execution failed for allowed tool ${toolName}`);
 
     // Auto-escalate on unexpected errors
     try {
@@ -682,7 +682,7 @@ export async function executeTool(
         chatTranscript: ctx.getTranscript(),
       });
     } catch (emailErr) {
-      console.error("[ChatTool] Failed to send escalation email:", emailErr);
+    console.error("[ChatTool] Failed to send escalation email");
     }
 
     return {

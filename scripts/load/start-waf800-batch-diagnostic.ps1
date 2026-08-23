@@ -3596,7 +3596,7 @@ function Set-ScalingTarget {
 function Set-DiagnosticCapacity {
     param($Config)
     $held = [ordered]@{DynamicScalingInSuspended=$true;DynamicScalingOutSuspended=$true;ScheduledScalingSuspended=$true}
-    Set-ScalingTarget $Config 6 8 $held
+    Set-ScalingTarget $Config 6 6 $held
     Invoke-AwsCommand @("ecs","update-service","--region",$Config.Resources.region,"--cluster",$Config.Resources.cluster,
         "--service",$Config.Resources.apiService,"--desired-count","6")
     Invoke-AwsCommand @("ecs","wait","services-stable","--region",$Config.Resources.region,"--cluster",$Config.Resources.cluster,
@@ -3608,7 +3608,7 @@ function Set-DiagnosticCapacity {
         throw "Diagnostic capacity failed to converge to six exact API targets and one worker."
     }
     $scaling = Get-ScalingSnapshot $Config
-    if ([int]$scaling.minCapacity -ne 6 -or [int]$scaling.maxCapacity -ne 8 -or
+    if ([int]$scaling.minCapacity -ne 6 -or [int]$scaling.maxCapacity -ne 6 -or
         -not [bool]$scaling.suspendedState.DynamicScalingInSuspended -or
         -not [bool]$scaling.suspendedState.DynamicScalingOutSuspended -or
         -not [bool]$scaling.suspendedState.ScheduledScalingSuspended) {

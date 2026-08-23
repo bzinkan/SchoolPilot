@@ -4,6 +4,7 @@ import { schools } from "../schema/core.js";
 import db from "../db.js";
 import { createSingleFlight } from "../util/singleFlight.js";
 import { clearSessionCookie } from "../config/sessionCookie.js";
+import { safeErrorMetadata } from "../util/safeLogging.js";
 
 const loadSchoolSingleFlight = createSingleFlight<
   string,
@@ -81,7 +82,10 @@ const resolveActiveSchool: RequestHandler = async (req, res, next) => {
   ) {
     return req.session.destroy((error) => {
       if (error) {
-        console.warn("[Session] invalidated session destroy failed:", error);
+        console.warn(
+          "[Session] invalidated session destroy failed:",
+          safeErrorMetadata(error)
+        );
       }
       clearSessionCookie(res);
       return res.status(401).json({ error: "Session invalidated" });

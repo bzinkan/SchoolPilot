@@ -34,6 +34,7 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [memberships, setMemberships] = useState([]);
   const [licenses, setLicenses] = useState({});
+  const [schoolSelectionRequired, setSchoolSelectionRequired] = useState(false);
   const [loading, setLoading] = useState(true);
   const [activeSchoolId, setActiveSchoolId] = useState(
     () => localStorage.getItem('sp_activeSchoolId') || null
@@ -119,9 +120,14 @@ export function AuthProvider({ children }) {
         ? res.data.activeSchoolId
         : null;
 
-      // Default to first membership's school if none selected, or repair a stale
-      // local selection after membership changes.
-      if (resolvedSchoolId) {
+      const serverRequiresSchoolSelection = res.data.schoolSelectionRequired === true;
+
+      // Multi-school identities must make an explicit selection before product
+      // routes mount. A previously selected valid school is sent in X-School-Id
+      // and therefore resolves above without entering this state.
+      if (serverRequiresSchoolSelection) {
+        selectActiveSchool(null);
+      } else if (resolvedSchoolId) {
         selectActiveSchool(resolvedSchoolId);
       } else if ((!selectedSchoolId || !selectedSchoolIsValid) && nextMemberships.length > 0) {
         selectActiveSchool(nextMemberships[0].schoolId);
@@ -134,6 +140,7 @@ export function AuthProvider({ children }) {
       setUser(res.data.user);
       setMemberships(nextMemberships);
       setLicenses(res.data.licenses || {});
+      setSchoolSelectionRequired(serverRequiresSchoolSelection);
       return res.data;
     } catch (error) {
       if (!isLatestRequest()) return null;
@@ -143,6 +150,7 @@ export function AuthProvider({ children }) {
       setUser(null);
       setMemberships([]);
       setLicenses({});
+      setSchoolSelectionRequired(false);
       if (error?.code === 'NATIVE_SECURE_STORAGE_UNAVAILABLE') {
         publishToken(null);
         setSecureStorageError(error.message);
@@ -177,8 +185,11 @@ export function AuthProvider({ children }) {
       await acceptToken(res.data.token);
     }
 
-    if (res.data.memberships?.length > 0) {
+    if (!res.data.schoolSelectionRequired && res.data.memberships?.length > 0) {
       selectActiveSchool(res.data.memberships[0].schoolId);
+    } else if (res.data.schoolSelectionRequired) {
+      selectActiveSchool(null);
+      setSchoolSelectionRequired(true);
     }
 
     // Refetch to get licenses before exposing authenticated product routes.
@@ -194,6 +205,7 @@ export function AuthProvider({ children }) {
     }
 
     selectActiveSchool(res.data.membership?.schoolId || res.data.school?.id || null);
+    setSchoolSelectionRequired(false);
     await fetchUser({ throwOnError: true });
     return res.data;
   };
@@ -208,6 +220,7 @@ export function AuthProvider({ children }) {
     setUser(null);
     setMemberships([]);
     setLicenses({});
+    setSchoolSelectionRequired(false);
     selectActiveSchool(null);
     await acceptToken(null);
   };
@@ -220,7 +233,7 @@ export function AuthProvider({ children }) {
     return res.data;
   };
 
-  const switchSchool = (schoolId) => {
+  const switchSchool = async (schoolId) => {
     // Product entitlements belong to the selected tenant. Hide product UI
     // synchronously so controls from the previous school cannot be used while
     // the new tenant's /auth/me response is still in flight.
@@ -229,7 +242,7 @@ export function AuthProvider({ children }) {
     selectActiveSchool(schoolId);
     queryClient.clear();
     // Refetch to get new school's licenses
-    fetchUser();
+    await fetchUser({ throwOnError: true });
   };
 
   const activeMembership = selectMembershipForSchool(memberships, activeSchoolId);
@@ -249,6 +262,7 @@ export function AuthProvider({ children }) {
         switchSchool,
         activeSchoolId,
         activeMembership,
+        schoolSelectionRequired,
         refetchUser: fetchUser,
         acceptToken,
         secureStorageError,

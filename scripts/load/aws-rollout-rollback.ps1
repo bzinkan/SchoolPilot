@@ -710,6 +710,9 @@ function Get-ApiRollbackDeploymentPolicy {
     if ($DesiredCount -lt 1) {
         throw "Application rollback requires API desired capacity of at least one."
     }
+    if ($DesiredCount -gt 6) {
+        throw "Application rollback refuses API desired capacity above the reviewed six-task ceiling."
+    }
 
     $configuration = Copy-EcsDeploymentConfiguration -DeploymentConfiguration $CapturedDeploymentConfiguration
     if ($DesiredCount -eq 1) {
@@ -722,7 +725,7 @@ function Get-ApiRollbackDeploymentPolicy {
         $mode = "singleton-one-replacement-slot"
     }
     else {
-        # At measured 6/8-task capacity, prohibit any surge so database connection
+        # At the reviewed six-task capacity, prohibit any surge so database connection
         # capacity cannot exceed the captured desired count. ECS rounds the minimum
         # up, so this percentage keeps exactly desired-1 tasks healthy.
         $configuration.maximumPercent = 100

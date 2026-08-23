@@ -32,11 +32,38 @@ describe("ClassPilot web-session routing", () => {
       request("POST", "/api/classpilot/device/screenshot"),
       request("GET", "/api/classpilot/device/device-1/students"),
       request("GET", "/api/classpilot/extension/settings"),
+      request("POST", "/api/classpilot/kiosk/launch-ticket"),
       request("POST", "/api/polls/poll-1/respond"),
       request("POST", "/api/checkin/respond"),
       request("POST", "/api/device/event"),
     ]) {
       assert.equal(skipsWebSession(req), true, `${req.method} ${req.path}`);
+    }
+  });
+
+  it("keeps public kiosk polling off the web-session pool without bypassing teacher routes", () => {
+    for (const req of [
+      request("POST", "/api/passpilot/kiosk/auth"),
+      request("POST", "/api/passpilot/kiosk/launch-ticket/redeem"),
+      request("POST", "/api/passpilot/kiosk/session"),
+      request("POST", "/api/passpilot/kiosk/session/resume"),
+      request("GET", "/api/passpilot/kiosk/config"),
+      request("GET", "/api/passpilot/kiosk/students"),
+      request("GET", "/api/passpilot/kiosk/snapshot"),
+      request("POST", "/api/passpilot/kiosk/client-health"),
+      request("GET", "/api/kiosk/snapshot"),
+      request("POST", "/api/kiosk/launch-ticket/redeem"),
+    ]) {
+      assert.equal(skipsWebSession(req), true, `${req.method} ${req.path}`);
+    }
+
+    for (const req of [
+      request("PUT", "/api/passpilot/kiosk/config"),
+      request("POST", "/api/passpilot/kiosk/sessions/claim"),
+      request("GET", "/api/passpilot/kiosk/sessions/mine"),
+      request("PUT", "/api/passpilot/kiosk/sessions/session-1"),
+    ]) {
+      assert.equal(skipsWebSession(req), false, `${req.method} ${req.path}`);
     }
   });
 });

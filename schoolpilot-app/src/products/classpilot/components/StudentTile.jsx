@@ -1,10 +1,9 @@
-import { useState, useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import { Card } from "../../../components/ui/card";
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
-import { Monitor, ExternalLink, AlertTriangle, Lock, Unlock, Layers, Maximize2, X, List, RotateCcw } from "lucide-react";
+import { Monitor, ExternalLink, AlertTriangle, Lock, Unlock, Layers, Maximize2, X, List, RotateCcw, EyeOff } from "lucide-react";
 import { Checkbox } from "../../../components/ui/checkbox";
-import VideoPortal from "./VideoPortal";
 import {
   deriveScreenshotDisplay,
   deriveStudentMonitoringDisplay,
@@ -56,6 +55,7 @@ function StudentTile({
   liveStream,
   onStartLiveView,
   onStopLiveView,
+  onExpandLiveView,
   liveViewPending = false,
   onAllowDomain,
   onManageTabs,
@@ -71,17 +71,12 @@ function StudentTile({
   returnToClassPending = false,
   recentHeartbeats = EMPTY_LIST,
   screenshotData = null,
-  screenshotError = "",
-  historyError = "",
-  onRetryTileData,
   flightPaths = EMPTY_LIST,
   monitoringDisplay,
   freshnessNowMs,
+  screenshotObservationStatus = 'legacy',
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const tileVideoSlotRef = useRef(null);
   const videoElementRef = useRef(null);
-  const lastAutoExpandedStreamRef = useRef(null);
   const effectiveMonitoringDisplay = monitoringDisplay
     || deriveStudentMonitoringDisplay(student, freshnessNowMs);
   const currentTelemetry = effectiveMonitoringDisplay.telemetryCurrent;
@@ -95,76 +90,16 @@ function StudentTile({
     ? "Unlock this student's screen only"
     : "Extension update required for screen-only unlock";
 
-  // Create video element once and attach stream
+  // The dashboard owns negotiation and the enlarged portal. This tile only
+  // renders a preview of the one active stream.
   useEffect(() => {
-    if (!videoElementRef.current) {
-      const video = document.createElement('video');
-      video.autoplay = true;
-      video.muted = true;
-      video.playsInline = true;
-      video.style.width = '100%';
-      video.style.height = 'auto';
-      video.className = 'rounded-md';
-      videoElementRef.current = video;
-    }
-
-    // Attach stream to video element
-    if (videoElementRef.current) {
-      videoElementRef.current.srcObject = liveStream || null;
-    }
-
-    // Mount video into tile slot when stream exists and the enlarged view is closed.
-    if (liveStream && !expanded && tileVideoSlotRef.current && videoElementRef.current) {
-      if (!tileVideoSlotRef.current.contains(videoElementRef.current)) {
-        tileVideoSlotRef.current.appendChild(videoElementRef.current);
-      }
-    } else if (!liveStream && videoElementRef.current) {
-      // Close portal if expanded
-      if (expanded) {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setExpanded(false);
-      }
-
-      // Remove video element from DOM when stream stops (check both locations)
-      const portalSlot = document.querySelector('#portal-video-slot');
-      if (portalSlot && portalSlot.contains(videoElementRef.current)) {
-        portalSlot.removeChild(videoElementRef.current);
-      }
-      if (tileVideoSlotRef.current && tileVideoSlotRef.current.contains(videoElementRef.current)) {
-        tileVideoSlotRef.current.removeChild(videoElementRef.current);
-      }
-    }
-  }, [liveStream, expanded]);
-
-  useEffect(() => {
-    if (!liveStream) {
-      lastAutoExpandedStreamRef.current = null;
-      return undefined;
-    }
-    if (lastAutoExpandedStreamRef.current === liveStream) {
-      return undefined;
-    }
-    lastAutoExpandedStreamRef.current = liveStream;
-
-    const timeout = window.setTimeout(() => {
-      setExpanded(true);
-    }, 0);
-
-    return () => window.clearTimeout(timeout);
+    const video = videoElementRef.current;
+    if (!video) return undefined;
+    video.srcObject = liveStream || null;
+    return () => {
+      if (video.srcObject === liveStream) video.srcObject = null;
+    };
   }, [liveStream]);
-
-  useEffect(() => {
-    if (!expanded || !liveStream || !videoElementRef.current) return undefined;
-
-    const timeout = window.setTimeout(() => {
-      const portalSlot = document.querySelector('#portal-video-slot');
-      if (portalSlot && videoElementRef.current && !portalSlot.contains(videoElementRef.current)) {
-        portalSlot.appendChild(videoElementRef.current);
-      }
-    }, 0);
-
-    return () => window.clearTimeout(timeout);
-  }, [expanded, liveStream]);
 
   // Get unique recent domains (last 5)
   const recentDomains = recentHeartbeats
@@ -193,28 +128,6 @@ function StudentTile({
   const activeFlightPath = flightPaths.find((fp) => fp.flightPathName === student.activeFlightPathName);
   const isBlockedByFlightPath = currentTelemetry && student.flightPathActive && activeFlightPath && student.activeTabUrl &&
     isBlockedDomain(student.activeTabUrl, activeFlightPath.blockedDomains || []);
-
-  // Expand video to portal
-  const handleExpand = (e) => {
-    e?.stopPropagation();
-    setExpanded(true);
-    // Move video to portal after next render
-    queueMicrotask(() => {
-      const portalSlot = document.querySelector('#portal-video-slot');
-      if (portalSlot && videoElementRef.current && !portalSlot.contains(videoElementRef.current)) {
-        portalSlot.appendChild(videoElementRef.current);
-      }
-    });
-  };
-
-  // Collapse video back to tile
-  const handleCollapse = () => {
-    const tileSlot = tileVideoSlotRef.current;
-    if (tileSlot && videoElementRef.current && !tileSlot.contains(videoElementRef.current)) {
-      tileSlot.appendChild(videoElementRef.current);
-    }
-    setExpanded(false);
-  };
 
   const isBlocked = currentTelemetry && isBlockedDomain(student.activeTabUrl, blockedDomains);
   const classroomNoiseSuppressed = Boolean(student.classroomNoiseSuppressed || isAbsent || student.suppressionReason);
@@ -506,10 +419,12 @@ function StudentTile({
           </div>
         ) : liveStream ? (
           <div className="aspect-video rounded-lg bg-black relative overflow-hidden">
-            <div
-              ref={tileVideoSlotRef}
-              id={`tile-video-slot-${student.studentId}`}
-              className="w-full h-full rounded-lg overflow-hidden"
+            <video
+              ref={videoElementRef}
+              autoPlay
+              muted
+              playsInline
+              className="h-full w-full rounded-lg object-contain"
               data-testid={`video-live-${student.studentId}`}
             />
           </div>
@@ -534,19 +449,6 @@ function StudentTile({
               )}
             </div>
           </div>
-        ) : screenshotError ? (
-          <div className="flex aspect-video items-center justify-center rounded-lg border border-red-200 bg-red-50/70 text-center dark:border-red-900 dark:bg-red-950/20" role="alert" data-testid={`screenshot-error-${student.studentId}`}>
-            <div className="px-4">
-              <AlertTriangle className="mx-auto mb-2 h-6 w-6 text-red-600 dark:text-red-400" />
-              <p className="text-sm font-semibold text-foreground">Couldn&apos;t load screen preview</p>
-              <p className="mt-1 text-xs text-muted-foreground">{screenshotError}</p>
-              {onRetryTileData ? (
-                <Button type="button" size="sm" variant="outline" className="mt-3" onClick={(event) => { event.stopPropagation(); onRetryTileData(); }}>
-                  Try again
-                </Button>
-              ) : null}
-            </div>
-          </div>
         ) : screenshotDisplay.fresh ? (
           // Screenshot thumbnail when available
           // Uses tab metadata from the screenshot (not current heartbeat) so overlay matches the image
@@ -555,6 +457,8 @@ function StudentTile({
               src={screenshotData.screenshot}
               alt={`${student.studentName || 'Student'}'s screen`}
               className="w-full h-full object-cover"
+              loading="lazy"
+              decoding="async"
               data-testid={`screenshot-${student.studentId}`}
             />
             {/* Overlay with tab info from when screenshot was taken */}
@@ -565,6 +469,8 @@ function StudentTile({
                     src={screenshotData.tabFavicon}
                     alt=""
                     className="w-3 h-3 flex-shrink-0 rounded"
+                    loading="lazy"
+                    decoding="async"
                     onError={(e) => {
                       e.target.style.display = 'none';
                     }}
@@ -574,6 +480,22 @@ function StudentTile({
                   {screenshotData.tabTitle || 'No active tab'}
                 </span>
               </div>
+            </div>
+          </div>
+        ) : screenshotObservationStatus === 'paused_unobserved' ? (
+          <div className="flex aspect-video items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-center dark:border-slate-800 dark:bg-slate-950/40" data-testid={`screenshot-paused-${student.studentId}`}>
+            <div className="px-4">
+              <EyeOff className="mx-auto mb-2 h-6 w-6 text-slate-500" />
+              <p className="text-sm font-semibold text-foreground">Screenshots paused</p>
+              <p className="mt-1 text-xs text-muted-foreground">This class view is not actively observed. Website activity remains available.</p>
+            </div>
+          </div>
+        ) : screenshotObservationStatus === 'error' ? (
+          <div className="flex aspect-video items-center justify-center rounded-lg border border-amber-200 bg-amber-50/70 text-center dark:border-amber-900 dark:bg-amber-950/20" data-testid={`screenshot-observation-error-${student.studentId}`}>
+            <div className="px-4">
+              <AlertTriangle className="mx-auto mb-2 h-6 w-6 text-amber-600 dark:text-amber-400" />
+              <p className="text-sm font-semibold text-foreground">Screenshot observation unavailable</p>
+              <p className="mt-1 text-xs text-muted-foreground">Activity reporting continues from heartbeat telemetry.</p>
             </div>
           </div>
         ) : (
@@ -613,13 +535,6 @@ function StudentTile({
           </div>
         )}
 
-        {historyError ? (
-          <div className="flex items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100" role="status" data-testid={`history-error-${student.studentId}`}>
-            <span>Recent activity could not be refreshed.</span>
-            {onRetryTileData ? <button type="button" className="font-semibold underline" onClick={(event) => { event.stopPropagation(); onRetryTileData(); }}>Retry</button> : null}
-          </div>
-        ) : null}
-
         {/* Mini History Icons */}
         {recentDomains.length > 0 && (
           <div className="flex items-center gap-1.5 px-1 py-1.5 border-t border-border/20">
@@ -636,6 +551,8 @@ function StudentTile({
                       src={domain.favicon}
                       alt=""
                       className="w-3.5 h-3.5 rounded"
+                      loading="lazy"
+                      decoding="async"
                       onError={(e) => {
                         e.target.style.display = 'none';
                       }}
@@ -705,14 +622,14 @@ function StudentTile({
               {liveViewPending ? "Connecting" : liveStream ? "Stop" : "View"}
             </Button>
           )}
-          {liveStream && (
+          {liveStream && onExpandLiveView && (
             <Button
               variant="outline"
               size="sm"
               className="h-7 px-3 text-xs"
               onClick={(e) => {
                 e.stopPropagation();
-                handleExpand();
+                onExpandLiveView();
               }}
               title="Expand to full screen with zoom and screenshot controls"
               data-testid={`button-expand-${student.studentId}`}
@@ -724,16 +641,36 @@ function StudentTile({
         </div>
       </div>
 
-      {/* Video Portal for enlarged view */}
-      {expanded && liveStream && (
-        <VideoPortal
-          studentName={student.studentName || student.deviceName || "Unknown student"}
-          onClose={handleCollapse}
-          onStopLiveView={onStopLiveView}
-        />
-      )}
     </Card>
   );
 }
 
-export default StudentTile;
+const CALLBACK_PROPS = new Set([
+  'onClick',
+  'onToggleSelect',
+  'onStartLiveView',
+  'onStopLiveView',
+  'onExpandLiveView',
+  'onAllowDomain',
+  'onManageTabs',
+  'onCommand',
+  'onReturnToClass',
+]);
+
+function freshnessProjection(props) {
+  const monitoring = props.monitoringDisplay
+    || deriveStudentMonitoringDisplay(props.student, props.freshnessNowMs);
+  const screenshot = deriveScreenshotDisplay(props.screenshotData, props.freshnessNowMs);
+  return `${monitoring.kind}:${monitoring.status}:${monitoring.telemetryCurrent}:${screenshot.fresh}`;
+}
+
+function studentTilePropsEqual(previous, next) {
+  const keys = new Set([...Object.keys(previous), ...Object.keys(next)]);
+  for (const key of keys) {
+    if (CALLBACK_PROPS.has(key) || key === 'freshnessNowMs' || key === 'monitoringDisplay') continue;
+    if (!Object.is(previous[key], next[key])) return false;
+  }
+  return freshnessProjection(previous) === freshnessProjection(next);
+}
+
+export default memo(StudentTile, studentTilePropsEqual);

@@ -76,67 +76,6 @@ export function indexTileHistory(response) {
   return historyByStudent;
 }
 
-function isMissingBatchEndpoint(error) {
-  return error?.response?.status === 404 &&
-    error?.response?.data?.error === 'Not found';
-}
-
-function isMissingLegacyTile(error) {
-  return error?.response?.status === 404;
-}
-
-/**
- * The normal path is always one cohort request. The legacy fan-out exists only
- * as a cross-tier rollback bridge: if an automatic backend rollback lands on a
- * release that predates the batch routes, its global JSON 404 is exactly
- * `{ error: "Not found" }`. Authorization 404s from the batch implementation
- * use a different generic response and must remain an empty cohort so settled
- * grants cannot linger in React Query.
- */
-export async function fetchTileBatchWithRollbackFallback(
-  request,
-  legacyDeviceByStudent,
-  requestApi
-) {
-  try {
-    return await requestApi('POST', request.endpoint, request.body);
-  } catch (error) {
-    if (error?.response?.status === 404 && !isMissingBatchEndpoint(error)) {
-      return { tiles: [] };
-    }
-    if (!isMissingBatchEndpoint(error)) throw error;
-  }
-
-  const tiles = await Promise.all(request.body.studentIds.map(async (studentId) => {
-    const deviceId = legacyDeviceByStudent.get(studentId);
-    if (!deviceId) {
-      return request.kind === 'screenshots'
-        ? { studentId, screenshot: null }
-        : { studentId, heartbeats: [] };
-    }
-    try {
-      if (request.kind === 'screenshots') {
-        const screenshot = await requestApi(
-          'GET',
-          `/device/screenshot/${encodeURIComponent(deviceId)}`
-        );
-        return { studentId, screenshot };
-      }
-      const response = await requestApi(
-        'GET',
-        `/heartbeats/${encodeURIComponent(deviceId)}?limit=${TILE_BATCH_HISTORY_LIMIT}`
-      );
-      return {
-        studentId,
-        heartbeats: Array.isArray(response) ? response : response?.heartbeats ?? [],
-      };
-    } catch (error) {
-      if (!isMissingLegacyTile(error)) throw error;
-      return request.kind === 'screenshots'
-        ? { studentId, screenshot: null }
-        : { studentId, heartbeats: [] };
-    }
-  }));
-
-  return { tiles };
+export function fetchTileBatch(request, requestApi, signal) {
+  return requestApi('POST', request.endpoint, request.body, { signal });
 }

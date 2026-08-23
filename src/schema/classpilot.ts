@@ -672,6 +672,7 @@ export const classpilotSessionReports = pgTable(
     windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
     windowEnd: timestamp("window_end", { withTimezone: true }).notNull(),
     timezone: text("timezone").notNull(),
+    reportVersion: integer("report_version").notNull().default(1),
     coverageAlgorithmVersion: text("coverage_algorithm_version")
       .notNull()
       .default("heartbeat-coverage-v1"),
@@ -704,6 +705,10 @@ export const classpilotSessionReports = pgTable(
     totalEligibleSeconds: integer("total_eligible_seconds").notNull().default(0),
     totalObservedSeconds: integer("total_observed_seconds").notNull().default(0),
     totalGapSeconds: integer("total_gap_seconds").notNull().default(0),
+    totalUnclassifiedSeconds: integer("total_unclassified_seconds").notNull().default(0),
+    totalOffTaskSeconds: integer("total_off_task_seconds").notNull().default(0),
+    totalOffTaskEventCount: integer("total_off_task_event_count").notNull().default(0),
+    totalSafetyAlertCount: integer("total_safety_alert_count").notNull().default(0),
     settleAt: timestamp("settle_at", { withTimezone: true }).notNull(),
     attemptCount: integer("attempt_count").notNull().default(0),
     leaseOwner: text("lease_owner"),
@@ -764,6 +769,11 @@ export const classpilotSessionStudentReports = pgTable(
     gapIntervals: jsonb("gap_intervals").notNull().default(sql`'[]'::jsonb`),
     eventCounts: jsonb("event_counts").notNull().default(sql`'{}'::jsonb`),
     topDomains: jsonb("top_domains").notNull().default(sql`'[]'::jsonb`),
+    unclassifiedSeconds: integer("unclassified_seconds").notNull().default(0),
+    offTaskSeconds: integer("off_task_seconds").notNull().default(0),
+    offTaskEventCount: integer("off_task_event_count").notNull().default(0),
+    offTaskEvents: jsonb("off_task_events").notNull().default(sql`'[]'::jsonb`),
+    safetyAlerts: jsonb("safety_alerts").notNull().default(sql`'[]'::jsonb`),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`now()`),
   },
   (table) => [
@@ -1090,7 +1100,9 @@ export const chatMessages = pgTable(
     schoolId: text("school_id").notNull(),
     sessionId: varchar("session_id").notNull(),
     studentId: text("student_id"),
+    studentSessionId: varchar("student_session_id"),
     deviceId: text("device_id"),
+    clientMessageId: varchar("client_message_id", { length: 128 }),
     senderId: text("sender_id").notNull(),
     senderType: text("sender_type").notNull().$type<"teacher" | "student">(),
     recipientId: text("recipient_id"), // null = broadcast
@@ -1111,11 +1123,75 @@ export const chatMessages = pgTable(
     index("chat_messages_session_id_idx").on(table.sessionId),
     index("chat_messages_school_session_idx").on(table.schoolId, table.sessionId),
     index("chat_messages_school_student_idx").on(table.schoolId, table.studentId),
+    uniqueIndex("chat_messages_student_client_unique")
+      .on(table.schoolId, table.studentId, table.studentSessionId, table.clientMessageId)
+      .where(sql`client_message_id IS NOT NULL`),
   ]
 );
 
 export type ChatMessage = typeof chatMessages.$inferSelect;
 export type InsertChatMessage = typeof chatMessages.$inferInsert;
+
+// ============================================================================
+// Safety evidence capture requests - exact-bound, short-lived and idempotent
+// ============================================================================
+export const classpilotEvidenceCaptureRequests = pgTable(
+  "classpilot_evidence_capture_requests",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    studentId: text("student_id").notNull(),
+    studentSessionId: varchar("student_session_id").notNull(),
+    deviceId: text("device_id").notNull(),
+    teachingSessionId: varchar("teaching_session_id"),
+    caseId: text("case_id"),
+    heartbeatId: text("heartbeat_id").notNull(),
+    tabRef: varchar("tab_ref", { length: 128 }).notNull(),
+    tabSnapshotRevision: integer("tab_snapshot_revision").notNull(),
+    expectedUrlDigest: varchar("expected_url_digest", { length: 64 }).notNull(),
+    status: text("status")
+      .notNull()
+      .default("pending")
+      .$type<"pending" | "uploaded" | "expired" | "failed">(),
+    artifactId: varchar("artifact_id"),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().default(sql`now()`),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => [
+    unique("cp_evidence_capture_school_id_fk_key").on(table.schoolId, table.id),
+    index("cp_evidence_capture_exact_binding_idx").on(
+      table.schoolId,
+      table.studentId,
+      table.studentSessionId,
+      table.deviceId,
+      table.status
+    ),
+    index("cp_evidence_capture_pending_expiry_idx").on(table.status, table.expiresAt),
+    check(
+      "cp_evidence_capture_status_check",
+      sql`${table.status} IN ('pending', 'uploaded', 'expired', 'failed')`
+    ),
+    check(
+      "cp_evidence_capture_revision_check",
+      sql`${table.tabSnapshotRevision} > 0`
+    ),
+    check(
+      "cp_evidence_capture_window_check",
+      sql`${table.expiresAt} > ${table.requestedAt}`
+    ),
+    foreignKey({
+      columns: [table.schoolId, table.studentId],
+      foreignColumns: [students.schoolId, students.id],
+      name: "cp_evidence_capture_student_school_fk",
+    }).onDelete("cascade"),
+  ]
+);
+
+export type ClasspilotEvidenceCaptureRequest =
+  typeof classpilotEvidenceCaptureRequests.$inferSelect;
+export type InsertClasspilotEvidenceCaptureRequest =
+  typeof classpilotEvidenceCaptureRequests.$inferInsert;
 
 // ============================================================================
 // Chat Deliveries - Durable teacher-to-student reply outbox

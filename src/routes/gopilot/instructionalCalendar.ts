@@ -3,7 +3,7 @@ import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { rejectDisabledGoPilotParent } from "../../middleware/rejectDisabledGoPilotParent.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
-import { requireProductLicense } from "../../middleware/requireProductLicense.js";
+import { requireGopilotEntitlement } from "../../middleware/requireGopilotEntitlement.js";
 import { requireGoPilotRole } from "../../services/gopilotAccess.js";
 import { logAudit } from "../../services/audit.js";
 import {
@@ -20,8 +20,8 @@ const auth = [
   authenticate,
   requireSchoolContext,
   rejectDisabledGoPilotParent,
+  requireGopilotEntitlement,
   requireActiveSchool,
-  requireProductLicense("GOPILOT"),
   requireGoPilotRole("admin", "school_admin"),
 ] as const;
 

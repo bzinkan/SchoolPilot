@@ -1,36 +1,21 @@
 import type { RequestHandler } from "express";
-import { eq, and } from "drizzle-orm";
-import { schoolMemberships } from "../schema/core.js";
-import db from "../db.js";
 import { createSingleFlight } from "../util/singleFlight.js";
+import {
+  identityHasAnyRole,
+  loadVerifiedSchoolIdentities,
+  type SchoolRole as Role,
+  type VerifiedSchoolIdentity,
+} from "../services/schoolIdentity.js";
 
-type Role = "admin" | "school_admin" | "teacher" | "office_staff" | "parent";
-
-type VerifiedSchoolMembership = {
-  userId: string;
-  schoolId: string;
-  role: string;
-};
-
-const loadRoleMembershipSingleFlight = createSingleFlight<
+const loadRoleIdentitySingleFlight = createSingleFlight<
   string,
-  typeof schoolMemberships.$inferSelect | undefined
+  VerifiedSchoolIdentity | undefined
 >({ maxPendingKeys: 4_096 });
 
-function loadActiveMembership(userId: string, schoolId: string) {
-  return loadRoleMembershipSingleFlight(`${userId}\u0000${schoolId}`, async () => {
-    const [membership] = await db
-      .select()
-      .from(schoolMemberships)
-      .where(
-        and(
-          eq(schoolMemberships.userId, userId),
-          eq(schoolMemberships.schoolId, schoolId),
-          eq(schoolMemberships.status, "active")
-        )
-      )
-      .limit(1);
-    return membership;
+function loadActiveIdentity(userId: string, schoolId: string) {
+  return loadRoleIdentitySingleFlight(`${userId}\u0000${schoolId}`, async () => {
+    const [identity] = await loadVerifiedSchoolIdentities(userId, schoolId);
+    return identity;
   });
 }
 
@@ -56,13 +41,14 @@ export function requireRole(...roles: Role[]): RequestHandler {
       return res.status(400).json({ error: "School context required" });
     }
 
-    const verified = res.locals
-      .verifiedSchoolMembership as VerifiedSchoolMembership | undefined;
+    const verifiedIdentity = (
+      res.locals.schoolIdentity ?? res.locals.verifiedSchoolIdentity
+    ) as VerifiedSchoolIdentity | undefined;
     if (
-      verified?.userId === req.authUser.id &&
-      verified.schoolId === schoolId
+      verifiedIdentity?.userId === req.authUser.id &&
+      verifiedIdentity.schoolId === schoolId
     ) {
-      return roles.includes(verified.role as Role)
+      return identityHasAnyRole(verifiedIdentity, roles)
         ? next()
         : res.status(403).json({ error: "Insufficient permissions" });
     }
@@ -70,9 +56,9 @@ export function requireRole(...roles: Role[]): RequestHandler {
     // Compatibility fallback for routes that establish school context without
     // requireSchoolContext. The normal chain supplies provenance above and
     // never repeats this database lookup.
-    const membership = await loadActiveMembership(req.authUser.id, schoolId);
+    const identity = await loadActiveIdentity(req.authUser.id, schoolId);
 
-    if (!membership || !roles.includes(membership.role as Role)) {
+    if (!identity || !identityHasAnyRole(identity, roles)) {
       return res.status(403).json({ error: "Insufficient permissions" });
     }
 

@@ -32,11 +32,11 @@ import type { RequestHandler } from "express";
  *   - /api/stripe/* webhooks — verified by Stripe-Signature instead
  *   - /api/extension/* and /api/classpilot/device/* — JWT-bearer authenticated
  *     (these would also be skipped by the bearer-token rule, listed for clarity)
- *   - /api/passpilot/kiosk/lookup|checkout|checkin (and the legacy /api/kiosk/*
- *     aliases) — public kiosk endpoints authenticated by X-School-Id +
- *     X-Kiosk-Pin (validateKiosk in routes/passpilot/kiosk.ts). They never read
- *     the session, so a staff cookie present on the kiosk device has no CSRF
- *     vector. The session-authenticated PUT /kiosk config routes stay protected.
+ *   - public PassPilot kiosk POSTs (and their legacy /api/kiosk/* aliases) —
+ *     authenticated by X-School-Id plus X-Kiosk-Token or legacy X-Kiosk-Pin.
+ *     They never read the web session, so a staff cookie present on the kiosk
+ *     device has no CSRF vector. Authenticated teacher config routes stay
+ *     protected.
  */
 
 const CSRF_EXEMPT_PATHS = [
@@ -52,26 +52,36 @@ const CSRF_EXEMPT_PATHS = [
   "/admin/billing/webhook", // Stripe webhook — verified by signature
 ];
 
-// Public PassPilot kiosk endpoints: authenticated by X-School-Id + X-Kiosk-Pin
-// (validateKiosk in routes/passpilot/kiosk.ts), never by the session cookie.
+// Public PassPilot kiosk endpoints: authenticated by X-School-Id plus a kiosk
+// token or legacy PIN (validateKiosk in routes/passpilot/kiosk.ts), never by
+// the session cookie.
 // A staff login in the same browser must not force CSRF onto requests that
 // ignore the session. Matched exactly — no sub-path exemption — so the
 // session-authenticated PUT /passpilot/kiosk/config (and compat PUT
 // /kiosk-config) stay protected, and any future kiosk sub-route must opt in
 // here deliberately.
 const CSRF_EXEMPT_EXACT_PATHS = new Set([
+  // Enrollment-key-authenticated managed-device handoff. The exact school is
+  // supplied by X-School-Id and verified against its enrollment key.
+  "/classpilot/kiosk/launch-ticket",
+  "/passpilot/kiosk/auth",
+  "/passpilot/kiosk/launch-ticket/redeem",
   "/passpilot/kiosk/lookup",
   "/passpilot/kiosk/checkout",
   "/passpilot/kiosk/checkin",
+  "/passpilot/kiosk/client-health",
   // Kiosk device session bootstrap + device-memory resume (public,
   // PIN-gated; resume lives under /session on purpose). The authenticated
   // /kiosk/sessions/* teacher endpoints are intentionally NOT exempt.
   "/passpilot/kiosk/session",
   "/passpilot/kiosk/session/resume",
   // Legacy alias mounts (routes/index.ts also mounts the kiosk router at /kiosk)
+  "/kiosk/auth",
+  "/kiosk/launch-ticket/redeem",
   "/kiosk/lookup",
   "/kiosk/checkout",
   "/kiosk/checkin",
+  "/kiosk/client-health",
   "/kiosk/session",
   "/kiosk/session/resume",
 ]);

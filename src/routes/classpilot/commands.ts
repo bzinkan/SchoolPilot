@@ -24,6 +24,7 @@ import {
   type ResolvedClasspilotCommandTarget,
 } from "../../services/classpilotCommandDispatcher.js";
 import { publicClasspilotCommand } from "../../services/classpilotCommandPublic.js";
+import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
 
 const router = Router();
 
@@ -165,8 +166,7 @@ async function resolveTargets(req: Request, res: Response, body: any): Promise<R
 
 router.post("/commands", ...auth, async (req, res, next) => {
   try {
-    const role = res.locals.membershipRole;
-    if (!req.authUser?.isSuperAdmin && !["admin", "school_admin", "teacher"].includes(role)) {
+    if (!requestHasAnySchoolRole(req, res, ["admin", "school_admin", "teacher"])) {
       return res.status(403).json({ error: "Teacher or admin access required" });
     }
 
@@ -244,8 +244,7 @@ router.get("/commands/active-state", ...auth, async (req, res, next) => {
     if (!teachingSessionId) return res.status(400).json({ error: "teachingSessionId query param required" });
     const session = await getTeachingSessionByIdAndSchool(teachingSessionId, res.locals.schoolId!);
     if (!session) return res.status(404).json({ error: "Class session not found" });
-    const role = res.locals.membershipRole as string | undefined;
-    const isAdmin = req.authUser?.isSuperAdmin || role === "admin" || role === "school_admin";
+    const isAdmin = requestHasAnySchoolRole(req, res, ["admin", "school_admin"]);
     if (!isAdmin && !(await isAuthorizedClasspilotSessionStaff(
       res.locals.schoolId!, teachingSessionId, req.authUser!.id
     ))) {

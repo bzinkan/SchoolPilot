@@ -190,6 +190,12 @@ async function installApiMocks(context, state) {
       await route.fulfill({ json: { records: [] } });
       return;
     }
+    if (pathname === "/api/passpilot/kiosk/auth" || pathname === "/api/passpilot/kiosk/snapshot") {
+      // Additive kiosk token/snapshot contracts are absent on this archived
+      // server fixture, so the controller must retain PIN + legacy routes.
+      await route.fulfill({ status: 404, json: { error: "Not found" } });
+      return;
+    }
     if (pathname === "/api/passpilot/kiosk/session") {
       // This suite models a legacy server without per-device kiosk sessions:
       // the kiosk page must feature-detect the 404 and use the school-global flow.

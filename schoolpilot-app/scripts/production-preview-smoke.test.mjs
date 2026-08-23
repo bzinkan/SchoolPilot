@@ -37,6 +37,21 @@ test('accepts an exact same-origin, GET-only, school-bound request', () => {
   );
 });
 
+test('returns the exact additive coverage-summary DTO without query parameters', () => {
+  assert.deepEqual(
+    respond(personas.classpilotTeacher, {
+      url: `${baseUrl}/api/coverage/summary`,
+      schoolId: personas.classpilotTeacher.schoolId,
+    }),
+    {
+      revision: 'coverage-v1:6hPA0vMwkd-Q454ouBPUBscd2jW89P3Ij7xF2T-GcVw',
+      availableStudentCount: 0,
+      claimedStudentCount: 0,
+      activeContextCount: 0,
+    }
+  );
+});
+
 test('does not allow historical GoPilot parent routes to fetch product data', () => {
   assert.throws(
     () => respond(personas.gopilotHistoricalParent, {
@@ -124,6 +139,7 @@ test('rejects missing, extra, duplicate, or incorrect query semantics', () => {
     `${baseUrl}/api/admin/attendance?date=2026-07-23`,
     `${baseUrl}/api/admin/attendance?date=2026-07-24&productContext=gopilot`,
     `${baseUrl}/api/settings?unexpected=true`,
+    `${baseUrl}/api/coverage/summary?unexpected=true`,
   ]) {
     assert.throws(
       () =>

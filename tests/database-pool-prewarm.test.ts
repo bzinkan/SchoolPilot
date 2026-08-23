@@ -8,13 +8,31 @@ import {
   maximumLaunchDatabaseConnections,
   maximumRollingDeploymentDatabaseConnections,
   prewarmDatabasePool,
+  schedulerDatabaseAllowed,
   type PrewarmPool,
 } from "../src/config/databasePools.js";
 
 const root = resolve(import.meta.dirname, "..");
 
 describe("API main database-pool prewarm", () => {
-  it("opens and verifies all 18 API main clients concurrently", async () => {
+  it("allows scheduler pools only for workers and explicit migration modes", () => {
+    assert.equal(schedulerDatabaseAllowed({ SCHEDULER_ENABLED: "false" }), false);
+    assert.equal(schedulerDatabaseAllowed({ SCHEDULER_ENABLED: "true" }), true);
+    assert.equal(schedulerDatabaseAllowed({
+      SCHEDULER_ENABLED: "false",
+      RUN_MIGRATIONS_ONLY: "true",
+    }), true);
+    assert.equal(schedulerDatabaseAllowed({
+      SCHEDULER_ENABLED: "false",
+      RUN_MIGRATIONS_ON_STARTUP: "true",
+    }), true);
+    assert.equal(schedulerDatabaseAllowed({
+      SCHEDULER_ENABLED: "false",
+      RUN_LEGACY_MIGRATIONS_ONLY: "true",
+    }), true);
+  });
+
+  it("opens and verifies all 16 API main clients concurrently", async () => {
     const expectedConnections = databasePoolMinimums({
       SCHEDULER_ENABLED: "false",
       DB_POOL_MAX: "999",
@@ -46,11 +64,11 @@ describe("API main database-pool prewarm", () => {
 
     await prewarmDatabasePool(fakePool, expectedConnections);
 
-    assert.equal(expectedConnections, 18);
-    assert.equal(connectCalls, 18);
-    assert.equal(queryCalls, 18);
-    assert.equal(peakCheckedOut, 18);
-    assert.equal(releaseCalls, 18);
+    assert.equal(expectedConnections, 16);
+    assert.equal(connectCalls, 16);
+    assert.equal(queryCalls, 16);
+    assert.equal(peakCheckedOut, 16);
+    assert.equal(releaseCalls, 16);
     assert.equal(checkedOut, 0);
   });
 
@@ -75,19 +93,19 @@ describe("API main database-pool prewarm", () => {
     };
 
     await assert.rejects(
-      prewarmDatabasePool(fakePool, 18),
+      prewarmDatabasePool(fakePool, 16),
       (error: unknown) => {
         assert.ok(error instanceof AggregateError);
-        assert.match(error.message, /Failed to prewarm 18 database connections/);
+        assert.match(error.message, /Failed to prewarm 16 database connections/);
         assert.equal(error.errors.length, 1);
         assert.match(String(error.errors[0]), /synthetic prewarm probe failure/);
         return true;
       }
     );
 
-    assert.equal(connectCalls, 18);
-    assert.equal(queryCalls, 18);
-    assert.equal(released.length, 18);
+    assert.equal(connectCalls, 16);
+    assert.equal(queryCalls, 16);
+    assert.equal(released.length, 16);
     assert.match(
       released.find(({ id }) => id === 7)?.error instanceof Error
         ? (released.find(({ id }) => id === 7)?.error as Error).message
@@ -96,7 +114,7 @@ describe("API main database-pool prewarm", () => {
     );
     assert.equal(
       released.filter(({ id, error }) => id !== 7 && error === undefined).length,
-      17
+      15
     );
   });
 
@@ -120,12 +138,12 @@ describe("API main database-pool prewarm", () => {
     };
 
     await assert.rejects(
-      prewarmDatabasePool(fakePool, 18),
-      /Failed to prewarm 18 database connections/
+      prewarmDatabasePool(fakePool, 16),
+      /Failed to prewarm 16 database connections/
     );
-    assert.equal(connectCalls, 18);
-    assert.equal(queryCalls, 17);
-    assert.equal(released.length, 17);
+    assert.equal(connectCalls, 16);
+    assert.equal(queryCalls, 15);
+    assert.equal(released.length, 15);
     assert.equal(released.includes(11), false);
   });
 
@@ -146,7 +164,7 @@ describe("API main database-pool prewarm", () => {
     };
 
     await assert.rejects(
-      prewarmDatabasePool(fakePool, 18),
+      prewarmDatabasePool(fakePool, 16),
       (error: unknown) => {
         assert.ok(error instanceof AggregateError);
         assert.equal(error.errors.length, 1);
@@ -154,8 +172,8 @@ describe("API main database-pool prewarm", () => {
         return true;
       }
     );
-    assert.equal(released.length, 18);
-    assert.deepEqual(released, Array.from({ length: 18 }, (_, index) => index + 1));
+    assert.equal(released.length, 16);
+    assert.deepEqual(released, Array.from({ length: 16 }, (_, index) => index + 1));
   });
 
   it("retains API connections at its configured cap and leaves worker minimum at zero", () => {
@@ -174,15 +192,15 @@ describe("API main database-pool prewarm", () => {
 
     assert.equal(databasePoolLimits(configuredApi).main, 12);
     assert.equal(databasePoolMinimums(configuredApi).main, 12);
-    assert.equal(databasePoolLimits(cappedApi).main, 18);
-    assert.equal(databasePoolMinimums(cappedApi).main, 18);
+    assert.equal(databasePoolLimits(cappedApi).main, 16);
+    assert.equal(databasePoolMinimums(cappedApi).main, 16);
     assert.equal(databasePoolLimits(worker).main, 2);
     assert.equal(databasePoolMinimums(worker).main, 0);
-    assert.equal(maximumLaunchDatabaseConnections(), 148);
-    assert.equal(maximumRollingDeploymentDatabaseConnections(2), 120);
+    assert.equal(maximumLaunchDatabaseConnections(), 124);
+    assert.equal(maximumRollingDeploymentDatabaseConnections(2), 104);
     assert.ok(maximumRollingDeploymentDatabaseConnections(2) < 150);
-    assert.equal(maximumRollingDeploymentDatabaseConnections(3), 164);
-    assert.ok(maximumRollingDeploymentDatabaseConnections(3) >= 150);
+    assert.equal(maximumRollingDeploymentDatabaseConnections(3), 140);
+    assert.ok(maximumRollingDeploymentDatabaseConnections(3) < 150);
   });
 
   it("wires prewarm only into serving startup before HTTP listen", () => {

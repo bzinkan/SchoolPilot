@@ -33,7 +33,11 @@ const {
   HEARTBEAT_TILE_CACHE_TTL_SECONDS,
   createHeartbeatTileCache,
 } = tileCacheModule;
-const { decodeScreenshotData } = screenshotModule;
+const {
+  decodeScreenshotData,
+  screenshotBindingVersion,
+  screenshotMatchesBinding,
+} = screenshotModule;
 
 function classificationEntry(index: number, overrides: Record<string, unknown> = {}) {
   return {
@@ -72,15 +76,27 @@ function cachedHeartbeat(index: number, studentId = "student-a") {
 }
 
 describe("screenshot authority binding", () => {
-  it("preserves current student/session bindings and rejects stale or corrupt data", () => {
+  const binding = {
+    schoolId: "school-a",
+    deviceId: "device-a",
+    studentId: "student-a",
+    studentSessionId: "session-a",
+  };
+
+  it("preserves complete authority metadata and rejects stale or corrupt data", () => {
+    const timestamp = Date.now();
     const current = decodeScreenshotData({
       screenshot: "data:image/jpeg;base64,Y3VycmVudA==",
-      timestamp: Date.now(),
-      studentId: "student-a",
-      studentSessionId: "session-a",
+      timestamp,
+      capturedAt: new Date(timestamp).toISOString(),
+      ...binding,
+      bindingVersion: screenshotBindingVersion(binding),
     });
+    assert.equal(current?.schoolId, "school-a");
+    assert.equal(current?.deviceId, "device-a");
     assert.equal(current?.studentId, "student-a");
     assert.equal(current?.studentSessionId, "session-a");
+    assert.equal(screenshotMatchesBinding(current, binding), true);
 
     assert.equal(decodeScreenshotData({
       screenshot: "data:image/jpeg;base64,c3RhbGU=",
@@ -90,6 +106,39 @@ describe("screenshot authority binding", () => {
     }), null);
     assert.equal(decodeScreenshotData("{not-json"), null);
     assert.equal(decodeScreenshotData({ timestamp: Date.now() }), null);
+  });
+
+  it("never adopts a screenshot from another school, device, student, or session", () => {
+    const timestamp = Date.now();
+    const current = decodeScreenshotData({
+      screenshot: "data:image/jpeg;base64,Y3VycmVudA==",
+      timestamp,
+      capturedAt: new Date(timestamp).toISOString(),
+      ...binding,
+      bindingVersion: screenshotBindingVersion(binding),
+    });
+    assert.ok(current);
+    for (const changed of [
+      { schoolId: "school-b" },
+      { deviceId: "device-b" },
+      { studentId: "student-b" },
+      { studentSessionId: "session-b" },
+    ]) {
+      const otherBinding = { ...binding, ...changed };
+      assert.equal(screenshotMatchesBinding(current, otherBinding), false);
+    }
+    assert.equal(screenshotMatchesBinding({
+      screenshot: current.screenshot,
+      timestamp: current.timestamp,
+      studentId: binding.studentId,
+      studentSessionId: binding.studentSessionId,
+    }, binding), false);
+    assert.equal(screenshotMatchesBinding({
+      screenshot: current.screenshot,
+      timestamp: current.timestamp,
+      studentId: binding.studentId,
+      studentSessionId: binding.studentSessionId,
+    }, binding, { allowLegacy: true }), true);
   });
 });
 

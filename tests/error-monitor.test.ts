@@ -533,7 +533,7 @@ describe("runtime telemetry payloads", () => {
 
     assert.equal(persisted.length, 1);
     assert.equal(persisted[0]?.category, "extension_runtime_error");
-    assert.equal(persisted[0]?.correlation.schoolId, "school-1");
+    assert.equal((persisted[0]?.correlation as Record<string, unknown>).schoolId, undefined);
     assert.equal((persisted[0]?.context as any)?.deviceId, undefined);
     assert.equal(persisted[0]?.context?.extensionVersion, "2.5.5");
     assert.equal(persisted[0]?.context?.chromeVersion, "v145.0.0.0");
