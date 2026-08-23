@@ -28,7 +28,10 @@ import {
 import { isPersistentClasspilotControl } from "./classpilotCommandDelivery.js";
 import { assertClasspilotEntitled } from "./classpilotEntitlement.js";
 import { assertGopilotEntitled } from "./gopilotEntitlement.js";
-import { isExactIdempotentStudentMessage } from "./classpilotStudentChat.js";
+import {
+  isCurrentClasspilotStudentMessageSession,
+  isExactIdempotentStudentMessage,
+} from "./classpilotStudentChat.js";
 import { assertClasspilotScreenshotEvidenceAuthority } from "./classpilotEvidenceAuthority.js";
 import {
   assertClasspilotHistoryFallbackPiStatementDiscoverable,
@@ -15098,8 +15101,19 @@ export async function createAuthorizedClasspilotStudentMessage(options: {
   deviceId: string;
   content: string;
   clientMessageId?: string | null;
+  teachingSessionId?: string | null;
 }): Promise<{ student: Student; teachingSession: TeachingSession; message: ChatMessage; created: boolean }> {
   return withAuthorizedStudentFabMutation({ ...options, feature: "chat" }, async (transactionDb, authority) => {
+    if (!isCurrentClasspilotStudentMessageSession(
+      options.teachingSessionId,
+      authority.teachingSession.id
+    )) {
+      throw classpilotFabMutationError(
+        409,
+        "student_message_session_superseded",
+        "Student message belongs to a teaching session that is no longer active"
+      );
+    }
     const [message] = await transactionDb.insert(chatMessages).values({
       schoolId: options.schoolId,
       sessionId: authority.teachingSession.id,

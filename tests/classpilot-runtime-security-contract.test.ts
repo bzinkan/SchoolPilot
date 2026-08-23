@@ -506,7 +506,17 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
     assert.match(studentFab, /getActiveClassOwnerForStudent/);
     assert.match(chat, /raiseAuthorizedClasspilotStudentHand\(\{[\s\S]*studentSessionId/);
     assert.match(chat, /lowerAuthorizedClasspilotStudentHand\(\{[\s\S]*studentSessionId/);
-    assert.match(chat, /createAuthorizedClasspilotStudentMessage\(\{[\s\S]*studentSessionId/);
+    assert.match(chat, /createAuthorizedClasspilotStudentMessage\(\{[\s\S]*studentSessionId[\s\S]*teachingSessionId/);
+    const studentMessageWrite = storage.slice(
+      storage.indexOf("export async function createAuthorizedClasspilotStudentMessage"),
+      storage.indexOf("export async function raiseAuthorizedClasspilotStudentHand")
+    );
+    assert.match(studentMessageWrite, /isCurrentClasspilotStudentMessageSession/);
+    assert.match(studentMessageWrite, /student_message_session_superseded/);
+    assert.ok(
+      studentMessageWrite.indexOf("student_message_session_superseded")
+        < studentMessageWrite.indexOf("transactionDb.insert(chatMessages)")
+    );
 
     const teacherFab = storage.slice(
       storage.indexOf("async function withAuthorizedClasspilotTeacherStudentAction"),

@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  isCurrentClasspilotStudentMessageSession,
   isExactIdempotentStudentMessage,
   parseClasspilotClientMessageId,
+  parseClasspilotTeachingSessionId,
 } from "../src/services/classpilotStudentChat.js";
 
 const clientMessageId = "550e8400-e29b-41d4-a716-446655440000";
@@ -18,6 +20,22 @@ test("student chat preserves legacy requests and validates durable UUIDs", () =>
   });
   assert.equal(parseClasspilotClientMessageId("not-a-uuid").status, "invalid");
 });
+
+test("student chat accepts an additive exact teaching-session scope", () => {
+  assert.deepEqual(parseClasspilotTeachingSessionId(undefined), {
+    status: "legacy",
+    teachingSessionId: null,
+  });
+  assert.deepEqual(parseClasspilotTeachingSessionId(clientMessageId.toUpperCase()), {
+    status: "valid",
+    teachingSessionId: clientMessageId,
+  });
+  assert.equal(parseClasspilotTeachingSessionId("not-a-uuid").status, "invalid");
+  assert.equal(isCurrentClasspilotStudentMessageSession(null, "teaching-b"), true);
+  assert.equal(isCurrentClasspilotStudentMessageSession("teaching-b", "teaching-b"), true);
+  assert.equal(isCurrentClasspilotStudentMessageSession("teaching-a", "teaching-b"), false);
+});
+
 test("student chat idempotency never crosses an exact authority boundary", () => {
   const existing = {
     schoolId: "school-a",

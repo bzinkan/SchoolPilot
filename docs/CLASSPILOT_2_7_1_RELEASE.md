@@ -97,7 +97,8 @@ Chromebooks. Complete all of the following:
 - stale tab/control revisions and incomplete bindings fail unavailable;
 - applied, idempotent, and allowlisted terminal ACK receipts drain only their
   exact outbox entries; retryable or mismatched receipts remain;
-- chat retry is idempotent and never crosses student/session authority;
+- chat retry carries its original teaching-session ID, is idempotent, and is
+  rejected before insertion if that session is no longer the current authority;
 - ambient screenshots start only for an active observation lease and stop
   within the documented bound; safety capture remains exact-bound;
 - Live View works directly and through TURN/TCP or TURNS/443 with UDP blocked;

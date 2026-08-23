@@ -38,7 +38,10 @@ import {
 } from "../../services/classpilotFab.js";
 import { assertClasspilotEntitled } from "../../services/classpilotEntitlement.js";
 import { classpilotCommandAuthorityEnvelope } from "../../services/classpilotCommandAuthority.js";
-import { parseClasspilotClientMessageId } from "../../services/classpilotStudentChat.js";
+import {
+  parseClasspilotClientMessageId,
+  parseClasspilotTeachingSessionId,
+} from "../../services/classpilotStudentChat.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
 
 const router = Router();
@@ -228,9 +231,14 @@ router.post("/student/send-message", ...studentAuth, async (req, res, next) => {
     const studentId = res.locals.studentId as string;
     const studentSessionId = res.locals.studentSessionId as string;
     const deviceId = res.locals.deviceId as string;
-    const { message, clientMessageId: rawClientMessageId } = req.body;
+    const {
+      message,
+      clientMessageId: rawClientMessageId,
+      sessionId: rawTeachingSessionId,
+    } = req.body;
     const content = String(message || "").trim();
     const parsedClientMessageId = parseClasspilotClientMessageId(rawClientMessageId);
+    const parsedTeachingSessionId = parseClasspilotTeachingSessionId(rawTeachingSessionId);
 
     if (!content) {
       return res.status(400).json({ error: "message required" });
@@ -241,7 +249,11 @@ router.post("/student/send-message", ...studentAuth, async (req, res, next) => {
     if (parsedClientMessageId.status === "invalid") {
       return res.status(400).json({ error: "clientMessageId must be a UUID", code: "CLIENT_MESSAGE_ID_INVALID" });
     }
+    if (parsedTeachingSessionId.status === "invalid") {
+      return res.status(400).json({ error: "sessionId must be a UUID", code: "TEACHING_SESSION_ID_INVALID" });
+    }
     const clientMessageId = parsedClientMessageId.clientMessageId;
+    const teachingSessionId = parsedTeachingSessionId.teachingSessionId;
 
     const { student, teachingSession, message: msg, created } = await createAuthorizedClasspilotStudentMessage({
       schoolId,
@@ -250,6 +262,7 @@ router.post("/student/send-message", ...studentAuth, async (req, res, next) => {
       deviceId,
       content,
       clientMessageId,
+      teachingSessionId,
     });
     const broadcastPayload = {
       type: "student-message",
@@ -274,6 +287,7 @@ router.post("/student/send-message", ...studentAuth, async (req, res, next) => {
       message: publicChatMessage(msg),
       messageId: msg.id,
       clientMessageId: msg.clientMessageId,
+      sessionId: teachingSession.id,
       delivered: true,
       duplicate: !created,
       messages: [publicChatMessage(msg)],
