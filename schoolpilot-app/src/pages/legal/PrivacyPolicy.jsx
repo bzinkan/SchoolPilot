@@ -63,6 +63,7 @@ export default function PrivacyPolicy() {
               <li>Google Classroom roster information (class names, student enrollments)</li>
               <li>Active-tab activity, including current tab URLs, titles, favicons, and timestamps during authorized monitoring</li>
               <li>Observation-bound screen capture thumbnails and exact-bound safety evidence captures, which may contain visible website content</li>
+              <li>Temporary authorized Live View media. The extension and Schoolpilot servers do not record the stream, but an authorized teacher can explicitly save a local recording or still image governed by school policy</li>
               <li>Student and teacher communications sent through ClassPilot</li>
               <li>Device connection status</li>
               <li>Hall pass records including destinations and timestamps (PassPilot)</li>
@@ -95,6 +96,7 @@ export default function PrivacyPolicy() {
               <li>Sync classroom rosters from Google Classroom</li>
               <li>Display student screens to authorized teachers during class sessions</li>
               <li>Generate usage reports for teachers and administrators</li>
+              <li>Classify monitored URL/domain signals and generate automated safety alerts for authorized human review</li>
               <li>Maintain and improve our service</li>
               <li>Communicate important updates about the service</li>
               <li>Ensure compliance with school policies and legal requirements</li>
@@ -108,23 +110,23 @@ export default function PrivacyPolicy() {
             </p>
             <ul className="list-disc pl-6 text-slate-700 space-y-2">
               <li><strong>Ordinary screen previews:</strong> The latest image is normally held for only 60–120 seconds and expires automatically</li>
-              <li><strong>Safety and evidence captures:</strong> Image content is retained for the school's configured evidence period (30 days by default), after which the image is purged while review metadata may remain</li>
-              <li><strong>Session logs:</strong> Retained for up to 90 days for reporting purposes</li>
+              <li><strong>Safety and evidence captures:</strong> Image content uses a separate deployment retention policy (30 days by default), after which the image is purged while bounded review metadata may remain</li>
+              <li><strong>ClassPilot heartbeat history and session-report detail:</strong> Uses the school's selected whole-number period from 1 through 365 days, default 30, and is purged or redacted by an hourly scheduled job</li>
               <li><strong>Hall pass records:</strong> Retained for the current school year for analytics</li>
               <li><strong>Dismissal records:</strong> Retained for the current school year for safety audits</li>
-              <li><strong>Account data:</strong> Retained until account deletion or school contract termination</li>
+              <li><strong>Account, audit, communication, and teacher-downloaded files:</strong> Follow separate documented or contractual policies and are not governed by the ClassPilot heartbeat-retention setting</li>
             </ul>
             <p className="text-slate-700 leading-relaxed mt-4">
-              Schools may request complete data deletion at any time by contacting us at privacy@school-pilot.net.
+              Schools may submit a verified deletion request at any time by contacting us at privacy@school-pilot.net.
+              Current roster and school controls deactivate access and are not proof of permanent destruction.
             </p>
             <h3 className="text-xl font-medium text-slate-800 mb-3 mt-6">4.1 Data Return and Destruction on Contract Termination</h3>
             <p className="text-slate-700 leading-relaxed">
-              Upon termination or expiration of a school's contract with Schoolpilot, all student personally
-              identifiable information (PII) and education records will be either <strong>returned to the school
-              in a standard export format or permanently destroyed</strong> at the school's written direction,
-              within <strong>thirty (30) days</strong> of the termination date. Schools may request a data export
-              at any time by contacting privacy@school-pilot.net. We will provide written confirmation of
-              destruction upon completion.
+              Contract termination disables service access. Data return and the approved scope and timing of
+              permanent destruction follow the executed agreement and a verified operator process. Schools may
+              request an available export by contacting privacy@school-pilot.net. We provide written confirmation
+              for the records included in a completed permanent-destruction operation; a soft-deleted account is
+              not represented as proof that every linked record was destroyed.
             </p>
             <h3 className="text-xl font-medium text-slate-800 mb-3 mt-6">4.2 No Data Mining, No Advertising</h3>
             <p className="text-slate-700 leading-relaxed">
@@ -144,7 +146,7 @@ export default function PrivacyPolicy() {
             <ul className="list-disc pl-6 text-slate-700 space-y-2">
               <li>We use education records only for legitimate educational purposes</li>
               <li>We are under direct control of the school regarding data use</li>
-              <li>We do not disclose student information to third parties except as required by law</li>
+              <li>We do not sell or rent student information; contracted subprocessors process purpose-limited data needed to operate enabled features under applicable agreements</li>
               <li>We maintain appropriate security measures to protect student data</li>
             </ul>
           </section>
@@ -200,7 +202,7 @@ export default function PrivacyPolicy() {
               <li>Personal devices are not monitored outside of school-managed contexts</li>
               <li>In observation-lease mode, ambient screenshots are captured only while an authorized teacher or administrator is actively observing; an exact-bound safety capture may be requested separately</li>
               <li>During mixed-version rollout, a school may explicitly retain the legacy scheduled-screenshot mode for older managed extensions</li>
-              <li>Authorized Live View screen streams are temporary and are not recorded by Schoolpilot</li>
+              <li>Authorized Live View streams are not recorded by the extension or Schoolpilot servers; an authorized teacher can explicitly save a local recording or still image, which the school controls</li>
             </ul>
           </section>
 
@@ -228,8 +230,8 @@ export default function PrivacyPolicy() {
             <h3 className="text-xl font-medium text-slate-800 mb-3">10.3 Right to Deletion</h3>
             <p className="text-slate-700 leading-relaxed mb-4">
               Parents may request deletion of data not required for the school's legitimate educational interest.
-              Schoolpilot will honor verified deletion requests submitted by the school within
-              <strong> thirty (30) days</strong>, subject to legal retention requirements.
+              Schoolpilot verifies each school-submitted request, confirms the approved scope and applicable
+              legal or contractual timeline, and provides completion evidence for records permanently destroyed.
             </p>
             <p className="text-slate-700 leading-relaxed mt-4">
               To exercise these rights, contact your school administrator or email us at privacy@school-pilot.net.

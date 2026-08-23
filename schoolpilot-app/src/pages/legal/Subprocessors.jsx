@@ -23,7 +23,7 @@ export default function Subprocessors() {
 
       <div className="container mx-auto px-4 py-12 max-w-4xl">
         <h1 className="text-4xl font-bold text-slate-900 mb-4">Subprocessors</h1>
-        <p className="text-slate-600 mb-8">Last updated: June 27, 2026</p>
+        <p className="text-slate-600 mb-8">Last updated: August 23, 2026</p>
 
         <div className="prose prose-slate max-w-none space-y-8">
           <section>
@@ -107,8 +107,10 @@ export default function Subprocessors() {
               </table>
             </div>
             <p className="text-slate-600 text-sm mt-2">
-              No student PII is sent through email except in teacher-initiated session summary emails addressed
-              to the teacher themselves, which may include aggregated student activity.
+              Depending on enabled features, a ClassPilot safety alert or session summary can contain recipient
+              addresses, student identity, page title, normalized domain, alert category, and activity/coverage,
+              off-task, or safety-summary fields. MailPilot safety alerts can contain student identity, message
+              sender, subject, and a bounded snippet. Schools control recipients and feature enablement.
             </p>
           </section>
 

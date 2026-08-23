@@ -2,7 +2,7 @@
 
 **Company:** Schoolpilot
 **Effective Date:** April 12, 2026
-**Last Reviewed:** April 12, 2026
+**Last Reviewed:** August 23, 2026
 **Owner:** Security & Privacy Officer (security@school-pilot.net)
 **Review Cycle:** Annual, or after any material change or security incident
 
@@ -51,10 +51,11 @@ All third-party service providers handling PII are reviewed annually and must si
 | Vendor | Purpose | Data Processed |
 |--------|---------|----------------|
 | **AWS (us-east-1)** | Hosting, database, storage | All customer data (SOC 2, ISO 27001, FERPA-aligned) |
-| **SendGrid** | Transactional email | Email addresses only |
+| **SendGrid** | Transactional email | Recipient addresses and configured message content, which can include student identity, activity/safety summaries, page title/domain, or MailPilot sender/subject/snippet fields |
 | **Stripe** | Payment processing | School billing info (PCI-DSS Level 1) |
-| **Anthropic Claude** | AI URL classification | URL strings only, no student PII |
+| **Anthropic Claude** | AI-assisted classification | ClassPilot URL strings and page titles, which can themselves contain identifying or user-entered values; enabled MailPilot content and authorized staff-assistant inputs are described in the public subprocessor notice |
 | **Google OAuth / Workspace API** | Authentication, roster sync | Email, name, classroom rosters (verified for restricted scopes) |
+| **Sentry** | Application error monitoring when enabled | Allowlisted diagnostics with user, arbitrary context, tags/extras, tokens, names, emails, and full sensitive URLs removed before transmission |
 
 ## 5. Technical Safeguards
 
@@ -125,18 +126,21 @@ Any employee, contractor, or external party who suspects a security incident mus
 |-----------|-----------|--------------------|
 | Ordinary screen previews | 60–120 second Redis TTL | TTL expiration (Redis) |
 | Safety/evidence screenshot content | School-configured period, default 30 days | Automated content purge; artifact review metadata may remain |
-| Heartbeats / activity logs | Per school setting, default 30 days | Automated nightly purge job |
-| Daily usage aggregates | Retained for school contract duration | Deleted on contract termination |
-| Account data | Retained during active contract | Deleted within 30 days of termination |
-| Audit logs | 2 years | Automated purge after retention period |
+| Heartbeats / activity logs | Per school setting, default 30 days | Automated hourly purge check, near 30 minutes past the hour |
+| Daily usage aggregates | Per school activity setting, default 30 days | Automated hourly purge check with activity history |
+| Account data | Retained during active contract | Access is disabled at termination; permanent-destruction scope and timing follow the executed agreement and verified operator evidence |
+| Audit logs | Policy target: 2 years | Permanent destruction requires a verified operator process; no automated audit-log purge is currently represented as complete |
 
-On contract termination, all school data is either returned to the school in export format or permanently destroyed within 30 days, per the school's written direction.
+On contract termination, service access is disabled. Data return and the scope
+and timing of permanent destruction follow the executed agreement and a verified
+operator process. A soft-deleted account is not treated as evidence that every
+linked record has been permanently destroyed.
 
 ## 10. Compliance
 
 Schoolpilot aligns with:
 - **FERPA** (Family Educational Rights and Privacy Act, 20 U.S.C. § 1232g) — operates as a "school official" with legitimate educational interest under direct school control
-- **COPPA** (Children's Online Privacy Protection Act) — relies on the school consent exception; no direct collection of data from children under 13
+- **COPPA** (Children's Online Privacy Protection Act) — relies on school authorization/consent for the documented educational collection; there is no independent child signup or collection outside school direction
 - **State data breach notification laws** in applicable jurisdictions
 - **Student Data Privacy Consortium (SDPC)** model contract principles
 

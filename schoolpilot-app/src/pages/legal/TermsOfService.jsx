@@ -28,7 +28,7 @@ export default function TermsOfService() {
       {/* Content */}
       <div className="container mx-auto px-4 py-12 max-w-4xl">
         <h1 className="text-4xl font-bold text-slate-900 mb-8">Terms of Service</h1>
-        <p className="text-slate-600 mb-8">Last updated: April 13, 2026</p>
+        <p className="text-slate-600 mb-8">Last updated: August 23, 2026</p>
 
         <div className="prose prose-slate max-w-none space-y-8">
           <section>
@@ -96,6 +96,7 @@ export default function TermsOfService() {
               <li>Ensuring the Service is used in compliance with school policies and applicable laws</li>
               <li>Managing user accounts and access permissions appropriately</li>
               <li>Training staff on appropriate use of monitoring capabilities</li>
+              <li>Governing access, notice, retention, and secure deletion for any screenshot or recording an authorized teacher explicitly downloads to a local device</li>
             </ul>
           </section>
 
@@ -103,8 +104,9 @@ export default function TermsOfService() {
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">6. Student Privacy</h2>
             <p className="text-slate-700 leading-relaxed">
               Schoolpilot is designed with student privacy as a priority. Monitoring occurs only during
-              designated school hours, students receive visual indicators when monitoring is active,
-              and screen captures are automatically deleted after a short retention period. For full
+              designated school hours and students receive visual indicators when monitoring is active.
+              Ambient previews, safety/evidence content, heartbeat history, account and audit records,
+              communications, and teacher-downloaded local copies have different retention rules. For full
               details on how we handle student data, please review our{" "}
               <a href="/privacy" className="text-amber-600 hover:text-amber-700 underline">
                 Privacy Policy
@@ -159,10 +161,11 @@ export default function TermsOfService() {
           <section>
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">10. Third-Party Services</h2>
             <p className="text-slate-700 leading-relaxed">
-              Schoolpilot integrates with third-party services including Google Classroom and Google
-              Workspace for Education. Your use of these integrations is subject to the respective
-              third-party terms of service. We are not responsible for the practices or content of
-              third-party services.
+              Schoolpilot integrates with Google Classroom and Google Workspace for Education and uses
+              contracted infrastructure, communications, error-monitoring, TURN relay, billing, and
+              AI-classification providers to operate enabled features. The current provider list, purpose,
+              and data exposure are published on our <a href="/subprocessors" className="text-amber-600 hover:text-amber-700 underline">Subprocessors</a> page.
+              Your use of integrations is also subject to applicable third-party terms.
             </p>
           </section>
 
@@ -222,7 +225,7 @@ export default function TermsOfService() {
               third parties, or for any other reason at our sole discretion. Upon termination, your
               right to use the Service will immediately cease. Data handling on termination is governed
               by our <a href="/privacy" className="text-amber-600 hover:text-amber-700 underline">Privacy Policy</a>,
-              which commits to returning or destroying all student data within 30 days of contract end.
+              which describes contract-specific data return and verified permanent-destruction handling.
             </p>
           </section>
 
