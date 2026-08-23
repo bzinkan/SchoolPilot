@@ -125,12 +125,15 @@ Any employee, contractor, or external party who suspects a security incident mus
 |-----------|-----------|--------------------|
 | Ordinary screen previews | 60–120 second Redis TTL | TTL expiration (Redis) |
 | Safety/evidence screenshot content | School-configured period, default 30 days | Automated content purge; artifact review metadata may remain |
-| Heartbeats / activity logs | Per school setting, default 30 days | Automated nightly purge job |
-| Daily usage aggregates | Retained for school contract duration | Deleted on contract termination |
-| Account data | Retained during active contract | Deleted within 30 days of termination |
-| Audit logs | 2 years | Automated purge after retention period |
+| Heartbeats / activity logs | Per school setting, default 30 days | Automated hourly purge check, near 30 minutes past the hour |
+| Daily usage aggregates | Per school activity setting, default 30 days | Automated hourly purge check with activity history |
+| Account data | Retained during active contract | Access is disabled at termination; permanent-destruction scope and timing follow the executed agreement and verified operator evidence |
+| Audit logs | Policy target: 2 years | Permanent destruction requires a verified operator process; no automated audit-log purge is currently represented as complete |
 
-On contract termination, all school data is either returned to the school in export format or permanently destroyed within 30 days, per the school's written direction.
+On contract termination, service access is disabled. Data return and the scope
+and timing of permanent destruction follow the executed agreement and a verified
+operator process. A soft-deleted account is not treated as evidence that every
+linked record has been permanently destroyed.
 
 ## 10. Compliance
 
