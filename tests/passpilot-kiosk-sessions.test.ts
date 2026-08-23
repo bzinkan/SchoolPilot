@@ -1683,6 +1683,7 @@ describe("ClassPilot managed kiosk launch tickets", { concurrency: false }, () =
           REDIS_URL: "",
           REDIS_PREFIX: prefix,
           CLASSPILOT_KIOSK_TICKET_HMAC_SECRET: secret,
+          JWT_SECRET: `${TAG}:production-ticket-test-jwt-secret`,
         },
         { NODE_ENV: "production" }
       );
