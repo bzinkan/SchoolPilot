@@ -284,6 +284,10 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File tests/credential-rotation.test.ps1
 
+      - name: ClassPilot same-digest runtime-config deployment tests
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/classpilot-runtime-config-deploy.test.ps1
+
       - name: Terraform formatting
         run: terraform fmt -check -recursive infra
 
