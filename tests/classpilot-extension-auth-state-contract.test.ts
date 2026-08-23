@@ -24,6 +24,7 @@ test("student login returns classroom state only for the exact active token sess
   assert.match(login, /serializeClasspilotStudentControlState\(controlState\)/);
   assert.match(login, /: null;/);
   assert.match(login, /classroomState,/);
+  assert.match(login, /exactBinding: classpilotControlStateExactBinding\(\{/);
 });
 
 test("heartbeat and WebSocket reconciliation carry authoritative explicit-null state", async () => {
@@ -44,11 +45,17 @@ test("heartbeat and WebSocket reconciliation carry authoritative explicit-null s
 
   assert.match(websocket, /classroomState: classroomStateRow[\s\S]*?: null,/);
   assert.match(websocket, /classroomState: bootstrap\.classroomState,/);
+  assert.match(websocket, /type: "auth-success"[\s\S]*?exactBinding: classpilotControlStateExactBinding\(\{/);
   assert.match(websocket, /message\.type === "classroom-state-request"/);
   assert.match(websocket, /session\.id === client\.studentSessionId/);
   assert.match(websocket, /session\.deviceId === client\.deviceId/);
   assert.match(
     websocket,
-    /type: "classroom-state-sync",[\s\S]*?studentId: client\.studentId,[\s\S]*?studentSessionId: client\.studentSessionId,[\s\S]*?exactBinding:[\s\S]*?classroomState: reconciliation\.state/
+    /classpilotClassroomStatePushFrame\(\{[\s\S]*?type: "classroom-state-sync",[\s\S]*?studentId: client\.studentId,[\s\S]*?studentSessionId: client\.studentSessionId,[\s\S]*?controlRevision: reconciliation\.state\?\.revision \?\? 0,[\s\S]*?classroomState: reconciliation\.state/
+  );
+  assert.equal(
+    (devices.match(/exactBinding: classpilotControlStateExactBinding\(\{/g) || []).length,
+    4,
+    "login, settings, safety close, and heartbeat must share the canonical V2 binding builder"
   );
 });

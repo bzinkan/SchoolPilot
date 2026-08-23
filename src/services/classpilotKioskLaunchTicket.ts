@@ -11,7 +11,11 @@ import crypto from "node:crypto";
 import { z } from "zod";
 import { redisCommand } from "../middleware/rateLimiter.js";
 
-export const CLASSPILOT_KIOSK_LAUNCH_TICKET_TTL_SECONDS = 60;
+export const CLASSPILOT_KIOSK_LAUNCH_TICKET_V1_TTL_SECONDS = 60;
+export const CLASSPILOT_KIOSK_LAUNCH_TICKET_V2_TTL_SECONDS = 600;
+// Retained for callers/tests that exercise the legacy V1 contract.
+export const CLASSPILOT_KIOSK_LAUNCH_TICKET_TTL_SECONDS =
+  CLASSPILOT_KIOSK_LAUNCH_TICKET_V1_TTL_SECONDS;
 const TICKET_TTL_MS = CLASSPILOT_KIOSK_LAUNCH_TICKET_TTL_SECONDS * 1_000;
 const MAX_LOCAL_TICKETS = 4_096;
 const TICKET_PATTERN = /^[A-Za-z0-9_-]{43}$/;
@@ -37,19 +41,37 @@ export const classpilotKioskLaunchTicketRequestSchema = z
   })
   .strict();
 
+export const classpilotKioskLaunchTicketPreflightSchema = z
+  .object({
+    clientProtocolVersion: z.number().int().min(1).max(100),
+    capabilities: z.array(z.string().trim().min(1).max(64)).max(32),
+  })
+  .strict();
+
 export const passpilotKioskLaunchTicketRedemptionSchema = z
   .object({
     ticket: z.string().trim().regex(TICKET_PATTERN),
   })
   .strict();
 
-type LaunchTicketRecord = {
+type LaunchTicketRecordV1 = {
   version: 1;
   schoolId: string;
   deviceId: string;
   issuedAt: number;
   expiresAt: number;
 };
+
+type LaunchTicketRecordV2 = {
+  version: 2;
+  schoolId: string;
+  deviceId: string;
+  legacyDeviceId: string;
+  issuedAt: number;
+  expiresAt: number;
+};
+
+type LaunchTicketRecord = LaunchTicketRecordV1 | LaunchTicketRecordV2;
 
 type LocalTicketRecord = {
   value: string;
@@ -72,7 +94,10 @@ export class BoundedClasspilotKioskLaunchTicketStore {
     }
   }
 
-  set(key: string, value: string, now = Date.now()): void {
+  set(key: string, value: string, now = Date.now(), ttlMs = this.ttlMs): void {
+    if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
+      throw new Error("classpilot_kiosk_ticket_ttl_invalid");
+    }
     this.prune(now);
     if (this.entries.has(key)) this.entries.delete(key);
     while (this.entries.size >= this.maxEntries) {
@@ -80,7 +105,7 @@ export class BoundedClasspilotKioskLaunchTicketStore {
       if (!oldest) break;
       this.entries.delete(oldest);
     }
-    this.entries.set(key, { value, expiresAt: now + this.ttlMs });
+    this.entries.set(key, { value, expiresAt: now + ttlMs });
   }
 
   getdel(key: string, now = Date.now()): string | null {
@@ -140,6 +165,16 @@ export function schoolScopedManagedKioskDeviceId(
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+/** Exact ClassPilot 2.6.9 projection used only to migrate existing bindings. */
+export function legacyManagedKioskDeviceId(directoryDeviceId: string): string {
+  const hex = crypto
+    .createHash("sha256")
+    .update(`classpilot-kiosk-device:${directoryDeviceId}`)
+    .digest("hex")
+    .slice(0, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 function serviceUnavailable(): Error {
   return Object.assign(new Error("Kiosk launch ticket service unavailable"), {
     status: 503,
@@ -153,7 +188,7 @@ function parseTicketRecord(value: unknown): LaunchTicketRecord | null {
   try {
     const record = JSON.parse(value) as Partial<LaunchTicketRecord>;
     if (
-      record.version !== 1 ||
+      (record.version !== 1 && record.version !== 2) ||
       typeof record.schoolId !== "string" ||
       record.schoolId.length < 1 ||
       record.schoolId.length > 128 ||
@@ -161,6 +196,17 @@ function parseTicketRecord(value: unknown): LaunchTicketRecord | null {
       !/^[0-9a-f-]{36}$/.test(record.deviceId) ||
       !Number.isSafeInteger(record.issuedAt) ||
       !Number.isSafeInteger(record.expiresAt)
+    ) {
+      return null;
+    }
+    if (
+      record.version === 2
+      && (
+        typeof (record as Partial<LaunchTicketRecordV2>).legacyDeviceId !== "string"
+        || !/^[0-9a-f-]{36}$/.test(
+          (record as Partial<LaunchTicketRecordV2>).legacyDeviceId || ""
+        )
+      )
     ) {
       return null;
     }
@@ -173,6 +219,7 @@ function parseTicketRecord(value: unknown): LaunchTicketRecord | null {
 export async function issueClasspilotKioskLaunchTicket(options: {
   schoolId: string;
   directoryDeviceId: string;
+  version?: 1 | 2;
   now?: number;
 }): Promise<{
   ticket: string;
@@ -180,16 +227,27 @@ export async function issueClasspilotKioskLaunchTicket(options: {
   expiresInSeconds: number;
 }> {
   const now = options.now ?? Date.now();
-  const record: LaunchTicketRecord = {
-    version: 1,
+  const version = options.version ?? 1;
+  const ttlSeconds = version === 2
+    ? CLASSPILOT_KIOSK_LAUNCH_TICKET_V2_TTL_SECONDS
+    : CLASSPILOT_KIOSK_LAUNCH_TICKET_V1_TTL_SECONDS;
+  const ttlMs = ttlSeconds * 1_000;
+  const common = {
     schoolId: options.schoolId,
     deviceId: schoolScopedManagedKioskDeviceId(
       options.schoolId,
       options.directoryDeviceId
     ),
     issuedAt: now,
-    expiresAt: now + TICKET_TTL_MS,
+    expiresAt: now + ttlMs,
   };
+  const record: LaunchTicketRecord = version === 2
+    ? {
+        version: 2,
+        ...common,
+        legacyDeviceId: legacyManagedKioskDeviceId(options.directoryDeviceId),
+      }
+    : { version: 1, ...common };
   const value = JSON.stringify(record);
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -205,7 +263,7 @@ export async function issueClasspilotKioskLaunchTicket(options: {
             value,
             "NX",
             "EX",
-            String(CLASSPILOT_KIOSK_LAUNCH_TICKET_TTL_SECONDS),
+            String(ttlSeconds),
           ],
           { readyTimeoutMs: 500 }
         );
@@ -216,7 +274,7 @@ export async function issueClasspilotKioskLaunchTicket(options: {
         return {
           ticket,
           expiresAt: new Date(record.expiresAt),
-          expiresInSeconds: CLASSPILOT_KIOSK_LAUNCH_TICKET_TTL_SECONDS,
+          expiresInSeconds: ttlSeconds,
         };
       }
       if (result === null) continue;
@@ -224,11 +282,11 @@ export async function issueClasspilotKioskLaunchTicket(options: {
     }
 
     if (process.env.NODE_ENV === "production") throw serviceUnavailable();
-    localTickets.set(key, value, now);
+    localTickets.set(key, value, now, ttlMs);
     return {
       ticket,
       expiresAt: new Date(record.expiresAt),
-      expiresInSeconds: CLASSPILOT_KIOSK_LAUNCH_TICKET_TTL_SECONDS,
+      expiresInSeconds: ttlSeconds,
     };
   }
 
@@ -243,7 +301,11 @@ export async function consumeClasspilotKioskLaunchTicket(options: {
   ticket: string;
   schoolId: string;
   now?: number;
-}): Promise<{ deviceId: string } | null> {
+}): Promise<{
+  deviceId: string;
+  legacyDeviceId: string | null;
+  ticketVersion: 1 | 2;
+} | null> {
   if (!TICKET_PATTERN.test(options.ticket)) return null;
   const now = options.now ?? Date.now();
   const key = ticketStorageKey(options.ticket);
@@ -270,7 +332,11 @@ export async function consumeClasspilotKioskLaunchTicket(options: {
   ) {
     return null;
   }
-  return { deviceId: record.deviceId };
+  return {
+    deviceId: record.deviceId,
+    legacyDeviceId: record.version === 2 ? record.legacyDeviceId : null,
+    ticketVersion: record.version,
+  };
 }
 
 export function resetClasspilotKioskLaunchTicketStateForTests(): void {

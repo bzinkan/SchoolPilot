@@ -54,6 +54,7 @@ import {
   releaseKioskSession,
   forceReleaseKioskSession,
   getActiveKioskSessionsForTeacher,
+  migrateLegacyKioskDeviceBinding,
   type KioskClassTarget,
 } from "../../services/storage.js";
 import { logAudit } from "../../services/audit.js";
@@ -473,6 +474,13 @@ router.post("/launch-ticket/redeem", kioskLimiter, async (req, res, next) => {
           error: "Kiosk launch ticket is invalid or expired",
           code: "PASSPILOT_KIOSK_LAUNCH_TICKET_INVALID",
         });
+      }
+      if (continuity.legacyDeviceId) {
+        await migrateLegacyKioskDeviceBinding(
+          schoolId,
+          continuity.deviceId,
+          continuity.legacyDeviceId
+        );
       }
       return res.json({
         continuityOnly: true,

@@ -41,7 +41,7 @@ import {
   getMembershipByUserAndSchool,
   updateClasspilotCommandSummary,
   withClasspilotCommandBroadcastLock,
-  updateClasspilotCommandTargetAck,
+  persistClasspilotCommandTargetAck,
   getTeachingSessionByIdAndSchool,
   isAuthorizedClasspilotSessionStaff,
   withClasspilotTeachingTelemetryAuthority,
@@ -52,6 +52,10 @@ import {
   acknowledgeTeacherChatDelivery,
   claimDueTeacherChatDeliveriesForBinding,
 } from "../services/storage.js";
+import {
+  classpilotCommandAckReceipt,
+  terminalClasspilotCommandAckReceipt,
+} from "../services/classpilotAckReceipt.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
 import {
   resolveActiveStudentTokenSession,
@@ -70,6 +74,10 @@ import {
   type ClasspilotStaffPresenceStore,
 } from "./classpilotStaffPresence.js";
 import { serializeClasspilotStudentControlState } from "../services/classpilotClassroomState.js";
+import {
+  classpilotClassroomStatePushFrame,
+  classpilotControlStateExactBinding,
+} from "../services/classpilotControlStateFrame.js";
 import { publicClasspilotCommand } from "../services/classpilotCommandPublic.js";
 import {
   classpilotCommandDeliveryPolicy,
@@ -80,7 +88,10 @@ import {
   resolveClasspilotEntitlement,
 } from "../services/classpilotEntitlement.js";
 import { registerClasspilotCommandUpdateScheduler } from "../services/classpilotCommandUpdateScheduler.js";
-import { classpilotAckEnvelopeMatchesBinding } from "../services/classpilotAckBinding.js";
+import {
+  classpilotAckControlRevision,
+  classpilotAckEnvelopeMatchesBinding,
+} from "../services/classpilotAckBinding.js";
 import {
   CLASSPILOT_WS_MAX_PAYLOAD_BYTES,
   normalizeClasspilotSignalingIdentifier,
@@ -989,13 +1000,13 @@ export function setupWebSocket(
                   studentId: payload.studentId,
                   studentSessionId: bootstrap.studentSessionId,
                   ...protocol,
-                  exactBinding: {
+                  exactBinding: classpilotControlStateExactBinding({
                     schoolId,
                     deviceId,
                     studentId: payload.studentId,
                     studentSessionId: bootstrap.studentSessionId,
                     controlRevision: bootstrap.classroomState?.revision ?? 0,
-                  },
+                  }),
                   settings: {
                     maxTabsPerStudent: bootstrap.schoolSettings?.maxTabsPerStudent
                       ? parseInt(bootstrap.schoolSettings.maxTabsPerStudent, 10) : null,
@@ -1368,11 +1379,9 @@ export function setupWebSocket(
             ws.close();
             return;
           }
-          ws.send(JSON.stringify({
+          ws.send(JSON.stringify(classpilotClassroomStatePushFrame({
             type: "classroom-state-sync",
-            studentId: client.studentId,
-            studentSessionId: client.studentSessionId,
-            exactBinding: {
+            binding: {
               schoolId: client.schoolId,
               deviceId: client.deviceId,
               studentId: client.studentId,
@@ -1380,7 +1389,7 @@ export function setupWebSocket(
               controlRevision: reconciliation.state?.revision ?? 0,
             },
             classroomState: reconciliation.state,
-          }));
+          })));
           return;
         }
 
@@ -1401,19 +1410,23 @@ export function setupWebSocket(
               message.data?.commandId ||
               ""
           ).trim();
+          const ackId = typeof message.ackId === "string"
+            ? message.ackId.trim().slice(0, 128)
+            : "";
           if (!classpilotAckEnvelopeMatchesBinding(message, {
             schoolId: client.schoolId,
             studentId: client.studentId,
             studentSessionId: client.studentSessionId,
             deviceId: client.deviceId,
           })) {
-            if (message.ackId) {
+            if (ackId) {
               ws.send(JSON.stringify({
                 type: "command-ack-receipt",
-                ackId: String(message.ackId).slice(0, 128),
-                commandId,
-                accepted: false,
-                code: "COMMAND_ACK_BINDING_MISMATCH",
+                ...terminalClasspilotCommandAckReceipt(
+                  ackId,
+                  commandId,
+                  "COMMAND_ACK_BINDING_MISMATCH"
+                ),
               }));
             }
             return;
@@ -1434,10 +1447,32 @@ export function setupWebSocket(
                   ? "received"
                   : null;
 
-          if (!commandId || !ackState) return;
+          if (!commandId || !ackState) {
+            if (ackId) {
+              ws.send(JSON.stringify({
+                type: "command-ack-receipt",
+                ...terminalClasspilotCommandAckReceipt(
+                  ackId,
+                  commandId,
+                  "COMMAND_ACK_MALFORMED"
+                ),
+              }));
+            }
+            return;
+          }
           const rawResult = message.result || message.state || message.data || null;
           const serializedResult = rawResult === null ? null : JSON.stringify(rawResult);
           if (serializedResult && Buffer.byteLength(serializedResult, "utf8") > 16 * 1024) {
+            if (ackId) {
+              ws.send(JSON.stringify({
+                type: "command-ack-receipt",
+                ...terminalClasspilotCommandAckReceipt(
+                  ackId,
+                  commandId,
+                  "COMMAND_ACK_MALFORMED"
+                ),
+              }));
+            }
             return;
           }
           const boundedError = message.error || message.errorMessage
@@ -1446,16 +1481,17 @@ export function setupWebSocket(
 
           const ackStartedAt = performance.now();
           let ackSucceeded = false;
-          let target;
+          let outcome;
           try {
-            target = await runWithTenantContext({ schoolId: client.schoolId }, () =>
-              updateClasspilotCommandTargetAck({
+            outcome = await runWithTenantContext({ schoolId: client.schoolId }, () =>
+              persistClasspilotCommandTargetAck({
                 commandId,
                 schoolId: client.schoolId!,
                 deviceId: client.deviceId!,
                 studentId: client.studentId!,
                 studentSessionId: client.studentSessionId!,
                 ackState,
+                controlRevision: classpilotAckControlRevision(message),
                 result: rawResult,
                 errorMessage: boundedError,
               })
@@ -1469,13 +1505,11 @@ export function setupWebSocket(
             );
           }
 
-          if (target) scheduleCommandUpdate(client.schoolId, commandId);
-          if (message.ackId) {
+          if (outcome.target) scheduleCommandUpdate(client.schoolId, commandId);
+          if (ackId) {
             ws.send(JSON.stringify({
               type: "command-ack-receipt",
-              ackId: String(message.ackId).slice(0, 128),
-              commandId,
-              accepted: !!target,
+              ...classpilotCommandAckReceipt(ackId, commandId, outcome),
             }));
           }
           return;

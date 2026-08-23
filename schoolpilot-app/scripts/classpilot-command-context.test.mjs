@@ -161,7 +161,7 @@ test('allSettled aggregation preserves successful side effects and failed-contex
 });
 
 test('exact tab selection requires opaque tabRef and observed revision', () => {
-  const first = { studentId: 'a', tabRef: 'opaque-1', observedRevision: 7, url: 'https://same.example', capabilities: { exactTabCloseV1: true } };
+  const first = { studentId: 'a', tabRef: 'opaque-1', observedRevision: 7, url: 'https://same.example', clientProtocolVersion: 2, capabilities: { exactTabCloseV1: true } };
   const duplicateUrl = { studentId: 'a', tabRef: 'opaque-2', observedRevision: 7, url: 'https://same.example', extensionCapabilities: ['exactTabCloseV1'] };
   assert.notEqual(tabSelectionKey(first), tabSelectionKey(duplicateUrl));
   assert.deepEqual(parseTabSelectionKey(tabSelectionKey(first)), {
@@ -172,6 +172,21 @@ test('exact tab selection requires opaque tabRef and observed revision', () => {
   assert.equal(exactTabCloseCapability(first).enabled, true);
   assert.match(exactTabCloseCapability({ studentId: 'a', url: first.url }).reason, /older extension/i);
   assert.equal(exactTabCloseCapability({ ...first, capabilities: { exactTabCloseV1: false } }).enabled, false);
+  assert.equal(exactTabCloseCapability({
+    ...first,
+    clientProtocolVersion: 3,
+    capabilities: { exactTabCloseV1: true, exactTabCloseV2: false },
+  }).enabled, false);
+  assert.match(exactTabCloseCapability({
+    ...first,
+    clientProtocolVersion: 3,
+    capabilities: { exactTabCloseV1: true, exactTabCloseV2: false },
+  }).reason, /ClassPilot update required/i);
+  assert.equal(exactTabCloseCapability({
+    ...first,
+    clientProtocolVersion: 3,
+    capabilities: { exactTabCloseV2: true },
+  }).enabled, true);
   assert.equal(studentSupportsCapability({ extensionCapabilities: ['screenOnlyUnlockV1'] }, 'screenOnlyUnlockV1'), true);
   assert.equal(studentSupportsCapability({ capabilities: { screenOnlyUnlockV1: false } }, 'screenOnlyUnlockV1'), false);
 });

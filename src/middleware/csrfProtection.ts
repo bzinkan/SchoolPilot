@@ -64,6 +64,7 @@ const CSRF_EXEMPT_EXACT_PATHS = new Set([
   // Enrollment-key-authenticated managed-device handoff. The exact school is
   // supplied by X-School-Id and verified against its enrollment key.
   "/classpilot/kiosk/launch-ticket",
+  "/classpilot/kiosk/launch-ticket/preflight",
   "/passpilot/kiosk/auth",
   "/passpilot/kiosk/launch-ticket/redeem",
   "/passpilot/kiosk/lookup",

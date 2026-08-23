@@ -159,7 +159,7 @@ describe("ClassPilot command authority envelopes", () => {
       source("src/routes/classpilot/dashboard.ts"),
     ]);
     const envelopes = dispatcher.slice(
-      dispatcher.indexOf("function payloadForTarget"),
+      dispatcher.indexOf("export function classpilotCommandFrameForTarget"),
       dispatcher.indexOf("async function endStudentSessionsForSignOut")
     );
     assert.match(envelopes, /const bindingEnvelope = \{[\s\S]*studentId: target\.studentId,[\s\S]*studentSessionId: target\.studentSessionId/);
@@ -556,8 +556,8 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
     assert.doesNotMatch(heartbeat, /pendingMessages\.map\(\(message\) => message\.id\)/);
 
     const ack = storage.slice(
-      storage.indexOf("export async function updateClasspilotCommandTargetAck"),
-      storage.indexOf("export async function getClasspilotCommandByIdAndSchool")
+      storage.indexOf("export async function persistClasspilotCommandTargetAck"),
+      storage.indexOf("export async function updateClasspilotCommandTargetAck")
     );
     assert.match(ack, /binding\.commandType === "teacher-message"/);
     assert.match(ack, /authorityCurrent[\s\S]*options\.ackState === "failed"/);
@@ -660,7 +660,7 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
     assert.match(login, /studentSessionId: session\.id/);
     assert.match(
       login,
-      /exactBinding: \{[\s\S]*?schoolId: options\.schoolId,[\s\S]*?deviceId: options\.deviceId,[\s\S]*?studentId: options\.student\.id,[\s\S]*?studentSessionId: session\.id,[\s\S]*?controlRevision:/
+      /exactBinding: classpilotControlStateExactBinding\(\{[\s\S]*?schoolId: options\.schoolId,[\s\S]*?deviceId: options\.deviceId,[\s\S]*?studentId: options\.student\.id,[\s\S]*?studentSessionId: session\.id,[\s\S]*?controlRevision:/
     );
     const legacy = devices.slice(
       devices.indexOf('router.post("/register-student"'),
@@ -676,7 +676,7 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
     assert.match(heartbeat, /return res\.json\(\{[\s\S]*?ok: true,[\s\S]*?schoolId,/);
     assert.match(
       heartbeat,
-      /exactBinding: \{[\s\S]*?schoolId,[\s\S]*?deviceId,[\s\S]*?studentId,[\s\S]*?studentSessionId,[\s\S]*?controlRevision:/
+      /exactBinding: classpilotControlStateExactBinding\(\{[\s\S]*?schoolId,[\s\S]*?deviceId,[\s\S]*?studentId,[\s\S]*?studentSessionId,[\s\S]*?controlRevision:/
     );
     const settings = devices.slice(
       devices.indexOf('router.get("/extension/settings"'),
@@ -684,7 +684,7 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
     );
     assert.match(settings, /return res\.json\(\{[\s\S]*?schoolId,[\s\S]*?exactBinding:/);
     assert.match(settings, /exactBinding:/);
-    assert.match(settings, /exactBinding: \{[\s\S]*?schoolId,[\s\S]*?deviceId,[\s\S]*?controlRevision:/);
+    assert.match(settings, /exactBinding: classpilotControlStateExactBinding\(\{[\s\S]*?schoolId,[\s\S]*?deviceId,[\s\S]*?controlRevision:/);
     const authSuccess = websocket.slice(
       websocket.indexOf('type: "auth-success"'),
       websocket.indexOf("for (const { message: teacherMessage }")
@@ -693,7 +693,7 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
     assert.match(authSuccess, /studentId: payload\.studentId/);
     assert.match(authSuccess, /studentSessionId: bootstrap\.studentSessionId/);
     assert.match(authSuccess, /exactBinding:/);
-    assert.match(authSuccess, /exactBinding: \{[\s\S]*?schoolId,[\s\S]*?deviceId,[\s\S]*?controlRevision:/);
+    assert.match(authSuccess, /exactBinding: classpilotControlStateExactBinding\(\{[\s\S]*?schoolId,[\s\S]*?deviceId,[\s\S]*?controlRevision:/);
     const classroomStateRecovery = websocket.slice(
       websocket.indexOf('message.type === "classroom-state-request"'),
       websocket.indexOf('message.type === "command-ack"')
@@ -701,8 +701,10 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
     assert.match(classroomStateRecovery, /type: "classroom-state-sync"/);
     assert.match(classroomStateRecovery, /studentId: client\.studentId/);
     assert.match(classroomStateRecovery, /studentSessionId: client\.studentSessionId/);
-    assert.match(classroomStateRecovery, /exactBinding:/);
-    assert.match(classroomStateRecovery, /exactBinding: \{[\s\S]*?schoolId:[\s\S]*?deviceId:[\s\S]*?controlRevision:/);
+    assert.match(
+      classroomStateRecovery,
+      /classpilotClassroomStatePushFrame\(\{[\s\S]*?binding: \{[\s\S]*?schoolId:[\s\S]*?deviceId:[\s\S]*?controlRevision:/
+    );
   });
 
   it("bounds FAB messages and uses one-statement conflict-safe hand raising", async () => {
@@ -754,6 +756,6 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
     ]);
     assert.match(storage, /pollExpiresAt: pollExpiryIso,[\s\S]*expiresAt: pollExpiryIso/);
     assert.match(dispatcher, /const committedCommandPayload = created\.commandPayload/);
-    assert.match(dispatcher, /payloadForTarget[\s\S]*\.\.\.committedCommandPayload/);
+    assert.match(dispatcher, /classpilotCommandFrameForTarget[\s\S]*\.\.\.committedCommandPayload/);
   });
 });

@@ -105,14 +105,17 @@ describe("ClassPilot cluster-safe realtime status", () => {
   it("keeps server-accepted capabilities separate from raw legacy declarations", async () => {
     const store = createClasspilotRealtimeStatusStore(async () => undefined, () => 1_000_000);
     const result = await store.write(heartbeat({
+      clientProtocolVersion: 3,
       extensionCapabilities: ["exactTabCloseV1", "screenshotObservationLeaseV1"],
-      acceptedCapabilities: ["screenshotObservationLeaseV1"],
+      acceptedCapabilities: ["exactTabCloseV2", "screenshotObservationLeaseV1"],
     }));
+    assert.equal(result.snapshot?.clientProtocolVersion, 3);
     assert.deepEqual(result.snapshot?.extensionCapabilities, [
       "exactTabCloseV1",
       "screenshotObservationLeaseV1",
     ]);
     assert.deepEqual(result.snapshot?.acceptedCapabilities, [
+      "exactTabCloseV2",
       "screenshotObservationLeaseV1",
     ]);
   });
@@ -376,6 +379,8 @@ describe("ClassPilot cluster-safe realtime status", () => {
     assert.match(contract, /tabSnapshot:.*[\s\S]*schemaVersion: 1, revision: tabSnapshotRevision/);
     assert.match(contract, /tabSnapshotRevision,/);
     assert.match(contract, /extensionVersion: snapshot\?\.extensionVersion \?\? null/);
+    assert.match(contract, /clientProtocolVersion: snapshot\?\.clientProtocolVersion \?\? null/);
+    assert.match(contract, /exactTabCloseV2: acceptedCapabilities\.has\("exactTabCloseV2"\)/);
     for (const capability of [
       "exactTabCloseV1",
       "screenOnlyUnlockV1",

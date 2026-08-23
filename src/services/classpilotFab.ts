@@ -20,6 +20,7 @@ import { sendToDeviceLocal } from "../realtime/ws-broadcast.js";
 import { publishWSBatch } from "../realtime/ws-redis.js";
 import { assertClasspilotEntitled } from "./classpilotEntitlement.js";
 import { classpilotCommandAuthorityEnvelope } from "./classpilotCommandAuthority.js";
+import { classpilotFabStatePushFrame } from "./classpilotControlStateFrame.js";
 
 export type FabFeature = "chat" | "hand";
 
@@ -271,12 +272,18 @@ export async function updateAndFanoutSessionFabSettings(options: {
     const fullState = await buildStudentFabState(options.schoolId, binding.studentId, {
       studentSessionId: binding.studentSessionId,
     });
-    const payload = {
-      type: "fab-state-sync",
-      _msgId: crypto.randomUUID(),
+    const payload = classpilotFabStatePushFrame({
+      messageId: crypto.randomUUID(),
       sessionId: options.teachingSessionId,
+      binding: {
+        schoolId: options.schoolId,
+        deviceId: binding.deviceId,
+        studentId: binding.studentId,
+        studentSessionId: binding.studentSessionId,
+        controlRevision: fullState.ownershipRevision,
+      },
       data: fullState,
-    };
+    });
     sendToDeviceLocal(options.schoolId, binding.deviceId, payload);
     publications.push({
       target: { kind: "device" as const, schoolId: options.schoolId, deviceId: binding.deviceId },

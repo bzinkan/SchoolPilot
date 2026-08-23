@@ -12,6 +12,7 @@ import {
   markClasspilotCommandTargetsServerCompleted,
   persistClasspilotControlCommandState,
   replaceClasspilotSupervisionControlSnapshots,
+  revalidateClasspilotExactCommandTargetsForDispatch,
   type ClasspilotCommandWithTargets,
   type ClasspilotCommandPollMutation,
 } from "./storage.js";
@@ -48,6 +49,8 @@ import type {
   ClasspilotStudentControlState,
 } from "../schema/classpilot.js";
 import { classpilotCommandAuthorityEnvelope } from "./classpilotCommandAuthority.js";
+import { classpilotExactTabCloseVersion } from "./classpilotExactTabCapability.js";
+import { classpilotControlStateExactBinding } from "./classpilotControlStateFrame.js";
 
 export type ClasspilotCommandTargetScope = "class" | "subgroup" | "students" | "context";
 
@@ -61,6 +64,8 @@ export type ResolvedClasspilotCommandTarget = {
   stateAuthorized?: boolean;
   unavailableReason?: string;
   durableAuthorityRevision?: number;
+  controlRevision?: number;
+  exactTabCloseVersion?: 1 | 2;
 };
 
 export const COVERAGE_COMMAND_TYPES = new Set([
@@ -152,7 +157,10 @@ export async function normalizeCommandPayload(
     case "lock-screen":
       return { extensionType: "lock-screen", payload: validated };
     case "close-tabs":
-      return { extensionType: "close-tab", payload: validated };
+      return {
+        extensionType: validated.closeAll === true ? "close-tabs" : "close-tab",
+        payload: validated,
+      };
     case "unlock-screen":
     case "remove-flight-path":
     case "remove-block-list":
@@ -338,7 +346,6 @@ async function authorizeExactTabClose(options: {
     }
     const read = snapshots.get(target.studentId);
     const snapshot = read?.status === "hit" ? read.snapshot : null;
-    const capabilities = new Set(snapshot?.extensionCapabilities || []);
     if (!snapshot || !classpilotRealtimeFresh(snapshot)) {
       outcomes.push(...rows.map((row) => ({
         studentId: target.studentId,
@@ -353,7 +360,8 @@ async function authorizeExactTabClose(options: {
         unavailableReason: "stale_tab_ref",
       };
     }
-    if (!capabilities.has("exactTabCloseV1")) {
+    const exactTabCloseVersion = classpilotExactTabCloseVersion(snapshot);
+    if (!exactTabCloseVersion) {
       outcomes.push(...rows.map((row) => ({
         studentId: target.studentId,
         tabRef: row.tabRef,
@@ -385,7 +393,7 @@ async function authorizeExactTabClose(options: {
       studentSessionId: null,
       deviceId: null,
       unavailableReason: "stale_tab_ref",
-    } : target;
+    } : { ...target, exactTabCloseVersion };
   });
   return { targets, outcomes };
 }
@@ -430,7 +438,8 @@ async function authorizeScreenOnlyUnlock(options: {
   });
 }
 
-function payloadForTarget(
+export function classpilotCommandFrameForTarget(
+  schoolId: string,
   commandType: string,
   extensionType: string,
   payload: any,
@@ -459,16 +468,35 @@ function payloadForTarget(
       String(tab.studentId || "") === target.studentId
     );
     if (!payload.closeAll && ownTabs.length === 0) return null;
+    const exactBindingEnvelope = target.exactTabCloseVersion === 2
+      && target.deviceId
+      && target.studentSessionId
+      && Number.isSafeInteger(target.controlRevision)
+      ? {
+          exactBinding: classpilotControlStateExactBinding({
+            schoolId,
+            deviceId: target.deviceId,
+            studentId: target.studentId,
+            studentSessionId: target.studentSessionId,
+            controlRevision: target.controlRevision!,
+          }),
+        }
+      : {};
+    if (target.exactTabCloseVersion === 2 && !("exactBinding" in exactBindingEnvelope)) {
+      return null;
+    }
     return {
       type: "remote-control",
       _msgId: crypto.randomUUID(),
       commandId: payload.commandId,
       ...bindingEnvelope,
+      ...exactBindingEnvelope,
       ...deliveryEnvelope,
       command: {
         type: extensionType,
         commandId: payload.commandId,
         ...bindingEnvelope,
+        ...exactBindingEnvelope,
         ...deliveryEnvelope,
         ...commandAuthority,
         data: {
@@ -850,6 +878,9 @@ export async function executeClasspilotCommand(options: {
       deviceId: target.deviceId,
       status: target.available ? "requested" : "unavailable",
       errorMessage: target.available ? null : target.unavailableReason || "Student unavailable",
+      result: target.exactTabCloseVersion === 2
+        ? { exactTabCloseVersion: 2 }
+        : null,
     })),
     {
       authority: options.teachingSessionId ? {
@@ -874,7 +905,7 @@ export async function executeClasspilotCommand(options: {
   const committedTargetByStudent = new Map(
     created.targets.map((target) => [target.studentId, target])
   );
-  const committedTargets = effectiveTargets.map((target) => {
+  let committedTargets = effectiveTargets.map((target) => {
     const persisted = committedTargetByStudent.get(target.studentId);
     if (!persisted) {
       return {
@@ -901,8 +932,40 @@ export async function executeClasspilotCommand(options: {
         && Number.isSafeInteger((persisted.result as Record<string, unknown>).durableAuthorityRevision)
           ? Number((persisted.result as Record<string, unknown>).durableAuthorityRevision)
           : undefined,
+      controlRevision:
+        persisted.result
+        && typeof persisted.result === "object"
+        && !Array.isArray(persisted.result)
+        && Number.isSafeInteger((persisted.result as Record<string, unknown>).frozenControlRevision)
+          ? Number((persisted.result as Record<string, unknown>).frozenControlRevision)
+          : undefined,
     };
   });
+
+  const exactV2StudentIds = committedTargets
+    .filter((target) => target.available && target.exactTabCloseVersion === 2)
+    .map((target) => target.studentId);
+  if (exactV2StudentIds.length > 0) {
+    const revalidated = await revalidateClasspilotExactCommandTargetsForDispatch({
+      schoolId: options.schoolId,
+      commandId: created.id,
+      studentIds: exactV2StudentIds,
+    });
+    const revalidatedByStudent = new Map(revalidated.map((target) => [target.studentId, target]));
+    committedTargets = committedTargets.map((target) => {
+      if (target.exactTabCloseVersion !== 2) return target;
+      const persisted = revalidatedByStudent.get(target.studentId);
+      if (!persisted || persisted.status === "unavailable") {
+        return {
+          ...target,
+          available: false,
+          stateAuthorized: false,
+          unavailableReason: persisted?.errorMessage || "Exact tab authority changed before dispatch",
+        };
+      }
+      return target;
+    });
+  }
 
   const shouldPersistBeforeDelivery = deliveryPolicy === "persistent_control";
   const stateAuthorizedTargets = committedTargets.filter((target) => target.stateAuthorized !== false);
@@ -964,7 +1027,7 @@ export async function executeClasspilotCommand(options: {
   let localDeliverySucceeded = false;
   try {
     for (const target of committedTargets.filter((target) => target.available && target.deviceId)) {
-      const message = payloadForTarget(options.commandType, normalized.extensionType, {
+      const message = classpilotCommandFrameForTarget(options.schoolId, options.commandType, normalized.extensionType, {
         ...committedCommandPayload,
         commandId: created.id,
         messageId: durableMessageIdByStudent.get(target.studentId),

@@ -59,7 +59,8 @@ import {
   getHeartbeatTileHistoryBatch,
   getHeartbeatTileHistoryBatchSqlShapeIdentity,
   type ClassPilotHistoryTileAccess,
-  updateClasspilotCommandTargetAck,
+  revalidateClasspilotSafetyExactBinding,
+  persistClasspilotCommandTargetAck,
   getProductLicenses,
   isAuthorizedClasspilotSessionStaff,
 } from "../../services/storage.js";
@@ -117,7 +118,15 @@ import {
   extensionRuntimeTelemetrySchema,
   trackExtensionRuntimeTelemetry,
 } from "../../services/runtimeTelemetry.js";
-import { classpilotAckEnvelopeMatchesBinding } from "../../services/classpilotAckBinding.js";
+import {
+  classpilotAckControlRevision,
+  classpilotAckEnvelopeMatchesBinding,
+} from "../../services/classpilotAckBinding.js";
+import {
+  classpilotCommandAckReceipt,
+  terminalClasspilotCommandAckReceipt,
+} from "../../services/classpilotAckReceipt.js";
+import { classpilotControlStateExactBinding } from "../../services/classpilotControlStateFrame.js";
 import { selectClasspilotSafetyEvidence } from "../../services/classpilotSafetyEvidence.js";
 import { redisCommand, redisStore } from "../../middleware/rateLimiter.js";
 import { getCoalescedTileAuthorization } from "../../services/classpilotTileAuthorization.js";
@@ -165,6 +174,7 @@ import {
   negotiateClasspilotSurfaceProtocol,
 } from "../../services/classpilotProtocol.js";
 import {
+  classpilotKioskLaunchTicketPreflightSchema,
   classpilotKioskLaunchTicketRequestSchema,
   issueClasspilotKioskLaunchTicket,
 } from "../../services/classpilotKioskLaunchTicket.js";
@@ -719,6 +729,7 @@ function publicRealtimeFields(snapshot: ClasspilotRealtimeStatus) {
   const age = Math.max(0, Date.now() - snapshot.observedAt);
   const activityFresh = snapshot.state === "active" && age < CLASSPILOT_REALTIME_STALE_AFTER_MS;
   const extensionCapabilities = new Set(snapshot.extensionCapabilities || []);
+  const acceptedCapabilities = new Set(snapshot.acceptedCapabilities || []);
   return {
     schemaVersion: snapshot.schemaVersion,
     eventVersion: 2,
@@ -728,8 +739,10 @@ function publicRealtimeFields(snapshot: ClasspilotRealtimeStatus) {
     tabSnapshot: { schemaVersion: 1, revision: snapshot.tabSnapshotRevision ?? snapshot.revision },
     tabSnapshotRevision: snapshot.tabSnapshotRevision ?? snapshot.revision,
     extensionVersion: snapshot.extensionVersion ?? null,
+    clientProtocolVersion: snapshot.clientProtocolVersion ?? null,
     capabilities: {
       exactTabCloseV1: extensionCapabilities.has("exactTabCloseV1"),
+      exactTabCloseV2: acceptedCapabilities.has("exactTabCloseV2"),
       screenOnlyUnlockV1: extensionCapabilities.has("screenOnlyUnlockV1"),
       fabStateRevisionV1: extensionCapabilities.has("fabStateRevisionV1"),
       durableChatAckV1: extensionCapabilities.has("durableChatAckV1"),
@@ -1033,13 +1046,13 @@ async function completeStudentDeviceLogin(options: {
     schoolId: options.schoolId,
     studentId: options.student.id,
     studentSessionId: session.id,
-    exactBinding: {
+    exactBinding: classpilotControlStateExactBinding({
       schoolId: options.schoolId,
       deviceId: options.deviceId,
       studentId: options.student.id,
       studentSessionId: session.id,
       controlRevision: classroomState?.revision ?? 0,
-    },
+    }),
     device,
     student: classPilotStudentDto(options.student),
     studentToken,
@@ -1304,6 +1317,100 @@ router.get("/school/status", async (_req, res) => {
   return res.json({ status: "ok", message: "Use POST with studentEmail" });
 });
 
+async function authorizeClasspilotKioskLaunch(
+  res: Response,
+  schoolId: string,
+  enrollmentKey: string | undefined
+) {
+  const school = await getSchoolById(schoolId);
+  const settings = school ? await getSettingsForSchool(schoolId) : undefined;
+  if (!school) {
+    res.status(404).json({ error: "Kiosk launch is not configured" });
+    return null;
+  }
+  const keyCheck = validateEnrollmentKeyForSettings(settings, enrollmentKey, {
+    requireConfiguredKey: true,
+  });
+  if (!keyCheck.ok) {
+    res.status(keyCheck.status).json({ error: keyCheck.error });
+    return null;
+  }
+  if (!(await requireUncachedClasspilotEntitlementForIssuance(res, schoolId))) {
+    return null;
+  }
+
+  const now = new Date();
+  const licenses = await getProductLicenses(schoolId);
+  const passpilotActive = licenses.some(
+    (license) =>
+      license.product === "PASSPILOT" &&
+      license.status === "active" &&
+      (!license.expiresAt || license.expiresAt.getTime() > now.getTime())
+  );
+  if (
+    !passpilotActive ||
+    school.kioskEnabled === false ||
+    !school.kioskPinHash
+  ) {
+    res.status(403).json({
+      error: "PassPilot kiosk is not available",
+      code: "PASSPILOT_KIOSK_UNAVAILABLE",
+    });
+    return null;
+  }
+  return school;
+}
+
+// POST /api/classpilot/kiosk/launch-ticket/preflight - Authenticate the
+// exact school/capability envelope before the extension reads the enterprise
+// directory id. This request never accepts an identifier in its body.
+router.post(
+  "/kiosk/launch-ticket/preflight",
+  classpilotKioskLaunchTicketLimiter,
+  async (req, res, next) => {
+    try {
+      setClassPilotNoStore(res);
+      const parsed = classpilotKioskLaunchTicketPreflightSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          error: "Invalid kiosk launch preflight request",
+          code: "CLASSPILOT_KIOSK_LAUNCH_PREFLIGHT_INVALID_REQUEST",
+        });
+      }
+      const schoolId = String(req.get("x-school-id") || "").trim();
+      if (!schoolId || schoolId.length > 128) {
+        return res.status(400).json({
+          error: "School authentication is required",
+          code: "CLASSPILOT_KIOSK_LAUNCH_SCHOOL_REQUIRED",
+        });
+      }
+      const protocol = negotiateClasspilotProtocol({
+        clientProtocolVersion: parsed.data.clientProtocolVersion,
+        advertisedCapabilities: parsed.data.capabilities,
+        scope: { serverOrigin: process.env.PUBLIC_BASE_URL, schoolId },
+      });
+      const v2Accepted =
+        protocol.acceptedCapabilities.includes("scopedAuthorityChecksV1") &&
+        protocol.acceptedCapabilities.includes("kioskLaunchTicketV2");
+      const enrollmentKey = enrollmentKeyFromRequest(req);
+
+      return await runWithTenantContext({ schoolId }, async () => {
+        if (!(await authorizeClasspilotKioskLaunch(res, schoolId, enrollmentKey))) {
+          return;
+        }
+        return res.json({
+          serverProtocolVersion: protocol.serverProtocolVersion,
+          acceptedCapabilities: v2Accepted
+            ? ["scopedAuthorityChecksV1", "kioskLaunchTicketV2"]
+            : [],
+        });
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 // POST /api/classpilot/kiosk/launch-ticket - Enrollment-key-authenticated,
 // one-use continuity handoff to PassPilot. The school is selected only by the
 // X-School-Id authentication envelope and verified against that exact school's
@@ -1337,53 +1444,27 @@ router.post(
           schoolId,
         },
       });
-      if (!protocol.acceptedCapabilities.includes("kioskLaunchTicketV1")) {
-        return res.status(426).json({
-          error: "Kiosk launch tickets are not available for this client",
-          code: "CLASSPILOT_KIOSK_LAUNCH_TICKET_CAPABILITY_REQUIRED",
-          ...protocol,
-        });
-      }
       const enrollmentKey = enrollmentKeyFromRequest(req);
 
       return await runWithTenantContext({ schoolId }, async () => {
-        const school = await getSchoolById(schoolId);
-        const settings = school ? await getSettingsForSchool(schoolId) : undefined;
-        if (!school) {
-          return res.status(404).json({ error: "Kiosk launch is not configured" });
-        }
-        const keyCheck = validateEnrollmentKeyForSettings(settings, enrollmentKey, {
-          requireConfiguredKey: true,
-        });
-        if (!keyCheck.ok) {
-          return res.status(keyCheck.status).json({ error: keyCheck.error });
-        }
-        if (!(await requireUncachedClasspilotEntitlementForIssuance(res, schoolId))) {
-          return;
-        }
+        if (!(await authorizeClasspilotKioskLaunch(res, schoolId, enrollmentKey))) return;
 
-        const now = new Date();
-        const licenses = await getProductLicenses(schoolId);
-        const passpilotActive = licenses.some(
-          (license) =>
-            license.product === "PASSPILOT" &&
-            license.status === "active" &&
-            (!license.expiresAt || license.expiresAt.getTime() > now.getTime())
-        );
-        if (
-          !passpilotActive ||
-          school.kioskEnabled === false ||
-          !school.kioskPinHash
-        ) {
-          return res.status(403).json({
-            error: "PassPilot kiosk is not available",
-            code: "PASSPILOT_KIOSK_UNAVAILABLE",
+        const v2Accepted =
+          protocol.acceptedCapabilities.includes("scopedAuthorityChecksV1") &&
+          protocol.acceptedCapabilities.includes("kioskLaunchTicketV2");
+        const v1Accepted = protocol.acceptedCapabilities.includes("kioskLaunchTicketV1");
+        if (!v2Accepted && !v1Accepted) {
+          return res.status(426).json({
+            error: "Kiosk launch tickets are not available for this client",
+            code: "CLASSPILOT_KIOSK_LAUNCH_TICKET_CAPABILITY_REQUIRED",
+            ...protocol,
           });
         }
 
         const issued = await issueClasspilotKioskLaunchTicket({
           schoolId,
           directoryDeviceId: parsed.data.directoryDeviceId,
+          version: v2Accepted ? 2 : 1,
         });
         return res.status(201).json({
           ticket: issued.ticket,
@@ -1573,13 +1654,13 @@ router.get("/extension/settings", requireDeviceAuth, requireClasspilotEntitlemen
       schoolId,
       studentId,
       studentSessionId,
-      exactBinding: {
+      exactBinding: classpilotControlStateExactBinding({
         schoolId,
         deviceId,
         studentId,
         studentSessionId,
         controlRevision: controlState?.revision ?? 0,
-      },
+      }),
       enableTrackingHours: schoolSettings?.enableTrackingHours ?? false,
       trackingStartTime: schoolSettings?.trackingStartTime ?? null,
       trackingEndTime: schoolSettings?.trackingEndTime ?? null,
@@ -2196,12 +2277,11 @@ router.post("/device/command-acks", requireDeviceAuth, requireClasspilotEntitlem
         studentSessionId,
         deviceId,
       })) {
-        receipts.push({
+        receipts.push(terminalClasspilotCommandAckReceipt(
           ackId,
           commandId,
-          accepted: false,
-          code: "COMMAND_ACK_BINDING_MISMATCH",
-        });
+          "COMMAND_ACK_BINDING_MISMATCH"
+        ));
         continue;
       }
       const state = String(raw?.ackState || raw?.status || "").trim();
@@ -2211,23 +2291,28 @@ router.post("/device/command-acks", requireDeviceAuth, requireClasspilotEntitlem
       const result = raw?.result ?? null;
       const serialized = result === null ? "" : JSON.stringify(result);
       if (!ackId || !commandId || !ackState || Buffer.byteLength(serialized, "utf8") > 16 * 1024) {
-        receipts.push({ ackId, commandId, accepted: false, code: "INVALID_COMMAND_ACK" });
+        receipts.push(terminalClasspilotCommandAckReceipt(
+          ackId,
+          commandId,
+          "COMMAND_ACK_MALFORMED"
+        ));
         continue;
       }
-      const target = await updateClasspilotCommandTargetAck({
+      const outcome = await persistClasspilotCommandTargetAck({
         schoolId,
         commandId,
         studentId,
         studentSessionId,
         deviceId,
         ackState,
+        controlRevision: classpilotAckControlRevision(raw),
         result,
         errorMessage: typeof (raw?.errorMessage ?? raw?.error) === "string"
           ? String(raw.errorMessage ?? raw.error).slice(0, 500)
           : null,
       });
-      if (target) scheduleClasspilotCommandUpdate(schoolId, commandId);
-      receipts.push({ ackId, commandId, accepted: !!target });
+      if (outcome.target) scheduleClasspilotCommandUpdate(schoolId, commandId);
+      receipts.push(classpilotCommandAckReceipt(ackId, commandId, outcome));
     }
     return res.json({ receipts });
   } catch (err) {
@@ -2577,6 +2662,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       screenshotHealth,
       classificationPending,
       extensionVersion,
+      clientProtocolVersion,
       acceptedCapabilities: protocol.acceptedCapabilities,
       extensionCapabilities: extensionCapabilities ?? capabilities,
       chromeVersion,
@@ -2751,13 +2837,33 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
         // stale result, but no live close, evidence, staff alert, or email may
         // escape unless this exact heartbeat still owns the active binding.
         if (safetyAction) {
-          const sendSafetyClose = (safetyEvidenceRequest?: {
+          const sendSafetyClose = async (safetyEvidenceRequest?: {
             requestId: string;
             tabRef: string;
             snapshotRevision: number;
             expiresAt: string;
           }) => {
             if (!safetyAction.closeTabData) return;
+            const exactBindingEnvelope = safetyAction.exactTabCloseVersion === 2
+              ? await runWithTenantContext({ schoolId }, () =>
+                  revalidateClasspilotSafetyExactBinding({
+                    schoolId,
+                    studentId,
+                    studentSessionId,
+                    deviceId,
+                    expectedControlRevision: controlState?.revision ?? 0,
+                  })
+                ).then((binding) => binding ? ({
+                  exactBinding: classpilotControlStateExactBinding({
+                    schoolId,
+                    deviceId,
+                    studentId,
+                    studentSessionId,
+                    controlRevision: binding.controlRevision,
+                  }),
+                }) : null)
+              : {};
+            if (exactBindingEnvelope === null) return;
             const safetyCommandIssuedAt = new Date();
             const safetyCommandExpiresAt = classpilotCommandExpiresAt(
               "close-tab",
@@ -2768,12 +2874,14 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
               _msgId: crypto.randomUUID(),
               studentId,
               studentSessionId,
+              ...exactBindingEnvelope,
               deliveryPolicy: classpilotCommandDeliveryPolicy("close-tab"),
               expiresAt: safetyCommandExpiresAt.toISOString(),
               command: {
                 type: "close-tab",
                 studentId,
                 studentSessionId,
+                ...exactBindingEnvelope,
                 deliveryPolicy: classpilotCommandDeliveryPolicy("close-tab"),
                 expiresAt: safetyCommandExpiresAt.toISOString(),
                 ...classpilotSchoolPolicyAuthorityEnvelope(schoolId, "ai_safety"),
@@ -2796,7 +2904,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
             deviceId,
             domain: classification.domain,
           }))) {
-            sendSafetyClose();
+            await sendSafetyClose();
             return;
           }
 
@@ -2896,7 +3004,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
             }
             return { timelineRecord, captureRequest };
           });
-          sendSafetyClose(safetyRecord.captureRequest);
+          await sendSafetyClose(safetyRecord.captureRequest);
 
           const alert = {
             type: "safety-alert",
@@ -3103,13 +3211,13 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       schoolId,
       studentId,
       studentSessionId,
-      exactBinding: {
+      exactBinding: classpilotControlStateExactBinding({
         schoolId,
         deviceId,
         studentId,
         studentSessionId,
         controlRevision: classroomState?.revision ?? 0,
-      },
+      }),
       planStatus: school.planStatus || "active",
       classroomState,
       ...protocol,

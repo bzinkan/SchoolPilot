@@ -119,6 +119,66 @@ describe("ClassPilot current-heartbeat safety action boundary", () => {
     assert.equal(action.snapshot.heartbeatId, binding.heartbeatId);
   });
 
+  it("requires the repaired marker before protocol 3 uses exact-tab V2", () => {
+    const repaired = resolve({
+      realtimeMutation: {
+        status: "stored",
+        snapshot: snapshot({
+          clientProtocolVersion: 3,
+          acceptedCapabilities: ["scopedAuthorityChecksV1", "exactTabCloseV2"],
+        }),
+      },
+    });
+    assert.equal(repaired?.exactTabCloseVersion, 2);
+    assert.deepEqual(repaired?.closeTabData, {
+      tabRefs: ["opaque-active-tab"],
+      snapshotRevision: 7,
+    });
+
+    const unrepaired = resolve({
+      realtimeMutation: {
+        status: "stored",
+        snapshot: snapshot({
+          clientProtocolVersion: 3,
+          acceptedCapabilities: ["exactTabCloseV2"],
+        }),
+      },
+    });
+    assert.equal(unrepaired?.exactTabCloseVersion, null);
+    assert.equal(unrepaired?.evidenceTarget, null);
+    assert.deepEqual(unrepaired?.closeTabData, { specificUrls: [unsafeSearchUrl] });
+  });
+
+  it("never falls back to a URL when an exact-tab V2 snapshot lacks the exact active ref", () => {
+    const missingRef = resolve({
+      realtimeMutation: {
+        status: "stored",
+        snapshot: snapshot({
+          clientProtocolVersion: 3,
+          acceptedCapabilities: ["scopedAuthorityChecksV1", "exactTabCloseV2"],
+          activeTabRef: undefined,
+        }),
+      },
+    });
+    assert.equal(missingRef?.exactTabCloseVersion, 2);
+    assert.equal(missingRef?.evidenceTarget, null);
+    assert.equal(missingRef?.closeTabData, null);
+
+    const mismatchedRef = resolve({
+      realtimeMutation: {
+        status: "stored",
+        snapshot: snapshot({
+          clientProtocolVersion: 3,
+          acceptedCapabilities: ["scopedAuthorityChecksV1", "exactTabCloseV2"],
+          activeTabRef: "opaque-stale-tab",
+        }),
+      },
+    });
+    assert.equal(mismatchedRef?.exactTabCloseVersion, 2);
+    assert.equal(mismatchedRef?.evidenceTarget, null);
+    assert.equal(mismatchedRef?.closeTabData, null);
+  });
+
   it("allows a legacy URL only when the complete snapshot has one match", () => {
     const legacy = resolve({
       realtimeMutation: {

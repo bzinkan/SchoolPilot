@@ -34,7 +34,7 @@ export function skipsWebSession(
   let path = req.path.startsWith("/api") ? req.path.slice(4) || "/" : req.path;
   const method = req.method.toUpperCase();
   const classpilotKioskLaunchTicketRequest =
-    method === "POST" && /^\/classpilot\/kiosk\/launch-ticket\/?$/.test(path);
+    method === "POST" && /^\/classpilot\/kiosk\/launch-ticket(?:\/preflight)?\/?$/.test(path);
   if (path.startsWith("/classpilot/")) path = path.slice("/classpilot".length);
 
   const devicePath = path.startsWith("/device/");

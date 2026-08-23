@@ -64,6 +64,7 @@ function readArchivedFixture(file: string): ArchivedFixture {
 function allV3CapabilitiesEnabled(): NodeJS.ProcessEnv {
   return {
     CLASSPILOT_PROTOCOL_V3_ENABLED: "true",
+    CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1: "true",
     CLASSPILOT_CAP_AUTH_BOUND_TELEMETRY_V1: "true",
     CLASSPILOT_CAP_EXACT_BINDING_ACK_V2: "true",
     CLASSPILOT_CAP_EXACT_TAB_CLOSE_V2: "true",
@@ -72,6 +73,7 @@ function allV3CapabilitiesEnabled(): NodeJS.ProcessEnv {
     CLASSPILOT_CAP_SAFETY_EVIDENCE_CAPTURE_V1: "true",
     CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1: "true",
     CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V1: "true",
+    CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V2: "true",
   };
 }
 
@@ -173,17 +175,20 @@ test("protocol v2 never activates v3 behavior even when a legacy payload spoofs 
 test("protocol v3 accepts only the client-advertised and server-enabled capability intersection", () => {
   const advertisedCapabilities = [
     ...LEGACY_V2_CAPABILITIES,
+    "scopedAuthorityChecksV1",
     "authBoundTelemetryV1",
     "exactBindingAckV2",
     "studentChatIdempotencyV1",
     "screenshotObservationLeaseV1",
     "safetyEvidenceCaptureV1",
     "kioskLaunchTicketV1",
+    "kioskLaunchTicketV2",
     "unknownFutureCapability",
     "authBoundTelemetryV1",
   ];
   const env: NodeJS.ProcessEnv = {
     CLASSPILOT_PROTOCOL_V3_ENABLED: "true",
+    CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1: "true",
     CLASSPILOT_CAP_AUTH_BOUND_TELEMETRY_V1: "true",
     CLASSPILOT_CAP_EXACT_BINDING_ACK_V2: "false",
     CLASSPILOT_CAP_EXACT_TAB_CLOSE_V2: "true",
@@ -192,6 +197,7 @@ test("protocol v3 accepts only the client-advertised and server-enabled capabili
     CLASSPILOT_CAP_SAFETY_EVIDENCE_CAPTURE_V1: "true",
     CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1: "true",
     CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V1: "false",
+    CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V2: "true",
   };
 
   assert.deepEqual(negotiateClasspilotProtocol({
@@ -201,9 +207,11 @@ test("protocol v3 accepts only the client-advertised and server-enabled capabili
   }), {
     serverProtocolVersion: 3,
     acceptedCapabilities: [
+      "scopedAuthorityChecksV1",
       "authBoundTelemetryV1",
       "studentChatIdempotencyV1",
       "safetyEvidenceCaptureV1",
+      "kioskLaunchTicketV2",
     ],
   });
 });

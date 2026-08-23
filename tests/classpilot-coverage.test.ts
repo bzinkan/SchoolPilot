@@ -67,6 +67,7 @@ import {
   replaceCoverageScopeGroupMembers,
   releaseSupervisionStudents,
   resyncActiveClasspilotSessionStudents,
+  persistClasspilotCommandTargetAck,
   setActiveStudentForDevice,
   updateCoverageAssignment,
   updateCoverageScopeGroup,
@@ -3179,6 +3180,29 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.ok(completed?.receivedAt);
     assert.ok(completed?.completedAt);
 
+    const duplicate = await inSchool(school.id, () => persistClasspilotCommandTargetAck({
+      commandId: created.id,
+      schoolId: school.id,
+      deviceId: deviceGuard,
+      studentId: studentDeviceGuard.id,
+      studentSessionId: sessionGuard.id,
+      ackState: "completed",
+      result: { ok: true },
+    }));
+    assert.equal(duplicate.disposition, "idempotent");
+    assert.equal(duplicate.code, "COMMAND_ACK_IDEMPOTENT");
+
+    const invalidTransition = await inSchool(school.id, () => persistClasspilotCommandTargetAck({
+      commandId: created.id,
+      schoolId: school.id,
+      deviceId: deviceGuard,
+      studentId: studentDeviceGuard.id,
+      studentSessionId: sessionGuard.id,
+      ackState: "received",
+    }));
+    assert.equal(invalidTransition.disposition, "terminal_rejected");
+    assert.equal(invalidTransition.code, "COMMAND_ACK_INVALID_TRANSITION");
+
     const originalReceivedAt = completed.receivedAt!.getTime();
     const originalCompletedAt = completed.completedAt!.getTime();
 
@@ -3213,6 +3237,138 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.equal(loaded?.targets[0]?.receivedAt?.getTime(), originalReceivedAt);
     assert.equal(loaded?.targets[0]?.completedAt?.getTime(), originalCompletedAt);
     assert.deepEqual(loaded?.targets[0]?.result, { ok: true });
+  });
+
+  it("fails closed when an exact-tab V2 ACK does not match the frozen control revision", async () => {
+    const createExactTarget = (suffix: string) => inSchool(school.id, () =>
+      createClasspilotCommandWithTargets({
+        schoolId: school.id,
+        teachingSessionId: null,
+        supervisionContextId: null,
+        teacherId: teacher.id,
+        targetScope: "students",
+        subgroupId: null,
+        commandType: "close-tabs",
+        commandPayload: { suffix },
+        requestedCount: 1,
+        unavailableCount: 0,
+      } as any, [{
+        schoolId: school.id,
+        teachingSessionId: null,
+        supervisionContextId: null,
+        commandId: "",
+        studentId: studentDeviceGuard.id,
+        studentSessionId: sessionGuard.id,
+        deviceId: deviceGuard,
+        status: "sent",
+        result: { exactTabCloseVersion: 2, frozenControlRevision: 12 },
+        errorMessage: null,
+      } as any])
+    );
+
+    const mismatchedCommand = await createExactTarget("mismatch");
+    const mismatched = await inSchool(school.id, () => persistClasspilotCommandTargetAck({
+      commandId: mismatchedCommand.id,
+      schoolId: school.id,
+      deviceId: deviceGuard,
+      studentId: studentDeviceGuard.id,
+      studentSessionId: sessionGuard.id,
+      ackState: "completed",
+      controlRevision: 13,
+    }));
+    assert.equal(mismatched.disposition, "terminal_rejected");
+    assert.equal(mismatched.code, "COMMAND_ACK_BINDING_MISMATCH");
+    assert.equal(mismatched.target?.status, "unavailable");
+
+    const matchingCommand = await createExactTarget("match");
+    const matching = await inSchool(school.id, () => persistClasspilotCommandTargetAck({
+      commandId: matchingCommand.id,
+      schoolId: school.id,
+      deviceId: deviceGuard,
+      studentId: studentDeviceGuard.id,
+      studentSessionId: sessionGuard.id,
+      ackState: "completed",
+      controlRevision: 12,
+    }));
+    assert.equal(matching.disposition, "applied");
+    assert.equal(matching.target.status, "completed");
+
+    const expiredMismatchCommand = await inSchool(school.id, () =>
+      createClasspilotCommandWithTargets({
+        schoolId: school.id,
+        teachingSessionId: null,
+        supervisionContextId: null,
+        teacherId: teacher.id,
+        targetScope: "students",
+        subgroupId: null,
+        commandType: "close-tabs",
+        commandPayload: { suffix: "expired-mismatch" },
+        requestedCount: 1,
+        unavailableCount: 0,
+        expiresAt: new Date(Date.now() - 1_000),
+      } as any, [{
+        schoolId: school.id,
+        teachingSessionId: null,
+        supervisionContextId: null,
+        commandId: "",
+        studentId: studentDeviceGuard.id,
+        studentSessionId: sessionGuard.id,
+        deviceId: deviceGuard,
+        status: "sent",
+        result: { exactTabCloseVersion: 2, frozenControlRevision: 12 },
+        errorMessage: null,
+      } as any])
+    );
+    const expiredMismatch = await inSchool(school.id, () => persistClasspilotCommandTargetAck({
+      commandId: expiredMismatchCommand.id,
+      schoolId: school.id,
+      deviceId: deviceGuard,
+      studentId: studentDeviceGuard.id,
+      studentSessionId: sessionGuard.id,
+      ackState: "expired",
+      controlRevision: 13,
+    }));
+    assert.equal(expiredMismatch.disposition, "terminal_rejected");
+    assert.equal(expiredMismatch.code, "COMMAND_ACK_BINDING_MISMATCH");
+    assert.equal(expiredMismatch.target?.status, "unavailable");
+
+    const expiredMissingCommand = await inSchool(school.id, () =>
+      createClasspilotCommandWithTargets({
+        schoolId: school.id,
+        teachingSessionId: null,
+        supervisionContextId: null,
+        teacherId: teacher.id,
+        targetScope: "students",
+        subgroupId: null,
+        commandType: "close-tabs",
+        commandPayload: { suffix: "expired-missing" },
+        requestedCount: 1,
+        unavailableCount: 0,
+        expiresAt: new Date(Date.now() - 1_000),
+      } as any, [{
+        schoolId: school.id,
+        teachingSessionId: null,
+        supervisionContextId: null,
+        commandId: "",
+        studentId: studentDeviceGuard.id,
+        studentSessionId: sessionGuard.id,
+        deviceId: deviceGuard,
+        status: "sent",
+        result: { exactTabCloseVersion: 2, frozenControlRevision: 12 },
+        errorMessage: null,
+      } as any])
+    );
+    const expiredMissing = await inSchool(school.id, () => persistClasspilotCommandTargetAck({
+      commandId: expiredMissingCommand.id,
+      schoolId: school.id,
+      deviceId: deviceGuard,
+      studentId: studentDeviceGuard.id,
+      studentSessionId: sessionGuard.id,
+      ackState: "expired",
+    }));
+    assert.equal(expiredMissing.disposition, "terminal_rejected");
+    assert.equal(expiredMissing.code, "COMMAND_ACK_BINDING_MISMATCH");
+    assert.equal(expiredMissing.target?.status, "unavailable");
   });
 
   it("converges concurrent sent and acknowledgement updates on completed", async () => {

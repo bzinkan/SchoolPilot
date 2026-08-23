@@ -16,7 +16,7 @@ describe("ClassPilot FAB lifecycle publication contract", () => {
     assert.match(lifecycle, /event: "started"/);
     assert.match(lifecycle, /event: "ended"/);
     assert.match(lifecycle, /syncClasspilotControlStatesToActiveDevices/);
-    assert.match(delivery, /type: "fab-state-sync"/);
+    assert.match(delivery, /classpilotFabStatePushFrame/);
     assert.match(delivery, /activeSessionIds: \[\]/);
   });
 

@@ -25,8 +25,10 @@ export type ClasspilotCoverageStatus = {
   tabSnapshot: { schemaVersion: 1; revision: number } | null;
   tabSnapshotRevision: number | null;
   extensionVersion: string | null;
+  clientProtocolVersion: number | null;
   capabilities: {
     exactTabCloseV1: boolean;
+    exactTabCloseV2: boolean;
     screenOnlyUnlockV1: boolean;
     fabStateRevisionV1: boolean;
     liveViewNegotiationV1: boolean;
@@ -74,8 +76,10 @@ function newestSessionsByStudent(sessions: readonly CoverageHydrationSession[]) 
 
 function coverageRealtimeCapabilities(status: ClasspilotRealtimeStatus | null) {
   const capabilities = new Set(status?.extensionCapabilities || []);
+  const acceptedCapabilities = new Set(status?.acceptedCapabilities || []);
   return {
     exactTabCloseV1: capabilities.has("exactTabCloseV1"),
+    exactTabCloseV2: acceptedCapabilities.has("exactTabCloseV2"),
     screenOnlyUnlockV1: capabilities.has("screenOnlyUnlockV1"),
     fabStateRevisionV1: capabilities.has("fabStateRevisionV1"),
     liveViewNegotiationV1: capabilities.has("liveViewNegotiationV1"),
@@ -121,6 +125,7 @@ function publicStatus(
       : null,
     tabSnapshotRevision: realtime?.tabSnapshotRevision ?? realtime?.revision ?? null,
     extensionVersion: realtime?.extensionVersion ?? null,
+    clientProtocolVersion: realtime?.clientProtocolVersion ?? null,
     capabilities: coverageRealtimeCapabilities(realtime),
     screenshotHealth: realtime?.screenshotHealth,
   };

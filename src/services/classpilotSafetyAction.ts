@@ -3,12 +3,14 @@ import type {
   ClasspilotRealtimeMutationResult,
   ClasspilotRealtimeStatus,
 } from "./classpilotRealtimeStatus.js";
+import { classpilotExactTabCloseVersion } from "./classpilotExactTabCapability.js";
 
 export type ClasspilotSafetyAction = {
   snapshot: ClasspilotRealtimeStatus;
   classifiedUrl: string;
   classifiedTitle: string;
   teachingSessionId: string | null;
+  exactTabCloseVersion: 1 | 2 | null;
   closeTabData:
     | { tabRefs: [string]; snapshotRevision: number }
     | { specificUrls: [string] }
@@ -70,10 +72,8 @@ export function resolveCurrentClasspilotSafetyAction(options: {
         (tab) => tab.tabRef === activeTabRef && tab.url === classifiedUrl
       )
     : undefined;
-  const extensionCapabilities = new Set(snapshot.extensionCapabilities || []);
-  const exactTabCapable = extensionCapabilities.has("exactTabCloseV1")
-    || extensionCapabilities.has("exactTabCloseV2");
-  const exactTarget = exactTabCapable && exactTab?.tabRef && snapshotRevision
+  const exactTabCloseVersion = classpilotExactTabCloseVersion(snapshot);
+  const exactTarget = exactTabCloseVersion && exactTab?.tabRef && snapshotRevision
     ? { tabRef: exactTab.tabRef, snapshotRevision }
     : null;
 
@@ -86,7 +86,7 @@ export function resolveCurrentClasspilotSafetyAction(options: {
     : [];
   const closeTabData = exactTarget
     ? { tabRefs: [exactTarget.tabRef] as [string], snapshotRevision: exactTarget.snapshotRevision }
-    : legacyMatches.length === 1
+    : exactTabCloseVersion !== 2 && legacyMatches.length === 1
       ? { specificUrls: [legacyMatches[0]!.url] as [string] }
       : null;
 
@@ -95,6 +95,7 @@ export function resolveCurrentClasspilotSafetyAction(options: {
     classifiedUrl,
     classifiedTitle: String(options.activeTabTitle || ""),
     teachingSessionId: snapshot.classroomState?.teachingSessionId ?? null,
+    exactTabCloseVersion,
     closeTabData,
     evidenceTarget: exactTarget,
   };

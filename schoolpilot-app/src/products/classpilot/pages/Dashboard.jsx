@@ -1773,6 +1773,7 @@ export default function Dashboard() {
             studentName: s.studentName,
             studentId: s.studentId,
             observedRevision: tab.observedRevision ?? s.tabSnapshotRevision ?? s.tabSnapshot?.revision,
+            clientProtocolVersion: s.clientProtocolVersion,
             capabilities: s.capabilities,
             extensionCapabilities: s.extensionCapabilities,
             active: tab.tabRef === s.activeTabRef || tab.url === s.activeTabUrl,

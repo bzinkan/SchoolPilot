@@ -33,6 +33,7 @@ describe("ClassPilot web-session routing", () => {
       request("GET", "/api/classpilot/device/device-1/students"),
       request("GET", "/api/classpilot/extension/settings"),
       request("POST", "/api/classpilot/kiosk/launch-ticket"),
+      request("POST", "/api/classpilot/kiosk/launch-ticket/preflight"),
       request("POST", "/api/polls/poll-1/respond"),
       request("POST", "/api/checkin/respond"),
       request("POST", "/api/device/event"),
