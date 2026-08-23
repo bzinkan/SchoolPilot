@@ -5,6 +5,9 @@ import test from 'node:test';
 import {
   createKioskApiClient,
   createKioskPollingController,
+  createKioskSnapshotValidatorStore,
+  kioskNotModifiedResult,
+  kioskSnapshotValidatorKey,
   normalizeKioskSnapshot,
   redeemKioskLaunchTicket,
 } from '../src/products/passpilot/kioskController.js';
@@ -138,6 +141,98 @@ test('older server revisions are discarded without replacing last-known-good sta
   controller.stop();
 });
 
+test('resume mutation fences an abort-insensitive stale poll before it can commit', async () => {
+  const pending = [];
+  const committed = [];
+  const controller = createKioskPollingController({
+    request: ({ signal }) => new Promise((resolve) => {
+      // Deliberately ignore abort. Some browser/network implementations can
+      // still deliver a response after AbortController cancellation.
+      pending.push({ resolve, signal });
+    }),
+    onResult: (value) => committed.push(value.revision),
+  });
+
+  controller.start();
+  assert.equal(pending.length, 1);
+  const resumeEpoch = controller.beginMutation();
+  assert.equal(pending[0].signal.aborted, true);
+  assert.equal(controller.getState().mutationPaused, true);
+  assert.equal(controller.completeMutation(resumeEpoch), true);
+
+  pending[0].resolve({ revision: 'stale-before-resume' });
+  await flush();
+  assert.deepEqual(committed, [], 'the stale response must not reach the page callback');
+  assert.equal(pending.length, 2, 'polling resumes only after stale work settles');
+
+  pending[1].resolve({ revision: 'fresh-after-resume' });
+  await flush();
+  assert.deepEqual(committed, ['fresh-after-resume']);
+  controller.stop();
+});
+
+test('snapshot validators are owned by one exact kiosk authority key', () => {
+  const store = createKioskSnapshotValidatorStore();
+  const sessionA = kioskSnapshotValidatorKey({
+    schoolId: 'school-a',
+    sessionMode: true,
+    sessionId: 'session-a',
+    classSource: 'classpilot_groups',
+    classId: 'class-a',
+  });
+  const sessionB = kioskSnapshotValidatorKey({
+    schoolId: 'school-a',
+    sessionMode: true,
+    sessionId: 'session-b',
+    classSource: 'classpilot_groups',
+    classId: 'class-a',
+  });
+  const otherSource = kioskSnapshotValidatorKey({
+    schoolId: 'school-a',
+    sessionMode: true,
+    sessionId: 'session-a',
+    classSource: 'legacy_grades',
+    classId: 'class-a',
+  });
+  const otherClass = kioskSnapshotValidatorKey({
+    schoolId: 'school-a',
+    sessionMode: true,
+    sessionId: 'session-a',
+    classSource: 'classpilot_groups',
+    classId: 'class-b',
+  });
+
+  store.set(sessionA, '"etag-a"');
+  assert.equal(store.get(sessionA), '"etag-a"');
+  assert.equal(store.get(sessionB), null);
+  assert.equal(store.get(otherSource), null);
+  assert.equal(store.get(otherClass), null);
+  store.set(sessionB, '"etag-b"');
+  assert.equal(store.get(sessionA), null, 'only the latest exact scope is retained');
+  assert.equal(store.get(sessionB), '"etag-b"');
+  store.clear();
+  assert.equal(store.getState(), null);
+});
+
+test('a 304 is accepted only with the exact validator that was sent', () => {
+  const exact = kioskNotModifiedResult({
+    validatorKey: '["school-a","session","session-a","legacy_grades","class-a"]',
+    validatorEtag: '"etag-a"',
+  });
+  assert.equal(exact.kind, 'not-modified');
+  assert.equal(exact.revision, '"etag-a"');
+
+  const missing = kioskNotModifiedResult({
+    validatorKey: '["school-a","session","session-b","legacy_grades","class-b"]',
+    validatorEtag: null,
+  });
+  assert.deepEqual(missing, {
+    kind: 'invalid-not-modified',
+    revision: null,
+    clearValidatorKey: '["school-a","session","session-b","legacy_grades","class-b"]',
+  });
+});
+
 test('kiosk API client prefers a short-lived token and falls back to PIN only for legacy servers', async () => {
   const tokenCalls = [];
   const tokenClient = createKioskApiClient({
@@ -219,6 +314,23 @@ test('concurrent StrictMode launch-ticket redemption shares one one-use request'
   assert.deepEqual(first, second);
 });
 
+test('launch-ticket redemption outages fall back to ordinary PIN kiosk access', async () => {
+  const failures = [
+    async () => new Response(JSON.stringify({
+      error: 'Continuity store unavailable.',
+      code: 'KIOSK_LAUNCH_TICKET_STORE_UNAVAILABLE',
+    }), { status: 503 }),
+    async () => { throw new TypeError('network unavailable'); },
+  ];
+  for (const [index, failure] of failures.entries()) {
+    const result = await redeemKioskLaunchTicket({
+      client: { request: failure },
+      ticket: `outage-${index}`,
+    });
+    assert.deepEqual(result, { handled: true, deviceId: null });
+  }
+});
+
 test('kiosk continuity storage is school-scoped and migrates the legacy key once', () => {
   const values = new Map([
     ['pp_kiosk_device', '11111111-1111-4111-8111-111111111111'],
@@ -259,5 +371,9 @@ test('both kiosk pages use one shared controller and contain no interval polling
     assert.doesNotMatch(source, /\bfetch\s*\(/, 'all kiosk requests must pass through token-aware transport');
     assert.match(source, /KioskOfflineBanner/);
     assert.match(source, /response\.status === 404 && !data\?\.code/);
+    assert.match(source, /beginMutation: beginKioskMutation/);
+    assert.match(source, /isKioskMutationCurrent\(mutation\)/);
+    assert.equal((source.match(/kioskNotModifiedResult\(\{ validatorKey, validatorEtag \}\)/g) || []).length, 1);
+    assert.doesNotMatch(source, /snapshotEtagRef/);
   }
 });

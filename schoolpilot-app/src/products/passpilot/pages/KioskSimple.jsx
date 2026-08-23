@@ -4,8 +4,11 @@ import { isCanonicalPassPilotSource, PASSPILOT_CLASS_MODEL_HEADER } from "../cla
 import KioskOfflineBanner from "../components/KioskOfflineBanner";
 import {
   createKioskApiClient,
+  createKioskSnapshotValidatorStore,
   KioskRequestError,
+  kioskNotModifiedResult,
   kioskSnapshotRevision,
+  kioskSnapshotValidatorKey,
   normalizeKioskSnapshot,
   redeemKioskLaunchTicket,
 } from "../kioskController";
@@ -90,7 +93,10 @@ export default function KioskSimplePage() {
   const legacyConfiguredClassRef = useRef(undefined);
   const sessionIdRef = useRef(null);
   const snapshotModeRef = useRef("unknown");
-  const snapshotEtagRef = useRef(null);
+  const snapshotValidatorsRef = useRef(null);
+  if (!snapshotValidatorsRef.current) {
+    snapshotValidatorsRef.current = createKioskSnapshotValidatorStore();
+  }
   const launchAdoptionRef = useRef(null);
   const launchTicketHandledRef = useRef(false);
   const lastGradesFetchAtRef = useRef(0);
@@ -98,6 +104,23 @@ export default function KioskSimplePage() {
   // concurrent bootstrap would mint a fresh unclaimed session (the resume
   // force-releases the old one) and clobber the stored session id.
   const resumingRef = useRef(false);
+
+  const resetSnapshotValidation = useCallback(() => {
+    snapshotModeRef.current = "unknown";
+    snapshotValidatorsRef.current.clear();
+  }, []);
+
+  useEffect(() => {
+    resetSnapshotValidation();
+  }, [
+    classSource,
+    kioskPin,
+    resetSnapshotValidation,
+    schoolId,
+    selectedGradeId,
+    session?.id,
+    sessionMode,
+  ]);
 
   // Close destination picker on inactivity (10s), but keep grade selected
   const resetInactivity = useCallback(() => {
@@ -151,6 +174,7 @@ export default function KioskSimplePage() {
   const handleSessionExpired = useCallback(() => {
     kioskPinStore().removeItem(KIOSK_SESSION_KEY);
     sessionIdRef.current = null;
+    resetSnapshotValidation();
     setSession(null);
     setResumeOffer(null);
     setSelectedGradeId(null);
@@ -158,7 +182,7 @@ export default function KioskSimplePage() {
     setStudentsClassId(null);
     setConfigError(null);
     setSessionMode(null);
-  }, []);
+  }, [resetSnapshotValidation]);
 
   const pollKiosk = useCallback(async ({ signal }) => {
     if (resumingRef.current) return { kind: "noop", revision: null };
@@ -230,23 +254,31 @@ export default function KioskSimplePage() {
     }
 
     const requestedClassId = selectedGradeId;
+    let snapshotUnsupported = false;
     if (requestedClassId && snapshotModeRef.current !== "legacy") {
+      const validatorKey = kioskSnapshotValidatorKey({
+        schoolId,
+        sessionMode,
+        sessionId: sessionIdRef.current,
+        classSource,
+        classId: requestedClassId,
+      });
+      const validatorEtag = snapshotValidatorsRef.current.get(validatorKey);
       const response = await kioskClient.request(
         `/api/passpilot/kiosk/snapshot?classId=${encodeURIComponent(requestedClassId)}`,
         {
           method: "GET",
           signal,
-          headers: snapshotEtagRef.current ? { "If-None-Match": snapshotEtagRef.current } : {},
+          headers: validatorEtag ? { "If-None-Match": validatorEtag } : {},
         },
       );
       if (response.status === 304) {
-        return { kind: "not-modified", revision: snapshotEtagRef.current };
+        return kioskNotModifiedResult({ validatorKey, validatorEtag });
       }
       const body = await response.json().catch(() => ({}));
       if (response.status === 404 && !body?.code) {
-        snapshotModeRef.current = "legacy";
+        snapshotUnsupported = true;
       } else if (!response.ok) {
-        snapshotModeRef.current = "snapshot";
         if (body?.code === "PASSPILOT_KIOSK_SESSION_EXPIRED") {
           return { kind: "session-expired", revision: `expired:${sessionIdRef.current}` };
         }
@@ -262,13 +294,14 @@ export default function KioskSimplePage() {
           });
         }
       } else {
-        snapshotModeRef.current = "snapshot";
         const etag = response.headers.get("etag");
-        if (etag) snapshotEtagRef.current = etag;
         return {
           kind: "snapshot",
           data: normalizeKioskSnapshot(body),
           revision: kioskSnapshotRevision(response, body),
+          transportMode: "snapshot",
+          validatorKey,
+          validatorEtag: etag,
         };
       }
     }
@@ -351,10 +384,21 @@ export default function KioskSimplePage() {
       kind: "legacy-state",
       data: { config, source: nextSource, classId: nextClassId, classes, students },
       revision: config?.revision ?? null,
+      transportMode: snapshotUnsupported ? "legacy" : undefined,
     };
   }, [classSource, kioskClient, launchTicket, schoolId, selectedGradeId, sessionMode]);
 
   const applyKioskPoll = useCallback((result) => {
+    if (result.clearValidatorKey) {
+      snapshotValidatorsRef.current.delete(result.clearValidatorKey);
+    }
+    if (result.transportMode && result.transportMode !== snapshotModeRef.current) {
+      snapshotValidatorsRef.current.clear();
+      snapshotModeRef.current = result.transportMode;
+    }
+    if (result.validatorKey && result.validatorEtag) {
+      snapshotValidatorsRef.current.set(result.validatorKey, result.validatorEtag);
+    }
     if (result.launchTicketHandled) setLaunchTicket(null);
     if (result.kind === "legacy-mode") {
       setBootstrapError(null);
@@ -363,8 +407,9 @@ export default function KioskSimplePage() {
     }
     if (result.kind === "bootstrap") {
       const data = result.data;
-      kioskPinStore().setItem(KIOSK_SESSION_KEY, data.session.id);
       sessionIdRef.current = data.session.id;
+      kioskPinStore().setItem(KIOSK_SESSION_KEY, data.session.id);
+      resetSnapshotValidation();
       if (redirectForKioskStyle(data.kioskStyle)) return;
       setBootstrapError(null);
       setSession(data.session);
@@ -452,7 +497,7 @@ export default function KioskSimplePage() {
       setStudents([]);
       setStudentsClassId(null);
     }
-  }, [handleSessionExpired, redirectForKioskStyle, sessionMode]);
+  }, [handleSessionExpired, redirectForKioskStyle, resetSnapshotValidation, sessionMode]);
 
   const handleKioskPollError = useCallback((error) => {
     if (error?.status === 401) {
@@ -478,6 +523,9 @@ export default function KioskSimplePage() {
     isOffline,
     lastSuccessAt,
     refresh: refreshKiosk,
+    beginMutation: beginKioskMutation,
+    isMutationCurrent: isKioskMutationCurrent,
+    completeMutation: completeKioskMutation,
   } = useKioskPollingController({
     enabled: Boolean(schoolId && kioskPin),
     controllerKey: kioskControllerKey,
@@ -494,6 +542,11 @@ export default function KioskSimplePage() {
   const handleResume = useCallback(async () => {
     if (resumingRef.current) return;
     resumingRef.current = true;
+    const mutation = beginKioskMutation();
+    if (!mutation) {
+      resumingRef.current = false;
+      return;
+    }
     try {
       const deviceId = getKioskDeviceId(schoolId);
       const res = await kioskClient.request("/api/passpilot/kiosk/session/resume", {
@@ -502,18 +555,21 @@ export default function KioskSimplePage() {
           ...(deviceId ? { "X-Kiosk-Device": deviceId } : {}),
         },
       });
+      if (!isKioskMutationCurrent(mutation)) return;
       checkPinRejected(res);
       if (!res.ok) {
         setResumeOffer(null);
         return;
       }
       const data = await res.json().catch(() => null);
+      if (!isKioskMutationCurrent(mutation)) return;
       if (!data?.session?.id) {
         setResumeOffer(null);
         return;
       }
-      kioskPinStore().setItem(KIOSK_SESSION_KEY, data.session.id);
       sessionIdRef.current = data.session.id;
+      kioskPinStore().setItem(KIOSK_SESSION_KEY, data.session.id);
+      resetSnapshotValidation();
       if (redirectForKioskStyle(data.kioskStyle)) return;
       setResumeOffer(null);
       setSession(data.session);
@@ -525,8 +581,18 @@ export default function KioskSimplePage() {
       // Connection error — keep the offer; the teacher can tap again.
     } finally {
       resumingRef.current = false;
+      completeKioskMutation(mutation, { refresh: true });
     }
-  }, [checkPinRejected, kioskClient, redirectForKioskStyle, schoolId]);
+  }, [
+    beginKioskMutation,
+    checkPinRejected,
+    completeKioskMutation,
+    isKioskMutationCurrent,
+    kioskClient,
+    redirectForKioskStyle,
+    resetSnapshotValidation,
+    schoolId,
+  ]);
 
   const showFeedback = (type, message) => {
     setFeedback({ type, message });

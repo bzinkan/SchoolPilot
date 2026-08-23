@@ -41,6 +41,8 @@ export function createKioskPollingController({
   clearTimer = clearTimeout,
 }) {
   let running = false;
+  let mutationPaused = false;
+  let mutationEpoch = 0;
   let timer = null;
   let inFlight = null;
   let refreshPending = false;
@@ -71,7 +73,7 @@ export function createKioskPollingController({
   };
 
   const schedule = (delay) => {
-    if (!running) return;
+    if (!running || mutationPaused) return;
     if (timer != null) clearTimer(timer);
     timer = setTimer(() => {
       timer = null;
@@ -80,7 +82,7 @@ export function createKioskPollingController({
   };
 
   const run = async () => {
-    if (!running) return;
+    if (!running || mutationPaused) return;
     if (inFlight) {
       refreshPending = true;
       inFlight.abortController.abort();
@@ -88,8 +90,9 @@ export function createKioskPollingController({
     }
 
     const revision = ++requestRevision;
+    const requestMutationEpoch = mutationEpoch;
     const abortController = new AbortController();
-    inFlight = { revision, abortController };
+    inFlight = { revision, mutationEpoch: requestMutationEpoch, abortController };
     emitStatus(true);
     let succeeded = false;
 
@@ -100,7 +103,13 @@ export function createKioskPollingController({
         requestRevision: revision,
         latestDataRevision,
       });
-      if (!running || abortController.signal.aborted || inFlight?.revision !== revision) return;
+      if (
+        !running
+        || mutationPaused
+        || requestMutationEpoch !== mutationEpoch
+        || abortController.signal.aborted
+        || inFlight?.revision !== revision
+      ) return;
 
       const incomingRevision = getRevision(result);
       const incomingComparable = comparableRevision(incomingRevision);
@@ -113,7 +122,18 @@ export function createKioskPollingController({
         && incomingComparable < latestComparable;
 
       if (!staleDataRevision && !duplicateDataRevision && revision > committedRequestRevision) {
-        await onResult(result, { requestRevision: revision, dataRevision: incomingRevision });
+        await onResult(result, {
+          requestRevision: revision,
+          dataRevision: incomingRevision,
+          mutationEpoch: requestMutationEpoch,
+        });
+        if (
+          !running
+          || mutationPaused
+          || requestMutationEpoch !== mutationEpoch
+          || abortController.signal.aborted
+          || inFlight?.revision !== revision
+        ) return;
         committedRequestRevision = revision;
         if (incomingRevision != null) latestDataRevision = incomingRevision;
       }
@@ -128,7 +148,13 @@ export function createKioskPollingController({
         }, abortController.signal);
       }
     } catch (error) {
-      if (!running || abortController.signal.aborted || isAbortError(error)) return;
+      if (
+        !running
+        || mutationPaused
+        || requestMutationEpoch !== mutationEpoch
+        || abortController.signal.aborted
+        || isAbortError(error)
+      ) return;
       consecutiveFailures += 1;
       await onError(error, { requestRevision: revision, consecutiveFailures });
       if (!outageReported && consecutiveFailures >= 3) {
@@ -141,7 +167,7 @@ export function createKioskPollingController({
       }
     } finally {
       if (inFlight?.revision === revision) inFlight = null;
-      if (running) {
+      if (running && !mutationPaused) {
         emitStatus(false);
         if (refreshPending) {
           refreshPending = false;
@@ -162,7 +188,7 @@ export function createKioskPollingController({
       void run();
     },
     refresh() {
-      if (!running) return;
+      if (!running || mutationPaused) return;
       if (timer != null) {
         clearTimer(timer);
         timer = null;
@@ -174,8 +200,36 @@ export function createKioskPollingController({
       }
       void run();
     },
+    beginMutation() {
+      mutationEpoch += 1;
+      mutationPaused = true;
+      refreshPending = false;
+      latestDataRevision = null;
+      if (timer != null) clearTimer(timer);
+      timer = null;
+      inFlight?.abortController.abort();
+      emitStatus(Boolean(inFlight));
+      return mutationEpoch;
+    },
+    isMutationCurrent(epoch) {
+      return running && mutationPaused && epoch === mutationEpoch;
+    },
+    completeMutation(epoch, { refresh = true } = {}) {
+      if (!running || !mutationPaused || epoch !== mutationEpoch) return false;
+      mutationPaused = false;
+      if (inFlight) {
+        refreshPending = refresh;
+      } else if (refresh) {
+        void run();
+      } else {
+        schedule(healthyDelayMs);
+      }
+      return true;
+    },
     stop() {
       running = false;
+      mutationPaused = false;
+      mutationEpoch += 1;
       refreshPending = false;
       if (timer != null) clearTimer(timer);
       timer = null;
@@ -184,6 +238,8 @@ export function createKioskPollingController({
     getState() {
       return {
         running,
+        mutationPaused,
+        mutationEpoch,
         inFlight: Boolean(inFlight),
         requestRevision,
         committedRequestRevision,
@@ -192,6 +248,61 @@ export function createKioskPollingController({
         lastSuccessAt,
       };
     },
+  };
+}
+
+export function kioskSnapshotValidatorKey({
+  schoolId,
+  sessionMode,
+  sessionId,
+  classSource,
+  classId,
+}) {
+  return JSON.stringify([
+    String(schoolId || ''),
+    sessionMode === true ? 'session' : 'legacy',
+    sessionMode === true ? String(sessionId || '') : '',
+    String(classSource || ''),
+    String(classId || ''),
+  ]);
+}
+
+export function createKioskSnapshotValidatorStore() {
+  let entry = null;
+  return {
+    get(key) {
+      return entry?.key === key ? entry.etag : null;
+    },
+    set(key, etag) {
+      if (!key || !etag) return;
+      entry = { key, etag };
+    },
+    delete(key) {
+      if (entry?.key === key) entry = null;
+    },
+    clear() {
+      entry = null;
+    },
+    getState() {
+      return entry ? { ...entry } : null;
+    },
+  };
+}
+
+export function kioskNotModifiedResult({ validatorKey, validatorEtag }) {
+  if (!validatorKey || !validatorEtag) {
+    return {
+      kind: 'invalid-not-modified',
+      revision: null,
+      clearValidatorKey: validatorKey || null,
+    };
+  }
+  return {
+    kind: 'not-modified',
+    revision: validatorEtag,
+    transportMode: 'snapshot',
+    validatorKey,
+    validatorEtag,
   };
 }
 
@@ -226,27 +337,27 @@ export async function redeemKioskLaunchTicket({ client, ticket }) {
   // server consumes the ticket; sharing this promise lets the surviving effect
   // receive the same opaque continuity id without replaying the ticket.
   const attempt = (async () => {
-    const response = await client.request('/api/passpilot/kiosk/launch-ticket/redeem', {
-      method: 'POST',
-      body: JSON.stringify({ ticket }),
-    });
-    const body = await response.json().catch(() => ({}));
-    if (response.ok) {
-      return {
-        handled: true,
-        deviceId: typeof body?.deviceId === 'string' ? body.deviceId : null,
-      };
+    try {
+      const response = await client.request('/api/passpilot/kiosk/launch-ticket/redeem', {
+        method: 'POST',
+        body: JSON.stringify({ ticket }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (response.ok) {
+        return {
+          handled: true,
+          deviceId: typeof body?.deviceId === 'string' ? body.deviceId : null,
+        };
+      }
+    } catch {
+      // Continuity must never be a prerequisite for kiosk access. A network or
+      // Redis-backed redemption outage falls through to the ordinary PIN flow.
     }
-    if ([400, 404, 405].includes(response.status)) {
-      // Continuity is optional. Invalid, expired, replayed, or unsupported
-      // tickets fall back to the locally generated kiosk id.
-      return { handled: true, deviceId: null };
-    }
-    throw new KioskRequestError(body?.error || 'Kiosk continuity is unavailable.', {
-      status: response.status,
-      code: body?.code || null,
-      body,
-    });
+
+    // Invalid, expired, replayed, unsupported, or temporarily unavailable
+    // continuity tickets all fall back to the locally generated kiosk id. The
+    // following session bootstrap remains authoritative for PIN/token access.
+    return { handled: true, deviceId: null };
   })();
   launchTicketRedemptions.set(ticket, attempt);
   void attempt.finally(() => {

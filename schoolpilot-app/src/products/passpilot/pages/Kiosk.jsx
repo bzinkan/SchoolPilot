@@ -8,8 +8,11 @@ import { PASSPILOT_CLASS_MODEL_HEADER } from "../classData";
 import KioskOfflineBanner from "../components/KioskOfflineBanner";
 import {
   createKioskApiClient,
+  createKioskSnapshotValidatorStore,
   KioskRequestError,
+  kioskNotModifiedResult,
   kioskSnapshotRevision,
+  kioskSnapshotValidatorKey,
   normalizeKioskSnapshot,
   redeemKioskLaunchTicket,
 } from "../kioskController";
@@ -66,13 +69,33 @@ export default function KioskPage() {
   const timeoutRef = useRef();
   const sessionIdRef = useRef(null);
   const snapshotModeRef = useRef("unknown");
-  const snapshotEtagRef = useRef(null);
+  const snapshotValidatorsRef = useRef(null);
+  if (!snapshotValidatorsRef.current) {
+    snapshotValidatorsRef.current = createKioskSnapshotValidatorStore();
+  }
   const launchAdoptionRef = useRef(null);
   const launchTicketHandledRef = useRef(false);
   // Blocks the 5s bootstrap interval while a resume is in flight — a
   // concurrent bootstrap would mint a fresh unclaimed session (the resume
   // force-releases the old one) and clobber the stored session id.
   const resumingRef = useRef(false);
+
+  const resetSnapshotValidation = useCallback(() => {
+    snapshotModeRef.current = "unknown";
+    snapshotValidatorsRef.current.clear();
+  }, []);
+
+  useEffect(() => {
+    resetSnapshotValidation();
+  }, [
+    kioskPin,
+    resetSnapshotValidation,
+    schoolId,
+    session?.classId,
+    session?.id,
+    session?.source,
+    sessionMode,
+  ]);
 
   const kioskClient = useMemo(() => createKioskApiClient({
     schoolId,
@@ -119,6 +142,7 @@ export default function KioskPage() {
   const handleSessionExpired = useCallback(() => {
     kioskPinStore().removeItem(KIOSK_SESSION_KEY);
     sessionIdRef.current = null;
+    resetSnapshotValidation();
     setSession(null);
     setResumeOffer(null);
     setSessionMode(null);
@@ -126,7 +150,7 @@ export default function KioskPage() {
     setStudent(null);
     setActivePass(null);
     setMessage("");
-  }, []);
+  }, [resetSnapshotValidation]);
 
   // Kiosk style is a school-wide admin setting. This page only renders the
   // "badge" style — when the server reports "simple", hop to the simple page,
@@ -215,21 +239,32 @@ export default function KioskPage() {
     }
 
     const classId = session?.classId || null;
+    let snapshotUnsupported = false;
     if (classId && snapshotModeRef.current !== "legacy") {
+      const validatorKey = kioskSnapshotValidatorKey({
+        schoolId,
+        sessionMode,
+        sessionId: sessionIdRef.current,
+        classSource: session?.source,
+        classId,
+      });
+      const validatorEtag = snapshotValidatorsRef.current.get(validatorKey);
       const response = await kioskClient.request(
         `/api/passpilot/kiosk/snapshot?classId=${encodeURIComponent(classId)}`,
         {
           method: "GET",
           signal,
-          headers: snapshotEtagRef.current ? { "If-None-Match": snapshotEtagRef.current } : {},
+          headers: validatorEtag ? { "If-None-Match": validatorEtag } : {},
         },
       );
       if (response.status === 304) {
-        return { kind: "not-modified", revision: snapshotEtagRef.current };
+        return kioskNotModifiedResult({ validatorKey, validatorEtag });
       }
       const body = await response.json().catch(() => ({}));
       if (response.status === 404 && !body?.code) {
-        snapshotModeRef.current = "legacy";
+        // Defer the transport transition until the controller confirms this
+        // request still belongs to the current mutation epoch.
+        snapshotUnsupported = true;
       } else if (!response.ok) {
         if (body?.code === "PASSPILOT_KIOSK_SESSION_EXPIRED") {
           return { kind: "session-expired", revision: `expired:${sessionIdRef.current}` };
@@ -246,14 +281,15 @@ export default function KioskPage() {
           });
         }
       } else {
-        snapshotModeRef.current = "snapshot";
         const etag = response.headers.get("etag");
-        if (etag) snapshotEtagRef.current = etag;
         const snapshot = normalizeKioskSnapshot(body);
         return {
           kind: "snapshot",
           data: snapshot,
           revision: kioskSnapshotRevision(response, body),
+          transportMode: "snapshot",
+          validatorKey,
+          validatorEtag: etag,
         };
       }
     }
@@ -283,10 +319,25 @@ export default function KioskPage() {
       }
       return { kind: "config-error", data, revision: data?.revision ?? null };
     }
-    return { kind: "config", data, revision: data?.revision ?? data?.session?.revision ?? null };
-  }, [kioskClient, launchTicket, schoolId, session?.classId, sessionMode]);
+    return {
+      kind: "config",
+      data,
+      revision: data?.revision ?? data?.session?.revision ?? null,
+      transportMode: snapshotUnsupported ? "legacy" : undefined,
+    };
+  }, [kioskClient, launchTicket, schoolId, session?.classId, session?.source, sessionMode]);
 
   const applyKioskPoll = useCallback((result) => {
+    if (result.clearValidatorKey) {
+      snapshotValidatorsRef.current.delete(result.clearValidatorKey);
+    }
+    if (result.transportMode && result.transportMode !== snapshotModeRef.current) {
+      snapshotValidatorsRef.current.clear();
+      snapshotModeRef.current = result.transportMode;
+    }
+    if (result.validatorKey && result.validatorEtag) {
+      snapshotValidatorsRef.current.set(result.validatorKey, result.validatorEtag);
+    }
     if (result.launchTicketHandled) setLaunchTicket(null);
     if (result.kind === "legacy-mode") {
       setBootstrapError(null);
@@ -295,8 +346,9 @@ export default function KioskPage() {
     }
     if (result.kind === "bootstrap") {
       const data = result.data;
-      kioskPinStore().setItem(KIOSK_SESSION_KEY, data.session.id);
       sessionIdRef.current = data.session.id;
+      kioskPinStore().setItem(KIOSK_SESSION_KEY, data.session.id);
+      resetSnapshotValidation();
       if (redirectForKioskStyle(data.kioskStyle)) return;
       setBootstrapError(null);
       setSession(data.session);
@@ -331,7 +383,7 @@ export default function KioskPage() {
         kioskName: data.kioskName ?? null,
       });
     }
-  }, [handleSessionExpired, redirectForKioskStyle]);
+  }, [handleSessionExpired, redirectForKioskStyle, resetSnapshotValidation]);
 
   const handleKioskPollError = useCallback((error) => {
     if (error?.status === 401) {
@@ -356,6 +408,9 @@ export default function KioskPage() {
     isOffline,
     lastSuccessAt,
     refresh: refreshKiosk,
+    beginMutation: beginKioskMutation,
+    isMutationCurrent: isKioskMutationCurrent,
+    completeMutation: completeKioskMutation,
   } = useKioskPollingController({
     enabled: Boolean(schoolId && kioskPin),
     controllerKey: kioskControllerKey,
@@ -370,6 +425,11 @@ export default function KioskPage() {
   const handleResume = useCallback(async () => {
     if (resumingRef.current) return;
     resumingRef.current = true;
+    const mutation = beginKioskMutation();
+    if (!mutation) {
+      resumingRef.current = false;
+      return;
+    }
     try {
       const deviceId = getKioskDeviceId(schoolId);
       const res = await kioskClient.request("/api/passpilot/kiosk/session/resume", {
@@ -378,6 +438,7 @@ export default function KioskPage() {
           ...(deviceId ? { "X-Kiosk-Device": deviceId } : {}),
         },
       });
+      if (!isKioskMutationCurrent(mutation)) return;
       if (res.status === 401) {
         clearPin();
         return;
@@ -387,12 +448,14 @@ export default function KioskPage() {
         return;
       }
       const data = await res.json().catch(() => null);
+      if (!isKioskMutationCurrent(mutation)) return;
       if (!data?.session?.id) {
         setResumeOffer(null);
         return;
       }
-      kioskPinStore().setItem(KIOSK_SESSION_KEY, data.session.id);
       sessionIdRef.current = data.session.id;
+      kioskPinStore().setItem(KIOSK_SESSION_KEY, data.session.id);
+      resetSnapshotValidation();
       if (redirectForKioskStyle(data.kioskStyle)) return;
       setResumeOffer(null);
       setSession(data.session);
@@ -401,8 +464,18 @@ export default function KioskPage() {
       // Connection error — keep the offer; the teacher can tap again.
     } finally {
       resumingRef.current = false;
+      completeKioskMutation(mutation, { refresh: true });
     }
-  }, [clearPin, kioskClient, redirectForKioskStyle, schoolId]);
+  }, [
+    beginKioskMutation,
+    clearPin,
+    completeKioskMutation,
+    isKioskMutationCurrent,
+    kioskClient,
+    redirectForKioskStyle,
+    resetSnapshotValidation,
+    schoolId,
+  ]);
 
   // Auto-reset on inactivity
   useEffect(() => {
