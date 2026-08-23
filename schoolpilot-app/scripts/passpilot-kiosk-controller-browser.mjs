@@ -18,6 +18,7 @@ assert.ok(address && typeof address !== 'string');
 let browser;
 let page;
 let legacyPage;
+let resumeRacePage;
 let activeSnapshots = 0;
 let maximumActiveSnapshots = 0;
 let snapshotCalls = 0;
@@ -204,10 +205,183 @@ try {
   assert.equal(legacyConfigIndex > legacySnapshotIndex, true);
   assert.equal(legacyStudentsIndex > legacyConfigIndex, true);
 
+  await legacyPage.close();
+  legacyPage = null;
+
+  for (const layout of [
+    {
+      name: 'simple',
+      path: '/passpilot/kiosk/simple',
+      kioskStyle: 'simple',
+      sessionStorageKey: 'pp_kiosk_session_simple',
+    },
+    {
+      name: 'badge',
+      path: '/passpilot/kiosk',
+      kioskStyle: 'badge',
+      sessionStorageKey: 'pp_kiosk_session_badge',
+    },
+  ]) {
+    resumeRacePage = await browser.newPage();
+    await resumeRacePage.addInitScript(() => {
+      window.localStorage.clear();
+      window.sessionStorage.clear();
+      window.localStorage.setItem('pp_kiosk_pin', '8642');
+    });
+
+    const schoolId = `resume-race-${layout.name}`;
+    const bootSessionId = `boot-${layout.name}`;
+    const resumedSessionId = `resumed-${layout.name}`;
+    let releaseOldPoll;
+    const oldPollRelease = new Promise((resolve) => { releaseOldPoll = resolve; });
+    let markOldPollStarted;
+    const oldPollStarted = new Promise((resolve) => { markOldPollStarted = resolve; });
+    let markResumeReturned;
+    const resumeReturned = new Promise((resolve) => { markResumeReturned = resolve; });
+    let markFreshPollStarted;
+    const freshPollStarted = new Promise((resolve) => { markFreshPollStarted = resolve; });
+
+    await resumeRacePage.route('**/api/**', async (route) => {
+      const request = route.request();
+      const pathname = new URL(request.url()).pathname;
+      const requestSessionId = request.headers()['x-kiosk-session'];
+      if (pathname === '/api/auth/me') {
+        await route.fulfill({ status: 401, json: { error: 'Not signed in' } });
+        return;
+      }
+      if (pathname === '/api/passpilot/kiosk/auth') {
+        await route.fulfill({ json: { token: `token-${layout.name}`, expiresInSeconds: 900 } });
+        return;
+      }
+      if (pathname === '/api/passpilot/kiosk/session') {
+        await route.fulfill({
+          status: 201,
+          json: {
+            kioskStyle: layout.kioskStyle,
+            session: {
+              id: bootSessionId,
+              status: 'unclaimed',
+              claimCode: '321654',
+              source: 'classpilot_groups',
+              classId: layout.name === 'badge' ? 'old-class' : null,
+            },
+            resume: { kioskName: 'Current Kiosk', className: 'Current Class' },
+          },
+        });
+        return;
+      }
+      if (pathname === '/api/passpilot/kiosk/session/resume') {
+        await route.fulfill({
+          status: 201,
+          json: {
+            kioskStyle: layout.kioskStyle,
+            session: {
+              id: resumedSessionId,
+              status: 'active',
+              claimCode: null,
+              source: 'classpilot_groups',
+              classId: 'new-class',
+              className: 'New Class',
+              kioskName: 'New Kiosk',
+            },
+          },
+        });
+        markResumeReturned();
+        return;
+      }
+      if (
+        requestSessionId === bootSessionId
+        && (pathname === '/api/passpilot/kiosk/config' || pathname === '/api/passpilot/kiosk/snapshot')
+      ) {
+        markOldPollStarted();
+        await oldPollRelease;
+        await route.fulfill({
+          status: 200,
+          headers: pathname.endsWith('/snapshot') ? { ETag: '"stale-etag"' } : {},
+          json: pathname.endsWith('/snapshot')
+            ? {
+                revision: 1,
+                kioskStyle: layout.kioskStyle,
+                config: {
+                  source: 'classpilot_groups',
+                  classId: 'old-class',
+                  className: 'Stale Class',
+                  kioskName: 'Stale Kiosk',
+                },
+                session: { id: bootSessionId, status: 'unclaimed', claimCode: '321654' },
+                roster: { students: [] },
+                passes: [],
+              }
+            : {
+                revision: 1,
+                kioskStyle: layout.kioskStyle,
+                source: null,
+                classId: null,
+                session: { id: bootSessionId, status: 'unclaimed', claimCode: '321654' },
+              },
+        }).catch(() => {});
+        return;
+      }
+      if (pathname === '/api/passpilot/kiosk/snapshot' && requestSessionId === resumedSessionId) {
+        markFreshPollStarted();
+        await route.fulfill({
+          status: 200,
+          headers: { ETag: '"fresh-etag"' },
+          json: {
+            revision: 2,
+            kioskStyle: layout.kioskStyle,
+            config: {
+              source: 'classpilot_groups',
+              classId: 'new-class',
+              className: 'New Class',
+              kioskName: 'New Kiosk',
+            },
+            session: {
+              id: resumedSessionId,
+              status: 'active',
+              source: 'classpilot_groups',
+              classId: 'new-class',
+              className: 'New Class',
+              kioskName: 'New Kiosk',
+            },
+            roster: { students: [] },
+            passes: [],
+          },
+        });
+        return;
+      }
+      await route.fulfill({ status: 404, json: { error: 'Not found' } });
+    });
+
+    await resumeRacePage.goto(`http://127.0.0.1:${address.port}${layout.path}?school=${schoolId}`);
+    const resumeButton = resumeRacePage.getByTestId('kiosk-resume-button');
+    await resumeButton.waitFor({ timeout: 10_000 });
+    await oldPollStarted;
+    await resumeButton.click();
+    await resumeReturned;
+    releaseOldPoll();
+    await freshPollStarted;
+    await resumeRacePage.getByText('New Class — New Kiosk', { exact: true }).waitFor({ timeout: 10_000 });
+    await resumeRacePage.waitForTimeout(100);
+    assert.equal(
+      await resumeRacePage.evaluate((key) => window.localStorage.getItem(key), layout.sessionStorageKey),
+      resumedSessionId,
+      `${layout.name} resume must persist the new session before stale polling can settle`,
+    );
+    assert.equal(
+      await resumeRacePage.getByTestId('kiosk-claim-code').count(),
+      0,
+      `${layout.name} stale polling must not restore the pre-resume claim screen`,
+    );
+    await resumeRacePage.close();
+    resumeRacePage = null;
+  }
+
   process.stdout.write('PassPilot kiosk controller browser regression passed.\n');
 } finally {
   await page?.close().catch(() => {});
   await legacyPage?.close().catch(() => {});
+  await resumeRacePage?.close().catch(() => {});
   await browser?.close().catch(() => {});
   await vite.close();
 }

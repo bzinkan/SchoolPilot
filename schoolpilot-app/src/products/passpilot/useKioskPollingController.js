@@ -50,6 +50,26 @@ export function useKioskPollingController({
   }, [enabled, controllerKey]);
 
   const refresh = useCallback(() => controllerRef.current?.refresh(), []);
+  const beginMutation = useCallback(() => {
+    const controller = controllerRef.current;
+    if (!controller) return null;
+    return { controller, epoch: controller.beginMutation() };
+  }, []);
+  const isMutationCurrent = useCallback((mutation) => (
+    Boolean(mutation)
+    && controllerRef.current === mutation.controller
+    && mutation.controller.isMutationCurrent(mutation.epoch)
+  ), []);
+  const completeMutation = useCallback((mutation, options) => {
+    if (!mutation || controllerRef.current !== mutation.controller) return false;
+    return mutation.controller.completeMutation(mutation.epoch, options);
+  }, []);
 
-  return { ...status, refresh };
+  return {
+    ...status,
+    refresh,
+    beginMutation,
+    isMutationCurrent,
+    completeMutation,
+  };
 }
