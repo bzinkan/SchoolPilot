@@ -30,7 +30,7 @@ describe("PostgreSQL session-pool isolation", () => {
     const dbSource = readFileSync(resolve(root, "src/db.ts"), "utf8");
     const appSource = readFileSync(resolve(root, "src/app.ts"), "utf8");
 
-    assert.equal(maximumLaunchDatabaseConnections(), 148);
+    assert.equal(maximumLaunchDatabaseConnections(), 124);
     assert.ok(maximumLaunchDatabaseConnections() < 150);
     assert.deepEqual(databasePoolLimits({
       SCHEDULER_ENABLED: "false",
@@ -40,10 +40,10 @@ describe("PostgreSQL session-pool isolation", () => {
       SCHEDULER_LOCK_POOL_MAX: "999",
     }), {
       role: "api",
-      main: 18,
+      main: 16,
       session: 2,
-      scheduler: 1,
-      schedulerLock: 1,
+      scheduler: 0,
+      schedulerLock: 0,
     });
     assert.deepEqual(databasePoolLimits({
       SCHEDULER_ENABLED: "true",
@@ -68,10 +68,10 @@ describe("PostgreSQL session-pool isolation", () => {
       SCHEDULER_LOCK_POOL_MAX: "-8",
     }), {
       role: "api",
-      main: 18,
+      main: 16,
       session: 2,
-      scheduler: 1,
-      schedulerLock: 1,
+      scheduler: 0,
+      schedulerLock: 0,
     });
     assert.deepEqual(databasePoolIdleTimeouts({ SCHEDULER_ENABLED: "false" }), {
       main: 75_000,
@@ -211,7 +211,7 @@ describe("PostgreSQL session-pool isolation", () => {
 
     assert.match(
       contextSource,
-      /const membership = await loadActiveMembershipContext\([\s\S]*if \(!membership\)[\s\S]*status\(403\)/
+      /const \[identity\] = await loadIdentities\(req\.authUser\.id, selectedSchoolId\);[\s\S]*if \(!identity\)[\s\S]*requested \? 404 : 403/
     );
     assert.match(requiredImpersonation, /return res\.status\(401\)/);
     assert.match(
@@ -273,7 +273,7 @@ describe("PostgreSQL session-pool isolation", () => {
     const screenshotRoute = routeSource.slice(screenshotStart, screenshotEnd);
     assert.match(screenshotRoute, /\.\.\.deviceAdminAuth/);
     assert.doesNotMatch(screenshotRoute, /tileReadAuth/);
-    assert.ok(screenshotRoute.indexOf("deviceAdminAuth") < screenshotRoute.indexOf("await getScreenshot(deviceId)"));
+    assert.ok(screenshotRoute.indexOf("deviceAdminAuth") < screenshotRoute.indexOf("await getScreenshot(binding)"));
     const historyStart = routeSource.indexOf(
       '// GET /api/classpilot/heartbeats/:deviceId'
     );

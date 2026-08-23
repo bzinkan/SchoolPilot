@@ -2,7 +2,7 @@ import { Router, type RequestHandler } from "express";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
-import { requireProductLicense } from "../../middleware/requireProductLicense.js";
+import { requireGopilotEntitlement } from "../../middleware/requireGopilotEntitlement.js";
 import {
   getPickupsForStudent,
   createPickup,
@@ -42,8 +42,8 @@ const auth = [
   authenticate,
   requireSchoolContext,
   rejectDisabledGoPilotParent,
+  requireGopilotEntitlement,
   requireActiveSchool,
-  requireProductLicense("GOPILOT"),
 ] as const;
 
 const manageAuth = [

@@ -134,6 +134,31 @@ describe("ClassPilot dashboard relational snapshot", () => {
     assert.equal(loads, 2);
   });
 
+  it("bounds timezone cache state and safely bypasses when all load slots are occupied", async () => {
+    const pending: Array<(value: string | null) => void> = [];
+    let loads = 0;
+    const events: string[] = [];
+    const cache = createClasspilotDashboardSchoolTimezoneCache({
+      maxEntries: 2,
+      canUse: () => true,
+      onEvent: (event) => events.push(event),
+      load: async () => {
+        loads += 1;
+        return new Promise<string | null>((resolve) => pending.push(resolve));
+      },
+    });
+
+    const first = cache.get("school-a");
+    const second = cache.get("school-b");
+    const bypassed = cache.get("school-c");
+    assert.equal(loads, 3);
+    assert.equal(events.at(-1), "bypass");
+    pending[0]!("A");
+    pending[1]!("B");
+    pending[2]!("C");
+    assert.deepEqual(await Promise.all([first, second, bypassed]), ["A", "B", "C"]);
+  });
+
   it("emits only aggregate PII-free dashboard hot-path metrics", () => {
     const service = readFileSync(
       new URL("../src/services/classpilotDashboardSnapshot.ts", import.meta.url),

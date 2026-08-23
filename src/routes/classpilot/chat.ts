@@ -38,6 +38,8 @@ import {
 } from "../../services/classpilotFab.js";
 import { assertClasspilotEntitled } from "../../services/classpilotEntitlement.js";
 import { classpilotCommandAuthorityEnvelope } from "../../services/classpilotCommandAuthority.js";
+import { parseClasspilotClientMessageId } from "../../services/classpilotStudentChat.js";
+import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
 
 const router = Router();
 
@@ -71,8 +73,7 @@ const pollResponseLimiter = rateLimit({
 });
 
 function isClasspilotAdmin(req: any, res: any): boolean {
-  const role = res.locals.membershipRole as string | undefined;
-  return !!req.authUser?.isSuperAdmin || role === "admin" || role === "school_admin";
+  return requestHasAnySchoolRole(req, res, ["admin", "school_admin"]);
 }
 
 async function authorizedStaffSession(
@@ -118,7 +119,12 @@ function handleFabContractError(error: unknown, res: any): boolean {
 }
 
 function publicChatMessage<T extends Record<string, any>>(message: T) {
-  const { deviceId: _deviceId, recipientId: _recipientId, ...safe } = message;
+  const {
+    deviceId: _deviceId,
+    studentSessionId: _studentSessionId,
+    recipientId: _recipientId,
+    ...safe
+  } = message;
   return safe;
 }
 
@@ -222,8 +228,9 @@ router.post("/student/send-message", ...studentAuth, async (req, res, next) => {
     const studentId = res.locals.studentId as string;
     const studentSessionId = res.locals.studentSessionId as string;
     const deviceId = res.locals.deviceId as string;
-    const { message } = req.body;
+    const { message, clientMessageId: rawClientMessageId } = req.body;
     const content = String(message || "").trim();
+    const parsedClientMessageId = parseClasspilotClientMessageId(rawClientMessageId);
 
     if (!content) {
       return res.status(400).json({ error: "message required" });
@@ -231,13 +238,18 @@ router.post("/student/send-message", ...studentAuth, async (req, res, next) => {
     if (content.length > 500) {
       return res.status(400).json({ error: "message cannot exceed 500 characters", code: "MESSAGE_TOO_LONG" });
     }
+    if (parsedClientMessageId.status === "invalid") {
+      return res.status(400).json({ error: "clientMessageId must be a UUID", code: "CLIENT_MESSAGE_ID_INVALID" });
+    }
+    const clientMessageId = parsedClientMessageId.clientMessageId;
 
-    const { student, teachingSession, message: msg } = await createAuthorizedClasspilotStudentMessage({
+    const { student, teachingSession, message: msg, created } = await createAuthorizedClasspilotStudentMessage({
       schoolId,
       studentId,
       studentSessionId,
       deviceId,
       content,
+      clientMessageId,
     });
     const broadcastPayload = {
       type: "student-message",
@@ -253,12 +265,17 @@ router.post("/student/send-message", ...studentAuth, async (req, res, next) => {
         timestamp: msg.createdAt.toISOString(),
       },
     };
-    broadcastToStaffSessionLocal(schoolId, teachingSession.id, broadcastPayload);
-    await publishWS({ kind: "staff-session", schoolId, sessionId: teachingSession.id }, broadcastPayload);
+    if (created) {
+      broadcastToStaffSessionLocal(schoolId, teachingSession.id, broadcastPayload);
+      await publishWS({ kind: "staff-session", schoolId, sessionId: teachingSession.id }, broadcastPayload);
+    }
 
     return res.json({
       message: publicChatMessage(msg),
       messageId: msg.id,
+      clientMessageId: msg.clientMessageId,
+      delivered: true,
+      duplicate: !created,
       messages: [publicChatMessage(msg)],
     });
   } catch (err) {

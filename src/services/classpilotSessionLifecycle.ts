@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { safeErrorMetadata } from "../util/safeLogging.js";
 import type db from "../db.js";
 import type { TeachingSession } from "../schema/classpilot.js";
 import {
@@ -153,7 +154,10 @@ export async function startManualClasspilotSession(options: {
     });
   }
   void pushClasspilotSessionControlStates(options.schoolId, outcome.session.id).catch((err) => {
-    console.warn(`[ClassPilot] Initial classroom-state push failed for ${outcome.session.id}:`, err);
+    console.warn(
+      "[ClassPilot] Initial classroom-state push failed:",
+      safeErrorMetadata(err)
+    );
   });
   return outcome;
 }
@@ -275,7 +279,7 @@ export function runClasspilotFinalizationSideEffects(
       teachingSessionId: result.session.id,
       reason: "session-ended",
     }).catch((err) => {
-      console.warn(`[ClassPilot] Live-view cleanup failed for ${result.session.id}:`, err);
+      console.warn("[ClassPilot] Live-view cleanup failed:", safeErrorMetadata(err));
     });
     // Usage is frozen with the coverage rows and derived gap events by the
     // immutable report worker. Keeping that write inside one transaction is
@@ -300,7 +304,10 @@ export function runClasspilotFinalizationSideEffects(
         reason: options.reason,
       })
     ).catch((err) => {
-      console.warn(`[ClassPilot] Student FAB finalization push failed for ${result.session.id}:`, err);
+      console.warn(
+        "[ClassPilot] Student FAB finalization push failed:",
+        safeErrorMetadata(err)
+      );
     });
     for (const conflictId of result.resolvedConflictIds) {
       const update = { type: "scheduled-class-conflict-updated", conflictId };
@@ -320,20 +327,27 @@ export function runClasspilotFinalizationSideEffects(
           result.session.id
         )
       ).catch((err) => {
-        console.warn(`[ClassPilot] Final classroom-state clear push failed for ${result.session.id}:`, err);
+        console.warn(
+          "[ClassPilot] Final classroom-state clear push failed:",
+          safeErrorMetadata(err)
+        );
       });
     }
     if (result.restoredControlStates.length > 0) {
       void runWithTenantContext({ schoolId: options.schoolId }, () =>
         publishControlStateRows(options.schoolId, result.restoredControlStates)
       ).catch((err) => {
-        console.warn(`[ClassPilot] Restored classroom-state push failed after ${result.session.id}:`, err);
+        console.warn(
+          "[ClassPilot] Restored classroom-state push failed:",
+          safeErrorMetadata(err)
+        );
       });
     }
   }
 }
 
 type SessionSummaryData = {
+  reportVersion: number;
   teacherName: string;
   className: string;
   date: string;
@@ -346,8 +360,11 @@ type SessionSummaryData = {
     totalMinutes: number;
     topDomains: Array<{ domain: string; minutes: number }>;
     offTaskCount: number;
+    offTaskMinutes?: number;
+    unclassifiedMinutes?: number;
     safetyAlerts: string[];
     safetyUrls: string[];
+    safetyReviewStatuses?: string[];
     coverageStatus: "complete" | "partial" | "none" | "not_expected" | "unavailable";
     coveragePercent: number | null;
     gapMinutes: number;
@@ -375,6 +392,9 @@ async function buildSessionSummaryData(
   const timeZone = report.timezone;
   const students = studentReports.map((student) => {
     const topDomains = Array.isArray(student.topDomains) ? student.topDomains as Array<any> : [];
+    const safetyAlerts = report.reportVersion >= 2 && Array.isArray(student.safetyAlerts)
+      ? student.safetyAlerts as Array<any>
+      : [];
     return {
       name: student.studentNameSnapshot,
       totalMinutes: Math.round(student.observedSeconds / 60),
@@ -382,9 +402,16 @@ async function buildSessionSummaryData(
         domain: String(domain.domain || ""),
         minutes: Math.round(Number(domain.seconds || 0) / 60),
       })).filter((domain) => domain.domain),
-      offTaskCount: 0,
-      safetyAlerts: [] as string[],
-      safetyUrls: [] as string[],
+      offTaskCount: report.reportVersion >= 2 ? student.offTaskEventCount : 0,
+      safetyAlerts: safetyAlerts.map((alert) => String(alert.category || "")).filter(Boolean),
+      // The immutable report stores normalized domains only. Query strings,
+      // paths, and raw URLs never enter summary email content.
+      safetyUrls: safetyAlerts.map((alert) => String(alert.domain || "")).filter(Boolean),
+      ...(report.reportVersion >= 2 ? {
+        offTaskMinutes: Math.round(student.offTaskSeconds / 60),
+        unclassifiedMinutes: Math.round(student.unclassifiedSeconds / 60),
+        safetyReviewStatuses: safetyAlerts.map((alert) => String(alert.reviewStatus || "Automated")),
+      } : {}),
       coverageStatus: student.status as SessionSummaryData["students"][number]["coverageStatus"],
       coveragePercent: student.coveragePercent,
       gapMinutes: Math.round(student.gapSeconds / 60),
@@ -404,6 +431,7 @@ async function buildSessionSummaryData(
     year: "numeric",
   });
   return {
+    reportVersion: report.reportVersion,
     teacherName: recipientName,
     className: session.classNameSnapshot || "Class",
     date: formatDate(session.startTime),
@@ -530,6 +558,7 @@ export async function dispatchDueClasspilotSessionSummaries(options: {
       if (!submittedDelivery) return;
       submissionStarted = true;
       const sendResult = await transport({
+        reportVersion: summary.reportVersion,
         to: delivery.recipientEmail,
         teacherName: summary.teacherName,
         className: summary.className,
@@ -647,7 +676,10 @@ export async function dispatchDueClasspilotSessionSummaries(options: {
         incrementAttempt: true,
       }, dbInstance).catch(() => undefined);
       counts[canRetry ? "retry" : "failed"] += 1;
-      console.error(`[SessionSummary] Delivery ${delivery.id} preparation failed:`, error);
+      console.error(
+        "[SessionSummary] Delivery preparation failed:",
+        safeErrorMetadata(error)
+      );
     }
     }));
   }

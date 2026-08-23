@@ -64,6 +64,17 @@ import {
 } from "../util/dailyUsageRollup.js";
 import { parseClasspilotRetentionDays } from "../util/classpilotRetention.js";
 import { isWithinTrackingWindow } from "./schoolHours.js";
+import {
+  gopilotLicenseEntitlementPredicate,
+  gopilotSchoolEntitlementPredicate,
+  resolveGopilotEntitlement,
+} from "./gopilotEntitlement.js";
+import {
+  dailyUsageAggregatesEqual,
+  readSetBasedDailyUsageCandidate,
+  upsertSetBasedDailyUsage,
+  type DailyUsageAggregate,
+} from "./classpilotDailyUsageRollup.js";
 
 let io: SocketServer | null = null;
 let intervalId: NodeJS.Timeout | null = null;
@@ -73,6 +84,9 @@ let heavyJobRunning = false; // Mutex: prevent rollup and purge from running con
 const dailyUsageRollupMarkers = new DailyUsageRollupMarkers();
 const reportedAutomaticScheduleSkips = new Map<string, number>();
 const AUTOMATIC_SCHEDULE_SKIP_DEDUPE_MS = 36 * 60 * 60 * 1000;
+const MAX_REPORTED_AUTOMATIC_SCHEDULE_SKIPS = 4_096;
+const DAILY_USAGE_SCHOOL_BATCH_SIZE = 25;
+const DAILY_USAGE_SCHOOL_CONCURRENCY = 2;
 
 function recordAutomaticScheduleSkips(options: {
   schoolId: string;
@@ -92,6 +106,11 @@ function recordAutomaticScheduleSkips(options: {
     const key = `${options.schoolId}:${options.scheduledDate}:${groupId}`;
     if (reportedAutomaticScheduleSkips.has(key)) continue;
     reportedAutomaticScheduleSkips.set(key, nowMs);
+    while (reportedAutomaticScheduleSkips.size > MAX_REPORTED_AUTOMATIC_SCHEDULE_SKIPS) {
+      const oldest = reportedAutomaticScheduleSkips.keys().next().value;
+      if (!oldest) break;
+      reportedAutomaticScheduleSkips.delete(oldest);
+    }
     newlySkipped += 1;
   }
   if (newlySkipped === 0) return;
@@ -137,7 +156,7 @@ export async function runWithSchedulerLock<T>(
     if (locked) {
       await client
         .query("SELECT pg_advisory_unlock(hashtext($1))", [`schoolpilot:scheduler:${jobName}`])
-        .catch((err) => console.warn(`[Scheduler] Failed to unlock ${jobName}:`, err));
+        .catch(() => console.warn(`[Scheduler] Failed to unlock ${jobName}`));
     }
     client.release();
   }
@@ -145,7 +164,7 @@ export async function runWithSchedulerLock<T>(
 
 function scheduleLockedJob(jobName: string, fn: () => Promise<void>) {
   void runWithSchedulerLock(jobName, fn).catch((err) => {
-    console.error(`[Scheduler] ${jobName} failed outside handler:`, err);
+    console.error(`[Scheduler] ${jobName} failed outside handler`);
     errorMonitor.trackError("scheduler_failure", err as Error, { job: jobName });
   });
 }
@@ -195,6 +214,7 @@ export function startScheduler(socketIo: SocketServer | null = null) {
     scheduleLockedJob("autoEndStaleClassPilotSessions", autoEndStaleClassPilotSessions);
     scheduleLockedJob("expireClasspilotSupervisionContexts", expireClasspilotSupervisionContexts);
     scheduleLockedJob("expireClasspilotTransientCommands", expireClasspilotTransientCommands);
+    scheduleLockedJob("expireClasspilotEvidenceCaptureRequests", expireClasspilotEvidenceCaptureRequests);
     scheduleLockedJob("reconcileClasspilotScheduledSessions", reconcileClasspilotScheduledSessions);
     // Security monitor: run every 5 minutes (every 5th tick) — rule-based breach detection
     if (tickCount % 5 === 0) {
@@ -209,6 +229,7 @@ export function startScheduler(socketIo: SocketServer | null = null) {
   scheduleLockedJob("autoCompleteStaleGoPilotSessions", autoCompleteStaleGoPilotSessions);
   scheduleLockedJob("expireClasspilotSupervisionContexts", expireClasspilotSupervisionContexts);
   scheduleLockedJob("expireClasspilotTransientCommands", expireClasspilotTransientCommands);
+  scheduleLockedJob("expireClasspilotEvidenceCaptureRequests", expireClasspilotEvidenceCaptureRequests);
   scheduleLockedJob("reconcileClasspilotScheduledSessions", reconcileClasspilotScheduledSessions);
   // Run heavy jobs immediately so a worker restart after 02:00 local time
   // catches up yesterday's usage without waiting for the next hourly boundary.
@@ -226,6 +247,7 @@ async function checkDismissalTimes() {
   try {
     // Auto-start is explicit and license-gated. Clock validation is isolated
     // per school so one malformed legacy timezone/time cannot abort all schools.
+    const entitlementNow = new Date();
     const result = await schedulerDb
       .select({
         id: schools.id,
@@ -238,15 +260,12 @@ async function checkDismissalTimes() {
         productLicenses,
         and(
           eq(productLicenses.schoolId, schools.id),
-          eq(productLicenses.product, "GOPILOT"),
-          eq(productLicenses.status, "active"),
-          or(isNull(productLicenses.expiresAt), gt(productLicenses.expiresAt, sql`NOW()`))
+          gopilotLicenseEntitlementPredicate(entitlementNow)
         )
       )
       .where(
         and(
-          eq(schools.status, "active"),
-          isNull(schools.deletedAt),
+          gopilotSchoolEntitlementPredicate(entitlementNow),
           eq(schools.gopilotAutoStartEnabled, true),
           isNotNull(schools.dismissalTime)
         )
@@ -278,7 +297,6 @@ async function checkDismissalTimes() {
         emitGoPilotSchedulerMetric("AutoStartSkipped", "calendar_unavailable");
         errorMonitor.trackError("scheduler_failure", error as Error, {
           job: "checkDismissalTimes",
-          schoolId: school.id,
           errorCode: (error as { code?: string }).code ?? "GOPILOT_CALENDAR_UNAVAILABLE",
         });
         continue;
@@ -287,13 +305,13 @@ async function checkDismissalTimes() {
     }
 
     if (eligible.length > 0) {
-      console.log(`[Scheduler] Found ${eligible.length} school(s) ready for dismissal:`, eligible.map(s => `${s.name} (${s.dismissalTime} ${s.schoolTimezone})`));
+      console.log(`[Scheduler] Found ${eligible.length} tenant(s) ready for dismissal`);
     }
     for (const school of eligible) {
       await autoStartDismissal(school.id, school.name, school.localDate);
     }
   } catch (err) {
-    console.error("Scheduler error:", err);
+    console.error("[Scheduler] Dismissal scan failed");
     errorMonitor.trackError("scheduler_failure", err as Error, { job: "checkDismissalTimes" });
   }
 }
@@ -358,6 +376,15 @@ async function autoStartDismissal(schoolId: string, schoolName: string, expected
       schoolId,
       expectedLocalDate,
       async (transactionDb) => {
+        const entitlement = await resolveGopilotEntitlement(
+          schoolId,
+          transactionDb,
+          { lock: "update" }
+        );
+        if (!entitlement.entitled) {
+          emitGoPilotSchedulerMetric("AutoStartSkipped", entitlement.reason);
+          return null;
+        }
         const [school] = await transactionDb
           .select({
             id: schools.id,
@@ -365,20 +392,9 @@ async function autoStartDismissal(schoolId: string, schoolName: string, expected
             dismissalTime: schools.dismissalTime,
           })
           .from(schools)
-          .innerJoin(
-            productLicenses,
-            and(
-              eq(productLicenses.schoolId, schools.id),
-              eq(productLicenses.product, "GOPILOT"),
-              eq(productLicenses.status, "active"),
-              or(isNull(productLicenses.expiresAt), gt(productLicenses.expiresAt, sql`NOW()`))
-            )
-          )
           .where(
             and(
               eq(schools.id, schoolId),
-              eq(schools.status, "active"),
-              isNull(schools.deletedAt),
               eq(schools.gopilotAutoStartEnabled, true)
             )
           )
@@ -414,7 +430,7 @@ async function autoStartDismissal(schoolId: string, schoolName: string, expected
     );
 
     if (startedSession) {
-      console.log(`Auto-started dismissal for ${schoolName} (session ${startedSession.id})`);
+      console.log("[Scheduler] Auto-started one dismissal session");
       emitGoPilotSchedulerMetric("AutoStartStarted", "scheduled_time_reached");
       const payload = { sessionId: startedSession.id };
       await Promise.all([
@@ -423,8 +439,8 @@ async function autoStartDismissal(schoolId: string, schoolName: string, expected
       ]);
     }
   } catch (err) {
-    console.error(`Failed to auto-start dismissal for school ${schoolId}:`, err);
-    errorMonitor.trackError("scheduler_failure", err as Error, { job: "autoStartDismissal", schoolId });
+    console.error("[Scheduler] Failed to auto-start dismissal");
+    errorMonitor.trackError("scheduler_failure", err as Error, { job: "autoStartDismissal" });
   }
 }
 
@@ -529,10 +545,10 @@ async function autoCompleteStaleGoPilotSessions() {
         status: nextStatus,
         outstanding,
       });
-      console.log(`[GoPilot] Stale session ${session.id} moved to ${nextStatus}; outstanding=${outstanding}`);
+      console.log(`[GoPilot] Stale session moved to ${nextStatus}; outstanding=${outstanding}`);
     }
   } catch (err) {
-    console.error("[GoPilot] Failed to auto-complete stale sessions:", err);
+    console.error("[GoPilot] Failed to auto-complete stale sessions");
     errorMonitor.trackError("scheduler_failure", err as Error, { job: "autoCompleteStaleGoPilotSessions" });
   }
 }
@@ -559,7 +575,7 @@ async function expireClasspilotSupervisionContexts() {
       syncClasspilotControlStatesToActiveDevices(schoolId, [...studentIds])
     ));
   } catch (err) {
-    console.error("[ClassPilot] Failed to expire supervision contexts:", err);
+    console.error("[ClassPilot] Failed to expire supervision contexts");
     errorMonitor.trackError("scheduler_failure", err as Error, {
       job: "expireClasspilotSupervisionContexts",
     });
@@ -570,7 +586,7 @@ async function expireClasspilotTransientCommands() {
   try {
     await expireClasspilotTransientCommandTargets({}, schedulerDb);
   } catch (err) {
-    console.error("[ClassPilot] Failed to expire transient commands:", err);
+    console.error("[ClassPilot] Failed to expire transient commands");
     errorMonitor.trackError("scheduler_failure", err as Error, {
       job: "expireClasspilotTransientCommands",
     });
@@ -648,12 +664,12 @@ async function autoEndStaleClassPilotSessions() {
           dbInstance: schedulerDb,
         });
         if (!result?.finalized) continue;
-        console.log(`[ClassPilot] Auto-ended stale session ${s.sessionId} for teacher ${s.teacherId} (${reason}, age: ${ageHours.toFixed(1)}h)`);
+        console.log(`[ClassPilot] Auto-ended one stale session (${reason}, age: ${ageHours.toFixed(1)}h)`);
 
       }
     }
   } catch (err) {
-    console.error("[ClassPilot] Auto-end stale sessions error:", err);
+    console.error("[ClassPilot] Auto-end stale sessions failed");
     errorMonitor.trackError("scheduler_failure", err as Error, { job: "autoEndStaleClassPilotSessions" });
   }
 }
@@ -663,6 +679,10 @@ async function autoEndStaleClassPilotSessions() {
 // ============================================================================
 
 async function rollupDailyUsage() {
+  const startedAt = performance.now();
+  let processedSchools = 0;
+  let failedSchools = 0;
+  let shadowMismatches = 0;
   try {
     // Find active schools with ClassPilot license (uses dedicated scheduler pool)
     const activeSchools = await schedulerDb
@@ -679,35 +699,107 @@ async function rollupDailyUsage() {
           eq(productLicenses.status, "active")
         )
       )
-      .where(eq(schools.status, "active"));
+      .where(and(
+        eq(schools.status, "active"),
+        eq(schools.isActive, true),
+        isNull(schools.disabledAt),
+        isNull(schools.deletedAt),
+        sql`${schools.planStatus} <> 'canceled'`,
+        or(isNull(schools.activeUntil), gt(schools.activeUntil, sql`now()`)),
+        or(isNull(productLicenses.expiresAt), gt(productLicenses.expiresAt, sql`now()`))
+      ));
 
     const now = new Date();
-    for (const school of activeSchools) {
-      const timezone = school.schoolTimezone || "America/New_York";
-      try {
-        const window = dailyUsageRollupWindow(now, timezone);
-        if (!window) continue;
-        if (await dailyUsageRollupMarkers.isComplete(school.id, window.date)) continue;
-
-        await rollupSchoolUsage(school.id, window);
-        await dailyUsageRollupMarkers.markComplete(school.id, window.date);
-      } catch (err) {
-        console.error(`[ClassPilot] Rollup failed for school ${school.id}:`, err);
-        errorMonitor.trackError("scheduler_failure", err as Error, {
-          job: "rollupSchoolUsage",
-          schoolId: school.id,
-        });
-      }
-      // Small yield between schools so other scheduler ticks can run
-      await new Promise((resolve) => setTimeout(resolve, 50));
+    for (let offset = 0; offset < activeSchools.length; offset += DAILY_USAGE_SCHOOL_BATCH_SIZE) {
+      const batch = activeSchools.slice(offset, offset + DAILY_USAGE_SCHOOL_BATCH_SIZE);
+      let next = 0;
+      const workers = Array.from(
+        { length: Math.min(DAILY_USAGE_SCHOOL_CONCURRENCY, batch.length) },
+        async () => {
+          while (next < batch.length) {
+            const school = batch[next++];
+            if (!school) return;
+            try {
+              const window = dailyUsageRollupWindow(
+                now,
+                school.schoolTimezone || "America/New_York"
+              );
+              if (!window) continue;
+              if (await dailyUsageRollupMarkers.isComplete(school.id, window.date)) continue;
+              const outcome = await rollupSchoolUsage(school.id, window);
+              processedSchools += 1;
+              if (outcome.shadowMismatch) shadowMismatches += 1;
+              await dailyUsageRollupMarkers.markComplete(school.id, window.date);
+            } catch (err) {
+              failedSchools += 1;
+              errorMonitor.trackError("scheduler_failure", err as Error, {
+                job: "rollupSchoolUsage",
+              });
+            }
+          }
+        }
+      );
+      await Promise.all(workers);
+      // Yield between fixed-size batches so other worker jobs can acquire the pool.
+      await new Promise((resolve) => setTimeout(resolve, 0));
     }
   } catch (err) {
-    console.error("[ClassPilot] Daily usage rollup error:", err);
+    console.error("[ClassPilot] Daily usage rollup failed");
     errorMonitor.trackError("scheduler_failure", err as Error, { job: "rollupDailyUsage" });
+    failedSchools += 1;
+  } finally {
+    console.log(JSON.stringify({
+      event: "classpilot_daily_usage_rollup",
+      processedSchools,
+      failedSchools,
+      shadowMismatches,
+      durationMs: Math.round(performance.now() - startedAt),
+      batchSize: DAILY_USAGE_SCHOOL_BATCH_SIZE,
+      concurrency: DAILY_USAGE_SCHOOL_CONCURRENCY,
+    }));
   }
 }
 
-async function rollupSchoolUsage(schoolId: string, window: DailyUsageRollupWindow) {
+type DailyUsageRollupMode = "legacy" | "shadow" | "set_based";
+
+function dailyUsageRollupMode(): DailyUsageRollupMode {
+  const configured = String(process.env.CLASSPILOT_DAILY_USAGE_ROLLUP_MODE || "shadow")
+    .trim()
+    .toLowerCase();
+  if (configured === "set_based") return "set_based";
+  if (configured === "legacy") return "legacy";
+  return "shadow";
+}
+
+async function rollupSchoolUsage(
+  schoolId: string,
+  window: DailyUsageRollupWindow
+): Promise<{ rowCount: number; shadowMismatch: boolean }> {
+  const mode = dailyUsageRollupMode();
+  const parameters = {
+    schoolId,
+    date: window.date,
+    dayStartUtc: window.dayStartUtc,
+    dayEndUtc: window.dayEndUtc,
+  };
+  if (mode === "set_based") {
+    const rows = await upsertSetBasedDailyUsage(schedulerPool, parameters);
+    return { rowCount: rows.length, shadowMismatch: false };
+  }
+
+  const legacy = await rollupSchoolUsageLegacy(schoolId, window);
+  if (mode === "legacy") return { rowCount: legacy.length, shadowMismatch: false };
+  const candidate = await readSetBasedDailyUsageCandidate(schedulerPool, parameters);
+  return {
+    rowCount: legacy.length,
+    shadowMismatch: !dailyUsageAggregatesEqual(legacy, candidate),
+  };
+}
+
+async function rollupSchoolUsageLegacy(
+  schoolId: string,
+  window: DailyUsageRollupWindow
+): Promise<DailyUsageAggregate[]> {
   // Aggregate heartbeats per student using raw, indexed timestamp comparisons.
   // All scheduler queries go through schedulerDb (dedicated pool, isolated from API requests).
   const studentTotals = await schedulerDb
@@ -729,8 +821,7 @@ async function rollupSchoolUsage(schoolId: string, window: DailyUsageRollupWindo
     .groupBy(heartbeats.studentId);
 
   if (studentTotals.length === 0) {
-    console.log(`[ClassPilot] Daily usage empty for school ${schoolId} (${window.date})`);
-    return;
+    return [];
   }
 
   // Get top domains per student from the same half-open UTC window.
@@ -751,7 +842,7 @@ async function rollupSchoolUsage(schoolId: string, window: DailyUsageRollupWindo
       )
     )
     .groupBy(heartbeats.studentId, sql`SUBSTRING(${heartbeats.activeTabUrl} FROM '://([^/]+)')`)
-    .orderBy(sql`COUNT(*) DESC`);
+    .orderBy(sql`COUNT(*) DESC`, sql`SUBSTRING(${heartbeats.activeTabUrl} FROM '://([^/]+)') ASC`);
 
   // Group domains by student and take top 5.
   const studentDomains = new Map<string, { domain: string; seconds: number; visits: number }[]>();
@@ -766,6 +857,7 @@ async function rollupSchoolUsage(schoolId: string, window: DailyUsageRollupWindo
 
   // Upsert daily usage for each student (through scheduler pool). If a worker
   // stops partway through, the next run safely recomputes and overwrites rows.
+  const aggregates: DailyUsageAggregate[] = [];
   for (const row of studentTotals) {
     if (!row.studentId) continue;
     const firstSeen = coerceSchedulerTimestamp(row.firstSeen);
@@ -793,9 +885,16 @@ async function rollupSchoolUsage(schoolId: string, window: DailyUsageRollupWindo
           computedAt: sql`now()`,
         },
       });
+    aggregates.push({
+      studentId: row.studentId,
+      totalSeconds: row.totalSeconds,
+      heartbeatCount: row.heartbeatCount,
+      topDomains: studentDomains.get(row.studentId) || [],
+      firstSeen,
+      lastSeen,
+    });
   }
-
-  console.log(`[ClassPilot] Rolled up daily usage for school ${schoolId}: ${studentTotals.length} students (${window.date})`);
+  return aggregates;
 }
 
 // ============================================================================
@@ -848,7 +947,7 @@ async function purgeExpiredHeartbeats() {
       } while (batchDeleted >= 5000);
 
       if (totalDeleted > 0) {
-        console.log(`[ClassPilot] Purged ${totalDeleted} expired heartbeats for school ${school.id} (retention: ${retentionDays}d)`);
+        console.log(`[ClassPilot] Purged ${totalDeleted} expired heartbeats for one tenant (retention: ${retentionDays}d)`);
       }
 
       // Session-linked derived data follows the same school setting. Report
@@ -979,10 +1078,9 @@ async function purgeExpiredHeartbeats() {
       } catch (schoolError) {
         // Isolate tenant failures so one damaged or transiently locked school
         // cannot prevent retention from running for every later tenant.
-        console.error(`[ClassPilot] Retention purge failed for school ${school.id}:`, schoolError);
+        console.error("[ClassPilot] Retention purge failed for one tenant");
         errorMonitor.trackError("scheduler_failure", schoolError as Error, {
           job: "purgeExpiredHeartbeats",
-          schoolId: school.id,
         });
       }
     }
@@ -998,7 +1096,7 @@ async function purgeExpiredHeartbeats() {
         )
     `);
   } catch (err) {
-    console.error("[ClassPilot] Heartbeat purge error:", err);
+    console.error("[ClassPilot] Heartbeat purge failed");
     errorMonitor.trackError("scheduler_failure", err as Error, { job: "purgeExpiredHeartbeats" });
   }
 }
@@ -1059,7 +1157,7 @@ async function expireDueClasspilotScheduleChanges(options: {
       // A damaged historical row must not keep newer dates reserved forever.
       // Report only a fixed error code; the monitor receives no tenant or row
       // identifiers from this recovery loop.
-      console.error("[ClassPilot] Pending schedule-change expiry failed:", error);
+      console.error("[ClassPilot] Pending schedule-change expiry failed");
       errorMonitor.trackError("scheduler_failure", error as Error, {
         job: "reconcileClasspilotScheduledSessions",
         errorCode: "SCHEDULE_CHANGE_EXPIRY_FAILED",
@@ -1091,7 +1189,7 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
         });
         // Finalization owns the single session-ended publication.
         } catch (error) {
-          console.error(`[ClassPilot] Failed to finalize scheduled occurrence ${session.id}:`, error);
+          console.error("[ClassPilot] Failed to finalize a scheduled occurrence");
           errorMonitor.trackError("scheduler_failure", error as Error, {
             job: "reconcileClasspilotScheduledSessions",
             errorCode: "OCCURRENCE_FINALIZE_FAILED",
@@ -1124,7 +1222,7 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
           now,
         });
       } catch (error) {
-        console.error(`[ClassPilot] Failed to expire pending schedule changes for school ${school.id}:`, error);
+        console.error("[ClassPilot] Failed to expire pending schedule changes for one tenant");
         errorMonitor.trackError("scheduler_failure", error as Error, {
           job: "reconcileClasspilotScheduledSessions",
           errorCode: "SCHEDULE_CHANGE_EXPIRY_FAILED",
@@ -1181,7 +1279,7 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
         dbInstance: schedulerDb,
       });
       if (expiredConflicts.length > 0) {
-        console.log(`[ClassPilot] Expired ${expiredConflicts.length} scheduled coverage request(s) for school ${school.id}`);
+        console.log(`[ClassPilot] Expired ${expiredConflicts.length} scheduled coverage request(s)`);
       }
 
       // A canonical occurrence frozen at the bell remains authoritative even
@@ -1210,7 +1308,7 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
             now,
           });
         } catch (error) {
-          console.error(`[ClassPilot] Failed to reconcile frozen occurrence ${frozenSession.id}:`, error);
+          console.error("[ClassPilot] Failed to reconcile a frozen occurrence");
           errorMonitor.trackError("scheduler_failure", error as Error, {
             job: "reconcileClasspilotScheduledSessions",
             errorCode: "FROZEN_OCCURRENCE_RECONCILE_FAILED",
@@ -1218,13 +1316,14 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
         }
       }
 
-      // Debug: log every scheduled group check to diagnose auto-start failures
+      // Count-only diagnostics preserve scheduling observability without
+      // emitting tenant, group, teacher, or schedule identifiers.
       const allScheduledGroups = await schedulerDb
         .select({ id: groups.id, name: groups.name, blockStartTime: groups.blockStartTime, blockEndTime: groups.blockEndTime, scheduleSkippedDate: groups.scheduleSkippedDate })
         .from(groups)
         .where(and(eq(groups.schoolId, school.id), eq(groups.scheduleEnabled, true)));
       if (allScheduledGroups.length > 0) {
-        console.log(`[ClassPilot] Schedule tick: school=${school.id.slice(0,8)}, time=${currentTimeHHMM} ${tz}, date=${todayDate}, groups=${JSON.stringify(allScheduledGroups.map(g => ({ name: g.name, start: g.blockStartTime, end: g.blockEndTime, skipped: g.scheduleSkippedDate })))}`);
+        console.log(`[ClassPilot] Schedule tick evaluated ${allScheduledGroups.length} scheduled group(s)`);
       }
 
       // 3. Create/promote each currently due canonical occurrence.
@@ -1255,8 +1354,7 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
             now,
           });
           console.log(
-            `[ClassPilot] Skipped ${readyGroups.length} automatic class start(s) for school ${school.id} `
-            + `(non_instructional_day)`
+            `[ClassPilot] Skipped ${readyGroups.length} automatic class start(s) (non_instructional_day)`
           );
           continue;
         }
@@ -1271,16 +1369,16 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
             now,
           });
           if (result.status === "started") {
-            console.log(`[ClassPilot] Auto-started session for "${group.name}" (teacher ${group.teacherId}, school ${school.id})`);
+            console.log("[ClassPilot] Auto-started one scheduled session");
           } else if (result.status === "coverage_needed") {
-            console.log(`[ClassPilot] Scheduled coverage needed for "${group.name}" (request ${result.conflictId})`);
+            console.log("[ClassPilot] Scheduled coverage is needed for one occurrence");
           } else if (result.status === "claimed") {
-            console.log(`[ClassPilot] Scheduled coverage already claimed for "${group.name}" (request ${result.conflictId})`);
+            console.log("[ClassPilot] Scheduled coverage was already claimed for one occurrence");
           } else {
-            console.log(`[ClassPilot] Skipped scheduled start for "${group.name}" (${result.reason})`);
+            console.log(`[ClassPilot] Skipped one scheduled start (${result.reason})`);
           }
         } catch (error) {
-          console.error(`[ClassPilot] Failed to reconcile scheduled group ${group.id}:`, error);
+          console.error("[ClassPilot] Failed to reconcile one scheduled group");
           errorMonitor.trackError("scheduler_failure", error as Error, {
             job: "reconcileClasspilotScheduledSessions",
             errorCode: "GROUP_RECONCILE_FAILED",
@@ -1288,7 +1386,7 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
         }
         }
       } catch (error) {
-        console.error(`[ClassPilot] Failed to reconcile scheduled school ${school.id}:`, error);
+        console.error("[ClassPilot] Failed to reconcile scheduled work for one tenant");
         errorMonitor.trackError("scheduler_failure", error as Error, {
           job: "reconcileClasspilotScheduledSessions",
           errorCode: "SCHOOL_RECONCILE_FAILED",
@@ -1297,7 +1395,7 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
     }
 
   } catch (err) {
-    console.error("[ClassPilot] Scheduled session reconciliation error:", err);
+    console.error("[ClassPilot] Scheduled session reconciliation failed");
     errorMonitor.trackError("scheduler_failure", err as Error, { job: "reconcileClasspilotScheduledSessions" });
   } finally {
     // 4. Freeze coverage after the 30-second settlement window, then dispatch
@@ -1309,7 +1407,7 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
       limit: 100,
       schoolId,
     }).catch((error) => {
-      console.error("[ClassPilot] Session report materialization error:", error);
+      console.error("[ClassPilot] Session report materialization failed");
       errorMonitor.trackError("scheduler_failure", error as Error, {
         job: "reconcileClasspilotScheduledSessions",
         errorCode: "REPORT_MATERIALIZATION_FAILED",
@@ -1323,7 +1421,7 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
       maxBatches: 5,
       maxDurationMs: 45_000,
     }).catch((error) => {
-      console.error("[ClassPilot] Scheduled summary dispatch error:", error);
+      console.error("[ClassPilot] Scheduled summary dispatch failed");
       errorMonitor.trackError("scheduler_failure", error as Error, {
         job: "reconcileClasspilotScheduledSessions",
         errorCode: "SUMMARY_DISPATCH_FAILED",
@@ -1376,7 +1474,7 @@ async function purgeMailpilotRetention() {
       );
     }
   } catch (err) {
-    console.error("[MailPilot] Retention purge error:", err);
+    console.error("[MailPilot] Retention purge failed");
     errorMonitor.trackError("scheduler_failure", err as Error, { job: "purgeMailpilotRetention" });
   }
 }
@@ -1401,7 +1499,7 @@ async function purgeOldErrorLogs() {
     } while (batchDeleted >= 5000);
     if (total > 0) console.log(`[ErrorLogs] Purged ${total} error logs older than 30 days`);
   } catch (err) {
-    console.error("[ErrorLogs] Retention purge error:", err);
+    console.error("[ErrorLogs] Retention purge failed");
     errorMonitor.trackError("scheduler_failure", err as Error, { job: "purgeOldErrorLogs" });
   }
 }
@@ -1448,8 +1546,77 @@ async function purgeExpiredEvidenceArtifactContent() {
       console.log(`[Evidence] Purged ${total} screenshot artifact payloads older than ${retentionDays} days`);
     }
   } catch (err) {
-    console.error("[Evidence] Retention purge error:", err);
+    console.error("[Evidence] Retention purge failed");
     errorMonitor.trackError("scheduler_failure", err as Error, { job: "purgeExpiredEvidenceArtifactContent" });
+  }
+}
+
+async function expireClasspilotEvidenceCaptureRequests() {
+  try {
+    const result = await schedulerPool.query(`
+      WITH due AS (
+        SELECT request.*
+        FROM classpilot_evidence_capture_requests AS request
+        WHERE request.status = 'pending'
+          AND request.expires_at <= now()
+        ORDER BY request.expires_at, request.id
+        LIMIT 500
+        FOR UPDATE SKIP LOCKED
+      ), artifacts AS (
+        INSERT INTO evidence_artifacts (
+          id, school_id, device_id, student_id, student_session_id, binding_version,
+          case_id, source_type, source_id, artifact_type, status, label,
+          content_type, content, metadata, captured_at
+        )
+        SELECT
+          gen_random_uuid(),
+          due.school_id,
+          due.device_id,
+          due.student_id,
+          due.student_session_id,
+          'v1:' || encode(digest(
+            due.school_id || chr(0) || due.device_id || chr(0)
+              || due.student_id || chr(0) || due.student_session_id,
+            'sha256'
+          ), 'hex'),
+          due.case_id,
+          'classpilot_safety_capture',
+          due.id,
+          'screenshot',
+          'unavailable',
+          'Safety screenshot unavailable',
+          NULL,
+          NULL,
+          jsonb_build_object(
+            'captureRequestId', due.id,
+            'unavailableReason', 'expired'
+          ),
+          now()
+        FROM due
+        RETURNING id, source_id
+      )
+      UPDATE classpilot_evidence_capture_requests AS request
+      SET status = 'expired', artifact_id = artifacts.id, completed_at = now()
+      FROM artifacts
+      WHERE request.id = artifacts.source_id
+      RETURNING request.id
+    `);
+    if ((result.rowCount || 0) > 0) {
+      console.log(JSON.stringify({
+        event: "classpilot_evidence_capture_expiry",
+        expiredCount: result.rowCount,
+      }));
+    }
+  } catch (error) {
+    // Mixed deploys may run a worker before the additive table exists. The
+    // capability remains dark and the next minute retries after migration.
+    const databaseError = error as { code?: string };
+    if (databaseError.code === "42P01") return;
+    errorMonitor.trackError(
+      "scheduler_failure",
+      error as Error,
+      { job: "expireClasspilotEvidenceCaptureRequests" }
+    );
   }
 }
 
@@ -1466,7 +1633,7 @@ async function purgeOldImportRuns() {
       console.log(`[ImportRuns] Purged ${result.rowCount} import runs older than 90 days`);
     }
   } catch (err) {
-    console.error("[ImportRuns] Retention purge error:", err);
+    console.error("[ImportRuns] Retention purge failed");
     errorMonitor.trackError("scheduler_failure", err as Error, { job: "purgeOldImportRuns" });
   }
 }
@@ -1533,7 +1700,7 @@ async function renewMailpilotWatches() {
     await Promise.all(Array.from({ length: concurrency }, () => worker()));
     console.log(`[MailPilot] Watch renewal: ${renewed} renewed, ${failed} failed`);
   } catch (err) {
-    console.error("[MailPilot] renewMailpilotWatches error:", err);
+    console.error("[MailPilot] Watch renewal failed");
     errorMonitor.trackError("scheduler_failure", err as Error, { job: "renewMailpilotWatches" });
   }
 }

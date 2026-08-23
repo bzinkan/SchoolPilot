@@ -24,6 +24,7 @@ import {
   createClasspilotWsFrameBucket,
   claimClasspilotLiveViewNegotiation,
   classpilotLiveViewNegotiationAuthority,
+  isClasspilotLiveViewNegotiationActive,
   listActiveClasspilotLiveViewNegotiations,
   releaseClasspilotLiveViewNegotiation,
   verifyClasspilotLiveViewNegotiation,
@@ -120,9 +121,9 @@ describe("ClassPilot authenticated HTTP recovery and rate limits", () => {
     assert.match(heartbeat, /const telemetryAuthority = realtimeControlAuthority\(controlState\)/);
     assert.match(heartbeat, /publishRevisionedRealtimeUpdate\(realtimeSnapshot, update, telemetryAuthority\)/);
     assert.match(devices, /allowEndedBinding: true/);
-    const coverage = await source("src/routes/classpilot/coverage.ts");
+    const coverageHydration = await source("src/services/classpilotCoverageHydration.ts");
     assert.match(devices, /liveViewNegotiationV1: extensionCapabilities\.has\("liveViewNegotiationV1"\)/);
-    assert.match(coverage, /liveViewNegotiationV1: capabilities\.has\("liveViewNegotiationV1"\)/);
+    assert.match(coverageHydration, /liveViewNegotiationV1: capabilities\.has\("liveViewNegotiationV1"\)/);
   });
 });
 
@@ -256,6 +257,7 @@ describe("ClassPilot WebSocket signaling containment", () => {
     ), {
       teachingSessionId: binding.teachingSessionId,
       requesterUserId: binding.requesterUserId,
+      expiresAt: issued.expiresAt,
     });
     assert.equal(verifyClasspilotLiveViewNegotiation(
       issued.negotiationId,
@@ -289,6 +291,16 @@ describe("ClassPilot WebSocket signaling containment", () => {
     const claimed = await claimClasspilotLiveViewNegotiation(binding, 20_000);
     assert.equal(claimed.status, "claimed");
     if (claimed.status === "claimed") {
+      assert.equal(await isClasspilotLiveViewNegotiationActive(
+        {
+          schoolId: binding.schoolId,
+          studentId: binding.studentId,
+          studentSessionId: binding.studentSessionId,
+          deviceId: binding.deviceId,
+        },
+        claimed.negotiationId,
+        20_001
+      ), true);
       assert.equal(listActiveClasspilotLiveViewNegotiations({
         schoolId: binding.schoolId,
         teachingSessionId: binding.teachingSessionId,
@@ -299,6 +311,16 @@ describe("ClassPilot WebSocket signaling containment", () => {
         { schoolId: binding.schoolId, studentId: binding.studentId },
         claimed.negotiationId
       );
+      assert.equal(await isClasspilotLiveViewNegotiationActive(
+        {
+          schoolId: binding.schoolId,
+          studentId: binding.studentId,
+          studentSessionId: binding.studentSessionId,
+          deviceId: binding.deviceId,
+        },
+        claimed.negotiationId,
+        20_001
+      ), false);
       assert.equal(listActiveClasspilotLiveViewNegotiations({
         negotiationIds: [claimed.negotiationId],
         now: 20_001,
@@ -636,7 +658,10 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
     assert.match(login, /schoolId: options\.schoolId/);
     assert.match(login, /studentId: options\.student\.id/);
     assert.match(login, /studentSessionId: session\.id/);
-    assert.match(login, /exactBinding: \{ studentId: options\.student\.id, studentSessionId: session\.id \}/);
+    assert.match(
+      login,
+      /exactBinding: \{[\s\S]*?schoolId: options\.schoolId,[\s\S]*?deviceId: options\.deviceId,[\s\S]*?studentId: options\.student\.id,[\s\S]*?studentSessionId: session\.id,[\s\S]*?controlRevision:/
+    );
     const legacy = devices.slice(
       devices.indexOf('router.post("/register-student"'),
       devices.indexOf("// Popup Endpoints")
@@ -649,13 +674,17 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
       devices.indexOf('router.post("/device/screenshot"')
     );
     assert.match(heartbeat, /return res\.json\(\{[\s\S]*?ok: true,[\s\S]*?schoolId,/);
-    assert.match(heartbeat, /exactBinding: \{ studentId, studentSessionId \}/);
+    assert.match(
+      heartbeat,
+      /exactBinding: \{[\s\S]*?schoolId,[\s\S]*?deviceId,[\s\S]*?studentId,[\s\S]*?studentSessionId,[\s\S]*?controlRevision:/
+    );
     const settings = devices.slice(
       devices.indexOf('router.get("/extension/settings"'),
       devices.indexOf("// Device & Student Registration")
     );
     assert.match(settings, /return res\.json\(\{[\s\S]*?schoolId,[\s\S]*?exactBinding:/);
     assert.match(settings, /exactBinding:/);
+    assert.match(settings, /exactBinding: \{[\s\S]*?schoolId,[\s\S]*?deviceId,[\s\S]*?controlRevision:/);
     const authSuccess = websocket.slice(
       websocket.indexOf('type: "auth-success"'),
       websocket.indexOf("for (const { message: teacherMessage }")
@@ -664,6 +693,7 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
     assert.match(authSuccess, /studentId: payload\.studentId/);
     assert.match(authSuccess, /studentSessionId: bootstrap\.studentSessionId/);
     assert.match(authSuccess, /exactBinding:/);
+    assert.match(authSuccess, /exactBinding: \{[\s\S]*?schoolId,[\s\S]*?deviceId,[\s\S]*?controlRevision:/);
     const classroomStateRecovery = websocket.slice(
       websocket.indexOf('message.type === "classroom-state-request"'),
       websocket.indexOf('message.type === "command-ack"')
@@ -672,6 +702,7 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
     assert.match(classroomStateRecovery, /studentId: client\.studentId/);
     assert.match(classroomStateRecovery, /studentSessionId: client\.studentSessionId/);
     assert.match(classroomStateRecovery, /exactBinding:/);
+    assert.match(classroomStateRecovery, /exactBinding: \{[\s\S]*?schoolId:[\s\S]*?deviceId:[\s\S]*?controlRevision:/);
   });
 
   it("bounds FAB messages and uses one-statement conflict-safe hand raising", async () => {

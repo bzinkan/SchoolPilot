@@ -10,6 +10,8 @@ import {
   type ConversationContext,
 } from "../services/chatService.js";
 import { getProductLicenses } from "../services/storage.js";
+import { runWithoutTenantContext } from "../db/tenantContext.js";
+import { activeEntitledProducts } from "../services/productEntitlement.js";
 
 const router = Router();
 
@@ -26,12 +28,42 @@ const auth = [authenticate, requireSchoolContext] as const;
 function startSse(res: any, headers: Record<string, string> = {}) {
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache, no-transform",
+    "Cache-Control": "no-store, no-transform",
     Connection: "keep-alive",
     ...headers,
   });
   res.flushHeaders?.();
   res.write(": connected\n\n");
+}
+
+async function releaseRequestTenantContext(res: any): Promise<void> {
+  const release = res.locals.releaseTenantContext;
+  if (typeof release === "function") await release();
+}
+
+async function streamWithDeadline(
+  req: any,
+  res: any,
+  stream: (signal: AbortSignal) => AsyncGenerator<unknown>
+): Promise<void> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  timeout.unref?.();
+  const abort = () => controller.abort();
+  req.once("aborted", abort);
+  res.once("close", abort);
+  try {
+    await runWithoutTenantContext(async () => {
+      for await (const event of stream(controller.signal)) {
+        if (controller.signal.aborted || res.writableEnded) break;
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
+      }
+    });
+  } finally {
+    clearTimeout(timeout);
+    req.off("aborted", abort);
+    res.off("close", abort);
+  }
 }
 
 async function buildContext(req: any, res: any): Promise<ConversationContext> {
@@ -41,9 +73,10 @@ async function buildContext(req: any, res: any): Promise<ConversationContext> {
 
   // Look up active product licenses for this school
   const licenses = await getProductLicenses(schoolId);
-  const licensedProducts = licenses
-    .filter((l: any) => l.status === "active")
-    .map((l: any) => l.product);
+  const licensedProducts = activeEntitledProducts({
+    school: res.locals.school,
+    licenses,
+  });
 
   return {
     userId: user.id,
@@ -76,18 +109,19 @@ router.post("/message", ...auth, chatLimiter, async (req, res) => {
 
   const convId = conversationId || crypto.randomUUID();
   const context = await buildContext(req, res);
-  console.log(`[AI Chat] User=${context.userName} Role=${context.userRole} Products=${context.licensedProducts.join(",") || "NONE"}`);
+  await releaseRequestTenantContext(res);
 
   // Start SSE immediately so ALB TargetResponseTime does not include model
   // generation time before the first assistant token arrives.
   startSse(res, { "X-Conversation-Id": convId });
 
   try {
-    for await (const event of sendMessage(convId, message.trim(), context)) {
-      res.write(`data: ${JSON.stringify(event)}\n\n`);
-    }
-  } catch (err: any) {
-    console.error("[Chat Route] Stream error:", err);
+    await streamWithDeadline(
+      req,
+      res,
+      (signal) => sendMessage(convId, message.trim(), context, { signal })
+    );
+  } catch {
     res.write(
       `data: ${JSON.stringify({ type: "error", content: "An unexpected error occurred." })}\n\n`
     );
@@ -110,19 +144,17 @@ router.post("/confirm", ...auth, async (req, res) => {
   }
 
   const context = await buildContext(req, res);
+  await releaseRequestTenantContext(res);
 
   startSse(res);
 
   try {
-    for await (const event of confirmAction(
-      conversationId,
-      !!confirmed,
-      context
-    )) {
-      res.write(`data: ${JSON.stringify(event)}\n\n`);
-    }
-  } catch (err: any) {
-    console.error("[Chat Route] Confirm error:", err);
+    await streamWithDeadline(
+      req,
+      res,
+      (signal) => confirmAction(conversationId, !!confirmed, context, { signal })
+    );
+  } catch {
     res.write(
       `data: ${JSON.stringify({ type: "error", content: "An unexpected error occurred." })}\n\n`
     );
@@ -134,12 +166,11 @@ router.post("/confirm", ...auth, async (req, res) => {
 // DELETE /api/chat/conversations/:id — clear a conversation
 router.delete("/conversations/:id", ...auth, (req, res) => {
   buildContext(req, res)
-    .then((context) => {
-      const deleted = deleteConversation(req.params.id as string, context);
+    .then(async (context) => {
+      const deleted = await deleteConversation(req.params.id as string, context);
       res.json({ ok: deleted });
     })
-    .catch((err) => {
-      console.error("[Chat Route] Delete conversation error:", err);
+    .catch(() => {
       res.status(500).json({ error: "Failed to delete conversation" });
     });
 });

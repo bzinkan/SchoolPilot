@@ -6,6 +6,8 @@
 // burst of imports can never starve request handling. Fire-and-forget: a
 // logging failure must never affect the import response.
 
+import { safeErrorMetadata } from "../util/safeLogging.js";
+
 const MAX_FAILURES_STORED = 100;
 
 export interface ImportRunInput {
@@ -50,7 +52,7 @@ export async function recordImportRun(run: ImportRunInput): Promise<void> {
     });
   } catch (err) {
     // Never throw — logging the outcome must not break the import itself.
-    console.error("[ImportLog] Failed to record import run:", (err as Error).message);
+    console.error("[ImportLog] Failed to record import run:", safeErrorMetadata(err));
     // Surface persistent import-logging failures to the operator (own table,
     // no PII passed). Safe: errorMonitor writes to a different table.
     try {

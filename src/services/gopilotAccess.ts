@@ -1,12 +1,12 @@
 import type { Request, RequestHandler, Response } from "express";
-import { and, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or } from "drizzle-orm";
 import db from "../db.js";
 import {
-  productLicenses,
   schoolMemberships,
   type SchoolMembership,
   type User,
 } from "../schema/core.js";
+import { resolveGopilotEntitlement } from "./gopilotEntitlement.js";
 import {
   authorizedPickups,
   busRoutes,
@@ -45,6 +45,15 @@ export type GoPilotIdentity = {
   memberships: SchoolMembership[];
 };
 
+const GOPILOT_ROLE_PRIORITY: readonly GoPilotRole[] = [
+  "super_admin",
+  "admin",
+  "school_admin",
+  "office_staff",
+  "teacher",
+  "parent",
+];
+
 export function effectiveGoPilotRole(
   membership: Pick<SchoolMembership, "role" | "gopilotRole">
 ): GoPilotRole {
@@ -67,23 +76,40 @@ function roleFromMembership(membership: Pick<SchoolMembership, "role" | "gopilot
 }
 
 function primaryRoleFromRoles(roles: GoPilotRole[]): GoPilotRole {
-  if (roles.includes("admin")) return "admin";
-  if (roles.includes("school_admin")) return "school_admin";
-  if (roles.includes("office_staff")) return "office_staff";
-  if (roles.includes("teacher")) return "teacher";
-  return "parent";
+  return GOPILOT_ROLE_PRIORITY.find((role) => roles.includes(role)) ?? "parent";
 }
 
-function capabilitiesForRole(primaryRole: GoPilotRole): GoPilotCapabilities {
-  const manager = isGoPilotManager(primaryRole);
+export function goPilotRolesFromMemberships(
+  memberships: readonly Pick<SchoolMembership, "role" | "gopilotRole">[]
+): GoPilotRole[] {
+  return [...new Set(memberships.flatMap(roleFromMembership))]
+    .sort(
+      (left, right) =>
+        GOPILOT_ROLE_PRIORITY.indexOf(left) - GOPILOT_ROLE_PRIORITY.indexOf(right)
+    );
+}
+
+export function goPilotIdentityHasAnyRole(
+  identity: { roles: readonly GoPilotRole[] },
+  roles: readonly GoPilotRole[]
+): boolean {
+  return roles.some((role) => identity.roles.includes(role));
+}
+
+export function capabilitiesForGoPilotRoles(
+  roles: readonly GoPilotRole[]
+): GoPilotCapabilities {
+  const manager = roles.some(isGoPilotManager);
   return {
     manageDismissal: manager,
     approveChangeRequests: manager,
-    acknowledgeChangeRequests: manager || primaryRole === "teacher",
+    acknowledgeChangeRequests: manager || roles.includes("teacher"),
     schoolWideAttendance: manager,
-    teacherAttendance: primaryRole === "teacher",
-    parentStudentAccess: primaryRole === "parent",
-    manageSetup: primaryRole === "super_admin" || primaryRole === "admin" || primaryRole === "school_admin",
+    teacherAttendance: roles.includes("teacher"),
+    parentStudentAccess: roles.includes("parent"),
+    manageSetup: roles.some((role) =>
+      role === "super_admin" || role === "admin" || role === "school_admin"
+    ),
   };
 }
 
@@ -104,35 +130,20 @@ export async function resolveGoPilotIdentity(
 
   if (memberships.length === 0) return null;
 
-  const roles = [...new Set(memberships.flatMap(roleFromMembership))];
+  const roles = goPilotRolesFromMemberships(memberships);
   if (roles.length === 0) return null;
 
   const primaryRole = primaryRoleFromRoles(roles);
   return {
     primaryRole,
     roles,
-    capabilities: capabilitiesForRole(primaryRole),
+    capabilities: capabilitiesForGoPilotRoles(roles),
     memberships,
   };
 }
 
 export async function hasActiveGoPilotLicense(schoolId: string): Promise<boolean> {
-  const [license] = await db
-    .select({ id: productLicenses.id })
-    .from(productLicenses)
-    .where(
-      and(
-        eq(productLicenses.schoolId, schoolId),
-        eq(productLicenses.product, "GOPILOT"),
-        eq(productLicenses.status, "active"),
-        or(
-          isNull(productLicenses.expiresAt),
-          gt(productLicenses.expiresAt, sql`NOW()`)
-        )
-      )
-    )
-    .limit(1);
-  return !!license;
+  return (await resolveGopilotEntitlement(schoolId)).entitled;
 }
 
 export async function hasAnyActiveGoPilotStaffMembership(userId: string): Promise<boolean> {
@@ -167,23 +178,25 @@ export async function getGoPilotMembership(
   ) ?? identity?.memberships[0];
 }
 
-export async function getRequestGoPilotRole(
+export async function getRequestGoPilotIdentity(
   req: Request,
   res: Response
-): Promise<GoPilotRole | null> {
+): Promise<GoPilotIdentity | null> {
   if (req.authUser?.isSuperAdmin) {
-    res.locals.gopilotRole = "super_admin";
-    res.locals.gopilotIdentity = {
+    const identity: GoPilotIdentity = {
       primaryRole: "super_admin",
       roles: ["super_admin"],
-      capabilities: capabilitiesForRole("super_admin"),
+      capabilities: capabilitiesForGoPilotRoles(["super_admin"]),
       memberships: [],
     };
-    return "super_admin";
+    res.locals.gopilotRole = identity.primaryRole;
+    res.locals.gopilotIdentity = identity;
+    return identity;
   }
 
-  if (res.locals.gopilotRole) {
-    return res.locals.gopilotRole as GoPilotRole;
+  const cached = res.locals.gopilotIdentity as GoPilotIdentity | undefined;
+  if (cached) {
+    return cached;
   }
 
   const schoolId = res.locals.schoolId as string | undefined;
@@ -193,22 +206,28 @@ export async function getRequestGoPilotRole(
   const identity = await resolveGoPilotIdentity(userId, schoolId);
   if (!identity) return null;
 
-  const role = identity.primaryRole;
   res.locals.gopilotIdentity = identity;
-  res.locals.gopilotRole = role;
-  return role;
+  res.locals.gopilotRole = identity.primaryRole;
+  return identity;
+}
+
+export async function getRequestGoPilotRole(
+  req: Request,
+  res: Response
+): Promise<GoPilotRole | null> {
+  return (await getRequestGoPilotIdentity(req, res))?.primaryRole ?? null;
 }
 
 export function requireGoPilotRole(...roles: GoPilotRole[]): RequestHandler {
   return async (req, res, next) => {
-    const role = await getRequestGoPilotRole(req, res);
-    if (!role) {
+    const identity = await getRequestGoPilotIdentity(req, res);
+    if (!identity) {
       return res.status(403).json({ error: "No access to this school" });
     }
-    if (role === "super_admin") {
+    if (identity.roles.includes("super_admin")) {
       return next();
     }
-    if (!roles.includes(role)) {
+    if (!goPilotIdentityHasAnyRole(identity, roles)) {
       return res.status(403).json({ error: "Insufficient permissions" });
     }
     return next();

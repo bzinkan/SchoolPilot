@@ -363,7 +363,8 @@ describe("GoPilot staff settings", { concurrency: false }, () => {
     try {
       const settings = await requestJson("GET", "/gopilot/settings", undefined, headers);
       assert.equal(settings.status, 403);
-      assert.equal(settings.body.error, "Product license required");
+      assert.equal(settings.body.code, "GOPILOT_NOT_ENTITLED");
+      assert.equal(settings.body.reason, "license_inactive");
 
       const auth = await requestJson("GET", "/auth/me", undefined, headers);
       assert.equal(auth.status, 200, JSON.stringify(auth.body));

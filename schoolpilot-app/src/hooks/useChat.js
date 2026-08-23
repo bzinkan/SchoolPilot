@@ -1,5 +1,71 @@
 import { useState, useCallback, useRef } from "react";
 
+async function readSSEStream(res, fixedIdx, setMessages, setPendingAction) {
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const jsonStr = line.slice(6).trim();
+      if (!jsonStr) continue;
+      try {
+        const event = JSON.parse(jsonStr);
+        if (event.type === "token") {
+          setMessages((previous) => {
+            const updated = [...previous];
+            const index = fixedIdx != null ? fixedIdx : updated.length - 1;
+            const message = updated[index];
+            if (message) updated[index] = { ...message, content: message.content + event.content };
+            return updated;
+          });
+        } else if (event.type === "confirmation") {
+          setPendingAction({
+            action: event.action,
+            params: event.params,
+            description: event.description,
+          });
+        } else if (event.type === "action_result") {
+          setMessages((previous) => {
+            const updated = [...previous];
+            const index = updated.length - 1;
+            const resultText = event.success ? "Action completed successfully." : "Action failed.";
+            if (updated[index]) {
+              updated[index] = {
+                ...updated[index],
+                content: updated[index].content || resultText,
+                actionResult: event,
+              };
+            }
+            return updated;
+          });
+        } else if (event.type === "error") {
+          setMessages((previous) => {
+            const updated = [...previous];
+            const index = fixedIdx != null ? fixedIdx : updated.length - 1;
+            if (updated[index]) {
+              updated[index] = {
+                ...updated[index],
+                content: updated[index].content || event.content || "An error occurred.",
+              };
+            }
+            return updated;
+          });
+        }
+      } catch {
+        // Ignore malformed events without terminating a valid provider stream.
+      }
+    }
+  }
+}
+
 export function useChat() {
   const [messages, setMessages] = useState([]);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -48,7 +114,7 @@ export function useChat() {
           return;
         }
 
-        await readSSEStream(res, assistantIdx);
+        await readSSEStream(res, assistantIdx, setMessages, setPendingAction);
       } catch {
         setMessages((prev) => {
           const updated = [...prev];
@@ -98,7 +164,7 @@ export function useChat() {
           return;
         }
 
-        await readSSEStream(res, null);
+        await readSSEStream(res, null, setMessages, setPendingAction);
       } catch {
         setMessages((prev) => {
           const updated = [...prev];
@@ -112,86 +178,8 @@ export function useChat() {
         setIsStreaming(false);
       }
     },
-    [messages.length]
+    []
   );
-
-  const readSSEStream = useCallback(async (res, fixedIdx) => {
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        const jsonStr = line.slice(6).trim();
-        if (!jsonStr) continue;
-
-        try {
-          const event = JSON.parse(jsonStr);
-
-          if (event.type === "token") {
-            setMessages((prev) => {
-              const updated = [...prev];
-              const idx = fixedIdx != null ? fixedIdx : updated.length - 1;
-              const msg = updated[idx];
-              if (msg) {
-                updated[idx] = {
-                  ...msg,
-                  content: msg.content + event.content,
-                };
-              }
-              return updated;
-            });
-          } else if (event.type === "confirmation") {
-            setPendingAction({
-              action: event.action,
-              params: event.params,
-              description: event.description,
-            });
-          } else if (event.type === "action_result") {
-            setMessages((prev) => {
-              const updated = [...prev];
-              const idx = updated.length - 1;
-              const resultText = event.success
-                ? "Action completed successfully."
-                : "Action failed.";
-              updated[idx] = {
-                ...updated[idx],
-                content: updated[idx].content || resultText,
-                actionResult: event,
-              };
-              return updated;
-            });
-          } else if (event.type === "error") {
-            setMessages((prev) => {
-              const updated = [...prev];
-              const idx = fixedIdx != null ? fixedIdx : updated.length - 1;
-              if (updated[idx]) {
-                updated[idx] = {
-                  ...updated[idx],
-                  content:
-                    updated[idx].content ||
-                    event.content ||
-                    "An error occurred.",
-                };
-              }
-              return updated;
-            });
-          }
-          // "done" — no action needed
-        } catch {
-          // skip malformed JSON
-        }
-      }
-    }
-  }, []);
 
   const clearChat = useCallback(async () => {
     if (conversationIdRef.current) {

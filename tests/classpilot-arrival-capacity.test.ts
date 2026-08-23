@@ -37,7 +37,7 @@ describe("ClassPilot school-arrival capacity controls", () => {
     assert.match(databaseSection, /createHeartbeatAndRefreshPresence/);
     assert.doesNotMatch(databaseSection, /publishWS|broadcastToTeachersLocal|classifyUrl/);
     assert.doesNotMatch(heartbeatRoute, /getStudentById/);
-    assert.doesNotMatch(routes, /getActiveSessionByDevice/);
+    assert.doesNotMatch(heartbeatRoute, /getActiveSessionByDevice/);
     assert.match(
       source("src/services/storage.ts"),
       /represented\.id,[\s\S]*student\.email AS student_email[\s\S]*FOR UPDATE OF represented/
@@ -108,7 +108,7 @@ describe("ClassPilot school-arrival capacity controls", () => {
     assert.match(ecs, /target_value\s*=\s*70\.0/);
     assert.match(production, /enable_api_arrival_capacity\s*=\s*true/);
     assert.match(production, /api_arrival_min_capacity\s*=\s*6/);
-    assert.match(production, /api_max_capacity\s*=\s*8/);
+    assert.match(production, /api_max_capacity\s*=\s*6/);
     assert.match(production, /api_arrival_scale_up_schedule\s*=\s*"cron\(45 5 \? \* MON-FRI \*\)"/);
     assert.match(production, /api_arrival_scale_down_schedule\s*=\s*"cron\(0 10 \? \* MON-FRI \*\)"/);
     assert.match(production, /api_arrival_schedule_timezone\s*=\s*"America\/New_York"/);

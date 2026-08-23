@@ -1,166 +1,149 @@
 import type { RequestHandler, Response } from "express";
-import { eq, and, isNull } from "drizzle-orm";
-import { schoolMemberships, schools } from "../schema/core.js";
-import db from "../db.js";
 import { bindTenantContext } from "./tenantContext.js";
 import { createSingleFlight } from "../util/singleFlight.js";
+import {
+  loadVerifiedSchoolIdentities,
+  type VerifiedSchoolIdentity,
+} from "../services/schoolIdentity.js";
 
-type ActiveMembershipContext = {
-  membership: typeof schoolMemberships.$inferSelect;
-  school: typeof schools.$inferSelect;
-};
-
-const loadMembershipSingleFlight = createSingleFlight<
+const loadIdentitySingleFlight = createSingleFlight<
   string,
-  ActiveMembershipContext | undefined
+  VerifiedSchoolIdentity[]
 >({ maxPendingKeys: 4_096 });
 
-function loadActiveMembershipContext(
-  userId: string,
-  schoolId?: string
-): Promise<ActiveMembershipContext | undefined> {
+function loadIdentities(userId: string, schoolId?: string) {
   const key = `${userId}\u0000${schoolId ?? "*"}`;
-  return loadMembershipSingleFlight(key, async () => {
-    const conditions = [
-      eq(schoolMemberships.userId, userId),
-      eq(schoolMemberships.status, "active"),
-      isNull(schools.deletedAt),
-    ];
-    if (schoolId) conditions.push(eq(schoolMemberships.schoolId, schoolId));
-    const [context] = await db
-      .select({ membership: schoolMemberships, school: schools })
-      .from(schoolMemberships)
-      .innerJoin(schools, eq(schoolMemberships.schoolId, schools.id))
-      .where(and(...conditions))
-      .limit(1);
-    return context;
-  });
+  return loadIdentitySingleFlight(key, () =>
+    loadVerifiedSchoolIdentities(userId, schoolId)
+  );
 }
 
-function applyVerifiedMembershipContext(
+let ambiguousSelectionCount = 0;
+const ambiguousSelectionTimer = setInterval(() => {
+  if (ambiguousSelectionCount === 0) return;
+  console.warn(JSON.stringify({
+    event: "ambiguous_school_selection",
+    count: ambiguousSelectionCount,
+    mode: membershipResolverMode(),
+  }));
+  ambiguousSelectionCount = 0;
+}, 60_000);
+ambiguousSelectionTimer.unref?.();
+
+function membershipResolverMode(): "observe" | "enforce" {
+  return process.env.MEMBERSHIP_RESOLVER_MODE?.toLowerCase() === "enforce"
+    ? "enforce"
+    : "observe";
+}
+
+function applyVerifiedIdentity(
   res: Response,
-  context: ActiveMembershipContext
+  identity: VerifiedSchoolIdentity
 ): void {
-  res.locals.schoolId = context.membership.schoolId;
-  res.locals.membershipRole = context.membership.role;
-  res.locals.school = context.school;
+  res.locals.schoolId = identity.schoolId;
+  res.locals.membershipRole = identity.primaryRole;
+  res.locals.membershipRoles = identity.roles;
+  res.locals.school = identity.school;
+  res.locals.schoolIdentity = identity;
+  res.locals.verifiedSchoolIdentity = identity;
+  // Compatibility for routes/tests that still consume the previous singular
+  // provenance. It is deterministic and always reflects the primary role.
   res.locals.verifiedSchoolMembership = {
-    userId: context.membership.userId,
-    schoolId: context.membership.schoolId,
-    role: context.membership.role,
+    userId: identity.userId,
+    schoolId: identity.schoolId,
+    role: identity.primaryRole,
   };
 }
 
+function requestedSchoolId(req: Parameters<RequestHandler>[0]): string {
+  return (
+    String(req.params.schoolId || "") ||
+    (req.headers["x-school-id"] as string) ||
+    (req.query.schoolId as string) ||
+    ""
+  );
+}
+
+function applySessionIdentity(
+  req: Parameters<RequestHandler>[0],
+  identity: VerifiedSchoolIdentity
+): void {
+  if (req.authMethod !== "session") return;
+  req.session.schoolId = identity.schoolId;
+  req.session.role = identity.primaryRole;
+  req.session.schoolSessionVersion = identity.school.schoolSessionVersion ?? 1;
+}
+
 /**
- * Ensures a school context is available.
- * For session auth: uses req.session.schoolId
- * For JWT auth: looks up first active membership or uses schoolId from params/body
- * Super admins can specify any school via query/params.
- *
- * Also stores the user's membership role in res.locals.membershipRole
- * so downstream handlers can check role without extra DB queries.
+ * Resolves one deterministic school identity and every active role in that
+ * school. The request body is never an authority source. Multiple schools
+ * without an explicit/session selection are observed first and fail with a
+ * stable 409 once MEMBERSHIP_RESOLVER_MODE=enforce.
  */
 const resolveSchoolContext: RequestHandler = async (req, res, next) => {
   if (!req.authUser) {
     return res.status(401).json({ error: "Authentication required" });
   }
 
-  // Super admins can operate on any school
   if (req.authUser.isSuperAdmin) {
-    const schoolId =
-      String(req.params.schoolId || "") ||
-      (req.headers["x-school-id"] as string) ||
-      (req.query.schoolId as string) ||
-      req.session?.schoolId;
-    if (schoolId) {
-      res.locals.schoolId = schoolId as string;
-    }
+    const schoolId = requestedSchoolId(req) || req.session?.schoolId;
+    if (schoolId) res.locals.schoolId = schoolId;
     res.locals.membershipRole = "super_admin";
+    res.locals.membershipRoles = ["super_admin"];
     return next();
   }
 
-  // Session-based: schoolId already in session
+  const requested = requestedSchoolId(req);
+
   if (req.authMethod === "session" && req.session?.schoolId) {
-    const requestedSchoolId =
-      String(req.params.schoolId || "") ||
-      (req.headers["x-school-id"] as string) ||
-      (req.query.schoolId as string) ||
-      "";
-
-    if (requestedSchoolId && requestedSchoolId !== req.session.schoolId) {
-      const requestedMembership = await loadActiveMembershipContext(
-        req.authUser.id,
-        requestedSchoolId
-      );
-
-      if (!requestedMembership) {
-        return res.status(404).json({ error: "School not found" });
-      }
-
-      req.session.schoolId = requestedMembership.membership.schoolId;
-      req.session.role = requestedMembership.membership.role;
-      req.session.schoolSessionVersion =
-        requestedMembership.school.schoolSessionVersion ?? 1;
-      applyVerifiedMembershipContext(res, requestedMembership);
-      return next();
+    const selectedSchoolId = requested || req.session.schoolId;
+    const [identity] = await loadIdentities(req.authUser.id, selectedSchoolId);
+    if (!identity) {
+      return res.status(requested ? 404 : 403).json({
+        error: requested ? "School not found" : "No access to this school",
+      });
     }
+    applySessionIdentity(req, identity);
+    applyVerifiedIdentity(res, identity);
+    return next();
+  }
 
-    const membership = await loadActiveMembershipContext(
-      req.authUser.id,
-      req.session.schoolId
-    );
-    if (!membership) {
-      // A stale session-selected school must not establish an RLS tenant after
-      // membership revocation. The user may select another active membership,
-      // but this request fails closed immediately.
+  if (requested) {
+    const [identity] = await loadIdentities(req.authUser.id, requested);
+    if (!identity) {
       return res.status(403).json({ error: "No access to this school" });
     }
-    applyVerifiedMembershipContext(res, membership);
+    applySessionIdentity(req, identity);
+    applyVerifiedIdentity(res, identity);
     return next();
   }
 
-  // JWT-based or session without schoolId: look up from params, query, header, or first membership
-  // NOTE: We intentionally skip req.body?.schoolId here. The school context should come
-  // from trusted sources (session, header, params), not from the request body which
-  // frontends may set incorrectly. The backend always overrides schoolId from res.locals.
-  const schoolId =
-    String(req.params.schoolId || "") ||
-    (req.headers["x-school-id"] as string) ||
-    (req.query.schoolId as string) ||
-    "";
-
-  if (schoolId) {
-    // Verify user has membership in this school
-    const membership = await loadActiveMembershipContext(
-      req.authUser.id,
-      schoolId
-    );
-
-    if (!membership) {
-      return res
-        .status(403)
-        .json({ error: "No access to this school" });
-    }
-
-    applyVerifiedMembershipContext(res, membership);
-    return next();
-  }
-
-  // Fallback: use first active membership
-  const membership = await loadActiveMembershipContext(req.authUser.id);
-
-  if (!membership) {
+  const identities = await loadIdentities(req.authUser.id);
+  if (identities.length === 0) {
     return res.status(400).json({ error: "No school context available" });
   }
+  if (identities.length > 1) {
+    ambiguousSelectionCount += 1;
+    if (membershipResolverMode() === "enforce") {
+      return res.status(409).json({
+        error: "Select a school before continuing",
+        code: "SCHOOL_SELECTION_REQUIRED",
+      });
+    }
+  }
 
-  applyVerifiedMembershipContext(res, membership);
+  // Observe mode preserves compatibility while removing nondeterminism: the
+  // loader orders by earliest active membership and then school ID.
+  const identity = identities[0]!;
+  applySessionIdentity(req, identity);
+  applyVerifiedIdentity(res, identity);
   return next();
 };
 
 /**
  * Resolves and authorizes the school without checking out a response-lifetime
- * RLS client. Callers must establish a narrow `runWithTenantContext` scope (or
- * invoke `bindTenantContext`) before touching any tenant table.
+ * RLS client. Callers must establish a narrow runWithTenantContext scope (or
+ * invoke bindTenantContext) before touching any tenant table.
  */
 export const requireSchoolContextWithoutTenantBinding: RequestHandler = (
   req,

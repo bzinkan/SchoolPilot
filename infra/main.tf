@@ -66,6 +66,55 @@ locals {
   has_domain             = var.domain != ""
   frontend_domains       = local.has_domain ? [for domain in module.dns[0].all_domains : domain if domain != module.dns[0].api_origin_domain] : []
   alb_access_logs_bucket = "${local.name}-alb-access-logs-${data.aws_caller_identity.current.account_id}"
+  database_capacity      = jsondecode(file("${path.module}/../src/config/databaseCapacity.json"))
+  rls_registry           = jsondecode(file("${path.module}/../src/config/rlsRegistry.json"))
+  rls_post_expand_tables = local.rls_registry.inventories.schoolPilot270PostExpand.tables
+  rls_configured_tables  = [for table in split(",", var.rls_enabled_tables) : trimspace(table) if trimspace(table) != ""]
+}
+
+check "database_capacity_contract" {
+  assert {
+    condition = (
+      var.api_max_capacity == local.database_capacity.apiMaxTasks &&
+      var.worker_desired_count == local.database_capacity.workerTasks &&
+      var.db_pool_max == local.database_capacity.api.main &&
+      var.scheduler_db_pool_max == local.database_capacity.worker.scheduler &&
+      (
+        var.api_max_capacity * (
+          local.database_capacity.api.main +
+          local.database_capacity.api.session +
+          local.database_capacity.api.scheduler +
+          local.database_capacity.api.schedulerLock
+        ) +
+        var.worker_desired_count * (
+          local.database_capacity.worker.main +
+          local.database_capacity.worker.session +
+          local.database_capacity.worker.scheduler +
+          local.database_capacity.worker.schedulerLock
+        )
+      ) <= local.database_capacity.reviewedDatabaseConnectionLimit *
+      (1 - local.database_capacity.minimumHeadroomPercent / 100)
+    )
+    error_message = "Terraform task counts and pool limits must match src/config/databaseCapacity.json and retain reviewed headroom."
+  }
+}
+
+check "rls_registry_contract" {
+  assert {
+    condition = (
+      local.rls_registry.inventories.historicalObservedProduction.count == 72 &&
+      length(local.rls_registry.inventories.historicalObservedProduction.tables) == 72 &&
+      local.rls_registry.inventories.schoolPilot270PostExpand.count == 75 &&
+      length(local.rls_post_expand_tables) == 75 &&
+      length(local.rls_configured_tables) > 0 &&
+      length(local.rls_configured_tables) == length(toset(local.rls_configured_tables)) &&
+      length(setsubtract(
+        toset(local.rls_configured_tables),
+        toset(local.rls_post_expand_tables)
+      )) == 0
+    )
+    error_message = "RLS_ENABLED_TABLES must contain only tables in src/config/rlsRegistry.json; the registry preserves the observed 72-table audit snapshot and the 75-table post-expand inventory."
+  }
 }
 
 # ALB access logs let us identify source IPs and paths for target 4xx spikes.
@@ -226,6 +275,35 @@ module "dns" {
   domain      = var.domain
 }
 
+module "turn" {
+  count  = var.enable_classpilot_turn && local.has_domain ? 1 : 0
+  source = "./modules/turn"
+
+  project              = var.project
+  environment          = var.environment
+  aws_region           = var.aws_region
+  vpc_id               = module.vpc.vpc_id
+  public_subnet_ids    = module.vpc.public_subnet_ids
+  route53_zone_id      = module.dns[0].zone_id
+  domain               = var.domain
+  tls_email            = var.classpilot_turn_tls_email
+  instance_type        = var.classpilot_turn_instance_type
+  relay_port_min       = var.classpilot_turn_relay_port_min
+  relay_port_max       = var.classpilot_turn_relay_port_max
+  alerts_sns_topic_arn = var.alerts_sns_topic_arn
+}
+
+check "classpilot_turn_activation" {
+  assert {
+    condition = !var.enable_classpilot_turn || (
+      local.has_domain &&
+      length(module.vpc.public_subnet_ids) >= 2 &&
+      can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", var.classpilot_turn_tls_email))
+    )
+    error_message = "ClassPilot TURN requires a managed domain, two public subnets, and an operational TLS email."
+  }
+}
+
 module "alb" {
   source = "./modules/alb"
 
@@ -278,6 +356,8 @@ module "ecs" {
   # Existing SecureString parameters managed outside Terraform tfvars.
   anthropic_api_key_parameter_arn  = var.anthropic_api_key_parameter_arn
   telegram_bot_token_parameter_arn = var.telegram_bot_token_parameter_arn
+  classpilot_turn_hosts            = try(join(",", module.turn[0].hostnames), "")
+  classpilot_turn_rest_secret_arn  = try(module.turn[0].rest_secret_arn, "")
 
   # Scaling
   desired_count                   = var.ecs_desired_count

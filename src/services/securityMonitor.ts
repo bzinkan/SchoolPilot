@@ -176,7 +176,7 @@ async function alertOn(d: Detection, eventId: string): Promise<void> {
         .where(sql`id = ${eventId}`);
     }
   } catch (err) {
-    console.error("[SecurityMonitor] Alert email failed:", err);
+    console.error("[SecurityMonitor] Alert email failed");
   }
 
   // Also log to the existing error monitor so it shows up in Telegram/existing channels
@@ -197,10 +197,10 @@ export async function runSecurityChecks(): Promise<void> {
     const since = new Date(Date.now() - 7 * 60 * 1000); // 7 min window for 5 min cadence
 
     const checks = await Promise.all([
-      checkFailedAuthSpike(since).catch(err => { console.error("[SecurityMonitor] failedAuth check failed:", err); return []; }),
-      checkBulkStudentOps(since).catch(err => { console.error("[SecurityMonitor] bulkStudent check failed:", err); return []; }),
-      checkOffHoursAdminBurst(since).catch(err => { console.error("[SecurityMonitor] offHours check failed:", err); return []; }),
-      checkCrossSchoolAccess(since).catch(err => { console.error("[SecurityMonitor] crossSchool check failed:", err); return []; }),
+    checkFailedAuthSpike(since).catch(() => { console.error("[SecurityMonitor] failedAuth check failed"); return []; }),
+    checkBulkStudentOps(since).catch(() => { console.error("[SecurityMonitor] bulkStudent check failed"); return []; }),
+    checkOffHoursAdminBurst(since).catch(() => { console.error("[SecurityMonitor] offHours check failed"); return []; }),
+    checkCrossSchoolAccess(since).catch(() => { console.error("[SecurityMonitor] crossSchool check failed"); return []; }),
     ]);
 
     const detections = checks.flat();
@@ -215,7 +215,7 @@ export async function runSecurityChecks(): Promise<void> {
       }
     }
   } catch (err) {
-    console.error("[SecurityMonitor] Top-level failure:", err);
+    console.error("[SecurityMonitor] Top-level failure");
     errorMonitor.trackError("scheduler_failure", err as Error, { job: "securityMonitor" });
   }
 }

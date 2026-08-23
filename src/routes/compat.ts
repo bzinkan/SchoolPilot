@@ -94,6 +94,7 @@ import {
   effectiveClasspilotControlEnforcementHealth,
   serializeClasspilotStudentControlState,
 } from "../services/classpilotClassroomState.js";
+import { requestHasAnySchoolRole } from "../services/schoolAuthorization.js";
 
 const router = Router();
 
@@ -879,7 +880,6 @@ router.post("/admin/students/bulk-delete", ...schoolAuth, requireRole("admin", "
       );
     } catch {
       console.warn("[Student Removal] ClassPilot socket shutdown failed after bulk deactivation", {
-        schoolId,
         studentCount: result.foundStudentIds.length,
       });
     }
@@ -894,7 +894,6 @@ router.post("/admin/students/bulk-delete", ...schoolAuth, requireRole("admin", "
     const stopFailures = stopped.filter((outcome) => outcome.status === "rejected").length;
     if (stopFailures > 0) {
       console.warn("[Student Removal] MailPilot shutdown failed after bulk deactivation", {
-        schoolId,
         failedCount: stopFailures,
       });
     }
@@ -1080,8 +1079,7 @@ router.get("/students-aggregated", ...classPilotStaffAuth, async (req, res, next
   try {
     const schoolId = res.locals.schoolId!;
     const userId = req.authUser!.id;
-    const membershipRole = res.locals.membershipRole as string | undefined;
-    const isAdmin = membershipRole === "admin" || membershipRole === "school_admin" || membershipRole === "super_admin";
+    const isAdmin = requestHasAnySchoolRole(req, res, ["admin", "school_admin"]);
 
     const requestedTeachingSessionId = typeof req.query.teachingSessionId === "string"
       ? req.query.teachingSessionId.trim()

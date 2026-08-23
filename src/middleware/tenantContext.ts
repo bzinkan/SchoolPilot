@@ -3,6 +3,25 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { pool } from "../db.js";
 import { tenantALS, rlsGucEnabled, type TenantStore } from "../db/tenantContext.js";
 import * as schema from "../schema/index.js";
+import {
+  recordRuntimePerformanceCounter,
+  recordRuntimePerformanceTiming,
+} from "../services/runtimePerformanceMetrics.js";
+
+async function acquireTenantClient() {
+  const startedAt = performance.now();
+  try {
+    const client = await pool.connect();
+    recordRuntimePerformanceCounter("poolAcquisitionSuccess");
+    recordRuntimePerformanceCounter("tenantCheckouts");
+    recordRuntimePerformanceTiming("poolAcquisitionMs", performance.now() - startedAt);
+    return client;
+  } catch (error) {
+    recordRuntimePerformanceCounter("poolAcquisitionFailure");
+    recordRuntimePerformanceTiming("poolAcquisitionMs", performance.now() - startedAt);
+    throw error;
+  }
+}
 
 // Binds a per-request tenant DB connection for Row-Level Security. Call this at
 // the END of the auth/school-context middleware (after res.locals.schoolId is
@@ -25,22 +44,25 @@ export const bindTenantContext: RequestHandler = async (req, res, next) => {
 
   let client;
   try {
-    client = await pool.connect();
+    client = await acquireTenantClient();
   } catch (err) {
     return next(err);
   }
 
-  let released = false;
-  const release = () => {
-    if (released) return;
-    released = true;
-    client!
+  let releasePromise: Promise<void> | null = null;
+  const release = (): Promise<void> => {
+    if (releasePromise) return releasePromise;
+    releasePromise = client!
       .query("SELECT set_config('app.school_id', '', false), set_config('app.is_super', 'off', false)")
       .catch(() => {})
-      .finally(() => client!.release());
+      .then(() => {
+        client!.release();
+      });
+    return releasePromise;
   };
-  res.on("finish", release);
-  res.on("close", release);
+  res.locals.releaseTenantContext = release;
+  res.on("finish", () => { void release(); });
+  res.on("close", () => { void release(); });
 
   try {
     // set_config(name, value, is_local=false) = session-level SET, but safely
@@ -50,7 +72,7 @@ export const bindTenantContext: RequestHandler = async (req, res, next) => {
       [isSuper ? "on" : "off", schoolId ?? ""]
     );
   } catch (err) {
-    release();
+    await release();
     return next(err);
   }
 
@@ -77,7 +99,7 @@ export async function runWithTenantContext<T>(
 ): Promise<T> {
   if (!rlsGucEnabled()) return fn();
 
-  const client = await pool.connect();
+  const client = await acquireTenantClient();
   try {
     await client.query(
       "SELECT set_config('app.is_super', $1, false), set_config('app.school_id', $2, false)",

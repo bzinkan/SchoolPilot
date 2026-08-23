@@ -7,6 +7,7 @@ import {
   CLASSPILOT_SCHEDULE_CHANGE_RLS_TABLES,
   GOPILOT_CHILD_RLS_TABLES,
   REVIEWED_RLS_TABLE_ENABLEMENTS,
+  SCHOOLPILOT_270_ADDITIVE_RLS_TABLES,
   addReviewedRlsTable,
   verifyEnabledRlsCandidates,
   verifyLiveRlsEnablementSources,
@@ -18,6 +19,14 @@ const migrationSource = readFileSync(new URL("../src/index.ts", import.meta.url)
 const claudeSource = readFileSync(new URL("../CLAUDE.md", import.meta.url), "utf8");
 const terraformVariables = readFileSync(new URL("../infra/variables.tf", import.meta.url), "utf8");
 const productionTfvars = readFileSync(new URL("../infra/production.tfvars", import.meta.url), "utf8");
+const rlsRegistry = JSON.parse(
+  readFileSync(new URL("../src/config/rlsRegistry.json", import.meta.url), "utf8"),
+) as {
+  inventories: {
+    historicalObservedProduction: { count: number; tables: string[] };
+    schoolPilot270PostExpand: { count: number; tables: string[] };
+  };
+};
 
 function taskDefinition(
   containerName: "api" | "scheduler-worker",
@@ -50,17 +59,18 @@ describe("one-release RLS table enablement", () => {
   it("adds only the reviewed table after matching live API/worker admission", () => {
     assert.deepEqual(REVIEWED_RLS_TABLE_ENABLEMENTS, [
       "classpilot_session_summary_deliveries",
+      targetTable,
       "classpilot_monitoring_events",
       "classpilot_session_reports",
       "classpilot_session_staff",
       "classpilot_session_student_reports",
       "classpilot_student_control_states",
       ...CLASSPILOT_FAB_RLS_TABLES,
-      targetTable,
       ...GOPILOT_CHILD_RLS_TABLES,
       ...CLASSPILOT_SCHEDULE_CHANGE_RLS_TABLES,
-      "passpilot_kiosk_sessions",
+      "classpilot_evidence_capture_requests",
       "passpilot_kiosk_devices",
+      "passpilot_kiosk_sessions",
     ]);
     const api = taskDefinition("api");
     const worker = taskDefinition("scheduler-worker");
@@ -236,6 +246,48 @@ describe("one-release RLS table enablement", () => {
     }
   });
 
+  it("adds the exact SchoolPilot 2.7.0 persistence expansion atomically", () => {
+    const api = taskDefinition("api");
+    const worker = taskDefinition("scheduler-worker");
+    const bundle = SCHOOLPILOT_270_ADDITIVE_RLS_TABLES.join(",");
+    assert.deepEqual(SCHOOLPILOT_270_ADDITIVE_RLS_TABLES, [
+      "classpilot_evidence_capture_requests",
+      "passpilot_kiosk_devices",
+      "passpilot_kiosk_sessions",
+    ]);
+    assert.deepEqual(
+      verifyLiveRlsEnablementSources({
+        apiTaskDefinition: api,
+        workerTaskDefinition: worker,
+        table: bundle,
+      }),
+      {
+        previousTables: ["students", "teaching_sessions"],
+        addedTables: SCHOOLPILOT_270_ADDITIVE_RLS_TABLES,
+      },
+    );
+    for (const definition of [api, worker]) {
+      const containerName = definition.containerDefinitions[0]?.name;
+      assert.ok(containerName === "api" || containerName === "scheduler-worker");
+      addReviewedRlsTable(definition, {
+        containerName,
+        table: bundle,
+      });
+      assert.equal(
+        environmentValue(definition, "RLS_ENABLED_TABLES"),
+        `students,teaching_sessions,${bundle}`,
+      );
+    }
+    assert.throws(
+      () => verifyLiveRlsEnablementSources({
+        apiTaskDefinition: taskDefinition("api"),
+        workerTaskDefinition: taskDefinition("scheduler-worker"),
+        table: SCHOOLPILOT_270_ADDITIVE_RLS_TABLES.slice(0, 2).join(","),
+      }),
+      /must match one exact reviewed singleton or ordered bundle/,
+    );
+  });
+
   it("preserves both kill switches by rejecting unsafe or redundant activation", () => {
     assert.throws(
       () =>
@@ -301,11 +353,11 @@ describe("one-release RLS table enablement", () => {
     );
     assert.ok(validationStart >= 0 && validationEnd > validationStart);
     const validation = deploySource.slice(validationStart, validationEnd);
-    assert.match(validation, /classpilot_session_summary_deliveries/);
-    assert.match(validation, /passpilot_grade_students/);
-    assert.match(validation, /authorized_pickups,custody_alerts,dismissal_changes,dismissal_overrides,dismissal_queue,family_group_students,homeroom_teachers/);
-    assert.match(validation, /classpilot_schedule_change_pairs,classpilot_schedule_changes,classpilot_schedule_change_legs/);
-    assert.match(validation, /classpilot_chat_deliveries,poll_responses,polls,session_settings/);
+    assert.match(
+      validation,
+      /enforce-deploy-rls-allowlist\.mjs" validate-request[\s\S]*--table "\$ENABLE_RLS_TABLE"/,
+    );
+    assert.doesNotMatch(validation, /case "\$ENABLE_RLS_TABLE"/);
     assert.match(validation, /"\$ENV" != "production"/);
     assert.match(validation, /"\$DEPLOY_BACKEND" != true/);
     assert.match(validation, /"\$DEPLOY_FRONTEND" != false/);
@@ -338,13 +390,7 @@ describe("one-release RLS table enablement", () => {
     );
     assert.ok(assertionStart >= 0 && assertionEnd > assertionStart);
     const assertion = migrationSource.slice(assertionStart, assertionEnd);
-    assert.match(assertion, /classpilot_session_summary_deliveries/);
-    assert.match(assertion, /passpilot_grade_students/);
-    for (const table of GOPILOT_CHILD_RLS_TABLES) assert.match(assertion, new RegExp(table));
-    for (const table of CLASSPILOT_SCHEDULE_CHANGE_RLS_TABLES) {
-      assert.match(assertion, new RegExp(table));
-    }
-    for (const table of CLASSPILOT_FAB_RLS_TABLES) assert.match(assertion, new RegExp(table));
+    assert.match(assertion, /isReviewedRlsEnforcementRequest\(requiredRlsTables\)/);
     assert.match(assertion, /RLS_GUC_ENABLED !== "true"/);
     assert.match(assertion, /enabledRlsTables\.has\(table\)/);
     assert.match(assertion, /relation\.relrowsecurity/);
@@ -375,20 +421,6 @@ describe("one-release RLS table enablement", () => {
     const defaultAllowlist = terraformVariables.match(
       /variable "rls_enabled_tables"[\s\S]*?default\s*=\s*"([^"]+)"/
     )?.[1] ?? "";
-    for (const table of GOPILOT_CHILD_RLS_TABLES) {
-      assert.equal(
-        defaultAllowlist.split(",").includes(table),
-        false,
-        `${table} must enter production only through the reviewed one-shot rollout`
-      );
-    }
-    for (const table of CLASSPILOT_SCHEDULE_CHANGE_RLS_TABLES) {
-      assert.equal(
-        defaultAllowlist.split(",").includes(table),
-        false,
-        `${table} must enter production only through the reviewed one-shot rollout`
-      );
-    }
     const productionAllowlist = productionTfvars.match(
       /^rls_enabled_tables\s*=\s*"([^"]+)"/m
     )?.[1] ?? "";
@@ -401,23 +433,26 @@ describe("one-release RLS table enablement", () => {
     }
     for (const table of CLASSPILOT_FAB_RLS_TABLES) {
       assert.equal(
-        defaultAllowlist.split(",").includes(table),
-        false,
-        `${table} must remain outside the generic/non-production default`,
-      );
-      assert.equal(
         productionAllowlist.split(",").includes(table),
         true,
         `${table} must remain in production.tfvars after verified live baseline adoption`,
       );
     }
     const productionTables = productionAllowlist.split(",");
-    assert.equal(productionTables.length, 72);
-    assert.equal(new Set(productionTables).size, 72);
-    assert.deepEqual(productionTables.slice(-CLASSPILOT_FAB_RLS_TABLES.length), [
-      ...CLASSPILOT_FAB_RLS_TABLES,
-    ]);
+    assert.equal(productionTables.length, 75);
+    assert.equal(new Set(productionTables).size, 75);
+    assert.deepEqual(productionTables, rlsRegistry.inventories.schoolPilot270PostExpand.tables);
+    assert.deepEqual(defaultAllowlist.split(","), productionTables);
+    assert.equal(rlsRegistry.inventories.historicalObservedProduction.count, 72);
+    assert.equal(rlsRegistry.inventories.historicalObservedProduction.tables.length, 72);
+    assert.deepEqual(
+      rlsRegistry.inventories.historicalObservedProduction.tables.slice(
+        -CLASSPILOT_FAB_RLS_TABLES.length,
+      ),
+      [...CLASSPILOT_FAB_RLS_TABLES],
+    );
     assert.match(claudeSource, /exact observed 72-table live/);
+    assert.match(claudeSource, /75-table 2\.7\.0/);
     assert.match(claudeSource, /Do not use the Terraform baseline to bypass/);
   });
 });

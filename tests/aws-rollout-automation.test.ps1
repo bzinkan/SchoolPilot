@@ -471,7 +471,7 @@ $global:SchoolPilotTestServiceState = @{
 $global:SchoolPilotTestAutoscalingState = [ordered]@{
     resourceId = "service/cluster/api"
     minCapacity = 1
-    maxCapacity = 8
+    maxCapacity = 6
     dynamicScalingInSuspended = $false
     dynamicScalingOutSuspended = $false
     scheduledScalingSuspended = $false
@@ -486,7 +486,7 @@ $global:SchoolPilotTestInjectDesiredAfterAutoscalingRestore = 0
 function Reset-SchoolPilotTestAutoscalingState {
     $global:SchoolPilotTestAutoscalingState.resourceId = "service/cluster/api"
     $global:SchoolPilotTestAutoscalingState.minCapacity = 1
-    $global:SchoolPilotTestAutoscalingState.maxCapacity = 8
+    $global:SchoolPilotTestAutoscalingState.maxCapacity = 6
     $global:SchoolPilotTestAutoscalingState.dynamicScalingInSuspended = $false
     $global:SchoolPilotTestAutoscalingState.dynamicScalingOutSuspended = $false
     $global:SchoolPilotTestAutoscalingState.scheduledScalingSuspended = $false
@@ -1666,7 +1666,7 @@ if ($service -eq "elbv2" -and $operation -eq "describe-target-health") { '{"Targ
 if ($service -eq "elbv2" -and $operation -eq "describe-target-group-attributes") { '{"Attributes":[{"Key":"deregistration_delay.timeout_seconds","Value":"300"},{"Key":"stickiness.enabled","Value":"false"}]}'; exit 0 }
 if ($service -eq "application-autoscaling" -and $operation -eq "describe-scalable-targets") {
   $suspended=Test-Path -LiteralPath $env:SCHOOLPILOT_TEST_AUTOSCALING_FLAG
-  @{ScalableTargets=@(@{ResourceId="service/cluster/api";MinCapacity=1;MaxCapacity=8;SuspendedState=@{DynamicScalingInSuspended=$suspended;DynamicScalingOutSuspended=$suspended;ScheduledScalingSuspended=$suspended}})}|ConvertTo-Json -Depth 8 -Compress;exit 0
+  @{ScalableTargets=@(@{ResourceId="service/cluster/api";MinCapacity=1;MaxCapacity=6;SuspendedState=@{DynamicScalingInSuspended=$suspended;DynamicScalingOutSuspended=$suspended;ScheduledScalingSuspended=$suspended}})}|ConvertTo-Json -Depth 8 -Compress;exit 0
 }
 if ($service -eq "application-autoscaling" -and $operation -eq "register-scalable-target") {
   $state=Arg "--suspended-state"
@@ -4055,7 +4055,7 @@ exit 0
         originalApiAutoscalingTarget = [ordered]@{
             resourceId = "service/other-cluster/api"
             minCapacity = 1
-            maxCapacity = 8
+            maxCapacity = 6
             suspendedState = [ordered]@{
                 dynamicScalingInSuspended = $false
                 dynamicScalingOutSuspended = $false
@@ -4484,31 +4484,21 @@ exit 0
         [int]$connectionSafeCompleted[0].details.postcondition.postAutoscalingWorkerConvergence.consecutiveStablePolls -eq 2
     ) "Completed rollback evidence must prove exact two-poll API/worker convergence for the connection-safe six-task path."
 
-    $eightTaskConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
-    $eightTaskConfig.runId = "connection-safe-application-eight"
-    [IO.File]::WriteAllText($rollbackConfigPath, ($eightTaskConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    $overCapacityConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $overCapacityConfig.runId = "connection-safe-application-over-capacity"
+    [IO.File]::WriteAllText($rollbackConfigPath, ($overCapacityConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
     $global:SchoolPilotTestServiceState.api.taskDefinition = "api-current"
     $global:SchoolPilotTestServiceState.api.desired = 8
     $global:SchoolPilotTestServiceState.api.running = 8
     $global:SchoolPilotTestServiceState.worker.taskDefinition = "worker-current"
-    $eightPayloadStart = $global:SchoolPilotTestDeploymentPayloads.Count
-    $eightTaskStart = $global:SchoolPilotTestTaskUpdateObservations.Count
-    & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null
-    $eightPayloads = @($global:SchoolPilotTestDeploymentPayloads | Select-Object -Skip $eightPayloadStart)
-    $eightTaskUpdates = @($global:SchoolPilotTestTaskUpdateObservations | Select-Object -Skip $eightTaskStart)
-    Assert-Condition (
-        $eightPayloads.Count -eq 4 -and
-        $eightPayloads[0].service -eq "api" -and
-        [int]$eightPayloads[0].configuration.maximumPercent -eq 100 -and
-        [int]$eightPayloads[0].configuration.minimumHealthyPercent -eq 87
-    ) "Eight-task Application rollback must preserve seven API tasks and prohibit overlap."
-    Assert-Condition (
-        $eightTaskUpdates.Count -eq 2 -and
-        $eightTaskUpdates[0].service -eq "api" -and
-        [int]$eightTaskUpdates[0].minimumHealthyTasks -eq 7 -and
-        [int]$eightTaskUpdates[0].maximumConcurrentTasks -eq 8 -and
-        $eightTaskUpdates[1].service -eq "worker"
-    ) "Eight-task Application rollback must converge the API before dispatching worker rollback."
+    $overCapacityRejected = $false
+    try {
+        & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null
+    }
+    catch {
+        $overCapacityRejected = $_.Exception.Message -match "above the reviewed six-task ceiling"
+    }
+    Assert-Condition $overCapacityRejected "Application rollback must reject an API posture above the six-task ceiling."
 
     $longDrainConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
     $longDrainConfig.runId = "connection-safe-long-draining-target"
@@ -4600,7 +4590,7 @@ exit 0
         originalApiAutoscalingTarget = [ordered]@{
             resourceId = "service/cluster/api"
             minCapacity = 1
-            maxCapacity = 8
+            maxCapacity = 6
             suspendedState = [ordered]@{
                 dynamicScalingInSuspended = $false
                 dynamicScalingOutSuspended = $false

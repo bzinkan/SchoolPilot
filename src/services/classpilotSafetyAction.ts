@@ -9,8 +9,23 @@ export type ClasspilotSafetyAction = {
   classifiedUrl: string;
   classifiedTitle: string;
   teachingSessionId: string | null;
-  closeTabData: { specificUrls: [string] };
+  closeTabData:
+    | { tabRefs: [string]; snapshotRevision: number }
+    | { specificUrls: [string] }
+    | null;
+  evidenceTarget: { tabRef: string; snapshotRevision: number } | null;
 };
+
+function normalizedLegacyUrl(value: string): string | null {
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Converts a safety classification into live side-effect context only when the
@@ -46,16 +61,41 @@ export function resolveCurrentClasspilotSafetyAction(options: {
   }
 
   const classifiedUrl = String(options.activeTabUrl || "");
-  if (!classifiedUrl) return null;
+  if (!classifiedUrl || snapshot.activeTabUrl !== classifiedUrl) return null;
+
+  const snapshotRevision = snapshot.tabSnapshotRevision;
+  const activeTabRef = snapshot.activeTabRef;
+  const exactTab = activeTabRef
+    ? snapshot.allOpenTabs.find(
+        (tab) => tab.tabRef === activeTabRef && tab.url === classifiedUrl
+      )
+    : undefined;
+  const extensionCapabilities = new Set(snapshot.extensionCapabilities || []);
+  const exactTabCapable = extensionCapabilities.has("exactTabCloseV1")
+    || extensionCapabilities.has("exactTabCloseV2");
+  const exactTarget = exactTabCapable && exactTab?.tabRef && snapshotRevision
+    ? { tabRef: exactTab.tabRef, snapshotRevision }
+    : null;
+
+  // Protocol-v2 compatibility may use a URL only when the complete snapshot
+  // proves it identifies exactly one tab. Missing/truncated tab data never
+  // broadens the action into closing every matching or open tab.
+  const normalizedClassifiedUrl = normalizedLegacyUrl(classifiedUrl);
+  const legacyMatches = normalizedClassifiedUrl && !snapshot.tabsTruncated
+    ? snapshot.allOpenTabs.filter((tab) => normalizedLegacyUrl(tab.url) === normalizedClassifiedUrl)
+    : [];
+  const closeTabData = exactTarget
+    ? { tabRefs: [exactTarget.tabRef] as [string], snapshotRevision: exactTarget.snapshotRevision }
+    : legacyMatches.length === 1
+      ? { specificUrls: [legacyMatches[0]!.url] as [string] }
+      : null;
 
   return {
     snapshot,
     classifiedUrl,
     classifiedTitle: String(options.activeTabTitle || ""),
     teachingSessionId: snapshot.classroomState?.teachingSessionId ?? null,
-    // The classifier may use a synthetic domain such as `search:<term>` for
-    // alert categorization/cooldown. Chrome must receive the actual observed
-    // URL, because its specificUrls contract performs an exact URL match.
-    closeTabData: { specificUrls: [classifiedUrl] },
+    closeTabData,
+    evidenceTarget: exactTarget,
   };
 }

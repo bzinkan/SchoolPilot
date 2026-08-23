@@ -14,6 +14,8 @@ import {
   materializeStudents,
   serverTrackingDisabledIntervals,
 } from "../src/services/classpilotMonitoringReports.js";
+import type { ClasspilotSessionReport, TeachingSession } from "../src/schema/classpilot.js";
+import type { ClasspilotSessionReportInput } from "../src/services/storage.js";
 import {
   assertClasspilotRetentionHours,
   parseClasspilotRetentionDays,
@@ -27,8 +29,72 @@ import {
 
 const at = (seconds: number) => new Date(Date.UTC(2026, 7, 13, 14, 0, seconds));
 
-test("heartbeat-coverage-v1 uses an exact sixty-second healthy boundary", () => {
-  assert.equal(HEARTBEAT_COVERAGE_ALGORITHM_VERSION, "heartbeat-coverage-v1");
+const typedTeachingSession: TeachingSession = {
+  id: "teaching-session",
+  groupId: "group",
+  teacherId: "teacher",
+  schoolId: "school",
+  startTime: at(0),
+  controlUpdatedAt: null,
+  sessionMode: "live",
+  scheduledConflictId: null,
+  scheduledDate: null,
+  scheduledTimezone: null,
+  scheduledStartAt: null,
+  scheduledEndAt: null,
+  scheduledTeacherEmail: null,
+  scheduledTeacherName: null,
+  classNameSnapshot: "Class",
+  timezoneSnapshot: "UTC",
+  rosterSnapshotCompletedAt: at(0),
+  scheduledState: null,
+  scheduledFinalizationReason: null,
+  endTime: at(60),
+  createdAt: at(0),
+};
+
+const typedSessionReport: ClasspilotSessionReport = {
+  id: "report",
+  schoolId: "school",
+  teachingSessionId: typedTeachingSession.id,
+  state: "ready",
+  windowStart: at(0),
+  windowEnd: at(60),
+  timezone: "UTC",
+  reportVersion: 2,
+  coverageAlgorithmVersion: "heartbeat-coverage-v2",
+  eventSchemaVersion: 2,
+  authorizationMarker: { version: 1, salt: "0123456789abcdef", digests: [] },
+  trackingPolicy: null,
+  rosterCount: 1,
+  eligibleStudentCount: 1,
+  completeCount: 1,
+  partialCount: 0,
+  noneCount: 0,
+  notExpectedCount: 0,
+  unavailableCount: 0,
+  totalEligibleSeconds: 60,
+  totalObservedSeconds: 60,
+  totalGapSeconds: 0,
+  totalUnclassifiedSeconds: 0,
+  totalOffTaskSeconds: 0,
+  totalOffTaskEventCount: 0,
+  totalSafetyAlertCount: 1,
+  settleAt: at(60),
+  attemptCount: 1,
+  leaseOwner: null,
+  leaseExpiresAt: null,
+  nextAttemptAt: at(60),
+  lastError: null,
+  materializedAt: at(60),
+  expiresAt: new Date("2026-09-13T14:01:00.000Z"),
+  detailExpiredAt: null,
+  createdAt: at(0),
+  updatedAt: at(60),
+};
+
+test("heartbeat-coverage-v2 uses an exact sixty-second healthy boundary", () => {
+  assert.equal(HEARTBEAT_COVERAGE_ALGORITHM_VERSION, "heartbeat-coverage-v2");
   assert.equal(HEARTBEAT_HEALTH_TOLERANCE_SECONDS, 60);
   const exact = calculateHeartbeatCoverage({
     windowStart: at(0),
@@ -49,6 +115,49 @@ test("heartbeat-coverage-v1 uses an exact sixty-second healthy boundary", () => 
   assert.equal(over.gapSeconds, 1);
   assert.deepEqual(over.gaps.map((gap) => [gap.start.toISOString(), gap.end.toISOString()]), [
     [at(60).toISOString(), at(61).toISOString()],
+  ]);
+});
+
+test("report v2 attributes forward for at most fifteen seconds without burst inflation", () => {
+  const result = calculateHeartbeatCoverage({
+    windowStart: at(0),
+    windowEnd: at(60),
+    authenticatedIntervals: [{ start: at(0), end: at(60), studentSessionId: "a" }],
+    heartbeats: [
+      { timestamp: at(0), url: "https://www.example.com/a?secret=1", category: "educational" },
+      { timestamp: at(0), url: "https://www.example.com/a?secret=1", category: "educational" },
+      { timestamp: at(2), url: "https://example.com/b", category: "educational" },
+      { timestamp: at(10), url: "https://example.com/c", category: "educational" },
+      { timestamp: at(40), url: "https://unknown.example/path", category: "unknown" },
+    ],
+  });
+
+  assert.equal(result.observedSeconds, 60);
+  assert.equal(result.topDomains.find((entry) => entry.domain === "example.com")?.seconds, 25);
+  assert.equal(result.topDomains.find((entry) => entry.domain === "unknown.example")?.seconds, 15);
+  assert.equal(result.topDomains.reduce((sum, entry) => sum + entry.seconds, 0), 40);
+  assert.equal(result.unclassifiedSeconds, 35);
+});
+
+test("report v2 groups off-task samples and applies teacher-intent exemptions first", () => {
+  const result = calculateHeartbeatCoverage({
+    windowStart: at(0),
+    windowEnd: at(90),
+    authenticatedIntervals: [{ start: at(0), end: at(90), studentSessionId: "a" }],
+    heartbeats: [
+      { timestamp: at(0), url: "https://games.example/a", category: "non-educational" },
+      { timestamp: at(10), url: "https://games.example/b", category: "non-educational" },
+      { timestamp: at(25), url: "https://games.example/c", category: "non-educational" },
+      { timestamp: at(50), url: "https://games.example/teacher", category: "non-educational", teacherIntentExempt: true },
+      { timestamp: at(70), url: "https://social.example/a", category: "non-educational" },
+    ],
+  });
+
+  assert.equal(result.offTaskSeconds, 55);
+  assert.equal(result.offTaskEventCount, 2);
+  assert.deepEqual(result.offTaskEvents.map((event) => [event.domain, event.seconds]), [
+    ["games.example", 40],
+    ["social.example", 15],
   ]);
 });
 
@@ -165,6 +274,74 @@ test("mid-session roster capture does not charge pre-capture authenticated time"
   assert.equal(student?.eligibleSeconds, 60);
   assert.equal(student?.heartbeatCount, 1);
   assert.equal(student?.status, "complete");
+});
+
+test("report v2 freezes exact-bound evidence availability and human review labels", () => {
+  const baseInput = {
+    session: typedTeachingSession,
+    roster: [{ studentId: "student", studentName: "Student", capturedAt: at(0) }],
+    authenticatedSessions: [{
+      id: "student-session",
+      studentId: "student",
+      startedAt: at(0),
+      endedAt: at(60),
+      lastSeenAt: at(60),
+    }],
+    heartbeats: [{
+      id: "heartbeat",
+      studentId: "student",
+      timestamp: at(10),
+      activeTabUrl: "https://unsafe.example/path?secret=yes",
+      aiCategory: "non-educational",
+      safetyAlert: "violence",
+    }],
+    aiDecisions: [{
+      id: "decision",
+      heartbeatId: "heartbeat",
+      studentId: "student",
+      domain: "unsafe.example",
+      category: "non-educational",
+      safetyAlert: "violence",
+      teacherIntentSource: null,
+      reviewStatus: "confirmed",
+      createdAt: at(11),
+    }],
+    evidenceArtifacts: [{
+      studentId: "student",
+      studentSessionId: "student-session",
+      sourceId: "heartbeat",
+      status: "available",
+    }],
+    exclusions: [],
+    monitoringEvents: [],
+    trackingPolicy: {
+      enableTrackingHours: false,
+      trackingStartTime: null,
+      trackingEndTime: null,
+      trackingDays: [],
+      schoolTimezone: "UTC",
+      afterHoursMode: "off",
+    },
+  } satisfies ClasspilotSessionReportInput;
+  const [student] = materializeStudents(typedSessionReport, baseInput);
+  assert.deepEqual(student?.safetyAlerts, [{
+    category: "violence",
+    domain: "unsafe.example",
+    occurredAt: at(10).toISOString(),
+    evidenceAvailability: "available",
+    reviewStatus: "Confirmed",
+  }]);
+
+  const [mismatched] = materializeStudents(typedSessionReport, {
+    ...baseInput,
+    evidenceArtifacts: [{
+      studentId: "student",
+      studentSessionId: "other-session",
+      sourceId: "heartbeat",
+      status: "available",
+    }],
+  });
+  assert.equal(mismatched?.safetyAlerts[0]?.evidenceAvailability, "unavailable");
 });
 
 test("tracking policy handles cross-midnight windows and DST wall-clock boundaries", () => {

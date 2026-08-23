@@ -109,15 +109,15 @@ function Invoke-CertificationAwsJson {
     }
     if ($service -eq "application-autoscaling" -and $operation -eq "describe-scheduled-actions") {
         return [pscustomobject]@{ScheduledActions=@(
-            [pscustomobject]@{ScheduledActionName="school-open";Schedule="cron(0 7 ? * MON-FRI *)";Timezone="America/New_York";ScalableTargetAction=[pscustomobject]@{MinCapacity=2;MaxCapacity=8}},
-            [pscustomobject]@{ScheduledActionName="school-close";Schedule="cron(0 17 ? * MON-FRI *)";Timezone="America/New_York";ScalableTargetAction=[pscustomobject]@{MinCapacity=1;MaxCapacity=8}}
+            [pscustomobject]@{ScheduledActionName="school-open";Schedule="cron(0 7 ? * MON-FRI *)";Timezone="America/New_York";ScalableTargetAction=[pscustomobject]@{MinCapacity=2;MaxCapacity=6}},
+            [pscustomobject]@{ScheduledActionName="school-close";Schedule="cron(0 17 ? * MON-FRI *)";Timezone="America/New_York";ScalableTargetAction=[pscustomobject]@{MinCapacity=1;MaxCapacity=6}}
         )}
     }
     if ($service -eq "application-autoscaling" -and $operation -eq "describe-scalable-targets") {
         $script:ScalableTargetCalls++
         return [pscustomobject]@{ScalableTargets=@([pscustomobject]@{
             ResourceId="service/cluster/api";ScalableDimension="ecs:service:DesiredCount"
-            MinCapacity=if($script:BadScalableTarget){5}else{6};MaxCapacity=8
+            MinCapacity=if($script:BadScalableTarget){5}else{6};MaxCapacity=6
         })}
     }
     if ($service -eq "elbv2" -and $operation -eq "describe-target-health") {
@@ -285,8 +285,8 @@ $script:EcrManifestFailure = $false
 $script:BadScalableTarget = $true
 $badTargetRejected = $false
 try { Get-CertificationTaskPreflight -Config $config -Contract $contract | Out-Null }
-catch { $badTargetRejected = $_.Exception.Message -match "min=6/max=8" }
-Assert-Condition $badTargetRejected "Night Waf preflight must reject any scalable-target lease other than min6/max8."
+catch { $badTargetRejected = $_.Exception.Message -match "min=6/max=6" }
+Assert-Condition $badTargetRejected "Night Waf preflight must reject any scalable-target lease other than min6/max6."
 $assertions++
 $script:BadScalableTarget = $false
 

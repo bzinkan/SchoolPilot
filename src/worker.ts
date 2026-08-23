@@ -5,6 +5,7 @@ import { pool, sessionPool } from "./db.js";
 import { schedulerLockPool, schedulerPool } from "./services/schedulerDb.js";
 import errorMonitor from "./services/errorMonitor.js";
 import { schedulerEnabled } from "./config/runtime.js";
+import { safeErrorMetadata } from "./util/safeLogging.js";
 
 initSentry();
 
@@ -39,7 +40,7 @@ async function shutdown(reason: string, err?: unknown): Promise<void> {
 
   if (err) {
     const error = err instanceof Error ? err : new Error(String(err));
-    console.error(`[SchedulerWorker] ${reason}:`, error);
+    console.error(`[SchedulerWorker] ${reason}:`, safeErrorMetadata(error));
     await errorMonitor.trackErrorAndFlush(
       "fatal_process_error",
       error,

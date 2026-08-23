@@ -2137,7 +2137,7 @@ $replacementLock = Enter-DiagnosticRunLock $lockConfig
 Exit-DiagnosticRunLock $replacementLock
 
 $script:restoreCalls = [System.Collections.Generic.List[object]]::new()
-$script:restoredScaling = [ordered]@{minCapacity=1;maxCapacity=8;suspendedState=[ordered]@{DynamicScalingInSuspended=$false;DynamicScalingOutSuspended=$false;ScheduledScalingSuspended=$false};scheduledActionsSha256='schedule';scalingPoliciesSha256='policy'}
+$script:restoredScaling = [ordered]@{minCapacity=1;maxCapacity=6;suspendedState=[ordered]@{DynamicScalingInSuspended=$false;DynamicScalingOutSuspended=$false;ScheduledScalingSuspended=$false};scheduledActionsSha256='schedule';scalingPoliciesSha256='policy'}
 $script:restoredServices = [ordered]@{api=[ordered]@{desired=2;running=2};worker=[ordered]@{desired=1;running=1}}
 function Set-ScalingTarget {
     param($Config,[int]$Minimum,[int]$Maximum,$SuspendedState)

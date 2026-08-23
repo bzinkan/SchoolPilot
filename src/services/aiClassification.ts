@@ -1,4 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
+import {
+  recordRuntimePerformanceCounter,
+  recordRuntimePerformanceTiming,
+} from "./runtimePerformanceMetrics.js";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
@@ -23,6 +27,80 @@ export interface AiClassificationOptions {
 const classificationCache = new Map<string, AiClassification>();
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const MAX_CACHE_SIZE = 5000;
+export const AI_PROVIDER_MAX_CONCURRENCY = 10;
+export const AI_PROVIDER_MAX_QUEUE = 100;
+export const AI_PROVIDER_TIMEOUT_MS = 10_000;
+const inFlightUrlClassifications = new Map<string, Promise<AiClassification>>();
+
+type ProviderWaiter = {
+  resolve: (release: (() => void) | null) => void;
+  timer: NodeJS.Timeout;
+};
+
+let activeProviderCalls = 0;
+const providerQueue: ProviderWaiter[] = [];
+
+function releaseProviderPermit(): void {
+  const next = providerQueue.shift();
+  if (next) {
+    clearTimeout(next.timer);
+    next.resolve(releaseProviderPermit);
+    return;
+  }
+  activeProviderCalls = Math.max(0, activeProviderCalls - 1);
+}
+
+function acquireProviderPermit(): Promise<(() => void) | null> {
+  if (activeProviderCalls < AI_PROVIDER_MAX_CONCURRENCY) {
+    activeProviderCalls += 1;
+    return Promise.resolve(releaseProviderPermit);
+  }
+  if (providerQueue.length >= AI_PROVIDER_MAX_QUEUE) {
+    recordRuntimePerformanceCounter("aiProviderSaturated");
+    return Promise.resolve(null);
+  }
+  return new Promise((resolve) => {
+    const waiter: ProviderWaiter = {
+      resolve,
+      timer: setTimeout(() => {
+        const index = providerQueue.indexOf(waiter);
+        if (index >= 0) providerQueue.splice(index, 1);
+        resolve(null);
+      }, AI_PROVIDER_TIMEOUT_MS),
+    };
+    waiter.timer.unref?.();
+    providerQueue.push(waiter);
+  });
+}
+
+async function runBoundedProviderCall<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T | null> {
+  const release = await acquireProviderPermit();
+  if (!release) return null;
+  const startedAt = performance.now();
+  recordRuntimePerformanceCounter("aiProviderCalls");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), AI_PROVIDER_TIMEOUT_MS);
+  timeout.unref?.();
+  try {
+    return await operation(controller.signal);
+  } catch {
+    recordRuntimePerformanceCounter(controller.signal.aborted ? "aiProviderTimeouts" : "aiProviderFailures");
+    return null;
+  } finally {
+    recordRuntimePerformanceTiming("aiProviderMs", performance.now() - startedAt);
+    clearTimeout(timeout);
+    release();
+  }
+}
+
+function unknownUrlClassification(domain: string): AiClassification {
+  return {
+    category: "unknown",
+    safetyAlert: null,
+    domain,
+    classifiedAt: Date.now(),
+  };
+}
 
 function extractDomain(url: string): string {
   try {
@@ -228,14 +306,16 @@ export async function classifyUrl(
     });
   }
 
-  try {
-    const response = await anthropic.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 150,
-      messages: [
-        {
-          role: "user",
-          content: `You are a K-12 school web content classifier. Given a URL and page title from a student's Chromebook, classify the content. Respond ONLY with valid JSON, no other text:
+  const existingClassification = inFlightUrlClassifications.get(cacheKey);
+  if (existingClassification) return existingClassification;
+  const classification = (async (): Promise<AiClassification> => {
+    const response = await runBoundedProviderCall((signal) => anthropic!.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 150,
+        messages: [
+          {
+            role: "user",
+            content: `You are a K-12 school web content classifier. Given a URL and page title from a student's Chromebook, classify the content. Respond ONLY with valid JSON, no other text:
 {"category":"educational"|"non-educational"|"unknown","safetyAlert":"self-harm"|"violence"|"sexual"|"drugs"|null}
 
 Rules:
@@ -247,20 +327,32 @@ Rules:
 
 URL: ${url}
 Title: ${title || "Unknown"}`,
-        },
-      ],
-    });
+          },
+        ],
+      }, { signal }));
+
+    if (!response) return unknownUrlClassification(domain);
 
     const text = response.content[0]?.type === "text" ? response.content[0].text.trim() : null;
-    if (!text) return null;
+    if (!text) return unknownUrlClassification(domain);
 
-    const parsed = JSON.parse(text);
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      return unknownUrlClassification(domain);
+    }
     const category = parsed.category === "educational" || parsed.category === "non-educational"
       ? parsed.category
       : "unknown";
-    const safetyAlert = ["self-harm", "violence", "sexual", "drugs"].includes(parsed.safetyAlert)
-      ? parsed.safetyAlert
-      : null;
+    const parsedSafetyAlert = typeof parsed.safetyAlert === "string" ? parsed.safetyAlert : null;
+    const safetyAlert: AiClassification["safetyAlert"] =
+      parsedSafetyAlert === "self-harm" ||
+      parsedSafetyAlert === "violence" ||
+      parsedSafetyAlert === "sexual" ||
+      parsedSafetyAlert === "drugs"
+        ? parsedSafetyAlert
+        : null;
     const result: AiClassification = {
       category,
       safetyAlert,
@@ -269,10 +361,9 @@ Title: ${title || "Unknown"}`,
     };
 
     return cacheClassification(cacheKey, result);
-  } catch (error) {
-    console.error("[AI Classification] Error:", error);
-    return null;
-  }
+  })().finally(() => inFlightUrlClassifications.delete(cacheKey));
+  inFlightUrlClassifications.set(cacheKey, classification);
+  return classification;
 }
 
 // ============================================================================
@@ -343,13 +434,25 @@ Subject: ${subject}
 Body:
 ${truncatedBody}`;
 
-  try {
-    const response = await anthropic.messages.create({
+  const response = await runBoundedProviderCall((signal) => anthropic!.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 400,
       messages: [{ role: "user", content: prompt }],
-    });
+    }, { signal }));
 
+  if (!response) {
+    return {
+      category: "unknown",
+      safetyAlert: null,
+      bullying: false,
+      confidence: 0,
+      severity: "low",
+      reasoning: "Classification unavailable",
+      classifiedAt: Date.now(),
+    };
+  }
+
+  try {
     const text = response.content[0]?.type === "text" ? response.content[0].text.trim() : null;
     if (!text) return null;
 
@@ -368,8 +471,17 @@ ${truncatedBody}`;
       reasoning: String(parsed.reasoning || "").slice(0, 500),
       classifiedAt: Date.now(),
     };
-  } catch (error) {
-    console.error("[AI Classification] classifyEmail error:", error);
-    return null;
+  } catch {
+    // Provider bodies and prompts can contain student data, so errors are
+    // intentionally not serialized to logs or telemetry.
+    return {
+      category: "unknown",
+      safetyAlert: null,
+      bullying: false,
+      confidence: 0,
+      severity: "low",
+      reasoning: "Classification unavailable",
+      classifiedAt: Date.now(),
+    };
   }
 }

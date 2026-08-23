@@ -31,6 +31,18 @@ import {
   isDisabledNativeGoPilotOAuthRedirect,
   rejectGoPilotParentRegistration,
 } from "../util/gopilotParentContainment.js";
+import {
+  buildVerifiedSchoolIdentities,
+  type VerifiedSchoolIdentity,
+} from "../services/schoolIdentity.js";
+
+const GOPILOT_ROLE_PRIORITY = [
+  "admin",
+  "school_admin",
+  "office_staff",
+  "teacher",
+  "parent",
+] as const;
 
 function clientIp(req: any): string | undefined {
   // Trust proxy is set by the app — this gives us the client IP, not ALB
@@ -39,6 +51,44 @@ function clientIp(req: any): string | undefined {
 
 function headerString(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
+}
+
+function serializeSchoolIdentity(identity: VerifiedSchoolIdentity) {
+  const goPilotRoles = [...new Set(identity.memberships.map((membership) =>
+    membership.gopilotRole || membership.role
+  ))].sort((left, right) =>
+    GOPILOT_ROLE_PRIORITY.indexOf(left as typeof GOPILOT_ROLE_PRIORITY[number])
+    - GOPILOT_ROLE_PRIORITY.indexOf(right as typeof GOPILOT_ROLE_PRIORITY[number])
+  );
+  const effectiveGoPilotRole = goPilotRoles[0] || identity.primaryRole;
+  return {
+    id: identity.primaryMembership.id,
+    schoolId: identity.schoolId,
+    role: identity.primaryRole,
+    roles: identity.roles,
+    primaryRole: identity.primaryRole,
+    gopilotRole: effectiveGoPilotRole,
+    gopilotRoles: goPilotRoles,
+    schoolName: identity.school.name,
+    schoolTimezone: identity.school.schoolTimezone,
+    kioskEnabled: identity.school.kioskEnabled,
+    kioskRequiresApproval: identity.school.kioskRequiresApproval,
+    defaultPassDuration: identity.school.defaultPassDuration,
+    activeGradeLevels: identity.school.activeGradeLevels,
+    mailpilotEntitled: identity.school.mailpilotEntitled,
+    classpilotEmailMonitoring: identity.school.classpilotEmailMonitoring,
+    ...(effectiveGoPilotRole !== "parent"
+      ? {
+          dismissalTime: identity.school.dismissalTime,
+          carNumber:
+            identity.memberships.find((membership) => membership.carNumber)
+              ?.carNumber ?? null,
+        }
+      : {}),
+    kioskName:
+      identity.memberships.find((membership) => membership.kioskName)
+        ?.kioskName ?? null,
+  };
 }
 
 const router = Router();
@@ -91,7 +141,7 @@ router.post("/login", authLimiter, async (req, res, next) => {
         metadata: { reason: "bad_password", ip: clientIp(req), lockoutTriggered: triggered },
       });
       if (triggered) {
-        console.warn(`[Security] Account locked after failed attempts: ${email}`);
+        console.warn("[Security] Account locked after repeated failed attempts");
       }
       return res.status(401).json({ error: "Invalid email or password" });
     }
@@ -101,8 +151,11 @@ router.post("/login", authLimiter, async (req, res, next) => {
 
     // Get memberships
     const membershipsWithSchool = await getMembershipsWithSchool(user.id);
-    const firstMembership = membershipsWithSchool[0];
-    if (!user.isSuperAdmin && !firstMembership) {
+    const schoolIdentities = buildVerifiedSchoolIdentities(membershipsWithSchool);
+    const selectedIdentity = schoolIdentities.length === 1
+      ? schoolIdentities[0]
+      : undefined;
+    if (!user.isSuperAdmin && schoolIdentities.length === 0) {
       await logAudit({
         userId: user.id,
         userEmail: user.email,
@@ -119,9 +172,9 @@ router.post("/login", authLimiter, async (req, res, next) => {
       email: user.email,
       role: user.isSuperAdmin
         ? "super_admin"
-        : firstMembership?.membership.role || "teacher",
-      schoolId: firstMembership?.membership.schoolId || null,
-      schoolSessionVersion: firstMembership?.school.schoolSessionVersion,
+        : selectedIdentity?.primaryRole || schoolIdentities[0]?.primaryRole || "teacher",
+      schoolId: selectedIdentity?.schoolId || null,
+      schoolSessionVersion: selectedIdentity?.school.schoolSessionVersion,
     });
 
     // Generate JWT (for GoPilot clients)
@@ -141,10 +194,10 @@ router.post("/login", authLimiter, async (req, res, next) => {
 
     // Audit: successful login
     await logAudit({
-      schoolId: firstMembership?.membership.schoolId ?? null,
+      schoolId: selectedIdentity?.schoolId ?? null,
       userId: user.id,
       userEmail: user.email,
-      userRole: user.isSuperAdmin ? "super_admin" : firstMembership?.membership.role,
+      userRole: user.isSuperAdmin ? "super_admin" : selectedIdentity?.primaryRole,
       action: "auth.login.success",
       metadata: { ip: clientIp(req), method: "password" },
     });
@@ -154,23 +207,11 @@ router.post("/login", authLimiter, async (req, res, next) => {
     return res.json({
       token,
       user: safeUser,
-      memberships: membershipsWithSchool.map((m) => ({
-        id: m.membership.id,
-        schoolId: m.membership.schoolId,
-        role: m.membership.role,
-        gopilotRole: m.membership.gopilotRole,
-        schoolName: m.school.name,
-        schoolTimezone: m.school.schoolTimezone,
-        kioskEnabled: m.school.kioskEnabled,
-        kioskRequiresApproval: m.school.kioskRequiresApproval,
-        defaultPassDuration: m.school.defaultPassDuration,
-        activeGradeLevels: m.school.activeGradeLevels,
-        mailpilotEntitled: m.school.mailpilotEntitled,
-        classpilotEmailMonitoring: m.school.classpilotEmailMonitoring,
-        ...((m.membership.gopilotRole || m.membership.role) !== "parent"
-          ? { dismissalTime: m.school.dismissalTime }
-          : {}),
-      })),
+      activeSchoolId: selectedIdentity?.schoolId ?? null,
+      schoolSelectionRequired: !user.isSuperAdmin && schoolIdentities.length > 1,
+      roles: selectedIdentity?.roles ?? [],
+      primaryRole: selectedIdentity?.primaryRole ?? null,
+      memberships: schoolIdentities.map(serializeSchoolIdentity),
     });
   } catch (err) {
     next(err);
@@ -294,25 +335,33 @@ router.get("/me", authenticate, async (req, res, next) => {
       (req.session as any).originalUserId
     );
 
+    const schoolIdentities = buildVerifiedSchoolIdentities(membershipsWithSchool);
     const requestedSchoolId = headerString(req.headers["x-school-id"]);
-    const requestedMembership = requestedSchoolId
-      ? membershipsWithSchool.find((m) => m.membership.schoolId === requestedSchoolId)
+    const requestedIdentity = requestedSchoolId
+      ? schoolIdentities.find((identity) => identity.schoolId === requestedSchoolId)
       : undefined;
-    const sessionMembership = req.session?.schoolId
-      ? membershipsWithSchool.find((m) => m.membership.schoolId === req.session.schoolId)
+    if (requestedSchoolId && !requestedIdentity && !req.authUser.isSuperAdmin) {
+      return res.status(403).json({ error: "No access to this school" });
+    }
+    const sessionIdentity = req.session?.schoolId
+      ? schoolIdentities.find((identity) => identity.schoolId === req.session.schoolId)
       : undefined;
-    const activeMembership =
-      requestedMembership || sessionMembership || membershipsWithSchool[0];
+    const schoolSelectionRequired = Boolean(
+      !requestedIdentity && !sessionIdentity && schoolIdentities.length > 1
+    );
+    const activeIdentity = schoolSelectionRequired
+      ? undefined
+      : requestedIdentity || sessionIdentity || schoolIdentities[0];
 
-    if (req.authMethod === "session" && activeMembership) {
-      req.session.schoolId = activeMembership.membership.schoolId;
-      req.session.role = activeMembership.membership.role;
+    if (req.authMethod === "session" && activeIdentity) {
+      req.session.schoolId = activeIdentity.schoolId;
+      req.session.role = activeIdentity.primaryRole;
       req.session.schoolSessionVersion =
-        activeMembership.school.schoolSessionVersion ?? 1;
+        activeIdentity.school.schoolSessionVersion ?? 1;
     }
 
     // Resolve product licenses for the verified active school.
-    const schoolId = activeMembership?.membership.schoolId;
+    const schoolId = activeIdentity?.schoolId;
     let licenses = { classPilot: false, passPilot: false, goPilot: false };
     if (schoolId) {
       const productLicenses = await getProductLicenses(schoolId);
@@ -343,26 +392,11 @@ router.get("/me", authenticate, async (req, res, next) => {
       },
       token,
       activeSchoolId: schoolId || null,
+      schoolSelectionRequired,
+      roles: activeIdentity?.roles ?? [],
+      primaryRole: activeIdentity?.primaryRole ?? null,
       licenses,
-      memberships: membershipsWithSchool.map((m) => ({
-        id: m.membership.id,
-        schoolId: m.membership.schoolId,
-        role: m.membership.role,
-        gopilotRole: m.membership.gopilotRole,
-        schoolName: m.school.name,
-        schoolTimezone: m.school.schoolTimezone,
-        kioskEnabled: m.school.kioskEnabled,
-        kioskRequiresApproval: m.school.kioskRequiresApproval,
-        defaultPassDuration: m.school.defaultPassDuration,
-        activeGradeLevels: m.school.activeGradeLevels,
-        ...((m.membership.gopilotRole || m.membership.role) !== "parent"
-          ? {
-              dismissalTime: m.school.dismissalTime,
-              carNumber: m.membership.carNumber,
-            }
-          : {}),
-        kioskName: m.membership.kioskName,
-      })),
+      memberships: schoolIdentities.map(serializeSchoolIdentity),
     });
   } catch (err) {
     next(err);
@@ -535,8 +569,12 @@ router.get("/google/callback", async (req, res, next) => {
 
     // Get memberships for session
     const membershipsWithSchool = await getMembershipsWithSchool(user.id);
-    const firstMembership = membershipsWithSchool[0];
-    if (!user.isSuperAdmin && !firstMembership) {
+    const schoolIdentities = buildVerifiedSchoolIdentities(membershipsWithSchool);
+    const selectedIdentity = schoolIdentities.length === 1
+      ? schoolIdentities[0]
+      : undefined;
+    const firstIdentity = schoolIdentities[0];
+    if (!user.isSuperAdmin && schoolIdentities.length === 0) {
       await logAudit({
         userId: user.id,
         userEmail: user.email,
@@ -552,7 +590,7 @@ router.get("/google/callback", async (req, res, next) => {
       .find((domain) => !!domain && domain === emailDomain);
     if (!user.isSuperAdmin && expectedHostedDomain && hostedDomain !== expectedHostedDomain) {
       await logAudit({
-        schoolId: firstMembership?.membership.schoolId ?? null,
+        schoolId: selectedIdentity?.schoolId ?? null,
         action: "auth.rejected",
         userEmail: profile.email,
         metadata: {
@@ -570,9 +608,9 @@ router.get("/google/callback", async (req, res, next) => {
       email: user.email,
       role: user.isSuperAdmin
         ? "super_admin"
-        : firstMembership?.membership.role || "teacher",
-      schoolId: firstMembership?.membership.schoolId || null,
-      schoolSessionVersion: firstMembership?.school.schoolSessionVersion,
+        : selectedIdentity?.primaryRole || firstIdentity?.primaryRole || "teacher",
+      schoolId: selectedIdentity?.schoolId || null,
+      schoolSessionVersion: selectedIdentity?.school.schoolSessionVersion,
     });
 
     // Generate JWT so the frontend can authenticate immediately
@@ -590,7 +628,12 @@ router.get("/google/callback", async (req, res, next) => {
 
     let redirectAfter = savedRedirect;
 
-    const gopilotRole = firstMembership?.membership.gopilotRole || firstMembership?.membership.role;
+    const firstProductMembership = firstIdentity
+      ? firstIdentity.memberships.find((membership) => membership.gopilotRole) ??
+        firstIdentity.primaryMembership
+      : undefined;
+    const gopilotRole =
+      firstProductMembership?.gopilotRole || firstIdentity?.primaryRole;
 
     // Resolve /gopilot to the correct role-based path. Historical parent
     // accounts remain valid identities for unrelated products, but may not be
@@ -613,12 +656,12 @@ router.get("/google/callback", async (req, res, next) => {
     // instead of the JWT. Client exchanges the code via POST /auth/exchange-code.
     // Avoids leaking JWTs to browser history, Referer headers, server logs,
     // and native deep-link logs.
-    const oneTimeCode = issueAuthCode(token);
+    const oneTimeCode = await issueAuthCode(token);
 
     // Web login: go to /login as usual
     return res.redirect(`${frontendUrl}/login?code=${encodeURIComponent(oneTimeCode)}`);
   } catch (err) {
-    console.error("[auth] Google OAuth callback error:", err);
+    console.error("[auth] Google OAuth callback failed");
     const frontendUrl = getFrontendUrl();
     return res.redirect(`${frontendUrl}/login?error=oauth_failed`);
   }
@@ -649,16 +692,20 @@ router.post("/logout", (req, res) => {
 // POST /api/auth/exchange-code
 // Trade a one-time code (issued by Google OAuth callback) for the JWT.
 // Code is single-use and expires after 60 seconds. Returns 400 if invalid/expired.
-router.post("/exchange-code", (req, res) => {
+router.post("/exchange-code", async (req, res, next) => {
   const { code } = req.body || {};
   if (typeof code !== "string" || !code) {
     return res.status(400).json({ error: "code required" });
   }
-  const token = consumeAuthCode(code);
-  if (!token) {
-    return res.status(400).json({ error: "Invalid or expired code" });
+  try {
+    const token = await consumeAuthCode(code);
+    if (!token) {
+      return res.status(400).json({ error: "Invalid or expired code" });
+    }
+    return res.json({ token });
+  } catch (error) {
+    return next(error);
   }
-  return res.json({ token });
 });
 
 // GET /api/auth/csrf

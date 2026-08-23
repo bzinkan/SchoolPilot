@@ -7,6 +7,7 @@ import { isRedisBroadcastReady, isRedisPublisherReady } from "../realtime/ws-red
 
 export const CLASSPILOT_DASHBOARD_SNAPSHOT_CHUNK_SIZE = 2_500;
 export const CLASSPILOT_DASHBOARD_SCHOOL_CACHE_TTL_MS = 5_000;
+export const CLASSPILOT_DASHBOARD_SCHOOL_CACHE_MAX_ENTRIES = 4_096;
 
 export type ClasspilotDashboardSnapshotRow = {
   studentId: string;
@@ -83,16 +84,32 @@ export function createClasspilotDashboardSchoolTimezoneCache(options: {
   canUse(schoolId: string): boolean;
   now?: () => number;
   onEvent?: (event: SchoolTimezoneCacheEvent) => void;
+  maxEntries?: number;
 }) {
   const cache = new Map<string, { expiresAt: number; value: string | null }>();
   const loads = new Map<string, Promise<string | null>>();
   const generations = new Map<string, number>();
   const now = options.now ?? Date.now;
+  const maxEntries = Math.max(1, options.maxEntries ?? CLASSPILOT_DASHBOARD_SCHOOL_CACHE_MAX_ENTRIES);
+
+  const trim = <Value>(map: Map<string, Value>): void => {
+    while (map.size > maxEntries) {
+      const oldest = map.keys().next().value;
+      if (!oldest) break;
+      map.delete(oldest);
+    }
+  };
 
   const invalidate = (schoolId: string): void => {
     cache.delete(schoolId);
+    const hadInFlightLoad = loads.has(schoolId);
     loads.delete(schoolId);
-    generations.set(schoolId, (generations.get(schoolId) ?? 0) + 1);
+    if (hadInFlightLoad) {
+      generations.set(schoolId, (generations.get(schoolId) ?? 0) + 1);
+      trim(generations);
+    } else {
+      generations.delete(schoolId);
+    }
     options.onEvent?.("invalidation");
   };
 
@@ -104,6 +121,8 @@ export function createClasspilotDashboardSchoolTimezoneCache(options: {
 
     const cached = cache.get(schoolId);
     if (cached && cached.expiresAt > now()) {
+      cache.delete(schoolId);
+      cache.set(schoolId, cached);
       options.onEvent?.("hit");
       return cached.value;
     }
@@ -113,6 +132,13 @@ export function createClasspilotDashboardSchoolTimezoneCache(options: {
     if (pending) {
       options.onEvent?.("hit");
       return pending;
+    }
+
+    if (loads.size >= maxEntries) {
+      // Timezone is presentation data. On saturation, bypassing the cache is
+      // safe and keeps the bounded optimization from becoming an authority.
+      options.onEvent?.("bypass");
+      return options.load(schoolId);
     }
 
     options.onEvent?.("miss");
@@ -125,11 +151,15 @@ export function createClasspilotDashboardSchoolTimezoneCache(options: {
             expiresAt: now() + CLASSPILOT_DASHBOARD_SCHOOL_CACHE_TTL_MS,
             value,
           });
+          trim(cache);
         }
         return value;
       })
       .finally(() => {
         if (loads.get(schoolId) === next) loads.delete(schoolId);
+        if ((generations.get(schoolId) ?? 0) === generation) {
+          generations.delete(schoolId);
+        }
       });
     loads.set(schoolId, next);
     return next;

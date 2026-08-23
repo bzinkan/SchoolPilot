@@ -34,7 +34,7 @@ describe("GoPilot scheduler clock policy", () => {
     );
   });
 
-  it("rechecks licensing, explicit enablement, and instructional day under the calendar lock", () => {
+  it("rechecks canonical entitlement, explicit enablement, and instructional day under the calendar lock", () => {
     const scheduler = source("src/services/scheduler.ts");
     const autoStart = scheduler.slice(
       scheduler.indexOf("async function autoStartDismissal"),
@@ -42,8 +42,10 @@ describe("GoPilot scheduler clock policy", () => {
     );
     assert.match(autoStart, /withInstructionalCalendarDateLock/);
     assert.match(autoStart, /eq\(schools\.gopilotAutoStartEnabled, true\)/);
-    assert.match(autoStart, /eq\(productLicenses\.product, "GOPILOT"\)/);
-    assert.match(autoStart, /gt\(productLicenses\.expiresAt, sql`NOW\(\)`\)/);
+    assert.match(autoStart, /resolveGopilotEntitlement\(/);
+    assert.match(autoStart, /lock: "update"/);
+    assert.match(scheduler, /gopilotSchoolEntitlementPredicate\(entitlementNow\)/);
+    assert.match(scheduler, /gopilotLicenseEntitlementPredicate\(entitlementNow\)/);
     assert.match(autoStart, /getInstructionalDateStatus\([\s\S]*?schoolId,[\s\S]*?currentClock\.localDate,[\s\S]*?transactionDb/);
     assert.match(autoStart, /\.for\("update", \{ of: schools \}\)/);
     assert.match(autoStart, /evaluateGoPilotAutoStartClock/);
@@ -156,9 +158,9 @@ describe("GoPilot dismissal concurrency and data contracts", () => {
 
   it("exposes GoPilot instructional calendar without a ClassPilot license", () => {
     const calendar = source("src/routes/gopilot/instructionalCalendar.ts");
-    assert.match(calendar, /requireProductLicense\("GOPILOT"\)/);
+    assert.match(calendar, /requireGopilotEntitlement/);
     assert.match(calendar, /requireGoPilotRole\("admin", "school_admin"\)/);
-    assert.doesNotMatch(calendar, /requireProductLicense\("CLASSPILOT"\)/);
+    assert.doesNotMatch(calendar, /CLASSPILOT/);
   });
 
   it("keeps GoPilot attendance scoping opt-in and homeroom-scopes teachers", () => {

@@ -1,5 +1,6 @@
 import { useAuth } from '../contexts/AuthContext';
 import { queryClient } from '../lib/queryClient';
+import { hasMembershipRole, membershipRoles, primaryMembershipRole } from '../shared/utils/schoolRoles';
 
 /**
  * Adapter hook that maps the unified AuthContext to the shape
@@ -16,7 +17,8 @@ export function usePassPilotAuth() {
   } = useAuth();
 
   // Derive the PassPilot role from the unified membership role
-  const membershipRole = activeMembership?.role || null;
+  const membershipRole = primaryMembershipRole(activeMembership);
+  const roles = membershipRoles(activeMembership);
   let role = null;
   if (membershipRole === 'admin' || membershipRole === 'school_admin') {
     role = 'school_admin';
@@ -32,6 +34,7 @@ export function usePassPilotAuth() {
         id: unifiedUser.id,
         email: unifiedUser.email,
         role,
+        roles,
         displayName:
           [unifiedUser.firstName, unifiedUser.lastName].filter(Boolean).join(' ') ||
           unifiedUser.email,
@@ -56,9 +59,9 @@ export function usePassPilotAuth() {
     : null;
 
   const isAuthenticated = !!unifiedUser;
-  const isAdmin = role === 'school_admin';
-  const isSchoolwideManager = isAdmin || role === 'office_staff';
-  const isTeacher = role === 'teacher';
+  const isAdmin = hasMembershipRole(activeMembership, 'admin', 'school_admin');
+  const isSchoolwideManager = isAdmin || hasMembershipRole(activeMembership, 'office_staff');
+  const isTeacher = hasMembershipRole(activeMembership, 'teacher');
 
   return {
     user,

@@ -735,7 +735,7 @@ try {
         }
         Targets=[pscustomobject]@{total=1;healthy=1;nonHealthy=0}
         Scaling=[pscustomobject]@{
-            resourceId="service/cluster/api";minCapacity=1;maxCapacity=8
+            resourceId="service/cluster/api";minCapacity=1;maxCapacity=6
             suspendedState=[pscustomobject]@{
                 DynamicScalingInSuspended=$false
                 DynamicScalingOutSuspended=$false
@@ -889,7 +889,7 @@ try {
     } "current generator IPv4" "Validate must reject generator-IP drift."
 
     $scalingContract = [pscustomobject]@{
-        minCapacity=1;maxCapacity=8
+        minCapacity=1;maxCapacity=6
         suspendedState=[pscustomobject]@{
             DynamicScalingInSuspended=$false
             DynamicScalingOutSuspended=$false
@@ -922,7 +922,7 @@ try {
     }
     Assert-ProductionScalingContract $scalingContract
     $heldScaling = [pscustomobject]@{
-        minCapacity=6;maxCapacity=8
+        minCapacity=6;maxCapacity=6
         suspendedState=[pscustomobject]@{
             DynamicScalingInSuspended=$false
             DynamicScalingOutSuspended=$true
@@ -1208,7 +1208,7 @@ try {
             Waf=[ordered]@{defaultAction="ALLOW";deviceRuleAction="BLOCK";apiRuleAction="BLOCK"}
             Route53=[ordered]@{measureLatency=$true;alarmState="OK"}
             Scaling=[ordered]@{
-                minCapacity=1;maxCapacity=8
+                minCapacity=1;maxCapacity=6
                 scheduledActionsSha256=("a" * 64)
                 scalingPoliciesSha256=("b" * 64)
                 suspendedState=[ordered]@{
@@ -1225,13 +1225,13 @@ try {
             schemaVersion=1;runId=$Stage.RunId;engineeringAcceptance=$true
             restored=$true;completedAtUtc=[DateTimeOffset]::UtcNow.ToString("o")
             target=[ordered]@{
-                apiDesiredCount=1;minCapacity=1;maxCapacity=8
+                apiDesiredCount=1;minCapacity=1;maxCapacity=6
                 scheduledActionsSha256=$initialPosture.Scaling.scheduledActionsSha256
                 scalingPoliciesSha256=$initialPosture.Scaling.scalingPoliciesSha256
                 suspendedState=$initialPosture.Scaling.suspendedState
             }
             observed=[ordered]@{
-                minCapacity=1;maxCapacity=8
+                minCapacity=1;maxCapacity=6
                 scheduledActionsSha256=$initialPosture.Scaling.scheduledActionsSha256
                 scalingPoliciesSha256=$initialPosture.Scaling.scalingPoliciesSha256
                 suspendedState=$initialPosture.Scaling.suspendedState
@@ -1608,7 +1608,7 @@ try {
             TaskArn="arn:task/old";TaskDefinitionArn=$runnerRollbackWorker
         }
         Scaling=[pscustomobject]@{
-            minCapacity=1;maxCapacity=8
+            minCapacity=1;maxCapacity=6
             suspendedState=[ordered]@{
                 DynamicScalingInSuspended=$false
                 DynamicScalingOutSuspended=$false
@@ -2137,7 +2137,7 @@ try {
                     api=[pscustomobject]@{desired=1}
                     worker=[pscustomobject]@{desired=1}
                 }
-                Scaling=[pscustomobject]@{minCapacity=1;maxCapacity=8;
+                Scaling=[pscustomobject]@{minCapacity=1;maxCapacity=6;
                     suspendedState=[pscustomobject]@{}}
             }
             function Get-ProductionPosture {

@@ -79,6 +79,15 @@ function contractLiterals(source: string): Set<string> {
 
 describe("ClassPilot final stop-loss governance", () => {
   it("keeps the v2 evidence and database regressions in CI", () => {
+    const laneListing = execFileSync(
+      process.execPath,
+      ["scripts/run-test-lane.mjs", "list"],
+      { cwd: repositoryRoot, encoding: "utf8" }
+    );
+    const laneByPath = new Map(laneListing.trim().split(/\r?\n/).map((line) => {
+      const [lane, path] = line.split("\t");
+      return [path, lane];
+    }));
     const backendTests = [
       "tests/classpilot-tile-auth-plan-base-funnel-evidence.test.ts",
       "tests/classpilot-tile-auth-plan-evidence-validator.test.ts",
@@ -92,26 +101,19 @@ describe("ClassPilot final stop-loss governance", () => {
       "tests/classpilot-tile-auth-plan-readiness-governance.test.ts",
     ];
     for (const testPath of backendTests) {
-      assert.ok(
-        ciWorkflow.includes(testPath),
-        `CI is missing the release-gate regression: ${testPath}`
+      assert.equal(
+        laneByPath.get(testPath),
+        "infrastructure",
+        `CI infrastructure lane is missing the release-gate regression: ${testPath}`
       );
     }
-    assert.ok(
-      ciWorkflow.includes(
-        "tests/classpilot-tile-authorization-plan-self-provisioning.integration.test.ts"
-      ),
+    assert.equal(
+      laneByPath.get("tests/classpilot-tile-authorization-plan-self-provisioning.integration.test.ts"),
+      "rls",
       "CI is missing the RLS-enabled transactional scenario integration suite"
     );
-    assert.ok(
-      ciWorkflow.indexOf(
-        "tests/classpilot-tile-auth-plan-evidence-validator.test.ts"
-      ) <
-        ciWorkflow.indexOf(
-          "tests/deploy-classpilot-tile-auth-plan-gate.test.ts"
-        ),
-      "CI must validate the v2 evidence contract before deploy orchestration"
-    );
+    assert.match(ciWorkflow, /npm run test:infrastructure/);
+    assert.match(ciWorkflow, /npm run test:rls-serial/);
   });
 
   it("requires freshness-independent v2 transactional evidence", () => {

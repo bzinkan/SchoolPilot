@@ -1,4 +1,5 @@
 import { drizzle } from "drizzle-orm/node-postgres";
+import { createHash } from "node:crypto";
 import pg from "pg";
 import * as schema from "./schema/index.js";
 import { getTenantStore, rlsGucEnabled } from "./db/tenantContext.js";
@@ -10,6 +11,7 @@ import {
   databasePoolMinimums,
   prewarmDatabasePool,
 } from "./config/databasePools.js";
+import { safeErrorMetadata } from "./util/safeLogging.js";
 
 // SOC 2 / SC-7: enforce TLS verify-full to AWS RDS using the bundled CA chain.
 // The Docker image ships /app/rds-ca.pem from AWS' truststore so we can verify
@@ -23,6 +25,24 @@ if (!url) {
 const poolLimits = databasePoolLimits();
 const poolMinimums = databasePoolMinimums();
 const poolIdleTimeouts = databasePoolIdleTimeouts();
+
+const databaseQueryDiagnosticsEnabled = /^(1|true|yes|on)$/i.test(
+  process.env.DB_QUERY_DIAGNOSTICS || ""
+);
+const redactedQueryLogger = {
+  logQuery(query: string, params: unknown[]): void {
+    const statement = query.trim().split(/\s+/, 1)[0]?.toLowerCase() || "unknown";
+    // Query text can contain dynamically authored literals, so emit only a
+    // one-way shape digest and parameter count. Parameter values are never
+    // logged in any environment.
+    console.debug(JSON.stringify({
+      event: "database_query_shape",
+      statement,
+      parameterCount: params.length,
+      shapeSha256: createHash("sha256").update(query).digest("hex"),
+    }));
+  },
+};
 
 const pool = new pg.Pool({
   connectionString: url,
@@ -39,7 +59,7 @@ const pool = new pg.Pool({
 // same pool for connect-pg-simple can make a classroom burst wait for a second
 // client to save its session before the first client is allowed to release.
 // All process pools are role-capped. Six API tasks plus one worker have a
-// configured ceiling of 148 connections, below the launch gate of 150.
+// configured ceiling of 124 connections, below the launch gate of 150.
 const sessionPool = new pg.Pool({
   connectionString: url,
   max: poolLimits.session,
@@ -56,7 +76,7 @@ export async function prewarmMainPool(): Promise<number> {
 }
 
 pool.on("error", (err) => {
-  console.error("Unexpected error on idle client", err);
+  console.error("Unexpected error on idle client", safeErrorMetadata(err));
   errorMonitor.trackError(
     "database_connectivity",
     err,
@@ -70,7 +90,7 @@ pool.on("error", (err) => {
 });
 
 sessionPool.on("error", (err) => {
-  console.error("Unexpected error on idle session client", err);
+  console.error("Unexpected error on idle session client", safeErrorMetadata(err));
   errorMonitor.trackError(
     "database_connectivity",
     err,
@@ -88,7 +108,7 @@ sessionPool.on("error", (err) => {
 // (startup, scheduler via schedulerDb, pre-auth/bootstrap paths).
 const globalDb = drizzle(pool, {
   schema,
-  logger: process.env.NODE_ENV === "development",
+  logger: databaseQueryDiagnosticsEnabled ? redactedQueryLogger : false,
 });
 
 function resolveDb(): typeof globalDb {

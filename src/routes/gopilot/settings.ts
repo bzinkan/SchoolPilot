@@ -3,7 +3,7 @@ import { z } from "zod";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
-import { requireProductLicense } from "../../middleware/requireProductLicense.js";
+import { requireGopilotEntitlement } from "../../middleware/requireGopilotEntitlement.js";
 import { rejectDisabledGoPilotParent } from "../../middleware/rejectDisabledGoPilotParent.js";
 import { requireGoPilotRole } from "../../services/gopilotAccess.js";
 import {
@@ -84,8 +84,8 @@ const staffAuth = [
   authenticate,
   requireSchoolContext,
   rejectDisabledGoPilotParent,
+  requireGopilotEntitlement,
   requireActiveSchool,
-  requireProductLicense("GOPILOT"),
   requireGoPilotRole("admin", "school_admin", "office_staff", "teacher"),
 ] as const;
 
@@ -93,8 +93,8 @@ const adminAuth = [
   authenticate,
   requireSchoolContext,
   rejectDisabledGoPilotParent,
+  requireGopilotEntitlement,
   requireActiveSchool,
-  requireProductLicense("GOPILOT"),
   requireGoPilotRole("admin", "school_admin"),
 ] as const;
 

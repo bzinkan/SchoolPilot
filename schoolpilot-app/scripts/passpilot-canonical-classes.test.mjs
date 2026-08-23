@@ -781,7 +781,7 @@ test("cross-product pass widgets advertise canonical capability and do not mask 
   const authContext = await readFile(path.join(APP_ROOT, "src/contexts/AuthContext.jsx"), "utf8");
   assert.match(
     authContext,
-    /const switchSchool = \(schoolId\) => \{[\s\S]*?setLicenses\(\{\}\);[\s\S]*?setLoading\(true\);[\s\S]*?selectActiveSchool\(schoolId\)/,
+    /const switchSchool = (?:async )?\(schoolId\) => \{[\s\S]*?setLicenses\(\{\}\);[\s\S]*?setLoading\(true\);[\s\S]*?selectActiveSchool\(schoolId\)/,
     "tenant switching must hide the prior school's licensed product controls before changing school context",
   );
 
@@ -1225,10 +1225,10 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
     await emailInput.fill("arielle@other.invalid");
     await addStudentDialog.getByPlaceholder("12345", { exact: true }).fill("A-2539");
     await addStudentDialog.getByRole("button", { name: "Add Student", exact: true }).click();
-    await standaloneRosterPage.getByText("Student email must use the school domain.", { exact: false }).waitFor();
+    await standaloneRosterPage.getByText("Student email must use the school domain.", { exact: false }).first().waitFor();
     await emailInput.fill("existing@example.edu");
     await addStudentDialog.getByRole("button", { name: "Add Student", exact: true }).click();
-    await standaloneRosterPage.getByText("A student with this email already exists.", { exact: false }).waitFor();
+    await standaloneRosterPage.getByText("A student with this email already exists.", { exact: false }).first().waitFor();
     await emailInput.fill("");
     await addStudentDialog.getByRole("button", { name: "Add Student", exact: true }).click();
     await standaloneRosterPage.getByText("Student added", { exact: true }).waitFor();
@@ -1764,6 +1764,13 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
       const request = route.request();
       const pathname = new URL(request.url()).pathname;
       staleKioskHeaders.push(request.headers()["x-passpilot-class-model"] || null);
+      if (pathname.endsWith("/auth") || pathname.endsWith("/snapshot")) {
+        // An archived server predates both additive kiosk contracts. The
+        // client must feature-detect these plain 404s and preserve the
+        // existing PIN/config flow.
+        await route.fulfill({ status: 404, json: { error: "Not found" } });
+        return;
+      }
       if (pathname.endsWith("/session")) {
         // Legacy server without per-device kiosk sessions: the kiosk must
         // feature-detect the 404 and stay on the school-global flow.
@@ -1804,6 +1811,10 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
     await styleRedirectPage.route("**/api/passpilot/kiosk/**", async (route) => {
       const request = route.request();
       const pathname = new URL(request.url()).pathname;
+      if (pathname.endsWith("/auth") || pathname.endsWith("/snapshot")) {
+        await route.fulfill({ status: 404, json: { error: "Not found" } });
+        return;
+      }
       if (pathname.endsWith("/session")) {
         styleSessionHeaders.push(request.headers()["x-kiosk-session"] || null);
         await route.fulfill({
@@ -1867,6 +1878,10 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
     await gateRedirectPage.route("**/api/passpilot/kiosk/**", async (route) => {
       const request = route.request();
       const pathname = new URL(request.url()).pathname;
+      if (pathname.endsWith("/auth") || pathname.endsWith("/snapshot")) {
+        await route.fulfill({ status: 404, json: { error: "Not found" } });
+        return;
+      }
       if (pathname.endsWith("/session")) {
         await route.fulfill({
           status: 201,
@@ -1923,6 +1938,10 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
     await devicePage.route("**/api/passpilot/kiosk/**", async (route) => {
       const request = route.request();
       const pathname = new URL(request.url()).pathname;
+      if (pathname.endsWith("/auth") || pathname.endsWith("/snapshot")) {
+        await route.fulfill({ status: 404, json: { error: "Not found" } });
+        return;
+      }
       if (pathname.endsWith("/session")) {
         deviceHeadersSeen.push(request.headers()["x-kiosk-device"] || null);
         await route.fulfill({
@@ -1991,6 +2010,10 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
     await resumePage.route("**/api/passpilot/kiosk/**", async (route) => {
       const request = route.request();
       const pathname = new URL(request.url()).pathname;
+      if (pathname.endsWith("/auth") || pathname.endsWith("/snapshot")) {
+        await route.fulfill({ status: 404, json: { error: "Not found" } });
+        return;
+      }
       if (pathname.endsWith("/session/resume")) {
         resumeDeviceHeaders.push(request.headers()["x-kiosk-device"] || null);
         if (resumeOutcome === "gone") {
@@ -2102,11 +2125,11 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
     await resumePage.getByTestId("kiosk-claim-code").waitFor();
     // Gate mode: the device id deliberately lives in localStorage even while
     // the PIN is sessionStorage-scoped.
-    const gateStorage = await gateRedirectPage.evaluate(() => ({
-      deviceInLocal: window.localStorage.getItem("pp_kiosk_device"),
+    const gateStorage = await gateRedirectPage.evaluate((schoolId) => ({
+      deviceInLocal: window.localStorage.getItem(`pp_kiosk_device:${schoolId}`),
       pinInLocal: window.localStorage.getItem("pp_kiosk_pin"),
       pinInSession: window.sessionStorage.getItem("pp_kiosk_pin"),
-    }));
+    }), SCHOOL_ID);
     assert.ok(gateStorage.deviceInLocal, "gate-launched kiosks must persist the device id in localStorage");
     assert.equal(gateStorage.pinInLocal, null, "gate mode must never write the PIN to localStorage");
     assert.equal(gateStorage.pinInSession, "1234");

@@ -5,6 +5,7 @@ import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
+import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
 import {
   searchStudents,
   getStudentsBySchool,
@@ -43,6 +44,15 @@ import {
 import { serializeClasspilotSession } from "../../services/classpilotSessionLifecycle.js";
 import { stopMailpilotMonitoringForStudent } from "../../services/mailpilotProvisioning.js";
 import { revokeClasspilotStudentSocketsAfterRosterRemoval } from "../../realtime/studentSocketRevocation.js";
+import {
+  ClasspilotStudentDataNotFoundError,
+  getClasspilotStudentData,
+  parseClasspilotStudentDataPeriod,
+} from "../../services/classpilotStudentData.js";
+import {
+  InvalidRosterCursorError,
+  listClasspilotRosterStudentsPage,
+} from "../../services/classpilotRosterPagination.js";
 
 const router = Router();
 
@@ -60,11 +70,7 @@ function lifecycleActor(req: any, res: any, source: string) {
 }
 
 function mayManageLifecycle(req: any, res: any): boolean {
-  return Boolean(
-    req.authUser?.isSuperAdmin ||
-    res.locals.membershipRole === "admin" ||
-    res.locals.membershipRole === "school_admin"
-  );
+  return requestHasAnySchoolRole(req, res, ["admin", "school_admin"]);
 }
 
 const auth = [
@@ -107,6 +113,49 @@ router.get("/student-analytics", ...auth, async (req, res, next) => {
     const students = await getStudentsBySchool(res.locals.schoolId!);
     return res.json({ analytics: students.map((s) => ({ studentId: s.id, name: `${s.firstName} ${s.lastName}` })) });
   } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/classpilot/student-data - One immutable-revision aggregate for the
+// Student Data screen and its CSV export. The underlying usage rows are
+// heartbeat-derived; screenshots are never read by this contract.
+router.get("/student-data", ...adminAuth, async (req, res, next) => {
+  try {
+    const period = parseClasspilotStudentDataPeriod(req.query.period);
+    const sessionId = req.query.sessionId;
+    const studentId = req.query.studentId;
+    if (sessionId !== undefined && (typeof sessionId !== "string" || !sessionId || sessionId.length > 128)) {
+      return res.status(400).json({
+        error: "sessionId must be a non-empty string",
+        code: "INVALID_STUDENT_DATA_SESSION",
+      });
+    }
+    if (studentId !== undefined && (typeof studentId !== "string" || !studentId || studentId.length > 128)) {
+      return res.status(400).json({
+        error: "studentId must be a non-empty string",
+        code: "INVALID_STUDENT_DATA_STUDENT",
+      });
+    }
+    const result = await getClasspilotStudentData({
+      schoolId: res.locals.schoolId!,
+      period,
+      sessionId,
+      studentId,
+      schoolTimeZone: res.locals.school?.schoolTimezone,
+    });
+    res.setHeader("Cache-Control", "no-store");
+    return res.json(result);
+  } catch (err) {
+    if (err instanceof ClasspilotStudentDataNotFoundError) {
+      return res.status(404).json({ error: err.message, code: err.code });
+    }
+    if ((err as { code?: string })?.code === "INVALID_STUDENT_DATA_PERIOD") {
+      return res.status(400).json({
+        error: (err as Error).message,
+        code: "INVALID_STUDENT_DATA_PERIOD",
+      });
+    }
     next(err);
   }
 });
@@ -179,9 +228,35 @@ router.get("/student-analytics/:studentId/usage", ...adminAuth, async (req, res,
 // GET /api/classpilot/roster/students - List roster students
 router.get("/roster/students", ...auth, async (req, res, next) => {
   try {
+    const paged = ["cursor", "limit", "search"].some((key) => (
+      Object.prototype.hasOwnProperty.call(req.query, key)
+    ));
+    if (paged) {
+      const page = await listClasspilotRosterStudentsPage({
+        schoolId: res.locals.schoolId!,
+        cursor: req.query.cursor as string | undefined,
+        limit: req.query.limit as string | undefined,
+        search: req.query.search as string | undefined,
+      });
+      return res.json({
+        students: classPilotStudentDtos(page.students),
+        pageInfo: {
+          limit: page.limit,
+          hasNextPage: page.hasMore,
+          nextCursor: page.nextCursor,
+        },
+        // Flat aliases make the additive response straightforward for clients
+        // already using `{ students, hasMore, nextCursor }` conventions.
+        hasMore: page.hasMore,
+        nextCursor: page.nextCursor,
+      });
+    }
     const students = await getStudentsBySchool(res.locals.schoolId!);
     return res.json({ students: classPilotStudentDtos(students) });
   } catch (err) {
+    if (err instanceof InvalidRosterCursorError) {
+      return res.status(400).json({ error: err.message, code: err.code });
+    }
     next(err);
   }
 });
@@ -466,7 +541,6 @@ router.delete("/students/:studentId", ...auth, requireRole("admin", "school_admi
       );
     } catch {
       console.warn("[Student Removal] ClassPilot socket shutdown failed after deactivation", {
-        schoolId: res.locals.schoolId,
         studentCount: result.foundStudentIds.length,
       });
     }
@@ -478,10 +552,7 @@ router.delete("/students/:studentId", ...auth, requireRole("admin", "school_admi
           existing.email
         );
       } catch {
-        console.warn("[Student Removal] MailPilot shutdown failed after deactivation", {
-          schoolId: res.locals.schoolId,
-          studentId,
-        });
+        console.warn("[Student Removal] MailPilot shutdown failed after deactivation");
       }
     }
 

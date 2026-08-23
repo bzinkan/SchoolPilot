@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { createClient, type RedisClientType } from "redis";
 import { redisCommand } from "../middleware/rateLimiter.js";
 import {
@@ -6,6 +6,7 @@ import {
   registerCacheInvalidationPublisher,
   type CacheInvalidationTarget,
 } from "./cacheInvalidation.js";
+import { safeErrorMetadata } from "../util/safeLogging.js";
 
 export type WsRedisTarget =
   | { kind: "staff"; schoolId: string }
@@ -202,7 +203,10 @@ function warnRedis(error?: unknown) {
   }
   redisWarned = true;
   if (error) {
-    console.warn("[WebSocket] Redis pub/sub disabled; running single-instance mode.", error);
+    console.warn(
+      "[WebSocket] Redis pub/sub disabled; running single-instance mode.",
+      safeErrorMetadata(error)
+    );
     return;
   }
   console.warn("[WebSocket] Redis pub/sub disabled; running single-instance mode.");
@@ -221,7 +225,10 @@ async function ensureRedisReady(): Promise<void> {
       console.log(`[Redis] Instance ${instanceShortId} connecting to Redis...`);
       redisPublisher = createClient({ url: redisUrl });
       redisPublisher.on("error", (err: unknown) => {
-        console.error(`[Redis] Instance ${instanceShortId} publisher error:`, err);
+        console.error(
+          `[Redis] Instance ${instanceShortId} publisher error:`,
+          safeErrorMetadata(err)
+        );
         warnRedis(err);
       });
       await redisPublisher.connect();
@@ -230,7 +237,10 @@ async function ensureRedisReady(): Promise<void> {
       redisSubscriber = redisPublisher.duplicate();
       redisSubscriber.on("error", (err: unknown) => {
         subscribed = false;
-        console.error(`[Redis] Instance ${instanceShortId} subscriber error:`, err);
+        console.error(
+          `[Redis] Instance ${instanceShortId} subscriber error:`,
+          safeErrorMetadata(err)
+        );
         warnRedis(err);
       });
       redisSubscriber.on("reconnecting", () => { subscribed = false; });
@@ -245,7 +255,10 @@ async function ensureRedisReady(): Promise<void> {
       console.log(`[Redis] Instance ${instanceShortId} fully initialized`);
     } catch (error) {
       redisEnabled = false;
-      console.error(`[Redis] Instance ${instanceShortId} initialization failed:`, error);
+      console.error(
+        `[Redis] Instance ${instanceShortId} initialization failed:`,
+        safeErrorMetadata(error)
+      );
       warnRedis(error);
     }
   })();
@@ -349,7 +362,10 @@ export async function subscribeWS(
         hotPathActivity.redisMessagesReceived += 1;
         onMessage(envelope.target, envelope.message);
       } catch (error) {
-        console.error(`[Redis] Instance ${instanceShortId} message parse error:`, error);
+        console.error(
+          `[Redis] Instance ${instanceShortId} message parse error:`,
+          safeErrorMetadata(error)
+        );
         warnRedis(error);
       }
     });
@@ -358,7 +374,10 @@ export async function subscribeWS(
   } catch (error) {
     subscribed = false;
     subscriptionStarted = false;
-    console.error(`[Redis] Instance ${instanceShortId} subscription failed:`, error);
+    console.error(
+      `[Redis] Instance ${instanceShortId} subscription failed:`,
+      safeErrorMetadata(error)
+    );
     warnRedis(error);
   }
 }
@@ -411,7 +430,7 @@ export async function publishWS(
     hotPathActivity.redisSubscriberDeliveries += numSubscribers;
     return numSubscribers > 0;
   } catch (error) {
-    console.error(`[Redis] Instance ${instanceShortId} publish failed:`, error);
+    console.error(`[Redis] Instance ${instanceShortId} publish failed:`, safeErrorMetadata(error));
     warnRedis(error);
     return false;
   }
@@ -469,7 +488,10 @@ export async function publishOrderedWS(
     hotPathActivity.redisSubscriberDeliveries += subscriberCount;
     return { status: "accepted", subscriberCount };
   } catch (error) {
-    console.error(`[Redis] Instance ${instanceShortId} ordered publish failed:`, error);
+    console.error(
+      `[Redis] Instance ${instanceShortId} ordered publish failed:`,
+      safeErrorMetadata(error)
+    );
     warnRedis(error);
     return { status: "failed", subscriberCount: 0 };
   }
@@ -510,7 +532,10 @@ export async function publishWSBatch(
     );
     return subscriberCounts.map((count) => count > 0);
   } catch (error) {
-    console.error(`[Redis] Instance ${instanceShortId} batch publish failed:`, error);
+    console.error(
+      `[Redis] Instance ${instanceShortId} batch publish failed:`,
+      safeErrorMetadata(error)
+    );
     warnRedis(error);
     return items.map(() => false);
   }
@@ -527,13 +552,49 @@ const SCREENSHOT_TTL_SECONDS = 120; // 120 seconds — must outlive both the 30s
 export type ScreenshotData = {
   screenshot: string;
   timestamp: number;
+  capturedAt?: string;
   tabTitle?: string;
   tabUrl?: string;
   tabFavicon?: string;
-  // Internal authority binding. Public tile responses strip both fields.
+  // Internal authority binding. Public tile responses strip these fields.
+  schoolId?: string;
+  deviceId?: string;
   studentId?: string;
   studentSessionId?: string;
+  bindingVersion?: string;
 };
+
+export type ScreenshotBinding = {
+  schoolId: string;
+  deviceId: string;
+  studentId: string;
+  studentSessionId: string;
+};
+
+export type BoundScreenshotData = ScreenshotData & ScreenshotBinding & {
+  capturedAt: string;
+  bindingVersion: string;
+};
+
+function screenshotBindingDigest(binding: ScreenshotBinding): string {
+  return createHash("sha256")
+    .update(binding.schoolId)
+    .update("\0")
+    .update(binding.deviceId)
+    .update("\0")
+    .update(binding.studentId)
+    .update("\0")
+    .update(binding.studentSessionId)
+    .digest("hex");
+}
+
+export function screenshotBindingVersion(binding: ScreenshotBinding): string {
+  return `v1:${screenshotBindingDigest(binding)}`;
+}
+
+export function screenshotBindingCacheKey(binding: ScreenshotBinding): string {
+  return `${SCREENSHOT_KEY_PREFIX}bound:${screenshotBindingDigest(binding)}`;
+}
 
 const SCREENSHOT_MAX_CLOCK_SKEW_MS = 30_000;
 
@@ -565,17 +626,53 @@ export function decodeScreenshotData(value: unknown): ScreenshotData | null {
   return {
     screenshot: candidate.screenshot,
     timestamp: candidate.timestamp,
+    ...(typeof candidate.capturedAt === "string" ? { capturedAt: candidate.capturedAt } : {}),
     ...(typeof candidate.tabTitle === "string" ? { tabTitle: candidate.tabTitle } : {}),
     ...(typeof candidate.tabUrl === "string" ? { tabUrl: candidate.tabUrl } : {}),
     ...(typeof candidate.tabFavicon === "string" ? { tabFavicon: candidate.tabFavicon } : {}),
+    ...(typeof candidate.schoolId === "string" ? { schoolId: candidate.schoolId } : {}),
+    ...(typeof candidate.deviceId === "string" ? { deviceId: candidate.deviceId } : {}),
     ...(typeof candidate.studentId === "string" ? { studentId: candidate.studentId } : {}),
     ...(typeof candidate.studentSessionId === "string"
       ? { studentSessionId: candidate.studentSessionId }
       : {}),
+    ...(typeof candidate.bindingVersion === "string"
+      ? { bindingVersion: candidate.bindingVersion }
+      : {}),
   };
 }
 
-export async function setScreenshot(deviceId: string, data: ScreenshotData): Promise<boolean> {
+export function screenshotMatchesBinding(
+  data: ScreenshotData | null,
+  binding: ScreenshotBinding,
+  options: { allowLegacy?: boolean } = {}
+): boolean {
+  if (!data) return false;
+  if (
+    data.studentId !== binding.studentId
+    || data.studentSessionId !== binding.studentSessionId
+  ) return false;
+
+  const expectedVersion = screenshotBindingVersion(binding);
+  const hasCompleteBinding = Boolean(
+    data.schoolId && data.deviceId && data.bindingVersion && data.capturedAt
+  );
+  if (!hasCompleteBinding) return options.allowLegacy === true;
+  if (
+    data.schoolId !== binding.schoolId
+    || data.deviceId !== binding.deviceId
+    || data.bindingVersion !== expectedVersion
+  ) return false;
+  const capturedAtMs = Date.parse(data.capturedAt!);
+  return Number.isFinite(capturedAtMs)
+    && Math.abs(capturedAtMs - data.timestamp) <= 1_000;
+}
+
+export async function setScreenshot(
+  binding: ScreenshotBinding,
+  data: BoundScreenshotData
+): Promise<boolean> {
+  if (!screenshotMatchesBinding(data, binding)) return false;
   if (!redisUrl) {
     return false; // Fallback to in-memory
   }
@@ -585,16 +682,26 @@ export async function setScreenshot(deviceId: string, data: ScreenshotData): Pro
   }
 
   try {
-    const key = `${SCREENSHOT_KEY_PREFIX}${deviceId}`;
-    await redisPublisher.setEx(key, SCREENSHOT_TTL_SECONDS, JSON.stringify(data));
+    const exactKey = screenshotBindingCacheKey(binding);
+    const legacyKey = `${SCREENSHOT_KEY_PREFIX}${binding.deviceId}`;
+    const serialized = JSON.stringify(data);
+    await redisPublisher
+      .multi()
+      .setEx(exactKey, SCREENSHOT_TTL_SECONDS, serialized)
+      // One-TTL compatibility bridge for API tasks that still read the old
+      // device-only key. The payload itself carries the complete binding.
+      .setEx(legacyKey, SCREENSHOT_TTL_SECONDS, serialized)
+      .exec();
     return true;
   } catch (error) {
-    console.warn("[Screenshot] Redis setEx failed:", error);
+    console.warn("[Screenshot] Redis setEx failed:", safeErrorMetadata(error));
     return false;
   }
 }
 
-export async function getScreenshot(deviceId: string): Promise<ScreenshotData | null> {
+export async function getScreenshot(
+  binding: ScreenshotBinding
+): Promise<ScreenshotData | null> {
   if (!redisUrl) {
     return null; // Fallback to in-memory
   }
@@ -604,14 +711,18 @@ export async function getScreenshot(deviceId: string): Promise<ScreenshotData | 
   }
 
   try {
-    const key = `${SCREENSHOT_KEY_PREFIX}${deviceId}`;
-    const data = await redisPublisher.get(key);
-    if (!data) {
-      return null;
-    }
-    return decodeScreenshotData(data);
+    const [exactRaw, legacyRaw] = await redisPublisher.mGet([
+      screenshotBindingCacheKey(binding),
+      `${SCREENSHOT_KEY_PREFIX}${binding.deviceId}`,
+    ]);
+    const exact = decodeScreenshotData(exactRaw);
+    if (screenshotMatchesBinding(exact, binding)) return exact;
+    const legacy = decodeScreenshotData(legacyRaw);
+    return screenshotMatchesBinding(legacy, binding, { allowLegacy: true })
+      ? legacy
+      : null;
   } catch (error) {
-    console.warn("[Screenshot] Redis get failed:", error);
+    console.warn("[Screenshot] Redis get failed:", safeErrorMetadata(error));
     return null;
   }
 }
@@ -622,9 +733,9 @@ export async function getScreenshot(deviceId: string): Promise<ScreenshotData | 
  * without issuing per-device Redis GETs.
  */
 export async function getScreenshots(
-  deviceIds: readonly string[]
+  bindings: readonly ScreenshotBinding[]
 ): Promise<(ScreenshotData | null)[]> {
-  if (deviceIds.length === 0) return [];
+  if (bindings.length === 0) return [];
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 250);
   timeout.unref?.();
@@ -632,21 +743,26 @@ export async function getScreenshots(
     const result = await redisCommand(
       [
         "MGET",
-        ...deviceIds.map((deviceId) => `${SCREENSHOT_KEY_PREFIX}${deviceId}`),
+        ...bindings.map(screenshotBindingCacheKey),
+        ...bindings.map((binding) => `${SCREENSHOT_KEY_PREFIX}${binding.deviceId}`),
       ],
       { readyTimeoutMs: 100, signal: controller.signal }
     );
-    if (!Array.isArray(result) || result.length !== deviceIds.length) {
-      return deviceIds.map(() => null);
+    if (!Array.isArray(result) || result.length !== bindings.length * 2) {
+      return bindings.map(() => null);
     }
     const values = result as unknown[];
-    return values.map((raw) => {
-      if (typeof raw !== "string" || !raw) return null;
-      return decodeScreenshotData(raw);
+    return bindings.map((binding, index) => {
+      const exact = decodeScreenshotData(values[index]);
+      if (screenshotMatchesBinding(exact, binding)) return exact;
+      const legacy = decodeScreenshotData(values[index + bindings.length]);
+      return screenshotMatchesBinding(legacy, binding, { allowLegacy: true })
+        ? legacy
+        : null;
     });
   } catch (error) {
-    console.warn("[Screenshot] Redis mGet failed:", error);
-    return deviceIds.map(() => null);
+    console.warn("[Screenshot] Redis mGet failed:", safeErrorMetadata(error));
+    return bindings.map(() => null);
   } finally {
     clearTimeout(timeout);
   }
@@ -682,7 +798,7 @@ export async function setFlightPathStatus(deviceId: string, data: FlightPathStat
     }
     return true;
   } catch (error) {
-    console.warn("[FlightPath] Redis set failed:", error);
+    console.warn("[FlightPath] Redis set failed:", safeErrorMetadata(error));
     return false;
   }
 }
@@ -704,7 +820,7 @@ export async function getFlightPathStatus(deviceId: string): Promise<FlightPathS
     }
     return JSON.parse(data) as FlightPathStatus;
   } catch (error) {
-    console.warn("[FlightPath] Redis get failed:", error);
+    console.warn("[FlightPath] Redis get failed:", safeErrorMetadata(error));
     return null;
   }
 }
@@ -728,7 +844,7 @@ export async function setDeviceLastSeen(deviceId: string, timestamp: number): Pr
     await redisPublisher.setEx(key, DEVICE_LASTSEEN_TTL_SECONDS, timestamp.toString());
     return true;
   } catch (error) {
-    console.warn("[LastSeen] Redis set failed:", error);
+    console.warn("[LastSeen] Redis set failed:", safeErrorMetadata(error));
     return false;
   }
 }
@@ -750,7 +866,7 @@ export async function getDeviceLastSeen(deviceId: string): Promise<number | null
     }
     return parseInt(data, 10);
   } catch (error) {
-    console.warn("[LastSeen] Redis get failed:", error);
+    console.warn("[LastSeen] Redis get failed:", safeErrorMetadata(error));
     return null;
   }
 }

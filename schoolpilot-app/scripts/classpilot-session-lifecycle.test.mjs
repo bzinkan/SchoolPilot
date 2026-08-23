@@ -62,6 +62,55 @@ function activeSession(kind, overrides = {}) {
   };
 }
 
+function readyReportV2() {
+  return {
+    state: "ready",
+    report: {
+      reportVersion: 2,
+      timezone: "America/New_York",
+      totals: {
+        roster: 1,
+        eligible: 1,
+        complete: 0,
+        partial: 1,
+        none: 0,
+        unavailable: 0,
+        eligibleSeconds: 120,
+        monitoredSeconds: 90,
+        gapSeconds: 30,
+        unclassifiedSeconds: 15,
+        offTaskSeconds: 45,
+        offTaskEventCount: 2,
+        safetyAlertCount: 1,
+      },
+      students: [{
+        studentId: "report-student",
+        studentName: "Ada Student",
+        status: "partial",
+        eligibleSeconds: 120,
+        monitoredSeconds: 90,
+        gapSeconds: 30,
+        unclassifiedSeconds: 15,
+        coveragePercent: 75,
+        topDomains: [{
+          domain: "https://docs.example.edu/assignment?student=private",
+          seconds: 60,
+        }],
+        offTaskSeconds: 45,
+        offTaskEventCount: 2,
+        safetyAlerts: [{
+          id: "safety-alert-1",
+          category: "self_harm",
+          normalizedDomain: "search.example.edu",
+          occurredAt: "2026-08-11T18:00:00.000Z",
+          evidenceAvailability: "available",
+          reviewStatus: "escalated",
+        }],
+      }],
+    },
+  };
+}
+
 async function configurePage(page, kind, options = {}) {
   let currentSession = options.active === false ? null : options.session || activeSession(kind);
   let dashboardWebSocket;
@@ -106,6 +155,11 @@ async function configurePage(page, kind, options = {}) {
     }
     if (pathname === "/api/sessions/active" && request.method() === "GET") {
       await route.fulfill({ json: { session: currentSession } });
+      return;
+    }
+    const reportMatch = pathname.match(/^\/api\/classpilot\/teaching-sessions\/([^/]+)\/report$/);
+    if (reportMatch && request.method() === "GET") {
+      await route.fulfill({ json: options.reportResponse || { state: "pending" } });
       return;
     }
     const endMatch = pathname.match(/^\/api\/classpilot\/teaching-sessions\/([^/]+)\/end$/);
@@ -311,7 +365,7 @@ test("ClassPilot dashboard explains scheduled and manual summary lifecycle", { t
     assert.equal(manualLogout.endRequests.length, 0, "manual logout must not end or email the class");
 
     manualPage = await browser.newPage();
-    const manualEnd = await configurePage(manualPage, "manual");
+    const manualEnd = await configurePage(manualPage, "manual", { reportResponse: readyReportV2() });
     await manualPage.goto(`http://127.0.0.1:${address.port}/classpilot`);
     await manualPage.getByTestId("badge-active-session").waitFor();
     assert.equal(await manualPage.getByTestId("badge-automatic-session").count(), 0);
@@ -332,6 +386,21 @@ test("ClassPilot dashboard explains scheduled and manual summary lifecycle", { t
         { exact: true },
       ).waitFor();
     });
+    const sessionReportDialog = manualPage.getByTestId("dialog-session-monitoring-report");
+    await sessionReportDialog.getByText("Report v2", { exact: true }).waitFor();
+    await sessionReportDialog.getByText(
+      /Activity time is derived from authenticated monitoring heartbeats\. Screenshots are not used/,
+    ).waitFor();
+    assert.match(await sessionReportDialog.getByTestId("session-report-monitored-time").innerText(), /1m 30s \/ 2m/);
+    assert.match(await sessionReportDialog.getByTestId("session-report-gap-time").innerText(), /30s/);
+    assert.match(await sessionReportDialog.getByTestId("session-report-unclassified-time").innerText(), /15s/);
+    assert.match(await sessionReportDialog.getByTestId("session-report-off-task").innerText(), /45s · 2 events/);
+    await sessionReportDialog.getByText("docs.example.edu", { exact: true }).waitFor();
+    await sessionReportDialog.getByText("Self Harm", { exact: true }).waitFor();
+    await sessionReportDialog.getByText("Evidence: Available", { exact: true }).waitFor();
+    await sessionReportDialog.getByText("Escalated", { exact: true }).waitFor();
+    await sessionReportDialog.getByText(/“Automated” means the alert was system-generated/).waitFor();
+    assert.doesNotMatch(await sessionReportDialog.innerText(), /student=private/);
     assert.equal(manualEnd.endRequests.length, 1, "manual End Class must submit exactly once");
     assert.equal(manualEnd.endRequests[0].sessionId, "manual-session");
     assert.equal(manualEnd.genericEndRequests.length, 0, "manual End Class must use the ID-specific endpoint");

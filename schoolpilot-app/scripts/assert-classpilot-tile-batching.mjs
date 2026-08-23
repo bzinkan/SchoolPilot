@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import {
   TILE_BATCH_REFETCH_INTERVAL_MS,
   createTileBatchRequests,
-  fetchTileBatchWithRollbackFallback,
+  fetchTileBatch,
 } from '../src/products/classpilot/lib/tileBatchPolling.js';
 
 const studentIds = Array.from({ length: 40 }, (_, index) =>
@@ -22,45 +22,36 @@ assert.equal(requests[1].body.limit, 10);
 assert.equal(JSON.stringify(requests).includes('deviceId'), false, 'batch requests must expose only student IDs');
 
 let healthyRequests = 0;
-const healthy = await fetchTileBatchWithRollbackFallback(
+const requestSignal = new AbortController().signal;
+const healthy = await fetchTileBatch(
   requests[0],
-  new Map(),
-  async () => {
+  async (method, endpoint, body, config) => {
     healthyRequests += 1;
+    assert.equal(method, 'POST');
+    assert.equal(endpoint, requests[0].endpoint);
+    assert.deepEqual(body, requests[0].body);
+    assert.equal(config.signal, requestSignal);
     return { tiles: [] };
-  }
+  },
+  requestSignal,
 );
 assert.deepEqual(healthy, { tiles: [] });
 assert.equal(healthyRequests, 1, 'healthy batch polling must make one network request per request descriptor');
 
-let authorization404Requests = 0;
-const authorization404 = await fetchTileBatchWithRollbackFallback(
-  requests[0],
-  new Map(),
-  async () => {
-    authorization404Requests += 1;
-    throw { response: { status: 404, data: { error: 'No accessible tiles' } } };
-  }
+let failedBatchRequests = 0;
+await assert.rejects(
+  fetchTileBatch(
+    requests[0],
+    async () => {
+      failedBatchRequests += 1;
+      throw Object.assign(new Error('Not found'), {
+        response: { status: 404, data: { error: 'Not found' } },
+      });
+    },
+  ),
+  /Not found/,
 );
-assert.deepEqual(authorization404, { tiles: [] });
-assert.equal(authorization404Requests, 1, 'authorization 404 must not activate legacy fan-out');
-
-const rollbackRequest = createTileBatchRequests(studentIds.slice(0, 2))[0];
-const legacyDevices = new Map(rollbackRequest.body.studentIds.map((studentId, index) => [studentId, `device-${index}`]));
-const rollbackCalls = [];
-const rollback = await fetchTileBatchWithRollbackFallback(
-  rollbackRequest,
-  legacyDevices,
-  async (method, endpoint) => {
-    rollbackCalls.push([method, endpoint]);
-    if (method === 'POST') {
-      throw { response: { status: 404, data: { error: 'Not found' } } };
-    }
-    return { screenshot: 'data:image/jpeg;base64,fixture' };
-  }
-);
-assert.equal(rollbackCalls.length, 3, 'legacy fan-out must activate only after the old backend route 404');
-assert.equal(rollback.tiles.length, 2);
+assert.equal(failedBatchRequests, 1, 'a failed cohort request must never fan out per student');
 
 const fiftyStudentIds = Array.from({ length: 50 }, (_, index) =>
   `10000000-0000-4000-8000-${String(index).padStart(12, '0')}`
@@ -105,5 +96,16 @@ assert.equal(
 );
 assert.match(dashboardSource, /historyByStudent\.get\(student\.studentId\)/);
 assert.match(dashboardSource, /screenshotsByStudent\.get\(student\.studentId\)/);
+assert.match(dashboardSource, /data-testid="tile-cohort-refresh-error"/);
+assert.doesNotMatch(
+  dashboardSource,
+  /failedScreenshotStudentIds|failedHistoryStudentIds/,
+  'a cohort refresh failure must not blank otherwise usable per-student data',
+);
+assert.doesNotMatch(
+  await readFile(new URL('../src/products/classpilot/lib/tileBatchPolling.js', import.meta.url), 'utf8'),
+  /\/device\/screenshot|\/heartbeats\//,
+  'tile polling must not contain a legacy per-device fallback',
+);
 
 console.log(`ClassPilot tile batching contract passed (${requests.length} requests for ${studentIds.length} tiles).`);

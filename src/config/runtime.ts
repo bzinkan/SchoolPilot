@@ -24,7 +24,7 @@ export function schedulerEnabled(env: NodeJS.ProcessEnv = process.env): boolean 
 }
 
 export function migrationsOnStartup(env: NodeJS.ProcessEnv = process.env): boolean {
-  return envFlag("RUN_MIGRATIONS_ON_STARTUP", true, env);
+  return envFlag("RUN_MIGRATIONS_ON_STARTUP", false, env);
 }
 
 export function migrationsOnly(env: NodeJS.ProcessEnv = process.env): boolean {

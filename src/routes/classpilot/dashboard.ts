@@ -42,6 +42,7 @@ import {
 } from "../../services/classpilotSharedChromebook.js";
 import { classPilotStudentDto } from "../../util/safeStudent.js";
 import { classpilotSchoolPolicyAuthorityEnvelope } from "../../services/classpilotCommandAuthority.js";
+import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
 
 const router = Router();
 
@@ -50,8 +51,7 @@ function param(req: any, key: string): string {
 }
 
 function isAdminRole(req: any, res: any): boolean {
-  const role = res.locals.membershipRole;
-  return req.authUser?.isSuperAdmin || role === "admin" || role === "school_admin";
+  return requestHasAnySchoolRole(req, res, ["admin", "school_admin"]);
 }
 
 function validateClasspilotRuleList(value: unknown, label: string): string[] {
@@ -227,8 +227,7 @@ router.post("/settings", ...auth, async (req, res, next) => {
 
     let normalizedCentralEmailRecipientUserId: string | null | undefined;
     if (isAdminSettingsRequest) {
-      const role = res.locals.membershipRole;
-      if (!req.authUser?.isSuperAdmin && role !== "admin" && role !== "school_admin") {
+      if (!isAdminRole(req, res)) {
         return res.status(403).json({ error: "Admin access required to update school settings" });
       }
 
@@ -513,12 +512,11 @@ router.post("/settings/student-messaging", ...auth, async (req, res, next) => {
 router.get("/groups", ...auth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
-    const role = res.locals.membershipRole;
     const scope = String(req.query.scope ?? "");
     let groupsList;
     if (scope === "mine") {
       groupsList = await getGroupsByTeacherAndSchool(req.authUser!.id, schoolId);
-    } else if (role === "admin" || role === "school_admin" || role === "super_admin") {
+    } else if (isAdminRole(req, res)) {
       groupsList = await getGroupsBySchool(schoolId);
     } else {
       groupsList = await getGroupsByTeacherAndSchool(req.authUser!.id, schoolId);

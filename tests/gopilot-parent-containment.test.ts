@@ -88,12 +88,12 @@ describe("GoPilot parent containment", () => {
     const existingTarget = await runMiddleware(
       rejectDisabledGoPilotParent,
       { params: { id: "known-pickup" } },
-      { gopilotRole: "parent" }
+      { gopilotIdentity: { primaryRole: "parent", roles: ["parent"] } }
     );
     const missingTarget = await runMiddleware(
       rejectDisabledGoPilotParent,
       { params: { id: "missing-pickup" } },
-      { gopilotRole: "parent" }
+      { gopilotIdentity: { primaryRole: "parent", roles: ["parent"] } }
     );
 
     assert.deepEqual(existingTarget, {
@@ -107,7 +107,7 @@ describe("GoPilot parent containment", () => {
     const staff = await runMiddleware(
       rejectDisabledGoPilotParent,
       { params: { id: "any" } },
-      { gopilotRole: "office_staff" }
+      { gopilotIdentity: { primaryRole: "office_staff", roles: ["office_staff"] } }
     );
     assert.equal(staff.nextCalls, 1);
   });

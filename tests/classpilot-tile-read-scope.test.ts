@@ -7,10 +7,11 @@ import { setTimeout as delay } from "node:timers/promises";
 
 // These values must be set before importing any application module. The test
 // models the production API process (not the scheduler worker) and deliberately
-// exercises the launch cap of 18 request/RLS connections.
+// exercises the reviewed API split of 16 request/RLS connections plus two
+// independent web-session connections.
 process.env.NODE_ENV = "test";
 process.env.SCHEDULER_ENABLED = "false";
-process.env.DB_POOL_MAX = "18";
+process.env.DB_POOL_MAX = "16";
 process.env.SESSION_DB_POOL_MAX = "2";
 process.env.RLS_GUC_ENABLED = "true";
 process.env.JWT_SECRET = randomBytes(32).toString("hex");
@@ -41,6 +42,10 @@ const appModule = await import("../dist/app.js");
 const drizzle = await import("drizzle-orm");
 const schema = await import("../dist/schema/index.js");
 const schedulerPools = await import("../dist/services/schedulerDb.js");
+const { classpilotScreenshotFallback } = await import(
+  "../dist/services/classpilotScreenshotFallback.js"
+);
+const { screenshotBindingVersion } = await import("../dist/realtime/ws-redis.js");
 
 const { runWithTenantContext } = tenantContext;
 const {
@@ -96,6 +101,35 @@ let otherStudentId = "";
 let activeGroupId = "";
 let activeTeachingSessionId = "";
 const activeStudentSessionIdByDevice = new Map<string, string>();
+
+function exactScreenshotBinding(deviceId: string) {
+  const studentIndex = primaryDeviceIds.indexOf(deviceId);
+  const studentId = authorizedStudentIds[studentIndex];
+  const studentSessionId = activeStudentSessionIdByDevice.get(deviceId);
+  assert.ok(studentId && studentSessionId, `missing exact screenshot binding for ${deviceId}`);
+  return { schoolId: schoolA.id, deviceId, studentId, studentSessionId };
+}
+
+function storeExactScreenshot(deviceId: string, overrides: Record<string, unknown> = {}) {
+  const binding = exactScreenshotBinding(deviceId);
+  const timestamp = typeof overrides.timestamp === "number" ? overrides.timestamp : Date.now();
+  return classpilotScreenshotFallback.set(binding, {
+    screenshot: `data:image/jpeg;base64,${Buffer.from(deviceId).toString("base64")}`,
+    timestamp,
+    capturedAt: new Date(timestamp).toISOString(),
+    tabTitle: "Synthetic tile",
+    ...binding,
+    bindingVersion: screenshotBindingVersion(binding),
+    ...overrides,
+  });
+}
+
+function seedExactScreenshots(excludedDeviceId?: string) {
+  classpilotScreenshotFallback.clear();
+  for (const deviceId of primaryDeviceIds) {
+    if (deviceId !== excludedDeviceId) assert.equal(storeExactScreenshot(deviceId), true);
+  }
+}
 
 function inSchool<T>(schoolId: string, fn: () => Promise<T>): Promise<T> {
   return runWithTenantContext({ schoolId }, fn);
@@ -180,7 +214,8 @@ async function waitForMainPoolDrain(timeoutMs = 2_000): Promise<void> {
 }
 
 before(async () => {
-  assert.equal((pool as any).options.max, 18);
+  assert.equal((pool as any).options.max, 16);
+  assert.equal((sessionPool as any).options.max, 2);
 
   schoolA = await createSchool({
     name: `${tag} A`,
@@ -393,22 +428,7 @@ before(async () => {
     });
   });
 
-  const screenshots = new Map<string, unknown>();
-  for (const deviceId of [...primaryDeviceIds, foreignDeviceId]) {
-    const studentIndex = primaryDeviceIds.indexOf(deviceId);
-    screenshots.set(deviceId, {
-      screenshot: `data:image/jpeg;base64,${Buffer.from(deviceId).toString("base64")}`,
-      timestamp: Date.now(),
-      tabTitle: "Synthetic tile",
-      ...(studentIndex >= 0
-        ? {
-            studentId: authorizedStudentIds[studentIndex],
-            studentSessionId: activeStudentSessionIdByDevice.get(deviceId),
-          }
-        : {}),
-    });
-  }
-  (globalThis as any).__screenshots = screenshots;
+  seedExactScreenshots();
 
   server = createServer(createApp());
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -479,7 +499,7 @@ after(async () => {
       await db.execute(sql`DELETE FROM users WHERE email LIKE ${userEmailPattern}`);
     });
   } finally {
-    delete (globalThis as any).__screenshots;
+    classpilotScreenshotFallback.clear();
     await Promise.allSettled([
       pool.end(),
       sessionPool.end(),
@@ -566,9 +586,7 @@ describe("ClassPilot tile-read tenant scope", () => {
   it("returns accessible empty tiles and validates bounded batch input", async () => {
     const deviceId = primaryDeviceIds[2]!;
     const studentId = authorizedStudentIds[2]!;
-    const screenshots = (globalThis as any).__screenshots as Map<string, unknown>;
-    const previousScreenshot = screenshots.get(deviceId);
-    screenshots.delete(deviceId);
+    seedExactScreenshots(deviceId);
     try {
       const response = await postJson(
         "/api/classpilot/tiles/screenshots",
@@ -580,7 +598,7 @@ describe("ClassPilot tile-read tenant scope", () => {
         tiles: [{ studentId, screenshot: null }],
       });
     } finally {
-      screenshots.set(deviceId, previousScreenshot);
+      seedExactScreenshots();
     }
 
     for (const body of [
@@ -601,10 +619,8 @@ describe("ClassPilot tile-read tenant scope", () => {
   it("never serves a stale screenshot after a shared-device student switch", async () => {
     const deviceId = primaryDeviceIds[0]!;
     const studentId = authorizedStudentIds[0]!;
-    const screenshots = (globalThis as any).__screenshots as Map<string, unknown>;
-    const previousScreenshot = screenshots.get(deviceId);
     try {
-      screenshots.set(deviceId, {
+      storeExactScreenshot(deviceId, {
         screenshot: "data:image/jpeg;base64,c3RhbGUtc3R1ZGVudA==",
         timestamp: Date.now(),
         studentId: otherStudentId,
@@ -627,11 +643,9 @@ describe("ClassPilot tile-read tenant scope", () => {
       assert.equal(switchedLegacy.status, 403);
       assert.match(switchedLegacy.body.error, /Insufficient permissions/i);
 
-      screenshots.set(deviceId, {
+      storeExactScreenshot(deviceId, {
         screenshot: "data:image/jpeg;base64,c3RhbGUtdHRs",
         timestamp: Date.now() - 121_000,
-        studentId,
-        studentSessionId: activeStudentSessionIdByDevice.get(deviceId),
       });
       const expiredBatch = await postJson(
         "/api/classpilot/tiles/screenshots",
@@ -647,7 +661,7 @@ describe("ClassPilot tile-read tenant scope", () => {
         teacher
       )).status, 403);
     } finally {
-      screenshots.set(deviceId, previousScreenshot);
+      seedExactScreenshots();
     }
   });
 
@@ -869,12 +883,10 @@ describe("ClassPilot tile-read tenant scope", () => {
     assert.deepEqual(officeBatchResponse.body, { error: "No accessible tiles" });
   });
 
-  it("preserves legacy school-wide screenshot detail for offline devices only", async () => {
+  it("fails closed for device-only screenshot detail after a session goes offline", async () => {
     const deviceId = primaryDeviceIds[5]!;
     const studentId = authorizedStudentIds[5]!;
-    const screenshots = (globalThis as any).__screenshots as Map<string, unknown>;
-    const previousScreenshot = screenshots.get(deviceId);
-    screenshots.set(deviceId, {
+    storeExactScreenshot(deviceId, {
       screenshot: "data:image/jpeg;base64,b2ZmbGluZS1hZG1pbi1kZXRhaWw=",
       timestamp: Date.now(),
       tabTitle: "Offline administrator detail",
@@ -892,10 +904,8 @@ describe("ClassPilot tile-read tenant scope", () => {
           `/api/classpilot/device/screenshot/${deviceId}`,
           schoolWideUser
         );
-        assert.equal(legacy.status, 200);
-        assert.match(legacy.body.screenshot, /^data:image\/jpeg;base64,/);
-        assert.equal(legacy.body.tabTitle, "Offline administrator detail");
-        assert.doesNotMatch(JSON.stringify(legacy.body), /studentSessionId|deviceId/);
+        assert.equal(legacy.status, 404);
+        assert.deepEqual(legacy.body, { error: "No screenshot available" });
 
         const batch = await postJson(
           "/api/classpilot/tiles/screenshots",
@@ -912,20 +922,16 @@ describe("ClassPilot tile-read tenant scope", () => {
           .set({ isActive: true, endedAt: null })
           .where(eq(studentSessions.deviceId, deviceId));
       });
-      screenshots.set(deviceId, previousScreenshot);
+      storeExactScreenshot(deviceId);
     }
   });
 
   it("keeps restricted legacy screenshot reads bound to an active student session", async () => {
     const deviceId = primaryDeviceIds[6]!;
     const studentId = authorizedStudentIds[6]!;
-    const screenshots = (globalThis as any).__screenshots as Map<string, unknown>;
-    const previousScreenshot = screenshots.get(deviceId);
-    screenshots.set(deviceId, {
+    storeExactScreenshot(deviceId, {
       screenshot: "data:image/jpeg;base64,b2ZmbGluZS1yZXN0cmljdGVk",
       timestamp: Date.now(),
-      studentId,
-      studentSessionId: activeStudentSessionIdByDevice.get(deviceId),
     });
     await inSchool(schoolA.id, async () => {
       await db
@@ -1005,7 +1011,7 @@ describe("ClassPilot tile-read tenant scope", () => {
           .set({ isActive: true, endedAt: null })
           .where(eq(studentSessions.deviceId, deviceId));
       });
-      screenshots.set(deviceId, previousScreenshot);
+      storeExactScreenshot(deviceId);
     }
   });
 
@@ -1231,8 +1237,8 @@ describe("ClassPilot tile-read tenant scope", () => {
     assert.equal((await batchRequest()).status, 200);
   });
 
-  it("serves a 40-request aligned burst through the 18-connection API pool", async () => {
-    assert.equal((pool as any).options.max, 18);
+  it("serves a 40-request aligned burst through the 16-connection API pool", async () => {
+    assert.equal((pool as any).options.max, 16);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10_000);
 

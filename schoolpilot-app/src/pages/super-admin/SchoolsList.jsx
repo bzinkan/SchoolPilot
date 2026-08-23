@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Activity, ShieldCheck } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
@@ -23,6 +23,7 @@ export default function SchoolsList() {
   const [schools, setSchools] = useState([]);
   const [stats, setStats] = useState({});
   const [search, setSearch] = useState('');
+  const [appliedSearch, setAppliedSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [productFilter, setProductFilter] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -37,11 +38,11 @@ export default function SchoolsList() {
   const [broadcastSending, setBroadcastSending] = useState(false);
   const [adminEmailInfo, setAdminEmailInfo] = useState(null);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       const params = {};
-      if (search) params.search = search;
+      if (appliedSearch) params.search = appliedSearch;
       if (statusFilter !== 'all') params.status = statusFilter;
 
       const [schoolsRes, statsRes] = await Promise.all([
@@ -55,9 +56,9 @@ export default function SchoolsList() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [appliedSearch, statusFilter]);
 
-  useEffect(() => { loadData(); }, [statusFilter]);
+  useEffect(() => { void loadData(); }, [loadData]);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,7 +91,7 @@ export default function SchoolsList() {
 
   const handleSearch = (e) => {
     e.preventDefault();
-    loadData();
+    setAppliedSearch(search.trim());
   };
 
   const handleSuspend = async (id) => {

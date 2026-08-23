@@ -22,6 +22,7 @@ import {
   startScheduledClassFromConflict,
 } from "../../services/classpilotScheduledStart.js";
 import { serializeClasspilotSession } from "../../services/classpilotSessionLifecycle.js";
+import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
 
 const router = Router();
 
@@ -39,8 +40,7 @@ function param(req: any, key: string): string {
 }
 
 function isAdmin(req: any, res: any): boolean {
-  const role = res.locals.membershipRole;
-  return !!req.authUser?.isSuperAdmin || role === "admin" || role === "school_admin";
+  return requestHasAnySchoolRole(req, res, ["admin", "school_admin"]);
 }
 
 function displayName(user: any): string {

@@ -38,6 +38,10 @@ locals {
     { name = "RLS_GUC_ENABLED", value = "true" },
     { name = "RLS_ENABLED_TABLES", value = var.rls_enabled_tables },
   ]
+  classpilot_turn_environment = var.classpilot_turn_hosts != "" ? [
+    { name = "CLASSPILOT_TURN_HOSTS", value = var.classpilot_turn_hosts },
+    { name = "CLASSPILOT_STUN_URLS", value = join(",", [for host in split(",", var.classpilot_turn_hosts) : "stun:${host}:3478"]) },
+  ] : []
   optional_common_secrets = concat(
     var.anthropic_api_key_parameter_arn != "" ? [
       { name = "ANTHROPIC_API_KEY", valueFrom = var.anthropic_api_key_parameter_arn },
@@ -63,7 +67,9 @@ locals {
     { name = "SENDGRID_API_KEY", valueFrom = local.application_secret_parameter_arns["SENDGRID_API_KEY"] },
     { name = "STRIPE_SECRET_KEY", valueFrom = local.application_secret_parameter_arns["STRIPE_SECRET_KEY"] },
     { name = "STRIPE_WEBHOOK_SECRET", valueFrom = local.application_secret_parameter_arns["STRIPE_WEBHOOK_SECRET"] },
-  ], local.optional_common_secrets)
+    ], local.optional_common_secrets, var.classpilot_turn_rest_secret_arn != "" ? [
+    { name = "CLASSPILOT_TURN_REST_SECRET", valueFrom = var.classpilot_turn_rest_secret_arn },
+  ] : [])
 }
 
 # --- CloudWatch Log Group ---
@@ -116,7 +122,7 @@ resource "aws_iam_role_policy" "ecs_secrets" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       {
         Effect   = "Allow"
         Action   = ["ssm:GetParameters"]
@@ -132,7 +138,11 @@ resource "aws_iam_role_policy" "ecs_secrets" {
           }
         }
       }
-    ]
+      ], var.classpilot_turn_rest_secret_arn != "" ? [{
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = [var.classpilot_turn_rest_secret_arn]
+    }] : [])
   })
 }
 
@@ -174,7 +184,7 @@ resource "aws_ecs_task_definition" "api" {
       protocol      = "tcp"
     }]
 
-    environment = concat(local.common_environment, [
+    environment = concat(local.common_environment, local.classpilot_turn_environment, [
       { name = "PORT", value = tostring(var.container_port) },
       { name = "SCHEDULER_ENABLED", value = "false" },
     ])
@@ -263,7 +273,7 @@ resource "aws_ecs_task_definition" "worker" {
     image   = "${var.ecr_repository_url}:latest"
     command = ["node", "dist/worker.js"]
 
-    environment = concat(local.common_environment, [
+    environment = concat(local.common_environment, local.classpilot_turn_environment, [
       { name = "SCHEDULER_ENABLED", value = "true" },
     ])
 

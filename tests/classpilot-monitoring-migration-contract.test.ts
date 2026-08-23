@@ -5,11 +5,12 @@ import { readFile } from "node:fs/promises";
 const root = new URL("../", import.meta.url);
 
 test("startup migration and Drizzle schema include all monitoring tenant tables", async () => {
-  const [schema, migration, workflow, deploy] = await Promise.all([
+  const [schema, migration, workflow, deploy, registrySource] = await Promise.all([
     readFile(new URL("src/schema/classpilot.ts", root), "utf8"),
     readFile(new URL("src/index.ts", root), "utf8"),
     readFile(new URL(".github/workflows/ci-build.yml", root), "utf8"),
     readFile(new URL("scripts/deploy.sh", root), "utf8"),
+    readFile(new URL("src/config/rlsRegistry.json", root), "utf8"),
   ]);
   const tables = [
     "classpilot_monitoring_events",
@@ -23,10 +24,14 @@ test("startup migration and Drizzle schema include all monitoring tenant tables"
     assert.match(migration, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
     assert.match(workflow, new RegExp(table));
   }
-  assert.match(
-    deploy,
-    /classpilot_monitoring_events,classpilot_session_reports,classpilot_session_staff,classpilot_session_student_reports,classpilot_student_control_states/
+  const registry = JSON.parse(registrySource) as {
+    reviewedEnablementRequests: { classpilotMonitoringAndReports: string[] };
+  };
+  assert.deepEqual(
+    registry.reviewedEnablementRequests.classpilotMonitoringAndReports,
+    tables
   );
+  assert.match(deploy, /enforce-deploy-rls-allowlist\.mjs/);
   assert.match(schema, /trackingPolicy: jsonb\("tracking_policy"\)/);
   assert.match(schema, /authorizationMarker: jsonb\("authorization_marker"\)/);
   assert.match(
@@ -70,7 +75,9 @@ test("report lifecycle has settlement, lease, immutable delivery wait, and expir
   assert.match(storage, /new Date\(now\.getTime\(\) \+ 30_000\)/);
   assert.match(storage, /\.for\("update", \{ skipLocked: true \}\)/);
   assert.match(storage, /state: "waiting_report"/);
-  assert.match(storage, /coverageAlgorithmVersion: "heartbeat-coverage-v1"/);
+  assert.match(storage, /classpilotSessionReportVersionForNewRow\(\)/);
+  assert.match(storage, /reportVersion,/);
+  assert.match(storage, /reportVersion === 2[\s\S]{0,100}"heartbeat-coverage-v2"[\s\S]{0,100}"heartbeat-coverage-v1"/);
   assert.match(storage, /trackingPolicy:/);
   assert.match(storage, /createClasspilotReportAuthorizationMarker/);
   assert.match(storage, /getHeartbeatsForStudentsInRange\([\s\S]*report\.windowStart,[\s\S]*report\.windowEnd/);

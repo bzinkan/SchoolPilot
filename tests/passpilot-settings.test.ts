@@ -238,12 +238,17 @@ describe("PassPilot admin settings backend", { concurrency: false }, () => {
       "activeGradeLevels",
     ]) {
       assert.equal(
-        authSource.match(new RegExp(`${field}: m\\.school\\.${field}`, "g"))?.length,
-        2,
-        `${field} must be serialized by both password login and /auth/me`
+        authSource.match(new RegExp(`${field}: identity\\.school\\.${field}`, "g"))?.length,
+        1,
+        `${field} must be serialized by the canonical school identity helper`
       );
       assert.match(usersSource, new RegExp(`${field}: m\\.school\\.${field}`));
     }
+    assert.equal(
+      authSource.match(/schoolIdentities\.map\(serializeSchoolIdentity\)/g)?.length,
+      2,
+      "password login and /auth/me must both use the canonical school identity helper"
+    );
     assert.doesNotMatch(authSource, /kioskPin(?:Hash)?: m\.school/);
     assert.doesNotMatch(usersSource, /kioskPin(?:Hash)?: m\.school/);
   });

@@ -33,11 +33,14 @@ import SchoolSettingsTab from './setup/SchoolSettingsTab';
 
 export default function SchoolSetupWizard() {
   const navigate = useNavigate();
-  const { currentSchool, currentRole } = useGoPilotAuth();
-  const canManageSetup = currentRole === 'admin' || currentRole === 'school_admin';
-  const canManagePickups = canManageSetup || currentRole === 'office_staff';
+  const { currentSchool, currentRole, currentRoles } = useGoPilotAuth();
+  const canManageSetup = currentRoles.some((role) => role === 'admin' || role === 'school_admin');
+  const canManagePickups = canManageSetup || currentRoles.includes('office_staff');
+  const teacherOnly = currentRoles.includes('teacher') && !canManagePickups;
 
-  const [activeTab, setActiveTab] = useState(currentRole === 'office_staff' ? 'pickups' : 'staff');
+  const [activeTab, setActiveTab] = useState(
+    currentRoles.includes('office_staff') && !canManageSetup ? 'pickups' : 'staff'
+  );
   const [students, setStudents] = useState([]);
   const [homerooms, setHomerooms] = useState([]);
   const [staff, setStaff] = useState([]);
@@ -64,8 +67,8 @@ export default function SchoolSetupWizard() {
 
   useEffect(() => {
     if (!currentRole || canManagePickups) return;
-    navigate(currentRole === 'teacher' ? '/gopilot/teacher' : '/gopilot', { replace: true });
-  }, [canManagePickups, currentRole, navigate]);
+    navigate(teacherOnly ? '/gopilot/teacher' : '/gopilot', { replace: true });
+  }, [canManagePickups, currentRole, navigate, teacherOnly]);
 
   // Fetch data on mount
   useEffect(() => {
@@ -332,7 +335,7 @@ export default function SchoolSetupWizard() {
                 <span className="hidden sm:inline">{label}</span>
               </button>
             ))}
-            <button onClick={() => requestSetupNavigation(currentRole === 'teacher' ? '/gopilot/teacher' : '/gopilot', { route: true })} className="px-4 py-2 text-sm text-gray-600 dark:text-slate-300 border dark:border-slate-600 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800">
+            <button onClick={() => requestSetupNavigation(teacherOnly ? '/gopilot/teacher' : '/gopilot', { route: true })} className="px-4 py-2 text-sm text-gray-600 dark:text-slate-300 border dark:border-slate-600 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800">
               Back to Dashboard
             </button>
           </div>

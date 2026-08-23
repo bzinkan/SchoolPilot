@@ -12,6 +12,8 @@ export type WSClient = {
   schoolId?: string;
   subscribedSessionIds: Set<string>;
   authenticated: boolean;
+  passiveAuthorizationExpiresAt?: number;
+  passiveAuthorizationGeneration?: number;
 };
 
 const wsClients = new Map<WebSocket, WSClient>();
@@ -104,6 +106,8 @@ export function authenticateWsClient(
   client.studentSessionId = auth.studentSessionId;
   client.userId = auth.userId;
   client.authenticated = true;
+  client.passiveAuthorizationExpiresAt = undefined;
+  client.passiveAuthorizationGeneration = undefined;
   client.subscribedSessionIds.clear();
 
   if (auth.role === "student") {
@@ -266,7 +270,7 @@ export function sendToDeviceLocal(schoolId: string, deviceId: string, message: u
   const sockets = studentSocketsBySchool.get(schoolId);
   const msgType = (message as { type?: string })?.type ?? 'unknown';
   if (!sockets) {
-    console.log(`[WS-Local] No sockets for school ${schoolId} to deliver ${msgType} to ${deviceId}`);
+    console.log(`[WS-Local] No exact-bound socket available for ${msgType}`);
     return false;
   }
   // Per-device dedup
@@ -284,11 +288,11 @@ export function sendToDeviceLocal(schoolId: string, deviceId: string, message: u
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(messageStr);
       sent = true;
-      console.log(`[WS-Local] Sent ${msgType} to device ${deviceId}`);
+      console.log(`[WS-Local] Sent exact-bound ${msgType}`);
     }
   });
   if (!sent) {
-    console.log(`[WS-Local] Device ${deviceId} not found locally for ${msgType}`);
+    console.log(`[WS-Local] Exact-bound local target unavailable for ${msgType}`);
   }
   return sent;
 }

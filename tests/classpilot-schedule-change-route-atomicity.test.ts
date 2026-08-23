@@ -77,11 +77,12 @@ test("schedule-change realtime keeps office staff view-only", async () => {
   assert.match(websocket, /membershipRole === "office_staff"[^\n]*return "office_staff"/);
   assert.match(websocket, /No active ClassPilot access for this school/);
   assert.match(websocket, /export async function activeStaffWebSocketRole/);
-  assert.match(websocket, /currentRole !== client\.role/);
+  assert.match(websocket, /await activeStaffWebSocketRole\(client\)/);
+  assert.match(websocket, /await validatePassiveAuthorization\(\)/);
   assert.match(websocket, /staffWebSocketMessageRevalidation/);
   assert.match(websocket, /staffPongRevalidation/);
   assert.ok(
-    websocket.indexOf("staffWebSocketMessageRevalidation") < websocket.indexOf("// --- Heartbeat handling ---"),
+    websocket.indexOf("staffWebSocketMessageRevalidation") < websocket.indexOf("// --- Passive heartbeat handling ---"),
     "Staff heartbeat authority must be revalidated before refreshing presence"
   );
   assert.match(broadcast, /WsRole = [^;]*"office_staff"/);

@@ -2,15 +2,26 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { buildSystemPrompt } from "../prompts/systemPrompt.js";
-import { getToolsForContext, type ChatTool } from "./chatTools.js";
+import { getToolsForContext } from "./chatTools.js";
 import { executeTool, type ToolContext } from "./chatToolExecutor.js";
 import { logAudit } from "./audit.js";
+import { runWithTenantContext } from "../middleware/tenantContext.js";
+import {
+  aiConversationStore,
+  AiConversationStoreError,
+  type StoredAiConversation,
+} from "./aiConversationStore.js";
+import { loadVerifiedSchoolIdentities } from "./schoolIdentity.js";
+import { getProductLicenses, getSchoolById } from "./storage.js";
+import { activeEntitledProducts } from "./productEntitlement.js";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
 const AI_CHAT_ENABLED = process.env.AI_CHAT_ENABLED === "true";
 const MODEL = "claude-sonnet-4-20250514";
 const MAX_TOKENS = 1024;
-const CONVERSATION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const PENDING_CONFIRMATION_TTL_MS = 5 * 60 * 1000;
+export const AI_CHAT_MAX_CONCURRENT_STREAMS = 10;
+let activeStreams = 0;
 
 let client: Anthropic | null = null;
 
@@ -35,16 +46,15 @@ interface Message {
   content: string | Anthropic.ContentBlock[];
 }
 
-interface Conversation {
+interface Conversation extends Omit<StoredAiConversation, "messages" | "context"> {
   messages: Message[];
   systemPrompt: string;
   context: ConversationContext;
-  lastActivity: Date;
   pendingToolUse?: {
     toolUseId: string;
     toolName: string;
     args: Record<string, any>;
-    toolMeta: ChatTool;
+    expiresAt: number;
   };
 }
 
@@ -56,8 +66,6 @@ export interface ConversationContext {
   userRole: string;
   licensedProducts: string[];
 }
-
-const conversations = new Map<string, Conversation>();
 
 function conversationMatchesContext(conv: Conversation, context: ConversationContext): boolean {
   return conv.context.userId === context.userId && conv.context.schoolId === context.schoolId;
@@ -79,29 +87,17 @@ async function auditAiEvent(
   });
 }
 
-// Cleanup expired conversations every 5 minutes. The HTTP server keeps the
-// process alive in production; this housekeeping timer must not keep one-off
-// migration commands or test workers alive after their real work is done.
-const conversationCleanupTimer = setInterval(() => {
-  const now = Date.now();
-  for (const [id, conv] of conversations) {
-    if (now - conv.lastActivity.getTime() > CONVERSATION_TTL_MS) {
-      conversations.delete(id);
-    }
-  }
-}, 5 * 60 * 1000);
-conversationCleanupTimer.unref?.();
-
-function getOrCreateConversation(
+async function getOrCreateConversation(
   conversationId: string,
   context: ConversationContext
-): Conversation {
-  let conv = conversations.get(conversationId);
+): Promise<Conversation> {
+  let conv = await aiConversationStore.load(conversationId, context) as Conversation | null;
   if (conv && !conversationMatchesContext(conv, context)) {
     throw new Error("Conversation does not belong to the current user and school.");
   }
   if (!conv) {
     conv = {
+      revision: 0,
       messages: [],
       systemPrompt: buildSystemPrompt({
         role: context.userRole,
@@ -110,12 +106,52 @@ function getOrCreateConversation(
         licensedProducts: context.licensedProducts,
       }),
       context,
-      lastActivity: new Date(),
+      lastActivity: Date.now(),
     };
-    conversations.set(conversationId, conv);
   }
-  conv.lastActivity = new Date();
   return conv;
+}
+
+async function saveConversation(
+  conversationId: string,
+  conv: Conversation
+): Promise<Conversation> {
+  return await aiConversationStore.save(
+    conversationId,
+    conv.context,
+    conv as StoredAiConversation,
+    conv.revision
+  ) as Conversation;
+}
+
+async function executeToolWithFreshTenant(
+  name: string,
+  args: Record<string, unknown>,
+  context: ToolContext
+) {
+  return runWithTenantContext(
+    { schoolId: context.schoolId },
+    async () => {
+      const [identities, licenses, school] = await Promise.all([
+        loadVerifiedSchoolIdentities(context.userId, context.schoolId),
+        getProductLicenses(context.schoolId),
+        getSchoolById(context.schoolId),
+      ]);
+      const identity = identities[0];
+      if (!identity) throw new Error("AI_CHAT_AUTHORITY_REVOKED");
+      const licensedProducts = activeEntitledProducts({ school, licenses });
+      const permittedRole = identity.roles.find((role) => (
+        getToolsForContext(role, licensedProducts).toolMeta.has(name)
+      ));
+      if (!permittedRole) throw new Error("AI_CHAT_AUTHORITY_REVOKED");
+      const freshContext: ToolContext = {
+        ...context,
+        userRole: permittedRole,
+        licensedProducts,
+      };
+      return executeTool(name, args, freshContext);
+    }
+  );
 }
 
 function getTranscript(conv: Conversation, maxMessages = 10): string {
@@ -151,31 +187,40 @@ export interface SSEEvent {
 export async function* sendMessage(
   conversationId: string,
   userMessage: string,
-  context: ConversationContext
+  context: ConversationContext,
+  options: { signal?: AbortSignal } = {}
 ): AsyncGenerator<SSEEvent> {
-  const existing = conversations.get(conversationId);
-  if (existing && !conversationMatchesContext(existing, context)) {
-    await auditAiEvent(context, "ai.conversation.denied", {
-      conversationId,
-      reason: "owner_mismatch",
-    });
+  if (activeStreams >= AI_CHAT_MAX_CONCURRENT_STREAMS) {
     yield {
       type: "error",
-      content: "Conversation not found.",
+      content: "AI chat is busy. Please retry shortly.",
     };
     return;
   }
+  activeStreams += 1;
 
-  const conv = getOrCreateConversation(conversationId, context);
+  let conv: Conversation;
+  try {
+    conv = await getOrCreateConversation(conversationId, context);
+  } catch {
+    activeStreams -= 1;
+    yield { type: "error", content: "Conversation state is temporarily unavailable." };
+    return;
+  }
   const { tools, toolMeta } = getToolsForContext(
     context.userRole,
     context.licensedProducts
   );
 
-  console.log(`[AI Chat] Tools available (${tools.length}): ${tools.map(t => t.name).join(", ") || "NONE"}`);
-
   // Add user message
   conv.messages.push({ role: "user", content: userMessage });
+  try {
+    conv = await saveConversation(conversationId, conv);
+  } catch {
+    activeStreams -= 1;
+    yield { type: "error", content: "Conversation state changed. Please retry." };
+    return;
+  }
 
   // Build messages for API (strip complex content blocks, keep text)
   const apiMessages: Anthropic.MessageParam[] = conv.messages.map((m) => ({
@@ -184,6 +229,7 @@ export async function* sendMessage(
   }));
 
   try {
+    if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
     const anthropic = getClient();
 
     // Stream the response
@@ -193,7 +239,7 @@ export async function* sendMessage(
       system: conv.systemPrompt,
       messages: apiMessages,
       tools: tools.length > 0 ? tools : undefined,
-    });
+    }, options.signal ? { signal: options.signal } : undefined);
 
     let fullText = "";
     let toolUseBlocks: any[] = [];
@@ -272,7 +318,7 @@ export async function* sendMessage(
             toolUseId: tb.id,
             toolName: tb.name,
             args: tb.input,
-            toolMeta: meta,
+            expiresAt: Date.now() + PENDING_CONFIRMATION_TTL_MS,
           };
           await auditAiEvent(context, "ai.tool.requested", {
             conversationId,
@@ -300,7 +346,7 @@ export async function* sendMessage(
             getTranscript: () => getTranscript(conv),
           };
 
-          const result = await executeTool(tb.name, tb.input, toolCtx);
+          const result = await executeToolWithFreshTenant(tb.name, tb.input, toolCtx);
           await auditAiEvent(context, "ai.tool.executed", {
             conversationId,
             toolName: tb.name,
@@ -331,7 +377,7 @@ export async function* sendMessage(
               content: m.content as any,
             })),
             tools: tools.length > 0 ? tools : undefined,
-          });
+          }, options.signal ? { signal: options.signal } : undefined);
 
           let followUpText = "";
           for (const block of followUp.content) {
@@ -348,14 +394,17 @@ export async function* sendMessage(
       }
     }
 
+    conv = await saveConversation(conversationId, conv);
     yield { type: "done" };
-  } catch (err: any) {
-    console.error("[ChatService] Error:", err);
+  } catch {
     yield {
       type: "error",
-      content:
-        err.message || "An error occurred while processing your message.",
+      content: options.signal?.aborted
+        ? "The AI chat request timed out or was cancelled."
+        : "AI chat is temporarily unavailable.",
     };
+  } finally {
+    activeStreams = Math.max(0, activeStreams - 1);
   }
 }
 
@@ -364,18 +413,14 @@ export async function* sendMessage(
 export async function* confirmAction(
   conversationId: string,
   confirmed: boolean,
-  context: ConversationContext
+  context: ConversationContext,
+  options: { signal?: AbortSignal } = {}
 ): AsyncGenerator<SSEEvent> {
-  const conv = conversations.get(conversationId);
-  if (conv && !conversationMatchesContext(conv, context)) {
-    await auditAiEvent(context, "ai.conversation.denied", {
-      conversationId,
-      reason: "owner_mismatch",
-    });
-    yield {
-      type: "error",
-      content: "Conversation not found.",
-    };
+  let conv: Conversation | null;
+  try {
+    conv = await aiConversationStore.load(conversationId, context) as Conversation | null;
+  } catch {
+    yield { type: "error", content: "Conversation state is temporarily unavailable." };
     return;
   }
   if (!conv || !conv.pendingToolUse) {
@@ -386,8 +431,27 @@ export async function* confirmAction(
     return;
   }
 
+  if (conv.pendingToolUse.expiresAt <= Date.now()) {
+    conv.pendingToolUse = undefined;
+    await saveConversation(conversationId, conv).catch(() => {});
+    yield { type: "error", content: "The pending action expired. Please ask again." };
+    return;
+  }
+
   const { toolUseId, toolName, args } = conv.pendingToolUse;
   conv.pendingToolUse = undefined;
+  try {
+    // Optimistic revision makes confirmation a single-use cross-task claim.
+    conv = await saveConversation(conversationId, conv);
+  } catch (error) {
+    yield {
+      type: "error",
+      content: error instanceof AiConversationStoreError && error.code === "conflict"
+        ? "That action was already handled."
+        : "Conversation state is temporarily unavailable.",
+    };
+    return;
+  }
 
   if (!confirmed) {
     await auditAiEvent(context, "ai.tool.cancelled", {
@@ -419,6 +483,7 @@ export async function* confirmAction(
       role: "assistant",
       content: "Okay, I've cancelled that action. Is there anything else I can help with?",
     });
+    await saveConversation(conversationId, conv).catch(() => {});
     yield { type: "done" };
     return;
   }
@@ -434,7 +499,7 @@ export async function* confirmAction(
     getTranscript: () => getTranscript(conv),
   };
 
-  const result = await executeTool(toolName, args, toolCtx);
+  const result = await executeToolWithFreshTenant(toolName, args, toolCtx);
   await auditAiEvent(context, "ai.tool.executed", {
     conversationId,
     toolName,
@@ -462,7 +527,13 @@ export async function* confirmAction(
   });
 
   // Get Claude's summary of the result
+  let providerPermit = false;
   try {
+    if (activeStreams >= AI_CHAT_MAX_CONCURRENT_STREAMS) {
+      throw new Error("provider_saturated");
+    }
+    activeStreams += 1;
+    providerPermit = true;
     const anthropic = getClient();
     const { tools } = getToolsForContext(
       context.userRole,
@@ -478,7 +549,7 @@ export async function* confirmAction(
         content: m.content as any,
       })),
       tools: tools.length > 0 ? tools : undefined,
-    });
+    }, options.signal ? { signal: options.signal } : undefined);
 
     let followUpText = "";
     for (const block of followUp.content) {
@@ -491,27 +562,24 @@ export async function* confirmAction(
     if (followUpText) {
       conv.messages.push({ role: "assistant", content: followUpText });
     }
-  } catch (err: any) {
-    console.error("[ChatService] Follow-up error:", err);
+  } catch {
     yield {
       type: "token",
       content: result.success
         ? "Done! The action was completed successfully."
         : `There was an issue: ${result.error}`,
     };
+  } finally {
+    if (providerPermit) activeStreams = Math.max(0, activeStreams - 1);
   }
 
+  await saveConversation(conversationId, conv).catch(() => {});
   yield { type: "done" };
 }
 
-export function deleteConversation(conversationId: string, context: ConversationContext): boolean {
-  const conv = conversations.get(conversationId);
-  if (conv && !conversationMatchesContext(conv, context)) {
-    auditAiEvent(context, "ai.conversation.denied", {
-      conversationId,
-      reason: "delete_owner_mismatch",
-    }).catch(() => {});
-    return false;
-  }
-  return conversations.delete(conversationId);
+export async function deleteConversation(
+  conversationId: string,
+  context: ConversationContext
+): Promise<boolean> {
+  return aiConversationStore.remove(conversationId, context);
 }

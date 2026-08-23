@@ -15,6 +15,9 @@ import { migrationsOnStartup, migrationsOnly, schedulerEnabled } from "./config/
 import { ensureHeartbeatHistoryIndexOnline } from "./db/heartbeatHistoryIndex.js";
 import { resolveEcsApiRuntimeIdentity } from "./services/ecsRuntimeIdentity.js";
 import { bindHeartbeatHotPathApiRuntimeTaskDefinitionSha256 } from "./services/heartbeatHotPathMetrics.js";
+import { runSchoolPilotMigrationLedger } from "./db/migrationLedger.js";
+import { schoolPilot27Migrations } from "./db/migrations27.js";
+import { safeErrorMetadata } from "./util/safeLogging.js";
 
 // Initialize Sentry as early as possible. No-op unless SENTRY_DSN is set
 // (gated off until the DPA is signed + subprocessors list updated).
@@ -38,7 +41,7 @@ async function bounded(promise: Promise<unknown>, timeoutMs: number, label: stri
       }),
     ]);
   } catch (err) {
-    console.error(`[FATAL] ${label} failed:`, err);
+    console.error(`[FATAL] ${label} failed:`, safeErrorMetadata(err));
   } finally {
     if (timer) clearTimeout(timer);
   }
@@ -52,7 +55,7 @@ function closeHttpServer(): Promise<void> {
       return;
     }
     server.close((err) => {
-      if (err) console.error("[FATAL] HTTP server close failed:", err);
+      if (err) console.error("[FATAL] HTTP server close failed:", safeErrorMetadata(err));
       resolve();
     });
   });
@@ -84,7 +87,7 @@ function closeWebSocketServer(): Promise<void> {
       }
     }
     wss.close((err) => {
-      if (err) console.error("[FATAL] WebSocket server close failed:", err);
+      if (err) console.error("[FATAL] WebSocket server close failed:", safeErrorMetadata(err));
       resolve();
     });
   });
@@ -100,7 +103,10 @@ async function flushHeartbeatClassificationWrites(): Promise<void> {
 async function fatalShutdown(reason: string, err: unknown): Promise<void> {
   const error = err instanceof Error ? err : new Error(String(err));
   if (fatalShutdownStarted) {
-    console.error(`[FATAL] Additional fatal event during shutdown (${reason}):`, error);
+    console.error(
+      `[FATAL] Additional fatal event during shutdown (${reason}):`,
+      safeErrorMetadata(error)
+    );
     return;
   }
   fatalShutdownStarted = true;
@@ -111,7 +117,7 @@ async function fatalShutdown(reason: string, err: unknown): Promise<void> {
     process.exit(1);
   }, 15_000);
 
-  console.error(`[FATAL] ${reason}:`, error);
+  console.error(`[FATAL] ${reason}:`, safeErrorMetadata(error));
   stopScheduler();
   stopHealthMonitor();
   const closeServers = Promise.allSettled([
@@ -218,6 +224,13 @@ function validateEnv(): void {
     }
   }
 
+  if (isProduction && migrationsOnStartup()) {
+    throw new Error(
+      "FATAL: RUN_MIGRATIONS_ON_STARTUP must remain disabled in production. " +
+        "Run the explicit RUN_MIGRATIONS_ONLY task before rolling services."
+    );
+  }
+
   // If MailPilot is configured (Pub/Sub topic set), the public push endpoint
   // must have its verify token — otherwise the route 503s every notification
   // and Gmail monitoring silently stops. Refuse to boot prod in that state.
@@ -237,14 +250,37 @@ validateEnv();
 
 const PORT = parseInt(process.env.PORT || "4000", 10);
 
+/**
+ * Production's one-off migration task runs only checksum-ledger migrations.
+ * The historical convergence routine below remains available to bootstrap a
+ * non-production database, but its legacy catch-and-continue behavior is not
+ * an acceptable production migration contract.
+ */
+export async function runVersionedMigrations(): Promise<void> {
+  const ledgerResults = await runSchoolPilotMigrationLedger({
+    pool,
+    migrations: schoolPilot27Migrations,
+  });
+  for (const result of ledgerResults) {
+    console.log(`[migration] ${result.id} ${result.status} (${result.durationMs}ms)`);
+  }
+}
+
 // Run lightweight auto-migrations for new tables
 import {
   RLS_GLOBAL_TABLES,
   isSafeIdentifier,
+  isReviewedRlsEnforcementRequest,
   parseRlsEnabledTables,
   policySqlFor,
 } from "./db/rlsPolicies.js";
 export async function runStartupMigrations(): Promise<void> {
+  if (process.env.NODE_ENV === "production") {
+    throw Object.assign(
+      new Error("Legacy startup convergence is disabled in production"),
+      { code: "LEGACY_STARTUP_MIGRATIONS_FORBIDDEN" }
+    );
+  }
   // Schools can share a district Google Workspace domain. Older deployments had
   // a single-column unique constraint on domain; remove it and keep uniqueness
   // on (domain, name), matching the Drizzle schema.
@@ -255,7 +291,7 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS schools_domain_idx ON schools (domain)`);
     console.log("[migration] schools shared-domain indexes ready");
   } catch (err) {
-    console.warn("[migration] schools shared-domain migration skipped:", (err as Error).message);
+    console.warn("[migration] schools shared-domain migration skipped:", safeErrorMetadata(err));
   }
 
   try {
@@ -356,7 +392,7 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`ALTER TABLE schools ALTER COLUMN plan_tier SET DEFAULT 'basic'`);
     console.log("[migration] school inquiry table and active/suspended defaults ready");
   } catch (err) {
-    console.warn("[migration] school inquiry migration skipped:", (err as Error).message);
+    console.warn("[migration] school inquiry migration skipped:", safeErrorMetadata(err));
   }
 
   try {
@@ -379,7 +415,7 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS daily_usage_school_student_date_idx ON daily_usage (school_id, student_id, date)`);
     console.log("[migration] daily_usage table ready");
   } catch (err) {
-    console.warn("[migration] daily_usage auto-migration skipped:", (err as Error).message);
+    console.warn("[migration] daily_usage auto-migration skipped:", safeErrorMetadata(err));
   }
 
   // Device enrollment secret columns (backward compatible — required defaults false)
@@ -396,7 +432,7 @@ export async function runStartupMigrations(): Promise<void> {
     `);
     console.log("[migration] settings enrollment_key columns ready");
   } catch (err) {
-    console.warn("[migration] enrollment_key migration skipped:", (err as Error).message);
+    console.warn("[migration] enrollment_key migration skipped:", safeErrorMetadata(err));
   }
 
   // Auto-enroll policy: default OFF (students must be pre-imported by IT).
@@ -415,7 +451,7 @@ export async function runStartupMigrations(): Promise<void> {
     `);
     console.log("[migration] settings auto_enroll_students column ready");
   } catch (err) {
-    console.warn("[migration] auto_enroll_students migration skipped:", (err as Error).message);
+    console.warn("[migration] auto_enroll_students migration skipped:", safeErrorMetadata(err));
   }
 
   // The ClassPilot automatic scheduler must have an authoritative school-day
@@ -1550,7 +1586,7 @@ export async function runStartupMigrations(): Promise<void> {
     const residual = nullCounts.rows.filter((r: any) => Number(r.n) > 0).map((r: any) => `${r.t}=${r.n}`);
     console.log(`[migration] derived-table school_id columns ready${residual.length ? ` (NULL remaining: ${residual.join(", ")})` : ""}`);
   } catch (err) {
-    console.warn("[migration] derived-table school_id migration skipped:", (err as Error).message);
+    console.warn("[migration] derived-table school_id migration skipped:", safeErrorMetadata(err));
   }
 
   // Scheduled occurrence metadata is required by both the API finalizer and
@@ -1779,7 +1815,7 @@ export async function runStartupMigrations(): Promise<void> {
     `);
     console.log("[migration] ClassPilot teacher command tables ready");
   } catch (err) {
-    console.warn("[migration] ClassPilot teacher command migration skipped:", (err as Error).message);
+    console.warn("[migration] ClassPilot teacher command migration skipped:", safeErrorMetadata(err));
   }
 
   // ClassPilot FAB production state: session-scoped chat + recoverable raised hands.
@@ -1846,7 +1882,9 @@ export async function runStartupMigrations(): Promise<void> {
         school_id TEXT NOT NULL,
         session_id VARCHAR NOT NULL,
         student_id TEXT,
+        student_session_id VARCHAR,
         device_id TEXT,
+        client_message_id VARCHAR(128),
         sender_id TEXT NOT NULL,
         sender_type TEXT NOT NULL,
         recipient_id TEXT,
@@ -1861,7 +1899,9 @@ export async function runStartupMigrations(): Promise<void> {
     `);
     await pool.query(`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS school_id TEXT`);
     await pool.query(`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS student_id TEXT`);
+    await pool.query(`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS student_session_id VARCHAR`);
     await pool.query(`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS device_id TEXT`);
+    await pool.query(`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS client_message_id VARCHAR(128)`);
     await pool.query(`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS delivery_status TEXT NOT NULL DEFAULT 'sent'`);
     await pool.query(`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP`);
     await pool.query(`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS failed_at TIMESTAMP`);
@@ -1878,6 +1918,11 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS chat_messages_session_id_idx ON chat_messages (session_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS chat_messages_school_session_idx ON chat_messages (school_id, session_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS chat_messages_school_student_idx ON chat_messages (school_id, student_id)`);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS chat_messages_student_client_unique
+      ON chat_messages (school_id, student_id, student_session_id, client_message_id)
+      WHERE client_message_id IS NOT NULL
+    `);
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS classpilot_active_hands (
@@ -2451,7 +2496,10 @@ export async function runStartupMigrations(): Promise<void> {
     }
     console.log("[migration] ClassPilot FAB, chat outbox, and poll tables ready");
   } catch (err) {
-    console.error("[migration] FATAL: ClassPilot FAB release-critical migration failed:", (err as Error).message);
+    console.error(
+      "[migration] FATAL: ClassPilot FAB release-critical migration failed:",
+      safeErrorMetadata(err)
+    );
     throw err;
   }
 
@@ -2552,7 +2600,10 @@ export async function runStartupMigrations(): Promise<void> {
     `);
     console.log("[migration] ClassPilot supervision coverage tables ready");
   } catch (err) {
-    console.warn("[migration] ClassPilot supervision coverage migration skipped:", (err as Error).message);
+    console.warn(
+      "[migration] ClassPilot supervision coverage migration skipped:",
+      safeErrorMetadata(err)
+    );
   }
 
   // ClassPilot scheduled-start coverage requests. These school-scoped rows record
@@ -2593,7 +2644,10 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_scheduled_conflicts_teacher_idx ON classpilot_scheduled_conflicts (school_id, teacher_id)`);
     console.log("[migration] ClassPilot scheduled conflict table ready");
   } catch (err) {
-    console.warn("[migration] ClassPilot scheduled conflict migration skipped:", (err as Error).message);
+    console.warn(
+      "[migration] ClassPilot scheduled conflict migration skipped:",
+      safeErrorMetadata(err)
+    );
   }
 
   // Session roster snapshots are now required runtime infrastructure for every
@@ -2641,7 +2695,10 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_session_usage_school_session_idx ON classpilot_session_usage (school_id, teaching_session_id)`);
     console.log("[migration] ClassPilot session-attributed usage table ready");
   } catch (err) {
-    console.warn("[migration] ClassPilot session analytics migration skipped:", (err as Error).message);
+    console.warn(
+      "[migration] ClassPilot session analytics migration skipped:",
+      safeErrorMetadata(err)
+    );
   }
 
   // Immutable ClassPilot monitoring reports, authorization snapshots, and
@@ -2676,6 +2733,7 @@ export async function runStartupMigrations(): Promise<void> {
       window_start TIMESTAMPTZ NOT NULL,
       window_end TIMESTAMPTZ NOT NULL,
       timezone TEXT NOT NULL,
+      report_version INTEGER NOT NULL DEFAULT 1,
       coverage_algorithm_version TEXT NOT NULL DEFAULT 'heartbeat-coverage-v1',
       event_schema_version INTEGER NOT NULL DEFAULT 1,
       authorization_marker JSONB,
@@ -2690,6 +2748,10 @@ export async function runStartupMigrations(): Promise<void> {
       total_eligible_seconds INTEGER NOT NULL DEFAULT 0,
       total_observed_seconds INTEGER NOT NULL DEFAULT 0,
       total_gap_seconds INTEGER NOT NULL DEFAULT 0,
+      total_unclassified_seconds INTEGER NOT NULL DEFAULT 0,
+      total_off_task_seconds INTEGER NOT NULL DEFAULT 0,
+      total_off_task_event_count INTEGER NOT NULL DEFAULT 0,
+      total_safety_alert_count INTEGER NOT NULL DEFAULT 0,
       settle_at TIMESTAMPTZ NOT NULL,
       attempt_count INTEGER NOT NULL DEFAULT 0,
       lease_owner TEXT,
@@ -2709,6 +2771,11 @@ export async function runStartupMigrations(): Promise<void> {
   `);
   await pool.query(`ALTER TABLE classpilot_session_reports ADD COLUMN IF NOT EXISTS authorization_marker JSONB`);
   await pool.query(`ALTER TABLE classpilot_session_reports ADD COLUMN IF NOT EXISTS tracking_policy JSONB`);
+  await pool.query(`ALTER TABLE classpilot_session_reports ADD COLUMN IF NOT EXISTS report_version INTEGER NOT NULL DEFAULT 1`);
+  await pool.query(`ALTER TABLE classpilot_session_reports ADD COLUMN IF NOT EXISTS total_unclassified_seconds INTEGER NOT NULL DEFAULT 0`);
+  await pool.query(`ALTER TABLE classpilot_session_reports ADD COLUMN IF NOT EXISTS total_off_task_seconds INTEGER NOT NULL DEFAULT 0`);
+  await pool.query(`ALTER TABLE classpilot_session_reports ADD COLUMN IF NOT EXISTS total_off_task_event_count INTEGER NOT NULL DEFAULT 0`);
+  await pool.query(`ALTER TABLE classpilot_session_reports ADD COLUMN IF NOT EXISTS total_safety_alert_count INTEGER NOT NULL DEFAULT 0`);
   // A trigger protects the backend-first mixed-version window: an older API
   // may finalize a class while the migration task is running, but every new
   // report still receives the same salted SHA-256 staff marker as the new
@@ -2835,6 +2902,11 @@ export async function runStartupMigrations(): Promise<void> {
       gap_intervals JSONB NOT NULL DEFAULT '[]'::jsonb,
       event_counts JSONB NOT NULL DEFAULT '{}'::jsonb,
       top_domains JSONB NOT NULL DEFAULT '[]'::jsonb,
+      unclassified_seconds INTEGER NOT NULL DEFAULT 0,
+      off_task_seconds INTEGER NOT NULL DEFAULT 0,
+      off_task_event_count INTEGER NOT NULL DEFAULT 0,
+      off_task_events JSONB NOT NULL DEFAULT '[]'::jsonb,
+      safety_alerts JSONB NOT NULL DEFAULT '[]'::jsonb,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       CONSTRAINT cp_student_reports_status_check
         CHECK (status IN ('complete', 'partial', 'none', 'not_expected', 'unavailable')),
@@ -2842,6 +2914,11 @@ export async function runStartupMigrations(): Promise<void> {
         CHECK (coverage_percent IS NULL OR (coverage_percent >= 0 AND coverage_percent <= 100))
     )
   `);
+  await pool.query(`ALTER TABLE classpilot_session_student_reports ADD COLUMN IF NOT EXISTS unclassified_seconds INTEGER NOT NULL DEFAULT 0`);
+  await pool.query(`ALTER TABLE classpilot_session_student_reports ADD COLUMN IF NOT EXISTS off_task_seconds INTEGER NOT NULL DEFAULT 0`);
+  await pool.query(`ALTER TABLE classpilot_session_student_reports ADD COLUMN IF NOT EXISTS off_task_event_count INTEGER NOT NULL DEFAULT 0`);
+  await pool.query(`ALTER TABLE classpilot_session_student_reports ADD COLUMN IF NOT EXISTS off_task_events JSONB NOT NULL DEFAULT '[]'::jsonb`);
+  await pool.query(`ALTER TABLE classpilot_session_student_reports ADD COLUMN IF NOT EXISTS safety_alerts JSONB NOT NULL DEFAULT '[]'::jsonb`);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS cp_student_reports_report_student_unique ON classpilot_session_student_reports (report_id, student_id)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS cp_student_reports_school_session_idx ON classpilot_session_student_reports (school_id, teaching_session_id)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS cp_student_reports_school_student_idx ON classpilot_session_student_reports (school_id, student_id)`);
@@ -2934,6 +3011,7 @@ export async function runStartupMigrations(): Promise<void> {
   await pool.query(`CREATE INDEX IF NOT EXISTS cp_monitoring_events_context_time_idx ON classpilot_monitoring_events (school_id, supervision_context_id, occurred_at DESC, id)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS cp_monitoring_events_student_time_idx ON classpilot_monitoring_events (school_id, student_id, occurred_at DESC)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS cp_monitoring_events_retention_idx ON classpilot_monitoring_events (retention_expires_at)`);
+  await runVersionedMigrations();
   console.log("[migration] ClassPilot immutable reports and monitoring events ready");
 
   // Google roster connector: IT-approved Domain-Wide Delegation for read-only
@@ -2963,7 +3041,7 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS google_roster_connectors_status_idx ON google_roster_connectors (school_id, status)`);
     console.log("[migration] Google roster connector table ready");
   } catch (err) {
-    console.warn("[migration] Google roster connector migration skipped:", (err as Error).message);
+    console.warn("[migration] Google roster connector migration skipped:", safeErrorMetadata(err));
   }
 
   // GoPilot staff-dismissal hardening. Child rows get a direct school_id so
@@ -3520,7 +3598,7 @@ export async function runStartupMigrations(): Promise<void> {
         (unknown.length ? ` (ignored unknown RLS_ENABLED_TABLES: ${unknown.join(", ")})` : ""),
     );
   } catch (err) {
-    console.warn("[migration] RLS policy migration skipped:", (err as Error).message);
+    console.warn("[migration] RLS policy migration skipped:", safeErrorMetadata(err));
   }
 
   // A reviewed deploy can request fail-closed catalog assertions for one new
@@ -3533,35 +3611,9 @@ export async function runStartupMigrations(): Promise<void> {
     .map((table) => table.trim())
     .filter(Boolean);
   if (requiredRlsTables.length > 0) {
-    const reviewedRlsTables = new Set([
-      "classpilot_session_summary_deliveries",
-      "classpilot_monitoring_events",
-      "classpilot_session_reports",
-      "classpilot_session_staff",
-      "classpilot_session_student_reports",
-      "classpilot_student_control_states",
-      "classpilot_active_hands",
-      "classpilot_chat_deliveries",
-      "poll_responses",
-      "polls",
-      "session_settings",
-      "passpilot_grade_students",
-      "authorized_pickups",
-      "custody_alerts",
-      "dismissal_changes",
-      "dismissal_overrides",
-      "dismissal_queue",
-      "family_group_students",
-      "homeroom_teachers",
-      "classpilot_schedule_change_pairs",
-      "classpilot_schedule_changes",
-      "classpilot_schedule_change_legs",
-      "passpilot_kiosk_sessions",
-      "passpilot_kiosk_devices",
-    ]);
     if (
       new Set(requiredRlsTables).size !== requiredRlsTables.length ||
-      requiredRlsTables.some((table) => !reviewedRlsTables.has(table))
+      !isReviewedRlsEnforcementRequest(requiredRlsTables)
     ) {
       throw new Error(`Unsupported required RLS enforcement table list: ${requiredRlsTables.join(",")}`);
     }
@@ -3614,7 +3666,7 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`DROP TABLE IF EXISTS substitute_assignments`);
     console.log("[migration] substitute_assignments table dropped");
   } catch (err) {
-    console.warn("[migration] substitute_assignments drop skipped:", (err as Error).message);
+    console.warn("[migration] substitute_assignments drop skipped:", safeErrorMetadata(err));
   }
 
   // ClassPilot groups base table. Some deployments had dependent DDL for
@@ -3662,7 +3714,7 @@ export async function runStartupMigrations(): Promise<void> {
     `);
     console.log("[migration] groups table ready");
   } catch (err) {
-    console.warn("[migration] groups migration skipped:", (err as Error).message);
+    console.warn("[migration] groups migration skipped:", safeErrorMetadata(err));
   }
 
   // Group membership junction table. Keep this before any group-dependent startup work.
@@ -3680,7 +3732,7 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS group_students_student_id_idx ON group_students (student_id)`);
     console.log("[migration] group_students table ready");
   } catch (err) {
-    console.warn("[migration] group_students migration skipped:", (err as Error).message);
+    console.warn("[migration] group_students migration skipped:", safeErrorMetadata(err));
   }
 
   // Co-teacher junction tables
@@ -3699,7 +3751,7 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS group_teachers_teacher_id_idx ON group_teachers (teacher_id)`);
     console.log("[migration] group_teachers table ready");
   } catch (err) {
-    console.warn("[migration] group_teachers migration skipped:", (err as Error).message);
+    console.warn("[migration] group_teachers migration skipped:", safeErrorMetadata(err));
   }
 
   // Canonical PassPilot mappings depend on the ClassPilot groups base table.
@@ -3768,7 +3820,7 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS homeroom_teachers_teacher_id_idx ON homeroom_teachers (teacher_id)`);
     console.log("[migration] homeroom_teachers table ready");
   } catch (err) {
-    console.warn("[migration] homeroom_teachers migration skipped:", (err as Error).message);
+    console.warn("[migration] homeroom_teachers migration skipped:", safeErrorMetadata(err));
   }
 
   // Seed co-teacher tables from existing teacherId columns
@@ -3787,7 +3839,7 @@ export async function runStartupMigrations(): Promise<void> {
     `);
     console.log("[migration] co-teacher data seeded from existing teacherId columns");
   } catch (err) {
-    console.warn("[migration] co-teacher data seed skipped:", (err as Error).message);
+    console.warn("[migration] co-teacher data seed skipped:", safeErrorMetadata(err));
   }
 
   // Student attendance table for daily absence tracking
@@ -3813,7 +3865,7 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS student_attendance_school_id_idx ON student_attendance (school_id)`);
     console.log("[migration] student_attendance table ready");
   } catch (err) {
-    console.warn("[migration] student_attendance migration skipped:", (err as Error).message);
+    console.warn("[migration] student_attendance migration skipped:", safeErrorMetadata(err));
   }
 
   // Unified student columns used across GoPilot, PassPilot kiosk, and ClassPilot.
@@ -3839,7 +3891,7 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS students_homeroom_id_idx ON students (homeroom_id)`);
     console.log("[migration] unified student columns ready");
   } catch (err) {
-    console.warn("[migration] unified student columns migration skipped:", (err as Error).message);
+    console.warn("[migration] unified student columns migration skipped:", safeErrorMetadata(err));
   }
 
   // Google integration tables used by OAuth, Workspace Directory, and Classroom import.
@@ -3894,7 +3946,7 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS classroom_course_students_school_student_idx ON classroom_course_students (school_id, student_id)`);
     console.log("[migration] Google integration tables ready");
   } catch (err) {
-    console.warn("[migration] Google integration tables migration skipped:", (err as Error).message);
+    console.warn("[migration] Google integration tables migration skipped:", safeErrorMetadata(err));
   }
 
   // Dismissal overrides table (session-scoped daily type changes)
@@ -3924,7 +3976,7 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS dismissal_overrides_student_id_idx ON dismissal_overrides (student_id)`);
     console.log("[migration] dismissal_overrides table ready");
   } catch (err) {
-    console.warn("[migration] dismissal_overrides migration skipped:", (err as Error).message);
+    console.warn("[migration] dismissal_overrides migration skipped:", safeErrorMetadata(err));
   }
 
   // Dismissal queue stable pickup grouping. Friendly guardian/family labels are
@@ -3935,7 +3987,10 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS dismissal_queue_pickup_group_idx ON dismissal_queue (session_id, pickup_group_id)`);
     console.log("[migration] dismissal_queue pickup grouping columns ready");
   } catch (err) {
-    console.warn("[migration] dismissal_queue pickup grouping migration skipped:", (err as Error).message);
+    console.warn(
+      "[migration] dismissal_queue pickup grouping migration skipped:",
+      safeErrorMetadata(err)
+    );
   }
 
   // Dismissal change acknowledgment fields (read/ack is separate from review).
@@ -3944,7 +3999,10 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`ALTER TABLE IF EXISTS dismissal_changes ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMP`);
     console.log("[migration] dismissal_changes acknowledgment columns ready");
   } catch (err) {
-    console.warn("[migration] dismissal_changes acknowledgment migration skipped:", (err as Error).message);
+    console.warn(
+      "[migration] dismissal_changes acknowledgment migration skipped:",
+      safeErrorMetadata(err)
+    );
   }
 
   // Add auto_block_unsafe_urls column to settings table
@@ -3959,7 +4017,7 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS central_email_recipient_user_id TEXT`);
     console.log("[migration] auto_block_unsafe_urls column ready");
   } catch (err) {
-    console.warn("[migration] auto_block_unsafe_urls migration skipped:", (err as Error).message);
+    console.warn("[migration] auto_block_unsafe_urls migration skipped:", safeErrorMetadata(err));
   }
 
   // Add class block scheduling columns to groups table
@@ -3970,7 +4028,7 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS schedule_skipped_date TEXT`);
     console.log("[migration] class block scheduling columns ready");
   } catch (err) {
-    console.warn("[migration] class block scheduling migration skipped:", (err as Error).message);
+    console.warn("[migration] class block scheduling migration skipped:", safeErrorMetadata(err));
   }
 
   // Add tax exemption metadata columns used by billing/admin school queries
@@ -3981,7 +4039,7 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`ALTER TABLE schools ADD COLUMN IF NOT EXISTS tax_exempt_cert_uploaded_at TIMESTAMP`);
     console.log("[migration] tax exemption columns ready");
   } catch (err) {
-    console.warn("[migration] tax exemption columns migration skipped:", (err as Error).message);
+    console.warn("[migration] tax exemption columns migration skipped:", safeErrorMetadata(err));
   }
 
   // Add AI classification columns to heartbeats table
@@ -4001,7 +4059,10 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`ALTER TABLE flight_paths ADD COLUMN IF NOT EXISTS source_updated_at TIMESTAMP`);
     console.log("[migration] ClassPilot competitive metadata columns ready");
   } catch (err) {
-    console.warn("[migration] heartbeats AI classification migration skipped:", (err as Error).message);
+    console.warn(
+      "[migration] heartbeats AI classification migration skipped:",
+      safeErrorMetadata(err)
+    );
   }
 
   // ClassPilot competitive safety spine tables
@@ -4084,6 +4145,9 @@ export async function runStartupMigrations(): Promise<void> {
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         school_id TEXT NOT NULL,
         student_id TEXT NOT NULL,
+        device_id TEXT,
+        student_session_id VARCHAR,
+        binding_version TEXT,
         case_id TEXT,
         source_type TEXT NOT NULL,
         source_id TEXT,
@@ -4097,14 +4161,46 @@ export async function runStartupMigrations(): Promise<void> {
         created_by TEXT
       )
     `);
+    await pool.query(`ALTER TABLE evidence_artifacts ADD COLUMN IF NOT EXISTS device_id TEXT`);
+    await pool.query(`ALTER TABLE evidence_artifacts ADD COLUMN IF NOT EXISTS student_session_id VARCHAR`);
+    await pool.query(`ALTER TABLE evidence_artifacts ADD COLUMN IF NOT EXISTS binding_version TEXT`);
+    await pool.query(`
+      DO $evidence_authority$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conname = 'evidence_artifacts_screenshot_exact_authority_check'
+            AND conrelid = 'evidence_artifacts'::regclass
+        ) THEN
+          ALTER TABLE evidence_artifacts
+          ADD CONSTRAINT evidence_artifacts_screenshot_exact_authority_check
+          CHECK (
+            artifact_type <> 'screenshot'
+            OR (
+              device_id IS NOT NULL
+              AND student_session_id IS NOT NULL
+              AND binding_version IS NOT NULL
+              AND captured_at IS NOT NULL
+            )
+          ) NOT VALID;
+        END IF;
+      END;
+      $evidence_authority$;
+    `);
     await pool.query(`CREATE INDEX IF NOT EXISTS evidence_artifacts_school_student_idx ON evidence_artifacts (school_id, student_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS evidence_artifacts_exact_binding_idx ON evidence_artifacts (school_id, student_id, student_session_id, captured_at)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS evidence_artifacts_exact_authority_idx ON evidence_artifacts (school_id, device_id, student_id, student_session_id, captured_at)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS evidence_artifacts_case_idx ON evidence_artifacts (case_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS evidence_artifacts_source_idx ON evidence_artifacts (source_type, source_id)`);
     await pool.query(`DROP INDEX CONCURRENTLY IF EXISTS evidence_artifacts_artifact_captured_idx`);
     await pool.query(`CREATE INDEX CONCURRENTLY IF NOT EXISTS evidence_artifacts_purge_idx ON evidence_artifacts (captured_at) WHERE artifact_type = 'screenshot' AND content IS NOT NULL`);
     console.log("[migration] ClassPilot competitive safety spine tables ready");
   } catch (err) {
-    console.warn("[migration] ClassPilot competitive safety spine migration skipped:", (err as Error).message);
+    console.warn(
+      "[migration] ClassPilot competitive safety spine migration skipped:",
+      safeErrorMetadata(err)
+    );
   }
 
   // Allow audit_logs.school_id and user_id to be NULL for system-level events
@@ -4114,7 +4210,7 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`ALTER TABLE audit_logs ALTER COLUMN user_id DROP NOT NULL`);
     console.log("[migration] audit_logs school_id/user_id nullable");
   } catch (err) {
-    console.warn("[migration] audit_logs nullable migration skipped:", (err as Error).message);
+    console.warn("[migration] audit_logs nullable migration skipped:", safeErrorMetadata(err));
   }
 
   // Auth lockouts — persistent across ECS task restarts and multi-instance
@@ -4131,7 +4227,7 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS auth_lockouts_locked_until_idx ON auth_lockouts (locked_until)`);
     console.log("[migration] auth_lockouts table ready");
   } catch (err) {
-    console.warn("[migration] auth_lockouts migration skipped:", (err as Error).message);
+    console.warn("[migration] auth_lockouts migration skipped:", safeErrorMetadata(err));
   }
 
   // Security events table — breach detection monitor findings
@@ -4162,7 +4258,7 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS security_events_school_id_idx ON security_events (school_id)`);
     console.log("[migration] security_events table ready");
   } catch (err) {
-    console.warn("[migration] security_events migration skipped:", (err as Error).message);
+    console.warn("[migration] security_events migration skipped:", safeErrorMetadata(err));
   }
 
   // MailPilot — ClassPilot add-on: Gmail safety monitoring (watches, alerts, scan log)
@@ -4173,7 +4269,10 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`UPDATE schools SET mailpilot_entitled = true WHERE classpilot_email_monitoring = true AND mailpilot_entitled = false`);
     console.log("[migration] MailPilot entitlement columns ready");
   } catch (err) {
-    console.warn("[migration] classpilot_email_monitoring migration skipped:", (err as Error).message);
+    console.warn(
+      "[migration] classpilot_email_monitoring migration skipped:",
+      safeErrorMetadata(err)
+    );
   }
 
   // PassPilot kiosk PIN (bcrypt hash; required by the public kiosk endpoints)
@@ -4181,7 +4280,7 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`ALTER TABLE schools ADD COLUMN IF NOT EXISTS kiosk_pin_hash TEXT`);
     console.log("[migration] kiosk_pin_hash column ready");
   } catch (err) {
-    console.warn("[migration] kiosk_pin_hash migration skipped:", (err as Error).message);
+    console.warn("[migration] kiosk_pin_hash migration skipped:", safeErrorMetadata(err));
   }
 
   try {
@@ -4205,7 +4304,7 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS mailpilot_watches_expires_idx ON mailpilot_watches (expires_at)`);
     console.log("[migration] mailpilot_watches table ready");
   } catch (err) {
-    console.warn("[migration] mailpilot_watches migration skipped:", (err as Error).message);
+    console.warn("[migration] mailpilot_watches migration skipped:", safeErrorMetadata(err));
   }
 
   try {
@@ -4242,7 +4341,7 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS email_alerts_school_review_idx ON email_alerts (school_id, review_status)`);
     console.log("[migration] email_alerts table ready");
   } catch (err) {
-    console.warn("[migration] email_alerts migration skipped:", (err as Error).message);
+    console.warn("[migration] email_alerts migration skipped:", safeErrorMetadata(err));
   }
 
   try {
@@ -4261,7 +4360,7 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS email_scan_log_school_idx ON email_scan_log (school_id)`);
     console.log("[migration] email_scan_log table ready");
   } catch (err) {
-    console.warn("[migration] email_scan_log migration skipped:", (err as Error).message);
+    console.warn("[migration] email_scan_log migration skipped:", safeErrorMetadata(err));
   }
 
   // Note: the previous one-time email-alias migration (bzinkan@school-pilot.net
@@ -4280,7 +4379,7 @@ export async function runStartupMigrations(): Promise<void> {
       await pool.query(`CREATE INDEX IF NOT EXISTS heartbeats_school_timestamp_idx ON heartbeats (school_id, timestamp DESC)`);
       console.log("[migration] heartbeats (school_id, timestamp) index ready (non-concurrent)");
     } catch (err2) {
-      console.warn("[migration] heartbeats index skipped:", (err2 as Error).message);
+      console.warn("[migration] heartbeats index skipped:", safeErrorMetadata(err2));
     }
   }
 
@@ -4382,7 +4481,7 @@ export async function runStartupMigrations(): Promise<void> {
     }
     console.log("[migration] student_devices (device_id, student_id) index ready");
   } catch (err) {
-    console.error("[migration] student_devices device index failed:", (err as Error).message);
+    console.error("[migration] student_devices device index failed:", safeErrorMetadata(err));
     throw err;
   } finally {
     await indexClient
@@ -4398,7 +4497,7 @@ export async function runStartupMigrations(): Promise<void> {
       console.log(`[migration] Backfilled emailLc for ${rowCount} students`);
     }
   } catch (err) {
-    console.warn("[migration] emailLc backfill skipped:", (err as Error).message);
+    console.warn("[migration] emailLc backfill skipped:", safeErrorMetadata(err));
   }
 
   // Clean up duplicate students created by extension (keep the admin-imported
@@ -4600,7 +4699,10 @@ export async function runStartupMigrations(): Promise<void> {
     // preserves every original identity/child row when an unenumerated legacy
     // FK or uniqueness collision is encountered; retain it for explicit repair
     // without leaving the partial child rewrites that caused the old orphan bug.
-    console.warn("[migration] Duplicate student cleanup rolled back; retained original rows:", (err as Error).message);
+    console.warn(
+      "[migration] Duplicate student cleanup rolled back; retained original rows:",
+      safeErrorMetadata(err)
+    );
   } finally {
     duplicateStudentCleanupClient.release();
   }
@@ -4631,7 +4733,7 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS error_logs_school_id_idx ON error_logs (school_id)`);
     console.log("[migration] error_logs table ready");
   } catch (err) {
-    console.warn("[migration] error_logs migration skipped:", (err as Error).message);
+    console.warn("[migration] error_logs migration skipped:", safeErrorMetadata(err));
   }
 
   // Import runs — durable outcome of every roster import (counts + per-row
@@ -4658,7 +4760,7 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS import_runs_created_at_idx ON import_runs (created_at)`);
     console.log("[migration] import_runs table ready");
   } catch (err) {
-    console.warn("[migration] import_runs migration skipped:", (err as Error).message);
+    console.warn("[migration] import_runs migration skipped:", safeErrorMetadata(err));
   }
 
   // PassPilot: guarantee at most ONE active pass per student per school.
@@ -4697,7 +4799,7 @@ export async function runStartupMigrations(): Promise<void> {
       console.warn("[migration] WARNING: passes one-active-per-student index NOT present after creation");
     }
   } catch (err) {
-    console.warn("[migration] passes active-unique migration skipped:", (err as Error).message);
+    console.warn("[migration] passes active-unique migration skipped:", safeErrorMetadata(err));
   }
 }
 
@@ -4758,16 +4860,19 @@ async function startServer(): Promise<void> {
 }
 
 async function runMigrationsAndExit(): Promise<void> {
-  await runStartupMigrations();
+  // Fail closed: unlike the non-production bootstrap routine, every schema
+  // mutation in this path is checksum-ledgered and any unexpected SQL state
+  // rejects the one-off task before it can report success.
+  await runVersionedMigrations();
   errorMonitor.dispose();
   await Promise.allSettled([pool.end(), sessionPool.end(), schedulerPool.end(), schedulerLockPool.end()]);
-  console.log("[migration] startup migrations complete");
+  console.log("[migration] versioned migrations complete");
   process.exit(0);
 }
 
 if (migrationsOnly()) {
   runMigrationsAndExit().catch((err) => {
-    console.error("[migration] startup migrations failed:", err);
+    console.error("[migration] startup migrations failed:", safeErrorMetadata(err));
     process.exit(1);
   });
 } else {

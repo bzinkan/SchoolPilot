@@ -91,9 +91,9 @@ export default function AdminAttendance() {
     enabled: activeTab === "history",
   });
 
-  const records = attendanceData?.records || [];
-  const allStudents = studentsData?.students || [];
-  const absentIdSet = new Set(records.map((r) => r.studentId));
+  const records = useMemo(() => attendanceData?.records || [], [attendanceData?.records]);
+  const allStudents = useMemo(() => studentsData?.students || [], [studentsData?.students]);
+  const absentIdSet = useMemo(() => new Set(records.map((record) => record.studentId)), [records]);
 
   // Filter students by search
   const filteredStudents = useMemo(() => {

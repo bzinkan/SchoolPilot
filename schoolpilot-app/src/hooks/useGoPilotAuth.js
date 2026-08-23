@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { goPilotMembershipRoles, primaryGoPilotRole } from '../shared/utils/schoolRoles';
 
 /**
  * Adapter hook that maps the unified AuthContext to the shape
@@ -20,13 +21,16 @@ export function useGoPilotAuth() {
       }
     : null, [activeMembership]);
 
-  const currentRole = activeMembership?.gopilotRole || activeMembership?.role || null;
+  const currentRole = primaryGoPilotRole(activeMembership);
+  const currentRoles = goPilotMembershipRoles(activeMembership);
 
   const mappedMemberships = useMemo(() => memberships.map((m) => ({
     school_id: m.schoolId,
     school_name: m.schoolName || '',
     school_slug: m.schoolSlug || '',
     role: m.role,
+    roles: m.roles || [m.role],
+    gopilot_roles: m.gopilotRoles || [m.gopilotRole || m.role],
     car_number: m.carNumber || '',
     school_timezone: m.schoolTimezone || 'America/New_York',
   })), [memberships]);
@@ -41,6 +45,7 @@ export function useGoPilotAuth() {
     // School fields (from GoPilot's useSchool)
     currentSchool,
     currentRole,
+    currentRoles,
     switchSchool,
     memberships: mappedMemberships,
   };

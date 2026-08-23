@@ -177,6 +177,9 @@ describe("PassPilot standalone multi-class rosters", { concurrency: false }, () 
     const schema = readFileSync(new URL("../src/schema/passpilot.ts", import.meta.url), "utf8");
     const startup = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
     const deployment = readFileSync(new URL("../scripts/enforce-deploy-rls-allowlist.mjs", import.meta.url), "utf8");
+    const registry = JSON.parse(
+      readFileSync(new URL("../src/config/rlsRegistry.json", import.meta.url), "utf8")
+    );
     const kioskRoute = readFileSync(new URL("../src/routes/passpilot/kiosk.ts", import.meta.url), "utf8");
     assert.match(schema, /passpilotGradeStudents = pgTable\(/);
     assert.match(schema, /"passpilot_grade_students"/);
@@ -187,7 +190,11 @@ describe("PassPilot standalone multi-class rosters", { concurrency: false }, () 
     assert.match(startup, /passpilot_grade_students_grade_school_fk/);
     assert.match(startup, /students_school_id_id_unique/);
     assert.match(startup, /grades_school_id_id_unique/);
-    assert.match(deployment, /passpilot_grade_students/);
+    assert.match(deployment, /rlsRegistry\.reviewedEnablementRequests/);
+    assert.deepEqual(
+      registry.reviewedEnablementRequests.passpilotLegacyMultiClass,
+      ["passpilot_grade_students"]
+    );
     assert.match(kioskRoute, /skipSuccessfulRequests:\s*true/);
   });
 

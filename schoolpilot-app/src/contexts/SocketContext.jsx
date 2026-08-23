@@ -1,24 +1,33 @@
 import { createContext, useContext, useEffect, useRef, useSyncExternalStore } from 'react';
 import { io } from 'socket.io-client';
 import { Capacitor } from '@capacitor/core';
+import { useLocation } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 import { useLicenses } from './LicenseContext';
+import { hasGoPilotRole } from '../shared/utils/schoolRoles';
 
 const SocketContext = createContext(null);
 
 export function SocketProvider({ children }) {
+  const { pathname } = useLocation();
   const { token, activeMembership } = useAuth();
   const { hasGoPilot } = useLicenses();
   const socketRef = useRef(null);
   const subscribersRef = useRef(new Set());
 
   const notify = () => subscribersRef.current.forEach((cb) => cb());
-  const effectiveRole = activeMembership?.gopilotRole || activeMembership?.role;
-  const hasGoPilotStaffRole = ['admin', 'school_admin', 'office_staff', 'teacher'].includes(effectiveRole);
+  const hasGoPilotStaffRole = hasGoPilotRole(
+    activeMembership,
+    'admin',
+    'school_admin',
+    'office_staff',
+    'teacher',
+  );
+  const onGoPilotRoute = pathname === '/gopilot' || pathname.startsWith('/gopilot/');
 
   useEffect(() => {
     // Only connect GoPilot socket if GoPilot is licensed
-    if (!token || !hasGoPilot || !hasGoPilotStaffRole) {
+    if (!token || !hasGoPilot || !hasGoPilotStaffRole || !onGoPilotRoute) {
       if (socketRef.current) {
         socketRef.current.disconnect();
         socketRef.current = null;
@@ -58,7 +67,7 @@ export function SocketProvider({ children }) {
       s.disconnect();
       appListener?.remove();
     };
-  }, [token, hasGoPilot, hasGoPilotStaffRole]);
+  }, [token, hasGoPilot, hasGoPilotStaffRole, onGoPilotRoute]);
 
   const subscribe = (cb) => {
     subscribersRef.current.add(cb);

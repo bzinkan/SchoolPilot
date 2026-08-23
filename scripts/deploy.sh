@@ -37,6 +37,9 @@
 #   ./scripts/deploy.sh --skip-wait      # Non-production only; production refuses this flag
 #   ./scripts/deploy.sh production       # Explicit environment (default: production)
 #   ./scripts/deploy.sh --tag abc123     # Override default git-SHA image tag
+#   ./scripts/deploy.sh production --backend \
+#     --immutable-image-sha <40-hex-sha> --immutable-image-digest sha256:<64-hex>
+#                                       # Reuse the exact green CI image; no local image build or push
 # ============================================================================
 
 set -euo pipefail
@@ -71,6 +74,8 @@ SAME_IMAGE_WORKER_TASK_DEFINITION=""
 SAME_IMAGE_NETWORK_HASH=""
 SAME_IMAGE_BOUND_NETWORK_HASH=""
 EXPECTED_NETWORK_CONFIG_SHA256=""
+IMMUTABLE_IMAGE_SHA=""
+IMMUTABLE_IMAGE_DIGEST=""
 SAME_IMAGE_SERVICE_MUTATION_STARTED=false
 SAME_IMAGE_SAFE_TERMINAL_REACHED=false
 SAME_IMAGE_RECOVERY_MAX_ATTEMPTS=30
@@ -156,6 +161,14 @@ while [[ $# -gt 0 ]]; do
     --expected-network-config-sha256)
       [[ $# -ge 2 ]] || { echo "--expected-network-config-sha256 requires a value"; exit 1; }
       EXPECTED_NETWORK_CONFIG_SHA256="$2"; shift 2
+      ;;
+    --immutable-image-sha)
+      [[ $# -ge 2 ]] || { echo "--immutable-image-sha requires a full 40-hex SHA"; exit 1; }
+      IMMUTABLE_IMAGE_SHA="$2"; shift 2
+      ;;
+    --immutable-image-digest)
+      [[ $# -ge 2 ]] || { echo "--immutable-image-digest requires a sha256 digest"; exit 1; }
+      IMMUTABLE_IMAGE_DIGEST="$2"; shift 2
       ;;
     --skip-wait) SKIP_WAIT=true; shift ;;
     --tag)      IMAGE_TAG="$2"; shift 2 ;;
@@ -1167,13 +1180,11 @@ validate_rls_table_enablement_mode() {
   if [[ -z "$ENABLE_RLS_TABLE" ]]; then
     return 0
   fi
-  case "$ENABLE_RLS_TABLE" in
-    classpilot_session_summary_deliveries|passpilot_grade_students|passpilot_kiosk_sessions|passpilot_kiosk_devices|classpilot_monitoring_events,classpilot_session_reports,classpilot_session_staff,classpilot_session_student_reports,classpilot_student_control_states|classpilot_chat_deliveries,poll_responses,polls,session_settings|authorized_pickups,custody_alerts,dismissal_changes,dismissal_overrides,dismissal_queue,family_group_students,homeroom_teachers|classpilot_schedule_change_pairs,classpilot_schedule_changes,classpilot_schedule_change_legs) ;;
-    *)
-      error "--enable-rls-table is not reviewed for: ${ENABLE_RLS_TABLE}"
-      return 1
-      ;;
-  esac
+  if ! node "$SCRIPT_DIR/enforce-deploy-rls-allowlist.mjs" validate-request \
+      --table "$ENABLE_RLS_TABLE" > /dev/null; then
+    error "--enable-rls-table is not reviewed for: ${ENABLE_RLS_TABLE}"
+    return 1
+  fi
   if [[ "$ENV" != "production" || "$DEPLOY_BACKEND" != true ||
         "$DEPLOY_FRONTEND" != false || -n "$SAME_IMAGE_NETWORKING_STAGE" ||
         "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" == true ||
@@ -3961,6 +3972,22 @@ validate_same_image_networking_mode() {
   fi
 }
 
+validate_immutable_image_mode() {
+  if [[ -z "$IMMUTABLE_IMAGE_SHA" && -z "$IMMUTABLE_IMAGE_DIGEST" ]]; then
+    return 0
+  fi
+  if [[ ! "$IMMUTABLE_IMAGE_SHA" =~ ^[0-9a-f]{40}$ ||
+        ! "$IMMUTABLE_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    error "Immutable-image deployment requires both a lowercase full application SHA and sha256 digest."
+    return 1
+  fi
+  if [[ "$DEPLOY_BACKEND" != true || -n "$SAME_IMAGE_NETWORKING_STAGE" || -n "$IMAGE_TAG" ||
+        -n "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ]]; then
+    error "Immutable-image deployment requires a backend deploy and rejects same-image, --tag, and rehearsal-reuse modes."
+    return 1
+  fi
+}
+
 same_image_application_identity_preflight() {
   local resolved_sha image_tag observed_digest
   if ! resolved_sha=$(git rev-parse --verify "${EXPECTED_APP_SHA}^{commit}" 2>/dev/null); then
@@ -4009,14 +4036,17 @@ same_image_autoscaling_contract_preflight() {
   if ! SAME_IMAGE_TARGET_JSON="$target_json" \
     EXPECTED_RESOURCE_ID="$AUTOSCALING_RESOURCE_ID" \
     EXPECTED_DIMENSION="$AUTOSCALING_DIMENSION" node <<'NODE'
+const fs = require("fs");
 const response = JSON.parse(process.env.SAME_IMAGE_TARGET_JSON || "null");
+const capacity = JSON.parse(fs.readFileSync("src/config/databaseCapacity.json", "utf8"));
 const targets = Array.isArray(response?.ScalableTargets) ? response.ScalableTargets : [];
 const target = targets[0];
 const suspended = target?.SuspendedState;
 if (targets.length !== 1 || target?.ServiceNamespace !== "ecs" ||
     target?.ResourceId !== process.env.EXPECTED_RESOURCE_ID ||
     target?.ScalableDimension !== process.env.EXPECTED_DIMENSION ||
-    ![1, 2].includes(Number(target?.MinCapacity)) || Number(target?.MaxCapacity) !== 8 ||
+    ![1, 2].includes(Number(target?.MinCapacity)) ||
+    Number(target?.MaxCapacity) !== Number(capacity?.apiMaxTasks) ||
     typeof suspended?.DynamicScalingInSuspended !== "boolean" ||
     typeof suspended?.DynamicScalingOutSuspended !== "boolean" ||
     typeof suspended?.ScheduledScalingSuspended !== "boolean") {
@@ -4024,7 +4054,7 @@ if (targets.length !== 1 || target?.ServiceNamespace !== "ecs" ||
 }
 NODE
   then
-    error "Same-image deployment requires one exact API scalable target at min 1/2, max 8, with an observable suspended state."
+    error "Same-image deployment requires one exact API scalable target at min 1/2, max 6, with an observable suspended state."
     return 1
   fi
 }
@@ -4887,6 +4917,7 @@ info "Plan observe:  $RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION"
 info "Plan receipt:  ${REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL:+provided}"
 info "Capacity release: $CAPACITY_ACCEPTANCE_RELEASE"
 info "Same image: ${SAME_IMAGE_NETWORKING_STAGE:-false}"
+info "Immutable CI image: ${IMMUTABLE_IMAGE_DIGEST:-false}"
 echo ""
 
 if ! validate_capacity_acceptance_authorization_mode; then
@@ -4905,6 +4936,9 @@ if ! validate_retired_certification_admission_mode; then
   exit 1
 fi
 if ! validate_same_image_networking_mode; then
+  exit 1
+fi
+if ! validate_immutable_image_mode; then
   exit 1
 fi
 if ! validate_classpilot_tile_auth_plan_gate_mode; then
@@ -4955,6 +4989,10 @@ if [[ "$LOCAL_SHA" != "$REMOTE_SHA" ]]; then
   error "Local main is not exactly origin/main. Pull the latest main before deploying."
   exit 1
 fi
+if [[ -n "$IMMUTABLE_IMAGE_SHA" && "$LOCAL_SHA" != "$IMMUTABLE_IMAGE_SHA" ]]; then
+  error "The immutable release image SHA does not match clean main == origin/main."
+  exit 1
+fi
 if [[ -n "$CAPACITY_ACCEPTANCE_FRONTEND_SHA" &&
       "$LOCAL_SHA" != "$CAPACITY_ACCEPTANCE_FRONTEND_SHA" ]]; then
   error "The capacity-acceptance frontend SHA does not match clean main == origin/main."
@@ -4996,7 +5034,7 @@ if [[ -n "$SAME_IMAGE_NETWORKING_STAGE" ]]; then
   success "Controller/tooling preflight OK: main@${LOCAL_SHA} has green GitHub checks"
   info "Deployed app identity: ${EXPECTED_APP_SHA} / ${EXPECTED_IMAGE_DIGEST}"
 else
-  IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short=12 HEAD)}"
+  IMAGE_TAG="${IMAGE_TAG:-${IMMUTABLE_IMAGE_SHA:-$(git rev-parse --short=12 HEAD)}}"
   success "Git deploy preflight OK: main@$IMAGE_TAG has green GitHub checks"
   info "Image tag:   $IMAGE_TAG"
 fi
@@ -5065,40 +5103,55 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   resolve_classpilot_candidate_source_task_definitions
   preflight_rls_table_enablement_sources
 
-  # Step 1: Build Docker image
-  info "Building Docker image..."
-  docker build -t "${NAME}-api:${IMAGE_TAG}" .
-  success "Docker build complete"
+  if [[ -n "$IMMUTABLE_IMAGE_DIGEST" ]]; then
+    info "Verifying the green CI image tag and digest in ECR..."
+    DIGEST=$(aws ecr describe-images \
+      --repository-name "${NAME}-api" \
+      --image-ids imageTag="${IMMUTABLE_IMAGE_SHA}" \
+      --query 'imageDetails[0].imageDigest' \
+      --output text \
+      --region "$REGION")
+    DIGEST="${DIGEST%$'\r'}"
+    if [[ "$DIGEST" != "$IMMUTABLE_IMAGE_DIGEST" ]]; then
+      error "The ECR SHA tag does not resolve to the authorized immutable image digest."
+      exit 1
+    fi
+    success "Using signed CI release image: ${ECR_REPO}@${DIGEST}"
+  else
+    # Legacy build path remains until two successful shadow deployments prove
+    # the immutable-image workflow. It can then be removed in a separate PR.
+    info "Building Docker image..."
+    docker build -t "${NAME}-api:${IMAGE_TAG}" .
+    success "Docker build complete"
 
-  # Step 2: Login to ECR
-  info "Logging into ECR..."
-  aws ecr get-login-password --region "$REGION" | \
-    docker login --username AWS --password-stdin "${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
-  success "ECR login OK"
+    info "Logging into ECR..."
+    aws ecr get-login-password --region "$REGION" | \
+      docker login --username AWS --password-stdin "${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
+    success "ECR login OK"
 
-  # Step 3: Tag and push
-  info "Pushing to ECR..."
-  docker tag "${NAME}-api:${IMAGE_TAG}" "${ECR_REPO}:${IMAGE_TAG}"
-  docker push "${ECR_REPO}:${IMAGE_TAG}"
+    info "Pushing to ECR..."
+    docker tag "${NAME}-api:${IMAGE_TAG}" "${ECR_REPO}:${IMAGE_TAG}"
+    docker push "${ECR_REPO}:${IMAGE_TAG}"
 
-  if [[ "$IMAGE_TAG" != "latest" ]]; then
-    docker tag "${NAME}-api:${IMAGE_TAG}" "${ECR_REPO}:latest"
-    docker push "${ECR_REPO}:latest"
+    if [[ "$IMAGE_TAG" != "latest" ]]; then
+      docker tag "${NAME}-api:${IMAGE_TAG}" "${ECR_REPO}:latest"
+      docker push "${ECR_REPO}:latest"
+    fi
+    success "Image pushed: ${ECR_REPO}:${IMAGE_TAG}"
+
+    info "Resolving image digest for tag ${IMAGE_TAG}..."
+    DIGEST=$(aws ecr describe-images \
+      --repository-name "${NAME}-api" \
+      --image-ids imageTag="${IMAGE_TAG}" \
+      --query 'imageDetails[0].imageDigest' \
+      --output text \
+      --region "$REGION")
+    info "Digest: $DIGEST"
   fi
-  success "Image pushed: ${ECR_REPO}:${IMAGE_TAG}"
 
-  # Step 4: Register a task-def revision pinned to the just-pushed image digest.
+  # Register API, worker, and one-off migration definitions from this one digest.
   # ECR tags (incl. :latest) are mutable — pinning by digest makes every revision
   # an exact, rollback-able image reference instead of "whatever :latest is now".
-  info "Resolving image digest for tag ${IMAGE_TAG}..."
-  DIGEST=$(aws ecr describe-images \
-    --repository-name "${NAME}-api" \
-    --image-ids imageTag="${IMAGE_TAG}" \
-    --query 'imageDetails[0].imageDigest' \
-    --output text \
-    --region "$REGION")
-  info "Digest: $DIGEST"
-
   info "Rendering task definition from the exact immutable serving API revision..."
   describe_exact_classpilot_candidate_task_definition \
     "$API_CANDIDATE_SOURCE_TASK_DEFINITION_ARN" \
@@ -5397,10 +5450,11 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   acquire_production_scaling_hold
   launch_safe_active_api_preflight
 
-  MIGRATION_OVERRIDES=$(ENABLE_RLS_TABLE="$ENABLE_RLS_TABLE" node -e '
+  MIGRATION_OVERRIDES=$(ENABLE_RLS_TABLE="$ENABLE_RLS_TABLE" DEPLOY_APPLICATION_SHA="$LOCAL_SHA" node -e '
     const environment = [
       { name: "RUN_MIGRATIONS_ONLY", value: "true" },
       { name: "SCHEDULER_ENABLED", value: "false" },
+      { name: "GIT_SHA", value: process.env.DEPLOY_APPLICATION_SHA },
     ];
     if (process.env.ENABLE_RLS_TABLE) {
       environment.push({

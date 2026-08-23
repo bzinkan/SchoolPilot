@@ -94,6 +94,7 @@ export type ClasspilotRealtimeStatus = {
   observedAt: number;
   activeTabUrl: string;
   activeTabTitle: string;
+  activeTabRef?: string;
   favicon?: string;
   allOpenTabs: ClasspilotRealtimeTab[];
   openTabCount: number;
@@ -112,6 +113,9 @@ export type ClasspilotRealtimeStatus = {
   aiClassification?: ClasspilotRealtimeClassification;
   classificationPending: boolean;
   extensionVersion?: string;
+  /** Server-negotiated protocol capabilities for this exact heartbeat binding. */
+  acceptedCapabilities?: string[];
+  /** Raw extension feature declarations used only for legacy UI compatibility. */
   extensionCapabilities?: string[];
   chromeVersion?: string;
   signOutReason?: string;
@@ -136,6 +140,7 @@ export type ClasspilotRealtimeWriteInput = {
   observedAt?: number;
   activeTabUrl?: unknown;
   activeTabTitle?: unknown;
+  activeTabRef?: unknown;
   favicon?: unknown;
   allOpenTabs?: unknown;
   tabSnapshotRevision?: unknown;
@@ -148,6 +153,7 @@ export type ClasspilotRealtimeWriteInput = {
   screenshotHealth?: unknown;
   classificationPending?: boolean;
   extensionVersion?: unknown;
+  acceptedCapabilities?: unknown;
   extensionCapabilities?: unknown;
   chromeVersion?: unknown;
   classroomState?: ClasspilotClassroomStateSnapshot;
@@ -455,6 +461,11 @@ function decodeSnapshot(raw: unknown): ClasspilotRealtimeStatus | undefined {
     !Number.isFinite(row.observedAt) ||
     typeof row.activeTabUrl !== "string" || row.activeTabUrl.length > 4_096 ||
     typeof row.activeTabTitle !== "string" || row.activeTabTitle.length > 512 ||
+    (row.activeTabRef !== undefined && (
+      typeof row.activeTabRef !== "string" ||
+      row.activeTabRef.length < 1 ||
+      row.activeTabRef.length > 128
+    )) ||
     (row.favicon !== undefined && (
       typeof row.favicon !== "string" ||
       row.favicon.length > 4_096 ||
@@ -505,6 +516,7 @@ function decodeSnapshot(raw: unknown): ClasspilotRealtimeStatus | undefined {
     observedAt: row.observedAt as number,
     activeTabUrl: row.activeTabUrl as string,
     activeTabTitle: row.activeTabTitle as string,
+    ...(typeof row.activeTabRef === "string" ? { activeTabRef: row.activeTabRef } : {}),
     allOpenTabs: (row.allOpenTabs as Array<Record<string, unknown>>).map((tab) => ({
       ...(typeof tab.tabRef === "string" ? { tabRef: tab.tabRef } : {}),
       url: tab.url as string,
@@ -540,6 +552,12 @@ function decodeSnapshot(raw: unknown): ClasspilotRealtimeStatus | undefined {
   }
   if (Array.isArray(row.extensionCapabilities)) {
     snapshot.extensionCapabilities = row.extensionCapabilities
+      .filter((value): value is string => typeof value === "string" && value.length > 0)
+      .slice(0, 32)
+      .map((value) => boundedString(value, 64));
+  }
+  if (Array.isArray(row.acceptedCapabilities)) {
+    snapshot.acceptedCapabilities = row.acceptedCapabilities
       .filter((value): value is string => typeof value === "string" && value.length > 0)
       .slice(0, 32)
       .map((value) => boundedString(value, 64));
@@ -601,6 +619,9 @@ function activeSnapshot(input: ClasspilotRealtimeWriteInput, now: number): Class
     observedAt: Math.max(Math.trunc(input.observedAt ?? now), 0),
     activeTabUrl: boundedString(input.activeTabUrl, 4_096),
     activeTabTitle: boundedString(input.activeTabTitle, 512),
+    ...(optionalString(input.activeTabRef, 128)
+      ? { activeTabRef: optionalString(input.activeTabRef, 128)! }
+      : {}),
     allOpenTabs: normalizedTabs.tabs,
     openTabCount: normalizedTabs.openTabCount,
     tabsTruncated: normalizedTabs.tabsTruncated,
@@ -623,11 +644,18 @@ function activeSnapshot(input: ClasspilotRealtimeWriteInput, now: number): Class
         .map((value) => value.trim().slice(0, 64)))]
         .slice(0, 32)
     : [];
+  const acceptedCapabilities = Array.isArray(input.acceptedCapabilities)
+    ? [...new Set(input.acceptedCapabilities
+        .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+        .map((value) => value.trim().slice(0, 64)))]
+        .slice(0, 32)
+    : [];
   const chromeVersion = optionalString(input.chromeVersion, 128);
   if (favicon) snapshot.favicon = favicon;
   if (activeFlightPathName) snapshot.classroomControls.activeFlightPathName = activeFlightPathName;
   if (screenshotHealth) snapshot.screenshotHealth = screenshotHealth;
   if (extensionVersion) snapshot.extensionVersion = extensionVersion;
+  if (acceptedCapabilities.length > 0) snapshot.acceptedCapabilities = acceptedCapabilities;
   if (extensionCapabilities.length > 0) snapshot.extensionCapabilities = extensionCapabilities;
   if (chromeVersion) snapshot.chromeVersion = chromeVersion;
   if (input.classroomState) snapshot.classroomState = input.classroomState;

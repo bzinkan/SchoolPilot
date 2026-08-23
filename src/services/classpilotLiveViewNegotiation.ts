@@ -9,6 +9,7 @@ export const CLASSPILOT_WS_MAX_PENDING_FRAMES = 8;
 // separate 90-second client deadline; it must not truncate a healthy stream.
 export const CLASSPILOT_LIVE_VIEW_SETUP_TTL_MS = 90_000;
 export const CLASSPILOT_LIVE_VIEW_NEGOTIATION_TTL_MS = 15 * 60_000;
+export const CLASSPILOT_LIVE_VIEW_MAX_LOCAL_CLAIMS = 4_096;
 
 export type ClasspilotWsFrameBucket = {
   tokens: number;
@@ -68,10 +69,32 @@ const activeClaims = new Map<string, {
   expiresAt: number;
 }>();
 
+function pruneLocalClaims(now: number): void {
+  for (const [key, claim] of localClaims) {
+    if (claim.expiresAt <= now) localClaims.delete(key);
+  }
+  for (const [negotiationId, claim] of activeClaims) {
+    if (claim.expiresAt <= now) activeClaims.delete(negotiationId);
+  }
+  while (localClaims.size >= CLASSPILOT_LIVE_VIEW_MAX_LOCAL_CLAIMS) {
+    const oldest = localClaims.keys().next().value as string | undefined;
+    if (!oldest) break;
+    localClaims.delete(oldest);
+  }
+  while (activeClaims.size >= CLASSPILOT_LIVE_VIEW_MAX_LOCAL_CLAIMS) {
+    const oldest = activeClaims.keys().next().value as string | undefined;
+    if (!oldest) break;
+    activeClaims.delete(oldest);
+  }
+}
+
 function rememberActiveClaim(
   binding: ClasspilotLiveViewBinding,
-  claim: { negotiationId: string; expiresAt: number }
+  claim: { negotiationId: string; expiresAt: number },
+  now = Date.now()
 ): void {
+  pruneLocalClaims(now);
+  activeClaims.delete(claim.negotiationId);
   activeClaims.set(claim.negotiationId, { binding: { ...binding }, expiresAt: claim.expiresAt });
 }
 
@@ -135,6 +158,14 @@ function claimKey(binding: Pick<ClasspilotLiveViewBinding, "schoolId" | "student
     .update(`${binding.schoolId}\u0000${binding.studentId}`)
     .digest("base64url");
   return `classpilot:live-view:${scoped}`;
+}
+
+function exactNegotiationIdMatch(left: unknown, right: string): boolean {
+  if (typeof left !== "string") return false;
+  const leftBytes = Buffer.from(left);
+  const rightBytes = Buffer.from(right);
+  return leftBytes.length === rightBytes.length
+    && crypto.timingSafeEqual(leftBytes, rightBytes);
 }
 
 export function createClasspilotLiveViewNegotiationId(
@@ -215,7 +246,7 @@ export function classpilotLiveViewNegotiationAuthority(
     "schoolId" | "studentId" | "studentSessionId" | "deviceId"
   >,
   now = Date.now()
-): { teachingSessionId: string; requesterUserId: string } | null {
+): { teachingSessionId: string; requesterUserId: string; expiresAt: number } | null {
   if (typeof negotiationId !== "string" || negotiationId.length > 2_048) return null;
   const payload = negotiationId.split(".")[0];
   if (!payload) return null;
@@ -238,6 +269,7 @@ export function classpilotLiveViewNegotiationAuthority(
     ) ? {
       teachingSessionId: claims.teachingSessionId,
       requesterUserId: claims.requesterUserId,
+      expiresAt: claims.expiresAt,
     } : null;
   } catch {
     return null;
@@ -253,13 +285,14 @@ export async function claimClasspilotLiveViewNegotiation(
 > {
   const claim = createClasspilotLiveViewNegotiationId(binding, now);
   const key = claimKey(binding);
+  pruneLocalClaims(now);
   try {
     const result = await redisCommand(
       ["SET", key, claim.negotiationId, "NX", "PX", String(CLASSPILOT_LIVE_VIEW_NEGOTIATION_TTL_MS)],
       { readyTimeoutMs: 200 }
     );
     if (result === "OK") {
-      rememberActiveClaim(binding, claim);
+      rememberActiveClaim(binding, claim, now);
       return { status: "claimed", ...claim };
     }
     if (result !== undefined) return { status: "busy" };
@@ -269,9 +302,42 @@ export async function claimClasspilotLiveViewNegotiation(
   if (process.env.REDIS_URL) return { status: "unavailable" };
   const current = localClaims.get(key);
   if (current && current.expiresAt > now) return { status: "busy" };
+  localClaims.delete(key);
   localClaims.set(key, claim);
-  rememberActiveClaim(binding, claim);
+  rememberActiveClaim(binding, claim, now);
   return { status: "claimed", ...claim };
+}
+
+/**
+ * Confirms that the signed, exact-bound negotiation is also the currently
+ * claimed negotiation for this student. Redis is authoritative when it is
+ * configured; production coordination failures fail closed.
+ */
+export async function isClasspilotLiveViewNegotiationActive(
+  binding: Pick<
+    ClasspilotLiveViewBinding,
+    "schoolId" | "studentId" | "studentSessionId" | "deviceId"
+  >,
+  negotiationId: string,
+  now = Date.now()
+): Promise<boolean> {
+  if (!classpilotLiveViewNegotiationAuthority(negotiationId, binding, now)) {
+    return false;
+  }
+  const key = claimKey(binding);
+  try {
+    const result = await redisCommand(["GET", key], { readyTimeoutMs: 200 });
+    if (result !== undefined) return exactNegotiationIdMatch(result, negotiationId);
+  } catch {
+    if (process.env.REDIS_URL) return false;
+  }
+  if (process.env.REDIS_URL) return false;
+  const current = localClaims.get(key);
+  return Boolean(
+    current
+    && current.expiresAt > now
+    && exactNegotiationIdMatch(current.negotiationId, negotiationId)
+  );
 }
 
 export async function releaseClasspilotLiveViewNegotiation(

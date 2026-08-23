@@ -34,6 +34,7 @@ import {
   recordRosterConnectorSync,
 } from "../../services/googleRosterConnector.js";
 import { getPasspilotClassSourceForSchool } from "../../services/passpilotAccess.js";
+import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
 
 const router = Router();
 
@@ -334,7 +335,7 @@ router.get("/courses", ...staffAuth, async (req, res, next) => {
       );
       classroom = google.classroom({ version: "v1", auth: oauth2Client });
     } else {
-      if (res.locals.membershipRole !== "admin" && res.locals.membershipRole !== "school_admin") {
+      if (!requestHasAnySchoolRole(req, res, ["admin", "school_admin"])) {
         return res.status(403).json({
           error: "INSUFFICIENT_GOOGLE_ROLE: Google Classroom roster import requires a school admin.",
           code: "INSUFFICIENT_GOOGLE_ROLE",

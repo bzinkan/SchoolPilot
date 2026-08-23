@@ -58,6 +58,26 @@ output "site_url" {
   value       = var.domain != "" ? "https://${module.dns[0].primary_domain}" : "https://${module.cdn.cloudfront_domain}"
 }
 
+output "classpilot_turn_hostnames" {
+  description = "ClassPilot TURN nodes; empty until the dark infrastructure flag is enabled"
+  value       = try(module.turn[0].hostnames, [])
+}
+
+output "classpilot_turn_elastic_ips" {
+  description = "Elastic IPs for the ClassPilot TURN nodes"
+  value       = try(module.turn[0].elastic_ips, [])
+}
+
+output "classpilot_turn_rest_secret_arn" {
+  description = "ARN only; the generated TURN REST secret never enters Terraform state"
+  value       = try(module.turn[0].rest_secret_arn, null)
+}
+
+output "classpilot_turn_dashboard_name" {
+  description = "CloudWatch dashboard for identifier-free TURN and Live View telemetry"
+  value       = try(module.turn[0].dashboard_name, null)
+}
+
 output "database_insights_restore_schedule_group" {
   description = "AWS Scheduler group used for bounded Database Insights restoration leases"
   value       = try(module.database_insights_lease_watchdog[0].schedule_group_name, null)

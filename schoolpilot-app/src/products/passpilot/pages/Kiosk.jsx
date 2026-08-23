@@ -1,12 +1,29 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Button } from "../../../components/ui/button";
 import { Card, CardContent } from "../../../components/ui/card";
 import { Input } from "../../../components/ui/input";
 import { Badge } from "../../../components/ui/badge";
 import { ArrowLeftRight, LogIn, X } from "lucide-react";
 import { PASSPILOT_CLASS_MODEL_HEADER } from "../classData";
+import KioskOfflineBanner from "../components/KioskOfflineBanner";
+import {
+  createKioskApiClient,
+  KioskRequestError,
+  kioskSnapshotRevision,
+  normalizeKioskSnapshot,
+  redeemKioskLaunchTicket,
+} from "../kioskController";
 import { kioskPinStore } from "../kioskPinStore";
-import { getKioskDeviceId, adoptKioskDeviceId } from "../kioskDeviceId";
+import {
+  adoptKioskDeviceId,
+  confirmKioskDeviceAdoption,
+  forgetKioskLaunchTicket,
+  getKioskDeviceAdoption,
+  getKioskDeviceId,
+  isKioskLaunchTicketPending,
+  takeKioskLaunchTicket,
+} from "../kioskDeviceId";
+import { useKioskPollingController } from "../useKioskPollingController";
 
 const DESTINATIONS = [
   { value: "bathroom", label: "Bathroom", emoji: "\u{1F6BB}" },
@@ -19,8 +36,8 @@ const DESTINATIONS = [
 const INACTIVITY_TIMEOUT = 10000; // 10 seconds
 
 // Kiosk PIN persistence: entered once by staff when setting up the kiosk
-// device, stored locally, sent on every kiosk API call. The backend requires
-// it on all public kiosk endpoints.
+// device and stored locally. The client exchanges it for a short-lived token
+// when supported, with direct PIN headers retained for older servers.
 const KIOSK_PIN_KEY = "pp_kiosk_pin";
 // Per-device kiosk session id (teacher-bound). Shares the PIN's storage rule:
 // sessionStorage in gate-launch mode so nothing persists in a student profile.
@@ -36,6 +53,7 @@ export default function KioskPage() {
   const [message, setMessage] = useState("");
   const [schoolId] = useState(() => new URLSearchParams(window.location.search).get("school") ?? "");
   const [kioskPin, setKioskPin] = useState(() => kioskPinStore().getItem(KIOSK_PIN_KEY) ?? "");
+  const [launchTicket, setLaunchTicket] = useState(() => takeKioskLaunchTicket());
   const [pinInput, setPinInput] = useState("");
   // Per-device kiosk session (teacher-bound). sessionMode: null = probing,
   // true = session flow, false = legacy school-global flow (older server).
@@ -47,18 +65,21 @@ export default function KioskPage() {
   const inputRef = useRef(null);
   const timeoutRef = useRef();
   const sessionIdRef = useRef(null);
+  const snapshotModeRef = useRef("unknown");
+  const snapshotEtagRef = useRef(null);
+  const launchAdoptionRef = useRef(null);
+  const launchTicketHandledRef = useRef(false);
   // Blocks the 5s bootstrap interval while a resume is in flight — a
   // concurrent bootstrap would mint a fresh unclaimed session (the resume
   // force-releases the old one) and clobber the stored session id.
   const resumingRef = useRef(false);
 
-  const kioskHeaders = () => ({
-    "Content-Type": "application/json",
-    "X-School-Id": schoolId,
-    "X-Kiosk-Pin": kioskPin,
-    ...(sessionIdRef.current ? { "X-Kiosk-Session": sessionIdRef.current } : {}),
-    ...PASSPILOT_CLASS_MODEL_HEADER,
-  });
+  const kioskClient = useMemo(() => createKioskApiClient({
+    schoolId,
+    pin: kioskPin,
+    getSessionId: () => sessionIdRef.current,
+    commonHeaders: PASSPILOT_CLASS_MODEL_HEADER,
+  }), [schoolId, kioskPin]);
 
   const savePin = (pin) => {
     kioskPinStore().setItem(KIOSK_PIN_KEY, pin);
@@ -66,13 +87,13 @@ export default function KioskPage() {
     setPinInput("");
   };
 
-  const clearPin = () => {
+  const clearPin = useCallback(() => {
     kioskPinStore().removeItem(KIOSK_PIN_KEY);
     setKioskPin("");
-  };
+  }, []);
 
   // 401 = wrong PIN (clear and re-prompt); returns true if it handled the response
-  const handlePinRejection = (res, errMsg) => {
+  const handlePinRejection = useCallback((res, errMsg) => {
     if (res.status === 401) {
       clearPin();
       setState("scan");
@@ -82,7 +103,7 @@ export default function KioskPage() {
     setState("error");
     setMessage(errMsg);
     return true;
-  };
+  }, [clearPin]);
 
   const resetToScan = useCallback(() => {
     setState("scan");
@@ -124,89 +145,236 @@ export default function KioskPage() {
     return true;
   }, [schoolId]);
 
-  // Per-device kiosk session bootstrap (see KioskSimple.jsx for the flow).
-  // A plain 404 from an older server → legacy school-global behavior.
-  useEffect(() => {
-    if (!schoolId || !kioskPin || sessionMode !== null) return;
-    let cancelled = false;
-    const bootstrap = async () => {
-      if (resumingRef.current) return;
-      try {
-        const urlParams = new URLSearchParams(window.location.search);
-        const urlSessionId = urlParams.get("session");
-        // ?device= arrives from the ClassPilot extension on managed
-        // Chromebooks: a durable device identity that survives the profile
-        // wipes that erase localStorage. Adopt it before minting a random id.
-        const urlDeviceId = urlParams.get("device");
-        const adoption = urlDeviceId ? adoptKioskDeviceId(urlDeviceId) : null;
-        if (urlSessionId || urlDeviceId) {
-          if (urlSessionId) kioskPinStore().setItem(KIOSK_SESSION_KEY, urlSessionId);
-          urlParams.delete("session");
-          urlParams.delete("device");
-          const query = urlParams.toString();
-          window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
+  const pollKiosk = useCallback(async ({ signal }) => {
+    if (resumingRef.current) return { kind: "noop", revision: null };
+
+    if (sessionMode === null) {
+      if (launchTicket && !launchTicketHandledRef.current) {
+        if (!isKioskLaunchTicketPending(launchTicket)) {
+          launchTicketHandledRef.current = true;
+        } else {
+          const redemption = await redeemKioskLaunchTicket({
+            client: kioskClient,
+            ticket: launchTicket,
+          });
+          if (redemption.handled) {
+            launchTicketHandledRef.current = true;
+            forgetKioskLaunchTicket(launchTicket);
+            if (redemption.deviceId) {
+              launchAdoptionRef.current = adoptKioskDeviceId(redemption.deviceId, schoolId);
+            }
+          }
         }
-        const storedId = kioskPinStore().getItem(KIOSK_SESSION_KEY);
-        const deviceId = adoption?.id || getKioskDeviceId();
-        const res = await fetch("/api/passpilot/kiosk/session", {
-          method: "POST",
-          credentials: "omit",
-          headers: {
-            ...kioskHeaders(),
-            ...(storedId ? { "X-Kiosk-Session": storedId } : {}),
-            ...(deviceId ? { "X-Kiosk-Device": deviceId } : {}),
-            // Same-device continuity proof: when adoption replaced a stored
-            // random id, present it once so the server migrates a live
-            // session (and its future binding) to the managed id.
-            ...(adoption?.previousId ? { "X-Kiosk-Device-Prev": adoption.previousId } : {}),
-          },
-        });
-        if (cancelled) return;
-        if (res.status === 401) {
-          clearPin();
-          return;
-        }
-        if (res.status === 404) {
-          setSessionMode(false);
-          return;
-        }
-        if (!res.ok) {
-          // Surface why the kiosk can't start instead of spinning silently.
-          const body = await res.json().catch(() => ({}));
-          if (!cancelled) setBootstrapError(body?.error || `Kiosk unavailable (${res.status})`);
-          return;
-        }
-        const data = await res.json().catch(() => null);
-        if (cancelled || !data?.session?.id) return;
-        kioskPinStore().setItem(KIOSK_SESSION_KEY, data.session.id);
-        sessionIdRef.current = data.session.id;
-        if (redirectForKioskStyle(data.kioskStyle)) return;
-        setBootstrapError(null);
-        setSession(data.session);
-        // ?? null: old servers omit the resume field entirely.
-        setResumeOffer(data.session.status === "unclaimed" ? (data.resume ?? null) : null);
-        setSessionMode(true);
-      } catch {
-        // Connection error — the interval retries.
       }
-    };
-    bootstrap();
-    const interval = setInterval(bootstrap, 5000);
-    return () => { cancelled = true; clearInterval(interval); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [schoolId, kioskPin, sessionMode]);
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlSessionId = urlParams.get("session");
+      const urlDeviceId = urlParams.get("device");
+      const legacyAdoption = urlDeviceId ? adoptKioskDeviceId(urlDeviceId, schoolId) : null;
+      const adoption = launchAdoptionRef.current || legacyAdoption || getKioskDeviceAdoption(schoolId);
+      if (urlSessionId || urlDeviceId) {
+        if (urlSessionId) kioskPinStore().setItem(KIOSK_SESSION_KEY, urlSessionId);
+        urlParams.delete("session");
+        urlParams.delete("device");
+        const query = urlParams.toString();
+        window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
+      }
+      const storedId = kioskPinStore().getItem(KIOSK_SESSION_KEY);
+      const deviceId = adoption?.id || getKioskDeviceId(schoolId);
+      const response = await kioskClient.request("/api/passpilot/kiosk/session", {
+        method: "POST",
+        signal,
+        headers: {
+          ...(storedId ? { "X-Kiosk-Session": storedId } : {}),
+          ...(deviceId ? { "X-Kiosk-Device": deviceId } : {}),
+          ...(adoption?.previousId ? { "X-Kiosk-Device-Prev": adoption.previousId } : {}),
+        },
+      });
+      const data = await response.json().catch(() => null);
+      if (response.status === 404 && !data?.code) {
+        return {
+          kind: "legacy-mode",
+          launchTicketHandled: launchTicketHandledRef.current,
+          revision: "legacy-mode",
+        };
+      }
+      if (!response.ok) {
+        throw new KioskRequestError(data?.error || `Kiosk unavailable (${response.status})`, {
+          status: response.status,
+          code: data?.code || null,
+          body: data,
+        });
+      }
+      if (!data?.session?.id) throw new Error("Kiosk session response was incomplete.");
+      confirmKioskDeviceAdoption(adoption?.id, schoolId);
+      return {
+        kind: "bootstrap",
+        data,
+        launchTicketHandled: launchTicketHandledRef.current,
+        revision: data.revision ?? data.session.revision ?? `session:${data.session.id}:${data.session.status}`,
+      };
+    }
+
+    const classId = session?.classId || null;
+    if (classId && snapshotModeRef.current !== "legacy") {
+      const response = await kioskClient.request(
+        `/api/passpilot/kiosk/snapshot?classId=${encodeURIComponent(classId)}`,
+        {
+          method: "GET",
+          signal,
+          headers: snapshotEtagRef.current ? { "If-None-Match": snapshotEtagRef.current } : {},
+        },
+      );
+      if (response.status === 304) {
+        return { kind: "not-modified", revision: snapshotEtagRef.current };
+      }
+      const body = await response.json().catch(() => ({}));
+      if (response.status === 404 && !body?.code) {
+        snapshotModeRef.current = "legacy";
+      } else if (!response.ok) {
+        if (body?.code === "PASSPILOT_KIOSK_SESSION_EXPIRED") {
+          return { kind: "session-expired", revision: `expired:${sessionIdRef.current}` };
+        }
+        if (["PASSPILOT_KIOSK_CLASS_CHANGED", "PASSPILOT_KIOSK_CLASS_REQUIRED"].includes(body?.code)) {
+          // Re-read config below to pick up the authoritative class binding.
+        } else if (body?.code === "PASSPILOT_KIOSK_CLASS_INACTIVE") {
+          return { kind: "config-error", data: body, revision: body?.revision ?? null };
+        } else {
+          throw new KioskRequestError(body?.error || "The kiosk snapshot is unavailable.", {
+            status: response.status,
+            code: body?.code || null,
+            body,
+          });
+        }
+      } else {
+        snapshotModeRef.current = "snapshot";
+        const etag = response.headers.get("etag");
+        if (etag) snapshotEtagRef.current = etag;
+        const snapshot = normalizeKioskSnapshot(body);
+        return {
+          kind: "snapshot",
+          data: snapshot,
+          revision: kioskSnapshotRevision(response, body),
+        };
+      }
+    }
+
+    const response = await kioskClient.request(`/api/passpilot/kiosk/config?school=${schoolId}`, {
+      method: "GET",
+      signal,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (data?.code === "PASSPILOT_KIOSK_SESSION_EXPIRED") {
+        return { kind: "session-expired", revision: `expired:${sessionIdRef.current}` };
+      }
+      if (response.status === 401) {
+        throw new KioskRequestError(data?.error || "Kiosk authorization expired.", {
+          status: response.status,
+          code: data?.code || null,
+          body: data,
+        });
+      }
+      if (response.status >= 500) {
+        throw new KioskRequestError(data?.error || "The kiosk configuration is unavailable.", {
+          status: response.status,
+          code: data?.code || null,
+          body: data,
+        });
+      }
+      return { kind: "config-error", data, revision: data?.revision ?? null };
+    }
+    return { kind: "config", data, revision: data?.revision ?? data?.session?.revision ?? null };
+  }, [kioskClient, launchTicket, schoolId, session?.classId, sessionMode]);
+
+  const applyKioskPoll = useCallback((result) => {
+    if (result.launchTicketHandled) setLaunchTicket(null);
+    if (result.kind === "legacy-mode") {
+      setBootstrapError(null);
+      setSessionMode(false);
+      return;
+    }
+    if (result.kind === "bootstrap") {
+      const data = result.data;
+      kioskPinStore().setItem(KIOSK_SESSION_KEY, data.session.id);
+      sessionIdRef.current = data.session.id;
+      if (redirectForKioskStyle(data.kioskStyle)) return;
+      setBootstrapError(null);
+      setSession(data.session);
+      setResumeOffer(data.session.status === "unclaimed" ? (data.resume ?? null) : null);
+      setSessionMode(true);
+      return;
+    }
+    if (result.kind === "session-expired") {
+      handleSessionExpired();
+      return;
+    }
+    if (result.kind === "config-error") {
+      redirectForKioskStyle(result.data?.kioskStyle);
+      return;
+    }
+    if (result.kind === "snapshot") {
+      const data = result.data;
+      if (redirectForKioskStyle(data.kioskStyle)) return;
+      if (data.session) setSession(data.session);
+      return;
+    }
+    if (result.kind === "config") {
+      const data = result.data;
+      if (redirectForKioskStyle(data.kioskStyle)) return;
+      if (!data.session) return;
+      setSession({
+        id: data.session.id,
+        status: data.session.status,
+        claimCode: data.session.claimCode ?? null,
+        classId: data.classId ?? null,
+        className: data.className ?? null,
+        kioskName: data.kioskName ?? null,
+      });
+    }
+  }, [handleSessionExpired, redirectForKioskStyle]);
+
+  const handleKioskPollError = useCallback((error) => {
+    if (error?.status === 401) {
+      clearPin();
+      return;
+    }
+    if (sessionMode === null) {
+      setBootstrapError(error?.message || "Kiosk is temporarily unavailable.");
+    }
+  }, [clearPin, sessionMode]);
+
+  const reportKioskHealth = useCallback(async (event, { signal }) => {
+    await kioskClient.request("/api/passpilot/kiosk/client-health", {
+      method: "POST",
+      signal,
+      body: JSON.stringify(event),
+    });
+  }, [kioskClient]);
+
+  const kioskControllerKey = `${schoolId}:${kioskPin}:${sessionMode ?? "bootstrap"}:${session?.id || ""}:${session?.classId || ""}`;
+  const {
+    isOffline,
+    lastSuccessAt,
+    refresh: refreshKiosk,
+  } = useKioskPollingController({
+    enabled: Boolean(schoolId && kioskPin),
+    controllerKey: kioskControllerKey,
+    request: pollKiosk,
+    onResult: applyKioskPoll,
+    onError: handleKioskPollError,
+    onHealthEvent: reportKioskHealth,
+    getRevision: (result) => result.revision,
+  });
 
   // One-tap resume for the remembered teacher (see KioskSimple.handleResume).
   const handleResume = useCallback(async () => {
     if (resumingRef.current) return;
     resumingRef.current = true;
     try {
-      const deviceId = getKioskDeviceId();
-      const res = await fetch("/api/passpilot/kiosk/session/resume", {
+      const deviceId = getKioskDeviceId(schoolId);
+      const res = await kioskClient.request("/api/passpilot/kiosk/session/resume", {
         method: "POST",
-        credentials: "omit",
         headers: {
-          ...kioskHeaders(),
           ...(deviceId ? { "X-Kiosk-Device": deviceId } : {}),
         },
       });
@@ -234,55 +402,7 @@ export default function KioskPage() {
     } finally {
       resumingRef.current = false;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [schoolId, kioskPin]);
-
-  // Session-mode config poll: tracks claim state, class, and kiosk name.
-  useEffect(() => {
-    if (!schoolId || !kioskPin || sessionMode !== true || !sessionIdRef.current) return;
-    const poll = () => {
-      // Fence every response to the session it was sent for (see KioskSimple):
-      // a stale 404 for the resume-released session must not wipe the freshly
-      // stored resumed session.
-      const polledSessionId = sessionIdRef.current;
-      fetch(`/api/passpilot/kiosk/config?school=${schoolId}`, { credentials: "omit", headers: kioskHeaders() })
-        .then(async (response) => {
-          if (polledSessionId !== sessionIdRef.current) return null;
-          if (response.status === 401) {
-            clearPin();
-            return null;
-          }
-          if (response.ok) return response.json();
-          const body = await response.json().catch(() => ({}));
-          if (response.status === 404 && body.code === "PASSPILOT_KIOSK_SESSION_EXPIRED") {
-            if (polledSessionId === sessionIdRef.current) handleSessionExpired();
-            return null;
-          }
-          // A style flip must reach kiosks parked on config errors (e.g. the
-          // class-inactive 409, which carries kioskStyle for this hop).
-          redirectForKioskStyle(body.kioskStyle);
-          return null;
-        })
-        .then((data) => {
-          if (!data?.session) return;
-          if (polledSessionId !== sessionIdRef.current) return;
-          if (redirectForKioskStyle(data.kioskStyle)) return;
-          setSession({
-            id: data.session.id,
-            status: data.session.status,
-            claimCode: data.session.claimCode ?? null,
-            classId: data.classId ?? null,
-            className: data.className ?? null,
-            kioskName: data.kioskName ?? null,
-          });
-        })
-        .catch(() => {});
-    };
-    poll();
-    const interval = setInterval(poll, 10_000);
-    return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [schoolId, kioskPin, sessionMode, handleSessionExpired]);
+  }, [clearPin, kioskClient, redirectForKioskStyle, schoolId]);
 
   // Auto-reset on inactivity
   useEffect(() => {
@@ -303,12 +423,8 @@ export default function KioskPage() {
     if (!idInput.trim() || !schoolId) return;
 
     try {
-      const res = await fetch("/api/passpilot/kiosk/lookup", {
+      const res = await kioskClient.request("/api/passpilot/kiosk/lookup", {
         method: "POST",
-        // Never ride a staff session cookie from this shared device — kiosk
-        // endpoints authenticate via the PIN headers only.
-        credentials: "omit",
-        headers: kioskHeaders(),
         body: JSON.stringify({ studentIdNumber: idInput.trim() }),
       });
 
@@ -345,12 +461,8 @@ export default function KioskPage() {
     if (!student || !schoolId) return;
 
     try {
-      const res = await fetch("/api/passpilot/kiosk/checkout", {
+      const res = await kioskClient.request("/api/passpilot/kiosk/checkout", {
         method: "POST",
-        // Never ride a staff session cookie from this shared device — kiosk
-        // endpoints authenticate via the PIN headers only.
-        credentials: "omit",
-        headers: kioskHeaders(),
         body: JSON.stringify({
           studentId: student.id,
           destination,
@@ -371,6 +483,7 @@ export default function KioskPage() {
 
       setState("success");
       setMessage(`Pass issued! Heading to ${destination}.`);
+      refreshKiosk();
     } catch {
       setState("error");
       setMessage("Connection error.");
@@ -381,12 +494,8 @@ export default function KioskPage() {
     if (!student || !schoolId) return;
 
     try {
-      const res = await fetch("/api/passpilot/kiosk/checkin", {
+      const res = await kioskClient.request("/api/passpilot/kiosk/checkin", {
         method: "POST",
-        // Never ride a staff session cookie from this shared device — kiosk
-        // endpoints authenticate via the PIN headers only.
-        credentials: "omit",
-        headers: kioskHeaders(),
         body: JSON.stringify({ studentId: student.id }),
       });
 
@@ -403,6 +512,7 @@ export default function KioskPage() {
 
       setState("success");
       setMessage("Welcome back! Pass returned.");
+      refreshKiosk();
     } catch {
       setState("error");
       setMessage("Connection error.");
@@ -462,6 +572,7 @@ export default function KioskPage() {
   if (sessionMode === null) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center p-8">
+        <KioskOfflineBanner isOffline={isOffline} lastSuccessAt={lastSuccessAt} />
         <div className="text-center space-y-4">
           <p className="text-xl text-gray-400">Connecting kiosk&hellip;</p>
           {bootstrapError && (
@@ -478,6 +589,7 @@ export default function KioskPage() {
     const code = session.claimCode || "";
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center p-8">
+        <KioskOfflineBanner isOffline={isOffline} lastSuccessAt={lastSuccessAt} />
         <div className="max-w-lg w-full text-center space-y-8">
           <h1 className="text-3xl font-bold text-blue-400">PassPilot Kiosk</h1>
           {resumeOffer && (
@@ -513,6 +625,7 @@ export default function KioskPage() {
   if (sessionMode === true && session?.status === "active" && !session?.classId) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center p-8">
+        <KioskOfflineBanner isOffline={isOffline} lastSuccessAt={lastSuccessAt} />
         <div className="max-w-lg text-center space-y-4">
           <h1 className="text-3xl font-bold text-blue-400">
             {session?.kioskName ? `${session.kioskName} — PassPilot Kiosk` : "PassPilot Kiosk"}
@@ -527,6 +640,7 @@ export default function KioskPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-900 to-black text-white flex flex-col items-center justify-center p-8">
+      <KioskOfflineBanner isOffline={isOffline} lastSuccessAt={lastSuccessAt} />
       <h1 className="text-3xl font-bold mb-8 text-blue-400">
         PassPilot Kiosk
         {sessionMode === true && (session?.className || session?.kioskName) ? (

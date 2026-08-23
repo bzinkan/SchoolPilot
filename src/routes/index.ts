@@ -35,6 +35,7 @@ import scheduledConflictRoutes from "./classpilot/scheduledConflicts.js";
 import instructionalCalendarRoutes from "./classpilot/instructionalCalendar.js";
 import monitoringEventRoutes from "./classpilot/monitoringEvents.js";
 import scheduleChangeRoutes from "./classpilot/scheduleChanges.js";
+import liveViewTelemetryRoutes from "./classpilot/liveViewTelemetry.js";
 import superAdminRoutes from "./admin/superAdmin.js";
 import superAdminMonitoringRoutes from "./admin/monitoring.js";
 import superAdminSoc2Routes from "./admin/soc2.js";
@@ -383,6 +384,7 @@ router.use("/", changeRoutes);
 
 // ClassPilot - Classroom monitoring & management
 router.use("/classpilot", deviceRoutes);
+router.use("/classpilot", liveViewTelemetryRoutes);
 router.use("/classpilot", monitoringRoutes);
 router.use("/classpilot/teaching-sessions", teachingSessionRoutes);
 router.use("/classpilot/admin/classes", adminClassRoutes);

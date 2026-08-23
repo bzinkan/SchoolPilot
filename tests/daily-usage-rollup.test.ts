@@ -8,6 +8,10 @@ import {
   dailyUsageRollupWindow,
   zonedDayStartUtc,
 } from "../src/util/dailyUsageRollup.ts";
+import {
+  CLASSPILOT_DAILY_USAGE_UPSERT_SQL,
+  dailyUsageAggregatesEqual,
+} from "../src/services/classpilotDailyUsageRollup.ts";
 
 describe("daily usage rollup scheduling", () => {
   it("waits until 02:00 in the school's local timezone", () => {
@@ -92,5 +96,29 @@ describe("daily usage rollup scheduling", () => {
     assert.match(rollupSource, /gte\(heartbeats\.timestamp, window\.dayStartUtc\)/);
     assert.match(rollupSource, /lt\(heartbeats\.timestamp, window\.dayEndUtc\)/);
     assert.doesNotMatch(rollupSource, /heartbeats\.timestamp[^\n]*AT TIME ZONE/);
+  });
+
+  it("uses one set-based upsert with ranked top domains", () => {
+    assert.match(CLASSPILOT_DAILY_USAGE_UPSERT_SQL, /ROW_NUMBER\(\) OVER/i);
+    assert.match(CLASSPILOT_DAILY_USAGE_UPSERT_SQL, /INSERT INTO daily_usage/i);
+    assert.match(CLASSPILOT_DAILY_USAGE_UPSERT_SQL, /ON CONFLICT \(student_id, date\) DO UPDATE/i);
+    assert.match(CLASSPILOT_DAILY_USAGE_UPSERT_SQL, /timestamp >= \$2/);
+    assert.match(CLASSPILOT_DAILY_USAGE_UPSERT_SQL, /timestamp < \$3/);
+  });
+
+  it("shadow comparison is stable across row order and timestamp representations", () => {
+    const first = [{
+      studentId: "student-a",
+      totalSeconds: 20,
+      heartbeatCount: 2,
+      topDomains: [{ domain: "example.test", seconds: 20, visits: 2 }],
+      firstSeen: new Date("2026-08-20T12:00:00Z"),
+      lastSeen: new Date("2026-08-20T12:00:10Z"),
+    }];
+    assert.equal(dailyUsageAggregatesEqual(first, [{
+      ...first[0]!,
+      firstSeen: "2026-08-20T12:00:00.000Z",
+      lastSeen: "2026-08-20T12:00:10.000Z",
+    }]), true);
   });
 });

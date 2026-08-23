@@ -2,15 +2,16 @@
 
 ## Launch posture: up to 800 active ClassPilot devices
 
-> **Real-student onboarding hold:** simulated AWS capacity acceptance does not
-> authorize onboarding. No managed Chromebooks are currently available. Keep
-> real students blocked until the first available managed Chromebooks pass
-> enrollment, real screenshot capture, 10-second heartbeat, class-scoped
-> command/received/completed ACK, forced reconnect, and cross-school isolation
-> smoke checks. The public Chrome Web Store listing
+> **Real-device acceptance boundary:** simulated AWS capacity acceptance does
+> not replace managed-Chromebook validation. Before expanding a release to a
+> new school or organizational unit, require enrollment, real screenshot
+> capture, 10-second heartbeat, class-scoped command/received/completed ACK,
+> forced reconnect, and cross-school isolation smoke checks on managed devices.
+> The public Chrome Web Store listing
 > `iggbfegfcjkfieoemeolfmfnapepalca` was confirmed by the operator and public
-> listing on August 19, 2026 at live version `2.6.1`; no higher package is
-> currently prepared. Re-check the listing at smoke-test time; do not
+> listing on August 22, 2026 at live version `2.6.9`; the separate ClassPilot
+> repository contains the unpublished `2.7.0` candidate. Re-check the listing
+> at smoke-test and upload time; do not
 > package or upload the extension from this SchoolPilot repository.
 
 ### Medium engineering acceptance — terminal and paused
@@ -90,9 +91,12 @@ The launch gate is performance-first but cost-conscious. It is intentionally
 different from the deferred 2,000-device HA profile:
 
 - API: ordinary minimum 1, weekday 05:45–10:00 arrival minimum 6, and
-  autoscaling maximum 8 at `512 CPU / 2048 MB`, with a 70% CPU target. The
-  higher memory revision is retained because launch performance takes priority
-  over the original 1024 MB cost model.
+  autoscaling maximum 6 at `512 CPU / 2048 MB`, with a 70% CPU target. Each
+  API task uses `main=16` and `session=2`; with the worker ceiling of 16, the
+  normal database connection ceiling is `6 × 18 + 16 = 124`. Re-enabling
+  eight tasks requires a separately reviewed RDS Proxy or database-capacity
+  decision. The higher memory revision is retained because launch performance
+  takes priority over the original 1024 MB cost model.
 - Scheduler: exactly one task at `256 CPU / 512 MB`.
 - ECS application tasks: the medium engineering acceptance retains the current
   private subnets and NAT egress. A later, separately reviewed cost stage may

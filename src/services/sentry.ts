@@ -9,23 +9,31 @@
 // request bodies, cookies, headers) so student data does not leak to Sentry.
 
 import * as Sentry from "@sentry/node";
+import { safeErrorMetadata } from "../util/safeLogging.js";
 
 let enabled = false;
 
 const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const TOKEN_RE = /\b(eyJ[A-Za-z0-9_-]{10,}|sk-[A-Za-z0-9_-]{10,}|Bearer\s+[A-Za-z0-9._-]+)\b/g;
+const URL_RE = /https?:\/\/[^\s"'<>]+/gi;
+const UUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
+const SECRET_ASSIGNMENT_RE = /\b(token|secret|password|pin|code|authorization|api[_-]?key)=([^\s&"'<>]+)/gi;
 
-function scrubString(s: string): string {
+export function scrubSentryText(s: string): string {
   return s
     .replace(EMAIL_RE, "[email]")
-    .replace(TOKEN_RE, "[redacted]");
+    .replace(TOKEN_RE, "[redacted]")
+    .replace(URL_RE, "[url]")
+    .replace(UUID_RE, "[identifier]")
+    .replace(SECRET_ASSIGNMENT_RE, "$1=[redacted]")
+    .slice(0, 4_096);
 }
 
 /** Recursively scrub strings inside an arbitrary value (bounded depth). */
 function scrubDeep(value: unknown, depth = 0): unknown {
   if (depth > 6) return "[truncated]";
   if (value == null) return value;
-  if (typeof value === "string") return scrubString(value);
+  if (typeof value === "string") return scrubSentryText(value);
   if (Array.isArray(value)) return value.map((v) => scrubDeep(v, depth + 1));
   if (typeof value === "object") {
     const out: Record<string, unknown> = {};
@@ -35,6 +43,18 @@ function scrubDeep(value: unknown, depth = 0): unknown {
     return out;
   }
   return value;
+}
+
+function allowlistedObject(
+  value: Record<string, unknown> | undefined,
+  keys: readonly string[]
+): Record<string, unknown> | undefined {
+  if (!value) return undefined;
+  const safe: Record<string, unknown> = {};
+  for (const key of keys) {
+    if (value[key] !== undefined) safe[key] = scrubDeep(value[key]);
+  }
+  return Object.keys(safe).length > 0 ? safe : undefined;
 }
 
 export function initSentry(): void {
@@ -60,36 +80,44 @@ export function initSentry(): void {
       return null;
     },
     beforeSend(event) {
-      // Drop request payloads/cookies/headers entirely — they carry PII.
+      // Request URLs, query strings, bodies, headers, cookies and environment
+      // can all contain tenant/student authority. Keep only the HTTP method.
       if (event.request) {
-        delete event.request.data;
-        delete event.request.cookies;
-        delete event.request.headers;
-        if (event.request.query_string) delete event.request.query_string;
+        event.request = event.request.method
+          ? { method: scrubSentryText(event.request.method).slice(0, 16) }
+          : undefined;
       }
-      // Strip user identifiers + any breadcrumbs that slipped through.
+      // The telemetry contract permits no user object or breadcrumbs.
       delete event.user;
       delete event.breadcrumbs;
+      delete event.transaction;
       // Scrub message + exception text + stack-frame text.
-      if (event.message) event.message = scrubString(event.message);
+      if (event.message) event.message = scrubSentryText(event.message);
       if (event.exception?.values) {
         for (const ex of event.exception.values) {
-          if (ex.value) ex.value = scrubString(ex.value);
+          if (ex.value) ex.value = scrubSentryText(ex.value);
           const frames = ex.stacktrace?.frames;
           if (frames) {
             for (const frame of frames) {
               if (frame.vars) frame.vars = scrubDeep(frame.vars) as Record<string, unknown>;
-              if (frame.context_line) frame.context_line = scrubString(frame.context_line);
-              if (Array.isArray(frame.pre_context)) frame.pre_context = frame.pre_context.map(scrubString);
-              if (Array.isArray(frame.post_context)) frame.post_context = frame.post_context.map(scrubString);
+              if (frame.context_line) frame.context_line = scrubSentryText(frame.context_line);
+              if (Array.isArray(frame.pre_context)) frame.pre_context = frame.pre_context.map(scrubSentryText);
+              if (Array.isArray(frame.post_context)) frame.post_context = frame.post_context.map(scrubSentryText);
             }
           }
         }
       }
-      // Scrub every other dynamic sub-object we or integrations might populate.
-      if (event.extra) event.extra = scrubDeep(event.extra) as Record<string, unknown>;
-      if (event.tags) event.tags = scrubDeep(event.tags) as Record<string, string>;
-      if (event.contexts) event.contexts = scrubDeep(event.contexts) as typeof event.contexts;
+      // Strict allowlists prevent a future integration from adding prompts,
+      // URLs, command payloads or opaque tenant/student identifiers.
+      event.tags = allowlistedObject(
+        event.tags as Record<string, unknown> | undefined,
+        ["category", "release", "environment"]
+      ) as Record<string, string> | undefined;
+      event.extra = allowlistedObject(
+        event.extra as Record<string, unknown> | undefined,
+        ["errorCode", "job", "messageType"]
+      );
+      event.contexts = undefined;
       return event;
     },
   });
@@ -119,19 +147,11 @@ export function captureError(
     Sentry.captureException(error, {
       tags: {
         category: context?.category,
-        requestId: context?.requestId,
-        fingerprint: context?.fingerprint,
         release: context?.release,
-        instanceId: context?.instanceId,
-      },
-      // schoolId/userId are non-PII opaque ids — safe for correlation.
-      extra: {
-        schoolId: context?.schoolId,
-        userId: context?.userId,
       },
     });
   } catch (err) {
-    console.error("[Sentry] captureException failed:", err);
+    console.error("[Sentry] captureException failed:", safeErrorMetadata(err));
   }
 }
 
@@ -140,7 +160,7 @@ export async function flushSentry(timeoutMs = 5000): Promise<boolean> {
   try {
     return await Sentry.flush(timeoutMs);
   } catch (err) {
-    console.error("[Sentry] flush failed:", err);
+    console.error("[Sentry] flush failed:", safeErrorMetadata(err));
     return false;
   }
 }

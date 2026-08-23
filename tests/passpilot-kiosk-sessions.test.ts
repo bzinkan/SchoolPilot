@@ -7,8 +7,11 @@ import { sql } from "drizzle-orm";
 
 const TAG = `pp_kiosk_sessions_${Date.now()}`;
 const KIOSK_PIN = "4321";
+const ENROLLMENT_KEY = `${TAG}_enrollment_key`;
 process.env.REDIS_URL = "";
 process.env.NODE_ENV = "test";
+process.env.CLASSPILOT_PROTOCOL_V3_ENABLED = "true";
+process.env.CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V1 = "true";
 
 let db: any;
 let pool: any;
@@ -71,7 +74,7 @@ async function requestJson(
   path: string,
   body: unknown,
   headers: Record<string, string>
-): Promise<{ status: number; body: any }> {
+): Promise<{ status: number; body: any; headers: Headers }> {
   const response = await fetch(`${baseUrl}${path}`, {
     method,
     headers: { "content-type": "application/json", ...headers },
@@ -80,7 +83,11 @@ async function requestJson(
       : { body: JSON.stringify(body) }),
   });
   const text = await response.text();
-  return { status: response.status, body: text ? JSON.parse(text) : null };
+  return {
+    status: response.status,
+    body: text ? JSON.parse(text) : null,
+    headers: response.headers,
+  };
 }
 
 before(async () => {
@@ -199,19 +206,25 @@ before(async () => {
   const pinHash = await hashPassword(KIOSK_PIN);
   for (const school of [schoolA, schoolB]) {
     await storage.createProductLicense({ schoolId: school.id, product: "PASSPILOT", status: "active" } as any);
+    await storage.createProductLicense({ schoolId: school.id, product: "CLASSPILOT", status: "active" } as any);
     await inSchool(school.id, () => storage.upsertSettings(school.id, {
       schoolName: school.name,
       passpilotClassSource: "legacy_grades",
+      enrollmentKey: ENROLLMENT_KEY,
+      enrollmentKeyRequired: true,
     }));
     await asSystem(() =>
       db.execute(sql`UPDATE schools SET kiosk_enabled = true, kiosk_pin_hash = ${pinHash} WHERE id = ${school.id}`)
     );
   }
   await storage.createProductLicense({ schoolId: schoolC.id, product: "PASSPILOT", status: "active" } as any);
+  await storage.createProductLicense({ schoolId: schoolC.id, product: "CLASSPILOT", status: "active" } as any);
   await inSchool(schoolC.id, async () => {
     await storage.upsertSettings(schoolC.id, {
       schoolName: schoolC.name,
       passpilotClassSource: "classpilot_groups",
+      enrollmentKey: ENROLLMENT_KEY,
+      enrollmentKeyRequired: true,
     });
     canonicalGroup = await storage.createGroup({
       schoolId: schoolC.id,
@@ -297,25 +310,29 @@ describe("PassPilot per-device kiosk sessions", { concurrency: false }, () => {
     const schema = readFileSync(new URL("../src/schema/passpilot.ts", import.meta.url), "utf8");
     const startup = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
     const csrf = readFileSync(new URL("../src/middleware/csrfProtection.ts", import.meta.url), "utf8");
-    const deployment = readFileSync(new URL("../scripts/enforce-deploy-rls-allowlist.mjs", import.meta.url), "utf8");
+    const rlsRegistry = readFileSync(new URL("../src/config/rlsRegistry.json", import.meta.url), "utf8");
     assert.match(schema, /passpilotKioskSessions = pgTable\(/);
     assert.match(startup, /CREATE TABLE IF NOT EXISTS passpilot_kiosk_sessions/);
-    assert.match(startup, /"passpilot_kiosk_sessions",/);
-    assert.match(deployment, /"passpilot_kiosk_sessions"/);
-    assert.match(deployment, /Object\.freeze\(\["passpilot_kiosk_sessions"\]\)/);
+    assert.match(startup, /isReviewedRlsEnforcementRequest/);
+    assert.match(rlsRegistry, /"passpilotKioskSessions"[\s\S]*?"passpilot_kiosk_sessions"/);
     const deployScript = readFileSync(new URL("../scripts/deploy.sh", import.meta.url), "utf8");
-    assert.match(deployScript, /\|passpilot_kiosk_sessions\|/);
+    assert.match(deployScript, /enforce-deploy-rls-allowlist\.mjs" validate-request/);
     assert.match(csrf, /"\/passpilot\/kiosk\/session"/);
     assert.match(csrf, /"\/kiosk\/session"/);
     // Device-memory table rides the same contract set.
     assert.match(schema, /passpilotKioskDevices = pgTable\(/);
     assert.match(startup, /CREATE TABLE IF NOT EXISTS passpilot_kiosk_devices/);
     assert.match(startup, /ADD COLUMN IF NOT EXISTS device_id TEXT/);
-    assert.match(startup, /"passpilot_kiosk_devices",/);
-    assert.match(deployment, /Object\.freeze\(\["passpilot_kiosk_devices"\]\)/);
-    assert.match(deployScript, /\|passpilot_kiosk_devices\|/);
+    assert.match(rlsRegistry, /"passpilotKioskDevices"[\s\S]*?"passpilot_kiosk_devices"/);
     assert.match(csrf, /"\/passpilot\/kiosk\/session\/resume"/);
     assert.match(csrf, /"\/kiosk\/session\/resume"/);
+    assert.match(csrf, /"\/passpilot\/kiosk\/auth"/);
+    assert.match(csrf, /"\/classpilot\/kiosk\/launch-ticket"/);
+    assert.match(csrf, /"\/passpilot\/kiosk\/launch-ticket\/redeem"/);
+    assert.match(csrf, /"\/passpilot\/kiosk\/client-health"/);
+    assert.match(csrf, /"\/kiosk\/auth"/);
+    assert.match(csrf, /"\/kiosk\/launch-ticket\/redeem"/);
+    assert.match(csrf, /"\/kiosk\/client-health"/);
   });
 
   let sessionOne: any;
@@ -1141,5 +1158,432 @@ describe("PassPilot kiosk device memory", { concurrency: false }, () => {
     assert.equal(claimed.status, 200, JSON.stringify(claimed.body));
     assert.ok(await bindingRow(schoolA.id, DEVM), "binding must be keyed to the migrated id");
     assert.equal(await bindingRow(schoolA.id, DEVX), undefined);
+  });
+});
+
+describe("PassPilot kiosk token, snapshot, and health contracts", { concurrency: false }, () => {
+  it("bounds the success-only PIN and health limiter primitives", async () => {
+    const {
+      KioskPinSuccessCache,
+      resetPasspilotKioskAuthStateForTests,
+      snapshotPasspilotKioskAuthStateForTests,
+    } = await import("../dist/services/passpilotKioskAuth.js");
+    const {
+      BoundedKioskHealthRateLimiter,
+      passpilotKioskClientHealthSchema,
+      resetPasspilotKioskHealthStateForTests,
+      snapshotPasspilotKioskHealthStateForTests,
+    } = await import("../dist/services/passpilotKioskHealth.js");
+
+    const pinCache = new KioskPinSuccessCache(4, 100);
+    for (let index = 0; index < 5; index += 1) {
+      pinCache.remember(`hmac-digest-${index}`, 1_000);
+    }
+    assert.equal(pinCache.size, 4);
+    assert.equal(pinCache.has("hmac-digest-0", 1_001), false);
+    assert.equal(pinCache.has("hmac-digest-4", 1_001), true);
+    assert.equal(pinCache.has("hmac-digest-4", 1_101), false);
+
+    const healthLimiter = new BoundedKioskHealthRateLimiter(2, 100);
+    assert.equal(healthLimiter.accept("scope-a", 1_000), true);
+    assert.equal(healthLimiter.accept("scope-a", 1_001), false);
+    assert.equal(healthLimiter.accept("scope-b", 1_001), true);
+    assert.equal(healthLimiter.accept("scope-c", 1_001), true);
+    assert.equal(healthLimiter.size, 2);
+    assert.equal(healthLimiter.accept("scope-a", 1_002), true, "oldest key is evicted at the bound");
+    assert.equal(healthLimiter.accept("scope-a", 1_103), true, "window expiry permits a new event");
+
+    assert.equal(
+      passpilotKioskClientHealthSchema.safeParse({
+        event: "snapshot_failure",
+        consecutiveFailures: 2,
+      }).success,
+      false
+    );
+    assert.equal(
+      passpilotKioskClientHealthSchema.safeParse({
+        event: "snapshot_recovery",
+        consecutiveFailures: 3,
+        reason: "network",
+      }).success,
+      true
+    );
+    resetPasspilotKioskAuthStateForTests();
+    assert.deepEqual(snapshotPasspilotKioskAuthStateForTests(), {
+      pinSuccessCacheSize: 0,
+      pinSuccessCacheMaxEntries: 4_096,
+      pinSuccessCacheTtlMs: 300_000,
+    });
+    resetPasspilotKioskHealthStateForTests();
+    assert.deepEqual(snapshotPasspilotKioskHealthStateForTests(), {
+      size: 0,
+      maxEntries: 4_096,
+      windowMs: 300_000,
+    });
+  });
+
+  it("exchanges a PIN once, polls with a token, and serves a revisioned snapshot", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    const authService = await import("../dist/services/passpilotKioskAuth.js");
+    const metricsService = await import("../dist/services/passpilotKioskMetrics.js");
+    authService.resetPasspilotKioskAuthStateForTests();
+    metricsService.snapshotPasspilotKioskMetrics({ reset: true });
+
+    const auth = await requestJson(
+      "POST",
+      "/passpilot/kiosk/auth",
+      {},
+      kioskHeaders(schoolA.id)
+    );
+    assert.equal(auth.status, 200, JSON.stringify(auth.body));
+    assert.equal(auth.body.expiresInSeconds, 900);
+    assert.equal(typeof auth.body.token, "string");
+    assert.ok(new Date(auth.body.expiresAt).getTime() > Date.now());
+    const tokenHeaders = {
+      "x-school-id": schoolA.id,
+      "x-kiosk-token": auth.body.token,
+      "x-passpilot-class-model": "classpilot-groups-v1",
+    };
+
+    const config = await requestJson(
+      "GET",
+      "/passpilot/kiosk/config",
+      undefined,
+      tokenHeaders
+    );
+    assert.equal(config.status, 200, JSON.stringify(config.body));
+    const students = await requestJson(
+      "GET",
+      `/passpilot/kiosk/students?classId=${gradeA.id}`,
+      undefined,
+      tokenHeaders
+    );
+    assert.equal(students.status, 200, JSON.stringify(students.body));
+
+    const snapshot = await requestJson(
+      "GET",
+      `/passpilot/kiosk/snapshot?classId=${gradeA.id}`,
+      undefined,
+      tokenHeaders
+    );
+    assert.equal(snapshot.status, 200, JSON.stringify(snapshot.body));
+    assert.equal(snapshot.body.config.classId, gradeA.id);
+    assert.equal(snapshot.body.config.className, "Class A");
+    assert.equal(snapshot.body.session, null);
+    assert.ok(snapshot.body.roster.some((student: any) => student.id === studentA.id));
+    assert.equal(Array.isArray(snapshot.body.passes), true);
+    assert.equal(typeof snapshot.body.revisions.config, "number");
+    assert.equal(typeof snapshot.body.revisions.snapshot, "string");
+    assert.equal(JSON.stringify(snapshot.body).includes("deviceId"), false);
+    const etag = snapshot.headers.get("etag");
+    assert.ok(etag);
+
+    const unchanged = await requestJson(
+      "GET",
+      `/passpilot/kiosk/snapshot?classId=${gradeA.id}`,
+      undefined,
+      { ...tokenHeaders, "if-none-match": etag! }
+    );
+    assert.equal(unchanged.status, 304);
+    assert.equal(unchanged.body, null);
+
+    const metrics = metricsService.snapshotPasspilotKioskMetrics();
+    assert.equal(metrics.counters.authorizationBcrypt, 1);
+    assert.ok((metrics.counters.authorizationTokenSuccess ?? 0) >= 2);
+    assert.equal(metrics.counters.tenantCheckouts, 4);
+    assert.ok((metrics.counters.configSqlStatements ?? 0) <= 6);
+    assert.ok((metrics.counters.studentsSqlStatements ?? 0) <= 8);
+    assert.ok((metrics.counters.snapshotSqlStatements ?? 0) <= 10);
+  });
+
+  it("invalidates tokens on the next request after PIN rotation or license revocation", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    const { hashPassword } = await import("../dist/util/password.js");
+    const oldHashResult = await asSystem(() =>
+      db.execute(sql`SELECT kiosk_pin_hash FROM schools WHERE id = ${schoolA.id}`)
+    );
+    const oldHash = oldHashResult.rows[0].kiosk_pin_hash;
+    const auth = await requestJson("POST", "/passpilot/kiosk/auth", {}, kioskHeaders(schoolA.id));
+    assert.equal(auth.status, 200);
+    const tokenHeaders = {
+      "x-school-id": schoolA.id,
+      "x-kiosk-token": auth.body.token,
+      "x-passpilot-class-model": "classpilot-groups-v1",
+    };
+
+    const rotatedPin = "6789";
+    const rotatedHash = await hashPassword(rotatedPin);
+    try {
+      await asSystem(() =>
+        db.execute(sql`UPDATE schools SET kiosk_pin_hash = ${rotatedHash} WHERE id = ${schoolA.id}`)
+      );
+      const revokedByRotation = await requestJson(
+        "GET",
+        "/passpilot/kiosk/grades",
+        undefined,
+        tokenHeaders
+      );
+      assert.equal(revokedByRotation.status, 401);
+      assert.equal(revokedByRotation.body.code, "PASSPILOT_KIOSK_TOKEN_INVALID");
+
+      const oldPin = await requestJson("POST", "/passpilot/kiosk/auth", {}, kioskHeaders(schoolA.id));
+      assert.equal(oldPin.status, 401);
+      const replacement = await requestJson("POST", "/passpilot/kiosk/auth", {}, {
+        "x-school-id": schoolA.id,
+        "x-kiosk-pin": rotatedPin,
+      });
+      assert.equal(replacement.status, 200);
+    } finally {
+      await asSystem(() =>
+        db.execute(sql`UPDATE schools SET kiosk_pin_hash = ${oldHash} WHERE id = ${schoolA.id}`)
+      );
+    }
+
+    try {
+      await asSystem(() =>
+        db.execute(sql`UPDATE product_licenses SET status = 'suspended' WHERE school_id = ${schoolA.id} AND product = 'PASSPILOT'`)
+      );
+      const revokedByLicense = await requestJson(
+        "GET",
+        "/passpilot/kiosk/grades",
+        undefined,
+        tokenHeaders
+      );
+      assert.equal(revokedByLicense.status, 403);
+      assert.equal(revokedByLicense.body.code, "PASSPILOT_KIOSK_LICENSE_REQUIRED");
+    } finally {
+      await asSystem(() =>
+        db.execute(sql`UPDATE product_licenses SET status = 'active' WHERE school_id = ${schoolA.id} AND product = 'PASSPILOT'`)
+      );
+    }
+  });
+
+  it("accepts only bounded health transitions and suppresses duplicates", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    const healthService = await import("../dist/services/passpilotKioskHealth.js");
+    healthService.resetPasspilotKioskHealthStateForTests();
+    const auth = await requestJson("POST", "/passpilot/kiosk/auth", {}, kioskHeaders(schoolA.id));
+    assert.equal(auth.status, 200);
+    const headers = {
+      "x-school-id": schoolA.id,
+      "x-kiosk-token": auth.body.token,
+    };
+
+    const premature = await requestJson(
+      "POST",
+      "/passpilot/kiosk/client-health",
+      { event: "snapshot_failure", consecutiveFailures: 2 },
+      headers
+    );
+    assert.equal(premature.status, 400);
+    assert.equal(premature.body.code, "PASSPILOT_KIOSK_HEALTH_INVALID");
+
+    const first = await requestJson(
+      "POST",
+      "/passpilot/kiosk/client-health",
+      { event: "snapshot_failure", consecutiveFailures: 3, reason: "timeout" },
+      headers
+    );
+    assert.equal(first.status, 202);
+    assert.equal(first.body.accepted, true);
+
+    const duplicate = await requestJson(
+      "POST",
+      "/passpilot/kiosk/client-health",
+      { event: "snapshot_failure", consecutiveFailures: 4, reason: "timeout" },
+      headers
+    );
+    assert.equal(duplicate.status, 202);
+    assert.equal(duplicate.body.accepted, false);
+    assert.equal(duplicate.headers.get("retry-after"), "300");
+
+    const recovery = await requestJson(
+      "POST",
+      "/passpilot/kiosk/client-health",
+      { event: "snapshot_recovery", consecutiveFailures: 4 },
+      headers
+    );
+    assert.equal(recovery.status, 202);
+    assert.equal(recovery.body.accepted, true);
+  });
+});
+
+describe("ClassPilot managed kiosk launch tickets", { concurrency: false }, () => {
+  const directoryDeviceId = "managed-directory-device-do-not-persist";
+  const launchBody = {
+    directoryDeviceId,
+    clientProtocolVersion: 3,
+    capabilities: ["kioskLaunchTicketV1"],
+  };
+
+  function enrollmentHeaders(schoolId: string): Record<string, string> {
+    return {
+      "x-school-id": schoolId,
+      "x-classpilot-enrollment-key": ENROLLMENT_KEY,
+    };
+  }
+
+  async function issueTicket(schoolId: string, id = directoryDeviceId) {
+    return requestJson(
+      "POST",
+      "/classpilot/kiosk/launch-ticket",
+      { ...launchBody, directoryDeviceId: id },
+      enrollmentHeaders(schoolId)
+    );
+  }
+
+  it("keeps the local fallback bounded and derives stable school-scoped UUIDs", async () => {
+    const service = await import("../dist/services/classpilotKioskLaunchTicket.js");
+    const store = new service.BoundedClasspilotKioskLaunchTicketStore(2, 100);
+    store.set("one", "1", 1_000);
+    store.set("two", "2", 1_000);
+    store.set("three", "3", 1_000);
+    assert.equal(store.size, 2);
+    assert.equal(store.getdel("one", 1_001), null);
+    assert.equal(store.getdel("two", 1_001), "2");
+    assert.equal(store.getdel("two", 1_001), null);
+    assert.equal(store.getdel("three", 1_101), null);
+
+    const first = service.schoolScopedManagedKioskDeviceId("school-a", directoryDeviceId);
+    const repeated = service.schoolScopedManagedKioskDeviceId("school-a", directoryDeviceId);
+    const otherSchool = service.schoolScopedManagedKioskDeviceId("school-b", directoryDeviceId);
+    assert.equal(first, repeated);
+    assert.notEqual(first, otherSchool);
+    assert.match(first, /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.deepEqual(service.snapshotClasspilotKioskLaunchTicketStateForTests(), {
+      size: 0,
+      maxEntries: 4_096,
+      ttlMs: 60_000,
+    });
+  });
+
+  it("authenticates issuance, forbids body school identity, and negotiates capability", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    const bodySchool = await requestJson(
+      "POST",
+      "/classpilot/kiosk/launch-ticket",
+      { ...launchBody, schoolId: schoolB.id },
+      enrollmentHeaders(schoolA.id)
+    );
+    assert.equal(bodySchool.status, 400);
+    assert.equal(bodySchool.body.code, "CLASSPILOT_KIOSK_LAUNCH_TICKET_INVALID_REQUEST");
+
+    const wrongKey = await requestJson(
+      "POST",
+      "/classpilot/kiosk/launch-ticket",
+      launchBody,
+      { "x-school-id": schoolA.id, "x-classpilot-enrollment-key": "wrong" }
+    );
+    assert.equal(wrongKey.status, 401);
+
+    const legacyProtocol = await requestJson(
+      "POST",
+      "/classpilot/kiosk/launch-ticket",
+      { ...launchBody, clientProtocolVersion: 2 },
+      enrollmentHeaders(schoolA.id)
+    );
+    assert.equal(legacyProtocol.status, 426);
+    assert.deepEqual(legacyProtocol.body.acceptedCapabilities, []);
+
+    const issued = await issueTicket(schoolA.id);
+    assert.equal(issued.status, 201, JSON.stringify(issued.body));
+    assert.match(issued.body.ticket, /^[A-Za-z0-9_-]{43}$/);
+    assert.equal(issued.body.expiresInSeconds, 60);
+    assert.equal(issued.body.serverProtocolVersion, 3);
+    assert.deepEqual(issued.body.acceptedCapabilities, ["kioskLaunchTicketV1"]);
+    assert.equal(JSON.stringify(issued.body).includes(directoryDeviceId), false);
+    assert.equal(issued.headers.get("cache-control")?.includes("no-store"), true);
+  });
+
+  it("requires current kiosk auth before one-use redemption and preserves only scoped continuity", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    const service = await import("../dist/services/classpilotKioskLaunchTicket.js");
+    service.resetClasspilotKioskLaunchTicketStateForTests();
+
+    const issued = await issueTicket(schoolA.id);
+    assert.equal(issued.status, 201, JSON.stringify(issued.body));
+
+    // Authentication happens before GETDEL, so an unauthenticated caller
+    // cannot burn a valid continuity ticket.
+    const unauthenticated = await requestJson(
+      "POST",
+      "/passpilot/kiosk/launch-ticket/redeem",
+      { ticket: issued.body.ticket },
+      { "x-school-id": schoolA.id }
+    );
+    assert.equal(unauthenticated.status, 401);
+
+    const auth = await requestJson("POST", "/passpilot/kiosk/auth", {}, kioskHeaders(schoolA.id));
+    assert.equal(auth.status, 200);
+    const tokenHeaders = {
+      "x-school-id": schoolA.id,
+      "x-kiosk-token": auth.body.token,
+    };
+    const redeemed = await requestJson(
+      "POST",
+      "/passpilot/kiosk/launch-ticket/redeem",
+      { ticket: issued.body.ticket },
+      tokenHeaders
+    );
+    assert.equal(redeemed.status, 200, JSON.stringify(redeemed.body));
+    assert.equal(redeemed.body.continuityOnly, true);
+    assert.match(
+      redeemed.body.deviceId,
+      /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+    );
+    assert.equal(JSON.stringify(redeemed.body).includes(directoryDeviceId), false);
+    assert.equal("token" in redeemed.body, false);
+    assert.equal("session" in redeemed.body, false);
+
+    const replay = await requestJson(
+      "POST",
+      "/passpilot/kiosk/launch-ticket/redeem",
+      { ticket: issued.body.ticket },
+      tokenHeaders
+    );
+    assert.equal(replay.status, 404);
+    assert.equal(replay.body.code, "PASSPILOT_KIOSK_LAUNCH_TICKET_INVALID");
+
+    const repeatedTicket = await issueTicket(schoolA.id);
+    const repeated = await requestJson(
+      "POST",
+      "/passpilot/kiosk/launch-ticket/redeem",
+      { ticket: repeatedTicket.body.ticket },
+      kioskHeaders(schoolA.id)
+    );
+    assert.equal(repeated.status, 200);
+    assert.equal(repeated.body.deviceId, redeemed.body.deviceId);
+
+    const otherSchoolTicket = await issueTicket(schoolB.id);
+    const otherSchool = await requestJson(
+      "POST",
+      "/passpilot/kiosk/launch-ticket/redeem",
+      { ticket: otherSchoolTicket.body.ticket },
+      kioskHeaders(schoolB.id)
+    );
+    assert.equal(otherSchool.status, 200);
+    assert.notEqual(otherSchool.body.deviceId, redeemed.body.deviceId);
+  });
+
+  it("burns a ticket presented under a different authenticated school", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    const issued = await issueTicket(schoolA.id, `${directoryDeviceId}-wrong-school`);
+    assert.equal(issued.status, 201);
+
+    const wrongSchool = await requestJson(
+      "POST",
+      "/passpilot/kiosk/launch-ticket/redeem",
+      { ticket: issued.body.ticket },
+      kioskHeaders(schoolB.id)
+    );
+    assert.equal(wrongSchool.status, 404);
+
+    const retryOriginalSchool = await requestJson(
+      "POST",
+      "/passpilot/kiosk/launch-ticket/redeem",
+      { ticket: issued.body.ticket },
+      kioskHeaders(schoolA.id)
+    );
+    assert.equal(retryOriginalSchool.status, 404);
   });
 });

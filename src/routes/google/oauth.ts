@@ -15,6 +15,7 @@ import {
   exchangeGoogleAuthCode,
   fetchGoogleUserInfo,
 } from "../../util/googleOAuthTokenExchange.js";
+import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
 
 const router = Router();
 
@@ -65,10 +66,14 @@ function scopesForPurpose(purpose: GooglePurpose): string[] {
   return [...new Set([...CORE_SCOPES, ...scopes])];
 }
 
-function roleCanRequestPurpose(role: string | null | undefined, purpose: GooglePurpose): boolean {
-  if (role === "super_admin") return true;
-  if (purpose === "workspace_import") return role === "admin" || role === "school_admin";
-  return role === "teacher" || role === "admin" || role === "school_admin";
+function requestCanRequestPurpose(req: any, res: any, purpose: GooglePurpose): boolean {
+  return requestHasAnySchoolRole(
+    req,
+    res,
+    purpose === "workspace_import"
+      ? ["admin", "school_admin"]
+      : ["teacher", "admin", "school_admin"]
+  );
 }
 
 function missingScopes(tokenScope: string | null | undefined, required: string[]): string[] {
@@ -104,7 +109,7 @@ router.get("/auth-url", authenticate, requireSchoolContext, requireActiveSchool,
         setupPath: "/api/google/roster-connector/setup-info",
       });
     }
-    if (!roleCanRequestPurpose(res.locals.membershipRole, purpose)) {
+    if (!requestCanRequestPurpose(req, res, purpose)) {
       return res.status(403).json({
         error: "INSUFFICIENT_GOOGLE_ROLE: You do not have permission to connect Google for this workflow.",
         code: "INSUFFICIENT_GOOGLE_ROLE",
@@ -153,7 +158,7 @@ router.get("/callback", async (req, res, next) => {
       const profile = await fetchGoogleUserInfo(tokens.access_token, "google-connect");
       connectedEmail = profile.email?.trim().toLowerCase() || null;
     } catch (err) {
-      console.warn("[google-oauth] unable to read connected account email:", (err as Error).message);
+      console.warn("[google-oauth] unable to read connected account identity");
     }
 
     // Preserve the existing refresh_token on re-consent: Google sometimes

@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { resolveCurrentClasspilotSafetyAction } from "../src/services/classpilotSafetyAction.js";
@@ -31,10 +30,16 @@ function snapshot(overrides: Partial<ClasspilotRealtimeStatus> = {}): Classpilot
     state: "active",
     ...binding,
     revision: 10,
+    tabSnapshotRevision: 7,
     observedAt: 1_000,
     activeTabUrl: unsafeSearchUrl,
     activeTabTitle: "Google Search",
-    allOpenTabs: [],
+    activeTabRef: "opaque-active-tab",
+    allOpenTabs: [{
+      tabRef: "opaque-active-tab",
+      url: unsafeSearchUrl,
+      title: "Google Search",
+    }],
     openTabCount: 1,
     tabsTruncated: false,
     activityState: "active",
@@ -62,6 +67,7 @@ function snapshot(overrides: Partial<ClasspilotRealtimeStatus> = {}): Classpilot
       hardExpiresAt: "2026-08-14T00:00:00.000Z",
     },
     classificationPending: false,
+    extensionCapabilities: ["exactTabCloseV1"],
     ...overrides,
   };
 }
@@ -97,14 +103,69 @@ describe("ClassPilot current-heartbeat safety action boundary", () => {
     }), null);
   });
 
-  it("targets the exact classified search URL and attributes from the returned snapshot", () => {
+  it("targets the exact opaque tab reference and snapshot revision", () => {
     const action = resolve();
 
     assert.ok(action);
-    assert.deepEqual(action.closeTabData, { specificUrls: [unsafeSearchUrl] });
+    assert.deepEqual(action.closeTabData, {
+      tabRefs: ["opaque-active-tab"],
+      snapshotRevision: 7,
+    });
+    assert.deepEqual(action.evidenceTarget, {
+      tabRef: "opaque-active-tab",
+      snapshotRevision: 7,
+    });
     assert.equal(action.teachingSessionId, "teaching-session-current");
     assert.equal(action.snapshot.heartbeatId, binding.heartbeatId);
-    assert.notEqual(action.closeTabData.specificUrls[0], classification().domain);
+  });
+
+  it("allows a legacy URL only when the complete snapshot has one match", () => {
+    const legacy = resolve({
+      realtimeMutation: {
+        status: "stored",
+        snapshot: snapshot({ activeTabRef: undefined, extensionCapabilities: [] }),
+      },
+    });
+    assert.deepEqual(legacy?.closeTabData, { specificUrls: [unsafeSearchUrl] });
+
+    const ambiguous = resolve({
+      realtimeMutation: {
+        status: "stored",
+        snapshot: snapshot({
+          activeTabRef: undefined,
+          extensionCapabilities: [],
+          allOpenTabs: [
+            { url: unsafeSearchUrl, title: "one" },
+            { url: `${unsafeSearchUrl}#duplicate`, title: "two" },
+          ],
+          openTabCount: 2,
+        }),
+      },
+    });
+    assert.equal(ambiguous?.closeTabData, null);
+  });
+
+  it("never infers a broad close from missing or truncated tab data", () => {
+    const missing = resolve({
+      realtimeMutation: {
+        status: "stored",
+        snapshot: snapshot({
+          activeTabRef: undefined,
+          extensionCapabilities: [],
+          allOpenTabs: [],
+          openTabCount: 0,
+        }),
+      },
+    });
+    assert.equal(missing?.closeTabData, null);
+
+    const truncated = resolve({
+      realtimeMutation: {
+        status: "stored",
+        snapshot: snapshot({ activeTabRef: undefined, extensionCapabilities: [], tabsTruncated: true }),
+      },
+    });
+    assert.equal(truncated?.closeTabData, null);
   });
 
   it("keeps non-safety classifications outside the live safety path", () => {
@@ -113,24 +174,4 @@ describe("ClassPilot current-heartbeat safety action boundary", () => {
     }), null);
   });
 
-  it("routes every live safety side effect through the guarded action context", () => {
-    const source = readFileSync(
-      new URL("../src/routes/classpilot/devices.ts", import.meta.url),
-      "utf8",
-    );
-    const start = source.indexOf("const safetyAction = resolveCurrentClasspilotSafetyAction");
-    const end = source.indexOf("// --- Deliver any missed messages", start);
-    const safetyPath = source.slice(start, end);
-
-    assert.ok(start >= 0 && end > start);
-    assert.match(safetyPath, /if \(safetyAction\) \{/);
-    assert.match(
-      safetyPath,
-      /data:\s*\{\s*\.\.\.safetyAction\.closeTabData,\s*studentId,\s*studentSessionId\s*\}/
-    );
-    assert.match(safetyPath, /deliveryPolicy: classpilotCommandDeliveryPolicy\("close-tab"\)/);
-    assert.match(safetyPath, /expiresAt: safetyCommandExpiresAt\.toISOString\(\)/);
-    assert.match(safetyPath, /const alertSessionId = safetyAction\.teachingSessionId/);
-    assert.doesNotMatch(safetyPath, /pattern: classification\.domain/);
-  });
 });

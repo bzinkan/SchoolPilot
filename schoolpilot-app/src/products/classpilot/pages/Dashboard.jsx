@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, useDeferredValue } from "react";
 import { useQuery, useQueries, useMutation } from "@tanstack/react-query";
 import { useNavigate } from 'react-router-dom';
 import { Monitor, Users, Activity, Settings as SettingsIcon, LogOut, Calendar, Shield, AlertTriangle, UserCog, Plus, X, GraduationCap, WifiOff, Video, MonitorPlay, TabletSmartphone, Lock, Unlock, Layers, CheckSquare, XSquare, User, UserCheck, List, ShieldBan, Eye, EyeOff, Timer, Clock, BarChart3, Trash2, UsersRound, Filter, Hand, MessageSquareOff, MessageSquare, Send, ClipboardCheck, RefreshCw } from "lucide-react";
@@ -6,6 +6,7 @@ import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Badge } from '../../../components/ui/badge';
 import StudentTile from '../components/StudentTile';
+import VideoPortal from '../components/VideoPortal';
 import StudentDetailDrawer from '../components/StudentDetailDrawer';
 import RemoteControlToolbar from '../components/RemoteControlToolbar';
 import SessionMonitoringReportDialog from '../components/SessionMonitoringReportDialog';
@@ -37,10 +38,11 @@ import {
   TILE_BATCH_QUERY_ROOTS,
   buildTileStudentIds,
   createTileBatchRequests,
-  fetchTileBatchWithRollbackFallback,
+  fetchTileBatch,
   indexTileHistory,
   indexTileScreenshots,
 } from '../lib/tileBatchPolling';
+import { createSubgroupMembersQuery } from '../lib/subgroupMembersQuery';
 import {
   applyStudentRealtimeEvents,
   coalesceStudentRealtimeEvents,
@@ -52,7 +54,6 @@ import {
   findNextStudentFreshnessBoundary,
   formatAbsoluteObservedAt,
   lastObservedDomain,
-  removeStoppedLiveStream,
 } from '../lib/studentMonitoringDisplay';
 import {
   applyTransientCommandUpdate,
@@ -88,12 +89,21 @@ import {
   scheduleChangeKeys,
   unwrapToday,
 } from '../lib/scheduleChanges';
+import { useObservationLease } from '../hooks/useObservationLease';
+import { useTileViewport } from '../hooks/useTileViewport';
 
 const EMPTY_LIST = Object.freeze([]);
 const EMPTY_TILE_MAP = new Map();
 const EMPTY_PICKUP_DATA = Object.freeze({
   students: EMPTY_LIST,
   scheduledCoverageGroups: EMPTY_LIST,
+});
+const EMPTY_LIVE_VIEW = Object.freeze({
+  studentId: null,
+  studentName: '',
+  stream: null,
+  pending: false,
+  expanded: false,
 });
 
 function pendingTransientControls(entries) {
@@ -230,6 +240,7 @@ export default function Dashboard() {
   const [selectedStudentIds, setSelectedStudentIds] = useState(new Set());
   const [showAttendance, setShowAttendance] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const deferredSearchQuery = useDeferredValue(searchQuery);
   const [selectedGrade, setSelectedGrade] = useState(() => {
     try {
       const saved = localStorage.getItem('classpilot-selected-grade');
@@ -239,9 +250,7 @@ export default function Dashboard() {
     }
   });
   const [wsConnected, setWsConnected] = useState(false);
-  const [liveStreams, setLiveStreams] = useState(new Map());
-  const [liveViewPendingIds, setLiveViewPendingIds] = useState(new Set());
-  const [tileRevisions, setTileRevisions] = useState({});
+  const [liveViewState, setLiveViewState] = useState(EMPTY_LIVE_VIEW);
   const [teacherAllowedDomains, setTeacherAllowedDomains] = useState(new Set());
   const [showGradeDialog, setShowGradeDialog] = useState(false);
   const [newGrade, setNewGrade] = useState("");
@@ -288,7 +297,6 @@ export default function Dashboard() {
   const [selectedCoverageContextId, setSelectedCoverageContextId] = useState("");
   const [rerouteNote, setRerouteNote] = useState("");
   const [selectedSubgroupId, setSelectedSubgroupId] = useState("");
-  const [subgroupMembers, setSubgroupMembers] = useState(new Set());
   const [raisedHands, setRaisedHands] = useState(new Map());
   const [studentMessages, setStudentMessages] = useState([]);
   const [chatReplies, setChatReplies] = useState({});
@@ -308,14 +316,12 @@ export default function Dashboard() {
   const [tileCommandState, setTileCommandState] = useState({});
   const dismissedMessageIds = useRef(new Set());
   const dismissedMessagesInitialized = useRef(false);
-  // eslint-disable-next-line react-hooks/refs
   if (!dismissedMessagesInitialized.current) {
     dismissedMessagesInitialized.current = true;
     try {
       const saved = localStorage.getItem('classpilot-dismissed-messages');
       if (saved) {
         const ids = JSON.parse(saved);
-        // eslint-disable-next-line react-hooks/refs
         ids.forEach(id => dismissedMessageIds.current.add(id));
       }
     } catch {
@@ -341,6 +347,8 @@ export default function Dashboard() {
   const aggregatedStudentsQueryKeyRef = useRef(null);
   const activeSchoolIdRef = useRef(null);
   const authenticatedSchoolIdRef = useRef(null);
+  const studentViewRef = useRef(studentView);
+  studentViewRef.current = studentView;
   const maxReconnectDelay = 30000;
   const [wsAuthenticated, setWsAuthenticated] = useState(false);
   const [freshnessNowMs, setFreshnessNowMs] = useState(() => Date.now());
@@ -352,23 +360,20 @@ export default function Dashboard() {
   const effectiveSessionIdRef = useRef(null);
   const LIVE_VIEW_TIMEOUT_MS = 15 * 60 * 1000;
   const LIVE_VIEW_CONNECT_TIMEOUT_MS = 12000;
-  const liveViewTimers = useRef(new Map());
-  const liveViewConnectTimers = useRef(new Map());
+  const activeLiveViewStudentIdRef = useRef(null);
+  const liveViewGenerationRef = useRef(0);
+  const liveViewTimerRef = useRef(null);
+  const liveViewConnectTimerRef = useRef(null);
 
   const handleLiveStreamStopped = useCallback((studentId) => {
-    setLiveStreams((current) => removeStoppedLiveStream(current, studentId));
-    setLiveViewPendingIds((current) => {
-      if (!current.has(studentId)) return current;
-      const next = new Set(current);
-      next.delete(studentId);
-      return next;
-    });
-    const connectTimer = liveViewConnectTimers.current.get(studentId);
-    if (connectTimer) clearTimeout(connectTimer);
-    liveViewConnectTimers.current.delete(studentId);
-    const liveTimer = liveViewTimers.current.get(studentId);
-    if (liveTimer) clearTimeout(liveTimer);
-    liveViewTimers.current.delete(studentId);
+    if (activeLiveViewStudentIdRef.current !== studentId) return;
+    activeLiveViewStudentIdRef.current = null;
+    liveViewGenerationRef.current += 1;
+    if (liveViewConnectTimerRef.current) clearTimeout(liveViewConnectTimerRef.current);
+    liveViewConnectTimerRef.current = null;
+    if (liveViewTimerRef.current) clearTimeout(liveViewTimerRef.current);
+    liveViewTimerRef.current = null;
+    setLiveViewState(EMPTY_LIVE_VIEW);
   }, []);
 
   // WebRTC hook for live video streaming
@@ -397,7 +402,7 @@ export default function Dashboard() {
     queryKey: ['/api/sessions/active'],
     queryFn: () => apiRequest('GET', '/sessions/active'),
     select: (data) => data?.session !== undefined ? data.session : data ?? null,
-    refetchInterval: 10000,
+    refetchInterval: wsAuthenticated ? false : 10000,
   });
 
   const { data: groups = EMPTY_LIST } = useQuery({
@@ -438,22 +443,23 @@ export default function Dashboard() {
     queryFn: () => apiRequest('GET', '/sessions/all'),
     select: (data) => Array.isArray(data) ? data : data?.sessions ?? [],
     enabled: isAdmin,
-    refetchInterval: 10000,
+    refetchInterval: wsAuthenticated ? false : 10000,
   });
 
-  const { data: activeCoverageContexts = EMPTY_LIST } = useQuery({
-    queryKey: ['/api/coverage/contexts'],
-    queryFn: () => apiRequest('GET', '/coverage/contexts'),
-    select: (data) => (data?.contexts || []).filter((context) => context.status === 'active'),
-    enabled: isAdmin || isTeacher,
-    refetchInterval: 10000,
+  const staffCoverageEnabled = isAdmin || isTeacher;
+  const coverageFallbackInterval = wsAuthenticated ? false : 10000;
+  const { data: coverageSummary = {} } = useQuery({
+    queryKey: ['/api/coverage/summary'],
+    queryFn: () => apiRequest('GET', '/coverage/summary'),
+    enabled: staffCoverageEnabled,
+    refetchInterval: coverageFallbackInterval,
   });
-  const manageableCoverageCount = activeCoverageContexts.filter((context) => context.canManage).length;
+  const manageableCoverageCount = Number(coverageSummary.activeContextCount || 0);
 
   const { data: coverageCapabilities = {} } = useQuery({
     queryKey: ['/api/coverage/capabilities'],
     queryFn: () => apiRequest('GET', '/coverage/capabilities'),
-    enabled: isAdmin || isTeacher,
+    enabled: staffCoverageEnabled,
   });
   const canManageSupervisionSetup = isAdmin || !!coverageCapabilities.canManageSupervisionSetup;
 
@@ -464,8 +470,8 @@ export default function Dashboard() {
       students: data?.students || [],
       scheduledCoverageGroups: data?.scheduledCoverageGroups || [],
     }),
-    enabled: isAdmin || isTeacher,
-    refetchInterval: 10000,
+    enabled: staffCoverageEnabled && studentView === 'available',
+    refetchInterval: coverageFallbackInterval,
   });
   const availablePickupStudents = availablePickupData.students;
   const scheduledCoverageGroups = availablePickupData.scheduledCoverageGroups;
@@ -474,16 +480,16 @@ export default function Dashboard() {
     queryKey: ['/api/coverage/claimed-students'],
     queryFn: () => apiRequest('GET', '/coverage/claimed-students'),
     select: (data) => data?.students || [],
-    enabled: isAdmin || isTeacher,
-    refetchInterval: 10000,
+    enabled: staffCoverageEnabled && studentView === 'claimed',
+    refetchInterval: coverageFallbackInterval,
   });
 
   const { data: rerouteCoverageTargets = EMPTY_LIST } = useQuery({
     queryKey: ['/api/coverage/reroute-targets'],
     queryFn: () => apiRequest('GET', '/coverage/reroute-targets'),
     select: (data) => data?.targets || data?.contexts || [],
-    enabled: isAdmin || isTeacher,
-    refetchInterval: 10000,
+    enabled: staffCoverageEnabled && showRerouteDialog,
+    refetchInterval: false,
   });
 
   // Admin observe mode logic
@@ -562,7 +568,7 @@ export default function Dashboard() {
         : '/students-aggregated',
     ),
     select: (data) => Array.isArray(data) ? data : data?.students ?? [],
-    refetchInterval: 30000,
+    refetchInterval: wsAuthenticated ? false : 30000,
     staleTime: 10000,
     structuralSharing: mergeAggregatedStudents,
   });
@@ -597,7 +603,7 @@ export default function Dashboard() {
     queryFn: () => apiRequest('GET', `/commands/active-state?teachingSessionId=${encodeURIComponent(effectiveSession.id)}`),
     select: (data) => data?.states ?? [],
     enabled: !!effectiveSession?.id,
-    refetchInterval: 30000,
+    refetchInterval: wsAuthenticated ? false : 30000,
   });
 
   const { data: urlHistory = EMPTY_LIST } = useQuery({
@@ -622,6 +628,34 @@ export default function Dashboard() {
     enabled: !!effectiveSession?.groupId,
   });
 
+  useEffect(() => {
+    if (
+      selectedSubgroupId
+      && !subgroups.some((subgroup) => subgroup.id === selectedSubgroupId)
+    ) {
+      setSelectedSubgroupId("");
+      setSelectedStudentIds(new Set());
+    }
+  }, [selectedSubgroupId, subgroups]);
+
+  const {
+    data: subgroupMemberIds = EMPTY_LIST,
+    isFetching: subgroupMembersFetching,
+    isError: subgroupMembersError,
+    error: subgroupMembersLoadError,
+    refetch: refetchSubgroupMembers,
+  } = useQuery(createSubgroupMembersQuery({
+    groupId: effectiveSession?.groupId,
+    subgroupId: selectedSubgroupId,
+    requestApi: apiRequest,
+  }));
+  const subgroupMembers = useMemo(
+    () => new Set(subgroupMemberIds),
+    [subgroupMemberIds],
+  );
+  const subgroupSelectionReady = !selectedSubgroupId
+    || (!subgroupMembersFetching && !subgroupMembersError);
+
   const { data: sessionStudentIds = EMPTY_LIST } = useQuery({
     queryKey: ['/api/groups', effectiveSession?.groupId, 'students'],
     queryFn: () => apiRequest('GET', `/groups/${effectiveSession?.groupId}/students`),
@@ -636,7 +670,7 @@ export default function Dashboard() {
     queryKey: ['/api/teacher/raised-hands', effectiveSession?.id],
     queryFn: () => apiRequest('GET', `/teacher/raised-hands?sessionId=${encodeURIComponent(effectiveSession.id)}`),
     enabled: !!effectiveSession?.id,
-    refetchInterval: 30000,
+    refetchInterval: wsAuthenticated ? false : 30000,
   });
 
   const { data: initialChatMessages } = useQuery({
@@ -644,7 +678,7 @@ export default function Dashboard() {
     queryFn: () => apiRequest('GET', `/teacher/messages?sessionId=${encodeURIComponent(effectiveSession.id)}`),
     select: (data) => data?.messages ?? [],
     enabled: !!effectiveSession?.id,
-    refetchInterval: 30000,
+    refetchInterval: wsAuthenticated ? false : 30000,
   });
 
   // Sync initial raised hands to state
@@ -911,6 +945,7 @@ export default function Dashboard() {
               });
             }
             if (message.type === 'live-view-busy' || message.type === 'live-view-unavailable') {
+              if (activeLiveViewStudentIdRef.current !== message.studentId) return;
               webrtc.stopLiveView(message.studentId);
               toast({
                 title: message.type === 'live-view-busy' ? "Live View In Use" : "Live View Unavailable",
@@ -1048,10 +1083,20 @@ export default function Dashboard() {
               }
             }
             if (message.type === 'scheduled-class-conflict-updated') {
+              queryClient.invalidateQueries({ queryKey: ['/api/coverage/summary'], exact: true });
               queryClient.invalidateQueries({ queryKey: ['/api/coverage/available-students'] });
               queryClient.invalidateQueries({ queryKey: ['/api/coverage/claimed-students'] });
               queryClient.invalidateQueries({ queryKey: ['/api/sessions/active'], exact: false });
               queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
+            }
+            if (message.type === 'coverage-summary-updated') {
+              queryClient.invalidateQueries({ queryKey: ['/api/coverage/summary'], exact: true });
+              if (studentViewRef.current === 'available') {
+                queryClient.invalidateQueries({ queryKey: ['/api/coverage/available-students'], exact: true });
+              }
+              if (studentViewRef.current === 'claimed') {
+                queryClient.invalidateQueries({ queryKey: ['/api/coverage/claimed-students'], exact: true });
+              }
             }
             if (message.type === 'schedule-change-updated' || message.type === 'classpilot-schedule-change-updated') {
               void invalidateScheduleChanges(activeSchoolIdRef.current);
@@ -1119,9 +1164,6 @@ export default function Dashboard() {
       }
     };
 
-    const activeLiveViewTimers = liveViewTimers.current;
-    const activeLiveViewConnectTimers = liveViewConnectTimers.current;
-
     connectWebSocket();
 
     return () => {
@@ -1153,10 +1195,10 @@ export default function Dashboard() {
         socket.close();
         wsRef.current = null;
       }
-      activeLiveViewTimers.forEach((timer) => clearTimeout(timer));
-      activeLiveViewTimers.clear();
-      activeLiveViewConnectTimers.forEach((timer) => clearTimeout(timer));
-      activeLiveViewConnectTimers.clear();
+      if (liveViewTimerRef.current) clearTimeout(liveViewTimerRef.current);
+      liveViewTimerRef.current = null;
+      if (liveViewConnectTimerRef.current) clearTimeout(liveViewConnectTimerRef.current);
+      liveViewConnectTimerRef.current = null;
       webrtc.cleanup();
     };
   // Reconnect when an administrator switches schools. Other live values are carried through refs.
@@ -1327,75 +1369,93 @@ export default function Dashboard() {
     setSearchQuery("");
   };
 
-  // Live view handlers — auto-timeout after 15 minutes to protect student device CPU/battery
-  const markLiveViewPending = (studentId, pending) => {
-    setLiveViewPendingIds((prev) => {
-      const next = new Set(prev);
-      if (pending) next.add(studentId);
-      else next.delete(studentId);
-      return next;
+  // The dashboard owns one live-view negotiation and one enlarged portal.
+  // Switching students tears down the previous exact-bound connection first.
+  const handleStopLiveView = (studentId = activeLiveViewStudentIdRef.current) => {
+    if (!studentId) return;
+    webrtc.stopLiveView(studentId, wsRef.current);
+    queryClient.invalidateQueries({
+      queryKey: [TILE_BATCH_QUERY_ROOTS.screenshots],
+      refetchType: 'all',
     });
   };
 
-  const refreshTile = (studentId) => {
-    setTileRevisions((prev) => ({ ...prev, [studentId]: (prev[studentId] ?? 0) + 1 }));
-  };
-
-  const handleStartLiveView = async (studentId) => {
+  const handleStartLiveView = async (studentId, studentName) => {
     if (!wsAuthenticated) {
       toast({ title: "Not Ready", description: "Please wait for connection to be established", variant: "destructive" });
       return;
     }
-    markLiveViewPending(studentId, true);
+
+    const previousStudentId = activeLiveViewStudentIdRef.current;
+    if (previousStudentId === studentId) return;
+    if (previousStudentId) {
+      webrtc.stopLiveView(previousStudentId, wsRef.current);
+    }
+
+    const generation = liveViewGenerationRef.current + 1;
+    liveViewGenerationRef.current = generation;
+    activeLiveViewStudentIdRef.current = studentId;
+    setLiveViewState({
+      studentId,
+      studentName: studentName || 'Unknown student',
+      stream: null,
+      pending: true,
+      expanded: false,
+    });
     let streamReceived = false;
-    if (liveViewConnectTimers.current.has(studentId)) clearTimeout(liveViewConnectTimers.current.get(studentId));
+    if (liveViewConnectTimerRef.current) clearTimeout(liveViewConnectTimerRef.current);
+    liveViewConnectTimerRef.current = null;
 
     try {
       const connection = await webrtc.startLiveView(studentId, effectiveSession?.id, (stream) => {
-        streamReceived = true;
-        markLiveViewPending(studentId, false);
-        if (liveViewConnectTimers.current.has(studentId)) {
-          clearTimeout(liveViewConnectTimers.current.get(studentId));
-          liveViewConnectTimers.current.delete(studentId);
+        if (
+          liveViewGenerationRef.current !== generation
+          || activeLiveViewStudentIdRef.current !== studentId
+        ) {
+          stream.getTracks().forEach((track) => track.stop());
+          webrtc.stopLiveView(studentId, wsRef.current);
+          return;
         }
-        setLiveStreams((prev) => { const newMap = new Map(prev); newMap.set(studentId, stream); return newMap; });
+        streamReceived = true;
+        if (liveViewConnectTimerRef.current) clearTimeout(liveViewConnectTimerRef.current);
+        liveViewConnectTimerRef.current = null;
+        setLiveViewState((current) => current.studentId === studentId
+          ? { ...current, stream, pending: false, expanded: true }
+          : current);
       });
       if (!connection) {
-        markLiveViewPending(studentId, false);
+        handleLiveStreamStopped(studentId);
         toast({ title: "Live View Not Ready", description: "The teacher connection is not ready yet. Try again in a moment.", variant: "destructive" });
         return;
       }
-      liveViewConnectTimers.current.set(studentId, setTimeout(() => {
-        if (streamReceived) return;
-        markLiveViewPending(studentId, false);
+      liveViewConnectTimerRef.current = setTimeout(() => {
+        if (
+          streamReceived
+          || liveViewGenerationRef.current !== generation
+          || activeLiveViewStudentIdRef.current !== studentId
+        ) return;
         handleStopLiveView(studentId);
-        refreshTile(studentId);
         toast({
           title: "Live View Timed Out",
           description: "The request was sent, but no stream arrived. The managed session, extension policy, or network may be blocking live capture; showing the latest screenshot instead.",
           variant: "destructive",
         });
-      }, LIVE_VIEW_CONNECT_TIMEOUT_MS));
+      }, LIVE_VIEW_CONNECT_TIMEOUT_MS);
     } catch (error) {
-      markLiveViewPending(studentId, false);
+      webrtc.stopLiveView(studentId, wsRef.current);
       toast({ title: "Live View Failed", description: error?.message || "Could not start live view.", variant: "destructive" });
       return;
     }
-    // Clear any existing timer for this device and start a new one
-    if (liveViewTimers.current.has(studentId)) clearTimeout(liveViewTimers.current.get(studentId));
-    liveViewTimers.current.set(studentId, setTimeout(() => {
+
+    if (liveViewTimerRef.current) clearTimeout(liveViewTimerRef.current);
+    liveViewTimerRef.current = setTimeout(() => {
+      if (
+        liveViewGenerationRef.current !== generation
+        || activeLiveViewStudentIdRef.current !== studentId
+      ) return;
       handleStopLiveView(studentId);
       toast({ title: "Live View Ended", description: "Auto-stopped after 15 minutes to protect student device" });
-    }, LIVE_VIEW_TIMEOUT_MS));
-  };
-
-  const handleStopLiveView = (studentId) => {
-    webrtc.stopLiveView(studentId, wsRef.current);
-    refreshTile(studentId);
-    queryClient.invalidateQueries({
-      queryKey: [TILE_BATCH_QUERY_ROOTS.screenshots],
-      refetchType: 'all',
-    });
+    }, LIVE_VIEW_TIMEOUT_MS);
   };
 
   // Session-only filtered students (no search filter) - used for class commands
@@ -1410,8 +1470,9 @@ export default function Dashboard() {
     return true;
   });
 
+  const normalizedSearchQuery = deferredSearchQuery.trim().toLowerCase();
   const matchesStudentSearch = (student) => {
-    const query = searchQuery.toLowerCase();
+    const query = normalizedSearchQuery;
     return (
       (student.studentName || '').toLowerCase().includes(query) ||
       String(student.studentId || '').toLowerCase().includes(query) ||
@@ -1436,9 +1497,9 @@ export default function Dashboard() {
       students: (group.students || [])
         .filter((student) => (
           matchesStudentSearch(student) ||
-          (group.label || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-          (group.className || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-          (group.teacherName || '').toLowerCase().includes(searchQuery.toLowerCase())
+          (group.label || '').toLowerCase().includes(normalizedSearchQuery) ||
+          (group.className || '').toLowerCase().includes(normalizedSearchQuery) ||
+          (group.teacherName || '').toLowerCase().includes(normalizedSearchQuery)
         ))
         .sort((a, b) => getLastName(a.studentName).localeCompare(getLastName(b.studentName))),
     }))
@@ -1452,17 +1513,42 @@ export default function Dashboard() {
     : studentView === "claimed"
       ? filteredClaimedStudents
       : filteredClassStudents;
+  const observationStudentIdsKey = JSON.stringify([...new Set(
+    studentView === 'claimed'
+      ? claimedPickupStudents.map((student) => student.studentId)
+      : selectedSubgroupId
+        ? sessionFilteredStudents
+          .filter((student) => subgroupMembers.has(student.studentId))
+          .map((student) => student.studentId)
+        : EMPTY_LIST
+  )].sort());
+  const observationScope = useMemo(() => {
+    if (studentView === 'class' && !selectedSubgroupId) return { kind: 'class' };
+    const studentIds = JSON.parse(observationStudentIdsKey);
+    return studentIds.length > 0 ? { kind: 'students', studentIds } : null;
+  }, [observationStudentIdsKey, selectedSubgroupId, studentView]);
+  const observationLeaseStatus = useObservationLease({
+    enabled: studentView !== 'available' && Boolean(effectiveSession?.id),
+    teachingSessionId: effectiveSession?.id,
+    scope: observationScope,
+  });
+  const {
+    supported: viewportTrackingSupported,
+    nearViewportStudentIds,
+    getTileRef,
+  } = useTileViewport();
+  const tileStudents = viewportTrackingSupported
+    ? filteredStudents.filter((student) => (
+        nearViewportStudentIds.has(student.studentId)
+        || liveViewState.studentId === student.studentId
+      ))
+    : filteredStudents;
   const tileStudentIdsKey = JSON.stringify(buildTileStudentIds(
-    studentView === "available" ? EMPTY_LIST : filteredStudents
+    studentView === "available" ? EMPTY_LIST : tileStudents
   ));
   const tileBatchRequests = useMemo(
     () => createTileBatchRequests(JSON.parse(tileStudentIdsKey)),
     [tileStudentIdsKey]
-  );
-  const legacyTileDeviceByStudent = new Map(
-    (studentView === "available" ? EMPTY_LIST : filteredStudents)
-      .filter((student) => student?.studentId)
-      .map((student) => [student.studentId, student.studentId])
   );
   const [screenshotTileRequests, historyTileRequests] = useMemo(() => [
     tileBatchRequests.filter((request) => request.kind === 'screenshots'),
@@ -1471,11 +1557,7 @@ export default function Dashboard() {
   const screenshotTileQueries = useQueries({
     queries: screenshotTileRequests.map((request) => ({
       queryKey: request.queryKey,
-      queryFn: () => fetchTileBatchWithRollbackFallback(
-        request,
-        legacyTileDeviceByStudent,
-        apiRequest
-      ),
+      queryFn: ({ signal }) => fetchTileBatch(request, apiRequest, signal),
       select: indexTileScreenshots,
       refetchInterval: request.refetchInterval,
       refetchIntervalInBackground: false,
@@ -1487,11 +1569,7 @@ export default function Dashboard() {
   const historyTileQueries = useQueries({
     queries: historyTileRequests.map((request) => ({
       queryKey: request.queryKey,
-      queryFn: () => fetchTileBatchWithRollbackFallback(
-        request,
-        legacyTileDeviceByStudent,
-        apiRequest
-      ),
+      queryFn: ({ signal }) => fetchTileBatch(request, apiRequest, signal),
       select: indexTileHistory,
       refetchInterval: request.refetchInterval,
       refetchIntervalInBackground: false,
@@ -1508,16 +1586,12 @@ export default function Dashboard() {
     if (historyTileQueries.length === 0) return EMPTY_TILE_MAP;
     return new Map(historyTileQueries.flatMap((query) => [...(query.data || EMPTY_TILE_MAP)]));
   }, [historyTileQueries]);
-  const failedScreenshotStudentIds = useMemo(() => new Set(
-    screenshotTileQueries.flatMap((query, index) => query.isError
-      ? screenshotTileRequests[index]?.body.studentIds || EMPTY_LIST
-      : EMPTY_LIST)
-  ), [screenshotTileQueries, screenshotTileRequests]);
-  const failedHistoryStudentIds = useMemo(() => new Set(
-    historyTileQueries.flatMap((query, index) => query.isError
-      ? historyTileRequests[index]?.body.studentIds || EMPTY_LIST
-      : EMPTY_LIST)
-  ), [historyTileQueries, historyTileRequests]);
+  const failedScreenshotCohortCount = screenshotTileQueries.filter((query) => query.isError).length;
+  const failedHistoryCohortCount = historyTileQueries.filter((query) => query.isError).length;
+  const retryTileData = () => {
+    queryClient.invalidateQueries({ queryKey: [TILE_BATCH_QUERY_ROOTS.screenshots], refetchType: 'all' });
+    queryClient.invalidateQueries({ queryKey: [TILE_BATCH_QUERY_ROOTS.history], refetchType: 'all' });
+  };
 
   useEffect(() => {
     if (freshnessTimeoutRef.current) {
@@ -1554,7 +1628,10 @@ export default function Dashboard() {
   }, [availablePickupStudents, claimedPickupStudents, freshnessNowMs, scheduledCoverageGroups, screenshotsByStudent, studentView, students]);
 
   const controllableStudents = filteredStudents.filter(isStudentCommandable);
-  const selectableStudents = dashboardCapabilities.canSelectStudents
+  const subgroupCommandsDisabled = studentView === 'class'
+    && Boolean(selectedSubgroupId)
+    && !subgroupSelectionReady;
+  const selectableStudents = dashboardCapabilities.canSelectStudents && !subgroupCommandsDisabled
     ? (studentView === "class" ? controllableStudents : filteredStudents)
     : EMPTY_LIST;
 
@@ -1572,18 +1649,23 @@ export default function Dashboard() {
     return display.kind === 'online' || display.kind === 'idle';
   };
 
-  const resolveActiveCommandTarget = (overrideStudentIds = null) => resolveCommandTargets({
-    mode: dashboardCapabilities.mode,
-    sessionStudents: sessionFilteredStudents.map((student) => ({
-      ...student,
-      commandable: isStudentCommandable(student),
-    })),
-    claimedStudents: claimedPickupStudents,
-    selectedStudentIds: Array.from(selectedStudentIds),
-    selectedSubgroupId: selectedSubgroupId || null,
-    subgroupStudentIds: Array.from(subgroupMembers),
-    overrideStudentIds,
-  });
+  const resolveActiveCommandTarget = (overrideStudentIds = null) => {
+    if (subgroupCommandsDisabled) {
+      throw new Error('Wait for the selected subgroup roster to finish loading before sending commands.');
+    }
+    return resolveCommandTargets({
+      mode: dashboardCapabilities.mode,
+      sessionStudents: sessionFilteredStudents.map((student) => ({
+        ...student,
+        commandable: isStudentCommandable(student),
+      })),
+      claimedStudents: claimedPickupStudents,
+      selectedStudentIds: Array.from(selectedStudentIds),
+      selectedSubgroupId: selectedSubgroupId || null,
+      subgroupStudentIds: Array.from(subgroupMembers),
+      overrideStudentIds,
+    });
+  };
 
   const getActiveCommandStudents = (overrideStudentIds = null) => {
     try {
@@ -1611,7 +1693,9 @@ export default function Dashboard() {
   const claimedSearchDisclosure = studentView === 'claimed' && filteredClaimedStudents.length !== claimedPickupStudents.length
     ? ` · ${filteredClaimedStudents.length} currently shown by search`
     : '';
-  const targetBannerLabel = studentView === 'claimed' && selectedStudentIds.size === 0
+  const targetBannerLabel = subgroupCommandsDisabled
+    ? `${subgroupName || 'Subgroup'} roster unavailable`
+    : studentView === 'claimed' && selectedStudentIds.size === 0
     ? `${targetStudents.length} claimed student${targetStudents.length === 1 ? '' : 's'} in ${claimedTargetContextCount} supervision group${claimedTargetContextCount === 1 ? '' : 's'}${claimedSearchDisclosure}`
     : selectedStudentIds.size > 0
     ? `${targetStudents.length} selected ${studentView === "class" ? "controllable " : "claimed "}student${targetStudents.length === 1 ? "" : "s"}${studentView === 'claimed' ? ` in ${claimedTargetContextCount} supervision group${claimedTargetContextCount === 1 ? '' : 's'}` : ''}`
@@ -2643,15 +2727,6 @@ export default function Dashboard() {
     };
   }, [activePoll?.id]);
 
-  // Fetch subgroup members when subgroup is selected
-  useEffect(() => {
-    if (selectedSubgroupId) {
-      apiRequest('GET', `/subgroups/${selectedSubgroupId}/members`)
-        .then(data => { setSubgroupMembers(new Set((data.members || []).map(m => m.studentId || m))); })
-        .catch(err => { console.error('Error fetching subgroup members:', err); setSubgroupMembers(new Set()); });
-    } else { setSubgroupMembers(new Set()); }
-  }, [selectedSubgroupId]);
-
   const handleCreatePoll = () => {
     const validOptions = pollOptions.filter(opt => opt.trim() !== '');
     if (!pollQuestion.trim()) { toast({ variant: "destructive", title: "Invalid Poll", description: "Please enter a question" }); return; }
@@ -2956,13 +3031,13 @@ export default function Dashboard() {
             selectedGrade={selectedGrade}
             onGradeChange={setSelectedGrade}
             userRole={currentUser?.role}
-            coverageCount={claimedContextCount || manageableCoverageCount}
+            coverageCount={manageableCoverageCount || claimedContextCount}
             availableCount={availablePickupStudents.length + scheduledCoverageGroups.reduce((total, group) => total + (group.students?.length || group.claimableCount || 0), 0)}
             claimedCount={claimedPickupStudents.length}
             pickupView={studentView}
             onPickupViewChange={handleStudentViewChange}
             onOpenCoverage={canManageSupervisionSetup ? () => navigate("/classpilot/coverage") : undefined}
-            canReroute={dashboardCapabilities.ownedClassSession && rerouteCoverageTargets.length > 0}
+            canReroute={dashboardCapabilities.ownedClassSession}
             onReroute={dashboardCapabilities.ownedClassSession ? () => setShowRerouteDialog(true) : undefined}
             canViewHistoricalTelemetry={isAdmin}
           />
@@ -3032,23 +3107,23 @@ export default function Dashboard() {
         {/* Control Buttons */}
         {canUseRemoteControls && studentView !== "available" && (
           <div className="flex items-center gap-2 flex-wrap mb-4">
-            {dashboardCapabilities.allows('open-tab') && <Button size="sm" variant="outline" onClick={() => setShowOpenTabDialog(true)} data-testid="button-open-tab" className="text-blue-600 dark:text-blue-400"><MonitorPlay className="h-4 w-4 mr-2" />Open URL</Button>}
-            {dashboardCapabilities.allows('close-tabs') && <Button size="sm" variant="outline" onClick={() => openManageTabs(null)} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Tabs</Button>}
-            {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={lockScreenMutation.isPending} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Lock Current</Button>}
-            {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={() => setShowLockUrlDialog(true)} data-testid="button-lock-url" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Lock URL</Button>}
-            {dashboardCapabilities.allows('unlock-screen') && <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={unlockScreenMutation.isPending || !targetSupportsScreenOnlyUnlock} title={targetSupportsScreenOnlyUnlock ? 'Unlock only the screen lock; Flight Paths remain active' : 'ClassPilot extension 2.6.0 or newer is required on every target'} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />{bulkUnlockLabel}</Button>}
-            {dashboardCapabilities.allows('temp-unblock') && <Button size="sm" variant="outline" onClick={() => setShowTempUnblockDialog(true)} data-testid="button-temp-unblock" className="text-green-700 dark:text-green-400"><Shield className="h-4 w-4 mr-2" />Temporary Unblock</Button>}
-            {dashboardCapabilities.allows('limit-tabs') && <Button size="sm" variant="outline" onClick={() => setShowTabLimitDialog(true)} data-testid="button-tab-limit" className="text-blue-700 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Tab Limit</Button>}
-            {dashboardCapabilities.allows('apply-flight-path') && <Button size="sm" variant="outline" onClick={() => setShowApplyFlightPathDialog(true)} data-testid="button-apply-flight-path" className="text-purple-600 dark:text-purple-400"><Layers className="h-4 w-4 mr-2" />Apply Flight Path</Button>}
+            {dashboardCapabilities.allows('open-tab') && <Button size="sm" variant="outline" onClick={() => setShowOpenTabDialog(true)} disabled={subgroupCommandsDisabled} data-testid="button-open-tab" className="text-blue-600 dark:text-blue-400"><MonitorPlay className="h-4 w-4 mr-2" />Open URL</Button>}
+            {dashboardCapabilities.allows('close-tabs') && <Button size="sm" variant="outline" onClick={() => openManageTabs(null)} disabled={subgroupCommandsDisabled} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Tabs</Button>}
+            {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={subgroupCommandsDisabled || lockScreenMutation.isPending} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Lock Current</Button>}
+            {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={() => setShowLockUrlDialog(true)} disabled={subgroupCommandsDisabled} data-testid="button-lock-url" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Lock URL</Button>}
+            {dashboardCapabilities.allows('unlock-screen') && <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={subgroupCommandsDisabled || unlockScreenMutation.isPending || !targetSupportsScreenOnlyUnlock} title={targetSupportsScreenOnlyUnlock ? 'Unlock only the screen lock; Flight Paths remain active' : 'ClassPilot extension 2.6.0 or newer is required on every target'} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />{bulkUnlockLabel}</Button>}
+            {dashboardCapabilities.allows('temp-unblock') && <Button size="sm" variant="outline" onClick={() => setShowTempUnblockDialog(true)} disabled={subgroupCommandsDisabled} data-testid="button-temp-unblock" className="text-green-700 dark:text-green-400"><Shield className="h-4 w-4 mr-2" />Temporary Unblock</Button>}
+            {dashboardCapabilities.allows('limit-tabs') && <Button size="sm" variant="outline" onClick={() => setShowTabLimitDialog(true)} disabled={subgroupCommandsDisabled} data-testid="button-tab-limit" className="text-blue-700 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Tab Limit</Button>}
+            {dashboardCapabilities.allows('apply-flight-path') && <Button size="sm" variant="outline" onClick={() => setShowApplyFlightPathDialog(true)} disabled={subgroupCommandsDisabled} data-testid="button-apply-flight-path" className="text-purple-600 dark:text-purple-400"><Layers className="h-4 w-4 mr-2" />Apply Flight Path</Button>}
             {studentView === "class" && <Button size="sm" variant="outline" onClick={() => setShowFlightPathViewerDialog(true)} data-testid="button-flight-path-status" className="text-purple-600 dark:text-purple-400"><Eye className="h-4 w-4 mr-2" />Flight Path Status</Button>}
-            {dashboardCapabilities.allows('apply-block-list') && <Button size="sm" variant="outline" onClick={() => setShowApplyBlockListDialog(true)} data-testid="button-apply-block-list" className="text-red-600 dark:text-red-400"><ShieldBan className="h-4 w-4 mr-2" />Apply Block List</Button>}
+            {dashboardCapabilities.allows('apply-block-list') && <Button size="sm" variant="outline" onClick={() => setShowApplyBlockListDialog(true)} disabled={subgroupCommandsDisabled} data-testid="button-apply-block-list" className="text-red-600 dark:text-red-400"><ShieldBan className="h-4 w-4 mr-2" />Apply Block List</Button>}
             {studentView === "class" && <Button size="sm" variant="outline" onClick={() => setShowBlockListViewerDialog(true)} data-testid="button-block-list-status" className="text-red-600 dark:text-red-400"><Shield className="h-4 w-4 mr-2" />Block List Status</Button>}
             {studentView === "class" && (
               <Button
                 size="sm"
                 variant="outline"
                 onClick={() => { setSignOutTargetSnapshot(targetBannerLabel); setShowSignOutDialog(true); }}
-                disabled={!canSignOutSelectedStudents || signOutStudentsMutation.isPending}
+                disabled={subgroupCommandsDisabled || !canSignOutSelectedStudents || signOutStudentsMutation.isPending}
                 data-testid="button-sign-out-students"
                 className="border-gray-300 bg-gray-200 text-black hover:bg-gray-300 hover:text-black disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-200 disabled:text-black/60 disabled:opacity-40"
               >
@@ -3062,7 +3137,10 @@ export default function Dashboard() {
                 <span className="sr-only">Filter by subgroup</span>
                 <select
                   value={selectedSubgroupId}
-                  onChange={(event) => setSelectedSubgroupId(event.target.value)}
+                  onChange={(event) => {
+                    setSelectedSubgroupId(event.target.value);
+                    setSelectedStudentIds(new Set());
+                  }}
                   data-testid="select-subgroup-filter"
                   aria-label="Filter by subgroup"
                   className="max-w-[170px] bg-transparent outline-none"
@@ -3082,6 +3160,53 @@ export default function Dashboard() {
           <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100" role="status" data-testid="students-refresh-error">
             <span>Showing the last student data because the dashboard refresh failed.</span>
             <Button type="button" size="sm" variant="outline" onClick={() => refetchStudents()} disabled={studentsRefreshing}><RefreshCw className="mr-2 h-3.5 w-3.5" />Retry</Button>
+          </div>
+        ) : null}
+
+        {studentView === 'class' && selectedSubgroupId && !subgroupSelectionReady ? (
+          <div
+            className={`mb-4 flex items-center justify-between gap-3 rounded-lg border px-4 py-3 text-sm ${subgroupMembersError ? 'border-red-200 bg-red-50 text-red-950 dark:border-red-900 dark:bg-red-950/30 dark:text-red-100' : 'border-blue-200 bg-blue-50 text-blue-950 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-100'}`}
+            role={subgroupMembersError ? 'alert' : 'status'}
+            data-testid="subgroup-members-status"
+          >
+            <span>
+              {subgroupMembersError
+                ? subgroupMembersLoadError?.message || 'The selected subgroup roster could not be loaded. Commands remain disabled.'
+                : 'Loading the selected subgroup roster. Commands are disabled until it is ready.'}
+            </span>
+            {subgroupMembersError ? (
+              <Button type="button" size="sm" variant="outline" onClick={() => refetchSubgroupMembers()}>
+                <RefreshCw className="mr-2 h-3.5 w-3.5" />Retry
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+
+        {observationLeaseStatus === 'paused_unobserved' ? (
+          <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-200" role="status" data-testid="screenshot-observation-paused">
+            Screen previews are paused because this class view is not actively observed. Activity reporting continues from heartbeats.
+          </div>
+        ) : observationLeaseStatus === 'error' ? (
+          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100" role="status" data-testid="screenshot-observation-error">
+            Screen-preview observation could not be renewed. Activity reporting continues, but new ambient screenshots are paused.
+          </div>
+        ) : null}
+
+        {studentView !== 'available' && (failedScreenshotCohortCount > 0 || failedHistoryCohortCount > 0) ? (
+          <div
+            className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"
+            role="status"
+            data-testid="tile-cohort-refresh-error"
+          >
+            <span>
+              Some screen-preview or recent-activity groups could not be refreshed.
+              {(screenshotsByStudent.size > 0 || historyByStudent.size > 0)
+                ? ' Last-known data remains visible where available.'
+                : ' Preview data is temporarily unavailable.'}
+            </span>
+            <Button type="button" size="sm" variant="outline" onClick={retryTileData}>
+              <RefreshCw className="mr-2 h-3.5 w-3.5" />Retry
+            </Button>
           </div>
         ) : null}
 
@@ -3302,6 +3427,10 @@ export default function Dashboard() {
             <div className="h-10 w-10 mx-auto mb-4 animate-spin rounded-full border-4 border-muted border-t-primary" />
             <p className="text-sm text-muted-foreground">Loading students...</p>
           </div>
+        ) : subgroupCommandsDisabled ? (
+          <div className="py-12 text-center text-sm text-muted-foreground">
+            The student grid will appear after the selected subgroup roster is ready.
+          </div>
         ) : filteredStudents.length === 0 ? (
           <div className="py-20 text-center">
             <div className="h-20 w-20 mx-auto mb-6 rounded-2xl bg-muted/30 flex items-center justify-center"><Monitor className="h-10 w-10 text-muted-foreground/50" /></div>
@@ -3315,7 +3444,6 @@ export default function Dashboard() {
             {filteredStudents.map((student) => {
               const studentRealtimeKey = student.studentId;
               const monitoringDisplay = deriveStudentMonitoringDisplay(student, freshnessNowMs);
-              const tileRevision = tileRevisions[studentRealtimeKey] ?? 0;
               const supervisedElsewhere = studentView === "class" && isStudentInTemporarySupervision(student);
               const supervisionStaffName = student.supervisionContext?.assignedStaff?.displayName || "";
               const coverageLabel = student.supervisionState === "temporary_coverage"
@@ -3342,18 +3470,18 @@ export default function Dashboard() {
                 student,
                 'liveViewNegotiationV1',
               );
-              const retryTileData = () => {
-                queryClient.invalidateQueries({ queryKey: [TILE_BATCH_QUERY_ROOTS.screenshots], refetchType: 'all' });
-                queryClient.invalidateQueries({ queryKey: [TILE_BATCH_QUERY_ROOTS.history], refetchType: 'all' });
-              };
               return (
-                <div key={`${student.studentId}-${tileRevision}`} className={`relative ${supervisedElsewhere ? "rounded-lg ring-2 ring-slate-300/70 dark:ring-slate-700/70" : ""}`}>
+                <div
+                  key={student.studentId}
+                  ref={getTileRef(student.studentId)}
+                  className={`relative min-h-[420px] [content-visibility:auto] [contain-intrinsic-size:420px] ${supervisedElsewhere ? "rounded-lg ring-2 ring-slate-300/70 dark:ring-slate-700/70" : ""}`}
+                >
                   {coverageLabel && (
                     <div className={`absolute left-3 top-3 z-10 max-w-[calc(100%-1.5rem)] rounded-md px-2 py-1 text-[11px] font-semibold shadow-sm ${student.supervisionState === "temporary_coverage" || student.supervisionState === "claimed" ? "bg-slate-800 text-white" : "bg-amber-400 text-slate-900"}`}>
                       {coverageLabel}
                     </div>
                   )}
-                  <StudentTile
+                  {(!viewportTrackingSupported || nearViewportStudentIds.has(student.studentId)) ? <StudentTile
                     student={student}
                     onClick={() => setSelectedStudent(student)}
                     blockedDomains={settings?.blockedDomains || []}
@@ -3361,11 +3489,15 @@ export default function Dashboard() {
                     isAbsent={absentIds.has(student.studentId)}
                     isSelected={selectedStudentIds.has(student.studentId)}
                     onToggleSelect={!dashboardCapabilities.canSelectStudents || supervisedElsewhere ? undefined : () => toggleStudentSelection(student.studentId)}
-                    liveStream={liveStreams.get(studentRealtimeKey) || null}
-                    liveViewPending={liveViewPendingIds.has(studentRealtimeKey)}
-                    onStartLiveView={dashboardCapabilities.canUseLiveView && supportsNegotiatedLiveView && !supervisedElsewhere && student.isLoggedIn && effectiveSession?.id ? () => handleStartLiveView(studentRealtimeKey) : undefined}
+                    liveStream={liveViewState.studentId === studentRealtimeKey ? liveViewState.stream : null}
+                    liveViewPending={liveViewState.studentId === studentRealtimeKey && liveViewState.pending}
+                    onStartLiveView={dashboardCapabilities.canUseLiveView && supportsNegotiatedLiveView && !supervisedElsewhere && student.isLoggedIn && effectiveSession?.id ? () => handleStartLiveView(studentRealtimeKey, student.studentName) : undefined}
                     onStopLiveView={dashboardCapabilities.canUseLiveView && !supervisedElsewhere ? () => handleStopLiveView(studentRealtimeKey) : undefined}
-                    onEndLiveRefresh={() => refreshTile(studentRealtimeKey)}
+                    onExpandLiveView={() => setLiveViewState((current) => (
+                      current.studentId === studentRealtimeKey && current.stream
+                        ? { ...current, expanded: true }
+                        : current
+                    ))}
                     onAllowDomain={tileControlsDisabled ? undefined : handleAllowDomain}
                     onManageTabs={!tileControlsDisabled && dashboardCapabilities.allows('close-tabs') ? () => openManageTabs([student.studentId]) : undefined}
                     onCommand={tileControlsDisabled ? undefined : handleTileCommand}
@@ -3378,15 +3510,16 @@ export default function Dashboard() {
                     supervisionLabel={coverageLabel || "In supervision"}
                     onReturnToClass={supervisedElsewhere && dashboardCapabilities.ownedClassSession && activeSession ? () => handleReturnToClass(student) : undefined}
                     returnToClassPending={returnToClassPending}
-                    recentHeartbeats={supervisedElsewhere || failedHistoryStudentIds.has(student.studentId) ? EMPTY_LIST : historyByStudent.get(student.studentId) || EMPTY_LIST}
-                    screenshotData={supervisedElsewhere || failedScreenshotStudentIds.has(student.studentId) ? null : screenshotsByStudent.get(student.studentId) || null}
-                    screenshotError={!supervisedElsewhere && failedScreenshotStudentIds.has(student.studentId) ? 'The screenshot request failed.' : ''}
-                    historyError={!supervisedElsewhere && failedHistoryStudentIds.has(student.studentId) ? 'The recent-activity request failed.' : ''}
-                    onRetryTileData={retryTileData}
+                    recentHeartbeats={supervisedElsewhere ? EMPTY_LIST : historyByStudent.get(student.studentId) || EMPTY_LIST}
+                    screenshotData={supervisedElsewhere ? null : screenshotsByStudent.get(student.studentId) || null}
                     flightPaths={flightPaths}
                     monitoringDisplay={monitoringDisplay}
                     freshnessNowMs={freshnessNowMs}
-                  />
+                    screenshotObservationStatus={observationLeaseStatus}
+                    actionContextKey={`${activeSchoolId || ''}:${effectiveSession?.id || ''}:${studentView}:${selectedSubgroupId}:${dashboardCapabilities.canUseRemoteControls}:${dashboardCapabilities.canUseLiveView}`}
+                  /> : (
+                    <div className="h-[420px] rounded-lg border border-border/30 bg-muted/10" aria-hidden="true" />
+                  )}
                 </div>
               );
             })}
@@ -3394,6 +3527,15 @@ export default function Dashboard() {
         )}
         </div>
       </main>
+
+      {liveViewState.expanded && liveViewState.stream ? (
+        <VideoPortal
+          stream={liveViewState.stream}
+          studentName={liveViewState.studentName}
+          onClose={() => setLiveViewState((current) => ({ ...current, expanded: false }))}
+          onStopLiveView={() => handleStopLiveView(liveViewState.studentId)}
+        />
+      ) : null}
 
       {/* Student Detail Drawer */}
       {selectedStudent && (
@@ -4147,14 +4289,14 @@ export default function Dashboard() {
         <TeacherFab
           attentionActive={attentionActive}
           onAttentionClick={() => setShowAttentionDialog(true)}
-          attentionPending={attentionModeMutation.isPending}
+          attentionPending={subgroupCommandsDisabled || attentionModeMutation.isPending}
           timerActive={timerActive}
           onTimerClick={() => timerActive ? handleStopTimer() : setShowTimerDialog(true)}
-          timerPending={timerMutation.isPending || timerDeliveryPending}
+          timerPending={subgroupCommandsDisabled || timerMutation.isPending || timerDeliveryPending}
           activePoll={activePoll}
           pollTotalResponses={pollTotalResponses}
           onPollClick={() => activePoll ? setShowPollResultsDialog(true) : setShowPollDialog(true)}
-          pollPending={pollMutation.isPending || closePollMutation.isPending || pollDeliveryPending}
+          pollPending={subgroupCommandsDisabled || pollMutation.isPending || closePollMutation.isPending || pollDeliveryPending}
           raisedHands={raisedHands}
           onDismissHand={(studentId) => dismissHandMutation.mutate(studentId)}
           handRaisingEnabled={sessionFabState?.handRaisingEnabled !== false}
@@ -4171,7 +4313,7 @@ export default function Dashboard() {
           fabSettingsPending={!sessionFabState || toggleHandRaisingMutation.isPending || toggleStudentMessagingMutation.isPending}
           chatReplies={chatReplies}
           onCloseChat={closeChat}
-          onSendMessage={() => setShowSendMessageDialog(true)}
+          onSendMessage={subgroupCommandsDisabled ? undefined : () => setShowSendMessageDialog(true)}
         />
       )}
     </div>

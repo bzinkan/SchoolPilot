@@ -42,6 +42,7 @@ import {
   getStudentsForDevice,
   getActiveStudentForDevice,
   getActiveSessions,
+  getActiveSessionByDevice,
   setActiveStudentForDevice,
   getAdminEmailsBySchool,
   addCentralEmailRecipientForSchool,
@@ -60,6 +61,7 @@ import {
   type ClassPilotHistoryTileAccess,
   updateClasspilotCommandTargetAck,
   getProductLicenses,
+  isAuthorizedClasspilotSessionStaff,
 } from "../../services/storage.js";
 import { sendSafetyAlertEmail } from "../../services/email.js";
 import {
@@ -83,7 +85,9 @@ import {
   setFlightPathStatus,
   recordScreenshotUpload,
   getScreenshots,
-  decodeScreenshotData,
+  screenshotBindingVersion,
+  screenshotMatchesBinding,
+  type ScreenshotBinding,
   type ScreenshotData,
   type WsRedisTarget,
 } from "../../realtime/ws-redis.js";
@@ -113,6 +117,8 @@ import {
   extensionRuntimeTelemetrySchema,
   trackExtensionRuntimeTelemetry,
 } from "../../services/runtimeTelemetry.js";
+import { classpilotAckEnvelopeMatchesBinding } from "../../services/classpilotAckBinding.js";
+import { selectClasspilotSafetyEvidence } from "../../services/classpilotSafetyEvidence.js";
 import { redisCommand, redisStore } from "../../middleware/rateLimiter.js";
 import { getCoalescedTileAuthorization } from "../../services/classpilotTileAuthorization.js";
 import {
@@ -126,6 +132,7 @@ import {
   persistHeartbeatClassification,
   trackHeartbeatClassificationProducer,
 } from "../../services/heartbeatClassificationBatcher.js";
+import { selectRequestSchoolRole } from "../../services/schoolAuthorization.js";
 import {
   bindHeartbeatHotPathHistoryFallbackSqlIdentity,
   recordHeartbeatHotPathCounter,
@@ -135,9 +142,11 @@ import {
 import {
   CLASSPILOT_REALTIME_STALE_AFTER_MS,
   classpilotPublicRealtimeBinding,
+  classpilotRealtimeFresh,
   classpilotRealtimeOrderingKey,
   markClasspilotRealtimeSignedOut,
   patchClasspilotRealtimeClassification,
+  readClasspilotRealtimeStatusBatch,
   writeClasspilotRealtimeStatus,
   type ClasspilotRealtimeStatus,
 } from "../../services/classpilotRealtimeStatus.js";
@@ -150,6 +159,27 @@ import { resolveCurrentClasspilotSafetyAction } from "../../services/classpilotS
 import { resolveClasspilotEntitlement } from "../../services/classpilotEntitlement.js";
 import { scheduleClasspilotCommandUpdate } from "../../services/classpilotCommandUpdateScheduler.js";
 import { classpilotSchoolPolicyAuthorityEnvelope } from "../../services/classpilotCommandAuthority.js";
+import {
+  isClasspilotCapabilityActive,
+  negotiateClasspilotProtocol,
+  negotiateClasspilotSurfaceProtocol,
+} from "../../services/classpilotProtocol.js";
+import {
+  classpilotKioskLaunchTicketRequestSchema,
+  issueClasspilotKioskLaunchTicket,
+} from "../../services/classpilotKioskLaunchTicket.js";
+import { classpilotObservationStatus } from "../../services/classpilotObservationLease.js";
+import { classpilotScreenshotFallback } from "../../services/classpilotScreenshotFallback.js";
+import { claimClasspilotSafetyAlert } from "../../services/classpilotSafetyCooldown.js";
+import {
+  classpilotLiveViewNegotiationAuthority,
+  isClasspilotLiveViewNegotiationActive,
+} from "../../services/classpilotLiveViewNegotiation.js";
+import { createClasspilotIceConfiguration } from "../../services/classpilotIceServers.js";
+import {
+  completeClasspilotEvidenceCaptureRequest,
+  createClasspilotEvidenceCaptureRequest,
+} from "../../services/classpilotEvidenceCapture.js";
 
 bindHeartbeatHotPathHistoryFallbackSqlIdentity(
   getHeartbeatTileHistoryBatchSqlShapeIdentity()
@@ -169,8 +199,6 @@ function normalizeExtensionSignOutReason(value: unknown): string {
   return EXTENSION_SIGN_OUT_REASONS.has(normalized) ? normalized : "explicit_sign_out";
 }
 
-// Cooldown for safety alerts: deviceId:domain → timestamp. Prevents duplicate alerts/emails.
-const safetyAlertCooldown = new Map<string, number>();
 // The legacy pending-message table has no durable delivery marker. Keep a
 // bounded, identity-bound process cache so reconnect recovery can advance
 // through the inbox. The extension also receives stable ids and must retain
@@ -188,7 +216,6 @@ const PENDING_MESSAGE_RECONNECT_GAP_MS = 60_000;
 const PENDING_MESSAGE_PERIODIC_CHECK_MS = 5 * 60_000;
 const DELIVERED_MESSAGE_CACHE_TTL_MS = 24 * 60 * 60_000;
 const DELIVERED_MESSAGE_CACHE_MAX_IDS = 500;
-const SAFETY_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
 const PIN_LOGIN_MAX_FAILURES = 5;
 const PIN_LOGIN_LOCKOUT_MS = 10 * 60 * 1000;
 const PIN_LOGIN_LOCKOUT_SECONDS = PIN_LOGIN_LOCKOUT_MS / 1000;
@@ -196,19 +223,7 @@ const PIN_LOGIN_FAILURE_WINDOW_SECONDS = 10 * 60;
 const fallbackPinLoginFailures = new Map<string, { count: number; lockedUntil: number; windowStart: number }>();
 const REDIS_KEY_PREFIX = process.env.REDIS_PREFIX ?? "schoolpilot";
 
-// In-memory cache for school lookups (reduces DB queries on heartbeats)
-const schoolCache = new Map<string, { school: any; expires: number }>();
-const SCHOOL_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-
-async function getCachedSchool(schoolId: string) {
-  const cached = schoolCache.get(schoolId);
-  if (cached && cached.expires > Date.now()) return cached.school;
-  const school = await getSchoolById(schoolId);
-  if (school) schoolCache.set(schoolId, { school, expires: Date.now() + SCHOOL_CACHE_TTL });
-  return school;
-}
-
-async function hasCachedClassPilotLicense(schoolId: string): Promise<boolean> {
+async function hasCurrentClassPilotLicense(schoolId: string): Promise<boolean> {
   return (await resolveClasspilotEntitlement(schoolId)).entitled;
 }
 
@@ -256,6 +271,25 @@ const extensionConfigLimiter = rateLimit({
   legacyHeaders: false,
   keyGenerator: extensionIp,
   store: redisStore("rl:classpilot:extension:config:"),
+  passOnStoreError: true,
+});
+
+const classpilotKioskLaunchTicketLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  message: { error: "Too many kiosk launch requests, please wait" },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const schoolSelector = String(req.get("x-school-id") || "");
+    const selectorDigest = crypto
+      .createHash("sha256")
+      .update(schoolSelector)
+      .digest("hex")
+      .slice(0, 24);
+    return `${enrollmentKeyLimiterKey(req)}:${selectorDigest}`;
+  },
+  store: redisStore("rl:classpilot:kiosk-launch-ticket:"),
   passOnStoreError: true,
 });
 
@@ -406,12 +440,16 @@ async function withAuthorizedTileDevice<T>(
   if (!schoolId) {
     return { status: "not-found" };
   }
-  const role = res.locals.membershipRole as
+  const role = selectRequestSchoolRole(req, res, [
+    "admin",
+    "school_admin",
+    "teacher",
+    "office_staff",
+  ]) as
     | "admin"
     | "school_admin"
     | "teacher"
-    | "office_staff"
-    | "super_admin";
+    | "office_staff";
 
   const rawSessionScope =
     req.sessionID || req.get("authorization") || "no-session";
@@ -466,12 +504,16 @@ function tileStaffScope(req: Request, res: Response) {
   return {
     schoolId: res.locals.schoolId as string,
     staffId: req.authUser!.id,
-    role: res.locals.membershipRole as
+    role: selectRequestSchoolRole(req, res, [
+      "admin",
+      "school_admin",
+      "teacher",
+      "office_staff",
+    ]) as
       | "admin"
       | "school_admin"
       | "teacher"
-      | "office_staff"
-      | "super_admin",
+      | "office_staff",
     isSuperAdmin: req.authUser!.isSuperAdmin,
   };
 }
@@ -509,16 +551,21 @@ function publicScreenshotData(data: ScreenshotData) {
 
 function screenshotForAuthorizedStudent(
   data: ScreenshotData | null,
-  access: { studentId: string; studentSessionId: string | null }
-) {
-  if (
-    !data ||
-    !access.studentSessionId ||
-    data.studentId !== access.studentId ||
-    data.studentSessionId !== access.studentSessionId
-  ) {
-    return null;
+  access: {
+    schoolId: string;
+    deviceId: string;
+    studentId: string;
+    studentSessionId: string | null;
   }
+) {
+  if (!access.studentSessionId) return null;
+  const binding: ScreenshotBinding = {
+    schoolId: access.schoolId,
+    deviceId: access.deviceId,
+    studentId: access.studentId,
+    studentSessionId: access.studentSessionId,
+  };
+  if (!data || !screenshotMatchesBinding(data, binding, { allowLegacy: true })) return null;
   return publicScreenshotData(data);
 }
 
@@ -584,7 +631,7 @@ async function tryRedisNumber(args: string[], label: string): Promise<number | u
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : undefined;
   } catch (error) {
-    console.warn(`[ClassPilot] Redis ${label} failed; using local fallback.`, error);
+    console.warn(`[ClassPilot] Redis ${label} failed; using local fallback.`);
     return undefined;
   }
 }
@@ -594,7 +641,7 @@ async function tryRedisVoid(args: string[], label: string): Promise<boolean> {
     const value = await redisCommand(args);
     return value !== undefined;
   } catch (error) {
-    console.warn(`[ClassPilot] Redis ${label} failed; using local fallback.`, error);
+    console.warn(`[ClassPilot] Redis ${label} failed; using local fallback.`);
     return false;
   }
 }
@@ -986,7 +1033,13 @@ async function completeStudentDeviceLogin(options: {
     schoolId: options.schoolId,
     studentId: options.student.id,
     studentSessionId: session.id,
-    exactBinding: { studentId: options.student.id, studentSessionId: session.id },
+    exactBinding: {
+      schoolId: options.schoolId,
+      deviceId: options.deviceId,
+      studentId: options.student.id,
+      studentSessionId: session.id,
+      controlRevision: classroomState?.revision ?? 0,
+    },
     device,
     student: classPilotStudentDto(options.student),
     studentToken,
@@ -1030,6 +1083,21 @@ async function recordRemoteActionTimeline(options: {
 const deviceLastHeartbeat = new Map<string, number>();
 const HEARTBEAT_MIN_INTERVAL_MS = 5_000; // 5 seconds minimum between heartbeats
 const RATE_LIMIT_CLEANUP_INTERVAL_MS = 60_000; // clean stale entries every 60s
+const MAX_DEVICE_HEARTBEAT_ENTRIES = 20_000;
+const MAX_DELIVERED_MESSAGE_DEVICES = 20_000;
+const MAX_TEACHER_REPLY_CHECKS = 20_000;
+const MAX_FALLBACK_SCHOOLS = 4_096;
+const MAX_FALLBACK_ROSTER_KEYS = 20_000;
+
+function setBoundedMap<K, V>(map: Map<K, V>, key: K, value: V, maximum: number): void {
+  map.delete(key);
+  while (map.size >= maximum) {
+    const oldest = map.keys().next().value as K | undefined;
+    if (oldest === undefined) break;
+    map.delete(oldest);
+  }
+  map.set(key, value);
+}
 
 // Periodic cleanup of stale rate-limit entries. The API listener owns process
 // lifetime; this maintenance timer should not strand migration/test workers.
@@ -1041,6 +1109,15 @@ const heartbeatRateLimitCleanupTimer = setInterval(() => {
   const deliveredCutoff = Date.now() - DELIVERED_MESSAGE_CACHE_TTL_MS;
   for (const [key, state] of deliveredMessages) {
     if (state.lastHeartbeatAt < deliveredCutoff) deliveredMessages.delete(key);
+  }
+  for (const [key, ts] of teacherReplyLastCheck) {
+    if (ts < cutoff) teacherReplyLastCheck.delete(key);
+  }
+  for (const [key, entry] of fallbackSchoolAutoCreations) {
+    if (entry.windowStart < Date.now() - AUTO_CREATE_WINDOW_MS) fallbackSchoolAutoCreations.delete(key);
+  }
+  for (const [key, entry] of fallbackRosterFetches) {
+    if (entry.windowStart < Date.now() - ROSTER_FETCH_WINDOW_SECONDS * 1_000) fallbackRosterFetches.delete(key);
   }
 }, RATE_LIMIT_CLEANUP_INTERVAL_MS);
 heartbeatRateLimitCleanupTimer.unref?.();
@@ -1075,7 +1152,12 @@ async function recordAutoCreation(schoolId: string): Promise<boolean> {
   const now = Date.now();
   const entry = fallbackSchoolAutoCreations.get(schoolId);
   if (!entry || now - entry.windowStart > AUTO_CREATE_WINDOW_MS) {
-    fallbackSchoolAutoCreations.set(schoolId, { count: 1, windowStart: now });
+    setBoundedMap(
+      fallbackSchoolAutoCreations,
+      schoolId,
+      { count: 1, windowStart: now },
+      MAX_FALLBACK_SCHOOLS
+    );
     return true;
   }
   if (entry.count >= MAX_AUTO_CREATIONS) return false;
@@ -1103,7 +1185,12 @@ async function enforceSharedRosterFetchThrottle(
   const now = Date.now();
   const current = fallbackRosterFetches.get(key);
   if (!current || now - current.windowStart > ROSTER_FETCH_WINDOW_SECONDS * 1000) {
-    fallbackRosterFetches.set(key, { count: 1, windowStart: now });
+    setBoundedMap(
+      fallbackRosterFetches,
+      key,
+      { count: 1, windowStart: now },
+      MAX_FALLBACK_ROSTER_KEYS
+    );
     return { ok: true };
   }
   if (current.count >= MAX_ROSTER_FETCHES_PER_WINDOW) {
@@ -1217,6 +1304,100 @@ router.get("/school/status", async (_req, res) => {
   return res.json({ status: "ok", message: "Use POST with studentEmail" });
 });
 
+// POST /api/classpilot/kiosk/launch-ticket - Enrollment-key-authenticated,
+// one-use continuity handoff to PassPilot. The school is selected only by the
+// X-School-Id authentication envelope and verified against that exact school's
+// enrollment key; school identity is intentionally forbidden in the body.
+router.post(
+  "/kiosk/launch-ticket",
+  classpilotKioskLaunchTicketLimiter,
+  async (req, res, next) => {
+    try {
+      setClassPilotNoStore(res);
+      const parsed = classpilotKioskLaunchTicketRequestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          error: "Invalid kiosk launch ticket request",
+          code: "CLASSPILOT_KIOSK_LAUNCH_TICKET_INVALID_REQUEST",
+        });
+      }
+
+      const schoolId = String(req.get("x-school-id") || "").trim();
+      if (!schoolId || schoolId.length > 128) {
+        return res.status(400).json({
+          error: "School authentication is required",
+          code: "CLASSPILOT_KIOSK_LAUNCH_SCHOOL_REQUIRED",
+        });
+      }
+      const protocol = negotiateClasspilotProtocol({
+        clientProtocolVersion: parsed.data.clientProtocolVersion,
+        advertisedCapabilities: parsed.data.capabilities,
+        scope: {
+          serverOrigin: process.env.PUBLIC_BASE_URL,
+          schoolId,
+        },
+      });
+      if (!protocol.acceptedCapabilities.includes("kioskLaunchTicketV1")) {
+        return res.status(426).json({
+          error: "Kiosk launch tickets are not available for this client",
+          code: "CLASSPILOT_KIOSK_LAUNCH_TICKET_CAPABILITY_REQUIRED",
+          ...protocol,
+        });
+      }
+      const enrollmentKey = enrollmentKeyFromRequest(req);
+
+      return await runWithTenantContext({ schoolId }, async () => {
+        const school = await getSchoolById(schoolId);
+        const settings = school ? await getSettingsForSchool(schoolId) : undefined;
+        if (!school) {
+          return res.status(404).json({ error: "Kiosk launch is not configured" });
+        }
+        const keyCheck = validateEnrollmentKeyForSettings(settings, enrollmentKey, {
+          requireConfiguredKey: true,
+        });
+        if (!keyCheck.ok) {
+          return res.status(keyCheck.status).json({ error: keyCheck.error });
+        }
+        if (!(await requireUncachedClasspilotEntitlementForIssuance(res, schoolId))) {
+          return;
+        }
+
+        const now = new Date();
+        const licenses = await getProductLicenses(schoolId);
+        const passpilotActive = licenses.some(
+          (license) =>
+            license.product === "PASSPILOT" &&
+            license.status === "active" &&
+            (!license.expiresAt || license.expiresAt.getTime() > now.getTime())
+        );
+        if (
+          !passpilotActive ||
+          school.kioskEnabled === false ||
+          !school.kioskPinHash
+        ) {
+          return res.status(403).json({
+            error: "PassPilot kiosk is not available",
+            code: "PASSPILOT_KIOSK_UNAVAILABLE",
+          });
+        }
+
+        const issued = await issueClasspilotKioskLaunchTicket({
+          schoolId,
+          directoryDeviceId: parsed.data.directoryDeviceId,
+        });
+        return res.status(201).json({
+          ticket: issued.ticket,
+          expiresInSeconds: issued.expiresInSeconds,
+          expiresAt: issued.expiresAt.toISOString(),
+          ...protocol,
+        });
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 // GET /api/classpilot/extension/login-config - Shared Chromebook login capabilities
 router.get("/extension/login-config", extensionConfigLimiter, async (req, res, next) => {
   try {
@@ -1235,7 +1416,7 @@ router.get("/extension/login-config", extensionConfigLimiter, async (req, res, n
     }
 
     await runWithTenantContext({ schoolId: school.id }, async () => {
-      if (!(await hasCachedClassPilotLicense(school.id))) {
+      if (!(await hasCurrentClassPilotLicense(school.id))) {
         return res.status(403).json({ error: "ClassPilot license is not active" });
       }
 
@@ -1302,7 +1483,7 @@ router.get("/extension/login-roster", extensionRosterLimiter, async (req, res, n
     }
 
     await runWithTenantContext({ schoolId: school.id }, async () => {
-      if (!(await hasCachedClassPilotLicense(school.id))) {
+      if (!(await hasCurrentClassPilotLicense(school.id))) {
         return res.status(403).json({ error: "ClassPilot license is not active" });
       }
 
@@ -1376,22 +1557,28 @@ router.get("/extension/settings", requireDeviceAuth, requireClasspilotEntitlemen
   try {
     const schoolId = res.locals.schoolId as string;
     const studentId = res.locals.studentId as string;
+    const deviceId = res.locals.deviceId as string;
+    const studentSessionId = res.locals.studentSessionId as string;
     const schoolSettings = await getSettingsForSchool(schoolId);
     const school = await getSchoolById(schoolId);
     if (!school) {
       return res.status(404).json({ error: "School not found" });
     }
     const fab = await buildStudentFabState(schoolId, studentId, {
-      studentSessionId: res.locals.studentSessionId as string,
+      studentSessionId,
     });
+    const controlState = await getClasspilotStudentControlState(schoolId, studentId);
 
     return res.json({
       schoolId,
       studentId,
-      studentSessionId: res.locals.studentSessionId as string,
+      studentSessionId,
       exactBinding: {
+        schoolId,
+        deviceId,
         studentId,
-        studentSessionId: res.locals.studentSessionId as string,
+        studentSessionId,
+        controlRevision: controlState?.revision ?? 0,
       },
       enableTrackingHours: schoolSettings?.enableTrackingHours ?? false,
       trackingStartTime: schoolSettings?.trackingStartTime ?? null,
@@ -1645,7 +1832,17 @@ router.post("/register", extensionRegisterLimiter, async (req, res, next) => {
 router.post("/extension/register", extensionRegisterLimiter, async (req, res, next) => {
   try {
     setClassPilotNoStore(res);
-    const { deviceId, deviceName, studentEmail, studentName, schoolId: explicitSchoolId, classId } = req.body;
+    const {
+      deviceId,
+      deviceName,
+      studentEmail,
+      studentName,
+      schoolId: explicitSchoolId,
+      classId,
+      clientProtocolVersion,
+      capabilities,
+      extensionCapabilities,
+    } = req.body;
     const enrollmentKey = enrollmentKeyFromRequest(req, { allowBody: true });
     if (!deviceId) {
       return res.status(400).json({ error: "deviceId required" });
@@ -1738,7 +1935,7 @@ router.post("/extension/register", extensionRegisterLimiter, async (req, res, ne
         }
         // Auto-enroll path (opt-in): cap auto-creations per school per hour.
         if (!(await recordAutoCreation(resolvedSchoolId))) {
-          console.warn(`[Security] Auto-creation rate limit hit for school ${resolvedSchoolId}; rejecting ${studentEmail}`);
+          console.warn("[Security] Student auto-creation rate limit reached");
           return res.status(429).json({
             error: "Auto-enrollment rate limit reached — please ask your administrator to import students first.",
           });
@@ -1762,14 +1959,37 @@ router.post("/extension/register", extensionRegisterLimiter, async (req, res, ne
         classId,
         student,
       });
+      const protocol = negotiateClasspilotSurfaceProtocol({
+        surface: "registration",
+        payload: req.body,
+        scope: {
+          serverOrigin: process.env.PUBLIC_BASE_URL,
+          schoolId: resolvedSchoolId,
+          deviceId,
+          studentId: login.studentId,
+          studentSessionId: login.studentSessionId,
+        },
+      });
 
       return res.json({
         ...login,
+        ...protocol,
         studentName: studentName || `${student.firstName || ""} ${student.lastName || ""}`.trim() || student.email,
       });
     }
 
-    return res.json({ device });
+    return res.json({
+      device,
+      ...negotiateClasspilotSurfaceProtocol({
+        surface: "registration",
+        payload: req.body,
+        scope: {
+          serverOrigin: process.env.PUBLIC_BASE_URL,
+          schoolId: resolvedSchoolId,
+          deviceId,
+        },
+      }),
+    });
     });
   } catch (err) {
     next(err);
@@ -1830,7 +2050,7 @@ router.post("/register-student", extensionRegisterLimiter, async (req, res, next
         }
         // Anti-spam: cap auto-creations per school per hour
         if (!(await recordAutoCreation(resolvedSchoolId))) {
-          console.warn(`[Security] Auto-creation rate limit hit on /register-student for school ${resolvedSchoolId}`);
+        console.warn("[Security] Student registration auto-creation rate limit reached");
           return res.status(429).json({
             error: "Auto-enrollment temporarily disabled — please ask your administrator to import students first.",
           });
@@ -1879,7 +2099,7 @@ router.get("/device/:deviceId/students", requireDeviceAuth, requireClasspilotEnt
     if (deviceId !== res.locals.deviceId) {
       return res.status(403).json({ error: "Device token does not match requested device" });
     }
-    if (!(await hasCachedClassPilotLicense(res.locals.schoolId as string))) {
+    if (!(await hasCurrentClassPilotLicense(res.locals.schoolId as string))) {
       return res.status(402).json({ planStatus: "inactive" });
     }
 
@@ -1902,7 +2122,7 @@ router.post("/device/:deviceId/active-student", requireDeviceAuth, requireClassp
       return res.status(403).json({ error: "Device token does not match requested device" });
     }
     const schoolId = res.locals.schoolId as string;
-    if (!(await hasCachedClassPilotLicense(schoolId))) {
+    if (!(await hasCurrentClassPilotLicense(schoolId))) {
       return res.status(402).json({ planStatus: "inactive" });
     }
 
@@ -1970,6 +2190,20 @@ router.post("/device/command-acks", requireDeviceAuth, requireClasspilotEntitlem
     for (const raw of acks) {
       const ackId = typeof raw?.ackId === "string" ? raw.ackId.trim().slice(0, 128) : "";
       const commandId = typeof raw?.commandId === "string" ? raw.commandId.trim().slice(0, 128) : "";
+      if (!classpilotAckEnvelopeMatchesBinding(raw, {
+        schoolId,
+        studentId,
+        studentSessionId,
+        deviceId,
+      })) {
+        receipts.push({
+          ackId,
+          commandId,
+          accepted: false,
+          code: "COMMAND_ACK_BINDING_MISMATCH",
+        });
+        continue;
+      }
       const state = String(raw?.ackState || raw?.status || "").trim();
       const ackState = state === "received" || state === "completed" || state === "failed" || state === "expired"
         ? state
@@ -2001,6 +2235,110 @@ router.post("/device/command-acks", requireDeviceAuth, requireClasspilotEntitlem
   }
 });
 
+// POST /api/classpilot/device/live-view/ice-servers - exact-bound short-lived TURN credentials
+router.post(
+  "/device/live-view/ice-servers",
+  requireCryptographicDeviceAuth,
+  requireClasspilotEntitlement,
+  deviceActionLimiter,
+  async (req, res, next) => {
+    setClassPilotNoStore(res);
+    try {
+      const exactBinding = {
+        schoolId: res.locals.schoolId as string,
+        studentId: res.locals.studentId as string,
+        studentSessionId: res.locals.studentSessionId as string,
+        deviceId: res.locals.deviceId as string,
+      };
+      if (!isClasspilotCapabilityActive("liveViewIceServersV1", exactBinding)) {
+        return res.status(404).json({
+          error: "Live View ICE configuration is not enabled",
+          code: "LIVE_VIEW_ICE_SERVERS_DISABLED",
+        });
+      }
+      const negotiationId = typeof req.body?.negotiationId === "string"
+        ? req.body.negotiationId.trim()
+        : "";
+      if (!negotiationId || negotiationId.length > 2_048) {
+        return res.status(400).json({
+          error: "A valid negotiation is required",
+          code: "LIVE_VIEW_NEGOTIATION_INVALID",
+        });
+      }
+      const realtime = (await readClasspilotRealtimeStatusBatch(
+        exactBinding.schoolId,
+        [exactBinding]
+      )).get(exactBinding.studentId);
+      if (
+        realtime?.status !== "hit"
+        || !classpilotRealtimeFresh(realtime.snapshot)
+        || !new Set(realtime.snapshot.acceptedCapabilities || []).has("liveViewIceServersV1")
+      ) {
+        return res.status(409).json({
+          error: "A healthy capability-bound heartbeat is required",
+          code: "LIVE_VIEW_ICE_SERVERS_CAPABILITY_NOT_READY",
+        });
+      }
+      const authority = classpilotLiveViewNegotiationAuthority(
+        negotiationId,
+        exactBinding
+      );
+      if (!authority) {
+        return res.status(403).json({
+          error: "Live View negotiation is not valid for this session",
+          code: "LIVE_VIEW_NEGOTIATION_INVALID",
+        });
+      }
+      if (!await isClasspilotLiveViewNegotiationActive(exactBinding, negotiationId)) {
+        return res.status(409).json({
+          error: "Live View negotiation is no longer active",
+          code: "LIVE_VIEW_NEGOTIATION_SUPERSEDED",
+        });
+      }
+      const authorized = await runWithTenantContext(
+        { schoolId: exactBinding.schoolId },
+        async () => {
+          const [controlState, staffAuthorized] = await Promise.all([
+            getClasspilotStudentControlState(exactBinding.schoolId, exactBinding.studentId),
+            isAuthorizedClasspilotSessionStaff(
+              exactBinding.schoolId,
+              authority.teachingSessionId,
+              authority.requesterUserId
+            ),
+          ]);
+          return controlState?.teachingSessionId === authority.teachingSessionId
+            && staffAuthorized;
+        }
+      );
+      if (!authorized) {
+        return res.status(403).json({
+          error: "Live View authority is no longer active",
+          code: "LIVE_VIEW_AUTHORITY_REVOKED",
+        });
+      }
+      if (!await isClasspilotLiveViewNegotiationActive(exactBinding, negotiationId)) {
+        return res.status(409).json({
+          error: "Live View negotiation ended before credentials were issued",
+          code: "LIVE_VIEW_NEGOTIATION_SUPERSEDED",
+        });
+      }
+      const configuration = createClasspilotIceConfiguration({
+        negotiationId,
+        negotiationExpiresAt: authority.expiresAt,
+      });
+      if (!configuration) {
+        return res.status(503).json({
+          error: "Live View relay configuration is unavailable",
+          code: "LIVE_VIEW_ICE_SERVERS_UNAVAILABLE",
+        });
+      }
+      return res.json({ negotiationId, ...configuration });
+    } catch (error) {
+      return next(error);
+    }
+  }
+);
+
 // POST /api/classpilot/device/heartbeat - Device sends heartbeat (device JWT auth)
 router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspilotEntitlement, deviceHeartbeatLimiter, async (req, res, next) => {
   try {
@@ -2011,12 +2349,25 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       flightPathActive, activeFlightPathName, screenshotHealth,
       extensionVersion, chromeVersion, appliedClassroomStateRevision,
       capabilities, extensionCapabilities, tabSnapshotRevision,
+      activeTabRef,
       classroomStateOutcome,
+      clientProtocolVersion,
     } = req.body;
     const schoolId = res.locals.schoolId as string;
     const studentId = res.locals.studentId as string;
     const deviceId = res.locals.deviceId as string;
     const studentSessionId = res.locals.studentSessionId as string;
+    const protocol = negotiateClasspilotSurfaceProtocol({
+      surface: "heartbeat",
+      payload: req.body,
+      scope: {
+        serverOrigin: process.env.PUBLIC_BASE_URL,
+        schoolId,
+        deviceId,
+        studentId,
+        studentSessionId,
+      },
+    });
 
     // --- Per-device rate limiting (item #9) ---
     const lastHb = deviceLastHeartbeat.get(deviceId);
@@ -2026,18 +2377,13 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
     }
     const pendingMessageRecoveryHeartbeat = !lastHb
       || now - lastHb >= PENDING_MESSAGE_RECONNECT_GAP_MS;
-    deviceLastHeartbeat.set(deviceId, now);
+    setBoundedMap(deviceLastHeartbeat, deviceId, now, MAX_DEVICE_HEARTBEAT_ENTRIES);
 
     // Keep the RLS connection only around the short database section. Redis,
     // WebSocket fan-out, classification, and response serialization must not
     // occupy one of the task's 18 PostgreSQL pool slots.
     const heartbeatDatabaseStartedAt = Date.now();
     const heartbeatDbResult = await runWithTenantContext({ schoolId }, async () => {
-      // --- ClassPilot license check (cached — saves 1 DB query per heartbeat) ---
-      if (!(await hasCachedClassPilotLicense(schoolId))) {
-        return { outcome: "unlicensed" } as const;
-      }
-
       // Cache only the non-secret tracking projection. Enrollment and other
       // security settings are always read through the uncached full-row helper.
       const trackingSettings = await getHeartbeatTrackingSettingsForSchool(schoolId);
@@ -2049,8 +2395,11 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
         // "limited" or "full" mode: continue processing.
       }
 
-      // --- Get school for planStatus (item #3) — cached to reduce DB queries ---
-      const school = await getCachedSchool(schoolId);
+      // The route middleware already performed the canonical uncached
+      // lifecycle/license check. Load the school projection directly for the
+      // classification domain and response without using it as cached
+      // authorization state.
+      const school = await getSchoolById(schoolId);
       if (!school || school.status !== "active") {
         return { outcome: "inactive_school" } as const;
       }
@@ -2123,9 +2472,6 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       Date.now() - heartbeatDatabaseStartedAt
     );
 
-    if (heartbeatDbResult.outcome === "unlicensed") {
-      return res.status(403).json({ error: "school_not_entitled", planStatus: "inactive" });
-    }
     if (heartbeatDbResult.outcome === "outside_tracking_window") {
       return res.status(204).send();
     }
@@ -2159,6 +2505,24 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
     const enforcementHealth = controlState
       ? effectiveClasspilotControlEnforcementHealth(controlState, extensionVersion)
       : undefined;
+    const screenshotPolicyPromise = protocol.acceptedCapabilities.includes("screenshotObservationLeaseV1")
+      ? classpilotObservationStatus({
+          schoolId,
+          teachingSessionId: controlState?.teachingSessionId,
+          studentId,
+        }).then((status) => ({
+          mode: "lease" as const,
+          observed: status.status === "observed",
+          expiresInSeconds: status.expiresInSeconds,
+          serverTime: new Date().toISOString(),
+          ...(status.status === "unavailable" ? { diagnostic: "unavailable" as const } : {}),
+        }))
+      : Promise.resolve({
+          mode: "legacy" as const,
+          observed: true,
+          expiresInSeconds: 0,
+          serverTime: new Date().toISOString(),
+        });
     const studentEmail = heartbeat.studentEmail;
     recordHeartbeatHotPathCounter("heartbeatRecorded");
 
@@ -2200,6 +2564,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       observedAt: heartbeat.timestamp.getTime(),
       activeTabUrl,
       activeTabTitle,
+      activeTabRef,
       favicon,
       allOpenTabs,
       tabSnapshotRevision,
@@ -2212,6 +2577,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       screenshotHealth,
       classificationPending,
       extensionVersion,
+      acceptedCapabilities: protocol.acceptedCapabilities,
       extensionCapabilities: extensionCapabilities ?? capabilities,
       chromeVersion,
       classroomState: classroomState || undefined,
@@ -2221,9 +2587,10 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
     // this heartbeat could not be inserted into Redis. Finish the single Redis
     // round trip after releasing PostgreSQL, then fail closed by deleting (or
     // locally suppressing) the affected cache key before the HTTP response.
-    const [heartbeatTileCacheWritten, realtimeStatusMutation] = await Promise.all([
+    const [heartbeatTileCacheWritten, realtimeStatusMutation, screenshotPolicy] = await Promise.all([
       heartbeatTileCacheWrite,
       realtimeStatusWrite,
+      screenshotPolicyPromise,
     ]);
     if (!heartbeatTileCacheWritten) {
       // invalidate() marks this process fail-closed before its first await.
@@ -2244,6 +2611,8 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
           ok: true,
           planStatus: school.planStatus || "active",
           classroomState,
+          ...protocol,
+          screenshotPolicy,
         });
       }
       throw new Error("Realtime heartbeat snapshot was not created");
@@ -2382,91 +2751,158 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
         // stale result, but no live close, evidence, staff alert, or email may
         // escape unless this exact heartbeat still owns the active binding.
         if (safetyAction) {
-          // Always close the tab immediately regardless of cooldown
-          const safetyCommandIssuedAt = new Date();
-          const safetyCommandExpiresAt = classpilotCommandExpiresAt(
-            "close-tab",
-            safetyCommandIssuedAt
-          )!;
-          const closeCmd = {
-            type: "remote-control",
-            _msgId: crypto.randomUUID(),
-            studentId,
-            studentSessionId,
-            deliveryPolicy: classpilotCommandDeliveryPolicy("close-tab"),
-            expiresAt: safetyCommandExpiresAt.toISOString(),
-            command: {
-              type: "close-tab",
+          const sendSafetyClose = (safetyEvidenceRequest?: {
+            requestId: string;
+            tabRef: string;
+            snapshotRevision: number;
+            expiresAt: string;
+          }) => {
+            if (!safetyAction.closeTabData) return;
+            const safetyCommandIssuedAt = new Date();
+            const safetyCommandExpiresAt = classpilotCommandExpiresAt(
+              "close-tab",
+              safetyCommandIssuedAt
+            )!;
+            const closeCmd = {
+              type: "remote-control",
+              _msgId: crypto.randomUUID(),
               studentId,
               studentSessionId,
               deliveryPolicy: classpilotCommandDeliveryPolicy("close-tab"),
               expiresAt: safetyCommandExpiresAt.toISOString(),
-              ...classpilotSchoolPolicyAuthorityEnvelope(schoolId, "ai_safety"),
-              data: { ...safetyAction.closeTabData, studentId, studentSessionId },
-            },
-          };
-          sendToDeviceLocal(schoolId, deviceId, closeCmd);
-          void publishWS({ kind: "device", schoolId, deviceId }, closeCmd);
-
-          // Cooldown: only send alerts/emails once per device per domain per 10 min
-          const cooldownKey = `${deviceId}:${classification.domain}`;
-          const lastAlert = safetyAlertCooldown.get(cooldownKey) || 0;
-          if (Date.now() - lastAlert < SAFETY_COOLDOWN_MS) {
-            return; // Skip duplicate alert — tab close already sent above
-          }
-          safetyAlertCooldown.set(cooldownKey, Date.now());
-
-          // Detached callback: the request's tenant connection is already
-          // released, so re-establish this school's context for the safety-case
-          // / AI-decision / timeline / evidence writes (classpilot_ai_decisions,
-          // student_safety_cases, student_timeline_events, evidence_artifacts).
-          await runWithTenantContext({ schoolId }, async () => {
-          const timelineRecord = await recordBrowserSafetyTimeline({
-            schoolId,
-            studentId,
-            deviceId,
-            heartbeatId: heartbeat.id,
-            url: safetyAction.classifiedUrl,
-            title: safetyAction.classifiedTitle,
-            classification,
-          }).catch((err) => {
-            console.warn("[Safety] Failed to record AI decision timeline:", err);
-            return null;
-          });
-
-          if (timelineRecord?.caseId) {
-            try {
-              const screenshotData = await getScreenshot(deviceId);
-              await createEvidenceArtifact({
-                schoolId,
+              command: {
+                type: "close-tab",
                 studentId,
-                caseId: timelineRecord.caseId,
-                sourceType: "classpilot_screenshot",
-                sourceId: heartbeat.id,
-                artifactType: "screenshot",
-                status: screenshotData?.screenshot ? "available" : "unavailable",
-                label: screenshotData?.screenshot ? "Screenshot at safety alert" : "Screenshot unavailable at safety alert",
-                contentType: screenshotData?.screenshot ? "image/jpeg" : null,
-                content: screenshotData?.screenshot || null,
-                metadata: {
-                  deviceId,
-                  tabTitle: screenshotData?.tabTitle || safetyAction.classifiedTitle,
-                  tabUrl: screenshotData?.tabUrl || safetyAction.classifiedUrl,
-                  capturedFromRedis: !!screenshotData?.screenshot,
+                studentSessionId,
+                deliveryPolicy: classpilotCommandDeliveryPolicy("close-tab"),
+                expiresAt: safetyCommandExpiresAt.toISOString(),
+                ...classpilotSchoolPolicyAuthorityEnvelope(schoolId, "ai_safety"),
+                data: {
+                  ...safetyAction.closeTabData,
+                  studentId,
+                  studentSessionId,
+                  ...(safetyEvidenceRequest ? { safetyEvidenceRequest } : {}),
                 },
-              });
-            } catch (err) {
-              console.warn("[Safety] Failed to snapshot evidence artifact:", err);
-            }
+              },
+            };
+            sendToDeviceLocal(schoolId, deviceId, closeCmd);
+            void publishWS({ kind: "device", schoolId, deviceId }, closeCmd);
+          };
+
+          // One HMAC-keyed Redis SET NX EX elects the task that emits alerts.
+          // Exact-bound tab closure never depends on a successful alert claim.
+          if (!(await claimClasspilotSafetyAlert({
+            schoolId,
+            deviceId,
+            domain: classification.domain,
+          }))) {
+            sendSafetyClose();
+            return;
           }
+
+          // The request's original RLS checkout is already released. Rebind
+          // the exact school for the timeline and evidence-request transaction.
+          const safetyRecord = await runWithTenantContext({ schoolId }, async () => {
+            const timelineRecord = await recordBrowserSafetyTimeline({
+              schoolId,
+              studentId,
+              deviceId,
+              heartbeatId: heartbeat.id,
+              url: safetyAction.classifiedUrl,
+              title: safetyAction.classifiedTitle,
+              classification,
+            }).catch(() => null);
+            let captureRequest: {
+              requestId: string;
+              tabRef: string;
+              snapshotRevision: number;
+              expiresAt: string;
+            } | undefined;
+            if (
+              timelineRecord?.caseId
+              && safetyAction.evidenceTarget
+              && protocol.acceptedCapabilities.includes("safetyEvidenceCaptureV1")
+            ) {
+              try {
+                const created = await createClasspilotEvidenceCaptureRequest({
+                  schoolId,
+                  deviceId,
+                  studentId,
+                  studentSessionId,
+                  teachingSessionId: safetyAction.teachingSessionId,
+                  caseId: timelineRecord.caseId,
+                  heartbeatId: heartbeat.id,
+                  tabRef: safetyAction.evidenceTarget.tabRef,
+                  tabSnapshotRevision: safetyAction.evidenceTarget.snapshotRevision,
+                  expectedUrl: safetyAction.classifiedUrl,
+                });
+                captureRequest = {
+                  ...created,
+                  tabRef: safetyAction.evidenceTarget.tabRef,
+                  snapshotRevision: safetyAction.evidenceTarget.snapshotRevision,
+                };
+              } catch {
+                // Fall through to the exact-validated ambient evidence path.
+              }
+            }
+
+            // Legacy/capture-unavailable compatibility: attach an ambient
+            // image only after exact tuple, URL and freshness validation.
+            if (timelineRecord?.caseId && !captureRequest) {
+              try {
+                const evidenceBinding: ScreenshotBinding = {
+                  schoolId,
+                  deviceId,
+                  studentId,
+                  studentSessionId,
+                };
+                const screenshotData = await getScreenshot(evidenceBinding);
+                const evidenceSelection = selectClasspilotSafetyEvidence({
+                  screenshot: screenshotData,
+                  binding: evidenceBinding,
+                  classifiedUrl: safetyAction.classifiedUrl,
+                  observedAt: safetyAction.snapshot.observedAt,
+                });
+                const evidenceScreenshot = evidenceSelection.screenshot;
+                await createEvidenceArtifact({
+                  schoolId,
+                  deviceId,
+                  studentId,
+                  studentSessionId,
+                  bindingVersion: evidenceScreenshot?.bindingVersion
+                    ?? screenshotBindingVersion(evidenceBinding),
+                  caseId: timelineRecord.caseId,
+                  sourceType: "classpilot_screenshot",
+                  sourceId: heartbeat.id,
+                  artifactType: "screenshot",
+                  status: evidenceSelection.available ? "available" : "unavailable",
+                  label: evidenceSelection.available
+                    ? "Recent exact-tab screenshot near safety alert"
+                    : "Screenshot unavailable at safety alert",
+                  contentType: evidenceSelection.available ? "image/jpeg" : null,
+                  content: evidenceScreenshot?.screenshot ?? null,
+                  capturedAt: evidenceSelection.available
+                    ? new Date(evidenceScreenshot!.timestamp)
+                    : new Date(),
+                  metadata: {
+                    capturedFromExactBinding: evidenceSelection.available,
+                    unavailableReason: evidenceSelection.unavailableReason,
+                  },
+                });
+              } catch {
+                // The safety record remains valid with explicitly unavailable
+                // evidence; failures never substitute another student's image.
+              }
+            }
+            return { timelineRecord, captureRequest };
           });
+          sendSafetyClose(safetyRecord.captureRequest);
 
           const alert = {
             type: "safety-alert",
             studentId,
             studentEmail,
             alert: classification.safetyAlert,
-            url: safetyAction.classifiedUrl,
             title: safetyAction.classifiedTitle,
             domain: classification.domain,
             timestamp: new Date().toISOString(),
@@ -2497,7 +2933,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
                 });
               }
           }).catch((err) => {
-            console.error("[Safety] Failed to send alert emails:", err);
+            console.error("[Safety] Failed to send alert emails");
           });
 
           // AI handles unsafe content in real-time (tab close + safety alert above).
@@ -2558,7 +2994,12 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
         checkedState.hasUnacknowledgedCommandMessages = recent.some(
           (message) => !!message.commandId
         );
-        deliveredMessages.set(deviceId, checkedState);
+        setBoundedMap(
+          deliveredMessages,
+          deviceId,
+          checkedState,
+          MAX_DELIVERED_MESSAGE_DEVICES
+        );
         pendingMessages = recent.map((message) => ({
           id: message.id,
           message: message.message,
@@ -2611,7 +3052,12 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
     const shouldCheckTeacherReplies = pendingMessageRecoveryHeartbeat
       || now - (teacherReplyLastCheck.get(teacherReplyCheckKey) || 0) >= 30_000;
     if (shouldCheckTeacherReplies) {
-      teacherReplyLastCheck.set(teacherReplyCheckKey, now);
+      setBoundedMap(
+        teacherReplyLastCheck,
+        teacherReplyCheckKey,
+        now,
+        MAX_TEACHER_REPLY_CHECKS
+      );
       try {
         const teacherReplies = await runWithTenantContext(
           { schoolId },
@@ -2657,9 +3103,17 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       schoolId,
       studentId,
       studentSessionId,
-      exactBinding: { studentId, studentSessionId },
+      exactBinding: {
+        schoolId,
+        deviceId,
+        studentId,
+        studentSessionId,
+        controlRevision: classroomState?.revision ?? 0,
+      },
       planStatus: school.planStatus || "active",
       classroomState,
+      ...protocol,
+      screenshotPolicy,
       ...(fab ? { fab } : {}),
       ...(pendingMessages.length > 0 ? { pendingMessages } : {}),
     });
@@ -2674,32 +3128,155 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
 
 // POST /api/classpilot/device/screenshot - Upload screenshot
 router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspilotEntitlement, deviceScreenshotLimiter, async (req, res, next) => {
+  setClassPilotNoStore(res);
   try {
-    const { screenshot, tabTitle, tabUrl, tabFavicon } = req.body;
+    const {
+      screenshot,
+      tabTitle,
+      tabUrl,
+      tabFavicon,
+      captureKind,
+      evidenceRequestId,
+      tabRef,
+      tabSnapshotRevision,
+      capturedAt,
+    } = req.body;
     const deviceId = res.locals.deviceId as string;
     const schoolId = res.locals.schoolId as string;
     const studentId = res.locals.studentId as string;
     const studentSessionId = res.locals.studentSessionId as string;
-
-    if (!screenshot) {
-      return res.status(400).json({ error: "screenshot data required" });
-    }
-
-    const data = {
-      screenshot,
-      timestamp: Date.now(),
-      tabTitle,
-      tabUrl,
-      tabFavicon,
+    const binding: ScreenshotBinding = {
+      schoolId,
+      deviceId,
       studentId,
       studentSessionId,
     };
+    const leaseRolloutActive = isClasspilotCapabilityActive(
+      "screenshotObservationLeaseV1",
+      binding
+    );
+    const safetyCaptureRolloutActive = isClasspilotCapabilityActive(
+      "safetyEvidenceCaptureV1",
+      binding
+    );
+    let acceptedHeartbeatCapabilities = new Set<string>();
+    if (leaseRolloutActive || safetyCaptureRolloutActive) {
+      const realtime = (await readClasspilotRealtimeStatusBatch(schoolId, [binding]))
+        .get(studentId);
+      if (
+        realtime?.status !== "hit"
+        || !classpilotRealtimeFresh(realtime.snapshot)
+      ) {
+        return res.status(409).json({
+          ok: false,
+          code: "SCREENSHOT_CAPABILITY_HEARTBEAT_REQUIRED",
+        });
+      }
+      acceptedHeartbeatCapabilities = new Set(
+        realtime.snapshot.acceptedCapabilities || []
+      );
+    }
+    const leaseNegotiated = leaseRolloutActive
+      && acceptedHeartbeatCapabilities.has("screenshotObservationLeaseV1");
+    const safetyCaptureNegotiated = safetyCaptureRolloutActive
+      && acceptedHeartbeatCapabilities.has("safetyEvidenceCaptureV1");
 
-    // Try Redis first, fall back to in-memory
-    const stored = await setScreenshot(deviceId, data);
+    if (typeof screenshot !== "string" || screenshot.length === 0) {
+      return res.status(400).json({ error: "screenshot data required" });
+    }
+
+    if (captureKind === "safety_evidence") {
+      const capturedAtDate = typeof capturedAt === "string" ? new Date(capturedAt) : null;
+      if (
+        !safetyCaptureNegotiated
+        || typeof evidenceRequestId !== "string"
+        || evidenceRequestId.length < 1
+        || evidenceRequestId.length > 128
+        || typeof tabRef !== "string"
+        || tabRef.length < 1
+        || tabRef.length > 128
+        || !Number.isSafeInteger(Number(tabSnapshotRevision))
+        || Number(tabSnapshotRevision) < 1
+        || typeof tabUrl !== "string"
+        || tabUrl.length < 1
+        || tabUrl.length > 4_096
+        || !capturedAtDate
+        || !Number.isFinite(capturedAtDate.getTime())
+      ) {
+        return res.status(400).json({
+          error: "Invalid safety evidence capture",
+          code: "SAFETY_EVIDENCE_CAPTURE_INVALID",
+        });
+      }
+      const completion = await runWithTenantContext(
+        { schoolId },
+        () => completeClasspilotEvidenceCaptureRequest({
+          schoolId,
+          deviceId,
+          studentId,
+          studentSessionId,
+          requestId: evidenceRequestId,
+          tabRef,
+          tabSnapshotRevision: Number(tabSnapshotRevision),
+          tabUrl,
+          tabTitle,
+          screenshot,
+          capturedAt: capturedAtDate,
+        })
+      );
+      if (completion.status === "unavailable") {
+        return res.status(completion.reason === "not_found" ? 404 : 409).json({
+          ok: false,
+          evidenceAvailable: false,
+          code: `SAFETY_EVIDENCE_${completion.reason.toUpperCase()}`,
+        });
+      }
+      return res.json({
+        ok: true,
+        evidenceAvailable: true,
+        evidenceRequestId,
+        duplicate: completion.duplicate,
+      });
+    }
+
+    if (leaseNegotiated) {
+      const observation = await runWithTenantContext(
+        { schoolId },
+        async () => {
+          const controlState = await getClasspilotStudentControlState(schoolId, studentId);
+          return classpilotObservationStatus({
+            schoolId,
+            teachingSessionId: controlState?.teachingSessionId,
+            studentId,
+          });
+        }
+      );
+      if (observation.status !== "observed") {
+        return res.status(409).json({
+          ok: false,
+          code: "SCREENSHOT_PAUSED_UNOBSERVED",
+          screenshotPolicy: { mode: "lease", observed: false },
+        });
+      }
+    }
+
+    const timestamp = Date.now();
+    const data = {
+      screenshot,
+      timestamp,
+      capturedAt: new Date(timestamp).toISOString(),
+      tabTitle,
+      tabUrl,
+      tabFavicon,
+      ...binding,
+      bindingVersion: screenshotBindingVersion(binding),
+    };
+
+    // The primary cache key contains the complete authority binding. Redis
+    // also receives a one-TTL legacy device key for mixed API deployments.
+    const stored = await setScreenshot(binding, data);
     if (!stored) {
-      (globalThis as any).__screenshots = (globalThis as any).__screenshots || new Map();
-      (globalThis as any).__screenshots.set(deviceId, data);
+      classpilotScreenshotFallback.set(binding, data);
     }
     recordScreenshotUpload(
       typeof screenshot === "string" ? Buffer.byteLength(screenshot, "utf8") : 0,
@@ -2747,8 +3324,19 @@ router.post("/tiles/screenshots", ...tileReadAuth, async (req, res, next) => {
     recordHeartbeatHotPathCounter("tileBatchAuthorizedItems", accesses.length);
 
     const redisStartedAt = Date.now();
-    const screenshots = await getScreenshots(
-      accesses.map((access) => access.deviceId)
+    const screenshotBindings = accesses.flatMap((access) =>
+      access.studentSessionId
+        ? [{
+            schoolId: access.schoolId,
+            deviceId: access.deviceId,
+            studentId: access.studentId,
+            studentSessionId: access.studentSessionId,
+          }]
+        : []
+    );
+    const screenshots = await getScreenshots(screenshotBindings);
+    const screenshotByStudent = new Map(
+      screenshotBindings.map((binding, index) => [binding.studentId, screenshots[index] ?? null])
     );
     recordHeartbeatHotPathTiming(
       "tileBatchScreenshotRedisMs",
@@ -2763,16 +3351,19 @@ router.post("/tiles/screenshots", ...tileReadAuth, async (req, res, next) => {
         screenshotFallbackItems
       );
     }
-    const memoryScreenshots = (globalThis as any).__screenshots as
-      | Map<string, unknown>
-      | undefined;
-
     return res.json({
-      tiles: accesses.map((access, index) => ({
+      tiles: accesses.map((access) => ({
         studentId: access.studentId,
         screenshot: screenshotForAuthorizedStudent(
-          screenshots[index] ??
-            decodeScreenshotData(memoryScreenshots?.get(access.deviceId)),
+          screenshotByStudent.get(access.studentId) ??
+            (access.studentSessionId
+              ? classpilotScreenshotFallback.get({
+                  schoolId: access.schoolId,
+                  deviceId: access.deviceId,
+                  studentId: access.studentId,
+                  studentSessionId: access.studentSessionId,
+                })
+              : null),
           access
         ),
       })),
@@ -2885,11 +3476,22 @@ router.get("/device/screenshot/:deviceId", ...deviceAdminAuth, async (req, res, 
       res,
       deviceId,
       "live",
-      (_device, _authorizedStudentIds, access) => ({
-        schoolWide: access.schoolWide === true,
-        studentId: access.liveStudentId,
-        studentSessionId: access.liveStudentSessionId ?? null,
-      })
+      async (device, _authorizedStudentIds, access) => {
+        const activeSession = access.liveStudentId && access.liveStudentSessionId
+          ? {
+              studentId: access.liveStudentId,
+              id: access.liveStudentSessionId,
+            }
+          : access.schoolWide
+            ? await getActiveSessionByDevice(deviceId)
+            : undefined;
+        return {
+          schoolId: device.schoolId,
+          deviceId,
+          studentId: activeSession?.studentId ?? null,
+          studentSessionId: activeSession?.id ?? null,
+        };
+      }
     );
     // The admission permit protects authentication and the bounded database
     // scope only; Redis retrieval and JSON serialization do not consume it.
@@ -2898,19 +3500,22 @@ router.get("/device/screenshot/:deviceId", ...deviceAdminAuth, async (req, res, 
       return res.status(404).json({ error: "Device not found" });
     }
 
-    let data = await getScreenshot(deviceId);
-    if (!data) {
-      data = decodeScreenshotData(
-        (globalThis as any).__screenshots?.get(deviceId)
-      );
+    const binding = authorization.value.studentId && authorization.value.studentSessionId
+      ? {
+          schoolId: authorization.value.schoolId,
+          deviceId: authorization.value.deviceId,
+          studentId: authorization.value.studentId,
+          studentSessionId: authorization.value.studentSessionId,
+        }
+      : null;
+    let data = binding ? await getScreenshot(binding) : null;
+    if (!data && binding) {
+      data = classpilotScreenshotFallback.get(binding);
     }
 
-    const authorizedScreenshot = authorization.value.schoolWide
-      ? (data ? publicScreenshotData(data) : null)
-      : screenshotForAuthorizedStudent(data, {
-          studentId: authorization.value.studentId ?? "",
-          studentSessionId: authorization.value.studentSessionId,
-        });
+    const authorizedScreenshot = binding
+      ? screenshotForAuthorizedStudent(data, binding)
+      : null;
     if (!authorizedScreenshot) {
       return res.status(404).json({ error: "No screenshot available" });
     }

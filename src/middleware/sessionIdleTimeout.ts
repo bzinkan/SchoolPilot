@@ -1,5 +1,6 @@
 import type { RequestHandler } from "express";
 import { clearSessionCookie } from "../config/sessionCookie.js";
+import { safeErrorMetadata } from "../util/safeLogging.js";
 
 /**
  * Enforce a tighter idle timeout for privileged roles.
@@ -63,7 +64,7 @@ export const sessionIdleTimeout: RequestHandler = (req, res, next) => {
     // Session idle too long — destroy and force re-auth
     return req.session.destroy((err) => {
       if (err) {
-        console.warn("[SessionIdle] destroy failed:", err);
+        console.warn("[SessionIdle] destroy failed:", safeErrorMetadata(err));
       }
       clearSessionCookie(res);
       return res.status(401).json({ error: "Session expired due to inactivity. Please log in again." });

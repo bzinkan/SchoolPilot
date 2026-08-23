@@ -10,6 +10,7 @@ import { requireDeviceAuth } from "../../middleware/requireDeviceAuth.js";
 import { logAudit } from "../../services/audit.js";
 import {
   getTeachingSessionByIdAndSchool,
+  getClasspilotSessionStudentRoster,
   getSupervisionContextByIdAndSchool,
   insertClasspilotMonitoringEventForResolvedScope,
   isAuthorizedClasspilotSessionStaff,
@@ -26,6 +27,16 @@ import {
   encodeClasspilotEventCursor,
   formulaSafeCsvCell,
 } from "../../util/classpilotEventCursor.js";
+import {
+  CLASSPILOT_OBSERVATION_RENEW_SECONDS,
+  releaseClasspilotObservationLease,
+  renewClasspilotObservationLease,
+} from "../../services/classpilotObservationLease.js";
+import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
+import {
+  classpilotSessionReportCsv,
+  classpilotSessionReportDto,
+} from "../../services/classpilotSessionReportPresentation.js";
 
 const router = Router();
 
@@ -57,8 +68,7 @@ const EVENT_TYPES = new Set([
 ]);
 
 function isAdmin(req: any, res: any): boolean {
-  const role = res.locals.membershipRole as string | undefined;
-  return !!req.authUser?.isSuperAdmin || role === "admin" || role === "school_admin";
+  return requestHasAnySchoolRole(req, res, ["admin", "school_admin"]);
 }
 
 async function authorizeSession(req: any, res: any, teachingSessionId: string): Promise<boolean> {
@@ -227,6 +237,101 @@ router.get("/supervision-contexts/:id/events", ...staffAuth, (req, res, next) =>
   eventList(req, res, next, { kind: "supervision_context", id: String(req.params.id || "") })
 );
 
+router.put("/teaching-sessions/:id/observation-lease", ...staffAuth, async (req, res, next) => {
+  try {
+    res.set("Cache-Control", "no-store, private");
+    const teachingSessionId = String(req.params.id || "");
+    const schoolId = res.locals.schoolId as string;
+    if (!(await authorizeSession(req, res, teachingSessionId))) {
+      return res.status(404).json({ error: "Not found" });
+    }
+    const viewerInstanceId = typeof req.body?.viewerInstanceId === "string"
+      ? req.body.viewerInstanceId.trim()
+      : "";
+    if (!/^[a-zA-Z0-9_-]{8,128}$/.test(viewerInstanceId)) {
+      return res.status(400).json({
+        error: "viewerInstanceId must be an opaque 8 through 128 character value",
+        code: "OBSERVATION_SCOPE_INVALID",
+      });
+    }
+    const rawScope = req.body?.scope;
+    let scope: { kind: "class" } | { kind: "students"; studentIds: string[] };
+    if (rawScope?.kind === "class") {
+      scope = { kind: "class" };
+    } else if (rawScope?.kind === "students" && Array.isArray(rawScope.studentIds)) {
+      const studentIds: string[] = [...new Set<string>((rawScope.studentIds as unknown[])
+        .filter((value: unknown): value is string => typeof value === "string")
+        .map((value: string) => value.trim())
+        .filter(Boolean))];
+      if (studentIds.length < 1 || studentIds.length > 500) {
+        return res.status(400).json({ error: "Explicit student scope is required", code: "OBSERVATION_SCOPE_INVALID" });
+      }
+      const roster = await getClasspilotSessionStudentRoster(
+        schoolId,
+        teachingSessionId
+      );
+      const authorizedStudents = new Set(roster.map((student) => student.studentId));
+      if (studentIds.some((studentId) => !authorizedStudents.has(studentId))) {
+        return res.status(404).json({ error: "Not found" });
+      }
+      scope = { kind: "students", studentIds };
+    } else {
+      return res.status(400).json({
+        error: "An explicit class or student observation scope is required",
+        code: "OBSERVATION_SCOPE_INVALID",
+      });
+    }
+    const lease = await renewClasspilotObservationLease({
+      schoolId,
+      teachingSessionId,
+      viewerUserId: req.authUser!.id,
+      viewerInstanceId,
+      scope,
+    });
+    return res.json({
+      state: "active",
+      renewAfterSeconds: CLASSPILOT_OBSERVATION_RENEW_SECONDS,
+      expiresAt: new Date(lease.expiresAt).toISOString(),
+      serverTime: new Date().toISOString(),
+      scope: lease.scope,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === "Observation lease storage unavailable") {
+      return res.status(503).json({
+        error: "Observation lease storage is unavailable",
+        code: "OBSERVATION_LEASE_UNAVAILABLE",
+      });
+    }
+    next(error);
+  }
+});
+
+router.delete("/teaching-sessions/:id/observation-lease", ...staffAuth, async (req, res, next) => {
+  try {
+    res.set("Cache-Control", "no-store, private");
+    const teachingSessionId = String(req.params.id || "");
+    const schoolId = res.locals.schoolId as string;
+    if (!(await authorizeSession(req, res, teachingSessionId))) {
+      return res.status(404).json({ error: "Not found" });
+    }
+    const viewerInstanceId = typeof req.body?.viewerInstanceId === "string"
+      ? req.body.viewerInstanceId.trim()
+      : "";
+    if (!/^[a-zA-Z0-9_-]{8,128}$/.test(viewerInstanceId)) {
+      return res.status(400).json({ error: "Invalid viewerInstanceId", code: "OBSERVATION_SCOPE_INVALID" });
+    }
+    await releaseClasspilotObservationLease({
+      schoolId,
+      teachingSessionId,
+      viewerUserId: req.authUser!.id,
+      viewerInstanceId,
+    });
+    return res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get("/teaching-sessions/:id/report", ...staffAuth, async (req, res, next) => {
   try {
     res.set("Cache-Control", "no-store, private");
@@ -254,51 +359,76 @@ router.get("/teaching-sessions/:id/report", ...staffAuth, async (req, res, next)
     }
     return res.json({
       state: "ready",
-      report: {
-        teachingSessionId: report.teachingSessionId,
-        windowStart: report.windowStart,
-        windowEnd: report.windowEnd,
-        timezone: report.timezone,
-        coverageAlgorithmVersion: report.coverageAlgorithmVersion,
-        totals: {
-          roster: report.rosterCount,
-          eligible: report.eligibleStudentCount,
-          complete: report.completeCount,
-          partial: report.partialCount,
-          none: report.noneCount,
-          notExpected: report.notExpectedCount,
-          unavailable: report.unavailableCount,
-          eligibleSeconds: report.totalEligibleSeconds,
-          observedSeconds: report.totalObservedSeconds,
-          gapSeconds: report.totalGapSeconds,
-        },
-        students: studentReports.map((student) => ({
-          studentId: student.studentId,
-          studentName: student.studentNameSnapshot,
-          status: student.status,
-          eligibleSeconds: student.eligibleSeconds,
-          observedSeconds: student.observedSeconds,
-          gapSeconds: student.gapSeconds,
-          coveragePercent: student.coveragePercent,
-          heartbeatCount: student.heartbeatCount,
-          firstObservedAt: student.firstObservedAt,
-          lastObservedAt: student.lastObservedAt,
-          gapIntervals: Array.isArray(student.gapIntervals)
-            ? student.gapIntervals.map((value) => {
-                const gap = value && typeof value === "object" ? value as Record<string, unknown> : {};
-                return {
-                  start: gap.start,
-                  end: gap.end,
-                  durationSeconds: gap.durationSeconds,
-                  cause: "unknown",
-                };
-              })
-            : [],
-          eventCounts: student.eventCounts,
-          topDomains: student.topDomains,
-        })),
+      report: classpilotSessionReportDto(report, studentReports),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Additive immutable report export. The legacy /events/export.csv endpoint
+// remains available for raw monitoring-event compatibility, while all report
+// UI/export adoption can use this route and the exact frozen v1/v2 report row.
+router.get("/teaching-sessions/:id/report/export.csv", ...staffAuth, async (req, res, next) => {
+  try {
+    const teachingSessionId = String(req.params.id || "");
+    const schoolId = res.locals.schoolId as string;
+    const reportRead = await readAuthorizedClasspilotSessionReport({
+      schoolId,
+      teachingSessionId,
+      staffId: req.authUser!.id,
+      isAdmin: isAdmin(req, res),
+      now: new Date(),
+    });
+    if (reportRead.status !== "available") {
+      if (reportRead.status === "expired") {
+        return res.status(410).json({ error: "Session summary expired", code: "SUMMARY_EXPIRED" });
+      }
+      return res.status(404).json({ error: "Not found" });
+    }
+    const { report } = reportRead;
+    if (report.state === "pending" || report.state === "materializing") {
+      return res.status(202).json({ state: "pending", retryAfterSeconds: 5 });
+    }
+    if (report.state === "failed") {
+      return res.status(409).json({
+        state: "failed",
+        error: "Session summary could not be generated",
+        code: "SESSION_REPORT_FAILED",
+      });
+    }
+    const requestedStudentId = typeof req.query.studentId === "string"
+      ? req.query.studentId.trim()
+      : "";
+    const studentReports = requestedStudentId
+      ? reportRead.studentReports.filter((student) => student.studentId === requestedStudentId)
+      : reportRead.studentReports;
+    if (requestedStudentId && studentReports.length === 0) {
+      return res.status(404).json({ error: "Not found" });
+    }
+    const reportDto = classpilotSessionReportDto(report, studentReports);
+    await logAudit({
+      schoolId,
+      userId: req.authUser!.id,
+      userEmail: req.authUser!.email,
+      userRole: res.locals.membershipRole,
+      action: "classpilot.session_report.export",
+      entityType: "teaching_session",
+      entityId: teachingSessionId,
+      metadata: {
+        reportVersion: report.reportVersion,
+        studentCount: studentReports.length,
+        filtered: Boolean(requestedStudentId),
       },
     });
+    res.set({
+      "Cache-Control": "no-store, private",
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="classpilot-report-v${report.reportVersion}-${teachingSessionId}.csv"`,
+      "X-ClassPilot-Report-Version": String(report.reportVersion),
+      "X-Content-Type-Options": "nosniff",
+    });
+    return res.send(classpilotSessionReportCsv(reportDto));
   } catch (error) {
     next(error);
   }

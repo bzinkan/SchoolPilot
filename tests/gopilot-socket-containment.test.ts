@@ -145,7 +145,10 @@ describe("GoPilot socket containment", { concurrency: false }, () => {
       await nextEvent(socket, "connect");
       const denied = nextEvent<any>(socket, "join:error");
       socket.emit("join:school", { schoolId: school.id, homeroomId: `${TAG}_missing` });
-      assert.deepEqual(await denied, { error: "Product license required" });
+      assert.deepEqual(await denied, {
+        error: "School is not entitled to GoPilot",
+        code: "GOPILOT_NOT_ENTITLED",
+      });
     } finally {
       socket.close();
     }

@@ -807,9 +807,9 @@ function Read-Configuration {
         }
         $engineeringScalingRestoration = [pscustomobject]@{
             ApiDesiredCount = Get-RequiredInteger $engineeringScalingRestoration `
-                "apiDesiredCount" 1 8
+                "apiDesiredCount" 1 6
             MinCapacity = Get-RequiredInteger $engineeringScalingRestoration "minCapacity" 1 6
-            MaxCapacity = Get-RequiredInteger $engineeringScalingRestoration "maxCapacity" 8 8
+            MaxCapacity = Get-RequiredInteger $engineeringScalingRestoration "maxCapacity" 6 6
             RollbackApiTaskDefinitionArn = Get-RequiredString $engineeringScalingRestoration `
                 "rollbackApiTaskDefinitionArn"
             RollbackWorkerTaskDefinitionArn = Get-RequiredString $engineeringScalingRestoration `
@@ -3578,7 +3578,7 @@ function Test-EngineeringHeldScalingPosture {
     param($Snapshot)
     return (
         [int]$Snapshot.minCapacity -eq 6 -and
-        [int]$Snapshot.maxCapacity -eq 8 -and
+        [int]$Snapshot.maxCapacity -eq 6 -and
         $Snapshot.suspendedState.DynamicScalingInSuspended -eq $false -and
         $Snapshot.suspendedState.DynamicScalingOutSuspended -eq $true -and
         $Snapshot.suspendedState.ScheduledScalingSuspended -eq $false -and
