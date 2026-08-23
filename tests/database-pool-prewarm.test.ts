@@ -8,12 +8,30 @@ import {
   maximumLaunchDatabaseConnections,
   maximumRollingDeploymentDatabaseConnections,
   prewarmDatabasePool,
+  schedulerDatabaseAllowed,
   type PrewarmPool,
 } from "../src/config/databasePools.js";
 
 const root = resolve(import.meta.dirname, "..");
 
 describe("API main database-pool prewarm", () => {
+  it("allows scheduler pools only for workers and explicit migration modes", () => {
+    assert.equal(schedulerDatabaseAllowed({ SCHEDULER_ENABLED: "false" }), false);
+    assert.equal(schedulerDatabaseAllowed({ SCHEDULER_ENABLED: "true" }), true);
+    assert.equal(schedulerDatabaseAllowed({
+      SCHEDULER_ENABLED: "false",
+      RUN_MIGRATIONS_ONLY: "true",
+    }), true);
+    assert.equal(schedulerDatabaseAllowed({
+      SCHEDULER_ENABLED: "false",
+      RUN_MIGRATIONS_ON_STARTUP: "true",
+    }), true);
+    assert.equal(schedulerDatabaseAllowed({
+      SCHEDULER_ENABLED: "false",
+      RUN_LEGACY_MIGRATIONS_ONLY: "true",
+    }), true);
+  });
+
   it("opens and verifies all 16 API main clients concurrently", async () => {
     const expectedConnections = databasePoolMinimums({
       SCHEDULER_ENABLED: "false",

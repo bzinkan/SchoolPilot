@@ -1,4 +1,10 @@
-import { intEnv, schedulerEnabled } from "./runtime.js";
+import {
+  intEnv,
+  legacyMigrationsOnly,
+  migrationsOnStartup,
+  migrationsOnly,
+  schedulerEnabled,
+} from "./runtime.js";
 import capacityProfile from "./databaseCapacity.json" with { type: "json" };
 
 export type DatabaseProcessRole = "api" | "worker";
@@ -20,6 +26,15 @@ export function databaseProcessRole(
   env: NodeJS.ProcessEnv = process.env
 ): DatabaseProcessRole {
   return schedulerEnabled(env) ? "worker" : "api";
+}
+
+export function schedulerDatabaseAllowed(
+  env: NodeJS.ProcessEnv = process.env
+): boolean {
+  return databaseProcessRole(env) === "worker" ||
+    migrationsOnly(env) ||
+    migrationsOnStartup(env) ||
+    legacyMigrationsOnly(env);
 }
 
 export function databasePoolLimits(env: NodeJS.ProcessEnv = process.env) {

@@ -5,12 +5,8 @@ import { buildPgSslConfig } from "../db/ssl.js";
 import errorMonitor from "./errorMonitor.js";
 import {
   databasePoolLimits,
-  databaseProcessRole,
+  schedulerDatabaseAllowed,
 } from "../config/databasePools.js";
-import {
-  migrationsOnStartup,
-  migrationsOnly,
-} from "../config/runtime.js";
 import { safeErrorMetadata } from "../util/safeLogging.js";
 
 const schedulerConnectionString =
@@ -20,14 +16,6 @@ type SchedulerPoolKind = "query" | "lock";
 
 let schedulerPoolInstance: pg.Pool | null = null;
 let schedulerLockPoolInstance: pg.Pool | null = null;
-
-function schedulerDatabaseAllowed(): boolean {
-  return (
-    databaseProcessRole() === "worker" ||
-    migrationsOnly() ||
-    migrationsOnStartup()
-  );
-}
 
 function trackPoolError(kind: SchedulerPoolKind, err: Error): void {
   const label = kind === "query" ? "scheduler_pool" : "scheduler_lock_pool";
