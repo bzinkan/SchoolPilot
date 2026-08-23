@@ -1551,7 +1551,7 @@ async function purgeExpiredEvidenceArtifactContent() {
   }
 }
 
-async function expireClasspilotEvidenceCaptureRequests() {
+export async function expireClasspilotEvidenceCaptureRequests() {
   try {
     const result = await schedulerPool.query(`
       WITH due AS (
@@ -1574,10 +1574,11 @@ async function expireClasspilotEvidenceCaptureRequests() {
           due.device_id,
           due.student_id,
           due.student_session_id,
-          'v1:' || encode(digest(
-            due.school_id || chr(0) || due.device_id || chr(0)
-              || due.student_id || chr(0) || due.student_session_id,
-            'sha256'
+          'v1:' || encode(sha256(
+            convert_to(due.school_id, 'UTF8') || decode('00', 'hex')
+              || convert_to(due.device_id, 'UTF8') || decode('00', 'hex')
+              || convert_to(due.student_id, 'UTF8') || decode('00', 'hex')
+              || convert_to(due.student_session_id, 'UTF8')
           ), 'hex'),
           due.case_id,
           'classpilot_safety_capture',
