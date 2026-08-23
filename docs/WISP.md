@@ -55,6 +55,7 @@ All third-party service providers handling PII are reviewed annually and must si
 | **Stripe** | Payment processing | School billing info (PCI-DSS Level 1) |
 | **Anthropic Claude** | AI-assisted classification | ClassPilot URL strings and page titles, which can themselves contain identifying or user-entered values; enabled MailPilot content and authorized staff-assistant inputs are described in the public subprocessor notice |
 | **Google OAuth / Workspace API** | Authentication, roster sync | Email, name, classroom rosters (verified for restricted scopes) |
+| **Sentry** | Application error monitoring when enabled | Allowlisted diagnostics with user, arbitrary context, tags/extras, tokens, names, emails, and full sensitive URLs removed before transmission |
 
 ## 5. Technical Safeguards
 
