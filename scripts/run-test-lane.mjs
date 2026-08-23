@@ -23,6 +23,7 @@ const RLS_SERIAL = new Set([
 const DB_SERIAL = new Set([
   "authenticate-operational-failure.test.ts",
   "auth-membership-lifecycle.test.ts",
+  "classpilot-2-7-1-command-frame.test.ts",
   "classpilot-admin-analytics.test.ts",
   "classpilot-admin-classes.test.ts",
   "classpilot-ai-decision-route-privacy.test.ts",
