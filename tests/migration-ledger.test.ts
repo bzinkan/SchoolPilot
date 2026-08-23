@@ -88,7 +88,7 @@ test("ClassPilot 2.7 expand migration checksum covers the exact additive SQL", (
 test("production one-off mode is ledger-only and legacy convergence fails closed", () => {
   const source = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
   const oneOffStart = source.indexOf("async function runMigrationsAndExit");
-  const oneOffEnd = source.indexOf("if (migrationsOnly())", oneOffStart);
+  const oneOffEnd = source.indexOf("async function runLegacyMigrationsAndExit", oneOffStart);
   assert.notEqual(oneOffStart, -1);
   assert.notEqual(oneOffEnd, -1);
   const oneOff = source.slice(oneOffStart, oneOffEnd);
