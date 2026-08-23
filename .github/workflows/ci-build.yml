@@ -34,14 +34,16 @@ jobs:
       - name: TypeScript check
         run: npx tsc --noEmit
 
-      - name: Test TypeScript check (no emit)
-        run: npm run check:tests
-
       - name: Unsafe test cast ratchet
         run: npm run check:test-casts
 
       - name: Build
         run: npm run build
+
+      # Test sources import the compiled dist surface so the no-emit ratchet
+      # must run after a clean-checkout build, not against a stale local dist.
+      - name: Test TypeScript check (no emit)
+        run: npm run check:tests
 
       - name: Pure unit tests (concurrency 4)
         run: npm run test:unit
