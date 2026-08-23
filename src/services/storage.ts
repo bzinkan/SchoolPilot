@@ -16229,6 +16229,51 @@ function frozenClasspilotCommandTargetResult(
   };
 }
 
+const classpilotCommandAuthorityResultKeys = [
+  "exactTabCloseVersion",
+  "frozenControlRevision",
+  "durableAuthorityRevision",
+] as const;
+
+/**
+ * Command-target result JSON contains both extension-supplied outcome data and
+ * server-frozen authority metadata. ACK payloads are untrusted and must never
+ * be able to replace (or invent) the authority fields used by later ACKs.
+ */
+function classpilotCommandAckResult(
+  existingResult: unknown,
+  receivedResult: unknown,
+  preserveExistingWhenMissing: boolean
+): unknown {
+  const existingRecord = existingResult
+    && typeof existingResult === "object"
+    && !Array.isArray(existingResult)
+    ? existingResult as Record<string, unknown>
+    : {};
+  const frozenAuthority: Record<string, unknown> = {};
+  for (const key of classpilotCommandAuthorityResultKeys) {
+    if (Object.prototype.hasOwnProperty.call(existingRecord, key)) {
+      frozenAuthority[key] = existingRecord[key];
+    }
+  }
+
+  const candidate = receivedResult !== undefined && receivedResult !== null
+    ? receivedResult
+    : preserveExistingWhenMissing
+      ? existingResult
+      : null;
+  const hasFrozenAuthority = Object.keys(frozenAuthority).length > 0;
+  if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+    const sanitized = { ...(candidate as Record<string, unknown>) };
+    for (const key of classpilotCommandAuthorityResultKeys) delete sanitized[key];
+    return hasFrozenAuthority ? { ...sanitized, ...frozenAuthority } : sanitized;
+  }
+  if (!hasFrozenAuthority) return candidate;
+  return candidate === null || candidate === undefined
+    ? frozenAuthority
+    : { ackResult: candidate, ...frozenAuthority };
+}
+
 export async function createClasspilotCommandWithTargets(
   commandData: InsertClasspilotCommand,
   targetData: InsertClasspilotCommandTarget[],
@@ -17113,7 +17158,7 @@ export async function persistClasspilotCommandTargetAck(
           .set({
             status: target.receivedAt ? "received" : "sent",
             ackState: target.receivedAt ? "received" : null,
-            result: options.result ?? target.result ?? null,
+            result: classpilotCommandAckResult(target.result, options.result, true),
             errorMessage: options.errorMessage || "Student inbox persistence failed; delivery will retry",
             failedAt: null,
             updatedAt: now,
@@ -17166,7 +17211,7 @@ export async function persistClasspilotCommandTargetAck(
         .set({
           status: "expired",
           ackState: "expired",
-          result: options.result ?? target.result ?? null,
+          result: classpilotCommandAckResult(target.result, options.result, true),
           errorMessage: options.errorMessage || "Not delivered before command expired",
           updatedAt: now,
         })
@@ -17280,9 +17325,11 @@ export async function persistClasspilotCommandTargetAck(
     const update: PgUpdateSetSource<typeof classpilotCommandTargets> = {
       status,
       ackState: options.ackState,
-      result: options.ackState === "received"
-        ? options.result ?? target.result ?? null
-        : options.result ?? null,
+      result: classpilotCommandAckResult(
+        target.result,
+        options.result,
+        options.ackState === "received"
+      ),
       errorMessage: options.errorMessage || null,
       updatedAt: now,
     };

@@ -3369,6 +3369,42 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.equal(expiredMissing.disposition, "terminal_rejected");
     assert.equal(expiredMissing.code, "COMMAND_ACK_BINDING_MISMATCH");
     assert.equal(expiredMissing.target?.status, "unavailable");
+
+    const overwrittenCommand = await createExactTarget("client-result-cannot-overwrite-authority");
+    const received = await inSchool(school.id, () => persistClasspilotCommandTargetAck({
+      commandId: overwrittenCommand.id,
+      schoolId: school.id,
+      deviceId: deviceGuard,
+      studentId: studentDeviceGuard.id,
+      studentSessionId: sessionGuard.id,
+      ackState: "received",
+      controlRevision: 12,
+      result: {
+        phase: "received",
+        exactTabCloseVersion: 1,
+        frozenControlRevision: 999,
+      },
+    }));
+    assert.equal(received.disposition, "applied");
+    assert.deepEqual(received.target.result, {
+      phase: "received",
+      exactTabCloseVersion: 2,
+      frozenControlRevision: 12,
+    });
+
+    const overwrittenRevision = await inSchool(school.id, () => persistClasspilotCommandTargetAck({
+      commandId: overwrittenCommand.id,
+      schoolId: school.id,
+      deviceId: deviceGuard,
+      studentId: studentDeviceGuard.id,
+      studentSessionId: sessionGuard.id,
+      ackState: "completed",
+      controlRevision: 999,
+      result: { phase: "completed" },
+    }));
+    assert.equal(overwrittenRevision.disposition, "terminal_rejected");
+    assert.equal(overwrittenRevision.code, "COMMAND_ACK_BINDING_MISMATCH");
+    assert.equal(overwrittenRevision.target?.status, "unavailable");
   });
 
   it("converges concurrent sent and acknowledgement updates on completed", async () => {
