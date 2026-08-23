@@ -26,12 +26,16 @@ describe("ClassPilot AWS TURN infrastructure contract", () => {
     assert.match(userData, /max-port=\$\{relay_port_max\}/);
   });
 
-  it("generates the shared secret in AWS and injects only its ARN into ECS", () => {
+  it("generates the shared secret in AWS and pre-grants only its ARN without runtime wiring", () => {
     assert.match(main, /AWS::SecretsManager::Secret/);
     assert.match(main, /GenerateSecretString/);
     assert.doesNotMatch(main, /secret_string\s*=/i);
     assert.match(ecs, /CLASSPILOT_TURN_REST_SECRET/);
-    assert.match(root, /classpilot_turn_rest_secret_arn\s*=\s*try\(module\.turn\[0\]\.rest_secret_arn/);
+    assert.match(ecs, /classpilot_turn_secret_access_arn/);
+    assert.match(ecs, /secretsmanager:GetSecretValue/);
+    assert.match(root, /classpilot_turn_secret_access_arn\s*=\s*try\(module\.turn\[0\]\.rest_secret_arn/);
+    assert.match(root, /classpilot_turn_hosts\s*=\s*""/);
+    assert.match(root, /classpilot_turn_rest_secret_arn\s*=\s*""/);
   });
 
   it("configures REST auth, TURNS 443, DNS certificate renewal, and telemetry", () => {

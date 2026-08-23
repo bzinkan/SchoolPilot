@@ -87,6 +87,62 @@ run "runtime_secret_arns_are_stable_without_values" {
   }
 }
 
+run "turn_secret_access_is_preprovisioned_without_runtime_wiring" {
+  command = plan
+
+  module {
+    source = "./modules/ecs"
+  }
+
+  variables {
+    project                           = "schoolpilot"
+    environment                       = "test"
+    aws_region                        = "us-east-1"
+    aws_account_id                    = "000000000000"
+    vpc_id                            = "vpc-00000000"
+    task_subnet_ids                   = ["subnet-00000001", "subnet-00000002"]
+    alb_target_group_arn              = "arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/test/0000000000000000"
+    ecr_repository_url                = "000000000000.dkr.ecr.us-east-1.amazonaws.com/test"
+    container_port                    = 4000
+    ecs_security_group_id             = "sg-00000000"
+    desired_count                     = 1
+    cpu                               = 512
+    memory                            = 1024
+    worker_desired_count              = 1
+    worker_cpu                        = 256
+    worker_memory                     = 512
+    db_pool_max                       = 18
+    scheduler_db_pool_max             = 3
+    rls_enabled_tables                = "students"
+    redis_url                         = "rediss://cache.invalid:6379"
+    classpilot_turn_secret_access_arn = "arn:aws:secretsmanager:us-east-1:000000000000:secret:/schoolpilot/test/CLASSPILOT_TURN_REST_SECRET-test"
+    classpilot_turn_hosts             = ""
+    classpilot_turn_rest_secret_arn   = ""
+  }
+
+  assert {
+    condition = strcontains(
+      aws_iam_role_policy.ecs_secrets.policy,
+      "arn:aws:secretsmanager:us-east-1:000000000000:secret:/schoolpilot/test/CLASSPILOT_TURN_REST_SECRET-test"
+    )
+    error_message = "The ECS execution role must be able to fetch the provisioned TURN REST secret."
+  }
+
+  assert {
+    condition = alltrue([
+      for definition in [
+        jsondecode(aws_ecs_task_definition.api.container_definitions)[0],
+        jsondecode(aws_ecs_task_definition.worker.container_definitions)[0],
+        ] : (
+        !contains([for entry in definition.environment : entry.name], "CLASSPILOT_TURN_HOSTS") &&
+        !contains([for entry in definition.environment : entry.name], "CLASSPILOT_STUN_URLS") &&
+        !contains([for entry in definition.secrets : entry.name], "CLASSPILOT_TURN_REST_SECRET")
+      )
+    ])
+    error_message = "Terraform provisioning must not wire TURN into bootstrap API/worker task definitions."
+  }
+}
+
 run "previous_pin_key_is_arn_only_and_temporary" {
   command = plan
 

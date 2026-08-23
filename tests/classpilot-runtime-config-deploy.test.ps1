@@ -1506,6 +1506,22 @@ try {
     Assert-Condition (@($global:RuntimeConfigTestState.Events | Where-Object { $_ -like "update:*" }).Count -eq 0) "Fresh-clock window crossing must produce zero service updates."
     Assert-Condition (-not $global:RuntimeConfigTestState.DynamicIn -and -not $global:RuntimeConfigTestState.DynamicOut) "Fresh-clock stop must restore the scaling hold."
 
+    $productionVariables = Get-Content -LiteralPath (Join-Path $repositoryRoot "infra/production.tfvars") -Raw
+    $terraformVariables = Get-Content -LiteralPath (Join-Path $repositoryRoot "infra/variables.tf") -Raw
+    $turnOperations = Get-Content -LiteralPath (Join-Path $repositoryRoot "docs/CLASSPILOT_TURN_OPERATIONS.md") -Raw
+    Assert-Condition ($productionVariables -cmatch '(?m)^enable_classpilot_turn\s*=\s*true\s*$') `
+        "The canonical production baseline must keep the reviewed TURN module enabled."
+    Assert-Condition ($productionVariables -cnotmatch '(?m)^\s*classpilot_turn_tls_email\s*=') `
+        "The operator-owned TURN TLS email must not be committed to production.tfvars."
+    Assert-Condition ($terraformVariables -cmatch '(?s)variable\s+"classpilot_turn_tls_email"\s*\{.*?sensitive\s*=\s*true.*?\}') `
+        "Terraform must continue treating the TURN TLS contact as sensitive input."
+    Assert-Condition ($turnOperations -cmatch 'TF_VAR_classpilot_turn_tls_email' -and
+        $turnOperations -cmatch 'Remove-Item Env:TF_VAR_classpilot_turn_tls_email') `
+        "The TURN runbook must document process-local injection and cleanup of the private TLS contact."
+    Assert-Condition ($turnOperations -cmatch 'zero destructive actions' -and
+        $turnOperations -cmatch 'must not deploy') `
+        "The TURN runbook must constrain the saved production plan before apply."
+
     Write-Output "ClassPilot runtime-config deployment tests passed ($script:Assertions assertions)."
 }
 finally {
