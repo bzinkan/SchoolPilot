@@ -152,10 +152,12 @@ export default function PrivacyPolicy() {
           <section>
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">6. COPPA Compliance</h2>
             <p className="text-slate-700 leading-relaxed">
-              Schoolpilot complies with the Children's Online Privacy Protection Act (COPPA). We do not
-              knowingly collect personal information directly from children under 13. All student accounts
-              are created and managed by schools, which obtain necessary parental consent as required by
-              COPPA's school consent exception.
+              Schoolpilot may process student personal information, including information from children under
+              13, only at the direction of a contracting school or district and for the educational purposes
+              described in this policy. Student accounts are created and managed by schools. The school provides
+              consent on behalf of parents where COPPA's school-consent exception applies and remains responsible
+              for required notices and any additional consent required by its policies or applicable law. We do
+              not use student information for advertising, behavioral profiling, or other commercial purposes.
             </p>
           </section>
 
