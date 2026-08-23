@@ -2,7 +2,7 @@
 
 **Company:** Schoolpilot
 **Effective Date:** April 12, 2026
-**Last Reviewed:** April 12, 2026
+**Last Reviewed:** August 23, 2026
 **Owner:** Security & Privacy Officer (security@school-pilot.net)
 **Review Cycle:** Annual, or after any material change or security incident
 
@@ -51,9 +51,9 @@ All third-party service providers handling PII are reviewed annually and must si
 | Vendor | Purpose | Data Processed |
 |--------|---------|----------------|
 | **AWS (us-east-1)** | Hosting, database, storage | All customer data (SOC 2, ISO 27001, FERPA-aligned) |
-| **SendGrid** | Transactional email | Email addresses only |
+| **SendGrid** | Transactional email | Recipient addresses and configured message content, which can include student identity, activity/safety summaries, page title/domain, or MailPilot sender/subject/snippet fields |
 | **Stripe** | Payment processing | School billing info (PCI-DSS Level 1) |
-| **Anthropic Claude** | AI URL classification | URL strings only, no student PII |
+| **Anthropic Claude** | AI-assisted classification | ClassPilot URL strings and page titles, which can themselves contain identifying or user-entered values; enabled MailPilot content and authorized staff-assistant inputs are described in the public subprocessor notice |
 | **Google OAuth / Workspace API** | Authentication, roster sync | Email, name, classroom rosters (verified for restricted scopes) |
 
 ## 5. Technical Safeguards
@@ -139,7 +139,7 @@ linked record has been permanently destroyed.
 
 Schoolpilot aligns with:
 - **FERPA** (Family Educational Rights and Privacy Act, 20 U.S.C. § 1232g) — operates as a "school official" with legitimate educational interest under direct school control
-- **COPPA** (Children's Online Privacy Protection Act) — relies on the school consent exception; no direct collection of data from children under 13
+- **COPPA** (Children's Online Privacy Protection Act) — relies on school authorization/consent for the documented educational collection; there is no independent child signup or collection outside school direction
 - **State data breach notification laws** in applicable jurisdictions
 - **Student Data Privacy Consortium (SDPC)** model contract principles
 
