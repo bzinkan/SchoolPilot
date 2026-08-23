@@ -188,10 +188,10 @@ jobs:
           DATABASE_URL: ${{ env.ADMIN_DATABASE_URL }}
         run: npm run build
 
-      - name: Run startup schema convergence
+      - name: Run non-production legacy schema convergence
         env:
           DATABASE_URL: ${{ env.ADMIN_DATABASE_URL }}
-          RUN_MIGRATIONS_ONLY: "true"
+          RUN_LEGACY_MIGRATIONS_ONLY: "true"
           RUN_MIGRATIONS_ON_STARTUP: "false"
           SCHEDULER_ENABLED: "false"
           REQUIRE_RLS_TABLE_ENFORCEMENT: classpilot_schedule_change_pairs,classpilot_schedule_changes,classpilot_schedule_change_legs

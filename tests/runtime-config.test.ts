@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   envFlag,
   intEnv,
+  legacyMigrationsOnly,
   migrationsOnStartup,
   migrationsOnly,
   schedulerEnabled,
@@ -21,6 +22,8 @@ describe("runtime config", () => {
     assert.equal(migrationsOnStartup({ RUN_MIGRATIONS_ON_STARTUP: "off" }), false);
     assert.equal(migrationsOnly({}), false);
     assert.equal(migrationsOnly({ RUN_MIGRATIONS_ONLY: "true" }), true);
+    assert.equal(legacyMigrationsOnly({}), false);
+    assert.equal(legacyMigrationsOnly({ RUN_LEGACY_MIGRATIONS_ONLY: "true" }), true);
   });
 
   it("parses integers without accepting invalid pool caps", () => {

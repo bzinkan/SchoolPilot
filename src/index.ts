@@ -11,7 +11,12 @@ import { startHealthMonitor, stopHealthMonitor } from "./services/healthMonitor.
 import errorMonitor from "./services/errorMonitor.js";
 import { pool, prewarmMainPool, sessionPool } from "./db.js";
 import { schedulerLockPool, schedulerPool } from "./services/schedulerDb.js";
-import { migrationsOnStartup, migrationsOnly, schedulerEnabled } from "./config/runtime.js";
+import {
+  legacyMigrationsOnly,
+  migrationsOnStartup,
+  migrationsOnly,
+  schedulerEnabled,
+} from "./config/runtime.js";
 import { ensureHeartbeatHistoryIndexOnline } from "./db/heartbeatHistoryIndex.js";
 import { resolveEcsApiRuntimeIdentity } from "./services/ecsRuntimeIdentity.js";
 import { bindHeartbeatHotPathApiRuntimeTaskDefinitionSha256 } from "./services/heartbeatHotPathMetrics.js";
@@ -228,6 +233,18 @@ function validateEnv(): void {
     throw new Error(
       "FATAL: RUN_MIGRATIONS_ON_STARTUP must remain disabled in production. " +
         "Run the explicit RUN_MIGRATIONS_ONLY task before rolling services."
+    );
+  }
+
+  if (legacyMigrationsOnly() && migrationsOnly()) {
+    throw new Error(
+      "FATAL: RUN_LEGACY_MIGRATIONS_ONLY and RUN_MIGRATIONS_ONLY are mutually exclusive."
+    );
+  }
+
+  if (isProduction && legacyMigrationsOnly()) {
+    throw new Error(
+      "FATAL: RUN_LEGACY_MIGRATIONS_ONLY is restricted to disposable non-production bootstrap databases."
     );
   }
 
@@ -4870,7 +4887,23 @@ async function runMigrationsAndExit(): Promise<void> {
   process.exit(0);
 }
 
-if (migrationsOnly()) {
+async function runLegacyMigrationsAndExit(): Promise<void> {
+  // Clean CI databases start from drizzle-kit push and still need the
+  // historical idempotent convergence routine before the restricted RLS
+  // posture. runStartupMigrations itself independently forbids production.
+  await runStartupMigrations();
+  errorMonitor.dispose();
+  await Promise.allSettled([pool.end(), sessionPool.end(), schedulerPool.end(), schedulerLockPool.end()]);
+  console.log("[migration] non-production legacy schema convergence complete");
+  process.exit(0);
+}
+
+if (legacyMigrationsOnly()) {
+  runLegacyMigrationsAndExit().catch((err) => {
+    console.error("[migration] legacy schema convergence failed:", safeErrorMetadata(err));
+    process.exit(1);
+  });
+} else if (migrationsOnly()) {
   runMigrationsAndExit().catch((err) => {
     console.error("[migration] startup migrations failed:", safeErrorMetadata(err));
     process.exit(1);

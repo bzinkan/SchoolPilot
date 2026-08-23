@@ -394,6 +394,12 @@ export function responseBodyFor(
     '/api/sessions/active': { session: null },
     '/api/teacher/groups': { groups: [] },
     '/api/coverage/contexts': { contexts: [] },
+    '/api/coverage/summary': {
+      revision: 'coverage-v1:6hPA0vMwkd-Q454ouBPUBscd2jW89P3Ij7xF2T-GcVw',
+      availableStudentCount: 0,
+      claimedStudentCount: 0,
+      activeContextCount: 0,
+    },
     '/api/coverage/capabilities': {},
     '/api/coverage/available-students': {
       students: [],

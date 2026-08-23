@@ -30,3 +30,7 @@ export function migrationsOnStartup(env: NodeJS.ProcessEnv = process.env): boole
 export function migrationsOnly(env: NodeJS.ProcessEnv = process.env): boolean {
   return envFlag("RUN_MIGRATIONS_ONLY", false, env);
 }
+
+export function legacyMigrationsOnly(env: NodeJS.ProcessEnv = process.env): boolean {
+  return envFlag("RUN_LEGACY_MIGRATIONS_ONLY", false, env);
+}
