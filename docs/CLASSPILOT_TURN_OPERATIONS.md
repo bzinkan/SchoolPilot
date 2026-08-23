@@ -1,18 +1,44 @@
 # ClassPilot TURN operations
 
-The two-node coturn module remains dark until `enable_classpilot_turn=true` is
-applied through the reviewed infrastructure workflow. Application capability
-activation is separate: `liveViewIceServersV1` must be enabled for the exact
-school and advertised by the current student binding before credentials or
-telemetry are accepted.
+The canonical production baseline enables the two-node coturn module. The
+service remains unavailable until that baseline is applied through the
+reviewed infrastructure workflow. Application capability activation is
+separate: `liveViewIceServersV1` must be enabled for the exact school and
+advertised by the current student binding before credentials or telemetry are
+accepted.
 
 ## Provisioning and activation boundary
 
-`infra/production.tfvars` intentionally defaults TURN to disabled. Provisioning
-requires a separately reviewed Terraform plan/apply with the production TURN
-flag enabled and the operator-owned TLS email supplied through the documented
-private variable path. Do not combine this infrastructure mutation with an API
-image deployment or a ClassPilot runtime-profile change.
+`infra/production.tfvars` enables TURN without storing the operator-owned TLS
+email. Before producing the saved production plan, set
+`TF_VAR_classpilot_turn_tls_email` only in the current PowerShell process, then
+clear it after planning. The saved plan already contains the input used during
+planning; `terraform apply` does not reread the environment variable. The
+address remains inside the sensitive saved plan/state and rendered instance
+user data because certbot requires it; process cleanup does not erase those
+controlled copies. Terraform's sensitive marking redacts ordinary display but
+does not encrypt plan or state bytes, so retain their existing restricted ACLs
+and encrypted recovery copies. Do not supply a higher-precedence email
+assignment in `terraform.tfvars`, `terraform.tfvars.json`, an auto-tfvars file,
+later var-file, or `-var` argument.
+
+Provisioning requires a separately reviewed Terraform plan/apply. After this
+baseline merges, do not run an unrelated production Terraform operation until
+the TURN plan is either applied or the baseline is explicitly reverted. The
+reviewed plan must contain zero destructive actions and only the TURN activation
+gate, TURN module, ECS execution-role secret permission, and TURN outputs. It
+must not deploy an API/worker image, update a live ECS service, or activate a
+ClassPilot runtime profile.
+
+```powershell
+$env:TF_VAR_classpilot_turn_tls_email = "<MONITORED_OPERATIONAL_EMAIL>"
+try {
+  # Create and inspect the reviewed saved plan while this value exists.
+}
+finally {
+  Remove-Item Env:TF_VAR_classpilot_turn_tls_email -ErrorAction SilentlyContinue
+}
+```
 
 Before any profile includes `liveViewIceServersV1`, prove all of the following
 against the live production nodes:

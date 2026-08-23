@@ -92,3 +92,8 @@ variable "classpilot_turn_rest_secret_arn" {
   type    = string
   default = ""
 }
+variable "classpilot_turn_secret_access_arn" {
+  description = "Optional TURN REST secret ARN granted to the ECS execution role without injecting it into bootstrap task definitions"
+  type        = string
+  default     = ""
+}

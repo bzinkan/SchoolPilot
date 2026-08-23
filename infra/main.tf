@@ -275,6 +275,15 @@ module "dns" {
   domain      = var.domain
 }
 
+module "turn_activation_gate" {
+  source = "./modules/turn-activation-gate"
+
+  enabled             = var.enable_classpilot_turn
+  has_managed_domain  = local.has_domain
+  public_subnet_count = length(module.vpc.public_subnet_ids)
+  tls_email           = var.classpilot_turn_tls_email
+}
+
 module "turn" {
   count  = var.enable_classpilot_turn && local.has_domain ? 1 : 0
   source = "./modules/turn"
@@ -291,17 +300,8 @@ module "turn" {
   relay_port_min       = var.classpilot_turn_relay_port_min
   relay_port_max       = var.classpilot_turn_relay_port_max
   alerts_sns_topic_arn = var.alerts_sns_topic_arn
-}
 
-check "classpilot_turn_activation" {
-  assert {
-    condition = !var.enable_classpilot_turn || (
-      local.has_domain &&
-      length(module.vpc.public_subnet_ids) >= 2 &&
-      can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", var.classpilot_turn_tls_email))
-    )
-    error_message = "ClassPilot TURN requires a managed domain, two public subnets, and an operational TLS email."
-  }
+  depends_on = [module.turn_activation_gate]
 }
 
 module "alb" {
@@ -356,8 +356,13 @@ module "ecs" {
   # Existing SecureString parameters managed outside Terraform tfvars.
   anthropic_api_key_parameter_arn  = var.anthropic_api_key_parameter_arn
   telegram_bot_token_parameter_arn = var.telegram_bot_token_parameter_arn
-  classpilot_turn_hosts            = try(join(",", module.turn[0].hostnames), "")
-  classpilot_turn_rest_secret_arn  = try(module.turn[0].rest_secret_arn, "")
+  # Terraform provisions the nodes and grants the ECS execution role access to
+  # the REST secret, but it deliberately leaves the bootstrap task templates
+  # unwired. The same-digest runtime helper adds hosts and the secret reference
+  # to the exact live API/worker pair only after the live TURN gate passes.
+  classpilot_turn_hosts             = ""
+  classpilot_turn_rest_secret_arn   = ""
+  classpilot_turn_secret_access_arn = try(module.turn[0].rest_secret_arn, "")
 
   # Scaling
   desired_count                   = var.ecs_desired_count

@@ -24,6 +24,11 @@ locals {
     var.google_oauth_previous_encryption_key_parameter_arn == "" ||
     var.google_oauth_previous_encryption_key_parameter_arn == local.expected_google_oauth_previous_encryption_key_parameter_arn
   )
+  classpilot_turn_secret_access_arn = (
+    var.classpilot_turn_secret_access_arn != ""
+    ? var.classpilot_turn_secret_access_arn
+    : var.classpilot_turn_rest_secret_arn
+  )
   common_environment = [
     { name = "NODE_ENV", value = "production" },
     { name = "APP_ENV", value = var.environment },
@@ -138,10 +143,10 @@ resource "aws_iam_role_policy" "ecs_secrets" {
           }
         }
       }
-      ], var.classpilot_turn_rest_secret_arn != "" ? [{
+      ], local.classpilot_turn_secret_access_arn != "" ? [{
         Effect   = "Allow"
         Action   = ["secretsmanager:GetSecretValue"]
-        Resource = [var.classpilot_turn_rest_secret_arn]
+        Resource = [local.classpilot_turn_secret_access_arn]
     }] : [])
   })
 }

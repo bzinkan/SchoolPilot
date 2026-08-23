@@ -73,10 +73,12 @@ alerts_sns_topic_arn = "arn:aws:sns:us-east-1:135775632425:schoolpilot-productio
 anthropic_api_key_parameter_arn  = "arn:aws:ssm:us-east-1:135775632425:parameter/schoolpilot/production/ANTHROPIC_API_KEY"
 telegram_bot_token_parameter_arn = "arn:aws:ssm:us-east-1:135775632425:parameter/schoolpilot/production/TELEGRAM_BOT_TOKEN"
 
-# Phase-2 dark infrastructure. Set both values in the reviewed TURN activation
-# change after DNS/TLS monitoring readiness has been confirmed.
-enable_classpilot_turn    = false
-classpilot_turn_tls_email = ""
+# ClassPilot TURN is part of the reviewed production baseline. Supply the
+# sensitive Let's Encrypt contact only through the private
+# TF_VAR_classpilot_turn_tls_email process environment whenever a new saved
+# plan is created; saved-plan apply does not reread it. Never commit the address
+# to this file.
+enable_classpilot_turn = true
 
 # SchoolPilot 2.7.0 post-expand RLS target. The immutable registry separately
 # preserves the exact 72-table live inventory observed on 2026-08-19; this
