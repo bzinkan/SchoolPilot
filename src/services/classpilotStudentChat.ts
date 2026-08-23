@@ -13,6 +13,28 @@ export function parseClasspilotClientMessageId(value: unknown):
     ? { status: "valid", clientMessageId: clientMessageId.toLowerCase() }
     : { status: "invalid", clientMessageId: null };
 }
+
+export function parseClasspilotTeachingSessionId(value: unknown):
+  | { status: "legacy"; teachingSessionId: null }
+  | { status: "valid"; teachingSessionId: string }
+  | { status: "invalid"; teachingSessionId: null } {
+  if (value === undefined || value === null || value === "") {
+    return { status: "legacy", teachingSessionId: null };
+  }
+  if (typeof value !== "string") return { status: "invalid", teachingSessionId: null };
+  const teachingSessionId = value.trim();
+  return UUID_PATTERN.test(teachingSessionId)
+    ? { status: "valid", teachingSessionId: teachingSessionId.toLowerCase() }
+    : { status: "invalid", teachingSessionId: null };
+}
+
+export function isCurrentClasspilotStudentMessageSession(
+  requestedTeachingSessionId: string | null | undefined,
+  currentTeachingSessionId: string
+): boolean {
+  return !requestedTeachingSessionId || requestedTeachingSessionId === currentTeachingSessionId;
+}
+
 export function isExactIdempotentStudentMessage(
   existing: {
     schoolId: string;

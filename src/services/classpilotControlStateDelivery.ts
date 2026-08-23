@@ -8,6 +8,10 @@ import {
 } from "./storage.js";
 import { serializeClasspilotStudentControlState } from "./classpilotClassroomState.js";
 import { buildStudentFabState } from "./classpilotFab.js";
+import {
+  classpilotClassroomStatePushFrame,
+  classpilotFabStatePushFrame,
+} from "./classpilotControlStateFrame.js";
 
 /** Push the authoritative classroom + FAB snapshots after any class/coverage
  * ownership transition.
@@ -41,13 +45,18 @@ export async function syncClasspilotControlStatesToActiveDevices(
       if (!session?.deviceId) continue;
       targetedDevices += 1;
       if (state) {
-        const classroomMessage = {
+        const classroomMessage = classpilotClassroomStatePushFrame({
           type: "classroom-state-sync",
-          _msgId: randomUUID(),
-          studentId,
-          studentSessionId: session.id,
+          messageId: randomUUID(),
+          binding: {
+            schoolId,
+            deviceId: session.deviceId,
+            studentId,
+            studentSessionId: session.id,
+            controlRevision: state.revision,
+          },
           classroomState: serializeClasspilotStudentControlState(state),
-        };
+        });
         sendToDeviceLocal(schoolId, session.deviceId, classroomMessage);
         publications.push({
           target: { kind: "device", schoolId, deviceId: session.deviceId },
@@ -76,14 +85,22 @@ export async function syncClasspilotControlStatesToActiveDevices(
           revision: 0,
         };
       }
-      const fabMessage = {
-        type: "fab-state-sync",
-        _msgId: randomUUID(),
+      const fabMessage = classpilotFabStatePushFrame({
+        messageId: randomUUID(),
+        binding: {
+          schoolId,
+          deviceId: session.deviceId,
+          studentId,
+          studentSessionId: session.id,
+          controlRevision: Number.isSafeInteger(fabState.ownershipRevision)
+            ? Number(fabState.ownershipRevision)
+            : state?.revision ?? 0,
+        },
         data: {
           ...fabState,
           reason: "control_ownership_transition",
         },
-      };
+      });
       sendToDeviceLocal(schoolId, session.deviceId, fabMessage);
       publications.push({
         target: { kind: "device", schoolId, deviceId: session.deviceId },

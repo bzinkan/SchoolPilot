@@ -39,6 +39,8 @@ const staffSession = { userId: "user-1", csrfToken: "secret-token" };
 describe("csrfProtection kiosk exemptions", () => {
   it("lets public kiosk POSTs through even when a staff session cookie is present", () => {
     for (const path of [
+      "/classpilot/kiosk/launch-ticket",
+      "/classpilot/kiosk/launch-ticket/preflight",
       "/passpilot/kiosk/lookup",
       "/passpilot/kiosk/checkout",
       "/passpilot/kiosk/checkin",

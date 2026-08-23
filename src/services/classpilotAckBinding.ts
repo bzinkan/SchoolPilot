@@ -9,6 +9,46 @@ function optionalString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function ackObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function suppliedControlRevisions(ack: Record<string, unknown>): unknown[] {
+  const exact = ackObject(ack.exactBinding);
+  const authority = ackObject(ack.authority);
+  return [
+    ack.studentControlRevision,
+    ack.controlRevision,
+    exact?.controlRevision,
+    authority?.controlRevision,
+  ].filter((value) => value !== undefined);
+}
+
+/** Return one strictly encoded, internally consistent ACK control revision.
+ * String coercion is deliberately forbidden: exact-tab V2 persistence treats
+ * absence as a binding failure, while legacy targets simply ignore absence. */
+export function classpilotAckControlRevision(value: unknown): number | undefined {
+  const ack = ackObject(value);
+  if (!ack) return undefined;
+  const revisions = suppliedControlRevisions(ack);
+  if (
+    revisions.length === 0
+    || revisions.some((revision) =>
+      typeof revision !== "number"
+      || !Number.isSafeInteger(revision)
+      || revision < 0
+    )
+  ) {
+    return undefined;
+  }
+  const [revision] = revisions as number[];
+  return revisions.every((candidate) => candidate === revision)
+    ? revision
+    : undefined;
+}
+
 /**
  * Protocol v2 acknowledgements do not carry an authority envelope, so absence
  * remains compatible. Once any explicit binding field is present, every
@@ -32,6 +72,11 @@ export function classpilotAckEnvelopeMatchesBinding(
   const exact = nestedObject("exactBinding");
   const authority = nestedObject("authority");
   if (exact === false || authority === false) return false;
+
+  const revisions = suppliedControlRevisions(ack);
+  if (revisions.length > 0 && classpilotAckControlRevision(ack) === undefined) {
+    return false;
+  }
 
   const supplied = {
     schoolId: [ack.schoolId, exact?.schoolId, authority?.schoolId],

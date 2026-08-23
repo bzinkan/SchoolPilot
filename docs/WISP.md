@@ -123,7 +123,8 @@ Any employee, contractor, or external party who suspects a security incident mus
 
 | Data Type | Retention | Destruction Method |
 |-----------|-----------|--------------------|
-| Screen captures | Max 24 hours (60–120 second Redis TTL) | TTL expiration (Redis) |
+| Ordinary screen previews | 60–120 second Redis TTL | TTL expiration (Redis) |
+| Safety/evidence screenshot content | School-configured period, default 30 days | Automated content purge; artifact review metadata may remain |
 | Heartbeats / activity logs | Per school setting, default 30 days | Automated nightly purge job |
 | Daily usage aggregates | Retained for school contract duration | Deleted on contract termination |
 | Account data | Retained during active contract | Deleted within 30 days of termination |

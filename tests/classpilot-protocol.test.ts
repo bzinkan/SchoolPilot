@@ -17,18 +17,57 @@ test("protocol v3 activates only the advertised and server-enabled intersection"
   const negotiated = negotiateClasspilotProtocol({
     clientProtocolVersion: 3,
     advertisedCapabilities: [
+      "scopedAuthorityChecksV1",
       "exactBindingAckV2",
       "screenshotObservationLeaseV1",
       "unknownCapability",
     ],
     env: {
       CLASSPILOT_PROTOCOL_V3_ENABLED: "true",
+      CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1: "true",
       CLASSPILOT_CAP_EXACT_BINDING_ACK_V2: "true",
       CLASSPILOT_CAP_SCREENSHOT_OBSERVATION_LEASE_V1: "false",
     },
   });
   assert.equal(negotiated.serverProtocolVersion, CLASSPILOT_SERVER_PROTOCOL_VERSION);
-  assert.deepEqual(negotiated.acceptedCapabilities, ["exactBindingAckV2"]);
+  assert.deepEqual(negotiated.acceptedCapabilities, [
+    "scopedAuthorityChecksV1",
+    "exactBindingAckV2",
+  ]);
+});
+
+test("authority-sensitive capabilities require the repaired scoping marker", () => {
+  const env: NodeJS.ProcessEnv = {
+    CLASSPILOT_PROTOCOL_V3_ENABLED: "true",
+    CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1: "true",
+    CLASSPILOT_CAP_AUTH_BOUND_TELEMETRY_V1: "true",
+    CLASSPILOT_CAP_EXACT_BINDING_ACK_V2: "true",
+    CLASSPILOT_CAP_EXACT_TAB_CLOSE_V2: "true",
+  };
+  assert.deepEqual(negotiateClasspilotProtocol({
+    clientProtocolVersion: 3,
+    advertisedCapabilities: [
+      "authBoundTelemetryV1",
+      "exactBindingAckV2",
+      "exactTabCloseV2",
+    ],
+    env,
+  }).acceptedCapabilities, []);
+  assert.deepEqual(negotiateClasspilotProtocol({
+    clientProtocolVersion: 3,
+    advertisedCapabilities: [
+      "scopedAuthorityChecksV1",
+      "authBoundTelemetryV1",
+      "exactBindingAckV2",
+      "exactTabCloseV2",
+    ],
+    env,
+  }).acceptedCapabilities, [
+    "scopedAuthorityChecksV1",
+    "authBoundTelemetryV1",
+    "exactBindingAckV2",
+    "exactTabCloseV2",
+  ]);
 });
 
 test("protocol v2 and version-only clients retain legacy behavior", () => {

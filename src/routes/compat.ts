@@ -209,6 +209,7 @@ function publicClasspilotExtensionContract(
   snapshot: ClasspilotRealtimeStatus | null | undefined
 ) {
   const extensionCapabilities = new Set(snapshot?.extensionCapabilities || []);
+  const acceptedCapabilities = new Set(snapshot?.acceptedCapabilities || []);
   const tabSnapshotRevision = snapshot
     ? snapshot.tabSnapshotRevision ?? snapshot.revision
     : null;
@@ -218,8 +219,10 @@ function publicClasspilotExtensionContract(
       : { schemaVersion: 1, revision: tabSnapshotRevision },
     tabSnapshotRevision,
     extensionVersion: snapshot?.extensionVersion ?? null,
+    clientProtocolVersion: snapshot?.clientProtocolVersion ?? null,
     capabilities: {
       exactTabCloseV1: extensionCapabilities.has("exactTabCloseV1"),
+      exactTabCloseV2: acceptedCapabilities.has("exactTabCloseV2"),
       screenOnlyUnlockV1: extensionCapabilities.has("screenOnlyUnlockV1"),
       fabStateRevisionV1: extensionCapabilities.has("fabStateRevisionV1"),
       durableChatAckV1: extensionCapabilities.has("durableChatAckV1"),

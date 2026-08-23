@@ -28,7 +28,7 @@ export default function PrivacyPolicy() {
       {/* Content */}
       <div className="container mx-auto px-4 py-12 max-w-4xl">
         <h1 className="text-4xl font-bold text-slate-900 mb-8">Privacy Policy</h1>
-        <p className="text-slate-600 mb-8">Last updated: April 12, 2026</p>
+        <p className="text-slate-600 mb-8">Last updated: August 23, 2026</p>
 
         <div className="prose prose-slate max-w-none space-y-8">
           <section>
@@ -61,8 +61,9 @@ export default function PrivacyPolicy() {
             </p>
             <ul className="list-disc pl-6 text-slate-700 space-y-2 mb-4">
               <li>Google Classroom roster information (class names, student enrollments)</li>
-              <li>Screen capture thumbnails during active ClassPilot monitoring sessions</li>
-              <li>Current tab URLs and titles during monitoring</li>
+              <li>Active-tab activity, including current tab URLs, titles, favicons, and timestamps during authorized monitoring</li>
+              <li>Observation-bound screen capture thumbnails and exact-bound safety evidence captures, which may contain visible website content</li>
+              <li>Student and teacher communications sent through ClassPilot</li>
               <li>Device connection status</li>
               <li>Hall pass records including destinations and timestamps (PassPilot)</li>
               <li>Staff-entered arrival, release, and dismissal records (GoPilot)</li>
@@ -72,6 +73,13 @@ export default function PrivacyPolicy() {
             <p className="text-slate-700 leading-relaxed">
               We automatically collect certain technical information including browser type, device information,
               IP address, and usage logs to maintain and improve our service.
+            </p>
+            <p className="text-slate-700 leading-relaxed mt-4">
+              During an explicit, authorized managed-kiosk launch, the ClassPilot extension may read and send the
+              Chromebook directory identifier to Schoolpilot only after the server confirms support for that flow.
+              Schoolpilot immediately converts it to school-scoped opaque identifiers. The raw directory identifier
+              is not stored, logged, returned to the browser, or placed in a URL. The resulting continuity identifier
+              does not replace the kiosk PIN or signed-token authorization requirement.
             </p>
           </section>
 
@@ -99,7 +107,8 @@ export default function PrivacyPolicy() {
               We retain data only as long as necessary to provide our services:
             </p>
             <ul className="list-disc pl-6 text-slate-700 space-y-2">
-              <li><strong>Screen captures:</strong> Deleted within 24 hours of capture or when the monitoring session ends</li>
+              <li><strong>Ordinary screen previews:</strong> The latest image is normally held for only 60–120 seconds and expires automatically</li>
+              <li><strong>Safety and evidence captures:</strong> Image content is retained for the school's configured evidence period (30 days by default), after which the image is purged while review metadata may remain</li>
               <li><strong>Session logs:</strong> Retained for up to 90 days for reporting purposes</li>
               <li><strong>Hall pass records:</strong> Retained for the current school year for analytics</li>
               <li><strong>Dismissal records:</strong> Retained for the current school year for safety audits</li>
@@ -143,10 +152,12 @@ export default function PrivacyPolicy() {
           <section>
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">6. COPPA Compliance</h2>
             <p className="text-slate-700 leading-relaxed">
-              Schoolpilot complies with the Children's Online Privacy Protection Act (COPPA). We do not
-              knowingly collect personal information directly from children under 13. All student accounts
-              are created and managed by schools, which obtain necessary parental consent as required by
-              COPPA's school consent exception.
+              Schoolpilot may process student personal information, including information from children under
+              13, only at the direction of a contracting school or district and for the educational purposes
+              described in this policy. Student accounts are created and managed by schools. The school provides
+              consent on behalf of parents where COPPA's school-consent exception applies and remains responsible
+              for required notices and any additional consent required by its policies or applicable law. We do
+              not use student information for advertising, behavioral profiling, or other commercial purposes.
             </p>
           </section>
 
@@ -187,6 +198,9 @@ export default function PrivacyPolicy() {
               <li>Students receive clear visual indicators when monitoring is active</li>
               <li>Teachers can only monitor students in their assigned classes</li>
               <li>Personal devices are not monitored outside of school-managed contexts</li>
+              <li>In observation-lease mode, ambient screenshots are captured only while an authorized teacher or administrator is actively observing; an exact-bound safety capture may be requested separately</li>
+              <li>During mixed-version rollout, a school may explicitly retain the legacy scheduled-screenshot mode for older managed extensions</li>
+              <li>Authorized Live View screen streams are temporary and are not recorded by Schoolpilot</li>
             </ul>
           </section>
 

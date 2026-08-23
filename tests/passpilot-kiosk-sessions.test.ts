@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { readFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import crypto from "node:crypto";
+import { createClient } from "redis";
 import { sql } from "drizzle-orm";
 
 const TAG = `pp_kiosk_sessions_${Date.now()}`;
@@ -12,6 +15,8 @@ process.env.REDIS_URL = "";
 process.env.NODE_ENV = "test";
 process.env.CLASSPILOT_PROTOCOL_V3_ENABLED = "true";
 process.env.CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V1 = "true";
+process.env.CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1 = "true";
+process.env.CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V2 = "true";
 
 let db: any;
 let pool: any;
@@ -1415,6 +1420,11 @@ describe("ClassPilot managed kiosk launch tickets", { concurrency: false }, () =
     clientProtocolVersion: 3,
     capabilities: ["kioskLaunchTicketV1"],
   };
+  const launchBodyV2 = {
+    directoryDeviceId,
+    clientProtocolVersion: 3,
+    capabilities: ["scopedAuthorityChecksV1", "kioskLaunchTicketV2"],
+  };
 
   function enrollmentHeaders(schoolId: string): Record<string, string> {
     return {
@@ -1430,6 +1440,56 @@ describe("ClassPilot managed kiosk launch tickets", { concurrency: false }, () =
       { ...launchBody, directoryDeviceId: id },
       enrollmentHeaders(schoolId)
     );
+  }
+
+  async function issueV2Ticket(schoolId: string, id = directoryDeviceId) {
+    return requestJson(
+      "POST",
+      "/classpilot/kiosk/launch-ticket",
+      { ...launchBodyV2, directoryDeviceId: id },
+      enrollmentHeaders(schoolId)
+    );
+  }
+
+  function runTicketProcess(
+    values: Record<string, string>,
+    overrides: Record<string, string> = {}
+  ): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const child = spawn(
+        process.execPath,
+        ["tests/fixtures/classpilot-kiosk-ticket-process.mjs"],
+        {
+          cwd: process.cwd(),
+          env: {
+            ...process.env,
+            NODE_ENV: "test",
+            ...values,
+            ...overrides,
+          },
+          stdio: ["ignore", "pipe", "pipe"],
+        }
+      );
+      let stdout = "";
+      let stderr = "";
+      child.stdout.setEncoding("utf8");
+      child.stderr.setEncoding("utf8");
+      child.stdout.on("data", (chunk) => { stdout += chunk; });
+      child.stderr.on("data", (chunk) => { stderr += chunk; });
+      child.on("error", reject);
+      child.on("close", (code) => {
+        if (code !== 0) {
+          reject(new Error(`ticket process failed (${code}): ${stderr || stdout}`));
+          return;
+        }
+        const line = stdout.trim().split(/\r?\n/).at(-1);
+        try {
+          resolve(JSON.parse(line || "null"));
+        } catch {
+          reject(new Error(`ticket process returned invalid JSON: ${stdout}; ${stderr}`));
+        }
+      });
+    });
   }
 
   it("keeps the local fallback bounded and derives stable school-scoped UUIDs", async () => {
@@ -1450,11 +1510,196 @@ describe("ClassPilot managed kiosk launch tickets", { concurrency: false }, () =
     assert.equal(first, repeated);
     assert.notEqual(first, otherSchool);
     assert.match(first, /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.equal(
+      service.legacyManagedKioskDeviceId(directoryDeviceId),
+      "d8c2edc3-f3fd-6465-e9f1-af3fa9079209",
+      "the migration id must exactly match the ClassPilot 2.6.9 algorithm"
+    );
     assert.deepEqual(service.snapshotClasspilotKioskLaunchTicketStateForTests(), {
       size: 0,
       maxEntries: 4_096,
       ttlMs: 60_000,
     });
+  });
+
+  it("authenticates a no-identifier V2 preflight before accepting ticket capability", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    const preflightBody = {
+      clientProtocolVersion: 3,
+      capabilities: ["scopedAuthorityChecksV1", "kioskLaunchTicketV2"],
+    };
+    const accepted = await requestJson(
+      "POST",
+      "/classpilot/kiosk/launch-ticket/preflight",
+      preflightBody,
+      enrollmentHeaders(schoolA.id)
+    );
+    assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+    assert.deepEqual(
+      new Set(accepted.body.acceptedCapabilities),
+      new Set(["scopedAuthorityChecksV1", "kioskLaunchTicketV2"])
+    );
+    assert.equal(accepted.headers.get("cache-control")?.includes("no-store"), true);
+    assert.equal(JSON.stringify(accepted.body).includes(directoryDeviceId), false);
+
+    const missingMarker = await requestJson(
+      "POST",
+      "/classpilot/kiosk/launch-ticket/preflight",
+      { clientProtocolVersion: 3, capabilities: ["kioskLaunchTicketV2"] },
+      enrollmentHeaders(schoolA.id)
+    );
+    assert.equal(missingMarker.status, 200);
+    assert.deepEqual(missingMarker.body.acceptedCapabilities, []);
+
+    const identifierRejected = await requestJson(
+      "POST",
+      "/classpilot/kiosk/launch-ticket/preflight",
+      { ...preflightBody, directoryDeviceId },
+      enrollmentHeaders(schoolA.id)
+    );
+    assert.equal(identifierRejected.status, 400);
+    assert.equal(
+      identifierRejected.body.code,
+      "CLASSPILOT_KIOSK_LAUNCH_PREFLIGHT_INVALID_REQUEST"
+    );
+
+    const wrongKey = await requestJson(
+      "POST",
+      "/classpilot/kiosk/launch-ticket/preflight",
+      preflightBody,
+      { "x-school-id": schoolA.id, "x-classpilot-enrollment-key": "wrong" }
+    );
+    assert.equal(wrongKey.status, 401);
+  });
+
+  it("issues V2 for ten minutes and consumes it after the V1 window", async () => {
+    const service = await import("../dist/services/classpilotKioskLaunchTicket.js");
+    service.resetClasspilotKioskLaunchTicketStateForTests();
+    const now = 1_800_000_000_000;
+    const issued = await service.issueClasspilotKioskLaunchTicket({
+      schoolId: "school-v2",
+      directoryDeviceId,
+      version: 2,
+      now,
+    });
+    assert.equal(issued.expiresInSeconds, 600);
+    assert.equal(issued.expiresAt.getTime(), now + 600_000);
+    const consumed = await service.consumeClasspilotKioskLaunchTicket({
+      ticket: issued.ticket,
+      schoolId: "school-v2",
+      now: now + 61_000,
+    });
+    assert.equal(consumed?.ticketVersion, 2);
+    assert.equal(consumed?.legacyDeviceId, service.legacyManagedKioskDeviceId(directoryDeviceId));
+
+    const nearExpiry = await service.issueClasspilotKioskLaunchTicket({
+      schoolId: "school-v2",
+      directoryDeviceId: `${directoryDeviceId}-near-expiry`,
+      version: 2,
+      now,
+    });
+    assert.ok(await service.consumeClasspilotKioskLaunchTicket({
+      ticket: nearExpiry.ticket,
+      schoolId: "school-v2",
+      now: now + 599_999,
+    }));
+
+    const expired = await service.issueClasspilotKioskLaunchTicket({
+      schoolId: "school-v2",
+      directoryDeviceId: `${directoryDeviceId}-expired`,
+      version: 2,
+      now,
+    });
+    assert.equal(await service.consumeClasspilotKioskLaunchTicket({
+      ticket: expired.ticket,
+      schoolId: "school-v2",
+      now: now + 600_001,
+    }), null);
+  });
+
+  it("uses Redis HMAC keys and one atomic cross-process V2 consumer", async (t) => {
+    const redisUrl = process.env.TEST_REDIS_URL || "redis://127.0.0.1:6380";
+    const redis = createClient({ url: redisUrl });
+    try {
+      await redis.connect();
+      await redis.ping();
+    } catch {
+      if (redis.isOpen) redis.disconnect();
+      return t.skip("Redis 7 integration service is unavailable");
+    }
+    const prefix = `${TAG}:kiosk-ticket-cross-process`;
+    const secret = `${TAG}:ticket-secret`;
+    const schoolId = `${TAG}:redis-school`;
+    const rawId = `${directoryDeviceId}-redis`;
+    try {
+      const issued = await runTicketProcess({
+        KIOSK_TICKET_PROCESS_MODE: "issue",
+        KIOSK_TICKET_SCHOOL_ID: schoolId,
+        KIOSK_TICKET_DIRECTORY_ID: rawId,
+        REDIS_URL: redisUrl,
+        REDIS_PREFIX: prefix,
+        CLASSPILOT_KIOSK_TICKET_HMAC_SECRET: secret,
+      });
+      assert.equal(issued.ok, true, JSON.stringify(issued));
+      assert.equal(issued.expiresInSeconds, 600);
+
+      const digest = crypto
+        .createHmac("sha256", secret)
+        .update(JSON.stringify(["classpilot-kiosk-launch-ticket-key-v1", issued.ticket]))
+        .digest("base64url");
+      const key = `${prefix}:classpilot:kiosk-launch-ticket:${digest}`;
+      const stored = await redis.get(key);
+      assert.ok(stored, "issuer process must write the HMAC-derived Redis key");
+      assert.equal(stored.includes(rawId), false, "Redis must not contain the raw directory id");
+      assert.equal(
+        (await redis.keys(`${prefix}:*`)).some((candidate) => candidate.includes(issued.ticket)),
+        false,
+        "the bearer ticket must never be embedded in its Redis key"
+      );
+      const ttl = await redis.ttl(key);
+      assert.ok(ttl > 0 && ttl <= 600, `expected bounded V2 TTL, got ${ttl}`);
+
+      const consumerEnv = {
+        KIOSK_TICKET_PROCESS_MODE: "consume",
+        KIOSK_TICKET_SCHOOL_ID: schoolId,
+        KIOSK_TICKET: issued.ticket,
+        REDIS_URL: redisUrl,
+        REDIS_PREFIX: prefix,
+        CLASSPILOT_KIOSK_TICKET_HMAC_SECRET: secret,
+      };
+      const consumers = await Promise.all([
+        runTicketProcess(consumerEnv),
+        runTicketProcess(consumerEnv),
+      ]);
+      assert.equal(consumers.filter((result) => result.continuity).length, 1);
+      assert.equal(consumers.filter((result) => result.continuity === null).length, 1);
+      assert.equal(await redis.exists(key), 0);
+
+      const productionNoRedis = await runTicketProcess(
+        {
+          KIOSK_TICKET_PROCESS_MODE: "issue",
+          KIOSK_TICKET_SCHOOL_ID: schoolId,
+          KIOSK_TICKET_DIRECTORY_ID: rawId,
+          REDIS_URL: "",
+          REDIS_PREFIX: prefix,
+          CLASSPILOT_KIOSK_TICKET_HMAC_SECRET: secret,
+          JWT_SECRET: `${TAG}:production-ticket-test-jwt-secret`,
+        },
+        { NODE_ENV: "production" }
+      );
+      assert.deepEqual(
+        { ok: productionNoRedis.ok, code: productionNoRedis.code, status: productionNoRedis.status },
+        {
+          ok: false,
+          code: "CLASSPILOT_KIOSK_LAUNCH_TICKET_UNAVAILABLE",
+          status: 503,
+        }
+      );
+    } finally {
+      const keys = await redis.keys(`${prefix}:*`);
+      if (keys.length > 0) await redis.del(keys);
+      await redis.quit();
+    }
   });
 
   it("authenticates issuance, forbids body school identity, and negotiates capability", async (t) => {
@@ -1565,6 +1810,172 @@ describe("ClassPilot managed kiosk launch tickets", { concurrency: false }, () =
     assert.notEqual(otherSchool.body.deviceId, redeemed.body.deviceId);
   });
 
+  it("migrates a valid 2.6.9 durable association without overwriting either identity", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    const service = await import("../dist/services/classpilotKioskLaunchTicket.js");
+    const rawId = `${directoryDeviceId}-migration`;
+    const legacyDeviceId = service.legacyManagedKioskDeviceId(rawId);
+    const newDeviceId = service.schoolScopedManagedKioskDeviceId(schoolA.id, rawId);
+    await asSystem(() => db.execute(sql`
+      INSERT INTO passpilot_kiosk_devices
+        (id, school_id, teacher_id, class_source, grade_id, classpilot_group_id)
+      VALUES
+        (${legacyDeviceId}, ${schoolA.id}, ${teacherA.id}, 'legacy_grades', ${gradeA.id}, NULL)
+      ON CONFLICT (school_id, id) DO UPDATE SET
+        teacher_id = EXCLUDED.teacher_id,
+        class_source = EXCLUDED.class_source,
+        grade_id = EXCLUDED.grade_id,
+        classpilot_group_id = NULL,
+        last_used_at = now()
+    `));
+
+    const issued = await issueV2Ticket(schoolA.id, rawId);
+    assert.equal(issued.status, 201, JSON.stringify(issued.body));
+    assert.equal(issued.body.expiresInSeconds, 600);
+    assert.equal(issued.body.acceptedCapabilities.includes("kioskLaunchTicketV2"), true);
+    const redeemed = await requestJson(
+      "POST",
+      "/passpilot/kiosk/launch-ticket/redeem",
+      { ticket: issued.body.ticket },
+      kioskHeaders(schoolA.id)
+    );
+    assert.equal(redeemed.status, 200, JSON.stringify(redeemed.body));
+    assert.equal(redeemed.body.deviceId, newDeviceId);
+
+    const migrated = await bindingRow(schoolA.id, newDeviceId);
+    assert.equal(migrated.teacher_id, teacherA.id);
+    assert.equal(migrated.grade_id, gradeA.id);
+    assert.ok(await bindingRow(schoolA.id, legacyDeviceId), "the 2.6.9 row must remain");
+
+    const boot = await requestJson(
+      "POST",
+      "/passpilot/kiosk/session",
+      {},
+      deviceHeaders(schoolA.id, newDeviceId)
+    );
+    assert.deepEqual(boot.body.resume, { kioskName: "Room 204", className: "Class A" });
+  });
+
+  it("keeps an existing V2 association authoritative during legacy migration", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    const service = await import("../dist/services/classpilotKioskLaunchTicket.js");
+    const rawId = `${directoryDeviceId}-conflict`;
+    const legacyDeviceId = service.legacyManagedKioskDeviceId(rawId);
+    const newDeviceId = service.schoolScopedManagedKioskDeviceId(schoolA.id, rawId);
+    await asSystem(() => db.execute(sql`
+      INSERT INTO passpilot_kiosk_devices
+        (id, school_id, teacher_id, class_source, grade_id, classpilot_group_id)
+      VALUES
+        (${legacyDeviceId}, ${schoolA.id}, ${teacherA.id}, 'legacy_grades', ${gradeA.id}, NULL),
+        (${newDeviceId}, ${schoolA.id}, ${teacherB.id}, 'legacy_grades', ${gradeB.id}, NULL)
+      ON CONFLICT (school_id, id) DO UPDATE SET last_used_at = now()
+    `));
+    const issued = await issueV2Ticket(schoolA.id, rawId);
+    const redeemed = await requestJson(
+      "POST",
+      "/passpilot/kiosk/launch-ticket/redeem",
+      { ticket: issued.body.ticket },
+      kioskHeaders(schoolA.id)
+    );
+    assert.equal(redeemed.status, 200);
+    const authoritative = await bindingRow(schoolA.id, newDeviceId);
+    assert.equal(authoritative.teacher_id, teacherB.id);
+    assert.equal(authoritative.grade_id, gradeB.id);
+  });
+
+  it("does not migrate an expired legacy association", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    const service = await import("../dist/services/classpilotKioskLaunchTicket.js");
+    const rawId = `${directoryDeviceId}-expired-binding`;
+    const legacyDeviceId = service.legacyManagedKioskDeviceId(rawId);
+    const newDeviceId = service.schoolScopedManagedKioskDeviceId(schoolA.id, rawId);
+    await asSystem(() => db.execute(sql`
+      INSERT INTO passpilot_kiosk_devices
+        (id, school_id, teacher_id, class_source, grade_id, classpilot_group_id, last_used_at)
+      VALUES
+        (${legacyDeviceId}, ${schoolA.id}, ${teacherA.id}, 'legacy_grades', ${gradeA.id}, NULL, now() - interval '61 days')
+    `));
+    const issued = await issueV2Ticket(schoolA.id, rawId);
+    const redeemed = await requestJson(
+      "POST",
+      "/passpilot/kiosk/launch-ticket/redeem",
+      { ticket: issued.body.ticket },
+      kioskHeaders(schoolA.id)
+    );
+    assert.equal(redeemed.status, 200);
+    assert.equal(await bindingRow(schoolA.id, newDeviceId), undefined);
+    assert.ok(await bindingRow(schoolA.id, legacyDeviceId), "migration does not delete history");
+  });
+
+  it("serializes concurrent V2 redemption to one migration winner", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    const service = await import("../dist/services/classpilotKioskLaunchTicket.js");
+    const rawId = `${directoryDeviceId}-concurrent`;
+    const legacyDeviceId = service.legacyManagedKioskDeviceId(rawId);
+    const newDeviceId = service.schoolScopedManagedKioskDeviceId(schoolA.id, rawId);
+    await asSystem(() => db.execute(sql`
+      INSERT INTO passpilot_kiosk_devices
+        (id, school_id, teacher_id, class_source, grade_id, classpilot_group_id)
+      VALUES
+        (${legacyDeviceId}, ${schoolA.id}, ${teacherA.id}, 'legacy_grades', ${gradeA.id}, NULL)
+    `));
+    const issued = await issueV2Ticket(schoolA.id, rawId);
+    const attempts = await Promise.all([
+      requestJson(
+        "POST",
+        "/passpilot/kiosk/launch-ticket/redeem",
+        { ticket: issued.body.ticket },
+        kioskHeaders(schoolA.id)
+      ),
+      requestJson(
+        "POST",
+        "/passpilot/kiosk/launch-ticket/redeem",
+        { ticket: issued.body.ticket },
+        kioskHeaders(schoolA.id)
+      ),
+    ]);
+    assert.deepEqual(attempts.map((attempt) => attempt.status).sort(), [200, 404]);
+    assert.ok(await bindingRow(schoolA.id, newDeviceId));
+  });
+
+  it("burns a V2 ticket under the wrong school without migrating either tenant", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    const service = await import("../dist/services/classpilotKioskLaunchTicket.js");
+    const rawId = `${directoryDeviceId}-v2-wrong-school`;
+    const legacyDeviceId = service.legacyManagedKioskDeviceId(rawId);
+    const schoolANewDeviceId = service.schoolScopedManagedKioskDeviceId(schoolA.id, rawId);
+    const schoolBNewDeviceId = service.schoolScopedManagedKioskDeviceId(schoolB.id, rawId);
+    await asSystem(() => db.execute(sql`
+      INSERT INTO passpilot_kiosk_devices
+        (id, school_id, teacher_id, class_source, grade_id, classpilot_group_id)
+      VALUES
+        (${legacyDeviceId}, ${schoolA.id}, ${teacherA.id}, 'legacy_grades', ${gradeA.id}, NULL)
+    `));
+    const issued = await issueV2Ticket(schoolA.id, rawId);
+    const wrongSchool = await requestJson(
+      "POST",
+      "/passpilot/kiosk/launch-ticket/redeem",
+      { ticket: issued.body.ticket },
+      {
+        ...kioskHeaders(schoolB.id),
+        "x-forwarded-for": "198.51.100.241",
+      }
+    );
+    assert.equal(wrongSchool.status, 404);
+    assert.equal(await bindingRow(schoolA.id, schoolANewDeviceId), undefined);
+    assert.equal(await bindingRow(schoolB.id, schoolBNewDeviceId), undefined);
+    const replay = await requestJson(
+      "POST",
+      "/passpilot/kiosk/launch-ticket/redeem",
+      { ticket: issued.body.ticket },
+      {
+        ...kioskHeaders(schoolA.id),
+        "x-forwarded-for": "198.51.100.241",
+      }
+    );
+    assert.equal(replay.status, 404);
+  });
+
   it("burns a ticket presented under a different authenticated school", async (t) => {
     if (!schemaReady) return t.skip("migration not applied");
     const issued = await issueTicket(schoolA.id, `${directoryDeviceId}-wrong-school`);
@@ -1574,7 +1985,10 @@ describe("ClassPilot managed kiosk launch tickets", { concurrency: false }, () =
       "POST",
       "/passpilot/kiosk/launch-ticket/redeem",
       { ticket: issued.body.ticket },
-      kioskHeaders(schoolB.id)
+      {
+        ...kioskHeaders(schoolB.id),
+        "x-forwarded-for": "198.51.100.242",
+      }
     );
     assert.equal(wrongSchool.status, 404);
 
@@ -1582,7 +1996,10 @@ describe("ClassPilot managed kiosk launch tickets", { concurrency: false }, () =
       "POST",
       "/passpilot/kiosk/launch-ticket/redeem",
       { ticket: issued.body.ticket },
-      kioskHeaders(schoolA.id)
+      {
+        ...kioskHeaders(schoolA.id),
+        "x-forwarded-for": "198.51.100.242",
+      }
     );
     assert.equal(retryOriginalSchool.status, 404);
   });

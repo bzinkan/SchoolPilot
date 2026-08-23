@@ -113,6 +113,8 @@ export type ClasspilotRealtimeStatus = {
   aiClassification?: ClasspilotRealtimeClassification;
   classificationPending: boolean;
   extensionVersion?: string;
+  /** Client protocol that produced this exact heartbeat snapshot. */
+  clientProtocolVersion?: number;
   /** Server-negotiated protocol capabilities for this exact heartbeat binding. */
   acceptedCapabilities?: string[];
   /** Raw extension feature declarations used only for legacy UI compatibility. */
@@ -153,6 +155,7 @@ export type ClasspilotRealtimeWriteInput = {
   screenshotHealth?: unknown;
   classificationPending?: boolean;
   extensionVersion?: unknown;
+  clientProtocolVersion?: unknown;
   acceptedCapabilities?: unknown;
   extensionCapabilities?: unknown;
   chromeVersion?: unknown;
@@ -550,6 +553,13 @@ function decodeSnapshot(raw: unknown): ClasspilotRealtimeStatus | undefined {
   if (typeof row.extensionVersion === "string") {
     snapshot.extensionVersion = boundedString(row.extensionVersion, 64);
   }
+  if (
+    Number.isSafeInteger(Number(row.clientProtocolVersion))
+    && Number(row.clientProtocolVersion) >= 1
+    && Number(row.clientProtocolVersion) <= 100
+  ) {
+    snapshot.clientProtocolVersion = Number(row.clientProtocolVersion);
+  }
   if (Array.isArray(row.extensionCapabilities)) {
     snapshot.extensionCapabilities = row.extensionCapabilities
       .filter((value): value is string => typeof value === "string" && value.length > 0)
@@ -638,6 +648,7 @@ function activeSnapshot(input: ClasspilotRealtimeWriteInput, now: number): Class
   const activeFlightPathName = optionalString(input.activeFlightPathName, 256);
   const screenshotHealth = normalizeScreenshotHealth(input.screenshotHealth);
   const extensionVersion = optionalString(input.extensionVersion, 64);
+  const clientProtocolVersion = Number(input.clientProtocolVersion);
   const extensionCapabilities = Array.isArray(input.extensionCapabilities)
     ? [...new Set(input.extensionCapabilities
         .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
@@ -655,6 +666,13 @@ function activeSnapshot(input: ClasspilotRealtimeWriteInput, now: number): Class
   if (activeFlightPathName) snapshot.classroomControls.activeFlightPathName = activeFlightPathName;
   if (screenshotHealth) snapshot.screenshotHealth = screenshotHealth;
   if (extensionVersion) snapshot.extensionVersion = extensionVersion;
+  if (
+    Number.isSafeInteger(clientProtocolVersion)
+    && clientProtocolVersion >= 1
+    && clientProtocolVersion <= 100
+  ) {
+    snapshot.clientProtocolVersion = clientProtocolVersion;
+  }
   if (acceptedCapabilities.length > 0) snapshot.acceptedCapabilities = acceptedCapabilities;
   if (extensionCapabilities.length > 0) snapshot.extensionCapabilities = extensionCapabilities;
   if (chromeVersion) snapshot.chromeVersion = chromeVersion;

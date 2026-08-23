@@ -35,6 +35,7 @@ import { serializeClasspilotStudentControlState } from "./classpilotClassroomSta
 import { getSessionStudentBindings } from "./classpilotFab.js";
 import { syncClasspilotControlStatesToActiveDevices } from "./classpilotControlStateDelivery.js";
 import { stopActiveClasspilotLiveViewNegotiations } from "./classpilotLiveViewStop.js";
+import { classpilotClassroomStatePushFrame } from "./classpilotControlStateFrame.js";
 
 export async function publishClasspilotSessionFabStates(options: {
   schoolId: string;
@@ -77,12 +78,17 @@ async function publishControlStateRows(
       ...serializeClasspilotStudentControlState(state),
       ...(teachingSessionIdOverride ? { teachingSessionId: teachingSessionIdOverride } : {}),
     };
-    const message = {
+    const message = classpilotClassroomStatePushFrame({
       type: "classroom-state",
-      studentId: state.studentId,
-      studentSessionId: studentSession.id,
+      binding: {
+        schoolId,
+        deviceId: studentSession.deviceId,
+        studentId: state.studentId,
+        studentSessionId: studentSession.id,
+        controlRevision: state.revision,
+      },
       classroomState,
-    };
+    });
     sendToDeviceLocal(schoolId, studentSession.deviceId, message);
     await publishWS(
       { kind: "device", schoolId, deviceId: studentSession.deviceId },

@@ -406,10 +406,17 @@ export function exactTabCloseCapability(tab) {
       reason: 'This tab was reported by an older extension. Update the student extension to close it individually.',
     };
   }
-  if (!studentSupportsCapability(tab, 'exactTabCloseV1')) {
+  const protocolVersion = Number(tab?.clientProtocolVersion);
+  const requiresV2 = protocolVersion === 3
+    || studentSupportsCapability(tab, 'scopedAuthorityChecksV1')
+    || studentSupportsCapability(tab, 'exactTabCloseV2');
+  const exactCloseCapability = requiresV2 ? 'exactTabCloseV2' : 'exactTabCloseV1';
+  if (!studentSupportsCapability(tab, exactCloseCapability)) {
     return {
       enabled: false,
-      reason: 'Extension update required for exact tab closing.',
+      reason: requiresV2
+        ? 'ClassPilot update required for exact tab closing.'
+        : 'Extension update required for exact tab closing.',
     };
   }
   return { enabled: true, reason: '' };

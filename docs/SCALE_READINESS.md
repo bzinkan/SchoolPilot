@@ -9,8 +9,8 @@
 > forced reconnect, and cross-school isolation smoke checks on managed devices.
 > The public Chrome Web Store listing
 > `iggbfegfcjkfieoemeolfmfnapepalca` was confirmed by the operator and public
-> listing on August 22, 2026 at live version `2.6.9`; the separate ClassPilot
-> repository contains the unpublished `2.7.0` candidate. Re-check the listing
+> listing on August 23, 2026 at live version `2.7.0`; the separate ClassPilot
+> repository contains the coordinated `2.7.1` repair candidate. Re-check the listing
 > at smoke-test and upload time; do not
 > package or upload the extension from this SchoolPilot repository.
 

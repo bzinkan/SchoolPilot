@@ -2,7 +2,10 @@ import { classpilotCommandDeliveryPolicy } from "./classpilotCommandDelivery.js"
 
 function isInternalTargetKey(key: string): boolean {
   const normalized = key.replace(/[_-]/g, "").toLowerCase();
-  return normalized.includes("deviceid") || normalized.includes("studentsessionid");
+  return normalized.includes("deviceid")
+    || normalized.includes("studentsessionid")
+    || normalized.includes("frozencontrolrevision")
+    || normalized.includes("exacttabcloseversion");
 }
 
 function stripInternalTargetIdentifiers(value: unknown): unknown {

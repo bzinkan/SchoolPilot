@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 export const CLASSPILOT_SERVER_PROTOCOL_VERSION = 3 as const;
 
 export const CLASSPILOT_PROTOCOL_V3_CAPABILITIES = [
+  "scopedAuthorityChecksV1",
   "authBoundTelemetryV1",
   "exactBindingAckV2",
   "exactTabCloseV2",
@@ -11,12 +12,14 @@ export const CLASSPILOT_PROTOCOL_V3_CAPABILITIES = [
   "safetyEvidenceCaptureV1",
   "liveViewIceServersV1",
   "kioskLaunchTicketV1",
+  "kioskLaunchTicketV2",
 ] as const;
 
 export type ClasspilotProtocolCapability =
   typeof CLASSPILOT_PROTOCOL_V3_CAPABILITIES[number];
 
 const CAPABILITY_FLAGS: Record<ClasspilotProtocolCapability, string> = {
+  scopedAuthorityChecksV1: "CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1",
   authBoundTelemetryV1: "CLASSPILOT_CAP_AUTH_BOUND_TELEMETRY_V1",
   exactBindingAckV2: "CLASSPILOT_CAP_EXACT_BINDING_ACK_V2",
   exactTabCloseV2: "CLASSPILOT_CAP_EXACT_TAB_CLOSE_V2",
@@ -25,7 +28,14 @@ const CAPABILITY_FLAGS: Record<ClasspilotProtocolCapability, string> = {
   safetyEvidenceCaptureV1: "CLASSPILOT_CAP_SAFETY_EVIDENCE_CAPTURE_V1",
   liveViewIceServersV1: "CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1",
   kioskLaunchTicketV1: "CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V1",
+  kioskLaunchTicketV2: "CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V2",
 };
+
+const SCOPED_AUTHORITY_CAPABILITIES = new Set<ClasspilotProtocolCapability>([
+  "authBoundTelemetryV1",
+  "exactBindingAckV2",
+  "exactTabCloseV2",
+]);
 
 function enabled(value: string | undefined): boolean {
   return /^(1|true|yes|on)$/i.test(value || "");
@@ -203,10 +213,19 @@ export function negotiateClasspilotProtocol(options: {
       : []
   );
   const serverEnabled = enabledClasspilotProtocolCapabilities(options.env, options.scope);
+  const repairedScopedAuthorityAccepted =
+    advertised.has("scopedAuthorityChecksV1")
+    && serverEnabled.has("scopedAuthorityChecksV1");
   return {
     serverProtocolVersion: CLASSPILOT_SERVER_PROTOCOL_VERSION,
     acceptedCapabilities: CLASSPILOT_PROTOCOL_V3_CAPABILITIES.filter(
-      (capability) => advertised.has(capability) && serverEnabled.has(capability)
+      (capability) =>
+        advertised.has(capability)
+        && serverEnabled.has(capability)
+        && (
+          !SCOPED_AUTHORITY_CAPABILITIES.has(capability)
+          || repairedScopedAuthorityAccepted
+        )
     ),
   };
 }

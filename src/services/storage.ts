@@ -28,7 +28,10 @@ import {
 import { isPersistentClasspilotControl } from "./classpilotCommandDelivery.js";
 import { assertClasspilotEntitled } from "./classpilotEntitlement.js";
 import { assertGopilotEntitled } from "./gopilotEntitlement.js";
-import { isExactIdempotentStudentMessage } from "./classpilotStudentChat.js";
+import {
+  isCurrentClasspilotStudentMessageSession,
+  isExactIdempotentStudentMessage,
+} from "./classpilotStudentChat.js";
 import { assertClasspilotScreenshotEvidenceAuthority } from "./classpilotEvidenceAuthority.js";
 import {
   assertClasspilotHistoryFallbackPiStatementDiscoverable,
@@ -3957,6 +3960,110 @@ export async function deleteKioskDeviceBinding(
         eq(passpilotKioskDevices.id, deviceId)
       )
     );
+}
+
+export type KioskManagedIdentityMigrationOutcome =
+  | "migrated"
+  | "new_binding_exists"
+  | "legacy_binding_unavailable";
+
+const KIOSK_DEVICE_UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * Copies the exact 2.6.9 managed-device binding to the school-scoped V2 id.
+ * The school advisory lock serializes this with every kiosk binding writer.
+ * The legacy row remains intact for mixed-version rollback compatibility.
+ */
+export async function migrateLegacyKioskDeviceBinding(
+  schoolId: string,
+  deviceId: string,
+  legacyDeviceId: string
+): Promise<KioskManagedIdentityMigrationOutcome> {
+  if (
+    !KIOSK_DEVICE_UUID_PATTERN.test(deviceId)
+    || !KIOSK_DEVICE_UUID_PATTERN.test(legacyDeviceId)
+    || deviceId === legacyDeviceId
+  ) {
+    return "legacy_binding_unavailable";
+  }
+
+  return db.transaction(async (tx) => {
+    await takePasspilotClassLock(tx, schoolId);
+    const bindings = await tx
+      .select()
+      .from(passpilotKioskDevices)
+      .where(
+        and(
+          eq(passpilotKioskDevices.schoolId, schoolId),
+          inArray(passpilotKioskDevices.id, [deviceId, legacyDeviceId])
+        )
+      )
+      .orderBy(asc(passpilotKioskDevices.id))
+      .for("update");
+
+    if (bindings.some((binding) => binding.id === deviceId)) {
+      return "new_binding_exists";
+    }
+    const legacy = bindings.find((binding) => binding.id === legacyDeviceId);
+    if (
+      !legacy
+      || legacy.lastUsedAt.getTime() <= Date.now() - 60 * 24 * 60 * 60 * 1_000
+    ) {
+      return "legacy_binding_unavailable";
+    }
+
+    const [membership] = await tx
+      .select({ role: schoolMemberships.role })
+      .from(schoolMemberships)
+      .where(
+        and(
+          eq(schoolMemberships.schoolId, schoolId),
+          eq(schoolMemberships.userId, legacy.teacherId),
+          eq(schoolMemberships.status, "active"),
+          inArray(schoolMemberships.role, [
+            "admin",
+            "school_admin",
+            "office_staff",
+            "teacher",
+          ])
+        )
+      )
+      .limit(1);
+    if (!membership) return "legacy_binding_unavailable";
+
+    const target = kioskSessionClassTarget(legacy);
+    if (target) {
+      try {
+        await lockAndAssertKioskClassSource(tx, schoolId, target.source);
+        await assertKioskSessionClassTarget(tx, schoolId, target, {
+          actorUserId: legacy.teacherId,
+          manager: membership.role !== "teacher",
+        });
+      } catch (error) {
+        const code = error && typeof error === "object"
+          ? (error as { code?: unknown }).code
+          : undefined;
+        if (
+          typeof code === "string"
+          && (code.startsWith("PASSPILOT_") || code === "CLASSES_MANAGED_IN_CLASSPILOT")
+        ) {
+          return "legacy_binding_unavailable";
+        }
+        throw error;
+      }
+    }
+
+    await tx.insert(passpilotKioskDevices).values({
+      id: deviceId,
+      schoolId,
+      teacherId: legacy.teacherId,
+      classSource: legacy.classSource,
+      gradeId: legacy.gradeId,
+      classpilotGroupId: legacy.classpilotGroupId,
+    });
+    return "migrated";
+  });
 }
 
 // The device presents X-Kiosk-Device on bootstrap. Stamp the session with it
@@ -14994,8 +15101,19 @@ export async function createAuthorizedClasspilotStudentMessage(options: {
   deviceId: string;
   content: string;
   clientMessageId?: string | null;
+  teachingSessionId?: string | null;
 }): Promise<{ student: Student; teachingSession: TeachingSession; message: ChatMessage; created: boolean }> {
   return withAuthorizedStudentFabMutation({ ...options, feature: "chat" }, async (transactionDb, authority) => {
+    if (!isCurrentClasspilotStudentMessageSession(
+      options.teachingSessionId,
+      authority.teachingSession.id
+    )) {
+      throw classpilotFabMutationError(
+        409,
+        "student_message_session_superseded",
+        "Student message belongs to a teaching session that is no longer active"
+      );
+    }
     const [message] = await transactionDb.insert(chatMessages).values({
       schoolId: options.schoolId,
       sessionId: authority.teachingSession.id,
@@ -16084,6 +16202,78 @@ export type ClasspilotCommandPollMutation =
   | { action: "start"; pollId: string; question: string; options: string[] }
   | { action: "close"; pollId: string };
 
+function frozenClasspilotCommandTargetResult(
+  commandData: InsertClasspilotCommand,
+  target: InsertClasspilotCommandTarget,
+  controlRevision: number
+): InsertClasspilotCommandTarget["result"] {
+  const commandPayload = commandData.commandPayload
+    && typeof commandData.commandPayload === "object"
+    && !Array.isArray(commandData.commandPayload)
+    ? commandData.commandPayload as Record<string, unknown>
+    : {};
+  const freezesExactTabAuthority = commandData.commandType === "close-tabs"
+    && Array.isArray(commandPayload.tabsToClose);
+  const freezesDurableMessageAuthority = commandData.commandType === "teacher-message";
+  if (!freezesExactTabAuthority && !freezesDurableMessageAuthority) return target.result;
+  return {
+    ...(target.result && typeof target.result === "object" && !Array.isArray(target.result)
+      ? target.result as Record<string, unknown>
+      : {}),
+    ...(freezesDurableMessageAuthority
+      ? { durableAuthorityRevision: controlRevision }
+      : {}),
+    ...(freezesExactTabAuthority
+      ? { frozenControlRevision: controlRevision }
+      : {}),
+  };
+}
+
+const classpilotCommandAuthorityResultKeys = [
+  "exactTabCloseVersion",
+  "frozenControlRevision",
+  "durableAuthorityRevision",
+] as const;
+
+/**
+ * Command-target result JSON contains both extension-supplied outcome data and
+ * server-frozen authority metadata. ACK payloads are untrusted and must never
+ * be able to replace (or invent) the authority fields used by later ACKs.
+ */
+function classpilotCommandAckResult(
+  existingResult: unknown,
+  receivedResult: unknown,
+  preserveExistingWhenMissing: boolean
+): unknown {
+  const existingRecord = existingResult
+    && typeof existingResult === "object"
+    && !Array.isArray(existingResult)
+    ? existingResult as Record<string, unknown>
+    : {};
+  const frozenAuthority: Record<string, unknown> = {};
+  for (const key of classpilotCommandAuthorityResultKeys) {
+    if (Object.prototype.hasOwnProperty.call(existingRecord, key)) {
+      frozenAuthority[key] = existingRecord[key];
+    }
+  }
+
+  const candidate = receivedResult !== undefined && receivedResult !== null
+    ? receivedResult
+    : preserveExistingWhenMissing
+      ? existingResult
+      : null;
+  const hasFrozenAuthority = Object.keys(frozenAuthority).length > 0;
+  if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+    const sanitized = { ...(candidate as Record<string, unknown>) };
+    for (const key of classpilotCommandAuthorityResultKeys) delete sanitized[key];
+    return hasFrozenAuthority ? { ...sanitized, ...frozenAuthority } : sanitized;
+  }
+  if (!hasFrozenAuthority) return candidate;
+  return candidate === null || candidate === undefined
+    ? frozenAuthority
+    : { ackResult: candidate, ...frozenAuthority };
+}
+
 export async function createClasspilotCommandWithTargets(
   commandData: InsertClasspilotCommand,
   targetData: InsertClasspilotCommandTarget[],
@@ -16235,17 +16425,12 @@ export async function createClasspilotCommandWithTargets(
               : "Student extension binding changed before dispatch",
           };
         }
-        return commandData.commandType === "teacher-message"
-          ? {
-              ...target,
-              result: {
-                ...(target.result && typeof target.result === "object" && !Array.isArray(target.result)
-                  ? target.result as Record<string, unknown>
-                  : {}),
-                durableAuthorityRevision: control!.revision,
-              },
-            }
-          : target;
+        const result = frozenClasspilotCommandTargetResult(
+          commandData,
+          target,
+          control!.revision
+        );
+        return result === target.result ? target : { ...target, result };
       });
       } else {
         await lockClasspilotStudentControlAuthorities(authority.schoolId, studentIds, transactionDb);
@@ -16348,17 +16533,12 @@ export async function createClasspilotCommandWithTargets(
                 : "Student extension binding changed before dispatch",
             };
           }
-          return commandData.commandType === "teacher-message"
-            ? {
-                ...target,
-                result: {
-                  ...(target.result && typeof target.result === "object" && !Array.isArray(target.result)
-                    ? target.result as Record<string, unknown>
-                    : {}),
-                  durableAuthorityRevision: control!.revision,
-                },
-              }
-            : target;
+          const result = frozenClasspilotCommandTargetResult(
+            commandData,
+            target,
+            control!.revision
+          );
+          return result === target.result ? target : { ...target, result };
         });
       }
       commandData = {
@@ -16466,6 +16646,156 @@ export async function createClasspilotCommandWithTargets(
     }
     throw error;
   }
+}
+
+/**
+ * Revalidate protocol-v3 exact-tab targets immediately before dispatch. The
+ * command transaction freezes the control revision; this second transaction
+ * proves that the same school/student/session/device authority still owns the
+ * student after command persistence and before a device frame is emitted.
+ */
+export async function revalidateClasspilotExactCommandTargetsForDispatch(options: {
+  schoolId: string;
+  commandId: string;
+  studentIds: readonly string[];
+}): Promise<ClasspilotCommandTarget[]> {
+  const requestedStudentIds = [...new Set(
+    options.studentIds.map(String).map((value) => value.trim()).filter(Boolean)
+  )];
+  if (requestedStudentIds.length === 0) return [];
+
+  return db.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    await assertClasspilotEntitled(options.schoolId, transactionDb, { lock: true });
+    const [command] = await tx
+      .select({
+        id: classpilotCommands.id,
+        commandType: classpilotCommands.commandType,
+        teachingSessionId: classpilotCommands.teachingSessionId,
+        supervisionContextId: classpilotCommands.supervisionContextId,
+      })
+      .from(classpilotCommands)
+      .where(and(
+        eq(classpilotCommands.id, options.commandId),
+        eq(classpilotCommands.schoolId, options.schoolId)
+      ))
+      .limit(1);
+    if (!command || command.commandType !== "close-tabs") return [];
+
+    await lockClasspilotStudentControlAuthorities(
+      options.schoolId,
+      requestedStudentIds,
+      transactionDb
+    );
+    const targets = await tx
+      .select()
+      .from(classpilotCommandTargets)
+      .where(and(
+        eq(classpilotCommandTargets.schoolId, options.schoolId),
+        eq(classpilotCommandTargets.commandId, options.commandId),
+        inArray(classpilotCommandTargets.studentId, requestedStudentIds)
+      ))
+      .orderBy(classpilotCommandTargets.createdAt)
+      .for("update");
+
+    let changed = false;
+    const revalidated: ClasspilotCommandTarget[] = [];
+    for (const target of targets) {
+      if (
+        target.status === "unavailable"
+        || !target.studentSessionId
+        || !target.deviceId
+      ) {
+        revalidated.push(target);
+        continue;
+      }
+      const frozenControlRevision = target.result
+        && typeof target.result === "object"
+        && !Array.isArray(target.result)
+        && Number.isSafeInteger(
+          (target.result as Record<string, unknown>).frozenControlRevision
+        )
+        ? Number((target.result as Record<string, unknown>).frozenControlRevision)
+        : undefined;
+      const bindingCurrent = frozenControlRevision !== undefined
+        && await hasExactClasspilotTelemetryBinding({
+          schoolId: options.schoolId,
+          studentId: target.studentId,
+          studentSessionId: target.studentSessionId,
+          deviceId: target.deviceId,
+        }, transactionDb);
+      const authorityCurrent = bindingCurrent
+        && await hasCurrentClasspilotStudentControlAuthority({
+          schoolId: options.schoolId,
+          studentId: target.studentId,
+          teachingSessionId: command.teachingSessionId,
+          supervisionContextId: command.supervisionContextId,
+          ownershipRevision: frozenControlRevision,
+        }, transactionDb);
+      if (bindingCurrent && authorityCurrent) {
+        revalidated.push(target);
+        continue;
+      }
+
+      const [unavailable] = await tx
+        .update(classpilotCommandTargets)
+        .set({
+          status: "unavailable",
+          errorMessage: bindingCurrent
+            ? "Student control authority changed before dispatch"
+            : "Student extension binding changed before dispatch",
+          updatedAt: new Date(),
+        })
+        .where(and(
+          eq(classpilotCommandTargets.id, target.id),
+          ne(classpilotCommandTargets.status, "unavailable")
+        ))
+        .returning();
+      revalidated.push(unavailable ?? target);
+      changed ||= !!unavailable;
+    }
+    if (changed) await updateClasspilotCommandSummary(options.commandId, transactionDb);
+    return revalidated;
+  });
+}
+
+/** Freeze/recheck the complete internal authority tuple for an exact safety
+ * close. School-policy safety actions do not require classroom ownership, but
+ * they still require the same active student/session/device binding and the
+ * same control revision observed by the classified heartbeat. */
+export async function revalidateClasspilotSafetyExactBinding(options: {
+  schoolId: string;
+  studentId: string;
+  studentSessionId: string;
+  deviceId: string;
+  expectedControlRevision: number;
+}): Promise<{ controlRevision: number } | undefined> {
+  if (!Number.isSafeInteger(options.expectedControlRevision) || options.expectedControlRevision < 0) {
+    return undefined;
+  }
+  return db.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    await assertClasspilotEntitled(options.schoolId, transactionDb, { lock: true });
+    await lockClasspilotStudentControlAuthorities(
+      options.schoolId,
+      [options.studentId],
+      transactionDb
+    );
+    if (!(await hasExactClasspilotTelemetryBinding(options, transactionDb))) return undefined;
+    const [state] = await tx
+      .select({ revision: classpilotStudentControlStates.revision })
+      .from(classpilotStudentControlStates)
+      .where(and(
+        eq(classpilotStudentControlStates.schoolId, options.schoolId),
+        eq(classpilotStudentControlStates.studentId, options.studentId)
+      ))
+      .limit(1)
+      .for("share");
+    const controlRevision = state?.revision ?? 0;
+    return controlRevision === options.expectedControlRevision
+      ? { controlRevision }
+      : undefined;
+  });
 }
 
 export async function updateClasspilotCommandSummary(
@@ -16643,7 +16973,34 @@ export async function expireClasspilotTransientCommandTargets(
   return commandIds;
 }
 
-export async function updateClasspilotCommandTargetAck(options: {
+export type ClasspilotCommandAckTerminalCode =
+  | "COMMAND_ACK_MALFORMED"
+  | "COMMAND_ACK_BINDING_MISMATCH"
+  | "COMMAND_ACK_TARGET_GONE"
+  | "COMMAND_ACK_TARGET_EXPIRED"
+  | "COMMAND_ACK_INVALID_TRANSITION";
+
+export type ClasspilotCommandAckPersistenceResult =
+  | {
+      disposition: "applied";
+      retryable: false;
+      code: "COMMAND_ACK_APPLIED";
+      target: ClasspilotCommandTarget;
+    }
+  | {
+      disposition: "idempotent";
+      retryable: false;
+      code: "COMMAND_ACK_IDEMPOTENT";
+      target: ClasspilotCommandTarget;
+    }
+  | {
+      disposition: "terminal_rejected";
+      retryable: false;
+      code: ClasspilotCommandAckTerminalCode;
+      target?: ClasspilotCommandTarget;
+    };
+
+export type ClasspilotCommandAckOptions = {
   commandId: string;
   schoolId: string;
   deviceId: string;
@@ -16652,8 +17009,13 @@ export async function updateClasspilotCommandTargetAck(options: {
   ackState: "received" | "completed" | "failed" | "expired";
   result?: unknown;
   errorMessage?: string | null;
+  controlRevision?: number;
   now?: Date;
-}): Promise<ClasspilotCommandTarget | undefined> {
+};
+
+export async function persistClasspilotCommandTargetAck(
+  options: ClasspilotCommandAckOptions
+): Promise<ClasspilotCommandAckPersistenceResult> {
   const now = options.now || new Date();
   return db.transaction(async (tx) => {
     const transactionDb = tx as unknown as typeof db;
@@ -16663,31 +17025,6 @@ export async function updateClasspilotCommandTargetAck(options: {
       [options.studentId],
       transactionDb
     );
-    if (!(await hasExactClasspilotTelemetryBinding(options, transactionDb))) return undefined;
-    const identityConditions = [
-      eq(classpilotCommandTargets.commandId, options.commandId),
-      eq(classpilotCommandTargets.schoolId, options.schoolId),
-      eq(classpilotCommandTargets.deviceId, options.deviceId),
-      eq(classpilotCommandTargets.studentId, options.studentId),
-      eq(classpilotCommandTargets.studentSessionId, options.studentSessionId),
-      eq(classpilotCommands.id, classpilotCommandTargets.commandId),
-      eq(classpilotCommands.schoolId, options.schoolId),
-      sql`exists (
-        select 1
-        from ${studentSessions} as authenticated_session
-        join ${students} as authenticated_student
-          on authenticated_student.id = authenticated_session.student_id
-         and authenticated_student.school_id = ${options.schoolId}
-        join ${devices} as authenticated_device
-          on authenticated_device.device_id = authenticated_session.device_id
-         and authenticated_device.school_id = ${options.schoolId}
-        where authenticated_session.id = ${options.studentSessionId}
-          and authenticated_session.student_id = ${options.studentId}
-          and authenticated_session.device_id = ${options.deviceId}
-          and authenticated_session.is_active = true
-          and authenticated_session.ended_at is null
-      )`,
-    ];
     const [binding] = await tx
       .select({
         target: getTableColumns(classpilotCommandTargets),
@@ -16698,18 +17035,90 @@ export async function updateClasspilotCommandTargetAck(options: {
       })
       .from(classpilotCommandTargets)
       .innerJoin(classpilotCommands, eq(classpilotCommands.id, classpilotCommandTargets.commandId))
-      .where(and(...identityConditions))
+      .where(and(
+        eq(classpilotCommandTargets.commandId, options.commandId),
+        eq(classpilotCommandTargets.schoolId, options.schoolId),
+        eq(classpilotCommandTargets.studentId, options.studentId),
+        eq(classpilotCommands.schoolId, options.schoolId)
+      ))
       .limit(1)
       .for("update");
     // ACKs never create or replace authority. Durable offline messages acquire
     // their first exact binding when a heartbeat claims them below; this path
     // may only advance the command target already frozen to the authenticated
     // school/student/session/device tuple.
-    if (!binding) return undefined;
+    if (!binding) {
+      return {
+        disposition: "terminal_rejected" as const,
+        retryable: false as const,
+        code: "COMMAND_ACK_TARGET_GONE" as const,
+      };
+    }
 
     const target = binding.target;
-    if (target.status === "failed" && target.ackState === "failed" && options.ackState === "failed") {
-      return target;
+    if (
+      target.deviceId !== options.deviceId
+      || target.studentSessionId !== options.studentSessionId
+      || !(await hasExactClasspilotTelemetryBinding(options, transactionDb))
+    ) {
+      return {
+        disposition: "terminal_rejected" as const,
+        retryable: false as const,
+        code: "COMMAND_ACK_BINDING_MISMATCH" as const,
+        target,
+      };
+    }
+    const frozenResult = target.result
+      && typeof target.result === "object"
+      && !Array.isArray(target.result)
+      ? target.result as Record<string, unknown>
+      : {};
+    const exactTabCloseV2 = frozenResult.exactTabCloseVersion === 2;
+    const frozenControlRevision = Number.isSafeInteger(frozenResult.frozenControlRevision)
+      ? Number(frozenResult.frozenControlRevision)
+      : undefined;
+    if (
+      exactTabCloseV2
+      && (
+        frozenControlRevision === undefined
+        || !Number.isSafeInteger(options.controlRevision)
+        || options.controlRevision !== frozenControlRevision
+      )
+    ) {
+      const [unavailable] = await tx
+        .update(classpilotCommandTargets)
+        .set({
+          status: "unavailable",
+          errorMessage: "Exact tab control authority changed before acknowledgement",
+          updatedAt: now,
+        })
+        .where(and(
+          eq(classpilotCommandTargets.id, target.id),
+          inArray(classpilotCommandTargets.status, ["requested", "sent", "received"])
+        ))
+        .returning();
+      return {
+        disposition: "terminal_rejected" as const,
+        retryable: false as const,
+        code: "COMMAND_ACK_BINDING_MISMATCH" as const,
+        target: unavailable ?? target,
+      };
+    }
+    if (target.status === "unavailable") {
+      return {
+        disposition: "terminal_rejected" as const,
+        retryable: false as const,
+        code: "COMMAND_ACK_TARGET_GONE" as const,
+        target,
+      };
+    }
+    if (target.ackState === options.ackState && target.status === options.ackState) {
+      return {
+        disposition: "idempotent" as const,
+        retryable: false as const,
+        code: "COMMAND_ACK_IDEMPOTENT" as const,
+        target,
+      };
     }
     if (binding.commandType === "teacher-message") {
       const durableAuthorityRevision = binding.target.result
@@ -16731,7 +17140,14 @@ export async function updateClasspilotCommandTargetAck(options: {
         // A stale-scope failure is terminal and suppresses future durable
         // heartbeat delivery. Never accept a completed/received ACK after the
         // immutable command authority ceased to control this student.
-        if (options.ackState !== "failed") return undefined;
+        if (options.ackState !== "failed") {
+          return {
+            disposition: "terminal_rejected" as const,
+            retryable: false as const,
+            code: "COMMAND_ACK_INVALID_TRANSITION" as const,
+            target,
+          };
+        }
       } else if (options.ackState === "failed") {
         // The extension reports persistence/notification failures through the
         // legacy `failed` ACK state. While authority is still current, receipt
@@ -16742,14 +17158,20 @@ export async function updateClasspilotCommandTargetAck(options: {
           .set({
             status: target.receivedAt ? "received" : "sent",
             ackState: target.receivedAt ? "received" : null,
-            result: options.result ?? target.result ?? null,
+            result: classpilotCommandAckResult(target.result, options.result, true),
             errorMessage: options.errorMessage || "Student inbox persistence failed; delivery will retry",
             failedAt: null,
             updatedAt: now,
           })
           .where(eq(classpilotCommandTargets.id, target.id))
           .returning();
-        return retryableTarget;
+        if (!retryableTarget) throw new Error("Failed to persist ClassPilot command ACK");
+        return {
+          disposition: "applied" as const,
+          retryable: false as const,
+          code: "COMMAND_ACK_APPLIED" as const,
+          target: retryableTarget,
+        };
       }
     }
     const deadline = binding.commandExpiresAt;
@@ -16759,24 +17181,49 @@ export async function updateClasspilotCommandTargetAck(options: {
       && target.receivedAt.getTime() <= deadline.getTime();
 
     if (options.ackState === "expired") {
-      if (!deadlinePassed || target.receivedAt) return undefined;
+      if (!deadlinePassed || target.receivedAt) {
+        return {
+          disposition: "terminal_rejected" as const,
+          retryable: false as const,
+          code: "COMMAND_ACK_INVALID_TRANSITION" as const,
+          target,
+        };
+      }
       if (target.status === "expired") {
-        if (target.ackState === "expired") return target;
+        if (target.ackState === "expired") {
+          return {
+            disposition: "idempotent" as const,
+            retryable: false as const,
+            code: "COMMAND_ACK_IDEMPOTENT" as const,
+            target,
+          };
+        }
       } else if (!(["requested", "sent"] as string[]).includes(target.status)) {
-        return undefined;
+        return {
+          disposition: "terminal_rejected" as const,
+          retryable: false as const,
+          code: "COMMAND_ACK_INVALID_TRANSITION" as const,
+          target,
+        };
       }
       const [expiredTarget] = await tx
         .update(classpilotCommandTargets)
         .set({
           status: "expired",
           ackState: "expired",
-          result: options.result ?? target.result ?? null,
+          result: classpilotCommandAckResult(target.result, options.result, true),
           errorMessage: options.errorMessage || "Not delivered before command expired",
           updatedAt: now,
         })
         .where(eq(classpilotCommandTargets.id, target.id))
         .returning();
-      return expiredTarget;
+      if (!expiredTarget) throw new Error("Failed to persist ClassPilot command ACK");
+      return {
+        disposition: "applied" as const,
+        retryable: false as const,
+        code: "COMMAND_ACK_APPLIED" as const,
+        target: expiredTarget,
+      };
     }
 
     if (deadlinePassed && options.ackState === "received") {
@@ -16790,9 +17237,20 @@ export async function updateClasspilotCommandTargetAck(options: {
           })
           .where(eq(classpilotCommandTargets.id, target.id))
           .returning();
-        return expiredTarget;
+        if (!expiredTarget) throw new Error("Failed to expire ClassPilot command target");
+        return {
+          disposition: "terminal_rejected" as const,
+          retryable: false as const,
+          code: "COMMAND_ACK_TARGET_EXPIRED" as const,
+          target: expiredTarget,
+        };
       }
-      return undefined;
+      return {
+        disposition: "terminal_rejected" as const,
+        retryable: false as const,
+        code: "COMMAND_ACK_TARGET_EXPIRED" as const,
+        target,
+      };
     }
 
     if (
@@ -16810,9 +17268,20 @@ export async function updateClasspilotCommandTargetAck(options: {
           })
           .where(eq(classpilotCommandTargets.id, target.id))
           .returning();
-        return expiredTarget;
+        if (!expiredTarget) throw new Error("Failed to expire ClassPilot command target");
+        return {
+          disposition: "terminal_rejected" as const,
+          retryable: false as const,
+          code: "COMMAND_ACK_TARGET_EXPIRED" as const,
+          target: expiredTarget,
+        };
       }
-      return undefined;
+      return {
+        disposition: "terminal_rejected" as const,
+        retryable: false as const,
+        code: "COMMAND_ACK_TARGET_EXPIRED" as const,
+        target,
+      };
     }
 
     const allowedStatuses: ClasspilotCommandTarget["status"][] = options.ackState === "received"
@@ -16834,18 +17303,33 @@ export async function updateClasspilotCommandTargetAck(options: {
           })
           .where(eq(classpilotCommandTargets.id, target.id))
           .returning();
-        return failedTarget;
+        if (!failedTarget) throw new Error("Failed to persist ClassPilot command ACK");
+        return {
+          disposition: "applied" as const,
+          retryable: false as const,
+          code: "COMMAND_ACK_APPLIED" as const,
+          target: failedTarget,
+        };
       }
-      return undefined;
+      return {
+        disposition: "terminal_rejected" as const,
+        retryable: false as const,
+        code: target.status === "expired"
+          ? "COMMAND_ACK_TARGET_EXPIRED" as const
+          : "COMMAND_ACK_INVALID_TRANSITION" as const,
+        target,
+      };
     }
 
     const status = options.ackState === "failed" ? "failed" : options.ackState;
     const update: PgUpdateSetSource<typeof classpilotCommandTargets> = {
       status,
       ackState: options.ackState,
-      result: options.ackState === "received"
-        ? options.result ?? target.result ?? null
-        : options.result ?? null,
+      result: classpilotCommandAckResult(
+        target.result,
+        options.result,
+        options.ackState === "received"
+      ),
       errorMessage: options.errorMessage || null,
       updatedAt: now,
     };
@@ -16863,8 +17347,28 @@ export async function updateClasspilotCommandTargetAck(options: {
       .set(update)
       .where(eq(classpilotCommandTargets.id, target.id))
       .returning();
-    return updatedTarget;
+    if (!updatedTarget) throw new Error("Failed to persist ClassPilot command ACK");
+    return {
+      disposition: "applied" as const,
+      retryable: false as const,
+      code: "COMMAND_ACK_APPLIED" as const,
+      target: updatedTarget,
+    };
   });
+}
+
+/** Compatibility adapter for existing internal callers. New transport
+ * receipts use persistClasspilotCommandTargetAck() so terminal outcomes can
+ * drain an exact matching 2.7.1 outbox entry without pretending the ACK was
+ * applied. */
+export async function updateClasspilotCommandTargetAck(
+  options: ClasspilotCommandAckOptions
+): Promise<ClasspilotCommandTarget | undefined> {
+  const outcome = await persistClasspilotCommandTargetAck(options);
+  if (outcome.disposition !== "terminal_rejected") return outcome.target;
+  return outcome.code === "COMMAND_ACK_TARGET_EXPIRED"
+    ? outcome.target
+    : undefined;
 }
 
 export async function getClasspilotCommandByIdAndSchool(
