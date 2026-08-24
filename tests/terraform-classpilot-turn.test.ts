@@ -106,6 +106,11 @@ describe("ClassPilot AWS TURN infrastructure contract", () => {
     assert.match(userData, /NoNewPrivileges=true/);
     assert.match(userData, /openssl s_client -connect 127\.0\.0\.1:443/);
     assert.match(userData, /classpilot-turn-relay-metrics\.py --self-test/);
+    assert.match(
+      userData,
+      /# The aggregate collector needs coturn's moderate session lifecycle records\.[\s\S]*?\nverbose\nlog-file=\/var\/log\/turnserver\/turn\.log\nsimple-log/
+    );
+    assert.doesNotMatch(userData, /\nVerbose\n/);
     assert.match(main, /refresh-certificate\.sh/);
     assert.match(
       main,

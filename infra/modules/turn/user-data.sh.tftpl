@@ -69,6 +69,10 @@ no-multicast-peers
 stale-nonce=600
 total-quota=1200
 user-quota=12
+# The aggregate collector needs coturn's moderate session lifecycle records.
+# Raw lines remain node-local under the bounded logrotate policy below; only
+# identifier-free counters are published to CloudWatch.
+verbose
 log-file=/var/log/turnserver/turn.log
 simple-log
 EOF

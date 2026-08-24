@@ -232,6 +232,15 @@ timer is enabled. The CloudWatch agent attaches the custom `Node` dimension in
 the `net` metric block; post-provisioning validation must find recent network
 datapoints for both `Node=a` and `Node=b` before TURN activation.
 
+Coturn must retain moderate `verbose` logging so the collector receives
+allocation and session-usage lifecycle rows. Those raw rows remain only in the
+node-local, seven-day rotated log and are never forwarded to CloudWatch. TURN
+REST usernames are expiry plus a non-identifying digest; do not replace them
+with school, student, device, or session identifiers. Activation validation
+must perform an authenticated relay, run the collector, and observe a fresh
+aggregate `AllocationCount` datapoint rather than accepting service health
+alone as telemetry proof.
+
 EC2 accepts at most 16 KiB of decoded user data. The certificate-refresh and
 relay-metrics helpers are therefore LF-normalized, gzip-compressed, and
 base64-encoded before Terraform renders them into the bootstrap. Keep the
