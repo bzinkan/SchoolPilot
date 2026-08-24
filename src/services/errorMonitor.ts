@@ -13,6 +13,7 @@ import {
   type MonitorAggregationAdapter,
   type MonitorAggregationStatus,
 } from "./monitorAggregation.js";
+import { resolveStaffLifecycleGuardCode } from "./staffLifecycleGuardSignal.js";
 
 export type { MonitorAggregationAdapter, MonitorAggregationStatus } from "./monitorAggregation.js";
 
@@ -39,7 +40,9 @@ export type ErrorCategory =
   | "database_connectivity"
   | "health_failure"
   | "browser_runtime_error"
-  | "extension_runtime_error";
+  | "extension_runtime_error"
+  | "staff_identity_integrity"
+  | "staff_lifecycle_guard_violation";
 
 export type MonitorPriority = "low" | "normal" | "high" | "critical";
 
@@ -214,6 +217,8 @@ const THRESHOLDS: Record<ErrorCategory, number> = {
   health_failure: 1,
   browser_runtime_error: 10,
   extension_runtime_error: 25,
+  staff_identity_integrity: 1,
+  staff_lifecycle_guard_violation: 3,
 };
 
 const COOLDOWNS: Record<ErrorCategory, number> = {
@@ -228,6 +233,8 @@ const COOLDOWNS: Record<ErrorCategory, number> = {
   health_failure: 60 * 60 * 1000,
   browser_runtime_error: 30 * 60 * 1000,
   extension_runtime_error: 30 * 60 * 1000,
+  staff_identity_integrity: 6 * 60 * 60 * 1000,
+  staff_lifecycle_guard_violation: 15 * 60 * 1000,
 };
 
 const SAFE_CONTEXT_KEYS: SafeContextKey[] = [
@@ -392,7 +399,12 @@ function priorityRank(priority: MonitorPriority): number {
 
 function defaultPriority(category: ErrorCategory): MonitorPriority {
   if (category === "fatal_process_error" || category === "security_event") return "critical";
-  if (category === "database_connectivity" || category === "health_failure") return "high";
+  if (
+    category === "database_connectivity" ||
+    category === "health_failure" ||
+    category === "staff_identity_integrity" ||
+    category === "staff_lifecycle_guard_violation"
+  ) return "high";
   if (category === "client_error") return "low";
   return "normal";
 }
@@ -751,6 +763,31 @@ export class ErrorMonitor {
     context?: Record<string, unknown>,
     options: MonitorEventOptions = {}
   ): void {
+    if (category === "client_error") {
+      const guardCode = resolveStaffLifecycleGuardCode(error);
+      if (guardCode) {
+        // This secondary signal is deliberately detached from request, school,
+        // user, membership, and resource context. Redis-backed monitor
+        // aggregation alerts only after three matching guard outcomes in the
+        // five-minute window.
+        this.trackError(
+          "staff_lifecycle_guard_violation",
+          new Error("Staff lifecycle guard rejected an invalid ownership mutation"),
+          {
+            job: "staffLifecycleGuard",
+            eventType: "staff_lifecycle_guard_violation",
+            errorCode: guardCode,
+            source: "api_error_monitor",
+          },
+          {
+            persist: false,
+            alert: options.alert,
+            priority: "high",
+          }
+        );
+      }
+    }
+
     const event = normalizeMonitorEvent(category, error, context, this.now(), options);
 
     const fingerprint = this.recordEvent(event);

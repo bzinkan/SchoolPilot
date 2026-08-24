@@ -349,10 +349,52 @@ async function testCanonicalRosterCreate(browser) {
 async function testStaffMembershipMutations(browser) {
   const membershipId = 'membership-created';
   const userId = 'user-created';
+  const replacementMembershipId = 'membership-replacement';
+  const formerMembershipId = 'membership-former';
+  const adminMembershipId = 'membership-base-admin';
   const mutationPaths = [];
-  let createBody = null;
+  const createBodies = [];
+  const transitionBodies = [];
+  let emailPatchCount = 0;
+  let impactGetCount = 0;
+  let transitionPostCount = 0;
   let updateBody = null;
-  let staffRows = [];
+  let adminUpdateBody = null;
+  let staffRows = [
+    {
+      id: membershipId,
+      userId,
+      role: 'teacher',
+      gopilotRole: null,
+      status: 'active',
+      user: { id: userId, email: 'avery.staff@example.invalid', firstName: 'Avery', lastName: 'Membership' },
+    },
+    {
+      id: replacementMembershipId,
+      userId: 'user-replacement',
+      role: 'parent',
+      gopilotRole: 'teacher',
+      status: 'active',
+      user: { id: 'user-replacement', email: 'bailey@example.invalid', firstName: 'Bailey', lastName: 'Replacement' },
+    },
+    {
+      id: adminMembershipId,
+      userId: 'user-base-admin',
+      role: 'admin',
+      gopilotRole: null,
+      status: 'active',
+      user: { id: 'user-base-admin', email: 'admin-base@example.invalid', firstName: 'Admin', lastName: 'Base' },
+    },
+  ];
+  const formerRow = {
+    id: formerMembershipId,
+    membershipId: formerMembershipId,
+    userId: 'user-former',
+    role: 'teacher',
+    gopilotRole: null,
+    status: 'inactive',
+    user: { id: 'user-former', email: 'former@example.invalid', firstName: 'Former', lastName: 'Teacher' },
+  };
   const { context, page } = await preparePage(browser, 'admin', async (route, request, url) => {
     if (url.pathname === '/api/gopilot/students') {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ students: [] }) });
@@ -367,34 +409,149 @@ async function testStaffMembershipMutations(browser) {
       return;
     }
     if (url.pathname === `/api/schools/${schoolId}/staff` && request.method() === 'POST') {
-      createBody = request.postDataJSON();
-      const user = { id: userId, email: createBody.email, firstName: createBody.firstName, lastName: createBody.lastName };
-      const membership = { id: membershipId, userId, role: createBody.role, gopilotRole: createBody.gopilotRole || null };
-      staffRows = [{ ...membership, user }];
+      const createBody = request.postDataJSON();
+      createBodies.push(createBody);
       mutationPaths.push(`${request.method()} ${url.pathname}`);
+
+      if (createBody.email === 'twin@example.invalid' && createBody.confirmDistinctPerson !== true) {
+        await route.fulfill({
+          status: 409,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            code: 'POSSIBLE_DUPLICATE_STAFF',
+            error: 'A staff member with this name already exists.',
+            candidates: [{ ...staffRows[0], membershipId }],
+          }),
+        });
+        return;
+      }
+      if (createBody.email === 'former@example.invalid') {
+        await route.fulfill({
+          status: 409,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            code: 'STAFF_REACTIVATION_REQUIRED',
+            error: 'Reactivate the existing staff identity.',
+            membershipId: formerMembershipId,
+            candidates: [formerRow],
+          }),
+        });
+        return;
+      }
+
+      const distinctId = 'membership-distinct';
+      const distinctUserId = 'user-distinct';
+      const user = { id: distinctUserId, email: createBody.email, firstName: createBody.firstName, lastName: createBody.lastName };
+      const membership = { id: distinctId, userId: distinctUserId, role: createBody.role, gopilotRole: createBody.gopilotRole || null, status: 'active' };
+      staffRows = [...staffRows, { ...membership, user }];
       await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ user, membership }) });
       return;
     }
-    if (url.pathname === `/api/schools/${schoolId}/staff/${membershipId}` && request.method() === 'PUT') {
-      updateBody = request.postDataJSON();
-      const current = staffRows[0];
-      staffRows = [{
+    const staffPutMatch = url.pathname.match(new RegExp(`^/api/schools/${schoolId}/staff/([^/]+)$`));
+    if (staffPutMatch && request.method() === 'PUT') {
+      const targetMembershipId = staffPutMatch[1];
+      const body = request.postDataJSON();
+      if (targetMembershipId === membershipId) updateBody = body;
+      if (targetMembershipId === adminMembershipId) adminUpdateBody = body;
+      staffRows = staffRows.map((current) => current.id === targetMembershipId ? {
         ...current,
-        role: updateBody.role || current.role,
-        gopilotRole: Object.prototype.hasOwnProperty.call(updateBody, 'gopilotRole') ? updateBody.gopilotRole : current.gopilotRole,
-        user: { ...current.user, firstName: updateBody.firstName, lastName: updateBody.lastName },
-      }];
+        role: body.role || current.role,
+        gopilotRole: Object.prototype.hasOwnProperty.call(body, 'gopilotRole') ? body.gopilotRole : current.gopilotRole,
+        user: {
+          ...current.user,
+          firstName: body.firstName ?? current.user.firstName,
+          lastName: body.lastName ?? current.user.lastName,
+        },
+      } : current);
       mutationPaths.push(`${request.method()} ${url.pathname}`);
-      const { user: _user, ...membership } = staffRows[0];
+      const { user: _user, ...membership } = staffRows.find((row) => row.id === targetMembershipId);
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ membership }) });
       return;
     }
-    if (url.pathname === `/api/schools/${schoolId}/staff/${membershipId}` && request.method() === 'DELETE') {
-      staffRows = [];
+
+    if (url.pathname === `/api/schools/${schoolId}/staff/${membershipId}/email` && request.method() === 'PATCH') {
+      emailPatchCount += 1;
+      const body = request.postDataJSON();
       mutationPaths.push(`${request.method()} ${url.pathname}`);
+      if (emailPatchCount === 1) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ userId, email: 'server-returned-a-different-address@example.invalid' }),
+        });
+        return;
+      }
+      staffRows = staffRows.map((row) => row.id === membershipId
+        ? { ...row, user: { ...row.user, email: body.email } }
+        : row);
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ userId, email: body.email }) });
+      return;
+    }
+
+    if (url.pathname === `/api/schools/${schoolId}/staff/${formerMembershipId}/reactivate` && request.method() === 'POST') {
+      staffRows = [...staffRows, { ...formerRow, status: 'active' }];
+      mutationPaths.push(`${request.method()} ${url.pathname}`);
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ membership: { ...formerRow, status: 'active' } }) });
+      return;
+    }
+
+    if (url.pathname === `/api/schools/${schoolId}/staff/${membershipId}/assignment-impact` && request.method() === 'GET') {
+      impactGetCount += 1;
+      const blocked = impactGetCount === 1;
+      const revision = transitionPostCount > 0 ? 'revision-refreshed' : 'revision-reviewed';
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          impact: {
+            revision,
+            assignments: [
+              {
+                assignmentType: 'gopilot_homeroom_primary',
+                assignmentId: 'assignment-primary',
+                resourceId: 'class-resource-primary',
+                label: 'Grade 7 Math',
+                required: true,
+                allowedOperations: ['replace'],
+              },
+              {
+                assignmentType: 'gopilot_homeroom_co_teacher',
+                assignmentId: 'assignment-co',
+                resourceId: 'class-resource-co',
+                label: 'Grade 8 Science',
+                required: false,
+                allowedOperations: ['replace', 'remove'],
+              },
+            ],
+            blockers: blocked ? [{
+              blockerType: 'active_teaching_session',
+              blockerId: 'blocker-session',
+              resourceId: 'class-resource-primary',
+              label: 'Grade 7 Math is active',
+            }] : [],
+          },
+        }),
+      });
+      return;
+    }
+
+    if (url.pathname === `/api/schools/${schoolId}/staff/${membershipId}/transition` && request.method() === 'POST') {
+      transitionPostCount += 1;
+      transitionBodies.push(request.postDataJSON());
+      mutationPaths.push(`${request.method()} ${url.pathname}`);
+      if (transitionPostCount === 1) {
+        await route.fulfill({
+          status: 409,
+          contentType: 'application/json',
+          body: JSON.stringify({ code: 'STAFF_ASSIGNMENT_IMPACT_STALE', error: 'The assignments changed.' }),
+        });
+        return;
+      }
+      staffRows = staffRows.filter((row) => row.id !== membershipId);
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
       return;
     }
+
     if (url.pathname.includes(userId)) {
       await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'User ID used where membership ID is required' }) });
       return;
@@ -404,19 +561,28 @@ async function testStaffMembershipMutations(browser) {
 
   try {
     await page.goto('/gopilot/setup', { waitUntil: 'networkidle' });
-    await page.getByRole('button', { name: 'Add Staff', exact: true }).click();
-    await page.getByPlaceholder('Email *').fill('avery.staff@example.invalid');
-    await page.getByPlaceholder('First Name *').fill('Avery');
-    await page.getByPlaceholder('Last Name *').fill('Membership');
-    await page.getByRole('button', { name: 'Add', exact: true }).click();
     await page.getByText('Avery Membership', { exact: true }).waitFor();
-    assert.deepEqual(createBody, {
-      email: 'avery.staff@example.invalid',
-      firstName: 'Avery',
-      lastName: 'Membership',
-      role: 'teacher',
-      password: '',
-    });
+    await page.getByText(`Membership ID: ${membershipId}`, { exact: true }).waitFor();
+
+    // A returned email mismatch must not be reported as success, and the retry
+    // remains an email-only operation with no profile PUT.
+    await page.getByRole('button', { name: 'Edit Avery Membership' }).click();
+    await page.getByPlaceholder('First').fill('Ava');
+    await page.getByLabel('Email for Avery Membership').fill('avery.corrected@example.invalid');
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await page.getByTestId('staff-edit-error').filter({ hasText: /Save email, role, and profile changes separately/ }).waitFor();
+    assert.equal(mutationPaths.filter((path) => path.includes('/email') || path.startsWith('PUT ')).length, 0);
+
+    await page.getByPlaceholder('First').fill('Avery');
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await page.getByTestId('staff-edit-error').filter({ hasText: /did not confirm the requested email/ }).waitFor();
+    assert.equal(mutationPaths.filter((path) => path.includes('/email')).length, 1);
+    assert.equal(mutationPaths.filter((path) => path.startsWith('PUT ')).length, 0);
+
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await page.getByText('Email corrected for avery.corrected@example.invalid. The staff member must sign in again.', { exact: true }).waitFor();
+    assert.equal(mutationPaths.filter((path) => path.includes('/email')).length, 2);
+    assert.equal(mutationPaths.filter((path) => path.startsWith('PUT ')).length, 0);
 
     await page.getByRole('button', { name: 'Edit Avery Membership' }).click();
     await page.getByPlaceholder('First').fill('Ava');
@@ -425,21 +591,179 @@ async function testStaffMembershipMutations(browser) {
     assert.deepEqual(updateBody, {
       firstName: 'Ava',
       lastName: 'Membership',
-      gopilotRole: null,
     });
 
-    page.once('dialog', async (dialog) => {
-      assert.match(dialog.message(), /lose access to every SchoolPilot product at this school/);
-      await dialog.accept();
-    });
-    await page.getByRole('button', { name: 'Remove Ava Membership' }).click();
-    await page.getByText('Ava Membership', { exact: true }).waitFor({ state: 'detached' });
-    assert.deepEqual(mutationPaths, [
-      `POST /api/schools/${schoolId}/staff`,
-      `PUT /api/schools/${schoolId}/staff/${membershipId}`,
-      `DELETE /api/schools/${schoolId}/staff/${membershipId}`,
+    // GoPilot Teacher is an override for a universal administrator; clearing
+    // the override would leave the effective GoPilot role as administrator.
+    await page.getByRole('button', { name: 'Edit Admin Base' }).click();
+    const adminEditRow = page.getByText(`Membership ID: ${adminMembershipId}`, { exact: true }).locator('xpath=ancestor::tr');
+    await adminEditRow.locator('select').selectOption('teacher');
+    await adminEditRow.getByRole('button', { name: 'Save', exact: true }).click();
+    await page.getByText(`Membership ID: ${adminMembershipId}`, { exact: true }).waitFor();
+    assert.deepEqual(adminUpdateBody, { gopilotRole: 'teacher' });
+
+    // Same-name creation must require an explicit distinct-person confirmation.
+    await page.getByRole('button', { name: 'Add Staff', exact: true }).click();
+    await page.getByPlaceholder('Email *').fill('twin@example.invalid');
+    await page.getByPlaceholder('First Name *').fill('Ava');
+    await page.getByPlaceholder('Last Name *').fill('Membership');
+    await page.getByRole('button', { name: 'Add', exact: true }).click();
+    await page.getByText('A staff member with this name already exists', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'This is a different person' }).click();
+    await page.getByText('Ava Membership', { exact: true }).nth(1).waitFor();
+    assert.equal(createBodies.at(-1).confirmDistinctPerson, true);
+
+    // An inactive identity must be reactivated instead of recreated.
+    await page.getByRole('button', { name: 'Add Staff', exact: true }).click();
+    await page.getByPlaceholder('Email *').fill('former@example.invalid');
+    await page.getByPlaceholder('First Name *').fill('Former');
+    await page.getByPlaceholder('Last Name *').fill('Teacher');
+    await page.getByRole('button', { name: 'Add', exact: true }).click();
+    await page.getByText('Use the existing former-staff identity').waitFor();
+    await page.getByRole('button', { name: 'Reactivate', exact: true }).click();
+    await page.getByText('Former Teacher', { exact: true }).waitFor();
+    assert.equal(createBodies.filter((body) => body.email === 'former@example.invalid').length, 1);
+
+    // Removal first shows immutable blocker/resource IDs and cannot proceed.
+    await page.getByRole('button', { name: /Remove school access for Ava Membership/ }).first().click();
+    await page.getByRole('heading', { name: 'Remove school access' }).waitFor();
+    await page.getByText('Blocker ID: blocker-session · Resource ID: class-resource-primary', { exact: true }).waitFor();
+    assert.equal(await page.getByTestId('button-confirm-remove-access').isDisabled(), true);
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+
+    // Once clear, every dependency requires an explicit decision. A stale
+    // revision resets those decisions and requires the operator to review again.
+    await page.getByRole('button', { name: /Remove school access for Ava Membership/ }).first().click();
+    await page.getByText('Assignment ID: assignment-primary · Resource ID: class-resource-primary', { exact: true }).waitFor();
+    const chooseDecisions = async () => {
+      await page.locator('#decision-action-assignment-primary').click();
+      await page.getByRole('option', { name: 'Transfer to another staff member' }).click();
+      await page.locator('#replacement-assignment-primary').click();
+      await page.getByRole('option', { name: /Bailey Replacement/ }).click();
+      await page.locator('#decision-action-assignment-co').click();
+      await page.getByRole('option', { name: 'Remove this relationship' }).click();
+    };
+    await chooseDecisions();
+    const refreshedImpact = page.waitForResponse((response) => (
+      response.request().method() === 'GET'
+      && new URL(response.url()).pathname === `/api/schools/${schoolId}/staff/${membershipId}/assignment-impact`
+    ));
+    await page.getByTestId('button-confirm-remove-access').click();
+    await refreshedImpact;
+    await page.getByLabel('Notifications (F8)')
+      .getByText('The impact review was refreshed. Review every assignment again before continuing.', { exact: true })
+      .waitFor();
+    await page.locator('#decision-action-assignment-primary').filter({ hasText: 'Choose an action' }).waitFor();
+    await page.locator('#decision-action-assignment-co').filter({ hasText: 'Choose an action' }).waitFor();
+    assert.equal(await page.getByTestId('button-confirm-remove-access').isDisabled(), true);
+    await chooseDecisions();
+    await page.getByTestId('button-confirm-remove-access').click();
+    await page.getByTestId(`staff-membership-id-${membershipId}`).waitFor({ state: 'detached' });
+    assert.equal(transitionBodies[0].expectedRevision, 'revision-reviewed');
+    assert.equal(transitionBodies[1].expectedRevision, 'revision-refreshed');
+    assert.deepEqual(transitionBodies[1].decisions, [
+      {
+        assignmentType: 'gopilot_homeroom_primary',
+        assignmentId: 'assignment-primary',
+        operation: 'replace',
+        replacementMembershipId,
+      },
+      {
+        assignmentType: 'gopilot_homeroom_co_teacher',
+        assignmentId: 'assignment-co',
+        operation: 'remove',
+      },
     ]);
+    assert.equal(mutationPaths.some((path) => path.startsWith('DELETE ')), false);
+    assert.equal(mutationPaths.filter((path) => path.endsWith('/transition')).length, 2);
     assert.ok(mutationPaths.every((path) => !path.includes(userId)));
+  } finally {
+    await context.close();
+  }
+}
+
+async function testWorkspaceStaffImportSelection(browser) {
+  let importBody = null;
+  const workspaceUsers = [
+    {
+      id: 'google-user-immutable-1',
+      email: 'first.teacher@example.invalid',
+      firstName: 'First',
+      lastName: 'Teacher',
+      suspended: false,
+    },
+    {
+      id: 'google-user-immutable-2',
+      email: 'second.teacher@example.invalid',
+      firstName: 'Second',
+      lastName: 'Teacher',
+      suspended: false,
+    },
+  ];
+
+  const { context, page } = await preparePage(browser, 'admin', async (route, request, url) => {
+    const emptyResponses = new Map([
+      ['/api/gopilot/students', { students: [] }],
+      [`/api/schools/${schoolId}/homerooms`, { homerooms: [] }],
+      [`/api/schools/${schoolId}/staff`, { staff: [] }],
+    ]);
+    if (emptyResponses.has(url.pathname) && request.method() === 'GET') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(emptyResponses.get(url.pathname)),
+      });
+      return;
+    }
+    if (url.pathname === `/api/schools/${schoolId}/google/org-units` && request.method() === 'GET') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ orgUnits: [{ name: 'Faculty', orgUnitPath: '/Faculty' }] }),
+      });
+      return;
+    }
+    if (url.pathname === `/api/schools/${schoolId}/google/workspace-users` && request.method() === 'GET') {
+      assert.equal(url.searchParams.get('orgUnitPath'), '/Faculty');
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ users: workspaceUsers }),
+      });
+      return;
+    }
+    if (url.pathname === `/api/schools/${schoolId}/google/import-staff` && request.method() === 'POST') {
+      importBody = request.postDataJSON();
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ imported: 1, updated: 0, skipped: 0, errors: [] }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 404,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: `Unexpected ${request.method()} ${url.pathname}` }),
+    });
+  });
+
+  try {
+    await page.goto('/gopilot/setup', { waitUntil: 'networkidle' });
+    await page.getByRole('button', { name: 'Import from Google Workspace', exact: true }).click();
+    await page.getByRole('button', { name: /Faculty/ }).click();
+    await page.getByText('First Teacher', { exact: true }).waitFor();
+    await page.locator('label', { hasText: 'Second Teacher' }).locator('input[type="checkbox"]').uncheck();
+    await page.getByRole('button', { name: 'Import 1 as Teachers', exact: true }).click();
+    await page.getByTestId('gopilot-workspace-staff-import-result').waitFor();
+
+    assert.deepEqual(importBody, {
+      orgUnitPath: '/Faculty',
+      userIds: ['google-user-immutable-1'],
+      role: 'teacher',
+      source: 'gopilot_setup',
+    });
+    assert.equal(Object.hasOwn(importBody, 'users'), false);
   } finally {
     await context.close();
   }
@@ -460,7 +784,9 @@ async function main() {
     await testCanonicalRosterCreate(browser);
     process.stdout.write('gopilot_browser_passed canonical staff roster create\n');
     await testStaffMembershipMutations(browser);
-    process.stdout.write('gopilot_browser_passed staff create, edit, and remove use membership IDs\n');
+    process.stdout.write('gopilot_browser_passed staff email verification, duplicate review, reactivation, and revisioned transition\n');
+    await testWorkspaceStaffImportSelection(browser);
+    process.stdout.write('gopilot_browser_passed Workspace staff import immutable-ID selection\n');
   } finally {
     await browser?.close();
     await stopPreview(preview);

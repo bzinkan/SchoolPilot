@@ -69,6 +69,9 @@ const DB_SERIAL = new Set([
   "student-email-domain.test.ts",
   "student-email-policy.test.ts",
   "student-removal-lifecycle.test.ts",
+  "staff-assignment-lifecycle.test.ts",
+  "staff-identity-integrity.integration.test.ts",
+  "staff-identity-lifecycle.test.ts",
 ]);
 
 const INFRASTRUCTURE = /^(?:aws-|capacity-|credential-rotation-infra|database-insights|deploy-|ecs-|frontend-dependency|classpilot-(?:arrival-capacity|load-|tile-auth-plan-|tile-authorization-plan-check)|gopilot-containment-inventory|heartbeat-history-index-contract|hot-path-logging|migration-ledger|predeploy-safety|private-load|production-terraform|redis-ready|rls-allowlist-drift|soc2-|terraform-|runtime-config)/;

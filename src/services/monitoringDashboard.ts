@@ -143,6 +143,8 @@ const MONITORING_CATEGORIES = [
   "health_failure",
   "browser_runtime_error",
   "extension_runtime_error",
+  "staff_identity_integrity",
+  "staff_lifecycle_guard_violation",
 ] as const satisfies readonly ErrorCategory[];
 
 const MONITORING_PRIORITIES = ["low", "normal", "high", "critical"] as const satisfies readonly MonitorPriority[];

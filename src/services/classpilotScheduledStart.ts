@@ -1,4 +1,4 @@
-import type db from "../db.js";
+import db from "../db.js";
 import { safeErrorMetadata } from "../util/safeLogging.js";
 import { broadcastToTeachersLocal } from "../realtime/ws-broadcast.js";
 import { publishWS } from "../realtime/ws-redis.js";
@@ -18,6 +18,7 @@ import {
 } from "./classpilotSessionLifecycle.js";
 import { syncClasspilotControlStatesToActiveDevices } from "./classpilotControlStateDelivery.js";
 import { assertClasspilotEntitled } from "./classpilotEntitlement.js";
+import { lockStaffAssignmentLifecycleSchool } from "./staffAssignmentLifecycleLock.js";
 import {
   getApprovedScheduleChangeLegsForSchoolDate,
   getEffectiveClasspilotScheduleWindow,
@@ -280,10 +281,20 @@ async function prepareScheduledOccurrence(options: {
   now: Date;
   dbInstance?: typeof db;
 }): Promise<ScheduledOccurrencePreparation> {
-  return withInstructionalCalendarDateLock(
-    options.group.schoolId,
-    options.scheduledDate,
-    async (lockedDb) => {
+  const dbInstance = options.dbInstance ?? db;
+  return dbInstance.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      options.group.schoolId
+    );
+    if (!lifecycleLocked) {
+      return { reason: "missing_schedule_window" as const };
+    }
+    return withInstructionalCalendarDateLock(
+      options.group.schoolId,
+      options.scheduledDate,
+      async (lockedDb) => {
       // Linearize occurrence creation with immediate school/license
       // revocation. The shared row locks make either the start or revocation
       // commit first; a stale candidate read can never create an occurrence
@@ -385,9 +396,10 @@ async function prepareScheduledOccurrence(options: {
         scheduledTeacherName: displayName(scheduledTeacher),
       }, lockedDb);
       return { occurrence, group: context.group };
-    },
-    options.dbInstance
-  );
+      },
+      transactionDb
+    );
+  });
 }
 
 export function broadcastScheduledClassUpdate(
@@ -1126,10 +1138,18 @@ export async function skipScheduledClassBeforeStart(options: {
   reason?: "non_instructional_day" | "school_date_changed";
 }> {
   const now = options.now ?? new Date();
-  return withInstructionalCalendarDateLock(
-    options.group.schoolId,
-    options.scheduledDate,
-    async (lockedDb) => {
+  const dbInstance = options.dbInstance ?? db;
+  return dbInstance.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      options.group.schoolId
+    );
+    if (!lifecycleLocked) return { skipped: false };
+    return withInstructionalCalendarDateLock(
+      options.group.schoolId,
+      options.scheduledDate,
+      async (lockedDb) => {
       const existing = await getScheduledTeachingSessionOccurrence(
         options.group.schoolId,
         options.group.id,
@@ -1204,9 +1224,10 @@ export async function skipScheduledClassBeforeStart(options: {
         scheduledTeacherName: displayName(teacher),
         now,
       }, lockedDb);
-    },
-    options.dbInstance
-  );
+      },
+      transactionDb
+    );
+  });
 }
 
 export async function expireScheduledClassConflictsForSchool(options: {

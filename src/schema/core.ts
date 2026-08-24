@@ -164,6 +164,10 @@ export const users = pgTable(
     phone: text("phone"),
     profileImageUrl: text("profile_image_url"),
     isSuperAdmin: boolean("is_super_admin").notNull().default(false),
+    // Incremented whenever credentials or staff access change. Existing
+    // sessions/JWTs carry the version they were issued under and are rejected
+    // after the value advances.
+    authVersion: integer("auth_version").notNull().default(1),
     checkInMethod: text("check_in_method").default("app"), // Retained historical parent preference; never authorizes GoPilot access
     notificationPrefs: text("notification_prefs"), // JSON from GoPilot
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
@@ -173,6 +177,9 @@ export const users = pgTable(
   (table) => [
     index("users_google_id_idx").on(table.googleId),
     index("users_email_idx").on(table.email),
+    uniqueIndex("users_email_normalized_unique").on(
+      sql`lower(btrim(${table.email}))`
+    ),
   ]
 );
 

@@ -4050,6 +4050,11 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
       firstName: "Bell",
       lastName: "Central",
     } as any);
+    const volumeTeacher = await storage.createUser({
+      email: `teacher@${TAG}-volume.example.edu`,
+      firstName: "Bell",
+      lastName: "Teacher",
+    });
     await storage.createProductLicense({
       schoolId: volumeSchool.id,
       product: "CLASSPILOT",
@@ -4063,6 +4068,12 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
         role: "admin",
         status: "active",
       } as any);
+      await storage.createMembership({
+        userId: volumeTeacher.id,
+        schoolId: volumeSchool.id,
+        role: "teacher",
+        status: "active",
+      });
       await inSchool(volumeSchool.id, () => storage.updateEnrollmentSettings(
         volumeSchool.id,
         { centralEmailRecipientUserId: volumeCentral.id } as any
@@ -4072,14 +4083,14 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
         for (let index = 0; index < 60; index++) {
           const group = await storage.createGroup({
             schoolId: volumeSchool.id,
-            teacherId: teacher.id,
+            teacherId: volumeTeacher.id,
             name: `${TAG}_bell_${index}`,
             groupType: "admin_class",
             status: "active",
           } as any);
           created.push(await storage.createTeachingSession({
             groupId: group.id,
-            teacherId: teacher.id,
+            teacherId: volumeTeacher.id,
             startTime: new Date(bellTime.getTime() - 45 * 60_000),
           } as any));
         }
@@ -4153,6 +4164,7 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
         await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${volumeSchool.id}`);
         await db.execute(sql`DELETE FROM schools WHERE id = ${volumeSchool.id}`);
         await db.execute(sql`DELETE FROM users WHERE id = ${volumeCentral.id}`);
+        await db.execute(sql`DELETE FROM users WHERE id = ${volumeTeacher.id}`);
       });
     }
   });

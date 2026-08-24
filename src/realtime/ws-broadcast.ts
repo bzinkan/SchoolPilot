@@ -9,6 +9,7 @@ export type WSClient = {
   studentId?: string;
   studentSessionId?: string;
   userId?: string;
+  authVersion?: number;
   schoolId?: string;
   subscribedSessionIds: Set<string>;
   authenticated: boolean;
@@ -89,6 +90,7 @@ export function authenticateWsClient(
     studentId?: string;
     studentSessionId?: string;
     userId?: string;
+    authVersion?: number;
   }
 ): WSClient | undefined {
   const client = wsClients.get(ws);
@@ -105,6 +107,7 @@ export function authenticateWsClient(
   client.studentId = auth.studentId;
   client.studentSessionId = auth.studentSessionId;
   client.userId = auth.userId;
+  client.authVersion = auth.authVersion;
   client.authenticated = true;
   client.passiveAuthorizationExpiresAt = undefined;
   client.passiveAuthorizationGeneration = undefined;
@@ -202,6 +205,32 @@ export function sendToStaffUserLocal(schoolId: string, userId: string, message: 
     sentCount++;
   });
   return sentCount;
+}
+
+/** Close every local staff socket for one immutable user identity. */
+export function closeStaffUserSocketsLocal(userId: string): number {
+  let closedCount = 0;
+  for (const [ws, client] of wsClients) {
+    if (
+      !client.authenticated ||
+      !isStaffRole(client.role) ||
+      client.userId !== userId
+    ) {
+      continue;
+    }
+    client.authenticated = false;
+    removeWsClient(ws);
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: "auth-error",
+        message: "Credentials have changed. Sign in again.",
+        code: "CREDENTIAL_INVALIDATED",
+      }));
+      ws.close(1008, "Credentials invalidated");
+    }
+    closedCount += 1;
+  }
+  return closedCount;
 }
 
 export function broadcastToStaffSessionLocal(

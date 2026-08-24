@@ -1,9 +1,10 @@
 import type { RequestHandler } from "express";
-import { verifyUserToken } from "../services/jwt.js";
+import { credentialVersionMatches, verifyUserToken } from "../services/jwt.js";
 import { eq } from "drizzle-orm";
 import { users } from "../schema/core.js";
 import db from "../db.js";
 import { createSingleFlight } from "../util/singleFlight.js";
+import { clearSessionCookie } from "../config/sessionCookie.js";
 
 const loadUserSingleFlight = createSingleFlight<
   string,
@@ -18,6 +19,32 @@ function loadUserById(userId: string): Promise<typeof users.$inferSelect | undef
       .where(eq(users.id, userId))
       .limit(1);
     return user;
+  });
+}
+
+function sessionCredentialMatches(
+  req: Parameters<RequestHandler>[0],
+  user: typeof users.$inferSelect
+): boolean {
+  return credentialVersionMatches(req.session?.authVersion, user.authVersion);
+}
+
+function rejectInvalidatedSession(
+  req: Parameters<RequestHandler>[0],
+  res: Parameters<RequestHandler>[1]
+) {
+  return req.session.destroy((error) => {
+    if (error) {
+      console.warn("[auth] Invalidated session destroy failed", {
+        requestId: req.requestId ?? "n/a",
+        name: error.name,
+      });
+    }
+    clearSessionCookie(res);
+    return res.status(401).json({
+      error: "Credentials have changed. Sign in again.",
+      code: "CREDENTIAL_INVALIDATED",
+    });
   });
 }
 
@@ -94,6 +121,9 @@ export const authenticate: RequestHandler = async (req, res, next) => {
       const user = await loadUserById(req.session.userId);
 
       if (user) {
+        if (!sessionCredentialMatches(req, user)) {
+          return rejectInvalidatedSession(req, res);
+        }
         req.authUser = user;
         req.authMethod = "session";
         return next();
@@ -129,6 +159,12 @@ export const authenticate: RequestHandler = async (req, res, next) => {
           const user = await loadUserById(payload.userId);
 
           if (user) {
+            if (!credentialVersionMatches(payload.authVersion, user.authVersion)) {
+              return res.status(401).json({
+                error: "Credentials have changed. Sign in again.",
+                code: "CREDENTIAL_INVALIDATED",
+              });
+            }
             req.authUser = user;
             req.authMethod = "jwt";
             req.jwtPayload = payload;
@@ -151,6 +187,9 @@ export const authenticate: RequestHandler = async (req, res, next) => {
       const user = await loadUserById(req.session.userId);
 
       if (user) {
+        if (!sessionCredentialMatches(req, user)) {
+          return rejectInvalidatedSession(req, res);
+        }
         req.authUser = user;
         req.authMethod = "session";
         return next();
@@ -175,6 +214,7 @@ export const optionalAuth: RequestHandler = async (req, _res, next) => {
     try {
       const user = await loadUserById(req.session.userId);
       if (user) {
+        if (!sessionCredentialMatches(req, user)) return next();
         req.authUser = user;
         req.authMethod = "session";
         return next();
@@ -209,6 +249,9 @@ export const optionalAuth: RequestHandler = async (req, _res, next) => {
         try {
           const user = await loadUserById(payload.userId);
           if (user) {
+            if (!credentialVersionMatches(payload.authVersion, user.authVersion)) {
+              return next();
+            }
             req.authUser = user;
             req.authMethod = "jwt";
             req.jwtPayload = payload;
@@ -229,6 +272,7 @@ export const optionalAuth: RequestHandler = async (req, _res, next) => {
     try {
       const user = await loadUserById(req.session.userId);
       if (user) {
+        if (!sessionCredentialMatches(req, user)) return next();
         req.authUser = user;
         req.authMethod = "session";
       }

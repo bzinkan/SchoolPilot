@@ -152,7 +152,9 @@ function studentMatchesGrade(student, gradeFilter) {
 function buildTeacherLabel(teacher) {
   if (!teacher) return "Select a teacher";
   const roleLabel = teacher.role === "admin" || teacher.role === "school_admin" ? " (Admin)" : "";
-  return `${displayName(teacher)}${roleLabel}`;
+  const name = displayName(teacher);
+  const emailLabel = teacher.email && teacher.email !== name ? ` — ${teacher.email}` : "";
+  return `${name}${emailLabel}${roleLabel}`;
 }
 
 function getClassTeacher(group, teachers) {

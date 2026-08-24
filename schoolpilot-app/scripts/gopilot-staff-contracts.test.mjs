@@ -195,7 +195,10 @@ test('GoPilot staff setup keeps membership IDs distinct from user IDs', async ()
   assert.match(setup, /staff\/\$\{membershipId\}/);
   assert.match(setup, /toArray\(res\.data, 'staff'\)\.map\(normalizeStaff\)/);
   assert.match(manager, /onUpdate\(s\.id, payload\)/);
-  assert.match(manager, /onRemove\(s\.id\)/);
+  assert.match(manager, /onRemove\(request\.staff\.id, \{ transitionComplete: true \}\)/);
+  assert.match(manager, /apiBasePath=\{`\/schools\/\$\{schoolId\}\/staff`\}/);
+  assert.match(manager, /newGopilotRole: 'office_staff'/);
+  assert.match(manager, /payload\.gopilotRole = s\.role === 'teacher' \? null : 'teacher'/);
   assert.match(manager, /aria-label=\{`Edit \$\{staffName\}`\}/);
-  assert.match(manager, /aria-label=\{`Remove \$\{staffName\}`\}/);
+  assert.match(manager, /aria-label=\{`Remove school access for \$\{staffName\} — \$\{s\.email\}`\}/);
 });

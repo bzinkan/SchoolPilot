@@ -80,10 +80,11 @@ function errorChainMatches(error: unknown, pattern: RegExp): boolean {
 // guard against the IDOR class fixed in the 2026-06 isolation sweep.
 
 const TAG = `xtest_${Date.now()}`;
-let schoolA: any;
-let schoolB: any;
-let schoolShared: any;
-let teacher: any;
+let schoolA: Awaited<ReturnType<typeof createSchool>>;
+let schoolB: Awaited<ReturnType<typeof createSchool>>;
+let schoolShared: Awaited<ReturnType<typeof createSchool>>;
+let schoolForeign: Awaited<ReturnType<typeof createSchool>>;
+let teacher: Awaited<ReturnType<typeof createUser>>;
 
 function inSchool<T>(schoolId: string, fn: () => Promise<T>): Promise<T> {
   return runWithTenantContext({ schoolId }, fn);
@@ -95,9 +96,22 @@ function asSystem<T>(fn: () => Promise<T>): Promise<T> {
 
 before(async () => {
   schoolA = await createSchool({ name: `${TAG}_A`, domain: `${TAG}-a.example.edu`, slug: `${TAG}-a` } as any);
-  schoolB = await createSchool({ name: `${TAG}_B`, domain: `${TAG}-b.example.edu`, slug: `${TAG}-b` } as any);
+  schoolB = await createSchool({ name: `${TAG}_B`, domain: `${TAG}-a.example.edu`, slug: `${TAG}-b` } as any);
   schoolShared = await createSchool({ name: `${TAG}_Shared`, domain: `${TAG}-a.example.edu`, slug: `${TAG}-shared` } as any);
-  teacher = await createUser({ email: `${TAG}-teacher@example.edu`, firstName: "T", lastName: "Teacher" } as any);
+  schoolForeign = await createSchool({ name: `${TAG}_Foreign`, domain: `${TAG}-b.example.edu`, slug: `${TAG}-foreign` });
+  teacher = await createUser({ email: `${TAG}-shared-teacher@${TAG}-a.example.edu`, firstName: "T", lastName: "Teacher" } as any);
+  await createMembership({
+    userId: teacher.id,
+    schoolId: schoolA.id,
+    role: "teacher",
+    status: "active",
+  });
+  await createMembership({
+    userId: teacher.id,
+    schoolId: schoolB.id,
+    role: "teacher",
+    status: "active",
+  });
   await createProductLicense({ schoolId: schoolA.id, product: "CLASSPILOT", status: "active" } as any);
 });
 
@@ -413,7 +427,7 @@ describe("cross-school isolation", () => {
     assert.equal((await getGoogleOAuthTokenForSchool(googleAdmin.id, schoolA.id))?.userId, googleAdmin.id);
     assert.equal((await getGoogleOAuthTokenForSchool(googleAdmin.id, schoolShared.id))?.userId, googleAdmin.id);
     await assert.rejects(
-      () => getGoogleOAuthTokenForSchool(googleAdmin.id, schoolB.id),
+      () => getGoogleOAuthTokenForSchool(googleAdmin.id, schoolForeign.id),
       (err: any) => err?.code === "GOOGLE_DOMAIN_MISMATCH"
     );
   });
@@ -441,7 +455,7 @@ describe("cross-school isolation", () => {
       lastName: "A",
     } as any);
     const homeroomTeacherB = await createUser({
-      email: `${TAG}-homeroom-b@${TAG}-b.example.edu`,
+      email: `${TAG}-homeroom-b@${TAG}-a.example.edu`,
       firstName: "Homeroom",
       lastName: "B",
     } as any);

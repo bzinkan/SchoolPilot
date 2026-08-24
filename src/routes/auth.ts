@@ -6,7 +6,6 @@ import { hashPassword, comparePassword } from "../util/password.js";
 import { signUserToken } from "../services/jwt.js";
 import {
   getUserByEmail,
-  getUserByGoogleId,
   createUser,
   createSchool,
   createMembership,
@@ -15,6 +14,9 @@ import {
   getProductLicenses,
   normalizeDomain,
   updateUser,
+  IdentityEmailConflictError,
+  GoogleIdentityConflictError,
+  resolveGoogleLoginIdentity,
 } from "../services/storage.js";
 import { authenticate } from "../middleware/authenticate.js";
 import { authLimiter } from "../middleware/rateLimiter.js";
@@ -175,6 +177,7 @@ router.post("/login", authLimiter, async (req, res, next) => {
         : selectedIdentity?.primaryRole || schoolIdentities[0]?.primaryRole || "teacher",
       schoolId: selectedIdentity?.schoolId || null,
       schoolSessionVersion: selectedIdentity?.school.schoolSessionVersion,
+      authVersion: user.authVersion,
     });
 
     // Generate JWT (for GoPilot clients)
@@ -182,6 +185,7 @@ router.post("/login", authLimiter, async (req, res, next) => {
       userId: user.id,
       email: user.email,
       isSuperAdmin: user.isSuperAdmin,
+      authVersion: user.authVersion,
     });
 
     // Persist session to PostgreSQL before responding
@@ -288,6 +292,7 @@ router.post("/register", rejectGoPilotParentRegistration, authLimiter, async (re
       role: membership?.role || "teacher",
       schoolId: membership?.schoolId || null,
       schoolSessionVersion: school?.schoolSessionVersion,
+      authVersion: user.authVersion,
     });
 
     // Persist session to PostgreSQL before responding
@@ -299,6 +304,7 @@ router.post("/register", rejectGoPilotParentRegistration, authLimiter, async (re
       userId: user.id,
       email: user.email,
       isSuperAdmin: false,
+      authVersion: user.authVersion,
     });
 
     const { password: _, ...safeUser } = user;
@@ -383,6 +389,7 @@ router.get("/me", authenticate, async (req, res, next) => {
           userId: req.authUser.id,
           email: req.authUser.email,
           isSuperAdmin: req.authUser.isSuperAdmin,
+          authVersion: req.authUser.authVersion,
         });
 
     return res.json({
@@ -543,11 +550,15 @@ router.get("/google/callback", async (req, res, next) => {
       return res.redirect(`${frontendUrl}/login?error=no_email`);
     }
 
-    // Find user by googleId first, then by email
-    let user = profile.id ? await getUserByGoogleId(profile.id) : undefined;
-    if (!user) {
-      user = await getUserByEmail(profile.email);
-    }
+    // Resolve immutable Google subject and email together. Email fallback may
+    // first-bind an unbound identity, but it can never cross an existing
+    // Google binding or select a different email-owned user.
+    const user = await resolveGoogleLoginIdentity({
+      email: profile.email,
+      googleId: profile.id,
+      profileImageUrl: profile.picture,
+      lastLoginAt: new Date(),
+    });
 
     if (!user) {
       // The "Workspace admin email isn't connecting" case — record WHO tried
@@ -559,13 +570,6 @@ router.get("/google/callback", async (req, res, next) => {
       });
       return res.redirect(`${frontendUrl}/login?error=no_account`);
     }
-
-    // Update googleId and profile image if needed
-    const updates: Record<string, any> = { lastLoginAt: new Date() };
-    if (profile.id && !user.googleId) updates.googleId = profile.id;
-    if (profile.picture && profile.picture !== user.profileImageUrl)
-      updates.profileImageUrl = profile.picture;
-    await updateUser(user.id, updates);
 
     // Get memberships for session
     const membershipsWithSchool = await getMembershipsWithSchool(user.id);
@@ -611,6 +615,7 @@ router.get("/google/callback", async (req, res, next) => {
         : selectedIdentity?.primaryRole || firstIdentity?.primaryRole || "teacher",
       schoolId: selectedIdentity?.schoolId || null,
       schoolSessionVersion: selectedIdentity?.school.schoolSessionVersion,
+      authVersion: user.authVersion,
     });
 
     // Generate JWT so the frontend can authenticate immediately
@@ -619,6 +624,7 @@ router.get("/google/callback", async (req, res, next) => {
       userId: user.id,
       email: user.email,
       isSuperAdmin: user.isSuperAdmin,
+      authVersion: user.authVersion,
     });
 
     // Save session best-effort (for cookie-based clients)
@@ -663,6 +669,18 @@ router.get("/google/callback", async (req, res, next) => {
   } catch (err) {
     console.error("[auth] Google OAuth callback failed");
     const frontendUrl = getFrontendUrl();
+    if (err instanceof IdentityEmailConflictError || err instanceof GoogleIdentityConflictError) {
+      await logAudit({
+        action: "auth.rejected",
+        metadata: {
+          reason: err instanceof GoogleIdentityConflictError
+            ? "google_identity_conflict"
+            : "identity_email_conflict",
+          method: "google",
+        },
+      });
+      return res.redirect(`${frontendUrl}/login?error=identity_conflict`);
+    }
     return res.redirect(`${frontendUrl}/login?error=oauth_failed`);
   }
 });

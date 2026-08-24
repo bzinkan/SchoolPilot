@@ -37,6 +37,11 @@ import { broadcastToTeachersLocal } from "../realtime/ws-broadcast.js";
 import { publishWS } from "../realtime/ws-redis.js";
 import { broadcastGoPilot } from "../realtime/socketio.js";
 import { runSecurityChecks } from "./securityMonitor.js";
+import {
+  getStaffIdentityIntegrityScanIntervalMinutes,
+  runStaffIdentityIntegrityScan,
+  STAFF_IDENTITY_INTEGRITY_SCAN_JOB,
+} from "./staffIdentityMonitoring.js";
 import { schedulerDb, schedulerLockPool, schedulerPool } from "./schedulerDb.js";
 import { schools, productLicenses } from "../schema/core.js";
 import {
@@ -57,6 +62,7 @@ import {
 import { startWatch, isMailpilotConfigured } from "./mailpilotGmail.js";
 import { coerceSchedulerTimestamp } from "../util/schedulerTimestamp.js";
 import { localDateInTimeZone } from "../util/schoolTime.js";
+import { lockStaffAssignmentLifecycleSchool } from "./staffAssignmentLifecycleLock.js";
 import {
   DailyUsageRollupMarkers,
   dailyUsageRollupWindow,
@@ -206,6 +212,8 @@ let tickCount = 0;
 
 export function startScheduler(socketIo: SocketServer | null = null) {
   io = socketIo;
+  const staffIdentityScanEveryTicks =
+    getStaffIdentityIntegrityScanIntervalMinutes();
   console.log("Dismissal scheduler started (checking every 60s)");
   intervalId = setInterval(() => {
     tickCount++;
@@ -222,6 +230,14 @@ export function startScheduler(socketIo: SocketServer | null = null) {
         await runSecurityChecks();
       });
     }
+    if (tickCount % staffIdentityScanEveryTicks === 0) {
+      scheduleLockedJob(
+        STAFF_IDENTITY_INTEGRITY_SCAN_JOB,
+        async () => {
+          await runStaffIdentityIntegrityScan();
+        }
+      );
+    }
     // Fire and forget — runs through the mutex and dedicated pool
     scheduleLockedJob("runHeavyJobsSerially", runHeavyJobsSerially);
   }, 60 * 1000);
@@ -231,6 +247,15 @@ export function startScheduler(socketIo: SocketServer | null = null) {
   scheduleLockedJob("expireClasspilotTransientCommands", expireClasspilotTransientCommands);
   scheduleLockedJob("expireClasspilotEvidenceCaptureRequests", expireClasspilotEvidenceCaptureRequests);
   scheduleLockedJob("reconcileClasspilotScheduledSessions", reconcileClasspilotScheduledSessions);
+  // Run the read-only aggregate scan at worker startup, then at its bounded
+  // configured cadence. The scheduler advisory lock and the scanner's local
+  // gate prevent overlap across or within worker processes.
+  scheduleLockedJob(
+    STAFF_IDENTITY_INTEGRITY_SCAN_JOB,
+    async () => {
+      await runStaffIdentityIntegrityScan();
+    }
+  );
   // Run heavy jobs immediately so a worker restart after 02:00 local time
   // catches up yesterday's usage without waiting for the next hourly boundary.
   scheduleLockedJob("runHeavyJobsSerially", runHeavyJobsSerially);
@@ -372,20 +397,27 @@ function emitGoPilotSchedulerMetric(
 
 async function autoStartDismissal(schoolId: string, schoolName: string, expectedLocalDate: string) {
   try {
-    const startedSession = await withInstructionalCalendarDateLock(
-      schoolId,
-      expectedLocalDate,
-      async (transactionDb) => {
+    const startedSession = await schedulerDb.transaction(async (tx) => {
+      const transactionDb = tx as unknown as typeof schedulerDb;
+      const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+        tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+        schoolId
+      );
+      if (!lifecycleLocked) return null;
+      return withInstructionalCalendarDateLock(
+        schoolId,
+        expectedLocalDate,
+        async (lockedDb) => {
         const entitlement = await resolveGopilotEntitlement(
           schoolId,
-          transactionDb,
+          lockedDb,
           { lock: "update" }
         );
         if (!entitlement.entitled) {
           emitGoPilotSchedulerMetric("AutoStartSkipped", entitlement.reason);
           return null;
         }
-        const [school] = await transactionDb
+        const [school] = await lockedDb
           .select({
             id: schools.id,
             schoolTimezone: schools.schoolTimezone,
@@ -410,13 +442,13 @@ async function autoStartDismissal(schoolId: string, schoolName: string, expected
         const instructional = await getInstructionalDateStatus(
           schoolId,
           currentClock.localDate,
-          transactionDb
+          lockedDb
         );
         if (!instructional.instructional) return null;
-        const session = await getOrCreateSession(schoolId, currentClock.localDate, transactionDb);
+        const session = await getOrCreateSession(schoolId, currentClock.localDate, lockedDb);
         if (session.status !== "pending") return null;
-        const updated = await updateSessionStatus(session.id, "active", transactionDb);
-        await transactionDb.insert(activityLog).values({
+        const updated = await updateSessionStatus(session.id, "active", lockedDb);
+        await lockedDb.insert(activityLog).values({
           schoolId,
           sessionId: session.id,
           action: "session.auto_started",
@@ -425,9 +457,10 @@ async function autoStartDismissal(schoolId: string, schoolName: string, expected
           details: { localDate: currentClock.localDate },
         });
         return updated ?? session;
-      },
-      schedulerDb
-    );
+        },
+        transactionDb
+      );
+    });
 
     if (startedSession) {
       console.log("[Scheduler] Auto-started one dismissal session");

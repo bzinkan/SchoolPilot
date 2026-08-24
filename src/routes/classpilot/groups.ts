@@ -527,6 +527,12 @@ router.post("/:id/teachers", ...auth, requireRole("admin"), async (req, res, nex
     if (!teacherId) {
       return res.status(400).json({ error: "teacherId is required" });
     }
+    if (role !== undefined && role !== "co-teacher") {
+      return res.status(422).json({
+        error: "This endpoint only adds co-teachers.",
+        code: "CLASS_CO_TEACHER_ROLE_REQUIRED",
+      });
+    }
 
     const group = await getGroupByIdAndSchool(param(req, "id"), res.locals.schoolId!);
     if (!group) {
@@ -555,7 +561,7 @@ router.post("/:id/teachers", ...auth, requireRole("admin"), async (req, res, nex
     const teacher = await addGroupTeacher(
       group.id,
       teacherId,
-      role || "co-teacher",
+      "co-teacher",
       req.authUser!.id
     );
     return res.status(201).json({ teacher });

@@ -6,6 +6,7 @@ export interface WebSessionIdentity {
   role: string;
   schoolId: string | null;
   schoolSessionVersion?: number | null;
+  authVersion?: number | null;
 }
 
 /**
@@ -28,5 +29,6 @@ export async function establishWebSession(
   req.session.role = identity.role;
   req.session.schoolId = identity.schoolId;
   req.session.schoolSessionVersion = identity.schoolSessionVersion ?? 1;
+  req.session.authVersion = identity.authVersion ?? 1;
   req.session.lastActivityAt = Date.now();
 }

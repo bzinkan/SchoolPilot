@@ -1,6 +1,6 @@
 import { Server as HttpServer } from "http";
 import { Server, type Socket } from "socket.io";
-import { verifyUserToken } from "../services/jwt.js";
+import { credentialVersionMatches, verifyUserToken } from "../services/jwt.js";
 import { getUserById } from "../services/storage.js";
 import {
   getHomeroomForSchool,
@@ -15,8 +15,22 @@ import {
   publishSocketIoRedis,
   subscribeSocketIoRedis,
 } from "./socketio-redis.js";
+import { registerCacheInvalidationHandler } from "./cacheInvalidation.js";
 
 let io: Server | null = null;
+const SOCKET_CREDENTIAL_REVALIDATION_MS = 30_000;
+
+registerCacheInvalidationHandler((target) => {
+  if (target.cache !== "user-credentials") return;
+  for (const socket of io?.sockets.sockets.values() ?? []) {
+    if (socket.data.userId !== target.userId) continue;
+    socket.emit("auth:error", {
+      error: "Credentials have changed. Sign in again.",
+      code: "CREDENTIAL_INVALIDATED",
+    });
+    socket.disconnect(true);
+  }
+});
 
 function joinValidatedSchoolRoom(socket: Socket, schoolId: string) {
   for (const room of Array.from(socket.rooms)) {
@@ -53,10 +67,13 @@ export function setupSocketIO(httpServer: HttpServer): Server {
     try {
       const payload = verifyUserToken(token);
       const user = await getUserById(payload.userId);
-      if (!user) return next(new Error("Invalid token"));
+      if (!user || !credentialVersionMatches(payload.authVersion, user.authVersion)) {
+        return next(new Error("Invalid token"));
+      }
       socket.data.userId = payload.userId;
       socket.data.email = payload.email;
       socket.data.isSuperAdmin = user.isSuperAdmin;
+      socket.data.authVersion = payload.authVersion ?? 1;
       if (!user.isSuperAdmin && !(await hasAnyActiveGoPilotStaffMembership(payload.userId))) {
         const disabled = new Error("GoPilot parent portal is disabled") as Error & {
           data?: { code: string; status: number };
@@ -73,9 +90,83 @@ export function setupSocketIO(httpServer: HttpServer): Server {
     }
   });
 
-  io.on("connection", (socket) => {
+  io.on("connection", async (socket) => {
     const userId = socket.data.userId;
+    const disconnectForCredentialChange = (
+      message = "Credentials have changed. Sign in again.",
+      code = "CREDENTIAL_INVALIDATED"
+    ) => {
+      if (!socket.connected) return;
+      socket.emit("auth:error", { error: message, code });
+      socket.disconnect(true);
+    };
+
+    // Close the handshake race between the middleware's database read and the
+    // socket becoming visible to local/Redis invalidation handlers. Once this
+    // second read succeeds, either it observed the bump or any later bump can
+    // see and disconnect the registered socket.
+    try {
+      const current = await getUserById(userId);
+      if (
+        !socket.connected ||
+        !current ||
+        !credentialVersionMatches(socket.data.authVersion, current.authVersion)
+      ) {
+        disconnectForCredentialChange();
+        return;
+      }
+    } catch {
+      disconnectForCredentialChange(
+        "Authentication service unavailable.",
+        "AUTHENTICATION_SERVICE_UNAVAILABLE"
+      );
+      return;
+    }
+
     console.log("[Socket.io] Authenticated client connected");
+
+    // Redis invalidation is the immediate path. This bounded fallback closes
+    // sockets even if a publisher/subscriber was temporarily unavailable, and
+    // prevents a stale client from passively receiving room broadcasts forever.
+    let credentialCheckRunning = false;
+    const credentialTimer = setInterval(async () => {
+      if (!socket.connected || credentialCheckRunning) return;
+      credentialCheckRunning = true;
+      try {
+        const current = await getUserById(userId);
+        if (
+          !current ||
+          !credentialVersionMatches(socket.data.authVersion, current.authVersion)
+        ) {
+          disconnectForCredentialChange();
+        }
+      } catch {
+        disconnectForCredentialChange(
+          "Authentication service unavailable.",
+          "AUTHENTICATION_SERVICE_UNAVAILABLE"
+        );
+      } finally {
+        credentialCheckRunning = false;
+      }
+    }, SOCKET_CREDENTIAL_REVALIDATION_MS);
+    credentialTimer.unref();
+
+    socket.use(async (_event, next) => {
+      try {
+        const current = await getUserById(userId);
+        if (!current || !credentialVersionMatches(socket.data.authVersion, current.authVersion)) {
+          disconnectForCredentialChange();
+          return next(new Error("Credentials invalidated"));
+        }
+        return next();
+      } catch {
+        disconnectForCredentialChange(
+          "Authentication service unavailable.",
+          "AUTHENTICATION_SERVICE_UNAVAILABLE"
+        );
+        return next(new Error("Authentication service unavailable"));
+      }
+    });
 
     socket.on("join:school", async ({ schoolId, homeroomId }) => {
       try {
@@ -153,6 +244,7 @@ export function setupSocketIO(httpServer: HttpServer): Server {
     });
 
     socket.on("disconnect", () => {
+      clearInterval(credentialTimer);
       console.log("[Socket.io] Authenticated client disconnected");
     });
   });

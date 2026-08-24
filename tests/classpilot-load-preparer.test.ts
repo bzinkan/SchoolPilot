@@ -1394,6 +1394,12 @@ describe("ClassPilot synthetic load fixture preparer", () => {
         return send(500, { error: error instanceof Error ? error.message : "mock failure" });
       }
     });
+    // Windows private-artifact ACL updates spawn PowerShell between API calls
+    // and can legitimately keep this in-process fixture idle for more than
+    // Node's five-second keep-alive default. Keep the mock socket alive across
+    // those checkpoints so Undici never races a server-initiated idle close.
+    server.keepAliveTimeout = 120_000;
+    server.headersTimeout = 125_000;
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
       server.listen(0, "127.0.0.1", resolve);
@@ -1420,15 +1426,12 @@ describe("ClassPilot synthetic load fixture preparer", () => {
         const requestUrl = new URL(input instanceof Request ? input.url : String(input));
         const method = String(init?.method || (input instanceof Request ? input.method : "GET")).toUpperCase();
         const shouldDrop = !injected && method === "POST" && requestUrl.pathname === pathname;
-        const fetchInit = shouldDrop
-          ? { ...init, headers: new Headers(init?.headers) }
-          : init;
-        if (shouldDrop) fetchInit.headers.set("Connection", "close");
-        const response = await actualFetch(input, fetchInit);
+        const response = await actualFetch(input, init);
         if (shouldDrop) {
           // The server-side mutation and complete response both happened.
-          // Drop only the client observation to exercise durable recovery
-          // without poisoning Node's process-global connection pool.
+          // Consume the complete response before dropping only the client
+          // observation. Setting Connection: close here makes Node's global
+          // Undici pool intermittently stall a later request on Windows.
           await response.arrayBuffer();
           injected = true;
           throw new Error("injected transport observation failure");

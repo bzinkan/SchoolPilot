@@ -19,6 +19,7 @@ import {
 } from "../../services/storage.js";
 import {
   allStudentsBelongToSchool,
+  effectiveGoPilotRole,
   getRequestGoPilotRole,
   getHomeroomForSchool,
   getTeacherHomeroomIds,
@@ -49,7 +50,7 @@ const manageAuth = [
 async function isActiveSchoolTeacher(userId: string, schoolId: string): Promise<boolean> {
   const membership = await getMembershipByUserAndSchool(userId, schoolId);
   if (!membership || membership.status !== "active") return false;
-  return (membership.gopilotRole || membership.role) === "teacher";
+  return effectiveGoPilotRole(membership) === "teacher";
 }
 
 // GET /api/gopilot/homerooms/mine - Teacher's own homerooms
@@ -369,6 +370,12 @@ router.post("/:id/teachers", ...manageAuth, async (req, res, next) => {
     if (!teacherId) {
       return res.status(400).json({ error: "teacherId is required" });
     }
+    if (role !== undefined && role !== "co-teacher") {
+      return res.status(422).json({
+        error: "This endpoint only adds co-teachers.",
+        code: "GOPILOT_CO_TEACHER_ROLE_REQUIRED",
+      });
+    }
     if (!(await isActiveSchoolTeacher(teacherId, res.locals.schoolId!))) {
       return res.status(404).json({ error: "Teacher not found" });
     }
@@ -381,7 +388,7 @@ router.post("/:id/teachers", ...manageAuth, async (req, res, next) => {
     const teacher = await addHomeroomTeacher(
       homeroom.id,
       teacherId,
-      role || "co-teacher"
+      "co-teacher"
     );
     await logAudit({
       schoolId: res.locals.schoolId!,

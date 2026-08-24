@@ -388,8 +388,12 @@ export default function SchoolSetupWizard() {
               if (!created.id) throw new Error('The server did not return a staff membership ID.');
               setStaff(prev => [...prev.filter(s => s.id !== created.id), created]);
             }}
-            onRemove={async (membershipId) => {
-              if (!window.confirm('Remove this staff member from the school? They will immediately lose access to every SchoolPilot product at this school.')) return;
+            onRemove={async (membershipId, options = {}) => {
+              if (options.transitionComplete) {
+                setStaff(prev => prev.filter(s => s.id !== membershipId));
+                return;
+              }
+              if (!window.confirm('Remove school access for this staff member? They will immediately lose access to every SchoolPilot product at this school, while historical records are retained.')) return;
               await api.delete(`/schools/${schoolId}/staff/${membershipId}`);
               setStaff(prev => prev.filter(s => s.id !== membershipId));
             }}
@@ -397,6 +401,23 @@ export default function SchoolSetupWizard() {
               await api.put(`/schools/${schoolId}/staff/${membershipId}`, data);
               const res = await api.get(`/schools/${schoolId}/staff`);
               setStaff(toArray(res.data, 'staff').map(normalizeStaff));
+            }}
+            onEmailCorrected={(membershipId, email) => {
+              setStaff(prev => prev.map((member) => (
+                member.id === membershipId
+                  ? { ...member, email, user: { ...(member.user || {}), email } }
+                  : member
+              )));
+            }}
+            onRoleTransitioned={(membershipId, updates) => {
+              setStaff(prev => prev.map((member) => {
+                if (member.id !== membershipId) return member;
+                const next = { ...member, ...updates };
+                if (Object.prototype.hasOwnProperty.call(updates, 'gopilotRole')) {
+                  next.gopilot_role = updates.gopilotRole;
+                }
+                return next;
+              }));
             }}
             onRefresh={async () => {
               const res = await api.get(`/schools/${schoolId}/staff`);

@@ -383,6 +383,10 @@ jobs:
         working-directory: schoolpilot-app
         run: npm run test:gopilot-staff-contracts
 
+      - name: Test staff identity lifecycle frontend contracts
+        working-directory: schoolpilot-app
+        run: npm run test:staff-identity-contracts
+
       - name: Lint frontend
         working-directory: schoolpilot-app
         run: npm run lint

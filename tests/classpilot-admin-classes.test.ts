@@ -20,6 +20,7 @@ import {
   getGroupTeacherSummaries,
   groupHasTeachingHistory,
   hardDeleteGroupWithCleanup,
+  removeGroupTeacher,
   replaceGroupTeachers,
   updateAdminClassWithTeachers,
   upsertAdminClassroomClass,
@@ -109,6 +110,38 @@ after(async () => {
 });
 
 describe("ClassPilot admin class management storage contracts", () => {
+  it("rejects noncanonical co-teacher writes and primary removal before DB contracts", async () => {
+    const relationshipGuardGroup: Parameters<typeof createGroup>[0] = {
+      schoolId: school.id,
+      teacherId: teacherA.id,
+      name: `${TAG}_Relationship_Guard`,
+      groupType: "admin_class",
+      status: "active",
+    };
+    const group = await inSchool(school.id, () => createGroup(relationshipGuardGroup));
+
+    await assert.rejects(
+      () => inSchool(school.id, () => addGroupTeacher(group.id, teacherB.id, "co_teacher")),
+      (error: any) => error?.code === "CLASS_TEACHER_RELATIONSHIP_ROLE_INVALID"
+    );
+    await assert.rejects(
+      () => inSchool(school.id, () => addGroupTeacher(group.id, teacherA.id, "co-teacher")),
+      (error: any) => error?.code === "CLASS_CO_TEACHER_DUPLICATES_PRIMARY"
+    );
+    await assert.rejects(
+      () => inSchool(school.id, () => removeGroupTeacher(group.id, teacherA.id)),
+      (error: any) => error?.code === "CLASS_PRIMARY_TEACHER_REQUIRED"
+    );
+
+    const teachers = await inSchool(school.id, () =>
+      getGroupTeacherSummaries(group.id, school.id)
+    );
+    assert.deepEqual(
+      teachers.map((entry) => [entry.teacherId, entry.relationshipRole]),
+      [[teacherA.id, "primary"]]
+    );
+  });
+
   it("reassigns the primary teacher and staged co-teachers transactionally", async () => {
     const group = await inSchool(school.id, () => createGroup({
       schoolId: school.id,
