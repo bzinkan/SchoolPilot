@@ -142,15 +142,18 @@ def collect():
 
 
 def self_test():
+    # Sanitized coturn 4.6.1 moderate-verbose lifecycle rows. Keep the timestamp,
+    # severity, session prefix, and message grammar aligned with the pinned
+    # production image integration fixture; all identities remain synthetic.
     lines = [
-        "1: session 0001: incoming packet BINDING processed, success\n",
-        "1: session 0001: 401 Unauthorized nonce challenge\n",
-        "1: session 0001: credentials are incorrect\n",
-        "2: session 0001: usage: realm=<r>, username=<>, rp=1, rb=20, sp=1, sb=88\n",
-        "3: session 0002: incoming packet ALLOCATE processed, success\n",
-        "4: session 0002: usage: realm=<r>, username=<opaque>, rp=2, rb=120, sp=3, sb=240\n",
-        "4: session 0002: peer usage: realm=<r>, username=<opaque>, rp=3, rb=240, sp=2, sb=120\n",
-        "5: session 0002: closed (2nd stage), user <opaque>\n",
+        "2026-08-24T12:33:01.220+0000 INFO session 0001: incoming packet BINDING processed, success\n",
+        "2026-08-24T12:33:01.221+0000 INFO session 0001: 401 Unauthorized nonce challenge\n",
+        "2026-08-24T12:33:01.222+0000 INFO session 0001: credentials are incorrect\n",
+        "2026-08-24T12:33:01.223+0000 INFO session 0001: usage: realm=<synthetic>, username=<>, rp=1, rb=20, sp=1, sb=88\n",
+        "2026-08-24T12:33:01.224+0000 INFO session 0002: realm <synthetic> user <opaque>: incoming packet ALLOCATE processed, success\n",
+        "2026-08-24T12:33:02.224+0000 INFO session 0002: usage: realm=<synthetic>, username=<opaque>, rp=2, rb=120, sp=3, sb=240\n",
+        "2026-08-24T12:33:02.225+0000 INFO session 0002: peer usage: realm=<synthetic>, username=<opaque>, rp=3, rb=240, sp=2, sb=120\n",
+        "2026-08-24T12:33:02.226+0000 INFO session 0002: closed (2nd stage), user <opaque>\n",
     ]
     relay_bytes, allocations, authentication_failures, active = parse_lines(lines, [])
     assert relay_bytes == 360

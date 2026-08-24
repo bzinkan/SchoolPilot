@@ -233,8 +233,10 @@ the `net` metric block; post-provisioning validation must find recent network
 datapoints for both `Node=a` and `Node=b` before TURN activation.
 
 Coturn must retain moderate `verbose` logging so the collector receives
-allocation and session-usage lifecycle rows. Those raw rows remain only in the
-node-local, seven-day rotated log and are never forwarded to CloudWatch. TURN
+allocation and session-usage lifecycle rows. `no-stdout-log` keeps those raw
+rows out of journald. They remain only on a 64 MiB node-local tmpfs, with an
+8 MiB/five-minute rotation guard, six retained rotations, and an 80% storage
+alarm; they are never forwarded to CloudWatch. TURN
 REST usernames are expiry plus a non-identifying digest; do not replace them
 with school, student, device, or session identifiers. Activation validation
 must perform an authenticated relay, run the collector, and observe a fresh

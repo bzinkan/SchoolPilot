@@ -108,9 +108,16 @@ describe("ClassPilot AWS TURN infrastructure contract", () => {
     assert.match(userData, /classpilot-turn-relay-metrics\.py --self-test/);
     assert.match(
       userData,
-      /# The aggregate collector needs coturn's moderate session lifecycle records\.[\s\S]*?\nverbose\nlog-file=\/var\/log\/turnserver\/turn\.log\nsimple-log/
+      /# The aggregate collector needs coturn's moderate session lifecycle records\.[\s\S]*?\nverbose\nlog-file=\/var\/log\/turnserver\/turn\.log\nsimple-log\nno-stdout-log/
     );
     assert.doesNotMatch(userData, /\nVerbose\n/);
+    assert.match(userData, /size=64M,mode=0750,uid=\$turnserver_uid,gid=\$turnserver_gid/);
+    assert.match(userData, /maxsize 8M/);
+    assert.match(userData, /OnUnitActiveSec=5min/);
+    assert.match(userData, /classpilot-turn-logrotate\.timer/);
+    assert.match(userData, /"rename": "turn_log_used_percent"/);
+    assert.match(main, /resource "aws_cloudwatch_metric_alarm" "log_storage"/);
+    assert.match(main, /metric_name\s*=\s*"turn_log_used_percent"/);
     assert.match(main, /refresh-certificate\.sh/);
     assert.match(
       main,
@@ -168,6 +175,7 @@ describe("ClassPilot AWS TURN infrastructure contract", () => {
       /relay_bytes \+= int\(usage_match\.group\(1\)\) \+ int\(usage_match\.group\(2\)\)/
     );
     assert.match(relayMetrics, /MAX_ACTIVE_ALLOCATIONS = 2_048/);
+    assert.match(relayMetrics, /Sanitized coturn 4\.6\.1 moderate-verbose lifecycle rows/);
     assert.match(relayMetrics, /peer usage/);
     assert.match(userData, /relay_metrics_script_base64gzip/);
     assert.match(
