@@ -243,16 +243,33 @@ export async function runStaffIdentityRepairCli(args: string[]): Promise<number>
   }
 
   let databaseModule: typeof import("../db.js") | undefined;
+  let cacheInvalidationModule:
+    | typeof import("../realtime/cacheInvalidation.js")
+    | undefined;
+  let errorMonitorModule: typeof import("../services/errorMonitor.js") | undefined;
   try {
-    const [lifecycle, tenantContext, coreSchema, classpilotSchema, drizzle, dbModule] = await Promise.all([
+    const [
+      lifecycle,
+      tenantContext,
+      coreSchema,
+      classpilotSchema,
+      drizzle,
+      dbModule,
+      cacheInvalidation,
+      loadedErrorMonitor,
+    ] = await Promise.all([
       import("../services/staffAssignmentLifecycle.js"),
       import("../middleware/tenantContext.js"),
       import("../schema/core.js"),
       import("../schema/classpilot.js"),
       import("drizzle-orm"),
       import("../db.js"),
+      import("../realtime/cacheInvalidation.js"),
+      import("../services/errorMonitor.js"),
     ]);
     databaseModule = dbModule;
+    cacheInvalidationModule = cacheInvalidation;
+    errorMonitorModule = loadedErrorMonitor;
 
     if (options.allSchools) {
       const report = await tenantContext.runWithTenantContext({ isSuper: true }, async () => {
@@ -505,6 +522,20 @@ export async function runStaffIdentityRepairCli(args: string[]): Promise<number>
     );
     return 1;
   } finally {
+    const runtimeShutdownOperations: Promise<void>[] = [];
+    if (cacheInvalidationModule) {
+      runtimeShutdownOperations.push(
+        cacheInvalidationModule.disposeCacheInvalidationPublisher()
+      );
+    }
+    if (errorMonitorModule) {
+      runtimeShutdownOperations.push(
+        errorMonitorModule.default.disposeAndWait()
+      );
+    }
+    // Monitoring persistence uses the application pool. Drain and fence it
+    // before ending either pool so cleanup cannot race a closing connection.
+    await Promise.allSettled(runtimeShutdownOperations);
     if (databaseModule) {
       await Promise.allSettled([
         databaseModule.pool.end(),

@@ -14,6 +14,36 @@ import { dispatchCacheInvalidation } from "../src/realtime/cacheInvalidation.js"
 
 const read = (path: string) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
+test("staff identity repair releases its lazily loaded realtime runtime", async () => {
+  const [repairCli, cacheBus, wsRedis] = await Promise.all([
+    read("src/cli/repairClasspilotStaffIdentity.ts"),
+    read("src/realtime/cacheInvalidation.ts"),
+    read("src/realtime/ws-redis.ts"),
+  ]);
+
+  assert.match(repairCli, /disposeCacheInvalidationPublisher\(\)/);
+  assert.match(repairCli, /disposeAndWait\(\)/);
+  const cleanup = repairCli.slice(
+    repairCli.lastIndexOf("} finally {"),
+    repairCli.indexOf("const invokedPath")
+  );
+  assert.ok(cleanup.indexOf("disposeAndWait()") < cleanup.indexOf("pool.end()"));
+  assert.match(cacheBus, /publisherDisposer/);
+  assert.match(wsRedis, /export async function disposeWSRedis\(\)/);
+  assert.match(
+    wsRedis,
+    /registerCacheInvalidationPublisher\([\s\S]*?disposeWSRedis\s*\)/
+  );
+  assert.doesNotMatch(
+    wsRedis.slice(0, wsRedis.indexOf("export async function getScreenshots")),
+    /middleware\/rateLimiter/
+  );
+  assert.match(
+    wsRedis.slice(wsRedis.indexOf("export async function getScreenshots")),
+    /await import\("\.\.\/middleware\/rateLimiter\.js"\)/
+  );
+});
+
 test("staff credential invalidation disconnects realtime clients on every API instance", async () => {
   const [cacheBus, socketIo, webSocket, wsBroadcast] = await Promise.all([
     read("src/realtime/cacheInvalidation.ts"),
