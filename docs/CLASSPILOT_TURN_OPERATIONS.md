@@ -156,3 +156,9 @@ its Python shebang directly. Bootstrap runs its built-in self-test before the
 timer is enabled. The CloudWatch agent attaches the custom `Node` dimension in
 the `net` metric block; post-provisioning validation must find recent network
 datapoints for both `Node=a` and `Node=b` before TURN activation.
+
+EC2 accepts at most 16 KiB of decoded user data. The certificate-refresh and
+relay-metrics helpers are therefore LF-normalized, gzip-compressed, and
+base64-encoded before Terraform renders them into the bootstrap. Keep the
+rendered-size contract below the repository's 15 KiB guard so certificate or
+telemetry maintenance cannot silently make a production plan unapplyable.
