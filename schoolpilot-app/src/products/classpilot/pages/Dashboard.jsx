@@ -11,7 +11,6 @@ import StudentDetailDrawer from '../components/StudentDetailDrawer';
 import RemoteControlToolbar from '../components/RemoteControlToolbar';
 import SessionMonitoringReportDialog from '../components/SessionMonitoringReportDialog';
 import TeacherFab from '../components/TeacherFab';
-import CommandResultsDrawer from '../components/CommandResultsDrawer';
 import {
   Dialog,
   DialogContent,
@@ -71,7 +70,6 @@ import {
   deriveDashboardCapabilities,
   exactTabCloseCapability,
   flightPathApplyCapability,
-  mergeCommandUpdateIntoBatches,
   normalizeSessionFabState,
   parseTabSelectionKey,
   resolveCommandTargets,
@@ -258,11 +256,6 @@ export default function Dashboard() {
   const [openTabUrl, setOpenTabUrl] = useState("");
   const [showLockUrlDialog, setShowLockUrlDialog] = useState(false);
   const [lockUrl, setLockUrl] = useState("");
-  const [showTempUnblockDialog, setShowTempUnblockDialog] = useState(false);
-  const [tempUnblockDomain, setTempUnblockDomain] = useState("");
-  const [tempUnblockDuration, setTempUnblockDuration] = useState("5");
-  const [showTabLimitDialog, setShowTabLimitDialog] = useState(false);
-  const [tabLimit, setTabLimit] = useState("");
   const [showCloseTabsDialog, setShowCloseTabsDialog] = useState(false);
   const [selectedTabsToClose, setSelectedTabsToClose] = useState(new Set());
   const [manageTabsStudentIds, setManageTabsStudentIds] = useState(null);
@@ -311,8 +304,6 @@ export default function Dashboard() {
   const [skipTodayGroup, setSkipTodayGroup] = useState(null);
   const [logoutPending, setLogoutPending] = useState(false);
   const [quickClaimStudentId, setQuickClaimStudentId] = useState(null);
-  const [commandResultBatches, setCommandResultBatches] = useState([]);
-  const [showCommandResults, setShowCommandResults] = useState(false);
   const [tileCommandState, setTileCommandState] = useState({});
   const dismissedMessageIds = useRef(new Set());
   const dismissedMessagesInitialized = useRef(false);
@@ -872,8 +863,6 @@ export default function Dashboard() {
                 messageSessionId
                 && String(messageSessionId) !== String(effectiveSessionIdRef.current)
               ) return;
-
-              setCommandResultBatches((batches) => mergeCommandUpdateIntoBatches(batches, message));
 
               const before = transientCommandOutcomesRef.current;
               const tracked = trackTransientCommandResponse(
@@ -1586,13 +1575,6 @@ export default function Dashboard() {
     if (historyTileQueries.length === 0) return EMPTY_TILE_MAP;
     return new Map(historyTileQueries.flatMap((query) => [...(query.data || EMPTY_TILE_MAP)]));
   }, [historyTileQueries]);
-  const failedScreenshotCohortCount = screenshotTileQueries.filter((query) => query.isError).length;
-  const failedHistoryCohortCount = historyTileQueries.filter((query) => query.isError).length;
-  const retryTileData = () => {
-    queryClient.invalidateQueries({ queryKey: [TILE_BATCH_QUERY_ROOTS.screenshots], refetchType: 'all' });
-    queryClient.invalidateQueries({ queryKey: [TILE_BATCH_QUERY_ROOTS.history], refetchType: 'all' });
-  };
-
   useEffect(() => {
     if (freshnessTimeoutRef.current) {
       clearTimeout(freshnessTimeoutRef.current);
@@ -1703,11 +1685,6 @@ export default function Dashboard() {
       ? `${subgroupName || "Subgroup"} - ${targetStudents.length} student${targetStudents.length === 1 ? "" : "s"}`
       : `All ${targetStudents.length} student${targetStudents.length === 1 ? "" : "s"}`;
   const targetConnectionLabel = `${connectedTargetCount} connected · ${signalLostTargetCount} signal lost · ${signedOutTargetCount} signed out`;
-  const targetSupportsScreenOnlyUnlock = targetStudents.length > 0
-    && targetStudents.every((student) => studentSupportsCapability(student, 'screenOnlyUnlockV1'));
-  const bulkUnlockLabel = targetSupportsScreenOnlyUnlock
-    ? 'Unlock Screen Only'
-    : 'Extension update required';
   const selectedSignOutStudents = studentView === "class"
     ? getStudentsForCommandTarget(Array.from(selectedStudentIds))
     : [];
@@ -2219,7 +2196,6 @@ export default function Dashboard() {
       targetLabel: targetBannerLabel,
       createdAt: new Date().toISOString(),
     };
-    setCommandResultBatches((batches) => [decorated, ...batches].slice(0, 20));
     return decorated;
   };
 
@@ -2357,52 +2333,6 @@ export default function Dashboard() {
     lockScreenMutation.mutate({ url: normalizedUrl });
     setShowLockUrlDialog(false);
     setLockUrl("");
-  };
-
-  const handleUnlockScreen = () => {
-    if (!targetSupportsScreenOnlyUnlock) {
-      toast({ variant: 'destructive', title: 'Extension update required', description: 'Screen-only unlock requires ClassPilot extension 2.6.0 or newer on every target.' });
-      return;
-    }
-    unlockScreenMutation.mutate({});
-  };
-
-  const tempUnblockMutation = useMutation({
-    mutationFn: async ({ domain, durationMinutes }) => postActiveCommand('temp-unblock', { domain, durationMinutes }),
-    onSuccess: (data) => {
-      toast(data.deliveryFeedback);
-      setShowTempUnblockDialog(false);
-      setTempUnblockDomain("");
-    },
-    onError: (error) => toast({ variant: "destructive", title: "Temporary unblock failed", description: error.message }),
-  });
-
-  const tabLimitMutation = useMutation({
-    mutationFn: async ({ maxTabs }) => postActiveCommand('limit-tabs', { maxTabs }),
-    onSuccess: (data) => {
-      toast(data.deliveryFeedback);
-      setShowTabLimitDialog(false);
-      setTabLimit("");
-    },
-    onError: (error) => toast({ variant: "destructive", title: "Tab limit failed", description: error.message }),
-  });
-
-  const handleTempUnblock = () => {
-    const domain = tempUnblockDomain.trim().replace(/^https?:\/\//i, '').replace(/^www\./i, '').split('/')[0];
-    if (!domain) {
-      toast({ variant: "destructive", title: "Domain required", description: "Enter the domain to temporarily unblock." });
-      return;
-    }
-    tempUnblockMutation.mutate({ domain, durationMinutes: Number.parseInt(tempUnblockDuration, 10) || 5 });
-  };
-
-  const handleTabLimit = () => {
-    const maxTabs = Number.parseInt(tabLimit, 10);
-    if (!Number.isInteger(maxTabs) || maxTabs < 1) {
-      toast({ variant: "destructive", title: "Invalid tab limit", description: "Enter at least 1 tab." });
-      return;
-    }
-    tabLimitMutation.mutate({ maxTabs });
   };
 
   const openManageTabs = (studentIds = null) => {
@@ -3112,9 +3042,6 @@ export default function Dashboard() {
             {dashboardCapabilities.allows('close-tabs') && <Button size="sm" variant="outline" onClick={() => openManageTabs(null)} disabled={subgroupCommandsDisabled} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Tabs</Button>}
             {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={subgroupCommandsDisabled || lockScreenMutation.isPending} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Lock Current</Button>}
             {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={() => setShowLockUrlDialog(true)} disabled={subgroupCommandsDisabled} data-testid="button-lock-url" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Lock URL</Button>}
-            {dashboardCapabilities.allows('unlock-screen') && <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={subgroupCommandsDisabled || unlockScreenMutation.isPending || !targetSupportsScreenOnlyUnlock} title={targetSupportsScreenOnlyUnlock ? 'Unlock only the screen lock; Flight Paths remain active' : 'ClassPilot extension 2.6.0 or newer is required on every target'} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />{bulkUnlockLabel}</Button>}
-            {dashboardCapabilities.allows('temp-unblock') && <Button size="sm" variant="outline" onClick={() => setShowTempUnblockDialog(true)} disabled={subgroupCommandsDisabled} data-testid="button-temp-unblock" className="text-green-700 dark:text-green-400"><Shield className="h-4 w-4 mr-2" />Temporary Unblock</Button>}
-            {dashboardCapabilities.allows('limit-tabs') && <Button size="sm" variant="outline" onClick={() => setShowTabLimitDialog(true)} disabled={subgroupCommandsDisabled} data-testid="button-tab-limit" className="text-blue-700 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Tab Limit</Button>}
             {dashboardCapabilities.allows('apply-flight-path') && <Button size="sm" variant="outline" onClick={() => setShowApplyFlightPathDialog(true)} disabled={subgroupCommandsDisabled} data-testid="button-apply-flight-path" className="text-purple-600 dark:text-purple-400"><Layers className="h-4 w-4 mr-2" />Apply Flight Path</Button>}
             {studentView === "class" && <Button size="sm" variant="outline" onClick={() => setShowFlightPathViewerDialog(true)} data-testid="button-flight-path-status" className="text-purple-600 dark:text-purple-400"><Eye className="h-4 w-4 mr-2" />Flight Path Status</Button>}
             {dashboardCapabilities.allows('apply-block-list') && <Button size="sm" variant="outline" onClick={() => setShowApplyBlockListDialog(true)} disabled={subgroupCommandsDisabled} data-testid="button-apply-block-list" className="text-red-600 dark:text-red-400"><ShieldBan className="h-4 w-4 mr-2" />Apply Block List</Button>}
@@ -3153,7 +3080,6 @@ export default function Dashboard() {
                 </select>
               </label>
             )}
-            <Button size="sm" variant="outline" onClick={() => setShowCommandResults(true)} data-testid="button-command-results"><ClipboardCheck className="h-4 w-4 mr-2" />Results{commandResultBatches.length > 0 ? ` (${commandResultBatches[0]?.summary?.requested || commandResultBatches[0]?.command?.targets?.length || 0})` : ''}</Button>
           </div>
         )}
 
@@ -3190,24 +3116,6 @@ export default function Dashboard() {
         ) : observationLeaseStatus === 'error' ? (
           <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100" role="status" data-testid="screenshot-observation-error">
             Screen-preview observation could not be renewed. Activity reporting continues, but new ambient screenshots are paused.
-          </div>
-        ) : null}
-
-        {studentView !== 'available' && (failedScreenshotCohortCount > 0 || failedHistoryCohortCount > 0) ? (
-          <div
-            className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"
-            role="status"
-            data-testid="tile-cohort-refresh-error"
-          >
-            <span>
-              Some screen-preview or recent-activity groups could not be refreshed.
-              {(screenshotsByStudent.size > 0 || historyByStudent.size > 0)
-                ? ' Last-known data remains visible where available.'
-                : ' Preview data is temporarily unavailable.'}
-            </span>
-            <Button type="button" size="sm" variant="outline" onClick={retryTileData}>
-              <RefreshCw className="mr-2 h-3.5 w-3.5" />Retry
-            </Button>
           </div>
         ) : null}
 
@@ -3888,25 +3796,6 @@ export default function Dashboard() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={showTempUnblockDialog} onOpenChange={setShowTempUnblockDialog}>
-        <DialogContent data-testid="dialog-temp-unblock">
-          <DialogHeader><DialogTitle>Temporarily Unblock a Domain</DialogTitle><DialogDescription>{targetBannerLabel}. Access will be restored automatically after the selected time.</DialogDescription></DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2"><Label htmlFor="temp-unblock-domain">Domain</Label><Input id="temp-unblock-domain" placeholder="example.org" value={tempUnblockDomain} onChange={(event) => setTempUnblockDomain(event.target.value)} data-testid="input-temp-unblock-domain" /></div>
-            <div className="space-y-2"><Label htmlFor="temp-unblock-duration">Duration</Label><Select value={tempUnblockDuration} onValueChange={setTempUnblockDuration}><SelectTrigger id="temp-unblock-duration" data-testid="select-temp-unblock-duration"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="5">5 minutes</SelectItem><SelectItem value="10">10 minutes</SelectItem><SelectItem value="15">15 minutes</SelectItem><SelectItem value="30">30 minutes</SelectItem></SelectContent></Select></div>
-          </div>
-          <DialogFooter><Button variant="outline" onClick={() => setShowTempUnblockDialog(false)}>Cancel</Button><Button onClick={handleTempUnblock} disabled={tempUnblockMutation.isPending} data-testid="button-confirm-temp-unblock">Temporarily Unblock</Button></DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={showTabLimitDialog} onOpenChange={setShowTabLimitDialog}>
-        <DialogContent data-testid="dialog-tab-limit">
-          <DialogHeader><DialogTitle>Set Tab Limit</DialogTitle><DialogDescription>{targetBannerLabel}. Students will be limited to this many open tabs.</DialogDescription></DialogHeader>
-          <div className="space-y-2 py-4"><Label htmlFor="tab-limit">Maximum open tabs</Label><Input id="tab-limit" type="number" min="1" max="100" value={tabLimit} onChange={(event) => setTabLimit(event.target.value)} data-testid="input-tab-limit" /></div>
-          <DialogFooter><Button variant="outline" onClick={() => setShowTabLimitDialog(false)}>Cancel</Button><Button onClick={handleTabLimit} disabled={tabLimitMutation.isPending} data-testid="button-confirm-tab-limit">Apply Limit</Button></DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       {/* Tabs Dialog */}
       <Dialog open={showCloseTabsDialog} onOpenChange={(open) => {
         setShowCloseTabsDialog(open);
@@ -4278,12 +4167,6 @@ export default function Dashboard() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      <CommandResultsDrawer
-        open={showCommandResults}
-        onOpenChange={setShowCommandResults}
-        batches={commandResultBatches}
-      />
 
       {/* TeacherFab */}
       {dashboardCapabilities.canUseTeacherFab && (
