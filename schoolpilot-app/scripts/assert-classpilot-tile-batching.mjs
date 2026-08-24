@@ -96,7 +96,23 @@ assert.equal(
 );
 assert.match(dashboardSource, /historyByStudent\.get\(student\.studentId\)/);
 assert.match(dashboardSource, /screenshotsByStudent\.get\(student\.studentId\)/);
-assert.match(dashboardSource, /data-testid="tile-cohort-refresh-error"/);
+assert.doesNotMatch(
+  dashboardSource,
+  /data-testid="tile-cohort-refresh-error"/,
+  'cohort tile failures must remain tile-local and not add a dashboard-wide warning banner',
+);
+for (const removedControl of [
+  'button-unlock-screen',
+  'button-temp-unblock',
+  'button-tab-limit',
+  'button-command-results',
+]) {
+  assert.doesNotMatch(
+    dashboardSource,
+    new RegExp(`data-testid=["']${removedControl}["']`),
+    `${removedControl} must remain absent from the classroom toolbar`,
+  );
+}
 assert.doesNotMatch(
   dashboardSource,
   /failedScreenshotStudentIds|failedHistoryStudentIds/,
