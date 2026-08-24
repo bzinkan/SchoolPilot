@@ -140,3 +140,19 @@ capability containment, pause OU unpinning and create/apply a fresh
 definitions. `-Operation Rollback` only restores the exact immediately prior
 API/worker pair recorded by its plan. The additive TURN infrastructure remains
 in place.
+
+## Node bootstrap contract
+
+Keep Certbot's `/etc/letsencrypt` tree root-only. The deploy hook validates the
+hostname, expiry, and matching certificate/private-key public keys, stages both
+files as `root:turnserver` with mode `0640`, and atomically switches the
+`/etc/coturn/tls/current` symlink before restarting an already-running coturn
+service. Coturn receives only `CAP_NET_BIND_SERVICE` so its unprivileged service
+account can bind TURNS/443. Never repair certificate access by making the
+Let's Encrypt tree world-readable.
+
+The identifier-free relay collector must remain LF-only because systemd executes
+its Python shebang directly. Bootstrap runs its built-in self-test before the
+timer is enabled. The CloudWatch agent attaches the custom `Node` dimension in
+the `net` metric block; post-provisioning validation must find recent network
+datapoints for both `Node=a` and `Node=b` before TURN activation.

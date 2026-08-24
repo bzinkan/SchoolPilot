@@ -1,2 +1,4 @@
 schoolpilot-app/package-lock.json text eol=lf
 infra/modules/turn/user-data.sh.tftpl text eol=lf
+infra/modules/turn/relay-metrics.py text eol=lf
+infra/modules/turn/refresh-certificate.sh text eol=lf

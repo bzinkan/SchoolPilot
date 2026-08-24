@@ -1,9 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
+bootstrap_complete=false
+contain_incomplete_bootstrap() {
+  if test "$bootstrap_complete" != true; then
+    systemctl disable --now coturn certbot.timer \
+      classpilot-turn-relay-metrics.timer >/dev/null 2>&1 || true
+  fi
+}
+trap contain_incomplete_bootstrap EXIT
 
 apt-get update
 apt-get install -y --no-install-recommends ca-certificates certbot coturn curl gnupg jq python3-certbot-dns-route53 unzip
+systemctl disable --now coturn >/dev/null 2>&1 || true
 
 # Ubuntu 24.04 no longer publishes the awscli apt package. Use AWS's official
 # system installer, which downloads and verifies AWS CLI v2 before installing
@@ -21,13 +30,23 @@ install -d -m 0750 -o turnserver -g turnserver /var/log/turnserver
 turn_secret="$(aws secretsmanager get-secret-value --region '${aws_region}' --secret-id '${rest_secret_arn}' --query SecretString --output text)"
 test -n "$turn_secret"
 
-certbot certonly --non-interactive --agree-tos --dns-route53 \
-  --email '${tls_email}' --domain '${hostname}' --keep-until-expiring
+install -d -m 0750 -o root -g turnserver /etc/coturn/tls/releases
+printf '%s' '${certificate_refresh_script_base64}' | base64 --decode \
+  >/usr/local/sbin/classpilot-turn-refresh-certificate
+chown root:root /usr/local/sbin/classpilot-turn-refresh-certificate
+chmod 0750 /usr/local/sbin/classpilot-turn-refresh-certificate
 
 install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
-printf '%s\n' '#!/usr/bin/env bash' 'systemctl restart coturn' \
-  >/etc/letsencrypt/renewal-hooks/deploy/restart-coturn
-chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/restart-coturn
+cat >/etc/letsencrypt/renewal-hooks/deploy/classpilot-turn-refresh-certificate <<'EOF'
+#!/usr/bin/env bash
+exec /usr/local/sbin/classpilot-turn-refresh-certificate '${hostname}'
+EOF
+chmod 0750 /etc/letsencrypt/renewal-hooks/deploy/classpilot-turn-refresh-certificate
+
+certbot certonly --non-interactive --agree-tos --dns-route53 \
+  --email '${tls_email}' --domain '${hostname}' --keep-until-expiring
+test -L /etc/coturn/tls/current || \
+  /usr/local/sbin/classpilot-turn-refresh-certificate '${hostname}'
 
 cat >/etc/turnserver.conf <<EOF
 listening-port=3478
@@ -40,8 +59,8 @@ server-name=${hostname}
 external-ip=${public_ip}
 min-port=${relay_port_min}
 max-port=${relay_port_max}
-cert=/etc/letsencrypt/live/${hostname}/fullchain.pem
-pkey=/etc/letsencrypt/live/${hostname}/privkey.pem
+cert=/etc/coturn/tls/current/fullchain.pem
+pkey=/etc/coturn/tls/current/privkey.pem
 no-tlsv1
 no-tlsv1_1
 no-cli
@@ -57,8 +76,16 @@ unset turn_secret
 chown root:turnserver /etc/turnserver.conf
 chmod 0640 /etc/turnserver.conf
 
+install -d -m 0755 /etc/systemd/system/coturn.service.d
+cat >/etc/systemd/system/coturn.service.d/classpilot-privileged-port.conf <<'EOF'
+[Service]
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+EOF
+
 sed -i 's/^#\?TURNSERVER_ENABLED=.*/TURNSERVER_ENABLED=1/' /etc/default/coturn
-systemctl enable --now coturn certbot.timer
+systemctl daemon-reload
 
 # Coturn writes final per-session usage as numeric rb/sb byte counters. This
 # bounded incremental collector emits only their sum; it never forwards realm,
@@ -67,6 +94,7 @@ install -d -m 0750 -o root -g root /var/lib/classpilot-turn-metrics
 printf '%s' '${relay_metrics_script_base64}' | base64 --decode \
   >/usr/local/bin/classpilot-turn-relay-metrics.py
 chmod 0750 /usr/local/bin/classpilot-turn-relay-metrics.py
+/usr/local/bin/classpilot-turn-relay-metrics.py --self-test
 
 cat >/etc/systemd/system/classpilot-turn-relay-metrics.service <<'EOF'
 [Unit]
@@ -114,7 +142,6 @@ cat >/etc/logrotate.d/coturn-schoolpilot <<'EOF'
 EOF
 
 systemctl daemon-reload
-systemctl enable --now classpilot-turn-relay-metrics.timer
 
 curl --fail --silent --show-error --location \
   https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb \
@@ -125,10 +152,13 @@ cat >/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'EOF'
   "agent": { "metrics_collection_interval": 60, "run_as_user": "root" },
   "metrics": {
     "namespace": "${metric_namespace}",
-    "append_dimensions": { "Node": "${node_name}" },
     "aggregation_dimensions": [["Node"]],
     "metrics_collected": {
-      "net": { "measurement": ["bytes_sent", "bytes_recv"], "metrics_collection_interval": 60 }
+      "net": {
+        "measurement": ["bytes_sent", "bytes_recv"],
+        "metrics_collection_interval": 60,
+        "append_dimensions": { "Node": "${node_name}" }
+      }
     }
   }
 }
@@ -136,3 +166,23 @@ EOF
 /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
   -a fetch-config -m ec2 \
   -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
+
+systemctl start coturn
+systemctl is-active --quiet coturn
+runuser -u turnserver -- test -r /etc/coturn/tls/current/fullchain.pem
+runuser -u turnserver -- test -r /etc/coturn/tls/current/privkey.pem
+timeout 10 openssl s_client -connect 127.0.0.1:443 \
+  -servername '${hostname}' -verify_hostname '${hostname}' \
+  -verify_return_error -CAfile /etc/ssl/certs/ca-certificates.crt \
+  </dev/null >/dev/null 2>&1
+systemctl start classpilot-turn-relay-metrics.service
+test "$(systemctl show classpilot-turn-relay-metrics.service -p Result --value)" = success
+test "$(systemctl show classpilot-turn-relay-metrics.service -p ExecMainStatus --value)" = 0
+test -s /var/lib/classpilot-turn-metrics/state.json
+systemctl start certbot.timer classpilot-turn-relay-metrics.timer
+systemctl is-active --quiet certbot.timer
+systemctl is-active --quiet classpilot-turn-relay-metrics.timer
+systemctl is-active --quiet amazon-cloudwatch-agent
+systemctl enable coturn certbot.timer classpilot-turn-relay-metrics.timer
+bootstrap_complete=true
+trap - EXIT

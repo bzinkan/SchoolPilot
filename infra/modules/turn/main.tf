@@ -207,17 +207,26 @@ resource "aws_instance" "turn" {
 
   user_data_replace_on_change = true
   user_data = templatefile("${path.module}/user-data.sh.tftpl", {
-    aws_region                  = var.aws_region
-    hostname                    = "turn-${each.key}.${var.domain}"
-    public_ip                   = aws_eip.turn[each.key].public_ip
-    realm                       = var.domain
-    relay_port_min              = var.relay_port_min
-    relay_port_max              = var.relay_port_max
-    rest_secret_arn             = aws_cloudformation_stack.rest_secret.outputs["SecretArn"]
-    tls_email                   = var.tls_email
-    metric_namespace            = "SchoolPilot/ClassPilotTURN"
-    node_name                   = each.key
-    relay_metrics_script_base64 = base64encode(file("${path.module}/relay-metrics.py"))
+    aws_region       = var.aws_region
+    hostname         = "turn-${each.key}.${var.domain}"
+    public_ip        = aws_eip.turn[each.key].public_ip
+    realm            = var.domain
+    relay_port_min   = var.relay_port_min
+    relay_port_max   = var.relay_port_max
+    rest_secret_arn  = aws_cloudformation_stack.rest_secret.outputs["SecretArn"]
+    tls_email        = var.tls_email
+    metric_namespace = "SchoolPilot/ClassPilotTURN"
+    node_name        = each.key
+    certificate_refresh_script_base64 = base64encode(replace(
+      replace(file("${path.module}/refresh-certificate.sh"), "\r\n", "\n"),
+      "\r",
+      "\n",
+    ))
+    relay_metrics_script_base64 = base64encode(replace(
+      replace(file("${path.module}/relay-metrics.py"), "\r\n", "\n"),
+      "\r",
+      "\n",
+    ))
   })
 
   lifecycle {
