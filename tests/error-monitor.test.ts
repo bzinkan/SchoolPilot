@@ -1,5 +1,6 @@
 import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import net, { type Socket } from "node:net";
 
 import {
   default as singletonErrorMonitor,
@@ -126,6 +127,70 @@ class ProbeAggregation extends FakeAggregation {
   }
 }
 
+class DisposableAggregation extends FakeAggregation {
+  disposed = false;
+
+  async dispose(): Promise<void> {
+    await Promise.resolve();
+    this.disposed = true;
+  }
+}
+
+class BlockingAggregation extends FakeAggregation {
+  disposeCalls = 0;
+  recordCalls = 0;
+  tryAcquireCalls = 0;
+  private resolveStarted!: () => void;
+  private resolveRecord!: (count: number) => void;
+  readonly started = new Promise<void>((resolve) => {
+    this.resolveStarted = resolve;
+  });
+  private readonly recordResult = new Promise<number>((resolve) => {
+    this.resolveRecord = resolve;
+  });
+
+  override async recordEvent(): Promise<number> {
+    this.recordCalls += 1;
+    this.resolveStarted();
+    return this.recordResult;
+  }
+
+  finishRecord(count = 1): void {
+    this.resolveRecord(count);
+  }
+
+  override async tryAcquireAlert(): Promise<boolean> {
+    this.tryAcquireCalls += 1;
+    return true;
+  }
+
+  async dispose(): Promise<void> {
+    this.disposeCalls += 1;
+  }
+}
+
+async function waitForCondition(
+  condition: () => boolean,
+  timeoutMs = 2_000
+): Promise<void> {
+  const startedAt = Date.now();
+  while (!condition()) {
+    if (Date.now() - startedAt >= timeoutMs) {
+      throw new Error("Timed out waiting for test condition");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+async function closeTcpServer(
+  server: net.Server,
+  sockets: Set<Socket>
+): Promise<void> {
+  for (const socket of sockets) socket.destroy();
+  if (!server.listening) return;
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+}
+
 function baseMonitoringSnapshot(overrides: Partial<MonitoringHealthSnapshot> = {}): MonitoringHealthSnapshot {
   return {
     status: "healthy",
@@ -242,6 +307,64 @@ describe("error monitor redaction", () => {
 });
 
 describe("error monitor fingerprints and stats", () => {
+  it("awaits aggregation cleanup for terminating one-off processes", async () => {
+    const aggregation = new DisposableAggregation(Date.now);
+    const monitor = makeMonitor({ aggregation });
+
+    await monitor.disposeAndWait();
+
+    assert.equal(aggregation.disposed, true);
+  });
+
+  it("drains tracked work before teardown and fences later monitor work", async () => {
+    const aggregation = new BlockingAggregation(Date.now);
+    const monitor = makeMonitor({ aggregation });
+    monitor.trackError(
+      "fatal_process_error",
+      new Error("shutdown-drain"),
+      undefined,
+      { persist: false }
+    );
+    await aggregation.started;
+
+    const disposal = monitor.disposeAndWait(500);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(aggregation.disposeCalls, 0);
+    aggregation.finishRecord();
+    await disposal;
+
+    monitor.trackError(
+      "fatal_process_error",
+      new Error("after-disposal"),
+      undefined,
+      { persist: false }
+    );
+    assert.equal(aggregation.disposeCalls, 1);
+    assert.equal(aggregation.recordCalls, 1);
+    assert.equal(aggregation.tryAcquireCalls, 0);
+  });
+
+  it("bounds pending-work drain and prevents timed-out callbacks from reusing aggregation", async () => {
+    const aggregation = new BlockingAggregation(Date.now);
+    const monitor = makeMonitor({ aggregation });
+    monitor.trackError(
+      "fatal_process_error",
+      new Error("shutdown-timeout"),
+      undefined,
+      { persist: false }
+    );
+    await aggregation.started;
+    const startedAt = Date.now();
+
+    await monitor.disposeAndWait(25);
+
+    assert.ok(Date.now() - startedAt < 1_000);
+    assert.equal(aggregation.disposeCalls, 1);
+    aggregation.finishRecord();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(aggregation.tryAcquireCalls, 0);
+  });
+
   it("groups equivalent fingerprints and separates path, job, message type, and error code", () => {
     const monitor = makeMonitor();
     const base = { path: "/api/same", job: "job-a", messageType: "type-a", errorCode: "E_A" };
@@ -441,6 +564,91 @@ describe("error monitor global aggregation", () => {
     assert.ok((status.degradedReason ?? "").length <= 180);
     assert.doesNotMatch(status.degradedReason ?? "", /super-secret|redis:\/\//);
     await adapter.dispose();
+  });
+
+  it("disconnects a paused Redis socket directly and remains terminal after disposal", async () => {
+    const sockets = new Set<Socket>();
+    let acceptedConnections = 0;
+    let quitCommands = 0;
+    let paused = false;
+    const server = net.createServer((socket) => {
+      acceptedConnections += 1;
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+      socket.on("data", (data) => {
+        const payload = data.toString().toUpperCase();
+        if (payload.includes("QUIT")) quitCommands += 1;
+        if (paused) return;
+        const commandCount = payload.match(/\*\d+/g)?.length ?? 0;
+        for (let index = 0; index < commandCount; index += 1) {
+          socket.write("+OK\r\n");
+        }
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const adapter = new RedisMonitorAggregationAdapter(
+      `redis://127.0.0.1:${address.port}`
+    );
+
+    try {
+      assert.deepEqual(await adapter.checkStatus(1_000), {
+        mode: "redis",
+        ok: true,
+      });
+      paused = true;
+      const startedAt = Date.now();
+
+      await adapter.dispose();
+      await waitForCondition(() => sockets.size === 0);
+
+      assert.ok(Date.now() - startedAt < 2_000);
+      assert.equal(quitCommands, 0);
+      const connectionCountAfterDispose = acceptedConnections;
+      assert.equal((await adapter.checkStatus(50)).mode, "local");
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      assert.equal(acceptedConnections, connectionCountAfterDispose);
+    } finally {
+      await adapter.dispose();
+      await closeTcpServer(server, sockets);
+    }
+  });
+
+  it("fences an in-flight Redis connect race during disposal", async () => {
+    const sockets = new Set<Socket>();
+    let acceptedConnections = 0;
+    const server = net.createServer((socket) => {
+      acceptedConnections += 1;
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+      socket.on("data", () => undefined);
+      // Intentionally never answer the node-redis initialization commands.
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const adapter = new RedisMonitorAggregationAdapter(
+      `redis://127.0.0.1:${address.port}`
+    );
+
+    try {
+      const connection = adapter.checkStatus(2_000);
+      await waitForCondition(() => acceptedConnections === 1);
+      const startedAt = Date.now();
+
+      await adapter.dispose();
+      assert.equal((await connection).mode, "local");
+      await waitForCondition(() => sockets.size === 0);
+
+      assert.ok(Date.now() - startedAt < 2_000);
+      assert.equal((await adapter.checkStatus(50)).mode, "local");
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      assert.equal(acceptedConnections, 1);
+    } finally {
+      await adapter.dispose();
+      await closeTcpServer(server, sockets);
+    }
   });
 
   it("uses shared aggregation counts and elects one alert sender", async () => {

@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from "crypto";
 import { createClient, type RedisClientType } from "redis";
-import { redisCommand } from "../middleware/rateLimiter.js";
 import {
   dispatchCacheInvalidation,
   registerCacheInvalidationPublisher,
@@ -99,6 +98,8 @@ const redisUrl = process.env.REDIS_URL;
 const redisPrefix = process.env.REDIS_PREFIX ?? "schoolpilot";
 const redisChannel = `${redisPrefix}:ws:broadcast`;
 const HOT_PATH_LOG_INTERVAL_MS = 60_000;
+const REDIS_INITIALIZATION_SHUTDOWN_GRACE_MS = 500;
+const REDIS_DISCONNECT_GRACE_MS = 250;
 
 type HotPathActivity = {
   redisMessagesPublished: number;
@@ -196,6 +197,7 @@ let redisWarned = false;
 let redisInitPromise: Promise<void> | null = null;
 let subscribed = false;
 let subscriptionStarted = false;
+let redisDisposed = false;
 
 function warnRedis(error?: unknown) {
   if (redisWarned) {
@@ -213,7 +215,7 @@ function warnRedis(error?: unknown) {
 }
 
 async function ensureRedisReady(): Promise<void> {
-  if (!redisUrl) {
+  if (!redisUrl || redisDisposed) {
     return;
   }
   if (redisInitPromise) {
@@ -232,6 +234,7 @@ async function ensureRedisReady(): Promise<void> {
         warnRedis(err);
       });
       await redisPublisher.connect();
+      if (redisDisposed) return;
       console.log(`[Redis] Instance ${instanceShortId} publisher connected`);
 
       redisSubscriber = redisPublisher.duplicate();
@@ -249,6 +252,7 @@ async function ensureRedisReady(): Promise<void> {
         if (subscriptionStarted) subscribed = true;
       });
       await redisSubscriber.connect();
+      if (redisDisposed) return;
       console.log(`[Redis] Instance ${instanceShortId} subscriber connected`);
 
       redisEnabled = true;
@@ -390,7 +394,23 @@ export async function publishWS(
   if (!redisUrl) {
     return false;
   }
-  await ensureRedisReady();
+  if (options.signal) {
+    if (options.signal.aborted) return false;
+    let removeAbortListener: (() => void) | undefined;
+    const ready = await Promise.race([
+      ensureRedisReady().then(() => true, () => false),
+      new Promise<boolean>((resolve) => {
+        const onAbort = () => resolve(false);
+        options.signal!.addEventListener("abort", onAbort, { once: true });
+        removeAbortListener = () => options.signal!.removeEventListener("abort", onAbort);
+        if (options.signal!.aborted) onAbort();
+      }),
+    ]);
+    removeAbortListener?.();
+    if (!ready || options.signal.aborted) return false;
+  } else {
+    await ensureRedisReady();
+  }
   if (!redisEnabled || !redisPublisher) {
     return false;
   }
@@ -419,10 +439,13 @@ export async function publishWS(
           serialized,
         ]
       : ["PUBLISH", redisChannel, serialized];
-    const numSubscribers = options.signal || ordered
+    // Do not attach AbortSignal to an already-sent node-redis command. In
+    // node-redis 4.7.x an aborted queued PUBLISH can corrupt delayed-reply
+    // bookkeeping and leave its TCP socket alive. The cache layer bounds the
+    // caller wait while retaining this raw promise for terminal disposal.
+    const numSubscribers = ordered
       ? await redisPublisher.sendCommand<number>(
-          command,
-          options.signal ? { signal: options.signal } : undefined
+          command
         )
       : await redisPublisher.publish(redisChannel, serialized);
     if (numSubscribers === -1) return true;
@@ -541,8 +564,94 @@ export async function publishWSBatch(
   }
 }
 
-registerCacheInvalidationPublisher((target) =>
-  publishWS(target, { type: "cache-invalidation" })
+export type RedisShutdownClient = {
+  disconnect(): Promise<unknown> | unknown;
+};
+
+type RedisRuntimeShutdownOptions = {
+  initialization?: Promise<unknown> | null;
+  clients: () => readonly (RedisShutdownClient | null)[];
+  initializationGraceMs?: number;
+  disconnectGraceMs?: number;
+};
+
+async function settlesWithin(
+  operation: Promise<unknown>,
+  timeoutMs: number
+): Promise<boolean> {
+  if (timeoutMs <= 0) return false;
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      operation.then(() => true, () => false),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function closeRedisClient(
+  client: RedisShutdownClient | null,
+  disconnectGraceMs: number
+): Promise<void> {
+  if (!client) return;
+  // This is terminal one-off teardown, so destroy the socket directly. A
+  // stalled QUIT makes node-redis report isOpen=false before the server reply,
+  // after which disconnect() refuses to destroy the still-live socket.
+  await settlesWithin(
+    Promise.resolve().then(() => client.disconnect()),
+    disconnectGraceMs
+  );
+}
+
+export async function closeRedisRuntimeForShutdown(
+  options: RedisRuntimeShutdownOptions
+): Promise<void> {
+  if (options.initialization) {
+    await settlesWithin(
+      options.initialization,
+      options.initializationGraceMs ?? REDIS_INITIALIZATION_SHUTDOWN_GRACE_MS
+    );
+  }
+  await Promise.allSettled(
+    options.clients().map((client) =>
+      closeRedisClient(
+        client,
+        options.disconnectGraceMs ?? REDIS_DISCONNECT_GRACE_MS
+      )
+    )
+  );
+}
+
+/**
+ * Release the long-lived realtime transport when a one-off process lazily
+ * imports this module only to broadcast a cache invalidation.
+ */
+export async function disposeWSRedis(): Promise<void> {
+  redisDisposed = true;
+  clearInterval(hotPathLogTimer);
+  await closeRedisRuntimeForShutdown({
+    initialization: redisInitPromise,
+    clients: () => [redisSubscriber, redisPublisher],
+  });
+  redisPublisher = null;
+  redisSubscriber = null;
+  redisEnabled = false;
+  subscribed = false;
+  subscriptionStarted = false;
+  redisInitPromise = null;
+}
+
+registerCacheInvalidationPublisher(
+  (target, options) => publishWS(
+    target,
+    { type: "cache-invalidation" },
+    { signal: options?.signal }
+  ),
+  disposeWSRedis
 );
 
 // Screenshot storage in Redis (for multi-instance deployments)
@@ -740,6 +849,9 @@ export async function getScreenshots(
   const timeout = setTimeout(() => controller.abort(), 250);
   timeout.unref?.();
   try {
+    // Keep the API rate-limiter Redis client out of lightweight one-off
+    // processes that import this module only to publish an invalidation.
+    const { redisCommand } = await import("../middleware/rateLimiter.js");
     const result = await redisCommand(
       [
         "MGET",

@@ -1,7 +1,10 @@
-import { createClient, type RedisClientType } from "redis";
+import { createClient } from "redis";
 import type { NormalizedMonitorEvent } from "./errorMonitor.js";
 
 const MONITOR_BUCKET_TTL_SECONDS = 7 * 60;
+const MONITOR_REDIS_INITIALIZATION_SHUTDOWN_GRACE_MS = 500;
+const MONITOR_REDIS_DISCONNECT_GRACE_MS = 250;
+type MonitorRedisClient = ReturnType<typeof createClient>;
 
 export type MonitorAggregationStatus = {
   mode: "redis" | "local";
@@ -36,10 +39,44 @@ function safeRedisError(value: unknown): string {
   return sanitized.length > 180 ? `${sanitized.slice(0, 177)}...` : sanitized;
 }
 
+async function settlesWithin(
+  operation: Promise<unknown>,
+  timeoutMs: number
+): Promise<boolean> {
+  if (timeoutMs <= 0) return false;
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      operation.then(() => true, () => false),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function closeMonitorRedisClient(
+  client: MonitorRedisClient | null
+): Promise<void> {
+  if (!client) return;
+  // Terminal one-off teardown must destroy the socket directly. node-redis
+  // marks a client closed before QUIT receives a response, so a timed-out
+  // QUIT can leave a live socket that disconnect() then refuses to destroy.
+  await settlesWithin(
+    Promise.resolve().then(() => client.disconnect()),
+    MONITOR_REDIS_DISCONNECT_GRACE_MS
+  );
+}
+
 export class RedisMonitorAggregationAdapter implements MonitorAggregationAdapter {
-  private client: RedisClientType | null = null;
+  private client: MonitorRedisClient | null = null;
   private connectPromise: Promise<void> | null = null;
   private lastError: string | undefined;
+  private generation = 0;
+  private disposed = false;
+  private disposePromise: Promise<void> | null = null;
 
   constructor(
     private readonly redisUrl: string,
@@ -103,6 +140,13 @@ export class RedisMonitorAggregationAdapter implements MonitorAggregationAdapter
   }
 
   getStatus(): MonitorAggregationStatus {
+    if (this.disposed) {
+      return {
+        mode: "local",
+        ok: false,
+        degradedReason: "Redis aggregation is disposed",
+      };
+    }
     if (this.client?.isReady && !this.lastError) {
       return { mode: "redis", ok: true };
     }
@@ -123,26 +167,35 @@ export class RedisMonitorAggregationAdapter implements MonitorAggregationAdapter
 
   resetForTests(): void {
     this.lastError = undefined;
-    void this.dispose();
-  }
-
-  async dispose(): Promise<void> {
+    this.generation += 1;
     const client = this.client;
     this.client = null;
     this.connectPromise = null;
-    if (!client) return;
-    try {
-      if (client.isOpen) await client.quit();
-    } catch {
-      try {
-        await client.disconnect();
-      } catch {
-        // Ignore cleanup failures; this is best-effort handle cleanup.
-      }
-    }
+    void closeMonitorRedisClient(client);
   }
 
-  private async getClient(timeoutMs = 2500): Promise<RedisClientType | null> {
+  dispose(): Promise<void> {
+    if (this.disposePromise) return this.disposePromise;
+    this.disposed = true;
+    this.generation += 1;
+    const initialization = this.connectPromise;
+    this.disposePromise = (async () => {
+      if (initialization) {
+        await settlesWithin(
+          initialization,
+          MONITOR_REDIS_INITIALIZATION_SHUTDOWN_GRACE_MS
+        );
+      }
+      const client = this.client;
+      if (this.client === client) this.client = null;
+      this.connectPromise = null;
+      await closeMonitorRedisClient(client);
+    })();
+    return this.disposePromise;
+  }
+
+  private async getClient(timeoutMs = 2500): Promise<MonitorRedisClient | null> {
+    if (this.disposed) return null;
     if (this.client?.isReady) return this.client;
     if (this.connectPromise) {
       try {
@@ -151,38 +204,46 @@ export class RedisMonitorAggregationAdapter implements MonitorAggregationAdapter
         this.lastError = safeRedisError(err);
         return null;
       }
-      return this.client?.isReady ? this.client : null;
+      return !this.disposed && this.client?.isReady ? this.client : null;
     }
 
-    this.connectPromise = (async () => {
+    const generation = this.generation;
+    const client = createClient({
+      url: this.redisUrl,
+      socket: { connectTimeout: timeoutMs, reconnectStrategy: false },
+    });
+    this.client = client;
+    client.on("error", (err) => {
+      if (!this.disposed && generation === this.generation) {
+        this.lastError = safeRedisError(err);
+      }
+    });
+    let connection!: Promise<void>;
+    connection = (async () => {
       try {
-        this.client = createClient({
-          url: this.redisUrl,
-          socket: { connectTimeout: timeoutMs, reconnectStrategy: false },
-        });
-        this.client.on("error", (err) => {
-          this.lastError = safeRedisError(err);
-        });
-        await this.withTimeout(this.client.connect(), timeoutMs);
+        await this.withTimeout(client.connect(), timeoutMs);
+        if (this.disposed || generation !== this.generation) {
+          await closeMonitorRedisClient(client);
+          if (this.client === client) this.client = null;
+          return;
+        }
         this.lastError = undefined;
       } catch (err) {
-        this.lastError = safeRedisError(err);
-        const client = this.client;
-        this.client = null;
-        if (client?.isOpen) {
-          try {
-            await client.disconnect();
-          } catch {
-            // Ignore failed cleanup after a failed connection attempt.
-          }
+        if (!this.disposed && generation === this.generation) {
+          this.lastError = safeRedisError(err);
         }
+        await closeMonitorRedisClient(client);
+        if (this.client === client) this.client = null;
       } finally {
-        this.connectPromise = null;
+        if (this.connectPromise === connection) this.connectPromise = null;
       }
     })();
+    this.connectPromise = connection;
 
-    await this.connectPromise;
-    return this.client?.isReady ? this.client : null;
+    await connection;
+    return !this.disposed && this.client === client && client.isReady
+      ? client
+      : null;
   }
 
   private async withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {

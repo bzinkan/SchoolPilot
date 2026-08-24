@@ -721,6 +721,8 @@ export class ErrorMonitor {
   private lastAlertFailureAt?: number;
   private housekeepingTimer?: NodeJS.Timeout;
   private metricsTimer?: NodeJS.Timeout;
+  private disposed = false;
+  private disposePromise?: Promise<void>;
 
   constructor(options: ErrorMonitorOptions = {}) {
     this.now = options.now ?? Date.now;
@@ -746,6 +748,12 @@ export class ErrorMonitor {
   }
 
   dispose(): void {
+    void this.disposeAndWait();
+  }
+
+  disposeAndWait(timeoutMs = DEFAULT_ALERT_TIMEOUT_MS): Promise<void> {
+    if (this.disposePromise) return this.disposePromise;
+    this.disposed = true;
     if (this.housekeepingTimer) {
       clearInterval(this.housekeepingTimer);
       this.housekeepingTimer = undefined;
@@ -754,7 +762,24 @@ export class ErrorMonitor {
       clearInterval(this.metricsTimer);
       this.metricsTimer = undefined;
     }
-    void this.aggregation?.dispose?.();
+    const startedAt = Date.now();
+    this.disposePromise = (async () => {
+      // Fence new work first, then give already tracked persistence/alert work
+      // one bounded opportunity to finish before closing its aggregation
+      // transport. Post-await checks in `checkThreshold` prevent a timed-out
+      // callback from using Redis after this point.
+      await timeoutAfter(
+        Promise.allSettled([...this.pending]).then(() => undefined),
+        timeoutMs,
+        undefined
+      );
+      const remainingMs = Math.max(0, timeoutMs - (Date.now() - startedAt));
+      const aggregationCleanup = Promise.resolve()
+        .then(() => this.aggregation?.dispose?.())
+        .then(() => undefined, () => undefined);
+      await timeoutAfter(aggregationCleanup, remainingMs, undefined);
+    })();
+    return this.disposePromise;
   }
 
   trackError(
@@ -763,6 +788,7 @@ export class ErrorMonitor {
     context?: Record<string, unknown>,
     options: MonitorEventOptions = {}
   ): void {
+    if (this.disposed) return;
     if (category === "client_error") {
       const guardCode = resolveStaffLifecycleGuardCode(error);
       if (guardCode) {
@@ -835,6 +861,7 @@ export class ErrorMonitor {
     context?: Record<string, unknown>,
     options: MonitorEventOptions = {}
   ): Promise<DeliveryResult[]> {
+    if (this.disposed) return [];
     const event = normalizeMonitorEvent(category, new Error(subject), context, this.now(), {
       ...options,
       persist: false,
@@ -874,6 +901,7 @@ export class ErrorMonitor {
   }
 
   async checkAggregationStatus(timeoutMs = 1000): Promise<MonitorAggregationStatus> {
+    if (this.disposed) return this.getAggregationStatus();
     return this.aggregation ? await this.aggregation.checkStatus(timeoutMs) : localAggregationStatus();
   }
 
@@ -1102,6 +1130,7 @@ export class ErrorMonitor {
   }
 
   private async checkThreshold(event: NormalizedMonitorEvent): Promise<void> {
+    if (this.disposed) return;
     const state = this.fingerprints.get(event.fingerprint);
     if (!state) return;
 
@@ -1109,6 +1138,7 @@ export class ErrorMonitor {
     let globalAggregation = false;
     if (this.aggregation) {
       const aggregatedCount = await this.aggregation.recordEvent(event, BUCKET_MS, WINDOW_MS);
+      if (this.disposed) return;
       if (typeof aggregatedCount === "number") {
         count = aggregatedCount;
         globalAggregation = true;
@@ -1119,12 +1149,14 @@ export class ErrorMonitor {
 
     if (globalAggregation && this.aggregation) {
       const acquired = await this.aggregation.tryAcquireAlert(event.fingerprint, RETRY_COOLDOWN_MS);
+      if (this.disposed) return;
       if (acquired === false) {
         this.incrementCounters(event.category, event.fingerprint, "cooldownSuppressed");
         return;
       }
       if (acquired === true) {
         const delivered = await this.sendAlert(state, count);
+        if (this.disposed) return;
         await this.aggregation.setCooldown(
           event.fingerprint,
           delivered ? COOLDOWNS[event.category] : RETRY_COOLDOWN_MS
