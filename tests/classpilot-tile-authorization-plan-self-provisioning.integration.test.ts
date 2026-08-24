@@ -227,6 +227,8 @@ async function waitForDatabaseSetting(
 }
 
 async function seedOwnedFixture(client: pg.Client): Promise<void> {
+  await client.query("BEGIN");
+  try {
   const schoolName =
     `[SYNTHETIC LOAD TEST - NON-BILLABLE] ${fixtureId} plan gate integration`;
   await client.query(
@@ -458,9 +460,16 @@ async function seedOwnedFixture(client: pg.Client): Promise<void> {
   ]) {
     await client.query(`ANALYZE ${table}`);
   }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
 }
 
 async function seedAmbiguousOwnedFixture(client: pg.Client): Promise<void> {
+  await client.query("BEGIN");
+  try {
   await client.query(
     `
       INSERT INTO schools (
@@ -617,44 +626,52 @@ async function seedAmbiguousOwnedFixture(client: pg.Client): Promise<void> {
     `,
     [ambiguousStudentIds, ambiguousDeviceIds]
   );
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
 }
 
 async function cleanupAmbiguousOwnedFixture(client: pg.Client): Promise<void> {
-  await client.query(
-    "DELETE FROM group_teachers WHERE group_id = ANY($1::text[])",
-    [[ambiguousClassGroupId, ambiguousOtherGroupId]]
-  );
-  await client.query(
-    "DELETE FROM group_students WHERE group_id = ANY($1::text[])",
-    [[ambiguousClassGroupId, ambiguousOtherGroupId]]
-  );
-  await client.query("DELETE FROM groups WHERE school_id = $1", [
-    ambiguousSchoolId,
-  ]);
-  await client.query(
-    "DELETE FROM student_devices WHERE student_id = ANY($1::text[])",
-    [ambiguousStudentIds]
-  );
-  await client.query("DELETE FROM devices WHERE school_id = $1", [
-    ambiguousSchoolId,
-  ]);
-  await client.query("DELETE FROM students WHERE school_id = $1", [
-    ambiguousSchoolId,
-  ]);
-  await client.query("DELETE FROM product_licenses WHERE school_id = $1", [
-    ambiguousSchoolId,
-  ]);
-  await client.query("DELETE FROM school_memberships WHERE school_id = $1", [
-    ambiguousSchoolId,
-  ]);
-  await client.query("DELETE FROM schools WHERE id = $1", [ambiguousSchoolId]);
-  await client.query("DELETE FROM users WHERE id = ANY($1::text[])", [
-    [
-      ambiguousPrimaryTeacherId,
-      ambiguousCoTeacherId,
-      ambiguousOfficeStaffId,
-    ],
-  ]);
+  await client.query("BEGIN");
+  try {
+    await client.query(
+      "DELETE FROM group_teachers WHERE group_id = ANY($1::text[])",
+      [[ambiguousClassGroupId, ambiguousOtherGroupId]]
+    );
+    await client.query(
+      "DELETE FROM group_students WHERE group_id = ANY($1::text[])",
+      [[ambiguousClassGroupId, ambiguousOtherGroupId]]
+    );
+    await client.query("DELETE FROM groups WHERE school_id = $1", [
+      ambiguousSchoolId,
+    ]);
+    await client.query(
+      "DELETE FROM student_devices WHERE student_id = ANY($1::text[])",
+      [ambiguousStudentIds]
+    );
+    await client.query("DELETE FROM devices WHERE school_id = $1", [
+      ambiguousSchoolId,
+    ]);
+    await client.query("DELETE FROM students WHERE school_id = $1", [
+      ambiguousSchoolId,
+    ]);
+    await client.query("DELETE FROM product_licenses WHERE school_id = $1", [
+      ambiguousSchoolId,
+    ]);
+    await client.query("DELETE FROM school_memberships WHERE school_id = $1", [
+      ambiguousSchoolId,
+    ]);
+    await client.query(
+      "UPDATE schools SET status = 'suspended', is_active = false, deleted_at = now() WHERE id = $1",
+      [ambiguousSchoolId]
+    );
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
 }
 
 async function cleanupOwnedFixture(client: pg.Client): Promise<void> {
@@ -703,10 +720,9 @@ async function cleanupOwnedFixture(client: pg.Client): Promise<void> {
     await client.query("DELETE FROM school_memberships WHERE school_id = $1", [
       schoolId,
     ]);
-    await client.query("DELETE FROM schools WHERE id = $1", [schoolId]);
     await client.query(
-      "DELETE FROM users WHERE id = ANY($1::text[])",
-      [[primaryTeacherId, coTeacherId, officeStaffId]]
+      "UPDATE schools SET status = 'suspended', is_active = false, deleted_at = now() WHERE id = $1",
+      [schoolId]
     );
     await client.query("COMMIT");
   } catch (error) {
@@ -845,6 +861,29 @@ describe(
           assert.equal(restored.status, "passed");
         }
 
+        async function expectGuardedMutation(
+          code: string,
+          mutate: () => Promise<unknown>
+        ): Promise<void> {
+          await assert.rejects(
+            mutate,
+            (error) =>
+              error instanceof Error &&
+              (
+                error.message.includes(code) ||
+                (
+                  error.cause instanceof Error &&
+                  error.cause.message.includes(code)
+                )
+              )
+          );
+          const unchanged =
+            await planCheckModule!.runClasspilotTileAuthorizationPlanBasePreflight({
+              client: applicationClient,
+            });
+          assert.equal(unchanged.status, "passed");
+        }
+
         const schoolName =
           `[SYNTHETIC LOAD TEST - NON-BILLABLE] ${fixtureId} plan gate integration`;
         const classDescription =
@@ -901,17 +940,11 @@ describe(
               ])
           );
 
-          await runMutationCase(
-            "primaryTeacherGroups",
-            { syntheticSchoolGroups: 2, primaryTeacherGroups: 0 },
+          await expectGuardedMutation(
+            "STAFF_ASSIGNMENTS_REQUIRE_REASSIGNMENT",
             () =>
               adminClient!.query(
                 "UPDATE school_memberships SET status = 'inactive' WHERE school_id = $1 AND role = 'teacher'",
-                [schoolId]
-              ),
-            () =>
-              adminClient!.query(
-                "UPDATE school_memberships SET status = 'active' WHERE school_id = $1 AND role = 'teacher'",
                 [schoolId]
               )
           );
@@ -1032,63 +1065,35 @@ describe(
             }
           );
 
-          await runMutationCase(
-            "noCoTeacherGroups",
-            { unsupervisedRosterStudents: 40, noCoTeacherGroups: 0 },
+          await expectGuardedMutation(
+            "STAFF_CLASS_PRIMARY_MIRROR_MISMATCH",
             () =>
               adminClient!.query(
                 "DELETE FROM group_teachers WHERE id = $1",
                 [classPrimaryRelationshipId]
-              ),
-            () =>
-              adminClient!.query(
-                `
-                  INSERT INTO group_teachers (
-                    id, group_id, teacher_id, role, assigned_at
-                  )
-                  VALUES ($1, $2, $3, 'primary', now())
-                `,
-                [
-                  classPrimaryRelationshipId,
-                  classGroupId,
-                  primaryTeacherId,
-                ]
               )
           );
 
-          await runMutationCase(
-            "noCoTeacherGroups",
-            { unsupervisedRosterStudents: 40, noCoTeacherGroups: 0 },
+          await expectGuardedMutation(
+            "STAFF_CLASS_PRIMARY_MIRROR_MISMATCH",
             () =>
               adminClient!.query(
                 "UPDATE group_teachers SET teacher_id = $1 WHERE id = $2",
                 [coTeacherId, classPrimaryRelationshipId]
-              ),
-            () =>
-              adminClient!.query(
-                "UPDATE group_teachers SET teacher_id = $1 WHERE id = $2",
-                [primaryTeacherId, classPrimaryRelationshipId]
               )
           );
 
-          await runMutationCase(
-            "noCoTeacherGroups",
-            { unsupervisedRosterStudents: 40, noCoTeacherGroups: 0 },
+          await expectGuardedMutation(
+            "STAFF_CLASS_PRIMARY_MIRROR_MISMATCH",
             () =>
               adminClient!.query(
                 "UPDATE group_teachers SET role = 'co-teacher' WHERE id = $1",
                 [classPrimaryRelationshipId]
-              ),
-            () =>
-              adminClient!.query(
-                "UPDATE group_teachers SET role = 'primary' WHERE id = $1",
-                [classPrimaryRelationshipId]
               )
           );
 
-          await runMutationCase(
-            "noCoTeacherGroups",
-            { unsupervisedRosterStudents: 40, noCoTeacherGroups: 0 },
+          await expectGuardedMutation(
+            "STAFF_CLASS_PRIMARY_MIRROR_MISMATCH",
             () =>
               adminClient!.query(
                 `
@@ -1098,11 +1103,6 @@ describe(
                   VALUES ($1, $2, $3, 'primary', now())
                 `,
                 [existingCoTeacherId, classGroupId, coTeacherId]
-              ),
-            () =>
-              adminClient!.query(
-                "DELETE FROM group_teachers WHERE id = $1",
-                [existingCoTeacherId]
               )
           );
 
@@ -1187,9 +1187,6 @@ describe(
                 "DELETE FROM school_memberships WHERE school_id = $1 AND user_id = $2",
                 [schoolId, secondOfficeStaffId]
               );
-              await adminClient!.query("DELETE FROM users WHERE id = $1", [
-                secondOfficeStaffId,
-              ]);
             }
           );
 
@@ -1278,13 +1275,13 @@ describe(
             },
             () =>
               adminClient!.query(
-                "UPDATE school_memberships SET status = 'inactive' WHERE school_id = $1 AND user_id = $2",
-                [schoolId, coTeacherId]
+                "UPDATE groups SET status = 'inactive' WHERE id = $1",
+                [otherGroupId]
               ),
             () =>
               adminClient!.query(
-                "UPDATE school_memberships SET status = 'active' WHERE school_id = $1 AND user_id = $2",
-                [schoolId, coTeacherId]
+                "UPDATE groups SET status = 'active' WHERE id = $1",
+                [otherGroupId]
               )
           );
 
@@ -1349,56 +1346,63 @@ describe(
               otherGroupId,
             ]
           );
-          await adminClient.query(
-            `
-              INSERT INTO groups (
-                id, school_id, teacher_id, name, description, group_type,
-                status, schedule_enabled
-              )
-              SELECT
-                fixture.group_id,
-                $2,
-                $3,
-                'Synthetic plan class ' || numbered.class_number,
-                'synthetic-load-fixture:' || $4 ||
-                  ':class:' || numbered.class_number,
-                'admin_class',
-                'active',
-                false
-              FROM unnest($1::text[])
-                WITH ORDINALITY AS fixture(group_id, ordinality)
-              CROSS JOIN LATERAL (
-                SELECT lpad((fixture.ordinality + 2)::text, 2, '0')
-                  AS class_number
-              ) AS numbered
-            `,
-            [
-              extraGroupIds,
-              schoolId,
-              primaryTeacherId,
-              fixtureId,
-            ]
-          );
-          await adminClient.query(
-            `
-              INSERT INTO group_teachers (
-                id, group_id, teacher_id, role, assigned_at
-              )
-              SELECT
-                fixture.relationship_id,
-                fixture.group_id,
-                $3,
-                'primary',
-                now()
-              FROM unnest($1::text[], $2::text[])
-                AS fixture(relationship_id, group_id)
-            `,
-            [
-              extraPrimaryRelationshipIds,
-              extraGroupIds,
-              primaryTeacherId,
-            ]
-          );
+          await adminClient.query("BEGIN");
+          try {
+            await adminClient.query(
+              `
+                INSERT INTO groups (
+                  id, school_id, teacher_id, name, description, group_type,
+                  status, schedule_enabled
+                )
+                SELECT
+                  fixture.group_id,
+                  $2,
+                  $3,
+                  'Synthetic plan class ' || numbered.class_number,
+                  'synthetic-load-fixture:' || $4 ||
+                    ':class:' || numbered.class_number,
+                  'admin_class',
+                  'active',
+                  false
+                FROM unnest($1::text[])
+                  WITH ORDINALITY AS fixture(group_id, ordinality)
+                CROSS JOIN LATERAL (
+                  SELECT lpad((fixture.ordinality + 2)::text, 2, '0')
+                    AS class_number
+                ) AS numbered
+              `,
+              [
+                extraGroupIds,
+                schoolId,
+                primaryTeacherId,
+                fixtureId,
+              ]
+            );
+            await adminClient.query(
+              `
+                INSERT INTO group_teachers (
+                  id, group_id, teacher_id, role, assigned_at
+                )
+                SELECT
+                  fixture.relationship_id,
+                  fixture.group_id,
+                  $3,
+                  'primary',
+                  now()
+                FROM unnest($1::text[], $2::text[])
+                  AS fixture(relationship_id, group_id)
+              `,
+              [
+                extraPrimaryRelationshipIds,
+                extraGroupIds,
+                primaryTeacherId,
+              ]
+            );
+            await adminClient.query("COMMIT");
+          } catch (error) {
+            await adminClient.query("ROLLBACK");
+            throw error;
+          }
           await adminClient.query(
             `
               INSERT INTO group_students (id, group_id, student_id)
@@ -1449,18 +1453,25 @@ describe(
             "DELETE FROM group_teachers WHERE id = $1",
             [classOneCoTeacherRelationshipId]
           );
-          await adminClient.query(
-            "DELETE FROM group_teachers WHERE group_id = ANY($1::text[])",
-            [extraGroupIds]
-          );
-          await adminClient.query(
-            "DELETE FROM group_students WHERE group_id = ANY($1::text[])",
-            [extraGroupIds]
-          );
-          await adminClient.query(
-            "DELETE FROM groups WHERE id = ANY($1::text[])",
-            [extraGroupIds]
-          );
+          await adminClient.query("BEGIN");
+          try {
+            await adminClient.query(
+              "DELETE FROM group_teachers WHERE group_id = ANY($1::text[])",
+              [extraGroupIds]
+            );
+            await adminClient.query(
+              "DELETE FROM group_students WHERE group_id = ANY($1::text[])",
+              [extraGroupIds]
+            );
+            await adminClient.query(
+              "DELETE FROM groups WHERE id = ANY($1::text[])",
+              [extraGroupIds]
+            );
+            await adminClient.query("COMMIT");
+          } catch (error) {
+            await adminClient.query("ROLLBACK");
+            throw error;
+          }
           await applicationClient.end();
         }
       }
@@ -1968,7 +1979,7 @@ describe(
               [schoolId, allDeviceIds[0]]
             );
             await adminClient.query(
-              "DELETE FROM schools WHERE id = $1",
+              "UPDATE schools SET status = 'suspended', is_active = false, deleted_at = now() WHERE id = $1",
               [crossSchoolId]
             );
           }

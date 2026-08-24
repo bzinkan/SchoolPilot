@@ -31,8 +31,8 @@ const appPool = new Pool({
   connectionString: process.env.DATABASE_URL,
   max: 1,
 });
-let admin: Awaited<ReturnType<typeof adminPool.connect>>;
-let app: Awaited<ReturnType<typeof appPool.connect>>;
+let admin: pg.PoolClient;
+let app: pg.PoolClient;
 
 function groupId(school: "a" | "b", order: number): string {
   return `${TAG}_${school}_group_${order}`;
@@ -113,29 +113,42 @@ before(async () => {
      VALUES ($1, $2, 'teacher', 'active'), ($3, $4, 'teacher', 'active')`,
     [ids.userA, ids.schoolA, ids.userB, ids.schoolB]
   );
-  for (const school of ["a", "b"] as const) {
-    const schoolId = school === "a" ? ids.schoolA : ids.schoolB;
-    const userId = school === "a" ? ids.userA : ids.userB;
-    for (let order = 1; order <= 4; order += 1) {
+  await admin.query("BEGIN");
+  try {
+    for (const school of ["a", "b"] as const) {
+      const schoolId = school === "a" ? ids.schoolA : ids.schoolB;
+      const userId = school === "a" ? ids.userA : ids.userB;
+      for (let order = 1; order <= 4; order += 1) {
+        const currentGroupId = groupId(school, order);
+        await admin.query(
+          `INSERT INTO groups
+             (id, school_id, teacher_id, name, group_type, status,
+              schedule_enabled, block_start_time, block_end_time)
+           VALUES ($1, $2, $3, $4, 'admin_class', 'active', true, $5, $6)`,
+          [
+            currentGroupId, schoolId, userId, `${TAG} ${school} ${order}`,
+            order % 2 === 1 ? "09:00" : "10:00",
+            order % 2 === 1 ? "10:00" : "11:00",
+          ]
+        );
+        await admin.query(
+          `INSERT INTO group_teachers (group_id, teacher_id, role)
+           VALUES ($1, $2, 'primary')`,
+          [currentGroupId, userId]
+        );
+      }
+      const pairId = school === "a" ? ids.pairA : ids.pairB;
       await admin.query(
-        `INSERT INTO groups
-           (id, school_id, teacher_id, name, group_type, status,
-            schedule_enabled, block_start_time, block_end_time)
-         VALUES ($1, $2, $3, $4, 'admin_class', 'active', true, $5, $6)`,
-        [
-          groupId(school, order), schoolId, userId, `${TAG} ${school} ${order}`,
-          order % 2 === 1 ? "09:00" : "10:00",
-          order % 2 === 1 ? "10:00" : "11:00",
-        ]
+        `INSERT INTO classpilot_schedule_change_pairs
+           (id, school_id, first_group_id, second_group_id, created_by)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [pairId, schoolId, groupId(school, 1), groupId(school, 2), userId]
       );
     }
-    const pairId = school === "a" ? ids.pairA : ids.pairB;
-    await admin.query(
-      `INSERT INTO classpilot_schedule_change_pairs
-         (id, school_id, first_group_id, second_group_id, created_by)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [pairId, schoolId, groupId(school, 1), groupId(school, 2), userId]
-    );
+    await admin.query("COMMIT");
+  } catch (error) {
+    await admin.query("ROLLBACK");
+    throw error;
   }
   await seedChange({
     school: "a", pairId: ids.pairA, changeId: ids.changeA,
@@ -167,10 +180,16 @@ after(async () => {
     for (const table of [...TABLES].reverse()) {
       await admin.query(`DELETE FROM ${table} WHERE school_id IN ($1, $2)`, [ids.schoolA, ids.schoolB]);
     }
+    await admin.query(
+      "DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id IN ($1, $2))",
+      [ids.schoolA, ids.schoolB]
+    );
     await admin.query("DELETE FROM groups WHERE school_id IN ($1, $2)", [ids.schoolA, ids.schoolB]);
     await admin.query("DELETE FROM school_memberships WHERE school_id IN ($1, $2)", [ids.schoolA, ids.schoolB]);
-    await admin.query("DELETE FROM schools WHERE id IN ($1, $2)", [ids.schoolA, ids.schoolB]);
-    await admin.query("DELETE FROM users WHERE id IN ($1, $2)", [ids.userA, ids.userB]);
+    await admin.query(
+      "UPDATE schools SET status = 'suspended', is_active = false, deleted_at = now() WHERE id IN ($1, $2)",
+      [ids.schoolA, ids.schoolB]
+    );
     await admin.query("COMMIT");
   } catch {
     await admin.query("ROLLBACK").catch(() => undefined);

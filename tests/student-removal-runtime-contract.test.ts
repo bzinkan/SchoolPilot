@@ -324,9 +324,13 @@ test("inactive students cannot be assigned to live ClassPilot supervision or con
     /resolveCoverageCommandTargets[\s\S]{0,2200}assertActiveStudentsInSchool/,
     "coverage command targets must be revalidated as active"
   );
+  const assignTeacherStudent = storage.slice(
+    storage.indexOf("export async function assignTeacherStudent"),
+    storage.indexOf("export async function unassignTeacherStudent")
+  );
   assert.match(
-    storage,
-    /assignTeacherStudent[\s\S]{0,900}eq\(students\.status, "active"\)[\s\S]{0,160}\.for\("update"\)/
+    assignTeacherStudent,
+    /const \[student\] = await tx[\s\S]*?eq\(students\.status, "active"\)[\s\S]*?\.for\("update"\)/
   );
   assert.ok(
     (storage.match(/lockActiveSchoolStudentsForOperationalWrite\(/g) || []).length >= 5,

@@ -54,6 +54,7 @@ const DB_SERIAL = new Set([
   "gopilot-setup-deletion.test.ts",
   "gopilot-socket-containment.test.ts",
   "gopilot-two-instance-realtime.test.ts",
+  "google-staff-import-error-sanitization.test.ts",
   "heartbeat-tracking-settings-cache.test.ts",
   "multi-role-authorization.test.ts",
   "multi-school-readiness-routes.test.ts",
@@ -70,8 +71,11 @@ const DB_SERIAL = new Set([
   "student-email-policy.test.ts",
   "student-removal-lifecycle.test.ts",
   "staff-assignment-lifecycle.test.ts",
+  "staff-assignment-integrity-readiness.test.ts",
+  "staff-credential-realtime-contract.test.ts",
   "staff-identity-integrity.integration.test.ts",
   "staff-identity-lifecycle.test.ts",
+  "staff-identity-monitoring.test.ts",
 ]);
 
 const INFRASTRUCTURE = /^(?:aws-|capacity-|credential-rotation-infra|database-insights|deploy-|ecs-|frontend-dependency|classpilot-(?:arrival-capacity|load-|tile-auth-plan-|tile-authorization-plan-check)|gopilot-containment-inventory|heartbeat-history-index-contract|hot-path-logging|migration-ledger|predeploy-safety|private-load|production-terraform|redis-ready|rls-allowlist-drift|soc2-|terraform-|runtime-config)/;

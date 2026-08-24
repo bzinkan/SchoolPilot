@@ -275,20 +275,26 @@ after(async () => {
       legacySchool?.id,
     ].filter(Boolean);
     if (schoolIds.length > 0) {
-      await db.execute(sql`DELETE FROM audit_logs WHERE school_id IN (${sql.join(schoolIds.map((id) => sql`${id}`), sql`, `)})`);
-      await db.execute(sql`DELETE FROM passes WHERE school_id IN (${sql.join(schoolIds.map((id) => sql`${id}`), sql`, `)})`);
-      await db.execute(sql`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (${sql.join(schoolIds.map((id) => sql`${id}`), sql`, `)}))`);
-      await db.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (${sql.join(schoolIds.map((id) => sql`${id}`), sql`, `)}))`);
-      await db.execute(sql`DELETE FROM groups WHERE school_id IN (${sql.join(schoolIds.map((id) => sql`${id}`), sql`, `)})`);
-      await db.execute(sql`DELETE FROM teacher_grades WHERE grade_id IN (SELECT id FROM grades WHERE school_id IN (${sql.join(schoolIds.map((id) => sql`${id}`), sql`, `)}))`);
-      await db.execute(sql`DELETE FROM grades WHERE school_id IN (${sql.join(schoolIds.map((id) => sql`${id}`), sql`, `)})`);
-      await db.execute(sql`DELETE FROM students WHERE school_id IN (${sql.join(schoolIds.map((id) => sql`${id}`), sql`, `)})`);
-      await db.execute(sql`DELETE FROM settings WHERE school_id IN (${sql.join(schoolIds.map((id) => sql`${id}`), sql`, `)})`);
-      await db.execute(sql`DELETE FROM product_licenses WHERE school_id IN (${sql.join(schoolIds.map((id) => sql`${id}`), sql`, `)})`);
-      await db.execute(sql`DELETE FROM school_memberships WHERE school_id IN (${sql.join(schoolIds.map((id) => sql`${id}`), sql`, `)})`);
-      await db.execute(sql`DELETE FROM schools WHERE id IN (${sql.join(schoolIds.map((id) => sql`${id}`), sql`, `)})`);
+      const ids = sql.join(schoolIds.map((id) => sql`${id}`), sql`, `);
+      await db.transaction(async (tx) => {
+        await tx.execute(sql`DELETE FROM audit_logs WHERE school_id IN (${ids})`);
+        await tx.execute(sql`DELETE FROM passes WHERE school_id IN (${ids})`);
+        await tx.execute(sql`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (${ids}))`);
+        await tx.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (${ids}))`);
+        await tx.execute(sql`DELETE FROM groups WHERE school_id IN (${ids})`);
+        await tx.execute(sql`DELETE FROM teacher_grades WHERE grade_id IN (SELECT id FROM grades WHERE school_id IN (${ids}))`);
+        await tx.execute(sql`DELETE FROM grades WHERE school_id IN (${ids})`);
+        await tx.execute(sql`DELETE FROM students WHERE school_id IN (${ids})`);
+        await tx.execute(sql`DELETE FROM settings WHERE school_id IN (${ids})`);
+        await tx.execute(sql`DELETE FROM product_licenses WHERE school_id IN (${ids})`);
+        await tx.execute(sql`DELETE FROM school_memberships WHERE school_id IN (${ids})`);
+        await tx.execute(sql`
+          UPDATE schools
+          SET status = 'suspended', is_active = false, deleted_at = now()
+          WHERE id IN (${ids})
+        `);
+      });
     }
-    await db.execute(sql`DELETE FROM users WHERE email LIKE ${`%@${TAG}-%`}`);
   });
   await pool.end();
 });
