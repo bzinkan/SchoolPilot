@@ -3,6 +3,7 @@ import authRoutes from "./auth.js";
 import schoolRoutes from "./schools.js";
 import studentRoutes from "./students.js";
 import userRoutes from "./users.js";
+import staffAssignmentLifecycleRoutes from "./staffAssignmentLifecycle.js";
 import passRoutes from "./passpilot/passes.js";
 import kioskRoutes from "./passpilot/kiosk.js";
 import passpilotClassRoutes from "./passpilot/classes.js";
@@ -349,6 +350,7 @@ router.use("/students", studentRoutes);
 
 // User/staff management (profile, staff CRUD, memberships)
 router.use("/users", userRoutes);
+router.use("/users", staffAssignmentLifecycleRoutes);
 
 // PassPilot - Hall passes
 router.use("/passpilot/passes", passRoutes);

@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
 import type { SchoolPilotMigration } from "./migrationLedger.js";
+import { staffIdentityIntegrityMigration } from "./staffIdentityIntegrityMigration.js";
+
+export { STAFF_IDENTITY_NORMALIZED_EMAIL_SQL } from "./staffIdentityIntegrityMigration.js";
 
 export const CLASSPILOT_27_EXPAND_SQL = `
 ALTER TABLE classpilot_session_reports
@@ -128,6 +131,11 @@ END;
 $evidence_authority$;
 `;
 
+export const STAFF_IDENTITY_AUTH_VERSION_SQL = `
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS auth_version INTEGER NOT NULL DEFAULT 1;
+`;
+
 export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
   {
     id: "20260822_classpilot_2_7_expand",
@@ -153,4 +161,42 @@ export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
       await connection.query(CLASSPILOT_27_EVIDENCE_AUTHORITY_SQL);
     },
   },
+  {
+    id: "20260824_staff_identity_auth_version_expand",
+    checksum: createHash("sha256").update(STAFF_IDENTITY_AUTH_VERSION_SQL).digest("hex"),
+    mode: "transactional",
+    apply: async (connection) => {
+      await connection.query(STAFF_IDENTITY_AUTH_VERSION_SQL);
+    },
+  },
+  staffIdentityIntegrityMigration,
 ];
+
+export const STAFF_IDENTITY_CONTRACT_MIGRATION_IDS = [
+  staffIdentityIntegrityMigration.id,
+] as const;
+
+const firstStaffIdentityContractIndex = schoolPilot27Migrations.findIndex(
+  (migration) => migration.id === STAFF_IDENTITY_CONTRACT_MIGRATION_IDS[0]
+);
+if (firstStaffIdentityContractIndex < 0) {
+  throw new Error("Staff identity contract migration is missing from the ordered manifest");
+}
+
+/**
+ * Stage-two production rollout: ship the credential version and recovery
+ * tooling before enforcing the data contract. The single aggregate contract
+ * migration is added only by the explicitly approved stage-five task, so its
+ * email index and ownership backstops commit or roll back together.
+ */
+export const schoolPilot27ExpandMigrations: readonly SchoolPilotMigration[] =
+  schoolPilot27Migrations.slice(0, firstStaffIdentityContractIndex);
+
+export function selectSchoolPilot27MigrationPlan(options: {
+  contractRolloutRequested: boolean;
+  contractPreviouslyApplied: boolean;
+}): readonly SchoolPilotMigration[] {
+  return options.contractRolloutRequested || options.contractPreviouslyApplied
+    ? schoolPilot27Migrations
+    : schoolPilot27ExpandMigrations;
+}

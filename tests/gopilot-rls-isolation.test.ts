@@ -37,7 +37,7 @@ const ids = {
   homeroomB: `${TAG}_homeroom_b`,
 };
 
-let client: Awaited<ReturnType<typeof pool.connect>>;
+let client: pg.PoolClient;
 
 async function setSystemBypass(enabled: boolean) {
   await client.query("SELECT set_config('app.is_super', $1, false)", [enabled ? "on" : ""]);
@@ -86,11 +86,26 @@ before(async () => {
             ($3, $4, 'teacher', 'teacher', 'active')`,
     [ids.userA, ids.schoolA, ids.userB, ids.schoolB]
   );
-  await client.query(
-    `INSERT INTO homerooms (id, school_id, teacher_id, name, grade)
-     VALUES ($1, $2, $3, 'A', '5'), ($4, $5, $6, 'B', '5')`,
-    [ids.homeroomA, ids.schoolA, ids.userA, ids.homeroomB, ids.schoolB, ids.userB]
-  );
+  await client.query("BEGIN");
+  try {
+    await client.query(
+      `INSERT INTO homerooms (id, school_id, teacher_id, name, grade)
+       VALUES ($1, $2, $3, 'A', '5'), ($4, $5, $6, 'B', '5')`,
+      [ids.homeroomA, ids.schoolA, ids.userA, ids.homeroomB, ids.schoolB, ids.userB]
+    );
+    await client.query(
+      `INSERT INTO homeroom_teachers (id, school_id, homeroom_id, teacher_id, role)
+       VALUES ($1, $2, $3, $4, 'primary'), ($5, $6, $7, $8, 'primary')`,
+      [
+        `${TAG}_homeroom_teacher_a`, ids.schoolA, ids.homeroomA, ids.userA,
+        `${TAG}_homeroom_teacher_b`, ids.schoolB, ids.homeroomB, ids.userB,
+      ]
+    );
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
   await client.query(
     `INSERT INTO students (id, school_id, first_name, last_name, homeroom_id, status)
      VALUES ($1, $2, 'Student', 'A', $3, 'active'),
@@ -114,7 +129,6 @@ before(async () => {
     const student = suffix === "a" ? ids.studentA : ids.studentB;
     const session = suffix === "a" ? ids.sessionA : ids.sessionB;
     const family = suffix === "a" ? ids.familyA : ids.familyB;
-    const homeroom = suffix === "a" ? ids.homeroomA : ids.homeroomB;
     await client.query(
       `INSERT INTO authorized_pickups (id, school_id, student_id, added_by, name, relationship, status)
        VALUES ($1, $2, $3, $4, 'Pickup', 'Guardian', 'pending')`,
@@ -147,11 +161,6 @@ before(async () => {
        VALUES ($1, $2, $3, $4)`,
       [`${TAG}_family_student_${suffix}`, school, family, student]
     );
-    await client.query(
-      `INSERT INTO homeroom_teachers (id, school_id, homeroom_id, teacher_id, role)
-       VALUES ($1, $2, $3, $4, 'primary')`,
-      [`${TAG}_homeroom_teacher_${suffix}`, school, homeroom, user]
-    );
   }
   await setSystemBypass(false);
 });
@@ -164,16 +173,25 @@ after(async () => {
   try {
     await client.query("RESET ROLE");
     await setSystemBypass(true);
-    for (const table of TABLES) {
-      await client.query(`DELETE FROM ${table} WHERE school_id IN ($1, $2)`, [ids.schoolA, ids.schoolB]);
+    await client.query("BEGIN");
+    try {
+      for (const table of TABLES) {
+        await client.query(`DELETE FROM ${table} WHERE school_id IN ($1, $2)`, [ids.schoolA, ids.schoolB]);
+      }
+      await client.query("DELETE FROM family_groups WHERE school_id IN ($1, $2)", [ids.schoolA, ids.schoolB]);
+      await client.query("DELETE FROM dismissal_sessions WHERE school_id IN ($1, $2)", [ids.schoolA, ids.schoolB]);
+      await client.query("DELETE FROM students WHERE school_id IN ($1, $2)", [ids.schoolA, ids.schoolB]);
+      await client.query("DELETE FROM homerooms WHERE school_id IN ($1, $2)", [ids.schoolA, ids.schoolB]);
+      await client.query("DELETE FROM school_memberships WHERE school_id IN ($1, $2)", [ids.schoolA, ids.schoolB]);
+      await client.query(
+        "UPDATE schools SET status = 'suspended', is_active = false, deleted_at = now() WHERE id IN ($1, $2)",
+        [ids.schoolA, ids.schoolB]
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
     }
-    await client.query("DELETE FROM family_groups WHERE school_id IN ($1, $2)", [ids.schoolA, ids.schoolB]);
-    await client.query("DELETE FROM dismissal_sessions WHERE school_id IN ($1, $2)", [ids.schoolA, ids.schoolB]);
-    await client.query("DELETE FROM students WHERE school_id IN ($1, $2)", [ids.schoolA, ids.schoolB]);
-    await client.query("DELETE FROM homerooms WHERE school_id IN ($1, $2)", [ids.schoolA, ids.schoolB]);
-    await client.query("DELETE FROM school_memberships WHERE school_id IN ($1, $2)", [ids.schoolA, ids.schoolB]);
-    await client.query("DELETE FROM schools WHERE id IN ($1, $2)", [ids.schoolA, ids.schoolB]);
-    await client.query("DELETE FROM users WHERE id IN ($1, $2)", [ids.userA, ids.userB]);
     await client.query(`DROP OWNED BY ${ROLE}`);
     await client.query(`DROP ROLE ${ROLE}`);
   } finally {

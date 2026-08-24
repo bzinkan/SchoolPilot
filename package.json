@@ -20,6 +20,7 @@
     "migrate:classpilot-pin-encryption": "node dist/cli/migrateClasspilotPinEncryption.js",
     "migrate:passpilot-clean-schools": "node dist/cli/cutoverPasspilotCleanSchools.js",
     "audit:gopilot": "node dist/cli/auditGopilotContainment.js",
+    "repair:classpilot-staff-identity": "node --env-file-if-exists=.env dist/cli/repairClasspilotStaffIdentity.js",
     "check:classpilot-tile-auth-plans": "node --env-file-if-exists=.env dist/cli/checkClasspilotTileAuthorizationPlans.js --execute",
     "check": "tsc --noEmit",
     "check:tests": "node scripts/check-test-types.mjs",

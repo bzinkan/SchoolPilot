@@ -8,9 +8,11 @@ import { getTenantStore, rlsGucEnabled } from "../db/tenantContext.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
 import {
   dispatchCacheInvalidation,
+  invalidateUserCredentialConnections,
   publishCacheInvalidation,
   registerCacheInvalidationHandler,
 } from "../realtime/cacheInvalidation.js";
+import { isDatabaseErrorCode } from "../util/databaseError.js";
 import { createLocalDateFormatter, localDateInTimeZone, localDateTimeUtc } from "../util/schoolTime.js";
 import { classpilotRetentionExpiresAt } from "../util/classpilotRetention.js";
 import {
@@ -33,6 +35,12 @@ import {
   isExactIdempotentStudentMessage,
 } from "./classpilotStudentChat.js";
 import { assertClasspilotScreenshotEvidenceAuthority } from "./classpilotEvidenceAuthority.js";
+import {
+  ACTIVE_INSTRUCTIONAL_GROUP_TYPES,
+  assertStaffLifecycleMutationAllowed,
+  getStaffAssignmentIntegrityIssues,
+} from "./staffAssignmentLifecycle.js";
+import { lockStaffAssignmentLifecycleSchool } from "./staffAssignmentLifecycleLock.js";
 import {
   assertClasspilotHistoryFallbackPiStatementDiscoverable,
   createClasspilotHistoryFallbackSqlShapeIdentity,
@@ -296,6 +304,61 @@ import {
 // User operations
 // ============================================================================
 
+export class IdentityEmailConflictError extends Error {
+  readonly code = "IDENTITY_EMAIL_CONFLICT";
+  readonly status = 409;
+  readonly expose = true;
+
+  constructor() {
+    super("This email resolves to multiple identities. Central review is required before sign-in or account changes can continue.");
+    this.name = "IdentityEmailConflictError";
+  }
+}
+
+export class GoogleIdentityConflictError extends Error {
+  readonly code = "GOOGLE_IDENTITY_CONFLICT";
+  readonly status = 409;
+  readonly expose = true;
+
+  constructor() {
+    super("Google identity and email resolve to different accounts. Central review is required before sign-in can continue.");
+    this.name = "GoogleIdentityConflictError";
+  }
+}
+
+export function staffIdentityUserLockKey(userId: string): string {
+  return `3:user:${userId}`;
+}
+
+export function staffIdentityEmailLockKey(email: string): string {
+  return `2:email:${email.trim().toLowerCase()}`;
+}
+
+export function staffIdentityGoogleLockKey(googleId: string): string {
+  return `2:google:${googleId.trim()}`;
+}
+
+export function staffIdentityNameLockKey(schoolId: string, normalizedName: string): string {
+  return `1:name:${schoolId}:${normalizedName}`;
+}
+
+/**
+ * Every staff identity and membership writer uses the same ordered advisory
+ * lock namespace. Prefixes establish name -> email -> user ordering, while the
+ * final sort makes multi-email/user operations deadlock-safe.
+ */
+export async function takeStaffIdentityLocks(
+  dbInstance: typeof db,
+  lockKeys: string[]
+): Promise<void> {
+  const keys = [...new Set(lockKeys.filter(Boolean))].sort();
+  for (const key of keys) {
+    await dbInstance.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`staff-identity:${key}`}, 0::bigint))`
+    );
+  }
+}
+
 export async function getUserById(
   id: string,
   dbInstance: typeof db = db
@@ -305,20 +368,25 @@ export async function getUserById(
 }
 
 export async function getUserByEmail(
-  email: string
+  email: string,
+  dbInstance: typeof db = db
 ): Promise<User | undefined> {
-  const [user] = await db
+  const normalizedEmail = email.trim().toLowerCase();
+  const matches = await dbInstance
     .select()
     .from(users)
-    .where(eq(users.email, email.toLowerCase()))
-    .limit(1);
-  return user;
+    .where(sql`lower(btrim(${users.email})) = ${normalizedEmail}`)
+    .orderBy(asc(users.id))
+    .limit(2);
+  if (matches.length > 1) throw new IdentityEmailConflictError();
+  return matches[0];
 }
 
 export async function getUserByGoogleId(
-  googleId: string
+  googleId: string,
+  dbInstance: typeof db = db
 ): Promise<User | undefined> {
-  const [user] = await db
+  const [user] = await dbInstance
     .select()
     .from(users)
     .where(eq(users.googleId, googleId))
@@ -326,23 +394,124 @@ export async function getUserByGoogleId(
   return user;
 }
 
+/** Resolve and first-bind a Google login under the canonical identity locks. */
+export async function resolveGoogleLoginIdentity(options: {
+  email: string;
+  googleId: string;
+  profileImageUrl?: string | null;
+  lastLoginAt?: Date;
+}): Promise<User | undefined> {
+  const normalizedEmail = options.email.trim().toLowerCase();
+  const googleId = options.googleId.trim();
+  if (!normalizedEmail || !googleId) return undefined;
+
+  return db.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    await takeStaffIdentityLocks(transactionDb, [
+      staffIdentityEmailLockKey(normalizedEmail),
+      staffIdentityGoogleLockKey(googleId),
+    ]);
+    const [byGoogleId, byEmail] = await Promise.all([
+      getUserByGoogleId(googleId, transactionDb),
+      getUserByEmail(normalizedEmail, transactionDb),
+    ]);
+    if (byGoogleId && byEmail && byGoogleId.id !== byEmail.id) {
+      throw new GoogleIdentityConflictError();
+    }
+    const candidate = byGoogleId ?? byEmail;
+    if (!candidate) return undefined;
+
+    await takeStaffIdentityLocks(transactionDb, [staffIdentityUserLockKey(candidate.id)]);
+    const [lockedUser] = await tx
+      .select()
+      .from(users)
+      .where(eq(users.id, candidate.id))
+      .limit(1)
+      .for("update");
+    if (!lockedUser) return undefined;
+
+    const currentByGoogleId = await getUserByGoogleId(googleId, transactionDb);
+    const currentByEmail = await getUserByEmail(normalizedEmail, transactionDb);
+    if (
+      (currentByGoogleId && currentByEmail && currentByGoogleId.id !== currentByEmail.id)
+      || (currentByGoogleId && currentByGoogleId.id !== lockedUser.id)
+      || (!currentByGoogleId && currentByEmail?.id !== lockedUser.id)
+      || (currentByEmail?.id === lockedUser.id
+        && lockedUser.googleId
+        && lockedUser.googleId !== googleId)
+    ) {
+      throw new GoogleIdentityConflictError();
+    }
+
+    const [updated] = await tx
+      .update(users)
+      .set({
+        lastLoginAt: options.lastLoginAt ?? new Date(),
+        ...(!lockedUser.googleId ? { googleId } : {}),
+        ...(options.profileImageUrl && options.profileImageUrl !== lockedUser.profileImageUrl
+          ? { profileImageUrl: options.profileImageUrl }
+          : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, lockedUser.id))
+      .returning();
+    return updated;
+  });
+}
+
 export async function createUser(data: InsertUser): Promise<User> {
   const [user] = await db
     .insert(users)
-    .values({ ...data, email: data.email.toLowerCase() })
+    .values({ ...data, email: data.email.trim().toLowerCase() })
     .returning();
   return user!;
 }
 
 export async function updateUser(
   id: string,
-  data: Partial<InsertUser>
+  data: Omit<Partial<InsertUser>, "email">
 ): Promise<User | undefined> {
-  const [user] = await db
-    .update(users)
-    .set({ ...data, updatedAt: new Date() })
-    .where(eq(users.id, id))
-    .returning();
+  const credentialMutation = Object.prototype.hasOwnProperty.call(data, "password");
+  const user = await db.transaction(async (tx) => {
+    await takeStaffIdentityLocks(tx as unknown as typeof db, [
+      ...(typeof data.googleId === "string"
+        ? [staffIdentityGoogleLockKey(data.googleId)]
+        : []),
+      staffIdentityUserLockKey(id),
+    ]);
+    const [updated] = await tx
+      .update(users)
+      .set({
+        ...data,
+        ...(credentialMutation
+          ? { authVersion: sql`${users.authVersion} + 1` }
+          : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, id))
+      .returning();
+    return updated;
+  });
+  if (user && credentialMutation) {
+    await invalidateUserCredentialConnections(user.id);
+  }
+  return user;
+}
+
+export async function bumpUserAuthVersion(id: string): Promise<User | undefined> {
+  const user = await db.transaction(async (tx) => {
+    await takeStaffIdentityLocks(tx as unknown as typeof db, [staffIdentityUserLockKey(id)]);
+    const [updated] = await tx
+      .update(users)
+      .set({
+        authVersion: sql`${users.authVersion} + 1`,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, id))
+      .returning();
+    return updated;
+  });
+  if (user) await invalidateUserCredentialConnections(user.id);
   return user;
 }
 
@@ -421,7 +590,7 @@ export async function resolveSchoolForStudent(
   return school ? { school, isSharedDomain: true } : undefined;
 }
 
-async function invalidateClasspilotPassiveAuthorization(schoolId: string): Promise<void> {
+export async function invalidateClasspilotPassiveAuthorization(schoolId: string): Promise<void> {
   const target = {
     kind: "cache-invalidation",
     schoolId,
@@ -491,7 +660,15 @@ export async function getMembershipsWithSchool(userId: string) {
     );
 }
 
-const STAFF_DOMAIN_ROLES = new Set(["admin", "school_admin", "teacher", "office_staff"]);
+const STAFF_DOMAIN_ROLE_VALUES = ["admin", "school_admin", "teacher", "office_staff"] as const;
+const STAFF_DOMAIN_ROLES = new Set<string>(STAFF_DOMAIN_ROLE_VALUES);
+
+function staffMembershipRolePredicate() {
+  return or(
+    inArray(schoolMemberships.role, [...STAFF_DOMAIN_ROLE_VALUES]),
+    inArray(schoolMemberships.gopilotRole, [...STAFF_DOMAIN_ROLE_VALUES])
+  )!;
+}
 
 export function normalizeDomain(domain?: string | null): string | null {
   const cleaned = String(domain || "").trim().toLowerCase();
@@ -505,6 +682,14 @@ export function getEmailDomain(email?: string | null): string | null {
 
 export function isStaffDomainRole(role?: string | null): boolean {
   return STAFF_DOMAIN_ROLES.has(String(role || ""));
+}
+
+/** A membership is staff in at least one supported product context. */
+export function isStaffMembershipRole(
+  membership: Pick<SchoolMembership, "role" | "gopilotRole">
+): boolean {
+  return isStaffDomainRole(membership.role)
+    || isStaffDomainRole(membership.gopilotRole);
 }
 
 /**
@@ -536,7 +721,8 @@ function schoolIsolationError(code: string, message: string, status = 400) {
 
 export async function validateStaffEmailDomainForSchool(
   email: string,
-  schoolId: string
+  schoolId: string,
+  dbInstance: typeof db = db
 ): Promise<{
   ok: boolean;
   code?: string;
@@ -544,7 +730,7 @@ export async function validateStaffEmailDomainForSchool(
   expectedDomain?: string | null;
   actualDomain?: string | null;
 }> {
-  const school = await getSchoolById(schoolId);
+  const school = await getSchoolById(schoolId, dbInstance);
   const expectedDomain = normalizeDomain(school?.domain);
   const actualDomain = getEmailDomain(email);
 
@@ -571,19 +757,24 @@ export async function validateStaffEmailDomainForSchool(
   return { ok: true, expectedDomain, actualDomain };
 }
 
-async function assertStaffMembershipEmailDomain(
-  data: Pick<InsertSchoolMembership, "userId" | "schoolId" | "role">
+export async function assertStaffMembershipEmailDomain(
+  data: Pick<InsertSchoolMembership, "userId" | "schoolId" | "role" | "gopilotRole">,
+  dbInstance: typeof db = db
 ): Promise<void> {
-  if (!isStaffDomainRole(data.role)) return;
-  const user = await getUserById(data.userId);
+  if (!isStaffDomainRole(data.role) && !isStaffDomainRole(data.gopilotRole)) return;
+  const user = await getUserById(data.userId, dbInstance);
   if (!user) return;
-  const validation = await validateStaffEmailDomainForSchool(user.email, data.schoolId);
+  const validation = await validateStaffEmailDomainForSchool(user.email, data.schoolId, dbInstance);
   if (!validation.ok) {
     throw schoolIsolationError(validation.code!, validation.message!);
   }
   // One email per person: a staff member can't reuse an email that already
   // belongs to a student in this school (the reverse of the student-side guard).
-  const studentClash = await getStudentByEmail(data.schoolId, user.email.toLowerCase());
+  const studentClash = await getStudentByEmail(
+    data.schoolId,
+    user.email.trim().toLowerCase(),
+    dbInstance
+  );
   if (studentClash) {
     throw schoolIsolationError(
       "EMAIL_IN_USE_BY_STUDENT",
@@ -611,7 +802,7 @@ export async function getStaffEmailDomainMismatches(schoolId: string): Promise<A
       and(
         eq(schoolMemberships.schoolId, schoolId),
         eq(schoolMemberships.status, "active"),
-        inArray(schoolMemberships.role, ["admin", "school_admin", "teacher", "office_staff"])
+        staffMembershipRolePredicate()
       )
     );
 
@@ -648,13 +839,37 @@ export async function getStaffEmailDomainMismatches(schoolId: string): Promise<A
 export async function createMembership(
   data: InsertSchoolMembership
 ): Promise<SchoolMembership> {
-  await assertStaffMembershipEmailDomain(data);
-  const [membership] = await db
-    .insert(schoolMemberships)
-    .values(data)
-    .returning();
+  const preliminaryUser = await getUserById(data.userId);
+  const membership = await db.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    await takeStaffIdentityLocks(transactionDb, [
+      ...(preliminaryUser?.email
+        ? [staffIdentityEmailLockKey(preliminaryUser.email)]
+        : []),
+      staffIdentityUserLockKey(data.userId),
+    ]);
+    const lockedUser = await getUserById(data.userId, transactionDb);
+    if (
+      preliminaryUser
+      && lockedUser
+      && lockedUser.email.trim().toLowerCase()
+        !== preliminaryUser.email.trim().toLowerCase()
+    ) {
+      throw schoolIsolationError(
+        "STAFF_IDENTITY_STALE",
+        "The staff identity changed concurrently. Refresh and try again.",
+        409
+      );
+    }
+    await assertStaffMembershipEmailDomain(data, transactionDb);
+    const [created] = await tx
+      .insert(schoolMemberships)
+      .values(data)
+      .returning();
+    return created!;
+  });
   await invalidateClasspilotPassiveAuthorization(data.schoolId);
-  return membership!;
+  return membership;
 }
 
 // ============================================================================
@@ -902,6 +1117,32 @@ function normalizeStudentEmailFields<T extends Partial<InsertStudent>>(data: T):
   };
 }
 
+async function assertStudentEmailNotUsedByStaff(
+  schoolId: string,
+  emailLc: string,
+  dbInstance: typeof db
+): Promise<void> {
+  const [staffClash] = await dbInstance
+    .select({ id: users.id })
+    .from(schoolMemberships)
+    .innerJoin(users, eq(users.id, schoolMemberships.userId))
+    .where(
+      and(
+        eq(schoolMemberships.schoolId, schoolId),
+        staffMembershipRolePredicate(),
+        sql`lower(btrim(${users.email})) = ${emailLc}`
+      )
+    )
+    .limit(1);
+  if (staffClash) {
+    throw schoolIsolationError(
+      "EMAIL_IN_USE_BY_STAFF",
+      "This email is already assigned to a staff identity in this school.",
+      409
+    );
+  }
+}
+
 export async function getStudentsBySchool(
   schoolId: string
 ): Promise<Student[]> {
@@ -1013,11 +1254,21 @@ export async function getStudentEmailsBySchool(
 }
 
 export async function createStudent(data: InsertStudent): Promise<Student> {
-  const [student] = await db
-    .insert(students)
-    .values(normalizeStudentEmailFields(data))
-    .returning();
-  return student!;
+  const normalized = normalizeStudentEmailFields(data);
+  return db.transaction(async (tx) => {
+    if (normalized.emailLc) {
+      await takeStaffIdentityLocks(tx as unknown as typeof db, [
+        staffIdentityEmailLockKey(normalized.emailLc),
+      ]);
+      await assertStudentEmailNotUsedByStaff(
+        normalized.schoolId,
+        normalized.emailLc,
+        tx as unknown as typeof db
+      );
+    }
+    const [student] = await tx.insert(students).values(normalized).returning();
+    return student!;
+  });
 }
 
 export async function getStudentById(
@@ -1038,15 +1289,19 @@ export async function getStudentsByIds(ids: string[]): Promise<Student[]> {
 
 export async function getStudentByEmail(
   schoolId: string,
-  emailLc: string
+  emailLc: string,
+  dbInstance: typeof db = db
 ): Promise<Student | undefined> {
-  const [student] = await db
+  const [student] = await dbInstance
     .select()
     .from(students)
     .where(
       and(
         eq(students.schoolId, schoolId),
-        eq(students.emailLc, emailLc)
+        or(
+          eq(students.emailLc, emailLc),
+          sql`lower(btrim(${students.email})) = ${emailLc}`
+        )
       )
     )
     .limit(1);
@@ -1057,12 +1312,34 @@ export async function updateStudent(
   id: string,
   data: Partial<InsertStudent>
 ): Promise<Student | undefined> {
-  const [student] = await db
-    .update(students)
-    .set({ ...normalizeStudentEmailFields(data), updatedAt: new Date() })
-    .where(eq(students.id, id))
-    .returning();
-  return student;
+  const normalized = normalizeStudentEmailFields(data);
+  return db.transaction(async (tx) => {
+    const [current] = await tx
+      .select({ emailLc: students.emailLc, schoolId: students.schoolId })
+      .from(students)
+      .where(eq(students.id, id))
+      .limit(1);
+    if (!current) return undefined;
+    if (Object.prototype.hasOwnProperty.call(normalized, "email")) {
+      await takeStaffIdentityLocks(tx as unknown as typeof db, [
+        ...(current.emailLc ? [staffIdentityEmailLockKey(current.emailLc)] : []),
+        ...(normalized.emailLc ? [staffIdentityEmailLockKey(normalized.emailLc)] : []),
+      ]);
+      if (normalized.emailLc) {
+        await assertStudentEmailNotUsedByStaff(
+          normalized.schoolId ?? current.schoolId,
+          normalized.emailLc,
+          tx as unknown as typeof db
+        );
+      }
+    }
+    const [student] = await tx
+      .update(students)
+      .set({ ...normalized, updatedAt: new Date() })
+      .where(eq(students.id, id))
+      .returning();
+    return student;
+  });
 }
 
 export async function getStudentsByExactEmails(
@@ -1222,6 +1499,14 @@ export async function reactivateInactiveStudentForRosterImport(
   safeUpdates.emailLc = normalizedEmailLc;
 
   const result = await withClasspilotSchedulePostCommitTransaction(async (tx) => {
+    await takeStaffIdentityLocks(tx as unknown as typeof db, [
+      staffIdentityEmailLockKey(normalizedEmailLc),
+    ]);
+    await assertStudentEmailNotUsedByStaff(
+      schoolId,
+      normalizedEmailLc,
+      tx as unknown as typeof db
+    );
     await lockClasspilotScheduleChangeSchool(
       schoolId,
       tx as unknown as ScheduleChangeDb
@@ -1445,7 +1730,25 @@ export async function searchStudents(
 
 export async function bulkCreateStudents(data: InsertStudent[]): Promise<Student[]> {
   if (data.length === 0) return [];
-  return db.insert(students).values(data.map(normalizeStudentEmailFields)).returning();
+  const normalized = data.map(normalizeStudentEmailFields);
+  return db.transaction(async (tx) => {
+    await takeStaffIdentityLocks(
+      tx as unknown as typeof db,
+      normalized.flatMap((student) =>
+        student.emailLc ? [staffIdentityEmailLockKey(student.emailLc)] : []
+      )
+    );
+    for (const student of normalized) {
+      if (student.emailLc) {
+        await assertStudentEmailNotUsedByStaff(
+          student.schoolId,
+          student.emailLc,
+          tx as unknown as typeof db
+        );
+      }
+    }
+    return tx.insert(students).values(normalized).returning();
+  });
 }
 
 // ============================================================================
@@ -1539,6 +1842,30 @@ export async function updateSchool(
       .limit(1)
       .for("update");
     if (!lockedSchool) return undefined;
+    const restoresDeletedSchool =
+      lockedSchool.deletedAt !== null && data.deletedAt === null;
+    if (restoresDeletedSchool) {
+      const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+        tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+        id,
+        { includeDeleted: true }
+      );
+      if (!lifecycleLocked) return undefined;
+      const integrity = await getStaffAssignmentIntegrityIssues(
+        id,
+        tx as unknown as Parameters<typeof getStaffAssignmentIntegrityIssues>[1]
+      );
+      if (integrity.total > 0) {
+        throw Object.assign(
+          new Error("Resolve staff assignment integrity findings before restoring this school."),
+          {
+            status: 409,
+            code: "SCHOOL_STAFF_ASSIGNMENT_INTEGRITY_REQUIRED",
+            expose: true,
+          }
+        );
+      }
+    }
     await takeClasspilotScheduleConfigLock(
       tx as unknown as ScheduleChangeDb,
       id
@@ -1963,25 +2290,525 @@ export async function getMembershipsBySchool(
 }
 
 export async function getStaffBySchool(
-  schoolId: string
+  schoolId: string,
+  status: "active" | "inactive" | "all" = "active",
+  dbInstance: typeof db = db
 ): Promise<(SchoolMembership & { user: User })[]> {
-  const rows = await db
+  const conditions = [
+    eq(schoolMemberships.schoolId, schoolId),
+    staffMembershipRolePredicate(),
+  ];
+  if (status !== "all") conditions.push(eq(schoolMemberships.status, status));
+  const rows = await dbInstance
     .select({
       membership: schoolMemberships,
       user: users,
     })
     .from(schoolMemberships)
     .innerJoin(users, eq(schoolMemberships.userId, users.id))
-    .where(
-      and(
-        eq(schoolMemberships.schoolId, schoolId),
-        eq(schoolMemberships.status, "active"),
-        inArray(schoolMemberships.role, ["admin", "school_admin", "teacher", "office_staff"])
-      )
-    )
+    .where(and(...conditions))
     .orderBy(users.lastName, users.firstName);
 
   return rows.map((r) => ({ ...r.membership, user: r.user }));
+}
+
+export async function getMembershipForSchoolById(
+  membershipId: string,
+  schoolId: string
+): Promise<(SchoolMembership & { user: User }) | undefined> {
+  const [row] = await db
+    .select({ membership: schoolMemberships, user: users })
+    .from(schoolMemberships)
+    .innerJoin(users, eq(users.id, schoolMemberships.userId))
+    .where(
+      and(
+        eq(schoolMemberships.id, membershipId),
+        eq(schoolMemberships.schoolId, schoolId)
+      )
+    )
+    .limit(1);
+  return row ? { ...row.membership, user: row.user } : undefined;
+}
+
+export async function getMembershipsByUserAndSchoolIncludingInactive(
+  userId: string,
+  schoolId: string,
+  dbInstance: typeof db = db
+): Promise<SchoolMembership[]> {
+  return dbInstance
+    .select()
+    .from(schoolMemberships)
+    .where(
+      and(
+        eq(schoolMemberships.userId, userId),
+        eq(schoolMemberships.schoolId, schoolId)
+      )
+    )
+    .orderBy(asc(schoolMemberships.createdAt), asc(schoolMemberships.id));
+}
+
+export type StaffIdentityAuditActor = {
+  userId: string;
+  userRole?: string | null;
+  /** A fixed route/import identifier; never pass names, emails, or request data. */
+  source: string;
+};
+
+export async function insertStaffIdentityAudit(
+  dbInstance: typeof db,
+  entry: {
+    schoolId: string;
+    actor: StaffIdentityAuditActor;
+    action: string;
+    entityType: "user" | "school_membership";
+    entityId: string;
+    fields: string[];
+    metadata?: Record<string, string | number | boolean | string[] | null>;
+  }
+): Promise<void> {
+  if (!/^[a-z0-9_.:-]{1,100}$/i.test(entry.actor.source)) {
+    throw schoolIsolationError(
+      "INVALID_IDENTITY_AUDIT_SOURCE",
+      "Identity audit source must be a fixed non-PII identifier.",
+      500
+    );
+  }
+  await dbInstance.insert(auditLogs).values({
+    schoolId: entry.schoolId,
+    userId: entry.actor.userId,
+    userEmail: null,
+    userRole: entry.actor.userRole ?? null,
+    action: entry.action,
+    entityType: entry.entityType,
+    entityId: entry.entityId,
+    changes: { fields: [...new Set(entry.fields)].sort() },
+    metadata: {
+      source: entry.actor.source,
+      ...(entry.metadata ?? {}),
+    },
+  });
+}
+
+export type StaffEmailIdentityMutationResult =
+  | { outcome: "not_found" }
+  | { outcome: "stale"; currentEmail: string }
+  | { outcome: "central_review_required"; otherSchoolIds: string[] }
+  | { outcome: "central_attachment_required" }
+  | {
+      outcome: "domain_error";
+      code: "SCHOOL_DOMAIN_REQUIRED" | "STAFF_EMAIL_DOMAIN_MISMATCH";
+      expectedDomain: string | null;
+      actualDomain: string | null;
+      schoolId: string;
+    }
+  | { outcome: "student_collision"; schoolId: string }
+  | { outcome: "email_in_use" }
+  | { outcome: "reactivation_required"; membership: SchoolMembership; user: User }
+  | { outcome: "updated"; user: User; membership: SchoolMembership | null }
+  | { outcome: "unchanged"; user: User; membership: SchoolMembership | null };
+
+/**
+ * Update a staff identity's email without replacing its users.id. The optional
+ * membership anchor is used by the public staff endpoint; Workspace imports
+ * use the immutable Google identity's user id as their anchor.
+ */
+export async function updateStaffEmailIdentity(options: {
+  schoolId: string;
+  membershipId?: string;
+  userId?: string;
+  expectedEmail: string;
+  email: string;
+  allowMultiSchool: boolean;
+  /** True only when the authenticated actor is a Super Admin. */
+  allowCentralIdentityMutation?: boolean;
+  /**
+   * True only for an explicitly authorized Super Admin central workflow. A
+   * school-scoped import must not attach a global or other-school identity.
+   */
+  allowGlobalIdentityAttachment?: boolean;
+  /** Workspace imports set this so even a current-school row cannot mask a global identity. */
+  rejectGlobalIdentityEvenWhenCurrent?: boolean;
+  rejectInactiveCurrentSchoolMembership?: boolean;
+  audit: StaffIdentityAuditActor;
+}): Promise<StaffEmailIdentityMutationResult> {
+  const normalizedExpected = options.expectedEmail.trim().toLowerCase();
+  const normalizedEmail = options.email.trim().toLowerCase();
+  const preliminaryMembership = options.membershipId
+    ? await db
+        .select({ userId: schoolMemberships.userId })
+        .from(schoolMemberships)
+        .where(
+          and(
+            eq(schoolMemberships.id, options.membershipId),
+            eq(schoolMemberships.schoolId, options.schoolId)
+          )
+        )
+        .limit(1)
+        .then((rows) => rows[0])
+    : undefined;
+  const anchorUserId = options.userId ?? preliminaryMembership?.userId;
+  if (!anchorUserId) return { outcome: "not_found" };
+
+  const result = await db.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    await takeStaffIdentityLocks(transactionDb, [
+      staffIdentityEmailLockKey(normalizedExpected),
+      staffIdentityEmailLockKey(normalizedEmail),
+      staffIdentityUserLockKey(anchorUserId),
+    ]);
+    let membership: SchoolMembership | null = null;
+    let userId = options.userId;
+    if (options.membershipId) {
+      const [lockedMembership] = await tx
+        .select()
+        .from(schoolMemberships)
+        .where(
+          and(
+            eq(schoolMemberships.id, options.membershipId),
+            eq(schoolMemberships.schoolId, options.schoolId),
+            staffMembershipRolePredicate()
+          )
+        )
+        .limit(1)
+        .for("update");
+      if (!lockedMembership) return { outcome: "not_found" } as const;
+      if (lockedMembership.userId !== anchorUserId) {
+        return { outcome: "not_found" } as const;
+      }
+      membership = lockedMembership;
+      userId = lockedMembership.userId;
+    }
+    if (!userId) return { outcome: "not_found" } as const;
+
+    const [lockedUser] = await tx
+      .select()
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1)
+      .for("update");
+    if (!lockedUser) return { outcome: "not_found" } as const;
+    if (options.rejectInactiveCurrentSchoolMembership) {
+      const currentSchoolMemberships = await tx
+        .select()
+        .from(schoolMemberships)
+        .where(
+          and(
+            eq(schoolMemberships.userId, userId),
+            eq(schoolMemberships.schoolId, options.schoolId)
+          )
+        )
+        .orderBy(asc(schoolMemberships.createdAt), asc(schoolMemberships.id));
+      const hasActive = currentSchoolMemberships.some(
+        (row) => row.status === "active" && isStaffMembershipRole(row)
+      );
+      const inactive = currentSchoolMemberships.find(
+        (row) => row.status !== "active" && isStaffMembershipRole(row)
+      );
+      if (!hasActive && inactive) {
+        return {
+          outcome: "reactivation_required",
+          membership: inactive,
+          user: lockedUser,
+        } as const;
+      }
+    }
+    if (lockedUser.email.trim().toLowerCase() !== normalizedExpected) {
+      return { outcome: "stale", currentEmail: lockedUser.email } as const;
+    }
+    const allMembershipRows = await tx
+      .select({ membership: schoolMemberships })
+      .from(schoolMemberships)
+      .where(eq(schoolMemberships.userId, userId))
+      .orderBy(asc(schoolMemberships.schoolId), asc(schoolMemberships.id));
+    const hasCurrentSchoolStaffMembership = allMembershipRows.some(
+      ({ membership: row }) =>
+        row.schoolId === options.schoolId && isStaffMembershipRole(row)
+    );
+    const otherSchoolIds = [
+      ...new Set(
+        allMembershipRows
+          .map(({ membership: row }) => row.schoolId)
+          .filter((schoolId) => schoolId !== options.schoolId)
+      ),
+    ];
+    const emailWillChange = lockedUser.email !== normalizedEmail;
+    if (
+      emailWillChange
+      && lockedUser.isSuperAdmin
+      && options.allowCentralIdentityMutation !== true
+      && options.allowGlobalIdentityAttachment !== true
+    ) {
+      return { outcome: "central_attachment_required" } as const;
+    }
+    if (
+      (!hasCurrentSchoolStaffMembership || options.rejectGlobalIdentityEvenWhenCurrent === true)
+      && (lockedUser.isSuperAdmin || otherSchoolIds.length > 0)
+      && options.allowGlobalIdentityAttachment !== true
+    ) {
+      return { outcome: "central_attachment_required" } as const;
+    }
+    if (emailWillChange && otherSchoolIds.length > 0 && !options.allowMultiSchool) {
+      return { outcome: "central_review_required", otherSchoolIds } as const;
+    }
+
+    const activeMembershipRows = await tx
+      .select({ membership: schoolMemberships, school: schools })
+      .from(schoolMemberships)
+      .innerJoin(schools, eq(schools.id, schoolMemberships.schoolId))
+      .where(
+        and(
+          eq(schoolMemberships.userId, userId),
+          eq(schoolMemberships.status, "active"),
+          isNull(schools.deletedAt)
+        )
+      )
+      .orderBy(asc(schoolMemberships.schoolId), asc(schoolMemberships.id));
+    const currentSchool = await tx
+      .select()
+      .from(schools)
+      .where(eq(schools.id, options.schoolId))
+      .limit(1)
+      .then((rows) => rows[0]);
+    if (!currentSchool) return { outcome: "not_found" } as const;
+
+    const validationSchools = new Map<string, School>([[currentSchool.id, currentSchool]]);
+    for (const row of activeMembershipRows) {
+      validationSchools.set(row.school.id, row.school);
+    }
+    const actualDomain = getEmailDomain(normalizedEmail);
+    for (const school of validationSchools.values()) {
+      const expectedDomain = normalizeDomain(school.domain);
+      if (!expectedDomain) {
+        return {
+          outcome: "domain_error",
+          code: "SCHOOL_DOMAIN_REQUIRED",
+          expectedDomain,
+          actualDomain,
+          schoolId: school.id,
+        } as const;
+      }
+      if (actualDomain !== expectedDomain) {
+        return {
+          outcome: "domain_error",
+          code: "STAFF_EMAIL_DOMAIN_MISMATCH",
+          expectedDomain,
+          actualDomain,
+          schoolId: school.id,
+        } as const;
+      }
+
+      const [studentClash] = await tx
+        .select({ id: students.id })
+        .from(students)
+        .where(
+          and(
+            eq(students.schoolId, school.id),
+            or(
+              eq(students.emailLc, normalizedEmail),
+              sql`lower(btrim(${students.email})) = ${normalizedEmail}`
+            )
+          )
+        )
+        .limit(1);
+      if (studentClash) {
+        return { outcome: "student_collision", schoolId: school.id } as const;
+      }
+    }
+
+    const emailOwners = await tx
+      .select({ id: users.id })
+      .from(users)
+      .where(sql`lower(btrim(${users.email})) = ${normalizedEmail}`)
+      .orderBy(asc(users.id))
+      .limit(2);
+    if (emailOwners.length > 1) throw new IdentityEmailConflictError();
+    if (emailOwners[0] && emailOwners[0].id !== userId) {
+      return { outcome: "email_in_use" } as const;
+    }
+    // During the deferred-index rollout legacy rows can still contain mixed
+    // case or surrounding whitespace. Only exact persisted bytes are a no-op;
+    // normalization itself is a credential-invalidating correction.
+    if (!emailWillChange) {
+      return { outcome: "unchanged", user: lockedUser, membership } as const;
+    }
+
+    const [updatedUser] = await tx
+      .update(users)
+      .set({
+        email: normalizedEmail,
+        authVersion: sql`${users.authVersion} + 1`,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, userId))
+      .returning();
+    await insertStaffIdentityAudit(transactionDb, {
+      schoolId: options.schoolId,
+      actor: options.audit,
+      action: "school.staff.email_corrected",
+      entityType: "school_membership",
+      entityId: membership?.id ?? userId,
+      fields: ["email"],
+      metadata: { targetUserId: userId, identityPreserved: true },
+    });
+    return { outcome: "updated", user: updatedUser!, membership } as const;
+  });
+  if (result.outcome === "updated") {
+    await invalidateUserCredentialConnections(result.user.id);
+  }
+  return result;
+}
+
+export type ReactivateStaffMembershipResult =
+  | { outcome: "not_found" }
+  | { outcome: "already_active"; membership: SchoolMembership; user: User }
+  | { outcome: "central_review_required" }
+  | {
+      outcome: "domain_error";
+      code: "SCHOOL_DOMAIN_REQUIRED" | "STAFF_EMAIL_DOMAIN_MISMATCH";
+      expectedDomain: string | null;
+      actualDomain: string | null;
+    }
+  | { outcome: "student_collision" }
+  | { outcome: "reactivated"; membership: SchoolMembership; user: User };
+
+export async function reactivateStaffMembershipForSchool(
+  membershipId: string,
+  schoolId: string,
+  audit: StaffIdentityAuditActor,
+  allowCentralIdentityMutation = false
+): Promise<ReactivateStaffMembershipResult> {
+  const [preliminaryMembership] = await db
+    .select({ userId: schoolMemberships.userId })
+    .from(schoolMemberships)
+    .where(
+      and(
+        eq(schoolMemberships.id, membershipId),
+        eq(schoolMemberships.schoolId, schoolId)
+      )
+    )
+    .limit(1);
+  if (!preliminaryMembership) return { outcome: "not_found" };
+  const preliminaryUser = await getUserById(preliminaryMembership.userId);
+  const result = await db.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    await takeStaffIdentityLocks(transactionDb, [
+      ...(preliminaryUser?.email
+        ? [staffIdentityEmailLockKey(preliminaryUser.email)]
+        : []),
+      staffIdentityUserLockKey(preliminaryMembership.userId),
+    ]);
+    const [membership] = await tx
+      .select()
+      .from(schoolMemberships)
+      .where(
+        and(
+          eq(schoolMemberships.id, membershipId),
+          eq(schoolMemberships.schoolId, schoolId),
+          staffMembershipRolePredicate()
+        )
+      )
+      .limit(1)
+      .for("update");
+    if (!membership) return { outcome: "not_found" } as const;
+    if (membership.userId !== preliminaryMembership.userId) {
+      return { outcome: "not_found" } as const;
+    }
+    const [user] = await tx
+      .select()
+      .from(users)
+      .where(eq(users.id, membership.userId))
+      .limit(1)
+      .for("update");
+    if (!user) return { outcome: "not_found" } as const;
+    if (
+      preliminaryUser
+      && user.email.trim().toLowerCase() !== preliminaryUser.email.trim().toLowerCase()
+    ) {
+      return { outcome: "not_found" } as const;
+    }
+    if (membership.status === "active") {
+      return { outcome: "already_active", membership, user } as const;
+    }
+    if (user.isSuperAdmin && !allowCentralIdentityMutation) {
+      return { outcome: "central_review_required" } as const;
+    }
+
+    const [school] = await tx
+      .select()
+      .from(schools)
+      .where(eq(schools.id, schoolId))
+      .limit(1);
+    const expectedDomain = normalizeDomain(school?.domain);
+    const actualDomain = getEmailDomain(user.email);
+    if (!expectedDomain) {
+      return {
+        outcome: "domain_error",
+        code: "SCHOOL_DOMAIN_REQUIRED",
+        expectedDomain,
+        actualDomain,
+      } as const;
+    }
+    if (actualDomain !== expectedDomain) {
+      return {
+        outcome: "domain_error",
+        code: "STAFF_EMAIL_DOMAIN_MISMATCH",
+        expectedDomain,
+        actualDomain,
+      } as const;
+    }
+    const [studentClash] = await tx
+      .select({ id: students.id })
+      .from(students)
+      .where(
+        and(
+          eq(students.schoolId, schoolId),
+          or(
+            eq(students.emailLc, user.email.trim().toLowerCase()),
+            sql`lower(btrim(${students.email})) = ${user.email.trim().toLowerCase()}`
+          )
+        )
+      )
+      .limit(1);
+    if (studentClash) return { outcome: "student_collision" } as const;
+
+    const [reactivated] = await tx
+      .update(schoolMemberships)
+      .set({ status: "active" })
+      .where(
+        and(
+          eq(schoolMemberships.id, membership.id),
+          eq(schoolMemberships.schoolId, schoolId)
+        )
+      )
+      .returning();
+    const [updatedUser] = await tx
+      .update(users)
+      .set({
+        authVersion: sql`${users.authVersion} + 1`,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, membership.userId))
+      .returning();
+    await insertStaffIdentityAudit(transactionDb, {
+      schoolId,
+      actor: audit,
+      action: "school.staff.reactivated",
+      entityType: "school_membership",
+      entityId: membership.id,
+      fields: ["status", "authVersion"],
+      metadata: { targetUserId: membership.userId },
+    });
+    return {
+      outcome: "reactivated",
+      membership: reactivated!,
+      user: updatedUser!,
+    } as const;
+  });
+  if (result.outcome === "reactivated") {
+    await invalidateClasspilotPassiveAuthorization(schoolId);
+    await invalidateUserCredentialConnections(result.user.id);
+  }
+  return result;
 }
 
 export async function getAdminEmailsBySchool(
@@ -2018,7 +2845,7 @@ export async function getCentralEmailRecipientForSchool(
         eq(schoolMemberships.schoolId, schoolId),
         eq(schoolMemberships.userId, recipientUserId),
         eq(schoolMemberships.status, "active"),
-        inArray(schoolMemberships.role, ["admin", "school_admin", "teacher", "office_staff"])
+        staffMembershipRolePredicate()
       )
     )
     .limit(1);
@@ -2065,14 +2892,6 @@ export async function updateMembership(
   data: Partial<InsertSchoolMembership>,
   scheduleChangeActorId?: string
 ): Promise<SchoolMembership | undefined> {
-  const [existing] = await db.select().from(schoolMemberships).where(eq(schoolMemberships.id, id)).limit(1);
-  if (existing) {
-    await assertStaffMembershipEmailDomain({
-      userId: data.userId || existing.userId,
-      schoolId: data.schoolId || existing.schoolId,
-      role: data.role || existing.role,
-    });
-  }
   return updateMembershipWithScheduleChangeGuard({
     id,
     data,
@@ -2098,38 +2917,30 @@ export async function updateMembershipForSchool(
   id: string,
   schoolId: string,
   data: Partial<InsertSchoolMembership>,
-  scheduleChangeActorId?: string
+  scheduleChangeActorId?: string,
+  allowCentralIdentityMutation = false
 ): Promise<SchoolMembership | undefined> {
-  const [existing] = await db
-    .select()
-    .from(schoolMemberships)
-    .where(and(eq(schoolMemberships.id, id), eq(schoolMemberships.schoolId, schoolId)))
-    .limit(1);
-  if (existing) {
-    await assertStaffMembershipEmailDomain({
-      userId: data.userId || existing.userId,
-      schoolId,
-      role: data.role || existing.role,
-    });
-  }
   return updateMembershipWithScheduleChangeGuard({
     id,
     schoolId,
     data,
     scheduleChangeActorId,
+    allowCentralIdentityMutation,
   });
 }
 
 export async function deleteMembershipForSchool(
   id: string,
   schoolId: string,
-  scheduleChangeActorId?: string
+  scheduleChangeActorId?: string,
+  allowCentralIdentityMutation = false
 ): Promise<boolean> {
   const membership = await updateMembershipWithScheduleChangeGuard({
     id,
     schoolId,
     data: { status: "inactive" },
     scheduleChangeActorId,
+    allowCentralIdentityMutation,
   });
   return Boolean(membership);
 }
@@ -2139,8 +2950,10 @@ async function updateMembershipWithScheduleChangeGuard(options: {
   schoolId?: string;
   data: Partial<InsertSchoolMembership>;
   scheduleChangeActorId?: string;
+  allowCentralIdentityMutation?: boolean;
 }): Promise<SchoolMembership | undefined> {
   let previousSchoolId: string | undefined;
+  const credentialInvalidatedUserIds = new Set<string>();
   const membership = await withClasspilotSchedulePostCommitTransaction(async (tx) => {
     const candidateConditions = [eq(schoolMemberships.id, options.id)];
     if (options.schoolId) {
@@ -2154,6 +2967,31 @@ async function updateMembershipWithScheduleChangeGuard(options: {
     if (!candidate) return undefined;
     previousSchoolId = candidate.schoolId;
     const transactionDb = tx as unknown as ScheduleChangeDb;
+    const prospectiveUserId = options.data.userId ?? candidate.userId;
+    const preliminaryUsers = await tx
+      .select({ id: users.id, email: users.email, isSuperAdmin: users.isSuperAdmin })
+      .from(users)
+      .where(inArray(users.id, [...new Set([candidate.userId, prospectiveUserId])]));
+    const preliminaryUserById = new Map(preliminaryUsers.map((user) => [user.id, user]));
+    const preliminaryCurrentUser = preliminaryUserById.get(candidate.userId);
+    const preliminaryProspectiveUser = preliminaryUserById.get(prospectiveUserId);
+    if (!preliminaryCurrentUser || !preliminaryProspectiveUser) {
+      throw schoolIsolationError(
+        "STAFF_IDENTITY_STALE",
+        "The staff identity changed concurrently. Refresh and try again.",
+        409
+      );
+    }
+    await takeStaffIdentityLocks(tx as unknown as typeof db, [
+      ...preliminaryUsers.map((user) => staffIdentityEmailLockKey(user.email)),
+      staffIdentityUserLockKey(candidate.userId),
+      staffIdentityUserLockKey(prospectiveUserId),
+    ]);
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      candidate.schoolId
+    );
+    if (!lifecycleLocked) return undefined;
     await lockClasspilotScheduleChangeSchool(candidate.schoolId, transactionDb);
     await takeClasspilotScheduleConfigLock(transactionDb, candidate.schoolId);
 
@@ -2164,7 +3002,7 @@ async function updateMembershipWithScheduleChangeGuard(options: {
         and(
           eq(groups.schoolId, candidate.schoolId),
           eq(groups.teacherId, candidate.userId),
-          eq(groups.groupType, "admin_class"),
+          inArray(groups.groupType, [...ACTIVE_INSTRUCTIONAL_GROUP_TYPES]),
           eq(groups.status, "active")
         )
       )
@@ -2183,20 +3021,90 @@ async function updateMembershipWithScheduleChangeGuard(options: {
       .limit(1)
       .for("update");
     if (!locked) return undefined;
+    if (locked.userId !== candidate.userId) {
+      throw schoolIsolationError(
+        "STAFF_MEMBERSHIP_STALE",
+        "The staff membership changed concurrently. Refresh and try again.",
+        409
+      );
+    }
+    const [lockedProspectiveUser] = await tx
+      .select({ id: users.id, email: users.email, isSuperAdmin: users.isSuperAdmin })
+      .from(users)
+      .where(eq(users.id, prospectiveUserId))
+      .limit(1);
+    if (
+      !lockedProspectiveUser ||
+      lockedProspectiveUser.email.trim().toLowerCase() !==
+        preliminaryProspectiveUser.email.trim().toLowerCase()
+    ) {
+      throw schoolIsolationError(
+        "STAFF_IDENTITY_STALE",
+        "The staff identity changed concurrently. Refresh and try again.",
+        409
+      );
+    }
 
-    const eligibleRoles = new Set(["teacher", "admin", "school_admin"]);
     const nextStatus = options.data.status ?? locked.status;
     const nextRole = options.data.role ?? locked.role;
+    const nextGopilotRole = Object.prototype.hasOwnProperty.call(options.data, "gopilotRole")
+      ? options.data.gopilotRole ?? null
+      : locked.gopilotRole;
     const nextUserId = options.data.userId ?? locked.userId;
     const nextSchoolId = options.data.schoolId ?? locked.schoolId;
-    const removesPrimaryEligibility =
-      locked.status === "active" &&
-      eligibleRoles.has(locked.role) &&
-      (nextStatus !== "active" ||
-        !eligibleRoles.has(nextRole) ||
-        nextUserId !== locked.userId ||
-        nextSchoolId !== locked.schoolId);
-    if (removesPrimaryEligibility) {
+    const membershipAuthorityChanged =
+      nextStatus !== locked.status ||
+      nextRole !== locked.role ||
+      nextGopilotRole !== locked.gopilotRole ||
+      nextUserId !== locked.userId ||
+      nextSchoolId !== locked.schoolId;
+    const lockedCurrentUser = locked.userId === lockedProspectiveUser.id
+      ? lockedProspectiveUser
+      : await tx
+          .select({ id: users.id, email: users.email, isSuperAdmin: users.isSuperAdmin })
+          .from(users)
+          .where(eq(users.id, locked.userId))
+          .limit(1)
+          .then((rows) => rows[0]);
+    if (
+      options.schoolId
+      && membershipAuthorityChanged
+      && (lockedCurrentUser?.isSuperAdmin || lockedProspectiveUser.isSuperAdmin)
+      && options.allowCentralIdentityMutation !== true
+    ) {
+      throw schoolIsolationError(
+        "STAFF_IDENTITY_CENTRAL_REVIEW_REQUIRED",
+        "A Super Admin must review school access changes for this central identity.",
+        409
+      );
+    }
+    if (nextStatus === "active") {
+      await assertStaffMembershipEmailDomain(
+        {
+          userId: nextUserId,
+          schoolId: nextSchoolId,
+          role: nextRole,
+          gopilotRole: nextGopilotRole,
+        },
+        tx as unknown as typeof db
+      );
+    }
+    let eligibilityLoss: Awaited<ReturnType<typeof assertStaffLifecycleMutationAllowed>> = null;
+    if (membershipAuthorityChanged) {
+      eligibilityLoss = await assertStaffLifecycleMutationAllowed({
+        schoolId: locked.schoolId,
+        membership: locked,
+        nextStatus,
+        nextRole,
+        nextGopilotRole,
+        nextUserId,
+        nextSchoolId,
+        dbInstance: tx as unknown as Parameters<
+          typeof assertStaffLifecycleMutationAllowed
+        >[0]["dbInstance"],
+      });
+    }
+    if (eligibilityLoss?.baseTeachingAuthority) {
       for (const group of primaryGroups) {
         await assertNoApprovedFutureScheduleChange({
           schoolId: locked.schoolId,
@@ -2224,6 +3132,17 @@ async function updateMembershipWithScheduleChangeGuard(options: {
         )
       )
       .returning();
+    if (membership && membershipAuthorityChanged) {
+      const affectedUserIds = [...new Set([locked.userId, membership.userId])];
+      await tx
+        .update(users)
+        .set({
+          authVersion: sql`${users.authVersion} + 1`,
+          updatedAt: new Date(),
+        })
+        .where(inArray(users.id, affectedUserIds));
+      for (const userId of affectedUserIds) credentialInvalidatedUserIds.add(userId);
+    }
     return membership;
   });
   const affectedSchools = new Set(
@@ -2231,6 +3150,9 @@ async function updateMembershipWithScheduleChangeGuard(options: {
   );
   for (const schoolId of affectedSchools) {
     await invalidateClasspilotPassiveAuthorization(schoolId);
+  }
+  for (const userId of credentialInvalidatedUserIds) {
+    await invalidateUserCredentialConnections(userId);
   }
   return membership;
 }
@@ -2403,6 +3325,11 @@ export async function assignTeacherGrade(
   const grade = await getGradeById(gradeId);
   if (!grade) return undefined;
   return db.transaction(async (tx) => {
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      grade.schoolId
+    );
+    if (!lifecycleLocked) return undefined;
     await takePasspilotClassLock(tx, grade.schoolId);
     const [source] = await tx
       .select({ value: settings.passpilotClassSource })
@@ -2427,6 +3354,11 @@ export async function assignTeacherGrade(
         409
       );
     }
+    await assertActiveClasspilotTeacherMembership(
+      teacherId,
+      grade.schoolId,
+      tx as unknown as typeof db
+    );
     const [assignment] = await tx
       .insert(teacherGrades)
       .values({ teacherId, gradeId })
@@ -2443,6 +3375,11 @@ export async function removeTeacherGrade(
   const grade = await getGradeById(gradeId);
   if (!grade) return false;
   return db.transaction(async (tx) => {
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      grade.schoolId
+    );
+    if (!lifecycleLocked) return false;
     await takePasspilotClassLock(tx, grade.schoolId);
     const [source] = await tx
       .select({ value: settings.passpilotClassSource })
@@ -2617,11 +3554,6 @@ export async function getUsersBySchool(
     .orderBy(users.lastName, users.firstName);
 
   return rows.map((r) => ({ ...r.membership, user: r.user }));
-}
-
-export async function deleteUser(id: string): Promise<boolean> {
-  const result = await db.delete(users).where(eq(users.id, id));
-  return (result.rowCount ?? 0) > 0;
 }
 
 // ============================================================================
@@ -4145,7 +5077,7 @@ function generateKioskClaimCode(): string {
 // Drizzle wraps driver errors (DrizzleQueryError with the pg error on .cause),
 // so the unique-violation code must be checked on both levels.
 function isUniqueViolation(err: any): boolean {
-  return err?.code === "23505" || err?.cause?.code === "23505";
+  return isDatabaseErrorCode(err, "23505");
 }
 
 export async function createKioskSession(
@@ -4183,6 +5115,18 @@ export async function createSelfClaimedKioskSession(
 ): Promise<KioskSession> {
   await sweepExpiredKioskSessions(schoolId);
   return db.transaction(async (tx) => {
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      schoolId
+    );
+    if (!lifecycleLocked) {
+      throw passpilotClassError("SCHOOL_NOT_FOUND", "School not found.", 404);
+    }
+    await assertActiveSchoolStaffMembership(
+      authorization.actorUserId,
+      schoolId,
+      tx as unknown as typeof db
+    );
     await takePasspilotClassLock(tx, schoolId);
     if (target) {
       await lockAndAssertKioskClassSource(tx, schoolId, target.source);
@@ -4235,6 +5179,13 @@ export async function createResumedKioskSession(
 ): Promise<KioskSession> {
   await sweepExpiredKioskSessions(schoolId);
   return db.transaction(async (tx) => {
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      schoolId
+    );
+    if (!lifecycleLocked) {
+      throw passpilotClassError("SCHOOL_NOT_FOUND", "School not found.", 404);
+    }
     await takePasspilotClassLock(tx, schoolId);
     // Re-read under the lock: concurrent resume taps or a concurrent
     // teacher-side mutation must serialize against this transaction.
@@ -4257,6 +5208,11 @@ export async function createResumedKioskSession(
         404
       );
     }
+    await assertActiveSchoolStaffMembership(
+      binding.teacherId,
+      schoolId,
+      tx as unknown as typeof db
+    );
     let target = kioskSessionClassTarget(binding);
     if (target) {
       try {
@@ -4376,6 +5332,18 @@ export async function claimKioskSessionByCode(
   authorization: KioskSessionAuthorization
 ): Promise<KioskSession> {
   return db.transaction(async (tx) => {
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      schoolId
+    );
+    if (!lifecycleLocked) {
+      throw passpilotClassError("SCHOOL_NOT_FOUND", "School not found.", 404);
+    }
+    await assertActiveSchoolStaffMembership(
+      authorization.actorUserId,
+      schoolId,
+      tx as unknown as typeof db
+    );
     await takePasspilotClassLock(tx, schoolId);
     // target null = teacher-bound classless claim (the kiosk shows the
     // teacher's name and waits for Send to Kiosk), mirroring
@@ -4914,12 +5882,59 @@ export async function removeStudentFromLegacyPasspilotGrade(
 // GoPilot - Homeroom operations
 // ============================================================================
 
+async function assertActiveClasspilotTeacherMembership(
+  userId: string,
+  schoolId: string,
+  dbInstance: typeof db = db
+): Promise<void> {
+  const [membership] = await dbInstance
+    .select({ id: schoolMemberships.id })
+    .from(schoolMemberships)
+    .where(
+      and(
+        eq(schoolMemberships.userId, userId),
+        eq(schoolMemberships.schoolId, schoolId),
+        eq(schoolMemberships.status, "active"),
+        inArray(schoolMemberships.role, ["teacher", "admin", "school_admin"])
+      )
+    )
+    .limit(1);
+  if (!membership) {
+    const err = new Error("Teacher must be active teaching staff at this school") as Error & { code?: string };
+    err.code = "CLASS_TEACHER_NOT_FOUND";
+    throw err;
+  }
+}
+
 async function assertActiveSchoolStaffMembership(
   userId: string,
   schoolId: string,
   dbInstance: typeof db = db
 ): Promise<void> {
-  const staffRoles = ["admin", "school_admin", "office_staff", "teacher"];
+  const [membership] = await dbInstance
+    .select({ id: schoolMemberships.id })
+    .from(schoolMemberships)
+    .where(
+      and(
+        eq(schoolMemberships.userId, userId),
+        eq(schoolMemberships.schoolId, schoolId),
+        eq(schoolMemberships.status, "active"),
+        inArray(schoolMemberships.role, ["teacher", "admin", "school_admin", "office_staff"])
+      )
+    )
+    .limit(1);
+  if (!membership) {
+    const err = new Error("Staff member must be active at this school") as Error & { code?: string };
+    err.code = "STAFF_MEMBERSHIP_NOT_FOUND";
+    throw err;
+  }
+}
+
+async function assertActiveGopilotTeacherMembership(
+  userId: string,
+  schoolId: string,
+  dbInstance: typeof db = db
+): Promise<void> {
   const [membership] = await dbInstance
     .select({ id: schoolMemberships.id })
     .from(schoolMemberships)
@@ -4929,17 +5944,20 @@ async function assertActiveSchoolStaffMembership(
         eq(schoolMemberships.schoolId, schoolId),
         eq(schoolMemberships.status, "active"),
         or(
-          inArray(schoolMemberships.gopilotRole, staffRoles),
+          sql`btrim(${schoolMemberships.gopilotRole}) = 'teacher'`,
           and(
-            or(isNull(schoolMemberships.gopilotRole), eq(schoolMemberships.gopilotRole, "")),
-            inArray(schoolMemberships.role, staffRoles)
+            or(
+              isNull(schoolMemberships.gopilotRole),
+              sql`btrim(${schoolMemberships.gopilotRole}) = ''`
+            ),
+            eq(schoolMemberships.role, "teacher")
           )
         )
       )
     )
     .limit(1);
   if (!membership) {
-    const err = new Error("Teacher must be active staff at this school") as Error & { code?: string };
+    const err = new Error("Teacher must have an active GoPilot teacher role at this school") as Error & { code?: string };
     err.code = "GOPILOT_INVALID_HOMEROOM_STAFF";
     throw err;
   }
@@ -4969,22 +5987,23 @@ export async function getHomeroomById(
 export async function createHomeroom(
   data: InsertHomeroom
 ): Promise<Homeroom> {
-  if (data.teacherId) {
-    await assertActiveSchoolStaffMembership(data.teacherId, data.schoolId);
-  }
-  const [hr] = await db.insert(homerooms).values(data).returning();
-  return hr!;
+  return createHomeroomWithPrimaryTeacher(data);
 }
 
 export async function createHomeroomWithPrimaryTeacher(
   data: InsertHomeroom
 ): Promise<Homeroom> {
   return db.transaction(async (tx) => {
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      data.schoolId
+    );
+    if (!lifecycleLocked) throw new Error("School not found");
     await tx.execute(
       sql`select pg_advisory_xact_lock(hashtextextended(${`gopilot:homerooms:${data.schoolId}`}, 0::bigint))`
     );
     if (data.teacherId) {
-      await assertActiveSchoolStaffMembership(data.teacherId, data.schoolId, tx as unknown as typeof db);
+      await assertActiveGopilotTeacherMembership(data.teacherId, data.schoolId, tx as unknown as typeof db);
     }
     const [homeroom] = await tx.insert(homerooms).values(data).returning();
     if (data.teacherId) {
@@ -5003,17 +6022,9 @@ export async function updateHomeroom(
   id: string,
   data: Partial<InsertHomeroom>
 ): Promise<Homeroom | undefined> {
-  if (data.teacherId) {
-    const existing = await getHomeroomById(id);
-    if (!existing) return undefined;
-    await assertActiveSchoolStaffMembership(data.teacherId, existing.schoolId);
-  }
-  const [hr] = await db
-    .update(homerooms)
-    .set(data)
-    .where(eq(homerooms.id, id))
-    .returning();
-  return hr;
+  const existing = await getHomeroomById(id);
+  if (!existing) return undefined;
+  return updateHomeroomWithPrimaryTeacher(id, existing.schoolId, data);
 }
 
 export async function updateHomeroomWithPrimaryTeacher(
@@ -5022,6 +6033,11 @@ export async function updateHomeroomWithPrimaryTeacher(
   data: Partial<InsertHomeroom>
 ): Promise<Homeroom | undefined> {
   return db.transaction(async (tx) => {
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      schoolId
+    );
+    if (!lifecycleLocked) return undefined;
     await tx.execute(
       sql`select pg_advisory_xact_lock(hashtextextended(${`gopilot:homeroom:${schoolId}:${id}`}, 0::bigint))`
     );
@@ -5035,7 +6051,7 @@ export async function updateHomeroomWithPrimaryTeacher(
       throw new Error("Homeroom school cannot be changed");
     }
     if (data.teacherId) {
-      await assertActiveSchoolStaffMembership(data.teacherId, schoolId, tx as unknown as typeof db);
+      await assertActiveGopilotTeacherMembership(data.teacherId, schoolId, tx as unknown as typeof db);
     }
     const [updated] = await tx
       .update(homerooms)
@@ -5067,6 +6083,11 @@ export async function updateHomeroomWithPrimaryTeacher(
 
 export async function deleteHomeroom(id: string, schoolId: string): Promise<boolean> {
   return db.transaction(async (tx) => {
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      schoolId
+    );
+    if (!lifecycleLocked) return false;
     const [homeroom] = await tx
       .select({ id: homerooms.id })
       .from(homerooms)
@@ -9567,7 +10588,7 @@ export async function resyncActiveClasspilotSessionStudents(
   });
 }
 
-export async function snapshotClasspilotSessionStaff(
+async function snapshotClasspilotSessionStaff(
   session: TeachingSession,
   dbInstance: typeof db = db
 ): Promise<number> {
@@ -9596,6 +10617,15 @@ export async function snapshotClasspilotSessionStaff(
   }
   const staffIds = Array.from(roles.keys());
   if (staffIds.length === 0) return 0;
+  if (!session.endTime) {
+    for (const staffId of staffIds) {
+      await assertActiveClasspilotTeacherMembership(
+        staffId,
+        session.schoolId,
+        dbInstance
+      );
+    }
+  }
   const staff = await dbInstance
     .select({
       id: users.id,
@@ -9656,6 +10686,17 @@ export async function backfillOpenTeachingSessionRosterSnapshots(
   for (const { session } of openWithoutSnapshot) {
     await dbInstance.transaction(async (tx) => {
       const transactionDb = tx as unknown as typeof db;
+      if (!session.schoolId) return;
+      const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+        tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+        session.schoolId
+      );
+      if (!lifecycleLocked) return;
+      await assertActiveClasspilotTeacherMembership(
+        session.teacherId,
+        session.schoolId,
+        transactionDb
+      );
       await lockClasspilotTeachingSessionLifecycle(session.id, transactionDb);
       const [candidate] = await tx
         .select()
@@ -9935,8 +10976,23 @@ export async function createTeachingSession(
   // caller, so it can never be omitted or mismatched. Under a request GUC the
   // group lookup only resolves the caller's own school; the scheduler passes
   // schedulerDb (is_super) so it resolves across schools.
+  const [candidateGroup] = await dbInstance
+    .select({ schoolId: groups.schoolId })
+    .from(groups)
+    .where(eq(groups.id, data.groupId))
+    .limit(1);
+  if (!candidateGroup) {
+    throw new Error(`createTeachingSession: group ${data.groupId} not found`);
+  }
   return dbInstance.transaction(async (tx) => {
     const transactionDb = tx as unknown as typeof db;
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      candidateGroup.schoolId
+    );
+    if (!lifecycleLocked) {
+      throw new Error(`createTeachingSession: group ${data.groupId} not found`);
+    }
     const [group] = await tx
       .select({
         schoolId: groups.schoolId,
@@ -9945,11 +11001,21 @@ export async function createTeachingSession(
       })
       .from(groups)
       .innerJoin(schools, eq(schools.id, groups.schoolId))
-      .where(eq(groups.id, data.groupId))
+      .where(and(
+        eq(groups.id, data.groupId),
+        eq(groups.schoolId, candidateGroup.schoolId)
+      ))
       .limit(1)
       .for("share");
     if (!group) {
       throw new Error(`createTeachingSession: group ${data.groupId} not found`);
+    }
+    if (!data.endTime) {
+      await assertActiveClasspilotTeacherMembership(
+        data.teacherId,
+        group.schoolId,
+        transactionDb
+      );
     }
     await assertClasspilotEntitled(group.schoolId, transactionDb, { lock: true });
     const [session] = await tx
@@ -10029,6 +11095,13 @@ export async function createOrReuseScheduledReportSession(
 ): Promise<TeachingSession> {
   return dbInstance.transaction(async (tx) => {
     const transactionDb = tx as unknown as typeof db;
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      data.schoolId
+    );
+    if (!lifecycleLocked) {
+      throw new Error(`Scheduled occurrence group ${data.groupId} was not found`);
+    }
     const [groupSnapshot] = await tx
       .select({ name: groups.name })
       .from(groups)
@@ -10063,6 +11136,12 @@ export async function createOrReuseScheduledReportSession(
       }
       return existing;
     }
+
+    await assertActiveClasspilotTeacherMembership(
+      data.teacherId,
+      data.schoolId,
+      transactionDb
+    );
 
     const [created] = await tx
       .insert(teachingSessions)
@@ -10200,6 +11279,11 @@ export async function promoteScheduledReportSessionToLive(
       : sql`false`;
   return dbInstance.transaction(async (tx) => {
     const transactionDb = tx as unknown as typeof db;
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      data.schoolId
+    );
+    if (!lifecycleLocked) return undefined;
     const [current] = await tx.select().from(teachingSessions).where(and(
       identity,
       eq(teachingSessions.schoolId, data.schoolId),
@@ -10208,6 +11292,11 @@ export async function promoteScheduledReportSessionToLive(
       isNull(teachingSessions.endTime)
     )).limit(1);
     if (!current) return undefined;
+    await assertActiveClasspilotTeacherMembership(
+      current.teacherId,
+      data.schoolId,
+      transactionDb
+    );
     const roster = await tx
       .select({ studentId: classpilotSessionStudents.studentId })
       .from(classpilotSessionStudents)
@@ -10314,9 +11403,16 @@ export async function withTeachingSessionStartLock<T>(
   dbInstance: typeof db = db
 ): Promise<T> {
   return dbInstance.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      schoolId
+    );
+    if (!lifecycleLocked) throw new Error("School not found");
+    await assertActiveClasspilotTeacherMembership(teacherId, schoolId, transactionDb);
     const lockKey = `classpilot:teaching-session-start:${schoolId}:${teacherId}`;
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${lockKey}))`);
-    return callback(tx as unknown as typeof db);
+    return callback(transactionDb);
   });
 }
 
@@ -12313,7 +13409,13 @@ export async function countOverdueSessionSummaryDeliveries(
   return Number(row?.count || 0);
 }
 
-export async function upsertScheduledClassConflict(
+const ACTIVE_SCHEDULED_COVERAGE_STATUSES = ["coverage_needed", "claimed", "pending"];
+
+function isActiveScheduledCoverageStatus(status: string): boolean {
+  return ACTIVE_SCHEDULED_COVERAGE_STATUSES.includes(status);
+}
+
+async function upsertScheduledClassConflictLocked(
   data: InsertClasspilotScheduledConflict & {
     schoolId: string;
     groupId: string;
@@ -12322,7 +13424,7 @@ export async function upsertScheduledClassConflict(
     blockStartTime: string;
     conflictPayload: unknown;
   },
-  dbInstance: typeof db = db
+  dbInstance: typeof db
 ): Promise<ClasspilotScheduledConflict> {
   const now = new Date();
   const status = data.status || "coverage_needed";
@@ -12359,6 +13461,36 @@ export async function upsertScheduledClassConflict(
   return row!;
 }
 
+export async function upsertScheduledClassConflict(
+  data: InsertClasspilotScheduledConflict & {
+    schoolId: string;
+    groupId: string;
+    teacherId: string;
+    scheduledDate: string;
+    blockStartTime: string;
+    conflictPayload: unknown;
+  },
+  dbInstance: Pick<typeof db, "transaction"> = db
+): Promise<ClasspilotScheduledConflict> {
+  return dbInstance.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      data.schoolId
+    );
+    if (!lifecycleLocked) throw new Error("School not found");
+    const status = data.status || "coverage_needed";
+    if (isActiveScheduledCoverageStatus(status)) {
+      await assertActiveClasspilotTeacherMembership(
+        data.teacherId,
+        data.schoolId,
+        transactionDb
+      );
+    }
+    return upsertScheduledClassConflictLocked(data, transactionDb);
+  });
+}
+
 /**
  * Create/update a coverage conflict and attach it to its canonical occurrence
  * under the same occurrence row lock. If finalization won the race, the
@@ -12380,10 +13512,15 @@ export async function upsertScheduledClassConflictForOccurrence(
   occurrenceActive: boolean;
   materiallyChanged: boolean;
   restoredStudentIds: string[];
-}> {
+  }> {
   return dbInstance.transaction(async (tx) => {
     const transactionDb = tx as unknown as typeof db;
     const restoredStudentIds: string[] = [];
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      data.schoolId
+    );
+    if (!lifecycleLocked) throw new Error("School not found");
     const [existingConflict] = await tx
       .select({
         id: classpilotScheduledConflicts.id,
@@ -12441,13 +13578,20 @@ export async function upsertScheduledClassConflictForOccurrence(
       ? null
       : JSON.parse(serializedConflictPayload);
     const nextStatus = occurrenceActive ? data.status || "coverage_needed" : "ended";
+    if (isActiveScheduledCoverageStatus(nextStatus)) {
+      await assertActiveClasspilotTeacherMembership(
+        data.teacherId,
+        data.schoolId,
+        transactionDb
+      );
+    }
     const materiallyChanged = !existingConflict
       || existingConflict.teacherId !== data.teacherId
       || existingConflict.blockEndTime !== (data.blockEndTime || null)
       || existingConflict.status !== nextStatus
       || existingConflict.scheduledTeacherConnected !== (data.scheduledTeacherConnected || false)
       || !isDeepStrictEqual(existingConflict.conflictPayload, normalizedConflictPayload);
-    const conflict = await upsertScheduledClassConflict({
+    const conflict = await upsertScheduledClassConflictLocked({
       ...conflictData,
       conflictPayload: normalizedConflictPayload,
       status: nextStatus,
@@ -12511,7 +13655,6 @@ export async function upsertScheduledClassConflictForOccurrence(
   });
 }
 
-const ACTIVE_SCHEDULED_COVERAGE_STATUSES = ["coverage_needed", "claimed", "pending"];
 const LIVE_TEACHING_SESSION_MODE = "live";
 const SCHEDULED_REPORT_SESSION_MODE = "scheduled_report";
 
@@ -12611,6 +13754,12 @@ export async function resolveScheduledClassConflict(
   resolvedBy: string | null,
   dbInstance: typeof db = db
 ): Promise<ClasspilotScheduledConflict | undefined> {
+  if (isActiveScheduledCoverageStatus(resolution)) {
+    throw Object.assign(
+      new Error("Active scheduled conflicts must use the guarded upsert/status workflow."),
+      { status: 409, code: "SCHEDULED_CONFLICT_ACTIVE_TRANSITION_REQUIRED" }
+    );
+  }
   const [row] = await dbInstance
     .update(classpilotScheduledConflicts)
     .set({
@@ -12754,18 +13903,50 @@ export async function updateScheduledClassConflictStatus(
     lastCheckedAt: new Date(),
   };
   if (conflictPayload !== undefined) data.conflictPayload = conflictPayload as any;
-  const [row] = await dbInstance
-    .update(classpilotScheduledConflicts)
-    .set(data)
-    .where(and(
-      eq(classpilotScheduledConflicts.id, id),
-      eq(classpilotScheduledConflicts.schoolId, schoolId),
+  return dbInstance.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      schoolId
+    );
+    if (!lifecycleLocked) return undefined;
+    const [current] = await tx
+      .select({
+        teacherId: classpilotScheduledConflicts.teacherId,
+        status: classpilotScheduledConflicts.status,
+      })
+      .from(classpilotScheduledConflicts)
+      .where(and(
+        eq(classpilotScheduledConflicts.id, id),
+        eq(classpilotScheduledConflicts.schoolId, schoolId)
+      ))
+      .limit(1)
+      .for("update");
+    if (!current) return undefined;
+    if (
       status === "claimed"
-        ? inArray(classpilotScheduledConflicts.status, ACTIVE_SCHEDULED_COVERAGE_STATUSES)
-        : sql`true`
-    ))
-    .returning();
-  return row;
+      && !isActiveScheduledCoverageStatus(current.status)
+    ) return undefined;
+    if (isActiveScheduledCoverageStatus(status)) {
+      await assertActiveClasspilotTeacherMembership(
+        current.teacherId,
+        schoolId,
+        transactionDb
+      );
+    }
+    const [row] = await tx
+      .update(classpilotScheduledConflicts)
+      .set(data)
+      .where(and(
+        eq(classpilotScheduledConflicts.id, id),
+        eq(classpilotScheduledConflicts.schoolId, schoolId),
+        status === "claimed"
+          ? inArray(classpilotScheduledConflicts.status, ACTIVE_SCHEDULED_COVERAGE_STATUSES)
+          : sql`true`
+      ))
+      .returning();
+    return row;
+  });
 }
 
 export async function getActiveTeachingSessions(
@@ -13415,16 +14596,35 @@ async function withPasspilotGroupMutationLock<T>(
   groupId: string,
   operation: (
     tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
-    group: { id: string; schoolId: string }
+    group: {
+      id: string;
+      schoolId: string;
+      teacherId: string;
+      groupType: string;
+      status: string;
+    }
   ) => Promise<T>
 ): Promise<T> {
   return withClasspilotSchedulePostCommitTransaction(async (tx) => {
     const [candidate] = await tx
-      .select({ id: groups.id, schoolId: groups.schoolId })
+      .select({
+        id: groups.id,
+        schoolId: groups.schoolId,
+        teacherId: groups.teacherId,
+        groupType: groups.groupType,
+        status: groups.status,
+      })
       .from(groups)
       .where(eq(groups.id, groupId))
       .limit(1);
     if (!candidate) {
+      throw schoolIsolationError("CLASS_NOT_FOUND", "Class not found", 404);
+    }
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      candidate.schoolId
+    );
+    if (!lifecycleLocked) {
       throw schoolIsolationError("CLASS_NOT_FOUND", "Class not found", 404);
     }
     await lockClasspilotScheduleChangeSchool(
@@ -13433,7 +14633,13 @@ async function withPasspilotGroupMutationLock<T>(
     );
     await takePasspilotClassLock(tx, candidate.schoolId);
     const [lockedGroup] = await tx
-      .select({ id: groups.id, schoolId: groups.schoolId })
+      .select({
+        id: groups.id,
+        schoolId: groups.schoolId,
+        teacherId: groups.teacherId,
+        groupType: groups.groupType,
+        status: groups.status,
+      })
       .from(groups)
       .where(and(eq(groups.id, groupId), eq(groups.schoolId, candidate.schoolId)))
       .limit(1)
@@ -13531,6 +14737,39 @@ export async function addGroupTeacher(
   scheduleChangeActorId?: string
 ): Promise<GroupTeacher> {
   return withPasspilotGroupMutationLock(groupId, async (tx, lockedGroup) => {
+    const isActiveInstructional =
+      lockedGroup.status === "active" &&
+      (ACTIVE_INSTRUCTIONAL_GROUP_TYPES as readonly string[]).includes(
+        lockedGroup.groupType
+      );
+    if (isActiveInstructional) {
+      if (role !== "primary" && role !== "co-teacher") {
+        throw schoolIsolationError(
+          "CLASS_TEACHER_RELATIONSHIP_ROLE_INVALID",
+          "Active class teacher relationships must be primary or co-teacher.",
+          422
+        );
+      }
+      await assertActiveClasspilotTeacherMembership(
+        teacherId,
+        lockedGroup.schoolId,
+        tx as unknown as typeof db
+      );
+      if (role === "primary" && teacherId !== lockedGroup.teacherId) {
+        throw schoolIsolationError(
+          "CLASS_PRIMARY_TEACHER_MISMATCH",
+          "The primary relationship must match the class primary teacher.",
+          409
+        );
+      }
+      if (role === "co-teacher" && teacherId === lockedGroup.teacherId) {
+        throw schoolIsolationError(
+          "CLASS_CO_TEACHER_DUPLICATES_PRIMARY",
+          "The class primary teacher cannot also be added as a co-teacher.",
+          409
+        );
+      }
+    }
     await assertProspectiveApprovedScheduleChangeAssignmentsSafe({
       schoolId: lockedGroup.schoolId,
       groupId,
@@ -13557,6 +14796,20 @@ export async function replaceGroupTeachers(
     new Set(coTeacherIds.filter((id) => id && id !== primaryTeacherId))
   );
   await withPasspilotGroupMutationLock(groupId, async (tx, lockedGroup) => {
+    if (
+      lockedGroup.status === "active" &&
+      (ACTIVE_INSTRUCTIONAL_GROUP_TYPES as readonly string[]).includes(
+        lockedGroup.groupType
+      )
+    ) {
+      for (const teacherId of [primaryTeacherId, ...uniqueCoTeachers]) {
+        await assertActiveClasspilotTeacherMembership(
+          teacherId,
+          lockedGroup.schoolId,
+          tx as unknown as typeof db
+        );
+      }
+    }
     const existing = await tx
       .select({ teacherId: groupTeachers.teacherId })
       .from(groupTeachers)
@@ -13574,6 +14827,12 @@ export async function replaceGroupTeachers(
     await tx
       .delete(groupTeachers)
       .where(eq(groupTeachers.groupId, groupId));
+    await tx
+      .update(groups)
+      .set({ teacherId: primaryTeacherId })
+      .where(
+        and(eq(groups.id, groupId), eq(groups.schoolId, lockedGroup.schoolId))
+      );
     await tx.insert(groupTeachers).values([
       { groupId, teacherId: primaryTeacherId, role: "primary" },
       ...uniqueCoTeachers.map((teacherId) => ({
@@ -13589,7 +14848,20 @@ export async function removeGroupTeacher(
   groupId: string,
   teacherId: string
 ): Promise<boolean> {
-  return withPasspilotGroupMutationLock(groupId, async (tx) => {
+  return withPasspilotGroupMutationLock(groupId, async (tx, lockedGroup) => {
+    if (
+      lockedGroup.status === "active" &&
+      (ACTIVE_INSTRUCTIONAL_GROUP_TYPES as readonly string[]).includes(
+        lockedGroup.groupType
+      ) &&
+      teacherId === lockedGroup.teacherId
+    ) {
+      throw schoolIsolationError(
+        "CLASS_PRIMARY_TEACHER_REQUIRED",
+        "The active class primary teacher cannot be removed without a replacement.",
+        409
+      );
+    }
     const result = await tx
       .delete(groupTeachers)
       .where(
@@ -13620,37 +14892,110 @@ export async function addHomeroomTeacher(
 ): Promise<HomeroomTeacher> {
   const homeroom = await getHomeroomById(homeroomId);
   if (!homeroom) throw new Error("Homeroom not found");
-  await assertActiveSchoolStaffMembership(teacherId, homeroom.schoolId);
-  const [row] = await db
-    .insert(homeroomTeachers)
-    .values({ schoolId: homeroom.schoolId, homeroomId, teacherId, role })
-    .onConflictDoNothing()
-    .returning();
-  if (row) return row;
-  const [existing] = await db
-    .select()
-    .from(homeroomTeachers)
-    .where(
-      and(
-        eq(homeroomTeachers.schoolId, homeroom.schoolId),
-        eq(homeroomTeachers.homeroomId, homeroomId),
-        eq(homeroomTeachers.teacherId, teacherId)
+  return db.transaction(async (tx) => {
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      homeroom.schoolId
+    );
+    if (!lifecycleLocked) throw new Error("Homeroom not found");
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`gopilot:homeroom:${homeroom.schoolId}:${homeroomId}`}, 0::bigint))`
+    );
+    const [lockedHomeroom] = await tx
+      .select({ id: homerooms.id, teacherId: homerooms.teacherId })
+      .from(homerooms)
+      .where(and(eq(homerooms.id, homeroomId), eq(homerooms.schoolId, homeroom.schoolId)))
+      .limit(1)
+      .for("update");
+    if (!lockedHomeroom) throw new Error("Homeroom not found");
+    if (role !== "primary" && role !== "co-teacher") {
+      throw schoolIsolationError(
+        "GOPILOT_TEACHER_RELATIONSHIP_ROLE_INVALID",
+        "Homeroom teacher relationships must be primary or co-teacher.",
+        422
+      );
+    }
+    if (role === "primary" && teacherId !== lockedHomeroom.teacherId) {
+      throw schoolIsolationError(
+        "GOPILOT_PRIMARY_TEACHER_MISMATCH",
+        "The primary relationship must match the homeroom primary teacher.",
+        409
+      );
+    }
+    if (role === "co-teacher" && teacherId === lockedHomeroom.teacherId) {
+      throw schoolIsolationError(
+        "GOPILOT_CO_TEACHER_DUPLICATES_PRIMARY",
+        "The homeroom primary teacher cannot also be added as a co-teacher.",
+        409
+      );
+    }
+    await assertActiveGopilotTeacherMembership(
+      teacherId,
+      homeroom.schoolId,
+      tx as unknown as typeof db
+    );
+    const [row] = await tx
+      .insert(homeroomTeachers)
+      .values({ schoolId: homeroom.schoolId, homeroomId, teacherId, role })
+      .onConflictDoNothing()
+      .returning();
+    if (row) return row;
+    const [existing] = await tx
+      .select()
+      .from(homeroomTeachers)
+      .where(
+        and(
+          eq(homeroomTeachers.schoolId, homeroom.schoolId),
+          eq(homeroomTeachers.homeroomId, homeroomId),
+          eq(homeroomTeachers.teacherId, teacherId)
+        )
       )
-    )
-    .limit(1);
-  return existing!;
+      .limit(1);
+    return existing!;
+  });
 }
 
 export async function removeHomeroomTeacher(
   homeroomId: string,
   teacherId: string
 ): Promise<boolean> {
-  const result = await db
-    .delete(homeroomTeachers)
-    .where(
-      and(eq(homeroomTeachers.homeroomId, homeroomId), eq(homeroomTeachers.teacherId, teacherId))
+  const homeroom = await getHomeroomById(homeroomId);
+  if (!homeroom) return false;
+  return db.transaction(async (tx) => {
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      homeroom.schoolId
     );
-  return (result.rowCount ?? 0) > 0;
+    if (!lifecycleLocked) return false;
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`gopilot:homeroom:${homeroom.schoolId}:${homeroomId}`}, 0::bigint))`
+    );
+    const [lockedHomeroom] = await tx
+      .select({ id: homerooms.id, teacherId: homerooms.teacherId })
+      .from(homerooms)
+      .where(and(eq(homerooms.id, homeroomId), eq(homerooms.schoolId, homeroom.schoolId)))
+      .limit(1)
+      .for("update");
+    if (!lockedHomeroom) return false;
+    if (teacherId === lockedHomeroom.teacherId) {
+      throw schoolIsolationError(
+        "GOPILOT_PRIMARY_TEACHER_REQUIRED",
+        "The homeroom primary teacher cannot be removed without a replacement.",
+        409
+      );
+    }
+    const result = await tx
+      .delete(homeroomTeachers)
+      .where(
+        and(
+          eq(homeroomTeachers.schoolId, homeroom.schoolId),
+          eq(homeroomTeachers.homeroomId, homeroomId),
+          eq(homeroomTeachers.teacherId, teacherId),
+          eq(homeroomTeachers.role, "co-teacher")
+        )
+      );
+    return (result.rowCount ?? 0) > 0;
+  });
 }
 
 export async function getGroupById(
@@ -13751,8 +15096,41 @@ export async function createGroup(
 ): Promise<Group> {
   return withClasspilotSchedulePostCommitTransaction(async (tx) => {
     const transactionDb = tx as unknown as ScheduleChangeDb;
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      data.schoolId
+    );
+    if (!lifecycleLocked) {
+      throw schoolIsolationError("CLASS_NOT_FOUND", "School not found", 404);
+    }
     await lockClasspilotScheduleChangeSchool(data.schoolId, transactionDb);
     await takePasspilotClassLock(tx, data.schoolId);
+    const createsActiveInstructionalClass =
+      (ACTIVE_INSTRUCTIONAL_GROUP_TYPES as readonly string[]).includes(
+        data.groupType ?? "teacher_created"
+      ) &&
+      (data.status ?? "active") === "active";
+    if (createsActiveInstructionalClass) {
+      const [eligibleTeacher] = await tx
+        .select({ id: schoolMemberships.id })
+        .from(schoolMemberships)
+        .where(
+          and(
+            eq(schoolMemberships.schoolId, data.schoolId),
+            eq(schoolMemberships.userId, data.teacherId),
+            eq(schoolMemberships.status, "active"),
+            inArray(schoolMemberships.role, ["teacher", "admin", "school_admin"])
+          )
+        )
+        .limit(1);
+      if (!eligibleTeacher) {
+        throw schoolIsolationError(
+          "CLASS_TEACHER_NOT_FOUND",
+          "The primary teacher must be active teaching staff at this school.",
+          404
+        );
+      }
+    }
     await assertNoLockedRecurringClassScheduleOverlap({
       schoolId: data.schoolId,
       status: data.status ?? "active",
@@ -13764,6 +15142,16 @@ export async function createGroup(
     });
     const [group] = await tx.insert(groups).values(data).returning();
     if (!group) throw new Error("Class could not be created");
+    if (
+      group.status === "active" &&
+      (ACTIVE_INSTRUCTIONAL_GROUP_TYPES as readonly string[]).includes(group.groupType)
+    ) {
+      await tx.insert(groupTeachers).values({
+        groupId: group.id,
+        teacherId: group.teacherId,
+        role: "primary",
+      });
+    }
     if (
       group.status === "active" &&
       group.scheduleEnabled &&
@@ -13822,6 +15210,54 @@ export async function updateGroup(
       .where(and(eq(groups.id, groupId), eq(groups.schoolId, lockedGroup.schoolId)))
       .limit(1);
     if (!current) return undefined;
+    if (data.schoolId !== undefined && data.schoolId !== lockedGroup.schoolId) {
+      throw schoolIsolationError(
+        "CLASS_SCHOOL_IMMUTABLE",
+        "A class cannot be moved between schools.",
+        409
+      );
+    }
+    const prospectiveTeacherId = data.teacherId ?? current.teacherId;
+    const prospectiveGroupType = data.groupType ?? current.groupType;
+    const prospectiveStatus = data.status ?? current.status;
+    const assignedTeacherRows = await tx
+      .select({ teacherId: groupTeachers.teacherId, role: groupTeachers.role })
+      .from(groupTeachers)
+      .where(eq(groupTeachers.groupId, groupId));
+    const prospectiveCoTeacherIds = assignedTeacherRows
+      .filter((row) => row.role === "co-teacher" && row.teacherId !== prospectiveTeacherId)
+      .map((row) => row.teacherId);
+    const prospectiveTeacherIds = Array.from(
+      new Set([prospectiveTeacherId, ...prospectiveCoTeacherIds])
+    );
+    if (
+      prospectiveStatus === "active" &&
+      (ACTIVE_INSTRUCTIONAL_GROUP_TYPES as readonly string[]).includes(
+        prospectiveGroupType
+      )
+    ) {
+      const activeMemberships = await tx
+        .select({ userId: schoolMemberships.userId })
+        .from(schoolMemberships)
+        .where(
+          and(
+            eq(schoolMemberships.schoolId, lockedGroup.schoolId),
+            eq(schoolMemberships.status, "active"),
+            inArray(schoolMemberships.role, ["teacher", "admin", "school_admin"]),
+            inArray(schoolMemberships.userId, prospectiveTeacherIds)
+          )
+        );
+      if (
+        new Set(activeMemberships.map((membership) => membership.userId)).size !==
+        prospectiveTeacherIds.length
+      ) {
+        throw schoolIsolationError(
+          "CLASS_TEACHER_NOT_FOUND",
+          "Every active class teacher must be active teaching staff at this school.",
+          404
+        );
+      }
+    }
     const scheduleIdentityChanged =
       (data.teacherId !== undefined && data.teacherId !== current.teacherId) ||
       (data.scheduleEnabled !== undefined && data.scheduleEnabled !== current.scheduleEnabled) ||
@@ -13830,36 +15266,29 @@ export async function updateGroup(
       (data.status !== undefined && data.status !== current.status);
     if (scheduleIdentityChanged) {
       const transactionDb = tx as unknown as ScheduleChangeDb;
-      const assignedTeachers = await tx
-        .select({ teacherId: groupTeachers.teacherId })
-        .from(groupTeachers)
-        .where(eq(groupTeachers.groupId, groupId));
       await assertNoLockedRecurringClassScheduleOverlap({
         schoolId: lockedGroup.schoolId,
         excludeGroupId: groupId,
-        status: data.status ?? current.status,
+        status: prospectiveStatus,
         scheduleEnabled: data.scheduleEnabled ?? current.scheduleEnabled,
         blockStartTime:
           data.blockStartTime !== undefined ? data.blockStartTime : current.blockStartTime,
         blockEndTime:
           data.blockEndTime !== undefined ? data.blockEndTime : current.blockEndTime,
-        teacherIds: [
-          data.teacherId ?? current.teacherId,
-          ...assignedTeachers.map((row) => row.teacherId),
-        ],
+        teacherIds: prospectiveTeacherIds,
         dbInstance: transactionDb,
       });
       await assertNoApprovedFutureScheduleChange({
         schoolId: lockedGroup.schoolId,
         groupId,
         prospectiveGroup: {
-          teacherId: data.teacherId ?? current.teacherId,
+          teacherId: prospectiveTeacherId,
           scheduleEnabled: data.scheduleEnabled ?? current.scheduleEnabled,
           blockStartTime:
             data.blockStartTime !== undefined ? data.blockStartTime : current.blockStartTime,
           blockEndTime:
             data.blockEndTime !== undefined ? data.blockEndTime : current.blockEndTime,
-          status: data.status ?? current.status,
+          status: prospectiveStatus,
         },
         actorId: scheduleChangeActorId,
         dbInstance: transactionDb,
@@ -13874,9 +15303,30 @@ export async function updateGroup(
     }
     const [group] = await tx
       .update(groups)
-      .set(data)
+      .set({ ...data, schoolId: lockedGroup.schoolId })
       .where(and(eq(groups.id, groupId), eq(groups.schoolId, lockedGroup.schoolId)))
       .returning();
+    if (
+      group?.status === "active" &&
+      (ACTIVE_INSTRUCTIONAL_GROUP_TYPES as readonly string[]).includes(group.groupType)
+    ) {
+      await tx
+        .delete(groupTeachers)
+        .where(
+          and(
+            eq(groupTeachers.groupId, groupId),
+            or(
+              eq(groupTeachers.role, "primary"),
+              eq(groupTeachers.teacherId, group.teacherId)
+            )
+          )
+        );
+      await tx.insert(groupTeachers).values({
+        groupId,
+        teacherId: group.teacherId,
+        role: "primary",
+      });
+    }
     return group;
   });
 }
@@ -13899,6 +15349,16 @@ export async function updateAdminClassWithTeachers(options: {
       )
       .limit(1);
     if (!current) return undefined;
+    if (
+      options.data.schoolId !== undefined &&
+      options.data.schoolId !== lockedGroup.schoolId
+    ) {
+      throw schoolIsolationError(
+        "CLASS_SCHOOL_IMMUTABLE",
+        "A class cannot be moved between schools.",
+        409
+      );
+    }
     const existingTeacherRows = await tx
       .select({ teacherId: groupTeachers.teacherId, role: groupTeachers.role })
       .from(groupTeachers)
@@ -14006,6 +15466,7 @@ export async function updateAdminClassWithTeachers(options: {
       .update(groups)
       .set({
         ...options.data,
+        schoolId: lockedGroup.schoolId,
         teacherId: primaryTeacherId,
       })
       .where(and(eq(groups.id, options.groupId), eq(groups.schoolId, lockedGroup.schoolId)))
@@ -14028,6 +15489,26 @@ export async function updateAdminClassWithTeachers(options: {
           role: "co-teacher",
         })),
       ]);
+    } else if (
+      group.status === "active" &&
+      (ACTIVE_INSTRUCTIONAL_GROUP_TYPES as readonly string[]).includes(group.groupType)
+    ) {
+      await tx
+        .delete(groupTeachers)
+        .where(
+          and(
+            eq(groupTeachers.groupId, options.groupId),
+            or(
+              eq(groupTeachers.role, "primary"),
+              eq(groupTeachers.teacherId, group.teacherId)
+            )
+          )
+        );
+      await tx.insert(groupTeachers).values({
+        groupId: options.groupId,
+        teacherId: group.teacherId,
+        role: "primary",
+      });
     }
     return group;
   });
@@ -14057,6 +15538,13 @@ export async function upsertAdminClassroomClass(options: {
     : Array.from(new Set(options.studentIds.filter(Boolean)));
 
   return withClasspilotSchedulePostCommitTransaction(async (tx) => {
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      options.schoolId
+    );
+    if (!lifecycleLocked) {
+      throw schoolIsolationError("CLASS_NOT_FOUND", "School not found", 404);
+    }
     await lockClasspilotScheduleChangeSchool(
       options.schoolId,
       tx as unknown as ScheduleChangeDb
@@ -14295,6 +15783,26 @@ export async function upsertAdminClassroomClass(options: {
           role: "co-teacher",
         })),
       ]);
+    } else if (
+      group.status === "active" &&
+      (ACTIVE_INSTRUCTIONAL_GROUP_TYPES as readonly string[]).includes(group.groupType)
+    ) {
+      await tx
+        .delete(groupTeachers)
+        .where(
+          and(
+            eq(groupTeachers.groupId, group.id),
+            or(
+              eq(groupTeachers.role, "primary"),
+              eq(groupTeachers.teacherId, group.teacherId)
+            )
+          )
+        );
+      await tx.insert(groupTeachers).values({
+        groupId: group.id,
+        teacherId: group.teacherId,
+        role: "primary",
+      });
     }
 
     let roster = { added: [] as string[], alreadyPresent: [] as string[] };
@@ -14376,11 +15884,7 @@ export async function upsertClasspilotGroupWithAssignments(options: {
 }
 
 export async function deleteGroup(groupId: string): Promise<boolean> {
-  await db
-    .delete(groupStudents)
-    .where(eq(groupStudents.groupId, groupId));
-  const result = await db.delete(groups).where(eq(groups.id, groupId));
-  return (result.rowCount ?? 0) > 0;
+  return hardDeleteGroupWithCleanup(groupId);
 }
 
 export async function archiveGroup(
@@ -14397,6 +15901,11 @@ export async function archiveGroup(
 
     // Class archiving and PassPilot class cutover use the same lock order so a
     // mapped class cannot become archived between final validation and cutover.
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      candidate.schoolId
+    );
+    if (!lifecycleLocked) return undefined;
     await lockClasspilotScheduleChangeSchool(
       candidate.schoolId,
       tx as unknown as ScheduleChangeDb
@@ -14452,6 +15961,11 @@ export async function hardDeleteGroupWithCleanup(
       .where(eq(groups.id, groupId))
       .limit(1);
     if (!candidate) return false;
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      candidate.schoolId
+    );
+    if (!lifecycleLocked) return false;
     await lockClasspilotScheduleChangeSchool(
       candidate.schoolId,
       tx as unknown as ScheduleChangeDb
@@ -14484,6 +15998,29 @@ export async function hardDeleteGroupWithCleanup(
         "CLASS_HAS_SCHEDULE_CHANGE_HISTORY",
         "Classes with schedule-change history cannot be deleted. Archive the class instead.",
         409
+      );
+    }
+    const [activeScheduledConflict] = await tx
+      .select({ value: sql<number>`COUNT(*)::int` })
+      .from(classpilotScheduledConflicts)
+      .where(
+        and(
+          eq(classpilotScheduledConflicts.schoolId, candidate.schoolId),
+          eq(classpilotScheduledConflicts.groupId, groupId),
+          inArray(
+            classpilotScheduledConflicts.status,
+            ACTIVE_SCHEDULED_COVERAGE_STATUSES
+          )
+        )
+      );
+    if ((activeScheduledConflict?.value ?? 0) > 0) {
+      throw Object.assign(
+        new Error("Classes with active scheduled coverage conflicts cannot be deleted. Resolve the conflict or archive the class instead."),
+        {
+          status: 409,
+          code: "CLASS_HAS_ACTIVE_SCHEDULED_CONFLICT",
+          expose: true,
+        }
       );
     }
     const [history] = await tx
@@ -14875,8 +16412,22 @@ export async function getFlightPathById(
 export async function createFlightPath(
   data: InsertFlightPath
 ): Promise<FlightPath> {
-  const [fp] = await db.insert(flightPaths).values(data).returning();
-  return fp!;
+  return db.transaction(async (tx) => {
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      data.schoolId
+    );
+    if (!lifecycleLocked) throw new Error("School not found");
+    if (data.teacherId) {
+      await assertActiveClasspilotTeacherMembership(
+        data.teacherId,
+        data.schoolId,
+        tx as unknown as typeof db
+      );
+    }
+    const [fp] = await tx.insert(flightPaths).values(data).returning();
+    return fp!;
+  });
 }
 
 export async function updateFlightPath(
@@ -14884,19 +16435,50 @@ export async function updateFlightPath(
   schoolId: string,
   data: Partial<InsertFlightPath>
 ): Promise<FlightPath | undefined> {
-  const [fp] = await db
-    .update(flightPaths)
-    .set(data)
-    .where(and(eq(flightPaths.id, id), eq(flightPaths.schoolId, schoolId)))
-    .returning();
-  return fp;
+  return db.transaction(async (tx) => {
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      schoolId
+    );
+    if (!lifecycleLocked) return undefined;
+    const [existing] = await tx
+      .select()
+      .from(flightPaths)
+      .where(and(eq(flightPaths.id, id), eq(flightPaths.schoolId, schoolId)))
+      .limit(1)
+      .for("update");
+    if (!existing) return undefined;
+    const nextTeacherId = Object.prototype.hasOwnProperty.call(data, "teacherId")
+      ? data.teacherId ?? null
+      : existing.teacherId;
+    if (nextTeacherId) {
+      await assertActiveClasspilotTeacherMembership(
+        nextTeacherId,
+        schoolId,
+        tx as unknown as typeof db
+      );
+    }
+    const [fp] = await tx
+      .update(flightPaths)
+      .set({ ...data, schoolId })
+      .where(and(eq(flightPaths.id, id), eq(flightPaths.schoolId, schoolId)))
+      .returning();
+    return fp;
+  });
 }
 
 export async function deleteFlightPath(id: string, schoolId: string): Promise<boolean> {
-  const result = await db
-    .delete(flightPaths)
-    .where(and(eq(flightPaths.id, id), eq(flightPaths.schoolId, schoolId)));
-  return (result.rowCount ?? 0) > 0;
+  return db.transaction(async (tx) => {
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      schoolId
+    );
+    if (!lifecycleLocked) return false;
+    const result = await tx
+      .delete(flightPaths)
+      .where(and(eq(flightPaths.id, id), eq(flightPaths.schoolId, schoolId)));
+    return (result.rowCount ?? 0) > 0;
+  });
 }
 
 // ============================================================================
@@ -14955,8 +16537,20 @@ export async function getBlockListById(
 export async function createBlockList(
   data: InsertBlockList
 ): Promise<BlockList> {
-  const [bl] = await db.insert(blockLists).values(data).returning();
-  return bl!;
+  return db.transaction(async (tx) => {
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      data.schoolId
+    );
+    if (!lifecycleLocked) throw new Error("School not found");
+    await assertActiveClasspilotTeacherMembership(
+      data.teacherId,
+      data.schoolId,
+      tx as unknown as typeof db
+    );
+    const [bl] = await tx.insert(blockLists).values(data).returning();
+    return bl!;
+  });
 }
 
 export async function updateBlockList(
@@ -14964,19 +16558,46 @@ export async function updateBlockList(
   schoolId: string,
   data: Partial<InsertBlockList>
 ): Promise<BlockList | undefined> {
-  const [bl] = await db
-    .update(blockLists)
-    .set(data)
-    .where(and(eq(blockLists.id, id), eq(blockLists.schoolId, schoolId)))
-    .returning();
-  return bl;
+  return db.transaction(async (tx) => {
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      schoolId
+    );
+    if (!lifecycleLocked) return undefined;
+    const [existing] = await tx
+      .select()
+      .from(blockLists)
+      .where(and(eq(blockLists.id, id), eq(blockLists.schoolId, schoolId)))
+      .limit(1)
+      .for("update");
+    if (!existing) return undefined;
+    const nextTeacherId = data.teacherId ?? existing.teacherId;
+    await assertActiveClasspilotTeacherMembership(
+      nextTeacherId,
+      schoolId,
+      tx as unknown as typeof db
+    );
+    const [bl] = await tx
+      .update(blockLists)
+      .set({ ...data, schoolId })
+      .where(and(eq(blockLists.id, id), eq(blockLists.schoolId, schoolId)))
+      .returning();
+    return bl;
+  });
 }
 
 export async function deleteBlockList(id: string, schoolId: string): Promise<boolean> {
-  const result = await db
-    .delete(blockLists)
-    .where(and(eq(blockLists.id, id), eq(blockLists.schoolId, schoolId)));
-  return (result.rowCount ?? 0) > 0;
+  return db.transaction(async (tx) => {
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      schoolId
+    );
+    if (!lifecycleLocked) return false;
+    const result = await tx
+      .delete(blockLists)
+      .where(and(eq(blockLists.id, id), eq(blockLists.schoolId, schoolId)));
+    return (result.rowCount ?? 0) > 0;
+  });
 }
 
 // ============================================================================
@@ -18883,6 +20504,18 @@ export async function replaceCoverageScopeGroupStaff(options: {
 }): Promise<ClasspilotCoverageAssignment[]> {
   const staffIds = Array.from(new Set(options.staffIds.map(String).filter(Boolean)));
   await db.transaction(async (tx) => {
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      options.schoolId
+    );
+    if (!lifecycleLocked) throw new Error("School not found");
+    for (const staffId of staffIds) {
+      await assertActiveSchoolStaffMembership(
+        staffId,
+        options.schoolId,
+        tx as unknown as typeof db
+      );
+    }
     const existing = await tx
       .select()
       .from(classpilotCoverageAssignments)
@@ -18977,11 +20610,25 @@ export async function getActiveCoverageAssignmentsForStaff(
 export async function createCoverageAssignment(
   data: InsertClasspilotCoverageAssignment
 ): Promise<ClasspilotCoverageAssignment> {
-  const [row] = await db
-    .insert(classpilotCoverageAssignments)
-    .values(data)
-    .returning();
-  return row!;
+  return db.transaction(async (tx) => {
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      data.schoolId
+    );
+    if (!lifecycleLocked) throw new Error("School not found");
+    if (data.active !== false) {
+      await assertActiveSchoolStaffMembership(
+        data.staffId,
+        data.schoolId,
+        tx as unknown as typeof db
+      );
+    }
+    const [row] = await tx
+      .insert(classpilotCoverageAssignments)
+      .values(data)
+      .returning();
+    return row!;
+  });
 }
 
 export async function updateCoverageAssignmentActive(
@@ -18989,17 +20636,43 @@ export async function updateCoverageAssignmentActive(
   assignmentId: string,
   active: boolean
 ): Promise<ClasspilotCoverageAssignment | undefined> {
-  const [row] = await db
-    .update(classpilotCoverageAssignments)
-    .set({ active, updatedAt: new Date() })
-    .where(
-      and(
-        eq(classpilotCoverageAssignments.schoolId, schoolId),
-        eq(classpilotCoverageAssignments.id, assignmentId)
+  return db.transaction(async (tx) => {
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      schoolId
+    );
+    if (!lifecycleLocked) return undefined;
+    const [existing] = await tx
+      .select()
+      .from(classpilotCoverageAssignments)
+      .where(
+        and(
+          eq(classpilotCoverageAssignments.schoolId, schoolId),
+          eq(classpilotCoverageAssignments.id, assignmentId)
+        )
       )
-    )
-    .returning();
-  return row;
+      .limit(1)
+      .for("update");
+    if (!existing) return undefined;
+    if (active) {
+      await assertActiveSchoolStaffMembership(
+        existing.staffId,
+        schoolId,
+        tx as unknown as typeof db
+      );
+    }
+    const [row] = await tx
+      .update(classpilotCoverageAssignments)
+      .set({ active, updatedAt: new Date() })
+      .where(
+        and(
+          eq(classpilotCoverageAssignments.schoolId, schoolId),
+          eq(classpilotCoverageAssignments.id, assignmentId)
+        )
+      )
+      .returning();
+    return row;
+  });
 }
 
 export async function updateCoverageAssignment(
@@ -19007,17 +20680,45 @@ export async function updateCoverageAssignment(
   assignmentId: string,
   data: Partial<Pick<InsertClasspilotCoverageAssignment, "staffId" | "scopeType" | "scopeValue" | "permissions" | "active">>
 ): Promise<ClasspilotCoverageAssignment | undefined> {
-  const [row] = await db
-    .update(classpilotCoverageAssignments)
-    .set({ ...data, updatedAt: new Date() })
-    .where(
-      and(
-        eq(classpilotCoverageAssignments.schoolId, schoolId),
-        eq(classpilotCoverageAssignments.id, assignmentId)
+  return db.transaction(async (tx) => {
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      schoolId
+    );
+    if (!lifecycleLocked) return undefined;
+    const [existing] = await tx
+      .select()
+      .from(classpilotCoverageAssignments)
+      .where(
+        and(
+          eq(classpilotCoverageAssignments.schoolId, schoolId),
+          eq(classpilotCoverageAssignments.id, assignmentId)
+        )
       )
-    )
-    .returning();
-  return row;
+      .limit(1)
+      .for("update");
+    if (!existing) return undefined;
+    const nextActive = data.active ?? existing.active;
+    const nextStaffId = data.staffId ?? existing.staffId;
+    if (nextActive) {
+      await assertActiveSchoolStaffMembership(
+        nextStaffId,
+        schoolId,
+        tx as unknown as typeof db
+      );
+    }
+    const [row] = await tx
+      .update(classpilotCoverageAssignments)
+      .set({ ...data, updatedAt: new Date() })
+      .where(
+        and(
+          eq(classpilotCoverageAssignments.schoolId, schoolId),
+          eq(classpilotCoverageAssignments.id, assignmentId)
+        )
+      )
+      .returning();
+    return row;
+  });
 }
 
 export async function getActiveSupervisionForStudents(
@@ -19380,6 +21081,17 @@ export async function claimScheduledCoverageStudents(options: {
 }> {
   const uniqueStudentIds = Array.from(new Set(options.studentIds.filter(Boolean)));
   return dbInstance.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      options.schoolId
+    );
+    if (!lifecycleLocked) throw new Error("School not found");
+    await assertActiveSchoolStaffMembership(
+      options.assignedStaffId,
+      options.schoolId,
+      transactionDb
+    );
     const [preExistingContext] = await tx
       .select({ id: classpilotSupervisionContexts.id })
       .from(classpilotSupervisionContexts)
@@ -19687,6 +21399,19 @@ export async function createSupervisionContextWithStudents(options: {
 }): Promise<ClasspilotSupervisionContext> {
   const uniqueStudentIds = Array.from(new Set(options.studentIds.filter(Boolean)));
   return db.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      options.context.schoolId
+    );
+    if (!lifecycleLocked) throw new Error("School not found");
+    if (options.context.status !== "ended") {
+      await assertActiveSchoolStaffMembership(
+        options.context.assignedStaffId,
+        options.context.schoolId,
+        transactionDb
+      );
+    }
     await lockClasspilotStudentControlAuthorities(
       options.context.schoolId,
       uniqueStudentIds,
@@ -19875,6 +21600,27 @@ export async function extendSupervisionContext(options: {
   if (options.scheduledConflictId !== undefined) data.scheduledConflictId = options.scheduledConflictId;
 
   return db.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      options.schoolId
+    );
+    if (!lifecycleLocked) return undefined;
+    const [currentContext] = await tx
+      .select({ assignedStaffId: classpilotSupervisionContexts.assignedStaffId })
+      .from(classpilotSupervisionContexts)
+      .where(and(
+        eq(classpilotSupervisionContexts.schoolId, options.schoolId),
+        eq(classpilotSupervisionContexts.id, options.contextId),
+        eq(classpilotSupervisionContexts.status, "active")
+      ))
+      .limit(1);
+    if (!currentContext) return undefined;
+    await assertActiveSchoolStaffMembership(
+      options.assignedStaffId || currentContext.assignedStaffId,
+      options.schoolId,
+      transactionDb
+    );
     const assignments = await tx
       .select({ studentId: classpilotSupervisionStudents.studentId })
       .from(classpilotSupervisionStudents)
@@ -20281,11 +22027,40 @@ export async function assignTeacherStudent(
 ): Promise<TeacherStudent> {
   // teacher_students.school_id must mirror the linked student's school (RLS
   // WITH CHECK). Derive it from the student so it can never be omitted.
+  const [candidateStudent] = await db
+    .select({ schoolId: students.schoolId })
+    .from(students)
+    .where(and(eq(students.id, studentId), eq(students.status, "active")))
+    .limit(1);
+  if (!candidateStudent) {
+    throw Object.assign(new Error("Student is not active"), {
+      status: 409,
+      code: "STUDENT_INACTIVE",
+      expose: true,
+    });
+  }
   return db.transaction(async (tx) => {
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      candidateStudent.schoolId
+    );
+    if (!lifecycleLocked) {
+      throw Object.assign(new Error("Student is not active"), {
+        status: 409,
+        code: "STUDENT_INACTIVE",
+        expose: true,
+      });
+    }
     const [student] = await tx
       .select({ schoolId: students.schoolId })
       .from(students)
-      .where(and(eq(students.id, studentId), eq(students.status, "active")))
+      .where(
+        and(
+          eq(students.id, studentId),
+          eq(students.schoolId, candidateStudent.schoolId),
+          eq(students.status, "active")
+        )
+      )
       .limit(1)
       .for("update");
     if (!student) {
@@ -20295,6 +22070,11 @@ export async function assignTeacherStudent(
         expose: true,
       });
     }
+    await assertActiveClasspilotTeacherMembership(
+      teacherId,
+      student.schoolId,
+      tx as unknown as typeof db
+    );
     const [row] = await tx
       .insert(teacherStudents)
       .values({ teacherId, studentId, schoolId: student.schoolId })
@@ -20319,15 +22099,35 @@ export async function unassignTeacherStudent(
   teacherId: string,
   studentId: string
 ): Promise<boolean> {
-  const result = await db
-    .delete(teacherStudents)
+  const [candidate] = await db
+    .select({ schoolId: teacherStudents.schoolId })
+    .from(teacherStudents)
     .where(
       and(
         eq(teacherStudents.teacherId, teacherId),
         eq(teacherStudents.studentId, studentId)
       )
+    )
+    .limit(1);
+  if (!candidate?.schoolId) return false;
+  const schoolId = candidate.schoolId;
+  return db.transaction(async (tx) => {
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      schoolId
     );
-  return (result.rowCount ?? 0) > 0;
+    if (!lifecycleLocked) return false;
+    const result = await tx
+      .delete(teacherStudents)
+      .where(
+        and(
+          eq(teacherStudents.schoolId, schoolId),
+          eq(teacherStudents.teacherId, teacherId),
+          eq(teacherStudents.studentId, studentId)
+        )
+      );
+    return (result.rowCount ?? 0) > 0;
+  });
 }
 
 // ============================================================================
@@ -22395,9 +24195,16 @@ export async function replaceInstructionalCalendarMonth(
 
   return withClasspilotSchedulePostCommitTransaction(async (tx) => {
     const transactionDb = tx as unknown as typeof db;
-    // Date locks are always taken first and in stable order. Scheduler-created
-    // occurrences use the same lock for their single local date, so either the
-    // closure save or occurrence creation wins deterministically.
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      options.schoolId
+    );
+    if (!lifecycleLocked) {
+      throw instructionalCalendarError("SCHOOL_NOT_FOUND", "School not found.", 404);
+    }
+    // The school lifecycle boundary precedes every product lock. Date locks
+    // remain stable within that boundary, so calendar saves and scheduled
+    // occurrence creation cannot form a school-row/date-lock cycle.
     for (const localDate of instructionalCalendarWeekdaysInMonth(month)) {
       await lockInstructionalCalendarDate(options.schoolId, localDate, transactionDb);
     }
@@ -22618,6 +24425,7 @@ export async function upsertSettings(
   invalidateHeartbeatTrackingSettingsCache(schoolId);
   const settingsData: Partial<InsertSettings> = {
     ...data,
+    schoolId,
   };
 
   if (
@@ -22629,27 +24437,53 @@ export async function upsertSettings(
     settingsData.sharedChromebookPinLoginEnabled = true;
   }
 
-  const [row] = await db
-    .insert(settings)
-    .values({
-      schoolId,
-      schoolName: settingsData.schoolName || "",
-      wsSharedKey: settingsData.wsSharedKey || "",
-      sharedChromebookLoginMethod: "name_pin",
-      ...settingsData,
-    })
-    .onConflictDoUpdate({
-      target: settings.schoolId,
-      set: settingsData,
-    })
-    .returning();
+  const persist = async (dbInstance: typeof db) => {
+    const [row] = await dbInstance
+      .insert(settings)
+      .values({
+        schoolName: settingsData.schoolName || "",
+        wsSharedKey: settingsData.wsSharedKey || "",
+        sharedChromebookLoginMethod: "name_pin",
+        ...settingsData,
+        schoolId,
+      })
+      .onConflictDoUpdate({
+        target: settings.schoolId,
+        set: { ...settingsData, schoolId },
+      })
+      .returning();
+    return row!;
+  };
+  const changesCentralRecipient = Object.prototype.hasOwnProperty.call(
+    settingsData,
+    "centralEmailRecipientUserId"
+  );
+  const row = changesCentralRecipient
+    ? await db.transaction(async (tx) => {
+        const transactionDb = tx as unknown as typeof db;
+        const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+          tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+          schoolId
+        );
+        if (!lifecycleLocked) throw new Error("School not found");
+        const recipientId = settingsData.centralEmailRecipientUserId;
+        if (recipientId) {
+          await assertActiveSchoolStaffMembership(
+            recipientId,
+            schoolId,
+            transactionDb
+          );
+        }
+        return persist(transactionDb);
+      })
+    : await persist(db);
   invalidateHeartbeatTrackingSettingsCache(schoolId);
   await publishCacheInvalidation({
     kind: "cache-invalidation",
     schoolId,
     cache: "heartbeat-tracking-settings",
   });
-  return row!;
+  return row;
 }
 
 // Update only the device-enrollment / auto-enroll fields on an existing settings row.
@@ -24983,10 +26817,18 @@ export async function expirePendingClasspilotScheduleChangesForSchool(options: {
     );
   }
   const rootDb = options.dbInstance ?? db;
-  return withInstructionalCalendarDateLock(
-    options.schoolId,
-    options.scheduledDate,
-    async (lockedDb) => {
+  return rootDb.transaction(async (tx) => {
+      const lockedDb = tx as unknown as typeof db;
+      const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+        tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+        options.schoolId
+      );
+      if (!lifecycleLocked) return { expiredIds: [] };
+      await lockInstructionalCalendarDate(
+        options.schoolId,
+        options.scheduledDate,
+        lockedDb
+      );
       await lockClasspilotScheduleChangeSchool(options.schoolId, lockedDb);
       await takeClasspilotScheduleConfigLock(lockedDb, options.schoolId);
       const policy = await getClasspilotScheduleChangeSettings(options.schoolId, lockedDb);
@@ -25084,9 +26926,7 @@ export async function expirePendingClasspilotScheduleChangesForSchool(options: {
         });
       }
       return { expiredIds: authoritativeIds };
-    },
-    rootDb
-  );
+    });
 }
 
 export async function listPendingClasspilotScheduleChangeDatesForSchool(options: {
@@ -25249,7 +27089,7 @@ export async function supersedePendingScheduleChangesForGroup(options: {
   return ids;
 }
 
-async function assertProspectiveApprovedScheduleChangeAssignmentsSafe(options: {
+export async function assertProspectiveApprovedScheduleChangeAssignmentsSafe(options: {
   schoolId: string;
   groupId: string;
   addedTeacherIds?: string[];
@@ -26004,6 +27844,17 @@ export async function createClasspilotScheduleChange(options: {
   try {
     return await db.transaction(async (tx) => {
       const transactionDb = tx as unknown as ScheduleChangeDb;
+      const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+        tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+        options.schoolId
+      );
+      if (!lifecycleLocked) {
+        throw scheduleChangeError(
+          "SCHEDULE_CHANGE_SCHOOL_UNAVAILABLE",
+          "School settings are unavailable.",
+          404
+        );
+      }
       const [candidatePair] = await tx
         .select()
         .from(classpilotScheduleChangePairs)
@@ -26346,6 +28197,17 @@ export async function applyClasspilotScheduleChangeAction(options: {
   const isAdmin = options.actor.role === "admin" || options.actor.role === "school_admin";
   return db.transaction(async (tx) => {
     const transactionDb = tx as unknown as ScheduleChangeDb;
+    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+      options.schoolId
+    );
+    if (!lifecycleLocked) {
+      throw scheduleChangeError(
+        "SCHEDULE_CHANGE_SCHOOL_UNAVAILABLE",
+        "School settings are unavailable.",
+        404
+      );
+    }
     const [candidate] = await tx
       .select()
       .from(classpilotScheduleChanges)

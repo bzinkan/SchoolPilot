@@ -17,6 +17,8 @@ import {
   createUser,
   deleteFamilyGroup,
   deleteHomeroom,
+  getHomeroomTeachers,
+  removeHomeroomTeacher,
 } from "../dist/services/storage.js";
 
 const TAG = `gdfk_${Date.now().toString(36)}_${process.pid}`;
@@ -221,6 +223,36 @@ after(async () => {
 });
 
 describe("GoPilot setup deletion tenant-FK cleanup", { concurrency: false }, () => {
+  it("rejects invalid homeroom relationships and primary removal before DB contracts", async () => {
+    await assert.rejects(
+      () => inSchool(ids.schoolA, () =>
+        addHomeroomTeacher(ids.homeroom, ids.coTeacher, "co_teacher")
+      ),
+      (error: any) => error?.code === "GOPILOT_TEACHER_RELATIONSHIP_ROLE_INVALID"
+    );
+    await assert.rejects(
+      () => inSchool(ids.schoolA, () =>
+        addHomeroomTeacher(ids.homeroom, ids.primaryTeacher, "co-teacher")
+      ),
+      (error: any) => error?.code === "GOPILOT_CO_TEACHER_DUPLICATES_PRIMARY"
+    );
+    await assert.rejects(
+      () => inSchool(ids.schoolA, () =>
+        removeHomeroomTeacher(ids.homeroom, ids.primaryTeacher)
+      ),
+      (error: any) => error?.code === "GOPILOT_PRIMARY_TEACHER_REQUIRED"
+    );
+
+    const teachers = await inSchool(ids.schoolA, () => getHomeroomTeachers(ids.homeroom));
+    assert.deepEqual(
+      teachers.map((entry) => [entry.teacherId, entry.role]).sort(),
+      [
+        [ids.coTeacher, "co-teacher"],
+        [ids.primaryTeacher, "primary"],
+      ].sort()
+    );
+  });
+
   it("deletes a same-school homeroom only after clearing teachers and detaching students", async () => {
     const beforeWrongSchoolDelete = await homeroomState();
     assert.equal(beforeWrongSchoolDelete.homeroom.length, 1);

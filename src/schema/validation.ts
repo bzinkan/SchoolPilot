@@ -37,15 +37,22 @@ export type RegisterData = z.infer<typeof registerSchema>;
 // User management
 // ============================================================================
 export const createTeacherSchema = z.object({
-  email: z.string().email("Invalid email address"),
+  email: z.string().trim().email("Invalid email address"),
   displayName: z.string().min(2, "Name must be at least 2 characters").optional(),
   firstName: z.string().min(1).optional(),
   lastName: z.string().min(1).optional(),
   role: z.enum(["admin", "teacher", "office_staff"]).optional(),
   gopilotRole: z.enum(["teacher", "office_staff"]).optional().nullable(),
   password: STRONG_PASSWORD.optional(),
+  confirmDistinctPerson: z.boolean().optional(),
 });
 export type CreateTeacherData = z.infer<typeof createTeacherSchema>;
+
+export const updateStaffEmailSchema = z.object({
+  expectedEmail: z.string().trim().email("Invalid current email address"),
+  email: z.string().trim().email("Invalid email address"),
+}).strict();
+export type UpdateStaffEmailData = z.infer<typeof updateStaffEmailSchema>;
 
 // ============================================================================
 // Student management

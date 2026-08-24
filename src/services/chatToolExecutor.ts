@@ -8,7 +8,7 @@ import {
   markStudentsAbsentBulk,
   getAttendanceBySchool,
   getGroupsBySchool,
-  createGroup,
+  upsertAdminClassroomClass,
   getHomeroomsBySchool,
   createHomeroom,
   getActivePassesBySchool,
@@ -17,7 +17,6 @@ import {
   getStudentById,
   createCanonicalPass,
   createLegacyPass,
-  addGroupTeacher,
   addHomeroomTeacher,
   getSchoolUsageSummary,
   getHeartbeatsByStudent,
@@ -229,16 +228,18 @@ const executors: Record<string, ToolExecutor> = {
   },
 
   create_class: async (args, ctx) => {
-    const group = await createGroup({
+    const { group } = await upsertAdminClassroomClass({
       schoolId: ctx.schoolId,
-      teacherId: ctx.userId,
-      name: args.name,
-      gradeLevel: args.gradeLevel || null,
-      periodLabel: args.periodLabel || null,
-      groupType: "admin_class",
+      primaryTeacherId: ctx.userId,
+      coTeacherIds: [],
+      data: {
+        name: args.name,
+        gradeLevel: args.gradeLevel || null,
+        periodLabel: args.periodLabel || null,
+        groupType: "admin_class",
+      },
+      scheduleChangeActorId: ctx.userId,
     });
-    // Seed the junction table
-    await addGroupTeacher(group.id, ctx.userId, "primary");
     return {
       success: true,
       data: {

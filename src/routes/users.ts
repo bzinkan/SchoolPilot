@@ -5,10 +5,10 @@ import { requireRole } from "../middleware/requireRole.js";
 import { requireActiveSchool } from "../middleware/requireActiveSchool.js";
 import {
   createTeacherSchema,
+  updateStaffEmailSchema,
   updateUserSchema,
   updateMembershipSchema,
 } from "../schema/validation.js";
-import { hashPassword } from "../util/password.js";
 import { logAuditStrict } from "../services/audit.js";
 import { disabledGoPilotParentPortalHandler } from "../util/gopilotParentContainment.js";
 import {
@@ -20,20 +20,23 @@ import {
   hasActiveGoPilotLicense,
 } from "../services/gopilotAccess.js";
 import {
-  getUserByEmail,
-  createUser,
   updateUser,
   getStaffBySchool,
   getUsersBySchool,
   getMembershipsBySchool,
-  getMembershipByUserAndSchool,
-  createMembership,
   updateMembershipForSchool,
   deleteMembershipForSchool,
   getMembershipsWithSchool,
-  validateStaffEmailDomainForSchool,
   getProductLicenses,
 } from "../services/storage.js";
+import {
+  changeStaffEmailForMembership,
+  createStaffIdentityForSchool,
+  reactivateStaffIdentity,
+  resetSchoolScopedStaffPassword,
+  sendStaffIdentityError,
+  updateSchoolScopedStaffProfile,
+} from "../services/staffIdentity.js";
 
 const router = Router();
 
@@ -221,7 +224,17 @@ router.get(
   requireStaffManagementRole,
   async (req, res, next) => {
     try {
-      const staff = await getStaffBySchool(res.locals.schoolId!);
+      const requestedStatus = String(req.query.status || "active");
+      if (!["active", "inactive", "all"].includes(requestedStatus)) {
+        return res.status(400).json({
+          error: "status must be active, inactive, or all",
+          code: "INVALID_STAFF_STATUS",
+        });
+      }
+      const staff = await getStaffBySchool(
+        res.locals.schoolId!,
+        requestedStatus as "active" | "inactive" | "all"
+      );
       const goPilotSetup = isGoPilotSetupRequest(res);
       return res.json({
         staff: staff.map((s) => {
@@ -232,6 +245,7 @@ router.get(
             gopilotRole: s.gopilotRole,
             kioskName: s.kioskName,
             carNumber: s.carNumber,
+            status: s.status,
             user: staffUserDto(s.user, goPilotSetup),
           };
         }),
@@ -278,75 +292,109 @@ router.post(
           .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       }
 
-      const role = parsed.data.role || "teacher";
-      const domainValidation = await validateStaffEmailDomainForSchool(
-        parsed.data.email,
-        res.locals.schoolId!
-      );
-      if (!domainValidation.ok) {
-        return res.status(400).json({
-          error: domainValidation.message,
-          code: domainValidation.code,
-          expectedDomain: domainValidation.expectedDomain,
-          actualDomain: domainValidation.actualDomain,
-        });
-      }
-
-      let user = await getUserByEmail(parsed.data.email);
-
-      if (!user) {
-        const hashedPassword = parsed.data.password
-          ? await hashPassword(parsed.data.password)
-          : null;
-
-        // Support both displayName and firstName/lastName from frontend
-        const firstName = parsed.data.firstName || parsed.data.displayName?.split(/\s+/)[0] || "";
-        const lastName = parsed.data.lastName || parsed.data.displayName?.split(/\s+/).slice(1).join(" ") || "";
-        const displayName = parsed.data.displayName || `${firstName} ${lastName}`.trim();
-
-        user = await createUser({
-          email: parsed.data.email.toLowerCase(),
-          password: hashedPassword,
-          firstName,
-          lastName,
-          displayName,
-        });
-      }
-
-      const existing = await getMembershipByUserAndSchool(
-        user.id,
-        res.locals.schoolId!
-      );
-      if (existing) {
-        return res
-          .status(409)
-          .json({ error: "User already has a membership in this school" });
-      }
-
-      const membership = await createMembership({
-        userId: user.id,
+      const result = await createStaffIdentityForSchool({
         schoolId: res.locals.schoolId!,
-        role,
-        gopilotRole: parsed.data.gopilotRole || null,
+        email: parsed.data.email,
+        role: parsed.data.role || "teacher",
+        gopilotRole: parsed.data.gopilotRole,
+        firstName: parsed.data.firstName,
+        lastName: parsed.data.lastName,
+        displayName: parsed.data.displayName,
+        password: parsed.data.password,
+        confirmDistinctPerson: parsed.data.confirmDistinctPerson,
+        audit: {
+          userId: req.authUser!.id,
+          userRole: isGoPilotSetupRequest(res)
+            ? res.locals.gopilotRole
+            : res.locals.membershipRole,
+          source: isGoPilotSetupRequest(res)
+            ? "gopilot.staff.create"
+            : "users.staff.create",
+        },
+        auditAction: isGoPilotSetupRequest(res)
+          ? "gopilot.staff.created"
+          : "school.staff.created",
       });
-
-      await logAuditStrict({
-        schoolId: res.locals.schoolId!,
-        userId: req.authUser!.id,
-        userEmail: req.authUser!.email,
-        userRole: isGoPilotSetupRequest(res) ? res.locals.gopilotRole : res.locals.membershipRole,
-        action: isGoPilotSetupRequest(res) ? "gopilot.staff.created" : "school.staff.created",
-        entityType: "school_membership",
-        entityId: membership.id,
-        changes: { fields: ["role", ...(parsed.data.gopilotRole ? ["gopilotRole"] : [])] },
-        metadata: { userId: user.id },
-      });
+      const { user, membership } = result;
 
       return res.status(201).json({
         user: staffUserDto(user, isGoPilotSetupRequest(res)),
         membership,
       });
     } catch (err) {
+      if (sendStaffIdentityError(res, err)) return;
+      next(err);
+    }
+  }
+);
+
+// PATCH /api/users/staff/:membershipId/email - Correct the same identity in place
+router.patch(
+  "/staff/:membershipId/email",
+  ...schoolContext,
+  requireStaffManagementRole,
+  async (req, res, next) => {
+    try {
+      const parsed = updateStaffEmailSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(422).json({
+          error: parsed.error.errors[0]?.message || "Invalid input",
+          code: "STAFF_EMAIL_INVALID",
+        });
+      }
+      const result = await changeStaffEmailForMembership({
+        schoolId: res.locals.schoolId!,
+        membershipId: param(req, "membershipId"),
+        expectedEmail: parsed.data.expectedEmail,
+        email: parsed.data.email,
+        allowMultiSchool: req.authUser!.isSuperAdmin,
+        allowCentralIdentityMutation: req.authUser!.isSuperAdmin,
+        audit: {
+          userId: req.authUser!.id,
+          userRole: isGoPilotSetupRequest(res)
+            ? res.locals.gopilotRole
+            : res.locals.membershipRole,
+          source: "users.staff.email",
+        },
+      });
+      return res.json({
+        userId: result.user.id,
+        email: result.user.email,
+        user: staffUserDto(result.user, isGoPilotSetupRequest(res)),
+        membership: result.membership,
+      });
+    } catch (err) {
+      if (sendStaffIdentityError(res, err)) return;
+      next(err);
+    }
+  }
+);
+
+// POST /api/users/staff/:membershipId/reactivate - Restore the same identity
+router.post(
+  "/staff/:membershipId/reactivate",
+  ...schoolContext,
+  requireStaffManagementRole,
+  async (req, res, next) => {
+    try {
+      const result = await reactivateStaffIdentity({
+        schoolId: res.locals.schoolId!,
+        membershipId: param(req, "membershipId"),
+        allowCentralIdentityMutation: req.authUser!.isSuperAdmin,
+        audit: {
+          userId: req.authUser!.id,
+          userRole: isGoPilotSetupRequest(res)
+            ? res.locals.gopilotRole
+            : res.locals.membershipRole,
+          source: "users.staff.reactivate",
+        },
+      });
+      return res.json({
+        user: staffUserDto(result.user, isGoPilotSetupRequest(res)),
+        membership: result.membership,
+      });
+    } catch (err) {
+      if (sendStaffIdentityError(res, err)) return;
       next(err);
     }
   }
@@ -367,33 +415,79 @@ router.put(
           .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       }
 
+      const rawPassword = req.body?.password;
+      if (rawPassword !== undefined) {
+        if (typeof rawPassword !== "string" || rawPassword.length < 8) {
+          return res.status(400).json({
+            error: "Password must be at least 8 characters.",
+            code: "INVALID_STAFF_PASSWORD",
+          });
+        }
+        const mixedMutationFields = [
+          "role",
+          "gopilotRole",
+          "kioskName",
+          "carNumber",
+          "firstName",
+          "lastName",
+          "status",
+        ].filter((field) => Object.prototype.hasOwnProperty.call(req.body ?? {}, field));
+        if (mixedMutationFields.length > 0) {
+          return res.status(400).json({
+            error: "Change a staff password separately from role or profile updates.",
+            code: "STAFF_PASSWORD_UPDATE_MUST_BE_SEPARATE",
+          });
+        }
+        const passwordReset = await resetSchoolScopedStaffPassword({
+          schoolId: res.locals.schoolId!,
+          membershipId: param(req, "membershipId"),
+          password: rawPassword,
+          audit: {
+            userId: req.authUser!.id,
+            userRole: isGoPilotSetupRequest(res)
+              ? res.locals.gopilotRole
+              : res.locals.membershipRole,
+            source: "users.staff.password",
+          },
+        });
+        return res.json({ membership: passwordReset.membership });
+      }
+
+      const hasGlobalProfileMutation = ["firstName", "lastName"]
+        .some((field) => Object.prototype.hasOwnProperty.call(req.body ?? {}, field));
+      const hasMembershipMutation = ["role", "gopilotRole", "kioskName", "carNumber", "status"]
+        .some((field) => Object.prototype.hasOwnProperty.call(req.body ?? {}, field));
+      if (hasGlobalProfileMutation && hasMembershipMutation) {
+        return res.status(400).json({
+          error: "Change the staff role and global profile name in separate requests.",
+          code: "STAFF_PROFILE_ROLE_UPDATE_MUST_BE_SEPARATE",
+        });
+      }
+
       const membership = await updateMembershipForSchool(
         param(req, "membershipId"),
         res.locals.schoolId!,
-        parsed.data
+        parsed.data,
+        undefined,
+        req.authUser!.isSuperAdmin
       );
       if (!membership) {
         return res.status(404).json({ error: "Membership not found" });
       }
 
-      // Also update user fields (name, password) if provided
-      const { firstName, lastName, password } = req.body;
-      if (membership.userId && (firstName || lastName || password)) {
-        const userUpdates: Record<string, any> = {};
-        if (firstName) userUpdates.firstName = firstName;
-        if (lastName) userUpdates.lastName = lastName;
-        if (firstName || lastName) {
-          userUpdates.displayName = `${firstName || ""} ${lastName || ""}`.trim();
-        }
-        if (password && password.length >= 8) {
-          userUpdates.password = await hashPassword(password);
-        }
-        if (Object.keys(userUpdates).length > 0) {
-          await updateUser(membership.userId, userUpdates);
-        }
+      // Profile fields remain school-scoped; passwords use the guarded path above.
+      const { firstName, lastName } = req.body;
+      if (membership.userId && (firstName || lastName)) {
+        await updateSchoolScopedStaffProfile({
+          schoolId: res.locals.schoolId!,
+          membershipId: membership.id,
+          firstName,
+          lastName,
+          allowCentralIdentityMutation: req.authUser!.isSuperAdmin,
+        });
       }
 
-      const changedFields = ["role", "gopilotRole", "status", "firstName", "lastName", "password"]
+      const changedFields = ["role", "gopilotRole", "status", "firstName", "lastName"]
         .filter((field) => Object.prototype.hasOwnProperty.call(req.body ?? {}, field))
         .map((field) => field === "password" ? "passwordChanged" : field);
       await logAuditStrict({
@@ -410,6 +504,7 @@ router.put(
 
       return res.json({ membership });
     } catch (err) {
+      if (sendStaffIdentityError(res, err)) return;
       next(err);
     }
   }
@@ -424,7 +519,9 @@ router.delete(
     try {
       const deleted = await deleteMembershipForSchool(
         param(req, "membershipId"),
-        res.locals.schoolId!
+        res.locals.schoolId!,
+        undefined,
+        req.authUser!.isSuperAdmin
       );
       if (!deleted) {
         return res.status(404).json({ error: "Membership not found" });

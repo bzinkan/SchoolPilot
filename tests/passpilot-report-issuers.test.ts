@@ -267,8 +267,11 @@ after(async () => {
         await db.execute(sql`DELETE FROM settings WHERE school_id IN (${schoolIds})`);
         await db.execute(sql`DELETE FROM product_licenses WHERE school_id IN (${schoolIds})`);
         await db.execute(sql`DELETE FROM school_memberships WHERE school_id IN (${schoolIds})`);
-        await db.execute(sql`DELETE FROM schools WHERE id IN (${schoolIds})`);
-        await db.execute(sql`DELETE FROM users WHERE email LIKE ${`%@${TAG}-%`}`);
+        await db.execute(sql`
+          UPDATE schools
+          SET status = 'suspended', is_active = false, deleted_at = now()
+          WHERE id IN (${schoolIds})
+        `);
       });
     }
   } finally {

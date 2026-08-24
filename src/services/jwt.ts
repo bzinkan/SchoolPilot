@@ -25,6 +25,19 @@ export interface UserJwtPayload {
   userId: string;
   email: string;
   isSuperAdmin?: boolean;
+  authVersion?: number;
+}
+
+/**
+ * Tokens and sessions issued before auth_version existed are version 1. This
+ * keeps a backend-first rollout compatible while still invalidating every old
+ * credential as soon as a user's version is incremented.
+ */
+export function credentialVersionMatches(
+  credentialVersion: number | null | undefined,
+  currentVersion: number | null | undefined
+): boolean {
+  return (credentialVersion ?? 1) === (currentVersion ?? 1);
 }
 
 export function signUserToken(payload: UserJwtPayload): string {

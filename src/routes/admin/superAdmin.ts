@@ -9,27 +9,27 @@ import {
   updateSchool,
   softDeleteSchool,
   getMembershipsBySchool,
-  createMembership,
-  createUser,
-  getUserByEmail,
   getStudentsBySchool,
   getStaffBySchool,
   getAllProductLicenses,
   getProductLicenses,
   createProductLicense,
   deleteProductLicenseForSchool,
-  deleteMembership,
+  deleteMembershipForSchool,
   updateUser,
   getSettingsForSchool,
   upsertSettings,
   getSchoolCounts,
   getSchoolInquiries,
   getEmailDomain,
-  validateStaffEmailDomainForSchool,
 } from "../../services/storage.js";
 import { hashPassword } from "../../util/password.js";
 import { sendWelcomeEmail, sendTaxCertificateRequestEmail } from "../../services/email.js";
 import { logAudit } from "../../services/audit.js";
+import {
+  createStaffIdentityForSchool,
+  sendStaffIdentityError,
+} from "../../services/staffIdentity.js";
 import { stopMailpilotMonitoringForSchool } from "../../services/mailpilotProvisioning.js";
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -232,8 +232,6 @@ router.post("/schools", ...auth, async (req, res, next) => {
       const adminEmail = resolvedAdminEmail as string;
       const pwd = resolvedAdminPassword || crypto.randomBytes(8).toString("hex");
       tempPassword = pwd;
-      const hashed = await hashPassword(pwd);
-
       // Split name into first/last if provided as a single "firstAdminName" field
       let firstName = resolvedAdminFirstName || "Admin";
       let lastName = resolvedAdminLastName;
@@ -243,24 +241,27 @@ router.post("/schools", ...auth, async (req, res, next) => {
         lastName = parts.slice(1).join(" ");
       }
 
-      let user = await getUserByEmail(adminEmail);
-      if (!user) {
-        user = await createUser({
-          email: adminEmail,
-          password: hashed,
-          firstName,
-          lastName,
-        });
-      }
-
-      await createMembership({
-        userId: user.id,
+      const identity = await createStaffIdentityForSchool({
         schoolId: school.id,
+        email: adminEmail,
         role: "admin",
-        status: "active",
+        password: pwd,
+        firstName,
+        lastName,
+        allowGlobalIdentityAttachment: true,
+        audit: {
+          userId: req.authUser!.id,
+          userRole: "super_admin",
+          source: "super_admin.school.create",
+        },
+        auditAction: "school.staff.created",
       });
 
-      await sendWelcomeEmail(adminEmail, name, pwd);
+      if (identity.createdUser) {
+        await sendWelcomeEmail(adminEmail, name, pwd);
+      } else {
+        tempPassword = undefined;
+      }
     }
 
     // Always create a settings row so every school has one from creation (some
@@ -309,6 +310,7 @@ router.post("/schools", ...auth, async (req, res, next) => {
 
     return res.status(201).json({ school, tempPassword });
   } catch (err) {
+    if (sendStaffIdentityError(res, err)) return;
     next(err);
   }
 });
@@ -511,57 +513,43 @@ router.post("/schools/:id/restore", ...auth, async (req, res, next) => {
 router.post("/schools/:id/admins", ...auth, async (req, res, next) => {
   try {
     const schoolId = param(req, "id");
-    const { email, firstName, lastName, displayName, password } = req.body;
+    const { email, firstName, lastName, displayName, password, confirmDistinctPerson } = req.body;
 
     if (!email) {
       return res.status(400).json({ error: "email is required" });
     }
-    const domainValidation = await validateStaffEmailDomainForSchool(email, schoolId);
-    if (!domainValidation.ok) {
-      return res.status(400).json({
-        error: domainValidation.message,
-        code: domainValidation.code,
-        expectedDomain: domainValidation.expectedDomain,
-        actualDomain: domainValidation.actualDomain,
-      });
-    }
-
-    // Resolve name: accept firstName/lastName or displayName (split on space)
-    let resolvedFirst = firstName;
-    let resolvedLast = lastName || "";
-    if (!resolvedFirst && displayName) {
-      const parts = displayName.trim().split(" ");
-      resolvedFirst = parts[0];
-      resolvedLast = parts.slice(1).join(" ");
-    }
-
     const tempPassword = password || crypto.randomBytes(8).toString("hex");
-    const hashed = await hashPassword(tempPassword);
-
-    let user = await getUserByEmail(email);
-    if (!user) {
-      user = await createUser({
-        email,
-        password: hashed,
-        firstName: resolvedFirst || "Admin",
-        lastName: resolvedLast,
-      });
-    }
-
-    await createMembership({
-      userId: user.id,
+    const identity = await createStaffIdentityForSchool({
       schoolId,
+      email,
       role: "admin",
-      status: "active",
+      password: tempPassword,
+      firstName,
+      lastName,
+      displayName,
+      confirmDistinctPerson: confirmDistinctPerson === true,
+      allowGlobalIdentityAttachment: true,
+      audit: {
+        userId: req.authUser!.id,
+        userRole: "super_admin",
+        source: "super_admin.school.admin.create",
+      },
+      auditAction: "admin.created",
     });
+    const { user } = identity;
 
     const school = await getSchoolById(schoolId);
-    if (school) {
+    if (school && identity.createdUser) {
       await sendWelcomeEmail(email, school.name, tempPassword);
     }
 
-    return res.status(201).json({ user: { id: user.id, email: user.email }, tempPassword });
+    return res.status(201).json({
+      user: { id: user.id, email: user.email },
+      membership: identity.membership,
+      ...(identity.createdUser ? { tempPassword } : {}),
+    });
   } catch (err) {
+    if (sendStaffIdentityError(res, err)) return;
     next(err);
   }
 });
@@ -622,7 +610,15 @@ router.delete("/schools/:id/admins/:membershipId", ...auth, async (req, res, nex
       return res.status(404).json({ error: "Admin not found" });
     }
 
-    await deleteMembership(membershipId);
+    const removed = await deleteMembershipForSchool(
+      membershipId,
+      schoolId,
+      undefined,
+      true
+    );
+    if (!removed) {
+      return res.status(404).json({ error: "Admin not found" });
+    }
 
     await logAudit({
       schoolId,
@@ -657,8 +653,10 @@ router.post("/schools/:id/impersonate", ...auth, async (req, res, next) => {
     // Set session impersonation
     if (req.session) {
       (req.session as any).originalUserId = req.authUser!.id;
+      (req.session as any).originalAuthVersion = req.authUser!.authVersion;
       (req.session as any).impersonating = true;
       (req.session as any).userId = admin.userId;
+      (req.session as any).authVersion = admin.user.authVersion;
       (req.session as any).schoolId = schoolId;
       (req.session as any).role = "admin";
     }
@@ -688,7 +686,9 @@ router.post("/stop-impersonate", authenticate, async (req, res, next) => {
 
     const impersonatedUserId = (req.session as any).userId || req.authUser?.id || null;
     (req.session as any).userId = originalUserId;
+    (req.session as any).authVersion = (req.session as any).originalAuthVersion ?? 1;
     delete (req.session as any).originalUserId;
+    delete (req.session as any).originalAuthVersion;
     delete (req.session as any).impersonating;
     delete (req.session as any).schoolId;
     delete (req.session as any).role;

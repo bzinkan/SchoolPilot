@@ -20,8 +20,14 @@ import {
 import { ensureHeartbeatHistoryIndexOnline } from "./db/heartbeatHistoryIndex.js";
 import { resolveEcsApiRuntimeIdentity } from "./services/ecsRuntimeIdentity.js";
 import { bindHeartbeatHotPathApiRuntimeTaskDefinitionSha256 } from "./services/heartbeatHotPathMetrics.js";
-import { runSchoolPilotMigrationLedger } from "./db/migrationLedger.js";
-import { schoolPilot27Migrations } from "./db/migrations27.js";
+import {
+  hasCompletedSchoolPilotMigration,
+  runSchoolPilotMigrationLedger,
+} from "./db/migrationLedger.js";
+import {
+  STAFF_IDENTITY_CONTRACT_MIGRATION_IDS,
+  selectSchoolPilot27MigrationPlan,
+} from "./db/migrations27.js";
 import { safeErrorMetadata } from "./util/safeLogging.js";
 
 // Initialize Sentry as early as possible. No-op unless SENTRY_DSN is set
@@ -274,10 +280,27 @@ const PORT = parseInt(process.env.PORT || "4000", 10);
  * an acceptable production migration contract.
  */
 export async function runVersionedMigrations(): Promise<void> {
+  const contractRolloutRequested =
+    process.env.NODE_ENV !== "production" ||
+    process.env.APPLY_STAFF_IDENTITY_CONTRACT_MIGRATIONS === "true";
+  const contractPreviouslyApplied = await hasCompletedSchoolPilotMigration(
+    pool,
+    STAFF_IDENTITY_CONTRACT_MIGRATION_IDS
+  );
+  const includeStaffIdentityContracts =
+    contractRolloutRequested || contractPreviouslyApplied;
   const ledgerResults = await runSchoolPilotMigrationLedger({
     pool,
-    migrations: schoolPilot27Migrations,
+    migrations: selectSchoolPilot27MigrationPlan({
+      contractRolloutRequested,
+      contractPreviouslyApplied,
+    }),
   });
+  if (!includeStaffIdentityContracts) {
+    console.log(
+      "[migration] staff identity contract migrations deferred; run the inventory, then set APPLY_STAFF_IDENTITY_CONTRACT_MIGRATIONS=true for the stage-five one-off task"
+    );
+  }
   for (const result of ledgerResults) {
     console.log(`[migration] ${result.id} ${result.status} (${result.durationMs}ms)`);
   }
@@ -298,6 +321,42 @@ export async function runStartupMigrations(): Promise<void> {
       { code: "LEGACY_STARTUP_MIGRATIONS_FORBIDDEN" }
     );
   }
+  // Staff identity corrections preserve users.id and invalidate credentials by
+  // advancing auth_version. Fail closed on case/whitespace collisions before
+  // normalizing and enforcing the same invariant used in production.
+  await pool.query(`
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS auth_version INTEGER NOT NULL DEFAULT 1;
+  `);
+  console.log("[migration] staff identity auth version ready");
+
+  await pool.query(`
+    DO $staff_email_collisions$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM users
+        GROUP BY lower(btrim(email))
+        HAVING count(*) > 1
+      ) THEN
+        RAISE EXCEPTION USING
+          ERRCODE = '23505',
+          MESSAGE = 'Normalized staff email collisions must be resolved before identity enforcement';
+      END IF;
+    END;
+    $staff_email_collisions$;
+
+    UPDATE users
+    SET email = lower(btrim(email)),
+        auth_version = auth_version + 1,
+        updated_at = now()
+    WHERE email IS DISTINCT FROM lower(btrim(email));
+
+    CREATE UNIQUE INDEX IF NOT EXISTS users_email_normalized_unique
+      ON users (lower(btrim(email)));
+  `);
+  console.log("[migration] normalized staff email contract ready");
+
   // Schools can share a district Google Workspace domain. Older deployments had
   // a single-column unique constraint on domain; remove it and keep uniqueness
   // on (domain, name), matching the Drizzle schema.
@@ -3487,12 +3546,20 @@ export async function runStartupMigrations(): Promise<void> {
     ALTER TABLE dismissal_overrides VALIDATE CONSTRAINT dismissal_overrides_type_check;
   `);
 
-  // Database-level guard for active same-school homeroom staff. It applies to
-  // both the legacy primary pointer and the co-teacher junction table.
-  await schedulerPool.query(`
+  // Database-level guard for active same-school homeroom teachers. GoPilot's
+  // product role is authoritative here: an active admin or office member is
+  // not implicitly eligible to own a homeroom.
+  const staffIdentityContractApplied = await hasCompletedSchoolPilotMigration(
+    pool,
+    STAFF_IDENTITY_CONTRACT_MIGRATION_IDS
+  );
+  if (!staffIdentityContractApplied) {
+    await schedulerPool.query(`
     DO $gopilot_homeroom_staff_inventory$
-    DECLARE invalid_primary_count BIGINT;
-    DECLARE invalid_junction_count BIGINT;
+    DECLARE
+      invalid_primary_count BIGINT;
+      invalid_junction_count BIGINT;
+      cross_school_junction_count BIGINT;
     BEGIN
       SELECT count(*) INTO invalid_primary_count
       FROM homerooms AS homeroom
@@ -3502,8 +3569,8 @@ export async function runStartupMigrations(): Promise<void> {
           WHERE membership.school_id = homeroom.school_id
             AND membership.user_id = homeroom.teacher_id
             AND membership.status = 'active'
-            AND COALESCE(NULLIF(membership.gopilot_role, ''), membership.role)
-              IN ('admin', 'school_admin', 'office_staff', 'teacher')
+            AND COALESCE(NULLIF(BTRIM(membership.gopilot_role), ''), membership.role)
+              = 'teacher'
         );
       SELECT count(*) INTO invalid_junction_count
       FROM homeroom_teachers AS assignment
@@ -3512,20 +3579,32 @@ export async function runStartupMigrations(): Promise<void> {
         WHERE membership.school_id = assignment.school_id
           AND membership.user_id = assignment.teacher_id
           AND membership.status = 'active'
-          AND COALESCE(NULLIF(membership.gopilot_role, ''), membership.role)
-            IN ('admin', 'school_admin', 'office_staff', 'teacher')
+          AND COALESCE(NULLIF(BTRIM(membership.gopilot_role), ''), membership.role)
+            = 'teacher'
       );
-      RAISE NOTICE 'GoPilot homeroom assignment inventory: invalid_primary=%, invalid_junction=%',
-        invalid_primary_count, invalid_junction_count;
-      IF invalid_primary_count > 0 OR invalid_junction_count > 0 THEN
+      SELECT count(*) INTO cross_school_junction_count
+      FROM homeroom_teachers AS assignment
+      LEFT JOIN homerooms AS homeroom ON homeroom.id = assignment.homeroom_id
+      WHERE homeroom.id IS NULL OR homeroom.school_id <> assignment.school_id;
+      RAISE NOTICE 'GoPilot homeroom assignment inventory: invalid_primary=%, invalid_junction=%, cross_school_junction=%',
+        invalid_primary_count, invalid_junction_count, cross_school_junction_count;
+      IF invalid_primary_count > 0 OR invalid_junction_count > 0
+         OR cross_school_junction_count > 0 THEN
         RAISE EXCEPTION 'GoPilot homeroom staff integrity migration blocked; review ID/count-only inventory';
       END IF;
     END
     $gopilot_homeroom_staff_inventory$;
 
     CREATE OR REPLACE FUNCTION gopilot_validate_homeroom_teacher()
-    RETURNS trigger LANGUAGE plpgsql AS $gopilot_homeroom_staff$
-    DECLARE resolved_school_id TEXT;
+    RETURNS trigger
+    LANGUAGE plpgsql
+    SECURITY DEFINER
+    SET search_path = public, pg_temp
+    AS $gopilot_homeroom_staff$
+    DECLARE
+      resolved_school_id TEXT;
+      homeroom_school_id TEXT;
+      previous_is_super TEXT;
     BEGIN
       IF TG_TABLE_NAME = 'homerooms' THEN
         IF NEW.teacher_id IS NULL THEN RETURN NEW; END IF;
@@ -3533,18 +3612,34 @@ export async function runStartupMigrations(): Promise<void> {
       ELSE
         resolved_school_id := NEW.school_id;
       END IF;
+      previous_is_super := current_setting('app.is_super', true);
+      PERFORM set_config('app.is_super', 'on', true);
+      PERFORM schoolpilot_lock_staff_assignment_school(resolved_school_id);
+      IF TG_TABLE_NAME = 'homeroom_teachers' THEN
+        SELECT school_id INTO homeroom_school_id
+        FROM homerooms
+        WHERE id = NEW.homeroom_id;
+        IF NOT FOUND OR homeroom_school_id <> resolved_school_id THEN
+          RAISE EXCEPTION 'GOPILOT_HOMEROOM_SCHOOL_MISMATCH'
+            USING ERRCODE = '23514', CONSTRAINT = 'gopilot_homeroom_teacher_same_school';
+        END IF;
+      END IF;
       IF NOT EXISTS (
         SELECT 1 FROM school_memberships AS membership
         WHERE membership.school_id = resolved_school_id
           AND membership.user_id = NEW.teacher_id
           AND membership.status = 'active'
-          AND COALESCE(NULLIF(membership.gopilot_role, ''), membership.role)
-            IN ('admin', 'school_admin', 'office_staff', 'teacher')
+          AND COALESCE(NULLIF(BTRIM(membership.gopilot_role), ''), membership.role)
+            = 'teacher'
       ) THEN
-        RAISE EXCEPTION 'GoPilot homeroom teacher must be active staff at the same school'
-          USING ERRCODE = '23514';
+        RAISE EXCEPTION 'GOPILOT_HOMEROOM_TEACHER_INELIGIBLE'
+          USING ERRCODE = '23514', CONSTRAINT = 'gopilot_active_homeroom_teacher_membership';
       END IF;
+      PERFORM set_config('app.is_super', COALESCE(previous_is_super, ''), true);
       RETURN NEW;
+    EXCEPTION WHEN OTHERS THEN
+      PERFORM set_config('app.is_super', COALESCE(previous_is_super, ''), true);
+      RAISE;
     END
     $gopilot_homeroom_staff$;
     DROP TRIGGER IF EXISTS gopilot_validate_homeroom_primary_teacher ON homerooms;
@@ -3555,7 +3650,13 @@ export async function runStartupMigrations(): Promise<void> {
     CREATE TRIGGER gopilot_validate_homeroom_co_teacher
       BEFORE INSERT OR UPDATE OF school_id, homeroom_id, teacher_id ON homeroom_teachers
       FOR EACH ROW EXECUTE FUNCTION gopilot_validate_homeroom_teacher();
-  `);
+    REVOKE ALL ON FUNCTION gopilot_validate_homeroom_teacher() FROM PUBLIC;
+    `);
+  } else {
+    console.log(
+      "[migration] canonical staff identity homeroom guards retained from the versioned contract"
+    );
+  }
 
   // RLS Phase 4: author per-school tenant-isolation policies (idempotent) for
   // every table that has a school_id column, EXCEPT global/bootstrap tables. The

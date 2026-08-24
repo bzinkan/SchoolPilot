@@ -334,6 +334,7 @@ Copy `.env.example` to `.env`. Required for local dev:
 - `APP_ENV` — Runtime environment dimension for CloudWatch embedded metrics (`production`, `staging`, `development`)
 - `RUN_MIGRATIONS_ON_STARTUP` — Defaults to `false` everywhere and is rejected when enabled in production; use the explicit one-off migration task instead
 - `RUN_MIGRATIONS_ONLY` — One-off migration task mode used by `npm run migrate:startup` / `scripts/deploy.sh`
+- `APPLY_STAFF_IDENTITY_CONTRACT_MIGRATIONS` — Stage-five migration-task acknowledgement. Leave false while deploying the additive staff identity/auth-version layer; set true only after the ID-only inventory in `docs/STAFF_IDENTITY_LIFECYCLE_RUNBOOK.md` is zero.
 - `SCHEDULER_ENABLED` — `false` for web ECS tasks, `true` only for the singleton scheduler worker
 - `DB_POOL_MAX` / `SCHEDULER_DB_POOL_MAX` — Main API and scheduler Postgres pool caps
 - `SESSION_SECRET`, `JWT_SECRET`, `STUDENT_TOKEN_SECRET` — Auth secrets. Kiosk tokens use `KIOSK_TOKEN_SECRET` when configured and otherwise share `JWT_SECRET`; `KIOSK_HEALTH_HMAC_SECRET` may independently rotate the opaque client-health rate-limit keys. `CLASSPILOT_KIOSK_TICKET_HMAC_SECRET` independently rotates launch-ticket keys and managed-device continuity projections (falling back to the kiosk/JWT secret when omitted).

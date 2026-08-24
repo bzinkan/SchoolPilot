@@ -33,6 +33,193 @@ function detailList(items, emptyText, render) {
   );
 }
 
+function integrityLabel(value) {
+  return String(value || "unknown")
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function ClassOwnershipIntegrity({ integrity, onOpenClasses, onOpenStaff }) {
+  if (!integrity) return null;
+
+  const rows = [
+    ...(integrity.invalidPrimaryAssignments || []).map((item) => ({
+      key: `primary-${item.groupId}-${item.teacherId}`,
+      type: "Invalid primary teacher",
+      category: "Class",
+      resourceId: item.groupId,
+      staffId: item.teacherId,
+      detail: "No active teachable membership",
+    })),
+    ...(integrity.invalidCoTeacherAssignments || []).map((item) => ({
+      key: `co-${item.relationshipId}`,
+      type: "Invalid co-teacher",
+      category: "Class",
+      resourceId: item.groupId,
+      staffId: item.teacherId,
+      detail: `Relationship ${item.relationshipId}`,
+    })),
+    ...(integrity.invalidClassRelationships || []).map((item) => ({
+      key: `class-relationship-${item.relationshipId}`,
+      type: "Invalid class relationship",
+      category: "Class",
+      resourceId: item.groupId,
+      staffId: item.teacherId,
+      detail: `${integrityLabel(item.role)} · Relationship ${item.relationshipId} · ${item.reasons.map(integrityLabel).join(", ")}`,
+    })),
+    ...(integrity.primaryMirrorMismatches || []).map((item) => ({
+      key: `mirror-${item.groupId}`,
+      type: "Primary relationship mismatch",
+      category: "Class",
+      resourceId: item.groupId,
+      staffId: item.teacherId,
+      detail: item.mirrorTeacherIds?.length
+        ? `Recorded primary IDs: ${item.mirrorTeacherIds.join(", ")}`
+        : "Primary relationship is missing",
+    })),
+    ...(integrity.homeroomPrimaryMirrorMismatches || []).map((item) => ({
+      key: `homeroom-mirror-${item.homeroomId}`,
+      type: "Primary relationship mismatch",
+      category: "GoPilot homeroom",
+      resourceId: item.homeroomId,
+      staffId: item.teacherId,
+      detail: item.mirrorTeacherIds?.length
+        ? `Recorded primary IDs: ${item.mirrorTeacherIds.join(", ")}`
+        : "Primary relationship is missing",
+    })),
+    ...(integrity.invalidHomeroomRelationships || []).map((item) => ({
+      key: `homeroom-relationship-${item.relationshipId}`,
+      type: "Invalid homeroom relationship",
+      category: "GoPilot homeroom",
+      resourceId: item.homeroomId,
+      staffId: item.teacherId,
+      detail: `${integrityLabel(item.role)} · Relationship ${item.relationshipId} · ${item.reasons.map(integrityLabel).join(", ")}`,
+    })),
+    ...(integrity.invalidTenantScopes || []).map((item) => ({
+      key: `tenant-scope-${item.resourceType}-${item.resourceId}`,
+      type: "Invalid tenant scope",
+      category: integrityLabel(item.resourceType),
+      resourceId: item.resourceId,
+      staffId: "—",
+      detail: [
+        integrityLabel(item.reason),
+        item.parentResourceId ? `Parent resource ${item.parentResourceId}` : null,
+        `Stored school ${item.storedSchoolId || "missing"}`,
+        `Parent school ${item.parentSchoolId || "missing"}`,
+      ].filter(Boolean).join(" · "),
+    })),
+    ...(integrity.invalidLiveAssignments || []).map((item) => ({
+      key: `assignment-${item.assignmentType}-${item.assignmentId}`,
+      type: "Invalid live ownership",
+      category: integrityLabel(item.assignmentType),
+      resourceId: item.resourceId,
+      staffId: item.ownerUserId,
+      detail: `${integrityLabel(item.reason)} · Assignment ${item.assignmentId}`,
+    })),
+    ...(integrity.invalidLiveBlockers || []).map((item) => ({
+      key: `blocker-${item.blockerType}-${item.blockerId}`,
+      type: "Invalid active workflow",
+      category: integrityLabel(item.blockerType),
+      resourceId: item.resourceId || item.blockerId,
+      staffId: item.ownerUserId,
+      detail: `${integrityLabel(item.reason)} · Workflow ${item.blockerId}`,
+    })),
+  ];
+
+  return (
+    <Card data-testid="class-ownership-integrity">
+      <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <CardTitle className="flex items-center gap-2 text-base">
+            {integrity.total === 0
+              ? <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+              : <ShieldAlert className="h-4 w-4 text-destructive" />}
+            Class Ownership Integrity
+          </CardTitle>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Live classes, teacher-owned records, and active workflows must reference eligible staff in this school.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={onOpenStaff}>
+            <ExternalLink className="mr-2 h-3.5 w-3.5" />
+            Open Staff
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={onOpenClasses}>
+            <ExternalLink className="mr-2 h-3.5 w-3.5" />
+            Open Class Management
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex flex-wrap gap-2">
+          <Badge variant={integrity.counts?.invalidPrimaryAssignments ? "destructive" : "secondary"}>
+            Primary: {integrity.counts?.invalidPrimaryAssignments || 0}
+          </Badge>
+          <Badge variant={integrity.counts?.invalidCoTeacherAssignments ? "destructive" : "secondary"}>
+            Co-teacher: {integrity.counts?.invalidCoTeacherAssignments || 0}
+          </Badge>
+          <Badge variant={integrity.counts?.invalidClassRelationships ? "destructive" : "secondary"}>
+            Class relationships: {integrity.counts?.invalidClassRelationships || 0}
+          </Badge>
+          <Badge variant={integrity.counts?.primaryMirrorMismatches ? "destructive" : "secondary"}>
+            Class mirror: {integrity.counts?.primaryMirrorMismatches || 0}
+          </Badge>
+          <Badge variant={integrity.counts?.homeroomPrimaryMirrorMismatches ? "destructive" : "secondary"}>
+            Homeroom mirror: {integrity.counts?.homeroomPrimaryMirrorMismatches || 0}
+          </Badge>
+          <Badge variant={integrity.counts?.invalidHomeroomRelationships ? "destructive" : "secondary"}>
+            Homeroom relationships: {integrity.counts?.invalidHomeroomRelationships || 0}
+          </Badge>
+          <Badge variant={integrity.counts?.invalidTenantScopes ? "destructive" : "secondary"}>
+            Tenant scope: {integrity.counts?.invalidTenantScopes || 0}
+          </Badge>
+          <Badge variant={integrity.counts?.invalidLiveAssignments ? "destructive" : "secondary"}>
+            Other ownership: {integrity.counts?.invalidLiveAssignments || 0}
+          </Badge>
+          <Badge variant={integrity.counts?.invalidLiveBlockers ? "destructive" : "secondary"}>
+            Active workflows: {integrity.counts?.invalidLiveBlockers || 0}
+          </Badge>
+        </div>
+
+        {rows.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No live staff ownership issues were found.</p>
+        ) : (
+          <div className="overflow-x-auto rounded-md border">
+            <table className="w-full min-w-[880px] text-sm">
+              <thead className="bg-muted/60">
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium">Issue</th>
+                  <th className="px-3 py-2 text-left font-medium">Type</th>
+                  <th className="px-3 py-2 text-left font-medium">Resource ID</th>
+                  <th className="px-3 py-2 text-left font-medium">Staff ID</th>
+                  <th className="px-3 py-2 text-left font-medium">Detail</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {rows.slice(0, 100).map((row) => (
+                  <tr key={row.key}>
+                    <td className="px-3 py-2 font-medium">{row.type}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{row.category}</td>
+                    <td className="break-all px-3 py-2 font-mono text-xs">{row.resourceId}</td>
+                    <td className="break-all px-3 py-2 font-mono text-xs">{row.staffId}</td>
+                    <td className="break-all px-3 py-2 text-muted-foreground">{row.detail}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {rows.length > 100 ? (
+          <p className="text-xs text-muted-foreground">
+            Showing the first 100 of {rows.length} school-scoped issues. Use the repair inventory for the complete ID-only report.
+          </p>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function ITReadiness() {
   const navigate = useNavigate();
   const { data, isLoading, refetch } = useQuery({
@@ -140,6 +327,12 @@ export default function ITReadiness() {
             )}
           </CardContent>
         </Card>
+
+        <ClassOwnershipIntegrity
+          integrity={data?.details?.classOwnershipIntegrity}
+          onOpenClasses={() => navigate("/classpilot/admin/classes")}
+          onOpenStaff={() => navigate("/classpilot/admin")}
+        />
 
         <div className="grid gap-4 lg:grid-cols-2">
           <Card>

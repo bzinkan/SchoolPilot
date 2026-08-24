@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Plus, Trash2, Check, X, Pencil, Eye, EyeOff, RefreshCw, ChevronRight, ArrowLeft } from 'lucide-react';
 import api from '../../../../shared/utils/api';
 import { GoogleLogo } from './constants';
 import GoogleRosterConnectorPanel from '../../../../shared/components/GoogleRosterConnectorPanel';
+import StaffAccessTransitionDialog from '../../../../shared/components/StaffAccessTransitionDialog';
 
 // ─── STAFF MANAGER TAB ──────────────────────────────────────────────
 
@@ -15,18 +16,39 @@ function needsGoogleRosterConnector(err) {
   );
 }
 
-export default function StaffManager({ staff, schoolId, onAdd, onRemove, onUpdate, onRefresh }) {
+function workspaceImportIssueText(issue) {
+  if (typeof issue === 'string') return issue;
+  if (!issue || typeof issue !== 'object') return 'Unknown import issue';
+  return [issue.email, issue.code, issue.error || issue.message]
+    .filter(Boolean)
+    .join(' — ') || 'Unknown import issue';
+}
+
+export default function StaffManager({
+  staff,
+  schoolId,
+  onAdd,
+  onRemove,
+  onUpdate,
+  onRefresh,
+  onEmailCorrected,
+  onRoleTransitioned,
+}) {
   const [roleFilter, setRoleFilter] = useState('All');
   const [showAddForm, setShowAddForm] = useState(false);
   const [addForm, setAddForm] = useState({ email: '', firstName: '', lastName: '', role: 'teacher', password: '' });
   const [showPassword, setShowPassword] = useState(false);
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState(null);
+  const [addIdentityConflict, setAddIdentityConflict] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [editData, setEditData] = useState({});
   const [editPassword, setEditPassword] = useState('');
   const [showEditPassword, setShowEditPassword] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState(null);
+  const [staffNotice, setStaffNotice] = useState(null);
+  const [transitionRequest, setTransitionRequest] = useState(null);
 
   // Workspace import state
   const [showWorkspaceModal, setShowWorkspaceModal] = useState(false);
@@ -39,13 +61,15 @@ export default function StaffManager({ staff, schoolId, onAdd, onRemove, onUpdat
   const [wsStep, setWsStep] = useState('orgunits');
   const [wsRole, setWsRole] = useState('teacher');
   const [wsConnectorRequired, setWsConnectorRequired] = useState(false);
+  const [wsImportResult, setWsImportResult] = useState(null);
 
   // Normalize: API returns { id, userId, role, user: { email, firstName, ... } }
   // Flatten user fields to top level for easy access
-  const normalized = staff.map(s => {
+  const normalized = useMemo(() => staff.map(s => {
     const u = s.user || {};
     return {
       ...s,
+      membershipId: s.membershipId || s.id,
       first_name: s.first_name || s.firstName || u.first_name || u.firstName || '',
       last_name: s.last_name || s.lastName || u.last_name || u.lastName || '',
       email: s.email || u.email || '',
@@ -53,7 +77,7 @@ export default function StaffManager({ staff, schoolId, onAdd, onRemove, onUpdat
       gopilotRole: s.gopilotRole || s.gopilot_role || null,
       effectiveRole: s.gopilotRole || s.gopilot_role || s.role,
     };
-  });
+  }), [staff]);
 
   const teachers = normalized.filter(s => s.effectiveRole === 'teacher');
   const officeStaff = normalized.filter(s => s.effectiveRole === 'office_staff');
@@ -67,40 +91,155 @@ export default function StaffManager({ staff, schoolId, onAdd, onRemove, onUpdat
     if (!addForm.email || !addForm.firstName || !addForm.lastName) return;
     setAdding(true);
     setAddError(null);
+    setAddIdentityConflict(null);
+    // Office staff in GoPilot = teacher base role + gopilotRole override
+    const payload = addForm.role === 'office_staff'
+      ? { ...addForm, role: 'teacher', gopilotRole: 'office_staff' }
+      : addForm;
     try {
-      // Office staff in GoPilot = teacher base role + gopilotRole override
-      const payload = addForm.role === 'office_staff'
-        ? { ...addForm, role: 'teacher', gopilotRole: 'office_staff' }
-        : addForm;
       await onAdd(payload);
       setAddForm({ email: '', firstName: '', lastName: '', role: 'teacher', password: '' });
       setShowAddForm(false);
     } catch (err) {
-      setAddError(err.response?.data?.error || 'Failed to add staff');
+      const data = err.response?.data || {};
+      if (data.code === 'POSSIBLE_DUPLICATE_STAFF' || data.code === 'STAFF_REACTIVATION_REQUIRED') {
+        setAddIdentityConflict({ ...data, pendingPayload: payload });
+      }
+      setAddError(data.error || 'Failed to add staff');
     }
     setAdding(false);
   };
 
+  const confirmDistinctStaff = async () => {
+    if (!addIdentityConflict?.pendingPayload) return;
+    setAdding(true);
+    setAddError(null);
+    try {
+      await onAdd({ ...addIdentityConflict.pendingPayload, confirmDistinctPerson: true });
+      setAddForm({ email: '', firstName: '', lastName: '', role: 'teacher', password: '' });
+      setAddIdentityConflict(null);
+      setShowAddForm(false);
+    } catch (err) {
+      setAddError(err.response?.data?.error || err.message || 'Failed to add staff');
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const reactivateExistingStaff = async (candidateMembershipId) => {
+    const membershipId = candidateMembershipId || addIdentityConflict?.membershipId;
+    if (!membershipId) return;
+    setAdding(true);
+    setAddError(null);
+    try {
+      await api.post(`/schools/${schoolId}/staff/${membershipId}/reactivate`, {});
+      setAddIdentityConflict(null);
+      setShowAddForm(false);
+      if (onRefresh) await onRefresh();
+    } catch (err) {
+      setAddError(err.response?.data?.error || err.message || 'Failed to reactivate staff');
+    } finally {
+      setAdding(false);
+    }
+  };
+
   const startEdit = (s) => {
     setEditingId(`${s.id}-${s.effectiveRole}`);
-    setEditData({ firstName: s.first_name, lastName: s.last_name, role: s.effectiveRole });
+    setEditData({ firstName: s.first_name, lastName: s.last_name, email: s.email, role: s.effectiveRole });
     setEditPassword('');
+    setEditError(null);
     setShowEditPassword(false);
   };
 
-  const cancelEdit = () => { setEditingId(null); setEditData({}); setEditPassword(''); };
+  const editExistingIdentity = (candidate) => {
+    const membershipId = candidate.membershipId || candidate.id;
+    const existing = normalized.find((staffMember) => staffMember.id === membershipId);
+    if (!existing) {
+      setAddError('Reactivate this former staff identity before editing its email.');
+      return;
+    }
+    setRoleFilter('All');
+    setShowAddForm(false);
+    setAddIdentityConflict(null);
+    startEdit(existing);
+  };
+
+  const cancelEdit = () => { setEditingId(null); setEditData({}); setEditPassword(''); setEditError(null); };
+
+  const updateStaffEmail = async (s, requestedEmail) => {
+    const emailResponse = await api.patch(`/schools/${schoolId}/staff/${s.id}/email`, {
+      expectedEmail: s.email,
+      email: requestedEmail,
+    });
+    const confirmedEmail = String(emailResponse.data?.email || emailResponse.data?.user?.email || '').trim().toLowerCase();
+    if (!confirmedEmail || confirmedEmail !== requestedEmail) {
+      throw new Error('The server did not confirm the requested email address. Refresh before trying again.');
+    }
+    onEmailCorrected?.(s.id, confirmedEmail, emailResponse.data);
+  };
 
   const saveEdit = async (s) => {
+    const selectedRole = editData.role;
+    const requestedEmail = String(editData.email || '').trim().toLowerCase();
+    const emailChanged = requestedEmail !== String(s.email || '').trim().toLowerCase();
+    const roleChanged = selectedRole !== s.effectiveRole;
+    const profileChanged = String(editData.firstName || '').trim() !== String(s.first_name || '').trim()
+      || String(editData.lastName || '').trim() !== String(s.last_name || '').trim()
+      || Boolean(editPassword);
+    const changeKinds = [emailChanged, roleChanged, profileChanged].filter(Boolean).length;
+
+    setEditError(null);
+    if (changeKinds > 1) {
+      setEditError('Save email, role, and profile changes separately so each operation has an unambiguous result.');
+      return;
+    }
+    if (changeKinds === 0) {
+      cancelEdit();
+      return;
+    }
+
+    if (emailChanged) {
+      setSaving(true);
+      try {
+        await updateStaffEmail(s, requestedEmail);
+        setStaffNotice(`Email corrected for ${requestedEmail}. The staff member must sign in again.`);
+        cancelEdit();
+      } catch (err) {
+        setEditError(err.response?.data?.error || err.message || 'Failed to correct the email');
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+
+    if (roleChanged && selectedRole === 'office_staff') {
+      setTransitionRequest({
+        staff: s,
+        action: 'change_role',
+        newGopilotRole: 'office_staff',
+      });
+      return;
+    }
+    if (roleChanged && selectedRole === 'admin' && s.effectiveRole === 'teacher') {
+      setTransitionRequest({
+        staff: s,
+        action: 'change_role',
+        newRole: 'admin',
+        newGopilotRole: null,
+      });
+      return;
+    }
+
     setSaving(true);
     try {
-      // Transform role selection: office_staff writes to gopilotRole only, admin is universal
-      const { role: selectedRole, ...rest } = editData;
-      let payload = { ...rest, password: editPassword || undefined };
-      if (selectedRole === 'office_staff') {
-        payload.gopilotRole = 'office_staff';
-      } else if (selectedRole === 'teacher') {
-        payload.gopilotRole = null;
-      } else if (selectedRole === 'admin') {
+      const payload = profileChanged ? {
+        firstName: editData.firstName,
+        lastName: editData.lastName,
+        password: editPassword || undefined,
+      } : {};
+      if (roleChanged && selectedRole === 'teacher') {
+        payload.gopilotRole = s.role === 'teacher' ? null : 'teacher';
+      } else if (roleChanged && selectedRole === 'admin') {
         payload.role = 'admin';
         payload.gopilotRole = null;
       }
@@ -109,14 +248,48 @@ export default function StaffManager({ staff, schoolId, onAdd, onRemove, onUpdat
       setEditData({});
       setEditPassword('');
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to update');
+      setEditError(err.response?.data?.error || err.message || 'Failed to update');
     }
     setSaving(false);
+  };
+
+  const removeStaffAccess = (s) => {
+    setTransitionRequest({ staff: s, action: 'deactivate' });
+  };
+
+  const handleTransitionComplete = async (result) => {
+    const request = transitionRequest;
+    if (!request) return;
+    try {
+      if (request.action === 'deactivate') {
+        await onRemove(request.staff.id, { transitionComplete: true });
+      } else {
+        onRoleTransitioned?.(request.staff.id, {
+          ...(request.newRole !== undefined ? { role: request.newRole } : {}),
+          ...(request.newGopilotRole !== undefined ? { gopilotRole: request.newGopilotRole } : {}),
+        }, result);
+        setEditingId(null);
+        setEditData({});
+        setEditPassword('');
+      }
+    } catch (err) {
+      const fallback = request.action === 'change_role'
+        ? 'The role changed, but the local staff list could not be updated.'
+        : 'School access was removed, but the local staff list could not be updated.';
+      alert(err.response?.data?.error || err.message || fallback);
+      try {
+        await onRefresh?.();
+      } catch {
+        // The transition is already committed; a later setup refresh will reconcile the list.
+      }
+    }
+    setTransitionRequest(null);
   };
 
   const openWorkspaceImport = async () => {
     setShowWorkspaceModal(true);
     setWsStep('orgunits');
+    setWsImportResult(null);
     setWsConnectorRequired(false);
     setWsLoading(true);
     try {
@@ -143,7 +316,7 @@ export default function StaffManager({ staff, schoolId, onAdd, onRemove, onUpdat
       const users = res.data?.users || res.data || [];
       const active = users.filter(u => !u.suspended);
       setWsUsers(active);
-      setWsSelectedUsers(new Set(active.map(u => u.email)));
+      setWsSelectedUsers(new Set(active.map(u => u.id).filter(Boolean)));
     } catch (err) {
       console.error(err);
       if (needsGoogleRosterConnector(err)) setWsConnectorRequired(true);
@@ -155,15 +328,24 @@ export default function StaffManager({ staff, schoolId, onAdd, onRemove, onUpdat
   const handleWorkspaceImport = async () => {
     setWsImporting(true);
     try {
-      const usersToImport = wsUsers
-        .filter(u => wsSelectedUsers.has(u.email))
-        .map(u => ({ email: u.email, firstName: u.firstName, lastName: u.lastName }));
-      const res = await api.post(`/schools/${schoolId}/google/import-staff`, { users: usersToImport, role: wsRole, source: 'gopilot_setup' });
-      alert(`Imported ${res.data.imported} new, updated ${res.data.updated} existing.`);
-      setShowWorkspaceModal(false);
+      const userIds = wsUsers
+        .filter(u => wsSelectedUsers.has(u.id))
+        .map(u => u.id)
+        .filter(Boolean);
+      const res = await api.post(`/schools/${schoolId}/google/import-staff`, {
+        orgUnitPath: wsSelectedOU?.orgUnitPath || '/',
+        userIds,
+        role: wsRole,
+        source: 'gopilot_setup',
+      });
+      setWsImportResult(res.data);
       setWsUsers([]);
       setWsSelectedUsers(new Set());
-      if (onRefresh) onRefresh();
+      try {
+        await onRefresh?.();
+      } catch (refreshError) {
+        console.error('Staff import completed, but refreshing the staff list failed:', refreshError);
+      }
     } catch (err) {
       console.error(err);
       if (needsGoogleRosterConnector(err)) {
@@ -183,6 +365,15 @@ export default function StaffManager({ staff, schoolId, onAdd, onRemove, onUpdat
           <p className="text-gray-500 dark:text-slate-400 text-sm">Add teachers and office staff. They can log in with Google or email/password.</p>
         </div>
       </div>
+
+      {staffNotice ? (
+        <div className="flex items-start justify-between gap-3 rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-900 dark:border-green-900 dark:bg-green-950/30 dark:text-green-100" role="status">
+          <span>{staffNotice}</span>
+          <button type="button" onClick={() => setStaffNotice(null)} aria-label="Dismiss staff update message">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      ) : null}
 
       {/* Action Bar */}
       <div className="flex flex-wrap items-center gap-3 bg-white dark:bg-slate-900 rounded-xl border dark:border-slate-700 p-4">
@@ -207,6 +398,55 @@ export default function StaffManager({ staff, schoolId, onAdd, onRemove, onUpdat
         <div className="bg-white dark:bg-slate-900 rounded-xl border dark:border-slate-700 p-4">
           <h3 className="font-semibold mb-3 dark:text-white">Add Staff Member</h3>
           {addError && <p className="text-red-600 text-sm mb-2">{addError}</p>}
+          {addIdentityConflict && (
+            <div className="mb-3 space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
+              <p className="font-semibold">
+                {addIdentityConflict.code === 'STAFF_REACTIVATION_REQUIRED'
+                  ? 'Use the existing former-staff identity'
+                  : 'A staff member with this name already exists'}
+              </p>
+              <p>
+                Correct the existing identity when this is the same person. Create another account only when these are truly different people.
+              </p>
+              {(addIdentityConflict.candidates || []).map(candidate => {
+                const candidateName = candidate.user?.displayName
+                  || [candidate.user?.firstName, candidate.user?.lastName].filter(Boolean).join(' ')
+                  || candidate.user?.email
+                  || 'Staff member';
+                return (
+                  <div key={candidate.membershipId} className="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-200 bg-white/70 p-2 dark:border-amber-900 dark:bg-slate-900/70">
+                    <span>
+                      {candidateName} — {candidate.user?.email}
+                      <span className="mt-1 block font-mono text-[10px]">Membership ID: {candidate.membershipId}</span>
+                    </span>
+                    {candidate.status === 'inactive' ? (
+                      <button type="button" onClick={() => reactivateExistingStaff(candidate.membershipId)} disabled={adding} className="rounded bg-green-600 px-2 py-1 font-medium text-white hover:bg-green-700 disabled:opacity-50">
+                        Reactivate
+                      </button>
+                    ) : (
+                      <button type="button" onClick={() => editExistingIdentity(candidate)} className="rounded border border-amber-500 px-2 py-1 font-medium hover:bg-amber-100 dark:hover:bg-amber-900/40">
+                        Edit existing email
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+              <div className="flex flex-wrap gap-2">
+                {addIdentityConflict.code === 'STAFF_REACTIVATION_REQUIRED' ? (
+                  <button type="button" onClick={() => reactivateExistingStaff()} disabled={adding} className="rounded bg-green-600 px-3 py-1.5 font-medium text-white hover:bg-green-700 disabled:opacity-50">
+                    Reactivate existing staff
+                  </button>
+                ) : (
+                  <button type="button" onClick={confirmDistinctStaff} disabled={adding} className="rounded bg-amber-700 px-3 py-1.5 font-medium text-white hover:bg-amber-800 disabled:opacity-50">
+                    This is a different person
+                  </button>
+                )}
+                <button type="button" onClick={() => setAddIdentityConflict(null)} className="rounded border px-3 py-1.5 font-medium hover:bg-white/70 dark:hover:bg-slate-800">
+                  Cancel review
+                </button>
+              </div>
+            </div>
+          )}
           <form onSubmit={handleAdd} className="space-y-3">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <input
@@ -299,8 +539,18 @@ export default function StaffManager({ staff, schoolId, onAdd, onRemove, onUpdat
                     <input type="text" value={editData.lastName} onChange={e => setEditData(d => ({ ...d, lastName: e.target.value }))}
                       className="border dark:border-slate-600 rounded px-2 py-1 text-sm w-24 dark:bg-slate-800 dark:text-white" placeholder="Last" />
                   </div>
+                  <p className="mt-1 font-mono text-[10px] text-gray-500 dark:text-slate-400">Membership ID: {s.membershipId}</p>
                 </td>
-                <td className="p-3 text-gray-500 dark:text-slate-400 text-sm">{s.email}</td>
+                <td className="p-3">
+                  <input
+                    type="email"
+                    value={editData.email || ''}
+                    onChange={e => setEditData(d => ({ ...d, email: e.target.value }))}
+                    className="w-full min-w-48 rounded border px-2 py-1 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+                    aria-label={`Email for ${staffName}`}
+                  />
+                  <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">Correct the email here; do not recreate the staff account.</p>
+                </td>
                 <td className="p-3">
                   <select value={editData.role} onChange={e => setEditData(d => ({ ...d, role: e.target.value }))}
                     className="border dark:border-slate-600 rounded px-2 py-1 text-sm dark:bg-slate-800 dark:text-white">
@@ -321,6 +571,11 @@ export default function StaffManager({ staff, schoolId, onAdd, onRemove, onUpdat
                   </div>
                 </td>
                 <td className="p-3 text-right">
+                  {editError ? (
+                    <p className="mb-2 max-w-64 text-left text-xs text-red-700 dark:text-red-300" role="alert" data-testid="staff-edit-error">
+                      {editError}
+                    </p>
+                  ) : null}
                   <div className="flex items-center justify-end gap-2">
                     <button onClick={() => saveEdit(s)} disabled={saving}
                       className="px-3 py-1 bg-green-600 text-white rounded text-xs font-medium hover:bg-green-700 disabled:opacity-50">
@@ -339,7 +594,12 @@ export default function StaffManager({ staff, schoolId, onAdd, onRemove, onUpdat
                     <div className="w-8 h-8 bg-indigo-100 dark:bg-indigo-900/30 rounded-full flex items-center justify-center text-indigo-600 dark:text-indigo-400 text-xs font-medium">
                       {(s.first_name || s.email?.[0] || '?')[0]}{(s.last_name || '')[0] || ''}
                     </div>
-                    <span className="font-medium dark:text-white">{s.first_name && s.last_name ? `${s.first_name} ${s.last_name}` : s.email || '—'}</span>
+                    <div>
+                      <span className="font-medium dark:text-white">{s.first_name && s.last_name ? `${s.first_name} ${s.last_name}` : s.email || '—'}</span>
+                      <p className="mt-1 font-mono text-[10px] text-gray-500 dark:text-slate-400" data-testid={`staff-membership-id-${s.membershipId}`}>
+                        Membership ID: {s.membershipId}
+                      </p>
+                    </div>
                   </div>
                 </td>
                 <td className="p-3 text-gray-500 dark:text-slate-400">{s.email}</td>
@@ -360,7 +620,7 @@ export default function StaffManager({ staff, schoolId, onAdd, onRemove, onUpdat
                     <button type="button" onClick={() => startEdit(s)} aria-label={`Edit ${staffName}`} className="flex h-10 w-10 items-center justify-center rounded-lg text-gray-400 hover:bg-blue-50 hover:text-blue-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-500 dark:hover:bg-blue-950/40">
                       <Pencil className="w-4 h-4" />
                     </button>
-                    <button type="button" onClick={() => onRemove(s.id)} aria-label={`Remove ${staffName}`} className="flex h-10 w-10 items-center justify-center rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 dark:text-slate-500 dark:hover:bg-red-950/40">
+                    <button type="button" onClick={() => removeStaffAccess(s)} aria-label={`Remove school access for ${staffName} — ${s.email}`} title="Remove school access" className="flex h-10 w-10 items-center justify-center rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 dark:text-slate-500 dark:hover:bg-red-950/40">
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
@@ -372,6 +632,20 @@ export default function StaffManager({ staff, schoolId, onAdd, onRemove, onUpdat
         </table>
       </div>
 
+      <StaffAccessTransitionDialog
+        open={Boolean(transitionRequest)}
+        onOpenChange={(open) => {
+          if (!open) setTransitionRequest(null);
+        }}
+        staff={transitionRequest?.staff}
+        allStaff={normalized}
+        apiBasePath={`/schools/${schoolId}/staff`}
+        transitionAction={transitionRequest?.action || 'deactivate'}
+        newRole={transitionRequest?.newRole}
+        newGopilotRole={transitionRequest?.newGopilotRole}
+        onTransitionComplete={handleTransitionComplete}
+      />
+
       {/* Workspace Import Modal for Staff */}
       {showWorkspaceModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -381,12 +655,51 @@ export default function StaffManager({ staff, schoolId, onAdd, onRemove, onUpdat
                 <GoogleLogo className="w-5 h-5" />
                 <h3 className="font-semibold text-lg dark:text-white">Import Staff from Google Workspace</h3>
               </div>
-              <button onClick={() => { setShowWorkspaceModal(false); setWsUsers([]); setWsOrgUnits([]); setWsSelectedUsers(new Set()); setWsConnectorRequired(false); }}
+              <button onClick={() => { setShowWorkspaceModal(false); setWsUsers([]); setWsOrgUnits([]); setWsSelectedUsers(new Set()); setWsConnectorRequired(false); setWsImportResult(null); }}
                 className="p-1 hover:bg-gray-100 dark:hover:bg-slate-800 rounded dark:text-slate-300"><X className="w-5 h-5" /></button>
             </div>
 
             <div className="flex-1 overflow-auto p-4">
-              {wsConnectorRequired ? (
+              {wsImportResult ? (
+                <div className="space-y-4" data-testid="gopilot-workspace-staff-import-result">
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-gray-500 dark:text-slate-400">Imported</p>
+                      <p className="text-2xl font-bold text-green-700 dark:text-green-400">{wsImportResult.imported || 0}</p>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-gray-500 dark:text-slate-400">Updated</p>
+                      <p className="text-2xl font-bold text-blue-700 dark:text-blue-400">{wsImportResult.updated || 0}</p>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-gray-500 dark:text-slate-400">Skipped / review</p>
+                      <p className="text-2xl font-bold text-amber-700 dark:text-amber-400">{wsImportResult.skipped || 0}</p>
+                    </div>
+                  </div>
+                  {wsImportResult.errors?.length > 0 ? (
+                    <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900 dark:border-red-900 dark:bg-red-950/30 dark:text-red-100">
+                      <p className="mb-2 font-semibold">Rows requiring review ({wsImportResult.errors.length})</p>
+                      <ul className="max-h-48 list-disc space-y-1 overflow-y-auto pl-5" data-testid="gopilot-workspace-staff-import-errors">
+                        {wsImportResult.errors.map((issue, index) => (
+                          <li key={`${index}-${workspaceImportIssueText(issue)}`}>{workspaceImportIssueText(issue)}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  <p className="text-xs text-gray-500 dark:text-slate-400">
+                    Keep this result open until every skipped or failed row has been reviewed. No row is silently overwritten.
+                  </p>
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => { setShowWorkspaceModal(false); setWsImportResult(null); }}
+                      className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
+              ) : wsConnectorRequired ? (
                 <GoogleRosterConnectorPanel
                   basePath={`/schools/${schoolId}/google/roster-connector`}
                   onConnected={openWorkspaceImport}
@@ -447,7 +760,7 @@ export default function StaffManager({ staff, schoolId, onAdd, onRemove, onUpdat
                     <input type="checkbox"
                       checked={wsSelectedUsers.size === wsUsers.length && wsUsers.length > 0}
                       onChange={e => {
-                        if (e.target.checked) setWsSelectedUsers(new Set(wsUsers.map(u => u.email)));
+                        if (e.target.checked) setWsSelectedUsers(new Set(wsUsers.map(u => u.id).filter(Boolean)));
                         else setWsSelectedUsers(new Set());
                       }}
                     />
@@ -455,12 +768,12 @@ export default function StaffManager({ staff, schoolId, onAdd, onRemove, onUpdat
                   </div>
                   <div className="border dark:border-slate-700 rounded-lg divide-y dark:divide-slate-700 max-h-[40vh] overflow-auto">
                     {wsUsers.map(u => (
-                      <label key={u.email} className="flex items-center gap-3 p-2.5 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer">
+                      <label key={u.id || u.email} className="flex items-center gap-3 p-2.5 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer">
                         <input type="checkbox"
-                          checked={wsSelectedUsers.has(u.email)}
+                          checked={wsSelectedUsers.has(u.id)}
                           onChange={e => {
                             const next = new Set(wsSelectedUsers);
-                            if (e.target.checked) next.add(u.email); else next.delete(u.email);
+                            if (e.target.checked) next.add(u.id); else next.delete(u.id);
                             setWsSelectedUsers(next);
                           }}
                         />
@@ -478,7 +791,7 @@ export default function StaffManager({ staff, schoolId, onAdd, onRemove, onUpdat
               )}
             </div>
 
-            {!wsConnectorRequired && wsStep === 'users' && wsUsers.length > 0 && (
+            {!wsImportResult && !wsConnectorRequired && wsStep === 'users' && wsUsers.length > 0 && (
               <div className="border-t dark:border-slate-700 p-4 flex items-center justify-between">
                 <p className="text-sm text-gray-600 dark:text-slate-300">{wsSelectedUsers.size} selected</p>
                 <button

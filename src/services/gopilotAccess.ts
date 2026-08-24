@@ -1,5 +1,5 @@
 import type { Request, RequestHandler, Response } from "express";
-import { and, eq, inArray, isNull, or } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import db from "../db.js";
 import {
   schoolMemberships,
@@ -57,7 +57,7 @@ const GOPILOT_ROLE_PRIORITY: readonly GoPilotRole[] = [
 export function effectiveGoPilotRole(
   membership: Pick<SchoolMembership, "role" | "gopilotRole">
 ): GoPilotRole {
-  return (membership.gopilotRole || membership.role) as GoPilotRole;
+  return (membership.gopilotRole?.trim() || membership.role) as GoPilotRole;
 }
 
 export function isGoPilotManager(role: GoPilotRole | null | undefined): boolean {
@@ -156,9 +156,12 @@ export async function hasAnyActiveGoPilotStaffMembership(userId: string): Promis
         eq(schoolMemberships.userId, userId),
         eq(schoolMemberships.status, "active"),
         or(
-          inArray(schoolMemberships.gopilotRole, staffRoles),
+          sql`btrim(${schoolMemberships.gopilotRole}) IN ('admin', 'school_admin', 'office_staff', 'teacher')`,
           and(
-            or(isNull(schoolMemberships.gopilotRole), eq(schoolMemberships.gopilotRole, "")),
+            or(
+              isNull(schoolMemberships.gopilotRole),
+              sql`btrim(${schoolMemberships.gopilotRole}) = ''`
+            ),
             inArray(schoolMemberships.role, staffRoles)
           )
         )

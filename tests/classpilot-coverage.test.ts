@@ -910,8 +910,8 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     ));
     await inSchool(school.id, () => addGroupTeacher(
       directGroup.id,
-      coverageStaff.id,
-      "co_teacher"
+      admin.id,
+      "co-teacher"
     ));
     const coverageGroup = await inSchool(school.id, () => createCoverageScopeGroup({
       group: {
@@ -934,7 +934,10 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       school.id,
       [directGroup.id, directGroup.id]
     ));
-    assert.deepEqual(teachers.get(directGroup.id), new Set([coverageStaff.id]));
+    assert.deepEqual(
+      teachers.get(directGroup.id),
+      new Set([teacher.id, admin.id])
+    );
     const coverage = await inSchool(school.id, () => getCoverageScopeGroupStudentIdsForGroups(
       school.id,
       [coverageGroup.id, coverageGroup.id]
@@ -1345,7 +1348,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     } as any));
     await inSchool(school.id, () => addGroupStudentsDetailed(sourceGroup.id, [overlapStudent.id]));
     await inSchool(school.id, () => addGroupStudentsDetailed(scheduledGroup.id, [scheduledOnlyStudent.id, overlapStudent.id]));
-    await inSchool(school.id, () => addGroupTeacher(scheduledGroup.id, scheduledCoTeacher.id, "co_teacher"));
+    await inSchool(school.id, () => addGroupTeacher(scheduledGroup.id, scheduledCoTeacher.id, "co-teacher"));
     const sourceSession = await inSchool(school.id, () => createTeachingSession({
       groupId: sourceGroup.id,
       teacherId: sourceTeacher.id,

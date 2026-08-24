@@ -52,6 +52,28 @@ async function ensureMigrationLedger(pool: Pool): Promise<void> {
   `);
 }
 
+/**
+ * Read a durable phase marker before choosing a staged migration manifest.
+ * Once a contract migration is complete, later one-off tasks must retain it
+ * so its checksum and every later dependency remain monotonic.
+ */
+export async function hasCompletedSchoolPilotMigration(
+  pool: Pool,
+  migrationIds: readonly string[]
+): Promise<boolean> {
+  if (migrationIds.length === 0) return false;
+  await ensureMigrationLedger(pool);
+  const result = await pool.query<{ present: boolean }>(`
+    SELECT EXISTS (
+      SELECT 1
+      FROM schema_migrations
+      WHERE id = ANY($1::text[])
+        AND status = 'complete'
+    ) AS present
+  `, [migrationIds]);
+  return result.rows[0]?.present === true;
+}
+
 async function runOneMigration(
   pool: Pool,
   migration: SchoolPilotMigration,

@@ -24,9 +24,6 @@ import {
   updateSchool,
   updateCanonicalKioskClass,
   updateLegacyKioskClass,
-  getUserByEmail,
-  createUser,
-  createMembership,
   getMembershipByUserAndSchool,
   deleteMembershipForSchool,
   updateMembership,
@@ -41,13 +38,19 @@ import {
   getGroupByIdAndSchool,
   getUserById,
   validateStaffEmailDomainForSchool,
+  upsertAdminClassroomClass,
 } from "../services/storage.js";
 import db from "../db.js";
-import { heartbeats, devices as deviceTable, groups, dailyUsage } from "../schema/classpilot.js";
+import { heartbeats, devices as deviceTable, dailyUsage } from "../schema/classpilot.js";
 import { eq, and, sql } from "drizzle-orm";
 import { createGradeSchema } from "../schema/validation.js";
-import { hashPassword } from "../util/password.js";
 import { logAudit, getAuditLogs, countAuditLogs } from "../services/audit.js";
+import {
+  createStaffIdentityForSchool,
+  resetSchoolScopedStaffPassword,
+  sendStaffIdentityError,
+  updateSchoolScopedStaffProfile,
+} from "../services/staffIdentity.js";
 import { stopMailpilotMonitoringForStudent } from "../services/mailpilotProvisioning.js";
 import { revokeClasspilotStudentSocketsAfterRosterRemoval } from "../realtime/studentSocketRevocation.js";
 import {
@@ -438,11 +441,9 @@ router.post("/teacher-grades/self-assign", ...legacyPassPilotClassAuth, async (r
 
 router.get("/teachers", ...passPilotAuth, async (req, res, next) => {
   try {
-    // Include office_staff since they act as teachers in PassPilot/ClassPilot
+    // PassPilot class ownership requires an active teaching role.
     const allStaff = await getUsersBySchool(res.locals.schoolId!);
-    const teachers = allStaff.filter(t =>
-      t.role === "teacher" || t.role === "office_staff"
-    );
+    const teachers = allStaff.filter(t => t.role === "teacher");
     return res.json({
       teachers: teachers.map((t) => {
         const { password: _, ...safeUser } = t.user;
@@ -461,10 +462,10 @@ router.get("/teachers", ...passPilotAuth, async (req, res, next) => {
 
 router.get("/admin/teachers", ...schoolAuth, requireRole("admin", "school_admin"), async (req, res, next) => {
   try {
-    // Return all staff who can teach (office_staff acts as teacher in PassPilot/ClassPilot)
+    // Return active roles eligible for instructional ownership.
     const allStaff = await getUsersBySchool(res.locals.schoolId!);
     const teachable = allStaff.filter(t =>
-      t.role === "teacher" || t.role === "school_admin" || t.role === "admin" || t.role === "office_staff"
+      t.role === "teacher" || t.role === "school_admin" || t.role === "admin"
     );
     return res.json({
       teachers: teachable.map((t) => {
@@ -497,13 +498,29 @@ router.post("/admin/teachers", ...schoolAuth, requireRole("admin"), async (req, 
 
 router.get("/admin/users", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
   try {
-    const staff = await getStaffBySchool(res.locals.schoolId!);
+    const requestedStatus = String(req.query.status || "active");
+    if (!["active", "inactive", "all"].includes(requestedStatus)) {
+      return res.status(400).json({
+        error: "status must be active, inactive, or all",
+        code: "INVALID_STAFF_STATUS",
+      });
+    }
+    const staff = await getStaffBySchool(
+      res.locals.schoolId!,
+      requestedStatus as "active" | "inactive" | "all"
+    );
     return res.json({
       users: staff.map((s) => {
         const { password: _, ...safeUser } = s.user;
         // Map DB role "admin" → "school_admin" for the frontend display
         const displayRole = s.role === "admin" ? "school_admin" : s.role;
-        return { membershipId: s.id, userId: s.userId, role: displayRole, user: safeUser };
+        return {
+          membershipId: s.id,
+          userId: s.userId,
+          role: displayRole,
+          status: s.status,
+          user: safeUser,
+        };
       }),
     });
   } catch (err) {
@@ -514,7 +531,7 @@ router.get("/admin/users", ...schoolAuth, requireRole("admin"), async (req, res,
 // POST /admin/users - Create staff member (ClassPilot Admin panel)
 router.post("/admin/users", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
   try {
-    const { email, role, name, password } = req.body;
+    const { email, role, name, password, confirmDistinctPerson } = req.body;
     if (!email) {
       return res.status(400).json({ error: "email is required" });
     }
@@ -523,56 +540,26 @@ router.post("/admin/users", ...schoolAuth, requireRole("admin"), async (req, res
     if (!["admin", "teacher", "office_staff"].includes(staffRole)) {
       return res.status(400).json({ error: "Invalid role" });
     }
-    const domainValidation = await validateStaffEmailDomainForSchool(email, res.locals.schoolId!);
-    if (!domainValidation.ok) {
-      return res.status(400).json({
-        error: domainValidation.message,
-        code: domainValidation.code,
-        expectedDomain: domainValidation.expectedDomain,
-        actualDomain: domainValidation.actualDomain,
-      });
-    }
-
-    let user = await getUserByEmail(email.toLowerCase());
-
-    if (!user) {
-      const hashedPw = password ? await hashPassword(password) : null;
-      const nameParts = (name || email.split("@")[0]).split(/\s+/);
-      user = await createUser({
-        email: email.toLowerCase(),
-        password: hashedPw,
-        firstName: nameParts[0] || "",
-        lastName: nameParts.slice(1).join(" ") || "",
-        displayName: name || email.split("@")[0],
-      });
-    }
-
-    const existing = await getMembershipByUserAndSchool(user.id, res.locals.schoolId!);
-    if (existing) {
-      return res.status(409).json({ error: "User already has a membership in this school" });
-    }
-
-    const membership = await createMembership({
-      userId: user.id,
+    const result = await createStaffIdentityForSchool({
       schoolId: res.locals.schoolId!,
       role: staffRole,
+      email,
+      displayName: name,
+      password,
+      confirmDistinctPerson: confirmDistinctPerson === true,
+      audit: {
+        userId: req.authUser!.id,
+        userRole: res.locals.membershipRole,
+        source: "compat.admin.users.create",
+      },
+      auditAction: "user.create",
     });
-
-    logAudit({
-      schoolId: res.locals.schoolId!,
-      userId: req.authUser!.id,
-      userEmail: req.authUser!.email,
-      userRole: res.locals.membershipRole,
-      action: "user.create",
-      entityType: "user",
-      entityId: user.id,
-      entityName: user.displayName || email,
-      changes: { role: staffRole },
-    });
+    const { user, membership } = result;
 
     const { password: _, ...safeUser } = user;
     return res.status(201).json({ user: safeUser, membership });
   } catch (err) {
+    if (sendStaffIdentityError(res, err)) return;
     next(err);
   }
 });
@@ -583,22 +570,38 @@ router.patch("/admin/users/:id", ...schoolAuth, requireRole("admin"), async (req
     const id = param(req, "id");
     const { role, name } = req.body;
 
+    if (role !== undefined && name !== undefined) {
+      return res.status(400).json({
+        error: "Change the staff role and global profile name in separate requests.",
+        code: "STAFF_PROFILE_ROLE_UPDATE_MUST_BE_SEPARATE",
+      });
+    }
+
     const data: Record<string, unknown> = {};
     if (role) {
       data.role = role === "school_admin" ? "admin" : role;
     }
 
-    const membership = await updateMembershipForSchool(id, res.locals.schoolId!, data);
+    const membership = await updateMembershipForSchool(
+      id,
+      res.locals.schoolId!,
+      data,
+      undefined,
+      req.authUser!.isSuperAdmin
+    );
     if (!membership) {
       return res.status(404).json({ error: "Membership not found" });
     }
 
     if (name && membership.userId) {
       const nameParts = name.split(/\s+/);
-      await updateUser(membership.userId, {
+      await updateSchoolScopedStaffProfile({
+        schoolId: res.locals.schoolId!,
+        membershipId: membership.id,
         firstName: nameParts[0] || "",
         lastName: nameParts.slice(1).join(" ") || "",
         displayName: name,
+        allowCentralIdentityMutation: req.authUser!.isSuperAdmin,
       });
     }
 
@@ -616,6 +619,7 @@ router.patch("/admin/users/:id", ...schoolAuth, requireRole("admin"), async (req
 
     return res.json({ membership });
   } catch (err) {
+    if (sendStaffIdentityError(res, err)) return;
     next(err);
   }
 });
@@ -628,31 +632,20 @@ router.post("/admin/users/:id/password", ...schoolAuth, requireRole("admin"), as
     if (!newPassword) {
       return res.status(400).json({ error: "newPassword is required" });
     }
-    const staff = await getStaffBySchool(res.locals.schoolId!);
-    const member = staff.find((s) => s.id === param(req, "id"));
-    if (!member) {
-      return res.status(404).json({ error: "Staff member not found" });
-    }
-    const hashed = await hashPassword(newPassword);
-    const updated = await updateUser(member.userId, { password: hashed });
-    if (!updated) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    logAudit({
+    await resetSchoolScopedStaffPassword({
       schoolId: res.locals.schoolId!,
-      userId: req.authUser!.id,
-      userEmail: req.authUser!.email,
-      userRole: res.locals.membershipRole,
-      action: "user.update",
-      entityType: "user",
-      entityId: member.userId,
-      entityName: member.user?.displayName || member.user?.email,
-      changes: { passwordReset: true },
+      membershipId: param(req, "id"),
+      password: newPassword,
+      audit: {
+        userId: req.authUser!.id,
+        userRole: res.locals.membershipRole,
+        source: "compat.admin.users.password",
+      },
     });
 
     return res.json({ ok: true });
   } catch (err) {
+    if (sendStaffIdentityError(res, err)) return;
     next(err);
   }
 });
@@ -661,7 +654,12 @@ router.post("/admin/users/:id/password", ...schoolAuth, requireRole("admin"), as
 router.delete("/admin/users/:id", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
   try {
     const membershipId = param(req, "id");
-    const deleted = await deleteMembershipForSchool(membershipId, res.locals.schoolId!);
+    const deleted = await deleteMembershipForSchool(
+      membershipId,
+      res.locals.schoolId!,
+      undefined,
+      req.authUser!.isSuperAdmin
+    );
     if (!deleted) {
       return res.status(404).json({ error: "Membership not found" });
     }
@@ -706,7 +704,12 @@ router.get("/admin/audit-logs", ...schoolAuth, requireRole("admin"), async (req,
 router.delete("/admin/teachers/:id", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
   try {
     const membershipId = param(req, "id");
-    const deleted = await deleteMembershipForSchool(membershipId, res.locals.schoolId!);
+    const deleted = await deleteMembershipForSchool(
+      membershipId,
+      res.locals.schoolId!,
+      undefined,
+      req.authUser!.isSuperAdmin
+    );
     if (!deleted) return res.status(404).json({ error: "Staff member not found" });
     logAudit({
       schoolId: res.locals.schoolId!,
@@ -793,14 +796,18 @@ router.post("/admin/classroom/create-class", ...schoolAuth, requireRole("admin")
         actualDomain: domainValidation.actualDomain,
       });
     }
-    // Create a group for this course
-    const [group] = await db.insert(groups).values({
+    const { group } = await upsertAdminClassroomClass({
       schoolId,
-      teacherId,
-      name: req.body.courseName || `Class ${courseId}`,
-      groupType: "admin_class",
-      gradeLevel: gradeLevel || null,
-    }).returning();
+      primaryTeacherId: teacherId,
+      coTeacherIds: [],
+      data: {
+        name: req.body.courseName || `Class ${courseId}`,
+        groupType: "admin_class",
+        gradeLevel: gradeLevel || null,
+        googleClassroomCourseId: String(courseId),
+      },
+      scheduleChangeActorId: req.authUser!.id,
+    });
     return res.status(201).json({ group });
   } catch (err) {
     next(err);

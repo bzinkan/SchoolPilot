@@ -61,6 +61,7 @@ import {
   requestHasAnySchoolRole,
   selectRequestSchoolRole,
 } from "../../services/schoolAuthorization.js";
+import { getStaffAssignmentIntegrityIssues } from "../../services/staffAssignmentLifecycle.js";
 
 const router = Router();
 
@@ -355,7 +356,7 @@ function issue(status: "pass" | "warn" | "fail", category: string, title: string
 
 async function buildReadinessPayload(req: any, res: any) {
   const schoolId = res.locals.schoolId!;
-  const [school, settings, rosterConnector, students, dbDevices, courses, watches, recentImports, cases, staffDomainMismatches] = await Promise.all([
+  const [school, settings, rosterConnector, students, dbDevices, courses, watches, recentImports, cases, staffDomainMismatches, classOwnershipIntegrity] = await Promise.all([
     getSchoolById(schoolId),
     getSettingsForSchool(schoolId),
     getGoogleRosterConnector(schoolId),
@@ -366,6 +367,7 @@ async function buildReadinessPayload(req: any, res: any) {
     db.select().from(importRuns).where(eq(importRuns.schoolId, schoolId)).orderBy(desc(importRuns.createdAt)).limit(5),
     listOpenSafetyCasesForSchool(schoolId, 20),
     getStaffEmailDomainMismatches(schoolId),
+    getStaffAssignmentIntegrityIssues(schoolId),
   ]);
 
   const now = Date.now();
@@ -434,6 +436,7 @@ async function buildReadinessPayload(req: any, res: any) {
     issue(googleDomainVerified ? "pass" : "fail", "Google", "Delegated admin domain", !rosterConnector ? "Connect the Google Workspace Roster Connector." : googleDomainVerified ? `Connector domain ${connectorDomain} matches this school.` : `Connector domain ${connectorDomain || "unknown"} or delegated admin domain ${delegatedAdminDomain || "unknown"} does not match ${schoolDomain || "the school domain"}.`, "/classpilot/it-readiness"),
     issue(missingRosterScopes.length === 0 && extraRosterScopes.length === 0 ? "pass" : "fail", "Google", "Roster Connector scopes", missingRosterScopes.length === 0 && extraRosterScopes.length === 0 ? "Only the approved read-only roster scopes are configured." : `Missing: ${missingRosterScopes.join(", ") || "none"}; Extra: ${extraRosterScopes.join(", ") || "none"}.`, "/classpilot/it-readiness"),
     issue(staffDomainMismatches.length === 0 ? "pass" : "fail", "Staff", "Staff email domain match", staffDomainMismatches.length === 0 ? "All staff emails match the school Workspace domain." : `${staffDomainMismatches.length} staff account(s) use the wrong or unverifiable domain.`, "/admin/users"),
+    issue(classOwnershipIntegrity.total === 0 ? "pass" : "fail", "Staff", "Class ownership integrity", classOwnershipIntegrity.total === 0 ? "Every live staff-owned record and active workflow has an eligible school member." : `${classOwnershipIntegrity.total} live staff ownership issue(s) require review.`, "/classpilot/admin"),
     issue(courses.length > 0 ? "pass" : "warn", "Roster", "Classroom sync history", courses.length > 0 ? `${courses.length} Classroom course(s) synced.` : "No Classroom courses have been synced yet.", "/classpilot/admin/classes"),
     issue(recentImports.length > 0 ? "pass" : "warn", "Roster", "Import run log", recentImports.length > 0 ? "Recent import outcomes are available." : "No import runs recorded yet.", "/classpilot/students"),
     issue(missingEmail.length === 0 ? "pass" : "fail", "Roster", "Student identity emails", missingEmail.length === 0 ? "Every student has an email and emailLc." : `${missingEmail.length} student(s) need email repair.`, "/classpilot/students"),
@@ -484,6 +487,7 @@ async function buildReadinessPayload(req: any, res: any) {
         disabledAt: rosterConnector?.disabledAt || null,
       },
       staffDomainMismatches,
+      classOwnershipIntegrity,
       mailpilot: {
         entitled: !!school?.mailpilotEntitled,
         enabled: !!school?.classpilotEmailMonitoring,

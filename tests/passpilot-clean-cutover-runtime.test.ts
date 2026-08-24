@@ -8,6 +8,7 @@ import {
   createGrade,
   createGroup,
   createLegacyPass,
+  createMembership,
   createProductLicense,
   createSchool,
   createStudent,
@@ -71,21 +72,27 @@ before(async () => {
     } as any);
     cleanSchool = await createSchool({
       name: `${TAG}_clean`,
-      domain: `${TAG}-clean.example.edu`,
+      domain: `${TAG}.example.edu`,
       slug: `${TAG}-clean`,
     } as any);
     dirtySchool = await createSchool({
       name: `${TAG}_dirty`,
-      domain: `${TAG}-dirty.example.edu`,
+      domain: `${TAG}.example.edu`,
       slug: `${TAG}-dirty`,
     } as any);
     emptySchool = await createSchool({
       name: `${TAG}_empty`,
-      domain: `${TAG}-empty.example.edu`,
+      domain: `${TAG}.example.edu`,
       slug: `${TAG}-empty`,
     } as any);
     for (const school of [cleanSchool, dirtySchool, emptySchool]) {
       await addBothLicenses(school.id);
+      await createMembership({
+        userId: teacher.id,
+        schoolId: school.id,
+        role: "teacher",
+        status: "active",
+      });
       await inSchool(school.id, () =>
         upsertSettings(school.id, {
           schoolName: school.name,

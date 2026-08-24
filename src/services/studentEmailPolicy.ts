@@ -8,6 +8,7 @@ import {
   studentEmailDomainMatches,
   validateStaffEmailDomainForSchool,
 } from "./storage.js";
+import { isDatabaseErrorCode } from "../util/databaseError.js";
 
 export type StudentEmailRules = {
   requireEmail: boolean;
@@ -34,11 +35,7 @@ export function emailDomainError(
 }
 
 export function isUniqueViolation(err: unknown): boolean {
-  return !!(
-    err &&
-    typeof err === "object" &&
-    (err as { code?: string }).code === "23505"
-  );
+  return isDatabaseErrorCode(err, "23505");
 }
 
 export function isEmailChanging(

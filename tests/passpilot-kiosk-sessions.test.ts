@@ -44,6 +44,7 @@ let gradeB: any;
 let gradeC: any;
 let studentA: any;
 let schemaReady = false;
+let staffLifecycleGuardInstalled = false;
 
 function inSchool<T>(schoolId: string, fn: () => Promise<T>): Promise<T> {
   return runWithTenantContext({ schoolId }, fn);
@@ -113,6 +114,20 @@ before(async () => {
     .then((result: any) => result.rows[0]?.ready === true)
     .catch(() => false);
   if (!schemaReady) return;
+
+  const staffLifecycleGuardResult = await pool.query(`
+    SELECT EXISTS (
+      SELECT 1
+      FROM pg_trigger AS trigger
+      INNER JOIN pg_class AS relation ON relation.oid = trigger.tgrelid
+      INNER JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+      WHERE namespace.nspname = 'public'
+        AND relation.relname = 'school_memberships'
+        AND trigger.tgname = 'classpilot_staff_assignment_membership_update'
+        AND trigger.tgenabled IN ('O', 'A')
+    ) AS installed
+  `);
+  staffLifecycleGuardInstalled = staffLifecycleGuardResult.rows[0]?.installed === true;
 
   // Self-provision schema the tests need (mirrors the src/index.ts inline
   // migration) so older local DBs run without a server boot. Tolerant of a
@@ -284,22 +299,27 @@ after(async () => {
     if (schemaReady && schoolA?.id && schoolB?.id && schoolC?.id) {
       await asSystem(async () => {
         const ids = sql.join([schoolA.id, schoolB.id, schoolC.id].map((id) => sql`${id}`), sql`, `);
-        await db.execute(sql`DELETE FROM audit_logs WHERE school_id IN (${ids})`);
-        await db.execute(sql`DELETE FROM passes WHERE school_id IN (${ids})`);
-        await db.execute(sql`DELETE FROM passpilot_kiosk_sessions WHERE school_id IN (${ids})`);
-        await db.execute(sql`DELETE FROM passpilot_kiosk_devices WHERE school_id IN (${ids})`);
-        await db.execute(sql`DELETE FROM teacher_grades WHERE grade_id IN (SELECT id FROM grades WHERE school_id IN (${ids}))`);
-        await db.execute(sql`DELETE FROM passpilot_grade_students WHERE school_id IN (${ids})`);
-        await db.execute(sql`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (${ids}))`);
-        await db.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (${ids}))`);
-        await db.execute(sql`DELETE FROM groups WHERE school_id IN (${ids})`);
-        await db.execute(sql`DELETE FROM grades WHERE school_id IN (${ids})`);
-        await db.execute(sql`DELETE FROM students WHERE school_id IN (${ids})`);
-        await db.execute(sql`DELETE FROM settings WHERE school_id IN (${ids})`);
-        await db.execute(sql`DELETE FROM product_licenses WHERE school_id IN (${ids})`);
-        await db.execute(sql`DELETE FROM school_memberships WHERE school_id IN (${ids})`);
-        await db.execute(sql`DELETE FROM schools WHERE id IN (${ids})`);
-        await db.execute(sql`DELETE FROM users WHERE email LIKE ${`%@${TAG}-%`}`);
+        await db.transaction(async (tx: typeof db) => {
+          await tx.execute(sql`DELETE FROM audit_logs WHERE school_id IN (${ids})`);
+          await tx.execute(sql`DELETE FROM passes WHERE school_id IN (${ids})`);
+          await tx.execute(sql`DELETE FROM passpilot_kiosk_sessions WHERE school_id IN (${ids})`);
+          await tx.execute(sql`DELETE FROM passpilot_kiosk_devices WHERE school_id IN (${ids})`);
+          await tx.execute(sql`DELETE FROM teacher_grades WHERE grade_id IN (SELECT id FROM grades WHERE school_id IN (${ids}))`);
+          await tx.execute(sql`DELETE FROM passpilot_grade_students WHERE school_id IN (${ids})`);
+          await tx.execute(sql`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (${ids}))`);
+          await tx.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (${ids}))`);
+          await tx.execute(sql`DELETE FROM groups WHERE school_id IN (${ids})`);
+          await tx.execute(sql`DELETE FROM grades WHERE school_id IN (${ids})`);
+          await tx.execute(sql`DELETE FROM students WHERE school_id IN (${ids})`);
+          await tx.execute(sql`DELETE FROM settings WHERE school_id IN (${ids})`);
+          await tx.execute(sql`DELETE FROM product_licenses WHERE school_id IN (${ids})`);
+          await tx.execute(sql`DELETE FROM school_memberships WHERE school_id IN (${ids})`);
+          await tx.execute(sql`
+            UPDATE schools
+            SET status = 'suspended', is_active = false, deleted_at = now()
+            WHERE id IN (${ids})
+          `);
+        });
       });
     }
   } finally {
@@ -576,27 +596,66 @@ describe("PassPilot per-device kiosk sessions", { concurrency: false }, () => {
     assert.equal(claim.status, 404);
   });
 
-  it("auto-releases sessions when the teacher's membership is deactivated (every endpoint)", async (t) => {
+  it("guards membership deactivation or auto-releases the teacher's live kiosk sessions", async (t) => {
     if (!schemaReady) return t.skip("migration not applied");
-    // Two sessions so lookup and config paths each get a fresh dead-teacher session.
     const selfOne = await requestJson("POST", "/passpilot/kiosk/sessions/self", { classId: gradeB.id }, authFor(teacherB, schoolA.id));
     const selfTwo = await requestJson("POST", "/passpilot/kiosk/sessions/self", { classId: gradeB.id }, authFor(teacherB, schoolA.id));
     assert.equal(selfOne.status, 201);
     assert.equal(selfTwo.status, 201);
-    await asSystem(() =>
-      db.execute(sql`UPDATE school_memberships SET status = 'inactive' WHERE school_id = ${schoolA.id} AND user_id = ${teacherB.id}`)
-    );
-    // /lookup and /checkin must enforce teacher liveness just like /config and
-    // /checkout — an ownerless session must not keep serving student data.
-    const lookup = await requestJson("POST", "/passpilot/kiosk/lookup", { studentIdNumber: "12345" }, kioskHeaders(schoolA.id, selfOne.body.session.id));
-    assert.equal(lookup.status, 404);
-    assert.equal(lookup.body.code, "PASSPILOT_KIOSK_SESSION_EXPIRED");
-    const config = await requestJson("GET", `/passpilot/kiosk/config?school=${schoolA.id}`, undefined, kioskHeaders(schoolA.id, selfTwo.body.session.id));
-    assert.equal(config.status, 404);
-    assert.equal(config.body.code, "PASSPILOT_KIOSK_SESSION_EXPIRED");
-    await asSystem(() =>
-      db.execute(sql`UPDATE school_memberships SET status = 'active' WHERE school_id = ${schoolA.id} AND user_id = ${teacherB.id}`)
-    );
+    try {
+      if (staffLifecycleGuardInstalled) {
+        // Stage-five integrity makes an ownerless live session impossible, so
+        // lifecycle transitions must resolve these dependencies first.
+        await assert.rejects(
+          asSystem(() =>
+            db.execute(sql`UPDATE school_memberships SET status = 'inactive' WHERE school_id = ${schoolA.id} AND user_id = ${teacherB.id}`)
+          ),
+          (error) =>
+            error instanceof Error &&
+            error.cause instanceof Error &&
+            error.cause.message.includes("STAFF_ASSIGNMENTS_REQUIRE_REASSIGNMENT")
+        );
+        const liveSessions = await asSystem<{ rows: Array<{ count: number }> }>(() => db.execute(sql`
+          SELECT count(*)::integer AS count
+          FROM passpilot_kiosk_sessions
+          WHERE id IN (${selfOne.body.session.id}, ${selfTwo.body.session.id})
+            AND status <> 'released'
+        `));
+        assert.equal(liveSessions.rows[0]?.count, 2);
+        const firstConfig = await requestJson("GET", `/passpilot/kiosk/config?school=${schoolA.id}`, undefined, kioskHeaders(schoolA.id, selfOne.body.session.id));
+        const secondConfig = await requestJson("GET", `/passpilot/kiosk/config?school=${schoolA.id}`, undefined, kioskHeaders(schoolA.id, selfTwo.body.session.id));
+        assert.equal(firstConfig.status, 200);
+        assert.equal(secondConfig.status, 200);
+      } else {
+        // Drizzle-push test databases do not install the stage-five constraint
+        // triggers. Preserve the endpoint's defense-in-depth behavior there.
+        await asSystem(() =>
+          db.execute(sql`UPDATE school_memberships SET status = 'inactive' WHERE school_id = ${schoolA.id} AND user_id = ${teacherB.id}`)
+        );
+        const lookup = await requestJson("POST", "/passpilot/kiosk/lookup", { studentIdNumber: "12345" }, kioskHeaders(schoolA.id, selfOne.body.session.id));
+        assert.equal(lookup.status, 404);
+        assert.equal(lookup.body.code, "PASSPILOT_KIOSK_SESSION_EXPIRED");
+        const config = await requestJson("GET", `/passpilot/kiosk/config?school=${schoolA.id}`, undefined, kioskHeaders(schoolA.id, selfTwo.body.session.id));
+        assert.equal(config.status, 404);
+        assert.equal(config.body.code, "PASSPILOT_KIOSK_SESSION_EXPIRED");
+      }
+    } finally {
+      await asSystem(async () => {
+        await db.transaction(async (tx: typeof db) => {
+          await tx.execute(sql`
+            UPDATE passpilot_kiosk_sessions
+            SET status = 'released', released_at = now()
+            WHERE id IN (${selfOne.body.session.id}, ${selfTwo.body.session.id})
+          `);
+          await tx.execute(sql`
+            UPDATE school_memberships
+            SET status = 'active'
+            WHERE school_id = ${schoolA.id}
+              AND user_id = ${teacherB.id}
+          `);
+        });
+      });
+    }
   });
 
   it("supports the full canonical (ClassPilot-groups) session flow", async (t) => {
@@ -845,9 +904,28 @@ describe("PassPilot kiosk device memory", { concurrency: false }, () => {
 
   it("self-heals the binding when the teacher is no longer active staff", async (t) => {
     if (!schemaReady) return t.skip("migration not applied");
-    await asSystem(() =>
-      db.execute(sql`UPDATE school_memberships SET status = 'inactive' WHERE school_id = ${schoolA.id} AND user_id = ${teacherA.id}`)
-    );
+    await asSystem(async () => {
+      await db.transaction(async (tx: typeof db) => {
+        await tx.execute(sql`
+          UPDATE passpilot_kiosk_sessions
+          SET status = 'released', released_at = now()
+          WHERE school_id = ${schoolA.id}
+            AND teacher_id = ${teacherA.id}
+            AND status <> 'released'
+        `);
+        await tx.execute(sql`
+          DELETE FROM teacher_grades
+          WHERE teacher_id = ${teacherA.id}
+            AND grade_id IN (${gradeA.id}, ${gradeB.id})
+        `);
+        await tx.execute(sql`
+          UPDATE school_memberships
+          SET status = 'inactive'
+          WHERE school_id = ${schoolA.id}
+            AND user_id = ${teacherA.id}
+        `);
+      });
+    });
     try {
       const resumed = await requestJson("POST", "/passpilot/kiosk/session/resume", undefined, deviceHeaders(schoolA.id, DEV1));
       assert.equal(resumed.status, 404);
@@ -856,9 +934,21 @@ describe("PassPilot kiosk device memory", { concurrency: false }, () => {
       const boot = await requestJson("POST", "/passpilot/kiosk/session", {}, deviceHeaders(schoolA.id, DEV1));
       assert.equal(boot.body.resume, null);
     } finally {
-      await asSystem(() =>
-        db.execute(sql`UPDATE school_memberships SET status = 'active' WHERE school_id = ${schoolA.id} AND user_id = ${teacherA.id}`)
-      );
+      await asSystem(async () => {
+        await db.transaction(async (tx: typeof db) => {
+          await tx.execute(sql`
+            UPDATE school_memberships
+            SET status = 'active'
+            WHERE school_id = ${schoolA.id}
+              AND user_id = ${teacherA.id}
+          `);
+          await tx.execute(sql`
+            INSERT INTO teacher_grades (teacher_id, grade_id)
+            VALUES (${teacherA.id}, ${gradeA.id}), (${teacherA.id}, ${gradeB.id})
+            ON CONFLICT DO NOTHING
+          `);
+        });
+      });
     }
   });
 

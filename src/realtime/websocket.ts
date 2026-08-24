@@ -9,10 +9,11 @@ import {
   verifyStudentToken,
   type StudentTokenPayload,
 } from "../services/deviceJwt.js";
-import { verifyUserToken } from "../services/jwt.js";
+import { credentialVersionMatches, verifyUserToken } from "../services/jwt.js";
 import errorMonitor from "../services/errorMonitor.js";
 import {
   registerWsClient,
+  closeStaffUserSocketsLocal,
   removeWsClient,
   authenticateWsClient,
   broadcastToTeachersLocal,
@@ -38,6 +39,7 @@ import {
 } from "./ws-redis.js";
 import {
   getSettingsForSchool,
+  getUserById,
   getMembershipByUserAndSchool,
   updateClasspilotCommandSummary,
   withClasspilotCommandBroadcastLock,
@@ -139,6 +141,8 @@ export function invalidatePassiveWebSocketAuthorizationLocal(schoolId: string): 
 registerCacheInvalidationHandler((target) => {
   if (target.cache === "classpilot-passive-authorization") {
     invalidatePassiveWebSocketAuthorizationLocal(target.schoolId);
+  } else if (target.cache === "user-credentials") {
+    closeStaffUserSocketsLocal(target.userId);
   }
 });
 
@@ -797,6 +801,7 @@ export function setupWebSocket(
             studentSessionId: client.studentSessionId,
             deviceId: client.deviceId,
             userId: undefined,
+            authVersion: undefined,
           }
         : {
             role: client.role,
@@ -805,16 +810,23 @@ export function setupWebSocket(
             studentSessionId: undefined,
             deviceId: undefined,
             userId: client.userId,
+            authVersion: client.authVersion,
           };
       const generation = passiveAuthorizationGeneration(binding.schoolId);
       const key = binding.role === "student"
         ? `student:${binding.schoolId}:${binding.studentId ?? ""}:${binding.studentSessionId ?? ""}:${binding.deviceId ?? ""}`
-        : `staff:${binding.schoolId}:${binding.userId ?? ""}:${binding.role}`;
+        : `staff:${binding.schoolId}:${binding.userId ?? ""}:${binding.role}:${binding.authVersion ?? 1}`;
       const outcome = await singleFlightPassiveAuthorization(key, async () => {
         if (binding.role === "student") {
           return hasActiveStudentWebSocketBinding(binding);
         }
-        return (await activeStaffWebSocketRole(binding)) === binding.role;
+        const [role, user] = await Promise.all([
+          activeStaffWebSocketRole(binding),
+          binding.userId ? getUserById(binding.userId) : Promise.resolve(undefined),
+        ]);
+        return role === binding.role && Boolean(
+          user && credentialVersionMatches(binding.authVersion, user.authVersion)
+        );
       });
       if (outcome.joined) activity.passiveAuthorizationJoins += 1;
       else if (outcome.bypassed) activity.passiveAuthorizationBypasses += 1;
@@ -827,7 +839,8 @@ export function setupWebSocket(
         client.studentId === binding.studentId &&
         client.studentSessionId === binding.studentSessionId &&
         client.deviceId === binding.deviceId &&
-        client.userId === binding.userId;
+        client.userId === binding.userId &&
+        client.authVersion === binding.authVersion;
       if (!outcome.authorized || !bindingUnchanged) {
         activity.passiveAuthorizationDenied += 1;
         return false;
@@ -1071,6 +1084,17 @@ export function setupWebSocket(
               const userId = payload.userId;
               const schoolId = message.schoolId;
 
+              const user = await getUserById(userId);
+              if (!user || !credentialVersionMatches(payload.authVersion, user.authVersion)) {
+                ws.send(JSON.stringify({
+                  type: "auth-error",
+                  message: "Credentials have changed. Sign in again.",
+                  code: "CREDENTIAL_INVALIDATED",
+                }));
+                ws.close(1008, "Credentials invalidated");
+                return;
+              }
+
               if (!schoolId) {
                 ws.send(JSON.stringify({ type: "auth-error", message: "School context required" }));
                 ws.close();
@@ -1095,11 +1119,38 @@ export function setupWebSocket(
                 return;
               }
 
-              authenticateWsClient(ws, {
+              const authenticatedClient = authenticateWsClient(ws, {
                 role,
                 userId,
                 schoolId,
+                authVersion: payload.authVersion ?? 1,
               });
+
+              if (!authenticatedClient) {
+                ws.send(JSON.stringify({ type: "auth-error", message: "Authentication failed" }));
+                ws.close(1011, "Authentication state unavailable");
+                return;
+              }
+
+              // Close the race between the first credential read and making
+              // this socket visible to credential invalidation. If a version
+              // bump committed before registration, this read observes it; if
+              // it commits later, the registered socket is closed by the
+              // local/Redis invalidation path.
+              const currentUser = await getUserById(userId);
+              if (
+                !currentUser ||
+                !credentialVersionMatches(authenticatedClient.authVersion, currentUser.authVersion)
+              ) {
+                removeWsClient(ws);
+                ws.send(JSON.stringify({
+                  type: "auth-error",
+                  message: "Credentials have changed. Sign in again.",
+                  code: "CREDENTIAL_INVALIDATED",
+                }));
+                ws.close(1008, "Credentials invalidated");
+                return;
+              }
 
               // Authentication is never gated on Redis. The presence write is
               // strictly bounded and the post-write pickup closes the bell-time
@@ -1151,7 +1202,14 @@ export function setupWebSocket(
           try {
             const authorized = passiveMessage
               ? await validatePassiveAuthorization()
-              : (await activeStaffWebSocketRole(client)) === client.role;
+              : await Promise.all([
+                  activeStaffWebSocketRole(client),
+                  client.userId ? getUserById(client.userId) : Promise.resolve(undefined),
+                ]).then(([role, user]) =>
+                  role === client.role && Boolean(
+                    user && credentialVersionMatches(client.authVersion, user.authVersion)
+                  )
+                );
             if (!authorized) {
               client.authenticated = false;
               clearStaffPresence();

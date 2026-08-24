@@ -16,6 +16,8 @@
 #   ./scripts/deploy.sh production --backend --activate-emergency \
 #     --enable-rls-table passpilot_grade_students
 #                                       # One reviewed release only; add one tenant table without changing the master switch or existing entries
+#   ./scripts/deploy.sh production --backend --apply-staff-identity-contracts
+#                                       # Stage-five migration-only one-off; reuse the exact serving main image and atomically apply staff contracts
 #   ./scripts/deploy.sh production --backend --activate-emergency \
 #     --classpilot-tile-auth-plan-gate --classpilot-tile-auth-plan-rehearsal
 #                                       # Build/register inactive exact candidates and run the preflight/full gate only
@@ -60,6 +62,7 @@ SKIP_WAIT=false
 ACTIVATE_EMERGENCY=false
 CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION=false
 ENABLE_RLS_TABLE=""
+APPLY_STAFF_IDENTITY_CONTRACTS=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=false
@@ -115,6 +118,10 @@ while [[ $# -gt 0 ]]; do
       [[ -z "$ENABLE_RLS_TABLE" ]] || { echo "--enable-rls-table may be specified only once"; exit 1; }
       ENABLE_RLS_TABLE="$2"
       shift 2
+      ;;
+    --apply-staff-identity-contracts)
+      APPLY_STAFF_IDENTITY_CONTRACTS=true
+      shift
       ;;
     --classpilot-tile-auth-plan-gate) RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=true; shift ;;
     --classpilot-tile-auth-plan-rehearsal)
@@ -1468,6 +1475,8 @@ TEMP_FILES=(
   .migration-task.json
   .migration-result.json
   .migration-stop.json
+  .staff-identity-current-api.json
+  .staff-identity-current-worker.json
   .worker-taskdef-current.json
   .worker-env-source.json
   .worker-taskdef-new.json
@@ -1917,6 +1926,27 @@ validate_rls_table_enablement_mode() {
         -n "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ||
         "$CAPACITY_ACCEPTANCE_RELEASE" == true ]]; then
     error "--enable-rls-table is a one-release production --backend migration flag and cannot be combined with frontend, same-image, capacity, observation, or rehearsal modes."
+    return 1
+  fi
+}
+
+validate_staff_identity_contract_rollout_mode() {
+  if [[ "$APPLY_STAFF_IDENTITY_CONTRACTS" != true ]]; then
+    return 0
+  fi
+
+  if [[ "$ENV" != "production" || "$DEPLOY_BACKEND" != true ||
+        "$DEPLOY_FRONTEND" != false || "$ACTIVATE_EMERGENCY" == true ||
+        -n "$ENABLE_RLS_TABLE" ||
+        -n "$SAME_IMAGE_NETWORKING_STAGE" ||
+        "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" == true ||
+        "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" == true ||
+        "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" == true ||
+        "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true ||
+        -n "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ||
+        "$CAPACITY_ACCEPTANCE_RELEASE" == true ||
+        -n "$CAPACITY_ACCEPTANCE_FRONTEND_SHA" ]]; then
+    error "--apply-staff-identity-contracts is a stage-five production --backend migration-only flag and cannot be combined with frontend, emergency activation, RLS, protected-window, same-image, capacity, observation, rehearsal, or receipt modes."
     return 1
   fi
 }
@@ -5370,7 +5400,7 @@ run_same_image_migration_task() {
     --launch-type FARGATE \
     --task-definition "$SAME_IMAGE_API_TASK_DEFINITION" \
     --network-configuration "file://.same-image-network.json" \
-    --overrides '{"containerOverrides":[{"name":"api","environment":[{"name":"RUN_MIGRATIONS_ONLY","value":"true"},{"name":"SCHEDULER_ENABLED","value":"false"}]}]}' \
+    --overrides '{"containerOverrides":[{"name":"api","environment":[{"name":"RUN_MIGRATIONS_ONLY","value":"true"},{"name":"SCHEDULER_ENABLED","value":"false"},{"name":"APPLY_STAFF_IDENTITY_CONTRACT_MIGRATIONS","value":"false"}]}]}' \
     --output json \
     --region "$REGION" \
     --no-cli-pager > .migration-task.json
@@ -5621,6 +5651,165 @@ same_image_networking_redeploy() {
   success "${SAME_IMAGE_NETWORKING_STAGE} same-image deployment complete: app=${EXPECTED_APP_SHA} digest=${EXPECTED_IMAGE_DIGEST} api=${SAME_IMAGE_API_TASK_DEFINITION} worker=${SAME_IMAGE_WORKER_TASK_DEFINITION} networkSha256=${SAME_IMAGE_NETWORK_HASH}"
 }
 
+run_staff_identity_contract_migration_task() {
+  if [[ "$APPLY_STAFF_IDENTITY_CONTRACTS" != true ]]; then
+    error "The staff identity contract migration helper requires explicit stage-five admission."
+    return 1
+  fi
+
+  local expected_digest expected_image migration_task_arn migration_wait_result
+  info "Verifying that the active API and worker still use the exact clean-main image..."
+  if ! expected_digest=$(aws ecr describe-images \
+      --repository-name "${NAME}-api" \
+      --image-ids imageTag="${IMAGE_TAG}" \
+      --query 'imageDetails[0].imageDigest' \
+      --output text \
+      --region "$REGION"); then
+    error "The clean-main image tag could not be resolved for the stage-five migration."
+    return 1
+  fi
+  expected_digest="${expected_digest%$'\r'}"
+  if [[ ! "$expected_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    error "The clean-main image tag did not resolve to one immutable SHA-256 digest."
+    return 1
+  fi
+  expected_image="${ECR_REPO}@${expected_digest}"
+
+  aws ecs describe-task-definition \
+    --task-definition "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION_ARN" \
+    --query taskDefinition --output json --region "$REGION" \
+    --no-cli-pager > .staff-identity-current-api.json
+  aws ecs describe-task-definition \
+    --task-definition "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN" \
+    --query taskDefinition --output json --region "$REGION" \
+    --no-cli-pager > .staff-identity-current-worker.json
+  if ! EXPECTED_API_ARN="$PRODUCTION_ROLLBACK_API_TASK_DEFINITION_ARN" \
+    EXPECTED_WORKER_ARN="$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN" \
+    EXPECTED_IMAGE="$expected_image" node <<'NODE'
+const fs = require("fs");
+const definitions = [
+  {
+    value: JSON.parse(fs.readFileSync(".staff-identity-current-api.json", "utf8")),
+    arn: process.env.EXPECTED_API_ARN,
+    container: "api",
+  },
+  {
+    value: JSON.parse(fs.readFileSync(".staff-identity-current-worker.json", "utf8")),
+    arn: process.env.EXPECTED_WORKER_ARN,
+    container: "scheduler-worker",
+  },
+];
+for (const definition of definitions) {
+  if (definition.value?.taskDefinitionArn !== definition.arn ||
+      definition.value?.status !== "ACTIVE") process.exit(1);
+  const containers = (definition.value?.containerDefinitions || [])
+    .filter((container) => container?.name === definition.container);
+  if (containers.length !== 1 || containers[0].image !== process.env.EXPECTED_IMAGE) {
+    process.exit(1);
+  }
+  const rolloutFlag = (containers[0].environment || [])
+    .find((entry) => entry?.name === "APPLY_STAFF_IDENTITY_CONTRACT_MIGRATIONS");
+  if (rolloutFlag?.value === "true") process.exit(1);
+}
+NODE
+  then
+    error "The active API/worker are not exact clean-main digest peers or retain the one-off staff contract flag."
+    return 1
+  fi
+  success "Stage-five image binding verified: app=${LOCAL_SHA} digest=${expected_digest}"
+
+  production_backend_capacity_preflight "immediately before stage-five migration hold"
+  if [[ "$PRODUCTION_PREFLIGHT_API_TASK_DEFINITION_ARN" != "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION_ARN" ||
+        "$PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION_ARN" != "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN" ]]; then
+    error "The active API/worker changed before the stage-five migration hold."
+    return 1
+  fi
+  acquire_production_scaling_hold
+  launch_safe_active_api_preflight
+
+  MIGRATION_OVERRIDES=$(DEPLOY_APPLICATION_SHA="$LOCAL_SHA" node -e '
+    process.stdout.write(JSON.stringify({
+      containerOverrides: [{
+        name: "api",
+        environment: [
+          { name: "RUN_MIGRATIONS_ONLY", value: "true" },
+          { name: "SCHEDULER_ENABLED", value: "false" },
+          { name: "GIT_SHA", value: process.env.DEPLOY_APPLICATION_SHA },
+          { name: "APPLY_STAFF_IDENTITY_CONTRACT_MIGRATIONS", value: "true" },
+        ],
+      }],
+    }));
+  ')
+  info "Running the atomic staff identity contract with the active API revision..."
+  aws ecs run-task \
+    --cluster "$CLUSTER" \
+    --launch-type FARGATE \
+    --task-definition "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION_ARN" \
+    --network-configuration "$NETWORK_CONFIG" \
+    --overrides "$MIGRATION_OVERRIDES" \
+    --output json \
+    --region "$REGION" \
+    --no-cli-pager > .migration-task.json
+
+  if ! migration_task_arn=$(node -e '
+    const fs = require("fs");
+    const result = JSON.parse(fs.readFileSync(".migration-task.json", "utf8"));
+    if ((result.failures || []).length !== 0 || result.tasks?.length !== 1 ||
+        !result.tasks[0]?.taskArn) process.exit(1);
+    process.stdout.write(result.tasks[0].taskArn);
+  '); then
+    error "The stage-five migration task was not started exactly once."
+    return 1
+  fi
+
+  set +e
+  wait_for_migration_task_stopped "$migration_task_arn"
+  migration_wait_result=$?
+  set -e
+  aws ecs describe-tasks \
+    --cluster "$CLUSTER" --tasks "$migration_task_arn" \
+    --output json --region "$REGION" --no-cli-pager > .migration-result.json
+  if [[ "$migration_wait_result" -eq 124 ]]; then
+    error "Stage-five migration exceeded the one-hour controller deadline and was stopped."
+    return 1
+  elif [[ "$migration_wait_result" -eq 125 ]]; then
+    error "Stage-five migration stop could not be confirmed within the bounded observation window."
+    return 1
+  elif [[ "$migration_wait_result" -ne 0 ]]; then
+    error "Stage-five migration task observation failed."
+    return 1
+  fi
+  if ! EXPECTED_TASK_ARN="$migration_task_arn" \
+    EXPECTED_TASK_DEFINITION="$PRODUCTION_ROLLBACK_API_TASK_DEFINITION_ARN" node <<'NODE'
+const fs = require("fs");
+const result = JSON.parse(fs.readFileSync(".migration-result.json", "utf8"));
+if ((result.failures || []).length !== 0 || result.tasks?.length !== 1) process.exit(1);
+const task = result.tasks[0];
+const api = (task.containers || []).filter((container) => container?.name === "api");
+if (task.taskArn !== process.env.EXPECTED_TASK_ARN || task.lastStatus !== "STOPPED" ||
+    task.taskDefinitionArn !== process.env.EXPECTED_TASK_DEFINITION ||
+    api.length !== 1 || api[0].exitCode !== 0) process.exit(1);
+NODE
+  then
+    error "The atomic staff identity contract migration failed; its transaction was rolled back."
+    return 1
+  fi
+
+  production_backend_capacity_preflight "after stage-five migration"
+  if [[ "$PRODUCTION_PREFLIGHT_API_TASK_DEFINITION_ARN" != "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION_ARN" ||
+        "$PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION_ARN" != "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN" ]]; then
+    error "The active API/worker changed during the stage-five migration."
+    return 1
+  fi
+  if ! restore_production_scaling_hold; then
+    error "The staff contract completed, but exact autoscaling restoration failed."
+    return 1
+  fi
+  rm -f .ecs-network.json .migration-task.json .migration-result.json .migration-stop.json \
+    .staff-identity-current-api.json .staff-identity-current-worker.json
+  success "Atomic staff identity contract completed; API and worker services were not mutated"
+}
+
 # --- Preflight checks ---
 echo ""
 echo "=========================================="
@@ -5635,6 +5824,7 @@ info "Backend:    $DEPLOY_BACKEND"
 info "Frontend:   $DEPLOY_FRONTEND"
 info "2048 API:   $ACTIVATE_EMERGENCY"
 info "RLS table:  ${ENABLE_RLS_TABLE:-unchanged}"
+info "Staff identity contracts: $APPLY_STAFF_IDENTITY_CONTRACTS"
 info "Tile plans: $RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE"
 info "Plan rehearse: $RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL"
 info "Plan observe:  $RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION"
@@ -5654,6 +5844,9 @@ if ! validate_protected_window_production_mutation_mode; then
   exit 1
 fi
 if ! validate_rls_table_enablement_mode; then
+  exit 1
+fi
+if ! validate_staff_identity_contract_rollout_mode; then
   exit 1
 fi
 if ! validate_capacity_acceptance_frontend_mode; then
@@ -5811,6 +6004,12 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   fi
 
   resolve_classpilot_tile_auth_candidate_network
+  if [[ "$APPLY_STAFF_IDENTITY_CONTRACTS" == true ]]; then
+    if ! run_staff_identity_contract_migration_task; then
+      exit 1
+    fi
+    exit 0
+  fi
   if [[ "$CAPACITY_ACCEPTANCE_RELEASE" == true ]]; then
     if [[ ! "$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
       error "The capacity-acceptance release could not bind the initial candidate network configuration."
@@ -6194,11 +6393,15 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   acquire_production_scaling_hold
   launch_safe_active_api_preflight
 
-  MIGRATION_OVERRIDES=$(ENABLE_RLS_TABLE="$ENABLE_RLS_TABLE" DEPLOY_APPLICATION_SHA="$LOCAL_SHA" node -e '
+  MIGRATION_OVERRIDES=$(ENABLE_RLS_TABLE="$ENABLE_RLS_TABLE" APPLY_STAFF_IDENTITY_CONTRACTS="$APPLY_STAFF_IDENTITY_CONTRACTS" DEPLOY_APPLICATION_SHA="$LOCAL_SHA" node -e '
     const environment = [
       { name: "RUN_MIGRATIONS_ONLY", value: "true" },
       { name: "SCHEDULER_ENABLED", value: "false" },
       { name: "GIT_SHA", value: process.env.DEPLOY_APPLICATION_SHA },
+      {
+        name: "APPLY_STAFF_IDENTITY_CONTRACT_MIGRATIONS",
+        value: process.env.APPLY_STAFF_IDENTITY_CONTRACTS === "true" ? "true" : "false",
+      },
     ];
     if (process.env.ENABLE_RLS_TABLE) {
       environment.push({

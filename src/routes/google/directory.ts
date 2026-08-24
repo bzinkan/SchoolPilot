@@ -14,11 +14,9 @@ import {
 import {
   createStudent,
   reactivateInactiveStudentForRosterImport,
-  createUser,
-  createMembership,
   getStudentByEmail,
-  getUserByEmail,
-  getMembershipByUserAndSchool,
+  getMembershipsByUserAndSchoolIncludingInactive,
+  isStaffMembershipRole,
   updateMembershipForSchool,
   getProductLicenses,
   getSchoolById,
@@ -26,6 +24,11 @@ import {
   autoAssignFamilyGroups,
   markGoogleRosterConnectorSynced,
 } from "../../services/storage.js";
+import {
+  attachWorkspaceStaffMembershipForSchool,
+  isStaffIdentityError,
+  resolveWorkspaceStaffUserForSchool,
+} from "../../services/staffIdentity.js";
 import { recordImportRun } from "../../services/importLog.js";
 import {
   checkStudentEmail,
@@ -41,8 +44,36 @@ import {
   type GeneratedClassPilotPin,
 } from "../../services/classpilotPins.js";
 import { getRosterDirectoryClientForSchool } from "../../services/googleRosterConnector.js";
+import errorMonitor from "../../services/errorMonitor.js";
+import { safeErrorMetadata } from "../../util/safeLogging.js";
 
 const router = Router();
+
+export function selectWorkspaceStaffMembershipState<
+  T extends { status: string; role: string; gopilotRole: string | null },
+>(memberships: T[]): { existing?: T; inactive?: T } {
+  const staffMemberships = memberships.filter(isStaffMembershipRole);
+  return {
+    existing: staffMemberships.find((membership) => membership.status === "active"),
+    inactive: staffMemberships.find((membership) => membership.status !== "active"),
+  };
+}
+
+/** Client-authored direct import rows never provide immutable identity proof. */
+export function workspaceStaffGoogleId(
+  user: { id?: unknown },
+  serverFetchedDirectoryRow: boolean
+): string | null {
+  if (!serverFetchedDirectoryRow || typeof user.id !== "string") return null;
+  return user.id.trim() || null;
+}
+
+export function canAttachGlobalWorkspaceIdentity(
+  isSuperAdmin: boolean,
+  explicitlyConfirmed: boolean
+): boolean {
+  return isSuperAdmin && explicitlyConfirmed;
+}
 
 const requireBaseDirectoryAdmin = requireRole("admin", "school_admin");
 const requireDirectoryAdmin: import("express").RequestHandler = async (req, res, next) => {
@@ -157,6 +188,46 @@ function buildDirectoryUsersParams(options: {
 
 function formatImportPolicyError(email: string, err: { code: string; error: string }) {
   return `${email}: ${err.code}: ${err.error}`;
+}
+
+export function formatStaffIdentityImportError(email: string, error: unknown): string {
+  if (isStaffIdentityError(error)) {
+    return `${email}: ${error.code}: ${error.message}`;
+  }
+  return `${email}: STAFF_IDENTITY_FAILED: Could not resolve staff identity.`;
+}
+
+type StaffMembershipImportOperation = "create" | "update";
+
+export function formatStaffMembershipImportError(
+  email: string,
+  operation: StaffMembershipImportOperation
+): string {
+  const code = operation === "create" ? "MEMBERSHIP_CREATE_FAILED" : "MEMBERSHIP_UPDATE_FAILED";
+  const message = operation === "create"
+    ? "Could not create staff membership."
+    : "Could not update staff membership.";
+  return `${email}: ${code}: ${message}`;
+}
+
+function reportUnexpectedStaffImportError(
+  operation: "identity" | StaffMembershipImportOperation,
+  error: unknown
+): void {
+  const metadata = safeErrorMetadata(error);
+  console.error(`[GoogleDirectory] Workspace staff ${operation} failed:`, metadata);
+  errorMonitor.trackError(
+    "api_error",
+    new Error("Workspace staff import operation failed"),
+    {
+      job: "workspaceStaffImport",
+      errorCode: operation === "identity"
+        ? "STAFF_IDENTITY_FAILED"
+        : operation === "create"
+          ? "MEMBERSHIP_CREATE_FAILED"
+          : "MEMBERSHIP_UPDATE_FAILED",
+    }
+  );
 }
 
 async function listDirectoryUsers(admin: any, params: any, paginateAll = true) {
@@ -680,6 +751,10 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
     const membershipRole = fromGoPilotSetup && staffRole === "office_staff" ? "teacher" : staffRole;
     const gopilotRole = fromGoPilotSetup && staffRole === "office_staff" ? "office_staff" : null;
     const shouldNormalizeExistingOffice = fromGoPilotSetup && staffRole === "office_staff";
+    const allowGlobalIdentityAttachment = canAttachGlobalWorkspaceIdentity(
+      req.authUser?.isSuperAdmin === true,
+      req.body?.confirmGlobalIdentityAttachment === true
+    );
     const canNormalizeExistingOfficeMembership = (existing: any) =>
       shouldNormalizeExistingOffice &&
       existing?.status === "active" &&
@@ -715,45 +790,80 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
           continue;
         }
 
-        let user = await getUserByEmail(email);
-        let createdUser = false;
-        if (!user) {
-          user = await createUser({
+        let identity;
+        try {
+          identity = await resolveWorkspaceStaffUserForSchool({
+            schoolId,
             email,
+            googleId: workspaceStaffGoogleId(u, true),
             firstName: u.name?.givenName || email.split("@")[0],
             lastName: u.name?.familyName || "",
-            googleId: u.id || null,
+            allowMultiSchoolEmailChange: req.authUser?.isSuperAdmin === true,
+            allowGlobalIdentityAttachment,
+            audit: {
+              userId: req.authUser!.id,
+              userRole: res.locals.gopilotRole ?? res.locals.membershipRole,
+              source: "google.directory.staff.import",
+            },
           });
-          createdUser = true;
+        } catch (error) {
+          skipped++;
+          if (!isStaffIdentityError(error)) {
+            reportUnexpectedStaffImportError("identity", error);
+          }
+          errors.push(formatStaffIdentityImportError(email, error));
+          continue;
         }
-
-        const existing = await getMembershipByUserAndSchool(user.id, schoolId);
+        const { user, createdUser } = identity;
+        const existingMemberships = await getMembershipsByUserAndSchoolIncludingInactive(
+          user.id,
+          schoolId
+        );
+        const { existing, inactive } =
+          selectWorkspaceStaffMembershipState(existingMemberships);
+        if (!existing && inactive) {
+          skipped++;
+          errors.push(`${email}: STAFF_REACTIVATION_REQUIRED: Reactivate membership ${inactive.id} instead of creating a new identity.`);
+          continue;
+        }
         if (existing && canNormalizeExistingOfficeMembership(existing)) {
           try {
             await updateMembershipForSchool(existing.id, schoolId, {
               role: membershipRole,
               gopilotRole,
-            });
+            }, undefined, allowGlobalIdentityAttachment);
             updated++;
-          } catch (err: any) {
+          } catch (err) {
             skipped++;
-            errors.push(`${email}: ${err?.code || "MEMBERSHIP_UPDATE_FAILED"}: ${err?.message || "Could not update staff membership."}`);
+            reportUnexpectedStaffImportError("update", err);
+            errors.push(formatStaffMembershipImportError(email, "update"));
             continue;
           }
         } else if (existing) {
-          skipped++;
+          if (identity.emailChanged) updated++;
+          else skipped++;
         } else {
           try {
-            await createMembership({
+            await attachWorkspaceStaffMembershipForSchool({
               userId: user.id,
               schoolId,
               role: membershipRole,
               gopilotRole,
-              status: "active",
+              allowGlobalIdentityAttachment,
+              audit: {
+                userId: req.authUser!.id,
+                userRole: res.locals.gopilotRole ?? res.locals.membershipRole,
+                source: "google.directory.staff.import",
+              },
             });
-          } catch (err: any) {
+          } catch (err) {
             skipped++;
-            errors.push(`${email}: ${err?.code || "MEMBERSHIP_CREATE_FAILED"}: ${err?.message || "Could not create staff membership."}`);
+            if (isStaffIdentityError(err)) {
+              errors.push(formatStaffIdentityImportError(email, err));
+            } else {
+              reportUnexpectedStaffImportError("create", err);
+              errors.push(formatStaffMembershipImportError(email, "create"));
+            }
             continue;
           }
         }
@@ -801,31 +911,59 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
         errors.push(formatImportPolicyError(email, validation));
         continue;
       }
-      let user = await getUserByEmail(email);
-      let createdUser = false;
-      if (!user) {
-        user = await createUser({
+      let identity;
+      try {
+        identity = await resolveWorkspaceStaffUserForSchool({
+          schoolId,
           email,
+          // Direct users[] payloads are client-authored. Their Google IDs are
+          // not identity evidence; only the server-fetched OU path may bind an
+          // immutable Directory ID.
+          googleId: workspaceStaffGoogleId(u, false),
           firstName: u.firstName || email.split("@")[0],
           lastName: u.lastName || "",
-          googleId: u.id || null,
+          allowMultiSchoolEmailChange: req.authUser?.isSuperAdmin === true,
+          allowGlobalIdentityAttachment,
+          audit: {
+            userId: req.authUser!.id,
+            userRole: res.locals.gopilotRole ?? res.locals.membershipRole,
+            source: "google.directory.staff.direct_import",
+          },
         });
-        createdUser = true;
-      } else {
-        updated++;
+      } catch (error) {
+        skipped++;
+        if (!isStaffIdentityError(error)) {
+          reportUnexpectedStaffImportError("identity", error);
+        }
+        errors.push(formatStaffIdentityImportError(email, error));
+        continue;
       }
+      const { user, createdUser } = identity;
+      if (!createdUser) updated++;
 
-      const existing = await getMembershipByUserAndSchool(user.id, schoolId);
+      const existingMemberships = await getMembershipsByUserAndSchoolIncludingInactive(
+        user.id,
+        schoolId
+      );
+      const { existing, inactive } =
+        selectWorkspaceStaffMembershipState(existingMemberships);
+      if (!existing && inactive) {
+        skipped++;
+        if (!createdUser) updated--;
+        errors.push(`${email}: STAFF_REACTIVATION_REQUIRED: Reactivate membership ${inactive.id} instead of creating a new identity.`);
+        continue;
+      }
       if (existing && canNormalizeExistingOfficeMembership(existing)) {
         try {
           await updateMembershipForSchool(existing.id, schoolId, {
             role: membershipRole,
             gopilotRole,
-          });
-        } catch (err: any) {
+          }, undefined, allowGlobalIdentityAttachment);
+        } catch (err) {
           skipped++;
           if (!createdUser) updated--;
-          errors.push(`${email}: ${err?.code || "MEMBERSHIP_UPDATE_FAILED"}: ${err?.message || "Could not update staff membership."}`);
+          reportUnexpectedStaffImportError("update", err);
+          errors.push(formatStaffMembershipImportError(email, "update"));
           continue;
         }
       } else if (existing && shouldNormalizeExistingOffice) {
@@ -836,17 +974,27 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
         // Existing non-GoPilot-setup staff import preserves the current membership role.
       } else {
         try {
-          await createMembership({
+          await attachWorkspaceStaffMembershipForSchool({
             userId: user.id,
             schoolId,
             role: membershipRole,
             gopilotRole,
-            status: "active",
+            allowGlobalIdentityAttachment,
+            audit: {
+              userId: req.authUser!.id,
+              userRole: res.locals.gopilotRole ?? res.locals.membershipRole,
+              source: "google.directory.staff.direct_import",
+            },
           });
-        } catch (err: any) {
+        } catch (err) {
           skipped++;
           if (!createdUser) updated--;
-          errors.push(`${email}: ${err?.code || "MEMBERSHIP_CREATE_FAILED"}: ${err?.message || "Could not create staff membership."}`);
+          if (isStaffIdentityError(err)) {
+            errors.push(formatStaffIdentityImportError(email, err));
+          } else {
+            reportUnexpectedStaffImportError("create", err);
+            errors.push(formatStaffMembershipImportError(email, "create"));
+          }
           continue;
         }
       }

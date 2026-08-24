@@ -41,6 +41,7 @@ import {
   updateCalendarHistoryGuard,
 } from "../calendarHistoryGuard";
 import SchoolCalendarMonth from "../components/SchoolCalendarMonth";
+import StaffAccessTransitionDialog from "../../../shared/components/StaffAccessTransitionDialog";
 
 const ADMIN_TAB_VALUES = new Set(["staff", "calendar", "audit"]);
 const MONTH_PATTERN = /^(\d{4})-(0[1-9]|1[0-2])$/;
@@ -68,6 +69,68 @@ const createStaffSchema = z.object({
   role: z.enum(["teacher", "school_admin"]),
   password: z.string().optional(),
 });
+
+const staffEmailSchema = z.string().email();
+const CLASSPILOT_TEACHABLE_ROLES = new Set(["teacher", "admin", "school_admin"]);
+
+function normalizeEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function losesClassPilotTeachability(currentRole, nextRole) {
+  return CLASSPILOT_TEACHABLE_ROLES.has(currentRole)
+    && !CLASSPILOT_TEACHABLE_ROLES.has(nextRole);
+}
+
+function classPilotStaffRoleLabel(role) {
+  if (role === "school_admin" || role === "admin") return "School Admin";
+  if (role === "office_staff") return "Office Staff";
+  return "Teacher";
+}
+
+function normalizeStaffRecord(record) {
+  const user = record?.user || {};
+  const role = record?.role === "admin" ? "school_admin" : record?.role;
+  return {
+    id: record?.id || record?.membershipId || record?.userId,
+    membershipId: record?.membershipId || record?.id,
+    userId: record?.userId || user.id,
+    role,
+    gopilotRole: record?.gopilotRole ?? null,
+    effectiveRole: record?.effectiveRole
+      || String(record?.gopilotRole || "").trim()
+      || record?.role,
+    status: record?.status || "active",
+    email: record?.email || user.email || "",
+    displayName: record?.displayName
+      || user.displayName
+      || [record?.firstName || user.firstName, record?.lastName || user.lastName].filter(Boolean).join(" ")
+      || null,
+    user,
+  };
+}
+
+function staffIdentityLabel(staff) {
+  const name = staff?.displayName || staff?.email || "Staff member";
+  return staff?.email && staff.email !== name ? `${name} — ${staff.email}` : name;
+}
+
+function getApiErrorDetails(error) {
+  const data = error?.response?.data || {};
+  return {
+    code: data.code || null,
+    message: data.error || data.message || error?.message || "The request could not be completed.",
+    data,
+  };
+}
+
+function workspaceImportIssueText(issue) {
+  if (typeof issue === "string") return issue;
+  if (!issue || typeof issue !== "object") return "Unknown import issue";
+  return [issue.email, issue.code, issue.error || issue.message]
+    .filter(Boolean)
+    .join(" — ") || "Unknown import issue";
+}
 
 export default function Admin() {
   const navigate = useNavigate();
@@ -109,13 +172,13 @@ function AdminPanel({ currentUser, schoolTimezone }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const { toast } = useToast();
 
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [staffToDelete, setStaffToDelete] = useState(null);
+  const [staffTransitionRequest, setStaffTransitionRequest] = useState(null);
   const [cleanupDialogOpen, setCleanupDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [staffToEdit, setStaffToEdit] = useState(null);
   const [selectedRole, setSelectedRole] = useState("teacher");
   const [editName, setEditName] = useState("");
+  const [editEmail, setEditEmail] = useState("");
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [staffToResetPassword, setStaffToResetPassword] = useState(null);
   const [newPassword, setNewPassword] = useState("");
@@ -133,10 +196,13 @@ function AdminPanel({ currentUser, schoolTimezone }) {
   const [wsExcludedEmails, setWsExcludedEmails] = useState(new Set());
   const [wsImportResult, setWsImportResult] = useState(null);
   const [staffSearchQuery, setStaffSearchQuery] = useState("");
+  const [staffStatusFilter, setStaffStatusFilter] = useState("active");
   const [staffPage, setStaffPage] = useState(0);
+  const [identityConflict, setIdentityConflict] = useState(null);
   const [importFile, setImportFile] = useState(null);
   const [importPreview, setImportPreview] = useState([]);
   const [importError, setImportError] = useState("");
+  const [importResult, setImportResult] = useState(null);
   const STAFF_PER_PAGE = 10;
   const requestedTab = searchParams.get("tab");
   const activeTab = ADMIN_TAB_VALUES.has(requestedTab) ? requestedTab : "staff";
@@ -236,19 +302,10 @@ function AdminPanel({ currentUser, schoolTimezone }) {
   const watchedRole = form.watch("role");
 
   const { data: staffData, isLoading } = useQuery({
-    queryKey: ["/api/admin/users"],
-    queryFn: () => apiRequest("GET", "/admin/users"),
+    queryKey: ["/api/users/staff", "all"],
+    queryFn: () => apiRequest("GET", "/users/staff?status=all"),
     select: (data) => ({
-      users: (data?.users ?? []).map((m) => ({
-        id: m.membershipId || m.userId,
-        membershipId: m.membershipId,
-        userId: m.userId,
-        role: m.role,
-        email: m.user?.email,
-        displayName: m.user?.displayName
-          || [m.user?.firstName, m.user?.lastName].filter(Boolean).join(' ')
-          || null,
-      })),
+      users: (data?.staff ?? data?.users ?? []).map(normalizeStaffRecord),
     }),
   });
 
@@ -303,28 +360,42 @@ function AdminPanel({ currentUser, schoolTimezone }) {
   const createStaffMutation = useMutation({
     mutationFn: async (data) => {
       const payload = {
-        email: data.email,
-        role: data.role,
-        name: data.name?.trim() ? data.name.trim() : undefined,
-        password: data.password?.trim() ? data.password : null,
+        email: normalizeEmail(data.email),
+        role: data.role === "school_admin" ? "admin" : data.role,
+        displayName: data.name?.trim() ? data.name.trim() : undefined,
+        password: data.password?.trim() ? data.password : undefined,
+        ...(data.confirmDistinctPerson ? { confirmDistinctPerson: true } : {}),
       };
-      return await apiRequest("POST", "/admin/users", payload);
+      return await apiRequest("POST", "/users/staff", payload);
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/users/staff"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/teachers"] });
       form.reset();
       setAddStaffDialogOpen(false);
+      setIdentityConflict(null);
+      setStaffStatusFilter("active");
       toast({
         title: "Staff member added",
         description: "The staff account has been created successfully.",
       });
     },
-    onError: (error) => {
+    onError: (error, variables) => {
+      const details = getApiErrorDetails(error);
+      if (details.code === "POSSIBLE_DUPLICATE_STAFF" || details.code === "STAFF_REACTIVATION_REQUIRED") {
+        setIdentityConflict({
+          ...details.data,
+          code: details.code,
+          pendingStaff: variables,
+        });
+        setAddStaffDialogOpen(false);
+        return;
+      }
       toast({
         variant: "destructive",
         title: "Failed to add staff",
-        description: error.message || "An error occurred",
+        description: details.message,
       });
     },
   });
@@ -334,26 +405,35 @@ function AdminPanel({ currentUser, schoolTimezone }) {
       const results = { success: 0, failed: 0, errors: [] };
       for (const user of users) {
         try {
-          await apiRequest("POST", "/admin/users", {
+          await apiRequest("POST", "/users/staff", {
             email: user.email,
-            role: user.role === "admin" ? "school_admin" : "teacher",
-            name: user.name || undefined,
+            role: user.role === "admin" ? "admin" : "teacher",
+            displayName: user.name || undefined,
           });
           results.success++;
         } catch (error) {
+          const details = getApiErrorDetails(error);
           results.failed++;
-          results.errors.push(`${user.email}: ${error.message || "Failed"}`);
+          results.errors.push({ email: user.email, code: details.code, message: details.message });
         }
       }
       return results;
     },
     onSuccess: (results) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/users/staff"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/teachers"] });
-      setImportDialogOpen(false);
-      setImportFile(null);
-      setImportPreview([]);
-      setImportError("");
+      setImportResult(results);
+      if (results.failed === 0) {
+        setImportDialogOpen(false);
+        setImportFile(null);
+        setImportPreview([]);
+        setImportError("");
+        setImportResult(null);
+      } else {
+        setImportFile(null);
+        setImportPreview([]);
+      }
       toast({
         title: "Import complete",
         description: `Successfully imported ${results.success} staff members.${results.failed > 0 ? ` ${results.failed} failed.` : ""}`,
@@ -402,12 +482,13 @@ function AdminPanel({ currentUser, schoolTimezone }) {
   const wsImportMutation = useMutation({
     mutationFn: (params) => apiRequest("POST", "/directory/import-staff", params),
     onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/users/staff"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/teachers"] });
       setWsImportResult(data);
       toast({
         title: "Staff import complete",
-        description: `Imported ${data.imported} new staff, skipped ${data.skipped} existing`,
+        description: `Imported ${data.imported || 0}, updated ${data.updated || 0}, and flagged ${data.skipped || 0} for review.`,
       });
     },
     onError: (error) => {
@@ -450,6 +531,7 @@ function AdminPanel({ currentUser, schoolTimezone }) {
     setImportFile(file);
     setImportError("");
     setImportPreview([]);
+    setImportResult(null);
 
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -468,56 +550,87 @@ function AdminPanel({ currentUser, schoolTimezone }) {
     reader.readAsText(file);
   };
 
-  const deleteStaffMutation = useMutation({
-    mutationFn: async (id) => {
-      return await apiRequest("DELETE", `/admin/users/${id}`);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/teachers"] });
+  const reactivateStaffMutation = useMutation({
+    mutationFn: (membershipId) => apiRequest("POST", `/users/staff/${membershipId}/reactivate`, {}),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["/api/users/staff"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/admin/teachers"] }),
+      ]);
+      setIdentityConflict(null);
+      setStaffStatusFilter("active");
       toast({
-        title: "Staff account deleted",
-        description: "The staff account has been deleted successfully.",
+        title: "School access restored",
+        description: "The existing staff identity was reactivated; no duplicate account was created.",
       });
-      setDeleteDialogOpen(false);
-      setStaffToDelete(null);
     },
     onError: (error) => {
-      const message = getFriendlyErrorMessage(error);
-      if (message.includes("last school admin")) {
-        toast({
-          title: "Action blocked",
-          description: message,
-        });
-        return;
-      }
       toast({
         variant: "destructive",
-        title: "Failed to delete staff",
-        description: message || "An error occurred",
+        title: "Could not reactivate staff",
+        description: getApiErrorDetails(error).message,
       });
     },
   });
 
   const updateStaffMutation = useMutation({
     mutationFn: async (payload) => {
-      return await apiRequest("PATCH", `/admin/users/${payload.userId}`, {
-        role: payload.role,
-        name: payload.name?.trim() || undefined,
-      });
+      const emailChanged = normalizeEmail(payload.email) !== normalizeEmail(payload.expectedEmail);
+      const profileChanged = payload.role !== payload.expectedRole
+        || payload.name?.trim() !== payload.expectedName?.trim();
+
+      if (emailChanged && profileChanged) {
+        const separateSaveError = new Error("Save the email correction separately from name or role changes.");
+        separateSaveError.code = "STAFF_EDIT_REQUIRES_SEPARATE_SAVES";
+        throw separateSaveError;
+      }
+
+      if (emailChanged) {
+        const emailResult = await apiRequest("PATCH", `/users/staff/${payload.membershipId}/email`, {
+          expectedEmail: payload.expectedEmail,
+          email: payload.email,
+        });
+        const confirmedEmail = normalizeEmail(emailResult?.email || emailResult?.user?.email);
+        if (!confirmedEmail || confirmedEmail !== normalizeEmail(payload.email)) {
+          const confirmationError = new Error("The server did not confirm the requested email address. Refresh the page before trying again.");
+          confirmationError.code = "STAFF_EMAIL_CONFIRMATION_MISMATCH";
+          throw confirmationError;
+        }
+        return { operation: "email" };
+      }
+
+      if (profileChanged) {
+        await apiRequest("PATCH", `/admin/users/${payload.membershipId}`, {
+          ...(payload.role !== payload.expectedRole ? { role: payload.role } : {}),
+          ...(payload.name?.trim() !== payload.expectedName?.trim()
+            ? { name: payload.name?.trim() || undefined }
+            : {}),
+        });
+        return { operation: "profile" };
+      }
+
+      return { operation: "none" };
     },
-    onSuccess: () => {
+    onSuccess: ({ operation }, payload) => {
       toast({
-        title: "Staff updated",
-        description: "Staff details have been updated successfully.",
+        title: operation === "email" ? "Email corrected" : "Staff updated",
+        description: operation === "email"
+          ? "The email was corrected on the existing identity. The staff member should sign in again."
+          : "Staff details have been updated successfully.",
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/teachers"] });
+      const editingOwnEmail = operation === "email" && payload.userId === currentUser?.id;
+      if (!editingOwnEmail) {
+        queryClient.invalidateQueries({ queryKey: ["/api/users/staff"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/admin/teachers"] });
+      }
       setEditDialogOpen(false);
       setStaffToEdit(null);
     },
     onError: (error) => {
-      const message = getFriendlyErrorMessage(error);
+      const details = getApiErrorDetails(error);
+      const message = details.message;
       if (message.includes("last school admin")) {
         toast({
           title: "Action blocked",
@@ -525,9 +638,16 @@ function AdminPanel({ currentUser, schoolTimezone }) {
         });
         return;
       }
+      if (details.code === "STAFF_EMAIL_STALE") {
+        queryClient.invalidateQueries({ queryKey: ["/api/users/staff"] });
+      }
       toast({
         variant: "destructive",
-        title: "Failed to update staff",
+        title: details.code === "STAFF_EMAIL_CENTRAL_REVIEW_REQUIRED"
+          ? "Central review required"
+          : details.code === "STAFF_EDIT_REQUIRES_SEPARATE_SAVES"
+            ? "Use separate saves"
+            : "Failed to update staff",
         description: message || "An error occurred",
       });
     },
@@ -584,15 +704,15 @@ function AdminPanel({ currentUser, schoolTimezone }) {
     createStaffMutation.mutate(data);
   };
 
-  const handleDeleteClick = (staff) => {
-    setStaffToDelete(staff);
-    setDeleteDialogOpen(true);
+  const handleRemoveAccessClick = (staff) => {
+    setStaffTransitionRequest({ staff, action: "deactivate" });
   };
 
   const handleEditClick = (staff) => {
     setStaffToEdit(staff);
     setSelectedRole(staff.role);
     setEditName(staff.displayName || "");
+    setEditEmail(staff.email || "");
     setEditDialogOpen(true);
   };
 
@@ -610,20 +730,70 @@ function AdminPanel({ currentUser, schoolTimezone }) {
     });
   };
 
-  const handleDeleteConfirm = () => {
-    if (staffToDelete) {
-      deleteStaffMutation.mutate(staffToDelete.id);
-    }
-  };
-
   const handleEditSubmit = () => {
     if (!staffToEdit) {
       return;
     }
-    updateStaffMutation.mutate({ userId: staffToEdit.id, role: selectedRole, name: editName });
+    const roleChanged = selectedRole !== staffToEdit.role;
+    const nameChanged = editName.trim() !== (staffToEdit.displayName || "").trim();
+    if (roleChanged && nameChanged) {
+      toast({
+        variant: "destructive",
+        title: "Use separate saves",
+        description: "Save the name change first, then reopen this editor to change the role.",
+      });
+      return;
+    }
+    if (roleChanged && losesClassPilotTeachability(staffToEdit.role, selectedRole)) {
+      setEditDialogOpen(false);
+      setStaffTransitionRequest({
+        staff: staffToEdit,
+        action: "change_role",
+        newRole: selectedRole,
+      });
+      setStaffToEdit(null);
+      return;
+    }
+    updateStaffMutation.mutate({
+      membershipId: staffToEdit.membershipId,
+      userId: staffToEdit.userId,
+      role: selectedRole,
+      expectedRole: staffToEdit.role,
+      name: editName,
+      expectedName: staffToEdit.displayName || "",
+      email: normalizeEmail(editEmail),
+      expectedEmail: staffToEdit.email,
+    });
+  };
+
+  const handleEditIdentityCandidate = (candidate) => {
+    const normalized = normalizeStaffRecord(candidate);
+    setIdentityConflict(null);
+    handleEditClick(normalized);
+  };
+
+  const handleConfirmDistinctPerson = () => {
+    if (!identityConflict?.pendingStaff) return;
+    createStaffMutation.mutate({
+      ...identityConflict.pendingStaff,
+      confirmDistinctPerson: true,
+    });
   };
 
   const staff = staffData?.users || [];
+  const activeStaff = staff.filter((member) => member.status === "active");
+  const formerStaff = staff.filter((member) => member.status === "inactive");
+  const editEmailChanged = Boolean(staffToEdit)
+    && normalizeEmail(editEmail) !== normalizeEmail(staffToEdit.email);
+  const editProfileChanged = Boolean(staffToEdit)
+    && (selectedRole !== staffToEdit.role
+      || editName.trim() !== (staffToEdit.displayName || "").trim());
+  const editRequiresSeparateSaves = editEmailChanged && editProfileChanged;
+  const identityConflictCandidates = (identityConflict?.candidates || []).map(normalizeStaffRecord);
+  if (identityConflict?.code === "STAFF_REACTIVATION_REQUIRED" && identityConflictCandidates.length === 0) {
+    const existing = staff.find((member) => member.membershipId === identityConflict.membershipId);
+    if (existing) identityConflictCandidates.push(existing);
+  }
 
   return (
     <div className="container mx-auto max-w-7xl space-y-6 p-4 sm:p-6">
@@ -713,7 +883,7 @@ function AdminPanel({ currentUser, schoolTimezone }) {
                     Staff Accounts
                   </CardTitle>
                   <CardDescription>
-                    {staff.length} {staff.length === 1 ? "staff member" : "staff members"} in the system
+                    {activeStaff.length} active · {formerStaff.length} former
                   </CardDescription>
                 </div>
                 <div className="flex items-center gap-2">
@@ -759,6 +929,33 @@ function AdminPanel({ currentUser, schoolTimezone }) {
                 />
               </div>
 
+              <div className="flex w-fit gap-1 rounded-lg bg-muted p-1" aria-label="Staff status filter">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={staffStatusFilter === "active" ? "default" : "ghost"}
+                  onClick={() => {
+                    setStaffStatusFilter("active");
+                    setStaffPage(0);
+                  }}
+                  data-testid="filter-active-staff"
+                >
+                  Active ({activeStaff.length})
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={staffStatusFilter === "inactive" ? "default" : "ghost"}
+                  onClick={() => {
+                    setStaffStatusFilter("inactive");
+                    setStaffPage(0);
+                  }}
+                  data-testid="filter-former-staff"
+                >
+                  Former ({formerStaff.length})
+                </Button>
+              </div>
+
               {/* Staff List */}
               {isLoading ? (
                 <div className="text-center py-8 text-muted-foreground">
@@ -777,11 +974,11 @@ function AdminPanel({ currentUser, schoolTimezone }) {
                   return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : parts[0].toLowerCase();
                 };
 
-                const filteredStaff = staff
+                const filteredStaff = (staffStatusFilter === "active" ? activeStaff : formerStaff)
                   .filter((member) => {
                     const query = staffSearchQuery.toLowerCase();
                     return (
-                      member.email.toLowerCase().includes(query) ||
+                      member.email?.toLowerCase().includes(query) ||
                       (member.displayName?.toLowerCase().includes(query) ?? false)
                     );
                   })
@@ -805,8 +1002,8 @@ function AdminPanel({ currentUser, schoolTimezone }) {
                       </div>
                     ) : (
                       <>
-                        <div className="border rounded-lg overflow-hidden">
-                          <table className="w-full">
+                        <div className="overflow-x-auto rounded-lg border">
+                          <table className="w-full min-w-[680px]">
                             <thead className="bg-muted">
                               <tr>
                                 <th className="px-4 py-3 text-left font-medium text-sm">Name</th>
@@ -823,47 +1020,71 @@ function AdminPanel({ currentUser, schoolTimezone }) {
                                   className="border-t hover:bg-muted/50"
                                 >
                                   <td className="px-4 py-3">
-                                    <span className="font-medium" data-testid={`staff-name-${member.id}`}>
-                                      {member.displayName || "\u2014"}
-                                    </span>
+                                    <div>
+                                      <span className="font-medium" data-testid={`staff-name-${member.id}`}>
+                                        {member.displayName || "\u2014"}
+                                      </span>
+                                      <p className="mt-1 font-mono text-[11px] text-muted-foreground" data-testid={`staff-membership-id-${member.id}`}>
+                                        Membership ID: {member.membershipId}
+                                      </p>
+                                    </div>
                                   </td>
                                   <td className="px-4 py-3 text-muted-foreground">
                                     {member.email}
                                   </td>
                                   <td className="px-4 py-3">
-                                    <Badge variant={member.role === "school_admin" ? "default" : "secondary"}>
-                                      {member.role === "school_admin" ? "School Admin" : "Teacher"}
-                                    </Badge>
+                                    <div className="flex flex-wrap gap-2">
+                                      <Badge variant={member.role === "school_admin" ? "default" : "secondary"}>
+                                        {classPilotStaffRoleLabel(member.role)}
+                                      </Badge>
+                                      {member.status === "inactive" ? <Badge variant="outline">Former staff</Badge> : null}
+                                    </div>
                                   </td>
                                   <td className="px-4 py-3">
                                     <div className="flex items-center justify-end gap-1">
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        data-testid={`button-edit-${member.id}`}
-                                        onClick={() => handleEditClick(member)}
-                                        disabled={updateStaffMutation.isPending}
-                                      >
-                                        Edit
-                                      </Button>
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        data-testid={`button-reset-password-${member.id}`}
-                                        onClick={() => handleResetPasswordClick(member)}
-                                        disabled={resetPasswordMutation.isPending}
-                                      >
-                                        <Key className="h-4 w-4" />
-                                      </Button>
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        data-testid={`button-delete-${member.id}`}
-                                        onClick={() => handleDeleteClick(member)}
-                                        disabled={deleteStaffMutation.isPending}
-                                      >
-                                        <Trash2 className="h-4 w-4 text-destructive" />
-                                      </Button>
+                                      {member.status === "active" ? (
+                                        <>
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            data-testid={`button-edit-${member.id}`}
+                                            onClick={() => handleEditClick(member)}
+                                            disabled={updateStaffMutation.isPending}
+                                          >
+                                            Edit
+                                          </Button>
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            aria-label={`Reset password for ${staffIdentityLabel(member)}`}
+                                            data-testid={`button-reset-password-${member.id}`}
+                                            onClick={() => handleResetPasswordClick(member)}
+                                            disabled={resetPasswordMutation.isPending}
+                                          >
+                                            <Key className="h-4 w-4" />
+                                          </Button>
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            aria-label={`Remove school access for ${staffIdentityLabel(member)}`}
+                                            data-testid={`button-remove-access-${member.id}`}
+                                            onClick={() => handleRemoveAccessClick(member)}
+                                          >
+                                            <Trash2 className="h-4 w-4 text-destructive" />
+                                          </Button>
+                                        </>
+                                      ) : (
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          data-testid={`button-reactivate-${member.id}`}
+                                          onClick={() => reactivateStaffMutation.mutate(member.membershipId)}
+                                          disabled={reactivateStaffMutation.isPending}
+                                        >
+                                          <RefreshCw className="mr-2 h-4 w-4" />
+                                          Reactivate
+                                        </Button>
+                                      )}
                                     </div>
                                   </td>
                                 </tr>
@@ -1246,6 +1467,7 @@ function AdminPanel({ currentUser, schoolTimezone }) {
           setEditDialogOpen(open);
           if (!open) {
             setStaffToEdit(null);
+            setEditEmail("");
           }
         }}
       >
@@ -1253,7 +1475,10 @@ function AdminPanel({ currentUser, schoolTimezone }) {
           <DialogHeader>
             <DialogTitle>Edit Staff</DialogTitle>
             <DialogDescription>
-              Update details for <strong>{staffToEdit?.displayName || staffToEdit?.email}</strong>.
+              Update details for <strong>{staffIdentityLabel(staffToEdit)}</strong>. Correcting the email keeps the same identity and class assignments.
+              {staffToEdit?.membershipId ? (
+                <span className="mt-1 block font-mono text-xs">Membership ID: {staffToEdit.membershipId}</span>
+              ) : null}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -1269,6 +1494,20 @@ function AdminPanel({ currentUser, schoolTimezone }) {
               />
             </div>
             <div className="space-y-2">
+              <Label htmlFor="edit-email">Email</Label>
+              <Input
+                id="edit-email"
+                data-testid="input-edit-email"
+                type="email"
+                value={editEmail}
+                onChange={(e) => setEditEmail(e.target.value)}
+                autoComplete="email"
+              />
+              <p className="text-xs text-muted-foreground">
+                Use this field for corrections and Workspace address changes. Do not remove and recreate the staff member.
+              </p>
+            </div>
+            <div className="space-y-2">
               <Label htmlFor="edit-role">Role</Label>
               <Select
                 value={selectedRole}
@@ -1280,15 +1519,33 @@ function AdminPanel({ currentUser, schoolTimezone }) {
                 <SelectContent>
                   <SelectItem value="teacher">Teacher</SelectItem>
                   <SelectItem value="school_admin">School Admin</SelectItem>
+                  <SelectItem value="office_staff">Office Staff (non-teaching)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
+            {editRequiresSeparateSaves ? (
+              <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" data-testid="staff-separate-save-warning">
+                Save the email correction by itself first. After the staff member signs in again, reopen this editor to save name or role changes.
+              </div>
+            ) : null}
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setEditDialogOpen(false)}>
                 Cancel
               </Button>
-              <Button type="button" onClick={handleEditSubmit} disabled={updateStaffMutation.isPending}>
-                {updateStaffMutation.isPending ? "Saving..." : "Save"}
+              <Button
+                type="button"
+                onClick={handleEditSubmit}
+                disabled={
+                  updateStaffMutation.isPending
+                  || editRequiresSeparateSaves
+                  || !staffEmailSchema.safeParse(normalizeEmail(editEmail)).success
+                }
+              >
+                {updateStaffMutation.isPending
+                  ? "Saving..."
+                  : editEmailChanged
+                    ? "Save email correction"
+                    : "Save profile changes"}
               </Button>
             </DialogFooter>
           </div>
@@ -1309,7 +1566,7 @@ function AdminPanel({ currentUser, schoolTimezone }) {
           <DialogHeader>
             <DialogTitle>Reset Password</DialogTitle>
             <DialogDescription>
-              Set a new password for <strong>{staffToResetPassword?.displayName || staffToResetPassword?.email}</strong>.
+              Set a new password for <strong>{staffIdentityLabel(staffToResetPassword)}</strong>.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -1343,27 +1600,16 @@ function AdminPanel({ currentUser, schoolTimezone }) {
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete Staff Account</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete the account for{" "}
-              <strong>{staffToDelete?.displayName || staffToDelete?.email}</strong>? This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel data-testid="button-cancel-delete">Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              data-testid="button-confirm-delete"
-              onClick={handleDeleteConfirm}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Delete Account
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <StaffAccessTransitionDialog
+        open={Boolean(staffTransitionRequest)}
+        onOpenChange={(open) => {
+          if (!open) setStaffTransitionRequest(null);
+        }}
+        staff={staffTransitionRequest?.staff}
+        allStaff={staff}
+        transitionAction={staffTransitionRequest?.action || "deactivate"}
+        newRole={staffTransitionRequest?.newRole}
+      />
 
       <AlertDialog open={cleanupDialogOpen} onOpenChange={setCleanupDialogOpen}>
         <AlertDialogContent>
@@ -1480,6 +1726,94 @@ function AdminPanel({ currentUser, schoolTimezone }) {
         </DialogContent>
       </Dialog>
 
+      <Dialog
+        open={Boolean(identityConflict)}
+        onOpenChange={(open) => {
+          if (!open && !createStaffMutation.isPending && !reactivateStaffMutation.isPending) {
+            setIdentityConflict(null);
+          }
+        }}
+      >
+        <DialogContent data-testid="dialog-staff-identity-conflict">
+          <DialogHeader>
+            <DialogTitle>
+              {identityConflict?.code === "STAFF_REACTIVATION_REQUIRED"
+                ? "Reactivate the existing staff identity"
+                : "Confirm this is a different person"}
+            </DialogTitle>
+            <DialogDescription>
+              {identityConflict?.code === "STAFF_REACTIVATION_REQUIRED"
+                ? "This email already belongs to former staff at this school. Reactivate that identity so its existing history and assignments remain connected."
+                : "A staff member with the same name already exists under another email. Choose the existing identity when this is an email correction; create another identity only when these are truly different people."}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            {identityConflictCandidates.map((candidate) => (
+              <div key={candidate.membershipId} className="flex flex-col gap-3 rounded-md border p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="font-medium">{staffIdentityLabel(candidate)}</p>
+                  <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                    Membership ID: {candidate.membershipId}
+                  </p>
+                  <div className="mt-1 flex gap-2">
+                    <Badge variant="secondary">
+                      {candidate.role === "school_admin" ? "School Admin" : "Teacher"}
+                    </Badge>
+                    <Badge variant={candidate.status === "inactive" ? "outline" : "default"}>
+                      {candidate.status === "inactive" ? "Former staff" : "Active"}
+                    </Badge>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" variant="outline" onClick={() => handleEditIdentityCandidate(candidate)}>
+                    Edit existing email
+                  </Button>
+                  {candidate.status === "inactive" ? (
+                    <Button
+                      type="button"
+                      onClick={() => reactivateStaffMutation.mutate(candidate.membershipId)}
+                      disabled={reactivateStaffMutation.isPending}
+                    >
+                      Reactivate
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+            {identityConflictCandidates.length === 0 ? (
+              <p className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">
+                Refresh the staff list to review the existing identity before continuing.
+              </p>
+            ) : null}
+          </div>
+
+          <DialogFooter className="gap-2 sm:justify-between">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setIdentityConflict(null);
+                setAddStaffDialogOpen(true);
+              }}
+            >
+              Back
+            </Button>
+            {identityConflict?.code === "POSSIBLE_DUPLICATE_STAFF" ? (
+              <Button
+                type="button"
+                variant="destructive"
+                data-testid="button-confirm-distinct-staff"
+                onClick={handleConfirmDistinctPerson}
+                disabled={createStaffMutation.isPending}
+              >
+                {createStaffMutation.isPending ? "Creating…" : "This is a different person"}
+              </Button>
+            ) : null}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Import CSV Dialog */}
       <Dialog
         open={importDialogOpen}
@@ -1489,6 +1823,7 @@ function AdminPanel({ currentUser, schoolTimezone }) {
             setImportFile(null);
             setImportPreview([]);
             setImportError("");
+            setImportResult(null);
           }
         }}
       >
@@ -1544,6 +1879,25 @@ function AdminPanel({ currentUser, schoolTimezone }) {
               </div>
             )}
 
+            {importResult?.failed > 0 ? (
+              <div className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+                <p className="font-medium">
+                  Imported {importResult.success}; {importResult.failed} require identity review.
+                </p>
+                <p>
+                  No conflicting row was created automatically. Use Add Staff to confirm a genuinely different person, Edit for an email correction, or Former staff to reactivate an existing identity.
+                </p>
+                <ul className="max-h-36 space-y-1 overflow-auto">
+                  {importResult.errors.map((error) => (
+                    <li key={`${error.email}-${error.code || error.message}`}>
+                      <span className="font-medium">{error.email}</span>: {error.message}
+                      {error.code ? <span className="ml-1 font-mono text-xs">({error.code})</span> : null}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
             {/* Preview */}
             {importPreview.length > 0 && (
               <div className="space-y-2">
@@ -1585,14 +1939,16 @@ function AdminPanel({ currentUser, schoolTimezone }) {
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setImportDialogOpen(false)}>
-              Cancel
+              {importResult ? "Close" : "Cancel"}
             </Button>
-            <Button
-              onClick={() => bulkImportMutation.mutate(importPreview)}
-              disabled={importPreview.length === 0 || bulkImportMutation.isPending}
-            >
-              {bulkImportMutation.isPending ? "Importing..." : `Import ${importPreview.length} Staff`}
-            </Button>
+            {!importResult ? (
+              <Button
+                onClick={() => bulkImportMutation.mutate(importPreview)}
+                disabled={importPreview.length === 0 || bulkImportMutation.isPending}
+              >
+                {bulkImportMutation.isPending ? "Importing..." : `Import ${importPreview.length} Staff`}
+              </Button>
+            ) : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1645,24 +2001,33 @@ function AdminPanel({ currentUser, schoolTimezone }) {
               <div className="space-y-4">
                 <div className="p-4 border rounded-md space-y-3">
                   <p className="font-medium">Import Results:</p>
-                  <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div className="grid grid-cols-3 gap-4 text-sm">
                     <div>
                       <p className="text-muted-foreground">Imported</p>
-                      <p className="text-2xl font-bold text-green-600">{wsImportResult.imported}</p>
+                      <p className="text-2xl font-bold text-green-600">{wsImportResult.imported || 0}</p>
                     </div>
                     <div>
-                      <p className="text-muted-foreground">Skipped (existing)</p>
-                      <p className="text-2xl font-bold text-gray-600">{wsImportResult.skipped || wsImportResult.updated || 0}</p>
+                      <p className="text-muted-foreground">Updated</p>
+                      <p className="text-2xl font-bold text-blue-600">{wsImportResult.updated || 0}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Skipped / review</p>
+                      <p className="text-2xl font-bold text-amber-700">{wsImportResult.skipped || 0}</p>
                     </div>
                   </div>
                   {wsImportResult.errors?.length > 0 && (
                     <div className="mt-3 p-3 bg-destructive/10 rounded-md">
-                      <p className="font-medium text-destructive mb-2">Errors:</p>
-                      <ul className="list-disc list-inside text-sm text-destructive space-y-1">
-                        {wsImportResult.errors.slice(0, 10).map((err, i) => <li key={i}>{err}</li>)}
+                      <p className="font-medium text-destructive mb-2">
+                        Rows requiring review ({wsImportResult.errors.length}):
+                      </p>
+                      <ul className="max-h-48 list-disc space-y-1 overflow-y-auto pl-5 text-sm text-destructive" data-testid="workspace-staff-import-errors">
+                        {wsImportResult.errors.map((err, i) => <li key={i}>{workspaceImportIssueText(err)}</li>)}
                       </ul>
                     </div>
                   )}
+                  <p className="text-xs text-muted-foreground">
+                    Keep this result open until every skipped or failed row has been reviewed. No row is silently overwritten.
+                  </p>
                 </div>
                 <div className="flex justify-end">
                   <Button onClick={() => setWsImportDialogOpen(false)}>Done</Button>
