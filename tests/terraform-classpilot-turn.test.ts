@@ -39,6 +39,15 @@ describe("ClassPilot AWS TURN infrastructure contract", () => {
   });
 
   it("configures REST auth, TURNS 443, DNS certificate renewal, and telemetry", () => {
+    assert.doesNotMatch(userData, /\r/);
+    assert.doesNotMatch(userData, /apt-get install[^\n]*\bawscli\b/);
+    assert.match(userData, /apt-get install[^\n]*\bgnupg\b/);
+    assert.match(userData, /apt-get install[^\n]*\bunzip\b/);
+    assert.match(userData, /https:\/\/awscli\.amazonaws\.com\/v2\/install\.sh/);
+    assert.match(userData, /--retry 5 --retry-delay 2 --retry-connrefused/);
+    assert.match(userData, /--connect-timeout 15 --max-time 120/);
+    assert.match(userData, /bash \/tmp\/aws-cli-install\.sh --system/);
+    assert.match(userData, /aws --version/);
     assert.match(userData, /use-auth-secret/);
     assert.match(userData, /tls-listening-port=443/);
     assert.match(userData, /--dns-route53/);
