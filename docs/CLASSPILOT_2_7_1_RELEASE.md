@@ -2,8 +2,15 @@
 
 This runbook is the operator contract for the paired SchoolPilot and ClassPilot
 2.7.1 release. Feature flags are temporary deployment and emergency controls;
-the successful final state has every repaired 2.7.1 capability globally on.
-`kioskLaunchTicketV1` remains off because V2 replaces it.
+the successful final state has `scopedAuthorityChecksV1` and all eight dependent
+repaired capabilities globally on. `kioskLaunchTicketV1` remains off because V2
+replaces it.
+
+Chrome Web Store listing `iggbfegfcjkfieoemeolfmfnapepalca` was
+operator-confirmed live at `2.7.1` on August 24, 2026. This is Store-publication
+evidence only. Managed-Chromebook validation was not passed and must not be
+claimed; the approved completion path below is explicitly synthetic-only with a
+separate managed-test waiver.
 
 ## Immutable release inputs
 
@@ -11,20 +18,24 @@ Record these before deployment:
 
 - SchoolPilot merge SHA and green workflow URLs.
 - ClassPilot 2.7.1 tag and merge SHA.
-- SHA-256 of the inspected `ClassPilot-v2.7.1.zip` that is uploaded.
+- SHA-256 of the inspected `ClassPilot-v2.7.1.zip` that was uploaded.
 - Previous API and worker ECS task-definition ARNs.
-- Managed test OU and exact test school ID.
-- Chrome Web Store listing version immediately before upload.
+- Managed test OU and exact test school ID for the strict path, or the explicit
+  `waived_not_passed` record for the synthetic-only path.
+- Chrome Web Store listing observation (`2.7.1` live on August 24, 2026).
+- Exact synthetic-validation, TURN-evidence, and managed-test-waiver hashes when
+  using the approved synthetic-only completion path.
 
-Production OUs remain pinned to 2.7.0 until the managed test OU completes all
-validation below. Do not rely on a Chrome Web Store downgrade for rollback.
+Store publication does not prove that any managed OU installed, adopted, or
+validated the release. Preserve independent Google Admin adoption controls and
+do not rely on a Chrome Web Store downgrade for rollback.
 
 ## Backend-first deployment posture
 
 Deploy the SchoolPilot backend and frontend with protocol capability acceptance
 off. This interval exists only to make the new additive contracts available
-before a 2.7.1 client can use them. No RLS activation or application-schema
-migration belongs to this release.
+before accepting them from a 2.7.1 client. No RLS activation or
+application-schema migration belongs to this release.
 
 TURN infrastructure is a separate reviewed operational gate. If the existing
 two-node module is not already provisioned, set its canonical production profile
@@ -33,6 +44,41 @@ to enabled and apply that infrastructure before validating
 application deployment. Verify both nodes, DNS, certificate renewal, secret
 wiring, aggregate telemetry, TURN/TCP, and TURNS/443 before accepting the
 capability. Keep the capability off if that live gate is not green.
+
+One narrow August 24, 2026 Terraform repair exception is authorized but remains
+pending execution. Its saved plan must replace only the two TURN instances and
+their two EIP associations, update only the two node-status alarms, and show
+exactly `4 to create, 2 to update, 4 to destroy` with no unrelated changes.
+EIPs, DNS, the TURN secret, IAM, security groups, the dashboard, and ECS are
+outside the exception. Use verified external state backups before plan, before
+apply, and after apply. The exact addresses and post-apply gates are in
+`CLASSPILOT_TURN_OPERATIONS.md`; authorization becomes completed and
+non-reusable only after the exact apply, live validation, and a fresh no-op plan
+all pass.
+
+If the exact SchoolPilot backend image must be deployed during the protected
+window, the only authorized deploy-script shape is:
+
+```bash
+./scripts/deploy.sh production --backend --activate-emergency \
+  --tag <full-40-character-main-sha> \
+  --confirm-protected-window-production-mutation
+```
+
+The flag is admitted only when the process starts during the weekday
+04:45–10:14 Eastern window. It rejects frontend, RLS, skip-wait, immutable-image, same-image,
+capacity, observation, rehearsal, and receipt modes. It accepts only a stable
+API desired count from one through six, installs the same 1–6 bounds documented
+below before API mutation, converges the API before the singleton worker, and
+validates and hash-binds the exact 05:45/10:00 scheduled actions, and restores
+the exact prior deployment and scheduled-scaling configuration. If restoration
+must raise the arrival minimum to six, completion waits for six desired,
+running, and healthy API targets. If a candidate may already have served and a
+safe terminal cannot be proven, the controller preserves its recovery files and
+retains no-growth/scaling containment for explicit roll-forward recovery rather
+than forcing an unproven old-code downgrade. It is
+not implied by `--activate-emergency` and must not be retained for an ordinary
+deploy.
 
 ### Required same-digest runtime configuration path
 
@@ -61,23 +107,42 @@ worker singleton, matching managed configuration, production AWS identity, and
 the reviewed 1–6 autoscaling ceiling. It does not require current `main`, an ECR
 SHA-tag lookup, TURN evidence, or an out-of-arrival-window start, because those
 checks could delay containment after code advances or during the school day.
-For API desired counts 2 through 6, it temporarily uses minimum healthy
-percentages `50`, `66`, `75`, `80`, and `83`, respectively, with maximum
-`100`. ECS rounding therefore permits exactly one stop and no capacity growth.
-A singleton API uses `100/200`, allowing one temporary replacement without a
-stop-first outage. The singleton worker uses `0/100`. The helper preserves the
-complete reviewed ROLLING deployment configuration, including the enabled
-rollback circuit breaker and alarm fields, while changing only those
-percentages. It suspends dynamic and scheduled scaling during mutation,
-restores the exact deployment configuration, and reconciles the current
-weekday 05:45–10:00 Eastern scheduled minimum (`6` in-window, `1` otherwise)
-with a two-phase, boundary-checked release before removing the hold. If desired
-capacity drifts after hold acquisition, service mutation stops immediately;
-recovery re-derives the no-growth policy from the current frozen count rather
-than a stale pre-hold count. The bounded convergence budget is one hour because
-a no-growth six-task rollout can require sequential 300-second ALB drains. This
-exception can only turn every capability off; it cannot enable or partially
-activate features.
+It can only turn every capability off; it cannot enable or partially activate
+features.
+
+Feature-enabling mutation inside the weekday 04:45–10:14 Eastern protected
+window is a separate explicit exception; only that admitted protected run may
+also use an API desired count above two.
+Both Plan and Apply must include `-ConfirmProductionMutation` and
+`-ConfirmProtectedWindowProductionMutation`. The approved synthetic-only
+global activation additionally requires
+`-ConfirmSyntheticOnlyGlobalActivation`; omitting any one of the three fails
+before mutation. Ordinary feature-enabling plans remain outside the protected
+window and accept only one or two stable API tasks.
+
+Both `off` and an explicitly protected feature-enabling plan use these exact
+temporary API `minimumHealthyPercent/maximumPercent` bounds:
+
+| Frozen desired count | API bounds | Permitted replacement behavior |
+|---:|---:|---|
+| 1 | `100/200` | One availability-preserving replacement slot |
+| 2 | `50/100` | Exactly one stop; no capacity growth |
+| 3 | `66/100` | Exactly one stop; no capacity growth |
+| 4 | `75/100` | Exactly one stop; no capacity growth |
+| 5 | `80/100` | Exactly one stop; no capacity growth |
+| 6 | `83/100` | Exactly one stop; no capacity growth |
+
+The singleton worker uses `0/100`. The helper preserves the complete reviewed
+ROLLING deployment configuration, including the enabled rollback circuit
+breaker and alarm fields, while changing only those percentages. It suspends
+dynamic and scheduled scaling during mutation, restores the exact deployment
+configuration, and reconciles the current weekday 05:45–10:00 Eastern scheduled
+minimum (`6` in-window, `1` otherwise) with a two-phase, boundary-checked release
+before removing the hold. If desired capacity drifts after hold acquisition,
+service mutation stops immediately; recovery re-derives the bounds from the
+current frozen count rather than a stale pre-hold count. The bounded convergence
+budget is one hour because a six-task rollout can require sequential 300-second
+ALB drains.
 
 Store profiles, TURN proof, plans, checkpoints, and results outside the
 repository in one dedicated private evidence root. The helper protects
@@ -86,11 +151,12 @@ generated material for the operator account and SYSTEM only on Windows
 contents, and rejects repository-local, broad, shared-readable, or
 reparse-point inputs. During planning it reads each operator input once and
 copies the exact bytes into the new private run directory under the neutral
-names `profile.json` and, when supplied, `turn-evidence.json`. Apply and
-rollback use only those hash-bound copies; they do not reopen the original
-input paths. Neither operator-supplied source paths nor school or TURN values
-are written to the plan or stdout. The plan names only the neutral files, and
-the final stdout value is the identifier-free `PlanRelativePath` after the
+names `profile.json` and, when supplied, `turn-evidence.json`,
+`synthetic-validation.json`, and `managed-test-waiver.json`. Apply and rollback
+use only those hash-bound copies; they do not reopen the original input paths.
+Neither operator-supplied source paths nor school, TURN, approver, or waiver
+values are written to the plan or stdout. The plan names only the neutral files,
+and the final stdout value is the identifier-free `PlanRelativePath` after the
 summary; join it to the exact `-ExternalEvidenceRoot` supplied to `Plan` before
 hashing or applying it.
 
@@ -128,7 +194,7 @@ hosts or secret ARN and must be no more than two hours old:
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "validatedAt": "<UTC_ISO_TIMESTAMP>",
   "hostsSha256": "<SHA256_OF_SORTED_COMMA_SEPARATED_HOSTS>",
   "secretArnSha256": "<SHA256_OF_EXACT_SECRET_ARN>",
@@ -142,10 +208,17 @@ hosts or secret ARN and must be no more than two hours old:
     "tlsCertificatesCurrent": true,
     "relayRangeValidated": true,
     "aggregateTelemetryHealthy": true,
-    "udpBlockedFallbackPassed": true
+    "syntheticUdpBlockedFallbackPassed": true,
+    "managedUdpBlockedLiveViewPassed": true
   }
 }
 ```
+
+The split TURN fields are deliberate. The ordinary strict path requires both
+synthetic and managed UDP-blocked checks to be `true`. Only the approved
+synthetic-only global path accepts
+`managedUdpBlockedLiveViewPassed: false`, and it accepts that value only when
+the hash-bound waiver below records that managed validation was not passed.
 
 For `test-school` and `global-on`, start from clean `main`. For every mode,
 record the exact active task-definition ARNs, full deployed SchoolPilot SHA,
@@ -176,16 +249,105 @@ pwsh -NoProfile -File scripts/deploy-classpilot-runtime-config.ps1 `
   -ConfirmProductionMutation
 ```
 
+### Approved synthetic-only completion waiver
+
+Managed-Chromebook validation has not passed. The approved exception may go
+directly from `baseline`, `off`, or a test-school prefix to `global-on` only
+when all three private evidence files are no more than two hours old and bind
+the exact release, image, and one another. The synthetic evidence has this
+strict shape. Its bound TURN evidence uses schema version 2 above with
+`syntheticUdpBlockedFallbackPassed: true` and
+`managedUdpBlockedLiveViewPassed: false`:
+
+```json
+{
+  "schemaVersion": 1,
+  "validatedAt": "<UTC_ISO_TIMESTAMP>",
+  "schoolPilotAppSha": "<FULL_40_CHARACTER_SCHOOLPILOT_SHA>",
+  "schoolPilotImageDigest": "sha256:<64_HEX>",
+  "classPilotTag": "v2.7.1",
+  "classPilotMergeSha": "a3b096d6a74ab6979f4e4c656d75e2397eb8648f",
+  "classPilotZipSha256": "40fed2c455d5c50fe3a947d23e3798a0c81832a67e717a2767b62970c024307c",
+  "turnEvidenceSha256": "<SHA256_OF_EXACT_TURN_EVIDENCE_FILE>",
+  "checks": {
+    "crossRepositoryContractPassed": true,
+    "unpackedZipPassed": true,
+    "identityTransitions10000Passed": true,
+    "redisCrossProcessPassed": true,
+    "allCapabilitiesSimultaneousPassed": true,
+    "protocol2CompatibilityPassed": true,
+    "markerless270LegacyPassed": true
+  }
+}
+```
+
+The separate approval file must bind both evidence hashes and state the waiver
+without implying a managed pass:
+
+```json
+{
+  "schemaVersion": 1,
+  "approvedAt": "<UTC_ISO_TIMESTAMP>",
+  "approvedBy": "bzinkan@school-pilot.net",
+  "reason": "<BOUNDED_NONEMPTY_APPROVAL_REASON>",
+  "syntheticValidationSha256": "<SHA256_OF_EXACT_SYNTHETIC_VALIDATION_FILE>",
+  "turnEvidenceSha256": "<SHA256_OF_EXACT_TURN_EVIDENCE_FILE>",
+  "managedValidation": "waived_not_passed",
+  "validationLevel": "synthetic_only"
+}
+```
+
+Supply the two additional paths and all three confirmations to Plan:
+
+```powershell
+$planRelativePath = & pwsh -NoProfile -File scripts/deploy-classpilot-runtime-config.ps1 `
+  -Operation Plan `
+  -ProfilePath C:\private\classpilot-global-on-profile.json `
+  -TurnEvidencePath C:\private\classpilot-turn-evidence.json `
+  -SyntheticValidationPath C:\private\classpilot-synthetic-validation.json `
+  -ManagedTestWaiverPath C:\private\classpilot-managed-test-waiver.json `
+  -ExternalEvidenceRoot $evidenceRoot `
+  -ExpectedAppSha <FULL_40_CHARACTER_SCHOOLPILOT_SHA> `
+  -ExpectedImageDigest <SHA256_IMAGE_DIGEST> `
+  -ExpectedApiTaskDefinitionArn <EXACT_ACTIVE_API_EMERGENCY_TASK_ARN> `
+  -ExpectedWorkerTaskDefinitionArn <EXACT_ACTIVE_SINGLETON_WORKER_TASK_ARN> `
+  -ConfirmProductionMutation `
+  -ConfirmSyntheticOnlyGlobalActivation `
+  -ConfirmProtectedWindowProductionMutation |
+  Select-Object -Last 1
+```
+
+Hash the returned plan exactly as above. Apply must repeat all three
+confirmations:
+
+```powershell
+pwsh -NoProfile -File scripts/deploy-classpilot-runtime-config.ps1 `
+  -Operation Apply `
+  -PlanPath $planPath `
+  -ExpectedPlanSha256 $planSha256 `
+  -ConfirmProductionMutation `
+  -ConfirmSyntheticOnlyGlobalActivation `
+  -ConfirmProtectedWindowProductionMutation
+```
+
+The plan, checkpoint, and result must retain
+`validationLevel: "synthetic_only"`,
+`managedValidation: "waived_not_passed"`, the two evidence hashes, and
+`protectedWindowProductionMutation: true`. Apply rereads only the captured
+copies and revalidates their hashes and freshness before acquiring the
+production mutation lease. Never rewrite those fields as `managed` or `passed`.
+
 For a profile that does not yet activate Live View, omit
 `-TurnEvidencePath`. For feature-enabling profiles, the helper rejects the
-weekday 04:45–10:14 Eastern arrival window, wrong AWS account, source drift,
-API desired count outside 1–2, a
+weekday 04:45–10:14 Eastern arrival window unless the exact protected-window
+confirmation is bound into the plan. Without that confirmation it also rejects
+an API desired count outside 1–2. Every path rejects a
 non-singleton worker, an autoscaling target outside the scheduled minimum
 `1`/`6` and maximum `6`, scheduled-action drift,
 mutable/mismatched images, missing emergency memory, incomplete TURN state, and
 an ECS deployment strategy other than exact reviewed ROLLING, or any mutation
-outside the allowlist. Emergency `off` uses the stricter
-containment exception above and accepts an exact current API count through six.
+outside the allowlist. Protected-window and emergency `off` plans accept only
+an exact stable current API count from one through six.
 The helper registers both candidates before the
 all-scaling hold, rechecks the exact source pair and full deployment
 configuration, waits for exact healthy API and running singleton-worker
@@ -232,7 +394,8 @@ step, use that step's candidate API and worker ARNs as the exact active source
 ARNs for the next plan; never reuse an older plan against a newer serving pair.
 The app SHA and image digest remain unchanged throughout this config-only train.
 
-Verify the existing 2.7.0 path before publishing the extension:
+Verify the retained protocol-2/2.7.0 compatibility path before capability
+activation, even though the 2.7.1 Store artifact is already public:
 
 - public `/health`, ECS desired/running counts, target health, restarts, and DB
   pool acquisition;
@@ -260,6 +423,13 @@ exact test school and move each capability from `off` to `on` in this order:
 7. `liveViewIceServersV1`
 8. `kioskLaunchTicketV2`
 
+Every item in that eight-capability sequence depends on
+`scopedAuthorityChecksV1`. The server accepts none of them unless the current
+exact binding both advertises and is accepted for the marker. This includes
+chat, screenshot, safety, Live View, and kiosk V2; the dependency is not limited
+to ACK, tab-close, or telemetry capabilities. `kioskLaunchTicketV1` is not a
+dependent fallback and remains off.
+
 Example shape (replace the placeholder with the exact test school ID and keep
 the JSON in one environment-variable value):
 
@@ -282,10 +452,13 @@ After each change, require a fresh exact-bound heartbeat whose
 `acceptedCapabilities` contains the expected intersection. A version string is
 never capability evidence.
 
-## Managed test acceptance
+## Managed test acceptance (not passed)
 
-Use the unpacked release ZIP and the exact Store artifact on managed test
-Chromebooks. Complete all of the following:
+The following remains the strict managed acceptance suite for a future managed
+validation record. It was not passed for the approved August 24 synthetic-only
+completion and must not be cited as completed. When managed devices are
+available, use the unpacked release ZIP and the exact Store artifact and record
+all of the following:
 
 - identity A to B changes cannot transmit, persist, upload, or ACK A data under
   B authority;
@@ -316,9 +489,10 @@ service-worker regression.
 
 ## Required final global posture
 
-Only after the complete managed test suite is green, replace the test-school
-registry with this global rollout registry and deploy it to the exact API and
-worker task pair using the helper above:
+The final target is the same for either authorized route: the ordinary strict
+route after managed acceptance, or the approved synthetic-only route with the
+exact validation and waiver evidence above. Deploy this global registry to the
+exact same-digest API and worker pair:
 
 ```json
 {
@@ -335,26 +509,35 @@ worker task pair using the helper above:
 }
 ```
 
-Unpin one pilot-school OU, observe one complete school day, then unpin the
-remaining production OUs. A healthy 2.7.1 heartbeat automatically receives the
-full accepted set; there is no remaining per-school enablement step.
+This is nine repaired capabilities globally on: the parent marker plus all
+eight dependents. `kioskLaunchTicketV1` is explicitly outside that nine and
+stays off. A healthy 2.7.1 heartbeat that advertises the marker and dependents
+receives the full accepted set; no dependent can be accepted without the marker.
 
-Do not call the release complete until all nine repaired capabilities are
-globally accepted for healthy 2.7.1 devices, TURN and Redis live tests are green,
-and the expected fleet capability telemetry is healthy.
+Chrome Web Store publication and runtime activation are separate from Google
+Admin installation. Continue controlled adoption and fleet observation, but do
+not label that observation “managed validation passed” until the managed suite
+above is actually executed. For the approved protected completion, require the
+global-on result to retain `validationLevel: "synthetic_only"` and
+`managedValidation: "waived_not_passed"`, all nine repaired rollout entries to
+be global `on`, V1 to be `off`, and the synthetic TURN and Redis evidence to
+remain green.
 
 ## Rollback and retained evidence
 
-For emergency containment, pause OU unpinning and create/apply a fresh
-`mode: "off"` profile with the runtime helper. This disables the entire repaired
-capability set; do not partially edit registry entries or hand-edit ECS task
-definitions. The flags-off 2.7.1 path remains compatible with 2.7.0/protocol 2.
+For emergency containment, pause further managed adoption and create/apply a
+fresh `mode: "off"` profile with the runtime helper. This disables the entire
+repaired capability set; do not partially edit registry entries or hand-edit
+ECS task definitions. The flags-off 2.7.1 path remains compatible with
+2.7.0/protocol 2.
 Use `-Operation Rollback` only with the exact successful plan whose immediately
 prior API/worker pair must be restored. Repair forward if a device already
 running 2.7.1 is defective.
 
-Delete merged branches only after backend/frontend smoke and managed test-OU
-validation. Retain the release tag, paired SHAs, uploaded ZIP, SHA-256, CI and
-package evidence, rollout record, and previous ECS task definitions. Preserve
+Delete merged branches only after backend/frontend smoke and the exact approved
+completion evidence is retained. Do not substitute the synthetic-only waiver
+for a managed-pass record. Retain the release tag, paired SHAs, uploaded ZIP,
+SHA-256, CI and package evidence, TURN and synthetic-validation evidence,
+managed-test waiver, rollout result, and previous ECS task definitions. Preserve
 protocol 2, legacy ACK fields, ticket V1 code, and legacy kiosk bindings until
 99% of the fleet advertises `scopedAuthorityChecksV1` for 30 consecutive days.

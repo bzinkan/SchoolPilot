@@ -89,10 +89,14 @@ type LibraryRunOptions = {
   deployBackend?: boolean;
   deployFrontend?: boolean;
   activateEmergency?: boolean;
+  confirmProtectedWindow?: boolean;
+  protectedWindowAdmitted?: boolean;
   skipWait?: boolean;
   easternClock?: string;
   serviceSnapshots?: string[];
   scalingSnapshots?: string[];
+  scheduledActionSnapshots?: string[];
+  targetHealthSnapshots?: string[];
   taskDefinitionSnapshots?: string[];
   registerFailCalls?: number[];
 };
@@ -106,6 +110,12 @@ function runLibrary(body: string, options: LibraryRunOptions = {}) {
   for (const [index, snapshot] of (options.scalingSnapshots ?? []).entries()) {
     writeFileSync(join(fixtureDir, `scaling-${index + 1}.txt`), snapshot, "utf8");
   }
+  for (const [index, snapshot] of (options.scheduledActionSnapshots ?? []).entries()) {
+    writeFileSync(join(fixtureDir, `scheduled-${index + 1}.txt`), snapshot, "utf8");
+  }
+  for (const [index, snapshot] of (options.targetHealthSnapshots ?? []).entries()) {
+    writeFileSync(join(fixtureDir, `targethealth-${index + 1}.txt`), snapshot, "utf8");
+  }
   for (const [index, snapshot] of (options.taskDefinitionSnapshots ?? []).entries()) {
     writeFileSync(join(fixtureDir, `taskdef-${index + 1}.txt`), snapshot, "utf8");
   }
@@ -116,6 +126,8 @@ ENV="$TEST_ENVIRONMENT"
 DEPLOY_BACKEND="$TEST_DEPLOY_BACKEND"
 DEPLOY_FRONTEND="$TEST_DEPLOY_FRONTEND"
 ACTIVATE_EMERGENCY="$TEST_ACTIVATE_EMERGENCY"
+CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION="$TEST_CONFIRM_PROTECTED_WINDOW"
+PROTECTED_WINDOW_PRODUCTION_MUTATION_ADMITTED="$TEST_PROTECTED_WINDOW_ADMITTED"
 SKIP_WAIT="$TEST_SKIP_WAIT"
 production_eastern_weekday_hhmm() {
   if [[ "$TEST_EASTERN_CLOCK" == "__FAIL__" ]]; then
@@ -164,6 +176,14 @@ aws() {
     next_fixture scaling
     return $?
   fi
+  if [[ "$1" == "application-autoscaling" && "$2" == "describe-scheduled-actions" ]]; then
+    next_fixture scheduled
+    return $?
+  fi
+  if [[ "$1" == "elbv2" && "$2" == "describe-target-health" ]]; then
+    next_fixture targethealth
+    return $?
+  fi
   if [[ "$1" == "ecs" && "$2" == "describe-task-definition" ]]; then
     next_fixture taskdef
     return $?
@@ -191,6 +211,10 @@ ${body}
       TEST_DEPLOY_BACKEND: String(options.deployBackend ?? true),
       TEST_DEPLOY_FRONTEND: String(options.deployFrontend ?? false),
       TEST_ACTIVATE_EMERGENCY: String(options.activateEmergency ?? false),
+      TEST_CONFIRM_PROTECTED_WINDOW: String(options.confirmProtectedWindow ?? false),
+      TEST_PROTECTED_WINDOW_ADMITTED: String(
+        options.protectedWindowAdmitted ?? options.confirmProtectedWindow ?? false
+      ),
       TEST_SKIP_WAIT: String(options.skipWait ?? false),
       TEST_EASTERN_CLOCK: options.easternClock ?? "1 1200",
       TEST_FIXTURE_DIR: shellFixtureDir,
@@ -218,6 +242,27 @@ const captureObservedRollbackRevisions = `
 PRODUCTION_ROLLBACK_API_TASK_DEFINITION="$PRODUCTION_PREFLIGHT_API_TASK_DEFINITION"
 PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION="$PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION"
 `;
+
+const reviewedScheduledActions = JSON.stringify([
+  {
+    name: "schoolpilot-production-api-arrival-scale-down",
+    schedule: "cron(0 10 ? * MON-FRI *)",
+    timezone: "America/New_York",
+    min: 1,
+    max: null,
+    start: null,
+    end: null,
+  },
+  {
+    name: "schoolpilot-production-api-arrival-scale-up",
+    schedule: "cron(45 5 ? * MON-FRI *)",
+    timezone: "America/New_York",
+    min: 6,
+    max: null,
+    start: null,
+    end: null,
+  },
+]);
 
 describe("production backend deployment capacity guard", () => {
   it("binds the reviewed 2048 MiB rollout to the freshly registered emergency revision", () => {
@@ -386,6 +431,111 @@ launch_safe_active_api_preflight
     }
   });
 
+  it("accepts API counts one through six only under the explicit protected-window confirmation", () => {
+    for (const apiDesired of ["1", "2", "3", "4", "5", "6"]) {
+      const result = runLibrary("production_backend_capacity_preflight", {
+        confirmProtectedWindow: true,
+        serviceSnapshots: [stableServices({ apiDesired })],
+      });
+      assert.equal(result.status, 0, `${apiDesired}: ${result.stderr}`);
+    }
+
+    for (const apiDesired of ["0", "7"]) {
+      const result = runLibrary("production_backend_capacity_preflight", {
+        confirmProtectedWindow: true,
+        serviceSnapshots: [stableServices({ apiDesired })],
+      });
+      assert.notEqual(result.status, 0, `unexpectedly accepted ${apiDesired}`);
+      assert.match(result.stderr, /stable count from 1 through 6/);
+    }
+
+    const ordinarySix = runLibrary("production_backend_capacity_preflight", {
+      serviceSnapshots: [stableServices({ apiDesired: "6" })],
+    });
+    assert.notEqual(ordinarySix.status, 0);
+    assert.match(ordinarySix.stderr, /ordinary backend deploys require desiredCount 1 or 2/);
+  });
+
+  it("requires the narrow protected-window command shape and exact full-SHA tag", () => {
+    const accepted = runLibrary(`
+IMAGE_TAG="0123456789abcdef0123456789abcdef01234567"
+validate_protected_window_production_mutation_mode
+`, {
+      activateEmergency: true,
+      confirmProtectedWindow: true,
+      easternClock: "1 0600",
+    });
+    assert.equal(accepted.status, 0, accepted.stderr);
+
+    const outsideWindow = runLibrary(`
+IMAGE_TAG="0123456789abcdef0123456789abcdef01234567"
+validate_protected_window_production_mutation_mode
+`, {
+      activateEmergency: true,
+      confirmProtectedWindow: true,
+      protectedWindowAdmitted: false,
+      easternClock: "1 1200",
+    });
+    assert.notEqual(outsideWindow.status, 0);
+    assert.match(outsideWindow.stderr, /valid only for an initial weekday 04:45-10:14/);
+
+    for (const body of [
+      'IMAGE_TAG="short"',
+      'IMAGE_TAG="0123456789abcdef0123456789abcdef01234567"; DEPLOY_FRONTEND=true',
+      'IMAGE_TAG="0123456789abcdef0123456789abcdef01234567"; ENABLE_RLS_TABLE=students',
+      'IMAGE_TAG="0123456789abcdef0123456789abcdef01234567"; SKIP_WAIT=true',
+      'IMAGE_TAG="0123456789abcdef0123456789abcdef01234567"; SAME_IMAGE_NETWORKING_STAGE=PublicEcs',
+    ]) {
+      const rejected = runLibrary(`${body}\nvalidate_protected_window_production_mutation_mode`, {
+        activateEmergency: true,
+        confirmProtectedWindow: true,
+      });
+      assert.notEqual(rejected.status, 0, body);
+      assert.match(rejected.stderr, /requires production --backend --activate-emergency/);
+    }
+  });
+
+  it("uses the exact reviewed no-growth percentages for API counts one through six", () => {
+    const result = runLibrary(`
+for desired in 1 2 3 4 5 6; do
+  printf '%s:%s\\n' "$desired" "$(protected_window_api_minimum_healthy_percent "$desired")"
+done
+`);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /1:100\s+2:50\s+3:66\s+4:75\s+5:80\s+6:83/);
+  });
+
+  it("never accepts zero healthy targets for a singleton and makes exact gates exact", () => {
+    const singletonOutage = runLibrary(`
+PRODUCTION_PREFLIGHT_API_DESIRED=1
+PROTECTED_WINDOW_TARGET_GROUP_ARN="arn:aws:elasticloadbalancing:us-east-1:135775632425:targetgroup/test/abcdef0123456789"
+assert_protected_window_target_health floor
+`, {
+      confirmProtectedWindow: true,
+      targetHealthSnapshots: ["0"],
+    });
+    assert.notEqual(singletonOutage.status, 0);
+    assert.match(singletonOutage.stderr, /minimum=1/);
+
+    const extraTarget = runLibrary(`
+PRODUCTION_PREFLIGHT_API_DESIRED=1
+PROTECTED_WINDOW_TARGET_GROUP_ARN="arn:aws:elasticloadbalancing:us-east-1:135775632425:targetgroup/test/abcdef0123456789"
+assert_protected_window_target_health exact
+`, {
+      confirmProtectedWindow: true,
+      targetHealthSnapshots: ["2"],
+    });
+    assert.notEqual(extraTarget.status, 0);
+    assert.match(extraTarget.stderr, /maximum=1/);
+  });
+
+  it("uses a protected convergence budget long enough for sequential stop-first replacement", () => {
+    assert.match(
+      deploySource,
+      /PROTECTED_WINDOW_PRODUCTION_MUTATION_ADMITTED[\s\S]*max_attempts=360[\s\S]*interval_seconds=10/
+    );
+  });
+
   it("blocks the measured arrival window plus its rollout safety buffer", () => {
     for (const easternClock of ["1 0445", "1 0544", "1 0545", "3 1000", "5 1014"]) {
       const result = runLibrary('production_backend_deploy_window_preflight "test phase"', { easternClock });
@@ -394,6 +544,201 @@ launch_safe_active_api_preflight
       assert.match(result.stderr, /test phase/);
       assert.deepEqual(result.commands, []);
     }
+  });
+
+  it("bypasses the arrival-window rejection only with the explicit protected confirmation", () => {
+    for (const easternClock of ["1 0445", "1 0545", "3 1000", "5 1014"]) {
+      const result = runLibrary('production_backend_deploy_window_preflight "protected test"', {
+        confirmProtectedWindow: true,
+        easternClock,
+      });
+      assert.equal(result.status, 0, `${easternClock}: ${result.stderr}`);
+      assert.match(result.stdout, /Operator-authorized protected-window production mutation accepted/);
+    }
+  });
+
+  it("rejects delayed mutation start after 10:14 but permits an already-started held mutation to finish", () => {
+    const delayed = runLibrary('production_backend_deploy_window_preflight "delayed hold"', {
+      confirmProtectedWindow: true,
+      easternClock: "1 1015",
+    });
+    assert.notEqual(delayed.status, 0);
+    assert.match(delayed.stderr, /may start production mutation only weekdays 04:45-10:14/);
+
+    const continuation = runLibrary(`
+PROTECTED_WINDOW_MUTATION_WINDOW_STARTED=true
+production_backend_deploy_window_preflight "continuation"
+`, {
+      confirmProtectedWindow: true,
+      easternClock: "1 1015",
+    });
+    assert.equal(continuation.status, 0, continuation.stderr);
+    assert.match(continuation.stdout, /may continue across the schedule boundary/);
+  });
+
+  it("does not widen the capacity policy without a protected-window admission", () => {
+    const result = runLibrary("production_backend_capacity_preflight", {
+      confirmProtectedWindow: true,
+      protectedWindowAdmitted: false,
+      serviceSnapshots: [stableServices({ apiDesired: "6" })],
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /ordinary backend deploys require desiredCount 1 or 2/);
+  });
+
+  it("rejects protected desired-count drift against the immutable captured count", () => {
+    // Supply the snapshot directly so the validator cannot hide drift behind a
+    // second control-plane read.
+    const direct = runLibrary(`
+PROTECTED_WINDOW_CAPTURED_API_DESIRED=2
+validate_production_service_snapshot 'schoolpilot-production-api\tACTIVE\t3\t3\t0\t1\tarn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api:101\tarn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api:101\tCOMPLETED
+schoolpilot-production-scheduler-worker\tACTIVE\t1\t1\t0\t1\tarn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:21\tarn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:21\tCOMPLETED'
+`, { confirmProtectedWindow: true });
+    assert.notEqual(direct.status, 0);
+    assert.match(direct.stderr, /desiredCount drifted/);
+  });
+
+  it("validates the exact 05:45 and 10:00 scheduled-action contract", () => {
+    const accepted = runLibrary(`
+cd "$TEST_FIXTURE_DIR"
+capture_protected_window_scheduled_actions
+`, {
+      confirmProtectedWindow: true,
+      scheduledActionSnapshots: [reviewedScheduledActions],
+    });
+    assert.equal(accepted.status, 0, accepted.stderr);
+    assert.match(accepted.stdout, /scheduled-scaling contract validated and hash-bound/);
+
+    const drifted = reviewedScheduledActions.replace(
+      '"timezone":"America/New_York"',
+      '"timezone":"UTC"'
+    );
+    const rejected = runLibrary(`
+cd "$TEST_FIXTURE_DIR"
+capture_protected_window_scheduled_actions
+`, {
+      confirmProtectedWindow: true,
+      scheduledActionSnapshots: [drifted],
+    });
+    assert.notEqual(rejected.status, 0);
+  });
+
+  it("rejects a missed arrival minimum before freezing scheduled scaling", () => {
+    const result = runLibrary(`
+cd "$TEST_FIXTURE_DIR"
+PRODUCTION_PREFLIGHT_API_DESIRED=6
+acquire_production_scaling_hold
+`, {
+      confirmProtectedWindow: true,
+      easternClock: "1 0800",
+      scheduledActionSnapshots: [reviewedScheduledActions],
+      scalingSnapshots: ["1\t6\tFalse\tFalse\tFalse"],
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /MinCapacity does not match/);
+    assert.equal(registerCommands(result.commands).length, 0);
+  });
+
+  it("restores an already-suspended scheduled target to its exact captured minimum", () => {
+    const result = runLibrary(`
+revalidate_protected_window_scheduled_actions() { :; }
+PRODUCTION_SCALING_HOLD_ACTIVE=true
+PRODUCTION_SCALING_PRIOR_MIN=4
+PRODUCTION_SCALING_PRIOR_MAX=6
+PRODUCTION_SCALING_PRIOR_IN=false
+PRODUCTION_SCALING_PRIOR_OUT=true
+PRODUCTION_SCALING_PRIOR_SCHEDULED=true
+restore_production_scaling_hold
+`, {
+      confirmProtectedWindow: true,
+      scalingSnapshots: ["4\t6\tFalse\tTrue\tTrue"],
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const registrations = registerCommands(result.commands);
+    assert.equal(registrations.length, 1);
+    const [registration] = registrations;
+    assert.ok(registration);
+    assert.match(registration, /--min-capacity 4 --max-capacity 6/);
+    assert.match(registration, /ScheduledScalingSuspended=true/);
+  });
+
+  it("reconciles the reviewed scheduled minimum before releasing protected scaling", () => {
+    for (const [easternClock, minimum] of [["1 0544", "1"], ["1 0545", "6"], ["1 0959", "6"], ["1 1000", "1"]] as const) {
+      const result = runLibrary(`
+revalidate_protected_window_scheduled_actions() { :; }
+wait_for_protected_window_api_capacity() { :; }
+PRODUCTION_SCALING_HOLD_ACTIVE=true
+PRODUCTION_SCALING_PRIOR_MAX=6
+PRODUCTION_SCALING_PRIOR_IN=false
+PRODUCTION_SCALING_PRIOR_OUT=false
+PRODUCTION_SCALING_PRIOR_SCHEDULED=false
+restore_production_scaling_hold
+`, {
+        confirmProtectedWindow: true,
+        easternClock,
+        scalingSnapshots: [
+          `${minimum}\t6\tTrue\tTrue\tTrue`,
+          `${minimum}\t6\tFalse\tFalse\tFalse`,
+        ],
+      });
+      assert.equal(result.status, 0, `${easternClock}: ${result.stderr}`);
+      const registrations = registerCommands(result.commands);
+      assert.equal(registrations.length, 2);
+      assert.ok(registrations.every(command => command.includes(`--min-capacity ${minimum} --max-capacity 6`)));
+      const [holdRegistration, restoreRegistration] = registrations;
+      assert.ok(holdRegistration);
+      assert.ok(restoreRegistration);
+      assert.match(holdRegistration, /ScheduledScalingSuspended=true/);
+      assert.match(restoreRegistration, /ScheduledScalingSuspended=false/);
+    }
+  });
+
+  it("installs no-growth bounds before API mutation and restores them before scaling release", () => {
+    const execution = deploySource.slice(libraryBoundary);
+    const applyBounds = execution.indexOf("\n  apply_protected_window_deployment_bounds\n");
+    const apiUpdate = execution.indexOf("aws ecs update-service", applyBounds);
+    const apiConvergence = execution.indexOf("wait_for_production_backend_strict_stability", apiUpdate);
+    const workerUpdate = execution.indexOf("aws ecs update-service", apiConvergence);
+    const finalConvergence = execution.indexOf("wait_for_production_backend_strict_stability", workerUpdate);
+    const restoreBounds = execution.indexOf("restore_protected_window_deployment_bounds", finalConvergence);
+    const restoreScaling = execution.indexOf("restore_production_scaling_hold", restoreBounds);
+    assert.ok(applyBounds > 0 && applyBounds < apiUpdate);
+    assert.ok(apiUpdate < apiConvergence && apiConvergence < workerUpdate);
+    assert.ok(workerUpdate < finalConvergence && finalConvergence < restoreBounds);
+    assert.ok(restoreBounds < restoreScaling);
+  });
+
+  it("preserves held recovery artifacts and refuses to erase them on a later run", () => {
+    const result = runLibrary(`
+cd "$TEST_FIXTURE_DIR"
+printf '%s' '{}' > .protected-window-api-prior.json
+assert_no_preserved_protected_window_recovery_artifacts
+`);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Refusing to erase or supersede/);
+    assert.doesNotMatch(
+      deploySource.match(/TEMP_FILES=\([\s\S]*?\n\)/)?.[0] ?? "",
+      /protected-window-api-prior/
+    );
+    assert.match(
+      deploySource.match(/PROTECTED_WINDOW_RECOVERY_FILES=\([\s\S]*?\n\)/)?.[0] ?? "",
+      /protected-window-api-prior/
+    );
+  });
+
+  it("does not force an unproven old-revision rollback after protected code may have served", () => {
+    assert.match(
+      deploySource,
+      /PROTECTED_WINDOW_SERVICE_MUTATION_STARTED[\s\S]*No unproven application downgrade was attempted/
+    );
+    const exitRecovery = deploySource.slice(
+      deploySource.indexOf("deploy_exit_cleanup()"),
+      deploySource.indexOf("# Validate the active API", deploySource.indexOf("deploy_exit_cleanup()"))
+    );
+    assert.doesNotMatch(
+      exitRecovery,
+      /RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE[^\n]*\|\|[^\n]*CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION/
+    );
   });
 
   it("allows safe weekday boundaries and weekends", () => {

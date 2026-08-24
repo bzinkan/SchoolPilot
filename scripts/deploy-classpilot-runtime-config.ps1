@@ -6,6 +6,8 @@ param(
     [string]$Operation = "Plan",
     [string]$ProfilePath,
     [string]$TurnEvidencePath,
+    [string]$SyntheticValidationPath,
+    [string]$ManagedTestWaiverPath,
     [string]$ExternalEvidenceRoot,
     [string]$PlanPath,
     [string]$ExpectedPlanSha256,
@@ -13,7 +15,9 @@ param(
     [string]$ExpectedImageDigest,
     [string]$ExpectedApiTaskDefinitionArn,
     [string]$ExpectedWorkerTaskDefinitionArn,
-    [switch]$ConfirmProductionMutation
+    [switch]$ConfirmProductionMutation,
+    [switch]$ConfirmSyntheticOnlyGlobalActivation,
+    [switch]$ConfirmProtectedWindowProductionMutation
 )
 
 Set-StrictMode -Version Latest
@@ -80,6 +84,9 @@ $script:AllowedEnvironmentNames = @($script:RuntimeEnvironmentNames) + @($script
 $script:AllowedSecretNames = @("CLASSPILOT_TURN_REST_SECRET")
 $script:EvidenceRootMarkerName = ".schoolpilot-classpilot-runtime-evidence-v1"
 $script:EvidenceRootMarkerBytes = [Text.Encoding]::UTF8.GetBytes("schoolpilot-classpilot-runtime-evidence-v1`n")
+$script:ClassPilotReleaseTag = "v2.7.1"
+$script:ClassPilotMergeSha = "a3b096d6a74ab6979f4e4c656d75e2397eb8648f"
+$script:ClassPilotZipSha256 = "40fed2c455d5c50fe3a947d23e3798a0c81832a67e717a2767b62970c024307c"
 
 function Get-Sha256Text {
     param([Parameter(Mandatory = $true)][string]$Value)
@@ -333,12 +340,42 @@ function ConvertTo-RuntimeConfiguration {
     }
 }
 
+function Get-FreshEvidenceTimestamp {
+    param(
+        [Parameter(Mandatory = $true)][string]$Value,
+        [Parameter(Mandatory = $true)][string]$Label,
+        [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow
+    )
+    try {
+        $timestamp = [DateTimeOffset]::ParseExact(
+            $Value,
+            "o",
+            [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::RoundtripKind
+        )
+    }
+    catch {
+        throw "$Label must use an exact ISO-8601 timestamp."
+    }
+    $age = $Now - $timestamp
+    if ($age.TotalMinutes -lt -5 -or $age.TotalHours -gt 2) {
+        throw "$Label must be no more than two hours old."
+    }
+    return $timestamp.ToUniversalTime().ToString("o")
+}
+
+function Test-IsJsonInteger {
+    param($Value)
+    return $Value -is [int] -or $Value -is [long]
+}
+
 function Assert-TurnEvidence {
     param(
         [Parameter(Mandatory = $true)]$RuntimeConfiguration,
         [string]$EvidencePath,
         $EvidenceSnapshot,
-        [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow
+        [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow,
+        [switch]$SyntheticOnlyWaiver
     )
     if ($null -eq $RuntimeConfiguration.Turn) { return $null }
     if ($null -eq $EvidenceSnapshot) {
@@ -352,35 +389,149 @@ function Assert-TurnEvidence {
     $requiredChecks = @(
         "twoHealthyNodes", "distinctAvailabilityZones", "dnsMatchesElasticIps",
         "turnUdp3478", "turnTcp3478", "turnsTcp443", "tlsCertificatesCurrent",
-        "relayRangeValidated", "aggregateTelemetryHealthy", "udpBlockedFallbackPassed"
+        "relayRangeValidated", "aggregateTelemetryHealthy", "syntheticUdpBlockedFallbackPassed",
+        "managedUdpBlockedLiveViewPassed"
     )
     Assert-ExactProperties -Value $evidence.checks -Allowed $requiredChecks -Trail "TURN evidence.checks"
     $presentChecks = @($evidence.checks.PSObject.Properties.Name)
     if (@($requiredChecks | Where-Object { $presentChecks -cnotcontains $_ }).Count -ne 0) {
         throw "TURN live evidence is incomplete."
     }
-    if ([int]$evidence.schemaVersion -ne 1) { throw "TURN evidence schemaVersion must be 1." }
-    $validatedAt = [DateTimeOffset]::ParseExact(
-        [string]$evidence.validatedAt,
-        "o",
-        [Globalization.CultureInfo]::InvariantCulture,
-        [Globalization.DateTimeStyles]::RoundtripKind
-    )
-    $age = $Now - $validatedAt
-    if ($age.TotalMinutes -lt -5 -or $age.TotalHours -gt 2) {
-        throw "TURN evidence must be no more than two hours old."
+    if (-not (Test-IsJsonInteger -Value $evidence.schemaVersion) -or [long]$evidence.schemaVersion -ne 2) {
+        throw "TURN evidence schemaVersion must be the integer 2."
     }
+    foreach ($name in @("validatedAt", "hostsSha256", "secretArnSha256")) {
+        if ($evidence.$name -isnot [string]) { throw "TURN evidence is incomplete." }
+    }
+    $validatedAt = Get-FreshEvidenceTimestamp -Value ([string]$evidence.validatedAt) `
+        -Label "TURN evidence" -Now $Now
     if ([string]$evidence.hostsSha256 -cne [string]$RuntimeConfiguration.Turn.HostsSha256 -or
         [string]$evidence.secretArnSha256 -cne [string]$RuntimeConfiguration.Turn.SecretArnSha256) {
         throw "TURN evidence does not bind the requested runtime inputs."
     }
-    foreach ($name in $requiredChecks) {
+    foreach ($name in @($requiredChecks | Where-Object { $_ -cne "managedUdpBlockedLiveViewPassed" })) {
         $value = $evidence.checks.$name
         if ($value -isnot [bool] -or -not $value) { throw "TURN live evidence is incomplete." }
     }
+    $managedPassed = $evidence.checks.managedUdpBlockedLiveViewPassed
+    if ($managedPassed -isnot [bool]) { throw "TURN live evidence is incomplete." }
+    if ($SyntheticOnlyWaiver) {
+        if ($RuntimeConfiguration.Mode -cne "global-on" -or $managedPassed) {
+            throw "Synthetic-only TURN evidence must record that managed UDP-blocked Live View has not passed."
+        }
+    }
+    elseif (-not $managedPassed) {
+        throw "Strict TURN evidence requires managed UDP-blocked Live View to pass."
+    }
     return [pscustomobject]@{
-        ValidatedAt = $validatedAt.ToUniversalTime().ToString("o")
+        ValidatedAt = $validatedAt
         EvidenceSha256 = [string]$EvidenceSnapshot.Sha256
+    }
+}
+
+function Assert-SyntheticValidationEvidence {
+    param(
+        [Parameter(Mandatory = $true)]$EvidenceSnapshot,
+        [Parameter(Mandatory = $true)][string]$AppSha,
+        [Parameter(Mandatory = $true)][string]$ImageDigest,
+        [Parameter(Mandatory = $true)][string]$TurnEvidenceSha256,
+        [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow
+    )
+    $evidence = $EvidenceSnapshot.Value
+    $allowed = @(
+        "schemaVersion", "validatedAt", "schoolPilotAppSha", "schoolPilotImageDigest",
+        "classPilotTag", "classPilotMergeSha", "classPilotZipSha256", "turnEvidenceSha256", "checks"
+    )
+    Assert-ExactProperties -Value $evidence -Allowed $allowed -Trail "synthetic validation evidence"
+    $present = @($evidence.PSObject.Properties.Name)
+    if (@($allowed | Where-Object { $present -cnotcontains $_ }).Count -ne 0) {
+        throw "Synthetic validation evidence is incomplete."
+    }
+    if (-not (Test-IsJsonInteger -Value $evidence.schemaVersion) -or [long]$evidence.schemaVersion -ne 1) {
+        throw "Synthetic validation evidence schemaVersion must be the integer 1."
+    }
+    foreach ($name in @(
+        "validatedAt", "schoolPilotAppSha", "schoolPilotImageDigest", "classPilotTag",
+        "classPilotMergeSha", "classPilotZipSha256", "turnEvidenceSha256"
+    )) {
+        if ($evidence.$name -isnot [string]) { throw "Synthetic validation evidence is incomplete." }
+    }
+    $validatedAt = Get-FreshEvidenceTimestamp -Value ([string]$evidence.validatedAt) `
+        -Label "Synthetic validation evidence" -Now $Now
+    if ([string]$evidence.schoolPilotAppSha -cne $AppSha -or
+        [string]$evidence.schoolPilotImageDigest -cne $ImageDigest -or
+        [string]$evidence.classPilotTag -cne $script:ClassPilotReleaseTag -or
+        [string]$evidence.classPilotMergeSha -cne $script:ClassPilotMergeSha -or
+        [string]$evidence.classPilotZipSha256 -cne $script:ClassPilotZipSha256 -or
+        [string]$evidence.turnEvidenceSha256 -cne $TurnEvidenceSha256) {
+        throw "Synthetic validation evidence does not bind the exact reviewed release and TURN evidence."
+    }
+    $requiredChecks = @(
+        "crossRepositoryContractPassed", "unpackedZipPassed", "identityTransitions10000Passed",
+        "redisCrossProcessPassed", "allCapabilitiesSimultaneousPassed", "protocol2CompatibilityPassed",
+        "markerless270LegacyPassed"
+    )
+    Assert-ExactProperties -Value $evidence.checks -Allowed $requiredChecks -Trail "synthetic validation evidence.checks"
+    $presentChecks = @($evidence.checks.PSObject.Properties.Name)
+    if (@($requiredChecks | Where-Object { $presentChecks -cnotcontains $_ }).Count -ne 0) {
+        throw "Synthetic validation evidence is incomplete."
+    }
+    foreach ($name in $requiredChecks) {
+        $value = $evidence.checks.$name
+        if ($value -isnot [bool] -or -not $value) {
+            throw "Synthetic validation evidence is incomplete."
+        }
+    }
+    return [pscustomobject]@{
+        ValidatedAt = $validatedAt
+        EvidenceSha256 = [string]$EvidenceSnapshot.Sha256
+    }
+}
+
+function Assert-ManagedTestWaiverEvidence {
+    param(
+        [Parameter(Mandatory = $true)]$EvidenceSnapshot,
+        [Parameter(Mandatory = $true)][string]$SyntheticValidationSha256,
+        [Parameter(Mandatory = $true)][string]$TurnEvidenceSha256,
+        [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow
+    )
+    $evidence = $EvidenceSnapshot.Value
+    $allowed = @(
+        "schemaVersion", "approvedAt", "approvedBy", "reason", "syntheticValidationSha256",
+        "turnEvidenceSha256", "managedValidation", "validationLevel"
+    )
+    Assert-ExactProperties -Value $evidence -Allowed $allowed -Trail "managed test waiver"
+    $present = @($evidence.PSObject.Properties.Name)
+    if (@($allowed | Where-Object { $present -cnotcontains $_ }).Count -ne 0) {
+        throw "Managed test waiver is incomplete."
+    }
+    if (-not (Test-IsJsonInteger -Value $evidence.schemaVersion) -or [long]$evidence.schemaVersion -ne 1) {
+        throw "Managed test waiver schemaVersion must be the integer 1."
+    }
+    foreach ($name in @(
+        "approvedAt", "approvedBy", "reason", "syntheticValidationSha256", "turnEvidenceSha256",
+        "managedValidation", "validationLevel"
+    )) {
+        if ($evidence.$name -isnot [string]) { throw "Managed test waiver is incomplete." }
+    }
+    $approvedAt = Get-FreshEvidenceTimestamp -Value ([string]$evidence.approvedAt) `
+        -Label "Managed test waiver" -Now $Now
+    if ([string]$evidence.approvedBy -cne "bzinkan@school-pilot.net" -or
+        [string]$evidence.syntheticValidationSha256 -cne $SyntheticValidationSha256 -or
+        [string]$evidence.turnEvidenceSha256 -cne $TurnEvidenceSha256 -or
+        [string]$evidence.managedValidation -cne "waived_not_passed" -or
+        [string]$evidence.validationLevel -cne "synthetic_only") {
+        throw "Managed test waiver does not bind the exact approved synthetic-only activation evidence."
+    }
+    $reason = [string]$evidence.reason
+    if ([string]::IsNullOrWhiteSpace($reason) -or $reason.Length -gt 1000) {
+        throw "Managed test waiver requires a bounded non-empty reason."
+    }
+    return [pscustomobject]@{
+        ApprovedAt = $approvedAt
+        EvidenceSha256 = [string]$EvidenceSnapshot.Sha256
+        ValidationLevel = "synthetic_only"
+        ManagedValidation = "waived_not_passed"
     }
 }
 
@@ -775,6 +926,26 @@ function Assert-ProductionDeploymentWindow {
     }
 }
 
+function Assert-RuntimeConfigMutationWindow {
+    param(
+        [DateTimeOffset]$NowEastern = (Get-EasternNow),
+        [switch]$ConfirmProtectedWindowProductionMutation
+    )
+    $isWeekday = $NowEastern.DayOfWeek -in @(
+        [DayOfWeek]::Monday, [DayOfWeek]::Tuesday, [DayOfWeek]::Wednesday,
+        [DayOfWeek]::Thursday, [DayOfWeek]::Friday
+    )
+    $minutes = $NowEastern.Hour * 60 + $NowEastern.Minute
+    $isProtectedWindow = $isWeekday -and $minutes -ge (4 * 60 + 45) -and $minutes -le (10 * 60 + 14)
+    if ($ConfirmProtectedWindowProductionMutation) {
+        if (-not $isProtectedWindow) {
+            throw "Protected-window runtime configuration confirmation is valid only weekdays 04:45-10:14 America/New_York."
+        }
+    } elseif ($isProtectedWindow) {
+        throw "Production runtime configuration is blocked during the weekday arrival scaling window."
+    }
+}
+
 function Get-ServiceSnapshot {
     $response = Invoke-AwsJson -Arguments @(
         "ecs", "describe-services", "--cluster", $script:Cluster,
@@ -788,6 +959,46 @@ function Get-ServiceSnapshot {
     $worker = @($response.services | Where-Object serviceName -CEQ $script:WorkerService)
     if ($api.Count -ne 1 -or $worker.Count -ne 1) { throw "Production ECS service identity is ambiguous." }
     return [pscustomobject]@{ Api = $api[0]; Worker = $worker[0] }
+}
+
+function Get-ApiTargetGroupArn {
+    param([Parameter(Mandatory = $true)]$ApiService)
+    $loadBalancers = @($ApiService.loadBalancers)
+    if ($loadBalancers.Count -ne 1) {
+        throw "Production API must have exactly one reviewed ALB target group."
+    }
+    $arn = [string]$loadBalancers[0].targetGroupArn
+    if ($arn -cnotmatch '^arn:aws:elasticloadbalancing:us-east-1:135775632425:targetgroup/[A-Za-z0-9-]+/[a-f0-9]+$') {
+        throw "Production API target-group identity is malformed."
+    }
+    return $arn
+}
+
+function Get-ApiHealthyTargetCount {
+    param([Parameter(Mandatory = $true)]$ApiService)
+    $targetGroupArn = Get-ApiTargetGroupArn -ApiService $ApiService
+    $response = Invoke-AwsJson -Arguments @(
+        "elbv2", "describe-target-health", "--target-group-arn", $targetGroupArn,
+        "--region", $script:Region, "--output", "json", "--no-cli-pager"
+    )
+    return @($response.TargetHealthDescriptions | Where-Object {
+        [string]$_.TargetHealth.State -ceq "healthy"
+    }).Count
+}
+
+function Assert-ApiTargetHealth {
+    param(
+        [Parameter(Mandatory = $true)]$ApiService,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 6)][int]$ExpectedDesiredCount,
+        [ValidateSet("Exact", "Converging")][string]$Mode = "Exact"
+    )
+    $healthy = Get-ApiHealthyTargetCount -ApiService $ApiService
+    $minimum = if ($Mode -ceq "Exact") { $ExpectedDesiredCount } else { [Math]::Max(1, $ExpectedDesiredCount - 1) }
+    $maximum = if ($Mode -ceq "Converging" -and $ExpectedDesiredCount -eq 1) { 2 } else { $ExpectedDesiredCount }
+    if ($healthy -lt $minimum -or $healthy -gt $maximum) {
+        throw "Production API healthy targets left the reviewed runtime-config range."
+    }
+    return $healthy
 }
 
 function Assert-StableService {
@@ -1222,6 +1433,9 @@ function Restore-ScalingHold {
                 throw "Autoscaling restoration could not stage the scheduled production state."
             }
         }
+        if ($stageMinimum -eq 6) {
+            [void](Wait-ApiCapacityExact -ExpectedDesiredCount 6)
+        }
         $releaseMinimum = Get-ScheduledApiMinimum -NowEastern (Get-CurrentDeploymentEasternTime)
         if ($releaseMinimum -ne $stageMinimum) { continue }
         $releaseState = [pscustomobject]@{
@@ -1419,7 +1633,8 @@ function Assert-AllowedRuntimeTransition {
     param(
         [Parameter(Mandatory = $true)]$SourceTaskDefinition,
         [Parameter(Mandatory = $true)][string]$ContainerName,
-        [Parameter(Mandatory = $true)]$TargetRuntimeConfiguration
+        [Parameter(Mandatory = $true)]$TargetRuntimeConfiguration,
+        [switch]$AllowSyntheticOnlyGlobalActivation
     )
     $sourceContainer = @($SourceTaskDefinition.containerDefinitions | Where-Object name -CEQ $ContainerName)
     if ($sourceContainer.Count -ne 1) { throw "Source runtime container is ambiguous." }
@@ -1442,6 +1657,10 @@ function Assert-AllowedRuntimeTransition {
     }
     if ($target.Mode -ceq "global-on" -and $source.Mode -ceq "test-school" -and
         $source.PrefixCount -eq $script:ActivationOrder.Count) {
+        return
+    }
+    if ($target.Mode -ceq "global-on" -and $AllowSyntheticOnlyGlobalActivation -and
+        $source.Mode -cin @("baseline", "off", "test-school")) {
         return
     }
     throw "Global runtime activation requires the completed test-school prefix."
@@ -1641,6 +1860,8 @@ function Wait-ExactServicePairConvergence {
             [int]$snapshot.Worker.desiredCount -ne 1) {
             throw "Service desired count drifted during runtime-config convergence."
         }
+        [void](Assert-ApiTargetHealth -ApiService $snapshot.Api `
+            -ExpectedDesiredCount $ExpectedApiDesiredCount -Mode Converging)
         $allDeployments = @($snapshot.Api.deployments) + @($snapshot.Worker.deployments)
         if (@($allDeployments | Where-Object { [int]$_.failedTasks -gt 0 -or [string]$_.rolloutState -ceq "FAILED" }).Count -gt 0) {
             throw "The runtime-config service deployment failed."
@@ -1650,6 +1871,8 @@ function Wait-ExactServicePairConvergence {
         $workerComplete = Test-ServiceDeploymentComplete -Service $snapshot.Worker `
             -ExpectedTaskDefinitionArn $ExpectedWorkerTaskDefinitionArn -ExpectedDesiredCount 1
         if ($apiComplete -and $workerComplete) {
+            [void](Assert-ApiTargetHealth -ApiService $snapshot.Api `
+                -ExpectedDesiredCount $ExpectedApiDesiredCount -Mode Exact)
             Assert-RunningTasksExact -ServiceName $script:ApiService -ExpectedTaskDefinitionArn $ExpectedApiTaskDefinitionArn `
                 -ExpectedCount $ExpectedApiDesiredCount -RequireHealthy
             Assert-RunningTasksExact -ServiceName $script:WorkerService -ExpectedTaskDefinitionArn $ExpectedWorkerTaskDefinitionArn `
@@ -1663,6 +1886,46 @@ function Wait-ExactServicePairConvergence {
         }
     }
     throw "Runtime-config service convergence timed out."
+}
+
+function Wait-ApiCapacityExact {
+    param(
+        [Parameter(Mandatory = $true)][ValidateRange(1, 6)][int]$ExpectedDesiredCount,
+        [ValidateRange(1, 720)][int]$MaxAttempts = 720,
+        [ValidateRange(0, 30)][int]$IntervalSeconds = 5,
+        [ValidateRange(30, 3600)][int]$MaxWallClockSeconds = 3600
+    )
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    $expectedTaskDefinitionArn = $null
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        Maintain-OperationLock
+        if ($stopwatch.Elapsed.TotalSeconds -ge $MaxWallClockSeconds) {
+            throw "Runtime-config API capacity convergence exceeded its bounded safety deadline."
+        }
+        $snapshot = Get-ServiceSnapshot
+        if ($null -eq $expectedTaskDefinitionArn) {
+            $expectedTaskDefinitionArn = [string]$snapshot.Api.taskDefinition
+        }
+        if ([string]$snapshot.Api.taskDefinition -cne $expectedTaskDefinitionArn) {
+            throw "API task definition drifted while restoring scheduled capacity."
+        }
+        if (Test-ServiceDeploymentComplete -Service $snapshot.Api `
+                -ExpectedTaskDefinitionArn $expectedTaskDefinitionArn `
+                -ExpectedDesiredCount $ExpectedDesiredCount) {
+            [void](Assert-ApiTargetHealth -ApiService $snapshot.Api `
+                -ExpectedDesiredCount $ExpectedDesiredCount -Mode Exact)
+            Assert-RunningTasksExact -ServiceName $script:ApiService `
+                -ExpectedTaskDefinitionArn $expectedTaskDefinitionArn `
+                -ExpectedCount $ExpectedDesiredCount -RequireHealthy
+            return $snapshot
+        }
+        if ($IntervalSeconds -gt 0) {
+            $remainingSeconds = $MaxWallClockSeconds - $stopwatch.Elapsed.TotalSeconds
+            if ($remainingSeconds -le 0) { throw "Runtime-config API capacity convergence exceeded its bounded safety deadline." }
+            Start-Sleep -Seconds ([Math]::Min($IntervalSeconds, [Math]::Floor($remainingSeconds)))
+        }
+    }
+    throw "Runtime-config API capacity convergence timed out."
 }
 
 function Invoke-RuntimeServiceUpdate {
@@ -1717,7 +1980,8 @@ function Write-OperationCheckpoint {
             "apply_api_update_pending", "apply_worker_update_pending", "apply_pair_converged",
             "rollback_scaling_hold_pending", "rollback_scaling_hold_acquired", "rollback_api_update_pending",
             "rollback_worker_update_pending", "rollback_pair_converged", "rollback_candidate_recovery_pending",
-            "rollback_candidate_pair_restored"
+            "rollback_candidate_pair_restored", "rollback_no_growth_bounds_pending",
+            "rollback_no_growth_bounds_acquired", "rollback_no_growth_bounds_restored"
         )][string]$Stage,
         [string]$CandidateApiArn,
         [string]$CandidateWorkerArn
@@ -1728,6 +1992,9 @@ function Write-OperationCheckpoint {
         recordedAt = [DateTimeOffset]::UtcNow.ToString("o")
         stage = $Stage
         planSha256 = $PlanSha256
+        validationLevel = [string]$Plan.validationLevel
+        managedValidation = [string]$Plan.managedValidation
+        protectedWindowProductionMutation = [bool]$Plan.protectedWindowProductionMutation
         appSha = [string]$Plan.appSha
         imageDigest = [string]$Plan.imageDigest
         priorApiTaskDefinitionArn = [string]$Plan.priorApiTaskDefinitionArn
@@ -1954,6 +2221,7 @@ function Get-ValidatedProductionSnapshot {
     $services = Get-ServiceSnapshot
     Assert-StableService -Service $services.Api -ExpectedTaskDefinitionArn $ApiTaskDefinitionArn -MinimumDesired 1 -MaximumDesired $MaximumApiDesiredCount -Label "API"
     Assert-StableService -Service $services.Worker -ExpectedTaskDefinitionArn $WorkerTaskDefinitionArn -MinimumDesired 1 -MaximumDesired 1 -Label "worker"
+    [void](Assert-ApiTargetHealth -ApiService $services.Api -ExpectedDesiredCount ([int]$services.Api.desiredCount) -Mode Exact)
     if ($RuntimeConfiguration.Mode -cne "off") {
         Assert-NormalServiceDeploymentConfiguration -Service $services.Api
         Assert-NormalServiceDeploymentConfiguration -Service $services.Worker
@@ -1993,21 +2261,49 @@ function New-RuntimeConfigPlan {
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
         [Parameter(Mandatory = $true)][string]$PrivateProfilePath,
         [string]$PrivateTurnEvidencePath,
+        [string]$PrivateSyntheticValidationPath,
+        [string]$PrivateManagedTestWaiverPath,
         [Parameter(Mandatory = $true)][string]$EvidenceRoot,
         [Parameter(Mandatory = $true)][string]$AppSha,
         [Parameter(Mandatory = $true)][string]$ImageDigest,
         [Parameter(Mandatory = $true)][string]$ApiTaskDefinitionArn,
         [Parameter(Mandatory = $true)][string]$WorkerTaskDefinitionArn,
         [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow,
-        [switch]$SkipRepositoryCheck
+        [switch]$SkipRepositoryCheck,
+        [switch]$ConfirmProductionMutation,
+        [switch]$ConfirmSyntheticOnlyGlobalActivation,
+        [switch]$ConfirmProtectedWindowProductionMutation
     )
+    $hasSyntheticValidation = -not [string]::IsNullOrWhiteSpace($PrivateSyntheticValidationPath)
+    $hasManagedTestWaiver = -not [string]::IsNullOrWhiteSpace($PrivateManagedTestWaiverPath)
+    if ($hasSyntheticValidation -ne $hasManagedTestWaiver) {
+        throw "Synthetic-only global activation requires both synthetic validation and managed test waiver evidence."
+    }
+    $syntheticOnlyWaiver = $hasSyntheticValidation -and $hasManagedTestWaiver
+    if ($ConfirmSyntheticOnlyGlobalActivation -and -not $syntheticOnlyWaiver) {
+        throw "Synthetic-only global activation confirmation requires both waiver evidence files."
+    }
+    if ($ConfirmProtectedWindowProductionMutation -and -not $ConfirmProductionMutation) {
+        throw "Protected-window plan admission also requires -ConfirmProductionMutation."
+    }
+    if ($syntheticOnlyWaiver -and (-not $ConfirmProductionMutation -or
+        -not $ConfirmSyntheticOnlyGlobalActivation -or -not $ConfirmProtectedWindowProductionMutation)) {
+        throw "Synthetic-only global activation requires all three explicit production confirmations."
+    }
     $PrivateProfilePath = Assert-PrivateInputPath -Path $PrivateProfilePath -RepositoryRoot $RepositoryRoot
     if ($PrivateTurnEvidencePath) {
         $PrivateTurnEvidencePath = Assert-PrivateInputPath -Path $PrivateTurnEvidencePath -RepositoryRoot $RepositoryRoot
     }
+    if ($hasSyntheticValidation) {
+        $PrivateSyntheticValidationPath = Assert-PrivateInputPath -Path $PrivateSyntheticValidationPath -RepositoryRoot $RepositoryRoot
+        $PrivateManagedTestWaiverPath = Assert-PrivateInputPath -Path $PrivateManagedTestWaiverPath -RepositoryRoot $RepositoryRoot
+    }
     $profileSnapshot = Read-StrictJsonSnapshot -Path $PrivateProfilePath
     $profile = $profileSnapshot.Value
     $runtime = ConvertTo-RuntimeConfiguration -Profile $profile
+    if ($syntheticOnlyWaiver -and $runtime.Mode -cne "global-on") {
+        throw "Synthetic-only waiver evidence is valid only for global-on activation."
+    }
     if ($null -eq $runtime.Turn -and $PrivateTurnEvidencePath) {
         throw "TURN evidence must be omitted when the selected profile does not manage TURN wiring."
     }
@@ -2015,12 +2311,29 @@ function New-RuntimeConfigPlan {
     $turnEvidence = if ($null -ne $runtime.Turn) {
         if (-not $PrivateTurnEvidencePath) { throw "TURN evidence is required for test-school and global-on profiles." }
         $turnEvidenceSnapshot = Read-StrictJsonSnapshot -Path $PrivateTurnEvidencePath
-        Assert-TurnEvidence -RuntimeConfiguration $runtime -EvidenceSnapshot $turnEvidenceSnapshot -Now $Now
+        Assert-TurnEvidence -RuntimeConfiguration $runtime -EvidenceSnapshot $turnEvidenceSnapshot -Now $Now `
+            -SyntheticOnlyWaiver:$syntheticOnlyWaiver
     } else { $null }
+    $syntheticValidationSnapshot = $null
+    $syntheticValidation = $null
+    $managedTestWaiverSnapshot = $null
+    $managedTestWaiver = $null
+    if ($syntheticOnlyWaiver) {
+        $syntheticValidationSnapshot = Read-StrictJsonSnapshot -Path $PrivateSyntheticValidationPath
+        $syntheticValidation = Assert-SyntheticValidationEvidence -EvidenceSnapshot $syntheticValidationSnapshot `
+            -AppSha $AppSha -ImageDigest $ImageDigest -TurnEvidenceSha256 ([string]$turnEvidence.EvidenceSha256) -Now $Now
+        $managedTestWaiverSnapshot = Read-StrictJsonSnapshot -Path $PrivateManagedTestWaiverPath
+        $managedTestWaiver = Assert-ManagedTestWaiverEvidence -EvidenceSnapshot $managedTestWaiverSnapshot `
+            -SyntheticValidationSha256 ([string]$syntheticValidation.EvidenceSha256) `
+            -TurnEvidenceSha256 ([string]$turnEvidence.EvidenceSha256) -Now $Now
+    }
     $snapshot = Get-ValidatedProductionSnapshot -RepositoryRoot $RepositoryRoot -AppSha $AppSha -ImageDigest $ImageDigest `
         -ApiTaskDefinitionArn $ApiTaskDefinitionArn -WorkerTaskDefinitionArn $WorkerTaskDefinitionArn `
         -RuntimeConfiguration $runtime -SkipRepositoryCheck:($SkipRepositoryCheck -or $runtime.Mode -ceq "off") `
-        -SkipEcrShaCheck:($runtime.Mode -ceq "off") -MaximumApiDesiredCount $(if ($runtime.Mode -ceq "off") { 6 } else { 2 })
+        -SkipEcrShaCheck:($runtime.Mode -ceq "off") `
+        -MaximumApiDesiredCount $(if ($runtime.Mode -ceq "off" -or $ConfirmProtectedWindowProductionMutation) { 6 } else { 2 })
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api" `
+        -TargetRuntimeConfiguration $runtime -AllowSyntheticOnlyGlobalActivation:$syntheticOnlyWaiver
     $root = Assert-PrivateExternalRoot -Root $EvidenceRoot -RepositoryRoot $RepositoryRoot
     $runId = $Now.ToUniversalTime().ToString("yyyyMMddTHHmmssfffZ") + "-" + [Guid]::NewGuid().ToString("N").Substring(0, 12)
     $runDirectory = Join-Path $root $runId
@@ -2028,9 +2341,15 @@ function New-RuntimeConfigPlan {
     Set-PrivatePathPermissions -Path $runDirectory -Directory
     $profileFile = "profile.json"
     $turnEvidenceFile = if ($null -ne $turnEvidenceSnapshot) { "turn-evidence.json" } else { $null }
+    $syntheticValidationFile = if ($null -ne $syntheticValidationSnapshot) { "synthetic-validation.json" } else { $null }
+    $managedTestWaiverFile = if ($null -ne $managedTestWaiverSnapshot) { "managed-test-waiver.json" } else { $null }
     Write-PrivateBytes -Path (Join-Path $runDirectory $profileFile) -Bytes $profileSnapshot.Bytes
     if ($null -ne $turnEvidenceSnapshot) {
         Write-PrivateBytes -Path (Join-Path $runDirectory $turnEvidenceFile) -Bytes $turnEvidenceSnapshot.Bytes
+    }
+    if ($null -ne $syntheticValidationSnapshot) {
+        Write-PrivateBytes -Path (Join-Path $runDirectory $syntheticValidationFile) -Bytes $syntheticValidationSnapshot.Bytes
+        Write-PrivateBytes -Path (Join-Path $runDirectory $managedTestWaiverFile) -Bytes $managedTestWaiverSnapshot.Bytes
     }
     $manifest = [ordered]@{
         schemaVersion = 1
@@ -2044,6 +2363,13 @@ function New-RuntimeConfigPlan {
         runtimeConfigurationSha256 = Get-RuntimeConfigurationSha256 -RuntimeConfiguration $runtime
         turnEvidenceFile = $turnEvidenceFile
         turnEvidenceSha256 = if ($null -ne $turnEvidence) { $turnEvidence.EvidenceSha256 } else { $null }
+        syntheticValidationFile = $syntheticValidationFile
+        syntheticValidationSha256 = if ($null -ne $syntheticValidation) { $syntheticValidation.EvidenceSha256 } else { $null }
+        managedTestWaiverFile = $managedTestWaiverFile
+        managedTestWaiverSha256 = if ($null -ne $managedTestWaiver) { $managedTestWaiver.EvidenceSha256 } else { $null }
+        validationLevel = if ($syntheticOnlyWaiver) { "synthetic_only" } elseif ($runtime.Mode -ceq "global-on") { "managed" } else { "not_applicable" }
+        managedValidation = if ($syntheticOnlyWaiver) { "waived_not_passed" } elseif ($runtime.Mode -ceq "global-on") { "passed" } else { "not_applicable" }
+        protectedWindowProductionMutation = [bool]$ConfirmProtectedWindowProductionMutation
         repositoryRoot = [IO.Path]::GetFullPath($RepositoryRoot)
         appSha = $AppSha
         imageDigest = $ImageDigest
@@ -2082,7 +2408,9 @@ function Read-RuntimePlan {
     Assert-ExactProperties -Value $plan -Allowed @(
         "schemaVersion", "runId", "createdAt", "profileFile", "profileSha256", "profileMode",
         "schoolScopeCount", "enabledCapabilityCount", "runtimeConfigurationSha256",
-        "turnEvidenceFile", "turnEvidenceSha256",
+        "turnEvidenceFile", "turnEvidenceSha256", "syntheticValidationFile", "syntheticValidationSha256",
+        "managedTestWaiverFile", "managedTestWaiverSha256", "validationLevel", "managedValidation",
+        "protectedWindowProductionMutation",
         "repositoryRoot", "appSha", "imageDigest", "priorApiTaskDefinitionArn",
         "priorWorkerTaskDefinitionArn", "scaling", "deploymentBounds", "deploymentConfigurationSha256",
         "checkpointFile", "resultFile"
@@ -2113,13 +2441,49 @@ function Read-RuntimePlan {
     }
     $hasTurnEvidence = [string]$plan.turnEvidenceSha256 -match '^[0-9a-f]{64}$'
     if (($hasTurnEvidence -and [string]$plan.turnEvidenceFile -cne "turn-evidence.json") -or
-        (-not $hasTurnEvidence -and $null -ne $plan.turnEvidenceFile)) {
+        (-not $hasTurnEvidence -and ($null -ne $plan.turnEvidenceFile -or $null -ne $plan.turnEvidenceSha256))) {
         throw "Runtime plan TURN evidence identity is invalid."
+    }
+    $hasSyntheticValidation = [string]$plan.syntheticValidationSha256 -match '^[0-9a-f]{64}$'
+    $hasManagedTestWaiver = [string]$plan.managedTestWaiverSha256 -match '^[0-9a-f]{64}$'
+    if ($hasSyntheticValidation -ne $hasManagedTestWaiver -or
+        ($hasSyntheticValidation -and ([string]$plan.syntheticValidationFile -cne "synthetic-validation.json" -or
+            [string]$plan.managedTestWaiverFile -cne "managed-test-waiver.json")) -or
+        (-not $hasSyntheticValidation -and ($null -ne $plan.syntheticValidationFile -or
+            $null -ne $plan.syntheticValidationSha256 -or $null -ne $plan.managedTestWaiverFile -or
+            $null -ne $plan.managedTestWaiverSha256))) {
+        throw "Runtime plan synthetic-only evidence identity is invalid."
+    }
+    if ($plan.protectedWindowProductionMutation -isnot [bool]) {
+        throw "Runtime plan protected-window authority is invalid."
+    }
+    if ($hasSyntheticValidation) {
+        if (-not $hasTurnEvidence -or [string]$plan.profileMode -cne "global-on" -or
+            [string]$plan.validationLevel -cne "synthetic_only" -or
+            [string]$plan.managedValidation -cne "waived_not_passed" -or
+            -not [bool]$plan.protectedWindowProductionMutation) {
+            throw "Runtime plan synthetic-only activation authority is invalid."
+        }
+    }
+    elseif ([string]$plan.profileMode -ceq "global-on") {
+        if ([string]$plan.validationLevel -cne "managed" -or [string]$plan.managedValidation -cne "passed") {
+            throw "Runtime plan strict managed activation authority is invalid."
+        }
+    }
+    elseif ([string]$plan.validationLevel -cne "not_applicable" -or
+        [string]$plan.managedValidation -cne "not_applicable") {
+        throw "Runtime plan staged validation authority is invalid."
     }
     $runDirectory = Split-Path -Parent ([string]$snapshot.Path)
     $plan | Add-Member -NotePropertyName profilePath -NotePropertyValue (Join-Path $runDirectory "profile.json")
     $plan | Add-Member -NotePropertyName turnEvidencePath -NotePropertyValue $(
         if ($hasTurnEvidence) { Join-Path $runDirectory "turn-evidence.json" } else { $null }
+    )
+    $plan | Add-Member -NotePropertyName syntheticValidationPath -NotePropertyValue $(
+        if ($hasSyntheticValidation) { Join-Path $runDirectory "synthetic-validation.json" } else { $null }
+    )
+    $plan | Add-Member -NotePropertyName managedTestWaiverPath -NotePropertyValue $(
+        if ($hasManagedTestWaiver) { Join-Path $runDirectory "managed-test-waiver.json" } else { $null }
     )
     $plan | Add-Member -NotePropertyName checkpointPath -NotePropertyValue (Join-Path $runDirectory "checkpoint.json")
     $plan | Add-Member -NotePropertyName resultPath -NotePropertyValue (Join-Path $runDirectory "result.json")
@@ -2148,6 +2512,11 @@ function Write-ResultEvidence {
         schoolScopeCount = [int]$Plan.schoolScopeCount
         enabledCapabilityCount = [int]$Plan.enabledCapabilityCount
         runtimeConfigurationSha256 = [string]$Plan.runtimeConfigurationSha256
+        syntheticValidationSha256 = if ($null -ne $Plan.syntheticValidationSha256) { [string]$Plan.syntheticValidationSha256 } else { $null }
+        managedTestWaiverSha256 = if ($null -ne $Plan.managedTestWaiverSha256) { [string]$Plan.managedTestWaiverSha256 } else { $null }
+        validationLevel = [string]$Plan.validationLevel
+        managedValidation = [string]$Plan.managedValidation
+        protectedWindowProductionMutation = [bool]$Plan.protectedWindowProductionMutation
         appSha = [string]$Plan.appSha
         imageDigest = [string]$Plan.imageDigest
         priorApiTaskDefinitionArn = [string]$Plan.priorApiTaskDefinitionArn
@@ -2177,8 +2546,29 @@ function Invoke-RuntimeConfigApply {
         [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow,
         [ValidateRange(1, 720)][int]$ConvergenceAttempts = 720,
         [ValidateRange(0, 30)][int]$ConvergenceIntervalSeconds = 5,
-        [switch]$SkipRepositoryCheck
+        [switch]$SkipRepositoryCheck,
+        [switch]$ConfirmProductionMutation,
+        [switch]$ConfirmSyntheticOnlyGlobalActivation,
+        [switch]$ConfirmProtectedWindowProductionMutation
     )
+    $syntheticOnlyWaiver = [string]$Plan.validationLevel -ceq "synthetic_only"
+    $protectedWindowMutation = [bool]$Plan.protectedWindowProductionMutation
+    if ($ConfirmProtectedWindowProductionMutation -ne $protectedWindowMutation) {
+        throw "Protected-window apply confirmation must match the exact reviewed plan authority."
+    }
+    if ($protectedWindowMutation -and (-not $ConfirmProductionMutation -or
+        -not $ConfirmProtectedWindowProductionMutation)) {
+        throw "Protected-window apply requires both production mutation confirmations."
+    }
+    if ($syntheticOnlyWaiver -and (-not $ConfirmProductionMutation -or
+        -not $ConfirmSyntheticOnlyGlobalActivation -or -not $ConfirmProtectedWindowProductionMutation)) {
+        throw "Synthetic-only global activation requires all three explicit production confirmations."
+    }
+    if (-not $syntheticOnlyWaiver -and $ConfirmSyntheticOnlyGlobalActivation) {
+        throw "Synthetic-only global activation confirmation does not match the reviewed plan."
+    }
+    $useNoGrowthDeploymentBounds = $Plan.profileMode -ceq "off" -or $protectedWindowMutation
+    $maximumApiDesiredCount = if ($useNoGrowthDeploymentBounds) { 6 } else { 2 }
     $profileSnapshot = Read-StrictJsonSnapshot -Path ([string]$Plan.profilePath)
     if ([string]$profileSnapshot.Sha256 -cne [string]$Plan.profileSha256) {
         throw "Private runtime profile changed after planning."
@@ -2191,26 +2581,51 @@ function Invoke-RuntimeConfigApply {
     if ((Get-RuntimeConfigurationSha256 -RuntimeConfiguration $runtime) -cne [string]$Plan.runtimeConfigurationSha256) {
         throw "Runtime profile authority changed after planning."
     }
+    $runtimeMutationEasternTime = $null
     if ($runtime.Mode -cne "off") {
-        Assert-ProductionDeploymentWindow -NowEastern (Get-CurrentDeploymentEasternTime)
+        $runtimeMutationEasternTime = Get-CurrentDeploymentEasternTime
+        Assert-RuntimeConfigMutationWindow -NowEastern $runtimeMutationEasternTime `
+            -ConfirmProtectedWindowProductionMutation:$protectedWindowMutation
     }
     if ($null -ne $runtime.Turn) {
         $turnEvidenceSnapshot = Read-StrictJsonSnapshot -Path ([string]$Plan.turnEvidencePath)
         if ([string]$turnEvidenceSnapshot.Sha256 -cne [string]$Plan.turnEvidenceSha256) {
             throw "TURN evidence changed after planning."
         }
-        [void](Assert-TurnEvidence -RuntimeConfiguration $runtime -EvidenceSnapshot $turnEvidenceSnapshot -Now $Now)
+        [void](Assert-TurnEvidence -RuntimeConfiguration $runtime -EvidenceSnapshot $turnEvidenceSnapshot -Now $Now `
+            -SyntheticOnlyWaiver:$syntheticOnlyWaiver)
+    }
+    if ($syntheticOnlyWaiver) {
+        $syntheticValidationSnapshot = Read-StrictJsonSnapshot -Path ([string]$Plan.syntheticValidationPath)
+        if ([string]$syntheticValidationSnapshot.Sha256 -cne [string]$Plan.syntheticValidationSha256) {
+            throw "Synthetic validation evidence changed after planning."
+        }
+        [void](Assert-SyntheticValidationEvidence -EvidenceSnapshot $syntheticValidationSnapshot `
+            -AppSha ([string]$Plan.appSha) -ImageDigest ([string]$Plan.imageDigest) `
+            -TurnEvidenceSha256 ([string]$Plan.turnEvidenceSha256) -Now $Now)
+        $managedTestWaiverSnapshot = Read-StrictJsonSnapshot -Path ([string]$Plan.managedTestWaiverPath)
+        if ([string]$managedTestWaiverSnapshot.Sha256 -cne [string]$Plan.managedTestWaiverSha256) {
+            throw "Managed test waiver changed after planning."
+        }
+        [void](Assert-ManagedTestWaiverEvidence -EvidenceSnapshot $managedTestWaiverSnapshot `
+            -SyntheticValidationSha256 ([string]$Plan.syntheticValidationSha256) `
+            -TurnEvidenceSha256 ([string]$Plan.turnEvidenceSha256) -Now $Now)
     }
     $snapshot = Get-ValidatedProductionSnapshot -RepositoryRoot ([string]$Plan.repositoryRoot) -AppSha ([string]$Plan.appSha) `
         -ImageDigest ([string]$Plan.imageDigest) -ApiTaskDefinitionArn ([string]$Plan.priorApiTaskDefinitionArn) `
         -WorkerTaskDefinitionArn ([string]$Plan.priorWorkerTaskDefinitionArn) -RuntimeConfiguration $runtime `
         -SkipRepositoryCheck:($SkipRepositoryCheck -or $runtime.Mode -ceq "off") `
-        -SkipEcrShaCheck:($runtime.Mode -ceq "off") -MaximumApiDesiredCount $(if ($runtime.Mode -ceq "off") { 6 } else { 2 })
+        -SkipEcrShaCheck:($runtime.Mode -ceq "off") -MaximumApiDesiredCount $maximumApiDesiredCount
+    if ($runtime.Mode -cne "off" -and
+        [int]$snapshot.Scaling.Min -ne (Get-ScheduledApiMinimum -NowEastern $runtimeMutationEasternTime)) {
+        throw "Production API MinCapacity does not match the reviewed current 05:45/10:00 schedule."
+    }
     Assert-ServicePairDeploymentBounds -Snapshot $snapshot.Services -Expected $Plan.deploymentBounds
     [void](Assert-ServicePairDeploymentConfigurations -Snapshot $snapshot.Services `
         -ExpectedSha256 $Plan.deploymentConfigurationSha256)
     Assert-AllowedRuntimeTransition -SourceTaskDefinition $snapshot.ApiTask.taskDefinition `
-        -ContainerName "api" -TargetRuntimeConfiguration $runtime
+        -ContainerName "api" -TargetRuntimeConfiguration $runtime `
+        -AllowSyntheticOnlyGlobalActivation:$syntheticOnlyWaiver
     $expectedApiDesiredCount = [int]$snapshot.Services.Api.desiredCount
     $apiSourceFingerprint = Get-TaskFingerprint -TaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api"
     $workerSourceFingerprint = Get-TaskFingerprint -TaskDefinition $snapshot.WorkerTask.taskDefinition -ContainerName "scheduler-worker"
@@ -2251,19 +2666,25 @@ function Invoke-RuntimeConfigApply {
         Write-OperationCheckpoint -Plan $Plan -PlanSha256 $PlanSha256 -Stage "apply_scaling_hold_acquired" `
             -CandidateApiArn $candidateApiArn -CandidateWorkerArn $candidateWorkerArn
         if ($runtime.Mode -cne "off") {
-            Assert-ProductionDeploymentWindow -NowEastern (Get-CurrentDeploymentEasternTime)
+            $preMutationEasternTime = Get-CurrentDeploymentEasternTime
+            Assert-RuntimeConfigMutationWindow -NowEastern $preMutationEasternTime `
+                -ConfirmProtectedWindowProductionMutation:$protectedWindowMutation
+            if ([int]$script:PriorScalingState.Min -ne (Get-ScheduledApiMinimum -NowEastern $preMutationEasternTime)) {
+                throw "Scheduled API minimum changed before runtime-config service mutation."
+            }
         }
         $before = Get-ServiceSnapshot
         Assert-StableService -Service $before.Api -ExpectedTaskDefinitionArn ([string]$Plan.priorApiTaskDefinitionArn) -MinimumDesired 1 `
-            -MaximumDesired $(if ($runtime.Mode -ceq "off") { 6 } else { 2 }) -Label "API"
+            -MaximumDesired $maximumApiDesiredCount -Label "API"
         Assert-StableService -Service $before.Worker -ExpectedTaskDefinitionArn ([string]$Plan.priorWorkerTaskDefinitionArn) -MinimumDesired 1 -MaximumDesired 1 -Label "worker"
+        [void](Assert-ApiTargetHealth -ApiService $before.Api -ExpectedDesiredCount $expectedApiDesiredCount -Mode Exact)
         if ([int]$before.Api.desiredCount -ne $expectedApiDesiredCount) {
             throw "API desired count changed after the exact deployment snapshot."
         }
         Assert-ServicePairDeploymentBounds -Snapshot $before -Expected $Plan.deploymentBounds
         [void](Assert-ServicePairDeploymentConfigurations -Snapshot $before `
             -ExpectedSha256 $Plan.deploymentConfigurationSha256)
-        if ($runtime.Mode -ceq "off") {
+        if ($useNoGrowthDeploymentBounds) {
             Write-OperationCheckpoint -Plan $Plan -PlanSha256 $PlanSha256 -Stage "apply_off_bounds_pending" `
                 -CandidateApiArn $candidateApiArn -CandidateWorkerArn $candidateWorkerArn
             Acquire-OffContainmentDeploymentBounds -Snapshot $before
@@ -2273,8 +2694,9 @@ function Invoke-RuntimeConfigApply {
         [void](Assert-ScalingHoldExact)
         $mutationReady = Get-ServiceSnapshot
         Assert-StableService -Service $mutationReady.Api -ExpectedTaskDefinitionArn ([string]$Plan.priorApiTaskDefinitionArn) -MinimumDesired 1 `
-            -MaximumDesired $(if ($runtime.Mode -ceq "off") { 6 } else { 2 }) -Label "API"
+            -MaximumDesired $maximumApiDesiredCount -Label "API"
         Assert-StableService -Service $mutationReady.Worker -ExpectedTaskDefinitionArn ([string]$Plan.priorWorkerTaskDefinitionArn) -MinimumDesired 1 -MaximumDesired 1 -Label "worker"
+        [void](Assert-ApiTargetHealth -ApiService $mutationReady.Api -ExpectedDesiredCount $expectedApiDesiredCount -Mode Exact)
         if ([int]$mutationReady.Api.desiredCount -ne $expectedApiDesiredCount) {
             throw "API desired count changed under the autoscaling hold before service mutation."
         }
@@ -2290,7 +2712,7 @@ function Invoke-RuntimeConfigApply {
         $candidatePairConverged = $true
         Write-OperationCheckpoint -Plan $Plan -PlanSha256 $PlanSha256 -Stage "apply_pair_converged" `
             -CandidateApiArn $candidateApiArn -CandidateWorkerArn $candidateWorkerArn
-        if ($runtime.Mode -ceq "off") {
+        if ($useNoGrowthDeploymentBounds) {
             Restore-OffContainmentDeploymentBounds
             Write-OperationCheckpoint -Plan $Plan -PlanSha256 $PlanSha256 -Stage "apply_off_bounds_restored" `
                 -CandidateApiArn $candidateApiArn -CandidateWorkerArn $candidateWorkerArn
@@ -2309,7 +2731,7 @@ function Invoke-RuntimeConfigApply {
         if ($terminalCandidateSafe) {
             throw $failure
         }
-        if ($runtime.Mode -ceq "off" -and $candidatePairConverged) {
+        if ($useNoGrowthDeploymentBounds -and $candidatePairConverged) {
             $candidateRecoverySucceeded = $false
             try {
                 [void](Wait-ExactServicePairConvergence -ExpectedApiTaskDefinitionArn $candidateApiArn `
@@ -2355,7 +2777,7 @@ function Invoke-RuntimeConfigApply {
         $serviceMutationStarted = $script:ApiServiceMutationStarted -or $script:WorkerServiceMutationStarted
         $rollbackSafetyReady = $true
         $rollbackApiDesiredCount = $expectedApiDesiredCount
-        if ($runtime.Mode -ceq "off" -and $serviceMutationStarted) {
+        if ($useNoGrowthDeploymentBounds -and $serviceMutationStarted) {
             try {
                 [void](Sync-ScalingHoldExact)
                 $recoverySnapshot = Get-ServiceSnapshot
@@ -2435,13 +2857,28 @@ function Invoke-RuntimeConfigRollback {
         [Parameter(Mandatory = $true)][string]$PlanSha256,
         [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow,
         [ValidateRange(1, 720)][int]$ConvergenceAttempts = 720,
-        [ValidateRange(0, 30)][int]$ConvergenceIntervalSeconds = 5
+        [ValidateRange(0, 30)][int]$ConvergenceIntervalSeconds = 5,
+        [switch]$ConfirmProductionMutation,
+        [switch]$ConfirmProtectedWindowProductionMutation
     )
-    Assert-ProductionDeploymentWindow -NowEastern (Get-CurrentDeploymentEasternTime)
+    $protectedWindowMutation = [bool]$Plan.protectedWindowProductionMutation
+    if ([bool]$ConfirmProtectedWindowProductionMutation -ne $protectedWindowMutation) {
+        throw "Protected-window rollback confirmation must match the exact reviewed plan authority."
+    }
+    if ($protectedWindowMutation -and (-not $ConfirmProductionMutation -or
+        -not $ConfirmProtectedWindowProductionMutation)) {
+        throw "Protected-window rollback requires both production mutation confirmations."
+    }
+    $maximumApiDesiredCount = if ($protectedWindowMutation) { 6 } else { 2 }
+    $rollbackAdmissionEasternTime = Get-CurrentDeploymentEasternTime
+    Assert-RuntimeConfigMutationWindow -NowEastern $rollbackAdmissionEasternTime `
+        -ConfirmProtectedWindowProductionMutation:$protectedWindowMutation
     $result = Read-StrictJson -Path ([string]$Plan.resultPath)
     Assert-ExactProperties -Value $result -Allowed @(
         "schemaVersion", "runId", "recordedAt", "status", "planSha256", "profileSha256",
         "profileMode", "schoolScopeCount", "enabledCapabilityCount", "runtimeConfigurationSha256",
+        "syntheticValidationSha256", "managedTestWaiverSha256", "validationLevel", "managedValidation",
+        "protectedWindowProductionMutation",
         "appSha", "imageDigest",
         "priorApiTaskDefinitionArn", "priorWorkerTaskDefinitionArn", "priorDeploymentBounds",
         "priorDeploymentConfigurationSha256", "candidateApiTaskDefinitionArn",
@@ -2457,6 +2894,12 @@ function Invoke-RuntimeConfigRollback {
     }
     if ([string]$result.runId -cne [string]$Plan.runId -or [string]$result.profileSha256 -cne [string]$Plan.profileSha256 -or
         [string]$result.runtimeConfigurationSha256 -cne [string]$Plan.runtimeConfigurationSha256 -or
+        [string]$result.syntheticValidationSha256 -cne [string]$Plan.syntheticValidationSha256 -or
+        [string]$result.managedTestWaiverSha256 -cne [string]$Plan.managedTestWaiverSha256 -or
+        [string]$result.validationLevel -cne [string]$Plan.validationLevel -or
+        [string]$result.managedValidation -cne [string]$Plan.managedValidation -or
+        $result.protectedWindowProductionMutation -isnot [bool] -or
+        [bool]$result.protectedWindowProductionMutation -ne [bool]$Plan.protectedWindowProductionMutation -or
         [string]$result.appSha -cne [string]$Plan.appSha -or [string]$result.imageDigest -cne [string]$Plan.imageDigest -or
         [string]$result.priorApiTaskDefinitionArn -cne [string]$Plan.priorApiTaskDefinitionArn -or
         [string]$result.priorWorkerTaskDefinitionArn -cne [string]$Plan.priorWorkerTaskDefinitionArn -or
@@ -2486,17 +2929,26 @@ function Invoke-RuntimeConfigRollback {
             -ExpectedCpu $contract.Cpu -ExpectedMemory $contract.Memory)
     }
     $snapshot = Get-ServiceSnapshot
-    Assert-StableService -Service $snapshot.Api -ExpectedTaskDefinitionArn ([string]$result.candidateApiTaskDefinitionArn) -MinimumDesired 1 -MaximumDesired 2 -Label "API"
+    Assert-StableService -Service $snapshot.Api -ExpectedTaskDefinitionArn ([string]$result.candidateApiTaskDefinitionArn) `
+        -MinimumDesired 1 -MaximumDesired $maximumApiDesiredCount -Label "API"
     Assert-StableService -Service $snapshot.Worker -ExpectedTaskDefinitionArn ([string]$result.candidateWorkerTaskDefinitionArn) -MinimumDesired 1 -MaximumDesired 1 -Label "worker"
+    [void](Assert-ApiTargetHealth -ApiService $snapshot.Api -ExpectedDesiredCount ([int]$snapshot.Api.desiredCount) -Mode Exact)
     Assert-ServicePairDeploymentBounds -Snapshot $snapshot -Expected $Plan.deploymentBounds
     [void](Assert-ServicePairDeploymentConfigurations -Snapshot $snapshot `
         -ExpectedSha256 $Plan.deploymentConfigurationSha256)
     $expectedApiDesiredCount = [int]$snapshot.Api.desiredCount
     Assert-ScheduledScalingContract
+    $rollbackScaling = Get-ScalingSnapshot
+    if ([int]$rollbackScaling.Min -ne (Get-ScheduledApiMinimum -NowEastern $rollbackAdmissionEasternTime)) {
+        throw "Production API MinCapacity does not match the reviewed current 05:45/10:00 schedule."
+    }
     Acquire-OperationLock -RunId ([string]$Plan.runId) -PlanSha256 $PlanSha256
     Start-OperationMutationWindow
     $script:ApiServiceMutationStarted = $false
     $script:WorkerServiceMutationStarted = $false
+    $script:DeploymentBoundsChanged = $false
+    $script:PriorDeploymentBounds = $null
+    $script:PriorDeploymentConfigurations = $null
     $terminalRollbackSafe = $false
     try {
         Write-OperationCheckpoint -Plan $Plan -PlanSha256 $PlanSha256 -Stage "rollback_scaling_hold_pending" `
@@ -2506,14 +2958,42 @@ function Invoke-RuntimeConfigRollback {
         Write-OperationCheckpoint -Plan $Plan -PlanSha256 $PlanSha256 -Stage "rollback_scaling_hold_acquired" `
             -CandidateApiArn ([string]$result.candidateApiTaskDefinitionArn) `
             -CandidateWorkerArn ([string]$result.candidateWorkerTaskDefinitionArn)
-        Assert-ProductionDeploymentWindow -NowEastern (Get-CurrentDeploymentEasternTime)
+        $rollbackPreMutationEasternTime = Get-CurrentDeploymentEasternTime
+        Assert-RuntimeConfigMutationWindow -NowEastern $rollbackPreMutationEasternTime `
+            -ConfirmProtectedWindowProductionMutation:$protectedWindowMutation
+        if ([int]$script:PriorScalingState.Min -ne (Get-ScheduledApiMinimum -NowEastern $rollbackPreMutationEasternTime)) {
+            throw "Scheduled API minimum changed before runtime-config rollback mutation."
+        }
         $before = Get-ServiceSnapshot
-        Assert-StableService -Service $before.Api -ExpectedTaskDefinitionArn ([string]$result.candidateApiTaskDefinitionArn) -MinimumDesired 1 -MaximumDesired 2 -Label "API"
+        Assert-StableService -Service $before.Api -ExpectedTaskDefinitionArn ([string]$result.candidateApiTaskDefinitionArn) `
+            -MinimumDesired 1 -MaximumDesired $maximumApiDesiredCount -Label "API"
         Assert-StableService -Service $before.Worker -ExpectedTaskDefinitionArn ([string]$result.candidateWorkerTaskDefinitionArn) -MinimumDesired 1 -MaximumDesired 1 -Label "worker"
+        [void](Assert-ApiTargetHealth -ApiService $before.Api -ExpectedDesiredCount $expectedApiDesiredCount -Mode Exact)
         if ([int]$before.Api.desiredCount -ne $expectedApiDesiredCount) { throw "API desired count changed before rollback mutation." }
         Assert-ServicePairDeploymentBounds -Snapshot $before -Expected $Plan.deploymentBounds
         [void](Assert-ServicePairDeploymentConfigurations -Snapshot $before `
             -ExpectedSha256 $Plan.deploymentConfigurationSha256)
+        if ($protectedWindowMutation) {
+            Write-OperationCheckpoint -Plan $Plan -PlanSha256 $PlanSha256 -Stage "rollback_no_growth_bounds_pending" `
+                -CandidateApiArn ([string]$result.candidateApiTaskDefinitionArn) `
+                -CandidateWorkerArn ([string]$result.candidateWorkerTaskDefinitionArn)
+            Acquire-OffContainmentDeploymentBounds -Snapshot $before
+            Write-OperationCheckpoint -Plan $Plan -PlanSha256 $PlanSha256 -Stage "rollback_no_growth_bounds_acquired" `
+                -CandidateApiArn ([string]$result.candidateApiTaskDefinitionArn) `
+                -CandidateWorkerArn ([string]$result.candidateWorkerTaskDefinitionArn)
+        }
+        [void](Assert-ScalingHoldExact)
+        $mutationReady = Get-ServiceSnapshot
+        Assert-StableService -Service $mutationReady.Api `
+            -ExpectedTaskDefinitionArn ([string]$result.candidateApiTaskDefinitionArn) `
+            -MinimumDesired 1 -MaximumDesired $maximumApiDesiredCount -Label "API"
+        Assert-StableService -Service $mutationReady.Worker `
+            -ExpectedTaskDefinitionArn ([string]$result.candidateWorkerTaskDefinitionArn) `
+            -MinimumDesired 1 -MaximumDesired 1 -Label "worker"
+        [void](Assert-ApiTargetHealth -ApiService $mutationReady.Api -ExpectedDesiredCount $expectedApiDesiredCount -Mode Exact)
+        if ([int]$mutationReady.Api.desiredCount -ne $expectedApiDesiredCount) {
+            throw "API desired count changed under the autoscaling hold before rollback mutation."
+        }
         Write-OperationCheckpoint -Plan $Plan -PlanSha256 $PlanSha256 -Stage "rollback_api_update_pending" `
             -CandidateApiArn ([string]$result.candidateApiTaskDefinitionArn) `
             -CandidateWorkerArn ([string]$result.candidateWorkerTaskDefinitionArn)
@@ -2529,6 +3009,12 @@ function Invoke-RuntimeConfigRollback {
         Write-OperationCheckpoint -Plan $Plan -PlanSha256 $PlanSha256 -Stage "rollback_pair_converged" `
             -CandidateApiArn ([string]$result.candidateApiTaskDefinitionArn) `
             -CandidateWorkerArn ([string]$result.candidateWorkerTaskDefinitionArn)
+        if ($protectedWindowMutation) {
+            Restore-OffContainmentDeploymentBounds
+            Write-OperationCheckpoint -Plan $Plan -PlanSha256 $PlanSha256 -Stage "rollback_no_growth_bounds_restored" `
+                -CandidateApiArn ([string]$result.candidateApiTaskDefinitionArn) `
+                -CandidateWorkerArn ([string]$result.candidateWorkerTaskDefinitionArn)
+        }
         [void](Restore-ScalingHold)
         $terminalRollbackSafe = $true
         Complete-OperationMutationWindow
@@ -2548,7 +3034,26 @@ function Invoke-RuntimeConfigRollback {
         $candidateRestored = $false
         $scalingRestored = $false
         $serviceMutationStarted = $script:ApiServiceMutationStarted -or $script:WorkerServiceMutationStarted
-        if ($serviceMutationStarted) {
+        $recoverySafetyReady = $true
+        $recoveryExpectedApiDesiredCount = $expectedApiDesiredCount
+        if ($protectedWindowMutation -and $serviceMutationStarted) {
+            try {
+                [void](Sync-ScalingHoldExact)
+                $recoverySnapshot = Get-ServiceSnapshot
+                $recoveryApiDesiredCount = [int]$recoverySnapshot.Api.desiredCount
+                if ($recoveryApiDesiredCount -lt 1 -or $recoveryApiDesiredCount -gt 6 -or
+                    [int]$recoverySnapshot.Worker.desiredCount -ne 1) {
+                    throw "Protected rollback recovery observed desired capacity outside the reviewed frozen range."
+                }
+                $recoveryExpectedApiDesiredCount = $recoveryApiDesiredCount
+                [void](Set-OffContainmentDeploymentConfigurations `
+                    -PriorConfigurations $script:PriorDeploymentConfigurations `
+                    -ApiDesiredCount $recoveryApiDesiredCount)
+                [void](Assert-ScalingHoldExact)
+            }
+            catch { $recoverySafetyReady = $false }
+        }
+        if ($serviceMutationStarted -and $recoverySafetyReady) {
             try {
                 Write-OperationCheckpoint -Plan $Plan -PlanSha256 $PlanSha256 -Stage "rollback_candidate_recovery_pending" `
                     -CandidateApiArn ([string]$result.candidateApiTaskDefinitionArn) `
@@ -2557,7 +3062,7 @@ function Invoke-RuntimeConfigRollback {
                 Invoke-RuntimeServiceUpdate -Role worker -TaskDefinitionArn ([string]$result.candidateWorkerTaskDefinitionArn)
                 [void](Wait-ExactServicePairConvergence -ExpectedApiTaskDefinitionArn ([string]$result.candidateApiTaskDefinitionArn) `
                     -ExpectedWorkerTaskDefinitionArn ([string]$result.candidateWorkerTaskDefinitionArn) `
-                    -ExpectedApiDesiredCount $expectedApiDesiredCount `
+                    -ExpectedApiDesiredCount $recoveryExpectedApiDesiredCount `
                     -MaxAttempts $ConvergenceAttempts -IntervalSeconds $ConvergenceIntervalSeconds)
                 Write-OperationCheckpoint -Plan $Plan -PlanSha256 $PlanSha256 -Stage "rollback_candidate_pair_restored" `
                     -CandidateApiArn ([string]$result.candidateApiTaskDefinitionArn) `
@@ -2566,7 +3071,12 @@ function Invoke-RuntimeConfigRollback {
             }
             catch { $candidateRestored = $false }
         }
-        if (-not $serviceMutationStarted -or $candidateRestored) {
+        $coherentServicePair = -not $serviceMutationStarted -or $candidateRestored
+        $boundsRestored = -not $script:DeploymentBoundsChanged
+        if ($coherentServicePair -and $script:DeploymentBoundsChanged) {
+            try { Restore-OffContainmentDeploymentBounds; $boundsRestored = $true } catch { $boundsRestored = $false }
+        }
+        if ($coherentServicePair -and $boundsRestored) {
             try {
                 if ($script:ScalingHoldAcquired) { [void](Restore-ScalingHold) }
                 else { [void](Assert-CanonicalScalingReleased) }
@@ -2574,7 +3084,9 @@ function Invoke-RuntimeConfigRollback {
             }
             catch { $scalingRestored = $false }
         }
-        $status = if (-not $serviceMutationStarted) {
+        $status = if (-not $boundsRestored -or -not $scalingRestored) {
+            "rollback_failed_manual_intervention"
+        } elseif (-not $serviceMutationStarted) {
             "rollback_failed_no_service_mutation"
         } elseif ($candidateRestored) {
             "rollback_failed_candidate_restored"
@@ -2582,7 +3094,7 @@ function Invoke-RuntimeConfigRollback {
             "rollback_failed_manual_intervention"
         }
         $terminalStateRecorded = $false
-        if ((-not $serviceMutationStarted -or $candidateRestored) -and $scalingRestored) {
+        if ($coherentServicePair -and $boundsRestored -and $scalingRestored) {
             try { Complete-OperationMutationWindow; $terminalStateRecorded = $true } catch { $terminalStateRecorded = $false }
         }
         $resultWritten = $false
@@ -2615,9 +3127,13 @@ function Invoke-Main {
                 if (-not [string]$required.Value) { throw "-$($required.Key) is required for Plan." }
             }
             $result = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $ProfilePath `
-                -PrivateTurnEvidencePath $TurnEvidencePath -EvidenceRoot $ExternalEvidenceRoot `
+                -PrivateTurnEvidencePath $TurnEvidencePath -PrivateSyntheticValidationPath $SyntheticValidationPath `
+                -PrivateManagedTestWaiverPath $ManagedTestWaiverPath -EvidenceRoot $ExternalEvidenceRoot `
                 -AppSha $ExpectedAppSha -ImageDigest $ExpectedImageDigest `
-                -ApiTaskDefinitionArn $ExpectedApiTaskDefinitionArn -WorkerTaskDefinitionArn $ExpectedWorkerTaskDefinitionArn
+                -ApiTaskDefinitionArn $ExpectedApiTaskDefinitionArn -WorkerTaskDefinitionArn $ExpectedWorkerTaskDefinitionArn `
+                -ConfirmProductionMutation:$ConfirmProductionMutation `
+                -ConfirmSyntheticOnlyGlobalActivation:$ConfirmSyntheticOnlyGlobalActivation `
+                -ConfirmProtectedWindowProductionMutation:$ConfirmProtectedWindowProductionMutation
             Write-Host "ClassPilot runtime plan created: mode=$($result.Mode) schoolScopeCount=$($result.SchoolScopeCount) planSha256=$($result.PlanSha256)"
             Write-Output $result.PlanRelativePath
         }
@@ -2625,14 +3141,19 @@ function Invoke-Main {
             if (-not $ConfirmProductionMutation) { throw "Apply requires -ConfirmProductionMutation." }
             if (-not $PlanPath -or -not $ExpectedPlanSha256) { throw "Apply requires -PlanPath and -ExpectedPlanSha256." }
             $plan = Read-RuntimePlan -Path $PlanPath -ExpectedSha256 $ExpectedPlanSha256
-            $result = Invoke-RuntimeConfigApply -Plan $plan -PlanSha256 $ExpectedPlanSha256
+            $result = Invoke-RuntimeConfigApply -Plan $plan -PlanSha256 $ExpectedPlanSha256 `
+                -ConfirmProductionMutation:$ConfirmProductionMutation `
+                -ConfirmSyntheticOnlyGlobalActivation:$ConfirmSyntheticOnlyGlobalActivation `
+                -ConfirmProtectedWindowProductionMutation:$ConfirmProtectedWindowProductionMutation
             Write-Host "ClassPilot runtime configuration applied: mode=$($result.profileMode) schoolScopeCount=$($result.schoolScopeCount) scalingRestored=$($result.scalingRestored)"
         }
         "Rollback" {
             if (-not $ConfirmProductionMutation) { throw "Rollback requires -ConfirmProductionMutation." }
             if (-not $PlanPath -or -not $ExpectedPlanSha256) { throw "Rollback requires -PlanPath and -ExpectedPlanSha256." }
             $plan = Read-RuntimePlan -Path $PlanPath -ExpectedSha256 $ExpectedPlanSha256
-            $result = Invoke-RuntimeConfigRollback -Plan $plan -PlanSha256 $ExpectedPlanSha256
+            $result = Invoke-RuntimeConfigRollback -Plan $plan -PlanSha256 $ExpectedPlanSha256 `
+                -ConfirmProductionMutation:$ConfirmProductionMutation `
+                -ConfirmProtectedWindowProductionMutation:$ConfirmProtectedWindowProductionMutation
             Write-Host "ClassPilot runtime rollback complete: scalingRestored=$($result.scalingRestored)"
         }
     }

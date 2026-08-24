@@ -13,6 +13,17 @@ import {
   resetClasspilotObservationLeasesForTests,
 } from "../src/services/classpilotObservationLease.js";
 
+const REPAIRED_CLIENT_DEPENDENT_CAPABILITIES = [
+  "authBoundTelemetryV1",
+  "exactBindingAckV2",
+  "exactTabCloseV2",
+  "studentChatIdempotencyV1",
+  "screenshotObservationLeaseV1",
+  "safetyEvidenceCaptureV1",
+  "liveViewIceServersV1",
+  "kioskLaunchTicketV2",
+] as const;
+
 test("protocol v3 activates only the advertised and server-enabled intersection", () => {
   const negotiated = negotiateClasspilotProtocol({
     clientProtocolVersion: 3,
@@ -36,38 +47,47 @@ test("protocol v3 activates only the advertised and server-enabled intersection"
   ]);
 });
 
-test("authority-sensitive capabilities require the repaired scoping marker", () => {
+test("all 2.7.1-dependent capabilities require the repaired scoping marker", () => {
   const env: NodeJS.ProcessEnv = {
     CLASSPILOT_PROTOCOL_V3_ENABLED: "true",
     CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1: "true",
     CLASSPILOT_CAP_AUTH_BOUND_TELEMETRY_V1: "true",
     CLASSPILOT_CAP_EXACT_BINDING_ACK_V2: "true",
     CLASSPILOT_CAP_EXACT_TAB_CLOSE_V2: "true",
+    CLASSPILOT_CAP_STUDENT_CHAT_IDEMPOTENCY_V1: "true",
+    CLASSPILOT_CAP_SCREENSHOT_OBSERVATION_LEASE_V1: "true",
+    CLASSPILOT_CAP_SAFETY_EVIDENCE_CAPTURE_V1: "true",
+    CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1: "true",
+    CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V2: "true",
   };
   assert.deepEqual(negotiateClasspilotProtocol({
     clientProtocolVersion: 3,
-    advertisedCapabilities: [
-      "authBoundTelemetryV1",
-      "exactBindingAckV2",
-      "exactTabCloseV2",
-    ],
+    advertisedCapabilities: [...REPAIRED_CLIENT_DEPENDENT_CAPABILITIES],
     env,
   }).acceptedCapabilities, []);
   assert.deepEqual(negotiateClasspilotProtocol({
     clientProtocolVersion: 3,
     advertisedCapabilities: [
       "scopedAuthorityChecksV1",
-      "authBoundTelemetryV1",
-      "exactBindingAckV2",
-      "exactTabCloseV2",
+      ...REPAIRED_CLIENT_DEPENDENT_CAPABILITIES,
     ],
     env,
   }).acceptedCapabilities, [
     "scopedAuthorityChecksV1",
-    "authBoundTelemetryV1",
-    "exactBindingAckV2",
-    "exactTabCloseV2",
+    ...REPAIRED_CLIENT_DEPENDENT_CAPABILITIES,
   ]);
+});
+
+test("kiosk launch ticket V1 remains independent of the repaired scoping marker", () => {
+  const negotiated = negotiateClasspilotProtocol({
+    clientProtocolVersion: 3,
+    advertisedCapabilities: ["kioskLaunchTicketV1"],
+    env: {
+      CLASSPILOT_PROTOCOL_V3_ENABLED: "true",
+      CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V1: "true",
+    },
+  });
+  assert.deepEqual(negotiated.acceptedCapabilities, ["kioskLaunchTicketV1"]);
 });
 
 test("protocol v2 and version-only clients retain legacy behavior", () => {
@@ -90,9 +110,13 @@ test("protocol v2 and version-only clients retain legacy behavior", () => {
 test("capability rollout modes are school-scoped and fail closed", () => {
   const baseEnv: NodeJS.ProcessEnv = {
     CLASSPILOT_PROTOCOL_V3_ENABLED: "true",
+    CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1: "true",
     CLASSPILOT_CAP_SCREENSHOT_OBSERVATION_LEASE_V1: "true",
   };
-  const advertisedCapabilities = ["screenshotObservationLeaseV1"];
+  const advertisedCapabilities = [
+    "scopedAuthorityChecksV1",
+    "screenshotObservationLeaseV1",
+  ];
   const negotiate = (schoolId: string, rollout: unknown) => negotiateClasspilotProtocol({
     clientProtocolVersion: 3,
     advertisedCapabilities,
@@ -112,12 +136,15 @@ test("capability rollout modes are school-scoped and fail closed", () => {
   }).acceptedCapabilities;
 
   assert.deepEqual(negotiate("school-a", {
+    scopedAuthorityChecksV1: { mode: "on", schoolIds: ["school-a"] },
     screenshotObservationLeaseV1: { mode: "observe", schoolIds: ["school-a"] },
-  }), []);
+  }), ["scopedAuthorityChecksV1"]);
   assert.deepEqual(negotiate("school-a", {
+    scopedAuthorityChecksV1: { mode: "on", schoolIds: ["school-a"] },
     screenshotObservationLeaseV1: { mode: "on", schoolIds: ["school-a"] },
   }), advertisedCapabilities);
   assert.deepEqual(negotiate("school-b", {
+    scopedAuthorityChecksV1: { mode: "on", schoolIds: ["school-a"] },
     screenshotObservationLeaseV1: { mode: "on", schoolIds: ["school-a"] },
   }), []);
   assert.deepEqual(negotiate("school-a", "{not-json"), []);

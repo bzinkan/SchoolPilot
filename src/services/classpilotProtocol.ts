@@ -31,10 +31,15 @@ const CAPABILITY_FLAGS: Record<ClasspilotProtocolCapability, string> = {
   kioskLaunchTicketV2: "CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V2",
 };
 
-const SCOPED_AUTHORITY_CAPABILITIES = new Set<ClasspilotProtocolCapability>([
+const SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES = new Set<ClasspilotProtocolCapability>([
   "authBoundTelemetryV1",
   "exactBindingAckV2",
   "exactTabCloseV2",
+  "studentChatIdempotencyV1",
+  "screenshotObservationLeaseV1",
+  "safetyEvidenceCaptureV1",
+  "liveViewIceServersV1",
+  "kioskLaunchTicketV2",
 ]);
 
 function enabled(value: string | undefined): boolean {
@@ -223,7 +228,7 @@ export function negotiateClasspilotProtocol(options: {
         advertised.has(capability)
         && serverEnabled.has(capability)
         && (
-          !SCOPED_AUTHORITY_CAPABILITIES.has(capability)
+          !SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES.has(capability)
           || repairedScopedAuthorityAccepted
         )
     ),

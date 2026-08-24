@@ -10,6 +10,10 @@
 #   ./scripts/deploy.sh production --backend --activate-emergency
 #                                       # Backend only; activate the newly registered 512/2048 API revision
 #   ./scripts/deploy.sh production --backend --activate-emergency \
+#     --tag <full-40-character-main-sha> \
+#     --confirm-protected-window-production-mutation
+#                                       # Explicit operator-authorized 04:45-10:14 ET no-growth rollout
+#   ./scripts/deploy.sh production --backend --activate-emergency \
 #     --enable-rls-table passpilot_grade_students
 #                                       # One reviewed release only; add one tenant table without changing the master switch or existing entries
 #   ./scripts/deploy.sh production --backend --activate-emergency \
@@ -54,6 +58,7 @@ DEPLOY_BACKEND=true
 DEPLOY_FRONTEND=true
 SKIP_WAIT=false
 ACTIVATE_EMERGENCY=false
+CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION=false
 ENABLE_RLS_TABLE=""
 RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
@@ -101,6 +106,10 @@ while [[ $# -gt 0 ]]; do
     --backend)  DEPLOY_FRONTEND=false; shift ;;
     --frontend) DEPLOY_BACKEND=false; shift ;;
     --activate-emergency) ACTIVATE_EMERGENCY=true; shift ;;
+    --confirm-protected-window-production-mutation)
+      CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION=true
+      shift
+      ;;
     --enable-rls-table)
       [[ $# -ge 2 ]] || { echo "--enable-rls-table requires a reviewed table name"; exit 1; }
       [[ -z "$ENABLE_RLS_TABLE" ]] || { echo "--enable-rls-table may be specified only once"; exit 1; }
@@ -201,7 +210,14 @@ PRODUCTION_SCALING_HOLD_ACTIVE=false
 PRODUCTION_SCALING_PRIOR_IN=""
 PRODUCTION_SCALING_PRIOR_OUT=""
 PRODUCTION_SCALING_PRIOR_SCHEDULED=""
+PRODUCTION_SCALING_PRIOR_MIN=""
+PRODUCTION_SCALING_PRIOR_MAX=""
+PRODUCTION_SCHEDULED_ACTIONS_SHA256=""
+PROTECTED_WINDOW_PRODUCTION_MUTATION_ADMITTED=false
+PROTECTED_WINDOW_MUTATION_WINDOW_STARTED=false
+PROTECTED_WINDOW_CAPTURED_API_DESIRED=""
 PRODUCTION_PREFLIGHT_API_TASK_DEFINITION=""
+PRODUCTION_PREFLIGHT_API_DESIRED=""
 PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION=""
 PRODUCTION_PREFLIGHT_API_TASK_DEFINITION_ARN=""
 PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION_ARN=""
@@ -259,6 +275,10 @@ TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_SHA256=""
 CAPACITY_ACCEPTANCE_NETWORK_SHA256=""
 CLASSPILOT_TILE_AUTH_SERVICE_MUTATION_STARTED=false
 CLASSPILOT_TILE_AUTH_SAFE_TERMINAL_REACHED=false
+PROTECTED_WINDOW_DEPLOYMENT_BOUNDS_ACTIVE=false
+PROTECTED_WINDOW_SERVICE_MUTATION_STARTED=false
+PROTECTED_WINDOW_SAFE_TERMINAL_REACHED=false
+PROTECTED_WINDOW_TARGET_GROUP_ARN=""
 
 # Colors (works in most terminals)
 RED='\033[0;31m'
@@ -512,8 +532,14 @@ validate_production_service_snapshot() {
           error "Production API completed an unexpected task definition (${normalized_service_task_definition}; expected ${expected_api}); refusing the backend deployment."
           return 1
         fi
-        if [[ "$desired" != "1" && "$desired" != "2" ]]; then
-          error "Production API desiredCount is ${desired}; backend deploys require desiredCount 1 or 2 so rolling database connections stay below the launch gate."
+        if [[ "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" == true &&
+              "$PROTECTED_WINDOW_PRODUCTION_MUTATION_ADMITTED" == true ]]; then
+          if (( desired < 1 || desired > 6 )); then
+            error "Production API desiredCount is ${desired}; protected-window backend deploys require a stable count from 1 through 6."
+            return 1
+          fi
+        elif [[ "$desired" != "1" && "$desired" != "2" ]]; then
+          error "Production API desiredCount is ${desired}; ordinary backend deploys require desiredCount 1 or 2 so rolling database connections stay below the launch gate."
           return 1
         fi
         ;;
@@ -539,6 +565,14 @@ validate_production_service_snapshot() {
 
   if [[ "$api_seen" != "1" || "$worker_seen" != "1" ]]; then
     error "Production capacity check did not return exactly one API and one scheduler worker service; refusing the backend deployment."
+    return 1
+  fi
+
+  if [[ "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" == true &&
+        "$PROTECTED_WINDOW_PRODUCTION_MUTATION_ADMITTED" == true &&
+        -n "$PROTECTED_WINDOW_CAPTURED_API_DESIRED" &&
+        "$api_desired" != "$PROTECTED_WINDOW_CAPTURED_API_DESIRED" ]]; then
+    error "Production API desiredCount drifted during the protected-window mutation (captured=${PROTECTED_WINDOW_CAPTURED_API_DESIRED}, observed=${api_desired})."
     return 1
   fi
 
@@ -642,9 +676,25 @@ production_backend_deploy_window_preflight() {
   fi
 
   numeric_hhmm=$((10#$hour * 100 + 10#$minute))
-  if (( 10#$weekday <= 5 && numeric_hhmm >= 445 && numeric_hhmm < 1015 )); then
+  if (( 10#$weekday <= 5 && numeric_hhmm >= 445 && numeric_hhmm < 1015 )) &&
+     [[ "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" != true ]]; then
     error "Production backend deploys are blocked weekdays 04:45-10:15 America/New_York so the 05:45 six-task arrival action cannot cross migration or a 200% ECS rollout (${phase})."
     return 1
+  fi
+
+  if (( 10#$weekday <= 5 && numeric_hhmm >= 445 && numeric_hhmm < 1015 )); then
+    success "Operator-authorized protected-window production mutation accepted (${phase}; America/New_York weekday=${weekday} time=${hhmm}); no-growth controls are mandatory"
+    return 0
+  fi
+
+  if [[ "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" == true ]]; then
+    if [[ "$PROTECTED_WINDOW_PRODUCTION_MUTATION_ADMITTED" != true ||
+          "$PROTECTED_WINDOW_MUTATION_WINDOW_STARTED" != true ]]; then
+      error "--confirm-protected-window-production-mutation may start production mutation only weekdays 04:45-10:14 America/New_York (${phase})."
+      return 1
+    fi
+    success "Previously admitted protected-window mutation may continue across the schedule boundary (${phase}; America/New_York weekday=${weekday} time=${hhmm})"
+    return 0
   fi
 
   success "Production backend deployment window preflight OK (${phase}; America/New_York weekday=${weekday} time=${hhmm})"
@@ -682,6 +732,289 @@ classpilot_tile_auth_plan_window_preflight() {
   success "ClassPilot tile authorization plan gate window preflight OK (America/New_York time=${hhmm})"
 }
 
+protected_window_api_minimum_healthy_percent() {
+  local desired="$1"
+  case "$desired" in
+    1) printf '100\n' ;;
+    2) printf '50\n' ;;
+    3) printf '66\n' ;;
+    4) printf '75\n' ;;
+    5) printf '80\n' ;;
+    6) printf '83\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+protected_window_scheduled_minimum() {
+  local raw weekday hhmm extra hour minute numeric_hhmm
+  if ! raw=$(production_eastern_weekday_hhmm); then
+    return 1
+  fi
+  read -r weekday hhmm extra <<< "$raw"
+  hhmm="${hhmm%$'\r'}"
+  extra="${extra%$'\r'}"
+  if [[ ! "$weekday" =~ ^[1-7]$ || ! "$hhmm" =~ ^[0-2][0-9][0-5][0-9]$ || -n "$extra" ]]; then
+    return 1
+  fi
+  hour="${hhmm:0:2}"
+  minute="${hhmm:2:2}"
+  if (( 10#$hour > 23 )); then
+    return 1
+  fi
+  numeric_hhmm=$((10#$hour * 100 + 10#$minute))
+  if (( 10#$weekday <= 5 && numeric_hhmm >= 545 && numeric_hhmm < 1000 )); then
+    printf '6\n'
+  else
+    printf '1\n'
+  fi
+}
+
+resolve_protected_window_target_group() {
+  if [[ -n "$PROTECTED_WINDOW_TARGET_GROUP_ARN" ]]; then
+    printf '%s\n' "$PROTECTED_WINDOW_TARGET_GROUP_ARN"
+    return 0
+  fi
+  local target_group
+  if ! target_group=$(AWS_MAX_ATTEMPTS=2 aws ecs describe-services \
+      --cluster "$CLUSTER" --services "$SERVICE" \
+      --query 'services[0].loadBalancers[0].targetGroupArn' --output text \
+      --region "$REGION" --no-cli-pager --cli-connect-timeout 3 --cli-read-timeout 5 2>/dev/null); then
+    return 1
+  fi
+  target_group="${target_group%$'\r'}"
+  if [[ ! "$target_group" =~ ^arn:aws:elasticloadbalancing:${REGION}:${ACCOUNT_ID}:targetgroup/[A-Za-z0-9-]+/[a-f0-9]+$ ]]; then
+    return 1
+  fi
+  PROTECTED_WINDOW_TARGET_GROUP_ARN="$target_group"
+  printf '%s\n' "$target_group"
+}
+
+capture_protected_window_target_group() {
+  local target_group
+  if [[ -n "$PROTECTED_WINDOW_TARGET_GROUP_ARN" ]]; then
+    return 0
+  fi
+  if ! target_group=$(resolve_protected_window_target_group); then
+    return 1
+  fi
+  PROTECTED_WINDOW_TARGET_GROUP_ARN="$target_group"
+}
+
+protected_window_healthy_target_count() {
+  local count
+  if ! capture_protected_window_target_group; then
+    return 1
+  fi
+  if ! count=$(AWS_MAX_ATTEMPTS=2 aws elbv2 describe-target-health --target-group-arn "$PROTECTED_WINDOW_TARGET_GROUP_ARN" \
+      --query 'length(TargetHealthDescriptions[?TargetHealth.State==`healthy`])' \
+      --output text --region "$REGION" --no-cli-pager --cli-connect-timeout 3 --cli-read-timeout 5 2>/dev/null); then
+    return 1
+  fi
+  count="${count%$'\r'}"
+  [[ "$count" =~ ^(0|[1-9][0-9]*)$ ]] || return 1
+  printf '%s\n' "$count"
+}
+
+assert_protected_window_target_health() {
+  local requirement="${1:-floor}"
+  if [[ "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" != true ]]; then
+    return 0
+  fi
+  local desired="$PRODUCTION_PREFLIGHT_API_DESIRED" healthy minimum
+  if [[ ! "$desired" =~ ^[1-6]$ ]] || ! healthy=$(protected_window_healthy_target_count); then
+    error "Protected-window deployment could not prove the current API target health."
+    return 1
+  fi
+  minimum=$((desired - 1))
+  if (( minimum < 1 )); then
+    minimum=1
+  fi
+  if [[ "$requirement" == "exact" ]]; then
+    minimum="$desired"
+  fi
+  local maximum="$desired"
+  if [[ "$requirement" != "exact" && "$desired" == "1" ]]; then
+    maximum=2
+  fi
+  if (( healthy < minimum || healthy > maximum )); then
+    error "Protected-window API target health left the reviewed range (healthy=${healthy}, desired=${desired}, minimum=${minimum}, maximum=${maximum})."
+    return 1
+  fi
+  success "Protected-window API target-health gate passed (healthy=${healthy}, desired=${desired}, minimum=${minimum}, maximum=${maximum})"
+}
+
+wait_for_protected_window_api_capacity() {
+  local expected="$1"
+  local max_attempts="${2:-180}"
+  local interval_seconds="${3:-10}"
+  local attempt raw status desired running pending deployments rollout extra healthy
+  if [[ ! "$expected" =~ ^[1-6]$ || ! "$max_attempts" =~ ^[1-9][0-9]*$ ||
+        ! "$interval_seconds" =~ ^(0|[1-9][0-9]*)$ ]]; then
+    return 1
+  fi
+  for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+    raw=""
+    if raw=$(AWS_MAX_ATTEMPTS=2 aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
+        --query 'services[0].[status,desiredCount,runningCount,pendingCount,length(deployments),deployments[0].rolloutState]' \
+        --output text --region "$REGION" --no-cli-pager --cli-connect-timeout 3 --cli-read-timeout 5 2>/dev/null); then
+      read -r status desired running pending deployments rollout extra <<< "$raw"
+      rollout="${rollout%$'\r'}"
+      extra="${extra%$'\r'}"
+      healthy=""
+      if [[ "$status" == "ACTIVE" && "$desired" == "$expected" &&
+            "$running" == "$expected" && "$pending" == "0" &&
+            "$deployments" == "1" && "$rollout" == "COMPLETED" && -z "$extra" ]] &&
+         healthy=$(protected_window_healthy_target_count) && [[ "$healthy" == "$expected" ]]; then
+        success "Protected-window API capacity converged (desired=${expected}, running=${expected}, healthy=${expected})"
+        return 0
+      fi
+    fi
+    if [[ "$attempt" != "$max_attempts" ]]; then
+      sleep "$interval_seconds"
+    fi
+  done
+  error "Protected-window API capacity did not converge to desired/running/healthy=${expected} before the bounded deadline."
+  return 1
+}
+
+capture_protected_window_deployment_configurations() {
+  if [[ "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" != true ]]; then
+    return 0
+  fi
+  local api_minimum
+  if ! api_minimum=$(protected_window_api_minimum_healthy_percent "$PRODUCTION_PREFLIGHT_API_DESIRED"); then
+    error "Protected-window deployment cannot derive a no-growth API policy for desiredCount=${PRODUCTION_PREFLIGHT_API_DESIRED}."
+    return 1
+  fi
+  if ! AWS_MAX_ATTEMPTS=2 aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" "$WORKER_SERVICE" \
+      --query 'services[].{serviceName:serviceName,deploymentConfiguration:deploymentConfiguration}' \
+      --output json --region "$REGION" --no-cli-pager --cli-connect-timeout 3 --cli-read-timeout 5 \
+      > .protected-window-deployment-configurations.json; then
+    error "Could not capture the exact production ECS deployment configurations."
+    return 1
+  fi
+  if ! API_SERVICE="$SERVICE" WORKER_SERVICE="$WORKER_SERVICE" API_MINIMUM="$api_minimum" node <<'NODE'
+const fs = require("fs");
+const rows = JSON.parse(fs.readFileSync(".protected-window-deployment-configurations.json", "utf8"));
+if (!Array.isArray(rows) || rows.length !== 2) process.exit(1);
+const byName = new Map(rows.map(row => [row?.serviceName, row?.deploymentConfiguration]));
+const api = byName.get(process.env.API_SERVICE);
+const worker = byName.get(process.env.WORKER_SERVICE);
+for (const value of [api, worker]) {
+  if (!value || value.strategy !== "ROLLING" || Number(value.minimumHealthyPercent) !== 100 ||
+      Number(value.maximumPercent) !== 200 || value.deploymentCircuitBreaker?.enable !== true ||
+      value.deploymentCircuitBreaker?.rollback !== true) process.exit(1);
+}
+const apiTemporary = structuredClone(api);
+apiTemporary.minimumHealthyPercent = Number(process.env.API_MINIMUM);
+apiTemporary.maximumPercent = Number(process.env.API_MINIMUM) === 100 ? 200 : 100;
+const workerTemporary = structuredClone(worker);
+workerTemporary.minimumHealthyPercent = 0;
+workerTemporary.maximumPercent = 100;
+for (const [name, value] of Object.entries({
+  ".protected-window-api-prior.json": api,
+  ".protected-window-worker-prior.json": worker,
+  ".protected-window-api-temporary.json": apiTemporary,
+  ".protected-window-worker-temporary.json": workerTemporary,
+})) fs.writeFileSync(name, JSON.stringify(value));
+NODE
+  then
+    error "Production ECS deployment configurations are not the reviewed 100%/200% rolling circuit-breaker posture."
+    return 1
+  fi
+}
+
+verify_protected_window_deployment_configurations() {
+  local api_path="$1"
+  local worker_path="$2"
+  local attempt
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    if AWS_MAX_ATTEMPTS=2 aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" "$WORKER_SERVICE" \
+        --query 'services[].{serviceName:serviceName,deploymentConfiguration:deploymentConfiguration}' \
+        --output json --region "$REGION" --no-cli-pager --cli-connect-timeout 3 --cli-read-timeout 5 \
+        > .protected-window-deployment-observed.json 2>/dev/null &&
+       API_SERVICE="$SERVICE" WORKER_SERVICE="$WORKER_SERVICE" API_PATH="$api_path" WORKER_PATH="$worker_path" node <<'NODE'
+const fs = require("fs");
+const canonical = value => Array.isArray(value)
+  ? `[${value.map(canonical).join(",")}]`
+  : value && typeof value === "object"
+    ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
+    : JSON.stringify(value);
+const rows = JSON.parse(fs.readFileSync(".protected-window-deployment-observed.json", "utf8"));
+if (!Array.isArray(rows) || rows.length !== 2) process.exit(1);
+const byName = new Map(rows.map(row => [row?.serviceName, row?.deploymentConfiguration]));
+const expectedApi = JSON.parse(fs.readFileSync(process.env.API_PATH, "utf8"));
+const expectedWorker = JSON.parse(fs.readFileSync(process.env.WORKER_PATH, "utf8"));
+if (canonical(byName.get(process.env.API_SERVICE)) !== canonical(expectedApi) ||
+    canonical(byName.get(process.env.WORKER_SERVICE)) !== canonical(expectedWorker)) process.exit(1);
+NODE
+    then
+      return 0
+    fi
+    if [[ "$attempt" != "10" ]]; then
+      sleep 2
+    fi
+  done
+  return 1
+}
+
+apply_protected_window_deployment_bounds() {
+  if [[ "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" != true ]]; then
+    return 0
+  fi
+  if [[ "$PROTECTED_WINDOW_DEPLOYMENT_BOUNDS_ACTIVE" == true ]]; then
+    error "Protected-window deployment bounds are already active."
+    return 1
+  fi
+  capture_protected_window_deployment_configurations || return 1
+  PROTECTED_WINDOW_DEPLOYMENT_BOUNDS_ACTIVE=true
+  if ! aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" \
+      --deployment-configuration file://.protected-window-api-temporary.json \
+      --region "$REGION" --no-cli-pager > /dev/null ||
+     ! aws ecs update-service --cluster "$CLUSTER" --service "$WORKER_SERVICE" \
+      --deployment-configuration file://.protected-window-worker-temporary.json \
+      --region "$REGION" --no-cli-pager > /dev/null ||
+     ! verify_protected_window_deployment_configurations \
+      .protected-window-api-temporary.json .protected-window-worker-temporary.json; then
+    error "Protected-window no-growth ECS deployment bounds did not converge exactly."
+    return 1
+  fi
+  success "Protected-window no-growth ECS bounds are active (API desired=${PRODUCTION_PREFLIGHT_API_DESIRED}; worker 0%/100%)"
+}
+
+restore_protected_window_deployment_bounds() {
+  if [[ "$PROTECTED_WINDOW_DEPLOYMENT_BOUNDS_ACTIVE" != true ]]; then
+    return 0
+  fi
+  if ! aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" \
+      --deployment-configuration file://.protected-window-api-prior.json \
+      --region "$REGION" --no-cli-pager > /dev/null ||
+     ! aws ecs update-service --cluster "$CLUSTER" --service "$WORKER_SERVICE" \
+      --deployment-configuration file://.protected-window-worker-prior.json \
+      --region "$REGION" --no-cli-pager > /dev/null ||
+     ! verify_protected_window_deployment_configurations \
+      .protected-window-api-prior.json .protected-window-worker-prior.json; then
+    error "Could not restore the exact prior ECS deployment configurations."
+    return 1
+  fi
+  PROTECTED_WINDOW_DEPLOYMENT_BOUNDS_ACTIVE=false
+  success "Exact prior API/worker deployment configurations restored"
+}
+
+restore_protected_window_deployment_bounds_bounded() {
+  local attempt
+  for attempt in 1 2 3; do
+    if restore_protected_window_deployment_bounds; then
+      return 0
+    fi
+    if [[ "$attempt" != "3" ]]; then
+      warn "Retrying exact protected-window deployment-configuration restoration (attempt $((attempt + 1))/3)..."
+      sleep 2
+    fi
+  done
+  return 1
+}
+
 wait_for_production_backend_strict_stability() {
   if [[ "$ENV" != "production" || "$DEPLOY_BACKEND" != true ]]; then
     return 0
@@ -689,9 +1022,26 @@ wait_for_production_backend_strict_stability() {
 
   local expected_api_ref="${1:-}"
   local expected_worker_ref="${2:-}"
-  local max_attempts="${3:-30}"
-  local interval_seconds="${4:-2}"
+  local max_attempts="${3:-}"
+  local interval_seconds="${4:-}"
   local attempt service_snapshot="" last_snapshot_read_ok=false
+
+  if [[ -z "$max_attempts" ]]; then
+    if [[ "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" == true &&
+          "$PROTECTED_WINDOW_PRODUCTION_MUTATION_ADMITTED" == true ]]; then
+      max_attempts=360
+    else
+      max_attempts=30
+    fi
+  fi
+  if [[ -z "$interval_seconds" ]]; then
+    if [[ "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" == true &&
+          "$PROTECTED_WINDOW_PRODUCTION_MUTATION_ADMITTED" == true ]]; then
+      interval_seconds=10
+    else
+      interval_seconds=2
+    fi
+  fi
 
   if [[ -z "$expected_api_ref" || -z "$expected_worker_ref" ]] ||
      ! normalize_task_definition_ref "$expected_api_ref" > /dev/null ||
@@ -711,6 +1061,10 @@ wait_for_production_backend_strict_stability() {
     last_snapshot_read_ok=false
     if service_snapshot=$(production_service_snapshot); then
       last_snapshot_read_ok=true
+      if [[ "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" == true ]] &&
+         ! assert_protected_window_target_health floor; then
+        return 1
+      fi
       # The ECS services-stable waiter can return a few seconds before the
       # rolloutState projection converges. Reuse the exact strict validator,
       # but suppress its fail-closed diagnostic until the bounded poll expires.
@@ -829,29 +1183,73 @@ acquire_production_scaling_hold() {
   production_backend_deploy_window_preflight "before autoscaling hold"
 
   local raw prior
-  if ! raw=$(production_scaling_state_snapshot); then
-    error "Could not read the production API autoscaling suspended state; refusing the service rollout."
-    return 1
+  if [[ "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" == true ]]; then
+    if [[ "$PROTECTED_WINDOW_PRODUCTION_MUTATION_ADMITTED" != true ||
+          ! "$PRODUCTION_PREFLIGHT_API_DESIRED" =~ ^[1-6]$ ]]; then
+      error "Protected-window scaling hold requires a valid initial admission and immutable API desired count."
+      return 1
+    fi
+    PROTECTED_WINDOW_CAPTURED_API_DESIRED="$PRODUCTION_PREFLIGHT_API_DESIRED"
+    if ! capture_protected_window_scheduled_actions; then
+      error "Could not validate and hash the exact production API scheduled-scaling contract."
+      return 1
+    fi
+    if ! raw=$(production_scaling_target_snapshot) ||
+       ! prior=$(normalize_production_scaling_target "$raw"); then
+      error "Could not read the exact production API autoscaling target for protected-window mutation."
+      return 1
+    fi
+    read -r PRODUCTION_SCALING_PRIOR_MIN PRODUCTION_SCALING_PRIOR_MAX \
+      PRODUCTION_SCALING_PRIOR_IN PRODUCTION_SCALING_PRIOR_OUT \
+      PRODUCTION_SCALING_PRIOR_SCHEDULED <<< "$prior"
+    if [[ "$PRODUCTION_SCALING_PRIOR_SCHEDULED" == false ]]; then
+      local expected_scheduled_minimum
+      if ! expected_scheduled_minimum=$(protected_window_scheduled_minimum) ||
+         [[ "$PRODUCTION_SCALING_PRIOR_MIN" != "$expected_scheduled_minimum" ]]; then
+        error "Production API MinCapacity does not match the reviewed current 05:45/10:00 schedule; refusing to freeze a drifted arrival posture."
+        return 1
+      fi
+    fi
+  else
+    if ! raw=$(production_scaling_state_snapshot); then
+      error "Could not read the production API autoscaling suspended state; refusing the service rollout."
+      return 1
+    fi
+    if ! prior=$(normalize_production_scaling_state "$raw"); then
+      error "Production API autoscaling suspended state was missing or ambiguous; refusing the service rollout."
+      return 1
+    fi
+    read -r PRODUCTION_SCALING_PRIOR_IN PRODUCTION_SCALING_PRIOR_OUT PRODUCTION_SCALING_PRIOR_SCHEDULED <<< "$prior"
   fi
-  if ! prior=$(normalize_production_scaling_state "$raw"); then
-    error "Production API autoscaling suspended state was missing or ambiguous; refusing the service rollout."
-    return 1
+
+  if [[ "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" == true ]]; then
+    production_backend_deploy_window_preflight "immediately before protected mutation begins"
+    PROTECTED_WINDOW_MUTATION_WINDOW_STARTED=true
   fi
-  read -r PRODUCTION_SCALING_PRIOR_IN PRODUCTION_SCALING_PRIOR_OUT PRODUCTION_SCALING_PRIOR_SCHEDULED <<< "$prior"
 
   # Mark the hold active before the mutating request. If the client loses the
   # response after AWS applied it, the EXIT trap still restores the captured state.
   PRODUCTION_SCALING_HOLD_ACTIVE=true
-  info "Suspending production API dynamic scaling while preserving the prior scheduled-scaling state..."
-  if ! set_production_scaling_state true true "$PRODUCTION_SCALING_PRIOR_SCHEDULED"; then
-    error "Could not suspend production API autoscaling; refusing the service rollout."
-    return 1
+  if [[ "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" == true ]]; then
+    info "Suspending production API dynamic and scheduled scaling for the protected-window mutation..."
+    if ! set_production_scaling_target "$PRODUCTION_SCALING_PRIOR_MIN" "$PRODUCTION_SCALING_PRIOR_MAX" true true true ||
+       ! wait_for_production_scaling_target "$PRODUCTION_SCALING_PRIOR_MIN" "$PRODUCTION_SCALING_PRIOR_MAX" true true true; then
+      error "Protected-window API autoscaling hold could not be verified."
+      return 1
+    fi
+    success "Protected-window API dynamic and scheduled scaling hold verified"
+  else
+    info "Suspending production API dynamic scaling while preserving the prior scheduled-scaling state..."
+    if ! set_production_scaling_state true true "$PRODUCTION_SCALING_PRIOR_SCHEDULED"; then
+      error "Could not suspend production API autoscaling; refusing the service rollout."
+      return 1
+    fi
+    if ! wait_for_production_scaling_state true true "$PRODUCTION_SCALING_PRIOR_SCHEDULED"; then
+      error "Production API autoscaling hold could not be verified; refusing the service rollout."
+      return 1
+    fi
+    success "Production API dynamic-scaling hold verified; scheduled-scaling state preserved"
   fi
-  if ! wait_for_production_scaling_state true true "$PRODUCTION_SCALING_PRIOR_SCHEDULED"; then
-    error "Production API autoscaling hold could not be verified; refusing the service rollout."
-    return 1
-  fi
-  success "Production API dynamic-scaling hold verified; scheduled-scaling state preserved"
 
   # The first check happens before Docker. This second snapshot closes the
   # build/push window and is protected from target-tracking drift. The reviewed
@@ -859,6 +1257,10 @@ acquire_production_scaling_hold() {
   # six-task arrival action from crossing migration or service replacement.
   if ! production_backend_capacity_preflight "under the autoscaling hold"; then
     error "Production ECS capacity changed after the initial preflight; refusing the migration and service rollout."
+    return 1
+  fi
+  if ! assert_protected_window_target_health exact; then
+    error "Protected-window target health changed after the initial stable snapshot."
     return 1
   fi
   if [[ -z "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION" ||
@@ -873,6 +1275,82 @@ acquire_production_scaling_hold() {
 restore_production_scaling_hold() {
   if [[ "$PRODUCTION_SCALING_HOLD_ACTIVE" != true ]]; then
     return 0
+  fi
+
+  if [[ "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" == true ]]; then
+    local attempt stage_minimum release_minimum after_minimum
+    info "Restoring the scheduled production API target and exact prior scaling suspension state..."
+    if ! revalidate_protected_window_scheduled_actions; then
+      error "The production API scheduled-scaling contract changed while the protected hold was active."
+      return 1
+    fi
+    if [[ "$PRODUCTION_SCALING_PRIOR_SCHEDULED" == true ]]; then
+      if ! set_production_scaling_target "$PRODUCTION_SCALING_PRIOR_MIN" "$PRODUCTION_SCALING_PRIOR_MAX" \
+          "$PRODUCTION_SCALING_PRIOR_IN" "$PRODUCTION_SCALING_PRIOR_OUT" true ||
+         ! wait_for_production_scaling_target "$PRODUCTION_SCALING_PRIOR_MIN" "$PRODUCTION_SCALING_PRIOR_MAX" \
+          "$PRODUCTION_SCALING_PRIOR_IN" "$PRODUCTION_SCALING_PRIOR_OUT" true; then
+        error "Could not restore the exact previously suspended scheduled-scaling target."
+        return 1
+      fi
+      PRODUCTION_SCALING_HOLD_ACTIVE=false
+      PRODUCTION_SCALING_PRIOR_IN=""
+      PRODUCTION_SCALING_PRIOR_OUT=""
+      PRODUCTION_SCALING_PRIOR_SCHEDULED=""
+      PRODUCTION_SCALING_PRIOR_MIN=""
+      PRODUCTION_SCALING_PRIOR_MAX=""
+      PRODUCTION_SCHEDULED_ACTIONS_SHA256=""
+      PROTECTED_WINDOW_CAPTURED_API_DESIRED=""
+      success "Exact previously suspended scheduled-scaling target restored"
+      return 0
+    fi
+    for attempt in 1 2 3 4; do
+      if ! stage_minimum=$(protected_window_scheduled_minimum) ||
+         ! set_production_scaling_target "$stage_minimum" "$PRODUCTION_SCALING_PRIOR_MAX" true true true ||
+         ! wait_for_production_scaling_target "$stage_minimum" "$PRODUCTION_SCALING_PRIOR_MAX" true true true; then
+        error "Could not stage the current scheduled production scaling target."
+        return 1
+      fi
+      if [[ "$stage_minimum" == "6" ]] &&
+         ! wait_for_protected_window_api_capacity 6; then
+        error "The 05:45 arrival capacity did not converge before protected-window scaling restoration."
+        return 1
+      fi
+      if ! release_minimum=$(protected_window_scheduled_minimum); then
+        return 1
+      fi
+      if [[ "$release_minimum" != "$stage_minimum" ]]; then
+        continue
+      fi
+      if ! set_production_scaling_target "$release_minimum" "$PRODUCTION_SCALING_PRIOR_MAX" \
+          "$PRODUCTION_SCALING_PRIOR_IN" "$PRODUCTION_SCALING_PRIOR_OUT" "$PRODUCTION_SCALING_PRIOR_SCHEDULED" ||
+         ! wait_for_production_scaling_target "$release_minimum" "$PRODUCTION_SCALING_PRIOR_MAX" \
+          "$PRODUCTION_SCALING_PRIOR_IN" "$PRODUCTION_SCALING_PRIOR_OUT" "$PRODUCTION_SCALING_PRIOR_SCHEDULED"; then
+        error "Could not release the protected-window scaling hold."
+        return 1
+      fi
+      if ! after_minimum=$(protected_window_scheduled_minimum); then
+        return 1
+      fi
+      if [[ "$after_minimum" == "$release_minimum" ]]; then
+        PRODUCTION_SCALING_HOLD_ACTIVE=false
+        PRODUCTION_SCALING_PRIOR_IN=""
+        PRODUCTION_SCALING_PRIOR_OUT=""
+        PRODUCTION_SCALING_PRIOR_SCHEDULED=""
+        PRODUCTION_SCALING_PRIOR_MIN=""
+        PRODUCTION_SCALING_PRIOR_MAX=""
+        PRODUCTION_SCHEDULED_ACTIONS_SHA256=""
+        PROTECTED_WINDOW_CAPTURED_API_DESIRED=""
+        success "Scheduled API target and exact prior scaling suspension state restored"
+        return 0
+      fi
+      if ! set_production_scaling_target "$after_minimum" "$PRODUCTION_SCALING_PRIOR_MAX" true true true ||
+         ! wait_for_production_scaling_target "$after_minimum" "$PRODUCTION_SCALING_PRIOR_MAX" true true true; then
+        error "Could not re-establish the protected-window hold across a schedule boundary."
+        return 1
+      fi
+    done
+    error "Protected-window scaling restoration crossed scheduled boundaries repeatedly."
+    return 1
   fi
 
   info "Restoring the exact prior production API autoscaling suspended state..."
@@ -926,21 +1404,38 @@ rollback_classpilot_tile_auth_deployment() {
       error "The scheduler-worker rollback request failed."
       failed=true
     fi
-    if ! aws ecs wait services-stable \
-      --cluster "$CLUSTER" \
-      --services "$SERVICE" "$WORKER_SERVICE" \
-      --region "$REGION"; then
-      error "The API/worker rollback did not reach the standard ECS stable state."
-      failed=true
-    elif ! wait_for_production_backend_strict_stability \
-      "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION" "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION"; then
-      error "The API/worker rollback did not reach exact strict convergence."
-      failed=true
-    else
-      success "API and scheduler worker restored to the exact pre-deployment revisions"
+    if [[ "$failed" == false ]]; then
+      if [[ "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" != true ]] &&
+         ! aws ecs wait services-stable \
+          --cluster "$CLUSTER" \
+          --services "$SERVICE" "$WORKER_SERVICE" \
+          --region "$REGION"; then
+        error "The API/worker rollback did not reach the standard ECS stable state."
+        failed=true
+      fi
+      if [[ "$failed" == false ]] && ! wait_for_production_backend_strict_stability \
+          "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION" "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION"; then
+        error "The API/worker rollback did not reach exact strict convergence."
+        failed=true
+      fi
+      if [[ "$failed" == false ]]; then
+        success "API and scheduler worker restored to the exact pre-deployment revisions"
+      fi
     fi
   fi
 
+  if [[ "$failed" == true && "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" == true ]]; then
+    error "Protected-window rollback did not prove one coherent service pair; retaining no-growth bounds and the scaling hold."
+    return 1
+  fi
+  if ! restore_protected_window_deployment_bounds_bounded; then
+    error "Protected-window ECS deployment configuration restoration failed after rollback."
+    failed=true
+  fi
+  if [[ "$failed" == true && "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" == true ]]; then
+    error "Protected-window deployment bounds were not restored exactly; retaining the scaling hold and recovery artifacts."
+    return 1
+  fi
   if ! restore_production_scaling_hold; then
     error "Autoscaling restoration failed after the guarded identity rollback."
     failed=true
@@ -988,8 +1483,37 @@ TEMP_FILES=(
   .same-image-worker-registered.json
 )
 
+PROTECTED_WINDOW_RECOVERY_FILES=(
+  .protected-window-deployment-configurations.json
+  .protected-window-deployment-observed.json
+  .protected-window-api-prior.json
+  .protected-window-worker-prior.json
+  .protected-window-api-temporary.json
+  .protected-window-worker-temporary.json
+  .protected-window-scheduled-actions.json
+  .protected-window-scheduled-actions-observed.json
+)
+
 cleanup_temp_files() {
   rm -f "${TEMP_FILES[@]}"
+}
+
+cleanup_protected_window_recovery_files() {
+  rm -f "${PROTECTED_WINDOW_RECOVERY_FILES[@]}"
+}
+
+assert_no_preserved_protected_window_recovery_artifacts() {
+  local path found=false
+  for path in "${PROTECTED_WINDOW_RECOVERY_FILES[@]}"; do
+    if [[ -e "$path" ]]; then
+      found=true
+      break
+    fi
+  done
+  if [[ "$found" == true ]]; then
+    error "Preserved protected-window recovery artifacts are present. Refusing to erase or supersede them; reconcile the live scaling/deployment state and archive or explicitly remove the recovery files before another deploy."
+    return 1
+  fi
 }
 
 deploy_exit_cleanup() {
@@ -1003,6 +1527,21 @@ deploy_exit_cleanup() {
     if ! rollback_classpilot_tile_auth_deployment; then
       error "EXIT recovery could not prove the guarded API/worker rollback."
       exit_code=1
+    fi
+  fi
+
+  if [[ "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" == true &&
+        "$PROTECTED_WINDOW_SERVICE_MUTATION_STARTED" == true &&
+        "$PROTECTED_WINDOW_SAFE_TERMINAL_REACHED" != true ]]; then
+    error "Protected-window service mutation did not reach a proven safe terminal state. No unproven application downgrade was attempted; no-growth bounds, scaling suspension, and recovery artifacts are retained for immediate roll-forward or operator recovery."
+    exit 1
+  fi
+
+  if [[ "$PROTECTED_WINDOW_DEPLOYMENT_BOUNDS_ACTIVE" == true ]]; then
+    warn "Deploy exited while protected-window no-growth bounds were active; restoring the exact prior API/worker deployment configurations..."
+    if ! restore_protected_window_deployment_bounds_bounded; then
+      error "The protected-window deployment configurations could not be restored. Scaling remains suspended and recovery artifacts were preserved; manual recovery is required immediately."
+      exit 1
     fi
   fi
 
@@ -1026,6 +1565,7 @@ deploy_exit_cleanup() {
   fi
 
   cleanup_temp_files
+  cleanup_protected_window_recovery_files
   exit "$exit_code"
 }
 
@@ -1174,6 +1714,190 @@ validate_emergency_activation_mode() {
     error "--activate-emergency is allowed only with production --backend so no frontend or staging rollout can share the 2048 MiB cutover."
     return 1
   fi
+}
+
+production_scaling_target_snapshot() {
+  aws application-autoscaling describe-scalable-targets \
+    --service-namespace ecs \
+    --resource-ids "$AUTOSCALING_RESOURCE_ID" \
+    --scalable-dimension "$AUTOSCALING_DIMENSION" \
+    --query 'ScalableTargets[0].[MinCapacity,MaxCapacity,SuspendedState.DynamicScalingInSuspended,SuspendedState.DynamicScalingOutSuspended,SuspendedState.ScheduledScalingSuspended]' \
+    --output text --region "$REGION" 2>/dev/null
+}
+
+production_scheduled_actions_snapshot() {
+  AWS_MAX_ATTEMPTS=2 aws application-autoscaling describe-scheduled-actions \
+    --service-namespace ecs \
+    --resource-id "$AUTOSCALING_RESOURCE_ID" \
+    --scalable-dimension "$AUTOSCALING_DIMENSION" \
+    --query 'ScheduledActions[].{name:ScheduledActionName,schedule:Schedule,timezone:Timezone,min:ScalableTargetAction.MinCapacity,max:ScalableTargetAction.MaxCapacity,start:StartTime,end:EndTime}' \
+    --output json --region "$REGION" --no-cli-pager --cli-connect-timeout 3 --cli-read-timeout 5 2>/dev/null
+}
+
+canonicalize_protected_window_scheduled_actions() {
+  local source_path="$1"
+  EXPECTED_UP_ACTION="${SERVICE}-arrival-scale-up" \
+  EXPECTED_DOWN_ACTION="${SERVICE}-arrival-scale-down" \
+  SCHEDULED_ACTIONS_PATH="$source_path" node <<'NODE'
+const fs = require("fs");
+let value;
+try {
+  value = JSON.parse(fs.readFileSync(process.env.SCHEDULED_ACTIONS_PATH, "utf8"));
+} catch {
+  process.exit(1);
+}
+const expected = [
+  {
+    name: process.env.EXPECTED_DOWN_ACTION,
+    schedule: "cron(0 10 ? * MON-FRI *)",
+    timezone: "America/New_York",
+    min: 1,
+    max: null,
+    start: null,
+    end: null,
+  },
+  {
+    name: process.env.EXPECTED_UP_ACTION,
+    schedule: "cron(45 5 ? * MON-FRI *)",
+    timezone: "America/New_York",
+    min: 6,
+    max: null,
+    start: null,
+    end: null,
+  },
+].sort((a, b) => a.name.localeCompare(b.name));
+if (!Array.isArray(value) || value.length !== expected.length) process.exit(1);
+const normalized = value.map((entry) => ({
+  name: entry?.name ?? null,
+  schedule: entry?.schedule ?? null,
+  timezone: entry?.timezone ?? null,
+  min: entry?.min ?? null,
+  max: entry?.max ?? null,
+  start: entry?.start ?? null,
+  end: entry?.end ?? null,
+})).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+if (JSON.stringify(normalized) !== JSON.stringify(expected)) process.exit(1);
+process.stdout.write(JSON.stringify(normalized));
+NODE
+}
+
+capture_protected_window_scheduled_actions() {
+  local canonical
+  if ! production_scheduled_actions_snapshot > .protected-window-scheduled-actions-observed.json ||
+     ! canonical=$(canonicalize_protected_window_scheduled_actions .protected-window-scheduled-actions-observed.json); then
+    return 1
+  fi
+
+  if [[ "$PROTECTED_WINDOW_DEPLOYMENT_BOUNDS_ACTIVE" == true ||
+        "$PRODUCTION_SCALING_HOLD_ACTIVE" == true ]]; then
+    error "Protected-window recovery remains active. Recovery artifacts were preserved; manual recovery is required immediately."
+    exit 1
+  fi
+  printf '%s\n' "$canonical" > .protected-window-scheduled-actions.json
+  if ! PRODUCTION_SCHEDULED_ACTIONS_SHA256=$(node -e \
+      'const fs=require("fs"),crypto=require("crypto");process.stdout.write(crypto.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"));' \
+      .protected-window-scheduled-actions.json) ||
+     [[ ! "$PRODUCTION_SCHEDULED_ACTIONS_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+    PRODUCTION_SCHEDULED_ACTIONS_SHA256=""
+    return 1
+  fi
+  success "Production API scheduled-scaling contract validated and hash-bound"
+}
+
+revalidate_protected_window_scheduled_actions() {
+  local canonical current_sha
+  if [[ ! "$PRODUCTION_SCHEDULED_ACTIONS_SHA256" =~ ^[a-f0-9]{64}$ ]] ||
+     ! production_scheduled_actions_snapshot > .protected-window-scheduled-actions-observed.json ||
+     ! canonical=$(canonicalize_protected_window_scheduled_actions .protected-window-scheduled-actions-observed.json) ||
+     ! current_sha=$(printf '%s\n' "$canonical" | node -e \
+       'const fs=require("fs"),crypto=require("crypto");process.stdout.write(crypto.createHash("sha256").update(fs.readFileSync(0)).digest("hex"));'); then
+    return 1
+  fi
+  [[ "$current_sha" == "$PRODUCTION_SCHEDULED_ACTIONS_SHA256" ]]
+}
+
+normalize_production_scaling_target() {
+  local raw="$1"
+  local minimum maximum scale_in scale_out scheduled extra
+  [[ "$raw" != *$'\n'* ]] || return 1
+  read -r minimum maximum scale_in scale_out scheduled extra <<< "$raw"
+  scheduled="${scheduled%$'\r'}"
+  extra="${extra%$'\r'}"
+  [[ "$minimum" =~ ^[1-6]$ && "$maximum" == "6" && -z "$extra" ]] || return 1
+  case "$scale_in" in True|true) scale_in=true ;; False|false) scale_in=false ;; *) return 1 ;; esac
+  case "$scale_out" in True|true) scale_out=true ;; False|false) scale_out=false ;; *) return 1 ;; esac
+  case "$scheduled" in True|true) scheduled=true ;; False|false) scheduled=false ;; *) return 1 ;; esac
+  printf '%s %s %s %s %s\n' "$minimum" "$maximum" "$scale_in" "$scale_out" "$scheduled"
+}
+
+set_production_scaling_target() {
+  local minimum="$1" maximum="$2" scale_in="$3" scale_out="$4" scheduled="$5"
+  aws application-autoscaling register-scalable-target \
+    --service-namespace ecs --resource-id "$AUTOSCALING_RESOURCE_ID" \
+    --scalable-dimension "$AUTOSCALING_DIMENSION" \
+    --min-capacity "$minimum" --max-capacity "$maximum" \
+    --suspended-state "DynamicScalingInSuspended=${scale_in},DynamicScalingOutSuspended=${scale_out},ScheduledScalingSuspended=${scheduled}" \
+    --region "$REGION" > /dev/null
+}
+
+wait_for_production_scaling_target() {
+  local expected="$1 $2 $3 $4 $5"
+  local attempt raw normalized
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    if raw=$(production_scaling_target_snapshot) &&
+       normalized=$(normalize_production_scaling_target "$raw") &&
+       [[ "$normalized" == "$expected" ]]; then
+      return 0
+    fi
+    [[ "$attempt" == "10" ]] || sleep 2
+  done
+  return 1
+}
+
+validate_protected_window_production_mutation_mode() {
+  if [[ "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" != true ]]; then
+    return 0
+  fi
+
+  if [[ "$ENV" != "production" || "$DEPLOY_BACKEND" != true ||
+        "$DEPLOY_FRONTEND" != false || "$ACTIVATE_EMERGENCY" != true ||
+        "$SKIP_WAIT" == true || ! "$IMAGE_TAG" =~ ^[0-9a-f]{40}$ ||
+        -n "$ENABLE_RLS_TABLE" || -n "$SAME_IMAGE_NETWORKING_STAGE" ||
+        -n "$IMMUTABLE_IMAGE_SHA" || -n "$IMMUTABLE_IMAGE_DIGEST" ||
+        "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" == true ||
+        "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" == true ||
+        "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true ||
+        -n "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ||
+        "$CAPACITY_ACCEPTANCE_RELEASE" == true ||
+        -n "$CAPACITY_ACCEPTANCE_FRONTEND_SHA" ]]; then
+    error "--confirm-protected-window-production-mutation requires production --backend --activate-emergency with one explicit full 40-character --tag and rejects frontend, RLS, --skip-wait, immutable-image, same-image, capacity, observation, rehearsal, and receipt modes."
+    return 1
+  fi
+
+  local raw weekday hhmm extra hour minute numeric_hhmm
+  if ! raw=$(production_eastern_weekday_hhmm); then
+    error "Could not resolve the America/New_York clock for protected-window admission."
+    return 1
+  fi
+  read -r weekday hhmm extra <<< "$raw"
+  hhmm="${hhmm%$'\r'}"
+  extra="${extra%$'\r'}"
+  if [[ ! "$weekday" =~ ^[1-7]$ || ! "$hhmm" =~ ^[0-2][0-9][0-5][0-9]$ || -n "$extra" ]]; then
+    error "The America/New_York clock for protected-window admission was malformed or ambiguous."
+    return 1
+  fi
+  hour="${hhmm:0:2}"
+  minute="${hhmm:2:2}"
+  if (( 10#$hour > 23 )); then
+    error "The America/New_York clock for protected-window admission was malformed or ambiguous."
+    return 1
+  fi
+  numeric_hhmm=$((10#$hour * 100 + 10#$minute))
+  if (( 10#$weekday > 5 || numeric_hhmm < 445 || numeric_hhmm >= 1015 )); then
+    error "--confirm-protected-window-production-mutation is valid only for an initial weekday 04:45-10:14 America/New_York admission."
+    return 1
+  fi
+  PROTECTED_WINDOW_PRODUCTION_MUTATION_ADMITTED=true
 }
 
 validate_rls_table_enablement_mode() {
@@ -4926,6 +5650,9 @@ fi
 if ! validate_emergency_activation_mode; then
   exit 1
 fi
+if ! validate_protected_window_production_mutation_mode; then
+  exit 1
+fi
 if ! validate_rls_table_enablement_mode; then
   exit 1
 fi
@@ -4956,6 +5683,9 @@ success "AWS credentials OK"
 cd "$PROJECT_ROOT"
 info "Working directory: $PROJECT_ROOT"
 
+if ! assert_no_preserved_protected_window_recovery_artifacts; then
+  exit 1
+fi
 trap deploy_exit_cleanup EXIT
 cleanup_temp_files
 
@@ -4987,6 +5717,10 @@ LOCAL_SHA=$(git rev-parse HEAD)
 REMOTE_SHA=$(git rev-parse origin/main)
 if [[ "$LOCAL_SHA" != "$REMOTE_SHA" ]]; then
   error "Local main is not exactly origin/main. Pull the latest main before deploying."
+  exit 1
+fi
+if [[ "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" == true && "$IMAGE_TAG" != "$LOCAL_SHA" ]]; then
+  error "Protected-window production mutation requires --tag to equal the exact clean main/origin-main 40-character SHA."
   exit 1
 fi
 if [[ -n "$IMMUTABLE_IMAGE_SHA" && "$LOCAL_SHA" != "$IMMUTABLE_IMAGE_SHA" ]]; then
@@ -5045,6 +5779,7 @@ fi
 # fails closed if ECS cannot provide one unambiguous two-service snapshot.
 production_backend_deploy_window_preflight
 production_backend_capacity_preflight
+assert_protected_window_target_health exact
 if [[ "$ENV" == "production" && "$DEPLOY_BACKEND" == true ]]; then
   # These are recovery identities, not observational scratch state.  The
   # strict-stability validator intentionally refreshes PRODUCTION_PREFLIGHT_*
@@ -5147,6 +5882,15 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
       --output text \
       --region "$REGION")
     info "Digest: $DIGEST"
+  fi
+
+  DIGEST="${DIGEST%$'\r'}"
+  if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    error "The deployment image did not resolve to one immutable SHA-256 digest."
+    exit 1
+  fi
+  if [[ "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" == true ]]; then
+    success "Protected-window release identity bound: app=${LOCAL_SHA} digest=${DIGEST}"
   fi
 
   # Register API, worker, and one-off migration definitions from this one digest.
@@ -5548,11 +6292,16 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     exit 1
   fi
   launch_safe_active_api_preflight
+  assert_protected_window_target_health exact
+  apply_protected_window_deployment_bounds
   info "Updating ECS API service to ${API_ROLLOUT_TASK_DEF}..."
   # Set before the request because a lost CLI response can leave an applied,
   # otherwise unobserved service mutation. The EXIT trap restores both exact
   # predeployment revisions until postdeploy identity and scaling are sealed.
   CLASSPILOT_TILE_AUTH_SERVICE_MUTATION_STARTED=true
+  if [[ "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" == true ]]; then
+    PROTECTED_WINDOW_SERVICE_MUTATION_STARTED=true
+  fi
   aws ecs update-service \
     --cluster "$CLUSTER" \
     --service "$SERVICE" \
@@ -5560,6 +6309,13 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     --region "$REGION" \
     --query 'service.{status:status,desired:desiredCount,running:runningCount,taskDef:taskDefinition}' \
     --output table
+
+  if [[ "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" == true ]]; then
+    wait_for_production_backend_strict_stability \
+      "$API_ROLLOUT_TASK_DEF" \
+      "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION"
+    success "Protected-window API replacement converged before worker mutation"
+  fi
 
   UPDATED_WORKER=false
   if [[ "$(ecs_service_status "$WORKER_SERVICE")" == "ACTIVE" ]]; then
@@ -5586,6 +6342,8 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
 
   if [[ "$SKIP_WAIT" == true ]]; then
     warn "Skipping ECS stabilization wait (--skip-wait)"
+  elif [[ "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" == true ]]; then
+    info "Using bounded protected-window convergence polling with the live target-health floor."
   else
     info "Waiting for ECS deployment to stabilize (this may take 2-5 minutes)..."
     if [[ "$UPDATED_WORKER" == true ]]; then
@@ -5623,12 +6381,19 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     exit 1
   fi
 
+  if ! restore_protected_window_deployment_bounds_bounded; then
+    error "Backend deployment converged, but exact ECS deployment configurations were not restored."
+    exit 1
+  fi
+
   if ! restore_production_scaling_hold; then
     error "Backend deployment stabilized, but autoscaling restoration failed; failing the deploy and retrying restoration from the EXIT trap."
     exit 1
   fi
   CLASSPILOT_TILE_AUTH_SERVICE_MUTATION_STARTED=false
   CLASSPILOT_TILE_AUTH_SAFE_TERMINAL_REACHED=true
+  PROTECTED_WINDOW_SERVICE_MUTATION_STARTED=false
+  PROTECTED_WINDOW_SAFE_TERMINAL_REACHED=true
 
   if [[ "$CAPACITY_ACCEPTANCE_RELEASE" == true ]]; then
     success "Capacity-acceptance backend release complete; strict rollback-only predeploy and active-revision plan gates passed."
