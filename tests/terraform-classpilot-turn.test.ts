@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
+import { gzipSync } from "node:zlib";
 
 const main = readFileSync("infra/modules/turn/main.tf", "utf8");
 const userData = readFileSync("infra/modules/turn/user-data.sh.tftpl", "utf8");
@@ -54,6 +55,7 @@ describe("ClassPilot AWS TURN infrastructure contract", () => {
     assert.doesNotMatch(certificateRefresh, /\r/);
     assert.doesNotMatch(userData, /apt-get install[^\n]*\bawscli\b/);
     assert.match(userData, /apt-get install[^\n]*\bgnupg\b/);
+    assert.match(userData, /apt-get install[^\n]*\bgzip\b/);
     assert.match(userData, /apt-get install[^\n]*\bunzip\b/);
     assert.match(userData, /https:\/\/awscli\.amazonaws\.com\/v2\/install\.sh/);
     assert.match(userData, /--retry 5 --retry-delay 2 --retry-connrefused/);
@@ -71,7 +73,11 @@ describe("ClassPilot AWS TURN infrastructure contract", () => {
     assert.match(userData, /pkey=\/etc\/coturn\/tls\/current\/privkey\.pem/);
     assert.match(userData, /cert=\/etc\/coturn\/tls\/current\/fullchain\.pem/);
     assert.match(userData, /classpilot-turn-refresh-certificate/);
-    assert.match(userData, /certificate_refresh_script_base64/);
+    assert.match(userData, /certificate_refresh_script_base64gzip/);
+    assert.match(
+      userData,
+      /certificate_refresh_script_base64gzip}' \| base64 --decode \| gzip --decompress/
+    );
     assert.match(
       userData,
       /exec \/usr\/local\/sbin\/classpilot-turn-refresh-certificate '\$\{hostname\}'/
@@ -103,11 +109,11 @@ describe("ClassPilot AWS TURN infrastructure contract", () => {
     assert.match(main, /refresh-certificate\.sh/);
     assert.match(
       main,
-      /base64encode\(replace\(\s*replace\(file\([^)]*relay-metrics\.py/
+      /base64gzip\(replace\(\s*replace\(file\([^)]*relay-metrics\.py/
     );
     assert.match(
       main,
-      /base64encode\(replace\(\s*replace\(file\([^)]*refresh-certificate\.sh/
+      /base64gzip\(replace\(\s*replace\(file\([^)]*refresh-certificate\.sh/
     );
     assert.doesNotMatch(userData, /(?:chmod|chown)[^\n]*\/etc\/letsencrypt\/live/);
     assert.doesNotMatch(userData, /pkey=\/etc\/letsencrypt\/live/);
@@ -158,7 +164,11 @@ describe("ClassPilot AWS TURN infrastructure contract", () => {
     );
     assert.match(relayMetrics, /MAX_ACTIVE_ALLOCATIONS = 2_048/);
     assert.match(relayMetrics, /peer usage/);
-    assert.match(userData, /relay_metrics_script_base64/);
+    assert.match(userData, /relay_metrics_script_base64gzip/);
+    assert.match(
+      userData,
+      /relay_metrics_script_base64gzip}' \| base64 --decode \| gzip --decompress/
+    );
     assert.match(userData, /OnUnitActiveSec=1min/);
     assert.doesNotMatch(userData, /logs_collected|log_group_name|log_stream_name/);
     assert.doesNotMatch(main, /aws_cloudwatch_log_metric_filter|aws_cloudwatch_log_group/);
@@ -172,6 +182,38 @@ describe("ClassPilot AWS TURN infrastructure contract", () => {
     assert.doesNotMatch(
       main,
       /(?:SchoolId|StudentId|StudentSessionId|DeviceId|NegotiationId)\s*=/
+    );
+  });
+
+  it("keeps the rendered EC2 bootstrap below the 16 KiB user-data limit", () => {
+    const normalizeLf = (value: string) => value.replace(/\r\n?/g, "\n");
+    const gzipBase64 = (value: string) =>
+      gzipSync(Buffer.from(normalizeLf(value), "utf8")).toString("base64");
+    const substitutions: Record<string, string> = {
+      aws_region: "us-east-1",
+      hostname: "turn-a.school-pilot.net",
+      public_ip: "255.255.255.255",
+      realm: "school-pilot.net",
+      relay_port_min: "49152",
+      relay_port_max: "49252",
+      rest_secret_arn:
+        "arn:aws:secretsmanager:us-east-1:123456789012:secret:/schoolpilot/production/CLASSPILOT_TURN_REST_SECRET-XXXXXX",
+      tls_email: "turn-certificates@school-pilot.net",
+      metric_namespace: "SchoolPilot/ClassPilotTURN",
+      node_name: "a",
+      certificate_refresh_script_base64gzip: gzipBase64(certificateRefresh),
+      relay_metrics_script_base64gzip: gzipBase64(relayMetrics),
+    };
+    let rendered = normalizeLf(userData);
+    for (const [name, value] of Object.entries(substitutions)) {
+      rendered = rendered.replaceAll(`\${${name}}`, value);
+    }
+    assert.doesNotMatch(rendered, /\$\{[a-z][a-z0-9_]*\}/);
+    const renderedBytes = Buffer.byteLength(rendered, "utf8");
+    const guardedLimit = 15_360;
+    assert.ok(
+      renderedBytes <= guardedLimit,
+      `TURN user data is ${renderedBytes} bytes; the guarded limit is ${guardedLimit}`
     );
   });
 

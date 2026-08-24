@@ -217,12 +217,12 @@ resource "aws_instance" "turn" {
     tls_email        = var.tls_email
     metric_namespace = "SchoolPilot/ClassPilotTURN"
     node_name        = each.key
-    certificate_refresh_script_base64 = base64encode(replace(
+    certificate_refresh_script_base64gzip = base64gzip(replace(
       replace(file("${path.module}/refresh-certificate.sh"), "\r\n", "\n"),
       "\r",
       "\n",
     ))
-    relay_metrics_script_base64 = base64encode(replace(
+    relay_metrics_script_base64gzip = base64gzip(replace(
       replace(file("${path.module}/relay-metrics.py"), "\r\n", "\n"),
       "\r",
       "\n",

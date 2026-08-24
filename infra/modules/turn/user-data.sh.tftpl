@@ -11,7 +11,7 @@ contain_incomplete_bootstrap() {
 trap contain_incomplete_bootstrap EXIT
 
 apt-get update
-apt-get install -y --no-install-recommends ca-certificates certbot coturn curl gnupg jq python3-certbot-dns-route53 unzip
+apt-get install -y --no-install-recommends ca-certificates certbot coturn curl gnupg gzip jq python3-certbot-dns-route53 unzip
 systemctl disable --now coturn >/dev/null 2>&1 || true
 
 # Ubuntu 24.04 no longer publishes the awscli apt package. Use AWS's official
@@ -31,7 +31,7 @@ turn_secret="$(aws secretsmanager get-secret-value --region '${aws_region}' --se
 test -n "$turn_secret"
 
 install -d -m 0750 -o root -g turnserver /etc/coturn/tls/releases
-printf '%s' '${certificate_refresh_script_base64}' | base64 --decode \
+printf '%s' '${certificate_refresh_script_base64gzip}' | base64 --decode | gzip --decompress \
   >/usr/local/sbin/classpilot-turn-refresh-certificate
 chown root:root /usr/local/sbin/classpilot-turn-refresh-certificate
 chmod 0750 /usr/local/sbin/classpilot-turn-refresh-certificate
@@ -91,7 +91,7 @@ systemctl daemon-reload
 # bounded incremental collector emits only their sum; it never forwards realm,
 # username, peer address, credential, negotiation, or other log content.
 install -d -m 0750 -o root -g root /var/lib/classpilot-turn-metrics
-printf '%s' '${relay_metrics_script_base64}' | base64 --decode \
+printf '%s' '${relay_metrics_script_base64gzip}' | base64 --decode | gzip --decompress \
   >/usr/local/bin/classpilot-turn-relay-metrics.py
 chmod 0750 /usr/local/bin/classpilot-turn-relay-metrics.py
 /usr/local/bin/classpilot-turn-relay-metrics.py --self-test
