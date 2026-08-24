@@ -44,6 +44,7 @@ let gradeB: any;
 let gradeC: any;
 let studentA: any;
 let schemaReady = false;
+let staffLifecycleGuardInstalled = false;
 
 function inSchool<T>(schoolId: string, fn: () => Promise<T>): Promise<T> {
   return runWithTenantContext({ schoolId }, fn);
@@ -113,6 +114,20 @@ before(async () => {
     .then((result: any) => result.rows[0]?.ready === true)
     .catch(() => false);
   if (!schemaReady) return;
+
+  const staffLifecycleGuardResult = await pool.query(`
+    SELECT EXISTS (
+      SELECT 1
+      FROM pg_trigger AS trigger
+      INNER JOIN pg_class AS relation ON relation.oid = trigger.tgrelid
+      INNER JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+      WHERE namespace.nspname = 'public'
+        AND relation.relname = 'school_memberships'
+        AND trigger.tgname = 'classpilot_staff_assignment_membership_update'
+        AND trigger.tgenabled IN ('O', 'A')
+    ) AS installed
+  `);
+  staffLifecycleGuardInstalled = staffLifecycleGuardResult.rows[0]?.installed === true;
 
   // Self-provision schema the tests need (mirrors the src/index.ts inline
   // migration) so older local DBs run without a server boot. Tolerant of a
@@ -581,36 +596,65 @@ describe("PassPilot per-device kiosk sessions", { concurrency: false }, () => {
     assert.equal(claim.status, 404);
   });
 
-  it("rejects membership deactivation while the teacher owns live kiosk assignments", async (t) => {
+  it("guards membership deactivation or auto-releases the teacher's live kiosk sessions", async (t) => {
     if (!schemaReady) return t.skip("migration not applied");
-    // Stage-five integrity makes an ownerless live session impossible, so the
-    // lifecycle transition must resolve these dependencies before deactivation.
     const selfOne = await requestJson("POST", "/passpilot/kiosk/sessions/self", { classId: gradeB.id }, authFor(teacherB, schoolA.id));
     const selfTwo = await requestJson("POST", "/passpilot/kiosk/sessions/self", { classId: gradeB.id }, authFor(teacherB, schoolA.id));
     assert.equal(selfOne.status, 201);
     assert.equal(selfTwo.status, 201);
     try {
-      await assert.rejects(
-        asSystem(() =>
-          db.execute(sql`UPDATE school_memberships SET status = 'inactive' WHERE school_id = ${schoolA.id} AND user_id = ${teacherB.id}`)
-        ),
-        (error) =>
-          error instanceof Error &&
-          error.cause instanceof Error &&
-          error.cause.message.includes("STAFF_ASSIGNMENTS_REQUIRE_REASSIGNMENT")
-      );
-      const firstConfig = await requestJson("GET", `/passpilot/kiosk/config?school=${schoolA.id}`, undefined, kioskHeaders(schoolA.id, selfOne.body.session.id));
-      const secondConfig = await requestJson("GET", `/passpilot/kiosk/config?school=${schoolA.id}`, undefined, kioskHeaders(schoolA.id, selfTwo.body.session.id));
-      assert.equal(firstConfig.status, 200);
-      assert.equal(secondConfig.status, 200);
-    } finally {
-      await asSystem(() =>
-        db.execute(sql`
-          UPDATE passpilot_kiosk_sessions
-          SET status = 'released', released_at = now()
+      if (staffLifecycleGuardInstalled) {
+        // Stage-five integrity makes an ownerless live session impossible, so
+        // lifecycle transitions must resolve these dependencies first.
+        await assert.rejects(
+          asSystem(() =>
+            db.execute(sql`UPDATE school_memberships SET status = 'inactive' WHERE school_id = ${schoolA.id} AND user_id = ${teacherB.id}`)
+          ),
+          (error) =>
+            error instanceof Error &&
+            error.cause instanceof Error &&
+            error.cause.message.includes("STAFF_ASSIGNMENTS_REQUIRE_REASSIGNMENT")
+        );
+        const liveSessions = await asSystem<{ rows: Array<{ count: number }> }>(() => db.execute(sql`
+          SELECT count(*)::integer AS count
+          FROM passpilot_kiosk_sessions
           WHERE id IN (${selfOne.body.session.id}, ${selfTwo.body.session.id})
-        `)
-      );
+            AND status <> 'released'
+        `));
+        assert.equal(liveSessions.rows[0]?.count, 2);
+        const firstConfig = await requestJson("GET", `/passpilot/kiosk/config?school=${schoolA.id}`, undefined, kioskHeaders(schoolA.id, selfOne.body.session.id));
+        const secondConfig = await requestJson("GET", `/passpilot/kiosk/config?school=${schoolA.id}`, undefined, kioskHeaders(schoolA.id, selfTwo.body.session.id));
+        assert.equal(firstConfig.status, 200);
+        assert.equal(secondConfig.status, 200);
+      } else {
+        // Drizzle-push test databases do not install the stage-five constraint
+        // triggers. Preserve the endpoint's defense-in-depth behavior there.
+        await asSystem(() =>
+          db.execute(sql`UPDATE school_memberships SET status = 'inactive' WHERE school_id = ${schoolA.id} AND user_id = ${teacherB.id}`)
+        );
+        const lookup = await requestJson("POST", "/passpilot/kiosk/lookup", { studentIdNumber: "12345" }, kioskHeaders(schoolA.id, selfOne.body.session.id));
+        assert.equal(lookup.status, 404);
+        assert.equal(lookup.body.code, "PASSPILOT_KIOSK_SESSION_EXPIRED");
+        const config = await requestJson("GET", `/passpilot/kiosk/config?school=${schoolA.id}`, undefined, kioskHeaders(schoolA.id, selfTwo.body.session.id));
+        assert.equal(config.status, 404);
+        assert.equal(config.body.code, "PASSPILOT_KIOSK_SESSION_EXPIRED");
+      }
+    } finally {
+      await asSystem(async () => {
+        await db.transaction(async (tx: typeof db) => {
+          await tx.execute(sql`
+            UPDATE passpilot_kiosk_sessions
+            SET status = 'released', released_at = now()
+            WHERE id IN (${selfOne.body.session.id}, ${selfTwo.body.session.id})
+          `);
+          await tx.execute(sql`
+            UPDATE school_memberships
+            SET status = 'active'
+            WHERE school_id = ${schoolA.id}
+              AND user_id = ${teacherB.id}
+          `);
+        });
+      });
     }
   });
 
