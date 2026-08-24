@@ -13,6 +13,8 @@ const {
   classpilotRealtimeFresh,
   classpilotRealtimeStatusKey,
   createClasspilotRealtimeStatusStore,
+  normalizeClasspilotPublicCapabilities,
+  normalizeClasspilotPublicClassroomControls,
 } = await import("../src/services/classpilotRealtimeStatus.ts");
 
 const binding = {
@@ -69,6 +71,108 @@ describe("ClassPilot cluster-safe realtime status", () => {
     assert.equal(result.snapshot.tabsTruncated, true);
     assert.ok(result.snapshot.allOpenTabs.every((tab) => tab.favicon === undefined));
     assert.ok(Buffer.byteLength(JSON.stringify(result.snapshot), "utf8") <= CLASSPILOT_REALTIME_MAX_BYTES);
+  });
+
+  it("evicts one circular local snapshot without suppressing another student", async () => {
+    const store = createClasspilotRealtimeStatusStore(async () => undefined, () => 1_000_000);
+    const secondBinding = {
+      schoolId: binding.schoolId,
+      studentId: "student-b",
+      studentSessionId: "session-b",
+      deviceId: "device-b",
+    };
+    const corrupted = await store.write(heartbeat());
+    const valid = await store.write(heartbeat({
+      ...secondBinding,
+      heartbeatId: "heartbeat-b",
+      activeTabUrl: "https://valid.example.test",
+    }));
+    assert.ok(corrupted.snapshot);
+    assert.ok(valid.snapshot);
+    Object.assign(corrupted.snapshot, { circular: corrupted.snapshot });
+
+    const results = store.readLocal(binding.schoolId, [binding, secondBinding]);
+    assert.equal(results.get(binding.studentId)?.status, "rejected");
+    assert.equal(results.get(secondBinding.studentId)?.status, "hit");
+    const validResult = results.get(secondBinding.studentId);
+    if (validResult?.status === "hit") {
+      assert.equal(validResult.snapshot.activeTabUrl, "https://valid.example.test");
+    }
+
+    const evicted = store.readLocal(binding.schoolId, [binding]);
+    assert.equal(evicted.get(binding.studentId)?.status, "miss");
+  });
+
+  it("normalizes malformed public controls and capabilities without throwing", () => {
+    const inactiveControls = {
+      screenLocked: false,
+      flightPathActive: false,
+      isSharing: false,
+      cameraActive: false,
+    };
+    for (const malformed of [
+      undefined,
+      null,
+      "controls",
+      [],
+      { screenLocked: true },
+      {
+        screenLocked: true,
+        flightPathActive: false,
+        isSharing: false,
+        cameraActive: "false",
+        activeFlightPathName: "Math",
+      },
+    ]) {
+      assert.deepEqual(
+        normalizeClasspilotPublicClassroomControls(malformed),
+        inactiveControls
+      );
+    }
+
+    const revokedControls = Proxy.revocable({}, {});
+    revokedControls.revoke();
+    assert.deepEqual(
+      normalizeClasspilotPublicClassroomControls(revokedControls.proxy),
+      inactiveControls
+    );
+
+    const validControls = {
+      screenLocked: true,
+      flightPathActive: true,
+      activeFlightPathName: "Algebra Flight Path",
+      isSharing: true,
+      cameraActive: false,
+    };
+    assert.deepEqual(
+      normalizeClasspilotPublicClassroomControls(validControls),
+      validControls
+    );
+
+    for (const malformed of [
+      undefined,
+      null,
+      "exactTabCloseV1",
+      { exactTabCloseV1: true },
+      ["exactTabCloseV1", 2],
+      ["x".repeat(65)],
+    ]) {
+      assert.deepEqual(normalizeClasspilotPublicCapabilities(malformed), []);
+    }
+    const revokedCapabilities = Proxy.revocable([], {});
+    revokedCapabilities.revoke();
+    assert.deepEqual(
+      normalizeClasspilotPublicCapabilities(revokedCapabilities.proxy),
+      []
+    );
+    assert.deepEqual(
+      normalizeClasspilotPublicCapabilities([
+        "exactTabCloseV1",
+        "screenOnlyUnlockV1",
+        "exactTabCloseV2",
+      ]),
+      ["exactTabCloseV1", "screenOnlyUnlockV1", "exactTabCloseV2"]
+    );
   });
 
   it("keeps the latest-status value bounded when desired restrictions are unusually large", async () => {
@@ -366,6 +470,10 @@ describe("ClassPilot cluster-safe realtime status", () => {
       new URL("../src/routes/compat.ts", import.meta.url),
       "utf8"
     );
+    const devices = readFileSync(
+      new URL("../src/routes/classpilot/devices.ts", import.meta.url),
+      "utf8"
+    );
     const contractStart = compat.indexOf("function publicClasspilotExtensionContract");
     const contractEnd = compat.indexOf("async function loadAuthorizedRealtimeStatuses", contractStart);
     const contract = compat.slice(contractStart, contractEnd);
@@ -380,6 +488,8 @@ describe("ClassPilot cluster-safe realtime status", () => {
     assert.match(contract, /tabSnapshotRevision,/);
     assert.match(contract, /extensionVersion: snapshot\?\.extensionVersion \?\? null/);
     assert.match(contract, /clientProtocolVersion: snapshot\?\.clientProtocolVersion \?\? null/);
+    assert.match(contract, /normalizeClasspilotPublicCapabilities\(snapshot\?\.extensionCapabilities\)/);
+    assert.match(contract, /normalizeClasspilotPublicCapabilities\(snapshot\?\.acceptedCapabilities\)/);
     assert.match(contract, /exactTabCloseV2: acceptedCapabilities\.has\("exactTabCloseV2"\)/);
     for (const capability of [
       "exactTabCloseV1",
@@ -395,7 +505,16 @@ describe("ClassPilot cluster-safe realtime status", () => {
     assert.match(contract, /minExtensionVersion: "2\.6\.0"/);
     assert.doesNotMatch(contract, /deviceId|studentSessionId|schoolId/);
     assert.match(aggregate, /publicClasspilotExtensionContract\(visibleRealtime\)/);
+    assert.match(aggregate, /normalizeClasspilotPublicClassroomControls\([\s\S]*?visibleRealtime\?\.classroomControls/);
     assert.match(serializer, /\.\.\.publicExtensionContract/);
     assert.doesNotMatch(serializer, /\bdeviceId\s*:/);
+
+    const deviceProjectionStart = devices.indexOf("function publicRealtimeFields");
+    const deviceProjectionEnd = devices.indexOf("type ClasspilotRealtimeControlAuthority", deviceProjectionStart);
+    const deviceProjection = devices.slice(deviceProjectionStart, deviceProjectionEnd);
+    assert.match(deviceProjection, /normalizeClasspilotPublicCapabilities\(snapshot\.extensionCapabilities\)/);
+    assert.match(deviceProjection, /normalizeClasspilotPublicCapabilities\(snapshot\.acceptedCapabilities\)/);
+    assert.match(deviceProjection, /normalizeClasspilotPublicClassroomControls\([\s\S]*?snapshot\.classroomControls/);
+    assert.doesNotMatch(deviceProjection, /snapshot\.classroomControls\.(?:screenLocked|flightPathActive|activeFlightPathName|isSharing|cameraActive)/);
   });
 });

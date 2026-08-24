@@ -543,6 +543,102 @@ describe("runtime telemetry payloads", () => {
 });
 
 describe("monitor integrations", () => {
+  it("persists API-role errors through the main RLS pool without initializing scheduler pools", async () => {
+    process.env.SCHEDULER_ENABLED = "false";
+    process.env.RUN_MIGRATIONS_ONLY = "false";
+    process.env.RUN_MIGRATIONS_ON_STARTUP = "false";
+    process.env.RUN_LEGACY_MIGRATIONS_ONLY = "false";
+    process.env.RLS_GUC_ENABLED = "true";
+
+    const [dbModule, tenantContext, schema, drizzle, schedulerModule] = await Promise.all([
+      import("../dist/db.js"),
+      import("../dist/middleware/tenantContext.js"),
+      import("../dist/schema/shared.js"),
+      import("drizzle-orm"),
+      import("../dist/services/schedulerDb.js"),
+    ]);
+    importedPool = dbModule.pool;
+    assert.deepEqual(schedulerModule.schedulerPoolsInitialized(), {
+      query: false,
+      lock: false,
+    });
+
+    const requestId = `req-api-monitor-${Date.now()}`;
+    const forbidden = [
+      "student-sensitive",
+      "session-sensitive",
+      "device-sensitive",
+      "school-sensitive",
+      "user-sensitive",
+      "student@example.org",
+      "203.0.113.7",
+      "secret-token",
+      "private-body",
+    ];
+
+    singletonErrorMonitor.resetStatsForTests();
+    singletonErrorMonitor.trackError(
+      "api_error",
+      new Error(
+        "Observe failed for student@example.org from 203.0.113.7 with Bearer secret-token"
+      ),
+      {
+        requestId,
+        method: "get",
+        path: "/api/students-aggregated?token=secret-token&studentId=student-sensitive",
+        statusCode: 500,
+        job: "admin_observe",
+        source: "schoolpilot-api",
+        schoolId: "school-sensitive",
+        userId: "user-sensitive",
+        studentId: "student-sensitive",
+        studentSessionId: "session-sensitive",
+        deviceId: "device-sensitive",
+        body: { note: "private-body" },
+      },
+      { alert: false }
+    );
+    await singletonErrorMonitor.flush();
+
+    try {
+      const rows = await tenantContext.runWithTenantContext(
+        { isSuper: true },
+        () =>
+          dbModule.db
+            .select()
+            .from(schema.errorLogs)
+            .where(drizzle.eq(schema.errorLogs.requestId, requestId))
+      );
+
+      assert.equal(rows.length, 1);
+      const row = rows[0]!;
+      assert.equal(row.requestId, requestId);
+      assert.equal(row.method, "GET");
+      assert.equal(row.path, "/api/students-aggregated");
+      assert.equal(row.statusCode, 500);
+      assert.equal(row.schoolId, null);
+      assert.equal(row.userId, null);
+      assert.deepEqual(row.context, {
+        job: "admin_observe",
+        source: "schoolpilot-api",
+      });
+      for (const sensitiveValue of forbidden) {
+        assert.doesNotMatch(JSON.stringify(row), new RegExp(sensitiveValue, "i"));
+      }
+      assert.equal(singletonErrorMonitor.getStats().totals.persisted, 1);
+      assert.deepEqual(schedulerModule.schedulerPoolsInitialized(), {
+        query: false,
+        lock: false,
+      });
+    } finally {
+      await tenantContext.runWithTenantContext({ isSuper: true }, () =>
+        dbModule.db
+          .delete(schema.errorLogs)
+          .where(drizzle.eq(schema.errorLogs.requestId, requestId))
+      );
+    }
+  });
+
   it("tracks main DB pool idle errors as non-persisted database connectivity events", async () => {
     const db = await import("../dist/db.js");
     importedPool = db.pool;

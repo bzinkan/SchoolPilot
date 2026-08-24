@@ -154,6 +154,8 @@ import {
   classpilotRealtimeFresh,
   classpilotRealtimeOrderingKey,
   markClasspilotRealtimeSignedOut,
+  normalizeClasspilotPublicCapabilities,
+  normalizeClasspilotPublicClassroomControls,
   patchClasspilotRealtimeClassification,
   readClasspilotRealtimeStatusBatch,
   writeClasspilotRealtimeStatus,
@@ -728,8 +730,15 @@ async function clearPinFailures(schoolId: string, studentId: string) {
 function publicRealtimeFields(snapshot: ClasspilotRealtimeStatus) {
   const age = Math.max(0, Date.now() - snapshot.observedAt);
   const activityFresh = snapshot.state === "active" && age < CLASSPILOT_REALTIME_STALE_AFTER_MS;
-  const extensionCapabilities = new Set(snapshot.extensionCapabilities || []);
-  const acceptedCapabilities = new Set(snapshot.acceptedCapabilities || []);
+  const extensionCapabilities = new Set(
+    normalizeClasspilotPublicCapabilities(snapshot.extensionCapabilities)
+  );
+  const acceptedCapabilities = new Set(
+    normalizeClasspilotPublicCapabilities(snapshot.acceptedCapabilities)
+  );
+  const classroomControls = normalizeClasspilotPublicClassroomControls(
+    snapshot.classroomControls
+  );
   return {
     schemaVersion: snapshot.schemaVersion,
     eventVersion: 2,
@@ -768,12 +777,12 @@ function publicRealtimeFields(snapshot: ClasspilotRealtimeStatus) {
     activeTabTitle: snapshot.activeTabTitle,
     favicon: snapshot.favicon,
     allOpenTabs: snapshot.allOpenTabs,
-    screenLocked: snapshot.classroomControls.screenLocked,
-    flightPathActive: snapshot.classroomControls.flightPathActive,
-    activeFlightPathName: snapshot.classroomControls.activeFlightPathName,
-    isSharing: snapshot.classroomControls.isSharing,
-    isScreenSharing: snapshot.classroomControls.isSharing,
-    cameraActive: snapshot.classroomControls.cameraActive,
+    screenLocked: classroomControls.screenLocked,
+    flightPathActive: classroomControls.flightPathActive,
+    activeFlightPathName: classroomControls.activeFlightPathName,
+    isSharing: classroomControls.isSharing,
+    isScreenSharing: classroomControls.isSharing,
+    cameraActive: classroomControls.cameraActive,
     aiClassification: snapshot.aiClassification ?? null,
     screenshotHealth: snapshot.screenshotHealth,
     classroomState: snapshot.classroomState,
