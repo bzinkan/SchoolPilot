@@ -109,7 +109,7 @@ function New-TestService {
             bakeTimeInMinutes = 0
         }
     }
-    return [pscustomobject]@{
+    $service = [pscustomobject]@{
         serviceName = $serviceName
         status = "ACTIVE"
         desiredCount = $desired
@@ -128,6 +128,14 @@ function New-TestService {
             failedTasks = 0
         })
     }
+    if ($isApi) {
+        $service | Add-Member -NotePropertyName loadBalancers -NotePropertyValue @(
+            [pscustomobject]@{
+                targetGroupArn = "arn:aws:elasticloadbalancing:us-east-1:135775632425:targetgroup/schoolpilot-production-api/abcdef0123456789"
+            }
+        )
+    }
+    return $service
 }
 
 function Copy-RegisteredTask {
@@ -173,6 +181,7 @@ function Reset-MockDeploymentState {
         TurnStatusHealthy = $true
         TurnSecretDeleted = $false
         ApiDesiredCount = 1
+        HealthyApiTargetCountOverride = $null
         ApiMinimumHealthyPercent = 100
         ApiMaximumPercent = 200
         WorkerMinimumHealthyPercent = 100
@@ -407,6 +416,14 @@ try {
     Assert-Throws {
         Assert-AllowedRuntimeTransition -SourceTaskDefinition (New-TransitionSourceTask) -ContainerName "api" -TargetRuntimeConfiguration $globalRuntime
     } "Global activation must not start from an empty baseline."
+    foreach ($waivedSource in @(
+        (New-TransitionSourceTask),
+        (New-TransitionSourceTask -RuntimeConfiguration $offTransitionRuntime),
+        (New-TransitionSourceTask -RuntimeConfiguration $firstCapabilityRuntime)
+    )) {
+        Assert-AllowedRuntimeTransition -SourceTaskDefinition $waivedSource -ContainerName "api" `
+            -TargetRuntimeConfiguration $globalRuntime -AllowSyntheticOnlyGlobalActivation
+    }
 
     $normalDeploymentService = New-TestService -Role api `
         -TaskDefinitionArn "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:1"
@@ -464,14 +481,15 @@ try {
 
     $evidencePath = Join-Path $testRoot "turn-evidence.json"
     $evidence = [ordered]@{
-        schemaVersion = 1
+        schemaVersion = 2
         validatedAt = [DateTimeOffset]::Parse("2026-08-23T12:00:00Z").ToString("o")
         hostsSha256 = $globalRuntime.Turn.HostsSha256
         secretArnSha256 = $globalRuntime.Turn.SecretArnSha256
         checks = [ordered]@{
             twoHealthyNodes = $true; distinctAvailabilityZones = $true; dnsMatchesElasticIps = $true
             turnUdp3478 = $true; turnTcp3478 = $true; turnsTcp443 = $true; tlsCertificatesCurrent = $true
-            relayRangeValidated = $true; aggregateTelemetryHealthy = $true; udpBlockedFallbackPassed = $true
+            relayRangeValidated = $true; aggregateTelemetryHealthy = $true
+            syntheticUdpBlockedFallbackPassed = $true; managedUdpBlockedLiveViewPassed = $true
         }
     }
     Write-TestJson -Path $evidencePath -Value $evidence
@@ -518,12 +536,12 @@ try {
     Assert-Condition ([string]$swappedTurnEvidence.EvidenceSha256 -ceq $validEvidenceSha256) "TURN validation must hash and parse the same captured bytes during path replacement."
     Assert-Condition ((Read-StrictJson -Path $evidencePath).checks.turnsTcp443 -eq $false) "TURN replacement regression must actually exchange the path after the bounded read."
     [IO.File]::WriteAllText($evidencePath, $validEvidenceText, [Text.UTF8Encoding]::new($false))
-    $evidence.checks.udpBlockedFallbackPassed = $false
+    $evidence.checks.syntheticUdpBlockedFallbackPassed = $false
     Write-TestJson -Path $evidencePath -Value $evidence
     Assert-Throws {
         Assert-TurnEvidence -RuntimeConfiguration $globalRuntime -EvidencePath $evidencePath -Now ([DateTimeOffset]::Parse("2026-08-23T12:30:00Z"))
     } "Missing UDP-blocked fallback evidence must block activation."
-    $evidence.checks.udpBlockedFallbackPassed = $true
+    $evidence.checks.syntheticUdpBlockedFallbackPassed = $true
     Write-TestJson -Path $evidencePath -Value $evidence
 
     $digest = "sha256:" + ("b" * 64)
@@ -573,6 +591,26 @@ try {
     Assert-Throws {
         Assert-ProductionDeploymentWindow -NowEastern ([DateTimeOffset]::Parse("2026-08-24T05:00:00-04:00"))
     } "Weekday arrival window must block runtime deployment."
+    Assert-ProductionDeploymentWindow -NowEastern ([DateTimeOffset]::Parse("2026-08-24T04:44:59-04:00"))
+    Assert-Throws {
+        Assert-ProductionDeploymentWindow -NowEastern ([DateTimeOffset]::Parse("2026-08-24T04:45:00-04:00"))
+    } "The protected weekday window must begin at exactly 04:45 Eastern."
+    Assert-Throws {
+        Assert-ProductionDeploymentWindow -NowEastern ([DateTimeOffset]::Parse("2026-08-24T10:14:59-04:00"))
+    } "The protected weekday window must include the complete 10:14 minute."
+    Assert-ProductionDeploymentWindow -NowEastern ([DateTimeOffset]::Parse("2026-08-24T10:15:00-04:00"))
+    Assert-RuntimeConfigMutationWindow -NowEastern ([DateTimeOffset]::Parse("2026-08-24T04:45:00-04:00")) `
+        -ConfirmProtectedWindowProductionMutation
+    Assert-RuntimeConfigMutationWindow -NowEastern ([DateTimeOffset]::Parse("2026-08-24T10:14:59-04:00")) `
+        -ConfirmProtectedWindowProductionMutation
+    Assert-Throws {
+        Assert-RuntimeConfigMutationWindow -NowEastern ([DateTimeOffset]::Parse("2026-08-24T10:15:00-04:00")) `
+            -ConfirmProtectedWindowProductionMutation
+    } "Protected confirmation must be rejected outside the weekday protected window."
+    Assert-Throws {
+        Assert-RuntimeConfigMutationWindow -NowEastern ([DateTimeOffset]::Parse("2026-08-23T06:00:00-04:00")) `
+            -ConfirmProtectedWindowProductionMutation
+    } "Protected confirmation must be rejected on weekends."
     Assert-ProductionDeploymentWindow -NowEastern ([DateTimeOffset]::Parse("2026-08-23T05:00:00-04:00"))
 
     $global:RuntimeConfigGitState = [ordered]@{ Branch = "main"; Sha = "a" * 40; Dirty = "" }
@@ -852,6 +890,24 @@ try {
                     } })
                 }
             }
+            "elbv2 describe-target-health" {
+                $targetGroupArn = Get-ArgumentValue -Arguments $Arguments -Name "--target-group-arn"
+                if ($targetGroupArn -cne "arn:aws:elasticloadbalancing:us-east-1:135775632425:targetgroup/schoolpilot-production-api/abcdef0123456789") {
+                    throw "Unexpected mocked target group."
+                }
+                $count = if ($null -eq $state.HealthyApiTargetCountOverride) {
+                    [int]$state.ApiDesiredCount
+                } else {
+                    [int]$state.HealthyApiTargetCountOverride
+                }
+                $descriptions = @()
+                if ($count -gt 0) {
+                    $descriptions = @(1..$count | ForEach-Object {
+                        [pscustomobject]@{ TargetHealth = [pscustomobject]@{ State = "healthy" } }
+                    })
+                }
+                return [pscustomobject]@{ TargetHealthDescriptions = $descriptions }
+            }
             "ecr describe-images" {
                 if ($state.RejectEcrLookup) { throw "ECR lookup must be skipped for emergency off containment." }
                 $imageId = Get-ArgumentValue -Arguments $Arguments -Name "--image-ids"
@@ -896,6 +952,9 @@ try {
             "application-autoscaling register-scalable-target" {
                 $state.ScalingMin = [int](Get-ArgumentValue -Arguments $Arguments -Name "--min-capacity")
                 $state.ScalingMax = [int](Get-ArgumentValue -Arguments $Arguments -Name "--max-capacity")
+                if ($state.ApiDesiredCount -lt $state.ScalingMin) {
+                    $state.ApiDesiredCount = $state.ScalingMin
+                }
                 $suspension = Get-ArgumentValue -Arguments $Arguments -Name "--suspended-state"
                 $state.DynamicIn = $suspension.Contains("DynamicScalingInSuspended=true", [StringComparison]::Ordinal)
                 $state.DynamicOut = $suspension.Contains("DynamicScalingOutSuspended=true", [StringComparison]::Ordinal)
@@ -928,6 +987,17 @@ try {
             default { throw "Unexpected mocked AWS operation: $operation" }
         }
     }
+
+    $global:RuntimeConfigTestState.HealthyApiTargetCountOverride = 0
+    $unhealthyApi = (Get-ServiceSnapshot).Api
+    Assert-Throws {
+        Assert-ApiTargetHealth -ApiService $unhealthyApi -ExpectedDesiredCount 1 -Mode Converging
+    } "A one-task runtime mutation must stop rather than accept zero healthy ALB targets."
+    $global:RuntimeConfigTestState.HealthyApiTargetCountOverride = 2
+    Assert-Throws {
+        Assert-ApiTargetHealth -ApiService $unhealthyApi -ExpectedDesiredCount 1 -Mode Exact
+    } "An exact runtime health gate must reject extra healthy ALB targets."
+    $global:RuntimeConfigTestState.HealthyApiTargetCountOverride = $null
 
     Acquire-OperationLock -RunId "lease-owner-a" -PlanSha256 ("1" * 64)
     $ownerA = [string]$script:OperationLockOwner
@@ -1007,6 +1077,123 @@ try {
     $evidenceRoot = Join-Path $testRoot "private-evidence-$testSchoolId"
     $appSha = "a" * 40
     $now = [DateTimeOffset]::Parse("2026-08-23T12:30:00Z")
+    $waiverTurnEvidencePath = Join-Path $testRoot "turn-evidence-synthetic-only.json"
+    $waiverTurnEvidence = $evidence | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30 -DateKind String
+    $waiverTurnEvidence.checks.managedUdpBlockedLiveViewPassed = $false
+    Write-TestJson -Path $waiverTurnEvidencePath -Value $waiverTurnEvidence
+    $waiverTurnSnapshot = Read-StrictJsonSnapshot -Path $waiverTurnEvidencePath
+    [void](Assert-TurnEvidence -RuntimeConfiguration $globalRuntime -EvidenceSnapshot $waiverTurnSnapshot `
+        -Now $now -SyntheticOnlyWaiver)
+    Assert-Throws {
+        Assert-TurnEvidence -RuntimeConfiguration $globalRuntime -EvidenceSnapshot $waiverTurnSnapshot -Now $now
+    } "Strict global activation must require managed UDP-blocked Live View evidence."
+    $managedTurnEvidencePath = Join-Path $testRoot "turn-evidence-managed-only-for-waiver.json"
+    Write-TestJson -Path $managedTurnEvidencePath -Value $evidence
+    Assert-Throws {
+        Assert-TurnEvidence -RuntimeConfiguration $globalRuntime -EvidencePath $managedTurnEvidencePath `
+            -Now $now -SyntheticOnlyWaiver
+    } "Synthetic-only activation must explicitly record that managed Live View has not passed."
+
+    $syntheticValidationPath = Join-Path $testRoot "synthetic-validation.json"
+    $syntheticValidation = [ordered]@{
+        schemaVersion = 1
+        validatedAt = [DateTimeOffset]::Parse("2026-08-23T12:05:00Z").ToString("o")
+        schoolPilotAppSha = $appSha
+        schoolPilotImageDigest = $digest
+        classPilotTag = "v2.7.1"
+        classPilotMergeSha = "a3b096d6a74ab6979f4e4c656d75e2397eb8648f"
+        classPilotZipSha256 = "40fed2c455d5c50fe3a947d23e3798a0c81832a67e717a2767b62970c024307c"
+        turnEvidenceSha256 = [string]$waiverTurnSnapshot.Sha256
+        checks = [ordered]@{
+            crossRepositoryContractPassed = $true
+            unpackedZipPassed = $true
+            identityTransitions10000Passed = $true
+            redisCrossProcessPassed = $true
+            allCapabilitiesSimultaneousPassed = $true
+            protocol2CompatibilityPassed = $true
+            markerless270LegacyPassed = $true
+        }
+    }
+    Write-TestJson -Path $syntheticValidationPath -Value $syntheticValidation
+    $validSyntheticValidationText = [IO.File]::ReadAllText($syntheticValidationPath)
+    $syntheticValidationSnapshot = Read-StrictJsonSnapshot -Path $syntheticValidationPath
+    [void](Assert-SyntheticValidationEvidence -EvidenceSnapshot $syntheticValidationSnapshot `
+        -AppSha $appSha -ImageDigest $digest -TurnEvidenceSha256 ([string]$waiverTurnSnapshot.Sha256) -Now $now)
+    $invalidSyntheticValidation = $validSyntheticValidationText | ConvertFrom-Json -Depth 30 -DateKind String
+    $invalidSyntheticValidation.validatedAt = $now.AddHours(-2).AddSeconds(-1).ToString("o")
+    Write-TestJson -Path $syntheticValidationPath -Value $invalidSyntheticValidation
+    Assert-Throws {
+        Assert-SyntheticValidationEvidence -EvidenceSnapshot (Read-StrictJsonSnapshot -Path $syntheticValidationPath) `
+            -AppSha $appSha -ImageDigest $digest -TurnEvidenceSha256 ([string]$waiverTurnSnapshot.Sha256) -Now $now
+    } "Synthetic validation evidence older than two hours must fail closed."
+    $invalidSyntheticValidation = $validSyntheticValidationText | ConvertFrom-Json -Depth 30 -DateKind String
+    $invalidSyntheticValidation.checks.redisCrossProcessPassed = $false
+    Write-TestJson -Path $syntheticValidationPath -Value $invalidSyntheticValidation
+    Assert-Throws {
+        Assert-SyntheticValidationEvidence -EvidenceSnapshot (Read-StrictJsonSnapshot -Path $syntheticValidationPath) `
+            -AppSha $appSha -ImageDigest $digest -TurnEvidenceSha256 ([string]$waiverTurnSnapshot.Sha256) -Now $now
+    } "A false synthetic validation check must fail closed."
+    $invalidSyntheticValidation = $validSyntheticValidationText | ConvertFrom-Json -Depth 30 -DateKind String
+    $invalidSyntheticValidation.turnEvidenceSha256 = "9" * 64
+    Write-TestJson -Path $syntheticValidationPath -Value $invalidSyntheticValidation
+    Assert-Throws {
+        Assert-SyntheticValidationEvidence -EvidenceSnapshot (Read-StrictJsonSnapshot -Path $syntheticValidationPath) `
+            -AppSha $appSha -ImageDigest $digest -TurnEvidenceSha256 ([string]$waiverTurnSnapshot.Sha256) -Now $now
+    } "Synthetic validation must bind the exact TURN evidence hash."
+    $invalidSyntheticValidation = $validSyntheticValidationText | ConvertFrom-Json -Depth 30 -DateKind String
+    $invalidSyntheticValidation.checks.PSObject.Properties.Remove("markerless270LegacyPassed")
+    Write-TestJson -Path $syntheticValidationPath -Value $invalidSyntheticValidation
+    Assert-Throws {
+        Assert-SyntheticValidationEvidence -EvidenceSnapshot (Read-StrictJsonSnapshot -Path $syntheticValidationPath) `
+            -AppSha $appSha -ImageDigest $digest -TurnEvidenceSha256 ([string]$waiverTurnSnapshot.Sha256) -Now $now
+    } "Incomplete synthetic validation evidence must fail closed."
+    [IO.File]::WriteAllText($syntheticValidationPath, $validSyntheticValidationText, [Text.UTF8Encoding]::new($false))
+    Set-PrivatePathPermissions -Path $syntheticValidationPath
+    $syntheticValidationSnapshot = Read-StrictJsonSnapshot -Path $syntheticValidationPath
+
+    $managedTestWaiverPath = Join-Path $testRoot "managed-test-waiver.json"
+    $managedTestWaiver = [ordered]@{
+        schemaVersion = 1
+        approvedAt = [DateTimeOffset]::Parse("2026-08-23T12:10:00Z").ToString("o")
+        approvedBy = "bzinkan@school-pilot.net"
+        reason = "Approved protected completion from the exact synthetic release evidence."
+        syntheticValidationSha256 = [string]$syntheticValidationSnapshot.Sha256
+        turnEvidenceSha256 = [string]$waiverTurnSnapshot.Sha256
+        managedValidation = "waived_not_passed"
+        validationLevel = "synthetic_only"
+    }
+    Write-TestJson -Path $managedTestWaiverPath -Value $managedTestWaiver
+    $validManagedTestWaiverText = [IO.File]::ReadAllText($managedTestWaiverPath)
+    $managedTestWaiverSnapshot = Read-StrictJsonSnapshot -Path $managedTestWaiverPath
+    [void](Assert-ManagedTestWaiverEvidence -EvidenceSnapshot $managedTestWaiverSnapshot `
+        -SyntheticValidationSha256 ([string]$syntheticValidationSnapshot.Sha256) `
+        -TurnEvidenceSha256 ([string]$waiverTurnSnapshot.Sha256) -Now $now)
+    $invalidManagedTestWaiver = $validManagedTestWaiverText | ConvertFrom-Json -Depth 30 -DateKind String
+    $invalidManagedTestWaiver.approvedAt = $now.AddHours(-2).AddSeconds(-1).ToString("o")
+    Write-TestJson -Path $managedTestWaiverPath -Value $invalidManagedTestWaiver
+    Assert-Throws {
+        Assert-ManagedTestWaiverEvidence -EvidenceSnapshot (Read-StrictJsonSnapshot -Path $managedTestWaiverPath) `
+            -SyntheticValidationSha256 ([string]$syntheticValidationSnapshot.Sha256) `
+            -TurnEvidenceSha256 ([string]$waiverTurnSnapshot.Sha256) -Now $now
+    } "A stale managed-test waiver must fail closed."
+    $invalidManagedTestWaiver = $validManagedTestWaiverText | ConvertFrom-Json -Depth 30 -DateKind String
+    $invalidManagedTestWaiver.syntheticValidationSha256 = "8" * 64
+    Write-TestJson -Path $managedTestWaiverPath -Value $invalidManagedTestWaiver
+    Assert-Throws {
+        Assert-ManagedTestWaiverEvidence -EvidenceSnapshot (Read-StrictJsonSnapshot -Path $managedTestWaiverPath) `
+            -SyntheticValidationSha256 ([string]$syntheticValidationSnapshot.Sha256) `
+            -TurnEvidenceSha256 ([string]$waiverTurnSnapshot.Sha256) -Now $now
+    } "Managed-test waiver must bind the exact synthetic validation hash."
+    $invalidManagedTestWaiver = $validManagedTestWaiverText | ConvertFrom-Json -Depth 30 -DateKind String
+    $invalidManagedTestWaiver.PSObject.Properties.Remove("reason")
+    Write-TestJson -Path $managedTestWaiverPath -Value $invalidManagedTestWaiver
+    Assert-Throws {
+        Assert-ManagedTestWaiverEvidence -EvidenceSnapshot (Read-StrictJsonSnapshot -Path $managedTestWaiverPath) `
+            -SyntheticValidationSha256 ([string]$syntheticValidationSnapshot.Sha256) `
+            -TurnEvidenceSha256 ([string]$waiverTurnSnapshot.Sha256) -Now $now
+    } "Incomplete managed-test waiver evidence must fail closed."
+    [IO.File]::WriteAllText($managedTestWaiverPath, $validManagedTestWaiverText, [Text.UTF8Encoding]::new($false))
+    Set-PrivatePathPermissions -Path $managedTestWaiverPath
     $global:RuntimeConfigTestState.TurnNodeCount = 1
     Assert-Throws { Assert-TurnAwsReadiness -RuntimeConfiguration $globalRuntime } "Fewer than two live TURN nodes must block activation."
     $global:RuntimeConfigTestState.TurnNodeCount = 2
@@ -1307,6 +1494,172 @@ try {
     $firstSourceUpdate = [Array]::IndexOf($preConvergenceEvents, "update:api:source")
     Assert-Condition ($preConvergenceResult.status -ceq "apply_failed_rolled_back" -and $preConvergenceResult.scalingRestored) "Pre-convergence containment failure must record a coherent source-pair recovery."
     Assert-Condition ($lastSafeWorkerBounds -ge 0 -and $lastSafeWorkerBounds -lt $firstSourceUpdate) "Source-pair recovery must first re-prove the complete no-growth containment configuration."
+
+    foreach ($protectedDesiredCount in 1..6) {
+        Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
+        Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $fullTestRuntime
+        $global:RuntimeConfigTestState.ApiDesiredCount = $protectedDesiredCount
+        $protectedCountPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $profilePath `
+            -PrivateTurnEvidencePath $evidencePath -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+            -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now -SkipRepositoryCheck `
+            -ConfirmProductionMutation -ConfirmProtectedWindowProductionMutation
+        $protectedCountPlan = Read-RuntimePlan -Path $protectedCountPlanResult.PlanPath `
+            -ExpectedSha256 $protectedCountPlanResult.PlanSha256
+        Assert-Condition ($protectedCountPlan.protectedWindowProductionMutation -eq $true -and
+            $protectedCountPlan.validationLevel -ceq "managed") `
+            "Protected strict planning must admit exact stable API desired count $protectedDesiredCount."
+    }
+    Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
+    Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $fullTestRuntime
+    $global:RuntimeConfigTestState.ApiDesiredCount = 3
+    Assert-Throws {
+        New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $profilePath `
+            -PrivateTurnEvidencePath $evidencePath -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+            -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now -SkipRepositoryCheck
+    } "Ordinary strict planning must retain the two-task API ceiling."
+
+    Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
+    Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $firstCapabilityRuntime
+    $global:RuntimeConfigTestState.ApiDesiredCount = 6
+    $global:RuntimeConfigTestState.ScalingMin = 6
+    $waiverPlanArguments = @{
+        RepositoryRoot = $repositoryRoot
+        PrivateProfilePath = $profilePath
+        PrivateTurnEvidencePath = $waiverTurnEvidencePath
+        PrivateSyntheticValidationPath = $syntheticValidationPath
+        PrivateManagedTestWaiverPath = $managedTestWaiverPath
+        EvidenceRoot = $evidenceRoot
+        AppSha = $appSha
+        ImageDigest = $digest
+        ApiTaskDefinitionArn = $apiSourceArn
+        WorkerTaskDefinitionArn = $workerSourceArn
+        Now = $now
+        SkipRepositoryCheck = $true
+    }
+    Assert-Throws {
+        New-RuntimeConfigPlan @waiverPlanArguments `
+            -ConfirmSyntheticOnlyGlobalActivation -ConfirmProtectedWindowProductionMutation
+    } "Synthetic-only plan admission must require the general production mutation confirmation."
+    Assert-Throws {
+        New-RuntimeConfigPlan @waiverPlanArguments `
+            -ConfirmProductionMutation -ConfirmProtectedWindowProductionMutation
+    } "Synthetic-only plan admission must require its exact waiver confirmation."
+    Assert-Throws {
+        New-RuntimeConfigPlan @waiverPlanArguments `
+            -ConfirmProductionMutation -ConfirmSyntheticOnlyGlobalActivation
+    } "Synthetic-only plan admission must require protected-window production confirmation."
+    Assert-Throws {
+        New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $profilePath `
+            -PrivateTurnEvidencePath $waiverTurnEvidencePath -PrivateSyntheticValidationPath $syntheticValidationPath `
+            -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest -ApiTaskDefinitionArn $apiSourceArn `
+            -WorkerTaskDefinitionArn $workerSourceArn -Now $now -SkipRepositoryCheck `
+            -ConfirmProductionMutation -ConfirmSyntheticOnlyGlobalActivation -ConfirmProtectedWindowProductionMutation
+    } "Synthetic-only plan admission must reject incomplete waiver evidence paths."
+
+    $waiverPlanResult = New-RuntimeConfigPlan @waiverPlanArguments `
+        -ConfirmProductionMutation -ConfirmSyntheticOnlyGlobalActivation -ConfirmProtectedWindowProductionMutation
+    $waiverPlan = Read-RuntimePlan -Path $waiverPlanResult.PlanPath -ExpectedSha256 $waiverPlanResult.PlanSha256
+    Assert-Condition ($waiverPlan.validationLevel -ceq "synthetic_only" -and
+        $waiverPlan.managedValidation -ceq "waived_not_passed" -and
+        $waiverPlan.protectedWindowProductionMutation -eq $true) `
+        "Waiver plan must record its exact synthetic-only authority."
+    Assert-Condition ([string]$waiverPlan.syntheticValidationSha256 -ceq [string]$syntheticValidationSnapshot.Sha256 -and
+        [string]$waiverPlan.managedTestWaiverSha256 -ceq (Get-FileSha256 -Path $managedTestWaiverPath)) `
+        "Waiver plan must bind both exact private evidence hashes."
+    $waiverPlanText = [IO.File]::ReadAllText($waiverPlanResult.PlanPath)
+    Assert-Condition (-not $waiverPlanText.Contains("bzinkan@school-pilot.net") -and
+        -not $waiverPlanText.Contains([string]$managedTestWaiver.reason) -and
+        -not $waiverPlanText.Contains($testSchoolId)) `
+        "Waiver plan must not expose private evidence contents or school scope."
+    Assert-Throws {
+        Invoke-RuntimeConfigApply -Plan $waiverPlan -PlanSha256 $waiverPlanResult.PlanSha256 -Now $now `
+            -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck `
+            -ConfirmSyntheticOnlyGlobalActivation -ConfirmProtectedWindowProductionMutation
+    } "Synthetic-only apply must re-require the general production mutation confirmation."
+    Assert-Throws {
+        Invoke-RuntimeConfigApply -Plan $waiverPlan -PlanSha256 $waiverPlanResult.PlanSha256 -Now $now `
+            -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck `
+            -ConfirmProductionMutation -ConfirmProtectedWindowProductionMutation
+    } "Synthetic-only apply must re-require the exact waiver confirmation."
+    $eventsBeforeStaleWaiverApply = @($global:RuntimeConfigTestState.Events).Count
+    Assert-Throws {
+        Invoke-RuntimeConfigApply -Plan $waiverPlan -PlanSha256 $waiverPlanResult.PlanSha256 `
+            -Now $now.AddHours(2).AddMinutes(1) -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 `
+            -SkipRepositoryCheck -ConfirmProductionMutation -ConfirmSyntheticOnlyGlobalActivation `
+            -ConfirmProtectedWindowProductionMutation
+    } "Apply must revalidate waiver evidence freshness against its current clock."
+    Assert-Condition (@($global:RuntimeConfigTestState.Events).Count -eq $eventsBeforeStaleWaiverApply) `
+        "Stale waiver evidence must fail before any production lease or service action."
+
+    $capturedSyntheticBytes = [IO.File]::ReadAllBytes([string]$waiverPlan.syntheticValidationPath)
+    $tamperedSyntheticCopy = Read-StrictJson -Path ([string]$waiverPlan.syntheticValidationPath)
+    $tamperedSyntheticCopy.checks.protocol2CompatibilityPassed = $false
+    Write-TestJson -Path ([string]$waiverPlan.syntheticValidationPath) -Value $tamperedSyntheticCopy
+    Assert-Throws {
+        Invoke-RuntimeConfigApply -Plan $waiverPlan -PlanSha256 $waiverPlanResult.PlanSha256 -Now $now `
+            -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck `
+            -ConfirmProductionMutation -ConfirmSyntheticOnlyGlobalActivation `
+            -ConfirmProtectedWindowProductionMutation
+    } "Apply must reject a changed hash-bound synthetic validation snapshot."
+    [IO.File]::WriteAllBytes([string]$waiverPlan.syntheticValidationPath, $capturedSyntheticBytes)
+    Set-PrivatePathPermissions -Path ([string]$waiverPlan.syntheticValidationPath)
+    $capturedWaiverBytes = [IO.File]::ReadAllBytes([string]$waiverPlan.managedTestWaiverPath)
+    $tamperedWaiverCopy = Read-StrictJson -Path ([string]$waiverPlan.managedTestWaiverPath)
+    $tamperedWaiverCopy.reason = "Changed after planning."
+    Write-TestJson -Path ([string]$waiverPlan.managedTestWaiverPath) -Value $tamperedWaiverCopy
+    Assert-Throws {
+        Invoke-RuntimeConfigApply -Plan $waiverPlan -PlanSha256 $waiverPlanResult.PlanSha256 -Now $now `
+            -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck `
+            -ConfirmProductionMutation -ConfirmSyntheticOnlyGlobalActivation `
+            -ConfirmProtectedWindowProductionMutation
+    } "Apply must reject a changed hash-bound managed-test waiver snapshot."
+    [IO.File]::WriteAllBytes([string]$waiverPlan.managedTestWaiverPath, $capturedWaiverBytes)
+    Set-PrivatePathPermissions -Path ([string]$waiverPlan.managedTestWaiverPath)
+
+    1..5 | ForEach-Object {
+        $global:RuntimeConfigClockQueue.Enqueue([DateTimeOffset]::Parse("2026-08-24T06:00:00-04:00"))
+    }
+    $waiverApplyResult = Invoke-RuntimeConfigApply -Plan $waiverPlan -PlanSha256 $waiverPlanResult.PlanSha256 -Now $now `
+        -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck `
+        -ConfirmProductionMutation -ConfirmSyntheticOnlyGlobalActivation `
+        -ConfirmProtectedWindowProductionMutation
+    Assert-Condition ($waiverApplyResult.status -ceq "applied" -and
+        $waiverApplyResult.validationLevel -ceq "synthetic_only" -and
+        $waiverApplyResult.managedValidation -ceq "waived_not_passed") `
+        "Synthetic-only protected apply must converge and retain its waiver record."
+    $waiverEvents = @($global:RuntimeConfigTestState.Events)
+    Assert-Condition ($waiverEvents -contains "bounds:api:83-100" -and
+        $waiverEvents -contains "bounds:worker:0-100") `
+        "Six-task protected activation must use the existing no-growth rolling bounds."
+    Assert-Condition ($global:RuntimeConfigTestState.ApiMinimumHealthyPercent -eq 100 -and
+        $global:RuntimeConfigTestState.ApiMaximumPercent -eq 200 -and
+        $global:RuntimeConfigTestState.WorkerMinimumHealthyPercent -eq 100 -and
+        $global:RuntimeConfigTestState.WorkerMaximumPercent -eq 200) `
+        "Protected activation must restore the exact prior deployment configuration."
+    $waiverCandidate = $global:RuntimeConfigTestState.TaskResponses[[string]$waiverApplyResult.candidateApiTaskDefinitionArn].taskDefinition
+    $waiverCandidateEnvironment = @($waiverCandidate.containerDefinitions | Where-Object name -CEQ "api")[0].environment
+    $waiverCandidateRollouts = [string]@($waiverCandidateEnvironment | Where-Object name -CEQ "CLASSPILOT_CAPABILITY_ROLLOUTS_JSON")[0].value | ConvertFrom-Json -Depth 10
+    Assert-Condition ($waiverCandidateRollouts.scopedAuthorityChecksV1.mode -ceq "on" -and
+        -not ($waiverCandidateRollouts.scopedAuthorityChecksV1.PSObject.Properties.Name -contains "schoolIds")) `
+        "Approved synthetic-only activation must produce the exact global-on runtime configuration."
+    $global:RuntimeConfigTestState.Events.Add("test:protected-rollback-start")
+    $protectedRollbackStart = [Array]::IndexOf(@($global:RuntimeConfigTestState.Events), "test:protected-rollback-start")
+    1..5 | ForEach-Object {
+        $global:RuntimeConfigClockQueue.Enqueue([DateTimeOffset]::Parse("2026-08-24T06:00:00-04:00"))
+    }
+    $waiverRollbackResult = Invoke-RuntimeConfigRollback -Plan $waiverPlan `
+        -PlanSha256 $waiverPlanResult.PlanSha256 -Now $now.AddHours(3) `
+        -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 `
+        -ConfirmProductionMutation -ConfirmProtectedWindowProductionMutation
+    $protectedRollbackEvents = @($global:RuntimeConfigTestState.Events)
+    $protectedRollbackTail = @($protectedRollbackEvents[($protectedRollbackStart + 1)..($protectedRollbackEvents.Count - 1)])
+    Assert-Condition ($waiverRollbackResult.status -ceq "rolled_back" -and
+        $global:RuntimeConfigTestState.ApiCurrentArn -ceq $apiSourceArn -and
+        $global:RuntimeConfigTestState.WorkerCurrentArn -ceq $workerSourceArn) `
+        "Protected rollback must restore the exact pre-waiver service pair at six tasks."
+    Assert-Condition ($protectedRollbackTail -contains "bounds:api:83-100" -and
+        $protectedRollbackTail -contains "bounds:worker:0-100") `
+        "Protected rollback must use the same no-growth six-task bounds."
 
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
     Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $fullTestRuntime

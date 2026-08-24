@@ -1,11 +1,12 @@
 # ClassPilot TURN operations
 
-The canonical production baseline enables the two-node coturn module. The
-service remains unavailable until that baseline is applied through the
-reviewed infrastructure workflow. Application capability activation is
-separate: `liveViewIceServersV1` must be enabled for the exact school and
+The canonical production baseline enables the two-node coturn module.
+Infrastructure apply, node health, application capability activation, and
+managed-Chromebook validation are separate facts. `liveViewIceServersV1` must
+be accepted together with its parent marker `scopedAuthorityChecksV1` and
 advertised by the current student binding before credentials or telemetry are
-accepted.
+accepted. Chrome Web Store `2.7.1` being live on August 24, 2026 proves none of
+those TURN or managed-device gates by itself.
 
 ## Provisioning and activation boundary
 
@@ -30,6 +31,46 @@ gate, TURN module, ECS execution-role secret permission, and TURN outputs. It
 must not deploy an API/worker image, update a live ECS service, or activate a
 ClassPilot runtime profile.
 
+### Authorized one-time node-replacement exception (pending)
+
+On August 24, 2026, one narrow targeted repair was authorized for the already
+reviewed TURN module. It is pending execution and does not authorize a general
+Terraform apply. The only replacement targets are:
+
+- `module.turn[0].aws_instance.turn["a"]`;
+- `module.turn[0].aws_instance.turn["b"]`;
+- `module.turn[0].aws_eip_association.turn["a"]`; and
+- `module.turn[0].aws_eip_association.turn["b"]`.
+
+The only in-place update targets are:
+
+- `module.turn[0].aws_cloudwatch_metric_alarm.node_status["a"]`; and
+- `module.turn[0].aws_cloudwatch_metric_alarm.node_status["b"]`.
+
+Create a unique saved plan with explicit replacement targeting for the two
+instances; their two associations must be the only dependent replacements. The
+reviewed summary must be exactly `4 to create, 2 to update, 4 to destroy`, and
+the full plan must show the four instance/association replacements plus the two
+alarm updates and no unrelated change. Abort if the plan changes or replaces
+an EIP, Route 53/DNS record, secret, IAM resource, security group, dashboard,
+ECS resource, or any other address.
+
+Take and verify the standard external CurrentUser-DPAPI and OneDrive AES-GCM
+Terraform-state backups before planning, again immediately before applying the
+hash-verified saved plan, and again after apply. Retain each backup receipt, the
+saved-plan SHA-256, and the reviewed plan JSON outside the repository. Do not
+re-plan between approval and apply.
+
+After apply, require both nodes to pass EC2/system status, retain their exact
+Elastic IP and DNS bindings, authenticate and relay on UDP/3478, TCP/3478, and
+TURNS/443, present current matching certificates, publish both node metric
+dimensions, and pass the relay-range and aggregate-telemetry checks. Then run a
+fresh full no-op plan and verify state-backup recovery material. Only after all
+of those checks pass may the operator mark the exception `completed` and
+`non-reusable`. Authorization alone is not completion. Any failed or ambiguous
+check leaves it an authorized one-time exception pending reconciliation; never
+reuse the saved plan or broaden the targets.
+
 ```powershell
 $env:TF_VAR_classpilot_turn_tls_email = "<MONITORED_OPERATIONAL_EMAIL>"
 try {
@@ -51,9 +92,11 @@ against the live production nodes:
    automation are current;
 5. the exact environment-scoped TURN REST secret exists in Secrets Manager and
    neither its ARN nor value is inline environment data;
-6. aggregate identifier-free node/application telemetry is healthy; and
-7. a managed test device with UDP blocked completes Live View through TURN/TCP
-   or TURNS/443.
+6. aggregate identifier-free node/application telemetry is healthy;
+7. the synthetic UDP-blocked fallback suite completes through TURN/TCP or
+   TURNS/443; and
+8. for the ordinary strict path, a managed test device with UDP blocked
+   completes Live View through TURN/TCP or TURNS/443.
 
 Record those results in the private, two-hour TURN evidence format documented
 in `CLASSPILOT_2_7_1_RELEASE.md`. Supply that file from a private path outside
@@ -69,13 +112,45 @@ different zones, and that the exact secret has not been scheduled for deletion.
 The evidence hash binds those control-plane checks to the operator's network,
 TLS, relay, telemetry, and UDP-blocked validation.
 
+TURN evidence schema version 2 keeps the last two checks separate as
+`syntheticUdpBlockedFallbackPassed` and
+`managedUdpBlockedLiveViewPassed`. The strict path requires both to be `true`.
+The approved synthetic-only global path requires the synthetic value to be
+`true` and the managed value to be `false`, plus a separate fresh waiver that
+binds the TURN-evidence and synthetic-validation hashes and records exactly
+`validationLevel: "synthetic_only"` and
+`managedValidation: "waived_not_passed"`. Never collapse the checks into one
+UDP-fallback boolean or describe the waiver as a managed pass.
+
 Run `scripts/deploy-classpilot-runtime-config.ps1` only after this gate is green.
 It updates the exact active same-digest API and worker revisions together; do
-not copy TURN values into one task definition by hand. Activate the test school
-first, finish the managed Live View gate, and use the helper's `global-on`
-profile only after the complete 2.7.1 managed test suite is green. The final
-release state has `liveViewIceServersV1` globally on; leaving it dark is a
-temporary deployment or incident posture, not release completion.
+not copy TURN values into one task definition by hand. The ordinary strict path
+activates the test school first and requires the managed Live View gate before
+`global-on`. The approved synthetic-only path may use `global-on` without a
+managed pass only with the exact evidence, waiver, and three explicit
+confirmations in `CLASSPILOT_2_7_1_RELEASE.md`. The final target has
+all nine repaired capabilities globally on, including
+`scopedAuthorityChecksV1` and its dependent `liveViewIceServersV1`, while
+`kioskLaunchTicketV1` stays off. Leaving Live View dark is temporary deployment
+or incident containment, not the final target.
+
+When the approved activation runs during the weekday 04:45–10:14 Eastern
+protected window, both Plan and Apply require
+`-ConfirmProductionMutation -ConfirmProtectedWindowProductionMutation`; the
+synthetic-only global path also requires
+`-ConfirmSyntheticOnlyGlobalActivation`. The plan must record
+`protectedWindowProductionMutation: true`. The helper accepts only a stable API
+desired count from one through six and temporarily maps counts `1..6` to API
+bounds `100/200`, `50/100`, `66/100`, `75/100`, `80/100`, and `83/100`,
+respectively; the worker uses `0/100`. Counts two through six allow one stop and
+no growth, while singleton `100/200` preserves one replacement slot. The exact
+prior deployment configuration and current scheduled minimum must be restored
+before the scaling hold is released.
+
+For containment, use a fresh `mode: "off"` Plan/Apply. It disables protocol-v3
+acceptance and all nine repaired capabilities together while leaving TURN
+infrastructure provisioned. Do not partially turn off only Live View, edit one
+service by hand, or use `-Operation Rollback` as a kill switch.
 
 ## Telemetry contract
 

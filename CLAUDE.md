@@ -271,10 +271,10 @@ When a school has multiple products, priority order is: ClassPilot > PassPilot >
   - **Axios instance** from `shared/utils/api.js` — legacy pattern, auto-attaches JWT tokens.
 - **Role-aware hooks**: `useClassPilotAuth`, `usePassPilotAuth`, `useGoPilotAuth` map the generic `activeMembership.role` to product-specific role checks (isAdmin, isTeacher, etc.).
 - **Vite proxy**: The frontend dev server proxies `/api`, `/ws`, and `/gopilot-socket` to the backend on port 4000.
-- **Chrome extension release state**: The ClassPilot Chrome extension is MV3 and lives in the separate `C:\GitHub\ClassPilot` repository. The operator confirmed Chrome Web Store listing `iggbfegfcjkfieoemeolfmfnapepalca` is live at `2.7.0` on August 23, 2026. The separate repository contains the coordinated `2.7.1` repair candidate. Confirm the listing again immediately before upload. Use `console.warn` rather than routine `console.error` because Chrome surfaces the latter as visible extension errors to school IT.
+- **Chrome extension release state**: The ClassPilot Chrome extension is MV3 and lives in the separate `C:\GitHub\ClassPilot` repository. The operator confirmed Chrome Web Store listing `iggbfegfcjkfieoemeolfmfnapepalca` is live at `2.7.1` on August 24, 2026. That proves public Store publication only; managed-Chromebook adoption and validation were not passed and must not be inferred from the listing. Confirm the listing again immediately before uploading any successor. Use `console.warn` rather than routine `console.error` because Chrome surfaces the latter as visible extension errors to school IT.
 - **Canonical packaging**: From a clean tagged ClassPilot commit in the ClassPilot repo root, run `./extension/package-extension.sh`. It reads the manifest, validates the packaged manifest version, and creates the Web Store artifact `dist/ClassPilot-v2.7.1.zip` plus compatibility copy `dist/classpilot-extension.zip`. Inspect the archive for root-level `manifest.json` and `managed_schema.json`, compare it byte-for-byte with source, and retain its SHA-256 before upload. A SchoolPilot deploy never publishes or updates the extension.
 - **Protocol v2 capabilities**: registration/login, heartbeat, and WebSocket auth advertise `classroomStateV1`, `fabStateRevisionV1`, `exactTabCloseV1`, `screenOnlyUnlockV1`, `durableChatAckV1`, `commandAckReceiptV1`, `classroomOverlayRestoreV1`, and `liveViewNegotiationV1`. The public telemetry contract reports a minimum extension version of `2.6.0`, but features must be gated by advertised capabilities rather than version inference alone.
-- **Protocol v3 repaired-client gate**: `scopedAuthorityChecksV1` proves that the client scopes `authBoundTelemetryV1`, `exactBindingAckV2`, and `exactTabCloseV2` independently. The server must refuse those three capabilities unless the marker is advertised and accepted; never infer repair status from `2.7.1` text. Protocol-3 selected-tab controls require accepted `exactTabCloseV2`; protocol-2 clients retain negotiated V1 behavior. The full activation and rollback contract is `docs/CLASSPILOT_2_7_1_RELEASE.md`.
+- **Protocol v3 repaired-client gate**: `scopedAuthorityChecksV1` is the required parent marker for all eight dependent repaired capabilities: `authBoundTelemetryV1`, `exactBindingAckV2`, `exactTabCloseV2`, `studentChatIdempotencyV1`, `screenshotObservationLeaseV1`, `safetyEvidenceCaptureV1`, `liveViewIceServersV1`, and `kioskLaunchTicketV2`. The server must refuse every dependent unless the marker is advertised and accepted; never infer repair status from `2.7.1` text. Protocol-3 selected-tab controls require accepted `exactTabCloseV2`; protocol-2 clients retain negotiated V1 behavior. `kioskLaunchTicketV1` stays off. The full activation and rollback contract is `docs/CLASSPILOT_2_7_1_RELEASE.md`.
 - **MV3 lifetime rules**: The awake worker owns one scheduled 10-second heartbeat. Chrome's heartbeat alarm is recovery-only when that cadence becomes stale; it is not a second steady-state heartbeat source. Screenshots use an independent 30-second alarm subject to the negotiated observation policy. Async offscreen/runtime messages must keep the MV3 event alive until ordered side effects, storage, and ACK work settle.
 - **Offscreen ownership**: `offscreen.js` owns the long-lived WebSocket and WebRTC peer/capture lifecycle; the service worker serializes relayed frames and owns exact-binding policy/state. Intentional or unexpected socket closure, auth invalidation, tracking off/off-hours, and Live View expiry must stop capture and reset negotiation state. Do not move these connections into a content script.
 - **Extension deployment**: Managed deployments normally force-install through Google Admin (Devices → Chrome → Apps & extensions), with the required screen-capture policies. The release sequence is live-version check → manifest bump → canonical package script → archive inspection → Chrome Web Store upload/review → staged managed-browser adoption. Keep backend, frontend, and extension compatibility additive during rollout.
@@ -342,7 +342,7 @@ Copy `.env.example` to `.env`. Required for local dev:
 - `GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY_PREVIOUS` — Optional previous PIN key used only during a staged dual-read/current-write rotation; remove after the counts-only migration and rollback window pass
 - `SUPER_ADMIN_EMAIL` — Email address that gets super admin privileges
 - `CORS_ALLOWLIST` — Comma-separated frontend origins
-- `CLASSPILOT_PROTOCOL_V3_ENABLED` plus the per-capability flags are kill switches. `CLASSPILOT_CAPABILITY_ROLLOUTS_JSON` optionally supplies fail-closed `off`, `observe`, `canary`, or `on` policy per capability, with optional `schoolIds` and a deterministic school-level `canaryPercent`. Capability acceptance still requires a protocol-v3 client advertisement from the current exact binding, and the three repaired authority capabilities additionally require accepted `scopedAuthorityChecksV1`. For 2.7.1 the flags are temporary deployment/emergency controls; after the managed gate, every repaired capability except superseded `kioskLaunchTicketV1` must be globally `on` per `docs/CLASSPILOT_2_7_1_RELEASE.md`.
+- `CLASSPILOT_PROTOCOL_V3_ENABLED` plus the per-capability flags are kill switches. `CLASSPILOT_CAPABILITY_ROLLOUTS_JSON` optionally supplies fail-closed `off`, `observe`, `canary`, or `on` policy per capability, with optional `schoolIds` and a deterministic school-level `canaryPercent`. Capability acceptance still requires a protocol-v3 client advertisement from the current exact binding, and all eight dependent repaired capabilities require accepted `scopedAuthorityChecksV1`. For 2.7.1 the flags are temporary deployment/emergency controls; the final target has the marker and all eight dependents globally `on`, while superseded `kioskLaunchTicketV1` stays `off`, per `docs/CLASSPILOT_2_7_1_RELEASE.md`. The approved synthetic-only exception records `validationLevel=synthetic_only` and `managedValidation=waived_not_passed`; it must never be described as managed-Chromebook validation.
 - `CLASSPILOT_SESSION_REPORT_V2_MODE` controls immutable session-report rollout with `legacy`, `shadow`, or `on`. Missing or malformed values fail closed to `legacy`. `shadow` persists, exposes, and emails the exact v1 contract while computing v2 without writes and emitting identifier-free aggregate mismatch, invariant, and timing metrics. `on` creates v2 rows; every materialization, API/CSV presentation, and email dispatch continues to follow the version stored on its report row, so existing v1 rows never change behavior when the environment changes.
 - `CLASSPILOT_TURN_HOSTS`, `CLASSPILOT_TURN_REST_SECRET`, and optional `CLASSPILOT_STUN_URLS` provide the dark `liveViewIceServersV1` runtime. Client outcome telemetry is accepted only for a still-active exact-bound negotiation and emits identifier-free metrics; deployment and alarm details live in `docs/CLASSPILOT_TURN_OPERATIONS.md`.
 - `SENDGRID_API_KEY` — SendGrid email service (session reports, safety alerts, welcome emails)
@@ -809,6 +809,36 @@ MiB API posture, use the reviewed backend-only mode instead:
 ./scripts/deploy.sh production --backend --activate-emergency
 ```
 
+The August 24, 2026 protected-window exception is explicit and narrow. It is
+not a new ordinary deploy mode:
+
+```bash
+./scripts/deploy.sh production --backend --activate-emergency \
+  --tag <full-40-character-main-sha> \
+  --confirm-protected-window-production-mutation
+```
+
+That flag is valid only for an initial admission during the weekday 04:45–10:14
+America/New_York window; it is also what permits a stable API desired count above two during that admitted run. It rejects
+frontend, RLS, skip-wait, immutable-image, same-image, capacity, observation,
+rehearsal, and receipt modes. The only admitted API desired counts and temporary
+`minimumHealthyPercent/maximumPercent` mappings are `1=100/200`, `2=50/100`,
+`3=66/100`, `4=75/100`, `5=80/100`, and `6=83/100`; the singleton worker uses
+`0/100`. Counts 2–6 therefore permit exactly one stop with no capacity growth,
+while count 1 permits one availability-preserving replacement slot. The script
+suspends dynamic and scheduled scaling, proves the live target-health floor,
+converges the API before mutating the worker, restores the exact prior ECS
+deployment configurations, and releases scaling only after validating the exact
+05:45/10:00 scheduled-action contract and reconciling the current minimum (`6`
+during 05:45–09:59 weekdays, otherwise `1`). If scheduled scaling was already
+suspended, its captured minimum is restored exactly. A reconciliation to six
+does not complete until desired, running, and healthy API capacity all reach six.
+After any candidate may have served traffic, an unresolved protected run retains
+the no-growth/scaling hold for explicit roll-forward recovery instead of forcing
+an unproven application downgrade; the ECS rollback circuit breaker remains enabled.
+Omitting the explicit flag retains the ordinary window and one-or-two-task
+rules.
+
 For the single release that first enforces the ClassPilot session-summary
 delivery outbox, use the explicitly reviewed additive RLS flag. Do not retain
 the flag on later releases:
@@ -891,13 +921,13 @@ For this ClassPilot release family, deploy in compatibility-safe stages:
 2. Deploy the SchoolPilot API/frontend only after the backend contract is live.
    Frontend controls must remain hidden or safe-disabled until the relevant
    extension capability is advertised; never infer support only from a version.
-3. Release the Chrome extension separately from `C:\GitHub\ClassPilot`. The
-   current Web Store version is operator-confirmed `2.7.0` (August 23, 2026),
-   and the separate repository contains the coordinated `2.7.1` repair
-   candidate. Immediately before upload, re-check the listing, build from the
-   clean tagged commit with `./extension/package-extension.sh`, inspect and
-   hash the versioned archive, and stage adoption through Chrome Web Store and
-   Google Admin.
+3. Release the Chrome extension separately from `C:\GitHub\ClassPilot`. Chrome
+   Web Store listing `iggbfegfcjkfieoemeolfmfnapepalca` is operator-confirmed
+   live at `2.7.1` (August 24, 2026). That observation is not managed-Chromebook
+   adoption or validation. Before any successor upload, re-check the listing,
+   build from the clean tagged commit with `./extension/package-extension.sh`,
+   inspect and hash the versioned archive, and stage adoption separately through
+   Chrome Web Store and Google Admin.
 4. Omit the one-shot RLS flag on later deploys. Verify all 75 target tables in
    the live catalog before applying the matching Terraform baseline. The
    historical 72-table observation remains unchanged in the registry. A
@@ -967,9 +997,11 @@ The deploy script requires a clean local `main` equal to `origin/main`, green
 latest GitHub Actions runs per workflow, authenticated AWS + GitHub CLIs, and a
 git-SHA image tag by default. A production backend deploy also fails closed
 unless the API is stable at one or two tasks and the scheduler worker is stable
-at exactly one task. It blocks weekday production backend deployments from
-04:45 through 10:14 America/New_York so the 05:45 six-task arrival action cannot
-cross a migration or 200%-capacity service rollout. Immediately before its
+at exactly one task. Ordinary mode blocks weekday production backend deployments
+from 04:45 through 10:14 America/New_York so the 05:45 six-task arrival action
+cannot cross a migration or 200%-capacity service rollout; only the explicit
+protected-window flag above may use the separately bounded no-growth path.
+Immediately before its
 migration it captures the API
 Application Auto Scaling suspended state, suspends dynamic scale-in/out while
 preserving the captured scheduled-scaling state, rechecks both services, keeps
@@ -1056,6 +1088,23 @@ after using the emergency target. The standard 512 CPU / 1024 MiB API revision
 is not an OOM recovery target because it retains the failed memory ceiling.
 
 ### Launch cost rollout
+
+The August 24, 2026 TURN repair has one authorized, still-pending targeted
+Terraform exception. It may replace only
+`module.turn[0].aws_instance.turn["a"]`,
+`module.turn[0].aws_instance.turn["b"]`,
+`module.turn[0].aws_eip_association.turn["a"]`, and
+`module.turn[0].aws_eip_association.turn["b"]`, while updating only
+`module.turn[0].aws_cloudwatch_metric_alarm.node_status["a"]` and
+`module.turn[0].aws_cloudwatch_metric_alarm.node_status["b"]`. The reviewed
+saved plan must be exactly `4 to create, 2 to update, 4 to destroy`, with no
+unrelated changes. It must never replace or update EIPs, DNS, the TURN secret,
+IAM, security groups, the dashboard, or ECS. Take and verify the normal external
+DPAPI and OneDrive AES-GCM state backups before plan, before apply, and after
+apply. Authorization alone is not completion: mark this exception completed and
+non-reusable only after the exact saved-plan apply, node/network/TLS/telemetry
+validation, and a fresh no-op plan all pass. Details are in
+`docs/CLASSPILOT_TURN_OPERATIONS.md`.
 
 The staged WAF/alarm, public-ECS, NAT, Route 53, Redis, synthetic-load, state
 recovery, supervision, and rollback procedure lives in

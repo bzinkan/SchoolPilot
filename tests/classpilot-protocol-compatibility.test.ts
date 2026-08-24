@@ -77,6 +77,20 @@ function allV3CapabilitiesEnabled(): NodeJS.ProcessEnv {
   };
 }
 
+function globalOn271Environment(): NodeJS.ProcessEnv {
+  const rollouts = Object.fromEntries(CLASSPILOT_PROTOCOL_V3_CAPABILITIES.map(
+    (capability) => [
+      capability,
+      { mode: capability === "kioskLaunchTicketV1" ? "off" : "on" },
+    ]
+  ));
+  return {
+    ...allV3CapabilitiesEnabled(),
+    CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V1: "false",
+    CLASSPILOT_CAPABILITY_ROLLOUTS_JSON: JSON.stringify(rollouts),
+  };
+}
+
 for (const definition of archivedFixtureDefinitions) {
   test(`archived ClassPilot ${definition.version} fixture remains protocol-v2 compatible`, () => {
     const fixture = readArchivedFixture(definition.file);
@@ -168,6 +182,18 @@ test("protocol v2 never activates v3 behavior even when a legacy payload spoofs 
       ...CLASSPILOT_PROTOCOL_V3_CAPABILITIES,
     ],
     env: allV3CapabilitiesEnabled(),
+  });
+  assert.deepEqual(negotiated.acceptedCapabilities, []);
+});
+
+test("a markerless 2.7.0-shaped client receives no 2.7.1 capability under global-on", () => {
+  const advertisedCapabilities = CLASSPILOT_PROTOCOL_V3_CAPABILITIES.filter(
+    (capability) => capability !== "scopedAuthorityChecksV1"
+  );
+  const negotiated = negotiateClasspilotProtocol({
+    clientProtocolVersion: 3,
+    advertisedCapabilities,
+    env: globalOn271Environment(),
   });
   assert.deepEqual(negotiated.acceptedCapabilities, []);
 });
