@@ -8,6 +8,7 @@ import db, { pool } from "../dist/db.js";
 import { runWithTenantContext } from "../dist/middleware/tenantContext.js";
 import { signUserToken } from "../dist/services/jwt.js";
 import { createStudentToken } from "../dist/services/deviceJwt.js";
+import { redisCommand } from "../dist/middleware/rateLimiter.js";
 import {
   addGroupStudentsDetailed,
   acknowledgeClasspilotStudentControlState,
@@ -85,6 +86,10 @@ import {
 } from "../dist/services/storage.js";
 import { buildStudentFabState } from "../dist/services/classpilotFab.js";
 import { snapshotClasspilotCoverageHydrationMetrics } from "../dist/services/classpilotCoverageHydration.js";
+import {
+  classpilotRealtimeStatusKey,
+  writeClasspilotRealtimeStatus,
+} from "../dist/services/classpilotRealtimeStatus.js";
 import {
   executeClasspilotCommand,
   normalizeCommandPayload,
@@ -165,6 +170,28 @@ function expectNoDeviceIds(value: unknown) {
   assert.equal(text.includes("deviceId"), false);
   assert.equal(text.includes("primaryDeviceId"), false);
   assert.equal(text.includes("studentSessionId"), false);
+}
+
+function expectNoInternalRealtimeBindings(value: unknown, forbiddenValues: readonly string[]) {
+  const visit = (candidate: unknown): void => {
+    if (Array.isArray(candidate)) {
+      candidate.forEach(visit);
+      return;
+    }
+    if (!candidate || typeof candidate !== "object") return;
+    for (const [key, nested] of Object.entries(candidate)) {
+      const normalizedKey = key.toLowerCase();
+      assert.equal(normalizedKey.includes("deviceid"), false, `teacher DTO exposed ${key}`);
+      assert.equal(normalizedKey.includes("studentsessionid"), false, `teacher DTO exposed ${key}`);
+      visit(nested);
+    }
+  };
+
+  visit(value);
+  const serialized = JSON.stringify(value);
+  for (const forbidden of forbiddenValues) {
+    assert.equal(serialized.includes(forbidden), false, `teacher DTO exposed internal value ${forbidden}`);
+  }
 }
 
 async function ensureCoverageTables() {
@@ -1673,6 +1700,197 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.equal(postExpiredScheduledActive, undefined);
 
     await inSchool(school.id, () => endTeachingSession(sourceSession.id));
+  });
+
+  it("keeps complete unscoped and Observe rosters when one local realtime snapshot is circular", async () => {
+    const validStudent = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Valid",
+      lastName: "Realtime",
+      email: `valid-realtime@${TAG}.example.edu`,
+      emailLc: `valid-realtime@${TAG}.example.edu`,
+      gradeLevel: "7",
+      status: "active",
+    }));
+    const rejectedStudent = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Rejected",
+      lastName: "Realtime",
+      email: `rejected-realtime@${TAG}.example.edu`,
+      emailLc: `rejected-realtime@${TAG}.example.edu`,
+      gradeLevel: "7",
+      status: "active",
+    }));
+    const validDeviceId = `${TAG}-device-route-valid`;
+    const rejectedDeviceId = `${TAG}-device-route-rejected`;
+
+    const { validSession, rejectedSession } = await inSchool(school.id, async () => {
+      await createDevice({
+        deviceId: validDeviceId,
+        schoolId: school.id,
+        classId: "default",
+        deviceName: "Route valid",
+      });
+      await createDevice({
+        deviceId: rejectedDeviceId,
+        schoolId: school.id,
+        classId: "default",
+        deviceName: "Route rejected",
+      });
+      await linkStudentDevice({ studentId: validStudent.id, deviceId: validDeviceId });
+      await linkStudentDevice({ studentId: rejectedStudent.id, deviceId: rejectedDeviceId });
+      const validSession = await setActiveStudentForDevice(validDeviceId, validStudent.id);
+      const rejectedSession = await setActiveStudentForDevice(rejectedDeviceId, rejectedStudent.id);
+      return { validSession, rejectedSession };
+    });
+
+    const routeGroup = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: teacher.id,
+      name: `${TAG}_Route_Regression`,
+      groupType: "admin_class",
+      status: "active",
+    }));
+    await inSchool(school.id, () => addGroupStudentsDetailed(routeGroup.id, [
+      validStudent.id,
+      rejectedStudent.id,
+    ]));
+    const teachingSession = await inSchool(school.id, () => createTeachingSession({
+      groupId: routeGroup.id,
+      teacherId: teacher.id,
+    }));
+
+    const observedAt = Date.now();
+    const validWrite = await writeClasspilotRealtimeStatus({
+      schoolId: school.id,
+      studentId: validStudent.id,
+      studentSessionId: validSession.id,
+      deviceId: validDeviceId,
+      heartbeatId: `${TAG}-route-valid-heartbeat`,
+      observedAt,
+      activeTabUrl: "https://example.edu/valid",
+      activeTabTitle: "Valid realtime",
+      screenLocked: true,
+      flightPathActive: true,
+      activeFlightPathName: "Route regression",
+      isSharing: true,
+      cameraActive: true,
+      extensionCapabilities: ["exactTabCloseV1"],
+    });
+    const rejectedWrite = await writeClasspilotRealtimeStatus({
+      schoolId: school.id,
+      studentId: rejectedStudent.id,
+      studentSessionId: rejectedSession.id,
+      deviceId: rejectedDeviceId,
+      heartbeatId: `${TAG}-route-rejected-heartbeat`,
+      observedAt,
+      activeTabUrl: "https://example.edu/rejected",
+      activeTabTitle: "Rejected realtime",
+      screenLocked: true,
+      flightPathActive: true,
+      activeFlightPathName: "Must not escape",
+      isSharing: true,
+      cameraActive: true,
+      extensionCapabilities: ["exactTabCloseV1"],
+    });
+    assert.ok(validWrite.snapshot);
+    assert.ok(rejectedWrite.snapshot);
+    Object.assign(rejectedWrite.snapshot, { circular: rejectedWrite.snapshot });
+    await Promise.all([
+      classpilotRealtimeStatusKey(school.id, validDeviceId),
+      classpilotRealtimeStatusKey(school.id, rejectedDeviceId),
+    ].map((key) => redisCommand(["DEL", key]).catch(() => undefined)));
+
+    const unscoped = await requestJson(
+      "GET",
+      "/students-aggregated",
+      undefined,
+      authFor(admin, school.id)
+    );
+    assert.equal(unscoped.status, 200);
+    assert.ok(Array.isArray(unscoped.body));
+    assert.ok(unscoped.body.some((row: any) => row.studentId === validStudent.id));
+    assert.ok(unscoped.body.some((row: any) => row.studentId === rejectedStudent.id));
+    const unscopedRejectedRow = unscoped.body.find(
+      (row: any) => row.studentId === rejectedStudent.id
+    );
+    assert.equal(unscopedRejectedRow.activeTabTitle, "");
+    assert.equal(unscopedRejectedRow.activeTabUrl, "");
+    assert.equal(unscopedRejectedRow.screenLocked, false);
+    assert.equal(unscopedRejectedRow.flightPathActive, false);
+    assert.equal(unscopedRejectedRow.activeFlightPathName, undefined);
+    assert.equal(unscopedRejectedRow.isSharing, false);
+    assert.equal(unscopedRejectedRow.cameraActive, false);
+    assert.equal(unscopedRejectedRow.capabilities.exactTabCloseV1, false);
+
+    const observeRejectedWrite = await writeClasspilotRealtimeStatus({
+      schoolId: school.id,
+      studentId: rejectedStudent.id,
+      studentSessionId: rejectedSession.id,
+      deviceId: rejectedDeviceId,
+      heartbeatId: `${TAG}-route-observe-rejected-heartbeat`,
+      observedAt: Date.now(),
+      activeTabUrl: "https://example.edu/rejected-observe",
+      activeTabTitle: "Rejected Observe realtime",
+      screenLocked: true,
+      flightPathActive: true,
+      activeFlightPathName: "Must not escape Observe",
+      isSharing: true,
+      cameraActive: true,
+      extensionCapabilities: ["exactTabCloseV1"],
+    });
+    assert.ok(observeRejectedWrite.snapshot);
+    Object.assign(observeRejectedWrite.snapshot, { circular: observeRejectedWrite.snapshot });
+    await redisCommand([
+      "DEL",
+      classpilotRealtimeStatusKey(school.id, rejectedDeviceId),
+    ]).catch(() => undefined);
+
+    const observed = await requestJson(
+      "GET",
+      `/students-aggregated?teachingSessionId=${encodeURIComponent(teachingSession.id)}`,
+      undefined,
+      authFor(admin, school.id)
+    );
+    assert.equal(observed.status, 200);
+    assert.deepEqual(
+      new Set(observed.body.map((row: any) => row.studentId)),
+      new Set([validStudent.id, rejectedStudent.id])
+    );
+
+    const validRow = observed.body.find((row: any) => row.studentId === validStudent.id);
+    const rejectedRow = observed.body.find((row: any) => row.studentId === rejectedStudent.id);
+    assert.equal(validRow.activeTabTitle, "Valid realtime");
+    assert.equal(validRow.screenLocked, true);
+    assert.equal(validRow.flightPathActive, true);
+    assert.equal(validRow.activeFlightPathName, "Route regression");
+    assert.equal(validRow.isSharing, true);
+    assert.equal(validRow.cameraActive, true);
+    assert.equal(validRow.capabilities.exactTabCloseV1, true);
+
+    assert.equal(rejectedRow.activeTabTitle, "");
+    assert.equal(rejectedRow.activeTabUrl, "");
+    assert.equal(rejectedRow.screenLocked, false);
+    assert.equal(rejectedRow.flightPathActive, false);
+    assert.equal(rejectedRow.activeFlightPathName, undefined);
+    assert.equal(rejectedRow.isSharing, false);
+    assert.equal(rejectedRow.cameraActive, false);
+    assert.equal(rejectedRow.capabilities.exactTabCloseV1, false);
+
+    expectNoInternalRealtimeBindings(unscoped.body, [
+      validDeviceId,
+      rejectedDeviceId,
+      validSession.id,
+      rejectedSession.id,
+    ]);
+    expectNoInternalRealtimeBindings(observed.body, [
+      validDeviceId,
+      rejectedDeviceId,
+      validSession.id,
+      rejectedSession.id,
+    ]);
+
+    await inSchool(school.id, () => endTeachingSession(teachingSession.id));
   });
 
   it("gives the newest normal class session control of overlapping students", async () => {

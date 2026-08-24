@@ -85,6 +85,8 @@ import {
   CLASSPILOT_REALTIME_SCHEMA_VERSION,
   CLASSPILOT_REALTIME_STALE_AFTER_MS,
   classpilotPublicRealtimeBinding,
+  normalizeClasspilotPublicCapabilities,
+  normalizeClasspilotPublicClassroomControls,
   readClasspilotRealtimeStatusBatch,
   readLocalClasspilotRealtimeStatusBatch,
   type ClasspilotRealtimeBinding,
@@ -208,8 +210,12 @@ function realtimeStatusFromHeartbeat(
 function publicClasspilotExtensionContract(
   snapshot: ClasspilotRealtimeStatus | null | undefined
 ) {
-  const extensionCapabilities = new Set(snapshot?.extensionCapabilities || []);
-  const acceptedCapabilities = new Set(snapshot?.acceptedCapabilities || []);
+  const extensionCapabilities = new Set(
+    normalizeClasspilotPublicCapabilities(snapshot?.extensionCapabilities)
+  );
+  const acceptedCapabilities = new Set(
+    normalizeClasspilotPublicCapabilities(snapshot?.acceptedCapabilities)
+  );
   const tabSnapshotRevision = snapshot
     ? snapshot.tabSnapshotRevision ?? snapshot.revision
     : null;
@@ -1245,6 +1251,9 @@ router.get("/students-aggregated", ...classPilotStaffAuth, async (req, res, next
           ? visibleRealtime?.enforcementHealth || "unsupported"
           : "unsupported";
       const publicExtensionContract = publicClasspilotExtensionContract(visibleRealtime);
+      const publicClassroomControls = normalizeClasspilotPublicClassroomControls(
+        visibleRealtime?.classroomControls
+      );
 
       return {
         studentId: student.id,
@@ -1267,11 +1276,11 @@ router.get("/students-aggregated", ...classPilotStaffAuth, async (req, res, next
         favicon: visibleRealtime?.favicon,
         allOpenTabs: visibleRealtime?.allOpenTabs,
         ...publicExtensionContract,
-        isSharing: visibleRealtime?.classroomControls.isSharing || false,
-        screenLocked: visibleRealtime?.classroomControls.screenLocked || false,
-        flightPathActive: visibleRealtime?.classroomControls.flightPathActive || false,
-        activeFlightPathName: visibleRealtime?.classroomControls.activeFlightPathName,
-        cameraActive: visibleRealtime?.classroomControls.cameraActive || false,
+        isSharing: publicClassroomControls.isSharing,
+        screenLocked: publicClassroomControls.screenLocked,
+        flightPathActive: publicClassroomControls.flightPathActive,
+        activeFlightPathName: publicClassroomControls.activeFlightPathName,
+        cameraActive: publicClassroomControls.cameraActive,
         aiClassification: visibleRealtime?.aiClassification || undefined,
         screenshotHealth: visibleRealtime?.screenshotHealth || undefined,
         classroomState: authoritativeClassroomState,

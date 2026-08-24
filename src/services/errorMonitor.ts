@@ -7,6 +7,7 @@ import { readFileSync } from "fs";
 import { sendEmail } from "./email.js";
 import { captureError, flushSentry } from "./sentry.js";
 import { safeErrorMetadata } from "../util/safeLogging.js";
+import { schedulerDatabaseAllowed } from "../config/databasePools.js";
 import {
   createDefaultMonitorAggregation,
   type MonitorAggregationAdapter,
@@ -538,9 +539,8 @@ async function persistErrorLog(event: NormalizedMonitorEvent): Promise<PersistRe
   if (inFlightPersists >= MAX_INFLIGHT_PERSISTS) return "dropped";
   inFlightPersists++;
   try {
-    const { schedulerDb } = await import("./schedulerDb.js");
     const { errorLogs } = await import("../schema/shared.js");
-    await schedulerDb.insert(errorLogs).values({
+    const values = {
       category: event.category,
       message: event.message,
       stack: event.stack ?? null,
@@ -553,7 +553,20 @@ async function persistErrorLog(event: NormalizedMonitorEvent): Promise<PersistRe
       schoolId: null,
       userId: null,
       context: event.context ?? null,
-    });
+    };
+
+    if (schedulerDatabaseAllowed()) {
+      const { schedulerDb } = await import("./schedulerDb.js");
+      await schedulerDb.insert(errorLogs).values(values);
+    } else {
+      const [{ db }, { runWithTenantContext }] = await Promise.all([
+        import("../db.js"),
+        import("../middleware/tenantContext.js"),
+      ]);
+      await runWithTenantContext({ isSuper: true }, () =>
+        db.insert(errorLogs).values(values)
+      );
+    }
     return "persisted";
   } catch (err) {
     console.error("[ErrorMonitor] Failed to persist error_log:", safeErrorMetadata(err));

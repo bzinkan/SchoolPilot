@@ -24,6 +24,7 @@ type RealtimeMetrics = {
   sharedReadUnavailable: number;
   sharedReadRejected: number;
   localReadHits: number;
+  localReadRejected: number;
 };
 
 function emptyRealtimeMetrics(): RealtimeMetrics {
@@ -37,6 +38,7 @@ function emptyRealtimeMetrics(): RealtimeMetrics {
     sharedReadUnavailable: 0,
     sharedReadRejected: 0,
     localReadHits: 0,
+    localReadRejected: 0,
   };
 }
 
@@ -131,7 +133,7 @@ export type ClasspilotRealtimeBinding = {
 
 export type ClasspilotRealtimeReadResult =
   | { status: "hit"; snapshot: ClasspilotRealtimeStatus }
-  | { status: "miss" | "unavailable" | "mismatch" | "expired" };
+  | { status: "miss" | "unavailable" | "mismatch" | "expired" | "rejected" };
 
 export type ClasspilotRealtimeWriteInput = {
   schoolId: string;
@@ -294,6 +296,75 @@ function boundedString(value: unknown, maxLength: number): string {
 function optionalString(value: unknown, maxLength: number): string | undefined {
   const normalized = boundedString(value, maxLength).trim();
   return normalized || undefined;
+}
+
+export type ClasspilotPublicClassroomControls = {
+  screenLocked: boolean;
+  flightPathActive: boolean;
+  activeFlightPathName?: string;
+  isSharing: boolean;
+  cameraActive: boolean;
+};
+
+/**
+ * Runtime boundary for teacher-facing classroom state. Cache snapshots are
+ * untrusted at read time: a malformed nested value must degrade to inactive
+ * controls instead of failing the complete authorized roster response.
+ */
+export function normalizeClasspilotPublicClassroomControls(
+  value: unknown
+): ClasspilotPublicClassroomControls {
+  const inactive: ClasspilotPublicClassroomControls = {
+    screenLocked: false,
+    flightPathActive: false,
+    isSharing: false,
+    cameraActive: false,
+  };
+  try {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return inactive;
+    const controls = value as Record<string, unknown>;
+    if (
+      typeof controls.screenLocked !== "boolean" ||
+      typeof controls.flightPathActive !== "boolean" ||
+      typeof controls.isSharing !== "boolean" ||
+      typeof controls.cameraActive !== "boolean" ||
+      (controls.activeFlightPathName !== undefined &&
+        typeof controls.activeFlightPathName !== "string")
+    ) {
+      return inactive;
+    }
+    const activeFlightPathName = optionalString(controls.activeFlightPathName, 256);
+    return {
+      screenLocked: controls.screenLocked,
+      flightPathActive: controls.flightPathActive,
+      isSharing: controls.isSharing,
+      cameraActive: controls.cameraActive,
+      ...(activeFlightPathName ? { activeFlightPathName } : {}),
+    };
+  } catch {
+    return inactive;
+  }
+}
+
+/**
+ * Runtime boundary for capability containers used by public projections.
+ * Only arrays can advertise capabilities; entries remain identifier-free and
+ * are bounded to the same limits as the realtime snapshot schema.
+ */
+export function normalizeClasspilotPublicCapabilities(value: unknown): string[] {
+  try {
+    if (!Array.isArray(value) || value.length > 32) return [];
+    const capabilities: string[] = [];
+    for (const candidate of value) {
+      if (typeof candidate !== "string") return [];
+      const normalized = candidate.trim();
+      if (!normalized || normalized.length > 64) return [];
+      if (!capabilities.includes(normalized)) capabilities.push(normalized);
+    }
+    return capabilities;
+  } catch {
+    return [];
+  }
 }
 
 function boundedNumber(value: unknown, minimum = 0, maximum = Number.MAX_SAFE_INTEGER): number {
@@ -935,12 +1006,26 @@ export function createClasspilotRealtimeStatusStore(
   ): Map<string, ClasspilotRealtimeReadResult> {
     const results = new Map<string, ClasspilotRealtimeReadResult>();
     for (const binding of bindings) {
-      const snapshot = localSnapshots.get(classpilotRealtimeStatusKey(schoolId, binding.deviceId));
-      const result = qualify(snapshot ? JSON.stringify(snapshot) : null, schoolId, binding);
-      results.set(
-        binding.studentId,
-        result
-      );
+      const key = classpilotRealtimeStatusKey(schoolId, binding.deviceId);
+      const snapshot = localSnapshots.get(key);
+      let serialized: string | undefined;
+      if (snapshot) {
+        try {
+          serialized = JSON.stringify(snapshot);
+        } catch {
+          serialized = undefined;
+        }
+        if (!serialized || !decodeSnapshot(serialized)) {
+          // Reject and evict only this process-local entry. Never let one
+          // circular or malformed snapshot suppress another roster member.
+          localSnapshots.delete(key);
+          results.set(binding.studentId, { status: "rejected" });
+          realtimeMetrics.localReadRejected += 1;
+          continue;
+        }
+      }
+      const result = qualify(serialized ?? null, schoolId, binding);
+      results.set(binding.studentId, result);
       if (result.status === "hit") realtimeMetrics.localReadHits += 1;
     }
     return results;
