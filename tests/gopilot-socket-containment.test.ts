@@ -132,25 +132,30 @@ describe("GoPilot socket containment", { concurrency: false }, () => {
     }
   });
 
-  it("lets retained staff authenticate but denies joining an expired-license school", async () => {
-    const socket = createSocketClient(baseUrl, {
-      path: "/gopilot-socket",
-      transports: ["websocket"],
-      auth: { token: tokenFor(teacher) },
-      forceNew: true,
-      reconnection: false,
-      timeout: 2_000,
-    });
-    try {
-      await nextEvent(socket, "connect");
-      const denied = nextEvent<any>(socket, "join:error");
-      socket.emit("join:school", { schoolId: school.id, homeroomId: `${TAG}_missing` });
-      assert.deepEqual(await denied, {
-        error: "School is not entitled to GoPilot",
-        code: "GOPILOT_NOT_ENTITLED",
+  it("denies every immediate post-connect join to an expired-license school", async () => {
+    // A client is allowed to emit as soon as Socket.IO reports `connect`. Use
+    // fresh sockets to keep that readiness contract covered against races in
+    // asynchronous server-side credential revalidation.
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      const socket = createSocketClient(baseUrl, {
+        path: "/gopilot-socket",
+        transports: ["websocket"],
+        auth: { token: tokenFor(teacher) },
+        forceNew: true,
+        reconnection: false,
+        timeout: 2_000,
       });
-    } finally {
-      socket.close();
+      try {
+        await nextEvent(socket, "connect");
+        const denied = nextEvent<any>(socket, "join:error");
+        socket.emit("join:school", { schoolId: school.id, homeroomId: `${TAG}_missing` });
+        assert.deepEqual(await denied, {
+          error: "School is not entitled to GoPilot",
+          code: "GOPILOT_NOT_ENTITLED",
+        }, `immediate join attempt ${attempt} was not denied`);
+      } finally {
+        socket.close();
+      }
     }
   });
 });

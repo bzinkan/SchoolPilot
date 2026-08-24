@@ -90,8 +90,14 @@ export function setupSocketIO(httpServer: HttpServer): Server {
     }
   });
 
-  io.on("connection", async (socket) => {
+  io.on("connection", (socket) => {
     const userId = socket.data.userId;
+    type InitialCredentialState =
+      | { ok: true }
+      | { ok: false; middlewareError: string };
+    let credentialTimer: ReturnType<typeof setInterval> | null = null;
+    let credentialCheckRunning = false;
+    let authenticatedConnectionLogged = false;
     const disconnectForCredentialChange = (
       message = "Credentials have changed. Sign in again.",
       code = "CREDENTIAL_INVALIDATED"
@@ -101,57 +107,43 @@ export function setupSocketIO(httpServer: HttpServer): Server {
       socket.disconnect(true);
     };
 
-    // Close the handshake race between the middleware's database read and the
-    // socket becoming visible to local/Redis invalidation handlers. Once this
-    // second read succeeds, either it observed the bump or any later bump can
-    // see and disconnect the registered socket.
-    try {
-      const current = await getUserById(userId);
-      if (
-        !socket.connected ||
-        !current ||
-        !credentialVersionMatches(socket.data.authVersion, current.authVersion)
-      ) {
-        disconnectForCredentialChange();
-        return;
-      }
-    } catch {
-      disconnectForCredentialChange(
-        "Authentication service unavailable.",
-        "AUTHENTICATION_SERVICE_UNAVAILABLE"
-      );
-      return;
-    }
-
-    console.log("[Socket.io] Authenticated client connected");
-
-    // Redis invalidation is the immediate path. This bounded fallback closes
-    // sockets even if a publisher/subscriber was temporarily unavailable, and
-    // prevents a stale client from passively receiving room broadcasts forever.
-    let credentialCheckRunning = false;
-    const credentialTimer = setInterval(async () => {
-      if (!socket.connected || credentialCheckRunning) return;
-      credentialCheckRunning = true;
+    // Socket.IO can notify the client that the namespace connected before an
+    // async connection callback resumes. Register packet middleware and event
+    // listeners synchronously, then gate them on this shared revalidation so a
+    // client may safely emit as soon as its `connect` event fires.
+    //
+    // This second read also closes the race between the namespace middleware's
+    // database read and the socket becoming visible to local/Redis credential
+    // invalidation handlers. Once it succeeds, either it observed the bump or
+    // any later bump can see and disconnect the registered socket.
+    const initialCredentialRevalidation = (async (): Promise<InitialCredentialState> => {
       try {
         const current = await getUserById(userId);
         if (
+          !socket.connected ||
           !current ||
           !credentialVersionMatches(socket.data.authVersion, current.authVersion)
         ) {
           disconnectForCredentialChange();
+          return { ok: false, middlewareError: "Credentials invalidated" };
         }
+        return { ok: true };
       } catch {
         disconnectForCredentialChange(
           "Authentication service unavailable.",
           "AUTHENTICATION_SERVICE_UNAVAILABLE"
         );
-      } finally {
-        credentialCheckRunning = false;
+        return { ok: false, middlewareError: "Authentication service unavailable" };
       }
-    }, SOCKET_CREDENTIAL_REVALIDATION_MS);
-    credentialTimer.unref();
+    })();
 
     socket.use(async (_event, next) => {
+      const initialState = await initialCredentialRevalidation;
+      if (!initialState.ok || !socket.connected) {
+        return next(new Error(
+          initialState.ok ? "Credentials invalidated" : initialState.middlewareError
+        ));
+      }
       try {
         const current = await getUserById(userId);
         if (!current || !credentialVersionMatches(socket.data.authVersion, current.authVersion)) {
@@ -169,6 +161,8 @@ export function setupSocketIO(httpServer: HttpServer): Server {
     });
 
     socket.on("join:school", async ({ schoolId, homeroomId }) => {
+      const initialState = await initialCredentialRevalidation;
+      if (!initialState.ok || !socket.connected) return;
       try {
         const requestedSchoolId = typeof schoolId === "string" ? schoolId : "";
         if (!requestedSchoolId) {
@@ -244,8 +238,41 @@ export function setupSocketIO(httpServer: HttpServer): Server {
     });
 
     socket.on("disconnect", () => {
-      clearInterval(credentialTimer);
-      console.log("[Socket.io] Authenticated client disconnected");
+      if (credentialTimer) clearInterval(credentialTimer);
+      if (authenticatedConnectionLogged) {
+        console.log("[Socket.io] Authenticated client disconnected");
+      }
+    });
+
+    void initialCredentialRevalidation.then((initialState) => {
+      if (!initialState.ok || !socket.connected) return;
+      authenticatedConnectionLogged = true;
+      console.log("[Socket.io] Authenticated client connected");
+
+      // Redis invalidation is the immediate path. This bounded fallback closes
+      // sockets even if a publisher/subscriber was temporarily unavailable, and
+      // prevents a stale client from passively receiving room broadcasts forever.
+      credentialTimer = setInterval(async () => {
+        if (!socket.connected || credentialCheckRunning) return;
+        credentialCheckRunning = true;
+        try {
+          const current = await getUserById(userId);
+          if (
+            !current ||
+            !credentialVersionMatches(socket.data.authVersion, current.authVersion)
+          ) {
+            disconnectForCredentialChange();
+          }
+        } catch {
+          disconnectForCredentialChange(
+            "Authentication service unavailable.",
+            "AUTHENTICATION_SERVICE_UNAVAILABLE"
+          );
+        } finally {
+          credentialCheckRunning = false;
+        }
+      }, SOCKET_CREDENTIAL_REVALIDATION_MS);
+      credentialTimer.unref();
     });
   });
 
