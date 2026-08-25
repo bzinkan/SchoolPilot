@@ -11,6 +11,19 @@ function Assert-Condition {
     if (-not $Condition) { throw $Message }
 }
 
+function Get-OwnedProcessStressThrottleLimit {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateRange(1, 65535)]
+        [int]$ProcessorCount
+    )
+
+    # Each parallel slot owns both a PowerShell runspace and a cold pwsh child.
+    # Reserve one logical processor for each side of that pair so the watchdogs
+    # measure process lifecycle failures rather than host scheduler starvation.
+    return [Math]::Max(2, [Math]::Min(8, [int][Math]::Floor($ProcessorCount / 2)))
+}
+
 function Assert-ExclusiveFileAccess {
     param(
         [Parameter(Mandatory = $true)]
@@ -212,9 +225,27 @@ exit 0
         [IO.File]::WriteAllText($fixture.path, $fixture.source, [Text.UTF8Encoding]::new($false))
     }
 
+    Assert-Condition ((Get-OwnedProcessStressThrottleLimit -ProcessorCount 1) -eq 2) `
+        "A single-processor host must retain two concurrent lifecycle workers."
+    Assert-Condition ((Get-OwnedProcessStressThrottleLimit -ProcessorCount 2) -eq 2) `
+        "A two-processor host must retain two concurrent lifecycle workers."
+    Assert-Condition ((Get-OwnedProcessStressThrottleLimit -ProcessorCount 4) -eq 2) `
+        "A four-processor host must reserve capacity for each runspace/child pair."
+    Assert-Condition ((Get-OwnedProcessStressThrottleLimit -ProcessorCount 8) -eq 4) `
+        "An eight-processor host must run four concurrent lifecycle workers."
+    Assert-Condition ((Get-OwnedProcessStressThrottleLimit -ProcessorCount 16) -eq 8) `
+        "A sixteen-processor host must retain the reviewed maximum concurrency."
+    Assert-Condition ((Get-OwnedProcessStressThrottleLimit -ProcessorCount 64) -eq 8) `
+        "High-capacity hosts must retain the reviewed maximum concurrency."
+    $stressThrottleLimit = Get-OwnedProcessStressThrottleLimit `
+        -ProcessorCount ([Environment]::ProcessorCount)
+    Assert-Condition ($stressThrottleLimit -ge 2 -and $stressThrottleLimit -le 8) `
+        "The runtime lifecycle throttle must remain between two and eight workers."
+
     # Each repetition exercises natural exit, the exit watchdog, and the
     # result-and-exit watchdog. A synchronized parent-owned registry keeps any
-    # failed worker cleanup reachable after its runspace returns.
+    # failed worker cleanup reachable after its runspace returns. Capacity-aware
+    # concurrency preserves those races without starving cold child startup.
     $stressResults = @(1..100 | ForEach-Object -Parallel {
         Set-StrictMode -Version Latest
         $ErrorActionPreference = "Stop"
@@ -385,7 +416,7 @@ exit 0
             }
         }
         [pscustomobject]@{iteration=$iteration;failure=$failure}
-    } -ThrottleLimit 8)
+    } -ThrottleLimit $stressThrottleLimit)
 
     $stressFailures = @($stressResults | Where-Object { $null -ne $_.failure })
     Assert-Condition ($stressResults.Count -eq 100) `
