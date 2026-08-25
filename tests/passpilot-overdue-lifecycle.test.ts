@@ -1,12 +1,16 @@
-import { after, before, describe, it } from "node:test";
+import { after, afterEach, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { readFileSync } from "node:fs";
 import { sql } from "drizzle-orm";
-import type { School } from "../src/schema/core.js";
+import { Client } from "pg";
+import type { School, User } from "../src/schema/core.js";
 import type { Grade, InsertPass } from "../src/schema/passpilot.js";
 import type { Student } from "../src/schema/students.js";
 
 const TAG = `passpilot_overdue_${Date.now()}`;
+const KIOSK_PIN = "5964";
 const ORIGINAL_REDIS_URL = process.env.REDIS_URL;
 const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
 process.env.REDIS_URL = "";
@@ -19,7 +23,12 @@ let schedulerPool: typeof import("../src/services/schedulerDb.js").schedulerPool
 let schedulerLockPool: typeof import("../src/services/schedulerDb.js").schedulerLockPool | undefined;
 let storage: typeof import("../src/services/storage.js");
 let runWithTenantContext: typeof import("../src/middleware/tenantContext.js").runWithTenantContext;
+let signUserToken: typeof import("../src/services/jwt.js").signUserToken;
+let executeTool: typeof import("../src/services/chatToolExecutor.js").executeTool;
+let server: Server | undefined;
+let baseUrl: string;
 let school: School;
+let teacher: User;
 let grade: Grade;
 let student: Student;
 
@@ -56,6 +65,68 @@ function isUniqueViolation(error: unknown): boolean {
   return isRecord(error.cause) && error.cause.code === "23505";
 }
 
+function errorMessage(body: unknown): string {
+  return isRecord(body) && typeof body.error === "string" ? body.error : "";
+}
+
+function authHeaders(): Record<string, string> {
+  return {
+    authorization: `Bearer ${signUserToken({
+      userId: teacher.id,
+      email: teacher.email,
+      isSuperAdmin: false,
+    })}`,
+    "x-school-id": school.id,
+  };
+}
+
+function kioskHeaders(): Record<string, string> {
+  return {
+    "x-school-id": school.id,
+    "x-kiosk-pin": KIOSK_PIN,
+  };
+}
+
+async function requestJson(
+  method: "POST",
+  path: string,
+  body: Record<string, unknown>,
+  headers: Record<string, string>
+): Promise<{ status: number; body: unknown }> {
+  const response = await fetch(`${baseUrl}${path}`, {
+    method,
+    headers: { "content-type": "application/json", ...headers },
+    body: JSON.stringify(body),
+  });
+  const text = await response.text();
+  return {
+    status: response.status,
+    body: text ? JSON.parse(text) as unknown : null,
+  };
+}
+
+async function resolveActivePasses(): Promise<void> {
+  const active = await inSchool(() => storage.getActivePassesByStudentIds(school.id, [student.id]));
+  await inSchool(async () => {
+    for (const pass of active) {
+      await storage.returnPass(pass.id, school.id);
+    }
+  });
+}
+
+async function waitForAdvisoryWaiters(client: Client, expected: number): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const result = await client.query<{ waiting: number }>(`
+      SELECT count(*)::int AS waiting
+      FROM pg_locks
+      WHERE locktype = 'advisory' AND NOT granted
+    `);
+    if ((result.rows[0]?.waiting ?? 0) >= expected) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+  }
+  assert.fail(`Timed out waiting for ${expected} PassPilot issuance lock waiters`);
+}
+
 before(async () => {
   const dbModule = await import("../dist/db.js");
   db = dbModule.default;
@@ -63,6 +134,8 @@ before(async () => {
   sessionPool = dbModule.sessionPool;
   storage = await import("../dist/services/storage.js");
   ({ runWithTenantContext } = await import("../dist/middleware/tenantContext.js"));
+  ({ signUserToken } = await import("../dist/services/jwt.js"));
+  ({ executeTool } = await import("../dist/services/chatToolExecutor.js"));
   const schedulerDbModule = await import("../dist/services/schedulerDb.js");
   schedulerPool = schedulerDbModule.schedulerPool;
   schedulerLockPool = schedulerDbModule.schedulerLockPool;
@@ -72,13 +145,30 @@ before(async () => {
     domain: `${TAG}.example.edu`,
     slug: TAG,
     defaultPassDuration: 5,
-    kioskEnabled: false,
+    kioskEnabled: true,
     kioskRequiresApproval: false,
+  }));
+  teacher = await asSystem(() => storage.createUser({
+    email: `teacher@${TAG}.example.edu`,
+    firstName: "Overdue",
+    lastName: "Teacher",
+  }));
+  await asSystem(() => storage.createMembership({
+    schoolId: school.id,
+    userId: teacher.id,
+    role: "teacher",
+    status: "active",
+  }));
+  await inSchool(() => storage.createProductLicense({
+    schoolId: school.id,
+    product: "PASSPILOT",
+    status: "active",
   }));
   await inSchool(() => storage.upsertSettings(school.id, {
     schoolName: school.name,
     schoolTimezone: school.schoolTimezone,
     wsSharedKey: `${TAG}-private-key`,
+    passpilotClassSource: "legacy_grades",
   }));
   grade = await inSchool(() => storage.createGrade({
     schoolId: school.id,
@@ -93,18 +183,42 @@ before(async () => {
     gradeId: grade.id,
     status: "active",
   }));
+  await inSchool(() => storage.assignTeacherGrade(teacher.id, grade.id));
+  const { hashPassword } = await import("../dist/util/password.js");
+  const kioskPinHash = await hashPassword(KIOSK_PIN);
+  const updatedSchool = await inSchool(() => storage.updateSchool(school.id, {
+    kioskPinHash,
+    kioskGradeId: grade.id,
+  }));
+  if (updatedSchool) school = updatedSchool;
+
+  const { createApp } = await import("../dist/app.js");
+  server = createServer(createApp());
+  await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
+  baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
 });
 
 after(async () => {
   try {
+    if (server) {
+      await new Promise<void>((resolve, reject) => {
+        server!.close((error) => error ? reject(error) : resolve());
+      });
+    }
     if (school?.id) {
       await asSystem(async () => {
+        await db.execute(sql`DELETE FROM student_timeline_events WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM passes WHERE school_id = ${school.id}`);
+        await db.execute(sql`DELETE FROM teacher_grades WHERE grade_id = ${grade.id}`);
+        await db.execute(sql`DELETE FROM passpilot_grade_students WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM students WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM grades WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM audit_logs WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM settings WHERE school_id = ${school.id}`);
+        await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${school.id}`);
+        await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM schools WHERE id = ${school.id}`);
+        await db.execute(sql`DELETE FROM users WHERE id = ${teacher.id}`);
       });
     }
   } finally {
@@ -117,6 +231,10 @@ after(async () => {
     if (ORIGINAL_NODE_ENV === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = ORIGINAL_NODE_ENV;
   }
+});
+
+afterEach(async () => {
+  if (school?.id) await resolveActivePasses();
 });
 
 describe("PassPilot overdue lifecycle", { concurrency: false }, () => {
@@ -175,7 +293,7 @@ describe("PassPilot overdue lifecycle", { concurrency: false }, () => {
 
     const settingsUpdate = await inSchool(() => storage.updatePasspilotAdminSettings(
       school.id,
-      0,
+      school.passpilotSettingsRevision,
       { defaultPassDuration: 10 },
       { userId: `${TAG}-admin`, userRole: "school_admin" }
     ));
@@ -204,5 +322,110 @@ describe("PassPilot overdue lifecycle", { concurrency: false }, () => {
       expiresAt: new Date(Date.now() + 60_000),
     })));
     assert.equal(replacement.status, "active");
+    await inSchool(() => storage.cancelPass(replacement.id, school.id));
+  });
+
+  it("blocks an overdue duplicate through teacher, kiosk, and AI issuance surfaces", async () => {
+    const overdue = await inSchool(() => storage.createPass(passInput({ teacherId: teacher.id })));
+    try {
+      const teacherResponse = await requestJson(
+        "POST",
+        "/passpilot/passes",
+        {
+          studentId: student.id,
+          gradeId: grade.id,
+          destination: "office",
+        },
+        authHeaders()
+      );
+      assert.equal(teacherResponse.status, 409);
+      assert.match(errorMessage(teacherResponse.body), /already has an active pass/i);
+
+      const kioskResponse = await requestJson(
+        "POST",
+        "/passpilot/kiosk/checkout",
+        {
+          studentId: student.id,
+          classId: grade.id,
+          destination: "nurse",
+        },
+        kioskHeaders()
+      );
+      assert.equal(kioskResponse.status, 409);
+      assert.match(errorMessage(kioskResponse.body), /already has an active pass/i);
+
+      const aiResult = await executeTool(
+        "issue_pass",
+        {
+          studentId: student.id,
+          classId: grade.id,
+          destination: "counselor",
+        },
+        {
+          userId: teacher.id,
+          schoolId: school.id,
+          schoolName: "current school",
+          userName: "current user",
+          userRole: "teacher",
+          licensedProducts: ["PASSPILOT"],
+          getTranscript: () => "",
+        }
+      );
+      assert.equal(aiResult.success, false);
+      assert.match(aiResult.error ?? "", /already has an active pass/i);
+
+      const active = await inSchool(() =>
+        storage.getActivePassesByStudentIds(school.id, [student.id])
+      );
+      assert.deepEqual(active.map((pass) => pass.id), [overdue.id]);
+      assert.equal((await inSchool(() => storage.getPassById(overdue.id, school.id)))?.status, "active");
+    } finally {
+      await resolveActivePasses();
+    }
+  });
+
+  it("allows exactly one winner when two teacher issuances race after both active-pass checks", async () => {
+    assert.ok(process.env.DATABASE_URL, "DATABASE_URL is required for the issuance race fixture");
+    const blocker = new Client({ connectionString: process.env.DATABASE_URL });
+    await blocker.connect();
+    const lockKey = `passpilot-class-source:${school.id}`;
+    await blocker.query("SELECT pg_advisory_lock(hashtext($1))", [lockKey]);
+
+    let attempts: Promise<Array<{ status: number; body: unknown }>> | undefined;
+    try {
+      attempts = Promise.all([
+        requestJson(
+          "POST",
+          "/passpilot/passes",
+          { studentId: student.id, gradeId: grade.id, destination: "office" },
+          authHeaders()
+        ),
+        requestJson(
+          "POST",
+          "/passpilot/passes",
+          { studentId: student.id, gradeId: grade.id, destination: "nurse" },
+          authHeaders()
+        ),
+      ]);
+      await waitForAdvisoryWaiters(blocker, 2);
+    } finally {
+      await blocker.query("SELECT pg_advisory_unlock(hashtext($1))", [lockKey]);
+      await blocker.end();
+    }
+
+    try {
+      const responses = await attempts!;
+      assert.deepEqual(responses.map((response) => response.status).sort(), [201, 409]);
+      const conflict = responses.find((response) => response.status === 409);
+      assert.match(errorMessage(conflict?.body), /already has an active pass/i);
+
+      const active = await inSchool(() =>
+        storage.getActivePassesByStudentIds(school.id, [student.id])
+      );
+      assert.equal(active.length, 1);
+      assert.equal(active[0]?.status, "active");
+    } finally {
+      await resolveActivePasses();
+    }
   });
 });
