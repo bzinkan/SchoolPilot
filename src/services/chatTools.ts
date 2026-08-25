@@ -331,7 +331,8 @@ export const chatTools: ChatTool[] = [
           duration: {
             type: "number",
             minimum: 1,
-            description: "Duration in minutes (default: 5)",
+            description:
+              "Optional overdue threshold override in minutes. When omitted, use the school's PassPilot setting.",
           },
         },
         required: ["studentId", "classId", "destination"],

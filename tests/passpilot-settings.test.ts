@@ -29,6 +29,7 @@ let adminB: any;
 let teacherA: any;
 
 const DTO_KEYS = [
+  "defaultPassDuration",
   "kioskEnabled",
   "kioskPinConfigured",
   "kioskRequiresApproval",
@@ -81,10 +82,22 @@ function assertExactDto(value: any): void {
   assert.equal(typeof value.schoolTimezone, "string");
   assert.equal(typeof value.kioskEnabled, "boolean");
   assert.equal(typeof value.kioskRequiresApproval, "boolean");
+  assert.equal(Number.isSafeInteger(value.defaultPassDuration), true);
+  assert.equal(value.defaultPassDuration >= 1 && value.defaultPassDuration <= 240, true);
   assert.equal(typeof value.kioskPinConfigured, "boolean");
   assert.equal(Number.isSafeInteger(value.revision), true);
   assert.equal("kioskPin" in value, false);
   assert.equal("kioskPinHash" in value, false);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function resultRows(value: unknown): unknown[] {
+  assert.ok(isRecord(value));
+  assert.ok(Array.isArray(value.rows));
+  return value.rows;
 }
 
 async function cleanup(): Promise<void> {
@@ -263,6 +276,7 @@ describe("PassPilot admin settings backend", { concurrency: false }, () => {
     assert.equal(canonical.status, 200);
     assertExactDto(canonical.body);
     assert.equal(canonical.body.name, schoolA.name);
+    assert.equal(canonical.body.defaultPassDuration, 5);
     assert.equal(canonical.body.revision, 0);
 
     const alias = await requestJson(
@@ -326,6 +340,7 @@ describe("PassPilot admin settings backend", { concurrency: false }, () => {
       ["PATCH", { kioskPin: "2468" }],
       ["PATCH", { kioskRequiresApproval: true }],
       ["PATCH", { kioskStyle: "badge" }],
+      ["PATCH", { defaultPassDuration: 10 }],
     ] as const) {
       const genericSchoolAttempt = await requestJson(
         method,
@@ -361,6 +376,10 @@ describe("PassPilot admin settings backend", { concurrency: false }, () => {
       { expectedRevision: 0, kioskPin: "123" },
       { expectedRevision: 0, activeGradeLevels: "[\"K\"]" },
       { expectedRevision: 0, kioskStyle: "kiosk" },
+      { expectedRevision: 0, defaultPassDuration: 0 },
+      { expectedRevision: 0, defaultPassDuration: 241 },
+      { expectedRevision: 0, defaultPassDuration: 1.5 },
+      { expectedRevision: 0, defaultPassDuration: "10" },
       { kioskEnabled: false },
     ];
     for (const body of invalidBodies) {
@@ -477,6 +496,7 @@ describe("PassPilot admin settings backend", { concurrency: false }, () => {
       schoolTimezone: "America/Denver",
       kioskEnabled: true,
       kioskRequiresApproval: true,
+      defaultPassDuration: 5,
       kioskPinConfigured: true,
       kioskStyle: "simple",
       revision: 1,
@@ -625,6 +645,7 @@ describe("PassPilot admin settings backend", { concurrency: false }, () => {
         schoolTimezone: "America/Chicago",
         kioskEnabled: true,
         kioskRequiresApproval: true,
+        defaultPassDuration: 10,
         kioskPin: "2468",
       },
       headers
@@ -636,6 +657,7 @@ describe("PassPilot admin settings backend", { concurrency: false }, () => {
       schoolTimezone: "America/Chicago",
       kioskEnabled: true,
       kioskRequiresApproval: true,
+      defaultPassDuration: 10,
       kioskPinConfigured: true,
       kioskStyle: "simple",
       revision: 1,
@@ -643,6 +665,7 @@ describe("PassPilot admin settings backend", { concurrency: false }, () => {
 
     const persisted = await asSystem(() => db.execute(sql`
       SELECT name, school_timezone, kiosk_enabled, kiosk_requires_approval,
+             default_pass_duration,
              kiosk_pin_hash, passpilot_settings_revision
       FROM schools
       WHERE id = ${schoolA.id}
@@ -650,6 +673,9 @@ describe("PassPilot admin settings backend", { concurrency: false }, () => {
     const firstHash = persisted.rows[0].kiosk_pin_hash;
     assert.notEqual(firstHash, "2468");
     assert.equal(await comparePassword("2468", firstHash), true);
+    const persistedDuration = resultRows(persisted)[0];
+    assert.ok(isRecord(persistedDuration));
+    assert.equal(persistedDuration.default_pass_duration, 10);
     assert.equal(persisted.rows[0].passpilot_settings_revision, 1);
 
     const mirror = await inSchool(schoolA.id, () => db.execute(sql`
@@ -673,6 +699,17 @@ describe("PassPilot admin settings backend", { concurrency: false }, () => {
     assert.doesNotMatch(serializedAudit, /2468/);
     assert.doesNotMatch(serializedAudit, /\$2[aby]\$/);
     assert.equal(audit.rows[0].changes.kioskPin, "configured");
+    const auditedSettings = resultRows(audit)[0];
+    assert.ok(isRecord(auditedSettings));
+    assert.ok(isRecord(auditedSettings.changes));
+    assert.deepEqual(auditedSettings.changes.fields, [
+      "name",
+      "schoolTimezone",
+      "kioskEnabled",
+      "kioskRequiresApproval",
+      "defaultPassDuration",
+      "kioskPin",
+    ]);
     assert.equal(audit.rows[0].metadata.revision, 1);
     assert.equal(audit.rows[0].metadata.contract, "revisioned");
 

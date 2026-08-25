@@ -21,6 +21,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../../../components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "../../../../components/ui/alert-dialog";
 import { Input } from "../../../../components/ui/input";
 import { Label } from "../../../../components/ui/label";
 import { useAbsentStudents } from "../../../../hooks/useAbsentStudents";
@@ -40,17 +51,20 @@ import {
   writePassPilotSelectedClassId,
 } from "../../selectedClassSession";
 import {
+  formatPassOverdueDuration,
   formatPassDuration,
   getCurrentSchoolWeekRange,
   getPassActualDurationMs,
   getPassDestinationLabel,
   getPassIssuerLabel,
   getPassStatusLabel,
+  isPassOverdue,
 } from "../../passData";
+import { formatLivePassDuration } from "../../passDuration";
 import { encodePassPilotCsv } from "../../passCsv";
 import { useKioskSessions } from "../../useKioskSessions";
 import ClaimKioskDialog from "../ClaimKioskDialog";
-import LivePassDuration from "../LivePassDuration";
+import { usePassNow } from "../LivePassDuration";
 
 const DESTINATION_LABELS = {
   bathroom: 'Bathroom',
@@ -87,10 +101,17 @@ function formatSchoolLocalDate(value, timezone, options = {}) {
   });
 }
 
-function getPassDurationLabel(pass) {
+function getPassDurationLabel(pass, nowMs) {
   const durationMs = getPassActualDurationMs(pass);
   if (durationMs !== null) return formatPassDuration(durationMs);
-  return getPassStatusLabel(pass) === 'Still out' ? 'Pending' : 'Unavailable';
+  const statusLabel = getPassStatusLabel(pass, nowMs);
+  return statusLabel === 'Still out' || statusLabel === 'Overdue' ? 'Pending' : 'Unavailable';
+}
+
+function getOverdueLabel(pass, nowMs) {
+  const duration = formatPassOverdueDuration(pass, nowMs);
+  if (!duration) return null;
+  return duration === '<1 min' ? `Overdue ${duration}` : `Overdue by ${duration}`;
 }
 
 function useSchoolDateAnchor(timezone) {
@@ -146,6 +167,9 @@ function MyClassTab() {
   const [showPassData, setShowPassData] = useState(false);
   const [timePeriod, setTimePeriod] = useState('today');
   const [selectedPassDataStudent, setSelectedPassDataStudent] = useState(null); // { id, name, classId, schoolId }
+  const [updatingPassId, setUpdatingPassId] = useState(null);
+  const passActionInFlightRef = React.useRef(false);
+  const nowMs = usePassNow();
 
   const { isAdmin, isSchoolwideManager, school, user } = usePassPilotAuth();
   const { canLinkToClassPilot } = useStudentImportHome();
@@ -456,8 +480,8 @@ function MyClassTab() {
             actualDurationMs !== null ? formatTimeFull(pass.returnedAt, tz) : '',
             getPassDestinationLabel(pass),
             getPassIssuerLabel(pass),
-            getPassStatusLabel(pass),
-            getPassDurationLabel(pass),
+            getPassStatusLabel(pass, nowMs),
+            getPassDurationLabel(pass, nowMs),
           ];
         })
       ));
@@ -614,17 +638,24 @@ function MyClassTab() {
     setIsCustomReasonDialogOpen(true);
   };
 
+  const invalidatePassState = () => Promise.all([
+    queryClient.invalidateQueries({ queryKey: ['/api/passes/active'] }),
+    queryClient.invalidateQueries({ queryKey: ['/api/passes'] }),
+    queryClient.invalidateQueries({ queryKey: ['/api/passes/history', schoolId] }),
+    queryClient.invalidateQueries({ queryKey: passPilotClassesQueryKey(schoolId) }),
+    queryClient.invalidateQueries({ queryKey: ['/api/students'] }),
+    ...(activeGradeId ? [queryClient.invalidateQueries({
+      queryKey: passPilotClassRosterQueryKey(activeGradeId, schoolId),
+    })] : []),
+  ]);
+
   const handleMarkReturned = async (passId, studentName) => {
+    if (passActionInFlightRef.current) return;
+    passActionInFlightRef.current = true;
+    setUpdatingPassId(passId);
     try {
-      await passPilotClassRequest('PUT', `/passes/${passId}/return`, {});
-      queryClient.invalidateQueries({ queryKey: ['/api/passes/active'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/passes'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/passes/history', schoolId] });
-      queryClient.invalidateQueries({ queryKey: passPilotClassesQueryKey(schoolId) });
-      queryClient.invalidateQueries({ queryKey: ['/api/students'] });
-      if (activeGradeId) queryClient.invalidateQueries({
-        queryKey: passPilotClassRosterQueryKey(activeGradeId, schoolId),
-      });
+      await passPilotClassRequest('PATCH', `/passes/${passId}/return`, {});
+      await invalidatePassState();
 
       toast({
         title: "Student returned",
@@ -636,6 +667,32 @@ function MyClassTab() {
         description: error.message,
         variant: "destructive",
       });
+    } finally {
+      passActionInFlightRef.current = false;
+      setUpdatingPassId(null);
+    }
+  };
+
+  const handleCancelPass = async (passId, studentName) => {
+    if (passActionInFlightRef.current) return;
+    passActionInFlightRef.current = true;
+    setUpdatingPassId(passId);
+    try {
+      await passPilotClassRequest('PATCH', `/passes/${passId}/cancel`, {});
+      await invalidatePassState();
+      toast({
+        title: "Pass canceled",
+        description: `${studentName}'s pass was canceled. They were not marked returned.`,
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      passActionInFlightRef.current = false;
+      setUpdatingPassId(null);
     }
   };
 
@@ -1246,13 +1303,15 @@ function MyClassTab() {
                             </h5>
                             <div className="divide-y rounded-md border bg-card">
                               {group.passes.map((pass) => {
-                                const statusLabel = getPassStatusLabel(pass);
+                                const statusLabel = getPassStatusLabel(pass, nowMs);
                                 const actualDurationMs = getPassActualDurationMs(pass);
                                 const statusClass = statusLabel === 'Returned'
                                   ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300'
-                                  : statusLabel === 'Still out'
+                                  : statusLabel === 'Overdue'
                                     ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
-                                    : 'bg-muted text-muted-foreground';
+                                    : statusLabel === 'Still out'
+                                      ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300'
+                                      : 'bg-muted text-muted-foreground';
                                 return (
                                   <article
                                     key={pass.id}
@@ -1282,7 +1341,7 @@ function MyClassTab() {
                                     <div>
                                       <p className="text-xs text-muted-foreground">Duration</p>
                                       <p className="font-medium text-foreground">
-                                        {getPassDurationLabel(pass)}
+                                        {getPassDurationLabel(pass, nowMs)}
                                       </p>
                                     </div>
                                     <div className="xl:text-right">
@@ -1362,33 +1421,87 @@ function MyClassTab() {
                   {sortedGradeOutPasses.map((pass) => {
                     const student = students.find((s) => s.id === pass.studentId);
                     if (!student) return null;
+                    const studentName = `${student.firstName} ${student.lastName}`;
+                    const overdue = isPassOverdue(pass, nowMs);
+                    const overdueLabel = getOverdueLabel(pass, nowMs);
+                    const passActionPending = updatingPassId === pass.id;
 
                     return (
-                      <div key={pass.id} className="flex items-center justify-between p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                      <div
+                        key={pass.id}
+                        className={`flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between ${
+                          overdue
+                            ? 'border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30'
+                            : 'border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20'
+                        }`}
+                      >
                         <div className="flex items-center space-x-3">
-                          <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-medium ${getAvatarColor(`${student.firstName} ${student.lastName}`)}`}>
-                            {getInitials(`${student.firstName} ${student.lastName}`)}
+                          <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-medium ${getAvatarColor(studentName)}`}>
+                            {getInitials(studentName)}
                           </div>
                           <div>
-                            <div className="flex items-center gap-2">
-                              <p className="font-medium">{student.firstName} {student.lastName}</p>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="font-medium">{studentName}</p>
                               <span className={`px-2 py-1 text-xs rounded-full border flex items-center gap-1 ${getPassTypeBadgeColor(pass.destination || 'general', pass.destination)}`}>
                                 {getPassTypeIcon(pass.destination || 'general', pass.destination)}
                                 {pass.destination || 'general'}
                               </span>
+                              {overdueLabel ? (
+                                <span
+                                  className="inline-flex rounded-full border border-amber-300 bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-800 dark:border-amber-700 dark:bg-amber-900/50 dark:text-amber-200"
+                                  data-testid={`pass-overdue-${pass.id}`}
+                                >
+                                  {overdueLabel}
+                                </span>
+                              ) : null}
                             </div>
                             <p className="text-sm text-muted-foreground">
-                              {pass.customDestination || <>Out for <LivePassDuration issuedAt={pass.issuedAt} /></>} • Since {pass.issuedAt ? formatTimeFull(pass.issuedAt, tz) : 'Unknown time'}
+                              {pass.customDestination || <>Out for {formatLivePassDuration(pass.issuedAt, nowMs)}</>} • Since {pass.issuedAt ? formatTimeFull(pass.issuedAt, tz) : 'Unknown time'}
                             </p>
                           </div>
                         </div>
-                        <Button
-                          onClick={() => handleMarkReturned(pass.id, `${student.firstName} ${student.lastName}`)}
-                          size="sm"
-                          data-testid={`button-return-${pass.id}`}
-                        >
-                          Mark Returned
-                        </Button>
+                        <div className="flex items-center gap-2 self-end sm:self-auto">
+                          <Button
+                            onClick={() => handleMarkReturned(pass.id, studentName)}
+                            size="sm"
+                            disabled={updatingPassId !== null}
+                            data-testid={`button-return-${pass.id}`}
+                          >
+                            {passActionPending ? 'Updating...' : 'Mark Returned'}
+                          </Button>
+                          {overdue ? (
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={updatingPassId !== null}
+                                  data-testid={`button-cancel-pass-${pass.id}`}
+                                >
+                                  Cancel Pass
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Cancel {studentName}&apos;s overdue pass?</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    Canceling closes this pass but does not mark the student returned. Use Mark Returned if the student is back in class.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Keep Pass Active</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    onClick={() => handleCancelPass(pass.id, studentName)}
+                                    data-testid={`button-confirm-cancel-pass-${pass.id}`}
+                                  >
+                                    Cancel Pass
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          ) : null}
+                        </div>
                       </div>
                     );
                   })}

@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  formatPassOverdueDuration,
   formatPassDuration,
   getCurrentSchoolWeekRange,
   getPassActualDurationMs,
   getPassDestinationLabel,
   getPassIssuerLabel,
+  getPassOverdueMs,
   getPassStatusLabel,
+  isPassOverdue,
 } from "../src/products/passpilot/passData.js";
 import { encodePassPilotCsv } from "../src/products/passpilot/passCsv.js";
 import { startOfTodayInTimezone } from "../src/lib/date-utils.js";
@@ -117,6 +120,46 @@ test("duration formatting rounds only a completed aggregate", () => {
   assert.equal(formatPassDuration(60_000), "1 min");
   assert.equal(formatPassDuration(89_999), "1 min");
   assert.equal(formatPassDuration(90_000), "2 min");
+});
+
+test("active passes become overdue at their deadline without changing historical statuses", () => {
+  const expiresAt = "2026-08-25T12:05:00.000Z";
+  const activePass = { status: "active", expiresAt };
+  const justBefore = Date.parse("2026-08-25T12:04:59.999Z");
+  const exactDeadline = Date.parse(expiresAt);
+
+  assert.equal(isPassOverdue(activePass, justBefore), false);
+  assert.equal(getPassOverdueMs(activePass, justBefore), null);
+  assert.equal(getPassStatusLabel(activePass, justBefore), "Still out");
+
+  assert.equal(isPassOverdue(activePass, exactDeadline), true);
+  assert.equal(getPassOverdueMs(activePass, exactDeadline), 0);
+  assert.equal(formatPassOverdueDuration(activePass, exactDeadline), "<1 min");
+  assert.equal(getPassStatusLabel(activePass, exactDeadline), "Overdue");
+
+  const twoMinutesOverdue = exactDeadline + 179_999;
+  assert.equal(getPassOverdueMs(activePass, twoMinutesOverdue), 179_999);
+  assert.equal(formatPassOverdueDuration(activePass, twoMinutesOverdue), "2 min");
+  assert.equal(getPassStatusLabel({ status: "expired", expiresAt }, twoMinutesOverdue), "Expired");
+  assert.equal(getPassStatusLabel({ status: "returned", expiresAt }, twoMinutesOverdue), "Returned");
+  assert.equal(getPassStatusLabel({ status: "canceled", expiresAt }, twoMinutesOverdue), "Canceled");
+});
+
+test("overdue helpers fail safely for malformed pass and clock timestamps", () => {
+  const now = Date.parse("2026-08-25T12:10:00.000Z");
+  for (const pass of [
+    { status: "active" },
+    { status: "active", expiresAt: null },
+    { status: "active", expiresAt: "" },
+    { status: "active", expiresAt: "not-a-date" },
+    { status: "returned", expiresAt: "2026-08-25T12:00:00.000Z" },
+  ]) {
+    assert.equal(isPassOverdue(pass, now), false);
+    assert.equal(getPassOverdueMs(pass, now), null);
+    assert.equal(formatPassOverdueDuration(pass, now), null);
+  }
+  assert.equal(isPassOverdue({ status: "active", expiresAt: "2026-08-25T12:00:00.000Z" }, Number.NaN), false);
+  assert.equal(getPassStatusLabel({ status: "active", expiresAt: "not-a-date" }, now), "Still out");
 });
 
 test("issuer, status, and destination labels cover teacher and kiosk history", () => {

@@ -142,10 +142,12 @@ export const passes = pgTable(
     classNameSnapshot: text("class_name_snapshot"),
     destination: text("destination").notNull(), // bathroom | nurse | office | counselor | other_classroom | custom
     customDestination: text("custom_destination"),
+    // `expired` is retained for historical rows only. Runtime passes remain
+    // active past their threshold until explicitly returned or canceled.
     status: text("status").notNull().default("active"), // active | returned | expired | canceled
     issuedAt: timestamp("issued_at").notNull().default(sql`now()`),
-    duration: integer("duration").notNull().default(5), // minutes
-    expiresAt: timestamp("expires_at").notNull(),
+    duration: integer("duration").notNull().default(5), // overdue threshold in minutes
+    expiresAt: timestamp("expires_at").notNull(), // derived overdue threshold; not an automatic transition
     returnedAt: timestamp("returned_at"),
     issuedVia: text("issued_via").notNull().default("teacher"), // teacher | kiosk
     notes: text("notes"),
@@ -155,6 +157,9 @@ export const passes = pgTable(
     index("passes_student_id_idx").on(table.studentId),
     index("passes_teacher_id_idx").on(table.teacherId),
     index("passes_status_idx").on(table.status),
+    uniqueIndex("passes_one_active_per_student")
+      .on(table.studentId, table.schoolId)
+      .where(sql`${table.status} = 'active'`),
     index("passes_issued_at_idx").on(table.issuedAt),
     index("passes_school_classpilot_group_status_idx").on(
       table.schoolId,

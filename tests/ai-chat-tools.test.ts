@@ -10,6 +10,22 @@ async function loadExecuteTool() {
   return mod.executeTool;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function getPassDurationDescription(tool: unknown): string {
+  assert.ok(isRecord(tool));
+  assert.ok(isRecord(tool.input_schema));
+  assert.ok(isRecord(tool.input_schema.properties));
+  assert.ok(isRecord(tool.input_schema.properties.duration));
+  const description = tool.input_schema.properties.duration.description;
+  if (typeof description !== "string") {
+    assert.fail("issue_pass duration description must be a string");
+  }
+  return description;
+}
+
 describe("AI chat tool privacy and authorization", () => {
   it("does not expose individual browsing history to AI chat", async () => {
     const { toolMeta } = getToolsForContext("teacher", ["CLASSPILOT"]);
@@ -56,10 +72,16 @@ describe("AI chat tool privacy and authorization", () => {
   });
 
   it("gives PassPilot-only teachers an authorized class inventory for pass issuance", () => {
-    const { toolMeta } = getToolsForContext("teacher", ["PASSPILOT"]);
+    const { tools, toolMeta } = getToolsForContext("teacher", ["PASSPILOT"]);
 
     assert.equal(toolMeta.has("list_passpilot_classes"), true);
     assert.equal(toolMeta.has("issue_pass"), true);
     assert.equal(toolMeta.has("list_classes"), false);
+
+    const issuePass = tools.find((tool) => tool.name === "issue_pass");
+    const durationDescription = getPassDurationDescription(issuePass);
+    assert.match(durationDescription, /optional overdue threshold override/i);
+    assert.match(durationDescription, /school's PassPilot setting/i);
+    assert.doesNotMatch(durationDescription, /default:\s*5/i);
   });
 });

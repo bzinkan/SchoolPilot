@@ -110,12 +110,43 @@ export function getPassIssuerLabel(pass) {
   return pass?.teacherId ? "Former staff member" : "Unknown issuer";
 }
 
-export function getPassStatusLabel(pass) {
+/**
+ * Return elapsed milliseconds beyond an active pass's deadline.
+ * Non-active passes, future deadlines, and malformed timestamps are not
+ * overdue and return null so historical `expired` rows remain distinct.
+ */
+export function getPassOverdueMs(pass, nowMs = Date.now()) {
+  if (String(pass?.status || "").toLowerCase() !== "active") return null;
+  if (pass?.expiresAt === null || pass?.expiresAt === undefined || pass.expiresAt === "") {
+    return null;
+  }
+
+  const currentMs = typeof nowMs === "number" ? nowMs : Number.NaN;
+  const expiresAtMs = new Date(pass.expiresAt).getTime();
+  if (!Number.isFinite(currentMs) || !Number.isFinite(expiresAtMs)) return null;
+
+  const overdueMs = currentMs - expiresAtMs;
+  return overdueMs >= 0 ? overdueMs : null;
+}
+
+export function isPassOverdue(pass, nowMs = Date.now()) {
+  return getPassOverdueMs(pass, nowMs) !== null;
+}
+
+/** Format only the elapsed overdue duration; surfaces supply the status copy. */
+export function formatPassOverdueDuration(pass, nowMs = Date.now()) {
+  const overdueMs = getPassOverdueMs(pass, nowMs);
+  if (overdueMs === null) return null;
+  if (overdueMs < 60_000) return "<1 min";
+  return `${Math.floor(overdueMs / 60_000)} min`;
+}
+
+export function getPassStatusLabel(pass, nowMs = Date.now()) {
   switch (String(pass?.status || "").toLowerCase()) {
     case "returned":
       return "Returned";
     case "active":
-      return "Still out";
+      return isPassOverdue(pass, nowMs) ? "Overdue" : "Still out";
     case "expired":
       return "Expired";
     case "canceled":
