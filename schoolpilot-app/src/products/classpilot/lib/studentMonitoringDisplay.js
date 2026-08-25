@@ -1,14 +1,67 @@
 export const MONITORING_SIGNAL_LOSS_MS = 60_000;
 export const SCREENSHOT_STALE_MS = 75_000;
+export const OBSERVED_AT_DISPLAY_FUTURE_SKEW_MS = 60_000;
+
+const MINUTE_MS = 60_000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
 
 const ABSOLUTE_OBSERVED_AT_FORMATTER = new Intl.DateTimeFormat(undefined, {
   dateStyle: 'medium',
   timeStyle: 'medium',
 });
 
-function observedTime(value) {
-  const parsed = typeof value === 'number' ? value : Date.parse(value || '');
-  return Number.isFinite(parsed) ? parsed : null;
+function parsedObservedTime(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const trimmed = typeof value === 'string' ? value.trim() : value;
+  if (trimmed === '') return null;
+  const parsed = typeof trimmed === 'number'
+    ? trimmed
+    : /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(trimmed)
+      ? Number(trimmed)
+      : Date.parse(trimmed);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+export function normalizeObservedAtForOrdering(value, nowMs = Date.now()) {
+  const parsed = parsedObservedTime(value);
+  const now = Number(nowMs);
+  if (
+    parsed === null
+    || !Number.isFinite(now)
+    || now <= 0
+    || parsed > now + OBSERVED_AT_DISPLAY_FUTURE_SKEW_MS
+  ) {
+    return null;
+  }
+  return Math.min(parsed, now);
+}
+
+export function normalizeObservedAtForDisplay(value, nowMs = Date.now()) {
+  return normalizeObservedAtForOrdering(value, nowMs);
+}
+
+function normalizedStudentObservedAt(student, nowMs) {
+  return normalizeObservedAtForDisplay(student?.realtimeObservedAt, nowMs)
+    ?? normalizeObservedAtForDisplay(student?.lastSeenAt, nowMs);
+}
+
+export function formatRelativeLastSeen(value, nowMs = Date.now()) {
+  const observedAtMs = normalizeObservedAtForDisplay(value, nowMs);
+  if (observedAtMs === null) return 'Never observed';
+
+  const elapsedMs = Math.max(0, Number(nowMs) - observedAtMs);
+  if (elapsedMs < MINUTE_MS) return 'Last seen just now';
+  if (elapsedMs < HOUR_MS) {
+    const minutes = Math.floor(elapsedMs / MINUTE_MS);
+    return `Last seen ${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+  }
+  if (elapsedMs < DAY_MS) {
+    const hours = Math.floor(elapsedMs / HOUR_MS);
+    return `Last seen ${hours} hour${hours === 1 ? '' : 's'} ago`;
+  }
+  const days = Math.floor(elapsedMs / DAY_MS);
+  return `Last seen ${days} day${days === 1 ? '' : 's'} ago`;
 }
 
 function isSignedOut(student) {
@@ -29,7 +82,7 @@ export function deriveStudentMonitoringDisplay(student, nowMs = Date.now()) {
       status: 'offline',
       label: 'Not logged in',
       telemetryCurrent: false,
-      observedAtMs: observedTime(student?.realtimeObservedAt ?? student?.lastSeenAt),
+      observedAtMs: normalizedStudentObservedAt(student, nowMs),
       nextBoundaryAtMs: null,
     };
   }
@@ -45,7 +98,7 @@ export function deriveStudentMonitoringDisplay(student, nowMs = Date.now()) {
     };
   }
 
-  const observedAtMs = observedTime(student?.realtimeObservedAt ?? student?.lastSeenAt);
+  const observedAtMs = normalizedStudentObservedAt(student, nowMs);
   const nextBoundaryAtMs = observedAtMs === null
     ? null
     : observedAtMs + MONITORING_SIGNAL_LOSS_MS;
@@ -78,8 +131,9 @@ export function deriveStudentMonitoringDisplay(student, nowMs = Date.now()) {
 }
 
 export function deriveScreenshotDisplay(screenshotData, nowMs = Date.now()) {
-  const observedAtMs = observedTime(
+  const observedAtMs = normalizeObservedAtForDisplay(
     screenshotData?.timestamp ?? screenshotData?.capturedAt ?? screenshotData?.observedAt,
+    nowMs,
   );
   const available = Boolean(screenshotData?.screenshot);
   const fresh = available
@@ -154,8 +208,8 @@ export function lastObservedDomain(student) {
   }
 }
 
-export function formatAbsoluteObservedAt(value) {
-  const time = observedTime(value);
+export function formatAbsoluteObservedAt(value, nowMs = Date.now()) {
+  const time = normalizeObservedAtForDisplay(value, nowMs);
   return time === null
     ? 'Unavailable'
     : ABSOLUTE_OBSERVED_AT_FORMATTER.format(new Date(time));

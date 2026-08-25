@@ -97,6 +97,36 @@ assert.equal(
 assert.match(dashboardSource, /historyByStudent\.get\(student\.studentId\)/);
 assert.match(dashboardSource, /screenshotsByStudent\.get\(student\.studentId\)/);
 assert.doesNotMatch(
+  studentTileSource,
+  /enforcementHealth|Controls:/,
+  'teacher tiles must not expose device-control synchronization health',
+);
+assert.doesNotMatch(
+  studentTileSource,
+  />\s*Preview unavailable\s*</,
+  'unavailable-state truth must replace the redundant preview heading',
+);
+assert.doesNotMatch(
+  studentTileSource,
+  /Last observed site:/,
+  'last-observed site details belong in the student drawer rather than the tile',
+);
+assert.match(
+  studentTileSource,
+  /data-testid=\{`button-manage-tabs-\$\{student\.studentId\}`\}[\s\S]{0,180}View Tabs/,
+  'the per-student shortcut must be labeled View Tabs',
+);
+assert.match(
+  dashboardSource,
+  /onClick=\{\(\) => openManageTabs\(null\)\}[\s\S]{0,260}data-testid="button-tabs"[\s\S]{0,180}Manage Tabs/,
+  'the toolbar action must be labeled Manage Tabs without changing its active-target scope',
+);
+assert.match(
+  dashboardSource,
+  /onManageTabs=\{[^\n]*openManageTabs\(\[student\.studentId\]\)/,
+  'the tile action must remain bound to exactly one student',
+);
+assert.doesNotMatch(
   dashboardSource,
   /data-testid="tile-cohort-refresh-error"/,
   'cohort tile failures must remain tile-local and not add a dashboard-wide warning banner',

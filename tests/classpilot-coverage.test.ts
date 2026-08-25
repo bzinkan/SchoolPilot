@@ -1724,6 +1724,15 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       gradeLevel: "7",
       status: "active",
     }));
+    const neverObservedStudent = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Never",
+      lastName: "Observed",
+      email: `never-observed@${TAG}.example.edu`,
+      emailLc: `never-observed@${TAG}.example.edu`,
+      gradeLevel: "7",
+      status: "active",
+    }));
     const validDeviceId = `${TAG}-device-route-valid`;
     const rejectedDeviceId = `${TAG}-device-route-rejected`;
 
@@ -1757,6 +1766,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     await inSchool(school.id, () => addGroupStudentsDetailed(routeGroup.id, [
       validStudent.id,
       rejectedStudent.id,
+      neverObservedStudent.id,
     ]));
     const teachingSession = await inSchool(school.id, () => createTeachingSession({
       groupId: routeGroup.id,
@@ -1814,6 +1824,12 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.ok(Array.isArray(unscoped.body));
     assert.ok(unscoped.body.some((row: any) => row.studentId === validStudent.id));
     assert.ok(unscoped.body.some((row: any) => row.studentId === rejectedStudent.id));
+    const unscopedNeverObservedRow = unscoped.body.find(
+      (row: any) => row.studentId === neverObservedStudent.id
+    );
+    assert.ok(unscopedNeverObservedRow);
+    assert.equal(Object.hasOwn(unscopedNeverObservedRow, "lastSeenAt"), true);
+    assert.equal(unscopedNeverObservedRow.lastSeenAt, null);
     const unscopedRejectedRow = unscoped.body.find(
       (row: any) => row.studentId === rejectedStudent.id
     );
@@ -1858,11 +1874,15 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.equal(observed.status, 200);
     assert.deepEqual(
       new Set(observed.body.map((row: any) => row.studentId)),
-      new Set([validStudent.id, rejectedStudent.id])
+      new Set([validStudent.id, rejectedStudent.id, neverObservedStudent.id])
     );
 
     const validRow = observed.body.find((row: any) => row.studentId === validStudent.id);
     const rejectedRow = observed.body.find((row: any) => row.studentId === rejectedStudent.id);
+    const neverObservedRow = observed.body.find(
+      (row: any) => row.studentId === neverObservedStudent.id
+    );
+    assert.equal(validRow.lastSeenAt, observedAt);
     assert.equal(validRow.activeTabTitle, "Valid realtime");
     assert.equal(validRow.screenLocked, true);
     assert.equal(validRow.flightPathActive, true);
@@ -1870,6 +1890,13 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.equal(validRow.isSharing, true);
     assert.equal(validRow.cameraActive, true);
     assert.equal(validRow.capabilities.exactTabCloseV1, true);
+
+    assert.ok(neverObservedRow);
+    assert.equal(Object.hasOwn(neverObservedRow, "lastSeenAt"), true);
+    assert.equal(neverObservedRow.lastSeenAt, null);
+    assert.equal(neverObservedRow.realtimeObservedAt, null);
+    assert.equal(neverObservedRow.loginState, "not_logged_in");
+    assert.equal(neverObservedRow.isLoggedIn, false);
 
     assert.equal(rejectedRow.activeTabTitle, "");
     assert.equal(rejectedRow.activeTabUrl, "");

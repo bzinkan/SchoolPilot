@@ -6,6 +6,7 @@ import {
   makeAggregatedStudentsQueryKey,
   mergeAggregatedStudents,
 } from '../src/products/classpilot/lib/studentRealtimeCache.js';
+import { normalizeObservedAtForOrdering } from '../src/products/classpilot/lib/studentMonitoringDisplay.js';
 
 const base = () => [{
   studentId: 'student-1',
@@ -210,6 +211,58 @@ test('coalesces a burst to the highest revision per student and event type', () 
   ]);
   assert.equal(result.length, 2);
   assert.equal(result.find((event) => event.type === 'student-update').revision, 4);
+});
+
+test('epoch and malformed timestamps cannot win realtime ordering', () => {
+  const nowMs = Date.now();
+  for (const invalid of [null, undefined, '', 0, '0', -1, Number.NaN, Infinity, 'not-a-date']) {
+    assert.equal(normalizeObservedAtForOrdering(invalid, nowMs), null);
+  }
+
+  const validEvent = {
+    type: 'student-update',
+    studentId: 'student-1',
+    revision: 4,
+    observedAtMs: nowMs - 5_000,
+    activeTabUrl: 'https://valid.example',
+  };
+  const epochEvent = {
+    ...validEvent,
+    observedAtMs: 0,
+    activeTabUrl: 'https://epoch.example',
+  };
+  for (const events of [[epochEvent, validEvent], [validEvent, epochEvent]]) {
+    const [winner] = coalesceStudentRealtimeEvents(events);
+    assert.equal(winner.activeTabUrl, 'https://valid.example');
+  }
+
+  const applied = applyStudentRealtimeEvents(base(), [{
+    type: 'student-update',
+    schoolId: 'school-1',
+    studentId: 'student-1',
+    deviceId: 'device-1',
+    revision: 4,
+    observedAtMs: 0,
+    activeTabUrl: 'https://revision-still-applies.example',
+  }], { schoolId: 'school-1' });
+  assert.equal(applied[0].realtimeRevision, 4);
+  assert.equal(applied[0].activeTabUrl, 'https://revision-still-applies.example');
+  assert.equal(applied[0].realtimeObservedAt, base()[0].realtimeObservedAt);
+});
+
+test('an invalid future observation cannot displace a valid realtime binding', () => {
+  const original = base();
+  const result = applyStudentRealtimeEvents(original, [{
+    type: 'student-update',
+    eventVersion: 2,
+    schoolId: 'school-1',
+    studentId: 'student-1',
+    realtimeBinding: 'binding-b',
+    revision: 999,
+    observedAtMs: Date.now() + 120_000,
+    activeTabUrl: 'https://future.invalid',
+  }], { schoolId: 'school-1' });
+  assert.equal(result, original);
 });
 
 test('a new public binding resets prior telemetry and accepts a lower revision', () => {

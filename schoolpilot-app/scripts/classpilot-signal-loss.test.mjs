@@ -8,6 +8,8 @@ import {
   deriveStudentMonitoringDisplay,
   deriveUnavailablePreview,
   findNextStudentFreshnessBoundary,
+  formatRelativeLastSeen,
+  normalizeObservedAtForDisplay,
   removeStoppedLiveStream,
 } from '../src/products/classpilot/lib/studentMonitoringDisplay.js';
 import {
@@ -60,6 +62,54 @@ test('signed-out and delegated rows never enter a freshness timer', () => {
     'Monitoring handled by assigned staff',
   );
   assert.equal(findNextStudentFreshnessBoundary([signedOut, delegated], new Map(), observedAt), null);
+});
+
+test('last-seen display rejects sentinel timestamps and formats valid observations relatively', () => {
+  for (const invalid of [
+    null,
+    undefined,
+    '',
+    0,
+    '0',
+    -1,
+    Number.NaN,
+    Infinity,
+    'not-a-date',
+    '1970-01-01T00:00:00.000Z',
+  ]) {
+    assert.equal(normalizeObservedAtForDisplay(invalid, observedAt), null);
+    assert.equal(formatRelativeLastSeen(invalid, observedAt), 'Never observed');
+  }
+
+  assert.equal(
+    formatRelativeLastSeen(observedAt - (12 * 60_000), observedAt),
+    'Last seen 12 minutes ago',
+  );
+  assert.equal(
+    formatRelativeLastSeen(observedAt + 30_000, observedAt),
+    'Last seen just now',
+    'minor future clock skew must be clamped to the present',
+  );
+  assert.equal(
+    formatRelativeLastSeen(observedAt + 61_000, observedAt),
+    'Never observed',
+    'timestamps beyond the bounded skew allowance are not observations',
+  );
+
+  const signedOutEpoch = monitoredStudent({
+    loginState: 'not_logged_in',
+    isLoggedIn: false,
+    realtimeObservedAt: null,
+    lastSeenAt: 0,
+  });
+  assert.equal(deriveStudentMonitoringDisplay(signedOutEpoch, observedAt).observedAtMs, null);
+
+  const validFallback = deriveStudentMonitoringDisplay({
+    ...signedOutEpoch,
+    realtimeObservedAt: 0,
+    lastSeenAt: observedAt - 60_000,
+  }, observedAt);
+  assert.equal(validFallback.observedAtMs, observedAt - 60_000);
 });
 
 test('unavailable previews preserve signed-out, delegated, and signal-loss truth', () => {

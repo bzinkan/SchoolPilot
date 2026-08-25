@@ -149,6 +149,14 @@ function todayInTimeZone(timeZone?: string | null): string {
   }
 }
 
+function teacherTimestampOrNull(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const timestamp = typeof value === "number"
+    ? value
+    : new Date(value as string | Date).getTime();
+  return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : null;
+}
+
 type AuthorizedRealtimeBinding = ClasspilotRealtimeBinding & {
   sessionStartedAt: Date | null;
 };
@@ -1198,13 +1206,10 @@ router.get("/students-aggregated", ...classPilotStaffAuth, async (req, res, next
       else if (dismissal?.status === "dismissed") suppressionReason = "Student is dismissed";
       else if (dismissal?.status === "released") suppressionReason = "Student is released for dismissal";
       else if (dismissal) suppressionReason = "Student is in the dismissal flow";
-      const sessionLastSeenAt = snapshot?.sessionLastSeenAt
-        ? new Date(snapshot.sessionLastSeenAt).getTime()
-        : 0;
-      const lastActivityAt = visibleRealtime?.observedAt
-        || (delegatedAway ? 0 : rt?.observedAt)
-        || sessionLastSeenAt
-        || 0;
+      const sessionLastSeenAt = teacherTimestampOrNull(snapshot?.sessionLastSeenAt);
+      const lastActivityAt = teacherTimestampOrNull(visibleRealtime?.observedAt)
+        ?? (delegatedAway ? null : teacherTimestampOrNull(rt?.observedAt))
+        ?? sessionLastSeenAt;
       const timeSinceLastSeen = lastActivityAt ? Date.now() - lastActivityAt : Infinity;
       // Authentication state and monitoring freshness are deliberately
       // separate. A still-active session with stale telemetry is reported as
