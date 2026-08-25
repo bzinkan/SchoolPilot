@@ -13,8 +13,8 @@ import {
   createHomeroom,
   getActivePassesBySchool,
   getActivePassForStudent,
-  expireOverduePasses,
   getStudentById,
+  getSchoolById,
   createCanonicalPass,
   createLegacyPass,
   addHomeroomTeacher,
@@ -412,14 +412,17 @@ const executors: Record<string, ToolExecutor> = {
       return { success: false, error: "Student not found" };
     }
 
-    const duration = args.duration ?? 5;
-    if (typeof duration !== "number" || !Number.isFinite(duration) || duration < 1) {
+    if (
+      args.duration !== undefined &&
+      (typeof args.duration !== "number" || !Number.isFinite(args.duration) || args.duration < 1)
+    ) {
       return { success: false, error: "Pass duration must be a finite number of at least 1 minute" };
     }
 
-    const [absentStudentIds, schoolSettings] = await Promise.all([
+    const [absentStudentIds, schoolSettings, school] = await Promise.all([
       getAbsentStudentIds(ctx.schoolId, todayDate()),
       getSettingsForSchool(ctx.schoolId),
+      getSchoolById(ctx.schoolId),
     ]);
     if (absentStudentIds.has(args.studentId)) {
       return { success: false, error: "Cannot issue a pass to an absent student" };
@@ -428,9 +431,10 @@ const executors: Record<string, ToolExecutor> = {
       return { success: false, error: "Passes cannot be issued outside school hours" };
     }
 
-    // Mirror the route safeguards: expire stale passes first, then enforce
-    // one active pass per student (route + DB partial unique index).
-    await expireOverduePasses(ctx.schoolId);
+    const duration = args.duration ?? school?.defaultPassDuration ?? 5;
+
+    // The deadline is an overdue threshold, not an automatic return. Any
+    // active pass, including an overdue one, blocks a second pass.
     const active = await getActivePassForStudent(args.studentId, ctx.schoolId);
     if (active) {
       return { success: false, error: "Student already has an active pass" };

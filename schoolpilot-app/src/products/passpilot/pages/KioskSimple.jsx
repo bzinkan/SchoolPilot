@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { ArrowLeft, Bath, Heart, Triangle, Clock } from "lucide-react";
 import { isCanonicalPassPilotSource, PASSPILOT_CLASS_MODEL_HEADER } from "../classData";
 import KioskOfflineBanner from "../components/KioskOfflineBanner";
+import { usePassNow } from "../components/LivePassDuration";
 import {
   createKioskApiClient,
   createKioskSnapshotValidatorStore,
@@ -22,6 +23,7 @@ import {
   isKioskLaunchTicketPending,
   takeKioskLaunchTicket,
 } from "../kioskDeviceId";
+import { formatPassOverdueDuration, isPassOverdue } from "../passData";
 import { useKioskPollingController } from "../useKioskPollingController";
 
 const DESTINATIONS = [
@@ -32,8 +34,10 @@ const DESTINATIONS = [
 
 const DESTINATION_PICKER_TIMEOUT = 10000; // 10 seconds - auto-close destination picker
 
-function getTimeSince(dateStr) {
-  const diff = Date.now() - new Date(dateStr).getTime();
+function getTimeSince(dateStr, nowMs) {
+  const issuedAtMs = new Date(dateStr).getTime();
+  if (!Number.isFinite(issuedAtMs)) return "";
+  const diff = Math.max(0, nowMs - issuedAtMs);
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return "just now";
   if (mins === 1) return "1 min";
@@ -62,6 +66,7 @@ const KIOSK_PIN_KEY = "pp_kiosk_pin";
 const KIOSK_SESSION_KEY = "pp_kiosk_session_simple";
 
 export default function KioskSimplePage() {
+  const nowMs = usePassNow();
   const [schoolId] = useState(() => new URLSearchParams(window.location.search).get("school") ?? "");
   const [kioskPin, setKioskPin] = useState(() => kioskPinStore().getItem(KIOSK_PIN_KEY) ?? "");
   const [launchTicket, setLaunchTicket] = useState(() => takeKioskLaunchTicket());
@@ -890,32 +895,52 @@ export default function KioskSimplePage() {
             </div>
           ) : (
             <div className="space-y-2">
-              {studentsOut.map(student => (
-                <button
-                  key={student.id}
-                  onClick={() => handleCheckin(student.id)}
-                  disabled={loading}
-                  className="w-full text-left px-4 py-4 rounded-lg flex items-center justify-between transition-colors bg-orange-900/30 border border-orange-700/50 hover:bg-orange-900/50"
-                >
-                  <div>
-                    <span className="text-lg font-medium">
-                      {student.lastName}, {student.firstName}
-                    </span>
-                    {student.studentIdNumber && (
-                      <span className="ml-3 text-sm text-gray-500">ID: {student.studentIdNumber}</span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="px-3 py-1 rounded-full bg-orange-800/60 text-orange-200 text-sm font-medium">
-                      {getDestinationLabel(student.activePass.destination, student.activePass.customDestination)}
-                    </span>
-                    <span className="text-sm text-gray-400">
-                      {getTimeSince(student.activePass.issuedAt)}
-                    </span>
-                    <span className="text-xs text-orange-400">Tap to return</span>
-                  </div>
-                </button>
-              ))}
+              {studentsOut.map(student => {
+                const overdue = isPassOverdue(student.activePass, nowMs);
+                const overdueDuration = overdue
+                  ? formatPassOverdueDuration(student.activePass, nowMs)
+                  : null;
+                const overdueLabel = overdueDuration === "<1 min"
+                  ? "Overdue <1 min"
+                  : overdueDuration
+                    ? `Overdue by ${overdueDuration}`
+                    : null;
+
+                return (
+                  <button
+                    key={student.id}
+                    onClick={() => handleCheckin(student.id)}
+                    disabled={loading}
+                    className={`w-full text-left px-4 py-4 rounded-lg flex items-center justify-between transition-colors ${overdue
+                      ? "bg-amber-900/30 border border-amber-600/60 hover:bg-amber-900/50"
+                      : "bg-orange-900/30 border border-orange-700/50 hover:bg-orange-900/50"
+                    }`}
+                  >
+                    <div>
+                      <span className="text-lg font-medium">
+                        {student.lastName}, {student.firstName}
+                      </span>
+                      {student.studentIdNumber && (
+                        <span className="ml-3 text-sm text-gray-500">ID: {student.studentIdNumber}</span>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap items-center justify-end gap-3">
+                      <span className="px-3 py-1 rounded-full bg-orange-800/60 text-orange-200 text-sm font-medium">
+                        {getDestinationLabel(student.activePass.destination, student.activePass.customDestination)}
+                      </span>
+                      <span className="text-sm text-gray-400">
+                        {getTimeSince(student.activePass.issuedAt, nowMs)}
+                      </span>
+                      {overdueLabel ? (
+                        <span className="rounded-full border border-amber-500/70 bg-amber-500/20 px-3 py-1 text-sm font-semibold text-amber-200">
+                          {overdueLabel}
+                        </span>
+                      ) : null}
+                      <span className="text-xs text-orange-400">Tap to return</span>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>

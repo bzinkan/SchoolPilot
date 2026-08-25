@@ -52,7 +52,7 @@ export function usePassPilotAuth() {
         domain: activeMembership.schoolDomain || '',
         kioskEnabled: activeMembership.kioskEnabled ?? false,
         kioskRequiresApproval: activeMembership.kioskRequiresApproval ?? false,
-        defaultPassDuration: activeMembership.defaultPassDuration ?? 15,
+        defaultPassDuration: activeMembership.defaultPassDuration ?? 5,
         schoolTimezone: activeMembership.schoolTimezone || 'America/New_York',
         activeGradeLevels: activeMembership.activeGradeLevels || [],
       }

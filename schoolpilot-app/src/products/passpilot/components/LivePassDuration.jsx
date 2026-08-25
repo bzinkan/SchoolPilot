@@ -31,8 +31,15 @@ function getServerSnapshot() {
   return 0;
 }
 
+// The hook and component intentionally share this module so every PassPilot
+// surface subscribes to the same module-scoped ticker.
+// eslint-disable-next-line react-refresh/only-export-components
+export function usePassNow() {
+  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+}
+
 const LivePassDuration = memo(function LivePassDuration({ issuedAt }) {
-  const nowMs = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  const nowMs = usePassNow();
   return formatLivePassDuration(issuedAt, nowMs);
 });
 

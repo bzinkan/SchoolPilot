@@ -375,5 +375,11 @@ test('both kiosk pages use one shared controller and contain no interval polling
     assert.match(source, /isKioskMutationCurrent\(mutation\)/);
     assert.equal((source.match(/kioskNotModifiedResult\(\{ validatorKey, validatorEtag \}\)/g) || []).length, 1);
     assert.doesNotMatch(source, /snapshotEtagRef/);
+    assert.match(source, /usePassNow\(\)/, 'kiosk deadlines must advance without requiring a new snapshot');
+    assert.match(source, /isPassOverdue\(/);
+    assert.match(source, /formatPassOverdueDuration\(/);
+    assert.match(source, /Overdue by/);
   }
+  assert.match(files[0], /Check In \(Return Pass\)/, 'badge kiosk offers check-in for an active overdue pass');
+  assert.match(files[1], /Tap to return/, 'simple kiosk offers check-in for an active overdue pass');
 });

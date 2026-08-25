@@ -26,7 +26,7 @@ PassPilot is a digital hall pass management system designed for schools. It repl
 - **Real-Time Pass Tracking** - See which students are out of class and where they are
 - **Teacher-Issued Passes** - Quick one-click pass creation from the dashboard
 - **Kiosk Self-Checkout** - Students scan a badge or select their name to check out
-- **Automatic Expiration** - Passes expire after a configurable duration
+- **Overdue Tracking** - A configurable threshold flags long-running passes without automatically returning the student
 - **Detailed Reports** - Analytics on pass usage by student, teacher, grade, and type
 - **CSV Export** - Export pass history for records
 - **Google Workspace Integration** - Import teachers from Google Directory
@@ -68,7 +68,7 @@ The Passes tab shows all **currently active passes** across the school in real-t
 #### What You See
 - **Student Name** - Who is out of class
 - **Destination** - Where they went (Bathroom, Nurse, Office, Counselor, Other Classroom, Custom)
-- **Status Badge** - Active (green), Returned (gray), Expired (red)
+- **Status Badge** - Active (green) or Overdue (amber); returned and historical statuses remain available in reports
 - **Time Issued** - When the pass was created
 - **Live Indicator** - Green dot showing real-time updates are active
 
@@ -202,8 +202,13 @@ Teachers can push a specific grade to the Simple Kiosk from their dashboard:
 
 Admins can configure kiosk settings:
 - **Enable/Disable** kiosk mode school-wide
-- **Default Pass Duration** - How long before passes auto-expire (default: 5 minutes)
+- **Overdue After (minutes)** - The school-wide overdue threshold for new passes (default: 5 minutes; configurable from 1 to 240)
 - **Kiosk Name** - Identifier for the kiosk location (e.g., "Room 204", "Main Hall")
+
+An overdue pass stays active and the student stays marked **Currently Out**.
+The pass ends only when the student checks in, staff marks the student returned,
+or authorized staff cancels the pass. Changing the threshold affects only new
+passes; an existing pass keeps the deadline recorded when it was issued.
 
 ---
 
@@ -235,7 +240,7 @@ Visual summary cards showing counts by type:
 ### Key Statistics
 
 - **Total Passes** - Number of passes issued in the date range
-- **Average Duration** - Average time students are out
+- **Average Duration** - Average time students are out for explicitly returned passes
 - **Peak Hour** - Busiest hour for pass activity
 - **Unique Students** - Number of distinct students who had passes
 
@@ -322,7 +327,7 @@ Teachers will only see their assigned classes in the My Class tab.
 
 Configure school-wide PassPilot settings:
 - **Kiosk Mode** - Enable/disable
-- **Pass Duration** - Default pass length in minutes
+- **Overdue After (minutes)** - School-wide threshold for new passes (1-240 whole minutes)
 - **Google Workspace** - Connection settings for teacher import
 
 ---
@@ -394,15 +399,12 @@ PassPilot is designed to support compliance with:
 2. Ask admin to enable kiosk mode in Settings
 3. Check internet connection on the kiosk device
 
-#### Pass Not Auto-Expiring
+#### Student Still Shows Currently Out After the Threshold
 
-**Possible Causes:**
-1. Duration set to 0 (no expiration)
-2. Server-side expiration check timing
-
-**Solutions:**
-1. Check Settings → Pass Duration (should be > 0)
-2. Passes are checked for expiration on each data refresh
+This is expected. The threshold marks the pass **Overdue**; it does not record
+that the student returned. Have the student check in at the kiosk, select
+**Mark Returned**, or use the authorized **Cancel Pass** action for an erroneous
+or stale pass.
 
 #### Cannot See Other Teachers' Passes
 
@@ -445,7 +447,7 @@ PassPilot is designed to support compliance with:
 
 - **Complete Roster First** - Import all students and classes before going live
 - **Assign All Teachers** - Ensure every teacher is assigned to their classes
-- **Set Appropriate Duration** - 5 minutes is standard; adjust based on your school's needs
+- **Set an Appropriate Overdue Threshold** - Choose 1-240 minutes based on your school's policy; reaching it never checks a student back in
 - **Review Reports Monthly** - Use analytics to identify trends and policy needs
 - **Train Teachers** - Walk through the dashboard and kiosk mode with staff before launch
 

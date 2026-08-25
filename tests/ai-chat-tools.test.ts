@@ -56,10 +56,16 @@ describe("AI chat tool privacy and authorization", () => {
   });
 
   it("gives PassPilot-only teachers an authorized class inventory for pass issuance", () => {
-    const { toolMeta } = getToolsForContext("teacher", ["PASSPILOT"]);
+    const { tools, toolMeta } = getToolsForContext("teacher", ["PASSPILOT"]);
 
     assert.equal(toolMeta.has("list_passpilot_classes"), true);
     assert.equal(toolMeta.has("issue_pass"), true);
     assert.equal(toolMeta.has("list_classes"), false);
+
+    const issuePass = tools.find((tool) => tool.name === "issue_pass") as any;
+    const durationDescription = issuePass?.input_schema?.properties?.duration?.description;
+    assert.match(durationDescription, /optional overdue threshold override/i);
+    assert.match(durationDescription, /school's PassPilot setting/i);
+    assert.doesNotMatch(durationDescription, /default:\s*5/i);
   });
 });

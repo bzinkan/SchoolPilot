@@ -53,6 +53,8 @@ export const schools = pgTable("schools", {
   // PassPilot settings
   kioskEnabled: boolean("kiosk_enabled").notNull().default(false),
   kioskRequiresApproval: boolean("kiosk_requires_approval").notNull().default(false),
+  // Minutes until an active pass is displayed as overdue. Crossing this
+  // threshold never changes the pass lifecycle state.
   defaultPassDuration: integer("default_pass_duration").notNull().default(5),
   kioskGradeId: varchar("kiosk_grade_id"),
   kioskClasspilotGroupId: varchar("kiosk_classpilot_group_id"),

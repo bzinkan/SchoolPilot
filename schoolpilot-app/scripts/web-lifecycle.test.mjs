@@ -10,9 +10,13 @@ test('live pass duration preserves the existing minute label behavior', () => {
   assert.equal(formatLivePassDuration('invalid', now), '0 min');
 });
 
-test('MyClass isolates its clock while retaining the three-second data cadence', async () => {
+test('PassPilot staff surfaces share one external-store clock and retain data polling', async () => {
   const myClass = await readFile(
     new URL('../src/products/passpilot/components/tabs/MyClassTab.jsx', import.meta.url),
+    'utf8',
+  );
+  const passes = await readFile(
+    new URL('../src/products/passpilot/components/tabs/PassesTab.jsx', import.meta.url),
     'utf8',
   );
   const ticker = await readFile(
@@ -22,10 +26,41 @@ test('MyClass isolates its clock while retaining the three-second data cadence',
 
   assert.match(myClass, /refetchInterval: 3000/);
   assert.match(myClass, /structuralSharing: true/);
-  assert.match(myClass, /<LivePassDuration issuedAt=\{pass\.issuedAt\}/);
+  assert.match(myClass, /const nowMs = usePassNow\(\)/);
+  assert.match(passes, /const nowMs = usePassNow\(\)/);
+  assert.match(ticker, /export function usePassNow\(\)/);
   assert.doesNotMatch(myClass, /currentTime|setInterval\s*\(/);
+  assert.doesNotMatch(passes, /setInterval\s*\(/);
   assert.equal((ticker.match(/setInterval\s*\(/g) || []).length, 1);
   assert.equal((ticker.match(/clearInterval\s*\(/g) || []).length, 1);
+});
+
+test('PassPilot staff UI exposes overdue resolution and guarded duration settings', async () => {
+  const myClass = await readFile(
+    new URL('../src/products/passpilot/components/tabs/MyClassTab.jsx', import.meta.url),
+    'utf8',
+  );
+  const passes = await readFile(
+    new URL('../src/products/passpilot/components/tabs/PassesTab.jsx', import.meta.url),
+    'utf8',
+  );
+  const setup = await readFile(
+    new URL('../src/products/passpilot/components/admin/SetupView.jsx', import.meta.url),
+    'utf8',
+  );
+
+  for (const surface of [myClass, passes]) {
+    assert.match(surface, /Mark Returned/);
+    assert.match(surface, /Cancel Pass/);
+    assert.match(surface, /does not mark the student returned/);
+  }
+  assert.match(myClass, /`\/passes\/\$\{passId\}\/cancel`/);
+  assert.match(passes, /`\/passes\/\$\{pass\.id\}\/\$\{action\}`/);
+  assert.match(setup, /settings\.defaultPassDuration !== undefined/);
+  assert.match(setup, />Overdue after \(minutes\)<\/Label>/);
+  assert.match(setup, /defaultPassDuration >= 1/);
+  assert.match(setup, /defaultPassDuration <= 240/);
+  assert.match(setup, /Changes apply only to new passes/);
 });
 
 test('Rosters fetch only the active surface and use server cursor pagination', async () => {

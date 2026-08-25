@@ -60,6 +60,7 @@ const DB_SERIAL = new Set([
   "multi-school-readiness-routes.test.ts",
   "p0-traffic-schema.test.ts",
   "passpilot-clean-cutover-runtime.test.ts",
+  "passpilot-overdue-lifecycle.test.ts",
   "passpilot-settings.test.ts",
   // This hermetic policy probe creates a role and table, then validates FORCE
   // RLS through SET ROLE. It requires the ordinary admin DB posture and must

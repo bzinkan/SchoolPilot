@@ -12,7 +12,6 @@ import {
   createCanonicalPass,
   returnPass,
   cancelPass,
-  expireOverduePasses,
   getStudentById,
   getStudentsByIds,
   getUserById,
@@ -213,9 +212,6 @@ router.get("/", async (req, res, next) => {
     const schoolId = res.locals.schoolId!;
     const role = await getRequestPassPilotRole(req, res);
 
-    // Expire overdue passes first
-    await expireOverduePasses(schoolId);
-
     const rawPasses = await getActivePassesBySchool(schoolId);
     const scopedPasses = await filterPassesForRole(rawPasses, req.authUser!, schoolId, role);
     const enriched = await enrichPasses(scopedPasses, schoolId);
@@ -230,8 +226,6 @@ router.get("/active", async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
     const role = await getRequestPassPilotRole(req, res);
-    await expireOverduePasses(schoolId);
-
     if (req.query.classId !== undefined) {
       const classId = typeof req.query.classId === "string"
         ? req.query.classId.trim()
@@ -432,11 +426,8 @@ router.post("/", async (req, res, next) => {
       return res.status(400).json({ error: "Cannot issue pass to absent student" });
     }
 
-    // Expire any overdue passes FIRST, so a pass that already lapsed doesn't
-    // block issuing a new one (otherwise a stale "active" pass returns 409).
-    await expireOverduePasses(schoolId);
-
-    // Check for existing active pass
+    // The deadline is an overdue threshold, not an automatic return. Any
+    // active pass, including an overdue one, blocks a second pass.
     const activePass = await getActivePassForStudent(studentId, schoolId);
     if (activePass) {
       return res.status(409).json({ error: "Student already has an active pass" });
@@ -450,7 +441,7 @@ router.post("/", async (req, res, next) => {
 
     // Calculate duration and expiry
     const school = res.locals.school || (await getSchoolById(schoolId));
-    const passDuration = duration || school?.defaultPassDuration || 5;
+    const passDuration = duration ?? school?.defaultPassDuration ?? 5;
     const expiresAt = new Date(Date.now() + passDuration * 60 * 1000);
 
     let pass;

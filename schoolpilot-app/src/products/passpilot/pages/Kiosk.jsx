@@ -6,6 +6,7 @@ import { Badge } from "../../../components/ui/badge";
 import { ArrowLeftRight, LogIn, X } from "lucide-react";
 import { PASSPILOT_CLASS_MODEL_HEADER } from "../classData";
 import KioskOfflineBanner from "../components/KioskOfflineBanner";
+import { usePassNow } from "../components/LivePassDuration";
 import {
   createKioskApiClient,
   createKioskSnapshotValidatorStore,
@@ -26,6 +27,7 @@ import {
   isKioskLaunchTicketPending,
   takeKioskLaunchTicket,
 } from "../kioskDeviceId";
+import { formatPassOverdueDuration, isPassOverdue } from "../passData";
 import { useKioskPollingController } from "../useKioskPollingController";
 
 const DESTINATIONS = [
@@ -49,6 +51,7 @@ const KIOSK_PIN_KEY = "pp_kiosk_pin";
 const KIOSK_SESSION_KEY = "pp_kiosk_session_badge";
 
 export default function KioskPage() {
+  const nowMs = usePassNow();
   const [state, setState] = useState("scan");
   const [idInput, setIdInput] = useState("");
   const [student, setStudent] = useState(null);
@@ -592,6 +595,16 @@ export default function KioskPage() {
     }
   };
 
+  const activePassOverdue = isPassOverdue(activePass, nowMs);
+  const overdueDuration = activePassOverdue
+    ? formatPassOverdueDuration(activePass, nowMs)
+    : null;
+  const overdueLabel = overdueDuration === "<1 min"
+    ? "Overdue <1 min"
+    : overdueDuration
+      ? `Overdue by ${overdueDuration}`
+      : null;
+
   if (!schoolId) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center p-8">
@@ -758,6 +771,19 @@ export default function KioskPage() {
                 <Badge variant="default" className="text-lg px-4 py-2">
                   Currently out: {activePass.destination}
                 </Badge>
+                {overdueLabel ? (
+                  <div>
+                    <Badge
+                      variant="outline"
+                      className="border-amber-500/70 bg-amber-500/15 px-4 py-2 text-base font-semibold text-amber-300"
+                    >
+                      {overdueLabel}
+                    </Badge>
+                    <p className="mt-2 text-sm text-amber-200/80">
+                      You are still checked out. Tap below when you return.
+                    </p>
+                  </div>
+                ) : null}
                 <Button size="lg" className="w-full text-lg h-14" onClick={handleCheckin}>
                   <ArrowLeftRight className="h-5 w-5 mr-2" />
                   Check In (Return Pass)

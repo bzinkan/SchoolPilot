@@ -30,6 +30,12 @@ const patchSettingsSchema = z
     schoolTimezone: z.enum(PASSPILOT_SUPPORTED_SCHOOL_TIMEZONES).optional(),
     kioskEnabled: z.boolean().optional(),
     kioskRequiresApproval: z.boolean().optional(),
+    defaultPassDuration: z
+      .number()
+      .int("Overdue threshold must be a whole number")
+      .min(1, "Overdue threshold must be at least 1 minute")
+      .max(240, "Overdue threshold must be no more than 240 minutes")
+      .optional(),
     kioskPin: z
       .string()
       .regex(/^\d{4,8}$/, "Kiosk PIN must be 4-8 digits")
@@ -44,6 +50,7 @@ const patchSettingsSchema = z
       value.schoolTimezone !== undefined ||
       value.kioskEnabled !== undefined ||
       value.kioskRequiresApproval !== undefined ||
+      value.defaultPassDuration !== undefined ||
       value.kioskPin !== undefined ||
       value.kioskStyle !== undefined,
     { message: "Provide at least one setting to update" }

@@ -8,13 +8,21 @@ import { useQuery } from "@tanstack/react-query";
 import { useToast } from "../../../../hooks/use-toast";
 import { usePassPilotAuth } from "../../../../hooks/usePassPilotAuth";
 import { formatTime, formatHour, formatDateTime, startOfTodayInTimezone } from "../../../../lib/date-utils";
+import { usePassNow } from "../LivePassDuration";
 import {
   fetchAllPassPilotHistory,
   isCanonicalPassPilotSource,
   passPilotClassRequest,
   usePassPilotHistoryClasses,
 } from "../../classData";
-import { getCurrentSchoolWeekRange, getPassIssuerLabel } from "../../passData";
+import {
+  formatPassOverdueDuration,
+  getCurrentSchoolWeekRange,
+  getPassActualDurationMs,
+  getPassIssuerLabel,
+  getPassOverdueMs,
+  getPassStatusLabel,
+} from "../../passData";
 import { encodePassPilotCsv } from "../../passCsv";
 
 const DEFAULT_REPORT_FILTERS = Object.freeze({
@@ -50,6 +58,7 @@ function reportIssuerLabel(issuer) {
 }
 
 function ReportsTab() {
+  const nowMs = usePassNow();
   const { school, isSchoolwideManager } = usePassPilotAuth();
   const tz = school?.schoolTimezone ?? "America/New_York";
   const { toast } = useToast();
@@ -107,12 +116,9 @@ function ReportsTab() {
     ? getCurrentSchoolWeekRange(tz)
     : null;
 
-  const calculateDuration = (issuedAt, returnedAt) => {
-    if (!returnedAt) return null;
-    const issued = new Date(issuedAt);
-    const returned = new Date(returnedAt);
-    const diffMs = returned.getTime() - issued.getTime();
-    return Math.max(0, Math.round(diffMs / (1000 * 60)));
+  const calculateDuration = (pass) => {
+    const durationMs = getPassActualDurationMs(pass);
+    return durationMs === null ? null : Math.round(durationMs / (1000 * 60));
   };
 
   const {
@@ -208,10 +214,11 @@ function ReportsTab() {
       return;
     }
 
-    const csvHeaders = ["Student Name", "Class", "Issued By", "Pass Type", "Destination", "Checkout Time", "Return Time", "Duration (min)"];
+    const csvHeaders = ["Student Name", "Class", "Issued By", "Pass Type", "Destination", "Checkout Time", "Return Time", "Status", "Duration (min)"];
     const csvRows = passes.map((pass) => {
-      const isReturned = pass.returnedAt || pass.status === 'returned';
-      const calculatedDuration = isReturned ? calculateDuration(pass.issuedAt, pass.returnedAt) : null;
+      const statusLabel = getPassStatusLabel(pass, nowMs);
+      const isReturned = statusLabel === 'Returned' && Boolean(pass.returnedAt);
+      const calculatedDuration = calculateDuration(pass);
 
       return [
         `${pass.student?.firstName ?? ''} ${pass.student?.lastName ?? ''}`.trim() || "Unknown",
@@ -220,8 +227,9 @@ function ReportsTab() {
         pass.destination || 'General',
         pass.customDestination || pass.destination || 'General',
         formatDateTime(pass.issuedAt, tz),
-        isReturned ? formatDateTime(pass.returnedAt, tz) : "Still Out",
-        calculatedDuration !== null ? calculatedDuration : "Still Out"
+        isReturned ? formatDateTime(pass.returnedAt, tz) : "—",
+        statusLabel,
+        calculatedDuration !== null ? calculatedDuration : "—"
       ];
     });
 
@@ -244,7 +252,7 @@ function ReportsTab() {
   const completedPasses = passes.filter(p => p.status === 'returned' && p.returnedAt);
   const passesWithDuration = completedPasses.map(p => ({
     ...p,
-    calculatedDuration: calculateDuration(p.issuedAt, p.returnedAt)
+    calculatedDuration: calculateDuration(p)
   })).filter(p => p.calculatedDuration !== null);
 
   const stats = {
@@ -287,13 +295,31 @@ function ReportsTab() {
     .sort((a, b) => new Date(b.issuedAt).getTime() - new Date(a.issuedAt).getTime())
     .slice(0, 10)
     .map(pass => {
-      const calculatedDuration = calculateDuration(pass.issuedAt, pass.returnedAt);
+      const calculatedDuration = calculateDuration(pass);
+      const statusLabel = getPassStatusLabel(pass, nowMs);
+      const overdueDuration = getPassOverdueMs(pass, nowMs) !== null
+        ? formatPassOverdueDuration(pass, nowMs)
+        : null;
+      const overdueLabel = overdueDuration === '<1 min'
+        ? 'Overdue <1 min'
+        : overdueDuration
+          ? `Overdue by ${overdueDuration}`
+          : null;
+      const checkoutDestination = pass.customDestination
+        ? ` - ${pass.customDestination}`
+        : pass.destination
+          ? ` to ${pass.destination}`
+          : '';
       return {
         id: pass.id,
         studentName: `${pass.student?.firstName ?? ''} ${pass.student?.lastName ?? ''}`.trim() || 'Unknown',
-        action: pass.status === 'returned'
-          ? `Returned after ${calculatedDuration !== null ? calculatedDuration : 0} minutes`
-          : `Checked out${pass.customDestination ? ` - ${pass.customDestination}` : (pass.destination ? ` to ${pass.destination}` : '')}`,
+        action: statusLabel === 'Returned'
+          ? (calculatedDuration === null
+              ? 'Returned (duration unavailable)'
+              : `Returned after ${calculatedDuration} minutes`)
+          : overdueLabel
+            || (statusLabel === 'Still out' ? `Checked out${checkoutDestination}` : statusLabel),
+        status: statusLabel,
         destination: pass.destination,
         time: formatTime(pass.issuedAt, tz),
         date: 'Today',
@@ -588,7 +614,12 @@ function ReportsTab() {
                             return <span className={`px-2 py-1 text-xs rounded-full ${badgeClass}`}>{displayText}</span>;
                           })()}
                         </div>
-                        <p className="text-xs text-muted-foreground">{activity.action}</p>
+                        <p className={`text-xs ${activity.status === 'Overdue'
+                          ? 'font-semibold text-amber-700 dark:text-amber-400'
+                          : 'text-muted-foreground'
+                        }`}>
+                          {activity.action}
+                        </p>
                       </div>
                     </div>
                     <div className="text-right">
