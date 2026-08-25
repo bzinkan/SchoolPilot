@@ -645,6 +645,10 @@ function Invoke-OwnedTestProcessWithResult {
         [string]$StandardErrorPath,
         [Parameter(Mandatory = $true)]
         [string]$ResultPath,
+        [AllowEmptyString()]
+        [string]$StartupReadyPath = "",
+        [ValidateRange(1000, 300000)]
+        [int]$StartupWatchdogMilliseconds = 60000,
         [ValidateRange(1000, 300000)]
         [int]$WatchdogMilliseconds = 90000
     )
@@ -653,7 +657,42 @@ function Invoke-OwnedTestProcessWithResult {
         throw "Owned test process name '$Name' is already registered."
     }
 
-    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $startupReadinessEnabled = -not [string]::IsNullOrWhiteSpace($StartupReadyPath)
+    if (-not $startupReadinessEnabled -and
+        $PSBoundParameters.ContainsKey("StartupWatchdogMilliseconds")) {
+        throw "Owned test process '$Name' cannot set StartupWatchdogMilliseconds without StartupReadyPath."
+    }
+    if ($startupReadinessEnabled) {
+        $startupReadyFullPath = [IO.Path]::GetFullPath($StartupReadyPath)
+        $pathComparison = if ($IsWindows) {
+            [StringComparison]::OrdinalIgnoreCase
+        }
+        else {
+            [StringComparison]::Ordinal
+        }
+        foreach ($reservedPath in @($ResultPath,$StandardOutputPath,$StandardErrorPath)) {
+            if ([string]::IsNullOrWhiteSpace($reservedPath)) { continue }
+            if ([string]::Equals(
+                $startupReadyFullPath,
+                [IO.Path]::GetFullPath($reservedPath),
+                $pathComparison
+            )) {
+                throw "Owned test process '$Name' startup readiness path collides with a result or redirect path."
+            }
+        }
+        if (Test-Path -LiteralPath $StartupReadyPath) {
+            throw "Owned test process '$Name' startup readiness marker must not exist before launch."
+        }
+    }
+
+    $totalWatch = [Diagnostics.Stopwatch]::StartNew()
+    $startupWatch = if ($startupReadinessEnabled) {
+        [Diagnostics.Stopwatch]::StartNew()
+    }
+    else {
+        $null
+    }
+    $lifecycleWatch = if ($startupReadinessEnabled) { $null } else { $totalWatch }
     $exitCode = $null
     $resultObserved = $false
     $processExited = $false
@@ -665,7 +704,30 @@ function Invoke-OwnedTestProcessWithResult {
             -StandardErrorPath $StandardErrorPath
         $owner = $Registry[$Name]
 
-        while ($watch.ElapsedMilliseconds -lt $WatchdogMilliseconds) {
+        if ($startupReadinessEnabled) {
+            while ($startupWatch.ElapsedMilliseconds -lt $StartupWatchdogMilliseconds) {
+                $startupReadyObserved = Test-Path -LiteralPath $StartupReadyPath -PathType Leaf
+                $owner.process.Refresh()
+                $processExited = $owner.process.HasExited
+                if ($startupReadyObserved -or $processExited) { break }
+                Start-Sleep -Milliseconds 100
+            }
+
+            $startupReadyObserved = Test-Path -LiteralPath $StartupReadyPath -PathType Leaf
+            $owner.process.Refresh()
+            $processExited = $owner.process.HasExited
+            if (-not $startupReadyObserved -and $processExited) {
+                throw "Owned test process '$Name' exited before publishing startup readiness (exitCode=$($owner.process.ExitCode))."
+            }
+            if (-not $startupReadyObserved -or
+                $startupWatch.ElapsedMilliseconds -gt $StartupWatchdogMilliseconds) {
+                throw "Owned test process '$Name' exceeded its ${StartupWatchdogMilliseconds}ms startup watchdog (startupReadyObserved=$startupReadyObserved, processExited=$processExited)."
+            }
+            $startupWatch.Stop()
+            $lifecycleWatch = [Diagnostics.Stopwatch]::StartNew()
+        }
+
+        while ($lifecycleWatch.ElapsedMilliseconds -lt $WatchdogMilliseconds) {
             $resultObserved = Test-Path -LiteralPath $ResultPath -PathType Leaf
             $owner.process.Refresh()
             $processExited = $owner.process.HasExited
@@ -682,20 +744,25 @@ function Invoke-OwnedTestProcessWithResult {
 
         Close-OwnedTestProcessJobInternal -Owner $owner -Name $Name
         $owner.process.WaitForExit()
-        $remainingDrainMilliseconds = $WatchdogMilliseconds - [int]$watch.ElapsedMilliseconds
+        $remainingDrainMilliseconds = $WatchdogMilliseconds - [int]$lifecycleWatch.ElapsedMilliseconds
         if ($remainingDrainMilliseconds -le 0) {
             throw "Owned test process '$Name' exceeded its ${WatchdogMilliseconds}ms result-exit-and-drain watchdog."
         }
         Write-OwnedTestProcessRedirectsInternal -Owner $owner -Name $Name `
             -TimeoutMilliseconds $remainingDrainMilliseconds
-        if ($watch.ElapsedMilliseconds -gt $WatchdogMilliseconds) {
+        if ($lifecycleWatch.ElapsedMilliseconds -gt $WatchdogMilliseconds) {
             throw "Owned test process '$Name' exceeded its ${WatchdogMilliseconds}ms result-exit-and-drain watchdog."
         }
         $exitCode = $owner.process.ExitCode
     }
     catch { $primaryFailure = $_ }
     finally {
-        $watch.Stop()
+        $totalWatch.Stop()
+        if ($null -ne $startupWatch) { $startupWatch.Stop() }
+        if ($null -ne $lifecycleWatch -and
+            -not [object]::ReferenceEquals($lifecycleWatch, $totalWatch)) {
+            $lifecycleWatch.Stop()
+        }
         if ($Registry.Contains($Name)) {
             try { Stop-OwnedTestProcess -Registry $Registry -Name $Name }
             catch { $cleanupFailure = $_ }
@@ -713,6 +780,6 @@ function Invoke-OwnedTestProcessWithResult {
     return [pscustomobject]@{
         exitCode = [int]$exitCode
         resultObserved = [bool]$resultObserved
-        durationMs = [long]$watch.ElapsedMilliseconds
+        durationMs = [long]$totalWatch.ElapsedMilliseconds
     }
 }

@@ -112,7 +112,10 @@ $descendantRoot = Join-Path $testRoot "descendant"
 $exitedParentRoot = Join-Path $testRoot "exited-parent"
 $argumentRoot = Join-Path $testRoot "arguments"
 $combinedFailureRoot = Join-Path $testRoot "combined-failure"
+$startupFailureRoot = Join-Path $testRoot "startup-failure"
 $stressRegistry = [hashtable]::Synchronized(@{})
+$startupValidationRegistry = [ordered]@{}
+$startupFailureRegistry = [ordered]@{}
 $topLevelFailure = $null
 $topLevelCleanupFailures = [System.Collections.Generic.List[Exception]]::new()
 
@@ -122,6 +125,7 @@ try {
     [void][IO.Directory]::CreateDirectory($exitedParentRoot)
     [void][IO.Directory]::CreateDirectory($argumentRoot)
     [void][IO.Directory]::CreateDirectory($combinedFailureRoot)
+    [void][IO.Directory]::CreateDirectory($startupFailureRoot)
 
     $normalChildPath = Join-Path $testRoot "normal-child.ps1"
     $timeoutChildPath = Join-Path $testRoot "timeout-child.ps1"
@@ -131,8 +135,9 @@ try {
     $argumentChildPath = Join-Path $testRoot "argument-child.ps1"
 
     $normalChildSource = @'
-param([string]$ResultPath,[string]$Label)
+param([string]$ResultPath,[string]$Label,[string]$ReadyPath)
 $ErrorActionPreference = "Stop"
+[IO.File]::WriteAllText($ReadyPath,'ready',[Text.UTF8Encoding]::new($false))
 Write-Output "normal-stdout:$Label"
 [Console]::Error.WriteLine("normal-stderr:$Label")
 [IO.File]::WriteAllText($ResultPath,'{"status":"ok"}',[Text.UTF8Encoding]::new($false))
@@ -282,14 +287,17 @@ exit 0
             $normalOut = Join-Path $normalRoot "normal.out"
             $normalErr = Join-Path $normalRoot "normal.err"
             $normalResultPath = Join-Path $normalRoot "result.json"
+            $normalReadyPath = Join-Path $normalRoot "ready.flag"
             $normalResult = Invoke-OwnedTestProcessWithResult `
                 -Registry $registry `
                 -Name $normalName `
                 -FilePath $using:pwshPath `
-                -ArgumentList @("-NoProfile","-File",$using:normalChildPath,$normalResultPath,[string]$iteration) `
+                -ArgumentList @("-NoProfile","-File",$using:normalChildPath,$normalResultPath,[string]$iteration,$normalReadyPath) `
                 -StandardOutputPath $normalOut `
                 -StandardErrorPath $normalErr `
                 -ResultPath $normalResultPath `
+                -StartupReadyPath $normalReadyPath `
+                -StartupWatchdogMilliseconds 60000 `
                 -WatchdogMilliseconds 30000
             if ($normalResult.exitCode -ne 0 -or -not $normalResult.resultObserved) {
                 throw "Normal child returned an invalid lifecycle snapshot."
@@ -360,16 +368,19 @@ exit 0
             $resultTimeoutOut = Join-Path $resultTimeoutRoot "result-timeout.out"
             $resultTimeoutErr = Join-Path $resultTimeoutRoot "result-timeout.err"
             $missingResultPath = Join-Path $resultTimeoutRoot "missing-result.json"
+            $resultTimeoutReadyPath = Join-Path $resultTimeoutRoot "ready.flag"
             $resultWatchdogRejected = $false
             try {
                 [void](Invoke-OwnedTestProcessWithResult `
                     -Registry $registry `
                     -Name $resultTimeoutName `
                     -FilePath $using:pwshPath `
-                    -ArgumentList @("-NoProfile","-File",$using:timeoutChildPath,"result-$iteration") `
+                    -ArgumentList @("-NoProfile","-File",$using:timeoutChildPath,"result-$iteration",$resultTimeoutReadyPath) `
                     -StandardOutputPath $resultTimeoutOut `
                     -StandardErrorPath $resultTimeoutErr `
                     -ResultPath $missingResultPath `
+                    -StartupReadyPath $resultTimeoutReadyPath `
+                    -StartupWatchdogMilliseconds 60000 `
                     -WatchdogMilliseconds 1000)
             }
             catch {
@@ -378,6 +389,9 @@ exit 0
             }
             if (-not $resultWatchdogRejected) {
                 throw "Result-timeout child did not trip the result-and-exit watchdog."
+            }
+            if (-not (Test-Path -LiteralPath $resultTimeoutReadyPath -PathType Leaf)) {
+                throw "Result-timeout child did not publish startup readiness before its lifecycle watchdog."
             }
             if ($registry.Contains($resultTimeoutName)) {
                 throw "Result-timeout child left its owned registry entry behind."
@@ -427,6 +441,129 @@ exit 0
         "Lifecycle stress retained $($stressRegistry.Count) parent-owned process registry entries."
     Assert-Condition (@(Get-ChildItem -LiteralPath $stressRoot -Force).Count -eq 0) `
         "Lifecycle stress left one or more case directories behind."
+
+    # Startup readiness is an explicit opt-in with fresh, non-colliding
+    # evidence. Invalid configurations must fail before launching a process.
+    $startupValidationRoot = Join-Path $startupFailureRoot "validation"
+    [void][IO.Directory]::CreateDirectory($startupValidationRoot)
+    $startupValidationOut = Join-Path $startupValidationRoot "validation.out"
+    $startupValidationErr = Join-Path $startupValidationRoot "validation.err"
+    $startupValidationResult = Join-Path $startupValidationRoot "result.json"
+    $startupValidationReady = Join-Path $startupValidationRoot "ready.flag"
+
+    $missingStartupPathFailure = $null
+    try {
+        [void](Invoke-OwnedTestProcessWithResult `
+            -Registry $startupValidationRegistry `
+            -Name "startup-timeout-without-path" `
+            -FilePath $pwshPath `
+            -ArgumentList @("-NoProfile","-File",$timeoutChildPath,"invalid-startup") `
+            -StandardOutputPath $startupValidationOut `
+            -StandardErrorPath $startupValidationErr `
+            -ResultPath $startupValidationResult `
+            -StartupWatchdogMilliseconds 1000 `
+            -WatchdogMilliseconds 30000)
+    }
+    catch {
+        $missingStartupPathFailure = $_.Exception
+    }
+    Assert-Condition ($null -ne $missingStartupPathFailure -and
+        $missingStartupPathFailure.Message -match "cannot set StartupWatchdogMilliseconds without StartupReadyPath") `
+        "A startup timeout without a readiness path did not fail before launch."
+
+    [IO.File]::WriteAllText($startupValidationReady, "stale", [Text.UTF8Encoding]::new($false))
+    $staleStartupFailure = $null
+    try {
+        [void](Invoke-OwnedTestProcessWithResult `
+            -Registry $startupValidationRegistry `
+            -Name "stale-startup-marker" `
+            -FilePath $pwshPath `
+            -ArgumentList @("-NoProfile","-File",$timeoutChildPath,"stale-startup") `
+            -StandardOutputPath $startupValidationOut `
+            -StandardErrorPath $startupValidationErr `
+            -ResultPath $startupValidationResult `
+            -StartupReadyPath $startupValidationReady `
+            -WatchdogMilliseconds 30000)
+    }
+    catch {
+        $staleStartupFailure = $_.Exception
+    }
+    Assert-Condition ($null -ne $staleStartupFailure -and
+        $staleStartupFailure.Message -match "marker must not exist before launch") `
+        "A preexisting startup marker did not fail before launch."
+    Remove-Item -LiteralPath $startupValidationReady -Force
+
+    foreach ($collision in @(
+        [pscustomobject]@{label="result";path=$startupValidationResult},
+        [pscustomobject]@{label="stdout";path=$startupValidationOut},
+        [pscustomobject]@{label="stderr";path=$startupValidationErr}
+    )) {
+        $collisionFailure = $null
+        try {
+            [void](Invoke-OwnedTestProcessWithResult `
+                -Registry $startupValidationRegistry `
+                -Name "startup-$($collision.label)-collision" `
+                -FilePath $pwshPath `
+                -ArgumentList @("-NoProfile","-File",$timeoutChildPath,"startup-collision") `
+                -StandardOutputPath $startupValidationOut `
+                -StandardErrorPath $startupValidationErr `
+                -ResultPath $startupValidationResult `
+                -StartupReadyPath $collision.path `
+                -WatchdogMilliseconds 30000)
+        }
+        catch {
+            $collisionFailure = $_.Exception
+        }
+        Assert-Condition ($null -ne $collisionFailure -and
+            $collisionFailure.Message -match "readiness path collides") `
+            "A startup readiness path collision with $($collision.label) did not fail before launch."
+    }
+    Assert-Condition ($startupValidationRegistry.Count -eq 0) `
+        "Invalid startup readiness configurations launched or retained an owned process."
+    Assert-DirectoryDeletesImmediately -Path $startupValidationRoot `
+        -Label "Startup readiness validation directory"
+
+    # A child that never publishes readiness must fail under the independent
+    # startup watchdog, while existing owned cleanup still drains both pipes.
+    $missingReadyRoot = Join-Path $startupFailureRoot "missing-ready"
+    [void][IO.Directory]::CreateDirectory($missingReadyRoot)
+    $missingReadyOut = Join-Path $missingReadyRoot "missing-ready.out"
+    $missingReadyErr = Join-Path $missingReadyRoot "missing-ready.err"
+    $missingReadyResult = Join-Path $missingReadyRoot "result.json"
+    $missingReadyPath = Join-Path $missingReadyRoot "ready.flag"
+    $missingReadyFailure = $null
+    try {
+        [void](Invoke-OwnedTestProcessWithResult `
+            -Registry $startupFailureRegistry `
+            -Name "missing-startup-readiness" `
+            -FilePath $pwshPath `
+            -ArgumentList @("-NoProfile","-File",$timeoutChildPath,"missing-startup-readiness") `
+            -StandardOutputPath $missingReadyOut `
+            -StandardErrorPath $missingReadyErr `
+            -ResultPath $missingReadyResult `
+            -StartupReadyPath $missingReadyPath `
+            -StartupWatchdogMilliseconds 1000 `
+            -WatchdogMilliseconds 30000)
+    }
+    catch {
+        $missingReadyFailure = $_.Exception
+    }
+    Assert-Condition ($null -ne $missingReadyFailure -and
+        $missingReadyFailure -isnot [AggregateException] -and
+        $missingReadyFailure.Message -match "exceeded its 1000ms startup watchdog") `
+        "A missing readiness marker did not retain the startup-watchdog failure identity."
+    Assert-Condition (-not $missingReadyFailure.Data.Contains("CleanupFailures")) `
+        "The missing-readiness watchdog unexpectedly reported a cleanup failure."
+    Assert-Condition ($startupFailureRegistry.Count -eq 0) `
+        "The missing-readiness watchdog retained an owned process."
+    Assert-Condition (-not (Test-Path -LiteralPath $missingReadyPath)) `
+        "The missing-readiness fixture unexpectedly published a startup marker."
+    Assert-ExclusiveFileAccess -Path $missingReadyOut -Label "Missing-readiness stdout"
+    Assert-ExclusiveFileAccess -Path $missingReadyErr -Label "Missing-readiness stderr"
+    Assert-DirectoryDeletesImmediately -Path $missingReadyRoot `
+        -Label "Missing-readiness case directory"
+    Assert-DirectoryDeletesImmediately -Path $startupFailureRoot `
+        -Label "Startup-readiness test directory"
 
     # Induce a redirect-persistence failure only after the watchdog terminates
     # the child by using a directory as the stdout destination. The process is
@@ -749,6 +886,8 @@ finally {
     $remainingRegistryEntries = 0
     foreach ($registryVariableName in @(
         "stressRegistry",
+        "startupValidationRegistry",
+        "startupFailureRegistry",
         "combinedFailureRegistry",
         "descendantRegistry",
         "argumentRegistry",
