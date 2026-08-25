@@ -2,6 +2,9 @@ import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { sql } from "drizzle-orm";
+import type { School } from "../src/schema/core.js";
+import type { Grade, InsertPass } from "../src/schema/passpilot.js";
+import type { Student } from "../src/schema/students.js";
 
 const TAG = `passpilot_overdue_${Date.now()}`;
 const ORIGINAL_REDIS_URL = process.env.REDIS_URL;
@@ -9,26 +12,26 @@ const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
 process.env.REDIS_URL = "";
 process.env.NODE_ENV = "test";
 
-let db: any;
-let pool: any;
-let sessionPool: any;
-let schedulerPool: any;
-let schedulerLockPool: any;
-let storage: any;
-let runWithTenantContext: any;
-let school: any;
-let grade: any;
-let student: any;
+let db: typeof import("../src/db.js").default;
+let pool: typeof import("../src/db.js").pool | undefined;
+let sessionPool: typeof import("../src/db.js").sessionPool | undefined;
+let schedulerPool: typeof import("../src/services/schedulerDb.js").schedulerPool | undefined;
+let schedulerLockPool: typeof import("../src/services/schedulerDb.js").schedulerLockPool | undefined;
+let storage: typeof import("../src/services/storage.js");
+let runWithTenantContext: typeof import("../src/middleware/tenantContext.js").runWithTenantContext;
+let school: School;
+let grade: Grade;
+let student: Student;
 
-function inSchool(fn: () => Promise<any>): Promise<any> {
+function inSchool<T>(fn: () => Promise<T>): Promise<T> {
   return runWithTenantContext({ schoolId: school.id }, fn);
 }
 
-function asSystem(fn: () => Promise<any>): Promise<any> {
+function asSystem<T>(fn: () => Promise<T>): Promise<T> {
   return runWithTenantContext({ isSuper: true }, fn);
 }
 
-function passInput(overrides: Record<string, unknown> = {}) {
+function passInput(overrides: Partial<InsertPass> = {}): InsertPass {
   return {
     schoolId: school.id,
     studentId: student.id,
@@ -41,6 +44,16 @@ function passInput(overrides: Record<string, unknown> = {}) {
     issuedVia: "teacher",
     ...overrides,
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  if (!isRecord(error)) return false;
+  if (error.code === "23505") return true;
+  return isRecord(error.cause) && error.cause.code === "23505";
 }
 
 before(async () => {
@@ -145,24 +158,20 @@ describe("PassPilot overdue lifecycle", { concurrency: false }, () => {
       ]));
 
     for (const rows of [schoolPasses, studentPasses, gradePasses]) {
-      assert.deepEqual(rows.map((pass: any) => pass.id), [overdue.id]);
+      assert.deepEqual(rows.map((pass) => pass.id), [overdue.id]);
     }
     assert.equal(activePass?.id, overdue.id);
     assert.equal(kioskState.activePass?.id, overdue.id);
 
-    const persistedAfterReads = await inSchool(() => db.execute(sql`
-      SELECT id, status, returned_at, expires_at
-      FROM passes
-      WHERE id IN (${overdue.id}, ${historicalExpired.id})
-      ORDER BY id
-    `));
-    const overdueRow = persistedAfterReads.rows.find((row: any) => row.id === overdue.id);
-    const expiredRow = persistedAfterReads.rows.find((row: any) => row.id === historicalExpired.id);
-    assert.equal(overdueRow.status, "active");
-    assert.equal(overdueRow.returned_at ?? overdueRow.returnedAt ?? null, null);
+    const [persistedOverdue, persistedExpired] = await inSchool(() => Promise.all([
+      storage.getPassById(overdue.id, school.id),
+      storage.getPassById(historicalExpired.id, school.id),
+    ]));
+    assert.equal(persistedOverdue?.status, "active");
+    assert.equal(persistedOverdue?.returnedAt, null);
     assert.ok(overdue.expiresAt.getTime() <= Date.now());
-    assert.equal(expiredRow.status, "expired");
-    assert.equal(expiredRow.returned_at ?? expiredRow.returnedAt ?? null, null);
+    assert.equal(persistedExpired?.status, "expired");
+    assert.equal(persistedExpired?.returnedAt, null);
 
     const settingsUpdate = await inSchool(() => storage.updatePasspilotAdminSettings(
       school.id,
@@ -179,7 +188,7 @@ describe("PassPilot overdue lifecycle", { concurrency: false }, () => {
 
     await assert.rejects(
       inSchool(() => storage.createPass(passInput({ expiresAt: new Date(Date.now() + 60_000) }))),
-      (error: any) => error?.code === "23505" || error?.cause?.code === "23505"
+      isUniqueViolation
     );
 
     const returned = await inSchool(() => storage.returnPass(overdue.id, school.id));

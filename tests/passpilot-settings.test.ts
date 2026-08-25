@@ -90,6 +90,16 @@ function assertExactDto(value: any): void {
   assert.equal("kioskPinHash" in value, false);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function resultRows(value: unknown): unknown[] {
+  assert.ok(isRecord(value));
+  assert.ok(Array.isArray(value.rows));
+  return value.rows;
+}
+
 async function cleanup(): Promise<void> {
   if (!schoolA?.id || !schoolB?.id) return;
   await asSystem(async () => {
@@ -663,7 +673,9 @@ describe("PassPilot admin settings backend", { concurrency: false }, () => {
     const firstHash = persisted.rows[0].kiosk_pin_hash;
     assert.notEqual(firstHash, "2468");
     assert.equal(await comparePassword("2468", firstHash), true);
-    assert.equal((persisted as any).rows[0].default_pass_duration, 10);
+    const persistedDuration = resultRows(persisted)[0];
+    assert.ok(isRecord(persistedDuration));
+    assert.equal(persistedDuration.default_pass_duration, 10);
     assert.equal(persisted.rows[0].passpilot_settings_revision, 1);
 
     const mirror = await inSchool(schoolA.id, () => db.execute(sql`
@@ -687,7 +699,10 @@ describe("PassPilot admin settings backend", { concurrency: false }, () => {
     assert.doesNotMatch(serializedAudit, /2468/);
     assert.doesNotMatch(serializedAudit, /\$2[aby]\$/);
     assert.equal(audit.rows[0].changes.kioskPin, "configured");
-    assert.deepEqual((audit as any).rows[0].changes.fields, [
+    const auditedSettings = resultRows(audit)[0];
+    assert.ok(isRecord(auditedSettings));
+    assert.ok(isRecord(auditedSettings.changes));
+    assert.deepEqual(auditedSettings.changes.fields, [
       "name",
       "schoolTimezone",
       "kioskEnabled",
