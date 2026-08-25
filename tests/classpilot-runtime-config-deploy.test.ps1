@@ -141,7 +141,7 @@ function New-TestService {
 function Copy-RegisteredTask {
     param($Request, [string]$Arn)
     $copy = $Request | ConvertTo-Json -Depth 50 | ConvertFrom-Json -Depth 50
-    $tags = @($copy.tags)
+    $tags = if ($copy.PSObject.Properties.Name -contains "tags") { @($copy.tags) } else { @() }
     if ($copy.PSObject.Properties.Name -contains "tags") { $copy.PSObject.Properties.Remove("tags") }
     $copy | Add-Member -NotePropertyName taskDefinitionArn -NotePropertyValue $Arn
     $copy | Add-Member -NotePropertyName revision -NotePropertyValue ([int]($Arn.Split(":")[-1]))
@@ -267,6 +267,21 @@ try {
         return [DateTimeOffset]::Parse("2026-08-23T08:30:00-04:00")
     }
     . $helperPath
+
+    $emptyTagsFingerprint = Get-TaskTagsFingerprint -Tags @()
+    Assert-Condition ($emptyTagsFingerprint -ceq "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945") `
+        "Empty task tags must use the deterministic canonical JSON array fingerprint."
+    Assert-Condition ((Get-TaskTagsFingerprint -Tags @()) -ceq $emptyTagsFingerprint) `
+        "Repeated empty task tags must retain the same fingerprint."
+    $singleTaskTag = @([pscustomobject]@{ key = "Environment"; value = "production" })
+    Assert-Condition ((Get-TaskTagsFingerprint -Tags $singleTaskTag) -ceq "16b7339bdbf6c8993a51dec9c7fc339af1a99cc9a4a82e1c50f3522c06b36b26") `
+        "The existing single-tag fingerprint must remain unchanged."
+    $multipleTaskTags = @(
+        [pscustomobject]@{ key = "Project"; value = "SchoolPilot" },
+        [pscustomobject]@{ key = "Environment"; value = "production" }
+    )
+    Assert-Condition ((Get-TaskTagsFingerprint -Tags $multipleTaskTags) -ceq "340b29a98c1a335bc93e4a8c839a9969187d5ce5085211dd01f1ee7446c7ffd5") `
+        "The existing sorted multi-tag fingerprint must remain unchanged."
 
     function Set-MockSourceRuntimeConfiguration {
         param([Parameter(Mandatory = $true)]$RuntimeConfiguration)
@@ -1292,6 +1307,8 @@ try {
 
     $offProfilePath = Join-Path $testRoot "off-profile.json"
     Write-TestJson -Path $offProfilePath -Value ([pscustomobject]@{ schemaVersion = 1; mode = "off" })
+    $global:RuntimeConfigTestState.TaskResponses[$apiSourceArn].tags = @()
+    $global:RuntimeConfigTestState.TaskResponses[$workerSourceArn].tags = @()
     $global:RuntimeConfigTestState.ApiDesiredCount = 6
     $global:RuntimeConfigTestState.ScalingMin = 6
     $global:RuntimeConfigTestState.RejectEcrLookup = $true
@@ -1306,6 +1323,9 @@ try {
     $offResult = Invoke-RuntimeConfigApply -Plan $offPlan -PlanSha256 $offPlanResult.PlanSha256 -Now $now `
         -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0
     Assert-Condition ($offResult.status -ceq "applied" -and $offResult.profileMode -ceq "off") "Emergency off must work from the exact active pair even when main advanced and the arrival window is active."
+    Assert-Condition (@($global:RuntimeConfigTestState.TaskResponses[[string]$offResult.candidateApiTaskDefinitionArn].tags).Count -eq 0 -and
+        @($global:RuntimeConfigTestState.TaskResponses[[string]$offResult.candidateWorkerTaskDefinitionArn].tags).Count -eq 0) `
+        "Runtime Apply must preserve untagged API and worker task definitions."
     Assert-Condition ($global:RuntimeConfigClockQueue.Count -eq 0) "Emergency off must use the live clock to restore the scheduled arrival minimum without applying the enablement window gate."
     Assert-Condition ($global:RuntimeConfigTestState.ApiMinimumHealthyPercent -eq 100 -and $global:RuntimeConfigTestState.ApiMaximumPercent -eq 200) "Emergency off must restore original API deployment bounds."
     Assert-Condition ($global:RuntimeConfigTestState.WorkerMinimumHealthyPercent -eq 100 -and $global:RuntimeConfigTestState.WorkerMaximumPercent -eq 200) "Emergency off must restore original worker deployment bounds."
