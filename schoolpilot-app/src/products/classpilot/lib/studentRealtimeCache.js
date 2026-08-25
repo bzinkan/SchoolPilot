@@ -1,3 +1,5 @@
+import { normalizeObservedAtForOrdering } from './studentMonitoringDisplay.js';
+
 const REALTIME_FIELDS = Object.freeze([
   'activeTabUrl',
   'activeTabTitle',
@@ -154,29 +156,42 @@ function prepareRealtimeBinding(row, event) {
   };
 }
 
-function observedTime(value) {
-  const parsed = typeof value === 'number' ? value : Date.parse(value || '');
-  return Number.isFinite(parsed) ? parsed : null;
+function firstNormalizedObservation(values, nowMs) {
+  for (const value of values) {
+    const normalized = normalizeObservedAtForOrdering(value, nowMs);
+    if (normalized !== null) return normalized;
+  }
+  return null;
 }
 
-function eventObservedAt(event) {
-  return observedTime(event.observedAtMs ?? event.realtimeObservedAt ?? event.timestamp);
+function eventObservedAt(event, nowMs = Date.now()) {
+  return firstNormalizedObservation([
+    event?.observedAtMs,
+    event?.realtimeObservedAt,
+    event?.timestamp,
+    event?.lastSeenAt,
+  ], nowMs);
 }
 
-function rowObservedAt(row) {
-  return observedTime(row.realtimeObservedAt ?? row.lastSeenAt);
+function rowObservedAt(row, nowMs = Date.now()) {
+  return firstNormalizedObservation([
+    row?.realtimeObservedAt,
+    row?.lastSeenAt,
+  ], nowMs);
 }
 
 function isNewerRealtimeObservation(incoming, current) {
+  const nowMs = Date.now();
   const incomingRevision = finiteRevision(incoming.revision ?? incoming.realtimeRevision);
   const currentRevision = finiteRevision(current.realtimeRevision);
-  const incomingTime = eventObservedAt(incoming);
-  const currentTime = rowObservedAt(current);
+  const incomingTime = eventObservedAt(incoming, nowMs);
+  const currentTime = rowObservedAt(current, nowMs);
 
   // Server-observed time spans device/session bindings, whereas a revision may
   // restart lower when a student moves to a different Chromebook. Prefer time
   // when both sides provide it, then use the revision as a deterministic
   // same-time or rollout fallback.
+  if (currentTime !== null && incomingTime === null) return false;
   if (incomingTime !== null && currentTime !== null && incomingTime !== currentTime) {
     return incomingTime > currentTime;
   }
@@ -201,6 +216,7 @@ function sameDevice(event, row) {
 }
 
 function canApplyVersion(event, row) {
+  const nowMs = Date.now();
   const incomingRevision = finiteRevision(event.revision ?? event.realtimeRevision);
   const currentRevision = finiteRevision(row.realtimeRevision);
 
@@ -210,8 +226,8 @@ function canApplyVersion(event, row) {
 
   // Unversioned messages are accepted only until a versioned state has arrived.
   if (currentRevision !== null) return false;
-  const incomingTime = eventObservedAt(event);
-  const currentTime = rowObservedAt(row);
+  const incomingTime = eventObservedAt(event, nowMs);
+  const currentTime = rowObservedAt(row, nowMs);
   return incomingTime === null || currentTime === null || incomingTime > currentTime;
 }
 
@@ -381,6 +397,7 @@ export function applyStudentRealtimeEvents(oldData, events, scope = {}) {
 
 export function coalesceStudentRealtimeEvents(events) {
   const best = new Map();
+  const nowMs = Date.now();
   for (const rawEvent of events || []) {
     const event = eventBody(rawEvent);
     if (!event?.type) continue;
@@ -396,8 +413,8 @@ export function coalesceStudentRealtimeEvents(events) {
     const incomingRevision = finiteRevision(event.revision ?? event.realtimeRevision);
     const priorBody = eventBody(prior);
     const priorRevision = finiteRevision(priorBody.revision ?? priorBody.realtimeRevision);
-    const incomingTime = eventObservedAt(event) ?? -1;
-    const priorTime = eventObservedAt(priorBody) ?? -1;
+    const incomingTime = eventObservedAt(event, nowMs) ?? -1;
+    const priorTime = eventObservedAt(priorBody, nowMs) ?? -1;
     if (
       (incomingRevision !== null && (priorRevision === null || incomingRevision > priorRevision))
       || (incomingRevision === priorRevision && incomingTime > priorTime)

@@ -8,9 +8,8 @@ import {
   deriveScreenshotDisplay,
   deriveStudentMonitoringDisplay,
   deriveUnavailablePreview,
-  formatAbsoluteObservedAt,
-  lastObservedDomain,
 } from "../lib/studentMonitoringDisplay";
+import LastSeenTime from "./LastSeenTime";
 import {
   studentSupportsCapability,
   studentTileFlightPathReleaseCommand,
@@ -83,8 +82,9 @@ function StudentTile({
   const screenshotDisplay = deriveScreenshotDisplay(screenshotData, freshnessNowMs);
   const displayStatus = effectiveMonitoringDisplay.status;
   const unavailablePreview = deriveUnavailablePreview(effectiveMonitoringDisplay);
-  const observedDomain = lastObservedDomain(student);
-  const absoluteLastObservedAt = formatAbsoluteObservedAt(effectiveMonitoringDisplay.observedAtMs);
+  const hasLastObservation = Number.isFinite(effectiveMonitoringDisplay.observedAtMs)
+    && effectiveMonitoringDisplay.observedAtMs > 0;
+  const neverObserved = effectiveMonitoringDisplay.kind === 'signed_out' && !hasLastObservation;
   const supportsScreenOnlyUnlock = studentSupportsCapability(student, 'screenOnlyUnlockV1');
   const unlockLabel = supportsScreenOnlyUnlock
     ? "Unlock this student's screen only"
@@ -220,7 +220,7 @@ function StudentTile({
       onClick={onClick}
     >
       <div className="p-4 space-y-3">
-        {/* Header Zone - Avatar + Student Name + Status */}
+        {/* Header Zone - Avatar + Student Name + Available Status */}
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 flex-1 min-w-0">
             {onToggleSelect && (
@@ -254,31 +254,19 @@ function StudentTile({
                   </span>
                 )}
               </h3>
-              <div className="flex items-center gap-2">
-                <span className={`text-xs font-medium ${
-                  displayStatus === 'online'
-                    ? 'text-green-600 dark:text-green-400'
-                    : displayStatus === 'idle' || displayStatus === 'signal_lost'
-                    ? 'text-amber-600 dark:text-amber-400'
-                    : 'text-muted-foreground'
-                }`}>
-                  {getStatusLabel(displayStatus)}
-                </span>
-                {student.classroomState?.revision != null && student.enforcementHealth && (
-                  <span
-                    className={`text-[10px] font-medium ${
-                      student.enforcementHealth === 'synced'
-                        ? 'text-green-600 dark:text-green-400'
-                        : student.enforcementHealth === 'failed'
-                          ? 'text-red-600 dark:text-red-400'
-                          : 'text-amber-600 dark:text-amber-400'
-                    }`}
-                    title="Device-reported classroom-control synchronization status. This is not proof against tampering."
-                  >
-                    Controls: {student.enforcementHealth}
+              {(currentTelemetry || isAbsent) && (
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs font-medium ${
+                    displayStatus === 'online'
+                      ? 'text-green-600 dark:text-green-400'
+                      : displayStatus === 'idle' || displayStatus === 'signal_lost'
+                        ? 'text-amber-600 dark:text-amber-400'
+                        : 'text-muted-foreground'
+                  }`}>
+                    {getStatusLabel(displayStatus)}
                   </span>
-                )}
-              </div>
+                </div>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">
@@ -435,17 +423,22 @@ function StudentTile({
           >
             <div className="px-4">
               <Monitor className={`mx-auto mb-2 h-6 w-6 ${unavailablePreview.warning ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`} />
-              <p className="text-sm font-semibold text-foreground">Preview unavailable</p>
-              <p className="mt-1 text-xs text-muted-foreground">{unavailablePreview.reason}</p>
-              {unavailablePreview.showLastObservation && (
-                <>
-                  <p className="mt-2 text-[11px] text-muted-foreground">Last observed at {absoluteLastObservedAt}</p>
-                  {observedDomain && (
-                    <p className="mt-1 truncate text-[11px] text-muted-foreground">
-                      Last observed site: {observedDomain}
-                    </p>
-                  )}
-                </>
+              <p
+                className="text-sm font-semibold text-foreground"
+                data-testid={`text-unavailable-status-${student.studentId}`}
+              >
+                {unavailablePreview.reason}
+              </p>
+              {unavailablePreview.showLastObservation && hasLastObservation && (
+                <LastSeenTime
+                  observedAt={effectiveMonitoringDisplay.observedAtMs}
+                  className="mt-2 block text-[11px] text-muted-foreground"
+                />
+              )}
+              {neverObserved && (
+                <span className="mt-2 block text-[11px] text-muted-foreground">
+                  Never observed
+                </span>
               )}
             </div>
           </div>
@@ -594,11 +587,11 @@ function StudentTile({
                 e.stopPropagation();
                 onManageTabs();
               }}
-              title="Manage this student's open tabs"
+              title="View this student's open tabs"
               data-testid={`button-manage-tabs-${student.studentId}`}
             >
               <List className="h-3.5 w-3.5 mr-1" />
-              Tabs
+              View Tabs
             </Button>
           )}
           {onStartLiveView && onStopLiveView && !controlDisabled && (
