@@ -120,12 +120,13 @@ export function normalizePassPilotClassesResponse(data) {
   };
 }
 
-export function useCanonicalPassPilotClasses(enabled = true, schoolId = "") {
+export function useCanonicalPassPilotClasses(enabled = true, schoolId = "", refetchInterval = false) {
   return useQuery({
     queryKey: passPilotClassesQueryKey(schoolId),
     queryFn: () => passPilotClassRequest("GET", "/passpilot/classes"),
     select: normalizePassPilotClassesResponse,
     enabled,
+    refetchInterval,
   });
 }
 

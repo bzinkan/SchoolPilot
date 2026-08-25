@@ -99,6 +99,7 @@ function freshState() {
     kioskGradeRequests: 0,
     kioskConfigFailures: 0,
     passHistoryRequests: [],
+    activePassRequests: [],
   };
 }
 
@@ -174,7 +175,13 @@ async function installApiMocks(context, state) {
       return;
     }
     if (pathname === "/api/passes/active") {
-      await route.fulfill({ json: { passes: [] } });
+      state.activePassRequests.push(url.search);
+      await route.fulfill({
+        json: {
+          classId: url.searchParams.get("classId"),
+          passes: [],
+        },
+      });
       return;
     }
     if (pathname === "/api/passes/history") {
@@ -293,6 +300,10 @@ test("legacy PassPilot supports shared students with class-scoped roster writes"
     await page.goto(`${baseUrl}/passpilot/my-class?classId=class-b`);
     await page.getByTestId("tab-grade-Science Lab").waitFor();
     assert.equal(new URL(page.url()).searchParams.get("classId"), "class-b");
+    assert.ok(
+      state.activePassRequests.some((search) => new URLSearchParams(search).get("classId") === "class-b"),
+      "legacy My Class must request active passes for the selected roster ID",
+    );
     await page.getByTestId("button-checkout-student-shared").click();
     await page.getByRole("menuitem", { name: "General/Restroom" }).click();
     await page.waitForFunction(() => document.body.textContent?.includes("Pass created"));

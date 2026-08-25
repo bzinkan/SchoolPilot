@@ -25,7 +25,10 @@ import {
 } from "../../services/storage.js";
 import { isWithinTrackingWindow } from "../../services/schoolHours.js";
 import type { Pass } from "../../schema/passpilot.js";
-import { normalizePasspilotPass } from "../../services/passpilotClasses.js";
+import {
+  getPasspilotClassActivePasses,
+  normalizePasspilotPass,
+} from "../../services/passpilotClasses.js";
 import {
   canAccessGrade,
   canAccessPasspilotClass,
@@ -228,6 +231,27 @@ router.get("/active", async (req, res, next) => {
     const schoolId = res.locals.schoolId!;
     const role = await getRequestPassPilotRole(req, res);
     await expireOverduePasses(schoolId);
+
+    if (req.query.classId !== undefined) {
+      const classId = typeof req.query.classId === "string"
+        ? req.query.classId.trim()
+        : "";
+      const scoped = classId
+        ? await getPasspilotClassActivePasses(schoolId, classId, {
+            userId: req.authUser!.id,
+            manager: isPassPilotManager(role),
+          })
+        : null;
+      if (!scoped) {
+        return res.status(404).json({
+          error: "Class not found",
+          code: "PASSPILOT_CLASS_NOT_FOUND",
+        });
+      }
+      const enriched = await enrichPasses(scoped.passes, schoolId);
+      return res.json({ classId: scoped.classId, passes: enriched });
+    }
+
     const rawPasses = await getActivePassesBySchool(schoolId);
     const scopedPasses = await filterPassesForRole(rawPasses, req.authUser!, schoolId, role);
     const enriched = await enrichPasses(scopedPasses, schoolId);

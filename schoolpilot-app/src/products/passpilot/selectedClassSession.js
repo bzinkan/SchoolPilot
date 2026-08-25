@@ -54,3 +54,10 @@ export function resolvePassPilotSelectedClassId(classes, requestedClassId, store
   if (storedClassId && availableClassIds.has(storedClassId)) return storedClassId;
   return classes[0]?.id || "";
 }
+
+export function resolvePassPilotSidebarClassId(classes, currentClassId, storedClassId) {
+  const availableClassIds = new Set(classes.map((item) => item.id));
+  if (currentClassId && availableClassIds.has(currentClassId)) return currentClassId;
+  if (storedClassId && availableClassIds.has(storedClassId)) return storedClassId;
+  return classes.length === 1 ? classes[0].id : "";
+}

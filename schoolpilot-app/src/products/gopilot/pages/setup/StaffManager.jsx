@@ -24,6 +24,19 @@ function workspaceImportIssueText(issue) {
     .join(' — ') || 'Unknown import issue';
 }
 
+function staffIdentityLabel(staff) {
+  const user = staff?.user || {};
+  const email = staff?.email || user.email || '';
+  const name = staff?.displayName
+    || user.displayName
+    || [staff?.firstName || staff?.first_name || user.firstName, staff?.lastName || staff?.last_name || user.lastName]
+      .filter(Boolean)
+      .join(' ')
+    || email
+    || 'Staff member';
+  return email && email !== name ? `${name} — ${email}` : name;
+}
+
 export default function StaffManager({
   staff,
   schoolId,
@@ -409,16 +422,9 @@ export default function StaffManager({
                 Correct the existing identity when this is the same person. Create another account only when these are truly different people.
               </p>
               {(addIdentityConflict.candidates || []).map(candidate => {
-                const candidateName = candidate.user?.displayName
-                  || [candidate.user?.firstName, candidate.user?.lastName].filter(Boolean).join(' ')
-                  || candidate.user?.email
-                  || 'Staff member';
                 return (
                   <div key={candidate.membershipId} className="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-200 bg-white/70 p-2 dark:border-amber-900 dark:bg-slate-900/70">
-                    <span>
-                      {candidateName} — {candidate.user?.email}
-                      <span className="mt-1 block font-mono text-[10px]">Membership ID: {candidate.membershipId}</span>
-                    </span>
+                    <span>{staffIdentityLabel(candidate)}</span>
                     {candidate.status === 'inactive' ? (
                       <button type="button" onClick={() => reactivateExistingStaff(candidate.membershipId)} disabled={adding} className="rounded bg-green-600 px-2 py-1 font-medium text-white hover:bg-green-700 disabled:opacity-50">
                         Reactivate
@@ -539,7 +545,6 @@ export default function StaffManager({
                     <input type="text" value={editData.lastName} onChange={e => setEditData(d => ({ ...d, lastName: e.target.value }))}
                       className="border dark:border-slate-600 rounded px-2 py-1 text-sm w-24 dark:bg-slate-800 dark:text-white" placeholder="Last" />
                   </div>
-                  <p className="mt-1 font-mono text-[10px] text-gray-500 dark:text-slate-400">Membership ID: {s.membershipId}</p>
                 </td>
                 <td className="p-3">
                   <input
@@ -596,9 +601,6 @@ export default function StaffManager({
                     </div>
                     <div>
                       <span className="font-medium dark:text-white">{s.first_name && s.last_name ? `${s.first_name} ${s.last_name}` : s.email || '—'}</span>
-                      <p className="mt-1 font-mono text-[10px] text-gray-500 dark:text-slate-400" data-testid={`staff-membership-id-${s.membershipId}`}>
-                        Membership ID: {s.membershipId}
-                      </p>
                     </div>
                   </div>
                 </td>

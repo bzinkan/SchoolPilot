@@ -385,7 +385,7 @@ export default function SchoolSetupWizard() {
             onAdd={async (data) => {
               const res = await api.post(`/schools/${schoolId}/staff`, data);
               const created = normalizeStaff(res.data);
-              if (!created.id) throw new Error('The server did not return a staff membership ID.');
+              if (!created.id) throw new Error('The server did not return the new staff account.');
               setStaff(prev => [...prev.filter(s => s.id !== created.id), created]);
             }}
             onRemove={async (membershipId, options = {}) => {

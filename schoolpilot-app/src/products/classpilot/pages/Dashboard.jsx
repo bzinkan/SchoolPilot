@@ -31,7 +31,6 @@ import { useLicenses } from '../../../contexts/LicenseContext';
 import { ThemeToggle } from '../../../components/ThemeToggle';
 import ClassPilotSidebar from '../components/ClassPilotSidebar';
 import { useAbsentStudents } from '../../../hooks/useAbsentStudents';
-import { AttendancePanel } from '../../../components/AttendancePanel';
 import { isUrlAllowed } from '../../../lib/classpilot-utils';
 import {
   TILE_BATCH_QUERY_ROOTS,
@@ -103,6 +102,44 @@ const EMPTY_LIVE_VIEW = Object.freeze({
   pending: false,
   expanded: false,
 });
+const CLASSROOM_SELECTION_STORAGE_PREFIX = "classpilot:classroom-selection:v1";
+const classroomSelectionCache = new Map();
+
+function classroomSelectionStorageKey(scope, userId, schoolId) {
+  if (!scope || !userId || !schoolId) return null;
+  return `${CLASSROOM_SELECTION_STORAGE_PREFIX}:${scope}:${encodeURIComponent(userId)}:${encodeURIComponent(schoolId)}`;
+}
+
+function readClassroomSelection(storageKey) {
+  if (!storageKey) return "";
+  if (classroomSelectionCache.has(storageKey)) {
+    return classroomSelectionCache.get(storageKey);
+  }
+
+  try {
+    const groupId = globalThis.window?.sessionStorage?.getItem(storageKey) || "";
+    classroomSelectionCache.set(storageKey, groupId);
+    return groupId;
+  } catch {
+    return "";
+  }
+}
+
+function writeClassroomSelection(storageKey, groupId) {
+  if (!storageKey) return;
+
+  if (groupId) classroomSelectionCache.set(storageKey, groupId);
+  else classroomSelectionCache.delete(storageKey);
+
+  try {
+    const storage = globalThis.window?.sessionStorage;
+    if (!storage) return;
+    if (groupId) storage.setItem(storageKey, groupId);
+    else storage.removeItem(storageKey);
+  } catch {
+    // Keep the in-memory selection for this SPA lifetime when storage is denied.
+  }
+}
 
 function pendingTransientControls(entries) {
   return {
@@ -221,6 +258,8 @@ export default function Dashboard() {
   const { currentUser, school, isAdmin, isTeacher, token, logout } = useClassPilotAuth();
   const { hasPassPilot, hasGoPilot } = useLicenses();
   const { absentIds } = useAbsentStudents();
+  const teacherClassroomSelectionKey = classroomSelectionStorageKey("teacher", currentUser?.id, school?.id);
+  const adminClassroomSelectionKey = classroomSelectionStorageKey("admin", currentUser?.id, school?.id);
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     try {
       return localStorage.getItem('classpilot-sidebar-open') !== 'false';
@@ -236,7 +275,6 @@ export default function Dashboard() {
   const showSidebar = (hasPassPilot || hasGoPilot) && sidebarOpen;
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [selectedStudentIds, setSelectedStudentIds] = useState(new Set());
-  const [showAttendance, setShowAttendance] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const [selectedGrade, setSelectedGrade] = useState(() => {
@@ -294,8 +332,8 @@ export default function Dashboard() {
   const [studentMessages, setStudentMessages] = useState([]);
   const [chatReplies, setChatReplies] = useState({});
   const [sessionFabState, setSessionFabState] = useState(null);
-  const [startGroupId, setStartGroupId] = useState("");
-  const [adminStartGroupId, setAdminStartGroupId] = useState("");
+  const [startGroupId, setStartGroupId] = useState(() => readClassroomSelection(teacherClassroomSelectionKey));
+  const [adminStartGroupId, setAdminStartGroupId] = useState(() => readClassroomSelection(adminClassroomSelectionKey));
   const [classStartOverlap, setClassStartOverlap] = useState(null);
   const [classResyncOverlap, setClassResyncOverlap] = useState(null);
   const [endClassTarget, setEndClassTarget] = useState(null);
@@ -396,23 +434,37 @@ export default function Dashboard() {
     refetchInterval: wsAuthenticated ? false : 10000,
   });
 
-  const { data: groups = EMPTY_LIST } = useQuery({
+  const { data: groups = EMPTY_LIST, isSuccess: groupsLoaded } = useQuery({
     queryKey: ['/api/teacher/groups'],
     queryFn: () => apiRequest('GET', '/teacher/groups'),
     select: (data) => Array.isArray(data) ? data : data?.groups ?? [],
   });
 
   useEffect(() => {
+    if (!groupsLoaded || !teacherClassroomSelectionKey) return;
     if (groups.length === 0) {
+      writeClassroomSelection(teacherClassroomSelectionKey, "");
       setStartGroupId("");
       return;
     }
-    if (!groups.some((group) => group.id === startGroupId)) {
-      setStartGroupId(groups[0].id);
+    if (groups.some((group) => group.id === startGroupId)) {
+      writeClassroomSelection(teacherClassroomSelectionKey, startGroupId);
+      return;
     }
-  }, [groups, startGroupId]);
 
-  const { data: adminTeachingGroups = EMPTY_LIST, isLoading: adminTeachingGroupsLoading } = useQuery({
+    const storedGroupId = readClassroomSelection(teacherClassroomSelectionKey);
+    const nextGroupId = groups.some((group) => group.id === storedGroupId)
+      ? storedGroupId
+      : groups[0].id;
+    writeClassroomSelection(teacherClassroomSelectionKey, nextGroupId);
+    setStartGroupId(nextGroupId);
+  }, [groups, groupsLoaded, startGroupId, teacherClassroomSelectionKey]);
+
+  const {
+    data: adminTeachingGroups = EMPTY_LIST,
+    isLoading: adminTeachingGroupsLoading,
+    isSuccess: adminTeachingGroupsLoaded,
+  } = useQuery({
     queryKey: ['/api/teacher/groups', 'mine'],
     queryFn: () => apiRequest('GET', '/teacher/groups?scope=mine'),
     select: (data) => Array.isArray(data) ? data : data?.groups ?? [],
@@ -420,14 +472,24 @@ export default function Dashboard() {
   });
 
   useEffect(() => {
-    if (!isAdmin || adminTeachingGroups.length === 0) {
+    if (!isAdmin || !adminTeachingGroupsLoaded || !adminClassroomSelectionKey) return;
+    if (adminTeachingGroups.length === 0) {
+      writeClassroomSelection(adminClassroomSelectionKey, "");
       setAdminStartGroupId("");
       return;
     }
-    if (!adminTeachingGroups.some((group) => group.id === adminStartGroupId)) {
-      setAdminStartGroupId(adminTeachingGroups[0].id);
+    if (adminTeachingGroups.some((group) => group.id === adminStartGroupId)) {
+      writeClassroomSelection(adminClassroomSelectionKey, adminStartGroupId);
+      return;
     }
-  }, [adminTeachingGroups, adminStartGroupId, isAdmin]);
+
+    const storedGroupId = readClassroomSelection(adminClassroomSelectionKey);
+    const nextGroupId = adminTeachingGroups.some((group) => group.id === storedGroupId)
+      ? storedGroupId
+      : adminTeachingGroups[0].id;
+    writeClassroomSelection(adminClassroomSelectionKey, nextGroupId);
+    setAdminStartGroupId(nextGroupId);
+  }, [adminClassroomSelectionKey, adminStartGroupId, adminTeachingGroups, adminTeachingGroupsLoaded, isAdmin]);
 
   const { data: allActiveSessions = EMPTY_LIST } = useQuery({
     queryKey: ['/api/sessions/all'],
@@ -2893,9 +2955,6 @@ export default function Dashboard() {
             {/* Right: Actions */}
             <div className="flex items-center gap-2">
               <ThemeToggle />
-              {!dashboardCapabilities.observedOtherClass && <button onClick={() => setShowAttendance(!showAttendance)} className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border transition-colors ${showAttendance ? 'bg-primary text-primary-foreground border-primary' : 'bg-transparent border-slate-600 text-slate-400 hover:bg-slate-800'}`} data-testid="button-attendance">
-                <ClipboardCheck className="h-4 w-4" /> Attendance
-              </button>}
               {isTeacher && (
                 <button onClick={() => navigate("/classpilot/my-settings")} className="w-9 h-9 flex items-center justify-center rounded-lg bg-transparent border border-slate-600 text-slate-400 hover:bg-slate-800 transition-colors" data-testid="button-my-settings" title="My Settings">
                   <User className="h-[18px] w-[18px]" />
@@ -2934,19 +2993,6 @@ export default function Dashboard() {
           <span className="underline underline-offset-2">View</span>
         </button>
       ) : null}
-
-      {/* Attendance Panel */}
-      {showAttendance && !dashboardCapabilities.observedOtherClass && (
-        <div className="px-6 py-3 border-b border-border bg-background">
-          <AttendancePanel
-            students={sessionFilteredStudents.map((s) => {
-              const parts = (s.studentName || '').split(' ');
-              return { id: s.studentId, firstName: parts[0] || '', lastName: parts.slice(1).join(' ') || '' };
-            })}
-            onClose={() => setShowAttendance(false)}
-          />
-        </div>
-      )}
 
       {/* Sidebar + Main Content */}
       <ClassPilotSidebar isOpen={sidebarOpen} onToggle={handleSidebarToggle} />

@@ -267,7 +267,7 @@ describe("PassPilot standalone multi-class rosters", { concurrency: false }, () 
     assert.deepEqual(rosterB.map((student: any) => student.id), [sharedStudent.id]);
   });
 
-  it("requires an exact class for shared students and never leaks a Class B pass to Class A", async (t) => {
+  it("keeps unscoped access origin-based while My Class is scoped by its exact roster", async (t) => {
     if (!schemaReady) return t.skip("passpilot_grade_students migration not applied");
     await inSchool(schoolA.id, async () => {
       await assert.rejects(
@@ -297,6 +297,65 @@ describe("PassPilot standalone multi-class rosters", { concurrency: false }, () 
       assert.equal(passB.classNameSnapshot, "Class B");
       assert.equal(await access.canAccessPass(teacherA, schoolA.id, passB, "teacher"), false);
       assert.equal(await access.canAccessPass(teacherB, schoolA.id, passB, "teacher"), true);
+
+      const rosterScoped = await requestJson(
+        "GET",
+        `/passpilot/passes/active?classId=${gradeA.id}`,
+        null,
+        authFor(teacherA, schoolA.id)
+      );
+      assert.equal(rosterScoped.status, 200);
+      assert.equal(rosterScoped.body.classId, gradeA.id);
+      assert.deepEqual(
+        rosterScoped.body.passes.map((pass: { id: string }) => pass.id),
+        [passB.id]
+      );
+
+      const inventory = await requestJson(
+        "GET",
+        "/passpilot/classes",
+        null,
+        authFor(teacherA, schoolA.id)
+      );
+      assert.equal(inventory.status, 200);
+      assert.equal(
+        inventory.body.classes.find(
+          (entry: { classId: string; activePassCount: number }) => entry.classId === gradeA.id
+        )?.activePassCount,
+        1
+      );
+
+      const unscoped = await requestJson(
+        "GET",
+        "/passpilot/passes/active",
+        null,
+        authFor(teacherA, schoolA.id)
+      );
+      assert.equal(unscoped.status, 200);
+      assert.equal("classId" in unscoped.body, false);
+      assert.equal(
+        unscoped.body.passes.some((pass: { id: string }) => pass.id === passB.id),
+        false
+      );
+
+      const unauthorized = await requestJson(
+        "GET",
+        `/passpilot/passes/active?classId=${gradeA.id}`,
+        null,
+        authFor(unrelatedTeacher, schoolA.id)
+      );
+      assert.equal(unauthorized.status, 404);
+      assert.equal(unauthorized.body.code, "PASSPILOT_CLASS_NOT_FOUND");
+
+      const crossTenant = await requestJson(
+        "GET",
+        `/passpilot/passes/active?classId=${gradeA.id}`,
+        null,
+        authFor(adminB, schoolB.id)
+      );
+      assert.equal(crossTenant.status, 404);
+      assert.equal(crossTenant.body.code, "PASSPILOT_CLASS_NOT_FOUND");
+
       await storage.returnPass(passB.id, schoolA.id);
 
       await storage.removeTeacherGrade(teacherB.id, gradeB.id);

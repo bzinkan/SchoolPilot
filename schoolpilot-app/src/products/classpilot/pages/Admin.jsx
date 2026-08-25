@@ -196,7 +196,6 @@ function AdminPanel({ currentUser, schoolTimezone }) {
   const [wsExcludedEmails, setWsExcludedEmails] = useState(new Set());
   const [wsImportResult, setWsImportResult] = useState(null);
   const [staffSearchQuery, setStaffSearchQuery] = useState("");
-  const [staffStatusFilter, setStaffStatusFilter] = useState("active");
   const [staffPage, setStaffPage] = useState(0);
   const [identityConflict, setIdentityConflict] = useState(null);
   const [importFile, setImportFile] = useState(null);
@@ -375,7 +374,6 @@ function AdminPanel({ currentUser, schoolTimezone }) {
       form.reset();
       setAddStaffDialogOpen(false);
       setIdentityConflict(null);
-      setStaffStatusFilter("active");
       toast({
         title: "Staff member added",
         description: "The staff account has been created successfully.",
@@ -559,7 +557,6 @@ function AdminPanel({ currentUser, schoolTimezone }) {
         queryClient.invalidateQueries({ queryKey: ["/api/admin/teachers"] }),
       ]);
       setIdentityConflict(null);
-      setStaffStatusFilter("active");
       toast({
         title: "School access restored",
         description: "The existing staff identity was reactivated; no duplicate account was created.",
@@ -782,7 +779,6 @@ function AdminPanel({ currentUser, schoolTimezone }) {
 
   const staff = staffData?.users || [];
   const activeStaff = staff.filter((member) => member.status === "active");
-  const formerStaff = staff.filter((member) => member.status === "inactive");
   const editEmailChanged = Boolean(staffToEdit)
     && normalizeEmail(editEmail) !== normalizeEmail(staffToEdit.email);
   const editProfileChanged = Boolean(staffToEdit)
@@ -813,13 +809,6 @@ function AdminPanel({ currentUser, schoolTimezone }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <ThemeToggle />
-          <Button
-            variant="outline"
-            onClick={() => requestRouteChange("/classpilot/admin/attendance")}
-          >
-            <ClipboardCheck className="h-4 w-4 mr-2" />
-            Attendance
-          </Button>
           <Button
             variant="outline"
             onClick={() => requestRouteChange("/classpilot/admin/analytics")}
@@ -883,7 +872,7 @@ function AdminPanel({ currentUser, schoolTimezone }) {
                     Staff Accounts
                   </CardTitle>
                   <CardDescription>
-                    {activeStaff.length} active · {formerStaff.length} former
+                    {activeStaff.length} active
                   </CardDescription>
                 </div>
                 <div className="flex items-center gap-2">
@@ -929,42 +918,15 @@ function AdminPanel({ currentUser, schoolTimezone }) {
                 />
               </div>
 
-              <div className="flex w-fit gap-1 rounded-lg bg-muted p-1" aria-label="Staff status filter">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={staffStatusFilter === "active" ? "default" : "ghost"}
-                  onClick={() => {
-                    setStaffStatusFilter("active");
-                    setStaffPage(0);
-                  }}
-                  data-testid="filter-active-staff"
-                >
-                  Active ({activeStaff.length})
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={staffStatusFilter === "inactive" ? "default" : "ghost"}
-                  onClick={() => {
-                    setStaffStatusFilter("inactive");
-                    setStaffPage(0);
-                  }}
-                  data-testid="filter-former-staff"
-                >
-                  Former ({formerStaff.length})
-                </Button>
-              </div>
-
               {/* Staff List */}
               {isLoading ? (
                 <div className="text-center py-8 text-muted-foreground">
                   Loading staff...
                 </div>
-              ) : staff.length === 0 ? (
+              ) : activeStaff.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
                   <Users className="h-12 w-12 mx-auto mb-3 text-muted-foreground/30" />
-                  <p>No staff yet. Add a staff member to get started!</p>
+                  <p>No active staff yet. Add a staff member to get started!</p>
                 </div>
               ) : (() => {
                 // Helper to extract last name for sorting
@@ -974,7 +936,7 @@ function AdminPanel({ currentUser, schoolTimezone }) {
                   return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : parts[0].toLowerCase();
                 };
 
-                const filteredStaff = (staffStatusFilter === "active" ? activeStaff : formerStaff)
+                const filteredStaff = activeStaff
                   .filter((member) => {
                     const query = staffSearchQuery.toLowerCase();
                     return (
@@ -1020,71 +982,48 @@ function AdminPanel({ currentUser, schoolTimezone }) {
                                   className="border-t hover:bg-muted/50"
                                 >
                                   <td className="px-4 py-3">
-                                    <div>
-                                      <span className="font-medium" data-testid={`staff-name-${member.id}`}>
-                                        {member.displayName || "\u2014"}
-                                      </span>
-                                      <p className="mt-1 font-mono text-[11px] text-muted-foreground" data-testid={`staff-membership-id-${member.id}`}>
-                                        Membership ID: {member.membershipId}
-                                      </p>
-                                    </div>
+                                    <span className="font-medium" data-testid={`staff-name-${member.id}`}>
+                                      {member.displayName || "\u2014"}
+                                    </span>
                                   </td>
                                   <td className="px-4 py-3 text-muted-foreground">
                                     {member.email}
                                   </td>
                                   <td className="px-4 py-3">
-                                    <div className="flex flex-wrap gap-2">
-                                      <Badge variant={member.role === "school_admin" ? "default" : "secondary"}>
-                                        {classPilotStaffRoleLabel(member.role)}
-                                      </Badge>
-                                      {member.status === "inactive" ? <Badge variant="outline">Former staff</Badge> : null}
-                                    </div>
+                                    <Badge variant={member.role === "school_admin" ? "default" : "secondary"}>
+                                      {classPilotStaffRoleLabel(member.role)}
+                                    </Badge>
                                   </td>
                                   <td className="px-4 py-3">
                                     <div className="flex items-center justify-end gap-1">
-                                      {member.status === "active" ? (
-                                        <>
-                                          <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            data-testid={`button-edit-${member.id}`}
-                                            onClick={() => handleEditClick(member)}
-                                            disabled={updateStaffMutation.isPending}
-                                          >
-                                            Edit
-                                          </Button>
-                                          <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            aria-label={`Reset password for ${staffIdentityLabel(member)}`}
-                                            data-testid={`button-reset-password-${member.id}`}
-                                            onClick={() => handleResetPasswordClick(member)}
-                                            disabled={resetPasswordMutation.isPending}
-                                          >
-                                            <Key className="h-4 w-4" />
-                                          </Button>
-                                          <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            aria-label={`Remove school access for ${staffIdentityLabel(member)}`}
-                                            data-testid={`button-remove-access-${member.id}`}
-                                            onClick={() => handleRemoveAccessClick(member)}
-                                          >
-                                            <Trash2 className="h-4 w-4 text-destructive" />
-                                          </Button>
-                                        </>
-                                      ) : (
-                                        <Button
-                                          variant="outline"
-                                          size="sm"
-                                          data-testid={`button-reactivate-${member.id}`}
-                                          onClick={() => reactivateStaffMutation.mutate(member.membershipId)}
-                                          disabled={reactivateStaffMutation.isPending}
-                                        >
-                                          <RefreshCw className="mr-2 h-4 w-4" />
-                                          Reactivate
-                                        </Button>
-                                      )}
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        data-testid={`button-edit-${member.id}`}
+                                        onClick={() => handleEditClick(member)}
+                                        disabled={updateStaffMutation.isPending}
+                                      >
+                                        Edit
+                                      </Button>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        aria-label={`Reset password for ${staffIdentityLabel(member)}`}
+                                        data-testid={`button-reset-password-${member.id}`}
+                                        onClick={() => handleResetPasswordClick(member)}
+                                        disabled={resetPasswordMutation.isPending}
+                                      >
+                                        <Key className="h-4 w-4" />
+                                      </Button>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        aria-label={`Remove school access for ${staffIdentityLabel(member)}`}
+                                        data-testid={`button-remove-access-${member.id}`}
+                                        onClick={() => handleRemoveAccessClick(member)}
+                                      >
+                                        <Trash2 className="h-4 w-4 text-destructive" />
+                                      </Button>
                                     </div>
                                   </td>
                                 </tr>
@@ -1476,9 +1415,6 @@ function AdminPanel({ currentUser, schoolTimezone }) {
             <DialogTitle>Edit Staff</DialogTitle>
             <DialogDescription>
               Update details for <strong>{staffIdentityLabel(staffToEdit)}</strong>. Correcting the email keeps the same identity and class assignments.
-              {staffToEdit?.membershipId ? (
-                <span className="mt-1 block font-mono text-xs">Membership ID: {staffToEdit.membershipId}</span>
-              ) : null}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -1753,9 +1689,6 @@ function AdminPanel({ currentUser, schoolTimezone }) {
               <div key={candidate.membershipId} className="flex flex-col gap-3 rounded-md border p-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="font-medium">{staffIdentityLabel(candidate)}</p>
-                  <p className="mt-1 font-mono text-[11px] text-muted-foreground">
-                    Membership ID: {candidate.membershipId}
-                  </p>
                   <div className="mt-1 flex gap-2">
                     <Badge variant="secondary">
                       {candidate.role === "school_admin" ? "School Admin" : "Teacher"}
@@ -1885,7 +1818,7 @@ function AdminPanel({ currentUser, schoolTimezone }) {
                   Imported {importResult.success}; {importResult.failed} require identity review.
                 </p>
                 <p>
-                  No conflicting row was created automatically. Use Add Staff to confirm a genuinely different person, Edit for an email correction, or Former staff to reactivate an existing identity.
+                  No conflicting row was created automatically. Retry through Add Staff to review the existing identity, then choose an email correction, reactivation, or explicit different-person confirmation.
                 </p>
                 <ul className="max-h-36 space-y-1 overflow-auto">
                   {importResult.errors.map((error) => (

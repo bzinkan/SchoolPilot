@@ -9,6 +9,7 @@ import { preview } from "vite";
 import {
   passPilotSelectedClassStorageKey,
   readPassPilotSelectedClassId,
+  resolvePassPilotSidebarClassId,
   resolvePassPilotSelectedClassId,
   writePassPilotSelectedClassId,
 } from "../src/products/passpilot/selectedClassSession.js";
@@ -270,6 +271,7 @@ async function installApiMocks(page, state) {
       || pathname.startsWith("/api/passpilot/admin/class-migration")
       || pathname === "/api/passes"
       || pathname === "/api/passes/active"
+      || pathname === "/api/passpilot/passes/active"
       || pathname === "/api/passes/history"
       || pathname === "/api/passpilot/passes/issuers"
       || pathname === "/api/kiosk-config"
@@ -478,8 +480,14 @@ async function installApiMocks(page, state) {
       await route.fulfill({ status: 201, json: { id: "pass-one" } });
       return;
     }
-    if (pathname === "/api/passes/active") {
-      await route.fulfill({ json: { passes: [] } });
+    if (pathname === "/api/passes/active" || pathname === "/api/passpilot/passes/active") {
+      state.activePassRequests.push(url.search);
+      await route.fulfill({
+        json: {
+          classId: url.searchParams.get("classId"),
+          passes: [],
+        },
+      });
       return;
     }
     if (pathname === "/api/passes/history") {
@@ -628,6 +636,7 @@ function freshState(overrides = {}) {
     passWrites: [],
     classModelHeaders: [],
     passHistoryRequests: [],
+    activePassRequests: [],
     reportIssuers,
     issuerRequests: [],
     issuerFailuresRemaining: 0,
@@ -691,6 +700,10 @@ test("PassPilot selected-class session state is versioned, scoped, and fail-safe
   assert.equal(resolvePassPilotSelectedClassId(classes, "retired-class", "class-two"), "class-two");
   assert.equal(resolvePassPilotSelectedClassId(classes, "retired-class", "also-retired"), "class-one");
   assert.equal(resolvePassPilotSelectedClassId([], "retired-class", "also-retired"), "");
+  assert.equal(resolvePassPilotSidebarClassId(classes, "class-one", "class-two"), "class-one");
+  assert.equal(resolvePassPilotSidebarClassId(classes, "retired-class", "class-two"), "class-two");
+  assert.equal(resolvePassPilotSidebarClassId(classes, "retired-class", "also-retired"), "");
+  assert.equal(resolvePassPilotSidebarClassId([{ id: "only-class" }], "", ""), "only-class");
 
   writePassPilotSelectedClassId("user-one", "school-one", "", storage);
   assert.equal(values.has(firstKey), false, "an empty class inventory must clear stale session state");
@@ -743,8 +756,14 @@ test("cross-product pass widgets advertise canonical capability and do not mask 
     path.join(APP_ROOT, "src/products/classpilot/components/sidebar/PassPilotMiniView.jsx"),
     "utf8",
   );
-  assert.match(miniView, /navigate\('\/passpilot\/passes'\)/, "View All Passes must retain its explicit deep link");
-  assert.match(miniView, /window\.open\('\/passpilot', '_blank'\)/, "generic PassPilot entry must use the default route");
+  assert.match(miniView, /Go to PassPilot/);
+  assert.match(miniView, /\/passpilot\/my-class\?classId=/, "the sidebar must deep-link to the selected My Class");
+  assert.match(miniView, /href=\{passPilotDestination\}/, "the new-tab action must preserve My Class context");
+  assert.match(miniView, /My Class — \$\{selectedClass\.name\}/);
+  assert.match(miniView, /aria-expanded=\{expanded\}/);
+  assert.match(miniView, /role="status"/);
+  assert.match(miniView, /roster-active-passes/);
+  assert.doesNotMatch(miniView, /navigate\(['"]\/passpilot\/passes/);
 
   const classData = await readFile(path.join(APP_ROOT, "src/products/passpilot/classData.js"), "utf8");
   const myClass = await readFile(
@@ -754,10 +773,13 @@ test("cross-product pass widgets advertise canonical capability and do not mask 
   assert.match(classData, /passPilotClassesQueryKey\(schoolId\)/);
   assert.match(classData, /passPilotHistoryClassesQueryKey\(schoolId\)/);
   assert.match(classData, /passPilotClassRosterQueryKey\(classId, schoolId\)/);
-  assert.match(myClass, /useCanonicalPassPilotClasses\(!!schoolId, schoolId\)/);
+  assert.match(myClass, /useCanonicalPassPilotClasses\(!!schoolId, schoolId, 3000\)/);
   assert.match(myClass, /const sourceResolved = !!schoolId && classInventoryQuery\.isSuccess/);
   assert.match(myClass, /if \(!sourceResolved \|\| !userId \|\| !schoolId\) return/);
-  assert.match(myClass, /\['\/api\/passes\/active', schoolId,/);
+  assert.match(myClass, /\['\/api\/passes\/active', schoolId, 'roster', activeGradeId\]/);
+  assert.match(myClass, /\/passes\/active\?classId=/);
+  assert.match(myClass, /grade\.activePassCount/);
+  assert.doesNotMatch(myClass, /AttendancePanel|showAttendance|ClipboardCheck/);
   assert.match(myClass, /['"]\/api\/passes\/history['"],\s*schoolId,/);
 
   const reports = await readFile(
@@ -809,6 +831,48 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
   let browser;
   try {
     browser = await chromium.launch({ headless: true });
+
+    const classPilotSidebarPage = await browser.newPage();
+    const classPilotSidebarState = freshState({ role: "admin" });
+    await installApiMocks(classPilotSidebarPage, classPilotSidebarState);
+    await classPilotSidebarPage.addInitScript(({ userId, schoolId }) => {
+      window.sessionStorage.setItem(
+        `passpilot:selected-class:v1:${encodeURIComponent(userId)}:${encodeURIComponent(schoolId)}`,
+        "retired-class",
+      );
+    }, { userId: "admin-one", schoolId: SCHOOL_ID });
+    await classPilotSidebarPage.goto(`${baseUrl}/classpilot`);
+    const sidebarClassPicker = classPilotSidebarPage.getByLabel("Select PassPilot class");
+    await sidebarClassPicker.waitFor({ timeout: 15_000 });
+    assert.equal(await sidebarClassPicker.inputValue(), "", "an inaccessible saved class must be cleared");
+    assert.equal(
+      await classPilotSidebarPage.evaluate(({ userId, schoolId }) => window.sessionStorage.getItem(
+        `passpilot:selected-class:v1:${encodeURIComponent(userId)}:${encodeURIComponent(schoolId)}`,
+      ), { userId: "admin-one", schoolId: SCHOOL_ID }),
+      null,
+      "the stale remembered selection must be removed from session storage",
+    );
+    const sidebarScopedPassRequest = classPilotSidebarPage.waitForRequest((request) => {
+      const url = new URL(request.url());
+      return url.pathname === "/api/passpilot/passes/active" && url.searchParams.get("classId") === "class-two";
+    });
+    await sidebarClassPicker.selectOption("class-two");
+    await sidebarScopedPassRequest;
+    await classPilotSidebarPage.getByText("My Class — Grade 4 Homeroom", { exact: true }).waitFor();
+    await classPilotSidebarPage.waitForFunction(
+      ({ userId, schoolId }) => window.sessionStorage.getItem(
+        `passpilot:selected-class:v1:${encodeURIComponent(userId)}:${encodeURIComponent(schoolId)}`,
+      ) === "class-two",
+      { userId: "admin-one", schoolId: SCHOOL_ID },
+    );
+    assert.equal(classPilotSidebarState.activePassRequests.at(-1), "?classId=class-two");
+    assert.equal(
+      await classPilotSidebarPage.getByLabel("Open My Class in PassPilot in a new tab").getAttribute("href"),
+      "/passpilot/my-class?classId=class-two",
+    );
+    await classPilotSidebarPage.getByRole("button", { name: "Go to PassPilot", exact: true }).click();
+    await classPilotSidebarPage.waitForURL("**/passpilot/my-class?classId=class-two");
+    await classPilotSidebarPage.close();
 
     const installCreateSchoolMocks = async (page, payloads) => {
       await page.route("**/api/**", async (route) => {
@@ -913,6 +977,10 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
 
     await canonicalPage.goto(`${baseUrl}/passpilot/my-class?classId=class-two`);
     await canonicalPage.getByText("Taylor Student", { exact: true }).waitFor();
+    assert.ok(
+      canonicalState.activePassRequests.some((search) => new URLSearchParams(search).get("classId") === "class-two"),
+      "My Class must request active passes for the selected roster ID",
+    );
     const selectedClassKey = passPilotSelectedClassStorageKey("admin-one", SCHOOL_ID);
     assert.equal(
       await canonicalPage.evaluate((key) => window.sessionStorage.getItem(key), selectedClassKey),

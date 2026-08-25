@@ -3318,6 +3318,26 @@ export async function getTeacherGrades(teacherId: string) {
     .where(eq(teacherGrades.teacherId, teacherId));
 }
 
+export async function isTeacherAssignedToLegacyPasspilotGrade(
+  schoolId: string,
+  gradeId: string,
+  teacherId: string
+): Promise<boolean> {
+  const [assignment] = await db
+    .select({ id: teacherGrades.id })
+    .from(teacherGrades)
+    .innerJoin(grades, eq(teacherGrades.gradeId, grades.id))
+    .where(
+      and(
+        eq(teacherGrades.teacherId, teacherId),
+        eq(teacherGrades.gradeId, gradeId),
+        eq(grades.schoolId, schoolId)
+      )
+    )
+    .limit(1);
+  return !!assignment;
+}
+
 export async function assignTeacherGrade(
   teacherId: string,
   gradeId: string
@@ -3575,6 +3595,35 @@ export async function getActivePassesBySchool(
       )
     )
     .where(and(eq(passes.schoolId, schoolId), eq(passes.status, "active")))
+    .orderBy(desc(passes.issuedAt));
+  return rows.map((row) => row.pass);
+}
+
+export async function getActivePassesByStudentIds(
+  schoolId: string,
+  studentIds: string[]
+): Promise<Pass[]> {
+  const uniqueStudentIds = [...new Set(studentIds.map(String).filter(Boolean))];
+  if (uniqueStudentIds.length === 0) return [];
+  const rows = await db
+    .select({ pass: passes })
+    .from(passes)
+    .innerJoin(
+      students,
+      and(
+        eq(students.id, passes.studentId),
+        eq(students.schoolId, passes.schoolId),
+        eq(students.status, "active")
+      )
+    )
+    .where(
+      and(
+        eq(passes.schoolId, schoolId),
+        inArray(passes.studentId, uniqueStudentIds),
+        eq(passes.status, "active"),
+        sql`${passes.expiresAt} > now()`
+      )
+    )
     .orderBy(desc(passes.issuedAt));
   return rows.map((row) => row.pass);
 }
@@ -5619,6 +5668,70 @@ export async function getStudentsByGrade(
       )
     )
     .orderBy(students.lastName, students.firstName);
+}
+
+export async function getLegacyPasspilotStudentIdsForGrades(
+  schoolId: string,
+  gradeIds: string[]
+): Promise<Map<string, Set<string>>> {
+  const uniqueGradeIds = [...new Set(gradeIds.map(String).filter(Boolean))];
+  const studentIdsByGrade = new Map<string, Set<string>>(
+    uniqueGradeIds.map((gradeId) => [gradeId, new Set<string>()])
+  );
+  if (uniqueGradeIds.length === 0) return studentIdsByGrade;
+
+  const membershipRows = await db
+    .select({
+      gradeId: passpilotGradeStudents.gradeId,
+      studentId: passpilotGradeStudents.studentId,
+    })
+    .from(passpilotGradeStudents)
+    .innerJoin(
+      grades,
+      and(
+        eq(grades.id, passpilotGradeStudents.gradeId),
+        eq(grades.schoolId, passpilotGradeStudents.schoolId)
+      )
+    )
+    .innerJoin(
+      students,
+      and(
+        eq(students.id, passpilotGradeStudents.studentId),
+        eq(students.schoolId, passpilotGradeStudents.schoolId),
+        eq(students.status, "active")
+      )
+    )
+    .where(
+      and(
+        eq(passpilotGradeStudents.schoolId, schoolId),
+        inArray(passpilotGradeStudents.gradeId, uniqueGradeIds)
+      )
+    );
+  const fallbackRows = await db
+    .select({ gradeId: students.gradeId, studentId: students.id })
+    .from(students)
+    .innerJoin(
+      grades,
+      and(
+        eq(grades.id, students.gradeId),
+        eq(grades.schoolId, students.schoolId)
+      )
+    )
+    .where(
+      and(
+        eq(students.schoolId, schoolId),
+        eq(students.status, "active"),
+        inArray(students.gradeId, uniqueGradeIds)
+      )
+    );
+
+  for (const row of membershipRows) {
+    studentIdsByGrade.get(row.gradeId)?.add(row.studentId);
+  }
+  for (const row of fallbackRows) {
+    if (row.gradeId) studentIdsByGrade.get(row.gradeId)?.add(row.studentId);
+  }
+  return studentIdsByGrade;
 }
 
 export async function getLegacyPasspilotGradeIdsForStudent(

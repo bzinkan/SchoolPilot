@@ -562,7 +562,7 @@ async function testStaffMembershipMutations(browser) {
   try {
     await page.goto('/gopilot/setup', { waitUntil: 'networkidle' });
     await page.getByText('Avery Membership', { exact: true }).waitFor();
-    await page.getByText(`Membership ID: ${membershipId}`, { exact: true }).waitFor();
+    assert.equal(await page.getByText(/^Membership ID:/).count(), 0);
 
     // A returned email mismatch must not be reported as success, and the retry
     // remains an email-only operation with no profile PUT.
@@ -596,10 +596,10 @@ async function testStaffMembershipMutations(browser) {
     // GoPilot Teacher is an override for a universal administrator; clearing
     // the override would leave the effective GoPilot role as administrator.
     await page.getByRole('button', { name: 'Edit Admin Base' }).click();
-    const adminEditRow = page.getByText(`Membership ID: ${adminMembershipId}`, { exact: true }).locator('xpath=ancestor::tr');
+    const adminEditRow = page.getByLabel('Email for Admin Base').locator('xpath=ancestor::tr');
     await adminEditRow.locator('select').selectOption('teacher');
     await adminEditRow.getByRole('button', { name: 'Save', exact: true }).click();
-    await page.getByText(`Membership ID: ${adminMembershipId}`, { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Edit Admin Base' }).waitFor();
     assert.deepEqual(adminUpdateBody, { gopilotRole: 'teacher' });
 
     // Same-name creation must require an explicit distinct-person confirmation.
@@ -658,7 +658,7 @@ async function testStaffMembershipMutations(browser) {
     assert.equal(await page.getByTestId('button-confirm-remove-access').isDisabled(), true);
     await chooseDecisions();
     await page.getByTestId('button-confirm-remove-access').click();
-    await page.getByTestId(`staff-membership-id-${membershipId}`).waitFor({ state: 'detached' });
+    await page.getByText('avery.corrected@example.invalid', { exact: true }).waitFor({ state: 'detached' });
     assert.equal(transitionBodies[0].expectedRevision, 'revision-reviewed');
     assert.equal(transitionBodies[1].expectedRevision, 'revision-refreshed');
     assert.deepEqual(transitionBodies[1].decisions, [

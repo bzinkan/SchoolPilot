@@ -36,7 +36,11 @@ import {
   updatePasspilotClassMappings,
   upsertSettings,
 } from "../dist/services/storage.js";
-import { getPasspilotClasses, getPasspilotClassRoster } from "../dist/services/passpilotClasses.js";
+import {
+  getPasspilotClasses,
+  getPasspilotClassActivePasses,
+  getPasspilotClassRoster,
+} from "../dist/services/passpilotClasses.js";
 import {
   canAccessPass,
   canAccessLegacyPassHistory,
@@ -396,6 +400,11 @@ describe("PassPilot canonical ClassPilot classes", () => {
           (entry) => entry.classId === groupA.id && entry.status === "archived"
         )
       );
+      assert.equal(
+        historyClasses.classes.find((entry) => entry.classId === groupA.id)?.activePassCount,
+        0,
+        "history inventory must not expose current out-of-class counts"
+      );
       await assert.rejects(
         hardDeleteGroupWithCleanup(groupA.id),
         (error: any) => error?.code === "CLASSPILOT_CLASS_IN_USE_BY_PASSPILOT"
@@ -449,6 +458,14 @@ describe("PassPilot canonical ClassPilot classes", () => {
       assert.equal(
         historyClasses.classes.some((entry) => entry.classId === grade.id && entry.historyOnly),
         true
+      );
+      assert.equal(
+        await getPasspilotClassActivePasses(schoolB.id, grade.id, {
+          userId: teacher.id,
+          manager: true,
+        }),
+        null,
+        "history-only legacy classes are never valid live class scopes"
       );
       await assert.rejects(
         createLegacyPass({
@@ -568,6 +585,63 @@ describe("PassPilot canonical ClassPilot classes", () => {
       assert.equal(selectedPass.gradeId, null);
       assert.equal(selectedPass.classNameSnapshot, "Canonical Science");
 
+      const rosterScopedPasses = await getPasspilotClassActivePasses(
+        schoolA.id,
+        primaryClass.id,
+        { userId: teacher.id, manager: false }
+      );
+      assert.deepEqual(rosterScopedPasses?.passes.map((pass) => pass.id), [selectedPass.id]);
+      assert.deepEqual(
+        (
+          await getPasspilotClassActivePasses(schoolA.id, primaryClass.id, {
+            userId: coTeacher.id,
+            manager: false,
+          })
+        )?.passes.map((pass) => pass.id),
+        [selectedPass.id],
+        "an assigned co-teacher may read the exact class roster's active passes"
+      );
+      assert.deepEqual(
+        (
+          await getPasspilotClassActivePasses(schoolA.id, primaryClass.id, {
+            userId: unrelatedTeacher.id,
+            manager: true,
+          })
+        )?.passes.map((pass) => pass.id),
+        [selectedPass.id],
+        "a same-school manager may read an active class"
+      );
+      const inventoryWithActivePass = await getPasspilotClasses(schoolA.id, {
+        userId: teacher.id,
+        manager: false,
+      });
+      assert.equal(
+        inventoryWithActivePass.classes.find((entry) => entry.classId === primaryClass.id)?.activePassCount,
+        1,
+        "a rostered student's pass counts even when it originated in another class"
+      );
+      assert.equal(
+        inventoryWithActivePass.classes.find((entry) => entry.classId === secondaryClass.id)?.activePassCount,
+        1,
+        "a student rostered in two classes counts in each class"
+      );
+      assert.equal(
+        await getPasspilotClassActivePasses(schoolA.id, primaryClass.id, {
+          userId: unrelatedTeacher.id,
+          manager: false,
+        }),
+        null
+      );
+      assert.equal(
+        await inSchool(schoolB.id, () =>
+          getPasspilotClassActivePasses(schoolB.id, primaryClass.id, {
+            userId: teacher.id,
+            manager: true,
+          })
+        ),
+        null
+      );
+
       await updateGroup(secondaryClass.id, { name: "Renamed Canonical Science" } as any);
       const [snapshottedPass] = (await db.execute(sql`
         SELECT class_name_snapshot FROM passes WHERE id = ${selectedPass.id}
@@ -610,6 +684,14 @@ describe("PassPilot canonical ClassPilot classes", () => {
       await addGroupStudents(teacherCreated.id, [studentA.id]);
       await addGroupStudents(archivedOfficial.id, [studentA.id]);
       for (const classId of [teacherCreated.id, archivedOfficial.id]) {
+        assert.equal(
+          await getPasspilotClassActivePasses(schoolA.id, classId, {
+            userId: teacher.id,
+            manager: false,
+          }),
+          null,
+          "inactive or non-instructional canonical groups are not valid live class scopes"
+        );
         await assert.rejects(
           createCanonicalPass(
             {

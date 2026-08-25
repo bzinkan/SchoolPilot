@@ -8,7 +8,7 @@ import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "../../../../lib/queryClient";
 import { usePassPilotAuth } from "../../../../hooks/usePassPilotAuth";
 import { formatTimeFull, startOfTodayInTimezone } from "../../../../lib/date-utils";
-import { Users, Clock, UserCheck, Timer, Heart, AlertTriangle, ChevronDown, Edit3, X, Search, Bath, Triangle, Monitor, ClipboardCheck, BarChart3, Download } from "lucide-react";
+import { Users, Clock, UserCheck, Timer, Heart, AlertTriangle, ChevronDown, Edit3, X, Search, Bath, Triangle, Monitor, BarChart3, Download } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,11 +24,11 @@ import {
 import { Input } from "../../../../components/ui/input";
 import { Label } from "../../../../components/ui/label";
 import { useAbsentStudents } from "../../../../hooks/useAbsentStudents";
-import { AttendancePanel } from "../../../../components/AttendancePanel";
 import { useStudentImportHome } from "../../../../shared/hooks/useStudentImportHome";
 import {
   fetchAllPassPilotHistory,
   isCanonicalPassPilotSource,
+  passPilotClassesQueryKey,
   passPilotClassRosterQueryKey,
   passPilotClassRequest,
   useCanonicalPassPilotClasses,
@@ -143,7 +143,6 @@ function MyClassTab() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isClaimKioskDialogOpen, setIsClaimKioskDialogOpen] = useState(false);
   const [claimTargetClassId, setClaimTargetClassId] = useState(null);
-  const [showAttendance, setShowAttendance] = useState(false);
   const [showPassData, setShowPassData] = useState(false);
   const [timePeriod, setTimePeriod] = useState('today');
   const [selectedPassDataStudent, setSelectedPassDataStudent] = useState(null); // { id, name, classId, schoolId }
@@ -156,7 +155,9 @@ function MyClassTab() {
   const { toast } = useToast();
   const { absentIds } = useAbsentStudents();
 
-  const classInventoryQuery = useCanonicalPassPilotClasses(!!schoolId, schoolId);
+  // Keep every class badge current when a kiosk or another staff member changes
+  // a pass outside this browser. The selected roster still uses its scoped poll.
+  const classInventoryQuery = useCanonicalPassPilotClasses(!!schoolId, schoolId, 3000);
   const sourceResolved = !!schoolId && classInventoryQuery.isSuccess;
   const canonical = sourceResolved && isCanonicalPassPilotSource(classInventoryQuery.data?.source);
 
@@ -228,13 +229,22 @@ function MyClassTab() {
     isError: passesError,
     refetch: refetchPasses,
   } = useQuery({
-    queryKey: ['/api/passes/active', schoolId, canonical ? 'classpilot_groups' : 'legacy_grades'],
-    queryFn: () => passPilotClassRequest('GET', '/passes/active'),
+    queryKey: ['/api/passes/active', schoolId, 'roster', activeGradeId],
+    queryFn: async () => {
+      const data = await passPilotClassRequest(
+        'GET',
+        `/passes/active?classId=${encodeURIComponent(activeGradeId)}`,
+      );
+      if (data?.classId !== activeGradeId) {
+        throw new Error('PassPilot returned a different class scope.');
+      }
+      return data;
+    },
     select: (data) => Array.isArray(data) ? data : (data?.passes ?? []),
     refetchInterval: 3000,
     structuralSharing: true,
     gcTime: 0,
-    enabled: sourceResolved,
+    enabled: sourceResolved && !!activeGradeId,
   });
 
   // Pass Data: fetch history for analytics. The school-local day anchor keeps
@@ -494,6 +504,7 @@ function MyClassTab() {
       queryClient.invalidateQueries({ queryKey: ['/api/passes/active'] });
       queryClient.invalidateQueries({ queryKey: ['/api/passes'] });
       queryClient.invalidateQueries({ queryKey: ['/api/passes/history', schoolId] });
+      queryClient.invalidateQueries({ queryKey: passPilotClassesQueryKey(schoolId) });
       queryClient.invalidateQueries({ queryKey: ['/api/students'] });
       if (activeGradeId) queryClient.invalidateQueries({
         queryKey: passPilotClassRosterQueryKey(activeGradeId, schoolId),
@@ -609,6 +620,7 @@ function MyClassTab() {
       queryClient.invalidateQueries({ queryKey: ['/api/passes/active'] });
       queryClient.invalidateQueries({ queryKey: ['/api/passes'] });
       queryClient.invalidateQueries({ queryKey: ['/api/passes/history', schoolId] });
+      queryClient.invalidateQueries({ queryKey: passPilotClassesQueryKey(schoolId) });
       queryClient.invalidateQueries({ queryKey: ['/api/students'] });
       if (activeGradeId) queryClient.invalidateQueries({
         queryKey: passPilotClassRosterQueryKey(activeGradeId, schoolId),
@@ -803,10 +815,7 @@ function MyClassTab() {
   // Get current active grade data
   const currentActiveGrade = myClasses.find(g => g.id === activeGradeId);
   const gradeStudents = currentActiveGrade ? students : [];
-  const gradeOutPasses = currentActiveGrade ? passes.filter((pass) => {
-    const passClassId = pass.classId || pass.classpilotGroupId || pass.gradeId;
-    return passClassId === currentActiveGrade.id;
-  }) : [];
+  const gradeOutPasses = currentActiveGrade ? passes : [];
 
   // Filter students based on search query
   const filterStudentsBySearch = (studentList, query) => {
@@ -885,11 +894,10 @@ function MyClassTab() {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap gap-2">
             {myClasses.map((grade) => {
-              const gradeOutCount = passes.filter((pass) => (
-                pass.classId || pass.classpilotGroupId || pass.gradeId
-              ) === grade.id).length;
-
               const isActive = activeGradeId === grade.id;
+              const gradeOutCount = isActive
+                ? passes.length
+                : Number(grade.activePassCount || 0);
 
               return (
                 <Button
@@ -987,15 +995,6 @@ function MyClassTab() {
                 Pass Data
                 <ChevronDown className={`w-3 h-3 transition-transform ${showPassData ? 'rotate-180' : ''}`} />
               </Button>
-              <Button
-                variant={showAttendance ? "default" : "outline"}
-                size="sm"
-                onClick={() => setShowAttendance(!showAttendance)}
-                className="flex items-center gap-1.5"
-              >
-                <ClipboardCheck className="w-4 h-4" />
-                Attendance
-              </Button>
             </div>
           )}
         </div>
@@ -1022,16 +1021,6 @@ function MyClassTab() {
           </div>
         )}
       </div>
-
-      {/* Attendance Panel */}
-      {showAttendance && currentActiveGrade && (
-        <div className="mb-6">
-          <AttendancePanel
-            students={gradeStudents}
-            onClose={() => setShowAttendance(false)}
-          />
-        </div>
-      )}
 
       {/* Show active grade content */}
       {currentActiveGrade && (

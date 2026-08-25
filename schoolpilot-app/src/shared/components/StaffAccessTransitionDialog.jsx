@@ -236,9 +236,6 @@ export default function StaffAccessTransitionDialog({
           <DialogDescription>
             {transitionAction === "deactivate" ? "Remove school access for " : `Change the role to ${transitionTargetLabel} for `}
             <strong>{identityLabel(staff)}</strong>. Every assignment needs an explicit decision; historical records will be retained.
-            {staff?.membershipId ? (
-              <span className="mt-1 block font-mono text-xs">Authorized membership ID: {staff.membershipId}</span>
-            ) : null}
           </DialogDescription>
         </DialogHeader>
 
@@ -352,7 +349,7 @@ export default function StaffAccessTransitionDialog({
                             <SelectContent>
                               {eligibleReplacementCandidates.map((candidate) => (
                                 <SelectItem key={candidate.membershipId} value={candidate.membershipId}>
-                                  {identityLabel(candidate)} · Membership ID: {candidate.membershipId}
+                                  {identityLabel(candidate)}
                                 </SelectItem>
                               ))}
                             </SelectContent>

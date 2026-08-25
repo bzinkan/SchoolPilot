@@ -25,10 +25,13 @@ test('ClassPilot corrects staff email on the existing membership identity', asyn
   assert.doesNotMatch(admin, /apiRequest\("DELETE", `\/admin\/users/);
 });
 
-test('ClassPilot exposes former staff, reactivation, and explicit duplicate-person confirmation', async () => {
+test('ClassPilot lists active staff only while retaining guarded reactivation and duplicate-person confirmation', async () => {
   const admin = await read('src/products/classpilot/pages/Admin.jsx');
 
-  assert.match(admin, /filter-former-staff/);
+  assert.match(admin, /const activeStaff = staff\.filter\(\(member\) => member\.status === "active"\)/);
+  assert.match(admin, /const filteredStaff = activeStaff/);
+  assert.doesNotMatch(admin, /filter-former-staff|formerStaff|button-reactivate/);
+  assert.doesNotMatch(admin, /Membership ID:/i);
   assert.match(admin, /\/users\/staff\/\$\{membershipId\}\/reactivate/);
   assert.match(admin, /POSSIBLE_DUPLICATE_STAFF/);
   assert.match(admin, /STAFF_REACTIVATION_REQUIRED/);
@@ -37,8 +40,15 @@ test('ClassPilot exposes former staff, reactivation, and explicit duplicate-pers
   assert.match(admin, /This is a different person/);
   assert.match(admin, /require identity review/);
   assert.match(admin, /No conflicting row was created automatically/);
+  assert.match(admin, /Retry through Add Staff to review the existing identity/);
   assert.match(admin, /Remove school access/);
   assert.doesNotMatch(admin, /Delete Staff Account|Staff account deleted/);
+});
+
+test('ClassPilot Admin no longer exposes attendance management navigation', async () => {
+  const admin = await read('src/products/classpilot/pages/Admin.jsx');
+
+  assert.doesNotMatch(admin, /requestRouteChange\("\/classpilot\/admin\/attendance"\)/);
 });
 
 test('staff removal uses the revisioned assignment transition contract', async () => {
@@ -67,7 +77,7 @@ test('staff removal uses the revisioned assignment transition contract', async (
   assert.match(dialog, /!ACTIVE_STAFF_ROLES\.has\(candidate\.role\) && !ACTIVE_STAFF_ROLES\.has\(effectiveRole\)/);
   assert.match(dialog, /ACTIVE_STAFF_DEPENDENCIES\.has\(dependency\.assignmentType\)[\s\S]+ACTIVE_STAFF_ROLES\.has\(candidate\.role\)/);
   assert.match(dialog, /value=\{decision\.operation\}/);
-  assert.match(dialog, /Authorized membership ID:/);
+  assert.doesNotMatch(dialog, /membership ID/i);
   assert.match(dialog, /Blocker ID:/);
   assert.match(dialog, /Assignment ID:/);
   assert.match(dialog, /Resource ID:/);
@@ -114,6 +124,7 @@ test('teacher selectors and GoPilot staff edits use unambiguous, stable identiti
   assert.match(goPilotStaff, /POSSIBLE_DUPLICATE_STAFF/);
   assert.match(goPilotStaff, /STAFF_REACTIVATION_REQUIRED/);
   assert.match(goPilotStaff, /confirmDistinctPerson: true/);
+  assert.doesNotMatch(goPilotStaff, /membership ID/i);
 });
 
 test('Workspace staff imports preserve updated, skipped, and error review results', async () => {
