@@ -44,6 +44,7 @@ import { createSubgroupMembersQuery } from '../lib/subgroupMembersQuery';
 import {
   applyStudentRealtimeEvents,
   coalesceStudentRealtimeEvents,
+  deriveAggregatedStudentsPresentation,
   makeAggregatedStudentsQueryKey,
   mergeAggregatedStudents,
 } from '../lib/studentRealtimeCache';
@@ -102,8 +103,31 @@ const EMPTY_LIVE_VIEW = Object.freeze({
   pending: false,
   expanded: false,
 });
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
 const CLASSROOM_SELECTION_STORAGE_PREFIX = "classpilot:classroom-selection:v1";
 const classroomSelectionCache = new Map();
+
+function normalizeAggregatedStudentsResponse(data) {
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === 'object' && Array.isArray(data.students)) return data.students;
+  throw new Error('Student data response did not match the expected contract.');
+}
+
+function normalizedRequestId(value) {
+  if (typeof value !== 'string') return null;
+  return REQUEST_ID_PATTERN.test(value) ? value : null;
+}
+
+function requestIdFromError(error) {
+  const bodyRequestId = normalizedRequestId(error?.response?.data?.requestId);
+  if (bodyRequestId) return bodyRequestId;
+
+  const headers = error?.response?.headers;
+  const headerValue = typeof headers?.get === 'function'
+    ? headers.get('x-request-id')
+    : headers?.['x-request-id'];
+  return normalizedRequestId(headerValue);
+}
 
 function classroomSelectionStorageKey(scope, userId, schoolId) {
   if (!scope || !userId || !schoolId) return null;
@@ -606,7 +630,7 @@ export default function Dashboard() {
     [activeSchoolId, adminSchoolMode, effectiveSessionId],
   );
   const {
-    data: students = EMPTY_LIST,
+    data: studentsSnapshot,
     isLoading: studentsLoading,
     isError: studentsQueryError,
     error: studentsError,
@@ -614,17 +638,30 @@ export default function Dashboard() {
     refetch: refetchStudents,
   } = useQuery({
     queryKey: aggregatedStudentsQueryKey,
-    queryFn: () => apiRequest(
+    // Validate before the value enters the cache. A selector error can retain
+    // selected data from the prior session key and make unknown targets look known.
+    queryFn: async () => normalizeAggregatedStudentsResponse(await apiRequest(
       'GET',
       effectiveSessionId
         ? `/students-aggregated?teachingSessionId=${encodeURIComponent(effectiveSessionId)}`
         : '/students-aggregated',
-    ),
-    select: (data) => Array.isArray(data) ? data : data?.students ?? [],
+    )),
     refetchInterval: wsAuthenticated ? false : 30000,
     staleTime: 10000,
     structuralSharing: mergeAggregatedStudents,
   });
+  const {
+    classStudentTargetsUnavailable,
+    classStudentDataUnavailable,
+    classStudentRefreshFailed,
+    classStudentCountsKnown,
+  } = deriveAggregatedStudentsPresentation({
+    studentsSnapshot,
+    isError: studentsQueryError,
+    studentView,
+  });
+  const students = studentsSnapshot ?? EMPTY_LIST;
+  const studentsRequestId = requestIdFromError(studentsError);
 
   useEffect(() => {
     websocketAuthRef.current = currentUser?.id && token ? {
@@ -1694,6 +1731,9 @@ export default function Dashboard() {
   };
 
   const resolveActiveCommandTarget = (overrideStudentIds = null) => {
+    if (classStudentTargetsUnavailable) {
+      throw new Error('Student targets are unavailable until the class roster finishes loading.');
+    }
     if (subgroupCommandsDisabled) {
       throw new Error('Wait for the selected subgroup roster to finish loading before sending commands.');
     }
@@ -1747,13 +1787,19 @@ export default function Dashboard() {
       ? `${subgroupName || "Subgroup"} - ${targetStudents.length} student${targetStudents.length === 1 ? "" : "s"}`
       : `All ${targetStudents.length} student${targetStudents.length === 1 ? "" : "s"}`;
   const targetConnectionLabel = `${connectedTargetCount} connected · ${signalLostTargetCount} signal lost · ${signedOutTargetCount} signed out`;
+  const displayedTargetBannerLabel = classStudentCountsKnown
+    ? targetBannerLabel
+    : 'Student data unavailable';
+  const displayedTargetConnectionLabel = classStudentCountsKnown
+    ? targetConnectionLabel
+    : 'Counts unavailable';
   const selectedSignOutStudents = studentView === "class"
     ? getStudentsForCommandTarget(Array.from(selectedStudentIds))
     : [];
   const signOutSelectedCount = selectedSignOutStudents.length;
   const canSignOutSelectedStudents = studentView === "class" && !!effectiveSession?.id && signOutSelectedCount > 0;
   const canShowStudentWorkspace = isAdmin || (isTeacher && (activeSession || studentView !== "class"));
-  const canUseRemoteControls = dashboardCapabilities.canUseRemoteControls;
+  const canUseRemoteControls = dashboardCapabilities.canUseRemoteControls && !classStudentTargetsUnavailable;
   const selectedAvailableStudents = filteredStudents.filter((student) => selectedStudentIds.has(student.studentId));
   const availableGroupSections = (() => {
     const sections = new Map();
@@ -3033,25 +3079,25 @@ export default function Dashboard() {
             <div className="p-5 rounded-xl bg-green-500/10 border border-green-500/20 dark:bg-green-500/10 dark:border-green-500/20 transition-all duration-300">
               <div className="flex items-center gap-4">
                 <div className="h-12 w-12 rounded-xl bg-green-500 flex items-center justify-center"><Users className="h-6 w-6 text-white" /></div>
-                <div><p className="text-[28px] font-bold text-foreground" data-testid="text-online-count">{onlineCount}</p><p className="text-[13px] text-green-500 font-medium">Online Now</p></div>
+                <div><p className="text-[28px] font-bold text-foreground" data-testid="text-online-count">{classStudentCountsKnown ? onlineCount : '—'}</p><p className="text-[13px] text-green-500 font-medium">Online Now</p></div>
               </div>
             </div>
             <div className="p-5 rounded-xl bg-amber-500/10 border border-amber-500/20 dark:bg-amber-500/10 dark:border-amber-500/20 transition-all duration-300">
               <div className="flex items-center gap-4">
                 <div className="h-12 w-12 rounded-xl bg-amber-500 flex items-center justify-center"><Activity className="h-6 w-6 text-slate-900" /></div>
-                <div><p className="text-[28px] font-bold text-foreground" data-testid="text-idle-count">{idleCount}</p><p className="text-[13px] text-amber-500 font-medium">Idle</p></div>
+                <div><p className="text-[28px] font-bold text-foreground" data-testid="text-idle-count">{classStudentCountsKnown ? idleCount : '—'}</p><p className="text-[13px] text-amber-500 font-medium">Idle</p></div>
               </div>
             </div>
             <div className="p-5 rounded-xl bg-slate-500/10 border border-slate-500/20 dark:bg-slate-500/10 dark:border-slate-500/20 transition-all duration-300">
               <div className="flex items-center gap-4">
                 <div className="h-12 w-12 rounded-xl bg-slate-500 flex items-center justify-center"><WifiOff className="h-6 w-6 text-white" /></div>
-                <div><p className="text-[28px] font-bold text-foreground" data-testid="text-offline-count">{offlineCount}</p><p className="text-[13px] text-muted-foreground font-medium">Not logged in</p></div>
+                <div><p className="text-[28px] font-bold text-foreground" data-testid="text-offline-count">{classStudentCountsKnown ? offlineCount : '—'}</p><p className="text-[13px] text-muted-foreground font-medium">Not logged in</p></div>
               </div>
             </div>
             <div className="p-5 rounded-xl bg-red-500/10 border border-red-500/20 dark:bg-red-500/10 dark:border-red-500/20 transition-all duration-300">
               <div className="flex items-center gap-4">
                 <div className="h-12 w-12 rounded-xl bg-red-500 flex items-center justify-center"><AlertTriangle className="h-6 w-6 text-white" /></div>
-                <div><p className="text-[28px] font-bold text-foreground" data-testid="text-offtask-count">{offTaskCount}</p><p className="text-[13px] text-red-500 font-medium">Off-Task Alert</p></div>
+                <div><p className="text-[28px] font-bold text-foreground" data-testid="text-offtask-count">{classStudentCountsKnown ? offTaskCount : '—'}</p><p className="text-[13px] text-red-500 font-medium">Off-Task Alert</p></div>
               </div>
             </div>
           </div>
@@ -3063,8 +3109,8 @@ export default function Dashboard() {
             <input type="text" placeholder="Search student" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} data-testid="input-search-students" className="w-[300px] px-4 py-3 text-sm rounded-lg border border-border bg-card text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-amber-400 transition-colors" />
             <div className="flex items-center gap-3">
               <div className="px-4 py-2 rounded-lg bg-amber-400 text-slate-900" data-testid="badge-selection-count">
-                <div className="text-[13px] font-semibold">Target: {activeClassName} - {targetBannerLabel}</div>
-                <div className="text-[11px] font-medium opacity-80">{targetConnectionLabel}</div>
+                <div className="text-[13px] font-semibold">Target: {activeClassName} - {displayedTargetBannerLabel}</div>
+                <div className="text-[11px] font-medium opacity-80">{displayedTargetConnectionLabel}</div>
               </div>
               <button
                 onClick={selectAll}
@@ -3129,9 +3175,12 @@ export default function Dashboard() {
           </div>
         )}
 
-        {studentView === 'class' && studentsQueryError && students.length > 0 ? (
+        {classStudentRefreshFailed ? (
           <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100" role="status" data-testid="students-refresh-error">
-            <span>Showing the last student data because the dashboard refresh failed.</span>
+            <span>
+              Showing the last student data because the dashboard refresh failed.
+              {studentsRequestId ? <span className="ml-1 font-mono" data-testid="students-refresh-request-id">Request ID: {studentsRequestId}</span> : null}
+            </span>
             <Button type="button" size="sm" variant="outline" onClick={() => refetchStudents()} disabled={studentsRefreshing}><RefreshCw className="mr-2 h-3.5 w-3.5" />Retry</Button>
           </div>
         ) : null}
@@ -3370,12 +3419,13 @@ export default function Dashboard() {
             </Button>
             {groups.length === 0 && <p className="text-xs text-muted-foreground max-w-md mx-auto">You don't have any class groups yet. Contact your administrator to have students assigned to your classes.</p>}
           </div>
-        ) : studentView === "class" && studentsQueryError && students.length === 0 ? (
+        ) : classStudentDataUnavailable ? (
           <div className="py-20 text-center" role="alert" data-testid="students-query-error">
             <div className="h-20 w-20 mx-auto mb-6 rounded-2xl bg-red-500/10 flex items-center justify-center"><AlertTriangle className="h-10 w-10 text-red-500" /></div>
             <h3 className="text-xl font-semibold mb-2">Student dashboard could not load</h3>
-            <p className="text-sm text-muted-foreground max-w-md mx-auto mb-6">{studentsError?.message || 'Check your connection and try again.'}</p>
-            <Button type="button" variant="outline" onClick={() => refetchStudents()} disabled={studentsRefreshing}><RefreshCw className="mr-2 h-4 w-4" />Try again</Button>
+            <p className="text-sm text-muted-foreground max-w-md mx-auto">Student data could not be loaded from the server.</p>
+            {studentsRequestId ? <p className="mt-2 font-mono text-xs text-muted-foreground" data-testid="students-error-request-id">Request ID: {studentsRequestId}</p> : null}
+            <Button type="button" variant="outline" className="mt-6" onClick={() => refetchStudents()} disabled={studentsRefreshing}><RefreshCw className="mr-2 h-4 w-4" />Try again</Button>
           </div>
         ) : studentView === "class" && studentsLoading ? (
           <div className="py-20 text-center">
@@ -3391,7 +3441,7 @@ export default function Dashboard() {
             <div className="h-20 w-20 mx-auto mb-6 rounded-2xl bg-muted/30 flex items-center justify-center"><Monitor className="h-10 w-10 text-muted-foreground/50" /></div>
             <h3 className="text-xl font-semibold mb-2">No students found</h3>
             <p className="text-sm text-muted-foreground max-w-md mx-auto">
-              {searchQuery ? "Try adjusting your search query to find students" : "No student devices are currently registered. Students will appear here when they connect with the Chrome extension."}
+              {searchQuery ? "Try adjusting your search query to find students" : "No students are available in this view."}
             </p>
           </div>
         ) : (
@@ -3416,7 +3466,7 @@ export default function Dashboard() {
                 : "";
               const returnToClassPending = returnToClassMutation.isPending &&
                 returnToClassMutation.variables?.studentIds?.includes(student.studentId);
-              const dashboardReadOnly = !dashboardCapabilities.canUseRemoteControls;
+              const dashboardReadOnly = !canUseRemoteControls;
               const tileControlsDisabled = supervisedElsewhere || dashboardReadOnly;
               const tileDisabledReason = supervisedElsewhere
                 ? disabledReason
@@ -3471,7 +3521,7 @@ export default function Dashboard() {
                     monitoringDisplay={monitoringDisplay}
                     freshnessNowMs={freshnessNowMs}
                     screenshotObservationStatus={observationLeaseStatus}
-                    actionContextKey={`${activeSchoolId || ''}:${effectiveSession?.id || ''}:${studentView}:${selectedSubgroupId}:${dashboardCapabilities.canUseRemoteControls}:${dashboardCapabilities.canUseLiveView}`}
+                    actionContextKey={`${activeSchoolId || ''}:${effectiveSession?.id || ''}:${studentView}:${selectedSubgroupId}:${canUseRemoteControls}:${dashboardCapabilities.canUseLiveView}`}
                   /> : (
                     <div className="h-[420px] rounded-lg border border-border/30 bg-muted/10" aria-hidden="true" />
                   )}
@@ -4215,7 +4265,7 @@ export default function Dashboard() {
       </Dialog>
 
       {/* TeacherFab */}
-      {dashboardCapabilities.canUseTeacherFab && (
+      {dashboardCapabilities.canUseTeacherFab && !classStudentTargetsUnavailable && (
         <TeacherFab
           attentionActive={attentionActive}
           onAttentionClick={() => setShowAttentionDialog(true)}

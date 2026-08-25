@@ -1,12 +1,14 @@
 import type { Heartbeat } from "../schema/classpilot.js";
 import { redisCommand } from "../middleware/rateLimiter.js";
 import { recordHeartbeatHotPathCounter } from "./heartbeatHotPathMetrics.js";
+import { classpilotTimestampDateOrNull } from "./classpilotTimestamp.js";
 
 export const HEARTBEAT_TILE_CACHE_MAX_RECORDS = 20;
 export const HEARTBEAT_TILE_CACHE_DEFAULT_RECORDS = 10;
 export const HEARTBEAT_TILE_CACHE_TTL_SECONDS = 15 * 60;
 
 type RedisCommand = (args: string[]) => Promise<unknown | undefined>;
+let commandForTests: RedisCommand | undefined;
 const locallyInvalidatedUntil = new Map<string, number>();
 const HEARTBEAT_TILE_REDIS_TIMEOUT_MS = 250;
 const HEARTBEAT_TILE_REDIS_READY_TIMEOUT_MS = 100;
@@ -131,7 +133,7 @@ function decodeHeartbeat(
   }
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const row = value as Record<string, unknown>;
-  const timestamp = new Date(String(row.timestamp ?? ""));
+  const timestamp = classpilotTimestampDateOrNull(row.timestamp);
   if (
     typeof row.id !== "string" ||
     row.id.length === 0 ||
@@ -152,7 +154,7 @@ function decodeHeartbeat(
     !nullableString(row.extensionVersion) ||
     !nullableString(row.chromeVersion) ||
     typeof row.classificationPending !== "boolean" ||
-    Number.isNaN(timestamp.getTime())
+    timestamp === null
   ) {
     return undefined;
   }
@@ -462,7 +464,15 @@ export function createHeartbeatTileCache(
   return { write, replace, read, readBatch, patchClassifications, invalidate };
 }
 
-const heartbeatTileCache = createHeartbeatTileCache();
+const heartbeatTileCache = createHeartbeatTileCache((args) => (
+  commandForTests ? commandForTests(args) : heartbeatTileRedisCommand(args)
+));
+
+export function setHeartbeatTileCacheCommandForTests(
+  command: RedisCommand | undefined
+): void {
+  commandForTests = command;
+}
 
 export const writeHeartbeatTileCache = heartbeatTileCache.write;
 export const replaceHeartbeatTileCache = heartbeatTileCache.replace;

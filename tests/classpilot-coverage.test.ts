@@ -91,6 +91,10 @@ import {
   writeClasspilotRealtimeStatus,
 } from "../dist/services/classpilotRealtimeStatus.js";
 import {
+  heartbeatTileCacheKey,
+  setHeartbeatTileCacheCommandForTests,
+} from "../dist/services/heartbeatTileCache.js";
+import {
   executeClasspilotCommand,
   normalizeCommandPayload,
 } from "../dist/services/classpilotCommandDispatcher.js";
@@ -536,6 +540,286 @@ after(async () => {
 });
 
 describe("ClassPilot supervision coverage storage contracts", () => {
+  it("returns 200 with an exact empty roster for admin school-wide and Observe views", async () => {
+    const emptySchool = await createSchool({
+      name: `${TAG}_Empty_School`,
+      domain: `${TAG}-empty.example.edu`,
+      slug: `${TAG}-empty`,
+    });
+    const emptyAdmin = await createUser({
+      email: `admin@${TAG}-empty.example.edu`,
+      firstName: "Empty",
+      lastName: "Admin",
+    });
+    const emptyTeacher = await createUser({
+      email: `teacher@${TAG}-empty.example.edu`,
+      firstName: "Empty",
+      lastName: "Teacher",
+    });
+
+    try {
+      await createProductLicense({
+        schoolId: emptySchool.id,
+        product: "CLASSPILOT",
+        status: "active",
+      });
+      await createMembership({
+        userId: emptyAdmin.id,
+        schoolId: emptySchool.id,
+        role: "admin",
+        status: "active",
+      });
+      await createMembership({
+        userId: emptyTeacher.id,
+        schoolId: emptySchool.id,
+        role: "teacher",
+        status: "active",
+      });
+
+      const schoolWide = await requestJson(
+        "GET",
+        "/students-aggregated",
+        undefined,
+        authFor(emptyAdmin, emptySchool.id)
+      );
+      assert.equal(schoolWide.status, 200);
+      assert.deepEqual(schoolWide.body, []);
+
+      const emptyGroup = await inSchool(emptySchool.id, () => createGroup({
+        schoolId: emptySchool.id,
+        teacherId: emptyTeacher.id,
+        name: `${TAG}_Empty_Group`,
+        groupType: "admin_class",
+        status: "active",
+      }));
+      const emptySession = await inSchool(emptySchool.id, () => createTeachingSession({
+        groupId: emptyGroup.id,
+        teacherId: emptyTeacher.id,
+      }));
+      const observed = await requestJson(
+        "GET",
+        `/students-aggregated?teachingSessionId=${encodeURIComponent(emptySession.id)}`,
+        undefined,
+        authFor(emptyAdmin, emptySchool.id)
+      );
+      assert.equal(observed.status, 200);
+      assert.deepEqual(observed.body, []);
+    } finally {
+      await asSystem(async () => {
+        await db.execute(sql`DELETE FROM classpilot_session_students WHERE school_id = ${emptySchool.id}`);
+        await db.execute(sql`DELETE FROM teaching_sessions WHERE school_id = ${emptySchool.id}`);
+        await db.execute(sql`DELETE FROM groups WHERE school_id = ${emptySchool.id}`);
+        await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${emptySchool.id}`);
+        await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${emptySchool.id}`);
+        await db.execute(sql`DELETE FROM schools WHERE id = ${emptySchool.id}`);
+        await db.execute(sql`DELETE FROM users WHERE id IN (${emptyAdmin.id}, ${emptyTeacher.id})`);
+      });
+    }
+  });
+
+  it("keeps admin and Observe rosters available across heartbeat-history fallback rows", async () => {
+    const fallbackSchool = await createSchool({
+      name: `${TAG}_Fallback_School`,
+      domain: `${TAG}-fallback.example.edu`,
+      slug: `${TAG}-fallback`,
+    });
+    const fallbackAdmin = await createUser({
+      email: `admin@${TAG}-fallback.example.edu`,
+      firstName: "Fallback",
+      lastName: "Admin",
+    });
+    const fallbackTeacher = await createUser({
+      email: `teacher@${TAG}-fallback.example.edu`,
+      firstName: "Fallback",
+      lastName: "Teacher",
+    });
+    const healthyDeviceId = `${TAG}-fallback-device-healthy`;
+    const invalidDeviceId = `${TAG}-fallback-device-invalid`;
+
+    try {
+      await createProductLicense({
+        schoolId: fallbackSchool.id,
+        product: "CLASSPILOT",
+        status: "active",
+      });
+      await createMembership({
+        userId: fallbackAdmin.id,
+        schoolId: fallbackSchool.id,
+        role: "admin",
+        status: "active",
+      });
+      await createMembership({
+        userId: fallbackTeacher.id,
+        schoolId: fallbackSchool.id,
+        role: "teacher",
+        status: "active",
+      });
+      const healthyStudent = await inSchool(fallbackSchool.id, () => createStudent({
+        schoolId: fallbackSchool.id,
+        firstName: "Healthy",
+        lastName: "Fallback",
+        email: `healthy@${TAG}-fallback.example.edu`,
+        emailLc: `healthy@${TAG}-fallback.example.edu`,
+        gradeLevel: "7",
+        status: "active",
+      }));
+      const invalidStudent = await inSchool(fallbackSchool.id, () => createStudent({
+        schoolId: fallbackSchool.id,
+        firstName: "Invalid",
+        lastName: "Fallback",
+        email: `invalid@${TAG}-fallback.example.edu`,
+        emailLc: `invalid@${TAG}-fallback.example.edu`,
+        gradeLevel: "7",
+        status: "active",
+      }));
+      await inSchool(fallbackSchool.id, async () => {
+        await createDevice({
+          deviceId: healthyDeviceId,
+          schoolId: fallbackSchool.id,
+          classId: "default",
+          deviceName: "Healthy fallback",
+        });
+        await createDevice({
+          deviceId: invalidDeviceId,
+          schoolId: fallbackSchool.id,
+          classId: "default",
+          deviceName: "Invalid fallback",
+        });
+        await linkStudentDevice({ studentId: healthyStudent.id, deviceId: healthyDeviceId });
+        await linkStudentDevice({ studentId: invalidStudent.id, deviceId: invalidDeviceId });
+        await setActiveStudentForDevice(healthyDeviceId, healthyStudent.id);
+        await setActiveStudentForDevice(invalidDeviceId, invalidStudent.id);
+      });
+      const fallbackGroup = await inSchool(fallbackSchool.id, () => createGroup({
+        schoolId: fallbackSchool.id,
+        teacherId: fallbackTeacher.id,
+        name: `${TAG}_Fallback_Group`,
+        groupType: "admin_class",
+        status: "active",
+      }));
+      await inSchool(fallbackSchool.id, () => addGroupStudentsDetailed(fallbackGroup.id, [
+        healthyStudent.id,
+        invalidStudent.id,
+      ]));
+      const fallbackSession = await inSchool(fallbackSchool.id, () => createTeachingSession({
+        groupId: fallbackGroup.id,
+        teacherId: fallbackTeacher.id,
+      }));
+
+      const observedAt = new Date();
+      const cacheRows = new Map<string, string[]>([
+        [heartbeatTileCacheKey(fallbackSchool.id, healthyDeviceId), [JSON.stringify({
+          id: `${TAG}-fallback-heartbeat-healthy`,
+          schoolId: fallbackSchool.id,
+          deviceId: healthyDeviceId,
+          studentId: healthyStudent.id,
+          studentEmail: healthyStudent.email,
+          activeTabTitle: "Healthy history fallback",
+          activeTabUrl: "https://example.edu/fallback",
+          favicon: null,
+          screenLocked: false,
+          flightPathActive: false,
+          activeFlightPathName: null,
+          isSharing: false,
+          cameraActive: false,
+          aiCategory: null,
+          safetyAlert: null,
+          extensionVersion: null,
+          chromeVersion: null,
+          screenshotHealth: null,
+          timestamp: observedAt.toISOString(),
+          classificationPending: false,
+        })]],
+        [heartbeatTileCacheKey(fallbackSchool.id, invalidDeviceId), [JSON.stringify({
+          id: `${TAG}-fallback-heartbeat-invalid`,
+          schoolId: fallbackSchool.id,
+          deviceId: invalidDeviceId,
+          studentId: invalidStudent.id,
+          studentEmail: invalidStudent.email,
+          activeTabTitle: "Must not escape",
+          activeTabUrl: "https://example.edu/invalid",
+          favicon: null,
+          screenLocked: false,
+          flightPathActive: false,
+          activeFlightPathName: null,
+          isSharing: false,
+          cameraActive: false,
+          aiCategory: null,
+          safetyAlert: null,
+          extensionVersion: null,
+          chromeVersion: null,
+          screenshotHealth: null,
+          timestamp: "0",
+          classificationPending: false,
+        })]],
+      ]);
+      let historyBatchReads = 0;
+      setHeartbeatTileCacheCommandForTests(async (args: string[]) => {
+        historyBatchReads += 1;
+        const keyCount = Number(args[2]);
+        return args.slice(3, 3 + keyCount).map((key) => cacheRows.get(key) ?? []);
+      });
+
+      const assertFallbackRoster = (body: unknown) => {
+        assert.ok(Array.isArray(body));
+        const healthyRow = body.find((row: unknown) => (
+          !!row && typeof row === "object"
+          && (row as Record<string, unknown>).studentId === healthyStudent.id
+        ));
+        const invalidRow = body.find((row: unknown) => (
+          !!row && typeof row === "object"
+          && (row as Record<string, unknown>).studentId === invalidStudent.id
+        ));
+        assert.ok(healthyRow);
+        assert.ok(invalidRow);
+        assert.equal(
+          (healthyRow as Record<string, unknown>).activeTabTitle,
+          "Healthy history fallback"
+        );
+        assert.equal((invalidRow as Record<string, unknown>).activeTabTitle, "");
+        expectNoInternalRealtimeBindings(body, [
+          healthyDeviceId,
+          invalidDeviceId,
+        ]);
+      };
+
+      const schoolWide = await requestJson(
+        "GET",
+        "/students-aggregated",
+        undefined,
+        authFor(fallbackAdmin, fallbackSchool.id)
+      );
+      assert.equal(schoolWide.status, 200);
+      assertFallbackRoster(schoolWide.body);
+
+      const observed = await requestJson(
+        "GET",
+        `/students-aggregated?teachingSessionId=${encodeURIComponent(fallbackSession.id)}`,
+        undefined,
+        authFor(fallbackAdmin, fallbackSchool.id)
+      );
+      assert.equal(observed.status, 200);
+      assertFallbackRoster(observed.body);
+      assert.ok(historyBatchReads >= 2);
+    } finally {
+      setHeartbeatTileCacheCommandForTests(undefined);
+      await asSystem(async () => {
+        await db.execute(sql`DELETE FROM student_sessions WHERE device_id IN (${healthyDeviceId}, ${invalidDeviceId})`);
+        await db.execute(sql`DELETE FROM student_devices WHERE device_id IN (${healthyDeviceId}, ${invalidDeviceId})`);
+        await db.execute(sql`DELETE FROM devices WHERE school_id = ${fallbackSchool.id}`);
+        await db.execute(sql`DELETE FROM classpilot_session_students WHERE school_id = ${fallbackSchool.id}`);
+        await db.execute(sql`DELETE FROM teaching_sessions WHERE school_id = ${fallbackSchool.id}`);
+        await db.execute(sql`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id = ${fallbackSchool.id})`);
+        await db.execute(sql`DELETE FROM groups WHERE school_id = ${fallbackSchool.id}`);
+        await db.execute(sql`DELETE FROM students WHERE school_id = ${fallbackSchool.id}`);
+        await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${fallbackSchool.id}`);
+        await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${fallbackSchool.id}`);
+        await db.execute(sql`DELETE FROM schools WHERE id = ${fallbackSchool.id}`);
+        await db.execute(sql`DELETE FROM users WHERE id IN (${fallbackAdmin.id}, ${fallbackTeacher.id})`);
+      });
+    }
+  });
+
   it("returns immediate 403 for revoked staff and device ingest entitlements", async () => {
     const studentToken = createStudentToken({
       schoolId: school.id,
