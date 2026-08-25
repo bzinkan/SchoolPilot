@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish aggregate coturn metrics without exporting log identities."""
+"""Publish aggregate and node-scoped coturn metrics without log identities."""
 
 import json
 import os
@@ -10,6 +10,7 @@ import sys
 LOG_PATH = "/var/log/turnserver/turn.log"
 STATE_PATH = "/var/lib/classpilot-turn-metrics/state.json"
 MAX_ACTIVE_ALLOCATIONS = 2_048
+NODE_PATTERN = re.compile(r"[ab]")
 SESSION_PATTERN = re.compile(r"\bsession ([0-9]{1,32}):")
 ALLOCATION_PATTERN = re.compile(r"\bALLOCATE processed, success\b")
 AUTHENTICATION_FAILURE_PATTERN = re.compile(
@@ -83,7 +84,49 @@ def parse_lines(lines, existing_allocations):
     return relay_bytes, allocation_count, authentication_failure_count, list(active)
 
 
-def publish_metrics(relay_bytes, allocation_count, authentication_failure_count):
+def validate_node_name(value):
+    if not isinstance(value, str) or not NODE_PATTERN.fullmatch(value):
+        raise RuntimeError("invalid TURN node name")
+    return value
+
+
+def build_metric_data(relay_bytes, allocation_count, authentication_failure_count, node_name):
+    node_name = validate_node_name(node_name)
+    metric_data = []
+
+    def append_metric(metric_name, unit, value):
+        if value <= 0:
+            return
+        aggregate = {
+            "MetricName": metric_name,
+            "Unit": unit,
+            "Value": value,
+        }
+        # Keep the existing dimensionless series as the alarm/dashboard
+        # authority and publish a second copy for per-node readiness proof.
+        metric_data.append(aggregate)
+        metric_data.append({
+            **aggregate,
+            "Dimensions": [{"Name": "Node", "Value": node_name}],
+        })
+
+    append_metric("RelayBytes", "Bytes", relay_bytes)
+    append_metric("AllocationCount", "Count", allocation_count)
+    append_metric(
+        "AuthenticationFailureCount",
+        "Count",
+        authentication_failure_count,
+    )
+    return metric_data
+
+
+def publish_metrics(relay_bytes, allocation_count, authentication_failure_count, node_name):
+    metric_data = build_metric_data(
+        relay_bytes,
+        allocation_count,
+        authentication_failure_count,
+        node_name,
+    )
     if relay_bytes <= 0 and allocation_count <= 0 and authentication_failure_count <= 0:
         return
     region = os.environ.get("AWS_REGION", "")
@@ -92,25 +135,6 @@ def publish_metrics(relay_bytes, allocation_count, authentication_failure_count)
         raise RuntimeError("invalid AWS region")
     if not re.fullmatch(r"[A-Za-z0-9/_.-]{1,255}", namespace):
         raise RuntimeError("invalid metric namespace")
-    metric_data = []
-    if relay_bytes > 0:
-        metric_data.append({
-            "MetricName": "RelayBytes",
-            "Unit": "Bytes",
-            "Value": relay_bytes,
-        })
-    if allocation_count > 0:
-        metric_data.append({
-            "MetricName": "AllocationCount",
-            "Unit": "Count",
-            "Value": allocation_count,
-        })
-    if authentication_failure_count > 0:
-        metric_data.append({
-            "MetricName": "AuthenticationFailureCount",
-            "Unit": "Count",
-            "Value": authentication_failure_count,
-        })
     encoded_metric_data = json.dumps(metric_data, separators=(",", ":"))
     subprocess.run([
         "aws", "cloudwatch", "put-metric-data",
@@ -122,6 +146,7 @@ def publish_metrics(relay_bytes, allocation_count, authentication_failure_count)
 
 
 def collect():
+    node_name = validate_node_name(os.environ.get("NODE_NAME"))
     try:
         stat = os.stat(LOG_PATH)
     except FileNotFoundError:
@@ -137,7 +162,12 @@ def collect():
         next_offset = handle.tell()
     # Advance only after CloudWatch accepts the metric so a transient AWS
     # failure retries the same aggregate instead of silently losing it.
-    publish_metrics(relay_bytes, allocation_count, authentication_failure_count)
+    publish_metrics(
+        relay_bytes,
+        allocation_count,
+        authentication_failure_count,
+        node_name,
+    )
     write_state(stat.st_ino, next_offset, active)
 
 
@@ -160,6 +190,33 @@ def self_test():
     assert authentication_failures == 1
     assert active == []
     assert sanitized_allocations(["bad", "1", "2"]) == ["1", "2"]
+    metric_data = build_metric_data(relay_bytes, allocations, authentication_failures, "a")
+    assert len(metric_data) == 6
+    for metric_name in (
+        "RelayBytes",
+        "AllocationCount",
+        "AuthenticationFailureCount",
+    ):
+        matching = [entry for entry in metric_data if entry["MetricName"] == metric_name]
+        assert len(matching) == 2
+        assert "Dimensions" not in matching[0]
+        assert matching[1]["Dimensions"] == [{"Name": "Node", "Value": "a"}]
+    assert validate_node_name("a") == "a"
+    assert validate_node_name("b") == "b"
+    node_b_metric_data = build_metric_data(relay_bytes, allocations, 0, "b")
+    assert len(node_b_metric_data) == 4
+    assert all(
+        entry.get("Dimensions") == [{"Name": "Node", "Value": "b"}]
+        for entry in node_b_metric_data
+        if "Dimensions" in entry
+    )
+    for invalid_node_name in (None, "", "A", "c", "a,b", " a"):
+        try:
+            validate_node_name(invalid_node_name)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("invalid TURN node name was accepted")
 
 
 if __name__ == "__main__":

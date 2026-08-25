@@ -139,6 +139,7 @@ describe("ClassPilot AWS TURN infrastructure contract", () => {
     assert.match(userData, /NoNewPrivileges=true/);
     assert.match(userData, /openssl s_client -connect 127\.0\.0\.1:443/);
     assert.match(userData, /classpilot-turn-relay-metrics\.py --self-test/);
+    assert.match(userData, /Environment=NODE_NAME=\$\{node_name\}/);
     assert.match(
       userData,
       /# The aggregate collector needs coturn's moderate session lifecycle records\.[\s\S]*?\nverbose\nlog-file=\/var\/log\/turnserver\/turn\.log\nsimple-log\nno-stdout-log/
@@ -199,9 +200,21 @@ describe("ClassPilot AWS TURN infrastructure contract", () => {
       /"namespace":\s*"\$\{metric_namespace\}",\s*"append_dimensions"/
     );
     assert.match(userData, /classpilot-turn-relay-metrics\.py/);
-    assert.match(relayMetrics, /"MetricName": "RelayBytes"/);
-    assert.match(relayMetrics, /"MetricName": "AllocationCount"/);
-    assert.match(relayMetrics, /"MetricName": "AuthenticationFailureCount"/);
+    assert.match(relayMetrics, /append_metric\("RelayBytes", "Bytes"/);
+    assert.match(relayMetrics, /append_metric\("AllocationCount", "Count"/);
+    assert.match(relayMetrics, /"AuthenticationFailureCount",\n\s+"Count"/);
+    assert.match(relayMetrics, /NODE_PATTERN = re\.compile\(r"\[ab\]"\)/);
+    assert.match(
+      relayMetrics,
+      /"Dimensions": \[\{"Name": "Node", "Value": node_name\}\]/
+    );
+    assert.match(relayMetrics, /metric_data\.append\(aggregate\)/);
+    assert.match(relayMetrics, /assert len\(metric_data\) == 6/);
+    assert.match(relayMetrics, /assert validate_node_name\("b"\) == "b"/);
+    assert.match(
+      relayMetrics,
+      /\[\{"Name": "Node", "Value": "b"\}\]/
+    );
     assert.match(relayMetrics, /ALLOCATION_PATTERN = re\.compile/);
     assert.match(
       relayMetrics,

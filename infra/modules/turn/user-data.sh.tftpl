@@ -131,6 +131,7 @@ Type=oneshot
 User=root
 Environment=AWS_REGION=${aws_region}
 Environment=METRIC_NAMESPACE=${metric_namespace}
+Environment=NODE_NAME=${node_name}
 ExecStart=/usr/local/bin/classpilot-turn-relay-metrics.py
 PrivateTmp=true
 NoNewPrivileges=true
