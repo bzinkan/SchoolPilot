@@ -173,7 +173,7 @@ export const updateSchoolSchema = z.object({
   // PassPilot
   kioskEnabled: z.boolean().optional(),
   kioskRequiresApproval: z.boolean().optional(),
-  defaultPassDuration: z.number().min(1).optional(),
+  defaultPassDuration: z.number().int().min(1).max(240).optional(),
   // Plaintext PIN on input only — hashed to kioskPinHash before storage,
   // never persisted or echoed back. null clears the PIN.
   kioskPin: z

@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { QueryClient, QueryObserver } from '@tanstack/react-query';
 import {
   applyStudentRealtimeEvents,
   coalesceStudentRealtimeEvents,
+  deriveAggregatedStudentsPresentation,
   makeAggregatedStudentsQueryKey,
   mergeAggregatedStudents,
 } from '../src/products/classpilot/lib/studentRealtimeCache.js';
@@ -26,6 +28,130 @@ test('scopes query keys by school and effective session', () => {
     makeAggregatedStudentsQueryKey('school-1', 'session-1'),
     makeAggregatedStudentsQueryKey('school-2', 'session-1'),
   );
+  assert.deepEqual(makeAggregatedStudentsQueryKey('school-1', null, true), [
+    '/api/students-aggregated', 'school-1', 'admin-school',
+  ]);
+});
+
+test('derives unavailable, fatal, and cached-refresh aggregate states from snapshot presence', () => {
+  assert.deepEqual(deriveAggregatedStudentsPresentation({
+    studentsSnapshot: undefined,
+    studentView: 'class',
+  }), {
+    hasSuccessfulStudentSnapshot: false,
+    classStudentTargetsUnavailable: true,
+    classStudentDataUnavailable: false,
+    classStudentRefreshFailed: false,
+    classStudentCountsKnown: false,
+  });
+
+  assert.deepEqual(deriveAggregatedStudentsPresentation({
+    studentsSnapshot: undefined,
+    isError: true,
+    studentView: 'class',
+  }), {
+    hasSuccessfulStudentSnapshot: false,
+    classStudentTargetsUnavailable: true,
+    classStudentDataUnavailable: true,
+    classStudentRefreshFailed: false,
+    classStudentCountsKnown: false,
+  });
+
+  assert.deepEqual(deriveAggregatedStudentsPresentation({
+    studentsSnapshot: [],
+    isError: true,
+    studentView: 'class',
+  }), {
+    hasSuccessfulStudentSnapshot: true,
+    classStudentTargetsUnavailable: false,
+    classStudentDataUnavailable: false,
+    classStudentRefreshFailed: true,
+    classStudentCountsKnown: true,
+  });
+
+  assert.deepEqual(deriveAggregatedStudentsPresentation({
+    studentsSnapshot: undefined,
+    isError: true,
+    studentView: 'available',
+  }), {
+    hasSuccessfulStudentSnapshot: false,
+    classStudentTargetsUnavailable: false,
+    classStudentDataUnavailable: false,
+    classStudentRefreshFailed: false,
+    classStudentCountsKnown: true,
+  });
+});
+
+test('QueryObserver preserves a successful empty snapshot across a failed refresh', async () => {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  let failRefresh = false;
+  const observer = new QueryObserver(queryClient, {
+    queryKey: ['aggregate-students', 'school-1', 'session-1'],
+    queryFn: async () => {
+      if (failRefresh) throw new Error('refresh failed');
+      return [];
+    },
+  });
+
+  try {
+    const initialResult = await observer.refetch();
+    assert.deepEqual(initialResult.data, []);
+    assert.equal(initialResult.isSuccess, true);
+
+    failRefresh = true;
+    const refreshResult = await observer.refetch({ throwOnError: false });
+    assert.equal(refreshResult.isError, true);
+    assert.deepEqual(refreshResult.data, []);
+    assert.deepEqual(deriveAggregatedStudentsPresentation({
+      studentsSnapshot: refreshResult.data,
+      isError: refreshResult.isError,
+      studentView: 'class',
+    }), {
+      hasSuccessfulStudentSnapshot: true,
+      classStudentTargetsUnavailable: false,
+      classStudentDataUnavailable: false,
+      classStudentRefreshFailed: true,
+      classStudentCountsKnown: true,
+    });
+  } finally {
+    observer.destroy();
+    queryClient.clear();
+  }
+});
+
+test('a new session query failure cannot reuse the prior school-wide roster snapshot', async () => {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const observer = new QueryObserver(queryClient, {
+    queryKey: ['aggregate-students', 'school-1', 'admin-school'],
+    queryFn: async () => [],
+  });
+
+  try {
+    const schoolResult = await observer.refetch();
+    assert.deepEqual(schoolResult.data, []);
+
+    observer.setOptions({
+      queryKey: ['aggregate-students', 'school-1', 'session-1'],
+      queryFn: async () => {
+        throw new Error('malformed aggregate response');
+      },
+    });
+    const sessionResult = await observer.refetch({ throwOnError: false });
+    assert.equal(sessionResult.isError, true);
+    assert.equal(sessionResult.data, undefined);
+    assert.equal(deriveAggregatedStudentsPresentation({
+      studentsSnapshot: sessionResult.data,
+      isError: sessionResult.isError,
+      studentView: 'class',
+    }).classStudentDataUnavailable, true);
+  } finally {
+    observer.destroy();
+    queryClient.clear();
+  }
 });
 
 test('applies an allowed higher-revision update without appending students', () => {

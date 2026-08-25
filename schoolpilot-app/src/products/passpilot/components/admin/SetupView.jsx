@@ -50,6 +50,7 @@ function samePassPilotSettings(left, right) {
     && left?.kioskRequiresApproval === right?.kioskRequiresApproval
     && left?.kioskPinConfigured === right?.kioskPinConfigured
     && left?.kioskStyle === right?.kioskStyle
+    && left?.defaultPassDuration === right?.defaultPassDuration
     && left?.revision === right?.revision;
 }
 
@@ -2782,6 +2783,13 @@ function SettingsForm({ settings, settingsQueryKey, refetchUser }) {
   // revision (the form's remount key never reruns the useState initializer).
   const kioskStyleSupported = settings.kioskStyle !== undefined;
   const effectiveKioskStyle = kioskStyle ?? settings.kioskStyle;
+  // The duration field follows the same backend-first deploy guard. An older
+  // strict server omits it, so this bundle must neither render nor submit it
+  // until the canonical settings DTO advertises support.
+  const defaultPassDurationSupported = settings.defaultPassDuration !== undefined;
+  const [overdueAfterMinutes, setOverdueAfterMinutes] = useState(
+    defaultPassDurationSupported ? String(settings.defaultPassDuration) : "",
+  );
   const [saving, setSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [conflict, setConflict] = useState(null);
@@ -2790,11 +2798,19 @@ function SettingsForm({ settings, settingsQueryKey, refetchUser }) {
 
   const trimmedName = name.trim();
   const pinIsValid = !kioskPin || /^\d{4,8}$/.test(kioskPin);
+  const defaultPassDuration = Number(overdueAfterMinutes);
+  const defaultPassDurationIsValid = !defaultPassDurationSupported || (
+    /^\d+$/.test(overdueAfterMinutes)
+    && Number.isInteger(defaultPassDuration)
+    && defaultPassDuration >= 1
+    && defaultPassDuration <= 240
+  );
   const kioskNeedsPin = kioskEnabled && !settings.kioskPinConfigured && !kioskPin;
   const dirty = trimmedName !== settings.name
     || schoolTimezone !== settings.schoolTimezone
     || kioskEnabled !== settings.kioskEnabled
     || (kioskStyleSupported && effectiveKioskStyle !== settings.kioskStyle)
+    || (defaultPassDurationSupported && defaultPassDuration !== settings.defaultPassDuration)
     || !!kioskPin;
 
   const verifySavedSettings = async (candidate) => {
@@ -2825,6 +2841,10 @@ function SettingsForm({ settings, settingsQueryKey, refetchUser }) {
       setErrorMessage("Kiosk PIN must be 4-8 digits.");
       return;
     }
+    if (!defaultPassDurationIsValid) {
+      setErrorMessage("Overdue after must be a whole number from 1 to 240 minutes.");
+      return;
+    }
     if (kioskNeedsPin) {
       setErrorMessage("Set a 4-8 digit kiosk PIN before enabling Kiosk Mode.");
       return;
@@ -2846,6 +2866,9 @@ function SettingsForm({ settings, settingsQueryKey, refetchUser }) {
       if (kioskEnabled !== settings.kioskEnabled) payload.kioskEnabled = kioskEnabled;
       if (kioskStyleSupported && effectiveKioskStyle !== settings.kioskStyle) {
         payload.kioskStyle = effectiveKioskStyle;
+      }
+      if (defaultPassDurationSupported && defaultPassDuration !== settings.defaultPassDuration) {
+        payload.defaultPassDuration = defaultPassDuration;
       }
       if (kioskPin) payload.kioskPin = kioskPin;
 
@@ -2884,6 +2907,7 @@ function SettingsForm({ settings, settingsQueryKey, refetchUser }) {
     || !!conflict
     || !trimmedName
     || !pinIsValid
+    || !defaultPassDurationIsValid
     || kioskNeedsPin
     || (!dirty && !pendingVerification);
 
@@ -2927,6 +2951,32 @@ function SettingsForm({ settings, settingsQueryKey, refetchUser }) {
               </SelectContent>
             </Select>
           </div>
+
+          {defaultPassDurationSupported ? (
+            <div className="space-y-1">
+              <Label htmlFor="passpilot-default-pass-duration">Overdue after (minutes)</Label>
+              <p id="passpilot-default-pass-duration-description" className="text-xs text-muted-foreground">
+                Choose 1–240 minutes. Changes apply only to new passes. At this time a pass is labeled overdue, but it stays active until staff mark the student returned or cancel the pass.
+              </p>
+              <Input
+                id="passpilot-default-pass-duration"
+                type="number"
+                inputMode="numeric"
+                min="1"
+                max="240"
+                step="1"
+                value={overdueAfterMinutes}
+                onChange={(event) => setOverdueAfterMinutes(event.target.value)}
+                aria-describedby="passpilot-default-pass-duration-description"
+                aria-invalid={!defaultPassDurationIsValid}
+                disabled={saving || !!pendingVerification}
+                data-testid="input-default-pass-duration"
+              />
+              {!defaultPassDurationIsValid ? (
+                <p className="text-xs text-destructive">Enter a whole number from 1 to 240 minutes.</p>
+              ) : null}
+            </div>
+          ) : null}
 
           <div className="border-t pt-5">
             <h3 className="font-medium">Kiosk access</h3>

@@ -83,7 +83,7 @@ const GOPILOT_DOCS = `
 
 const PASSPILOT_DOCS = `
 ## PassPilot Features
-- **Hall Passes**: Digital passes issued by teachers to students. Each pass has a destination (bathroom, nurse, office, counselor, or custom), duration (default 5 minutes), and auto-expiry.
+- **Hall Passes**: Digital passes issued by teachers to students. Each pass has a destination (bathroom, nurse, office, counselor, or custom) and a school-configured overdue threshold. Reaching that threshold does not return or cancel the pass; it remains active until staff or the kiosk records an explicit return, or authorized staff cancels it.
 - **Grades/Periods**: Class periods (e.g., 1st period, 2nd period) that teachers are assigned to. Students belong to grades for pass tracking.
 - **Pass Destinations**: bathroom, nurse, office, counselor, other_classroom, or a custom destination.
 - **Active Passes**: Only ONE active pass per student at a time. Teachers and admins see all active passes in real-time.

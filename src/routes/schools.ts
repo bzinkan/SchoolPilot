@@ -56,13 +56,14 @@ function rejectPasspilotKioskSettingsBypass(req: any, res: any): boolean {
   if (
     !Object.prototype.hasOwnProperty.call(body, "kioskEnabled")
     && !Object.prototype.hasOwnProperty.call(body, "kioskRequiresApproval")
+    && !Object.prototype.hasOwnProperty.call(body, "defaultPassDuration")
     && !Object.prototype.hasOwnProperty.call(body, "kioskPin")
     && !Object.prototype.hasOwnProperty.call(body, "kioskStyle")
   ) {
     return false;
   }
   res.status(409).json({
-    error: "Kiosk settings are managed in PassPilot Setup.",
+    error: "PassPilot settings are managed in PassPilot Setup.",
     code: "PASSPILOT_KIOSK_SETTINGS_MANAGED_IN_SETUP",
     managementUrl: "/passpilot/setup?section=settings",
   });

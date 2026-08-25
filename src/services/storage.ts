@@ -1800,6 +1800,7 @@ export async function updateSchool(
     "kioskEnabled",
     "kioskRequiresApproval",
     "kioskPinHash",
+    "defaultPassDuration",
   ] as const;
   const touchesPasspilotSettings = passpilotSettingsFields.some((field) =>
     Object.prototype.hasOwnProperty.call(data, field)
@@ -1963,6 +1964,7 @@ export type PasspilotAdminSettingsDto = {
   schoolTimezone: string;
   kioskEnabled: boolean;
   kioskRequiresApproval: boolean;
+  defaultPassDuration: number;
   kioskPinConfigured: boolean;
   kioskStyle: PasspilotKioskStyle;
   revision: number;
@@ -1973,6 +1975,7 @@ export type PasspilotAdminSettingsPatch = {
   schoolTimezone?: string;
   kioskEnabled?: boolean;
   kioskRequiresApproval?: boolean;
+  defaultPassDuration?: number;
   kioskPinHash?: string | null;
   kioskStyle?: PasspilotKioskStyle;
 };
@@ -1999,6 +2002,7 @@ function passpilotAdminSettingsDto(school: Pick<
   | "schoolTimezone"
   | "kioskEnabled"
   | "kioskRequiresApproval"
+  | "defaultPassDuration"
   | "kioskPinHash"
   | "kioskStyle"
   | "passpilotSettingsRevision"
@@ -2008,6 +2012,7 @@ function passpilotAdminSettingsDto(school: Pick<
     schoolTimezone: school.schoolTimezone,
     kioskEnabled: school.kioskEnabled,
     kioskRequiresApproval: school.kioskRequiresApproval,
+    defaultPassDuration: school.defaultPassDuration,
     kioskPinConfigured: Boolean(school.kioskPinHash),
     kioskStyle: school.kioskStyle,
     revision: school.passpilotSettingsRevision,
@@ -2027,6 +2032,7 @@ export async function getPasspilotAdminSettings(
       schoolTimezone: schools.schoolTimezone,
       kioskEnabled: schools.kioskEnabled,
       kioskRequiresApproval: schools.kioskRequiresApproval,
+      defaultPassDuration: schools.defaultPassDuration,
       kioskPinHash: schools.kioskPinHash,
       kioskStyle: schools.kioskStyle,
       passpilotSettingsRevision: schools.passpilotSettingsRevision,
@@ -2070,6 +2076,7 @@ async function persistPasspilotAdminSettings(
         schoolTimezone: schools.schoolTimezone,
         kioskEnabled: schools.kioskEnabled,
         kioskRequiresApproval: schools.kioskRequiresApproval,
+        defaultPassDuration: schools.defaultPassDuration,
         kioskPinHash: schools.kioskPinHash,
         kioskStyle: schools.kioskStyle,
         passpilotSettingsRevision: schools.passpilotSettingsRevision,
@@ -2094,6 +2101,8 @@ async function persistPasspilotAdminSettings(
     const nextKioskEnabled = patch.kioskEnabled ?? current.kioskEnabled;
     const nextKioskRequiresApproval =
       patch.kioskRequiresApproval ?? current.kioskRequiresApproval;
+    const nextDefaultPassDuration =
+      patch.defaultPassDuration ?? current.defaultPassDuration;
     const nextKioskPinHash =
       patch.kioskPinHash === undefined ? currentSchool.kioskPinHash : patch.kioskPinHash;
     const nextKioskStyle = patch.kioskStyle ?? current.kioskStyle;
@@ -2111,6 +2120,9 @@ async function persistPasspilotAdminSettings(
     if (nextKioskEnabled !== current.kioskEnabled) changedFields.push("kioskEnabled");
     if (nextKioskRequiresApproval !== current.kioskRequiresApproval) {
       changedFields.push("kioskRequiresApproval");
+    }
+    if (nextDefaultPassDuration !== current.defaultPassDuration) {
+      changedFields.push("defaultPassDuration");
     }
     if (nextKioskStyle !== current.kioskStyle) changedFields.push("kioskStyle");
     const kioskPinChange = patch.kioskPinHash === undefined
@@ -2142,6 +2154,7 @@ async function persistPasspilotAdminSettings(
         schoolTimezone: nextTimezone,
         kioskEnabled: nextKioskEnabled,
         kioskRequiresApproval: nextKioskRequiresApproval,
+        defaultPassDuration: nextDefaultPassDuration,
         kioskPinHash: nextKioskPinHash,
         kioskStyle: nextKioskStyle,
         passpilotSettingsRevision: revision,
@@ -2156,6 +2169,7 @@ async function persistPasspilotAdminSettings(
         schoolTimezone: schools.schoolTimezone,
         kioskEnabled: schools.kioskEnabled,
         kioskRequiresApproval: schools.kioskRequiresApproval,
+        defaultPassDuration: schools.defaultPassDuration,
         kioskPinHash: schools.kioskPinHash,
         kioskStyle: schools.kioskStyle,
         passpilotSettingsRevision: schools.passpilotSettingsRevision,
@@ -3620,8 +3634,7 @@ export async function getActivePassesByStudentIds(
       and(
         eq(passes.schoolId, schoolId),
         inArray(passes.studentId, uniqueStudentIds),
-        eq(passes.status, "active"),
-        sql`${passes.expiresAt} > now()`
+        eq(passes.status, "active")
       )
     )
     .orderBy(desc(passes.issuedAt));
@@ -5619,22 +5632,6 @@ export async function cancelPass(
     )
     .returning();
   return pass;
-}
-
-export async function expireOverduePasses(
-  schoolId: string
-): Promise<number> {
-  const result = await db
-    .update(passes)
-    .set({ status: "expired" })
-    .where(
-      and(
-        eq(passes.schoolId, schoolId),
-        eq(passes.status, "active"),
-        sql`${passes.expiresAt} <= now()`
-      )
-    );
-  return result.rowCount ?? 0;
 }
 
 export async function getStudentByIdNumber(
@@ -23898,7 +23895,7 @@ export async function completePasspilotClassMigration(
     if ((activeLegacyPassState?.count ?? 0) > 0) {
       throw passpilotClassError(
         "PASSPILOT_ACTIVE_LEGACY_PASSES",
-        "Return, cancel, or expire every active legacy pass before completing class migration.",
+        "Return or cancel every active legacy pass before completing class migration.",
         409
       );
     }

@@ -1,20 +1,51 @@
 import { Card, CardContent } from "../../../../components/ui/card";
+import { Button } from "../../../../components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../../components/ui/select";
 import { Badge } from "../../../../components/ui/badge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "../../../../components/ui/alert-dialog";
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { usePassPilotAuth } from "../../../../hooks/usePassPilotAuth";
-import { apiRequest } from "../../../../lib/queryClient";
+import { useToast } from "../../../../hooks/use-toast";
+import { apiRequest, queryClient } from "../../../../lib/queryClient";
 import { formatTime } from "../../../../lib/date-utils";
 import {
   isCanonicalPassPilotSource,
+  passPilotClassesQueryKey,
   passPilotClassRequest,
   useCanonicalPassPilotClasses,
 } from "../../classData";
+import { formatPassOverdueDuration, isPassOverdue } from "../../passData";
+import { usePassNow } from "../LivePassDuration";
+
+function formatLiveDuration(issuedAt, nowMs) {
+  if (!issuedAt) return "Unknown";
+  const issuedAtMs = new Date(issuedAt).getTime();
+  if (!Number.isFinite(issuedAtMs) || !Number.isFinite(nowMs)) return "Unknown";
+  return `${Math.max(0, Math.floor((nowMs - issuedAtMs) / 60_000))} min`;
+}
+
+function getOverdueLabel(pass, nowMs) {
+  const duration = formatPassOverdueDuration(pass, nowMs);
+  if (!duration) return null;
+  return duration === '<1 min' ? `Overdue ${duration}` : `Overdue by ${duration}`;
+}
 
 function PassesTab() {
   const { school, isSchoolwideManager } = usePassPilotAuth();
+  const { toast } = useToast();
   const tz = school?.schoolTimezone ?? "America/New_York";
+  const schoolId = school?.id || '';
   const classInventoryQuery = useCanonicalPassPilotClasses();
   const canonical = classInventoryQuery.isSuccess
     && isCanonicalPassPilotSource(classInventoryQuery.data?.source);
@@ -37,6 +68,9 @@ function PassesTab() {
 
   const [filterType, setFilterType] = useState("all");
   const [filterClassId, setFilterClassId] = useState("all");
+  const [updatingPassId, setUpdatingPassId] = useState(null);
+  const passActionInFlightRef = useRef(false);
+  const nowMs = usePassNow();
 
   if (isLoading || classInventoryQuery.isLoading) {
     return (
@@ -64,20 +98,6 @@ function PassesTab() {
   }
 
   if (!passes) return null;
-
-  const formatDuration = (issuedAt) => {
-    if (!issuedAt) return "Unknown";
-    try {
-      const now = new Date();
-      const issued = new Date(issuedAt);
-      if (isNaN(issued.getTime())) return "Unknown";
-      const diffMs = now.getTime() - issued.getTime();
-      const diffMinutes = Math.floor(diffMs / (1000 * 60));
-      return `${diffMinutes} min`;
-    } catch {
-      return "Unknown";
-    }
-  };
 
   const getInitials = (name) => {
     return name
@@ -116,6 +136,44 @@ function PassesTab() {
     }
 
     return <Badge variant="outline" className="bg-blue-50 text-blue-600 border-blue-200">General</Badge>;
+  };
+
+  const invalidatePassState = () => Promise.all([
+    queryClient.invalidateQueries({ queryKey: ['/api/passes/active'] }),
+    queryClient.invalidateQueries({ queryKey: ['/api/passes'] }),
+    queryClient.invalidateQueries({ queryKey: ['/api/passes/history'] }),
+    queryClient.invalidateQueries({ queryKey: passPilotClassesQueryKey(schoolId) }),
+    queryClient.invalidateQueries({ queryKey: ['passpilot', 'class-students'] }),
+    queryClient.invalidateQueries({ queryKey: ['/api/students'] }),
+  ]);
+
+  const transitionPass = async (pass, action) => {
+    if (passActionInFlightRef.current) return;
+    passActionInFlightRef.current = true;
+    setUpdatingPassId(pass.id);
+    const studentName = [pass.student?.firstName, pass.student?.lastName].filter(Boolean).join(' ') || 'Student';
+    try {
+      await passPilotClassRequest('PATCH', `/passes/${pass.id}/${action}`, {});
+      await invalidatePassState();
+      toast(action === 'return'
+        ? {
+            title: 'Student returned',
+            description: `${studentName} has been marked as returned.`,
+          }
+        : {
+            title: 'Pass canceled',
+            description: `${studentName}'s pass was canceled. They were not marked returned.`,
+          });
+    } catch (transitionError) {
+      toast({
+        title: 'Error',
+        description: transitionError?.response?.data?.error || transitionError?.message || 'The pass could not be updated.',
+        variant: 'destructive',
+      });
+    } finally {
+      passActionInFlightRef.current = false;
+      setUpdatingPassId(null);
+    }
   };
 
   const filteredPasses = (passes || []).filter((pass) => {
@@ -204,42 +262,107 @@ function PassesTab() {
             </CardContent>
           </Card>
         ) : (
-          filteredPasses.map((pass) => (
-            <Card key={pass.id} className="shadow-sm" data-testid={`pass-card-${pass.id}`}>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-3">
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center ${getAvatarColor(`${pass.student?.firstName ?? ''} ${pass.student?.lastName ?? ''}`.trim() || '')}`}>
-                      <span className="text-sm font-medium" data-testid={`student-initials-${pass.id}`}>
-                        {getInitials(`${pass.student?.firstName ?? ''} ${pass.student?.lastName ?? ''}`.trim() || '')}
-                      </span>
-                    </div>
-                    <div>
-                      <div className="flex items-center space-x-2 mb-1">
-                        <h3 className="font-medium text-foreground" data-testid={`student-name-${pass.id}`}>
-                          {pass.student?.firstName} {pass.student?.lastName}
-                        </h3>
-                        {getDestinationBadge(pass)}
+          filteredPasses.map((pass) => {
+            const overdue = isPassOverdue(pass, nowMs);
+            const overdueLabel = getOverdueLabel(pass, nowMs);
+            const passActionPending = updatingPassId === pass.id;
+            const studentName = `${pass.student?.firstName ?? ''} ${pass.student?.lastName ?? ''}`.trim();
+
+            return (
+              <Card
+                key={pass.id}
+                className={`shadow-sm ${overdue ? 'border-amber-300 bg-amber-50/60 dark:border-amber-700 dark:bg-amber-950/20' : ''}`}
+                data-testid={`pass-card-${pass.id}`}
+              >
+                <CardContent className="p-4">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-center space-x-3">
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center ${getAvatarColor(studentName)}`}>
+                        <span className="text-sm font-medium" data-testid={`student-initials-${pass.id}`}>
+                          {getInitials(studentName)}
+                        </span>
                       </div>
-                      <p className="text-sm text-muted-foreground">
-                        Class <span data-testid={`student-grade-${pass.id}`}>{pass.className || pass.classNameSnapshot || pass.student?.grade || "Unknown"}</span> •
-                        Out for <span data-testid={`pass-duration-${pass.id}`}>{formatDuration(pass.issuedAt)}</span>
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        Issued by: <span className="font-medium">{pass.teacher ? `${pass.teacher.firstName} ${pass.teacher.lastName}`.trim() + (pass.issuedVia === "kiosk" && pass.notes ? ` (${pass.notes} Kiosk)` : '') : (pass.issuedVia === "kiosk" ? (pass.notes ? `${pass.notes} Kiosk` : "Kiosk") : "Unknown")}</span>
-                      </p>
+                      <div>
+                        <div className="mb-1 flex flex-wrap items-center gap-2">
+                          <h3 className="font-medium text-foreground" data-testid={`student-name-${pass.id}`}>
+                            {pass.student?.firstName} {pass.student?.lastName}
+                          </h3>
+                          {getDestinationBadge(pass)}
+                          {overdueLabel ? (
+                            <Badge
+                              variant="outline"
+                              className="border-amber-300 bg-amber-100 text-amber-800 dark:border-amber-700 dark:bg-amber-900/50 dark:text-amber-200"
+                              data-testid={`pass-overdue-${pass.id}`}
+                            >
+                              {overdueLabel}
+                            </Badge>
+                          ) : null}
+                        </div>
+                        <p className="text-sm text-muted-foreground">
+                          Class <span data-testid={`student-grade-${pass.id}`}>{pass.className || pass.classNameSnapshot || pass.student?.grade || "Unknown"}</span> •
+                          Out for <span data-testid={`pass-duration-${pass.id}`}>{formatLiveDuration(pass.issuedAt, nowMs)}</span>
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Issued by: <span className="font-medium">{pass.teacher ? `${pass.teacher.firstName} ${pass.teacher.lastName}`.trim() + (pass.issuedVia === "kiosk" && pass.notes ? ` (${pass.notes} Kiosk)` : '') : (pass.issuedVia === "kiosk" ? (pass.notes ? `${pass.notes} Kiosk` : "Kiosk") : "Unknown")}</span>
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex flex-col items-end gap-2">
+                      <div className="text-right">
+                        <p className="text-sm text-muted-foreground">Checked out</p>
+                        <p className="text-sm font-medium text-foreground" data-testid={`checkout-time-${pass.id}`}>
+                          {formatTime(pass.issuedAt, tz)}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => transitionPass(pass, 'return')}
+                          disabled={updatingPassId !== null}
+                          data-testid={`button-return-${pass.id}`}
+                        >
+                          {passActionPending ? 'Updating...' : 'Mark Returned'}
+                        </Button>
+                        {overdue ? (
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={updatingPassId !== null}
+                                data-testid={`button-cancel-pass-${pass.id}`}
+                              >
+                                Cancel Pass
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Cancel {studentName || 'this student'}&apos;s overdue pass?</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  Canceling closes this pass but does not mark the student returned. Use Mark Returned if the student is back in class.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Keep Pass Active</AlertDialogCancel>
+                                <AlertDialogAction
+                                  onClick={() => transitionPass(pass, 'cancel')}
+                                  data-testid={`button-confirm-cancel-pass-${pass.id}`}
+                                >
+                                  Cancel Pass
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm text-muted-foreground">Checked out</p>
-                    <p className="text-sm font-medium text-foreground" data-testid={`checkout-time-${pass.id}`}>
-                      {formatTime(pass.issuedAt, tz)}
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))
+                </CardContent>
+              </Card>
+            );
+          })
         )}
       </div>
     </div>

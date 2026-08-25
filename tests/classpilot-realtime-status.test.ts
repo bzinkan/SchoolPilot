@@ -11,6 +11,7 @@ const {
   CLASSPILOT_REALTIME_MAX_TABS,
   classpilotPublicRealtimeBinding,
   classpilotRealtimeFresh,
+  classpilotRealtimeStatusFromHeartbeat,
   classpilotRealtimeStatusKey,
   createClasspilotRealtimeStatusStore,
   normalizeClasspilotPublicCapabilities,
@@ -39,6 +40,107 @@ function heartbeat(overrides: Record<string, unknown> = {}) {
 }
 
 describe("ClassPilot cluster-safe realtime status", () => {
+  it("builds heartbeat fallback status from Date, string, and numeric timestamps", () => {
+    const now = Date.parse("2026-08-25T13:20:00.000Z");
+    const observedAt = now - 30_000;
+    const history = {
+      id: "heartbeat-history-a",
+      schoolId: binding.schoolId,
+      studentId: binding.studentId,
+      deviceId: binding.deviceId,
+      timestamp: new Date(observedAt),
+      activeTabUrl: "https://example.test/history",
+      activeTabTitle: "History",
+      screenLocked: true,
+      flightPathActive: false,
+      isSharing: false,
+      cameraActive: false,
+    };
+
+    const timestampForms = [
+      new Date(observedAt),
+      new Date(observedAt).toISOString(),
+      observedAt,
+    ];
+    for (const sessionStartedAt of timestampForms) {
+      for (const timestamp of timestampForms) {
+        const snapshot = classpilotRealtimeStatusFromHeartbeat(
+          binding.schoolId,
+          { ...binding, sessionStartedAt },
+          { ...history, timestamp },
+          now
+        );
+        assert.ok(snapshot);
+        assert.equal(snapshot.observedAt, observedAt);
+        assert.equal(snapshot.activeTabTitle, "History");
+        assert.equal(snapshot.studentSessionId, binding.studentSessionId);
+      }
+    }
+  });
+
+  it("fails closed for invalid, stale, pre-session, future, or mismatched heartbeat history", () => {
+    const now = Date.parse("2026-08-25T13:20:00.000Z");
+    const observedAt = now - 30_000;
+    const validBinding = {
+      ...binding,
+      sessionStartedAt: new Date(observedAt).toISOString(),
+    };
+    const history = {
+      id: "heartbeat-history-a",
+      schoolId: binding.schoolId,
+      studentId: binding.studentId,
+      deviceId: binding.deviceId,
+      timestamp: new Date(observedAt),
+      activeTabUrl: "https://example.test/history",
+      activeTabTitle: "History",
+    };
+    const build = (
+      bindingOverride: Record<string, unknown> = {},
+      heartbeatOverride: Record<string, unknown> = {}
+    ) => classpilotRealtimeStatusFromHeartbeat(
+      binding.schoolId,
+      { ...validBinding, ...bindingOverride },
+      { ...history, ...heartbeatOverride },
+      now
+    );
+
+    for (const sessionStartedAt of [
+      null,
+      undefined,
+      "",
+      "not-a-date",
+      "0",
+      String(observedAt),
+      "2026-02-31T13:15:00.000Z",
+      new Date(0),
+      1_700_000_000,
+    ]) {
+      assert.equal(build({ sessionStartedAt }), null);
+    }
+    for (const timestamp of [
+      "not-a-date",
+      "0",
+      String(observedAt),
+      "2026-02-31T13:15:00.000Z",
+      new Date(0),
+      1_700_000_000,
+    ]) {
+      assert.equal(build({}, { timestamp }), null);
+    }
+    assert.equal(build({ sessionStartedAt: new Date(observedAt + 1).toISOString() }), null);
+    assert.equal(build({}, { timestamp: new Date(now - 300_000) }), null);
+    assert.equal(build({}, { timestamp: new Date(now + 1) }), null);
+    assert.equal(build({}, { schoolId: "school-b" }), null);
+    assert.equal(build({}, { studentId: "student-b" }), null);
+    assert.equal(build({}, { deviceId: "device-b" }), null);
+    assert.equal(classpilotRealtimeStatusFromHeartbeat(
+      binding.schoolId,
+      validBinding,
+      null,
+      now
+    ), null);
+  });
+
   it("uses a hashed Redis key without exposing school or device identifiers", () => {
     const key = classpilotRealtimeStatusKey(binding.schoolId, binding.deviceId);
     assert.match(key, /:classpilot:latest-status:[A-Za-z0-9_-]{43}$/);
@@ -450,6 +552,8 @@ describe("ClassPilot cluster-safe realtime status", () => {
       realtimeLoader.indexOf("readHeartbeatTileCacheBatch") <
       realtimeLoader.indexOf("readLocalClasspilotRealtimeStatusBatch")
     );
+    assert.match(realtimeLoader, /classpilotRealtimeStatusFromHeartbeat\(/);
+    assert.doesNotMatch(realtimeLoader, /sessionStartedAt\?\.getTime\(\)/);
 
     assert.match(devices, /Promise\.all\(\[\s*heartbeatTileCacheWrite,\s*realtimeStatusWrite/);
     assert.match(devices, /patchClasspilotRealtimeClassification\(\{[\s\S]*?heartbeatId: heartbeat\.id/);

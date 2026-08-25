@@ -17,6 +17,8 @@ import {
   passPilotClassRequest,
   useCanonicalPassPilotClasses,
 } from '../../../passpilot/classData';
+import { usePassNow } from '../../../passpilot/components/LivePassDuration';
+import { formatPassOverdueDuration, isPassOverdue } from '../../../passpilot/passData';
 import { useKioskSessions } from '../../../passpilot/useKioskSessions';
 import {
   readPassPilotSelectedClassId,
@@ -51,14 +53,17 @@ function getDestinationStyle(destination) {
   return { bg: 'bg-purple-50 dark:bg-purple-950/40', text: 'text-purple-600 dark:text-purple-400', border: 'border-purple-200 dark:border-purple-800' };
 }
 
-function formatDuration(issuedAt) {
+function formatDuration(issuedAt, nowMs) {
   if (!issuedAt) return '';
-  const mins = Math.floor((Date.now() - new Date(issuedAt).getTime()) / 60000);
+  const issuedAtMs = new Date(issuedAt).getTime();
+  if (!Number.isFinite(issuedAtMs)) return '';
+  const mins = Math.floor(Math.max(0, nowMs - issuedAtMs) / 60000);
   if (mins < 1) return '<1 min';
   return `${mins} min`;
 }
 
 export default function PassPilotMiniView() {
+  const nowMs = usePassNow();
   const [expanded, setExpanded] = useState(true);
   const [sidebarSelection, setSidebarSelection] = useState({ scopeKey: '', classId: '' });
   const [isSendingToKiosk, setIsSendingToKiosk] = useState(false);
@@ -305,7 +310,16 @@ export default function PassPilotMiniView() {
                 const initials = getInitials(student.firstName, student.lastName);
                 const dest = pass.customDestination || pass.destination || 'General';
                 const destStyle = getDestinationStyle(dest);
-                const duration = formatDuration(pass.issuedAt);
+                const duration = formatDuration(pass.issuedAt, nowMs);
+                const overdue = isPassOverdue(pass, nowMs);
+                const overdueDuration = overdue
+                  ? formatPassOverdueDuration(pass, nowMs)
+                  : null;
+                const overdueLabel = overdueDuration === '<1 min'
+                  ? 'Overdue <1 min'
+                  : overdueDuration
+                    ? `Overdue by ${overdueDuration}`
+                    : null;
 
                 return (
                   <div key={pass.id} className="flex items-center gap-2 px-1 py-1.5 rounded-md hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
@@ -314,13 +328,18 @@ export default function PassPilotMiniView() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-medium text-slate-800 dark:text-slate-200 truncate">{name}</p>
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
                         <span className={`text-[10px] px-1.5 py-0.5 rounded border ${destStyle.bg} ${destStyle.text} ${destStyle.border}`}>
                           {dest}
                         </span>
                         {duration && (
                           <span className="text-[10px] text-slate-400 dark:text-slate-500">{duration}</span>
                         )}
+                        {overdueLabel ? (
+                          <span className="rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:border-amber-700 dark:bg-amber-950/50 dark:text-amber-300">
+                            {overdueLabel}
+                          </span>
+                        ) : null}
                       </div>
                     </div>
                   </div>

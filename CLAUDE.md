@@ -594,6 +594,12 @@ Teacher My Class tab includes a collapsible "Pass Data" section showing:
 - Export CSV button for current view (class-wide or individual student)
 - Pass history API uses opaque keyset pagination (`limit <= 500`, `nextCursor`, `hasMore`). Reports and CSV exports must follow every page; never silently truncate.
 
+### PassPilot Overdue Lifecycle
+- `schools.default_pass_duration` is the administrator-configurable overdue threshold for newly issued passes (1-240 whole minutes), not an automatic return timer.
+- A pass remains `active` after `expires_at` until an explicit return or cancellation. Active-pass reads and duplicate-issuance checks must not filter or mutate rows based on `expires_at`.
+- Derive overdue presentation as `status === "active" && now >= expiresAt`; do not persist a new overdue status. Retain historical `expired` rows unchanged.
+- Teacher, kiosk, and AI issuance use the school threshold when no per-pass duration override is provided. Existing passes keep their recorded `duration` and `expires_at` when the setting changes.
+
 ### PassPilot Class Source
 - `settings.passpilot_class_source` is the only authority: `legacy_grades` preserves standalone PassPilot behavior, while `classpilot_groups` uses active official ClassPilot `admin_class` groups, `group_students`, and primary/co-teacher assignments.
 - Never infer the source from licenses and never dual-write live rosters. Existing schools cut over only through the reviewed migration. New-school provisioning also requires explicit `passpilotClassModelAcknowledged: true`; licenses alone leave the school in legacy mode.

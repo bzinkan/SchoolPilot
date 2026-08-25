@@ -802,6 +802,9 @@ test("cross-product pass widgets advertise canonical capability and do not mask 
   assert.match(miniView, /Sending…/);
   assert.match(miniView, /On Kiosk/);
   assert.match(miniView, /Kiosk unavailable/);
+  assert.match(miniView, /usePassNow\(\)/, "the sidebar must update overdue state between active-pass polls");
+  assert.match(miniView, /isPassOverdue\(pass, nowMs\)/);
+  assert.match(miniView, /Overdue by/);
   assert.doesNotMatch(miniView, /ClaimKioskDialog|legacyKioskServer|\/kiosk-config/);
 
   const kioskSessionsHook = await readFile(
@@ -837,6 +840,12 @@ test("cross-product pass widgets advertise canonical capability and do not mask 
     "utf8",
   );
   assert.match(reports, /csvHeaders = \["Student Name", "Class", "Issued By"/);
+  assert.match(reports, /"Status", "Duration \(min\)"/);
+  assert.match(reports, /getPassStatusLabel\(pass, nowMs\)/);
+  assert.match(reports, /getPassActualDurationMs\(pass\)/);
+  assert.match(reports, /getPassOverdueMs\(pass, nowMs\) !== null/);
+  assert.match(reports, /Overdue by/);
+  assert.match(reports, /activity\.status === 'Overdue'/);
 
   const compatibilityRoutes = await readFile(path.join(APP_ROOT, "../src/routes/compat.ts"), "utf8");
   assert.match(

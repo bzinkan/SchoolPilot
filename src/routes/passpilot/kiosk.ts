@@ -32,7 +32,6 @@ import {
   getActivePassForStudent,
   createLegacyPass,
   createCanonicalPass,
-  expireOverduePasses,
   getKioskStudentState,
   returnKioskPassForStudent,
   getGradesBySchool,
@@ -78,6 +77,7 @@ import {
   authorizePasspilotKiosk,
   issuePasspilotKioskToken,
 } from "../../services/passpilotKioskAuth.js";
+import { isDatabaseErrorCode } from "../../util/databaseError.js";
 import {
   getPasspilotKioskClassRecord,
   getPasspilotKioskClassSource,
@@ -919,16 +919,14 @@ router.post("/checkout", kioskLimiter, async (req, res, next) => {
       return res.status(403).json({ error: "Passes cannot be issued outside school hours" });
     }
 
-    // Expire lapsed passes first so a stale one doesn't block a new checkout.
-    await expireOverduePasses(schoolId);
-
-    // Check for existing active pass
+    // The deadline is an overdue threshold, not an automatic return. An
+    // overdue pass remains active and blocks a second checkout.
     const activePass = await getActivePassForStudent(student.id, schoolId);
     if (activePass) {
       return res.status(409).json({ error: "Student already has an active pass" });
     }
 
-    const passDuration = school.defaultPassDuration || 5;
+    const passDuration = school.defaultPassDuration ?? 5;
     const expiresAt = new Date(Date.now() + passDuration * 60 * 1000);
 
     // Kiosk label + pass attribution.
@@ -1030,9 +1028,9 @@ router.post("/checkout", kioskLimiter, async (req, res, next) => {
                   expectedKioskClassId: school.kioskGradeId || null,
                 }
           );
-    } catch (err: any) {
+    } catch (err) {
       // Drizzle may wrap the pg error (DrizzleQueryError with .cause).
-      if (err?.code === "23505" || err?.cause?.code === "23505") {
+      if (isDatabaseErrorCode(err, "23505")) {
         return res.status(409).json({ error: "Student already has an active pass" });
       }
       throw err;

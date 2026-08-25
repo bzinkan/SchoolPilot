@@ -17,6 +17,7 @@ assert.ok(address && typeof address !== 'string');
 
 let browser;
 let page;
+let overduePage;
 let legacyPage;
 let resumeRacePage;
 let activeSnapshots = 0;
@@ -136,6 +137,87 @@ try {
 
   await page.close();
   page = null;
+
+  overduePage = await browser.newPage();
+  await overduePage.addInitScript(() => {
+    window.localStorage.setItem('pp_kiosk_pin', '9753');
+  });
+  let overdueSnapshotCalls = 0;
+  await overduePage.route('**/api/**', async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === '/api/auth/me') {
+      await route.fulfill({ status: 401, json: { error: 'Not signed in' } });
+      return;
+    }
+    if (pathname === '/api/passpilot/kiosk/auth') {
+      await route.fulfill({ json: { token: 'overdue-kiosk-token', expiresInSeconds: 900 } });
+      return;
+    }
+    if (pathname === '/api/passpilot/kiosk/session') {
+      await route.fulfill({
+        json: {
+          kioskStyle: 'simple',
+          session: {
+            id: 'overdue-session',
+            status: 'active',
+            source: 'classpilot_groups',
+            classId: 'overdue-class',
+            className: 'Biology',
+          },
+        },
+      });
+      return;
+    }
+    if (pathname === '/api/passpilot/kiosk/snapshot') {
+      overdueSnapshotCalls += 1;
+      if (overdueSnapshotCalls === 1) {
+        await route.fulfill({
+          status: 200,
+          headers: { ETag: '"overdue-snapshot"' },
+          json: {
+            revision: 'overdue-snapshot',
+            kioskStyle: 'simple',
+            config: {
+              source: 'classpilot_groups',
+              classId: 'overdue-class',
+              className: 'Biology',
+            },
+            session: { id: 'overdue-session', status: 'active' },
+            roster: {
+              students: [{ id: 'overdue-student', firstName: 'Grace', lastName: 'Hopper' }],
+            },
+            passes: [{
+              id: 'overdue-pass',
+              studentId: 'overdue-student',
+              status: 'active',
+              destination: 'nurse',
+              issuedAt: new Date(Date.now() - 300_000).toISOString(),
+              expiresAt: new Date(Date.now() + 5_500).toISOString(),
+              returnedAt: null,
+            }],
+          },
+        });
+      } else {
+        assert.equal(request.headers()['if-none-match'], '"overdue-snapshot"');
+        await route.fulfill({ status: 304, headers: { ETag: '"overdue-snapshot"' } });
+      }
+      return;
+    }
+    await route.fulfill({ status: 404, json: { error: 'Not found' } });
+  });
+
+  await overduePage.goto(`http://127.0.0.1:${address.port}/passpilot/kiosk/simple?school=overdue-school`);
+  await overduePage.getByText('Hopper, Grace', { exact: true }).waitFor({ timeout: 10_000 });
+  assert.equal(await overduePage.getByText(/Overdue/).count(), 0, 'the future deadline starts on time');
+  await overduePage.getByText('Overdue <1 min', { exact: true }).waitFor({ timeout: 12_000 });
+  assert.equal(overdueSnapshotCalls >= 2, true, 'the deadline must cross after an unchanged 304 snapshot');
+  assert.equal(await overduePage.getByText('Currently Out - Biology', { exact: true }).isVisible(), true);
+  assert.equal(await overduePage.getByText('Tap to return', { exact: true }).isVisible(), true);
+  assert.equal(await overduePage.getByText('Hopper, Grace', { exact: true }).count(), 1);
+  await overduePage.close();
+  overduePage = null;
+
   legacyPage = await browser.newPage();
   await legacyPage.addInitScript(() => {
     window.localStorage.setItem('pp_kiosk_pin', '1357');
@@ -380,6 +462,7 @@ try {
   process.stdout.write('PassPilot kiosk controller browser regression passed.\n');
 } finally {
   await page?.close().catch(() => {});
+  await overduePage?.close().catch(() => {});
   await legacyPage?.close().catch(() => {});
   await resumeRacePage?.close().catch(() => {});
   await browser?.close().catch(() => {});

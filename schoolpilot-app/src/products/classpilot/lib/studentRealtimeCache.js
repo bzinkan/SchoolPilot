@@ -531,3 +531,23 @@ export function makeAggregatedStudentsQueryKey(schoolId, effectiveSessionId, adm
     effectiveSessionId || (adminSchoolMode ? 'admin-school' : 'no-session'),
   ];
 }
+
+export function deriveAggregatedStudentsPresentation({
+  studentsSnapshot,
+  isError = false,
+  studentView = 'class',
+}) {
+  const hasSuccessfulStudentSnapshot = studentsSnapshot !== undefined;
+  const classStudentTargetsUnavailable = studentView === 'class'
+    && !hasSuccessfulStudentSnapshot;
+
+  return {
+    hasSuccessfulStudentSnapshot,
+    classStudentTargetsUnavailable,
+    classStudentDataUnavailable: classStudentTargetsUnavailable && isError,
+    classStudentRefreshFailed: studentView === 'class'
+      && hasSuccessfulStudentSnapshot
+      && isError,
+    classStudentCountsKnown: studentView !== 'class' || hasSuccessfulStudentSnapshot,
+  };
+}
