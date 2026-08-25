@@ -1671,6 +1671,9 @@ function Get-TaskTagsFingerprint {
     $normalized = @($Tags | Sort-Object key | ForEach-Object {
         [ordered]@{ key = [string]$_.key; value = [string]$_.value }
     })
+    if ($normalized.Count -eq 0) {
+        return Get-Sha256Text -Value "[]"
+    }
     return Get-CanonicalJsonSha256 -Value $normalized
 }
 
