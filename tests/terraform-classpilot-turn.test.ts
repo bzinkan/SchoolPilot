@@ -7,6 +7,15 @@ import { gzipSync } from "node:zlib";
 const main = readFileSync("infra/modules/turn/main.tf", "utf8");
 const userData = readFileSync("infra/modules/turn/user-data.sh.tftpl", "utf8");
 const relayMetrics = readFileSync("infra/modules/turn/relay-metrics.py", "utf8");
+const turnOperations = readFileSync(
+  "docs/CLASSPILOT_TURN_OPERATIONS.md",
+  "utf8"
+);
+const releaseRunbook = readFileSync(
+  "docs/CLASSPILOT_2_7_1_RELEASE.md",
+  "utf8"
+);
+const repositoryGuidance = readFileSync("CLAUDE.md", "utf8");
 const certificateRefresh = readFileSync(
   "infra/modules/turn/refresh-certificate.sh",
   "utf8"
@@ -15,6 +24,30 @@ const root = readFileSync("infra/main.tf", "utf8");
 const ecs = readFileSync("infra/modules/ecs/main.tf", "utf8");
 
 describe("ClassPilot AWS TURN infrastructure contract", () => {
+  it("pins the one-time repair to the exact authorized 6/3/4 address set", () => {
+    const authorizedAddresses = [
+      'module.turn[0].aws_instance.turn["a"]',
+      'module.turn[0].aws_instance.turn["b"]',
+      'module.turn[0].aws_eip_association.turn["a"]',
+      'module.turn[0].aws_eip_association.turn["b"]',
+      'module.turn[0].aws_cloudwatch_metric_alarm.log_storage["a"]',
+      'module.turn[0].aws_cloudwatch_metric_alarm.log_storage["b"]',
+      'module.turn[0].aws_cloudwatch_metric_alarm.node_status["a"]',
+      'module.turn[0].aws_cloudwatch_metric_alarm.node_status["b"]',
+      "module.turn[0].aws_cloudwatch_dashboard.turn",
+    ];
+    for (const address of authorizedAddresses) {
+      assert.ok(
+        turnOperations.includes(`\`${address}\``),
+        `TURN operations must name the authorized address ${address}`
+      );
+    }
+    for (const document of [turnOperations, releaseRunbook, repositoryGuidance]) {
+      assert.match(document, /6 to create, 3 to update, 4 to destroy/);
+      assert.doesNotMatch(document, /4 to create, 2 to update, 4 to destroy/);
+    }
+  });
+
   it("creates exactly two independently addressed nodes across indexed public subnets", () => {
     assert.match(main, /nodes\s*=\s*\{\s*a\s*=\s*0\s+b\s*=\s*1/s);
     assert.match(main, /subnet_id\s*=\s*var\.public_subnet_ids\[each\.value\]/);
@@ -106,6 +139,19 @@ describe("ClassPilot AWS TURN infrastructure contract", () => {
     assert.match(userData, /NoNewPrivileges=true/);
     assert.match(userData, /openssl s_client -connect 127\.0\.0\.1:443/);
     assert.match(userData, /classpilot-turn-relay-metrics\.py --self-test/);
+    assert.match(userData, /Environment=NODE_NAME=\$\{node_name\}/);
+    assert.match(
+      userData,
+      /# The aggregate collector needs coturn's moderate session lifecycle records\.[\s\S]*?\nverbose\nlog-file=\/var\/log\/turnserver\/turn\.log\nsimple-log\nno-stdout-log/
+    );
+    assert.doesNotMatch(userData, /\nVerbose\n/);
+    assert.match(userData, /size=64M,mode=0750,uid=\$turnserver_uid,gid=\$turnserver_gid/);
+    assert.match(userData, /maxsize 8M/);
+    assert.match(userData, /OnUnitActiveSec=5min/);
+    assert.match(userData, /classpilot-turn-logrotate\.timer/);
+    assert.match(userData, /"rename": "turn_log_used_percent"/);
+    assert.match(main, /resource "aws_cloudwatch_metric_alarm" "log_storage"/);
+    assert.match(main, /metric_name\s*=\s*"turn_log_used_percent"/);
     assert.match(main, /refresh-certificate\.sh/);
     assert.match(
       main,
@@ -154,15 +200,39 @@ describe("ClassPilot AWS TURN infrastructure contract", () => {
       /"namespace":\s*"\$\{metric_namespace\}",\s*"append_dimensions"/
     );
     assert.match(userData, /classpilot-turn-relay-metrics\.py/);
-    assert.match(relayMetrics, /"MetricName": "RelayBytes"/);
-    assert.match(relayMetrics, /"MetricName": "AllocationCount"/);
-    assert.match(relayMetrics, /"MetricName": "AuthenticationFailureCount"/);
+    assert.match(relayMetrics, /append_metric\("RelayBytes", "Bytes"/);
+    assert.match(relayMetrics, /append_metric\("AllocationCount", "Count"/);
+    assert.match(relayMetrics, /"AuthenticationFailureCount",\n\s+"Count"/);
+    assert.match(relayMetrics, /NODE_PATTERN = re\.compile\(r"\[ab\]"\)/);
+    assert.match(
+      relayMetrics,
+      /"Dimensions": \[\{"Name": "Node", "Value": node_name\}\]/
+    );
+    assert.match(relayMetrics, /metric_data\.append\(aggregate\)/);
+    assert.match(relayMetrics, /assert len\(metric_data\) == 6/);
+    assert.match(relayMetrics, /assert validate_node_name\("b"\) == "b"/);
+    assert.match(
+      relayMetrics,
+      /\[\{"Name": "Node", "Value": "b"\}\]/
+    );
     assert.match(relayMetrics, /ALLOCATION_PATTERN = re\.compile/);
     assert.match(
       relayMetrics,
       /relay_bytes \+= int\(usage_match\.group\(1\)\) \+ int\(usage_match\.group\(2\)\)/
     );
     assert.match(relayMetrics, /MAX_ACTIVE_ALLOCATIONS = 2_048/);
+    assert.match(
+      relayMetrics,
+      /Sanitized rows captured from the Ubuntu 24\.04 coturn 4\.6\.1-1build4/
+    );
+    assert.match(
+      relayMetrics,
+      /"1: : session 000000000000000001: realm <synthetic> user <>: incoming packet message processed, error 401: Unauthorized\\n"/
+    );
+    assert.match(
+      relayMetrics,
+      /"2: : session 000000000000000002: realm <synthetic> user <opaque>: incoming packet ALLOCATE processed, success\\n"/
+    );
     assert.match(relayMetrics, /peer usage/);
     assert.match(userData, /relay_metrics_script_base64gzip/);
     assert.match(

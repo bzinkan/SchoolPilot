@@ -1095,14 +1095,18 @@ Terraform exception. It may replace only
 `module.turn[0].aws_instance.turn["a"]`,
 `module.turn[0].aws_instance.turn["b"]`,
 `module.turn[0].aws_eip_association.turn["a"]`, and
-`module.turn[0].aws_eip_association.turn["b"]`, while updating only
+`module.turn[0].aws_eip_association.turn["b"]`; create only
+`module.turn[0].aws_cloudwatch_metric_alarm.log_storage["a"]` and
+`module.turn[0].aws_cloudwatch_metric_alarm.log_storage["b"]`; and update only
 `module.turn[0].aws_cloudwatch_metric_alarm.node_status["a"]` and
-`module.turn[0].aws_cloudwatch_metric_alarm.node_status["b"]`. The reviewed
-saved plan must be exactly `4 to create, 2 to update, 4 to destroy`, with no
-unrelated changes. It must never replace or update EIPs, DNS, the TURN secret,
-IAM, security groups, the dashboard, or ECS. Take and verify the normal external
-DPAPI and OneDrive AES-GCM state backups before plan, before apply, and after
-apply. Authorization alone is not completion: mark this exception completed and
+`module.turn[0].aws_cloudwatch_metric_alarm.node_status["b"]` plus
+`module.turn[0].aws_cloudwatch_dashboard.turn`. The reviewed saved plan must be
+exactly `6 to create, 3 to update, 4 to destroy`, with no unrelated changes. It
+must never replace or update EIPs, DNS, the TURN secret, IAM, security groups,
+ECS, API, worker, or frontend resources; the exact TURN dashboard address may
+update but must not be replaced. Take and verify the normal external DPAPI and
+OneDrive AES-GCM state backups before plan, before apply, and after apply.
+Authorization alone is not completion: mark this exception completed and
 non-reusable only after the exact saved-plan apply, node/network/TLS/telemetry
 validation, and a fresh no-op plan all pass. Details are in
 `docs/CLASSPILOT_TURN_OPERATIONS.md`.

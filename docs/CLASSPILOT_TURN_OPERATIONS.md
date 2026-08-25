@@ -42,18 +42,27 @@ Terraform apply. The only replacement targets are:
 - `module.turn[0].aws_eip_association.turn["a"]`; and
 - `module.turn[0].aws_eip_association.turn["b"]`.
 
+The only additional create targets are:
+
+- `module.turn[0].aws_cloudwatch_metric_alarm.log_storage["a"]`; and
+- `module.turn[0].aws_cloudwatch_metric_alarm.log_storage["b"]`.
+
 The only in-place update targets are:
 
 - `module.turn[0].aws_cloudwatch_metric_alarm.node_status["a"]`; and
-- `module.turn[0].aws_cloudwatch_metric_alarm.node_status["b"]`.
+- `module.turn[0].aws_cloudwatch_metric_alarm.node_status["b"]`; and
+- `module.turn[0].aws_cloudwatch_dashboard.turn`.
 
 Create a unique saved plan with explicit replacement targeting for the two
 instances; their two associations must be the only dependent replacements. The
-reviewed summary must be exactly `4 to create, 2 to update, 4 to destroy`, and
-the full plan must show the four instance/association replacements plus the two
-alarm updates and no unrelated change. Abort if the plan changes or replaces
-an EIP, Route 53/DNS record, secret, IAM resource, security group, dashboard,
-ECS resource, or any other address.
+reviewed summary must be exactly `6 to create, 3 to update, 4 to destroy`, and
+the full plan must show only the four instance/association replacements, the two
+new bounded-log-storage alarms, the two node-status alarm updates, and the TURN
+CloudWatch dashboard update listed above. Abort if the plan changes or replaces
+an EIP, Route 53/DNS record, secret, IAM resource, security group, ECS resource,
+API, worker, frontend resource, or any other address. A dashboard update is
+authorized only at the exact `module.turn[0].aws_cloudwatch_dashboard.turn`
+address; a dashboard replacement or any other dashboard change is forbidden.
 
 Take and verify the standard external CurrentUser-DPAPI and OneDrive AES-GCM
 Terraform-state backups before planning, again immediately before applying the
@@ -192,9 +201,13 @@ device, negotiation, credential, URL, or request dimensions.
 The `SchoolPilot/ClassPilotTURN` namespace contains:
 
 - `AllocationCount` and `AuthenticationFailureCount` from the on-node bounded
-  aggregate collector. Raw coturn lines are never forwarded to CloudWatch;
+  aggregate collector. Each is published both without dimensions for existing
+  release-wide alarms/dashboard graphs and with exactly `Node=a` or `Node=b`
+  for per-node readiness validation. Raw coturn lines are never forwarded to
+  CloudWatch;
 - `RelayBytes` from client-side usage records for sessions that successfully
-  allocated a relay (peer rows are excluded to prevent double counting);
+  allocated a relay (peer rows are excluded to prevent double counting), also
+  dual-published as dimensionless and exact `Node=a` or `Node=b` series;
 - `IceSuccessCount`, `IceFailureCount`, `IceConnectionTimeMs`, and
   `RelayFallbackCount` from exact-bound client telemetry;
 - fixed relay transport and ICE restart counters; and
@@ -228,9 +241,24 @@ Let's Encrypt tree world-readable.
 
 The identifier-free relay collector must remain LF-only because systemd executes
 its Python shebang directly. Bootstrap runs its built-in self-test before the
-timer is enabled. The CloudWatch agent attaches the custom `Node` dimension in
-the `net` metric block; post-provisioning validation must find recent network
-datapoints for both `Node=a` and `Node=b` before TURN activation.
+timer is enabled. User data passes only its strict `a` or `b` node name. The
+collector keeps each existing dimensionless metric and emits one matching
+`Node=a` or `Node=b` copy; the CloudWatch agent separately attaches the same
+custom `Node` dimension in the `net` metric block. Post-provisioning validation
+must find recent allocation, relay-byte, authentication, and network datapoints
+for both `Node=a` and `Node=b` before TURN activation. Existing aggregate alarm
+and dashboard semantics remain dimensionless.
+
+Coturn must retain moderate `verbose` logging so the collector receives
+allocation and session-usage lifecycle rows. `no-stdout-log` keeps those raw
+rows out of journald. They remain only on a 64 MiB node-local tmpfs, with an
+8 MiB/five-minute rotation guard, six retained rotations, and an 80% storage
+alarm; they are never forwarded to CloudWatch. TURN
+REST usernames are expiry plus a non-identifying digest; do not replace them
+with school, student, device, or session identifiers. Activation validation
+must perform an authenticated relay, run the collector, and observe both a
+fresh aggregate `AllocationCount` datapoint and the matching exact-node copy
+rather than accepting service health alone as telemetry proof.
 
 EC2 accepts at most 16 KiB of decoded user data. The certificate-refresh and
 relay-metrics helpers are therefore LF-normalized, gzip-compressed, and

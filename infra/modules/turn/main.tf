@@ -294,6 +294,28 @@ resource "aws_cloudwatch_metric_alarm" "node_status" {
   }
 }
 
+resource "aws_cloudwatch_metric_alarm" "log_storage" {
+  for_each = local.nodes
+
+  alarm_name          = "${local.name}-${each.key}-log-storage"
+  alarm_description   = "A bounded ClassPilot TURN log filesystem remained above 80 percent utilization."
+  namespace           = "SchoolPilot/ClassPilotTURN"
+  metric_name         = "turn_log_used_percent"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = 80
+  evaluation_periods  = 2
+  datapoints_to_alarm = 2
+  period              = 60
+  statistic           = "Maximum"
+  treat_missing_data  = "breaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_actions
+
+  dimensions = {
+    Node = each.key
+  }
+}
+
 resource "aws_cloudwatch_metric_alarm" "ice_success_rate" {
   alarm_name          = "${local.name}-ice-success-rate"
   alarm_description   = "Live View ICE success fell below 70 percent for at least ten reported attempts."
@@ -405,6 +427,21 @@ resource "aws_cloudwatch_dashboard" "turn" {
           metrics = [
             for pair in setproduct(sort(keys(local.nodes)), ["net_bytes_sent", "net_bytes_recv"]) :
             ["SchoolPilot/ClassPilotTURN", pair[1], "Node", pair[0], { stat = "Sum" }]
+          ]
+        }
+      },
+      {
+        type   = "metric"
+        width  = 12
+        height = 6
+        properties = {
+          title  = "TURN bounded log storage"
+          view   = "timeSeries"
+          region = var.aws_region
+          period = 300
+          metrics = [
+            for node in sort(keys(local.nodes)) :
+            ["SchoolPilot/ClassPilotTURN", "turn_log_used_percent", "Node", node, { stat = "Maximum" }]
           ]
         }
       }

@@ -5,13 +5,14 @@ bootstrap_complete=false
 contain_incomplete_bootstrap() {
   if test "$bootstrap_complete" != true; then
     systemctl disable --now coturn certbot.timer \
-      classpilot-turn-relay-metrics.timer >/dev/null 2>&1 || true
+      classpilot-turn-relay-metrics.timer \
+      classpilot-turn-logrotate.timer >/dev/null 2>&1 || true
   fi
 }
 trap contain_incomplete_bootstrap EXIT
 
 apt-get update
-apt-get install -y --no-install-recommends ca-certificates certbot coturn curl gnupg gzip jq python3-certbot-dns-route53 unzip
+apt-get install -y --no-install-recommends ca-certificates certbot coturn curl gnupg gzip jq logrotate python3-certbot-dns-route53 unzip
 systemctl disable --now coturn >/dev/null 2>&1 || true
 
 # Ubuntu 24.04 no longer publishes the awscli apt package. Use AWS's official
@@ -27,6 +28,24 @@ rm -f /tmp/aws-cli-install.sh
 aws --version
 
 install -d -m 0750 -o turnserver -g turnserver /var/log/turnserver
+turnserver_uid="$(id -u turnserver)"
+turnserver_gid="$(id -g turnserver)"
+cat >/etc/systemd/system/var-log-turnserver.mount <<EOF
+[Unit]
+Before=coturn.service
+
+[Mount]
+What=tmpfs
+Where=/var/log/turnserver
+Type=tmpfs
+Options=rw,nosuid,nodev,noexec,size=64M,mode=0750,uid=$turnserver_uid,gid=$turnserver_gid
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable --now var-log-turnserver.mount
+mountpoint --quiet /var/log/turnserver
 turn_secret="$(aws secretsmanager get-secret-value --region '${aws_region}' --secret-id '${rest_secret_arn}' --query SecretString --output text)"
 test -n "$turn_secret"
 
@@ -69,8 +88,13 @@ no-multicast-peers
 stale-nonce=600
 total-quota=1200
 user-quota=12
+# The aggregate collector needs coturn's moderate session lifecycle records.
+# Raw lines remain node-local under the bounded logrotate policy below; only
+# identifier-free counters are published to CloudWatch.
+verbose
 log-file=/var/log/turnserver/turn.log
 simple-log
+no-stdout-log
 EOF
 unset turn_secret
 chown root:turnserver /etc/turnserver.conf
@@ -107,6 +131,7 @@ Type=oneshot
 User=root
 Environment=AWS_REGION=${aws_region}
 Environment=METRIC_NAMESPACE=${metric_namespace}
+Environment=NODE_NAME=${node_name}
 ExecStart=/usr/local/bin/classpilot-turn-relay-metrics.py
 PrivateTmp=true
 NoNewPrivileges=true
@@ -133,12 +158,37 @@ EOF
 cat >/etc/logrotate.d/coturn-schoolpilot <<'EOF'
 /var/log/turnserver/turn.log {
   daily
-  rotate 7
+  maxsize 8M
+  rotate 6
   compress
   missingok
   notifempty
   copytruncate
 }
+EOF
+
+cat >/etc/systemd/system/classpilot-turn-logrotate.service <<'EOF'
+[Unit]
+Description=Enforce the bounded ClassPilot TURN log policy
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/logrotate --state /var/lib/classpilot-turn-metrics/logrotate.state /etc/logrotate.d/coturn-schoolpilot
+NoNewPrivileges=true
+EOF
+
+cat >/etc/systemd/system/classpilot-turn-logrotate.timer <<'EOF'
+[Unit]
+Description=Enforce the ClassPilot TURN log bound every five minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
 EOF
 
 systemctl daemon-reload
@@ -157,6 +207,13 @@ cat >/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'EOF'
       "net": {
         "measurement": ["bytes_sent", "bytes_recv"],
         "metrics_collection_interval": 60,
+        "append_dimensions": { "Node": "${node_name}" }
+      },
+      "disk": {
+        "measurement": [{ "name": "used_percent", "rename": "turn_log_used_percent", "unit": "Percent" }],
+        "metrics_collection_interval": 60,
+        "resources": ["/var/log/turnserver"],
+        "drop_device": true,
         "append_dimensions": { "Node": "${node_name}" }
       }
     }
@@ -179,10 +236,13 @@ systemctl start classpilot-turn-relay-metrics.service
 test "$(systemctl show classpilot-turn-relay-metrics.service -p Result --value)" = success
 test "$(systemctl show classpilot-turn-relay-metrics.service -p ExecMainStatus --value)" = 0
 test -s /var/lib/classpilot-turn-metrics/state.json
-systemctl start certbot.timer classpilot-turn-relay-metrics.timer
+systemctl start classpilot-turn-logrotate.service
+test "$(systemctl show classpilot-turn-logrotate.service -p Result --value)" = success
+systemctl start certbot.timer classpilot-turn-relay-metrics.timer classpilot-turn-logrotate.timer
 systemctl is-active --quiet certbot.timer
 systemctl is-active --quiet classpilot-turn-relay-metrics.timer
+systemctl is-active --quiet classpilot-turn-logrotate.timer
 systemctl is-active --quiet amazon-cloudwatch-agent
-systemctl enable coturn certbot.timer classpilot-turn-relay-metrics.timer
+systemctl enable coturn certbot.timer classpilot-turn-relay-metrics.timer classpilot-turn-logrotate.timer
 bootstrap_complete=true
 trap - EXIT
