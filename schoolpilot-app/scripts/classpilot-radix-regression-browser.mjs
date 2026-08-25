@@ -57,6 +57,62 @@ try {
   });
 
   await page.goto(`${baseURL}/classpilot-radix-regression.html`, { waitUntil: 'networkidle' });
+
+  const lockButton = page.getByTestId('toolbar-lock');
+  const unlockButton = page.getByTestId('toolbar-unlock');
+  assert.equal(await lockButton.isDisabled(), true, 'Lock must require an explicit student selection');
+  assert.equal(await unlockButton.isDisabled(), true, 'Unlock must require an explicit student selection');
+  await lockButton.evaluate((button) => button.click());
+  await unlockButton.evaluate((button) => button.click());
+  assert.deepEqual(
+    JSON.parse(await page.getByTestId('screen-command-requests').textContent()),
+    [],
+    'disabled screen controls must not produce a request',
+  );
+
+  await page.getByTestId('select-student-a').click();
+  assert.equal(await lockButton.isEnabled(), true);
+  assert.equal(await unlockButton.isEnabled(), true);
+  await lockButton.click();
+  assert.deepEqual(
+    JSON.parse(await page.getByTestId('screen-command-requests').textContent()),
+    [{
+      commandType: 'lock-screen',
+      commandPayload: { url: 'CURRENT_URL' },
+      studentIds: ['student-a'],
+    }],
+  );
+
+  await page.getByTestId('select-student-b').click();
+  await unlockButton.click();
+  assert.deepEqual(
+    JSON.parse(await page.getByTestId('screen-command-requests').textContent()),
+    [{
+      commandType: 'lock-screen',
+      commandPayload: { url: 'CURRENT_URL' },
+      studentIds: ['student-a'],
+    }, {
+      commandType: 'unlock-screen',
+      commandPayload: { screenOnly: true },
+      studentIds: ['student-a', 'student-b'],
+    }],
+  );
+
+  await page.getByTestId('select-student-legacy').click();
+  assert.equal(
+    await unlockButton.isDisabled(),
+    true,
+    'one selected student without screenOnlyUnlockV1 must disable combined Unlock',
+  );
+  assert.equal(
+    await page.getByTestId('screen-toolbar-regression').getByText('Lock URL', { exact: true }).count(),
+    0,
+  );
+  assert.equal(
+    await page.getByTestId('screen-toolbar-regression').getByText('Temporary Unblock', { exact: true }).count(),
+    0,
+  );
+
   for (let expected = 1; expected <= 8; expected += 1) {
     await page.getByTestId('open-url-dialog').click();
     await page.getByTestId('open-url-dialog-content').waitFor();

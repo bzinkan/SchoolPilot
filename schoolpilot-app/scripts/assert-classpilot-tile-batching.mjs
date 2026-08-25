@@ -132,10 +132,10 @@ assert.doesNotMatch(
   'cohort tile failures must remain tile-local and not add a dashboard-wide warning banner',
 );
 for (const removedControl of [
-  'button-unlock-screen',
   'button-temp-unblock',
   'button-tab-limit',
   'button-command-results',
+  'button-lock-url',
 ]) {
   assert.doesNotMatch(
     dashboardSource,
@@ -143,6 +143,71 @@ for (const removedControl of [
     `${removedControl} must remain absent from the classroom toolbar`,
   );
 }
+assert.doesNotMatch(
+  dashboardSource,
+  /showLockUrlDialog|handleLockToUrl|dialog-lock-url|input-lock-url|button-confirm-lock-url/,
+  'the removed Lock URL action must leave no dialog, state, validation, or handler behind',
+);
+assert.match(
+  dashboardSource,
+  /data-testid="button-lock-screen"[\s\S]{0,180}>Lock<\/Button>/,
+  'the current-domain action must retain button-lock-screen and display the concise Lock label',
+);
+assert.match(
+  dashboardSource,
+  /data-testid="button-unlock-screen"[\s\S]{0,220}>Unlock<\/Button>/,
+  'the screen-only release action must use button-unlock-screen and display Unlock',
+);
+assert.doesNotMatch(
+  dashboardSource,
+  />Lock Current<|>Lock URL</,
+  'the classroom toolbar must not expose the superseded Lock Current or Lock URL labels',
+);
+assert.match(
+  dashboardSource,
+  /toolbarScreenCommand\(['"]lock-screen['"],\s*selectedStudentIds\)/,
+  'toolbar Lock must build its command only from the explicit selection',
+);
+assert.match(
+  dashboardSource,
+  /toolbarScreenCommand\(['"]unlock-screen['"],\s*selectedStudentIds\)/,
+  'toolbar Unlock must build its command only from the explicit selection',
+);
+assert.match(
+  dashboardSource,
+  /selectedStudentIds\.size === 0/,
+  'toolbar screen controls must remain disabled while there is no explicit selection',
+);
+assert.match(
+  dashboardSource,
+  /screenOnlyUnlockV1/,
+  'toolbar Unlock must remain capability-gated',
+);
+assert.match(
+  dashboardSource,
+  /explicitlySelectedStudents\.every\(\(student\) => studentSupportsCapability\(student, 'screenOnlyUnlockV1'\)\)/,
+  'one unsupported student in a mixed selection must disable toolbar Unlock',
+);
+assert.match(
+  dashboardSource,
+  /screenToolbarRosterUnavailable[\s\S]{0,240}studentsLoading \|\| studentsQueryError[\s\S]{0,180}claimedStudentsLoading \|\| claimedStudentsQueryError/,
+  'Lock and Unlock must fail closed when either command roster cannot be loaded',
+);
+assert.match(
+  dashboardSource,
+  /exactSelectedTargetsResolved = !screenToolbarRosterUnavailable/,
+  'retained stale roster rows must not leave Lock or Unlock usable after a load failure',
+);
+assert.match(
+  dashboardSource,
+  /disabled=\{[^\n]*lockScreenMutation\.isPending[^\n]*unlockScreenMutation\.isPending[^\n]*\}[^\n]*data-testid="button-lock-screen"/,
+  'Lock must remain disabled while either screen command is pending',
+);
+assert.match(
+  dashboardSource,
+  /disabled=\{[^\n]*lockScreenMutation\.isPending[^\n]*unlockScreenMutation\.isPending[^\n]*\}[^\n]*data-testid="button-unlock-screen"/,
+  'Unlock must remain disabled while either screen command is pending',
+);
 assert.doesNotMatch(
   dashboardSource,
   /failedScreenshotStudentIds|failedHistoryStudentIds/,
