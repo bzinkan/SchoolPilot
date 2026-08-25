@@ -45,6 +45,7 @@ import {
   requirePasspilotClassModel,
   requirePassPilotRole,
 } from "../../services/passpilotAccess.js";
+import { isDatabaseErrorCode } from "../../util/databaseError.js";
 
 const router = Router();
 
@@ -473,10 +474,10 @@ router.post("/", async (req, res, next) => {
               manager: isPassPilotManager(role),
             }
           );
-    } catch (err: any) {
+    } catch (err) {
       // Partial unique index (one active pass per student) — a concurrent
       // double-issue loses the race here. Surface it as the same 409.
-      if (err?.code === "23505") {
+      if (isDatabaseErrorCode(err, "23505")) {
         return res.status(409).json({ error: "Student already has an active pass" });
       }
       throw err;

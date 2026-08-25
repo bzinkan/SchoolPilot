@@ -42,6 +42,7 @@ import { eq, and, sql, desc, inArray } from "drizzle-orm";
 import { getToolsForContext } from "./chatTools.js";
 import { getPasspilotClasses } from "./passpilotClasses.js";
 import { isWithinTrackingWindow } from "./schoolHours.js";
+import { isDatabaseErrorCode } from "../util/databaseError.js";
 
 // Lazy imports to avoid circular deps — flight paths may not exist in all setups
 let _getFlightPathsBySchool: ((schoolId: string) => Promise<any[]>) | null =
@@ -470,8 +471,8 @@ const executors: Record<string, ToolExecutor> = {
             { ...commonPass, gradeId: args.classId },
             { actorUserId: ctx.userId, manager }
           );
-    } catch (err: any) {
-      if (err?.code === "23505") {
+    } catch (err) {
+      if (isDatabaseErrorCode(err, "23505")) {
         return { success: false, error: "Student already has an active pass" };
       }
       throw err;

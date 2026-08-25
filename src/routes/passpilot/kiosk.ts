@@ -77,6 +77,7 @@ import {
   authorizePasspilotKiosk,
   issuePasspilotKioskToken,
 } from "../../services/passpilotKioskAuth.js";
+import { isDatabaseErrorCode } from "../../util/databaseError.js";
 import {
   getPasspilotKioskClassRecord,
   getPasspilotKioskClassSource,
@@ -1027,9 +1028,9 @@ router.post("/checkout", kioskLimiter, async (req, res, next) => {
                   expectedKioskClassId: school.kioskGradeId || null,
                 }
           );
-    } catch (err: any) {
+    } catch (err) {
       // Drizzle may wrap the pg error (DrizzleQueryError with .cause).
-      if (err?.code === "23505" || err?.cause?.code === "23505") {
+      if (isDatabaseErrorCode(err, "23505")) {
         return res.status(409).json({ error: "Student already has an active pass" });
       }
       throw err;

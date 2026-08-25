@@ -157,6 +157,9 @@ export const passes = pgTable(
     index("passes_student_id_idx").on(table.studentId),
     index("passes_teacher_id_idx").on(table.teacherId),
     index("passes_status_idx").on(table.status),
+    uniqueIndex("passes_one_active_per_student")
+      .on(table.studentId, table.schoolId)
+      .where(sql`${table.status} = 'active'`),
     index("passes_issued_at_idx").on(table.issuedAt),
     index("passes_school_classpilot_group_status_idx").on(
       table.schoolId,
