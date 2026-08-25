@@ -16,6 +16,7 @@ import {
   studentSignOutCommandPayload,
   sessionFabSettingsPayload,
   tabSelectionKey,
+  toolbarScreenCommand,
 } from '../src/products/classpilot/lib/dashboardCommandContext.js';
 import { commandDeliveryFeedback } from '../src/products/classpilot/lib/commandDeliveryTruth.js';
 
@@ -85,6 +86,24 @@ test('claimed targets always use the full claimed cohort when there is no explic
   assert.deepEqual(target.groups, [
     { kind: 'coverage', id: 'ctx-1', targetStudentIds: ['a'] },
     { kind: 'coverage', id: 'ctx-2', targetStudentIds: ['b'] },
+  ]);
+});
+
+test('explicit claimed selections remain partitioned into their exact supervision contexts', () => {
+  const claimed = [
+    { studentId: 'a', contextId: 'ctx-1' },
+    { studentId: 'b', contextId: 'ctx-2' },
+    { studentId: 'c', contextId: 'ctx-1' },
+  ];
+  const target = resolveCommandTargets({
+    mode: 'claimed-coverage',
+    claimedStudents: claimed,
+    selectedStudentIds: ['b', 'c'],
+  });
+  assert.deepEqual(target.targetStudentIds, ['b', 'c']);
+  assert.deepEqual(target.groups, [
+    { kind: 'coverage', id: 'ctx-2', targetStudentIds: ['b'] },
+    { kind: 'coverage', id: 'ctx-1', targetStudentIds: ['c'] },
   ]);
 });
 
@@ -228,6 +247,56 @@ test('student tile unlock and Flight Path actions retain distinct semantics', ()
     commandPayload: {},
     studentIds: ['a'],
   });
+});
+
+test('toolbar Lock and Unlock require explicit students and keep exact payload semantics', () => {
+  assert.deepEqual(toolbarScreenCommand('lock-screen', [' student-a ']), {
+    commandType: 'lock-screen',
+    commandPayload: { url: 'CURRENT_URL' },
+    studentIds: ['student-a'],
+  });
+  assert.deepEqual(toolbarScreenCommand('lock-screen', ['student-b', 'student-a', 'student-b', '']), {
+    commandType: 'lock-screen',
+    commandPayload: { url: 'CURRENT_URL' },
+    studentIds: ['student-b', 'student-a'],
+  });
+  assert.deepEqual(toolbarScreenCommand('unlock-screen', new Set(['student-a', 'student-b'])), {
+    commandType: 'unlock-screen',
+    commandPayload: { screenOnly: true },
+    studentIds: ['student-a', 'student-b'],
+  });
+
+  for (const invalidSelection of [undefined, null, [], new Set(), 'student-a', { studentId: 'student-a' }]) {
+    assert.equal(toolbarScreenCommand('lock-screen', invalidSelection), null);
+    assert.equal(toolbarScreenCommand('unlock-screen', invalidSelection), null);
+  }
+  assert.equal(toolbarScreenCommand('open-tab', ['student-a']), null);
+
+  const submittedCommands = [];
+  const descriptor = toolbarScreenCommand('lock-screen', []);
+  if (descriptor) submittedCommands.push(descriptor);
+  assert.deepEqual(submittedCommands, [], 'an empty selection must not produce a command request');
+});
+
+test('toolbar Unlock capability gating fails closed for a mixed selection', () => {
+  const selectedStudents = [
+    { studentId: 'student-a', capabilities: { screenOnlyUnlockV1: true } },
+    { studentId: 'student-b', extensionCapabilities: ['screenOnlyUnlockV1'] },
+  ];
+  assert.equal(
+    selectedStudents.every((student) => studentSupportsCapability(student, 'screenOnlyUnlockV1')),
+    true,
+  );
+
+  const mixedSelection = [
+    ...selectedStudents,
+    { studentId: 'student-c', capabilities: { screenOnlyUnlockV1: false } },
+  ];
+  assert.equal(
+    mixedSelection.every((student) => studentSupportsCapability(student, 'screenOnlyUnlockV1')),
+    false,
+    'one unsupported selected student must disable the combined Unlock action',
+  );
 });
 
 test('websocket acknowledgements refresh the matching command result without discarding mixed rows', () => {

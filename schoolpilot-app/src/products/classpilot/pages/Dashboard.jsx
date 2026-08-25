@@ -77,6 +77,7 @@ import {
   studentSignOutCommandPayload,
   sessionFabSettingsPayload,
   tabSelectionKey,
+  toolbarScreenCommand,
 } from '../lib/dashboardCommandContext';
 import {
   className as scheduleClassName,
@@ -316,8 +317,6 @@ export default function Dashboard() {
   const [newGrade, setNewGrade] = useState("");
   const [showOpenTabDialog, setShowOpenTabDialog] = useState(false);
   const [openTabUrl, setOpenTabUrl] = useState("");
-  const [showLockUrlDialog, setShowLockUrlDialog] = useState(false);
-  const [lockUrl, setLockUrl] = useState("");
   const [showCloseTabsDialog, setShowCloseTabsDialog] = useState(false);
   const [selectedTabsToClose, setSelectedTabsToClose] = useState(new Set());
   const [manageTabsStudentIds, setManageTabsStudentIds] = useState(null);
@@ -553,7 +552,11 @@ export default function Dashboard() {
   const availablePickupStudents = availablePickupData.students;
   const scheduledCoverageGroups = availablePickupData.scheduledCoverageGroups;
 
-  const { data: claimedPickupStudents = EMPTY_LIST } = useQuery({
+  const {
+    data: claimedPickupStudents = EMPTY_LIST,
+    isLoading: claimedStudentsLoading,
+    isError: claimedStudentsQueryError,
+  } = useQuery({
     queryKey: ['/api/coverage/claimed-students'],
     queryFn: () => apiRequest('GET', '/coverage/claimed-students'),
     select: (data) => data?.students || [],
@@ -1763,6 +1766,21 @@ export default function Dashboard() {
   );
 
   const targetStudents = studentView === "available" ? filteredStudents : getActiveCommandStudents();
+  const screenToolbarRosterUnavailable = studentView === 'class'
+    ? studentsLoading || studentsQueryError
+    : studentView === 'claimed'
+      ? claimedStudentsLoading || claimedStudentsQueryError
+      : true;
+  const lockToolbarCommand = toolbarScreenCommand('lock-screen', selectedStudentIds);
+  const explicitlySelectedStudentIds = lockToolbarCommand?.studentIds || EMPTY_LIST;
+  const explicitlySelectedStudents = explicitlySelectedStudentIds.length > 0
+    ? getActiveCommandStudents(explicitlySelectedStudentIds)
+    : EMPTY_LIST;
+  const exactSelectedTargetsResolved = !screenToolbarRosterUnavailable
+    && explicitlySelectedStudentIds.length > 0
+    && explicitlySelectedStudents.length === explicitlySelectedStudentIds.length;
+  const selectedTargetsSupportScreenOnlyUnlock = exactSelectedTargetsResolved
+    && explicitlySelectedStudents.every((student) => studentSupportsCapability(student, 'screenOnlyUnlockV1'));
   const connectedTargetCount = targetStudents.filter(isConnectedStudent).length;
   const signalLostTargetCount = targetStudents.filter((student) => deriveStudentMonitoringDisplay(student, freshnessNowMs).kind === 'signal_lost').length;
   const signedOutTargetCount = Math.max(0, targetStudents.length - connectedTargetCount - signalLostTargetCount);
@@ -2371,7 +2389,7 @@ export default function Dashboard() {
   });
 
   const lockScreenMutation = useMutation({
-    mutationFn: async ({ url }) => postActiveCommand('lock-screen', { url }),
+    mutationFn: async ({ url, studentIds }) => postActiveCommand('lock-screen', { url }, { studentIds }),
     onSuccess: (data) => {
       toast(data.deliveryFeedback);
       refreshScreenshotsForDevices();
@@ -2431,16 +2449,28 @@ export default function Dashboard() {
   };
 
   const handleLockScreen = () => {
-    lockScreenMutation.mutate({ url: "CURRENT_URL" });
+    const command = toolbarScreenCommand('lock-screen', selectedStudentIds);
+    if (!command || !exactSelectedTargetsResolved) {
+      toast({ variant: "destructive", title: "Select students first", description: "Choose one or more students to lock." });
+      return;
+    }
+    lockScreenMutation.mutate({
+      url: command.commandPayload.url,
+      studentIds: command.studentIds,
+    });
   };
 
-  const handleLockToUrl = () => {
-    if (!lockUrl.trim()) { toast({ variant: "destructive", title: "Invalid URL", description: "Please enter a valid URL" }); return; }
-    let normalizedUrl = lockUrl.trim();
-    if (!normalizedUrl.match(/^https?:\/\//i)) normalizedUrl = 'https://' + normalizedUrl;
-    lockScreenMutation.mutate({ url: normalizedUrl });
-    setShowLockUrlDialog(false);
-    setLockUrl("");
+  const handleUnlockScreen = () => {
+    const command = toolbarScreenCommand('unlock-screen', selectedStudentIds);
+    if (!command || !exactSelectedTargetsResolved) {
+      toast({ variant: "destructive", title: "Select students first", description: "Choose one or more students to unlock." });
+      return;
+    }
+    if (!selectedTargetsSupportScreenOnlyUnlock) {
+      toast({ variant: "destructive", title: "Extension update required", description: "Every selected student must use a ClassPilot version that supports screen-only unlock." });
+      return;
+    }
+    unlockScreenMutation.mutate({ studentIds: command.studentIds });
   };
 
   const openManageTabs = (studentIds = null) => {
@@ -3132,8 +3162,8 @@ export default function Dashboard() {
           <div className="flex items-center gap-2 flex-wrap mb-4">
             {dashboardCapabilities.allows('open-tab') && <Button size="sm" variant="outline" onClick={() => setShowOpenTabDialog(true)} disabled={subgroupCommandsDisabled} data-testid="button-open-tab" className="text-blue-600 dark:text-blue-400"><MonitorPlay className="h-4 w-4 mr-2" />Open URL</Button>}
             {dashboardCapabilities.allows('close-tabs') && <Button size="sm" variant="outline" onClick={() => openManageTabs(null)} disabled={subgroupCommandsDisabled} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Manage Tabs</Button>}
-            {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={subgroupCommandsDisabled || lockScreenMutation.isPending} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Lock Current</Button>}
-            {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={() => setShowLockUrlDialog(true)} disabled={subgroupCommandsDisabled} data-testid="button-lock-url" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Lock URL</Button>}
+            {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={subgroupCommandsDisabled || !exactSelectedTargetsResolved || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={exactSelectedTargetsResolved ? 'Lock each selected student to their current domain' : 'Select one or more students to lock'} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Lock</Button>}
+            {dashboardCapabilities.allows('unlock-screen') && <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={subgroupCommandsDisabled || !selectedTargetsSupportScreenOnlyUnlock || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={!exactSelectedTargetsResolved ? 'Select one or more students to unlock' : selectedTargetsSupportScreenOnlyUnlock ? 'Unlock selected students while preserving Flight Paths and other restrictions' : 'ClassPilot extension update required for every selected student'} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />Unlock</Button>}
             {dashboardCapabilities.allows('apply-flight-path') && <Button size="sm" variant="outline" onClick={() => setShowApplyFlightPathDialog(true)} disabled={subgroupCommandsDisabled} data-testid="button-apply-flight-path" className="text-purple-600 dark:text-purple-400"><Layers className="h-4 w-4 mr-2" />Apply Flight Path</Button>}
             {studentView === "class" && <Button size="sm" variant="outline" onClick={() => setShowFlightPathViewerDialog(true)} data-testid="button-flight-path-status" className="text-purple-600 dark:text-purple-400"><Eye className="h-4 w-4 mr-2" />Flight Path Status</Button>}
             {dashboardCapabilities.allows('apply-block-list') && <Button size="sm" variant="outline" onClick={() => setShowApplyBlockListDialog(true)} disabled={subgroupCommandsDisabled} data-testid="button-apply-block-list" className="text-red-600 dark:text-red-400"><ShieldBan className="h-4 w-4 mr-2" />Apply Block List</Button>}
@@ -3871,23 +3901,6 @@ export default function Dashboard() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowOpenTabDialog(false)} data-testid="button-cancel-open-tab">Cancel</Button>
             <Button onClick={handleOpenTab} disabled={openTabMutation.isPending} data-testid="button-confirm-open-tab"><MonitorPlay className="h-4 w-4 mr-2" />Open Tab</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Lock URL Dialog */}
-      <Dialog open={showLockUrlDialog} onOpenChange={setShowLockUrlDialog}>
-        <DialogContent data-testid="dialog-lock-url">
-          <DialogHeader><DialogTitle>Lock Students to URL</DialogTitle><DialogDescription>{targetBannerLabel}</DialogDescription></DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="lock-url">URL to Lock</Label>
-              <Input id="lock-url" type="url" placeholder="https://example.com" value={lockUrl} onChange={(e) => setLockUrl(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !lockScreenMutation.isPending) handleLockToUrl(); }} data-testid="input-lock-url" />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowLockUrlDialog(false)} data-testid="button-cancel-lock-url">Cancel</Button>
-            <Button onClick={handleLockToUrl} disabled={lockScreenMutation.isPending} data-testid="button-confirm-lock-url"><Lock className="h-4 w-4 mr-2" />Lock to URL</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

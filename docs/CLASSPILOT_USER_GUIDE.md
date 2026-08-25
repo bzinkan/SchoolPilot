@@ -290,11 +290,13 @@ ClassPilot describes monitoring gaps only as **cause unknown**. A gap does not p
 
 ### Per-Student Targeting
 
-All remote controls support targeting specific students:
+Remote controls can target specific students. Some actions may use the displayed
+class when no students are selected, but **Lock** and **Unlock** always require
+one or more explicitly selected students.
 
 1. **Select Students** - Check boxes on student tiles
 2. **Target Display** - Shows "Target: X selected" or "Target: All students"
-3. **Apply Command** - Only affects selected students (or all if none selected)
+3. **Apply Command** - Uses the target shown for that action
 4. **Clear Selection** - "Clear Selection" button to deselect all
 
 **Selection Controls:**
@@ -335,28 +337,29 @@ All remote controls support targeting specific students:
 
 #### Lock/Unlock Screens
 
-**Lock Screen:**
-- **Button:** "Lock Screen" in toolbar
-- **Action:** 
-  - Restricts student to current tab only
-  - Prevents creating new tabs
-  - Blocks navigation away from current page
-- **Visual:** 🔒 Lock icon on student tile
-- **Use Cases:**
-  - Focus students during test
-  - Ensure attention during presentation
-  - Prevent browsing during lecture
+**Lock:**
+- **Button:** "Lock" in the toolbar
+- **Target:** One or more explicitly selected students; the button is disabled
+  when no students are selected
+- **Action:** Locks each selected student to the domain of that student's own
+  current tab. When multiple students are selected, each student remains on
+  their respective current domain.
+- **Visual:** 🔒 Lock icon on the student tile
 
-**Unlock Screen:**
-- **Button:** "Unlock Screen" in toolbar
-- **Action:** Removes restrictions, normal browsing resumes
-- **Visual:** Lock icon disappears
+**Unlock:**
+- **Button:** "Unlock" in the toolbar
+- **Target:** One or more explicitly selected students; the button is disabled
+  when no students are selected
+- **Action:** Removes only the selected students' screen/domain lock. Flight
+  Paths, block lists, attention mode, tab limits, and other independent
+  restrictions remain in place.
+- **Visual:** Lock icon disappears when the screen lock is removed
 
 **How to Use:**
-1. Select students to lock
-2. Click "Lock Screen"
-3. Students are restricted to current tab
-4. Click "Unlock Screen" when ready to restore access
+1. Select one or more students.
+2. Click "Lock" to lock each student to their own current domain.
+3. Select the students whose screen lock should be removed.
+4. Click "Unlock"; other independent restrictions remain unchanged.
 
 ### Apply Scenes
 

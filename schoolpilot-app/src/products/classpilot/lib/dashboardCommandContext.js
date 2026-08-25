@@ -45,6 +45,33 @@ export function studentSupportsCapability(student, capabilityName) {
   return advertised.includes(capabilityName);
 }
 
+export function toolbarScreenCommand(commandType, selectedStudentIds) {
+  const selectedIds = normalizedIds(
+    Array.isArray(selectedStudentIds)
+      ? selectedStudentIds
+      : selectedStudentIds instanceof Set
+        ? [...selectedStudentIds]
+        : [],
+  );
+  if (selectedIds.length === 0) return null;
+
+  if (commandType === 'lock-screen') {
+    return {
+      commandType,
+      commandPayload: { url: 'CURRENT_URL' },
+      studentIds: selectedIds,
+    };
+  }
+  if (commandType === 'unlock-screen') {
+    return {
+      commandType,
+      commandPayload: { screenOnly: true },
+      studentIds: selectedIds,
+    };
+  }
+  return null;
+}
+
 export function studentTileScreenToggleCommand(student) {
   const targetStudentId = studentId(student);
   if (!targetStudentId) return null;
