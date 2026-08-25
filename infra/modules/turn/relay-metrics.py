@@ -142,18 +142,17 @@ def collect():
 
 
 def self_test():
-    # Sanitized coturn 4.6.1 moderate-verbose lifecycle rows. Keep the timestamp,
-    # severity, session prefix, and message grammar aligned with the pinned
-    # production image integration fixture; all identities remain synthetic.
+    # Sanitized rows captured from the Ubuntu 24.04 coturn 4.6.1-1build4
+    # package in an isolated loopback relay test. Keep the elapsed-seconds
+    # prefix and message grammar aligned with that integration fixture; all
+    # identities and addresses below are synthetic.
     lines = [
-        "2026-08-24T12:33:01.220+0000 INFO session 0001: incoming packet BINDING processed, success\n",
-        "2026-08-24T12:33:01.221+0000 INFO session 0001: 401 Unauthorized nonce challenge\n",
-        "2026-08-24T12:33:01.222+0000 INFO session 0001: credentials are incorrect\n",
-        "2026-08-24T12:33:01.223+0000 INFO session 0001: usage: realm=<synthetic>, username=<>, rp=1, rb=20, sp=1, sb=88\n",
-        "2026-08-24T12:33:01.224+0000 INFO session 0002: realm <synthetic> user <opaque>: incoming packet ALLOCATE processed, success\n",
-        "2026-08-24T12:33:02.224+0000 INFO session 0002: usage: realm=<synthetic>, username=<opaque>, rp=2, rb=120, sp=3, sb=240\n",
-        "2026-08-24T12:33:02.225+0000 INFO session 0002: peer usage: realm=<synthetic>, username=<opaque>, rp=3, rb=240, sp=2, sb=120\n",
-        "2026-08-24T12:33:02.226+0000 INFO session 0002: closed (2nd stage), user <opaque>\n",
+        "1: : session 000000000000000001: realm <synthetic> user <>: incoming packet message processed, error 401: Unauthorized\n",
+        "1: : ERROR: check_stun_auth: user synthetic credentials are incorrect\n",
+        "2: : session 000000000000000002: realm <synthetic> user <opaque>: incoming packet ALLOCATE processed, success\n",
+        "8: : session 000000000000000002: usage: realm=<synthetic>, username=<opaque>, rp=2, rb=120, sp=3, sb=240\n",
+        "8: : session 000000000000000002: peer usage: realm=<synthetic>, username=<opaque>, rp=3, rb=240, sp=2, sb=120\n",
+        "8: : session 000000000000000002: closed (2nd stage), user <opaque> realm <synthetic> origin <>, local 127.0.0.1:3478, remote 127.0.0.1:50000, reason: allocation timeout\n",
     ]
     relay_bytes, allocations, authentication_failures, active = parse_lines(lines, [])
     assert relay_bytes == 360

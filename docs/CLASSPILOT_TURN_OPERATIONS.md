@@ -42,18 +42,27 @@ Terraform apply. The only replacement targets are:
 - `module.turn[0].aws_eip_association.turn["a"]`; and
 - `module.turn[0].aws_eip_association.turn["b"]`.
 
+The only additional create targets are:
+
+- `module.turn[0].aws_cloudwatch_metric_alarm.log_storage["a"]`; and
+- `module.turn[0].aws_cloudwatch_metric_alarm.log_storage["b"]`.
+
 The only in-place update targets are:
 
 - `module.turn[0].aws_cloudwatch_metric_alarm.node_status["a"]`; and
-- `module.turn[0].aws_cloudwatch_metric_alarm.node_status["b"]`.
+- `module.turn[0].aws_cloudwatch_metric_alarm.node_status["b"]`; and
+- `module.turn[0].aws_cloudwatch_dashboard.turn`.
 
 Create a unique saved plan with explicit replacement targeting for the two
 instances; their two associations must be the only dependent replacements. The
-reviewed summary must be exactly `4 to create, 2 to update, 4 to destroy`, and
-the full plan must show the four instance/association replacements plus the two
-alarm updates and no unrelated change. Abort if the plan changes or replaces
-an EIP, Route 53/DNS record, secret, IAM resource, security group, dashboard,
-ECS resource, or any other address.
+reviewed summary must be exactly `6 to create, 3 to update, 4 to destroy`, and
+the full plan must show only the four instance/association replacements, the two
+new bounded-log-storage alarms, the two node-status alarm updates, and the TURN
+CloudWatch dashboard update listed above. Abort if the plan changes or replaces
+an EIP, Route 53/DNS record, secret, IAM resource, security group, ECS resource,
+API, worker, frontend resource, or any other address. A dashboard update is
+authorized only at the exact `module.turn[0].aws_cloudwatch_dashboard.turn`
+address; a dashboard replacement or any other dashboard change is forbidden.
 
 Take and verify the standard external CurrentUser-DPAPI and OneDrive AES-GCM
 Terraform-state backups before planning, again immediately before applying the

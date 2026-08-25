@@ -7,6 +7,15 @@ import { gzipSync } from "node:zlib";
 const main = readFileSync("infra/modules/turn/main.tf", "utf8");
 const userData = readFileSync("infra/modules/turn/user-data.sh.tftpl", "utf8");
 const relayMetrics = readFileSync("infra/modules/turn/relay-metrics.py", "utf8");
+const turnOperations = readFileSync(
+  "docs/CLASSPILOT_TURN_OPERATIONS.md",
+  "utf8"
+);
+const releaseRunbook = readFileSync(
+  "docs/CLASSPILOT_2_7_1_RELEASE.md",
+  "utf8"
+);
+const repositoryGuidance = readFileSync("CLAUDE.md", "utf8");
 const certificateRefresh = readFileSync(
   "infra/modules/turn/refresh-certificate.sh",
   "utf8"
@@ -15,6 +24,30 @@ const root = readFileSync("infra/main.tf", "utf8");
 const ecs = readFileSync("infra/modules/ecs/main.tf", "utf8");
 
 describe("ClassPilot AWS TURN infrastructure contract", () => {
+  it("pins the one-time repair to the exact authorized 6/3/4 address set", () => {
+    const authorizedAddresses = [
+      'module.turn[0].aws_instance.turn["a"]',
+      'module.turn[0].aws_instance.turn["b"]',
+      'module.turn[0].aws_eip_association.turn["a"]',
+      'module.turn[0].aws_eip_association.turn["b"]',
+      'module.turn[0].aws_cloudwatch_metric_alarm.log_storage["a"]',
+      'module.turn[0].aws_cloudwatch_metric_alarm.log_storage["b"]',
+      'module.turn[0].aws_cloudwatch_metric_alarm.node_status["a"]',
+      'module.turn[0].aws_cloudwatch_metric_alarm.node_status["b"]',
+      "module.turn[0].aws_cloudwatch_dashboard.turn",
+    ];
+    for (const address of authorizedAddresses) {
+      assert.ok(
+        turnOperations.includes(`\`${address}\``),
+        `TURN operations must name the authorized address ${address}`
+      );
+    }
+    for (const document of [turnOperations, releaseRunbook, repositoryGuidance]) {
+      assert.match(document, /6 to create, 3 to update, 4 to destroy/);
+      assert.doesNotMatch(document, /4 to create, 2 to update, 4 to destroy/);
+    }
+  });
+
   it("creates exactly two independently addressed nodes across indexed public subnets", () => {
     assert.match(main, /nodes\s*=\s*\{\s*a\s*=\s*0\s+b\s*=\s*1/s);
     assert.match(main, /subnet_id\s*=\s*var\.public_subnet_ids\[each\.value\]/);
@@ -175,7 +208,18 @@ describe("ClassPilot AWS TURN infrastructure contract", () => {
       /relay_bytes \+= int\(usage_match\.group\(1\)\) \+ int\(usage_match\.group\(2\)\)/
     );
     assert.match(relayMetrics, /MAX_ACTIVE_ALLOCATIONS = 2_048/);
-    assert.match(relayMetrics, /Sanitized coturn 4\.6\.1 moderate-verbose lifecycle rows/);
+    assert.match(
+      relayMetrics,
+      /Sanitized rows captured from the Ubuntu 24\.04 coturn 4\.6\.1-1build4/
+    );
+    assert.match(
+      relayMetrics,
+      /"1: : session 000000000000000001: realm <synthetic> user <>: incoming packet message processed, error 401: Unauthorized\\n"/
+    );
+    assert.match(
+      relayMetrics,
+      /"2: : session 000000000000000002: realm <synthetic> user <opaque>: incoming packet ALLOCATE processed, success\\n"/
+    );
     assert.match(relayMetrics, /peer usage/);
     assert.match(userData, /relay_metrics_script_base64gzip/);
     assert.match(

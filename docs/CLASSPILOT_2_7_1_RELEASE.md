@@ -47,11 +47,13 @@ capability. Keep the capability off if that live gate is not green.
 
 One narrow August 24, 2026 Terraform repair exception is authorized but remains
 pending execution. Its saved plan must replace only the two TURN instances and
-their two EIP associations, update only the two node-status alarms, and show
-exactly `4 to create, 2 to update, 4 to destroy` with no unrelated changes.
-EIPs, DNS, the TURN secret, IAM, security groups, the dashboard, and ECS are
-outside the exception. Use verified external state backups before plan, before
-apply, and after apply. The exact addresses and post-apply gates are in
+their two EIP associations; create only the two TURN bounded-log-storage alarms;
+and update only the two node-status alarms and the TURN CloudWatch dashboard.
+The reviewed summary must be exactly `6 to create, 3 to update, 4 to destroy`
+with no unrelated changes. EIPs, DNS, the TURN secret, IAM, security groups,
+ECS, API, worker, and frontend resources remain outside the exception. Use
+verified external state backups before plan, before apply, and after apply. The
+exact authorized addresses and post-apply gates are in
 `CLASSPILOT_TURN_OPERATIONS.md`; authorization becomes completed and
 non-reusable only after the exact apply, live validation, and a fresh no-op plan
 all pass.
