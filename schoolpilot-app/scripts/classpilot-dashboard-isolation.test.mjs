@@ -71,3 +71,26 @@ test('dashboard renews observation only for a visible exact scope and virtualize
   assert.match(dashboard, /nearViewportStudentIds\.has/);
   assert.match(tile, /export default memo\(StudentTile, studentTilePropsEqual\)/);
 });
+
+test('dashboard command entry points fail closed until the class roster is authoritative', async () => {
+  const dashboard = await readFile(
+    new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(
+    dashboard,
+    /const resolveActiveCommandTarget = \(overrideStudentIds = null\) => \{\s*if \(classStudentTargetsUnavailable\) \{\s*throw new Error/,
+    'the final command-target resolver must reject an unknown class roster',
+  );
+  assert.match(
+    dashboard,
+    /const canUseRemoteControls = dashboardCapabilities\.canUseRemoteControls && !classStudentTargetsUnavailable/,
+    'the classroom command row and student actions must share the unavailable-target guard',
+  );
+  assert.match(
+    dashboard,
+    /dashboardCapabilities\.canUseTeacherFab && !classStudentTargetsUnavailable/,
+    'Teacher FAB and its messaging entry point must remain unavailable without a roster snapshot',
+  );
+});

@@ -4,6 +4,7 @@ import { getTenantStore, rlsGucEnabled } from "../db/tenantContext.js";
 import { schools } from "../schema/core.js";
 import { registerCacheInvalidationHandler } from "../realtime/cacheInvalidation.js";
 import { isRedisBroadcastReady, isRedisPublisherReady } from "../realtime/ws-redis.js";
+import { classpilotTimestampDateOrNull } from "./classpilotTimestamp.js";
 
 export const CLASSPILOT_DASHBOARD_SNAPSHOT_CHUNK_SIZE = 2_500;
 export const CLASSPILOT_DASHBOARD_SCHOOL_CACHE_TTL_MS = 5_000;
@@ -52,29 +53,29 @@ export type RawClasspilotDashboardSnapshotRow = {
   mapped_device_id: string | null;
   student_session_id?: string | null;
   session_device_id: string | null;
-  session_started_at?: Date | null;
-  session_last_seen_at: Date | null;
+  session_started_at?: Date | string | null;
+  session_last_seen_at: Date | string | null;
   attendance_status: string | null;
   pass_id: string | null;
   pass_destination: string | null;
-  pass_issued_at: Date | null;
-  pass_expires_at: Date | null;
+  pass_issued_at: Date | string | null;
+  pass_expires_at: Date | string | null;
   pass_status: string | null;
   dismissal_id: string | null;
   dismissal_status: string | null;
   dismissal_check_in_method: string | null;
-  dismissal_check_in_time: Date | null;
+  dismissal_check_in_time: Date | string | null;
   coverage_id: string | null;
   coverage_context_type: string | null;
   coverage_name: string | null;
   coverage_staff_id: string | null;
   coverage_staff_display_name: string | null;
-  coverage_ends_at: Date | null;
+  coverage_ends_at: Date | string | null;
   class_session_id: string | null;
   class_group_id: string | null;
   class_group_name: string | null;
   class_teacher_id: string | null;
-  class_start_time: Date | null;
+  class_start_time: Date | string | null;
 };
 
 type SchoolTimezoneCacheEvent = "hit" | "miss" | "bypass" | "invalidation";
@@ -252,23 +253,35 @@ export async function getClasspilotDashboardSchoolTimezone(schoolId: string): Pr
   return schoolTimezoneState.get(schoolId);
 }
 
+function snapshotDateOrNull(value: Date | string | null | undefined): Date | null {
+  return classpilotTimestampDateOrNull(value);
+}
+
 function mapSnapshotRow(
   row: RawClasspilotDashboardSnapshotRow
 ): ClasspilotDashboardSnapshotRow {
+  const sessionStartedAt = snapshotDateOrNull(row.session_started_at);
+  const sessionLastSeenAt = snapshotDateOrNull(row.session_last_seen_at);
+  const passIssuedAt = snapshotDateOrNull(row.pass_issued_at);
+  const passExpiresAt = snapshotDateOrNull(row.pass_expires_at);
+  const dismissalCheckInTime = snapshotDateOrNull(row.dismissal_check_in_time);
+  const coverageEndsAt = snapshotDateOrNull(row.coverage_ends_at);
+  const classStartTime = snapshotDateOrNull(row.class_start_time);
+
   return {
     studentId: row.student_id,
     mappedDeviceId: row.mapped_device_id,
     studentSessionId: row.student_session_id ?? null,
     sessionDeviceId: row.session_device_id,
-    sessionStartedAt: row.session_started_at ?? null,
-    sessionLastSeenAt: row.session_last_seen_at,
+    sessionStartedAt,
+    sessionLastSeenAt,
     attendanceStatus: row.attendance_status,
-    activePass: row.pass_id && row.pass_destination && row.pass_issued_at && row.pass_expires_at && row.pass_status
+    activePass: row.pass_id && row.pass_destination && passIssuedAt && passExpiresAt && row.pass_status
       ? {
           id: row.pass_id,
           destination: row.pass_destination,
-          issuedAt: row.pass_issued_at,
-          expiresAt: row.pass_expires_at,
+          issuedAt: passIssuedAt,
+          expiresAt: passExpiresAt,
           status: row.pass_status,
         }
       : null,
@@ -277,28 +290,28 @@ function mapSnapshotRow(
           id: row.dismissal_id,
           status: row.dismissal_status,
           checkInMethod: row.dismissal_check_in_method,
-          checkInTime: row.dismissal_check_in_time,
+          checkInTime: dismissalCheckInTime,
         }
       : null,
     coverage: row.coverage_id && row.coverage_context_type && row.coverage_name
-      && row.coverage_staff_id && row.coverage_ends_at
+      && row.coverage_staff_id && coverageEndsAt
       ? {
           id: row.coverage_id,
           contextType: row.coverage_context_type,
           name: row.coverage_name,
           assignedStaffId: row.coverage_staff_id,
           assignedStaffDisplayName: row.coverage_staff_display_name || "Staff",
-          endsAt: row.coverage_ends_at,
+          endsAt: coverageEndsAt,
         }
       : null,
     activeClass: row.class_session_id && row.class_group_id && row.class_group_name
-      && row.class_teacher_id && row.class_start_time
+      && row.class_teacher_id && classStartTime
       ? {
           sessionId: row.class_session_id,
           groupId: row.class_group_id,
           groupName: row.class_group_name,
           teacherId: row.class_teacher_id,
-          startTime: row.class_start_time,
+          startTime: classStartTime,
         }
       : null,
   };

@@ -85,9 +85,9 @@ import { rejectDisabledGoPilotParent } from "../middleware/rejectDisabledGoPilot
 import { readHeartbeatTileCacheBatch } from "../services/heartbeatTileCache.js";
 import {
   CLASSPILOT_REALTIME_EXPIRED_AFTER_MS,
-  CLASSPILOT_REALTIME_SCHEMA_VERSION,
   CLASSPILOT_REALTIME_STALE_AFTER_MS,
   classpilotPublicRealtimeBinding,
+  classpilotRealtimeStatusFromHeartbeat,
   normalizeClasspilotPublicCapabilities,
   normalizeClasspilotPublicClassroomControls,
   readClasspilotRealtimeStatusBatch,
@@ -161,63 +161,6 @@ type AuthorizedRealtimeBinding = ClasspilotRealtimeBinding & {
   sessionStartedAt: Date | null;
 };
 
-function realtimeStatusFromHeartbeat(
-  schoolId: string,
-  binding: AuthorizedRealtimeBinding,
-  heartbeat: any
-): ClasspilotRealtimeStatus | null {
-  const observedAt = new Date(heartbeat?.timestamp ?? 0).getTime();
-  const sessionStartedAt = binding.sessionStartedAt?.getTime() ?? 0;
-  if (
-    heartbeat?.schoolId !== schoolId ||
-    heartbeat?.studentId !== binding.studentId ||
-    heartbeat?.deviceId !== binding.deviceId ||
-    !Number.isFinite(observedAt) ||
-    observedAt < sessionStartedAt ||
-    Date.now() - observedAt >= CLASSPILOT_REALTIME_EXPIRED_AFTER_MS
-  ) {
-    return null;
-  }
-  const snapshot: ClasspilotRealtimeStatus = {
-    schemaVersion: CLASSPILOT_REALTIME_SCHEMA_VERSION,
-    state: "active",
-    schoolId,
-    studentId: binding.studentId,
-    studentSessionId: binding.studentSessionId,
-    deviceId: binding.deviceId,
-    revision: 0,
-    heartbeatId: heartbeat.id || null,
-    observedAt,
-    activeTabUrl: heartbeat.activeTabUrl || "",
-    activeTabTitle: heartbeat.activeTabTitle || "",
-    allOpenTabs: [],
-    openTabCount: 0,
-    tabsTruncated: false,
-    activityState: "unknown",
-    classroomControls: {
-      screenLocked: heartbeat.screenLocked === true,
-      flightPathActive: heartbeat.flightPathActive === true,
-      isSharing: heartbeat.isSharing === true,
-      cameraActive: heartbeat.cameraActive === true,
-    },
-    classificationPending: false,
-  };
-  if (heartbeat.favicon) snapshot.favicon = heartbeat.favicon;
-  if (heartbeat.activeFlightPathName) {
-    snapshot.classroomControls.activeFlightPathName = heartbeat.activeFlightPathName;
-  }
-  if (heartbeat.aiCategory || heartbeat.safetyAlert) {
-    snapshot.aiClassification = {
-      category: heartbeat.aiCategory || "unknown",
-      safetyAlert: heartbeat.safetyAlert || null,
-    };
-  }
-  if (heartbeat.screenshotHealth) snapshot.screenshotHealth = heartbeat.screenshotHealth;
-  if (heartbeat.extensionVersion) snapshot.extensionVersion = heartbeat.extensionVersion;
-  if (heartbeat.chromeVersion) snapshot.chromeVersion = heartbeat.chromeVersion;
-  return snapshot;
-}
-
 function publicClasspilotExtensionContract(
   snapshot: ClasspilotRealtimeStatus | null | undefined
 ) {
@@ -282,7 +225,7 @@ async function loadAuthorizedRealtimeStatuses(
   for (const binding of fallbackBindings) {
     const history = sharedHistory.get(binding.studentId);
     if (history?.status === "hit") {
-      const candidate = realtimeStatusFromHeartbeat(
+      const candidate = classpilotRealtimeStatusFromHeartbeat(
         schoolId,
         binding,
         history.heartbeats[0]
@@ -1154,6 +1097,8 @@ router.get("/students-aggregated", ...classPilotStaffAuth, async (req, res, next
       // Teacher without active session → show empty (Dashboard shows "No Active Class Session")
       return res.json([]);
     }
+
+    if (dbStudents.length === 0) return res.json([]);
 
     const schoolTimezone = await getClasspilotDashboardSchoolTimezone(schoolId);
     const today = todayInTimeZone(schoolTimezone);

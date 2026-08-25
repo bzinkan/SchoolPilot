@@ -1,6 +1,7 @@
 import { createHash } from "crypto";
 import { redisCommand } from "../middleware/rateLimiter.js";
 import type { ClasspilotClassroomStateSnapshot } from "./classpilotClassroomState.js";
+import { classpilotTimestampMsOrNull } from "./classpilotTimestamp.js";
 
 export const CLASSPILOT_REALTIME_SCHEMA_VERSION = 2;
 export const CLASSPILOT_REALTIME_TTL_SECONDS = 360;
@@ -306,6 +307,10 @@ export type ClasspilotPublicClassroomControls = {
   cameraActive: boolean;
 };
 
+export type ClasspilotHeartbeatFallbackBinding = ClasspilotRealtimeBinding & {
+  sessionStartedAt: Date | string | number | null | undefined;
+};
+
 /**
  * Runtime boundary for teacher-facing classroom state. Cache snapshots are
  * untrusted at read time: a malformed nested value must degrade to inactive
@@ -429,6 +434,85 @@ function normalizeScreenshotHealth(value: unknown): ClasspilotScreenshotHealth |
     successes: boundedNumber(health.successes, 0, 1_000_000),
     alarmActive: health.alarmActive === true,
   };
+}
+
+function fallbackTimestampMsOrNull(value: unknown): number | null {
+  return classpilotTimestampMsOrNull(value);
+}
+
+/**
+ * Builds a degraded realtime snapshot from an authorized heartbeat-history row.
+ * Heartbeat history does not contain the student-session id, so a valid session
+ * start is mandatory and the history timestamp must fall inside that session.
+ */
+export function classpilotRealtimeStatusFromHeartbeat(
+  schoolId: string,
+  binding: ClasspilotHeartbeatFallbackBinding,
+  heartbeat: unknown,
+  now = Date.now()
+): ClasspilotRealtimeStatus | null {
+  if (!heartbeat || typeof heartbeat !== "object" || Array.isArray(heartbeat)) return null;
+  const row = heartbeat as Record<string, unknown>;
+  const observedAt = fallbackTimestampMsOrNull(row.timestamp);
+  const sessionStartedAt = fallbackTimestampMsOrNull(binding.sessionStartedAt);
+  if (
+    row.schoolId !== schoolId ||
+    row.studentId !== binding.studentId ||
+    row.deviceId !== binding.deviceId ||
+    observedAt === null ||
+    sessionStartedAt === null ||
+    observedAt < sessionStartedAt ||
+    observedAt > now ||
+    now - observedAt >= CLASSPILOT_REALTIME_EXPIRED_AFTER_MS
+  ) {
+    return null;
+  }
+
+  const snapshot: ClasspilotRealtimeStatus = {
+    schemaVersion: CLASSPILOT_REALTIME_SCHEMA_VERSION,
+    state: "active",
+    schoolId,
+    studentId: binding.studentId,
+    studentSessionId: binding.studentSessionId,
+    deviceId: binding.deviceId,
+    revision: 0,
+    heartbeatId: optionalString(row.id, 256) ?? null,
+    observedAt,
+    activeTabUrl: boundedString(row.activeTabUrl, 4_096),
+    activeTabTitle: boundedString(row.activeTabTitle, 512),
+    allOpenTabs: [],
+    openTabCount: 0,
+    tabsTruncated: false,
+    activityState: "unknown",
+    classroomControls: {
+      screenLocked: row.screenLocked === true,
+      flightPathActive: row.flightPathActive === true,
+      isSharing: row.isSharing === true,
+      cameraActive: row.cameraActive === true,
+    },
+    classificationPending: false,
+  };
+  const favicon = normalizeFavicon(row.favicon);
+  if (favicon) snapshot.favicon = favicon;
+  const activeFlightPathName = optionalString(row.activeFlightPathName, 256);
+  if (activeFlightPathName) {
+    snapshot.classroomControls.activeFlightPathName = activeFlightPathName;
+  }
+  const aiCategory = optionalString(row.aiCategory, 64);
+  const safetyAlert = optionalString(row.safetyAlert, 64);
+  if (aiCategory || safetyAlert) {
+    snapshot.aiClassification = {
+      category: aiCategory || "unknown",
+      safetyAlert: safetyAlert || null,
+    };
+  }
+  const screenshotHealth = normalizeScreenshotHealth(row.screenshotHealth);
+  if (screenshotHealth) snapshot.screenshotHealth = screenshotHealth;
+  const extensionVersion = optionalString(row.extensionVersion, 64);
+  if (extensionVersion) snapshot.extensionVersion = extensionVersion;
+  const chromeVersion = optionalString(row.chromeVersion, 128);
+  if (chromeVersion) snapshot.chromeVersion = chromeVersion;
+  return snapshot;
 }
 
 let revisionSequence = 0;

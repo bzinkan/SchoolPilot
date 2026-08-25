@@ -105,6 +105,84 @@ describe("ClassPilot dashboard relational snapshot", () => {
     assert.deepEqual(rows.map((row) => row.studentId), ["student-a"]);
   });
 
+  it("normalizes every raw snapshot timestamp before exposing the typed row", () => {
+    const timestamp = "2026-08-25 13:15:00.123456";
+    const expectedTimestamp = "2026-08-25T13:15:00.123Z";
+    const [row] = mapClasspilotDashboardSnapshotRows([{
+      ...rawSnapshotRow("student-a"),
+      student_session_id: "session-a",
+      session_device_id: "device-a",
+      session_started_at: timestamp,
+      session_last_seen_at: timestamp,
+      pass_id: "pass-a",
+      pass_destination: "Library",
+      pass_issued_at: timestamp,
+      pass_expires_at: timestamp,
+      pass_status: "active",
+      dismissal_id: "dismissal-a",
+      dismissal_status: "queued",
+      dismissal_check_in_time: timestamp,
+      coverage_id: "coverage-a",
+      coverage_context_type: "temporary",
+      coverage_name: "Coverage",
+      coverage_staff_id: "staff-a",
+      coverage_ends_at: timestamp,
+      class_session_id: "class-session-a",
+      class_group_id: "group-a",
+      class_group_name: "Math",
+      class_teacher_id: "teacher-a",
+      class_start_time: timestamp,
+    }], ["student-a"]);
+
+    assert.ok(row);
+    for (const value of [
+      row.sessionStartedAt,
+      row.sessionLastSeenAt,
+      row.activePass?.issuedAt,
+      row.activePass?.expiresAt,
+      row.dismissal?.checkInTime,
+      row.coverage?.endsAt,
+      row.activeClass?.startTime,
+    ]) {
+      assert.ok(value instanceof Date);
+      assert.equal(value.toISOString(), expectedTimestamp);
+    }
+  });
+
+  it("degrades invalid raw timestamps without failing the roster", () => {
+    const [row] = mapClasspilotDashboardSnapshotRows([{
+      ...rawSnapshotRow("student-a"),
+      session_started_at: "0",
+      session_last_seen_at: "1700000000000",
+      pass_id: "pass-a",
+      pass_destination: "Library",
+      pass_issued_at: "2026-02-31T13:15:00.000Z",
+      pass_expires_at: "not-a-date",
+      pass_status: "active",
+      dismissal_id: "dismissal-a",
+      dismissal_status: "queued",
+      dismissal_check_in_time: "2026-13-01T13:15:00.000Z",
+      coverage_id: "coverage-a",
+      coverage_context_type: "temporary",
+      coverage_name: "Coverage",
+      coverage_staff_id: "staff-a",
+      coverage_ends_at: "2026-08-25",
+      class_session_id: "class-session-a",
+      class_group_id: "group-a",
+      class_group_name: "Math",
+      class_teacher_id: "teacher-a",
+      class_start_time: "2026-08-25T25:15:00.000Z",
+    }], ["student-a"]);
+
+    assert.ok(row);
+    assert.equal(row.sessionStartedAt, null);
+    assert.equal(row.sessionLastSeenAt, null);
+    assert.equal(row.activePass, null);
+    assert.equal(row.dismissal?.checkInTime, null);
+    assert.equal(row.coverage, null);
+    assert.equal(row.activeClass, null);
+  });
+
   it("single-flights timezone loads and does not repopulate after invalidation during load", async () => {
     const pending: Array<(value: string | null) => void> = [];
     let loads = 0;
