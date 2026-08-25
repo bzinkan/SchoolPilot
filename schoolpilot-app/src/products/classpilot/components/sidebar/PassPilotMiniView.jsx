@@ -1,12 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { AlertCircle, ChevronDown, ChevronRight, ExternalLink, CheckCircle2 } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  ExternalLink,
+  LoaderCircle,
+  Monitor,
+} from 'lucide-react';
+import { Button } from '../../../../components/ui/button';
 import { useClassPilotAuth } from '../../../../hooks/useClassPilotAuth';
+import { useToast } from '../../../../hooks/use-toast';
 import {
   passPilotClassRequest,
   useCanonicalPassPilotClasses,
 } from '../../../passpilot/classData';
+import { useKioskSessions } from '../../../passpilot/useKioskSessions';
 import {
   readPassPilotSelectedClassId,
   resolvePassPilotSidebarClassId,
@@ -50,7 +61,9 @@ function formatDuration(issuedAt) {
 export default function PassPilotMiniView() {
   const [expanded, setExpanded] = useState(true);
   const [sidebarSelection, setSidebarSelection] = useState({ scopeKey: '', classId: '' });
+  const [isSendingToKiosk, setIsSendingToKiosk] = useState(false);
   const navigate = useNavigate();
+  const { toast } = useToast();
   const { currentUser, school } = useClassPilotAuth();
   const userId = currentUser?.id || '';
   const schoolId = school?.id || '';
@@ -78,6 +91,16 @@ export default function PassPilotMiniView() {
   }, [classInventoryQuery.isSuccess, schoolId, selectedClassId, storedClassId, userId]);
 
   const selectedClass = classes.find((item) => item.id === selectedClassId) || null;
+  const {
+    kioskSessions,
+    isLoading: kioskSessionsLoading,
+    isError: kioskSessionsError,
+    retargetKiosks,
+  } = useKioskSessions({
+    enabled: classInventoryQuery.isSuccess && !!selectedClassId,
+  });
+  const allKiosksOnSelectedClass = kioskSessions.length > 0
+    && kioskSessions.every((session) => session.classId === selectedClassId);
   const passesQuery = useQuery({
     queryKey: ['passpilot', 'roster-active-passes', schoolId, selectedClassId],
     queryFn: async () => {
@@ -105,6 +128,36 @@ export default function PassPilotMiniView() {
     if (nextClassId && !accessibleClassIds.has(nextClassId)) return;
     setSidebarSelection({ scopeKey: selectionScopeKey, classId: nextClassId });
     writePassPilotSelectedClassId(userId, schoolId, nextClassId);
+  };
+
+  const handleSendToKiosk = async () => {
+    if (
+      !selectedClass
+      || kioskSessionsLoading
+      || kioskSessionsError
+      || isSendingToKiosk
+      || allKiosksOnSelectedClass
+    ) {
+      return;
+    }
+
+    setIsSendingToKiosk(true);
+    try {
+      const data = await retargetKiosks(selectedClass.id);
+      const updated = data?.updated ?? 0;
+      if (updated === 0) {
+        toast({ title: 'No kiosk is connected.' });
+        return;
+      }
+      toast({ title: `Sent ${selectedClass.name} to ${updated} kiosk${updated === 1 ? '' : 's'}.` });
+    } catch {
+      toast({
+        variant: 'destructive',
+        title: 'Kiosk couldn’t be updated. Try again.',
+      });
+    } finally {
+      setIsSendingToKiosk(false);
+    }
   };
 
   const passPilotDestination = selectedClassId
@@ -171,6 +224,42 @@ export default function PassPilotMiniView() {
                     <option key={item.id} value={item.id}>{item.name}</option>
                   ))}
                 </select>
+              ) : null}
+              {selectedClass ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleSendToKiosk}
+                  disabled={
+                    kioskSessionsLoading
+                    || kioskSessionsError
+                    || isSendingToKiosk
+                    || allKiosksOnSelectedClass
+                  }
+                  aria-busy={kioskSessionsLoading || isSendingToKiosk}
+                  title={allKiosksOnSelectedClass
+                    ? `${selectedClass.name} is on ${kioskSessions.length} connected kiosk${kioskSessions.length === 1 ? '' : 's'}`
+                    : undefined}
+                  className={`w-full ${allKiosksOnSelectedClass
+                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 disabled:opacity-100 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-400'
+                    : ''}`}
+                >
+                  {isSendingToKiosk || kioskSessionsLoading ? (
+                    <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                  ) : (
+                    <Monitor aria-hidden="true" />
+                  )}
+                  <span aria-live="polite">
+                    {isSendingToKiosk
+                      ? 'Sending…'
+                      : kioskSessionsError
+                        ? 'Kiosk unavailable'
+                        : allKiosksOnSelectedClass
+                          ? 'On Kiosk'
+                          : 'Send to Kiosk'}
+                  </span>
+                </Button>
               ) : null}
             </div>
           )}

@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 
+import { useAuth } from "../../contexts/AuthContext";
 import { queryClient } from "../../lib/queryClient";
 import { passPilotClassRequest } from "./classData";
 
@@ -12,9 +13,21 @@ const KIOSK_SESSIONS_QUERY_KEY = ["passpilot", "kiosk-sessions"];
 // school-global flow. The 15s poll keeps probing, so the UI upgrades itself
 // once the server does.
 export function useKioskSessions({ enabled = true } = {}) {
+  const { user, activeSchoolId } = useAuth();
+  const queryKey = [
+    ...KIOSK_SESSIONS_QUERY_KEY,
+    user?.id || "anonymous",
+    activeSchoolId || "no-school",
+  ];
   const query = useQuery({
-    queryKey: KIOSK_SESSIONS_QUERY_KEY,
-    queryFn: () => passPilotClassRequest("GET", "/passpilot/kiosk/sessions/mine"),
+    queryKey,
+    queryFn: async () => {
+      const data = await passPilotClassRequest("GET", "/passpilot/kiosk/sessions/mine");
+      if (!Array.isArray(data?.sessions)) {
+        throw new Error("PassPilot returned an invalid kiosk-session response.");
+      }
+      return data;
+    },
     enabled,
     refetchInterval: 15000,
     retry: (failureCount, error) =>
@@ -25,7 +38,7 @@ export function useKioskSessions({ enabled = true } = {}) {
   const kioskSessions = query.data?.sessions || [];
 
   const invalidate = () =>
-    queryClient.invalidateQueries({ queryKey: KIOSK_SESSIONS_QUERY_KEY });
+    queryClient.invalidateQueries({ queryKey });
 
   // Bind an unclaimed kiosk (the 6-digit code on its screen) to this teacher.
   // classId is optional: without it the kiosk shows the teacher's name and
@@ -47,7 +60,18 @@ export function useKioskSessions({ enabled = true } = {}) {
       "/passpilot/kiosk/sessions/retarget",
       { classId }
     );
-    invalidate();
+    if (
+      !Array.isArray(data?.sessions)
+      || !Number.isInteger(data?.updated)
+      || data.updated !== data.sessions.length
+      || data.sessions.some((session) => session?.classId !== classId)
+    ) {
+      throw new Error("PassPilot returned an invalid kiosk retarget response.");
+    }
+    await queryClient.cancelQueries({ queryKey });
+    queryClient.setQueryData(queryKey, {
+      sessions: data.sessions,
+    });
     return data;
   };
 
@@ -67,6 +91,9 @@ export function useKioskSessions({ enabled = true } = {}) {
   return {
     kioskSessions,
     legacyKioskServer,
+    isLoading: query.isLoading,
+    isError: query.isError,
+    error: query.error,
     invalidate,
     claimKiosk,
     retargetKiosks,

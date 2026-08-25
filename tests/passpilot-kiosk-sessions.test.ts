@@ -544,6 +544,54 @@ describe("PassPilot per-device kiosk sessions", { concurrency: false }, () => {
     assert.notEqual(fresh.body.session.id, sessionTwo.id);
   });
 
+  it("does not retarget kiosk sessions that exceeded the active idle TTL", async (t) => {
+    if (!schemaReady) return t.skip("migration not applied");
+    const created = await requestJson("POST", "/passpilot/kiosk/session", {}, kioskHeaders(schoolA.id));
+    assert.equal(created.status, 201);
+    const claimed = await requestJson(
+      "POST",
+      "/passpilot/kiosk/sessions/claim",
+      { claimCode: created.body.session.claimCode, classId: gradeB.id },
+      authFor(teacherB, schoolA.id)
+    );
+    assert.equal(claimed.status, 200);
+
+    await asSystem(() =>
+      db.execute(sql`
+        UPDATE passpilot_kiosk_sessions
+        SET last_seen_at = now() - interval '21 hours'
+        WHERE id = ${claimed.body.session.id}
+      `)
+    );
+
+    const mine = await requestJson(
+      "GET",
+      "/passpilot/kiosk/sessions/mine",
+      undefined,
+      authFor(teacherB, schoolA.id)
+    );
+    assert.equal(mine.status, 200);
+    assert.equal(mine.body.sessions.length, 0);
+
+    const retarget = await requestJson(
+      "POST",
+      "/passpilot/kiosk/sessions/retarget",
+      { classId: gradeB.id },
+      authFor(teacherB, schoolA.id)
+    );
+    assert.equal(retarget.status, 200);
+    assert.equal(retarget.body.updated, 0);
+    assert.deepEqual(retarget.body.sessions, []);
+
+    const single = await requestJson(
+      "PUT",
+      `/passpilot/kiosk/sessions/${claimed.body.session.id}`,
+      { classId: gradeB.id },
+      authFor(teacherB, schoolA.id)
+    );
+    assert.equal(single.status, 404);
+  });
+
   it("creates auto-claimed self sessions for teacher-launched kiosks", async (t) => {
     if (!schemaReady) return t.skip("migration not applied");
     const self = await requestJson("POST", "/passpilot/kiosk/sessions/self", { classId: gradeB.id }, authFor(teacherB, schoolA.id));

@@ -5477,7 +5477,8 @@ export async function retargetKioskSessionsForTeacher(
         and(
           eq(passpilotKioskSessions.schoolId, schoolId),
           eq(passpilotKioskSessions.teacherId, teacherId),
-          eq(passpilotKioskSessions.status, "active")
+          eq(passpilotKioskSessions.status, "active"),
+          kioskSessionLiveCondition()
         )
       )
       .returning();
@@ -5514,6 +5515,7 @@ export async function updateKioskSessionClass(
           eq(passpilotKioskSessions.id, sessionId),
           eq(passpilotKioskSessions.schoolId, schoolId),
           eq(passpilotKioskSessions.status, "active"),
+          kioskSessionLiveCondition(),
           authorization.manager
             ? sql`true`
             : eq(passpilotKioskSessions.teacherId, authorization.actorUserId)

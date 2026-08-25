@@ -534,7 +534,19 @@ async function installApiMocks(page, state) {
       return;
     }
     if (pathname === "/api/passpilot/kiosk/sessions/mine") {
-      await route.fulfill({ json: { sessions: state.kioskSessions } });
+      state.kioskMineRequests += 1;
+      while (state.holdKioskSessions) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      if (state.kioskSessionFailuresRemaining > 0) {
+        state.kioskSessionFailuresRemaining -= 1;
+        await route.fulfill({ status: 500, json: { error: "Kiosk sessions temporarily unavailable" } });
+        return;
+      }
+      const sessions = state.kioskSessions.filter(
+        (session) => session.status === "active" && session.expired !== true,
+      );
+      await route.fulfill({ json: { sessions } });
       return;
     }
     if (pathname === "/api/passpilot/kiosk/sessions/claim") {
@@ -554,12 +566,27 @@ async function installApiMocks(page, state) {
     if (pathname === "/api/passpilot/kiosk/sessions/retarget") {
       const payload = request.postDataJSON();
       state.kioskRetargets.push(payload);
-      state.kioskSessions = state.kioskSessions.map((session) => ({
-        ...session,
-        classId: payload.classId,
-        className: "Class Two",
-      }));
-      await route.fulfill({ json: { updated: state.kioskSessions.length, sessions: state.kioskSessions } });
+      while (state.holdKioskRetarget) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      if (state.kioskRetargetFailuresRemaining > 0) {
+        state.kioskRetargetFailuresRemaining -= 1;
+        await route.fulfill({ status: 500, json: { error: "Kiosk update temporarily unavailable" } });
+        return;
+      }
+      const className = officialClasses.find((item) => item.id === payload.classId)?.name || null;
+      const liveSessionIds = new Set(
+        state.kioskSessions
+          .filter((session) => session.status === "active" && session.expired !== true)
+          .map((session) => session.id),
+      );
+      state.kioskSessions = state.kioskSessions.map((session) => (
+        liveSessionIds.has(session.id)
+          ? { ...session, classId: payload.classId, className }
+          : session
+      ));
+      const sessions = state.kioskSessions.filter((session) => liveSessionIds.has(session.id));
+      await route.fulfill({ json: { updated: sessions.length, sessions } });
       return;
     }
     if (pathname.startsWith("/api/passpilot/kiosk/sessions/") && request.method() === "DELETE") {
@@ -645,6 +672,11 @@ function freshState(overrides = {}) {
     kioskSessions: [],
     kioskClaims: [],
     kioskRetargets: [],
+    kioskMineRequests: 0,
+    kioskSessionFailuresRemaining: 0,
+    kioskRetargetFailuresRemaining: 0,
+    holdKioskSessions: false,
+    holdKioskRetarget: false,
     emptyCanonical: false,
     rosterFailuresRemaining: 0,
     historyFailuresRemaining: 0,
@@ -764,6 +796,24 @@ test("cross-product pass widgets advertise canonical capability and do not mask 
   assert.match(miniView, /role="status"/);
   assert.match(miniView, /roster-active-passes/);
   assert.doesNotMatch(miniView, /navigate\(['"]\/passpilot\/passes/);
+  assert.match(miniView, /useKioskSessions/);
+  assert.match(miniView, /retargetKiosks\(selectedClass\.id\)/);
+  assert.match(miniView, /No kiosk is connected\./);
+  assert.match(miniView, /Sending…/);
+  assert.match(miniView, /On Kiosk/);
+  assert.match(miniView, /Kiosk unavailable/);
+  assert.doesNotMatch(miniView, /ClaimKioskDialog|legacyKioskServer|\/kiosk-config/);
+
+  const kioskSessionsHook = await readFile(
+    path.join(APP_ROOT, "src/products/passpilot/useKioskSessions.js"),
+    "utf8",
+  );
+  assert.match(kioskSessionsHook, /user\?\.id \|\| "anonymous"/);
+  assert.match(kioskSessionsHook, /activeSchoolId \|\| "no-school"/);
+  assert.match(kioskSessionsHook, /cancelQueries\(\{ queryKey \}\)/);
+  assert.match(kioskSessionsHook, /setQueryData\(queryKey/);
+  assert.match(kioskSessionsHook, /data\.updated !== data\.sessions\.length/);
+  assert.match(kioskSessionsHook, /session\?\.classId !== classId/);
 
   const classData = await readFile(path.join(APP_ROOT, "src/products/passpilot/classData.js"), "utf8");
   const myClass = await readFile(
@@ -818,7 +868,7 @@ test("cross-product pass widgets advertise canonical capability and do not mask 
   );
 });
 
-test("PassPilot canonical classes use the persisted source and preserve the legacy path before cutover", { timeout: 90_000 }, async () => {
+test("PassPilot canonical classes use the persisted source and preserve the legacy path before cutover", { timeout: 120_000 }, async () => {
   const server = await preview({
     root: APP_ROOT,
     logLevel: "error",
@@ -836,15 +886,20 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
     const classPilotSidebarState = freshState({ role: "admin" });
     await installApiMocks(classPilotSidebarPage, classPilotSidebarState);
     await classPilotSidebarPage.addInitScript(({ userId, schoolId }) => {
-      window.sessionStorage.setItem(
-        `passpilot:selected-class:v1:${encodeURIComponent(userId)}:${encodeURIComponent(schoolId)}`,
-        "retired-class",
-      );
+      const key = `passpilot:selected-class:v1:${encodeURIComponent(userId)}:${encodeURIComponent(schoolId)}`;
+      if (!window.sessionStorage.getItem(key)) {
+        window.sessionStorage.setItem(key, "retired-class");
+      }
     }, { userId: "admin-one", schoolId: SCHOOL_ID });
     await classPilotSidebarPage.goto(`${baseUrl}/classpilot`);
     const sidebarClassPicker = classPilotSidebarPage.getByLabel("Select PassPilot class");
     await sidebarClassPicker.waitFor({ timeout: 15_000 });
     assert.equal(await sidebarClassPicker.inputValue(), "", "an inaccessible saved class must be cleared");
+    assert.equal(
+      await classPilotSidebarPage.getByRole("button", { name: "Send to Kiosk", exact: true }).count(),
+      0,
+      "the kiosk action must stay hidden until a valid PassPilot class is selected",
+    );
     assert.equal(
       await classPilotSidebarPage.evaluate(({ userId, schoolId }) => window.sessionStorage.getItem(
         `passpilot:selected-class:v1:${encodeURIComponent(userId)}:${encodeURIComponent(schoolId)}`,
@@ -866,6 +921,97 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
       { userId: "admin-one", schoolId: SCHOOL_ID },
     );
     assert.equal(classPilotSidebarState.activePassRequests.at(-1), "?classId=class-two");
+
+    const zeroKioskButton = classPilotSidebarPage.getByRole("button", { name: "Send to Kiosk", exact: true });
+    await zeroKioskButton.click();
+    await classPilotSidebarPage.getByText("No kiosk is connected.", { exact: true }).waitFor();
+    assert.deepEqual(classPilotSidebarState.kioskRetargets, [{ classId: "class-two" }]);
+    assert.deepEqual(classPilotSidebarState.kioskClaims, []);
+    assert.equal(await classPilotSidebarPage.getByTestId("input-kiosk-claim-code").count(), 0);
+
+    // The session list is still cached as empty when this kiosk appears. The
+    // click must ask the authoritative retarget endpoint instead of repeating
+    // the stale no-kiosk state.
+    classPilotSidebarState.kioskSessions = [{
+      id: "sidebar-kiosk-one",
+      status: "active",
+      classId: "class-one",
+      className: "Grade 3 Homeroom",
+    }];
+    const sendOneButton = classPilotSidebarPage.getByRole("button", { name: "Send to Kiosk", exact: true });
+    classPilotSidebarState.holdKioskRetarget = true;
+    const sendOnePromise = sendOneButton.click();
+    const sendingButton = classPilotSidebarPage.getByRole("button", { name: "Sending…", exact: true });
+    await sendingButton.waitFor();
+    assert.equal(await sendingButton.isDisabled(), true);
+    classPilotSidebarState.holdKioskRetarget = false;
+    await sendOnePromise;
+    await classPilotSidebarPage.getByText("Sent Grade 4 Homeroom to 1 kiosk.", { exact: true }).waitFor();
+    const oneOnKioskButton = classPilotSidebarPage.getByRole("button", { name: "On Kiosk", exact: true });
+    await oneOnKioskButton.waitFor();
+    assert.equal(await oneOnKioskButton.isDisabled(), true);
+    assert.deepEqual(classPilotSidebarState.kioskRetargets.at(-1), { classId: "class-two" });
+
+    classPilotSidebarState.kioskSessions = [
+      {
+        id: "sidebar-kiosk-one",
+        status: "active",
+        classId: "class-two",
+        className: "Grade 4 Homeroom",
+      },
+      {
+        id: "sidebar-kiosk-two",
+        status: "active",
+        classId: "class-two",
+        className: "Grade 4 Homeroom",
+      },
+    ];
+    await classPilotSidebarPage.reload();
+    const pluralOnKioskButton = classPilotSidebarPage.getByRole("button", { name: "On Kiosk", exact: true });
+    await pluralOnKioskButton.waitFor();
+    assert.equal(await pluralOnKioskButton.isDisabled(), true);
+    assert.match(await pluralOnKioskButton.getAttribute("title"), /2 connected kiosks/);
+
+    classPilotSidebarState.kioskSessions[1] = {
+      ...classPilotSidebarState.kioskSessions[1],
+      classId: null,
+      className: null,
+    };
+    await classPilotSidebarPage.reload();
+    await classPilotSidebarPage.getByRole("button", { name: "Send to Kiosk", exact: true }).click();
+    await classPilotSidebarPage.getByText("Sent Grade 4 Homeroom to 2 kiosks.", { exact: true }).waitFor();
+    await classPilotSidebarPage.getByRole("button", { name: "On Kiosk", exact: true }).waitFor();
+    assert.ok(classPilotSidebarState.kioskSessions.every((session) => session.classId === "class-two"));
+
+    const activeSidebarClassPicker = classPilotSidebarPage.getByLabel("Select PassPilot class");
+    await activeSidebarClassPicker.selectOption("class-one");
+    await classPilotSidebarPage.getByRole("button", { name: "Send to Kiosk", exact: true }).waitFor();
+    classPilotSidebarState.kioskRetargetFailuresRemaining = 1;
+    await classPilotSidebarPage.getByRole("button", { name: "Send to Kiosk", exact: true }).click();
+    await classPilotSidebarPage
+      .getByText("Kiosk couldn’t be updated. Try again.", { exact: true })
+      .waitFor();
+    await classPilotSidebarPage.getByRole("button", { name: "Send to Kiosk", exact: true }).waitFor();
+    assert.ok(classPilotSidebarState.kioskSessions.every((session) => session.classId === "class-two"));
+
+    await activeSidebarClassPicker.selectOption("class-two");
+    await classPilotSidebarPage.getByRole("button", { name: "On Kiosk", exact: true }).waitFor();
+
+    classPilotSidebarState.kioskSessions = [{
+      id: "expired-sidebar-kiosk",
+      status: "active",
+      expired: true,
+      classId: "class-one",
+      className: "Grade 3 Homeroom",
+    }];
+    const retargetCountBeforeExpiredCheck = classPilotSidebarState.kioskRetargets.length;
+    await classPilotSidebarPage.reload();
+    await classPilotSidebarPage.getByRole("button", { name: "Send to Kiosk", exact: true }).click();
+    await classPilotSidebarPage.getByText("No kiosk is connected.", { exact: true }).waitFor();
+    assert.equal(classPilotSidebarState.kioskRetargets.length, retargetCountBeforeExpiredCheck + 1);
+    assert.deepEqual(classPilotSidebarState.kioskRetargets.at(-1), { classId: "class-two" });
+    assert.equal(classPilotSidebarState.kioskSessions[0].classId, "class-one");
+
     assert.equal(
       await classPilotSidebarPage.getByLabel("Open My Class in PassPilot in a new tab").getAttribute("href"),
       "/passpilot/my-class?classId=class-two",
@@ -873,6 +1019,51 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
     await classPilotSidebarPage.getByRole("button", { name: "Go to PassPilot", exact: true }).click();
     await classPilotSidebarPage.waitForURL("**/passpilot/my-class?classId=class-two");
     await classPilotSidebarPage.close();
+
+    const kioskLoadingPage = await browser.newPage();
+    const kioskLoadingState = freshState({ role: "admin", holdKioskSessions: true });
+    await installApiMocks(kioskLoadingPage, kioskLoadingState);
+    await kioskLoadingPage.addInitScript(({ userId, schoolId }) => {
+      window.sessionStorage.setItem(
+        `passpilot:selected-class:v1:${encodeURIComponent(userId)}:${encodeURIComponent(schoolId)}`,
+        "class-two",
+      );
+    }, { userId: "admin-one", schoolId: SCHOOL_ID });
+    await kioskLoadingPage.goto(`${baseUrl}/classpilot`);
+    const loadingKioskButton = kioskLoadingPage.getByRole("button", { name: "Send to Kiosk", exact: true });
+    await loadingKioskButton.waitFor();
+    assert.equal(await loadingKioskButton.isDisabled(), true);
+    assert.equal(await loadingKioskButton.getAttribute("aria-busy"), "true");
+    assert.equal(await kioskLoadingPage.getByText("No kiosk is connected.", { exact: true }).count(), 0);
+    kioskLoadingState.holdKioskSessions = false;
+    await kioskLoadingPage.waitForFunction(() => {
+      const button = [...document.querySelectorAll("button")]
+        .find((item) => item.textContent?.trim() === "Send to Kiosk");
+      return button instanceof HTMLButtonElement && !button.disabled;
+    });
+    await kioskLoadingPage.close();
+
+    const kioskUnavailablePage = await browser.newPage();
+    const kioskUnavailableState = freshState({
+      role: "admin",
+      kioskSessionFailuresRemaining: 2,
+    });
+    await installApiMocks(kioskUnavailablePage, kioskUnavailableState);
+    await kioskUnavailablePage.addInitScript(({ userId, schoolId }) => {
+      window.sessionStorage.setItem(
+        `passpilot:selected-class:v1:${encodeURIComponent(userId)}:${encodeURIComponent(schoolId)}`,
+        "class-two",
+      );
+    }, { userId: "admin-one", schoolId: SCHOOL_ID });
+    await kioskUnavailablePage.goto(`${baseUrl}/classpilot`);
+    const unavailableKioskButton = kioskUnavailablePage
+      .getByRole("button", { name: "Kiosk unavailable", exact: true });
+    await unavailableKioskButton.waitFor({ timeout: 15_000 });
+    assert.equal(await unavailableKioskButton.isDisabled(), true);
+    assert.ok(kioskUnavailableState.kioskMineRequests >= 2);
+    assert.equal(await kioskUnavailablePage.getByText("No kiosk is connected.", { exact: true }).count(), 0);
+    assert.deepEqual(kioskUnavailableState.kioskRetargets, []);
+    await kioskUnavailablePage.close();
 
     const installCreateSchoolMocks = async (page, payloads) => {
       await page.route("**/api/**", async (route) => {
