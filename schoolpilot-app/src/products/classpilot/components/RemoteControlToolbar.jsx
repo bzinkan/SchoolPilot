@@ -17,6 +17,7 @@ function RemoteControlToolbar({
   availableCount = 0,
   claimedCount = 0,
   pickupView = "class",
+  showCoverageRail = true,
   onPickupViewChange,
   onOpenCoverage,
   canReroute = false,
@@ -80,6 +81,7 @@ function RemoteControlToolbar({
             </div>
 
             <div className="flex justify-center">
+              {showCoverageRail ? (
               <div className="flex flex-wrap items-center justify-center gap-2 rounded-lg border border-yellow-300 bg-yellow-50/80 p-1.5 shadow-sm" data-testid="coverage-action-rail">
                 {onPickupViewChange && (
                   <div className="flex flex-wrap items-center justify-center gap-1.5" data-testid="student-pickup-view-tabs">
@@ -152,6 +154,7 @@ function RemoteControlToolbar({
                   </Button>
                 )}
               </div>
+              ) : null}
             </div>
 
             <div className="hidden lg:block" />

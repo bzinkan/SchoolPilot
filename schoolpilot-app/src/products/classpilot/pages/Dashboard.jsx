@@ -255,6 +255,10 @@ function sessionEndToastDescription(data, wasScheduled) {
   return "Class session has been ended.";
 }
 
+function isStudentInTemporarySupervision(student) {
+  return student?.supervisionState === "temporary_coverage";
+}
+
 function AvailableStudentActivity({ student, nowMs }) {
   const display = deriveStudentMonitoringDisplay(student, nowMs);
   if (display.telemetryCurrent) {
@@ -590,6 +594,9 @@ export default function Dashboard() {
     // `/settings` carries the authoritative per-session FAB revision. Its
     // query key is intentionally stable for legacy consumers, so refresh it
     // whenever class ownership moves from none→A, A→B, or A→none.
+    // Teacher-granted off-task exceptions are session-local and must not
+    // carry into an observed or subsequently owned class.
+    setTeacherAllowedDomains(new Set());
     void queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
   }, [effectiveSession?.id]);
   useEffect(() => {
@@ -621,13 +628,26 @@ export default function Dashboard() {
     refetchInterval: 60_000,
   });
   const effectiveSessionId = effectiveSession?.id || null;
+  const isStudentOwnedByAnotherClass = useCallback((student) => (
+    !!effectiveSessionId
+    && student?.supervisionContext?.type === "class"
+    && student.supervisionContext.id
+    && student.supervisionContext.id !== effectiveSessionId
+  ), [effectiveSessionId]);
+  const isStudentMonitoringSuppressed = useCallback((student) => (
+    studentView === 'class'
+    && (
+      isStudentInTemporarySupervision(student)
+      || isStudentOwnedByAnotherClass(student)
+    )
+  ), [isStudentOwnedByAnotherClass, studentView]);
   const adminSchoolMode = isAdmin && !effectiveSessionId;
   useEffect(() => () => {
     // A peer-to-peer stream can outlive signaling. Tear it down whenever the
-    // authoritative class context changes, including A→B replacement and
-    // A→none session end.
+    // authoritative class context or Live View capability changes, including
+    // A→B replacement, A→none session end, and owned-class→Observe.
     cleanupLiveViews();
-  }, [cleanupLiveViews, effectiveSessionId]);
+  }, [cleanupLiveViews, dashboardCapabilities.canUseLiveView, effectiveSessionId]);
   const aggregatedStudentsQueryKey = useMemo(
     () => makeAggregatedStudentsQueryKey(activeSchoolId, effectiveSessionId, adminSchoolMode),
     [activeSchoolId, adminSchoolMode, effectiveSessionId],
@@ -665,6 +685,21 @@ export default function Dashboard() {
   });
   const students = studentsSnapshot ?? EMPTY_LIST;
   const studentsRequestId = requestIdFromError(studentsError);
+  const selectedStudentRow = selectedStudent
+    ? students.find((student) => student.studentId === selectedStudent.studentId) || selectedStudent
+    : null;
+  const selectedStudentMonitoringSuppressed = isStudentMonitoringSuppressed(selectedStudentRow);
+  const activeLiveViewStudent = liveViewState.studentId
+    ? students.find((student) => student.studentId === liveViewState.studentId) || null
+    : null;
+  const activeLiveViewMonitoringSuppressed = isStudentMonitoringSuppressed(activeLiveViewStudent);
+  const monitoringSuppressedStudentIdsKey = JSON.stringify(
+    students
+      .filter(isStudentMonitoringSuppressed)
+      .map((student) => student.studentId)
+      .filter(Boolean)
+      .sort(),
+  );
 
   useEffect(() => {
     websocketAuthRef.current = currentUser?.id && token ? {
@@ -700,16 +735,33 @@ export default function Dashboard() {
   });
 
   const { data: urlHistory = EMPTY_LIST } = useQuery({
-    queryKey: ['/api/classpilot/tiles/history', selectedStudent?.studentId, effectiveSession?.startTime],
+    queryKey: [
+      '/api/classpilot/tiles/history',
+      'detail',
+      effectiveSessionId || 'school',
+      selectedStudentRow?.studentId,
+    ],
     queryFn: () => {
       return apiRequest('POST', '/classpilot/tiles/history', {
-        studentIds: [selectedStudent.studentId],
+        studentIds: [selectedStudentRow.studentId],
         limit: 10,
       });
     },
     select: (data) => data?.tiles?.[0]?.heartbeats || [],
-    enabled: !!selectedStudent?.studentId,
+    enabled: Boolean(selectedStudentRow?.studentId && !selectedStudentMonitoringSuppressed),
+    gcTime: 0,
   });
+
+  useEffect(() => {
+    if (!selectedStudentMonitoringSuppressed) return undefined;
+    const frame = requestAnimationFrame(() => setSelectedStudent(null));
+    return () => cancelAnimationFrame(frame);
+  }, [selectedStudentMonitoringSuppressed]);
+
+  useEffect(() => {
+    if (!activeLiveViewMonitoringSuppressed) return;
+    cleanupLiveViews();
+  }, [activeLiveViewMonitoringSuppressed, cleanupLiveViews]);
 
   const { data: subgroups = EMPTY_LIST } = useQuery({
     queryKey: ['/api/groups', effectiveSession?.groupId, 'subgroups'],
@@ -748,16 +800,6 @@ export default function Dashboard() {
   );
   const subgroupSelectionReady = !selectedSubgroupId
     || (!subgroupMembersFetching && !subgroupMembersError);
-
-  const { data: sessionStudentIds = EMPTY_LIST } = useQuery({
-    queryKey: ['/api/groups', effectiveSession?.groupId, 'students'],
-    queryFn: () => apiRequest('GET', `/groups/${effectiveSession?.groupId}/students`),
-    enabled: !!effectiveSession?.groupId,
-    select: (data) => {
-      const students = Array.isArray(data) ? data : data?.students ?? [];
-      return students.map((s) => s.id);
-    },
-  });
 
   const { data: initialRaisedHands } = useQuery({
     queryKey: ['/api/teacher/raised-hands', effectiveSession?.id],
@@ -1421,13 +1463,6 @@ export default function Dashboard() {
     return nameParts[nameParts.length - 1].toLowerCase();
   };
 
-  const isStudentInTemporarySupervision = (student) => student?.supervisionState === "temporary_coverage";
-  const isStudentOwnedByAnotherClass = (student) => (
-    !!effectiveSession?.id &&
-    student?.supervisionContext?.type === "class" &&
-    student.supervisionContext.id &&
-    student.supervisionContext.id !== effectiveSession.id
-  );
   const isStudentCommandable = (student) => !isStudentInTemporarySupervision(student) && !isStudentOwnedByAnotherClass(student);
 
   // Selection handlers
@@ -1455,9 +1490,41 @@ export default function Dashboard() {
   };
   const clearSelection = () => { setSelectedStudentIds(new Set()); };
   const handleStudentViewChange = (view) => {
+    if (dashboardCapabilities.observedOtherClass && view !== 'class') return;
     setStudentView(view);
     setSelectedStudentIds(new Set());
     setSearchQuery("");
+  };
+  const handleAdminObservedSessionChange = (event) => {
+    const sessionId = event.target.value || null;
+    setAdminObservedSessionId(sessionId);
+    setSelectedStudentIds(new Set());
+    setSearchQuery("");
+    setSelectedSubgroupId("");
+    setSelectedStudent(null);
+    if (sessionId) {
+      setStudentView('class');
+      setShowOpenTabDialog(false);
+      setShowCloseTabsDialog(false);
+      setSelectedTabsToClose(new Set());
+      setManageTabsStudentIds(null);
+      setManageTabsTargetSnapshot("");
+      setShowApplyFlightPathDialog(false);
+      setShowFlightPathViewerDialog(false);
+      setShowApplyBlockListDialog(false);
+      setShowBlockListViewerDialog(false);
+      setShowSendMessageDialog(false);
+      setShowSignOutDialog(false);
+      setShowAttentionDialog(false);
+      setShowTimerDialog(false);
+      setShowPollDialog(false);
+      setShowPollResultsDialog(false);
+      setShowRerouteDialog(false);
+      setClassStartOverlap(null);
+      setClassResyncOverlap(null);
+      setEndClassTarget(null);
+      setSkipTodayGroup(null);
+    }
   };
 
   // The dashboard owns one live-view negotiation and one enlarged portal.
@@ -1549,12 +1616,11 @@ export default function Dashboard() {
     }, LIVE_VIEW_TIMEOUT_MS);
   };
 
-  // Session-only filtered students (no search filter) - used for class commands
+  // A session-scoped aggregate already represents the frozen teaching-session
+  // roster. Do not intersect it with mutable current group membership: doing so
+  // can hide students added to or removed from the group after class started.
   const sessionFilteredStudents = students.filter((student) => {
-    if (effectiveSession && sessionStudentIds.length > 0) {
-      if (!sessionStudentIds.includes(student.studentId)) return false;
-      if (isStudentOwnedByAnotherClass(student)) return false;
-    }
+    if (effectiveSession && isStudentOwnedByAnotherClass(student)) return false;
     if (isAdmin && !effectiveSession) {
       return normalizeGrade(student.gradeLevel) === normalizeGrade(selectedGrade);
     }
@@ -1634,8 +1700,11 @@ export default function Dashboard() {
         || liveViewState.studentId === student.studentId
       ))
     : filteredStudents;
+  const monitorableTileStudents = tileStudents.filter((student) => (
+    !isStudentMonitoringSuppressed(student)
+  ));
   const tileStudentIdsKey = JSON.stringify(buildTileStudentIds(
-    studentView === "available" ? EMPTY_LIST : tileStudents
+    studentView === "available" ? EMPTY_LIST : monitorableTileStudents
   ));
   const tileBatchRequests = useMemo(
     () => createTileBatchRequests(JSON.parse(tileStudentIdsKey)),
@@ -1678,6 +1747,19 @@ export default function Dashboard() {
     return new Map(historyTileQueries.flatMap((query) => [...(query.data || EMPTY_TILE_MAP)]));
   }, [historyTileQueries]);
   useEffect(() => {
+    if (monitoringSuppressedStudentIdsKey === '[]') return;
+    queryClient.removeQueries({
+      queryKey: [TILE_BATCH_QUERY_ROOTS.screenshots],
+      exact: false,
+      type: 'inactive',
+    });
+    queryClient.removeQueries({
+      queryKey: [TILE_BATCH_QUERY_ROOTS.history],
+      exact: false,
+      type: 'inactive',
+    });
+  }, [monitoringSuppressedStudentIdsKey]);
+  useEffect(() => {
     if (freshnessTimeoutRef.current) {
       clearTimeout(freshnessTimeoutRef.current);
       freshnessTimeoutRef.current = null;
@@ -1719,7 +1801,8 @@ export default function Dashboard() {
     ? (studentView === "class" ? controllableStudents : filteredStudents)
     : EMPTY_LIST;
 
-  const statsStudents = studentView === "class" ? sessionFilteredStudents : filteredStudents;
+  const statsStudents = (studentView === "class" ? sessionFilteredStudents : filteredStudents)
+    .filter((student) => !isStudentMonitoringSuppressed(student));
   const statsMonitoringDisplays = statsStudents.map((student) => (
     deriveStudentMonitoringDisplay(student, freshnessNowMs)
   ));
@@ -1727,11 +1810,6 @@ export default function Dashboard() {
   const idleCount = statsMonitoringDisplays.filter((display) => display.kind === 'idle').length;
   const offlineCount = statsMonitoringDisplays.filter((display) => display.kind === 'signed_out').length;
   const offTaskCount = statsStudents.filter(isStudentOffTask).length;
-
-  const isConnectedStudent = (student) => {
-    const display = deriveStudentMonitoringDisplay(student, freshnessNowMs);
-    return display.kind === 'online' || display.kind === 'idle';
-  };
 
   const resolveActiveCommandTarget = (overrideStudentIds = null) => {
     if (classStudentTargetsUnavailable) {
@@ -1781,15 +1859,51 @@ export default function Dashboard() {
     && explicitlySelectedStudents.length === explicitlySelectedStudentIds.length;
   const selectedTargetsSupportScreenOnlyUnlock = exactSelectedTargetsResolved
     && explicitlySelectedStudents.every((student) => studentSupportsCapability(student, 'screenOnlyUnlockV1'));
-  const connectedTargetCount = targetStudents.filter(isConnectedStudent).length;
-  const signalLostTargetCount = targetStudents.filter((student) => deriveStudentMonitoringDisplay(student, freshnessNowMs).kind === 'signal_lost').length;
-  const signedOutTargetCount = Math.max(0, targetStudents.length - connectedTargetCount - signalLostTargetCount);
   const activeClassName = studentView === "available"
     ? "Available"
     : studentView === "claimed"
       ? "Claimed"
       : groups.find(g => g.id === effectiveSession?.groupId)?.name || (effectiveSession ? "Active Class" : "Class");
   const subgroupName = selectedSubgroupId ? subgroups.find(s => s.id === selectedSubgroupId)?.name : null;
+  const observedViewStudents = dashboardCapabilities.observedOtherClass
+    ? sessionFilteredStudents.filter((student) => (
+        !selectedSubgroupId || subgroupMembers.has(student.studentId)
+      ))
+    : EMPTY_LIST;
+  const bannerStudents = dashboardCapabilities.observedOtherClass
+    ? observedViewStudents
+    : targetStudents;
+  const bannerCounts = {
+    connected: 0,
+    signalLost: 0,
+    signedOut: 0,
+    inSupervision: 0,
+  };
+  for (const student of bannerStudents) {
+    if (
+      dashboardCapabilities.observedOtherClass
+      && isStudentInTemporarySupervision(student)
+    ) {
+      bannerCounts.inSupervision += 1;
+      continue;
+    }
+
+    const display = deriveStudentMonitoringDisplay(student, freshnessNowMs);
+    switch (display.kind) {
+      case 'online':
+      case 'idle':
+        bannerCounts.connected += 1;
+        break;
+      case 'signal_lost':
+        bannerCounts.signalLost += 1;
+        break;
+      case 'signed_out':
+        bannerCounts.signedOut += 1;
+        break;
+      default:
+        break;
+    }
+  }
   const claimedContextCount = new Set(claimedPickupStudents.map((student) => student.contextId).filter(Boolean)).size;
   const claimedTargetContextCount = new Set(targetStudents.map((student) => student.contextId).filter(Boolean)).size;
   const claimedSearchDisclosure = studentView === 'claimed' && filteredClaimedStudents.length !== claimedPickupStudents.length
@@ -1804,12 +1918,20 @@ export default function Dashboard() {
     : selectedSubgroupId && studentView === "class"
       ? `${subgroupName || "Subgroup"} - ${targetStudents.length} student${targetStudents.length === 1 ? "" : "s"}`
       : `All ${targetStudents.length} student${targetStudents.length === 1 ? "" : "s"}`;
-  const targetConnectionLabel = `${connectedTargetCount} connected · ${signalLostTargetCount} signal lost · ${signedOutTargetCount} signed out`;
-  const displayedTargetBannerLabel = classStudentCountsKnown
-    ? targetBannerLabel
+  const observedViewLabel = subgroupCommandsDisabled
+    ? `${subgroupName || 'Subgroup'} roster unavailable`
+    : selectedSubgroupId
+      ? `${subgroupName || "Subgroup"} - ${observedViewStudents.length} student${observedViewStudents.length === 1 ? "" : "s"}`
+      : `All ${observedViewStudents.length} student${observedViewStudents.length === 1 ? "" : "s"}`;
+  const targetConnectionLabel = `${bannerCounts.connected} connected · ${bannerCounts.signalLost} signal lost · ${bannerCounts.signedOut} signed out`;
+  const observedConnectionLabel = `${targetConnectionLabel}${bannerCounts.inSupervision > 0 ? ` · ${bannerCounts.inSupervision} in supervision` : ''}`;
+  const bannerCountsKnown = classStudentCountsKnown
+    && (!dashboardCapabilities.observedOtherClass || !subgroupCommandsDisabled);
+  const displayedTargetBannerLabel = bannerCountsKnown
+    ? dashboardCapabilities.observedOtherClass ? observedViewLabel : targetBannerLabel
     : 'Student data unavailable';
-  const displayedTargetConnectionLabel = classStudentCountsKnown
-    ? targetConnectionLabel
+  const displayedTargetConnectionLabel = bannerCountsKnown
+    ? dashboardCapabilities.observedOtherClass ? observedConnectionLabel : targetConnectionLabel
     : 'Counts unavailable';
   const selectedSignOutStudents = studentView === "class"
     ? getStudentsForCommandTarget(Array.from(selectedStudentIds))
@@ -1901,7 +2023,11 @@ export default function Dashboard() {
     if (!settings?.blockedDomains || settings.blockedDomains.length === 0) return;
     students.forEach((student) => {
       const studentId = student.studentId;
-      if (!deriveStudentMonitoringDisplay(student, freshnessNowMs).telemetryCurrent || !student.activeTabUrl) {
+      if (
+        isStudentMonitoringSuppressed(student)
+        || !deriveStudentMonitoringDisplay(student, freshnessNowMs).telemetryCurrent
+        || !student.activeTabUrl
+      ) {
         const keysToDelete = Array.from(notifiedViolations.current).filter(key => key.startsWith(studentId + '-'));
         keysToDelete.forEach(key => notifiedViolations.current.delete(key));
         return;
@@ -1924,7 +2050,7 @@ export default function Dashboard() {
         keysToDelete.forEach(key => notifiedViolations.current.delete(key));
       }
     });
-  }, [freshnessNowMs, students, settings, toast]);
+  }, [freshnessNowMs, isStudentMonitoringSuppressed, settings, students, toast]);
 
   useEffect(() => {
     const hasAttention = activeClassroomStates.some((state) => state.stateType === 'attention');
@@ -2165,7 +2291,7 @@ export default function Dashboard() {
       queryClient.invalidateQueries({ queryKey: ['/api/coverage/contexts'] });
       queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
       clearSelection();
-      setStudentView("claimed");
+      if (!dashboardCapabilities.observedOtherClass) setStudentView("claimed");
       const isQuickClaim = variables?.quickClaimStudentId && variables?.students?.length === 1;
       toast({
         title: isQuickClaim ? "Student claimed" : "Students claimed",
@@ -2238,6 +2364,7 @@ export default function Dashboard() {
   });
 
   const handleClaimStudents = (studentsToClaim, options = {}) => {
+    if (dashboardCapabilities.observedOtherClass) return;
     if (!studentsToClaim.length) {
       toast({ variant: "destructive", title: "Select students first" });
       return;
@@ -2246,7 +2373,13 @@ export default function Dashboard() {
     claimPickupMutation.mutate({ students: studentsToClaim, quickClaimStudentId: options.quickClaimStudentId || null });
   };
 
+  const handleStartScheduledConflict = (conflictId) => {
+    if (dashboardCapabilities.observedOtherClass) return;
+    startScheduledConflictMutation.mutate(conflictId);
+  };
+
   const handleRerouteSelected = () => {
+    if (dashboardCapabilities.observedOtherClass) return;
     const studentIds = Array.from(selectedStudentIds);
     if (studentIds.length === 0) {
       toast({ variant: "destructive", title: "Select students first" });
@@ -2260,6 +2393,7 @@ export default function Dashboard() {
   };
 
   const handleReturnToClass = (student) => {
+    if (dashboardCapabilities.observedOtherClass) return;
     if (!activeSession) {
       toast({ variant: "destructive", title: "Start a class first", description: "Only an active class teacher can return a student from supervision." });
       return;
@@ -3002,7 +3136,7 @@ export default function Dashboard() {
                     <Eye className="h-4 w-4" />
                     <select
                       value={adminObservedSessionId || ""}
-                      onChange={(event) => setAdminObservedSessionId(event.target.value || null)}
+                      onChange={handleAdminObservedSessionChange}
                       disabled={allActiveSessions.length === 0}
                       aria-label="Observe active ClassPilot class"
                       data-testid="select-admin-observe"
@@ -3088,8 +3222,9 @@ export default function Dashboard() {
             availableCount={availablePickupStudents.length + scheduledCoverageGroups.reduce((total, group) => total + (group.students?.length || group.claimableCount || 0), 0)}
             claimedCount={claimedPickupStudents.length}
             pickupView={studentView}
-            onPickupViewChange={handleStudentViewChange}
-            onOpenCoverage={canManageSupervisionSetup ? () => navigate("/classpilot/coverage") : undefined}
+            showCoverageRail={!dashboardCapabilities.observedOtherClass}
+            onPickupViewChange={dashboardCapabilities.observedOtherClass ? undefined : handleStudentViewChange}
+            onOpenCoverage={!dashboardCapabilities.observedOtherClass && canManageSupervisionSetup ? () => navigate("/classpilot/coverage") : undefined}
             canReroute={dashboardCapabilities.ownedClassSession}
             onReroute={dashboardCapabilities.ownedClassSession ? () => setShowRerouteDialog(true) : undefined}
             canViewHistoricalTelemetry={isAdmin}
@@ -3139,20 +3274,24 @@ export default function Dashboard() {
             <input type="text" placeholder="Search student" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} data-testid="input-search-students" className="w-[300px] px-4 py-3 text-sm rounded-lg border border-border bg-card text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-amber-400 transition-colors" />
             <div className="flex items-center gap-3">
               <div className="px-4 py-2 rounded-lg bg-amber-400 text-slate-900" data-testid="badge-selection-count">
-                <div className="text-[13px] font-semibold">Target: {activeClassName} - {displayedTargetBannerLabel}</div>
+                <div className="text-[13px] font-semibold">{dashboardCapabilities.observedOtherClass ? 'Viewing' : 'Target'}: {activeClassName} - {displayedTargetBannerLabel}</div>
                 <div className="text-[11px] font-medium opacity-80">{displayedTargetConnectionLabel}</div>
               </div>
-              <button
-                onClick={selectAll}
-                disabled={selectableStudents.length === 0 || selectedStudentIds.size === selectableStudents.length}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium bg-transparent border border-border text-muted-foreground hover:bg-card transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                data-testid="button-select-all-students"
-              >
-                <Users className="h-4 w-4" /> Select All ({selectableStudents.length})
-              </button>
-              <button onClick={clearSelection} disabled={selectedStudentIds.size === 0} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium bg-transparent border border-border text-muted-foreground hover:bg-card transition-colors disabled:opacity-50 disabled:cursor-not-allowed" data-testid="button-clear-selection">
-                Clear Selection
-              </button>
+              {!dashboardCapabilities.observedOtherClass ? (
+                <>
+                  <button
+                    onClick={selectAll}
+                    disabled={selectableStudents.length === 0 || selectedStudentIds.size === selectableStudents.length}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium bg-transparent border border-border text-muted-foreground hover:bg-card transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    data-testid="button-select-all-students"
+                  >
+                    <Users className="h-4 w-4" /> Select All ({selectableStudents.length})
+                  </button>
+                  <button onClick={clearSelection} disabled={selectedStudentIds.size === 0} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium bg-transparent border border-border text-muted-foreground hover:bg-card transition-colors disabled:opacity-50 disabled:cursor-not-allowed" data-testid="button-clear-selection">
+                    Clear Selection
+                  </button>
+                </>
+              ) : null}
             </div>
           </div>
         )}
@@ -3181,27 +3320,30 @@ export default function Dashboard() {
                 Student Sign Out
               </Button>
             )}
-            {studentView === "class" && subgroups.length > 0 && (
-              <label className={`inline-flex h-8 items-center gap-2 rounded-md border bg-background px-3 text-xs font-medium shadow-sm ${selectedSubgroupId ? "border-pink-300 text-pink-600 dark:text-pink-400" : "border-input text-pink-600 dark:text-pink-400"}`}>
-                <UsersRound className="h-4 w-4" />
-                <span className="sr-only">Filter by subgroup</span>
-                <select
-                  value={selectedSubgroupId}
-                  onChange={(event) => {
-                    setSelectedSubgroupId(event.target.value);
-                    setSelectedStudentIds(new Set());
-                  }}
-                  data-testid="select-subgroup-filter"
-                  aria-label="Filter by subgroup"
-                  className="max-w-[170px] bg-transparent outline-none"
-                >
-                  <option value="">All Students</option>
-                  {subgroups.map((subgroup) => (
-                    <option key={subgroup.id} value={subgroup.id}>{subgroup.name}</option>
-                  ))}
-                </select>
-              </label>
-            )}
+          </div>
+        )}
+
+        {studentView === "class" && subgroups.length > 0 && (
+          <div className="mb-4 flex items-center gap-2">
+            <label className={`inline-flex h-8 items-center gap-2 rounded-md border bg-background px-3 text-xs font-medium shadow-sm ${selectedSubgroupId ? "border-pink-300 text-pink-600 dark:text-pink-400" : "border-input text-pink-600 dark:text-pink-400"}`}>
+              <UsersRound className="h-4 w-4" />
+              <span className="sr-only">Filter by subgroup</span>
+              <select
+                value={selectedSubgroupId}
+                onChange={(event) => {
+                  setSelectedSubgroupId(event.target.value);
+                  setSelectedStudentIds(new Set());
+                }}
+                data-testid="select-subgroup-filter"
+                aria-label="Filter by subgroup"
+                className="max-w-[170px] bg-transparent outline-none"
+              >
+                <option value="">All Students</option>
+                {subgroups.map((subgroup) => (
+                  <option key={subgroup.id} value={subgroup.id}>{subgroup.name}</option>
+                ))}
+              </select>
+            </label>
           </div>
         )}
 
@@ -3301,7 +3443,7 @@ export default function Dashboard() {
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => startScheduledConflictMutation.mutate(section.id)}
+                            onClick={() => handleStartScheduledConflict(section.id)}
                             disabled={startScheduledConflictMutation.isPending}
                             data-testid={`button-start-scheduled-coverage-${section.id}`}
                           >
@@ -3478,8 +3620,10 @@ export default function Dashboard() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 2xl:grid-cols-6 gap-6">
             {filteredStudents.map((student) => {
               const studentRealtimeKey = student.studentId;
-              const monitoringDisplay = deriveStudentMonitoringDisplay(student, freshnessNowMs);
-              const supervisedElsewhere = studentView === "class" && isStudentInTemporarySupervision(student);
+              const supervisedElsewhere = isStudentMonitoringSuppressed(student);
+              const monitoringDisplay = supervisedElsewhere
+                ? null
+                : deriveStudentMonitoringDisplay(student, freshnessNowMs);
               const supervisionStaffName = student.supervisionContext?.assignedStaff?.displayName || "";
               const coverageLabel = student.supervisionState === "temporary_coverage"
                 ? `In supervision: ${[
@@ -3491,16 +3635,24 @@ export default function Dashboard() {
                   : student.supervisionState === "online_unassigned"
                     ? "Online Unassigned"
                     : null;
-              const disabledReason = supervisedElsewhere
+              const supervisionReason = supervisedElsewhere
                 ? `${student.studentName || "This student"} is currently claimed by ${supervisionStaffName || student.supervisionContext?.name || "another supervision session"}.`
                 : "";
               const returnToClassPending = returnToClassMutation.isPending &&
                 returnToClassMutation.variables?.studentIds?.includes(student.studentId);
               const dashboardReadOnly = !canUseRemoteControls;
-              const tileControlsDisabled = supervisedElsewhere || dashboardReadOnly;
-              const tileDisabledReason = supervisedElsewhere
-                ? disabledReason
+              const tileActionsDisabled = supervisedElsewhere || dashboardReadOnly;
+              const tileActionsDisabledReason = supervisedElsewhere
+                ? supervisionReason
                 : dashboardCapabilities.reason;
+              const tileStudent = supervisedElsewhere
+                ? {
+                    studentId: student.studentId,
+                    studentName: student.studentName,
+                    supervisionState: student.supervisionState,
+                    supervisionContext: student.supervisionContext,
+                  }
+                : student;
               const supportsNegotiatedLiveView = studentSupportsCapability(
                 student,
                 'liveViewNegotiationV1',
@@ -3517,15 +3669,15 @@ export default function Dashboard() {
                     </div>
                   )}
                   {(!viewportTrackingSupported || nearViewportStudentIds.has(student.studentId)) ? <StudentTile
-                    student={student}
-                    onClick={() => setSelectedStudent(student)}
-                    blockedDomains={settings?.blockedDomains || []}
-                    isOffTask={isStudentOffTask(student)}
-                    isAbsent={absentIds.has(student.studentId)}
-                    isSelected={selectedStudentIds.has(student.studentId)}
+                    student={tileStudent}
+                    onClick={supervisedElsewhere ? undefined : () => setSelectedStudent(student)}
+                    blockedDomains={supervisedElsewhere ? EMPTY_LIST : settings?.blockedDomains || []}
+                    isOffTask={!supervisedElsewhere && isStudentOffTask(student)}
+                    isAbsent={!supervisedElsewhere && absentIds.has(student.studentId)}
+                    isSelected={!supervisedElsewhere && selectedStudentIds.has(student.studentId)}
                     onToggleSelect={!dashboardCapabilities.canSelectStudents || supervisedElsewhere ? undefined : () => toggleStudentSelection(student.studentId)}
-                    liveStream={liveViewState.studentId === studentRealtimeKey ? liveViewState.stream : null}
-                    liveViewPending={liveViewState.studentId === studentRealtimeKey && liveViewState.pending}
+                    liveStream={!supervisedElsewhere && liveViewState.studentId === studentRealtimeKey ? liveViewState.stream : null}
+                    liveViewPending={!supervisedElsewhere && liveViewState.studentId === studentRealtimeKey && liveViewState.pending}
                     onStartLiveView={dashboardCapabilities.canUseLiveView && supportsNegotiatedLiveView && !supervisedElsewhere && student.isLoggedIn && effectiveSession?.id ? () => handleStartLiveView(studentRealtimeKey, student.studentName) : undefined}
                     onStopLiveView={dashboardCapabilities.canUseLiveView && !supervisedElsewhere ? () => handleStopLiveView(studentRealtimeKey) : undefined}
                     onExpandLiveView={() => setLiveViewState((current) => (
@@ -3533,22 +3685,24 @@ export default function Dashboard() {
                         ? { ...current, expanded: true }
                         : current
                     ))}
-                    onAllowDomain={tileControlsDisabled ? undefined : handleAllowDomain}
-                    onManageTabs={!tileControlsDisabled && dashboardCapabilities.allows('close-tabs') ? () => openManageTabs([student.studentId]) : undefined}
-                    onCommand={tileControlsDisabled ? undefined : handleTileCommand}
+                    onAllowDomain={tileActionsDisabled ? undefined : handleAllowDomain}
+                    onManageTabs={!tileActionsDisabled && dashboardCapabilities.allows('close-tabs') ? () => openManageTabs([student.studentId]) : undefined}
+                    onCommand={tileActionsDisabled ? undefined : handleTileCommand}
                     commandPending={tileCommandState[student.studentId]?.pending === true}
-                    commandError={tileCommandState[student.studentId]?.error || ''}
+                    commandError={supervisedElsewhere ? '' : tileCommandState[student.studentId]?.error || ''}
                     canLockScreen={dashboardCapabilities.allows('lock-screen') && dashboardCapabilities.allows('unlock-screen')}
                     canRemoveFlightPath={dashboardCapabilities.allows('remove-flight-path')}
-                    controlDisabled={tileControlsDisabled}
-                    disabledReason={tileDisabledReason}
-                    supervisionLabel={coverageLabel || "In supervision"}
+                    actionsDisabled={tileActionsDisabled}
+                    actionsDisabledReason={tileActionsDisabledReason}
+                    monitoringSuppressed={supervisedElsewhere}
+                    monitoringSuppressedReason={supervisionReason}
+                    supervisionLabel={coverageLabel || ""}
                     onReturnToClass={supervisedElsewhere && dashboardCapabilities.ownedClassSession && activeSession ? () => handleReturnToClass(student) : undefined}
                     returnToClassPending={returnToClassPending}
                     recentHeartbeats={supervisedElsewhere ? EMPTY_LIST : historyByStudent.get(student.studentId) || EMPTY_LIST}
                     screenshotData={supervisedElsewhere ? null : screenshotsByStudent.get(student.studentId) || null}
-                    flightPaths={flightPaths}
-                    monitoringDisplay={monitoringDisplay}
+                    flightPaths={supervisedElsewhere ? EMPTY_LIST : flightPaths}
+                    monitoringDisplay={monitoringDisplay || undefined}
                     freshnessNowMs={freshnessNowMs}
                     screenshotObservationStatus={observationLeaseStatus}
                     actionContextKey={`${activeSchoolId || ''}:${effectiveSession?.id || ''}:${studentView}:${selectedSubgroupId}:${canUseRemoteControls}:${dashboardCapabilities.canUseLiveView}`}
@@ -3563,7 +3717,7 @@ export default function Dashboard() {
         </div>
       </main>
 
-      {liveViewState.expanded && liveViewState.stream ? (
+      {dashboardCapabilities.canUseLiveView && liveViewState.expanded && liveViewState.stream && !activeLiveViewMonitoringSuppressed ? (
         <VideoPortal
           stream={liveViewState.stream}
           studentName={liveViewState.studentName}
@@ -3573,9 +3727,9 @@ export default function Dashboard() {
       ) : null}
 
       {/* Student Detail Drawer */}
-      {selectedStudent && (
+      {selectedStudentRow && !selectedStudentMonitoringSuppressed && (
         <StudentDetailDrawer
-          student={students.find((student) => student.studentId === selectedStudent.studentId) || selectedStudent}
+          student={selectedStudentRow}
           urlHistory={urlHistory}
           allowedDomains={settings?.allowedDomains || []}
           flightPaths={flightPaths}

@@ -17,6 +17,14 @@ import {
 } from "../lib/dashboardCommandContext";
 
 const EMPTY_LIST = Object.freeze([]);
+const SUPPRESSED_MONITORING_DISPLAY = Object.freeze({
+  kind: 'delegated',
+  status: 'suppressed',
+  label: '',
+  telemetryCurrent: false,
+  observedAtMs: null,
+  nextBoundaryAtMs: null,
+});
 
 function isBlockedDomain(url, blockedDomains) {
   if (!url || blockedDomains.length === 0) return false;
@@ -63,8 +71,10 @@ function StudentTile({
   commandError = "",
   canLockScreen = true,
   canRemoveFlightPath = true,
-  controlDisabled = false,
-  disabledReason = "",
+  actionsDisabled = false,
+  actionsDisabledReason = "",
+  monitoringSuppressed = false,
+  monitoringSuppressedReason = "",
   supervisionLabel = "",
   onReturnToClass,
   returnToClassPending = false,
@@ -76,10 +86,15 @@ function StudentTile({
   screenshotObservationStatus = 'legacy',
 }) {
   const videoElementRef = useRef(null);
-  const effectiveMonitoringDisplay = monitoringDisplay
-    || deriveStudentMonitoringDisplay(student, freshnessNowMs);
+  const interactionsDisabled = actionsDisabled || monitoringSuppressed;
+  const effectiveMonitoringDisplay = monitoringSuppressed
+    ? SUPPRESSED_MONITORING_DISPLAY
+    : monitoringDisplay || deriveStudentMonitoringDisplay(student, freshnessNowMs);
   const currentTelemetry = effectiveMonitoringDisplay.telemetryCurrent;
-  const screenshotDisplay = deriveScreenshotDisplay(screenshotData, freshnessNowMs);
+  const screenshotDisplay = deriveScreenshotDisplay(
+    monitoringSuppressed ? null : screenshotData,
+    freshnessNowMs,
+  );
   const displayStatus = effectiveMonitoringDisplay.status;
   const unavailablePreview = deriveUnavailablePreview(effectiveMonitoringDisplay);
   const hasLastObservation = Number.isFinite(effectiveMonitoringDisplay.observedAtMs)
@@ -89,20 +104,22 @@ function StudentTile({
   const unlockLabel = supportsScreenOnlyUnlock
     ? "Unlock this student's screen only"
     : "Extension update required for screen-only unlock";
+  const activeLiveStream = interactionsDisabled ? null : liveStream;
+  const unavailableActionReason = actionsDisabledReason || "Student actions are unavailable in this view";
 
   // The dashboard owns negotiation and the enlarged portal. This tile only
   // renders a preview of the one active stream.
   useEffect(() => {
     const video = videoElementRef.current;
     if (!video) return undefined;
-    video.srcObject = liveStream || null;
+    video.srcObject = activeLiveStream || null;
     return () => {
-      if (video.srcObject === liveStream) video.srcObject = null;
+      if (video.srcObject === activeLiveStream) video.srcObject = null;
     };
-  }, [liveStream]);
+  }, [activeLiveStream]);
 
   // Get unique recent domains (last 5)
-  const recentDomains = recentHeartbeats
+  const recentDomains = (monitoringSuppressed ? EMPTY_LIST : recentHeartbeats)
     .slice(0, 10)
     .reduce((acc, hb) => {
       try {
@@ -130,11 +147,13 @@ function StudentTile({
     isBlockedDomain(student.activeTabUrl, activeFlightPath.blockedDomains || []);
 
   const isBlocked = currentTelemetry && isBlockedDomain(student.activeTabUrl, blockedDomains);
-  const classroomNoiseSuppressed = Boolean(student.classroomNoiseSuppressed || isAbsent || student.suppressionReason);
+  const effectiveIsAbsent = !monitoringSuppressed && isAbsent;
+  const classroomNoiseSuppressed = !monitoringSuppressed
+    && Boolean(student.classroomNoiseSuppressed || effectiveIsAbsent || student.suppressionReason);
   const effectiveIsOffTask = currentTelemetry && isOffTask && !classroomNoiseSuppressed;
 
   const getStatusLabel = (status) => {
-    if (isAbsent) return 'Absent';
+    if (effectiveIsAbsent) return 'Absent';
     if (effectiveMonitoringDisplay.label) return effectiveMonitoringDisplay.label;
     switch (status) {
       case 'online':
@@ -149,7 +168,7 @@ function StudentTile({
   };
 
   const getBorderStyle = (status) => {
-    if (controlDisabled) {
+    if (monitoringSuppressed) {
       return 'border-2 border-slate-300 border-dashed dark:border-slate-700';
     }
 
@@ -174,7 +193,7 @@ function StudentTile({
   };
 
   const getShadowStyle = (status) => {
-    if (controlDisabled) {
+    if (monitoringSuppressed) {
       return 'shadow-sm';
     }
 
@@ -199,8 +218,8 @@ function StudentTile({
   };
 
   const getOpacity = (status) => {
-    if (controlDisabled) return 'opacity-90';
-    if (isAbsent) return 'opacity-50';
+    if (monitoringSuppressed) return 'opacity-90';
+    if (effectiveIsAbsent) return 'opacity-50';
     switch (status) {
       case 'online':
         return 'opacity-100';
@@ -216,19 +235,20 @@ function StudentTile({
   return (
     <Card
       data-testid={`card-student-${student.studentId}`}
-      className={`${getBorderStyle(displayStatus)} ${getShadowStyle(displayStatus)} ${getOpacity(displayStatus)} ${controlDisabled ? 'bg-slate-50/80 dark:bg-slate-950/40' : 'hover-elevate cursor-pointer'} transition-all duration-200 overflow-hidden`}
-      onClick={onClick}
+      className={`${getBorderStyle(displayStatus)} ${getShadowStyle(displayStatus)} ${getOpacity(displayStatus)} ${monitoringSuppressed ? 'bg-slate-50/80 dark:bg-slate-950/40' : 'hover-elevate cursor-pointer'} transition-all duration-200 overflow-hidden`}
+      onClick={monitoringSuppressed ? undefined : onClick}
     >
       <div className="p-4 space-y-3">
         {/* Header Zone - Avatar + Student Name + Available Status */}
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 flex-1 min-w-0">
-            {onToggleSelect && (
+            {onToggleSelect && !monitoringSuppressed && (
               <Checkbox
                 checked={isSelected}
-                disabled={controlDisabled}
+                disabled={interactionsDisabled}
                 onCheckedChange={onToggleSelect}
                 onClick={(e) => e.stopPropagation()}
+                title={interactionsDisabled ? unavailableActionReason : "Select this student"}
                 data-testid={`checkbox-select-student-${student.studentId}`}
               />
             )}
@@ -254,7 +274,7 @@ function StudentTile({
                   </span>
                 )}
               </h3>
-              {(currentTelemetry || isAbsent) && (
+              {(currentTelemetry || effectiveIsAbsent) && (
                 <div className="flex items-center gap-2">
                   <span className={`text-xs font-medium ${
                     displayStatus === 'online'
@@ -270,19 +290,19 @@ function StudentTile({
             </div>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">
-            <Button
+            {!monitoringSuppressed ? <Button
               variant="ghost"
               size="icon"
               className="h-7 w-7"
-              disabled={controlDisabled || !canLockScreen || !onCommand || (student.screenLocked && !supportsScreenOnlyUnlock) || (!currentTelemetry && !student.screenLocked) || commandPending}
+              disabled={interactionsDisabled || !canLockScreen || !onCommand || (student.screenLocked && !supportsScreenOnlyUnlock) || (!currentTelemetry && !student.screenLocked) || commandPending}
               onClick={(e) => {
                 e.stopPropagation();
-                if (controlDisabled) return;
+                if (interactionsDisabled) return;
                 const command = studentTileScreenToggleCommand(student);
                 if (command) onCommand?.(command);
               }}
-              title={controlDisabled
-                ? disabledReason || "Student is currently in supervision"
+              title={interactionsDisabled
+                ? unavailableActionReason
                 : student.screenLocked
                   ? unlockLabel
                   : currentTelemetry
@@ -295,30 +315,30 @@ function StudentTile({
               ) : (
                 <Unlock className="h-4 w-4" />
               )}
-            </Button>
+            </Button> : null}
           </div>
         </div>
 
-        {controlDisabled && (
+        {monitoringSuppressed && (
           <div className="rounded-md border border-slate-300 bg-white/80 p-3 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-200">
             <div className="flex items-center gap-2 font-semibold">
               <Lock className="h-3.5 w-3.5" />
               <span>{supervisionLabel || "In supervision"}</span>
             </div>
             <p className="mt-1 leading-snug text-slate-500 dark:text-slate-400">
-              {disabledReason || "This student is currently claimed by another supervision session."}
+              {monitoringSuppressedReason || "This student is currently claimed by another supervision session."}
             </p>
           </div>
         )}
 
-        {commandError && !controlDisabled ? (
+        {commandError && !interactionsDisabled ? (
           <div className="rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200" role="alert">
             {commandError}
           </div>
         ) : null}
 
         {/* Alert Badges */}
-        {(effectiveIsOffTask || isBlocked || isBlockedByFlightPath || student.flightPathActive || (currentTelemetry && student.aiClassification?.safetyAlert) || classroomNoiseSuppressed) && (
+        {!monitoringSuppressed && (effectiveIsOffTask || isBlocked || isBlockedByFlightPath || student.flightPathActive || (currentTelemetry && student.aiClassification?.safetyAlert) || classroomNoiseSuppressed) && (
           <div className="flex flex-col gap-2">
             <div className="flex flex-wrap gap-1.5">
               {currentTelemetry && student.aiClassification?.safetyAlert && (
@@ -350,15 +370,18 @@ function StudentTile({
                   Off-Task
                   {onAllowDomain && (
                     <button
-                      className="ml-1.5 hover:bg-red-200 dark:hover:bg-red-800 rounded-full p-0.5"
+                      className="ml-1.5 rounded-full p-0.5 enabled:hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-50 dark:enabled:hover:bg-red-800"
+                      disabled={interactionsDisabled}
                       onClick={(e) => {
                         e.stopPropagation();
+                        if (interactionsDisabled) return;
                         try {
                           const domain = new URL(student.activeTabUrl).hostname.toLowerCase().replace(/^www\./, '');
                           onAllowDomain(domain);
                         } catch { /* ignore invalid URL */ }
                       }}
-                      title="Allow this domain for this session"
+                      title={interactionsDisabled ? unavailableActionReason : "Allow this domain for this session"}
+                      data-testid={`button-allow-domain-${student.studentId}`}
                     >
                       <X className="h-3 w-3" />
                     </button>
@@ -383,10 +406,12 @@ function StudentTile({
                   className="h-7 px-3 text-xs bg-blue-600 hover:bg-blue-700 text-white"
                   onClick={(e) => {
                     e.stopPropagation();
+                    if (interactionsDisabled) return;
                     const command = studentTileFlightPathReleaseCommand(student);
                     if (command) onCommand?.(command);
                   }}
-                  disabled={!onCommand || commandPending}
+                  disabled={interactionsDisabled || !onCommand || commandPending}
+                  title={interactionsDisabled ? unavailableActionReason : "Remove this student's active Flight Path"}
                   data-testid={`button-unblock-${student.studentId}`}
                 >
                   Remove Flight Path
@@ -397,7 +422,7 @@ function StudentTile({
         )}
 
         {/* Preview Zone - Live View, Screenshot Thumbnail, or Website Preview Card */}
-        {controlDisabled ? (
+        {monitoringSuppressed ? (
           <div className="flex aspect-video items-center justify-center rounded-lg border border-slate-200 bg-slate-100/80 text-center dark:border-slate-800 dark:bg-slate-900/80">
             <div className="px-4">
               <Lock className="mx-auto mb-2 h-6 w-6 text-slate-400" />
@@ -405,7 +430,7 @@ function StudentTile({
               <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Return the student to class to monitor again.</p>
             </div>
           </div>
-        ) : liveStream ? (
+        ) : activeLiveStream ? (
           <div className="aspect-video rounded-lg bg-black relative overflow-hidden">
             <video
               ref={videoElementRef}
@@ -561,7 +586,7 @@ function StudentTile({
 
         {/* Footer Zone - Actions Only */}
         <div className="flex items-center justify-end gap-2 pt-2 border-t border-border/20">
-          {controlDisabled && onReturnToClass && (
+          {monitoringSuppressed && onReturnToClass && (
             <Button
               variant="outline"
               size="sm"
@@ -578,7 +603,7 @@ function StudentTile({
               Return to Class
             </Button>
           )}
-          {onManageTabs && !controlDisabled && (
+          {onManageTabs && !interactionsDisabled && (
             <Button
               variant="outline"
               size="sm"
@@ -594,28 +619,28 @@ function StudentTile({
               View Tabs
             </Button>
           )}
-          {onStartLiveView && onStopLiveView && !controlDisabled && (
+          {onStartLiveView && onStopLiveView && !interactionsDisabled && (
             <Button
-              variant={liveStream ? "default" : "outline"}
+              variant={activeLiveStream ? "default" : "outline"}
               size="sm"
               className="h-7 px-3 text-xs"
               disabled={liveViewPending}
               onClick={(e) => {
                 e.stopPropagation();
-                if (liveStream) {
+                if (activeLiveStream) {
                   onStopLiveView();
                 } else {
                   onStartLiveView();
                 }
               }}
-              title={liveViewPending ? "Waiting for live view to connect" : liveStream ? "Stop live view" : "Start live view"}
+              title={liveViewPending ? "Waiting for live view to connect" : activeLiveStream ? "Stop live view" : "Start live view"}
               data-testid={`button-live-view-${student.studentId}`}
             >
               <Monitor className="h-3.5 w-3.5 mr-1" />
-              {liveViewPending ? "Connecting" : liveStream ? "Stop" : "View"}
+              {liveViewPending ? "Connecting" : activeLiveStream ? "Stop" : "View"}
             </Button>
           )}
-          {liveStream && onExpandLiveView && (
+          {activeLiveStream && onExpandLiveView && !interactionsDisabled && (
             <Button
               variant="outline"
               size="sm"
