@@ -49,12 +49,12 @@ try {
   await waitForServer(server);
   browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ locale: 'en-US', timezoneId: 'UTC' });
-  await page.clock.install({ time: new Date('2026-08-24T11:59:50.000Z') });
+  await page.clock.install({ time: new Date('2026-08-24T12:00:00.000Z') });
+  await page.clock.pauseAt(new Date('2026-08-24T12:00:00.000Z'));
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
 
   await page.goto(`${baseURL}/classpilot-student-tile-regression.html`, { waitUntil: 'networkidle' });
-  await page.clock.pauseAt(new Date('2026-08-24T12:00:00.000Z'));
   await page.evaluate(() => {
     const nativeSetTimeout = globalThis.setTimeout.bind(globalThis);
     const nativeClearTimeout = globalThis.clearTimeout.bind(globalThis);
@@ -176,6 +176,89 @@ try {
     1,
     'available Online status must remain in the tile header',
   );
+
+  const readOnlyTile = page.getByTestId('card-student-read-only-student');
+  await page.getByTestId('screenshot-read-only-student').waitFor();
+  await readOnlyTile.getByTitle('Research notes').waitFor();
+  assert.equal(
+    await readOnlyTile.getByText('Controls locked', { exact: true }).count(),
+    0,
+    'read-only actions must not suppress an authorized screenshot',
+  );
+  assert.equal(
+    await readOnlyTile.getByText(/In supervision/).count(),
+    0,
+    'ordinary Observe must not be mislabeled as temporary supervision',
+  );
+  assert.equal(
+    await page.getByTestId('checkbox-select-student-read-only-student').isDisabled(),
+    true,
+    'read-only selection must remain disabled',
+  );
+  const readOnlyLockButton = page.getByTestId('button-lock-toggle-read-only-student');
+  assert.equal(await readOnlyLockButton.isDisabled(), true, 'read-only device commands must remain disabled');
+  assert.equal(
+    await readOnlyLockButton.getAttribute('title'),
+    'Observe mode is read-only.',
+    'disabled action tooltips must explain the read-only context',
+  );
+  const readOnlyAllowButton = page.getByTestId('button-allow-domain-read-only-student');
+  assert.equal(await readOnlyAllowButton.isDisabled(), true, 'read-only allow-domain actions must remain disabled');
+  assert.equal(
+    await readOnlyAllowButton.getAttribute('title'),
+    'Observe mode is read-only.',
+    'secondary action tooltips must use the same read-only reason',
+  );
+  assert.equal(
+    await page.getByTestId('button-manage-tabs-read-only-student').count(),
+    0,
+    'read-only tiles must not expose the tabs shortcut',
+  );
+  assert.equal(
+    await page.getByTestId('button-live-view-read-only-student').count(),
+    0,
+    'read-only tiles must not expose Live View',
+  );
+  assert.equal(
+    await page.getByTestId('video-live-read-only-student').count(),
+    0,
+    'a stale live stream must not replace the read-only screenshot',
+  );
+  assert.equal(
+    await page.getByTestId('button-expand-read-only-student').count(),
+    0,
+    'a stale live stream must not expose its expand control',
+  );
+  assert.equal(
+    (await readOnlyTile.getAttribute('class')).includes('border-dashed'),
+    false,
+    'read-only actions must retain normal monitoring status styling',
+  );
+  await page.getByTestId('screenshot-read-only-student').click();
+  await page.getByTestId('card-clicks').filter({ hasText: 'Card clicks: 1' }).waitFor();
+
+  const supervisedTile = page.getByTestId('card-student-supervised-student');
+  await supervisedTile.getByText('In supervision: Ms. Rivera', { exact: true }).waitFor();
+  await supervisedTile.getByText('Ms. Rivera is temporarily supervising this student.', { exact: true }).waitFor();
+  await supervisedTile.getByText('Controls locked', { exact: true }).waitFor();
+  assert.equal(
+    await page.getByTestId('screenshot-supervised-student').count(),
+    0,
+    'true temporary supervision must continue suppressing the screenshot',
+  );
+  assert.equal(
+    (await supervisedTile.getAttribute('class')).includes('border-dashed'),
+    true,
+    'true temporary supervision must retain suppressed styling',
+  );
+  await page.getByTestId('button-return-to-class-supervised-student').click();
+  await page.getByTestId('return-clicks').filter({ hasText: 'Return clicks: 1' }).waitFor();
+  assert.equal(
+    await page.getByTestId('card-clicks').textContent(),
+    'Card clicks: 1',
+    'the Return to Class action must not open the student drawer',
+  );
+
   await page.getByTestId('toggle-tiles').click();
   assert.deepEqual(
     await page.evaluate(() => globalThis.__studentTileMinuteTimers()),
