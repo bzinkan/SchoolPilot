@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
 import type { SchoolPilotMigration } from "./migrationLedger.js";
+import {
+  CLASSPILOT_STUDENT_SESSION_RECOVERY_INDEXES_CONTRACT,
+  ensureClasspilotStudentSessionRecoveryIndexesOnline,
+} from "./classpilotStudentSessionRecoveryIndexes.js";
 import { staffIdentityIntegrityMigration } from "./staffIdentityIntegrityMigration.js";
 
 export { STAFF_IDENTITY_NORMALIZED_EMAIL_SQL } from "./staffIdentityIntegrityMigration.js";
@@ -136,6 +140,122 @@ ALTER TABLE users
   ADD COLUMN IF NOT EXISTS auth_version INTEGER NOT NULL DEFAULT 1;
 `;
 
+export const CLASSPILOT_STUDENT_SESSION_RECOVERY_SQL = `
+SET LOCAL lock_timeout = '15s';
+SET LOCAL statement_timeout = '2min';
+
+ALTER TABLE student_sessions
+  ADD COLUMN IF NOT EXISTS auth_kind TEXT NOT NULL DEFAULT 'legacy',
+  ADD COLUMN IF NOT EXISTS manual_lease_expires_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS session_recovery_token_hash VARCHAR(64);
+
+DO $student_session_recovery_constraints$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'student_sessions_auth_kind_check'
+      AND conrelid = 'student_sessions'::regclass
+  ) THEN
+    ALTER TABLE student_sessions
+      ADD CONSTRAINT student_sessions_auth_kind_check
+      CHECK (auth_kind IN ('legacy', 'managed_profile', 'manual_shared'))
+      NOT VALID;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'student_sessions_manual_lease_shape_check'
+      AND conrelid = 'student_sessions'::regclass
+  ) THEN
+    ALTER TABLE student_sessions
+      ADD CONSTRAINT student_sessions_manual_lease_shape_check
+      CHECK (
+        (auth_kind = 'manual_shared' AND manual_lease_expires_at IS NOT NULL)
+        OR
+        (auth_kind <> 'manual_shared'
+          AND manual_lease_expires_at IS NULL
+          AND session_recovery_token_hash IS NULL)
+      ) NOT VALID;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'student_sessions_active_manual_recovery_check'
+      AND conrelid = 'student_sessions'::regclass
+  ) THEN
+    ALTER TABLE student_sessions
+      ADD CONSTRAINT student_sessions_active_manual_recovery_check
+      CHECK (
+        auth_kind <> 'manual_shared'
+        OR is_active = false
+        OR session_recovery_token_hash IS NOT NULL
+      ) NOT VALID;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'student_sessions_recovery_token_hash_check'
+      AND conrelid = 'student_sessions'::regclass
+  ) THEN
+    ALTER TABLE student_sessions
+      ADD CONSTRAINT student_sessions_recovery_token_hash_check
+      CHECK (
+        session_recovery_token_hash IS NULL
+        OR session_recovery_token_hash ~ '^[0-9a-f]{64}$'
+      ) NOT VALID;
+  END IF;
+END;
+$student_session_recovery_constraints$;
+
+-- Phase A must remain compatible with already-running tasks whose INSERTs omit
+-- auth_kind. Remove the superseded insert guard if an interrupted pre-release
+-- migration installed it; a later contract migration may introduce a writer
+-- guard only after all old tasks have drained.
+DROP TRIGGER IF EXISTS student_sessions_reject_legacy_insert
+  ON student_sessions;
+DROP FUNCTION IF EXISTS reject_legacy_student_session_insert();
+
+-- Once assigned, an auth kind is durable session history and cannot be
+-- rewritten to evade or acquire lease semantics. Updates that leave the value
+-- unchanged, including ordinary updates to retained legacy rows, remain valid.
+CREATE OR REPLACE FUNCTION reject_student_session_auth_kind_change()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $student_session_auth_kind_guard$
+BEGIN
+  IF NEW.auth_kind IS DISTINCT FROM OLD.auth_kind THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'CP002',
+      MESSAGE = 'CLASSPILOT_SESSION_AUTH_KIND_IMMUTABLE';
+  END IF;
+
+  RETURN NEW;
+END;
+$student_session_auth_kind_guard$;
+
+DROP TRIGGER IF EXISTS student_sessions_auth_kind_immutable
+  ON student_sessions;
+
+CREATE TRIGGER student_sessions_auth_kind_immutable
+BEFORE UPDATE OF auth_kind ON student_sessions
+FOR EACH ROW
+EXECUTE FUNCTION reject_student_session_auth_kind_change();
+`;
+
+export const CLASSPILOT_STUDENT_SESSION_RECOVERY_VALIDATE_SQL = `
+SET LOCAL lock_timeout = '15s';
+SET LOCAL statement_timeout = '5min';
+
+ALTER TABLE student_sessions
+  VALIDATE CONSTRAINT student_sessions_auth_kind_check;
+ALTER TABLE student_sessions
+  VALIDATE CONSTRAINT student_sessions_manual_lease_shape_check;
+ALTER TABLE student_sessions
+  VALIDATE CONSTRAINT student_sessions_active_manual_recovery_check;
+ALTER TABLE student_sessions
+  VALIDATE CONSTRAINT student_sessions_recovery_token_hash_check;
+`;
+
 export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
   {
     id: "20260822_classpilot_2_7_expand",
@@ -167,6 +287,36 @@ export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
     mode: "transactional",
     apply: async (connection) => {
       await connection.query(STAFF_IDENTITY_AUTH_VERSION_SQL);
+    },
+  },
+  {
+    id: "20260827_classpilot_student_session_recovery_expand",
+    checksum: createHash("sha256")
+      .update(CLASSPILOT_STUDENT_SESSION_RECOVERY_SQL)
+      .digest("hex"),
+    mode: "transactional",
+    apply: async (connection) => {
+      await connection.query(CLASSPILOT_STUDENT_SESSION_RECOVERY_SQL);
+    },
+  },
+  {
+    id: "20260827_classpilot_student_session_recovery_validate",
+    checksum: createHash("sha256")
+      .update(CLASSPILOT_STUDENT_SESSION_RECOVERY_VALIDATE_SQL)
+      .digest("hex"),
+    mode: "transactional",
+    apply: async (connection) => {
+      await connection.query(CLASSPILOT_STUDENT_SESSION_RECOVERY_VALIDATE_SQL);
+    },
+  },
+  {
+    id: "20260827_classpilot_student_session_recovery_indexes_online",
+    checksum: createHash("sha256")
+      .update(CLASSPILOT_STUDENT_SESSION_RECOVERY_INDEXES_CONTRACT)
+      .digest("hex"),
+    mode: "nontransactional",
+    apply: async (connection) => {
+      await ensureClasspilotStudentSessionRecoveryIndexesOnline(connection);
     },
   },
   staffIdentityIntegrityMigration,

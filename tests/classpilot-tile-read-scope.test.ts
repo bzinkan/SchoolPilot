@@ -352,6 +352,7 @@ before(async () => {
       primaryDeviceIds.map((deviceId, index) => ({
         studentId: authorizedStudentIds[index]!,
         deviceId,
+        authKind: "managed_profile" as const,
         isActive: true,
       }))
     ).returning({

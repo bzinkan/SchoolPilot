@@ -4,6 +4,7 @@ import {
   CLASSPILOT_PASSIVE_AUTH_TTL_MS,
   hasFreshPassiveWebSocketAuthorization,
   invalidatePassiveWebSocketAuthorizationLocal,
+  mayUsePassiveWebSocketAuthorizationCache,
 } from "../src/realtime/websocket.js";
 import { selectClasspilotStaffSocketRole } from "../src/services/classpilotWebSocketAuthorization.js";
 
@@ -27,6 +28,13 @@ describe("ClassPilot passive WebSocket authorization", () => {
     );
     invalidatePassiveWebSocketAuthorizationLocal(schoolId);
     assert.equal(hasFreshPassiveWebSocketAuthorization(client, now), false);
+  });
+
+  it("never serves a student passive frame from the authorization TTL cache", () => {
+    assert.equal(mayUsePassiveWebSocketAuthorizationCache("student"), false);
+    for (const role of ["teacher", "office_staff", "school_admin", "super_admin"] as const) {
+      assert.equal(mayUsePassiveWebSocketAuthorizationCache(role), true);
+    }
   });
 
   it("chooses a canonical role independent of membership row order", () => {

@@ -6,7 +6,7 @@ export type SchoolPilotMigration = {
   id: string;
   checksum: string;
   mode: SchoolPilotMigrationMode;
-  apply: (connection: Pick<Pool, "query"> | Pick<PoolClient, "query">) => Promise<void>;
+  apply: (connection: Pick<PoolClient, "query">) => Promise<void>;
 };
 
 export type SchoolPilotMigrationResult = {
@@ -136,7 +136,15 @@ async function runOneMigration(
       }
     }
 
-    await migration.apply(pool);
+    // Nontransactional DDL such as CREATE INDEX CONCURRENTLY still needs one
+    // stable PostgreSQL session for advisory locks and bounded session
+    // timeouts. Deliberately do not issue BEGIN/COMMIT on this client.
+    const client = await pool.connect();
+    try {
+      await migration.apply(client);
+    } finally {
+      client.release();
+    }
     const durationMs = Date.now() - startedAt;
     await pool.query(`
       UPDATE schema_migrations

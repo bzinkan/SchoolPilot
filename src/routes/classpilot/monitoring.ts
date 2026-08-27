@@ -574,7 +574,19 @@ router.get("/sessions/active/:deviceId", ...adminAuth, async (req, res, next) =>
       return res.json({ session: null });
     }
     const session = await getActiveSessionByStudent(id);
-    return res.json({ session: session || null });
+    return res.json({
+      session: session
+        ? {
+            id: session.id,
+            studentId: session.studentId,
+            deviceId: session.deviceId,
+            startedAt: session.startedAt,
+            lastSeenAt: session.lastSeenAt,
+            endedAt: session.endedAt,
+            isActive: session.isActive,
+          }
+        : null,
+    });
   } catch (err) {
     next(err);
   }

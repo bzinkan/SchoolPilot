@@ -355,6 +355,11 @@ async function loadSnapshotChunk(
       FROM student_sessions AS session
       INNER JOIN scoped_students AS scoped ON scoped.student_id = session.student_id
       WHERE session.is_active = true
+        AND session.ended_at IS NULL
+        AND (
+          session.auth_kind <> 'manual_shared'
+          OR session.manual_lease_expires_at > now()
+        )
       ORDER BY session.student_id, session.last_seen_at DESC, session.id
     ),
     today_attendance AS MATERIALIZED (

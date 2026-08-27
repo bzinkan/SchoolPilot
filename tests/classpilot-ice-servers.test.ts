@@ -40,6 +40,16 @@ describe("ClassPilot short-lived ICE configuration", () => {
     const start = route.indexOf('"/device/live-view/ice-servers"');
     const end = route.indexOf('// POST /api/classpilot/device/heartbeat', start);
     const handler = route.slice(start, end);
+    assert.match(
+      handler,
+      /requireDeviceAuthWithoutTenant,\s*requireClasspilotEntitlement/,
+      "TURN issuance must revalidate the exact current database session"
+    );
+    assert.doesNotMatch(
+      handler,
+      /requireCryptographicDeviceAuth/,
+      "cryptographic-only auth is reserved for compatibility cleanup"
+    );
     assert.match(handler, /classpilotLiveViewNegotiationAuthority/);
     assert.match(handler, /isClasspilotLiveViewNegotiationActive\(exactBinding, negotiationId\)/);
     assert.match(handler, /LIVE_VIEW_NEGOTIATION_SUPERSEDED/);

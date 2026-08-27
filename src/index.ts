@@ -4686,14 +4686,31 @@ export async function runStartupMigrations(): Promise<void> {
     `);
     // One active session is allowed per canonical student. Rank the keeper and
     // duplicate identities together before re-parenting so a normal historic
-    // duplicate cannot abort startup on the partial unique index. The freshest
-    // binding remains authoritative; older bindings are ended atomically.
+    // duplicate cannot abort startup on the partial unique index. A currently
+    // authoritative binding wins before freshness: an expired manual lease is
+    // only physically active and must not displace a valid legacy, managed, or
+    // unexpired manual binding. Older/lower-authority bindings end atomically.
     await duplicateStudentCleanupClient.query(`
       WITH ranked AS (
         SELECT session.id,
                row_number() OVER (
                  PARTITION BY COALESCE(mapping.keeper_id, session.student_id)
-                 ORDER BY session.last_seen_at DESC, session.started_at DESC, session.id DESC
+                 ORDER BY
+                   CASE
+                     WHEN session.ended_at IS NULL
+                       AND (
+                         session.auth_kind IN ('legacy', 'managed_profile')
+                         OR (
+                           session.auth_kind = 'manual_shared'
+                           AND session.manual_lease_expires_at > now()
+                         )
+                       )
+                     THEN 0
+                     ELSE 1
+                   END,
+                   session.last_seen_at DESC,
+                   session.started_at DESC,
+                   session.id DESC
                ) AS ordinal
         FROM student_sessions session
         LEFT JOIN classpilot_duplicate_student_cleanup mapping
@@ -4709,7 +4726,8 @@ export async function runStartupMigrations(): Promise<void> {
       )
       UPDATE student_sessions session
       SET is_active = false,
-          ended_at = COALESCE(session.ended_at, now())
+          ended_at = COALESCE(session.ended_at, now()),
+          session_recovery_token_hash = NULL
       FROM ranked
       WHERE session.id = ranked.id AND ranked.ordinal > 1
     `);

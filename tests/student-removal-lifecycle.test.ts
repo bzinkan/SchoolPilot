@@ -22,6 +22,7 @@ import {
   createSchool,
   createStudent,
   createUser,
+  createDevice,
   deactivateStudentsForRoster,
   delayQueueEntry,
   dismissQueueEntry,
@@ -44,7 +45,7 @@ import {
   reactivateInactiveStudentForRosterImport,
   releaseQueueEntry,
   setActiveStudentForDevice,
-  startStudentSession,
+  startStudentSessionWithReplacements,
   transitionDismissalSessionStatus,
 } from "../dist/services/storage.js";
 
@@ -242,9 +243,19 @@ describe("ClassPilot student roster removal lifecycle", () => {
       carNumber: `${TAG}-car`,
       familyName: `${TAG} Family`,
     } as any, [student.id]));
-    const activeSession = await inSchool(schoolAId, () =>
-      startStudentSession(schoolAId, student.id, `${TAG}-device-retained`)
-    );
+    const activeSession = await inSchool(schoolAId, async () => {
+      await createDevice({
+        deviceId: `${TAG}-device-retained`,
+        schoolId: schoolAId,
+        classId: schoolAId,
+      } as Parameters<typeof createDevice>[0]);
+      return (await startStudentSessionWithReplacements(
+        schoolAId,
+        student.id,
+        `${TAG}-device-retained`,
+        { authKind: "managed_profile" }
+      )).session;
+    });
     const teachingSessionId = `${TAG}_teaching_session`;
     const subgroupId = `${TAG}_subgroup`;
     const coverageGroupId = `${TAG}_coverage_group`;
@@ -431,7 +442,12 @@ describe("ClassPilot student roster removal lifecycle", () => {
 
     await assert.rejects(
       inSchool(schoolAId, () =>
-        startStudentSession(schoolAId, student.id, `${TAG}-device-inactive`)
+        startStudentSessionWithReplacements(
+          schoolAId,
+          student.id,
+          `${TAG}-device-inactive`,
+          { authKind: "managed_profile" }
+        )
       ),
       (error: any) => error?.code === "STUDENT_INACTIVE" && error?.status === 403
     );
@@ -442,8 +458,8 @@ describe("ClassPilot student roster removal lifecycle", () => {
       (error: any) => error?.code === "STUDENT_INACTIVE" && error?.status === 403
     );
     const anomalousSession = await inSchool(schoolAId, () => db.execute(sql`
-      INSERT INTO student_sessions (student_id, device_id, is_active)
-      VALUES (${student.id}, ${`${TAG}-device-anomalous`}, true)
+      INSERT INTO student_sessions (student_id, device_id, auth_kind, is_active)
+      VALUES (${student.id}, ${`${TAG}-device-anomalous`}, 'managed_profile', true)
       RETURNING id
     `));
 

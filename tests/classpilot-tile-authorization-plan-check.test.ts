@@ -2149,6 +2149,14 @@ describe("ClassPilot tile authorization plan checker", () => {
     assert.match(service, /historical_mapping\.device_id/);
     assert.match(service, /conflicting_pair_exists/);
     assert.match(service, /active_session\.is_active = true/);
+    assert.match(
+      service,
+      /active_session\.is_active = true[\s\S]*?AND NOT \([\s\S]*?active_session\.manual_lease_expires_at > now\(\)[\s\S]*?active_session\.student_id = requested\.student_id[\s\S]*?active_session\.device_id = requested\.device_id/
+    );
+    assert.match(
+      service,
+      /INSERT INTO student_sessions \([\s\S]*?auth_kind[\s\S]*?'managed_profile'/
+    );
     const baseSql = service.slice(
       service.indexOf("/* transactional_plan_base_v2 */"),
       service.indexOf("/* transactional_plan_session_posture_v1 */")

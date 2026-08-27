@@ -78,6 +78,7 @@ before(async () => {
       .values({
         studentId,
         deviceId,
+        authKind: "managed_profile",
         isActive: true,
         lastSeenAt: new Date(Date.now() - 120_000),
       })
@@ -128,7 +129,12 @@ describe("ClassPilot heartbeat presence hot path", () => {
       1,
       "the hot path must issue one database statement"
     );
-    assert.match(functionSource, /WITH\s+represented_session\s+AS\s+MATERIALIZED/i);
+    assert.match(functionSource, /WITH\s+locked_device\s+AS\s+MATERIALIZED/i);
+    assert.match(
+      functionSource,
+      /locked_device\s+AS\s+MATERIALIZED[\s\S]*?FOR\s+UPDATE[\s\S]*?represented_session\s+AS\s+MATERIALIZED/i,
+      "the hot path must lock the exact same-school device before the session"
+    );
     assert.match(functionSource, /eligible_session\s+AS\s+MATERIALIZED/i);
     assert.match(functionSource, /inserted_heartbeat\s+AS/i);
     assert.match(functionSource, /refreshed_device\s+AS/i);

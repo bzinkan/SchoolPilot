@@ -57,6 +57,13 @@ export type InsertStudentDevice = typeof studentDevices.$inferInsert;
 // ============================================================================
 // Student Sessions - Active device tracking
 // ============================================================================
+export const STUDENT_SESSION_AUTH_KINDS = [
+  "legacy",
+  "managed_profile",
+  "manual_shared",
+] as const;
+export type StudentSessionAuthKind = (typeof STUDENT_SESSION_AUTH_KINDS)[number];
+
 export const studentSessions = pgTable(
   "student_sessions",
   {
@@ -67,6 +74,9 @@ export const studentSessions = pgTable(
     lastSeenAt: timestamp("last_seen_at").notNull().default(sql`now()`),
     endedAt: timestamp("ended_at"),
     isActive: boolean("is_active").notNull().default(true),
+    authKind: text("auth_kind").$type<StudentSessionAuthKind>().notNull().default("legacy"),
+    manualLeaseExpiresAt: timestamp("manual_lease_expires_at", { withTimezone: true }),
+    sessionRecoveryTokenHash: varchar("session_recovery_token_hash", { length: 64 }),
   },
   (table) => [
     uniqueIndex("student_sessions_active_student_unique")
@@ -83,6 +93,37 @@ export const studentSessions = pgTable(
     index("student_sessions_last_seen_active_idx").on(
       table.lastSeenAt,
       table.isActive
+    ),
+    index("student_sessions_manual_lease_expiry_idx")
+      .on(table.manualLeaseExpiresAt)
+      .where(sql`auth_kind = 'manual_shared' AND is_active = true AND ended_at IS NULL`),
+    uniqueIndex("student_sessions_recovery_token_hash_unique")
+      .on(table.sessionRecoveryTokenHash)
+      .where(sql`session_recovery_token_hash IS NOT NULL`),
+    check(
+      "student_sessions_auth_kind_check",
+      sql`${table.authKind} IN ('legacy', 'managed_profile', 'manual_shared')`
+    ),
+    check(
+      "student_sessions_manual_lease_shape_check",
+      sql`(
+        (${table.authKind} = 'manual_shared' AND ${table.manualLeaseExpiresAt} IS NOT NULL)
+        OR
+        (${table.authKind} <> 'manual_shared'
+          AND ${table.manualLeaseExpiresAt} IS NULL
+          AND ${table.sessionRecoveryTokenHash} IS NULL)
+      )`
+    ),
+    check(
+      "student_sessions_active_manual_recovery_check",
+      sql`${table.authKind} <> 'manual_shared'
+        OR ${table.isActive} = false
+        OR ${table.sessionRecoveryTokenHash} IS NOT NULL`
+    ),
+    check(
+      "student_sessions_recovery_token_hash_check",
+      sql`${table.sessionRecoveryTokenHash} IS NULL
+        OR ${table.sessionRecoveryTokenHash} ~ '^[0-9a-f]{64}$'`
     ),
   ]
 );

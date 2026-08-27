@@ -178,6 +178,7 @@ import {
   type InsertStudentDevice,
   type StudentSession,
   type InsertStudentSession,
+  type StudentSessionAuthKind,
   type Heartbeat,
   type InsertHeartbeat,
   type EventRecord,
@@ -252,6 +253,10 @@ import {
   type GroupTeacher,
   type InsertGroupTeacher,
 } from "../schema/classpilot.js";
+import {
+  assertClasspilotManualSharedSessionIssuanceEnabled,
+  currentStudentSessionAuthorityPredicate,
+} from "./classpilotStudentSessionAuthority.js";
 import {
   settings,
   googleOAuthTokens,
@@ -1421,7 +1426,7 @@ export async function deactivateStudentsForRoster(
       ? { rowCount: 0 }
       : await tx
           .update(studentSessions)
-          .set({ isActive: false, endedAt: now })
+          .set({ isActive: false, endedAt: now, sessionRecoveryTokenHash: null })
           .where(
             and(
               inArray(studentSessions.studentId, foundStudentIds),
@@ -1562,7 +1567,7 @@ export async function reactivateInactiveStudentForRosterImport(
       // record. Never let a roster restore resurrect that credential.
       await tx
         .update(studentSessions)
-        .set({ isActive: false, endedAt: now })
+        .set({ isActive: false, endedAt: now, sessionRecoveryTokenHash: null })
         .where(
           and(
             eq(studentSessions.studentId, existing.id),
@@ -9145,6 +9150,11 @@ export function buildClassPilotTileAuthorizationQuery(
         INNER JOIN ${studentSessions} AS session
           ON session.student_id = authorized.student_id
          AND session.is_active = true
+         AND session.ended_at IS NULL
+         AND (
+           session.auth_kind <> 'manual_shared'
+           OR session.manual_lease_expires_at > now()
+         )
       `
     : studentIds
       ? sql`
@@ -9178,6 +9188,11 @@ export function buildClassPilotTileAuthorizationQuery(
             ON active_session.student_id = authorized.student_id
            AND active_session.device_id = mapping.device_id
            AND active_session.is_active = true
+           AND active_session.ended_at IS NULL
+           AND (
+             active_session.auth_kind <> 'manual_shared'
+             OR active_session.manual_lease_expires_at > now()
+           )
         ) AS ranked
         WHERE ranked.device_rank = 1
       `
@@ -9509,9 +9524,58 @@ export async function updateDevice(
   return device;
 }
 
-export async function deleteDevice(deviceId: string): Promise<boolean> {
-  return db.transaction(async (tx) => {
+export type DeleteDeviceWithEndedSessionsResult = {
+  deleted: boolean;
+  endedSessions: StudentSession[];
+};
+
+export async function deleteDeviceWithEndedSessions(
+  schoolId: string,
+  deviceId: string
+): Promise<DeleteDeviceWithEndedSessionsResult> {
+  const result = await db.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    const [device] = await tx.select({ deviceId: devices.deviceId })
+      .from(devices)
+      .where(and(eq(devices.deviceId, deviceId), eq(devices.schoolId, schoolId)))
+      .limit(1)
+      .for("update");
+    if (!device) return { deleted: false, endedSessions: [] };
+
     const now = new Date();
+    // student_sessions deliberately has no device foreign key because session
+    // history outlives Chromebook records. Resolve the exact, tenant-owned
+    // rows through the student before updating so a corrupt foreign-school row
+    // can never be mutated merely because it points at this school's device.
+    const scopedActiveSessions = await tx
+      .select({ id: studentSessions.id })
+      .from(studentSessions)
+      .innerJoin(students, and(
+        eq(students.id, studentSessions.studentId),
+        eq(students.schoolId, schoolId)
+      ))
+      .where(and(
+        eq(studentSessions.deviceId, deviceId),
+        eq(studentSessions.isActive, true),
+        isNull(studentSessions.endedAt)
+      ))
+      .for("update", { of: studentSessions });
+    const scopedActiveSessionIds = scopedActiveSessions.map((row) => row.id);
+    const endedSessions = scopedActiveSessionIds.length === 0
+      ? []
+      : await tx
+      .update(studentSessions)
+      .set({
+        isActive: false,
+        endedAt: sql`now()`,
+        sessionRecoveryTokenHash: null,
+      })
+      .where(and(
+        inArray(studentSessions.id, scopedActiveSessionIds),
+        eq(studentSessions.isActive, true),
+        isNull(studentSessions.endedAt)
+      ))
+      .returning();
     await tx
       .update(classpilotActiveHands)
       .set({ clearedAt: now, updatedAt: now })
@@ -9529,9 +9593,22 @@ export async function deleteDevice(deviceId: string): Promise<boolean> {
       .where(eq(pollResponses.deviceId, deviceId));
     const result = await tx
       .delete(devices)
-      .where(eq(devices.deviceId, deviceId));
-    return (result.rowCount ?? 0) > 0;
+      .where(and(eq(devices.deviceId, deviceId), eq(devices.schoolId, schoolId)));
+    return {
+      deleted: (result.rowCount ?? 0) > 0,
+      endedSessions,
+    };
   });
+  if (result.endedSessions.length > 0) {
+    await invalidateClasspilotPassiveAuthorization(schoolId);
+  }
+  return result;
+}
+
+export async function deleteDevice(deviceId: string): Promise<boolean> {
+  const device = await getDeviceById(deviceId);
+  if (!device) return false;
+  return (await deleteDeviceWithEndedSessions(device.schoolId, deviceId)).deleted;
 }
 
 // ============================================================================
@@ -9602,7 +9679,7 @@ export async function getActiveStudentForDevice(
     .where(
       and(
         eq(studentSessions.deviceId, deviceId),
-        eq(studentSessions.isActive, true),
+        currentStudentSessionAuthorityPredicate(),
         eq(students.status, "active")
       )
     )
@@ -9615,69 +9692,182 @@ export async function setActiveStudentForDevice(
   deviceId: string,
   studentId: string
 ): Promise<StudentSession> {
-  let schoolId: string | undefined;
-  const session = await db.transaction(async (tx) => {
-    // Resolve the lifecycle lock key without locking the student first. The
-    // active check is repeated under the shared school lock and row lock, so a
-    // concurrent roster removal cannot insert a session after deactivation.
-    const [candidate] = await tx
-      .select({ schoolId: students.schoolId })
-      .from(students)
-      .where(eq(students.id, studentId))
-      .limit(1);
-    if (!candidate) {
-      throw Object.assign(new Error("Student is not enrolled"), {
-        status: 403,
-        code: "STUDENT_INACTIVE",
-        expose: true,
-      });
-    }
-    schoolId = candidate.schoolId;
-
-    await takePasspilotClassLock(tx, candidate.schoolId);
-    const [activeStudent] = await tx
-      .select({ id: students.id })
-      .from(students)
-      .where(
-        and(
-          eq(students.id, studentId),
-          eq(students.schoolId, candidate.schoolId),
-          eq(students.status, "active")
-        )
-      )
-      .limit(1)
-      .for("update");
-    if (!activeStudent) {
-      throw Object.assign(new Error("Student is not enrolled"), {
-        status: 403,
-        code: "STUDENT_INACTIVE",
-        expose: true,
-      });
-    }
-
-    const now = new Date();
-    await tx
-      .update(studentSessions)
-      .set({ isActive: false, endedAt: now })
-      .where(
-        and(
-          eq(studentSessions.deviceId, deviceId),
-          eq(studentSessions.isActive, true)
-        )
-      );
-    const [session] = await tx
-      .insert(studentSessions)
-      .values({ studentId, deviceId })
-      .returning();
-    return session!;
-  });
-  if (schoolId) await invalidateClasspilotPassiveAuthorization(schoolId);
-  return session;
+  // Legacy fixture/bootstrap helper. Runtime student switching was retired;
+  // callers that issue credentials use startStudentSessionWithReplacements
+  // directly so they can publish every returned exact tombstone.
+  const [student] = await db
+    .select({ schoolId: students.schoolId, status: students.status })
+    .from(students)
+    .where(eq(students.id, studentId))
+    .limit(1);
+  if (!student || student.status !== "active") {
+    throw Object.assign(new Error("Student is not enrolled"), {
+      status: 403,
+      code: "STUDENT_INACTIVE",
+      expose: true,
+    });
+  }
+  const [device] = await db
+    .select({ schoolId: devices.schoolId })
+    .from(devices)
+    .where(eq(devices.deviceId, deviceId))
+    .limit(1);
+  if (!device || student.schoolId !== device.schoolId) {
+    throw Object.assign(new Error("Student device is unavailable"), {
+      status: 403,
+      code: "STUDENT_DEVICE_UNAVAILABLE",
+      expose: true,
+    });
+  }
+  return (await startStudentSessionWithReplacements(
+    student.schoolId,
+    studentId,
+    deviceId,
+    { authKind: "managed_profile" }
+  )).session;
 }
 
 // ============================================================================
 // ClassPilot - Heartbeat operations
 // ============================================================================
+
+export async function refreshStudentSessionAuthorityWithoutTelemetry(options: {
+  schoolId: string;
+  studentId: string;
+  deviceId: string;
+  studentSessionId: string;
+}): Promise<
+  | {
+      outcome: "accepted";
+      authKind: StudentSessionAuthKind;
+      authorityExpiresAt: Date | null;
+      leaseRenewed: boolean;
+    }
+  | { outcome: "replaced_session" }
+  | { outcome: "inactive_session" }
+> {
+  const result = await db.execute(sql`
+    WITH locked_device AS MATERIALIZED (
+      SELECT device_id
+      FROM devices
+      WHERE device_id = ${options.deviceId}
+        AND school_id = ${options.schoolId}
+      FOR UPDATE
+    ),
+    represented_session AS MATERIALIZED (
+      SELECT
+        represented.id,
+        represented.is_active,
+        represented.ended_at,
+        represented.auth_kind,
+        represented.manual_lease_expires_at
+      FROM student_sessions AS represented
+      INNER JOIN students AS student
+        ON student.id = represented.student_id
+       AND student.school_id = ${options.schoolId}
+       AND student.status = 'active'
+      INNER JOIN locked_device AS session_device
+        ON session_device.device_id = represented.device_id
+      WHERE represented.id = ${options.studentSessionId}
+        AND represented.student_id = ${options.studentId}
+        AND represented.device_id = ${options.deviceId}
+      FOR UPDATE OF represented
+    ),
+    eligible_session AS MATERIALIZED (
+      SELECT id, auth_kind, manual_lease_expires_at
+      FROM represented_session
+      WHERE is_active = true
+        AND ended_at IS NULL
+        AND (
+          auth_kind <> 'manual_shared'
+          OR manual_lease_expires_at > now()
+        )
+    ),
+    refreshed_session AS (
+      UPDATE student_sessions
+      SET
+        last_seen_at = now(),
+        manual_lease_expires_at = CASE
+          WHEN auth_kind = 'manual_shared' THEN now() + interval '300 seconds'
+          ELSE manual_lease_expires_at
+        END
+      WHERE id = ${options.studentSessionId}
+        AND student_id = ${options.studentId}
+        AND device_id = ${options.deviceId}
+        AND is_active = true
+        AND EXISTS (SELECT 1 FROM eligible_session)
+        AND (last_seen_at IS NULL OR last_seen_at < now() - interval '60 seconds')
+      RETURNING manual_lease_expires_at
+    )
+    SELECT
+      'accepted'::text AS outcome,
+      eligible.auth_kind,
+      COALESCE(
+        (SELECT manual_lease_expires_at FROM refreshed_session LIMIT 1),
+        eligible.manual_lease_expires_at
+      ) AS authority_expires_at,
+      (
+        eligible.auth_kind = 'manual_shared'
+        AND EXISTS (SELECT 1 FROM refreshed_session)
+      ) AS lease_renewed
+    FROM eligible_session AS eligible
+    UNION ALL
+    SELECT
+      CASE
+        WHEN EXISTS (
+          SELECT 1
+          FROM student_sessions AS replacement
+          WHERE replacement.student_id = ${options.studentId}
+            AND replacement.id <> ${options.studentSessionId}
+            AND replacement.is_active = true
+            AND replacement.ended_at IS NULL
+            AND (
+              replacement.auth_kind <> 'manual_shared'
+              OR replacement.manual_lease_expires_at > now()
+            )
+        ) THEN 'replaced_session'::text
+        ELSE 'inactive_session'::text
+      END AS outcome,
+      NULL::text AS auth_kind,
+      NULL::timestamptz AS authority_expires_at,
+      false AS lease_renewed
+    WHERE NOT EXISTS (SELECT 1 FROM eligible_session)
+    LIMIT 1
+  `);
+  const row = result.rows[0] as {
+    outcome?: unknown;
+    auth_kind?: unknown;
+    authority_expires_at?: unknown;
+    lease_renewed?: unknown;
+  } | undefined;
+  if (row?.outcome === "replaced_session") return { outcome: "replaced_session" };
+  if (row?.outcome === "inactive_session") return { outcome: "inactive_session" };
+  if (
+    row?.outcome !== "accepted"
+    || !(["legacy", "managed_profile", "manual_shared"] as const).includes(
+      row.auth_kind as StudentSessionAuthKind
+    )
+  ) {
+    throw new Error("Student session authority refresh returned an invalid outcome");
+  }
+  const authorityExpiresAt = row.authority_expires_at == null
+    ? null
+    : row.authority_expires_at instanceof Date
+      ? row.authority_expires_at
+      : new Date(String(row.authority_expires_at));
+  if (
+    row.auth_kind === "manual_shared"
+    && (!authorityExpiresAt || Number.isNaN(authorityExpiresAt.getTime()))
+  ) {
+    throw new Error("Student session authority refresh returned an invalid lease");
+  }
+  return {
+    outcome: "accepted",
+    authKind: row.auth_kind as StudentSessionAuthKind,
+    authorityExpiresAt,
+    leaseRenewed: row.lease_renewed === true,
+  };
+}
 
 export async function createHeartbeat(
   data: InsertHeartbeat
@@ -9694,7 +9884,15 @@ export async function createHeartbeatAndRefreshPresence(
   },
   studentSessionId: string
 ): Promise<
-  | { outcome: "recorded"; id: string; studentEmail: string; timestamp: Date }
+  | {
+      outcome: "recorded";
+      id: string;
+      studentEmail: string;
+      timestamp: Date;
+      authKind: StudentSessionAuthKind;
+      authorityExpiresAt: Date | null;
+      leaseRenewed: boolean;
+    }
   | { outcome: "replaced_session" }
   | { outcome: "inactive_session" }
 > {
@@ -9703,29 +9901,43 @@ export async function createHeartbeatAndRefreshPresence(
       ? null
       : JSON.stringify(data.screenshotHealth);
   const result = await db.execute(sql`
-    WITH represented_session AS MATERIALIZED (
+    WITH locked_device AS MATERIALIZED (
+      SELECT device_id
+      FROM devices
+      WHERE device_id = ${data.deviceId}
+        AND school_id = ${data.schoolId}
+      FOR UPDATE
+    ),
+    represented_session AS MATERIALIZED (
       SELECT
         represented.id,
         represented.student_id,
         represented.is_active,
+        represented.ended_at,
+        represented.auth_kind,
+        represented.manual_lease_expires_at,
         student.email AS student_email
       FROM student_sessions AS represented
       INNER JOIN students AS student
         ON student.id = represented.student_id
        AND student.school_id = ${data.schoolId}
        AND student.status = 'active'
-      INNER JOIN devices AS session_device
+      INNER JOIN locked_device AS session_device
         ON session_device.device_id = represented.device_id
-       AND session_device.school_id = ${data.schoolId}
       WHERE represented.id = ${studentSessionId}
         AND represented.student_id = ${data.studentId}
         AND represented.device_id = ${data.deviceId}
       FOR UPDATE OF represented
     ),
     eligible_session AS MATERIALIZED (
-      SELECT id, student_email
+      SELECT id, student_email, auth_kind, manual_lease_expires_at
       FROM represented_session
       WHERE is_active = true
+        AND ended_at IS NULL
+        AND (
+          auth_kind <> 'manual_shared'
+          OR manual_lease_expires_at > now()
+        )
     ),
     inserted_heartbeat AS (
       INSERT INTO heartbeats (
@@ -9790,19 +10002,34 @@ export async function createHeartbeatAndRefreshPresence(
     ),
     refreshed_session AS (
       UPDATE student_sessions
-      SET last_seen_at = now()
+      SET
+        last_seen_at = now(),
+        manual_lease_expires_at = CASE
+          WHEN auth_kind = 'manual_shared' THEN now() + interval '300 seconds'
+          ELSE manual_lease_expires_at
+        END
       WHERE id = ${studentSessionId}
         AND student_id = ${data.studentId}
         AND device_id = ${data.deviceId}
         AND is_active = true
         AND EXISTS (SELECT 1 FROM eligible_session)
         AND (last_seen_at IS NULL OR last_seen_at < now() - interval '60 seconds')
+      RETURNING manual_lease_expires_at
     )
     SELECT
       'recorded'::text AS outcome,
       id,
       student_email,
-      timestamp
+      timestamp,
+      (SELECT auth_kind FROM eligible_session LIMIT 1) AS auth_kind,
+      COALESCE(
+        (SELECT manual_lease_expires_at FROM refreshed_session LIMIT 1),
+        (SELECT manual_lease_expires_at FROM eligible_session LIMIT 1)
+      ) AS authority_expires_at,
+      (
+        (SELECT auth_kind FROM eligible_session LIMIT 1) = 'manual_shared'
+        AND EXISTS (SELECT 1 FROM refreshed_session)
+      ) AS lease_renewed
     FROM inserted_heartbeat
     UNION ALL
     SELECT
@@ -9813,12 +10040,20 @@ export async function createHeartbeatAndRefreshPresence(
           WHERE replacement.student_id = ${data.studentId}
             AND replacement.id <> ${studentSessionId}
             AND replacement.is_active = true
+            AND replacement.ended_at IS NULL
+            AND (
+              replacement.auth_kind <> 'manual_shared'
+              OR replacement.manual_lease_expires_at > now()
+            )
         ) THEN 'replaced_session'::text
         ELSE 'inactive_session'::text
       END AS outcome,
       NULL::varchar AS id,
       NULL::text AS student_email,
-      NULL::timestamp AS timestamp
+      NULL::timestamp AS timestamp,
+      NULL::text AS auth_kind,
+      NULL::timestamptz AS authority_expires_at,
+      false AS lease_renewed
     WHERE NOT EXISTS (SELECT 1 FROM inserted_heartbeat)
     LIMIT 1
   `);
@@ -9827,6 +10062,9 @@ export async function createHeartbeatAndRefreshPresence(
     id?: unknown;
     student_email?: unknown;
     timestamp?: unknown;
+    auth_kind?: unknown;
+    authority_expires_at?: unknown;
+    lease_renewed?: unknown;
   } | undefined;
   if (row?.outcome === "replaced_session") {
     return { outcome: "replaced_session" };
@@ -9848,6 +10086,22 @@ export async function createHeartbeatAndRefreshPresence(
   if (Number.isNaN(timestamp.getTime())) {
     throw new Error("Heartbeat insert returned an invalid timestamp");
   }
+  if (!(["legacy", "managed_profile", "manual_shared"] as const).includes(
+    row.auth_kind as StudentSessionAuthKind
+  )) {
+    throw new Error("Heartbeat insert returned an invalid session auth kind");
+  }
+  const authorityExpiresAt = row.authority_expires_at == null
+    ? null
+    : row.authority_expires_at instanceof Date
+      ? row.authority_expires_at
+      : new Date(String(row.authority_expires_at));
+  if (
+    row.auth_kind === "manual_shared"
+    && (!authorityExpiresAt || Number.isNaN(authorityExpiresAt.getTime()))
+  ) {
+    throw new Error("Heartbeat insert returned an invalid session lease");
+  }
   return {
     outcome: "recorded",
     id,
@@ -9855,6 +10109,9 @@ export async function createHeartbeatAndRefreshPresence(
     // Realtime payloads historically normalize that optional value to "".
     studentEmail: row.student_email || "",
     timestamp,
+    authKind: row.auth_kind as StudentSessionAuthKind,
+    authorityExpiresAt,
+    leaseRenewed: row.lease_renewed === true,
   };
 }
 
@@ -10275,16 +10532,71 @@ export async function getEventsByDevice(
 // ClassPilot - Student Session operations
 // ============================================================================
 
-export async function startStudentSession(
+export type StudentSessionIssuanceAuthKind = Exclude<StudentSessionAuthKind, "legacy">;
+
+export type StartStudentSessionWithReplacementsOptions = {
+  authKind: StudentSessionIssuanceAuthKind;
+  /** Optional caller-preallocated UUID used to sign credentials before writes. */
+  sessionId?: string;
+  sessionRecoveryTokenHash?: string | null;
+  reclaimRecoveryTokenHash?: string | null;
+};
+
+export type StartStudentSessionWithReplacementsResult = {
+  session: StudentSession;
+  replacedSessions: StudentSession[];
+};
+
+export async function startStudentSessionWithReplacements(
   schoolId: string,
   studentId: string,
-  deviceId: string
-): Promise<StudentSession> {
-  const session = await db.transaction(async (tx) => {
+  deviceId: string,
+  options: StartStudentSessionWithReplacementsOptions
+): Promise<StartStudentSessionWithReplacementsResult> {
+  if (options.authKind === "manual_shared") {
+    assertClasspilotManualSharedSessionIssuanceEnabled();
+  }
+  if (
+    options.sessionId !== undefined
+    && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      options.sessionId
+    )
+  ) {
+    throw new TypeError("Invalid preallocated student session id");
+  }
+  if (!(["managed_profile", "manual_shared"] as const).includes(options.authKind)) {
+    throw new TypeError("Invalid student session auth kind");
+  }
+  if (
+    options.authKind === "manual_shared" &&
+    !/^[0-9a-f]{64}$/.test(options.sessionRecoveryTokenHash || "")
+  ) {
+    throw new TypeError("Manual student sessions require a recovery token hash");
+  }
+  if (
+    options.authKind !== "manual_shared" &&
+    options.sessionRecoveryTokenHash != null
+  ) {
+    throw new TypeError("Recovery token hashes are limited to manual student sessions");
+  }
+  if (
+    options.reclaimRecoveryTokenHash != null &&
+    !/^[0-9a-f]{64}$/.test(options.reclaimRecoveryTokenHash)
+  ) {
+    throw new TypeError("Invalid reclaim recovery token hash");
+  }
+
+  const result = await db.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
     // Student roster removal/restoration and session issuance take this lock in
     // the same order. The row-level active check is therefore authoritative at
     // the point the credential-bearing session is created.
     await takePasspilotClassLock(tx, schoolId);
+    // The route-level entitlement check may race a school/license revocation.
+    // Re-read and share-lock the canonical school + ClassPilot license rows
+    // inside the issuance transaction so a revocation that acquired its row
+    // lock first wins before any credential-bearing session can be inserted.
+    await assertClasspilotEntitled(schoolId, transactionDb, { lock: true });
     const [student] = await tx
       .select({ id: students.id })
       .from(students)
@@ -10305,53 +10617,241 @@ export async function startStudentSession(
       });
     }
 
-    const now = new Date();
-    await tx
+    const [device] = await tx
+      .select({ deviceId: devices.deviceId })
+      .from(devices)
+      .where(and(eq(devices.deviceId, deviceId), eq(devices.schoolId, schoolId)))
+      .limit(1)
+      .for("update");
+    if (!device) {
+      throw Object.assign(new Error("Student device is unavailable"), {
+        status: 403,
+        code: "STUDENT_DEVICE_UNAVAILABLE",
+        expose: true,
+      });
+    }
+
+    const conflicting = await tx
+      .select({
+        session: studentSessions,
+        authoritative: sql<boolean>`(
+          ${studentSessions.isActive} = true
+          AND ${studentSessions.endedAt} IS NULL
+          AND (
+            ${studentSessions.authKind} = 'managed_profile'
+            OR ${studentSessions.authKind} = 'legacy'
+            OR (
+              ${studentSessions.authKind} = 'manual_shared'
+              AND ${studentSessions.manualLeaseExpiresAt} > now()
+            )
+          )
+        )`,
+      })
+      .from(studentSessions)
+      .innerJoin(students, and(
+        eq(students.id, studentSessions.studentId),
+        eq(students.schoolId, schoolId)
+      ))
+      .where(and(
+        or(
+          eq(studentSessions.studentId, studentId),
+          eq(studentSessions.deviceId, deviceId)
+        ),
+        eq(studentSessions.isActive, true)
+      ))
+      .for("update", { of: studentSessions });
+
+    if (options.authKind === "manual_shared") {
+      const blockingSession = conflicting.find(({ session, authoritative }) => {
+        if (!authoritative) return false;
+        return !(
+          session.authKind === "manual_shared" &&
+          session.studentId === studentId &&
+          session.deviceId === deviceId &&
+          options.reclaimRecoveryTokenHash != null &&
+          session.sessionRecoveryTokenHash === options.reclaimRecoveryTokenHash
+        );
+      });
+      if (blockingSession) {
+        throw Object.assign(new Error("Student session is active on another sign-in context"), {
+          status: 409,
+          code: "STUDENT_SESSION_ACTIVE",
+          expose: true,
+        });
+      }
+    }
+
+    const conflictingIds = conflicting.map(({ session }) => session.id);
+    const replacedSessions = conflictingIds.length === 0
+      ? []
+      : await tx
       .update(studentSessions)
-      .set({ isActive: false, endedAt: now })
+      .set({ isActive: false, endedAt: sql`now()`, sessionRecoveryTokenHash: null })
       .where(
         and(
-          or(
-            eq(studentSessions.studentId, studentId),
-            eq(studentSessions.deviceId, deviceId)
-          ),
+          inArray(studentSessions.id, conflictingIds),
           eq(studentSessions.isActive, true)
         )
-      );
+      )
+      .returning();
 
     const [session] = await tx
       .insert(studentSessions)
-      .values({ studentId, deviceId })
+      .values({
+        ...(options.sessionId ? { id: options.sessionId } : {}),
+        studentId,
+        deviceId,
+        authKind: options.authKind,
+        manualLeaseExpiresAt: options.authKind === "manual_shared"
+          ? sql`now() + interval '300 seconds'`
+          : null,
+        sessionRecoveryTokenHash: options.authKind === "manual_shared"
+          ? options.sessionRecoveryTokenHash!
+          : null,
+      })
       .returning();
-    return session!;
+
+    // Only establish the student/device association after this transaction has
+    // accepted the session authority. A blocked manual login must not mutate
+    // dashboard targeting state merely because its PIN was otherwise valid.
+    await tx
+      .insert(studentDevices)
+      .values({ studentId, deviceId })
+      .onConflictDoUpdate({
+        target: [studentDevices.studentId, studentDevices.deviceId],
+        set: { lastSeenAt: sql`now()` },
+      });
+    return { session: session!, replacedSessions };
   });
   await invalidateClasspilotPassiveAuthorization(schoolId);
-  return session;
+  return result;
+}
+
+export async function endStudentSessionExact(options: {
+  schoolId: string;
+  studentId: string;
+  deviceId: string;
+  studentSessionId: string;
+}): Promise<StudentSession | undefined> {
+  const result = await db.transaction(async (tx) => {
+    const [binding] = await tx
+      .select({ id: studentSessions.id })
+      .from(studentSessions)
+      .innerJoin(students, and(
+        eq(students.id, studentSessions.studentId),
+        eq(students.schoolId, options.schoolId)
+      ))
+      .where(and(
+        eq(studentSessions.id, options.studentSessionId),
+        eq(studentSessions.studentId, options.studentId),
+        eq(studentSessions.deviceId, options.deviceId)
+      ))
+      .limit(1)
+      .for("update", { of: studentSessions });
+    if (!binding) return undefined;
+    const [session] = await tx
+      .update(studentSessions)
+      .set({ isActive: false, endedAt: sql`now()`, sessionRecoveryTokenHash: null })
+      .where(and(
+        eq(studentSessions.id, options.studentSessionId),
+        eq(studentSessions.studentId, options.studentId),
+        eq(studentSessions.deviceId, options.deviceId),
+        eq(studentSessions.isActive, true),
+        isNull(studentSessions.endedAt)
+      ))
+      .returning();
+    return session;
+  });
+  if (result) {
+    await invalidateClasspilotPassiveAuthorization(options.schoolId);
+  }
+  return result;
+}
+
+export async function endStudentSessionByRecoveryTokenHash(options: {
+  schoolId: string;
+  tokenHash: string;
+}): Promise<StudentSession | undefined> {
+  if (!/^[0-9a-f]{64}$/.test(options.tokenHash)) return undefined;
+  const result = await db.transaction(async (tx) => {
+    const [binding] = await tx
+      .select({ session: studentSessions })
+      .from(studentSessions)
+      .innerJoin(students, and(
+        eq(students.id, studentSessions.studentId),
+        eq(students.schoolId, options.schoolId)
+      ))
+      .where(and(
+        eq(studentSessions.authKind, "manual_shared"),
+        eq(studentSessions.sessionRecoveryTokenHash, options.tokenHash),
+        eq(studentSessions.isActive, true),
+        isNull(studentSessions.endedAt)
+      ))
+      .limit(1)
+      .for("update", { of: studentSessions });
+    if (!binding) return undefined;
+    const [ended] = await tx
+      .update(studentSessions)
+      .set({ isActive: false, endedAt: sql`now()`, sessionRecoveryTokenHash: null })
+      .where(and(
+        eq(studentSessions.id, binding.session.id),
+        eq(studentSessions.sessionRecoveryTokenHash, options.tokenHash),
+        eq(studentSessions.isActive, true),
+        isNull(studentSessions.endedAt)
+      ))
+      .returning();
+    return ended;
+  });
+  if (result) await invalidateClasspilotPassiveAuthorization(options.schoolId);
+  return result;
+}
+
+export async function getReclaimableStudentSessionByRecoveryTokenHash(options: {
+  schoolId: string;
+  tokenHash: string;
+}): Promise<StudentSession | undefined> {
+  if (!/^[0-9a-f]{64}$/.test(options.tokenHash)) return undefined;
+  const [row] = await db
+    .select({ session: studentSessions })
+    .from(studentSessions)
+    .innerJoin(students, and(
+      eq(students.id, studentSessions.studentId),
+      eq(students.schoolId, options.schoolId),
+      eq(students.status, "active")
+    ))
+    .innerJoin(devices, and(
+      eq(devices.deviceId, studentSessions.deviceId),
+      eq(devices.schoolId, options.schoolId)
+    ))
+    .where(and(
+      eq(studentSessions.authKind, "manual_shared"),
+      eq(studentSessions.sessionRecoveryTokenHash, options.tokenHash),
+      currentStudentSessionAuthorityPredicate()
+    ))
+    .limit(1);
+  return row?.session;
 }
 
 export async function endStudentSession(
   sessionId: string
 ): Promise<StudentSession | undefined> {
-  const result = await db.transaction(async (tx) => {
-    const [binding] = await tx
-      .select({ schoolId: students.schoolId })
-      .from(studentSessions)
-      .innerJoin(students, eq(students.id, studentSessions.studentId))
-      .where(eq(studentSessions.id, sessionId))
-      .limit(1)
-      .for("update");
-    if (!binding) return { session: undefined, schoolId: undefined };
-    const [session] = await tx
-      .update(studentSessions)
-      .set({ isActive: false, endedAt: new Date() })
-      .where(eq(studentSessions.id, sessionId))
-      .returning();
-    return { session, schoolId: binding.schoolId };
+  const [binding] = await db
+    .select({
+      schoolId: students.schoolId,
+      studentId: studentSessions.studentId,
+      deviceId: studentSessions.deviceId,
+    })
+    .from(studentSessions)
+    .innerJoin(students, eq(students.id, studentSessions.studentId))
+    .where(eq(studentSessions.id, sessionId))
+    .limit(1);
+  if (!binding) return undefined;
+  return endStudentSessionExact({
+    schoolId: binding.schoolId,
+    studentId: binding.studentId,
+    deviceId: binding.deviceId,
+    studentSessionId: sessionId,
   });
-  if (result.session && result.schoolId) {
-    await invalidateClasspilotPassiveAuthorization(result.schoolId);
-  }
-  return result.session;
 }
 
 export async function touchStudentSession(
@@ -10365,7 +10865,7 @@ export async function touchStudentSession(
       and(
         eq(studentSessions.studentId, studentId),
         eq(studentSessions.deviceId, deviceId),
-        eq(studentSessions.isActive, true)
+        currentStudentSessionAuthorityPredicate()
       )
     );
 }
@@ -10380,7 +10880,7 @@ export async function getActiveSessionByStudent(
     .where(
       and(
         eq(studentSessions.studentId, studentId),
-        eq(studentSessions.isActive, true),
+        currentStudentSessionAuthorityPredicate(),
         eq(students.status, "active")
       )
     )
@@ -10407,8 +10907,7 @@ export async function getActiveSessionsForStudents(
         eq(students.status, "active"),
         eq(devices.schoolId, schoolId),
         inArray(studentSessions.studentId, uniqueStudentIds),
-        eq(studentSessions.isActive, true),
-        isNull(studentSessions.endedAt)
+        currentStudentSessionAuthorityPredicate()
       )
     );
   return rows.map((row) => row.session);
@@ -10423,7 +10922,7 @@ export async function getActiveSessionByDevice(
     .where(
       and(
         eq(studentSessions.deviceId, deviceId),
-        eq(studentSessions.isActive, true)
+        currentStudentSessionAuthorityPredicate()
       )
     )
     .limit(1);
@@ -10439,7 +10938,7 @@ export async function getActiveSessionById(
     .where(
       and(
         eq(studentSessions.id, sessionId),
-        eq(studentSessions.isActive, true)
+        currentStudentSessionAuthorityPredicate()
       )
     )
     .limit(1);
@@ -10460,10 +10959,40 @@ export async function getActiveSessions(
       and(
         eq(students.schoolId, schoolId),
         eq(students.status, "active"),
-        eq(studentSessions.isActive, true)
+        currentStudentSessionAuthorityPredicate()
       )
     );
   return rows.map((r) => ({ ...r.session, student: r.student }));
+}
+
+/** Login-roster exclusion uses the same authority contract as current session
+ * reads. Legacy and managed-profile rows remain authoritative until explicitly
+ * ended; only manual shared sessions have an expiring database-time lease. */
+export async function getStudentIdsHiddenFromClasspilotLoginRoster(
+  schoolId: string
+): Promise<string[]> {
+  const rows = await db
+    .select({ studentId: studentSessions.studentId })
+    .from(studentSessions)
+    .innerJoin(students, and(
+      eq(students.id, studentSessions.studentId),
+      eq(students.schoolId, schoolId),
+      eq(students.status, "active")
+    ))
+    .where(and(
+      eq(studentSessions.isActive, true),
+      isNull(studentSessions.endedAt),
+      or(
+        eq(studentSessions.authKind, "managed_profile"),
+        eq(studentSessions.authKind, "legacy"),
+        and(
+          eq(studentSessions.authKind, "manual_shared"),
+          isNotNull(studentSessions.manualLeaseExpiresAt),
+          sql`${studentSessions.manualLeaseExpiresAt} > now()`
+        )
+      )
+    ));
+  return [...new Set(rows.map((row) => row.studentId))];
 }
 
 // ============================================================================
@@ -17096,8 +17625,7 @@ async function withAuthorizedClasspilotTeacherStudentAction<T>(options: {
       ))
       .where(and(
         eq(studentSessions.studentId, options.studentId),
-        eq(studentSessions.isActive, true),
-        isNull(studentSessions.endedAt)
+        currentStudentSessionAuthorityPredicate()
       ))
       .orderBy(desc(studentSessions.lastSeenAt), desc(studentSessions.startedAt))
       .limit(1)
@@ -17900,8 +18428,7 @@ export async function createPollResponseFirstWrite(options: {
         eq(studentSessions.studentId, options.studentId),
         eq(studentSessions.deviceId, options.deviceId),
         eq(studentSessions.id, options.studentSessionId),
-        eq(studentSessions.isActive, true),
-        isNull(studentSessions.endedAt)
+        currentStudentSessionAuthorityPredicate()
       ))
       .limit(1)
       .for("share");
@@ -20122,6 +20649,10 @@ export async function acknowledgeClasspilotStudentControlState(
             AND active_session.device_id = ${options.deviceId}
             AND active_session.is_active = true
             AND active_session.ended_at IS NULL
+            AND (
+              active_session.auth_kind <> 'manual_shared'
+              OR active_session.manual_lease_expires_at > now()
+            )
             AND active_device.school_id = ${options.schoolId}
         )`
       ))
@@ -20954,26 +21485,39 @@ async function hasExactClasspilotTelemetryBinding(
     eq(studentSessions.deviceId, options.deviceId),
   ];
   if (!options.allowEndedBinding) {
-    bindingConditions.push(
-      eq(studentSessions.isActive, true),
-      isNull(studentSessions.endedAt)
-    );
+    bindingConditions.push(currentStudentSessionAuthorityPredicate());
   }
-  const [binding] = await dbInstance
-    .select({ id: studentSessions.id })
-    .from(studentSessions)
-    .innerJoin(students, and(
-      eq(students.id, studentSessions.studentId),
-      eq(students.schoolId, options.schoolId),
-      eq(students.status, "active")
-    ))
-    .innerJoin(devices, and(
-      eq(devices.deviceId, studentSessions.deviceId),
-      eq(devices.schoolId, options.schoolId)
-    ))
-    .where(and(...bindingConditions))
-    .limit(1)
-    .for("share");
+  // Ended-session tombstones are published after the durable transition and
+  // may also follow deletion of the device row. In that narrow mode the exact
+  // session tuple plus the student's immutable school scope is sufficient.
+  // Live telemetry still requires both an active student and a current
+  // same-school device record.
+  const [binding] = options.allowEndedBinding
+    ? await dbInstance
+      .select({ id: studentSessions.id })
+      .from(studentSessions)
+      .innerJoin(students, and(
+        eq(students.id, studentSessions.studentId),
+        eq(students.schoolId, options.schoolId)
+      ))
+      .where(and(...bindingConditions))
+      .limit(1)
+      .for("share")
+    : await dbInstance
+      .select({ id: studentSessions.id })
+      .from(studentSessions)
+      .innerJoin(students, and(
+        eq(students.id, studentSessions.studentId),
+        eq(students.schoolId, options.schoolId),
+        eq(students.status, "active")
+      ))
+      .innerJoin(devices, and(
+        eq(devices.deviceId, studentSessions.deviceId),
+        eq(devices.schoolId, options.schoolId)
+      ))
+      .where(and(...bindingConditions))
+      .limit(1)
+      .for("share");
   if (!binding) return false;
   if (!options.allowEndedBinding) return true;
 
@@ -20985,8 +21529,7 @@ async function hasExactClasspilotTelemetryBinding(
     .from(studentSessions)
     .where(and(
       eq(studentSessions.studentId, options.studentId),
-      eq(studentSessions.isActive, true),
-      isNull(studentSessions.endedAt),
+      currentStudentSessionAuthorityPredicate(),
       ne(studentSessions.id, options.studentSessionId)
     ))
     .limit(1)
@@ -21007,8 +21550,8 @@ export async function withClasspilotTeachingTelemetryAuthority<T>(options: {
 }, callback: (target: {
   teachingSessionId: string;
   controlRevision: number;
-}) => Promise<T> | T): Promise<T | undefined> {
-  return db.transaction(async (tx) => {
+}) => Promise<T> | T, dbInstance: typeof db = db): Promise<T | undefined> {
+  return dbInstance.transaction(async (tx) => {
     const transactionDb = tx as unknown as typeof db;
     await assertClasspilotEntitled(options.schoolId, transactionDb, { lock: true });
     await lockClasspilotStudentControlAuthorities(
@@ -21083,8 +21626,8 @@ export async function withClasspilotSupervisionTelemetryAuthority<T>(options: {
   assignedStaffId: string;
   supervisionContextId: string;
   controlRevision: number;
-}) => Promise<T> | T): Promise<T | undefined> {
-  return db.transaction(async (tx) => {
+}) => Promise<T> | T, dbInstance: typeof db = db): Promise<T | undefined> {
+  return dbInstance.transaction(async (tx) => {
     const transactionDb = tx as unknown as typeof db;
     await lockClasspilotStudentControlAuthorities(
       options.schoolId,
@@ -21995,8 +22538,7 @@ export async function getOnlineUnassignedStudents(
       and(
         eq(students.schoolId, schoolId),
         eq(students.status, "active"),
-        eq(studentSessions.isActive, true),
-        isNull(studentSessions.endedAt),
+        currentStudentSessionAuthorityPredicate(),
         sql`${studentSessions.lastSeenAt} >= ${cutoff}`
       )
     )

@@ -86,7 +86,7 @@ describe("ClassPilot school-arrival capacity controls", () => {
     assert.match(commands, /getActiveSessionsForStudents\(schoolId, selectedStudentIds\)/);
     assert.doesNotMatch(commands, /getActiveSessionByStudent/);
     assert.match(batchLookup, /inArray\(studentSessions\.studentId, uniqueStudentIds\)/);
-    assert.match(batchLookup, /eq\(studentSessions\.isActive, true\)/);
+    assert.match(batchLookup, /currentStudentSessionAuthorityPredicate\(\)/);
     assert.match(batchLookup, /eq\(students\.schoolId, schoolId\)/);
     assert.match(batchLookup, /eq\(devices\.schoolId, schoolId\)/);
   });

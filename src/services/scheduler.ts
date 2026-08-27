@@ -81,6 +81,7 @@ import {
   upsertSetBasedDailyUsage,
   type DailyUsageAggregate,
 } from "./classpilotDailyUsageRollup.js";
+import { reapExpiredManualStudentSessions } from "./classpilotStudentSessionLifecycle.js";
 
 let io: SocketServer | null = null;
 let intervalId: NodeJS.Timeout | null = null;
@@ -222,6 +223,7 @@ export function startScheduler(socketIo: SocketServer | null = null) {
     scheduleLockedJob("autoEndStaleClassPilotSessions", autoEndStaleClassPilotSessions);
     scheduleLockedJob("expireClasspilotSupervisionContexts", expireClasspilotSupervisionContexts);
     scheduleLockedJob("expireClasspilotTransientCommands", expireClasspilotTransientCommands);
+    scheduleLockedJob("expireClasspilotManualStudentSessions", expireClasspilotManualStudentSessions);
     scheduleLockedJob("expireClasspilotEvidenceCaptureRequests", expireClasspilotEvidenceCaptureRequests);
     scheduleLockedJob("reconcileClasspilotScheduledSessions", reconcileClasspilotScheduledSessions);
     // Security monitor: run every 5 minutes (every 5th tick) — rule-based breach detection
@@ -245,6 +247,7 @@ export function startScheduler(socketIo: SocketServer | null = null) {
   scheduleLockedJob("autoCompleteStaleGoPilotSessions", autoCompleteStaleGoPilotSessions);
   scheduleLockedJob("expireClasspilotSupervisionContexts", expireClasspilotSupervisionContexts);
   scheduleLockedJob("expireClasspilotTransientCommands", expireClasspilotTransientCommands);
+  scheduleLockedJob("expireClasspilotManualStudentSessions", expireClasspilotManualStudentSessions);
   scheduleLockedJob("expireClasspilotEvidenceCaptureRequests", expireClasspilotEvidenceCaptureRequests);
   scheduleLockedJob("reconcileClasspilotScheduledSessions", reconcileClasspilotScheduledSessions);
   // Run the read-only aggregate scan at worker startup, then at its bounded
@@ -1650,6 +1653,50 @@ export async function expireClasspilotEvidenceCaptureRequests() {
       "scheduler_failure",
       error as Error,
       { job: "expireClasspilotEvidenceCaptureRequests" }
+    );
+  }
+}
+
+export async function expireClasspilotManualStudentSessions() {
+  try {
+    const result = await reapExpiredManualStudentSessions();
+    if (result.publicationFailures > 0) {
+      errorMonitor.trackError(
+        "scheduler_failure",
+        Object.assign(new Error("Manual student-session tombstone publication failed"), {
+          code: "CLASSPILOT_MANUAL_SESSION_PUBLICATION_FAILED",
+        }),
+        {
+          job: "expireClasspilotManualStudentSessions",
+          errorCode: "CLASSPILOT_MANUAL_SESSION_PUBLICATION_FAILED",
+        }
+      );
+    }
+    if (result.ended > 0 || result.publicationFailures > 0 || result.backlog) {
+      console.log(JSON.stringify({
+        _aws: {
+          Timestamp: Date.now(),
+          CloudWatchMetrics: [{
+            Namespace: "SchoolPilot/ClassPilot",
+            Dimensions: [["Environment"]],
+            Metrics: [
+              { Name: "ManualStudentSessionsExpired", Unit: "Count" },
+              { Name: "ManualStudentSessionPublicationFailures", Unit: "Count" },
+              { Name: "ManualStudentSessionExpiryBacklog", Unit: "Count" },
+            ],
+          }],
+        },
+        Environment: process.env.APP_ENV || process.env.NODE_ENV || "development",
+        ManualStudentSessionsExpired: result.ended,
+        ManualStudentSessionPublicationFailures: result.publicationFailures,
+        ManualStudentSessionExpiryBacklog: result.backlog ? 1 : 0,
+      }));
+    }
+  } catch (error) {
+    errorMonitor.trackError(
+      "scheduler_failure",
+      error as Error,
+      { job: "expireClasspilotManualStudentSessions" }
     );
   }
 }
