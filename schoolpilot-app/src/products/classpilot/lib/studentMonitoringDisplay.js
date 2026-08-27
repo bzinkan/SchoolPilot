@@ -1,5 +1,12 @@
 export const MONITORING_SIGNAL_LOSS_MS = 60_000;
+export const MONITORING_SIGNAL_LOSS_CONFIRMATION_MS = 30_000;
+export const MONITORING_SIGNAL_LOSS_CONFIRMED_MS =
+  MONITORING_SIGNAL_LOSS_MS + MONITORING_SIGNAL_LOSS_CONFIRMATION_MS;
+// One maximum 35-second reconciliation interval plus bounded delivery/render
+// allowance. An old success cannot permanently certify a signal-loss state.
+export const MONITORING_CONFIRMATION_FRESH_MS = 45_000;
 export const SCREENSHOT_STALE_MS = 75_000;
+export const SCREENSHOT_RECONNECT_RETAIN_MS = 120_000;
 export const OBSERVED_AT_DISPLAY_FUTURE_SKEW_MS = 60_000;
 
 const MINUTE_MS = 60_000;
@@ -75,7 +82,47 @@ function isDelegated(student) {
     || student?._realtimeSuppressed === true;
 }
 
-export function deriveStudentMonitoringDisplay(student, nowMs = Date.now()) {
+function serverReportsMonitoringLoss(student) {
+  return student?.monitoringState === 'lost'
+    || student?.monitoringState === 'signal_lost'
+    || (student?.activityFresh === false && Boolean(student?.monitoringLostAt));
+}
+
+function hasSuccessfulReconciliationAfter(value, boundaryAtMs) {
+  const reconciledAtMs = Number(value);
+  return Number.isFinite(reconciledAtMs)
+    && reconciledAtMs > 0
+    && reconciledAtMs >= boundaryAtMs;
+}
+
+function monitoringConfirmation(options, graceStartedAtMs, nowMs) {
+  const hasExplicitReconciliation = Object.prototype.hasOwnProperty.call(
+    options,
+    'lastSuccessfulReconciliationAtMs',
+  );
+  if (!hasExplicitReconciliation) {
+    return { confirmed: true, nextBoundaryAtMs: null };
+  }
+
+  const reconciledAtMs = Number(options.lastSuccessfulReconciliationAtMs);
+  const postGraceSuccess = hasSuccessfulReconciliationAfter(
+    reconciledAtMs,
+    graceStartedAtMs ?? Number.POSITIVE_INFINITY,
+  );
+  if (!postGraceSuccess) return { confirmed: false, nextBoundaryAtMs: null };
+
+  const realtimeHealthy = options.realtimeHealthy === true;
+  const reconciliationExpiresAtMs = reconciledAtMs + MONITORING_CONFIRMATION_FRESH_MS;
+  const reconciliationFresh = nowMs < reconciliationExpiresAtMs;
+  return {
+    confirmed: realtimeHealthy || reconciliationFresh,
+    nextBoundaryAtMs: !realtimeHealthy && reconciliationFresh
+      ? reconciliationExpiresAtMs
+      : null,
+  };
+}
+
+export function deriveStudentMonitoringDisplay(student, nowMs = Date.now(), options = {}) {
   if (isSignedOut(student)) {
     return {
       kind: 'signed_out',
@@ -99,23 +146,48 @@ export function deriveStudentMonitoringDisplay(student, nowMs = Date.now()) {
   }
 
   const observedAtMs = normalizedStudentObservedAt(student, nowMs);
-  const nextBoundaryAtMs = observedAtMs === null
+  const graceStartedAtMs = observedAtMs === null
     ? null
     : observedAtMs + MONITORING_SIGNAL_LOSS_MS;
-  const locallyStale = nextBoundaryAtMs !== null && nowMs >= nextBoundaryAtMs;
-  const serverReportsLoss = student?.monitoringState === 'lost'
-    || student?.monitoringState === 'signal_lost'
-    || (student?.activityFresh === false && Boolean(student?.monitoringLostAt));
-  const telemetryCurrent = observedAtMs !== null && !locallyStale && !serverReportsLoss;
+  const confirmedBoundaryAtMs = observedAtMs === null
+    ? null
+    : observedAtMs + MONITORING_SIGNAL_LOSS_CONFIRMED_MS;
+  const serverReportsLoss = serverReportsMonitoringLoss(student);
+  const confirmation = monitoringConfirmation(options, graceStartedAtMs, nowMs);
+  const authoritativeLossConfirmed = serverReportsLoss && confirmation.confirmed;
 
-  if (!telemetryCurrent) {
+  if (observedAtMs === null) {
+    const signalLost = authoritativeLossConfirmed;
     return {
-      kind: 'signal_lost',
-      status: 'signal_lost',
-      label: 'Monitoring signal lost — cause unknown',
+      kind: signalLost ? 'signal_lost' : 'updates_unavailable',
+      status: signalLost ? 'signal_lost' : 'updates_unavailable',
+      label: signalLost ? 'Monitoring signal lost' : 'Monitoring updates unavailable',
       telemetryCurrent: false,
       observedAtMs,
-      nextBoundaryAtMs: null,
+      nextBoundaryAtMs: signalLost ? confirmation.nextBoundaryAtMs : null,
+    };
+  }
+
+  if (nowMs >= graceStartedAtMs && nowMs < confirmedBoundaryAtMs) {
+    return {
+      kind: 'reconnecting',
+      status: 'reconnecting',
+      label: 'Updating monitoring…',
+      telemetryCurrent: false,
+      observedAtMs,
+      nextBoundaryAtMs: confirmedBoundaryAtMs,
+    };
+  }
+
+  if (nowMs >= confirmedBoundaryAtMs) {
+    const signalLost = authoritativeLossConfirmed;
+    return {
+      kind: signalLost ? 'signal_lost' : 'updates_unavailable',
+      status: signalLost ? 'signal_lost' : 'updates_unavailable',
+      label: signalLost ? 'Monitoring signal lost' : 'Monitoring updates unavailable',
+      telemetryCurrent: false,
+      observedAtMs,
+      nextBoundaryAtMs: signalLost ? confirmation.nextBoundaryAtMs : null,
     };
   }
 
@@ -126,8 +198,38 @@ export function deriveStudentMonitoringDisplay(student, nowMs = Date.now()) {
     label: idle ? 'Idle' : 'Online',
     telemetryCurrent: true,
     observedAtMs,
-    nextBoundaryAtMs,
+    nextBoundaryAtMs: graceStartedAtMs,
   };
+}
+
+function sameMonitoringDisplay(left, right) {
+  if (!left || !right) return false;
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key) => Object.is(left[key], right[key]));
+}
+
+export function projectStudentMonitoringDisplays(
+  students,
+  nowMs = Date.now(),
+  options = {},
+  previousDisplays = null,
+) {
+  const previous = previousDisplays instanceof Map ? previousDisplays : null;
+  const next = new Map();
+  let projectionUnchanged = Boolean(previous && previous.size === (students || []).length);
+
+  for (const student of students || []) {
+    if (!student?.studentId) continue;
+    const derived = deriveStudentMonitoringDisplay(student, nowMs, options);
+    const prior = previous?.get(student.studentId);
+    const display = sameMonitoringDisplay(prior, derived) ? prior : derived;
+    next.set(student.studentId, display);
+    if (display !== prior) projectionUnchanged = false;
+  }
+
+  return projectionUnchanged ? previous : next;
 }
 
 export function deriveScreenshotDisplay(screenshotData, nowMs = Date.now()) {
@@ -139,11 +241,19 @@ export function deriveScreenshotDisplay(screenshotData, nowMs = Date.now()) {
   const fresh = available
     && observedAtMs !== null
     && nowMs < observedAtMs + SCREENSHOT_STALE_MS;
+  const retained = available
+    && observedAtMs !== null
+    && nowMs < observedAtMs + SCREENSHOT_RECONNECT_RETAIN_MS;
   return {
     available,
     fresh,
+    retained,
     observedAtMs,
-    nextBoundaryAtMs: fresh ? observedAtMs + SCREENSHOT_STALE_MS : null,
+    nextBoundaryAtMs: fresh
+      ? observedAtMs + SCREENSHOT_STALE_MS
+      : retained
+        ? observedAtMs + SCREENSHOT_RECONNECT_RETAIN_MS
+        : null,
   };
 }
 
@@ -162,20 +272,38 @@ export function deriveUnavailablePreview(monitoringDisplay) {
         warning: false,
       };
     case 'signal_lost':
+      return {
+        reason: 'Monitoring signal lost',
+        showLastObservation: true,
+        warning: true,
+      };
+    case 'reconnecting':
+      return {
+        reason: 'Updating monitoring…',
+        showLastObservation: true,
+        warning: true,
+      };
+    case 'updates_unavailable':
     default:
       return {
-        reason: 'Monitoring signal lost — cause unknown',
+        reason: 'Monitoring updates unavailable',
         showLastObservation: true,
         warning: true,
       };
   }
 }
 
-export function findNextStudentFreshnessBoundary(students, screenshotsByStudent, nowMs = Date.now()) {
+export function findNextStudentFreshnessBoundary(
+  students,
+  screenshotsByStudent,
+  nowMs = Date.now(),
+  monitoringDisplaysByStudent = null,
+) {
   let earliest = null;
 
   for (const student of students || []) {
-    const monitoring = deriveStudentMonitoringDisplay(student, nowMs);
+    const monitoring = monitoringDisplaysByStudent?.get?.(student?.studentId)
+      || deriveStudentMonitoringDisplay(student, nowMs);
     if (
       monitoring.nextBoundaryAtMs !== null
       && monitoring.nextBoundaryAtMs > nowMs
@@ -187,7 +315,7 @@ export function findNextStudentFreshnessBoundary(students, screenshotsByStudent,
     const screenshot = screenshotsByStudent?.get?.(student?.studentId);
     const screenshotDisplay = deriveScreenshotDisplay(screenshot, nowMs);
     if (
-      monitoring.telemetryCurrent
+      (monitoring.telemetryCurrent || monitoring.kind === 'reconnecting' || monitoring.kind === 'updates_unavailable')
       && screenshotDisplay.nextBoundaryAtMs !== null
       && screenshotDisplay.nextBoundaryAtMs > nowMs
       && (earliest === null || screenshotDisplay.nextBoundaryAtMs < earliest)

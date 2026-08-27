@@ -31,6 +31,11 @@ describe("ClassPilot student tile batch contract", () => {
     assert.match(query, /row_number\(\) OVER/i);
     assert.match(query, /session\.school_id = \$\{options\.schoolId\}/);
     assert.match(query, /co_teacher\.teacher_id = \$\{options\.staffId\}/);
+    assert.match(query, /options\.teachingSessionId/);
+    assert.match(query, /classpilotSessionStudents/);
+    assert.match(query, /classpilotSessionStaff/);
+    assert.match(query, /selected_session\.roster_snapshot_completed_at IS NOT NULL/);
+    assert.match(query, /selected_staff\.staff_id = \$\{options\.staffId\}/);
   });
 
   it("keeps the batch routes student-addressed, no-store, and bounded", () => {
@@ -45,6 +50,8 @@ describe("ClassPilot student tile batch contract", () => {
     );
     assert.match(routes, /getBatchTileAccessForStaff\(scope, parsed\.studentIds, "live"\)/);
     assert.match(routes, /getBatchTileAccessForStaff\(scope, parsed\.studentIds, "history"\)/);
+    assert.match(routes, /parseTileTeachingSessionId\(req\.body\)/);
+    assert.match(routes, /tileStaffScope\(req, res, sessionScope\.teachingSessionId\)/);
     assert.match(routes, /error: "No accessible tiles"/);
     assert.match(routes, /heartbeats: heartbeats\.map\(safeTileHeartbeat\)/);
   });

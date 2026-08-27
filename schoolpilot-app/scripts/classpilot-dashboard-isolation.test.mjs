@@ -5,6 +5,178 @@ import {
   createSubgroupMembersQuery,
   subgroupMembersQueryKey,
 } from '../src/products/classpilot/lib/subgroupMembersQuery.js';
+import {
+  normalizedObservationScope,
+  observationLeaseFailureStatus,
+  observationLeaseRenewalFailureDisposition,
+  observationLeaseResponseDisposition,
+} from '../src/products/classpilot/lib/observationLeaseStatus.js';
+import { classpilotReconciliationIntervalMs } from '../src/products/classpilot/lib/monitoringReconciliation.js';
+
+function responseError(status, code) {
+  return {
+    response: {
+      status,
+      data: code ? { code } : {},
+    },
+  };
+}
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+test('observation lease failures distinguish transient outage and hard denial', () => {
+  assert.equal(
+    observationLeaseFailureStatus(responseError(404)),
+    'denied',
+    'an un-coded 404 can be an authorization/session failure and must fail private',
+  );
+  assert.equal(
+    observationLeaseFailureStatus(responseError(404, 'OBSERVATION_SESSION_UNAVAILABLE')),
+    'denied',
+    'a current-server coded 404 must purge rather than revive cached previews',
+  );
+  assert.equal(observationLeaseFailureStatus(responseError(401, 'UNAUTHORIZED')), 'denied');
+  assert.equal(observationLeaseFailureStatus(responseError(403, 'FORBIDDEN')), 'denied');
+  assert.equal(
+    observationLeaseFailureStatus(responseError(503, 'SCREENSHOT_STORE_UNAVAILABLE')),
+    'error',
+  );
+  assert.equal(
+    observationLeaseFailureStatus(responseError(409, 'OBSERVATION_LEASE_UNAVAILABLE')),
+    'error',
+  );
+  assert.equal(observationLeaseFailureStatus(new Error('network unavailable')), 'error');
+  assert.deepEqual(
+    observationLeaseRenewalFailureDisposition(responseError(404, 'OBSERVATION_SESSION_UNAVAILABLE')),
+    { status: 'denied', releaseLease: true },
+    'an observed lease whose renewal is denied must be explicitly released',
+  );
+  assert.deepEqual(
+    observationLeaseRenewalFailureDisposition(responseError(503, 'OBSERVATION_LEASE_UNAVAILABLE')),
+    { status: 'error', releaseLease: false },
+    'a transient outage retains only the already-bounded exact-context lease',
+  );
+});
+
+test('malformed and over-limit enabled observation scopes fail private', async () => {
+  const tooManyStudentIds = Array.from({ length: 501 }, (_, index) => `student-${index}`);
+  assert.equal(normalizedObservationScope({ kind: 'students', studentIds: tooManyStudentIds }), null);
+  assert.equal(normalizedObservationScope({ kind: 'students', studentIds: 'not-an-array' }), null);
+  assert.equal(normalizedObservationScope({ kind: 'unknown' }), null);
+
+  const [lease, dashboard] = await Promise.all([
+    readFile(new URL('../src/products/classpilot/hooks/useObservationLease.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url), 'utf8'),
+  ]);
+  assert.match(lease, /leaseConfigurationInvalid[\s\S]{0,160}status = 'denied'/);
+  assert.match(lease, /if \(!sessionId \|\| !normalizedScope\)[\s\S]{0,220}status: 'denied'/);
+  assert.match(
+    dashboard,
+    /observationReadsAllowed = observationLeaseStatus === 'observed'[\s\S]{0,180}observationLeaseStatus === 'error'/,
+    'denied invalid scopes must issue zero screenshot/history batch reads',
+  );
+});
+
+test('deferred observation PUTs cannot adopt after hide or out of order after a restart', async () => {
+  const deletedViewerIds = [];
+  const adoptedViewerIds = [];
+  const settle = async (request, runtime) => {
+    await request.deferred.promise;
+    const disposition = observationLeaseResponseDisposition({
+      stopped: false,
+      requestEpoch: request.epoch,
+      currentEpoch: runtime.currentEpoch,
+      visibilityState: runtime.visibilityState,
+      requestViewerId: request.viewerId,
+      activeViewerId: runtime.activeViewerId,
+    });
+    if (disposition === 'adopt') adoptedViewerIds.push(request.viewerId);
+    else deletedViewerIds.push(request.viewerId);
+  };
+
+  const hiddenRequest = { deferred: deferred(), epoch: 1, viewerId: 'viewer-a' };
+  const hiddenCompletion = settle(hiddenRequest, {
+    currentEpoch: 2,
+    visibilityState: 'hidden',
+    activeViewerId: 'viewer-a',
+  });
+  hiddenRequest.deferred.resolve();
+  await hiddenCompletion;
+  assert.deepEqual(adoptedViewerIds, []);
+  assert.deepEqual(deletedViewerIds, ['viewer-a']);
+
+  const staleA = { deferred: deferred(), epoch: 3, viewerId: 'viewer-a2' };
+  const currentB = { deferred: deferred(), epoch: 5, viewerId: 'viewer-b' };
+  const visibleBRuntime = {
+    currentEpoch: 5,
+    visibilityState: 'visible',
+    activeViewerId: 'viewer-b',
+  };
+  const staleCompletion = settle(staleA, visibleBRuntime);
+  const currentCompletion = settle(currentB, visibleBRuntime);
+  currentB.deferred.resolve();
+  await currentCompletion;
+  staleA.deferred.resolve();
+  await staleCompletion;
+  assert.deepEqual(adoptedViewerIds, ['viewer-b']);
+  assert.deepEqual(deletedViewerIds, ['viewer-a', 'viewer-a2']);
+
+  // Model an already-observed lease whose renewal PUT is still executing.
+  // DELETE-on-hide can arrive first; the post-settlement DELETE is what
+  // guarantees the late PUT commit cannot leave an orphaned observed lease.
+  const renewal = deferred();
+  const redisOrder = [];
+  let redisObserved = true;
+  const lateRenewal = (async () => {
+    await renewal.promise;
+    redisObserved = true;
+    redisOrder.push('put-commit');
+    redisObserved = false;
+    redisOrder.push('delete-after-settle');
+  })();
+  redisObserved = false;
+  redisOrder.push('delete-on-hide');
+  renewal.resolve();
+  await lateRenewal;
+  assert.equal(redisObserved, false);
+  assert.deepEqual(redisOrder, ['delete-on-hide', 'put-commit', 'delete-after-settle']);
+
+  const leaseSource = await readFile(
+    new URL('../src/products/classpilot/hooks/useObservationLease.js', import.meta.url),
+    'utf8',
+  );
+  assert.doesNotMatch(
+    leaseSource,
+    /AbortController|controller\.abort\(\)/,
+    'revocation must not abort a PUT and let its server mutation commit after the only DELETE',
+  );
+  assert.match(leaseSource, /if \(disposition === 'release'\)[\s\S]{0,100}await deleteLease\(requestViewerId\)/);
+  assert.match(
+    leaseSource,
+    /if \(stopped \|\| epoch !== requestEpoch\)[\s\S]{0,320}await deleteLease\(requestViewerId\)/,
+    'a revoked PUT must issue its second exact-viewer DELETE after rejection settles',
+  );
+  assert.match(
+    leaseSource,
+    /if \(!failure\.releaseLease\)[\s\S]{0,180}setStatus\('error'\)[\s\S]{0,140}else \{[\s\S]{0,100}setStatus\(failure\.status\)[\s\S]{0,220}await deleteLease\(requestViewerId\)/,
+    'a terminal renewal denial must revoke the previously observed exact-viewer lease',
+  );
+});
+
+test('aggregate reconciliation jitter is stable per tab and does not synchronize class viewers', () => {
+  const scope = '["/api/students-aggregated","school-1","session-1"]';
+  const firstViewer = classpilotReconciliationIntervalMs(`tab-alpha:${scope}`);
+  const secondViewer = classpilotReconciliationIntervalMs(`tab-bravo:${scope}`);
+
+  assert.equal(firstViewer, classpilotReconciliationIntervalMs(`tab-alpha:${scope}`));
+  assert.notEqual(firstViewer, secondViewer);
+  assert.ok(firstViewer >= 25_000 && firstViewer <= 35_000);
+  assert.ok(secondViewer >= 25_000 && secondViewer <= 35_000);
+});
 
 test('subgroup membership queries are fenced by group and subgroup identity', async () => {
   assert.notDeepEqual(
@@ -72,6 +244,138 @@ test('dashboard renews observation only for a visible exact scope and virtualize
   assert.match(tile, /export default memo\(StudentTile, studentTilePropsEqual\)/);
 });
 
+test('authorization loss purges active tile caches without retaining denied pixels', async () => {
+  const [dashboard, tile, privacy] = await Promise.all([
+    readFile(new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/products/classpilot/components/StudentTile.jsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/products/classpilot/lib/tileCachePrivacy.js', import.meta.url), 'utf8'),
+  ]);
+
+  assert.match(privacy, /queryClient\.setQueriesData\(/);
+  assert.match(privacy, /queryClient\.cancelQueries\(/);
+  assert.match(privacy, /queryClient\.removeQueries\(/);
+  assert.match(dashboard, /purgeStudentTileCaches\(queryClient, JSON\.parse\(tileCachePurgeStudentIdsKey\)\)/);
+  assert.match(dashboard, /purgeAllStudentTileCaches\(queryClient\)/);
+  assert.match(dashboard, /tileBatchFailureScope\(query\.error\)/);
+  assert.match(dashboard, /tileGlobalAuthorizationFailure/);
+  assert.match(dashboard, /observationLeaseStatus === 'denied'/);
+  assert.match(dashboard, /\['signed_out', 'delegated'\]\.includes\(monitoringDisplay\?\.kind\)/);
+  assert.match(
+    tile,
+    /screenshotAuthorizationRevoked = screenshotObservationStatus === 'pending'[\s\S]{0,180}screenshotObservationStatus === 'denied'[\s\S]{0,120}screenshotObservationStatus === 'paused_unobserved'/,
+  );
+  assert.match(tile, /screenshotObservationStatus === 'denied'/);
+  assert.doesNotMatch(
+    tile,
+    /signal_lost['"]\s*\|\|[\s\S]{0,120}screenshotDisplay\.retained/,
+    'confirmed loss must never authorize retained screenshot pixels',
+  );
+});
+
+test('enabled observation scopes remain pending across A to B to A until their exact PUT succeeds', async () => {
+  const [lease, dashboard, tile] = await Promise.all([
+    readFile(new URL('../src/products/classpilot/hooks/useObservationLease.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/products/classpilot/components/StudentTile.jsx', import.meta.url), 'utf8'),
+  ]);
+
+  assert.match(
+    lease,
+    /let status = 'pending';[\s\S]{0,180}if \(!enabled\) status = 'legacy';[\s\S]{0,100}else if \(leaseState\.contextKey === leaseContextKey\) status = leaseState\.status/,
+    'an enabled exact context must stay pending until that context records its own lease response',
+  );
+  assert.match(lease, /if \(stopped\) return;/);
+  assert.match(dashboard, /enabled: studentView === 'class' && Boolean\(effectiveSession\?\.id\)/);
+  assert.match(dashboard, /enabled: screenshotTileReadsEnabled/);
+  assert.match(dashboard, /enabled: historyTileReadsEnabled/);
+  assert.match(tile, /screenshotObservationStatus === 'pending'/);
+  assert.match(tile, /Authorizing screen preview…/);
+});
+
+test('claimed coverage stays telemetry-only without misusing the class frozen-roster lease', async () => {
+  const dashboard = await readFile(
+    new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(dashboard, /studentView === 'claimed'[\s\S]{0,80}\? 'denied'/);
+  assert.match(dashboard, /studentView !== 'claimed'[\s\S]{0,100}observationReadsAllowed/);
+  assert.match(dashboard, /historyTileReadsEnabled = studentView !== 'available'[\s\S]{0,80}observationReadsAllowed/);
+  assert.match(dashboard, /purgeAllScreenshotTileCaches\(queryClient\)/);
+});
+
+test('A to B switches replace the complete realtime routing context before queued events can flush', async () => {
+  const dashboard = await readFile(
+    new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
+    'utf8',
+  );
+  const routingLayoutEffect = dashboard.match(
+    /useLayoutEffect\(\(\) => \{[\s\S]{0,900}effectiveSessionIdRef\.current = effectiveSessionId;[\s\S]{0,300}aggregatedStudentsQueryKeyRef\.current = aggregatedStudentsQueryKey;[\s\S]{0,300}activeSchoolIdRef\.current = activeSchoolId;[\s\S]{0,300}pendingRealtimeEventsRef\.current = \[\];[\s\S]{0,500}\}, \[activeSchoolId, aggregatedStudentsQueryKey, effectiveSessionId\]\);/,
+  );
+  assert.ok(
+    routingLayoutEffect,
+    'session, query key, school, and queued events must switch atomically in one layout effect',
+  );
+  assert.doesNotMatch(
+    dashboard,
+    /useEffect\(\(\) => \{\s*aggregatedStudentsQueryKeyRef\.current/,
+    'a later passive effect must not leave a session/query-key race window',
+  );
+  assert.match(
+    dashboard,
+    /if \(!currentSessionId\) return !messageSessionId;/,
+    'Observe A to admin-school-wide must reject a delayed session-A event',
+  );
+  assert.match(
+    dashboard,
+    /const coverageEvents = coalesceStudentRealtimeEvents\(queued[\s\S]{0,220}entry\.coverageEligible/,
+    'session-scoped classroom telemetry must not leak into a separately authorized coverage cache',
+  );
+  for (const eventType of [
+    'live-view-requested',
+    'hand-raised',
+    'hand-lowered',
+    'hand-dismissed',
+    'student-message',
+    'chat-message-delivery',
+    'safety-alert',
+    'screenshot-available',
+    'student-event',
+  ]) {
+    const start = dashboard.indexOf(`if (message.type === '${eventType}')`);
+    const next = dashboard.indexOf('if (message.type ===', start + 1);
+    const handler = dashboard.slice(start, next < 0 ? dashboard.length : next);
+    assert.ok(start >= 0, `missing ${eventType} handler`);
+    assert.match(
+      handler,
+      /classRealtimeMessageEligibility\(message\)/,
+      `${eventType} must reject a delayed session-A event before session-B side effects`,
+    );
+  }
+});
+
+test('detail history is fenced to the current authority and cannot reuse a stale selected row', async () => {
+  const dashboard = await readFile(
+    new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(
+    dashboard,
+    /selectedStudentRoster\.find\(\(student\) => student\.studentId === selectedStudent\.studentId\) \|\| null/,
+  );
+  assert.doesNotMatch(
+    dashboard,
+    /students\.find\(\(student\) => student\.studentId === selectedStudent\.studentId\) \|\| selectedStudent/,
+  );
+  assert.match(
+    dashboard,
+    /setSelectedStudent\(null\);[\s\S]{0,240}\[\s*activeSchoolId,[\s\S]{0,220}effectiveSessionId,[\s\S]{0,160}studentView,/,
+    'the drawer selection must be cleared when session or authority changes',
+  );
+  assert.match(dashboard, /studentView !== 'available'/);
+});
+
 test('dashboard command entry points fail closed until the class roster is authoritative', async () => {
   const dashboard = await readFile(
     new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
@@ -80,12 +384,12 @@ test('dashboard command entry points fail closed until the class roster is autho
 
   assert.match(
     dashboard,
-    /const resolveActiveCommandTarget = \(overrideStudentIds = null\) => \{\s*if \(classStudentTargetsUnavailable\) \{\s*throw new Error/,
+    /const resolveActiveCommandTarget = \(overrideStudentIds = null,[\s\S]{0,120}\) => \{\s*if \(classStudentTargetsUnavailable\) \{\s*throw new Error/,
     'the final command-target resolver must reject an unknown class roster',
   );
   assert.match(
     dashboard,
-    /const canUseRemoteControls = dashboardCapabilities\.canUseRemoteControls && !classStudentTargetsUnavailable/,
+    /const canUseRemoteControls = dashboardCapabilities\.canUseRemoteControls\s*&& !classStudentTargetsUnavailable/,
     'the classroom command row and student actions must share the unavailable-target guard',
   );
   assert.match(

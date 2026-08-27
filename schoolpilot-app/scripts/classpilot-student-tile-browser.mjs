@@ -137,12 +137,10 @@ try {
   );
 
   const tabsButton = signedOutTile.getByRole('button', { name: 'View Tabs', exact: true });
-  await tabsButton.click();
-  await page.getByTestId('tab-clicks').filter({ hasText: 'Tab clicks: 1' }).waitFor();
   assert.equal(
-    await page.getByTestId('card-clicks').textContent(),
-    'Card clicks: 0',
-    'the tile Tabs shortcut must not open the student drawer',
+    await tabsButton.count(),
+    0,
+    'signed-out authorization loss must remove the cached-history shortcut',
   );
 
   await page.getByTestId('age-last-seen').click();
@@ -162,7 +160,7 @@ try {
   );
 
   const signalLostTile = page.getByTestId('card-student-signal-lost-student');
-  await signalLostTile.getByText('Monitoring signal lost — cause unknown', { exact: true }).waitFor();
+  await signalLostTile.getByText('Monitoring signal lost', { exact: true }).waitFor();
   await signalLostTile.getByText('Last seen 2 hours ago', { exact: true }).waitFor();
   assert.equal(
     await signalLostTile.getByText('Preview unavailable', { exact: true }).count(),
@@ -258,6 +256,38 @@ try {
     'Card clicks: 1',
     'the Return to Class action must not open the student drawer',
   );
+
+  const pausedTile = page.getByTestId('card-student-paused-student');
+  await pausedTile.getByText('Screenshots paused', { exact: true }).waitFor();
+  assert.equal(
+    await page.getByTestId('screenshot-paused-student').count(),
+    0,
+    'releasing a paused observation lease must immediately hide even a fresh cached screenshot',
+  );
+  assert.equal(
+    await page.getByTestId('screenshot-retained-paused-student').count(),
+    0,
+    'a paused observation may not use reconnecting retention',
+  );
+  assert.equal(
+    await page.getByTestId('video-live-paused-student').count(),
+    0,
+    'paused observation must also hide an existing live pixel stream',
+  );
+
+  const pendingTile = page.getByTestId('card-student-pending-student');
+  await pendingTile.getByText('Authorizing screen preview…', { exact: true }).waitFor();
+  assert.equal(
+    await page.getByTestId('screenshot-pending-student').count(),
+    0,
+    'a cached A-context pixel must remain hidden until the current session lease is acknowledged',
+  );
+  assert.equal(
+    await page.getByTestId('screenshot-retained-pending-student').count(),
+    0,
+    'pending authorization must not qualify for last-preview retention',
+  );
+  assert.equal(await page.getByTestId('video-live-pending-student').count(), 0);
 
   await page.getByTestId('toggle-tiles').click();
   assert.deepEqual(

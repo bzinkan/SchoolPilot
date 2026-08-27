@@ -743,13 +743,13 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     await observePreviewPage.getByTestId("student-tabs").waitFor({ state: "hidden" });
     assert.equal(
       (await observePreviewPage.getByTestId("badge-selection-count").innerText()).trim(),
-      "Viewing: Biology - All 2 students\n2 connected · 0 signal lost · 0 signed out",
+      "Viewing: Biology - All 2 students\n2 connected · 0 updating · 0 signal lost · 0 updates unavailable · 0 signed out",
     );
     await observePreviewPage.getByTestId("input-search-students").fill("No matching student");
     await observedCard.waitFor({ state: "hidden" });
     assert.equal(
       (await observePreviewPage.getByTestId("badge-selection-count").innerText()).trim(),
-      "Viewing: Biology - All 2 students\n2 connected · 0 signal lost · 0 signed out",
+      "Viewing: Biology - All 2 students\n2 connected · 0 updating · 0 signal lost · 0 updates unavailable · 0 signed out",
       "text search must not change Observe totals",
     );
     await observePreviewPage.getByTestId("input-search-students").fill("");
@@ -901,11 +901,11 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     );
     assert.equal(
       (await signalLostCard.getByTestId(`text-unavailable-status-${SIGNAL_LOST_STUDENT_ID}`).innerText()).trim(),
-      "Monitoring signal lost — cause unknown",
+      "Monitoring signal lost",
     );
     assert.equal(
       (await observePreviewPage.getByTestId("badge-selection-count").innerText()).trim(),
-      "Viewing: Biology - All 3 students\n0 connected · 1 signal lost · 1 signed out · 1 in supervision",
+      "Viewing: Biology - All 3 students\n0 connected · 0 updating · 1 signal lost · 0 updates unavailable · 1 signed out · 1 in supervision",
     );
     assert.equal((await observePreviewPage.getByTestId("text-online-count").innerText()).trim(), "0");
     assert.equal((await observePreviewPage.getByTestId("text-idle-count").innerText()).trim(), "0");
@@ -944,7 +944,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     await signedOutCard.waitFor({ state: "hidden" });
     assert.equal(
       (await observePreviewPage.getByTestId("badge-selection-count").innerText()).trim(),
-      "Viewing: Biology - Needs Check-In - 1 student\n0 connected · 1 signal lost · 0 signed out",
+      "Viewing: Biology - Needs Check-In - 1 student\n0 connected · 0 updating · 1 signal lost · 0 updates unavailable · 0 signed out",
       "Observe subgroup selection must scope its roster and totals",
     );
     await subgroupFilter.selectOption("");
@@ -952,7 +952,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     await signedOutCard.waitFor();
     assert.equal(
       (await observePreviewPage.getByTestId("badge-selection-count").innerText()).trim(),
-      "Viewing: Biology - All 3 students\n0 connected · 1 signal lost · 1 signed out · 1 in supervision",
+      "Viewing: Biology - All 3 students\n0 connected · 0 updating · 1 signal lost · 0 updates unavailable · 1 signed out · 1 in supervision",
     );
     await assertObserveEntryPointsUnavailable(
       observePreviewPage,
@@ -999,7 +999,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     assert.equal(await returnedCard.getByText("Controls locked", { exact: true }).count(), 0);
     assert.equal(
       (await observePreviewPage.getByTestId("badge-selection-count").innerText()).trim(),
-      "Viewing: Biology - All 1 student\n1 connected · 0 signal lost · 0 signed out",
+      "Viewing: Biology - All 1 student\n1 connected · 0 updating · 0 signal lost · 0 updates unavailable · 0 signed out",
     );
     await assertObserveEntryPointsUnavailable(
       observePreviewPage,

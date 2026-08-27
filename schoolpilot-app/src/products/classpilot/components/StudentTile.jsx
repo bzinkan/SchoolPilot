@@ -17,6 +17,11 @@ import {
 } from "../lib/dashboardCommandContext";
 
 const EMPTY_LIST = Object.freeze([]);
+const SCREENSHOT_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  hour: 'numeric',
+  minute: '2-digit',
+  second: '2-digit',
+});
 const SUPPRESSED_MONITORING_DISPLAY = Object.freeze({
   kind: 'delegated',
   status: 'suppressed',
@@ -84,18 +89,43 @@ function StudentTile({
   monitoringDisplay,
   freshnessNowMs,
   screenshotObservationStatus = 'legacy',
+  screenshotRefreshUnavailable = false,
 }) {
   const videoElementRef = useRef(null);
-  const interactionsDisabled = actionsDisabled || monitoringSuppressed;
   const effectiveMonitoringDisplay = monitoringSuppressed
     ? SUPPRESSED_MONITORING_DISPLAY
     : monitoringDisplay || deriveStudentMonitoringDisplay(student, freshnessNowMs);
   const currentTelemetry = effectiveMonitoringDisplay.telemetryCurrent;
+  const monitoringActionsDisabled = !currentTelemetry;
+  const interactionsDisabled = actionsDisabled || monitoringSuppressed || monitoringActionsDisabled;
   const screenshotDisplay = deriveScreenshotDisplay(
     monitoringSuppressed ? null : screenshotData,
     freshnessNowMs,
   );
   const displayStatus = effectiveMonitoringDisplay.status;
+  const screenshotAuthorizationRevoked = screenshotObservationStatus === 'pending'
+    || screenshotObservationStatus === 'denied'
+    || screenshotObservationStatus === 'paused_unobserved';
+  const canRetainScreenshot = !screenshotAuthorizationRevoked && (
+    effectiveMonitoringDisplay.kind === 'reconnecting'
+    || effectiveMonitoringDisplay.kind === 'updates_unavailable'
+    || (
+      currentTelemetry
+      && (screenshotObservationStatus === 'error' || screenshotRefreshUnavailable)
+    )
+  );
+  const screenshotTransportHealthy = (
+    screenshotObservationStatus === 'observed'
+    || screenshotObservationStatus === 'legacy'
+  ) && !screenshotRefreshUnavailable;
+  const screenshotPreviewMode = currentTelemetry && screenshotDisplay.fresh && screenshotTransportHealthy
+    ? 'current'
+    : canRetainScreenshot && screenshotDisplay.retained
+      ? 'retained'
+      : null;
+  const screenshotCapturedLabel = screenshotDisplay.observedAtMs === null
+    ? null
+    : SCREENSHOT_TIME_FORMATTER.format(new Date(screenshotDisplay.observedAtMs));
   const unavailablePreview = deriveUnavailablePreview(effectiveMonitoringDisplay);
   const hasLastObservation = Number.isFinite(effectiveMonitoringDisplay.observedAtMs)
     && effectiveMonitoringDisplay.observedAtMs > 0;
@@ -104,8 +134,20 @@ function StudentTile({
   const unlockLabel = supportsScreenOnlyUnlock
     ? "Unlock this student's screen only"
     : "Extension update required for screen-only unlock";
-  const activeLiveStream = interactionsDisabled ? null : liveStream;
-  const unavailableActionReason = actionsDisabledReason || "Student actions are unavailable in this view";
+  const activeLiveStream = interactionsDisabled || screenshotAuthorizationRevoked
+    ? null
+    : liveStream;
+  const unavailableActionReason = actionsDisabledReason
+    || (monitoringActionsDisabled
+      ? 'Student actions are disabled while monitoring updates'
+      : "Student actions are unavailable in this view");
+  const safetyUnlockAvailable = !actionsDisabled
+    && !monitoringSuppressed
+    && monitoringActionsDisabled
+    && student.screenLocked
+    && supportsScreenOnlyUnlock
+    && canLockScreen
+    && Boolean(onCommand);
 
   // The dashboard owns negotiation and the enlarged portal. This tile only
   // renders a preview of the one active stream.
@@ -185,6 +227,10 @@ function StudentTile({
         return 'border-2 border-green-500/30';
       case 'idle':
         return 'border-2 border-amber-500/30';
+      case 'reconnecting':
+      case 'updates_unavailable':
+      case 'signal_lost':
+        return 'border border-amber-500/50';
       case 'offline':
         return 'border border-border/40';
       default:
@@ -279,7 +325,7 @@ function StudentTile({
                   <span className={`text-xs font-medium ${
                     displayStatus === 'online'
                       ? 'text-green-600 dark:text-green-400'
-                      : displayStatus === 'idle' || displayStatus === 'signal_lost'
+                      : displayStatus === 'idle' || displayStatus === 'signal_lost' || displayStatus === 'reconnecting' || displayStatus === 'updates_unavailable'
                         ? 'text-amber-600 dark:text-amber-400'
                         : 'text-muted-foreground'
                   }`}>
@@ -294,16 +340,18 @@ function StudentTile({
               variant="ghost"
               size="icon"
               className="h-7 w-7"
-              disabled={interactionsDisabled || !canLockScreen || !onCommand || (student.screenLocked && !supportsScreenOnlyUnlock) || (!currentTelemetry && !student.screenLocked) || commandPending}
+              disabled={(!safetyUnlockAvailable && interactionsDisabled) || !canLockScreen || !onCommand || (student.screenLocked && !supportsScreenOnlyUnlock) || (!currentTelemetry && !student.screenLocked) || commandPending}
               onClick={(e) => {
                 e.stopPropagation();
-                if (interactionsDisabled) return;
+                if (interactionsDisabled && !safetyUnlockAvailable) return;
                 const command = studentTileScreenToggleCommand(student);
                 if (command) onCommand?.(command);
               }}
-              title={interactionsDisabled
-                ? unavailableActionReason
-                : student.screenLocked
+              title={safetyUnlockAvailable
+                ? unlockLabel
+                : interactionsDisabled
+                  ? unavailableActionReason
+                  : student.screenLocked
                   ? unlockLabel
                   : currentTelemetry
                     ? "Save a lock restriction for the current screen"
@@ -441,6 +489,48 @@ function StudentTile({
               data-testid={`video-live-${student.studentId}`}
             />
           </div>
+        ) : screenshotPreviewMode ? (
+          // A reconnecting tile may retain only its last same-context preview.
+          // It is visibly dimmed and timestamped so it is never presented as live.
+          <div
+            className={`aspect-video rounded-lg bg-muted/40 relative overflow-hidden ${screenshotPreviewMode === 'retained' ? 'ring-1 ring-inset ring-amber-400/50' : ''}`}
+            data-testid={screenshotPreviewMode === 'retained'
+              ? `screenshot-retained-${student.studentId}`
+              : `screenshot-current-${student.studentId}`}
+          >
+            <img
+              src={screenshotData.screenshot}
+              alt={`${student.studentName || 'Student'}'s screen`}
+              className={`w-full h-full object-cover ${screenshotPreviewMode === 'retained' ? 'opacity-55' : ''}`}
+              loading="lazy"
+              decoding="async"
+              data-testid={`screenshot-${student.studentId}`}
+            />
+            {screenshotPreviewMode === 'retained' ? (
+              <div className="absolute left-2 top-2 rounded-md bg-amber-400 px-2 py-1 text-[11px] font-semibold text-slate-950 shadow" data-testid={`screenshot-updating-${student.studentId}`}>
+                Updating…{screenshotCapturedLabel ? ` · Captured ${screenshotCapturedLabel}` : ''}
+              </div>
+            ) : null}
+            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-2">
+              <div className="flex items-center gap-1.5">
+                {screenshotData.tabFavicon && (
+                  <img
+                    src={screenshotData.tabFavicon}
+                    alt=""
+                    className="w-3 h-3 flex-shrink-0 rounded"
+                    loading="lazy"
+                    decoding="async"
+                    onError={(e) => {
+                      e.target.style.display = 'none';
+                    }}
+                  />
+                )}
+                <span className="text-xs text-white/90 truncate font-medium">
+                  {screenshotData.tabTitle || 'No active tab'}
+                </span>
+              </div>
+            </div>
+          </div>
         ) : !currentTelemetry ? (
           <div
             className={`flex aspect-video items-center justify-center rounded-lg border text-center ${unavailablePreview.warning ? 'border-amber-200 bg-amber-50/70 dark:border-amber-900 dark:bg-amber-950/20' : 'border-border bg-muted/30'}`}
@@ -467,37 +557,20 @@ function StudentTile({
               )}
             </div>
           </div>
-        ) : screenshotDisplay.fresh ? (
-          // Screenshot thumbnail when available
-          // Uses tab metadata from the screenshot (not current heartbeat) so overlay matches the image
-          <div className="aspect-video rounded-lg bg-muted/40 relative overflow-hidden">
-            <img
-              src={screenshotData.screenshot}
-              alt={`${student.studentName || 'Student'}'s screen`}
-              className="w-full h-full object-cover"
-              loading="lazy"
-              decoding="async"
-              data-testid={`screenshot-${student.studentId}`}
-            />
-            {/* Overlay with tab info from when screenshot was taken */}
-            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-2">
-              <div className="flex items-center gap-1.5">
-                {screenshotData.tabFavicon && (
-                  <img
-                    src={screenshotData.tabFavicon}
-                    alt=""
-                    className="w-3 h-3 flex-shrink-0 rounded"
-                    loading="lazy"
-                    decoding="async"
-                    onError={(e) => {
-                      e.target.style.display = 'none';
-                    }}
-                  />
-                )}
-                <span className="text-xs text-white/90 truncate font-medium">
-                  {screenshotData.tabTitle || 'No active tab'}
-                </span>
-              </div>
+        ) : screenshotObservationStatus === 'pending' ? (
+          <div className="flex aspect-video items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-center dark:border-slate-800 dark:bg-slate-950/40" data-testid={`screenshot-observation-pending-${student.studentId}`}>
+            <div className="px-4">
+              <Monitor className="mx-auto mb-2 h-6 w-6 text-slate-500" />
+              <p className="text-sm font-semibold text-foreground">Authorizing screen preview…</p>
+              <p className="mt-1 text-xs text-muted-foreground">Monitoring activity remains available while this view is verified.</p>
+            </div>
+          </div>
+        ) : screenshotObservationStatus === 'denied' ? (
+          <div className="flex aspect-video items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-center dark:border-slate-800 dark:bg-slate-950/40" data-testid={`screenshot-observation-denied-${student.studentId}`}>
+            <div className="px-4">
+              <EyeOff className="mx-auto mb-2 h-6 w-6 text-slate-500" />
+              <p className="text-sm font-semibold text-foreground">Screen preview unavailable</p>
+              <p className="mt-1 text-xs text-muted-foreground">Screen observation is not authorized in this view.</p>
             </div>
           </div>
         ) : screenshotObservationStatus === 'paused_unobserved' ? (
@@ -679,7 +752,7 @@ function freshnessProjection(props) {
   const monitoring = props.monitoringDisplay
     || deriveStudentMonitoringDisplay(props.student, props.freshnessNowMs);
   const screenshot = deriveScreenshotDisplay(props.screenshotData, props.freshnessNowMs);
-  return `${monitoring.kind}:${monitoring.status}:${monitoring.telemetryCurrent}:${screenshot.fresh}`;
+  return `${monitoring.kind}:${monitoring.status}:${monitoring.telemetryCurrent}:${screenshot.fresh}:${screenshot.retained}`;
 }
 
 function studentTilePropsEqual(previous, next) {
