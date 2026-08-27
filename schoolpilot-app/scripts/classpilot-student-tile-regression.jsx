@@ -55,6 +55,18 @@ const SUPERVISED_STUDENT = Object.freeze({
   studentName: 'Supervised Student',
 });
 
+const PAUSED_STUDENT = Object.freeze({
+  ...ONLINE_STUDENT,
+  studentId: 'paused-student',
+  studentName: 'Paused Observation Student',
+});
+
+const PENDING_STUDENT = Object.freeze({
+  ...ONLINE_STUDENT,
+  studentId: 'pending-student',
+  studentName: 'Pending Observation Student',
+});
+
 const SCREENSHOT_DATA_URL = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="320" height="180"%3E%3Crect width="320" height="180" fill="%231d4ed8"/%3E%3C/svg%3E';
 const RECENT_HEARTBEATS = Object.freeze([
   Object.freeze({
@@ -149,7 +161,7 @@ function TileRegressionHarness() {
             monitoringDisplay={{
               kind: 'signal_lost',
               status: 'signal_lost',
-              label: 'Monitoring signal lost — cause unknown',
+              label: 'Monitoring signal lost',
               telemetryCurrent: false,
               observedAtMs,
               nextBoundaryAtMs: null,
@@ -212,6 +224,48 @@ function TileRegressionHarness() {
               tabTitle: 'Suppressed lesson',
             }}
             onReturnToClass={() => setReturnClicks((count) => count + 1)}
+          />
+        </div>
+
+        <div data-testid="paused-tile-host">
+          <StudentTile
+            student={PAUSED_STUDENT}
+            monitoringDisplay={{
+              kind: 'online',
+              status: 'online',
+              label: 'Online',
+              telemetryCurrent: true,
+              observedAtMs: Date.now(),
+              nextBoundaryAtMs: Date.now() + 60_000,
+            }}
+            screenshotObservationStatus="paused_unobserved"
+            liveStream={staleLiveStreamRef.current}
+            screenshotData={{
+              screenshot: SCREENSHOT_DATA_URL,
+              timestamp: Date.now(),
+              tabTitle: 'Must not remain visible',
+            }}
+          />
+        </div>
+
+        <div data-testid="pending-tile-host">
+          <StudentTile
+            student={PENDING_STUDENT}
+            monitoringDisplay={{
+              kind: 'online',
+              status: 'online',
+              label: 'Online',
+              telemetryCurrent: true,
+              observedAtMs: Date.now(),
+              nextBoundaryAtMs: Date.now() + 60_000,
+            }}
+            screenshotObservationStatus="pending"
+            liveStream={staleLiveStreamRef.current}
+            screenshotData={{
+              screenshot: SCREENSHOT_DATA_URL,
+              timestamp: Date.now(),
+              tabTitle: 'Cached prior context',
+            }}
           />
         </div>
       </div>}

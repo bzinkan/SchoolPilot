@@ -6,6 +6,7 @@ import {
   type CacheInvalidationTarget,
 } from "./cacheInvalidation.js";
 import { safeErrorMetadata } from "../util/safeLogging.js";
+import { correlateClasspilotSessionMessage } from "../services/classpilotSessionSubscription.js";
 
 export type WsRedisTarget =
   | { kind: "staff"; schoolId: string }
@@ -43,6 +44,12 @@ export type PublishWSBatchItem = {
   message: unknown;
   includeSource?: boolean;
 };
+
+function messageForTarget(target: WsRedisTarget, message: unknown): unknown {
+  return target.kind === "staff-session"
+    ? correlateClasspilotSessionMessage(target.sessionId, message)
+    : message;
+}
 
 export type CommandHotPathPhase =
   | "command_local_delivery"
@@ -109,6 +116,7 @@ type HotPathActivity = {
   screenshotPayloadBytes: number;
   screenshotRedisStores: number;
   screenshotMemoryFallbacks: number;
+  screenshotStoreUnavailable: number;
   commandPhases: Partial<Record<CommandHotPathPhase, {
     count: number;
     failures: number;
@@ -127,6 +135,7 @@ function emptyHotPathActivity(): HotPathActivity {
     screenshotPayloadBytes: 0,
     screenshotRedisStores: 0,
     screenshotMemoryFallbacks: 0,
+    screenshotStoreUnavailable: 0,
     commandPhases: {},
   };
 }
@@ -157,13 +166,18 @@ function flushHotPathActivity(): void {
 const hotPathLogTimer = setInterval(flushHotPathActivity, HOT_PATH_LOG_INTERVAL_MS);
 hotPathLogTimer.unref?.();
 
-export function recordScreenshotUpload(payloadBytes: number, storedInRedis: boolean): void {
+export function recordScreenshotUpload(
+  payloadBytes: number,
+  outcome: "redis" | "local_fallback" | "unavailable"
+): void {
   hotPathActivity.screenshotUploads += 1;
   hotPathActivity.screenshotPayloadBytes += Math.max(0, payloadBytes);
-  if (storedInRedis) {
+  if (outcome === "redis") {
     hotPathActivity.screenshotRedisStores += 1;
-  } else {
+  } else if (outcome === "local_fallback") {
     hotPathActivity.screenshotMemoryFallbacks += 1;
+  } else {
+    hotPathActivity.screenshotStoreUnavailable += 1;
   }
 }
 
@@ -418,7 +432,7 @@ export async function publishWS(
   const payload: WsRedisEnvelope = {
     instanceId,
     target,
-    message,
+    message: messageForTarget(target, message),
     includeSource: options.includeSource || undefined,
     orderedKey: options.orderedKey,
     revision: options.revision,
@@ -486,7 +500,7 @@ export async function publishOrderedWS(
   const payload: WsRedisEnvelope = {
     instanceId,
     target,
-    message,
+    message: messageForTarget(target, message),
     includeSource: options.includeSource || undefined,
     orderedKey: options.orderedKey,
     revision: options.revision,
@@ -539,7 +553,7 @@ export async function publishWSBatch(
     const serialized = items.map(({ target, message, includeSource }) => JSON.stringify({
       instanceId,
       target,
-      message,
+      message: messageForTarget(target, message),
       includeSource: includeSource || undefined,
     } satisfies WsRedisEnvelope));
     const pipeline = redisPublisher.multi();
@@ -685,6 +699,10 @@ export type BoundScreenshotData = ScreenshotData & ScreenshotBinding & {
   bindingVersion: string;
 };
 
+export type ScreenshotBatchReadResult =
+  | { status: "ok"; screenshots: (ScreenshotData | null)[] }
+  | { status: "unavailable" };
+
 function screenshotBindingDigest(binding: ScreenshotBinding): string {
   return createHash("sha256")
     .update(binding.schoolId)
@@ -810,41 +828,52 @@ export async function setScreenshot(
 
 export async function getScreenshot(
   binding: ScreenshotBinding
-): Promise<ScreenshotData | null> {
-  if (!redisUrl) {
-    return null; // Fallback to in-memory
-  }
-  await ensureRedisReady();
-  if (!redisEnabled || !redisPublisher) {
-    return null;
-  }
+): Promise<
+  | { status: "ok"; screenshot: ScreenshotData | null }
+  | { status: "unavailable" }
+> {
+  const batch = await getScreenshots([binding]);
+  return batch.status === "unavailable"
+    ? batch
+    : { status: "ok", screenshot: batch.screenshots[0] ?? null };
+}
 
-  try {
-    const [exactRaw, legacyRaw] = await redisPublisher.mGet([
-      screenshotBindingCacheKey(binding),
-      `${SCREENSHOT_KEY_PREFIX}${binding.deviceId}`,
-    ]);
-    const exact = decodeScreenshotData(exactRaw);
-    if (screenshotMatchesBinding(exact, binding)) return exact;
-    const legacy = decodeScreenshotData(legacyRaw);
-    return screenshotMatchesBinding(legacy, binding, { allowLegacy: true })
-      ? legacy
-      : null;
-  } catch (error) {
-    console.warn("[Screenshot] Redis get failed:", safeErrorMetadata(error));
-    return null;
+export function decodeScreenshotBatchRead(
+  bindings: readonly ScreenshotBinding[],
+  result: unknown
+): ScreenshotBatchReadResult {
+  if (!Array.isArray(result) || result.length !== bindings.length * 2) {
+    return { status: "unavailable" };
   }
+  const values = result as unknown[];
+  return {
+    status: "ok",
+    screenshots: bindings.map((binding, index) => {
+      const exact = decodeScreenshotData(values[index]);
+      if (screenshotMatchesBinding(exact, binding)) return exact;
+      const legacy = decodeScreenshotData(values[index + bindings.length]);
+      return screenshotMatchesBinding(legacy, binding, { allowLegacy: true })
+        ? legacy
+        : null;
+    }),
+  };
 }
 
 /**
- * Fetch a dashboard cohort with one Redis MGET. Missing/corrupt entries remain
- * null so the caller can use the existing per-process in-memory fallback
- * without issuing per-device Redis GETs.
+ * Fetch a dashboard cohort with one Redis MGET. A successful read keeps
+ * missing, expired, mismatched, or corrupt rows isolated as null. Transport
+ * and protocol failures are distinct so callers can retain the last known
+ * authorized preview instead of presenting a false cache miss.
  */
 export async function getScreenshots(
   bindings: readonly ScreenshotBinding[]
-): Promise<(ScreenshotData | null)[]> {
-  if (bindings.length === 0) return [];
+): Promise<ScreenshotBatchReadResult> {
+  if (bindings.length === 0) return { status: "ok", screenshots: [] };
+  if (!redisUrl) {
+    return process.env.NODE_ENV === "production" || process.env.APP_ENV === "production"
+      ? { status: "unavailable" }
+      : { status: "ok", screenshots: bindings.map(() => null) };
+  }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 250);
   timeout.unref?.();
@@ -860,21 +889,10 @@ export async function getScreenshots(
       ],
       { readyTimeoutMs: 100, signal: controller.signal }
     );
-    if (!Array.isArray(result) || result.length !== bindings.length * 2) {
-      return bindings.map(() => null);
-    }
-    const values = result as unknown[];
-    return bindings.map((binding, index) => {
-      const exact = decodeScreenshotData(values[index]);
-      if (screenshotMatchesBinding(exact, binding)) return exact;
-      const legacy = decodeScreenshotData(values[index + bindings.length]);
-      return screenshotMatchesBinding(legacy, binding, { allowLegacy: true })
-        ? legacy
-        : null;
-    });
+    return decodeScreenshotBatchRead(bindings, result);
   } catch (error) {
     console.warn("[Screenshot] Redis mGet failed:", safeErrorMetadata(error));
-    return bindings.map(() => null);
+    return { status: "unavailable" };
   } finally {
     clearTimeout(timeout);
   }

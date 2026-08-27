@@ -28,6 +28,10 @@ export interface DeviceRealtimeStatus {
     attempts: number;
     successes: number;
     alarmActive: boolean;
+    lastSuccessfulHeartbeatAt?: number;
+    screenshotPolicySource?: string;
+    screenshotPolicyAdoptedAt?: number;
+    lastCaptureAttemptAt?: number;
   };
 }
 

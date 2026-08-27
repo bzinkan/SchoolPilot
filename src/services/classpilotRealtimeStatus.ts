@@ -77,6 +77,10 @@ export type ClasspilotScreenshotHealth = {
   attempts: number;
   successes: number;
   alarmActive: boolean;
+  lastSuccessfulHeartbeatAt?: number;
+  screenshotPolicySource?: string;
+  screenshotPolicyAdoptedAt?: number;
+  lastCaptureAttemptAt?: number;
 };
 
 export type ClasspilotRealtimeClassification = {
@@ -426,7 +430,7 @@ function normalizeTabs(value: unknown): {
 function normalizeScreenshotHealth(value: unknown): ClasspilotScreenshotHealth | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const health = value as Record<string, unknown>;
-  return {
+  const normalized: ClasspilotScreenshotHealth = {
     lastSuccessAt: boundedNumber(health.lastSuccessAt),
     lastErrorAt: boundedNumber(health.lastErrorAt),
     lastError: boundedString(health.lastError, 256),
@@ -434,6 +438,15 @@ function normalizeScreenshotHealth(value: unknown): ClasspilotScreenshotHealth |
     successes: boundedNumber(health.successes, 0, 1_000_000),
     alarmActive: health.alarmActive === true,
   };
+  const lastSuccessfulHeartbeatAt = boundedNumber(health.lastSuccessfulHeartbeatAt);
+  const screenshotPolicySource = boundedString(health.screenshotPolicySource, 32);
+  const screenshotPolicyAdoptedAt = boundedNumber(health.screenshotPolicyAdoptedAt);
+  const lastCaptureAttemptAt = boundedNumber(health.lastCaptureAttemptAt);
+  if (lastSuccessfulHeartbeatAt > 0) normalized.lastSuccessfulHeartbeatAt = lastSuccessfulHeartbeatAt;
+  if (screenshotPolicySource) normalized.screenshotPolicySource = screenshotPolicySource;
+  if (screenshotPolicyAdoptedAt > 0) normalized.screenshotPolicyAdoptedAt = screenshotPolicyAdoptedAt;
+  if (lastCaptureAttemptAt > 0) normalized.lastCaptureAttemptAt = lastCaptureAttemptAt;
+  return normalized;
 }
 
 function fallbackTimestampMsOrNull(value: unknown): number | null {

@@ -3,6 +3,9 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
   MONITORING_SIGNAL_LOSS_MS,
+  MONITORING_SIGNAL_LOSS_CONFIRMED_MS,
+  MONITORING_CONFIRMATION_FRESH_MS,
+  SCREENSHOT_RECONNECT_RETAIN_MS,
   SCREENSHOT_STALE_MS,
   deriveScreenshotDisplay,
   deriveStudentMonitoringDisplay,
@@ -10,6 +13,7 @@ import {
   findNextStudentFreshnessBoundary,
   formatRelativeLastSeen,
   normalizeObservedAtForDisplay,
+  projectStudentMonitoringDisplays,
   removeStoppedLiveStream,
 } from '../src/products/classpilot/lib/studentMonitoringDisplay.js';
 import {
@@ -24,6 +28,10 @@ import {
   trackTransientCommandResponse,
   transientClassroomUiEffect,
 } from '../src/products/classpilot/lib/commandDeliveryTruth.js';
+import {
+  advanceGraceReconciliationLatch,
+  reconcileGraceCohort,
+} from '../src/products/classpilot/lib/graceReconciliation.js';
 
 const observedAt = Date.parse('2026-08-13T12:00:00.000Z');
 const monitoredStudent = (overrides = {}) => ({
@@ -42,15 +50,69 @@ const monitoredStudent = (overrides = {}) => ({
   ...overrides,
 });
 
-test('monitoring changes exactly at the 60-second local boundary without a refetch', () => {
+test('monitoring enters one grace state at 60 seconds and requires server confirmation at 90 seconds', () => {
   assert.equal(
     deriveStudentMonitoringDisplay(monitoredStudent(), observedAt + MONITORING_SIGNAL_LOSS_MS - 1).kind,
     'online',
   );
   assert.equal(
     deriveStudentMonitoringDisplay(monitoredStudent(), observedAt + MONITORING_SIGNAL_LOSS_MS).kind,
+    'reconnecting',
+  );
+  assert.equal(
+    deriveStudentMonitoringDisplay(
+      monitoredStudent(),
+      observedAt + MONITORING_SIGNAL_LOSS_CONFIRMED_MS,
+      { lastSuccessfulReconciliationAtMs: null },
+    ).kind,
+    'updates_unavailable',
+  );
+  const confirmedLost = monitoredStudent({
+    monitoringState: 'signal_lost',
+    activityFresh: false,
+    monitoringLostAt: new Date(observedAt + MONITORING_SIGNAL_LOSS_MS).toISOString(),
+  });
+  assert.equal(
+    deriveStudentMonitoringDisplay(
+      confirmedLost,
+      observedAt + MONITORING_SIGNAL_LOSS_CONFIRMED_MS,
+      { lastSuccessfulReconciliationAtMs: observedAt + MONITORING_SIGNAL_LOSS_MS },
+    ).kind,
     'signal_lost',
   );
+});
+
+test('a confirmed loss becomes updates unavailable when both realtime and reconciliation go stale', () => {
+  const confirmedLost = monitoredStudent({
+    monitoringState: 'signal_lost',
+    activityFresh: false,
+    monitoringLostAt: new Date(observedAt + MONITORING_SIGNAL_LOSS_MS).toISOString(),
+  });
+  const reconciliationAtMs = observedAt + MONITORING_SIGNAL_LOSS_MS;
+  const atConfirmation = deriveStudentMonitoringDisplay(
+    confirmedLost,
+    observedAt + MONITORING_SIGNAL_LOSS_CONFIRMED_MS,
+    { lastSuccessfulReconciliationAtMs: reconciliationAtMs, realtimeHealthy: false },
+  );
+  assert.equal(atConfirmation.kind, 'signal_lost');
+  assert.equal(
+    atConfirmation.nextBoundaryAtMs,
+    reconciliationAtMs + MONITORING_CONFIRMATION_FRESH_MS,
+  );
+
+  const afterBothPathsGoStale = deriveStudentMonitoringDisplay(
+    confirmedLost,
+    reconciliationAtMs + MONITORING_CONFIRMATION_FRESH_MS,
+    { lastSuccessfulReconciliationAtMs: reconciliationAtMs, realtimeHealthy: false },
+  );
+  assert.equal(afterBothPathsGoStale.kind, 'updates_unavailable');
+
+  const liveSubscriptionStillConfirmsNoNewHeartbeat = deriveStudentMonitoringDisplay(
+    confirmedLost,
+    reconciliationAtMs + MONITORING_CONFIRMATION_FRESH_MS + 30_000,
+    { lastSuccessfulReconciliationAtMs: reconciliationAtMs, realtimeHealthy: true },
+  );
+  assert.equal(liveSubscriptionStillConfirmsNoNewHeartbeat.kind, 'signal_lost');
 });
 
 test('signed-out and delegated rows never enter a freshness timer', () => {
@@ -124,7 +186,7 @@ test('unavailable previews preserve signed-out, delegated, and signal-loss truth
   assert.equal(delegatedPreview.warning, false);
 
   const signalLossPreview = deriveUnavailablePreview({ kind: 'signal_lost' });
-  assert.equal(signalLossPreview.reason, 'Monitoring signal lost — cause unknown');
+  assert.equal(signalLossPreview.reason, 'Monitoring signal lost');
   assert.equal(signalLossPreview.showLastObservation, true);
   assert.equal(signalLossPreview.warning, true);
 });
@@ -147,24 +209,38 @@ test('the dashboard omits the aggregate signal-loss card while student tiles ret
   assert.match(tileSource, /\{unavailablePreview\.reason\}/);
   assert.equal(
     deriveUnavailablePreview({ kind: 'signal_lost' }).reason,
-    'Monitoring signal lost — cause unknown',
+    'Monitoring signal lost',
   );
 });
 
-test('missing timestamps and explicit server loss fail closed to signal lost', () => {
+test('missing timestamps fail closed to unavailable and explicit loss still needs a confirmed boundary', () => {
   const missingTime = monitoredStudent({ realtimeObservedAt: null });
-  assert.equal(deriveStudentMonitoringDisplay(missingTime, observedAt).kind, 'signal_lost');
+  assert.equal(deriveStudentMonitoringDisplay(missingTime, observedAt).kind, 'updates_unavailable');
 
   const explicitLoss = monitoredStudent({
     monitoringState: 'signal_lost',
     activityFresh: false,
     monitoringLostAt: new Date(observedAt + 1_000).toISOString(),
   });
-  assert.equal(deriveStudentMonitoringDisplay(explicitLoss, observedAt + 2_000).kind, 'signal_lost');
+  assert.equal(deriveStudentMonitoringDisplay(explicitLoss, observedAt + 2_000).kind, 'online');
+  assert.equal(deriveStudentMonitoringDisplay(
+    explicitLoss,
+    observedAt + MONITORING_SIGNAL_LOSS_CONFIRMED_MS,
+    { lastSuccessfulReconciliationAtMs: observedAt + MONITORING_SIGNAL_LOSS_MS },
+  ).kind, 'signal_lost');
 });
 
 test('a same-binding higher-revision observation clears signal loss immediately', () => {
-  const lost = deriveStudentMonitoringDisplay(monitoredStudent(), observedAt + 60_000);
+  const lostStudent = monitoredStudent({
+    monitoringState: 'signal_lost',
+    activityFresh: false,
+    monitoringLostAt: new Date(observedAt + MONITORING_SIGNAL_LOSS_MS).toISOString(),
+  });
+  const lost = deriveStudentMonitoringDisplay(
+    lostStudent,
+    observedAt + MONITORING_SIGNAL_LOSS_CONFIRMED_MS,
+    { lastSuccessfulReconciliationAtMs: observedAt + MONITORING_SIGNAL_LOSS_MS },
+  );
   assert.equal(lost.kind, 'signal_lost');
   const recovered = monitoredStudent({
     realtimeRevision: 4,
@@ -177,6 +253,8 @@ test('screenshots become stale at 75 seconds independently of healthy URL teleme
   const screenshot = { screenshot: 'data:image/jpeg;base64,test', timestamp: observedAt };
   assert.equal(deriveScreenshotDisplay(screenshot, observedAt + SCREENSHOT_STALE_MS - 1).fresh, true);
   assert.equal(deriveScreenshotDisplay(screenshot, observedAt + SCREENSHOT_STALE_MS).fresh, false);
+  assert.equal(deriveScreenshotDisplay(screenshot, observedAt + SCREENSHOT_STALE_MS).retained, true);
+  assert.equal(deriveScreenshotDisplay(screenshot, observedAt + SCREENSHOT_RECONNECT_RETAIN_MS).retained, false);
 
   const student = monitoredStudent({ realtimeObservedAt: new Date(observedAt + 70_000).toISOString() });
   assert.equal(deriveStudentMonitoringDisplay(student, observedAt + SCREENSHOT_STALE_MS).telemetryCurrent, true);
@@ -187,15 +265,20 @@ test('a stopped WebRTC stream cannot bypass the signal-loss preview', () => {
   const current = new Map([['student-1', frozenStream]]);
   const cleared = removeStoppedLiveStream(current, 'student-1');
   const display = deriveStudentMonitoringDisplay(
-    monitoredStudent(),
-    observedAt + MONITORING_SIGNAL_LOSS_MS,
+    monitoredStudent({
+      monitoringState: 'signal_lost',
+      activityFresh: false,
+      monitoringLostAt: new Date(observedAt + MONITORING_SIGNAL_LOSS_MS).toISOString(),
+    }),
+    observedAt + MONITORING_SIGNAL_LOSS_CONFIRMED_MS,
+    { lastSuccessfulReconciliationAtMs: observedAt + MONITORING_SIGNAL_LOSS_MS },
   );
 
   assert.notEqual(cleared, current);
   assert.equal(cleared.has('student-1'), false);
   assert.equal(current.get('student-1'), frozenStream, 'state updates remain immutable');
   assert.equal(display.kind, 'signal_lost');
-  assert.equal(deriveUnavailablePreview(display).reason, 'Monitoring signal lost — cause unknown');
+  assert.equal(deriveUnavailablePreview(display).reason, 'Monitoring signal lost');
 
   const webRtcSource = readFileSync(
     new URL('../src/hooks/useWebRTC.js', import.meta.url),
@@ -223,8 +306,31 @@ test('a stopped WebRTC stream cannot bypass the signal-loss preview', () => {
   assert.match(dashboardSource, /message\.type === 'student-signed-out'[\s\S]*webrtc\.stopLiveView\(message\.studentId\)/);
   assert.match(
     dashboardSource,
-    /message\.type === 'student-signed-out'[\s\S]*pendingRealtimeEventsRef\.current = pendingRealtimeEventsRef\.current\.filter[\s\S]*setQueryData\(\['\/api\/coverage\/claimed-students'\]/,
+    /message\.type === 'student-signed-out'[\s\S]*pendingRealtimeEventsRef\.current = pendingRealtimeEventsRef\.current\.filter[\s\S]*setQueryData\(coverageQueryKey, nextCoverageSnapshot\)/,
     'signed-out tombstones must evict queued telemetry and update coverage tiles immediately',
+  );
+  const signedOutStart = dashboardSource.indexOf("if (message.type === 'student-signed-out')");
+  const signedOutEnd = dashboardSource.indexOf("if (message.type === 'session-ended')", signedOutStart);
+  const signedOutHandler = dashboardSource.slice(signedOutStart, signedOutEnd);
+  assert.ok(signedOutStart >= 0 && signedOutEnd > signedOutStart);
+  assert.ok(
+    signedOutHandler.indexOf('if (!classEligible && !coverageEligible) return;')
+      < signedOutHandler.indexOf('webrtc.stopLiveView(message.studentId)'),
+    'session/scope eligibility must be checked before a delayed sign-out stops a live view',
+  );
+  assert.ok(
+    signedOutHandler.indexOf('if (!classMutationAccepted && !coverageMutationAccepted) return;')
+      < signedOutHandler.indexOf('purgeStudentTileCaches'),
+    'binding/revision acceptance must be checked before a delayed sign-out purges pixels',
+  );
+  const safetyAlertStart = dashboardSource.indexOf("if (message.type === 'safety-alert')");
+  const screenshotEventStart = dashboardSource.indexOf("if (message.type === 'screenshot-available')", safetyAlertStart);
+  const safetyAlertHandler = dashboardSource.slice(safetyAlertStart, screenshotEventStart);
+  assert.ok(safetyAlertStart >= 0 && screenshotEventStart > safetyAlertStart);
+  assert.ok(
+    safetyAlertHandler.indexOf('if (!classRealtimeMessageEligibility(message)) return;')
+      < safetyAlertHandler.indexOf('toast({'),
+    'a delayed session-A safety alert must be rejected before it can affect session B',
   );
   assert.match(dashboardSource, /for \(const studentId of signedOutStudentIds\)[\s\S]*webrtc\.stopLiveView\(studentId\)/);
 });
@@ -242,6 +348,61 @@ test('an 800-student cohort plans one earliest timeout in O(n) semantics', () =>
     findNextStudentFreshnessBoundary(students, screenshots, observedAt),
     observedAt + MONITORING_SIGNAL_LOSS_MS,
   );
+});
+
+test('unchanged monitoring projections preserve map and per-student object identity', () => {
+  const students = [
+    monitoredStudent({ studentId: 'student-1' }),
+    monitoredStudent({ studentId: 'student-2' }),
+  ];
+  const first = projectStudentMonitoringDisplays(students, observedAt + 10_000, {
+    lastSuccessfulReconciliationAtMs: observedAt + 5_000,
+    realtimeHealthy: true,
+  });
+  const unchanged = projectStudentMonitoringDisplays(students, observedAt + 20_000, {
+    lastSuccessfulReconciliationAtMs: observedAt + 15_000,
+    realtimeHealthy: true,
+  }, first);
+  assert.equal(unchanged, first);
+  assert.equal(unchanged.get('student-1'), first.get('student-1'));
+  assert.equal(unchanged.get('student-2'), first.get('student-2'));
+
+  const oneStudentChanged = projectStudentMonitoringDisplays([
+    { ...students[0], activityState: 'idle' },
+    students[1],
+  ], observedAt + 20_000, {
+    lastSuccessfulReconciliationAtMs: observedAt + 15_000,
+    realtimeHealthy: true,
+  }, unchanged);
+  assert.notEqual(oneStudentChanged, unchanged);
+  assert.notEqual(oneStudentChanged.get('student-1'), unchanged.get('student-1'));
+  assert.equal(oneStudentChanged.get('student-2'), unchanged.get('student-2'));
+});
+
+test('800 staggered grace boundaries trigger one cohort reconciliation rather than per-tile requests', () => {
+  let latch = { scopeKey: null, cohortActive: false };
+  let refetches = 0;
+  for (let index = 0; index < 800; index += 1) {
+    const reconnecting = Array.from(
+      { length: Math.min(index + 1, 30) },
+      (_, offset) => `student-${index - offset}`,
+    );
+    latch = reconcileGraceCohort({
+      current: latch,
+      scopeKey: 'school-1:session-1',
+      reconnectingStudentIds: reconnecting,
+      refetch: () => { refetches += 1; },
+    });
+  }
+  assert.equal(refetches, 1, 'the production callback may run only once for one active grace cohort');
+
+  latch = advanceGraceReconciliationLatch(latch, 'school-1:session-1', []).latch;
+  const recoveredThenStaleAgain = advanceGraceReconciliationLatch(
+    latch,
+    'school-1:session-1',
+    ['student-1'],
+  );
+  assert.equal(recoveredThenStaleAgain.shouldRefetch, true, 'a later distinct grace cohort may reconcile once');
 });
 
 function transientResponse(index = 1) {

@@ -8998,6 +8998,7 @@ export type ClassPilotTileScopeOptions = {
   staffId: string;
   role: ClassPilotTileReadRole;
   isSuperAdmin?: boolean;
+  teachingSessionId?: string;
 };
 
 type ClassPilotTileReadOptions = ClassPilotTileScopeOptions & {
@@ -9068,8 +9069,48 @@ export function buildClassPilotTileAuthorizationQuery(
   const requestedStudents = requestedTileStudentsSql(options.schoolId, studentIds);
   const schoolWide = hasSchoolWideTileRead(options);
 
-  const authorizedStudents = schoolWide
-    ? sql`SELECT requested.student_id FROM requested_students AS requested`
+  const authorizedStudents = options.teachingSessionId
+    ? schoolWide
+      ? sql`
+          SELECT roster.student_id
+          FROM ${classpilotSessionStudents} AS roster
+          INNER JOIN ${teachingSessions} AS selected_session
+            ON selected_session.id = roster.teaching_session_id
+           AND selected_session.school_id = ${options.schoolId}
+           AND selected_session.session_mode = 'live'
+           AND selected_session.end_time IS NULL
+           AND selected_session.roster_snapshot_completed_at IS NOT NULL
+          INNER JOIN requested_students AS requested
+            ON requested.student_id = roster.student_id
+          WHERE roster.school_id = ${options.schoolId}
+            AND roster.teaching_session_id = ${options.teachingSessionId}
+        `
+      : options.role === "teacher"
+        ? sql`
+            SELECT roster.student_id
+            FROM ${classpilotSessionStudents} AS roster
+            INNER JOIN ${teachingSessions} AS selected_session
+              ON selected_session.id = roster.teaching_session_id
+             AND selected_session.school_id = ${options.schoolId}
+             AND selected_session.session_mode = 'live'
+             AND selected_session.end_time IS NULL
+             AND selected_session.roster_snapshot_completed_at IS NOT NULL
+            INNER JOIN ${classpilotSessionStaff} AS selected_staff
+              ON selected_staff.school_id = ${options.schoolId}
+             AND selected_staff.teaching_session_id = selected_session.id
+             AND selected_staff.staff_id = ${options.staffId}
+            INNER JOIN requested_students AS requested
+              ON requested.student_id = roster.student_id
+            LEFT JOIN active_supervision AS reassigned
+              ON reassigned.student_id = roster.student_id
+             AND reassigned.assigned_staff_id <> ${options.staffId}
+            WHERE roster.school_id = ${options.schoolId}
+              AND roster.teaching_session_id = ${options.teachingSessionId}
+              AND reassigned.student_id IS NULL
+          `
+        : sql`SELECT NULL::text AS student_id WHERE false`
+    : schoolWide
+      ? sql`SELECT requested.student_id FROM requested_students AS requested`
     : options.role === "office_staff"
       ? sql`
           SELECT supervision.student_id

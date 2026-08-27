@@ -180,7 +180,11 @@ import {
   classpilotKioskLaunchTicketRequestSchema,
   issueClasspilotKioskLaunchTicket,
 } from "../../services/classpilotKioskLaunchTicket.js";
-import { classpilotObservationStatus } from "../../services/classpilotObservationLease.js";
+import { resolveClasspilotScreenshotPolicy } from "../../services/classpilotScreenshotPolicy.js";
+import {
+  CLASSPILOT_SCREENSHOT_AVAILABLE_ORDERING_NAMESPACE,
+  classpilotScreenshotAvailableEvent,
+} from "../../services/classpilotScreenshotAvailability.js";
 import { classpilotScreenshotFallback } from "../../services/classpilotScreenshotFallback.js";
 import { claimClasspilotSafetyAlert } from "../../services/classpilotSafetyCooldown.js";
 import {
@@ -512,7 +516,25 @@ function parseTileStudentIds(body: unknown):
   return studentIds.length > 0 ? { ok: true, studentIds } : { ok: false };
 }
 
-function tileStaffScope(req: Request, res: Response) {
+function parseTileTeachingSessionId(body: unknown):
+  | { ok: true; teachingSessionId?: string }
+  | { ok: false } {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false };
+  }
+  const value = (body as { teachingSessionId?: unknown }).teachingSessionId;
+  if (value === undefined) return { ok: true };
+  if (typeof value !== "string") return { ok: false };
+  const teachingSessionId = value.trim();
+  if (!teachingSessionId || teachingSessionId.length > 200) return { ok: false };
+  return { ok: true, teachingSessionId };
+}
+
+function tileStaffScope(
+  req: Request,
+  res: Response,
+  teachingSessionId?: string
+) {
   return {
     schoolId: res.locals.schoolId as string,
     staffId: req.authUser!.id,
@@ -527,6 +549,7 @@ function tileStaffScope(req: Request, res: Response) {
       | "teacher"
       | "office_staff",
     isSuperAdmin: req.authUser!.isSuperAdmin,
+    ...(teachingSessionId ? { teachingSessionId } : {}),
   };
 }
 
@@ -559,6 +582,14 @@ function publicScreenshotData(data: ScreenshotData) {
     ...(data.tabUrl !== undefined ? { tabUrl: data.tabUrl } : {}),
     ...(data.tabFavicon !== undefined ? { tabFavicon: data.tabFavicon } : {}),
   };
+}
+
+function classpilotScreenshotStoreRequired(): boolean {
+  return Boolean(
+    process.env.REDIS_URL
+    || process.env.NODE_ENV === "production"
+    || process.env.APP_ENV === "production"
+  );
 }
 
 function screenshotForAuthorizedStudent(
@@ -811,10 +842,20 @@ async function publishRevisionedRealtimeUpdate(
   snapshot: ClasspilotRealtimeStatus,
   message: Record<string, unknown>,
   authority: ClasspilotRealtimeControlAuthority | undefined,
-  options: { allowEndedBinding?: boolean } = {}
+  options: {
+    allowEndedBinding?: boolean;
+    orderingNamespace?: string;
+    orderingRevision?: string;
+  } = {}
 ): Promise<void> {
-  const orderedKey = classpilotRealtimeOrderingKey(snapshot.schoolId, snapshot.deviceId);
-  const revision = String(snapshot.revision);
+  const realtimeOrderingKey = classpilotRealtimeOrderingKey(
+    snapshot.schoolId,
+    snapshot.deviceId
+  );
+  const orderedKey = options.orderingNamespace
+    ? `${realtimeOrderingKey}:${options.orderingNamespace}`
+    : realtimeOrderingKey;
+  const revision = options.orderingRevision ?? String(snapshot.revision);
   const publishToAudience = async (options: {
     target: WsRedisTarget;
     scopedOrderedKey: string;
@@ -2599,24 +2640,12 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
     const enforcementHealth = controlState
       ? effectiveClasspilotControlEnforcementHealth(controlState, extensionVersion)
       : undefined;
-    const screenshotPolicyPromise = protocol.acceptedCapabilities.includes("screenshotObservationLeaseV1")
-      ? classpilotObservationStatus({
-          schoolId,
-          teachingSessionId: controlState?.teachingSessionId,
-          studentId,
-        }).then((status) => ({
-          mode: "lease" as const,
-          observed: status.status === "observed",
-          expiresInSeconds: status.expiresInSeconds,
-          serverTime: new Date().toISOString(),
-          ...(status.status === "unavailable" ? { diagnostic: "unavailable" as const } : {}),
-        }))
-      : Promise.resolve({
-          mode: "legacy" as const,
-          observed: true,
-          expiresInSeconds: 0,
-          serverTime: new Date().toISOString(),
-        });
+    const screenshotPolicyPromise = resolveClasspilotScreenshotPolicy({
+      schoolId,
+      teachingSessionId: controlState?.teachingSessionId,
+      studentId,
+      acceptedCapabilities: protocol.acceptedCapabilities,
+    });
     const studentEmail = heartbeat.studentEmail;
     recordHeartbeatHotPathCounter("heartbeatRecorded");
 
@@ -2973,7 +3002,11 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
                   studentId,
                   studentSessionId,
                 };
-                const screenshotData = await getScreenshot(evidenceBinding);
+                const screenshotRead = await getScreenshot(evidenceBinding);
+                const screenshotStoreUnavailable = screenshotRead.status === "unavailable";
+                const screenshotData = screenshotRead.status === "ok"
+                  ? screenshotRead.screenshot
+                  : null;
                 const evidenceSelection = selectClasspilotSafetyEvidence({
                   screenshot: screenshotData,
                   binding: evidenceBinding,
@@ -2995,7 +3028,9 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
                   status: evidenceSelection.available ? "available" : "unavailable",
                   label: evidenceSelection.available
                     ? "Recent exact-tab screenshot near safety alert"
-                    : "Screenshot unavailable at safety alert",
+                    : screenshotStoreUnavailable
+                      ? "Screenshot service unavailable at safety alert"
+                      : "Screenshot unavailable at safety alert",
                   contentType: evidenceSelection.available ? "image/jpeg" : null,
                   content: evidenceScreenshot?.screenshot ?? null,
                   capturedAt: evidenceSelection.available
@@ -3003,7 +3038,9 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
                     : new Date(),
                   metadata: {
                     capturedFromExactBinding: evidenceSelection.available,
-                    unavailableReason: evidenceSelection.unavailableReason,
+                    unavailableReason: screenshotStoreUnavailable
+                      ? "screenshot_store_unavailable"
+                      : evidenceSelection.unavailableReason,
                   },
                 });
               } catch {
@@ -3277,6 +3314,8 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
       binding
     );
     let acceptedHeartbeatCapabilities = new Set<string>();
+    let screenshotRealtimeSnapshot: ClasspilotRealtimeStatus | null = null;
+    let screenshotControlAuthority: ClasspilotRealtimeControlAuthority | undefined;
     if (leaseRolloutActive || safetyCaptureRolloutActive) {
       const realtime = (await readClasspilotRealtimeStatusBatch(schoolId, [binding]))
         .get(studentId);
@@ -3289,6 +3328,7 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
           code: "SCREENSHOT_CAPABILITY_HEARTBEAT_REQUIRED",
         });
       }
+      screenshotRealtimeSnapshot = realtime.snapshot;
       acceptedHeartbeatCapabilities = new Set(
         realtime.snapshot.acceptedCapabilities || []
       );
@@ -3357,22 +3397,34 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
     }
 
     if (leaseNegotiated) {
-      const observation = await runWithTenantContext(
+      const resolvedPolicy = await runWithTenantContext(
         { schoolId },
         async () => {
           const controlState = await getClasspilotStudentControlState(schoolId, studentId);
-          return classpilotObservationStatus({
-            schoolId,
-            teachingSessionId: controlState?.teachingSessionId,
-            studentId,
-          });
+          return {
+            controlState,
+            screenshotPolicy: await resolveClasspilotScreenshotPolicy({
+              schoolId,
+              teachingSessionId: controlState?.teachingSessionId,
+              studentId,
+              acceptedCapabilities: ["screenshotObservationLeaseV1"],
+            }),
+          };
         }
       );
-      if (observation.status !== "observed") {
+      const screenshotPolicy = resolvedPolicy.screenshotPolicy;
+      screenshotControlAuthority = realtimeControlAuthority(resolvedPolicy.controlState);
+      if ("diagnostic" in screenshotPolicy && screenshotPolicy.diagnostic === "unavailable") {
+        return res.status(503).json({
+          ok: false,
+          code: "OBSERVATION_LEASE_UNAVAILABLE",
+        });
+      }
+      if (!screenshotPolicy.observed) {
         return res.status(409).json({
           ok: false,
           code: "SCREENSHOT_PAUSED_UNOBSERVED",
-          screenshotPolicy: { mode: "lease", observed: false },
+          screenshotPolicy,
         });
       }
     }
@@ -3392,13 +3444,43 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
     // The primary cache key contains the complete authority binding. Redis
     // also receives a one-TTL legacy device key for mixed API deployments.
     const stored = await setScreenshot(binding, data);
+    const screenshotStoreRequired = classpilotScreenshotStoreRequired();
+    recordScreenshotUpload(
+      typeof screenshot === "string" ? Buffer.byteLength(screenshot, "utf8") : 0,
+      stored ? "redis" : screenshotStoreRequired ? "unavailable" : "local_fallback"
+    );
+    if (!stored && screenshotStoreRequired) {
+      return res.status(503).json({
+        ok: false,
+        error: "Screenshot service unavailable",
+        code: "SCREENSHOT_STORE_UNAVAILABLE",
+      });
+    }
     if (!stored) {
       classpilotScreenshotFallback.set(binding, data);
     }
-    recordScreenshotUpload(
-      typeof screenshot === "string" ? Buffer.byteLength(screenshot, "utf8") : 0,
-      stored
-    );
+
+    if (screenshotRealtimeSnapshot && screenshotControlAuthority) {
+      const screenshotAvailable = classpilotScreenshotAvailableEvent({
+        studentId,
+        capturedAt: data.capturedAt,
+        timestamp: data.timestamp,
+      });
+      // The aggregate poll remains authoritative. This best-effort fast path
+      // revalidates the exact session/supervision binding before delivery and
+      // never delays the extension upload response or exposes device IDs.
+      void publishRevisionedRealtimeUpdate(
+        screenshotRealtimeSnapshot,
+        screenshotAvailable,
+        screenshotControlAuthority,
+        {
+          orderingNamespace: CLASSPILOT_SCREENSHOT_AVAILABLE_ORDERING_NAMESPACE,
+          orderingRevision: String(data.timestamp),
+        }
+      ).catch(() => {
+        recordHeartbeatHotPathCounter("screenshotAvailableBroadcastFailures");
+      });
+    }
 
     return res.json({ ok: true });
   } catch (err) {
@@ -3411,14 +3493,17 @@ router.post("/tiles/screenshots", ...tileReadAuth, async (req, res, next) => {
   setClassPilotNoStore(res);
   try {
     const parsed = parseTileStudentIds(req.body);
-    if (!parsed.ok) {
+    const sessionScope = parseTileTeachingSessionId(req.body);
+    if (!parsed.ok || !sessionScope.ok) {
       releaseClassPilotTileAdmission(res);
-      return res.status(400).json({ error: "studentIds must contain 1 to 50 non-empty strings" });
+      return res.status(400).json({
+        error: "studentIds must contain 1 to 50 non-empty strings and teachingSessionId must be a non-empty string when provided",
+      });
     }
     recordHeartbeatHotPathCounter("tileBatchScreenshotRequests");
     recordHeartbeatHotPathCounter("tileBatchScreenshotItems", parsed.studentIds.length);
 
-    const scope = tileStaffScope(req, res);
+    const scope = tileStaffScope(req, res, sessionScope.teachingSessionId);
     const authorizationStartedAt = Date.now();
     const accessByStudent = await runWithTenantContext(
       { schoolId: scope.schoolId },
@@ -3451,18 +3536,31 @@ router.post("/tiles/screenshots", ...tileReadAuth, async (req, res, next) => {
           }]
         : []
     );
-    const screenshots = await getScreenshots(screenshotBindings);
-    const screenshotByStudent = new Map(
-      screenshotBindings.map((binding, index) => [binding.studentId, screenshots[index] ?? null])
-    );
+    const screenshotRead = await getScreenshots(screenshotBindings);
     recordHeartbeatHotPathTiming(
       "tileBatchScreenshotRedisMs",
       Date.now() - redisStartedAt
+    );
+    if (screenshotRead.status === "unavailable") {
+      recordHeartbeatHotPathCounter("tileBatchScreenshotStoreUnavailable");
+      return res.status(503).json({
+        error: "Screenshot service unavailable",
+        code: "SCREENSHOT_STORE_UNAVAILABLE",
+      });
+    }
+    const screenshots = screenshotRead.screenshots;
+    const localFallbackAllowed = !classpilotScreenshotStoreRequired();
+    const screenshotByStudent = new Map(
+      screenshotBindings.map((binding, index) => [binding.studentId, screenshots[index] ?? null])
     );
     const screenshotFallbackItems = screenshots.filter(
       (screenshot) => screenshot === null
     ).length;
     if (screenshotFallbackItems > 0) {
+      recordHeartbeatHotPathCounter(
+        "tileBatchScreenshotMissItems",
+        screenshotFallbackItems
+      );
       recordHeartbeatHotPathCounter(
         "tileBatchScreenshotFallbackItems",
         screenshotFallbackItems
@@ -3473,7 +3571,7 @@ router.post("/tiles/screenshots", ...tileReadAuth, async (req, res, next) => {
         studentId: access.studentId,
         screenshot: screenshotForAuthorizedStudent(
           screenshotByStudent.get(access.studentId) ??
-            (access.studentSessionId
+            (localFallbackAllowed && access.studentSessionId
               ? classpilotScreenshotFallback.get({
                   schoolId: access.schoolId,
                   deviceId: access.deviceId,
@@ -3495,10 +3593,12 @@ router.post("/tiles/history", ...tileReadAuth, async (req, res, next) => {
   setClassPilotNoStore(res);
   try {
     const parsed = parseTileStudentIds(req.body);
+    const sessionScope = parseTileTeachingSessionId(req.body);
     const rawLimit = (req.body as { limit?: unknown } | undefined)?.limit;
     const limit = rawLimit === undefined ? 10 : rawLimit;
     if (
       !parsed.ok ||
+      !sessionScope.ok ||
       typeof limit !== "number" ||
       !Number.isSafeInteger(limit) ||
       limit < 1 ||
@@ -3506,13 +3606,13 @@ router.post("/tiles/history", ...tileReadAuth, async (req, res, next) => {
     ) {
       releaseClassPilotTileAdmission(res);
       return res.status(400).json({
-        error: "studentIds must contain 1 to 50 non-empty strings and limit must be an integer from 1 to 10",
+        error: "studentIds must contain 1 to 50 non-empty strings, teachingSessionId must be a non-empty string when provided, and limit must be an integer from 1 to 10",
       });
     }
     recordHeartbeatHotPathCounter("tileBatchHistoryRequests");
     recordHeartbeatHotPathCounter("tileBatchHistoryItems", parsed.studentIds.length);
 
-    const scope = tileStaffScope(req, res);
+    const scope = tileStaffScope(req, res, sessionScope.teachingSessionId);
     const authorizationStartedAt = Date.now();
     const accessByStudent = await runWithTenantContext(
       { schoolId: scope.schoolId },
@@ -3625,8 +3725,17 @@ router.get("/device/screenshot/:deviceId", ...deviceAdminAuth, async (req, res, 
           studentSessionId: authorization.value.studentSessionId,
         }
       : null;
-    let data = binding ? await getScreenshot(binding) : null;
-    if (!data && binding) {
+    const screenshotRead = binding
+      ? await getScreenshot(binding)
+      : { status: "ok" as const, screenshot: null };
+    if (screenshotRead.status === "unavailable") {
+      return res.status(503).json({
+        error: "Screenshot service unavailable",
+        code: "SCREENSHOT_STORE_UNAVAILABLE",
+      });
+    }
+    let data = screenshotRead.screenshot;
+    if (!data && binding && !classpilotScreenshotStoreRequired()) {
       data = classpilotScreenshotFallback.get(binding);
     }
 

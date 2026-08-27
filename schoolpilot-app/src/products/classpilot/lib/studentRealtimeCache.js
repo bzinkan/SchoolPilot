@@ -208,6 +208,20 @@ function sameSchool(event, schoolId) {
   return String(event.schoolId) === String(schoolId);
 }
 
+export function aggregateSnapshotHasStudent(data, studentId) {
+  if (typeof studentId !== 'string' || !studentId) return false;
+  return (rowsFrom(data) || []).some((student) => student?.studentId === studentId);
+}
+
+function sameTeachingSession(event, teachingSessionId, allowSessionlessEvents) {
+  const eventSessionId = event.teachingSessionId ?? event.sessionId;
+  // Additive rollout compatibility: older events do not carry a session. The
+  // dashboard accepts those only after the current session subscription ACKs.
+  if (!teachingSessionId) return true;
+  if (!eventSessionId) return allowSessionlessEvents === true;
+  return String(eventSessionId) === String(teachingSessionId);
+}
+
 function sameDevice(event, row) {
   // Teacher-facing v2 events are student scoped and intentionally omit raw
   // device identifiers. Keep this compatibility guard only during rollout.
@@ -355,7 +369,15 @@ function mapSignedOut(row, event) {
 
 function applyOne(rows, rawEvent, scope) {
   const event = eventBody(rawEvent);
-  if (!event || !sameSchool(event, scope?.schoolId)) return rows;
+  if (
+    !event
+    || !sameSchool(event, scope?.schoolId)
+    || !sameTeachingSession(
+      event,
+      scope?.teachingSessionId,
+      scope?.allowSessionlessEvents,
+    )
+  ) return rows;
   if (!['student-update', 'ai-classification', 'student-signed-out'].includes(event.type)) return rows;
 
   const studentId = event.studentId;

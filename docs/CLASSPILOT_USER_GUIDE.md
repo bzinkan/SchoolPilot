@@ -172,7 +172,7 @@ ClassPilot automatically tracks:
 
 **Update Frequency:** Every 10 seconds
 
-If browser telemetry stops for 60 seconds, ClassPilot replaces the cached preview with a neutral **Preview unavailable** panel. It may show the last observed time and site as historical context, but it does not present the old screenshot, URL, title, or activity classification as current. Cached screenshots are also hidden independently after 75 seconds even when URL telemetry remains current.
+If browser telemetry pauses for 60 seconds, ClassPilot enters **Updating monitoring…** while it confirms the student's status through realtime and server refresh. During this 30-second confirmation window, new commands are disabled and the last authorized screenshot may remain dimmed and timestamped for up to 120 seconds from capture. At 90 seconds, a successful server confirmation produces **Monitoring signal lost** and hides the preview. If neither realtime nor server refresh can confirm the student's state, ClassPilot instead shows **Monitoring updates unavailable** so a service outage is not mistaken for a student disconnect. One newer exact-binding heartbeat restores the normal Online or Idle presentation immediately.
 
 ### Activity Details
 

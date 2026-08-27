@@ -234,6 +234,38 @@ test('rejects wrong-school, wrong-device, and stale events', () => {
   assert.equal(applyStudentRealtimeEvents(original, events, { schoolId: 'school-1' }), original);
 });
 
+test('session-correlated events cannot cross class views and legacy events require an ACKed subscription', () => {
+  const event = {
+    type: 'student-update',
+    eventVersion: 2,
+    schoolId: 'school-1',
+    teachingSessionId: 'session-a',
+    studentId: 'student-1',
+    realtimeBinding: 'binding-a',
+    revision: 4,
+    realtimeObservedAt: '2026-08-13T12:00:04.000Z',
+    activeTabUrl: 'https://session-a.example',
+  };
+  assert.equal(applyStudentRealtimeEvents(base(), [event], {
+    schoolId: 'school-1',
+    teachingSessionId: 'session-b',
+    allowSessionlessEvents: true,
+  })[0].activeTabUrl, 'https://example.test/old');
+
+  const legacy = { ...event };
+  delete legacy.teachingSessionId;
+  assert.equal(applyStudentRealtimeEvents(base(), [legacy], {
+    schoolId: 'school-1',
+    teachingSessionId: 'session-b',
+    allowSessionlessEvents: false,
+  })[0].activeTabUrl, 'https://example.test/old');
+  assert.equal(applyStudentRealtimeEvents(base(), [legacy], {
+    schoolId: 'school-1',
+    teachingSessionId: 'session-b',
+    allowSessionlessEvents: true,
+  })[0].activeTabUrl, 'https://session-a.example');
+});
+
 test('rejects a classification for a page that is no longer active', () => {
   const original = base();
   const result = applyStudentRealtimeEvents(original, [{
@@ -327,6 +359,48 @@ test('sign-out wins over a queued active event until HTTP reconciliation', () =>
   }], { schoolId: 'school-1' });
   assert.equal(late, signedOut);
   assert.equal(late[0].loginState, 'not_logged_in');
+});
+
+test('a delayed session-A sign-out cannot mutate session B', () => {
+  const original = base();
+  const result = applyStudentRealtimeEvents(original, [{
+    type: 'student-signed-out',
+    schoolId: 'school-1',
+    teachingSessionId: 'session-a',
+    studentId: 'student-1',
+    realtimeBinding: 'binding-a',
+    revision: 99,
+  }], {
+    schoolId: 'school-1',
+    teachingSessionId: 'session-b',
+    allowSessionlessEvents: true,
+  });
+  assert.equal(result, original);
+  assert.equal(result[0].loginState, undefined);
+});
+
+test('an A-to-B-to-A switch rejects a delayed sign-out from the retired A binding', () => {
+  const returnedToA = [{
+    ...base()[0],
+    realtimeBinding: 'binding-a-new',
+    realtimeRevision: 2,
+    _retiredRealtimeBindings: ['binding-a-old'],
+  }];
+  const result = applyStudentRealtimeEvents(returnedToA, [{
+    type: 'student-signed-out',
+    eventVersion: 2,
+    schoolId: 'school-1',
+    teachingSessionId: 'session-a',
+    studentId: 'student-1',
+    realtimeBinding: 'binding-a-old',
+    revision: 100,
+  }], {
+    schoolId: 'school-1',
+    teachingSessionId: 'session-a',
+  });
+  assert.equal(result, returnedToA);
+  assert.equal(result[0].realtimeBinding, 'binding-a-new');
+  assert.equal(result[0].loginState, undefined);
 });
 
 test('coalesces a burst to the highest revision per student and event type', () => {

@@ -29,6 +29,7 @@ import {
 } from "../../util/classpilotEventCursor.js";
 import {
   CLASSPILOT_OBSERVATION_RENEW_SECONDS,
+  classpilotObservationSessionIsLive,
   releaseClasspilotObservationLease,
   renewClasspilotObservationLease,
 } from "../../services/classpilotObservationLease.js";
@@ -49,6 +50,18 @@ const deviceEventLimiter = rateLimit({
   // bound Chromebook rather than a whole school sharing one NAT address.
   keyGenerator: (_req, res) =>
     `device:${String(res.locals.schoolId || "unknown-school")}:${String(res.locals.deviceId || "unknown-device")}`,
+});
+
+const observationLeaseRenewalLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  // Do not key on viewerInstanceId: it is intentionally opaque and supplied
+  // by the tab. The immutable staff/session tuple prevents minted IDs from
+  // bypassing this bound.
+  keyGenerator: (req, res) =>
+    `observation:${String(res.locals.schoolId || "unknown-school")}:${String(req.authUser?.id || "unknown-user")}:${String(req.params.id || "unknown-session")}`,
 });
 
 const staffAuth = [
@@ -74,6 +87,24 @@ function isAdmin(req: any, res: any): boolean {
 async function authorizeSession(req: any, res: any, teachingSessionId: string): Promise<boolean> {
   if (isAdmin(req, res)) return !!(await getTeachingSessionByIdAndSchool(teachingSessionId, res.locals.schoolId));
   return isAuthorizedClasspilotSessionStaff(res.locals.schoolId, teachingSessionId, req.authUser!.id);
+}
+
+async function authorizeLiveObservationSession(
+  req: any,
+  res: any,
+  teachingSessionId: string
+): Promise<boolean> {
+  const session = await getTeachingSessionByIdAndSchool(
+    teachingSessionId,
+    res.locals.schoolId
+  );
+  if (!classpilotObservationSessionIsLive(session)) return false;
+  return isAdmin(req, res)
+    || isAuthorizedClasspilotSessionStaff(
+      res.locals.schoolId,
+      teachingSessionId,
+      req.authUser!.id
+    );
 }
 
 async function authorizeContext(req: any, res: any, contextId: string): Promise<boolean> {
@@ -237,13 +268,20 @@ router.get("/supervision-contexts/:id/events", ...staffAuth, (req, res, next) =>
   eventList(req, res, next, { kind: "supervision_context", id: String(req.params.id || "") })
 );
 
-router.put("/teaching-sessions/:id/observation-lease", ...staffAuth, async (req, res, next) => {
+router.put(
+  "/teaching-sessions/:id/observation-lease",
+  ...staffAuth,
+  observationLeaseRenewalLimiter,
+  async (req, res, next) => {
   try {
     res.set("Cache-Control", "no-store, private");
     const teachingSessionId = String(req.params.id || "");
     const schoolId = res.locals.schoolId as string;
-    if (!(await authorizeSession(req, res, teachingSessionId))) {
-      return res.status(404).json({ error: "Not found" });
+    if (!(await authorizeLiveObservationSession(req, res, teachingSessionId))) {
+      return res.status(404).json({
+        error: "Not found",
+        code: "OBSERVATION_SESSION_UNAVAILABLE",
+      });
     }
     const viewerInstanceId = typeof req.body?.viewerInstanceId === "string"
       ? req.body.viewerInstanceId.trim()
@@ -272,7 +310,10 @@ router.put("/teaching-sessions/:id/observation-lease", ...staffAuth, async (req,
       );
       const authorizedStudents = new Set(roster.map((student) => student.studentId));
       if (studentIds.some((studentId) => !authorizedStudents.has(studentId))) {
-        return res.status(404).json({ error: "Not found" });
+        return res.status(404).json({
+          error: "Not found",
+          code: "OBSERVATION_SESSION_UNAVAILABLE",
+        });
       }
       scope = { kind: "students", studentIds };
     } else {
@@ -304,16 +345,14 @@ router.put("/teaching-sessions/:id/observation-lease", ...staffAuth, async (req,
     }
     next(error);
   }
-});
+  }
+);
 
 router.delete("/teaching-sessions/:id/observation-lease", ...staffAuth, async (req, res, next) => {
   try {
     res.set("Cache-Control", "no-store, private");
     const teachingSessionId = String(req.params.id || "");
     const schoolId = res.locals.schoolId as string;
-    if (!(await authorizeSession(req, res, teachingSessionId))) {
-      return res.status(404).json({ error: "Not found" });
-    }
     const viewerInstanceId = typeof req.body?.viewerInstanceId === "string"
       ? req.body.viewerInstanceId.trim()
       : "";

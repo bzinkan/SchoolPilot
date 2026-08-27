@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback, useDeferredValue } from "react";
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, useDeferredValue } from "react";
 import { useQuery, useQueries, useMutation } from "@tanstack/react-query";
 import { useNavigate } from 'react-router-dom';
 import { Monitor, Users, Activity, Settings as SettingsIcon, LogOut, Calendar, Shield, AlertTriangle, UserCog, Plus, X, GraduationCap, WifiOff, Video, MonitorPlay, TabletSmartphone, Lock, Unlock, Layers, CheckSquare, XSquare, User, UserCheck, List, ShieldBan, Eye, EyeOff, Timer, Clock, BarChart3, Trash2, UsersRound, Filter, Hand, MessageSquareOff, MessageSquare, Send, ClipboardCheck, RefreshCw } from "lucide-react";
@@ -34,15 +34,22 @@ import { useAbsentStudents } from '../../../hooks/useAbsentStudents';
 import { isUrlAllowed } from '../../../lib/classpilot-utils';
 import {
   TILE_BATCH_QUERY_ROOTS,
-  buildTileStudentIds,
   createTileBatchRequests,
   fetchTileBatch,
   indexTileHistory,
   indexTileScreenshots,
+  retainFreshTileScreenshotsOnNull,
 } from '../lib/tileBatchPolling';
+import {
+  purgeAllScreenshotTileCaches,
+  purgeAllStudentTileCaches,
+  purgeStudentTileCaches,
+  tileBatchFailureScope,
+} from '../lib/tileCachePrivacy';
 import { createSubgroupMembersQuery } from '../lib/subgroupMembersQuery';
 import {
   applyStudentRealtimeEvents,
+  aggregateSnapshotHasStudent,
   coalesceStudentRealtimeEvents,
   deriveAggregatedStudentsPresentation,
   makeAggregatedStudentsQueryKey,
@@ -53,6 +60,7 @@ import {
   findNextStudentFreshnessBoundary,
   formatAbsoluteObservedAt,
   lastObservedDomain,
+  projectStudentMonitoringDisplays,
 } from '../lib/studentMonitoringDisplay';
 import {
   applyTransientCommandUpdate,
@@ -90,6 +98,8 @@ import {
 } from '../lib/scheduleChanges';
 import { useObservationLease } from '../hooks/useObservationLease';
 import { useTileViewport } from '../hooks/useTileViewport';
+import { classpilotReconciliationIntervalMs } from '../lib/monitoringReconciliation';
+import { reconcileGraceCohort } from '../lib/graceReconciliation';
 
 const EMPTY_LIST = Object.freeze([]);
 const EMPTY_TILE_MAP = new Map();
@@ -105,6 +115,10 @@ const EMPTY_LIVE_VIEW = Object.freeze({
   expanded: false,
 });
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
+const SESSION_SUBSCRIPTION_ACK_TIMEOUT_MS = 5_000;
+const SESSION_SUBSCRIPTION_RETRY_MS = Object.freeze([1_000, 2_000, 5_000, 10_000, 30_000]);
+const SCREENSHOT_EVENT_COALESCE_MS = 1_000;
+const SCREENSHOT_EVENT_RATE_LIMIT_MS = 5_000;
 const CLASSROOM_SELECTION_STORAGE_PREFIX = "classpilot:classroom-selection:v1";
 const classroomSelectionCache = new Map();
 
@@ -117,6 +131,20 @@ function normalizeAggregatedStudentsResponse(data) {
 function normalizedRequestId(value) {
   if (typeof value !== 'string') return null;
   return REQUEST_ID_PATTERN.test(value) ? value : null;
+}
+
+function createRealtimeRequestId(prefix = 'session') {
+  const random = globalThis.crypto?.randomUUID?.()
+    || `${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+  return `${prefix}_${String(random).replace(/[^A-Za-z0-9._-]/g, '_')}`.slice(0, 128);
+}
+
+function realtimeMessageSessionId(message) {
+  return message?.teachingSessionId
+    || message?.sessionId
+    || message?.data?.teachingSessionId
+    || message?.data?.sessionId
+    || null;
 }
 
 function requestIdFromError(error) {
@@ -397,17 +425,42 @@ export default function Dashboard() {
   const invalidateTimeoutRef = useRef(null);
   const realtimeFlushTimeoutRef = useRef(null);
   const pendingRealtimeEventsRef = useRef([]);
+  const screenshotRefetchTimeoutRef = useRef(null);
+  const lastScreenshotRefetchAtRef = useRef(0);
   const freshnessTimeoutRef = useRef(null);
+  const graceReconciliationLatchRef = useRef({ scopeKey: null, cohortActive: false });
   const commandExpiryTimeoutRef = useRef(null);
   const transientCommandOutcomesRef = useRef(new Map());
   const aggregatedStudentsQueryKeyRef = useRef(null);
   const activeSchoolIdRef = useRef(null);
   const authenticatedSchoolIdRef = useRef(null);
+  const sessionSubscriptionAckTimeoutRef = useRef(null);
+  const sessionSubscriptionRetryTimeoutRef = useRef(null);
+  const sessionSubscriptionAttemptRef = useRef(0);
+  const sessionSubscriptionGenerationRef = useRef(0);
+  const sessionSubscriptionPendingRef = useRef(null);
+  const sessionSubscriptionStateRef = useRef({ status: 'not_applicable', sessionId: null });
+  const reconciliationSeedRef = useRef(null);
+  if (!reconciliationSeedRef.current) {
+    reconciliationSeedRef.current = createRealtimeRequestId('reconcile');
+  }
   const studentViewRef = useRef(studentView);
   studentViewRef.current = studentView;
   const maxReconnectDelay = 30000;
   const [wsAuthenticated, setWsAuthenticated] = useState(false);
-  const [freshnessNowMs, setFreshnessNowMs] = useState(() => Date.now());
+  const [sessionSubscriptionState, setSessionSubscriptionState] = useState({
+    status: 'not_applicable',
+    sessionId: null,
+    errorCode: null,
+  });
+  const [tileGlobalAuthorizationDenied, setTileGlobalAuthorizationDenied] = useState(false);
+  sessionSubscriptionStateRef.current = sessionSubscriptionState;
+  const [freshnessVersion, setFreshnessVersion] = useState(0);
+  const freshnessNowMs = Date.now();
+  const [aggregateReconciliation, setAggregateReconciliation] = useState({
+    key: null,
+    succeededAtMs: null,
+  });
   const [transientCommandVersion, setTransientCommandVersion] = useState(0);
   const [transientPendingControls, setTransientPendingControls] = useState({
     timer: false,
@@ -435,6 +488,7 @@ export default function Dashboard() {
   // WebRTC hook for live video streaming
   const webrtc = useWebRTC(wsRef, handleLiveStreamStopped);
   const cleanupLiveViews = webrtc.cleanup;
+  const stopLiveView = webrtc.stopLiveView;
 
   const { data: settings } = useQuery({
     queryKey: ['/api/settings'],
@@ -652,6 +706,13 @@ export default function Dashboard() {
     () => makeAggregatedStudentsQueryKey(activeSchoolId, effectiveSessionId, adminSchoolMode),
     [activeSchoolId, adminSchoolMode, effectiveSessionId],
   );
+  const aggregatedStudentsScopeKey = JSON.stringify(aggregatedStudentsQueryKey);
+  const aggregateReconciliationIntervalMs = useMemo(
+    () => classpilotReconciliationIntervalMs(
+      `${reconciliationSeedRef.current}:${aggregatedStudentsScopeKey}`,
+    ),
+    [aggregatedStudentsScopeKey],
+  );
   const {
     data: studentsSnapshot,
     isLoading: studentsLoading,
@@ -663,16 +724,30 @@ export default function Dashboard() {
     queryKey: aggregatedStudentsQueryKey,
     // Validate before the value enters the cache. A selector error can retain
     // selected data from the prior session key and make unknown targets look known.
-    queryFn: async () => normalizeAggregatedStudentsResponse(await apiRequest(
-      'GET',
-      effectiveSessionId
-        ? `/students-aggregated?teachingSessionId=${encodeURIComponent(effectiveSessionId)}`
-        : '/students-aggregated',
-    )),
-    refetchInterval: wsAuthenticated ? false : 30000,
+    queryFn: async () => {
+      const rows = normalizeAggregatedStudentsResponse(await apiRequest(
+        'GET',
+        effectiveSessionId
+          ? `/students-aggregated?teachingSessionId=${encodeURIComponent(effectiveSessionId)}`
+          : '/students-aggregated',
+      ));
+      setAggregateReconciliation({
+        key: aggregatedStudentsScopeKey,
+        succeededAtMs: Date.now(),
+      });
+      return rows;
+    },
+    // WebSocket delivery is the fast path, never the only path. Keeping a
+    // stable per-view jitter avoids a school-wide bell-time polling herd.
+    refetchInterval: aggregateReconciliationIntervalMs,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
     staleTime: 10000,
     structuralSharing: mergeAggregatedStudents,
   });
+  const lastSuccessfulReconciliationAtMs = aggregateReconciliation.key === aggregatedStudentsScopeKey
+    ? aggregateReconciliation.succeededAtMs
+    : null;
   const {
     classStudentTargetsUnavailable,
     classStudentDataUnavailable,
@@ -685,8 +760,16 @@ export default function Dashboard() {
   });
   const students = studentsSnapshot ?? EMPTY_LIST;
   const studentsRequestId = requestIdFromError(studentsError);
+  const selectedStudentRoster = studentView === 'class'
+    ? students
+    : studentView === 'claimed'
+      ? claimedPickupStudents
+      : [
+          ...scheduledCoverageGroups.flatMap((group) => group.students || EMPTY_LIST),
+          ...availablePickupStudents,
+        ];
   const selectedStudentRow = selectedStudent
-    ? students.find((student) => student.studentId === selectedStudent.studentId) || selectedStudent
+    ? selectedStudentRoster.find((student) => student.studentId === selectedStudent.studentId) || null
     : null;
   const selectedStudentMonitoringSuppressed = isStudentMonitoringSuppressed(selectedStudentRow);
   const activeLiveViewStudent = liveViewState.studentId
@@ -700,6 +783,108 @@ export default function Dashboard() {
       .filter(Boolean)
       .sort(),
   );
+  const sessionRealtimeHealthy = Boolean(
+    effectiveSessionId
+    && sessionSubscriptionState.status === 'active'
+    && sessionSubscriptionState.sessionId === effectiveSessionId,
+  );
+  const monitoringProjectionRef = useRef({ scopeKey: null, displays: null });
+  const monitoringDisplaysByStudent = useMemo(() => {
+    const previousDisplays = monitoringProjectionRef.current.scopeKey === aggregatedStudentsScopeKey
+      ? monitoringProjectionRef.current.displays
+      : null;
+    const displays = projectStudentMonitoringDisplays(
+      students,
+      freshnessNowMs,
+      {
+        lastSuccessfulReconciliationAtMs,
+        realtimeHealthy: sessionRealtimeHealthy,
+      },
+      previousDisplays,
+    );
+    monitoringProjectionRef.current = {
+      scopeKey: aggregatedStudentsScopeKey,
+      displays,
+    };
+    return displays;
+  // freshnessVersion is the single dashboard clock tick. Date.now() itself is
+  // intentionally not a dependency because it would defeat stable tile props.
+  }, [aggregatedStudentsScopeKey, freshnessVersion, lastSuccessfulReconciliationAtMs, sessionRealtimeHealthy, students]); // eslint-disable-line react-hooks/exhaustive-deps
+  const monitoringDisplayFor = useCallback((student) => (
+    monitoringDisplaysByStudent.get(student?.studentId)
+      || deriveStudentMonitoringDisplay(student, Date.now(), {
+        lastSuccessfulReconciliationAtMs,
+        realtimeHealthy: sessionRealtimeHealthy,
+      })
+  ), [lastSuccessfulReconciliationAtMs, monitoringDisplaysByStudent, sessionRealtimeHealthy]);
+
+  useEffect(() => {
+    if (studentView !== 'class') {
+      graceReconciliationLatchRef.current = {
+        scopeKey: aggregatedStudentsScopeKey,
+        cohortActive: false,
+      };
+      return;
+    }
+    const reconnectingStudentIds = [];
+    for (const [studentId, display] of monitoringDisplaysByStudent) {
+      if (display.kind === 'reconnecting') reconnectingStudentIds.push(studentId);
+    }
+    graceReconciliationLatchRef.current = reconcileGraceCohort({
+      current: graceReconciliationLatchRef.current,
+      scopeKey: aggregatedStudentsScopeKey,
+      reconnectingStudentIds,
+      reconciliationInFlight: studentsRefreshing,
+      refetch: () => { void refetchStudents(); },
+    });
+  }, [
+    aggregatedStudentsScopeKey,
+    monitoringDisplaysByStudent,
+    refetchStudents,
+    studentView,
+    studentsRefreshing,
+  ]);
+
+  useEffect(() => {
+    if (studentView !== 'class') return;
+    setSelectedStudentIds((current) => {
+      let changed = false;
+      const next = new Set();
+      for (const studentId of current) {
+        if (monitoringDisplaysByStudent.get(studentId)?.telemetryCurrent) next.add(studentId);
+        else changed = true;
+      }
+      return changed ? next : current;
+    });
+  }, [monitoringDisplaysByStudent, studentView]);
+
+  useEffect(() => {
+    const activeStudentId = activeLiveViewStudentIdRef.current;
+    if (!activeStudentId || studentView !== 'class') return;
+    if (monitoringDisplaysByStudent.get(activeStudentId)?.telemetryCurrent) return;
+    stopLiveView(activeStudentId, wsRef.current);
+  }, [monitoringDisplaysByStudent, stopLiveView, studentView]);
+
+  useEffect(() => {
+    const reconcileVisibleDashboard = () => {
+      if (document.visibilityState === 'hidden') return;
+      setFreshnessVersion((version) => version + 1);
+      void refetchStudents();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') reconcileVisibleDashboard();
+    };
+    window.addEventListener('online', reconcileVisibleDashboard);
+    window.addEventListener('pageshow', reconcileVisibleDashboard);
+    window.addEventListener('focus', reconcileVisibleDashboard);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.removeEventListener('online', reconcileVisibleDashboard);
+      window.removeEventListener('pageshow', reconcileVisibleDashboard);
+      window.removeEventListener('focus', reconcileVisibleDashboard);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [aggregatedStudentsScopeKey, refetchStudents]);
 
   useEffect(() => {
     websocketAuthRef.current = currentUser?.id && token ? {
@@ -717,14 +902,33 @@ export default function Dashboard() {
   const selectedTeacherStartGroup = groups.find((group) => group.id === startGroupId);
   const selectedAdminStartGroup = adminTeachingGroups.find((group) => group.id === adminStartGroupId);
 
-  useEffect(() => {
-    effectiveSessionIdRef.current = effectiveSession?.id || null;
-  }, [effectiveSession?.id]);
-
-  useEffect(() => {
+  useLayoutEffect(() => {
+    // Replace every piece of event-routing context in one pre-paint step. A
+    // socket callback cannot observe session B paired with session A's cache
+    // key (or school) while an Observe/teacher context is switching.
+    effectiveSessionIdRef.current = effectiveSessionId;
     aggregatedStudentsQueryKeyRef.current = aggregatedStudentsQueryKey;
     activeSchoolIdRef.current = activeSchoolId;
-  }, [activeSchoolId, aggregatedStudentsQueryKey]);
+    pendingRealtimeEventsRef.current = [];
+    if (realtimeFlushTimeoutRef.current) {
+      clearTimeout(realtimeFlushTimeoutRef.current);
+      realtimeFlushTimeoutRef.current = null;
+    }
+  }, [activeSchoolId, aggregatedStudentsQueryKey, effectiveSessionId]);
+
+  useLayoutEffect(() => {
+    // A detail drawer is an authority-bound view. Never let a selected row or
+    // its history survive a class, school, viewer mode, view, or subgroup
+    // transition and later bind to a coincidentally matching student ID.
+    setSelectedStudent(null);
+  }, [
+    activeSchoolId,
+    currentUser?.id,
+    dashboardCapabilities.mode,
+    effectiveSessionId,
+    selectedSubgroupId,
+    studentView,
+  ]);
 
   const { data: activeClassroomStates = EMPTY_LIST } = useQuery({
     queryKey: ['/api/commands/active-state', effectiveSession?.id],
@@ -732,24 +936,6 @@ export default function Dashboard() {
     select: (data) => data?.states ?? [],
     enabled: !!effectiveSession?.id,
     refetchInterval: wsAuthenticated ? false : 30000,
-  });
-
-  const { data: urlHistory = EMPTY_LIST } = useQuery({
-    queryKey: [
-      '/api/classpilot/tiles/history',
-      'detail',
-      effectiveSessionId || 'school',
-      selectedStudentRow?.studentId,
-    ],
-    queryFn: () => {
-      return apiRequest('POST', '/classpilot/tiles/history', {
-        studentIds: [selectedStudentRow.studentId],
-        limit: 10,
-      });
-    },
-    select: (data) => data?.tiles?.[0]?.heartbeats || [],
-    enabled: Boolean(selectedStudentRow?.studentId && !selectedStudentMonitoringSuppressed),
-    gcTime: 0,
   });
 
   useEffect(() => {
@@ -904,6 +1090,38 @@ export default function Dashboard() {
     }
     reconnectAttemptsRef.current = 0;
 
+    const classRealtimeMessageEligibility = (message) => {
+      const messageSchoolId = message?.schoolId || message?.data?.schoolId;
+      if (
+        messageSchoolId
+        && String(messageSchoolId) !== String(activeSchoolIdRef.current)
+      ) return false;
+      const currentSessionId = effectiveSessionIdRef.current;
+      const messageSessionId = realtimeMessageSessionId(message);
+      // Admin school-wide has no teaching-session subscription. A delayed
+      // event from a previously observed class must not mutate that view;
+      // only genuinely school-wide/sessionless messages are eligible.
+      if (!currentSessionId) return !messageSessionId;
+      if (messageSessionId) return String(messageSessionId) === String(currentSessionId);
+      const subscription = sessionSubscriptionStateRef.current;
+      return subscription.status === 'active'
+        && String(subscription.sessionId) === String(currentSessionId)
+        && subscription.socketGeneration === generation;
+    };
+
+    const coverageRealtimeMessageEligibility = (message) => {
+      if (realtimeMessageSessionId(message)) return false;
+      const messageSchoolId = message?.schoolId || message?.data?.schoolId;
+      if (
+        messageSchoolId
+        && String(messageSchoolId) !== String(activeSchoolIdRef.current)
+      ) return false;
+      return aggregateSnapshotHasStudent(
+        queryClient.getQueryData(['/api/coverage/claimed-students']),
+        message?.studentId || message?.data?.studentId,
+      );
+    };
+
     const flushRealtimeEvents = () => {
       realtimeFlushTimeoutRef.current = null;
       if (!isCurrentGeneration()) return;
@@ -911,22 +1129,45 @@ export default function Dashboard() {
       pendingRealtimeEventsRef.current = [];
       const queryKey = aggregatedStudentsQueryKeyRef.current;
       if (queued.length === 0) return;
-      const events = coalesceStudentRealtimeEvents(queued);
-      const scope = { schoolId: activeSchoolIdRef.current };
+      const currentSessionId = effectiveSessionIdRef.current;
+      const classEvents = coalesceStudentRealtimeEvents(queued
+        .filter((entry) => (
+          entry.socketGeneration === generation
+          && String(entry.sessionContextId || '') === String(currentSessionId || '')
+          && entry.classEligible
+        ))
+        .map((entry) => entry.message));
+      const coverageEvents = coalesceStudentRealtimeEvents(queued
+        .filter((entry) => (
+          entry.socketGeneration === generation
+          && entry.coverageEligible
+        ))
+        .map((entry) => entry.message));
+      const scope = {
+        schoolId: activeSchoolIdRef.current,
+        teachingSessionId: currentSessionId,
+        allowSessionlessEvents: true,
+      };
       if (queryKey) {
-        queryClient.setQueryData(queryKey, (old) => applyStudentRealtimeEvents(old, events, scope));
+        queryClient.setQueryData(queryKey, (old) => applyStudentRealtimeEvents(old, classEvents, scope));
       }
       // Coverage telemetry is delivered to the assigned staff member, not to a
       // teaching-session subscription. Update only rows already granted by the
       // claimed-students response; socket messages can never add visibility.
       queryClient.setQueryData(['/api/coverage/claimed-students'], (old) => (
-        applyStudentRealtimeEvents(old, events, scope)
+        applyStudentRealtimeEvents(old, coverageEvents, { schoolId: scope.schoolId })
       ));
     };
 
     const queueRealtimeEvent = (message) => {
       if (!isCurrentGeneration()) return;
-      pendingRealtimeEventsRef.current.push(message);
+      pendingRealtimeEventsRef.current.push({
+        message,
+        socketGeneration: generation,
+        sessionContextId: effectiveSessionIdRef.current,
+        classEligible: classRealtimeMessageEligibility(message),
+        coverageEligible: coverageRealtimeMessageEligibility(message),
+      });
       if (realtimeFlushTimeoutRef.current) return;
       realtimeFlushTimeoutRef.current = setTimeout(flushRealtimeEvents, 100);
     };
@@ -987,6 +1228,12 @@ export default function Dashboard() {
           if (!isCurrentSocket(socket)) return;
           try {
             const message = JSON.parse(event.data);
+            if (
+              message.type === 'session-subscription-success'
+              || message.type === 'session-subscription-error'
+            ) {
+              sessionSubscriptionPendingRef.current?.handleMessage?.(message, generation);
+            }
             if (message.type === 'auth-success') {
               setWsAuthenticated(true);
               authenticatedSchoolIdRef.current = activeSchoolIdRef.current;
@@ -1069,6 +1316,7 @@ export default function Dashboard() {
               }
             }
             if (message.type === 'live-view-requested') {
+              if (!classRealtimeMessageEligibility(message)) return;
               void webrtc.handleLiveViewRequested(
                 message.studentId,
                 message.teachingSessionId,
@@ -1078,6 +1326,7 @@ export default function Dashboard() {
               });
             }
             if (message.type === 'live-view-busy' || message.type === 'live-view-unavailable') {
+              if (!classRealtimeMessageEligibility(message)) return;
               if (activeLiveViewStudentIdRef.current !== message.studentId) return;
               webrtc.stopLiveView(message.studentId);
               toast({
@@ -1089,14 +1338,16 @@ export default function Dashboard() {
               });
             }
             if (message.type === 'answer') {
+              if (!classRealtimeMessageEligibility(message)) return;
               webrtc.handleAnswer(message.from, message.sdp, message.negotiationId);
             }
             if (message.type === 'ice') {
+              if (!classRealtimeMessageEligibility(message)) return;
               webrtc.handleIceCandidate(message.from, message.candidate, message.negotiationId);
             }
             if (message.type === 'hand-raised') {
-              const eventSessionId = message.sessionId || message.data?.sessionId;
-              if (eventSessionId && effectiveSessionIdRef.current && eventSessionId !== effectiveSessionIdRef.current) return;
+              if (!classRealtimeMessageEligibility(message)) return;
+              const eventSessionId = realtimeMessageSessionId(message);
               setRaisedHands(prev => {
                 const newMap = new Map(prev);
                 newMap.set(message.data.studentId, {
@@ -1111,8 +1362,7 @@ export default function Dashboard() {
               toast({ title: "Hand Raised", description: `${message.data.studentName} is asking for help` });
             }
             if (message.type === 'hand-lowered') {
-              const eventSessionId = message.sessionId || message.data?.sessionId;
-              if (eventSessionId && effectiveSessionIdRef.current && eventSessionId !== effectiveSessionIdRef.current) return;
+              if (!classRealtimeMessageEligibility(message)) return;
               setRaisedHands(prev => {
                 const newMap = new Map(prev);
                 newMap.delete(message.data.studentId);
@@ -1120,8 +1370,7 @@ export default function Dashboard() {
               });
             }
             if (message.type === 'hand-dismissed') {
-              const eventSessionId = message.sessionId || message.data?.sessionId;
-              if (eventSessionId && effectiveSessionIdRef.current && eventSessionId !== effectiveSessionIdRef.current) return;
+              if (!classRealtimeMessageEligibility(message)) return;
               setRaisedHands(prev => {
                 const newMap = new Map(prev);
                 newMap.delete(message.studentId || message.data?.studentId);
@@ -1129,8 +1378,8 @@ export default function Dashboard() {
               });
             }
             if (message.type === 'student-message') {
-              const eventSessionId = message.sessionId || message.data?.sessionId;
-              if (eventSessionId && effectiveSessionIdRef.current && eventSessionId !== effectiveSessionIdRef.current) return;
+              if (!classRealtimeMessageEligibility(message)) return;
+              const eventSessionId = realtimeMessageSessionId(message);
               const msgId = message.data.id;
               if (dismissedMessageIds.current.has(msgId)) return;
               const newMsg = {
@@ -1154,8 +1403,7 @@ export default function Dashboard() {
               });
             }
             if (message.type === 'chat-message-delivery') {
-              const eventSessionId = message.sessionId || message.data?.sessionId;
-              if (eventSessionId && effectiveSessionIdRef.current && eventSessionId !== effectiveSessionIdRef.current) return;
+              if (!classRealtimeMessageEligibility(message)) return;
               const messageId = message.messageId || message.data?.messageId;
               if (!messageId) return;
               setChatReplies(prev => {
@@ -1174,23 +1422,55 @@ export default function Dashboard() {
               queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
             }
             if (message.type === 'student-signed-out') {
-              webrtc.stopLiveView(message.studentId);
+              const classEligible = classRealtimeMessageEligibility(message);
+              const coverageEligible = coverageRealtimeMessageEligibility(message);
+              if (!classEligible && !coverageEligible) return;
+              const scope = {
+                schoolId: activeSchoolIdRef.current,
+                teachingSessionId: effectiveSessionIdRef.current,
+                allowSessionlessEvents: classEligible,
+              };
+              const queryKey = aggregatedStudentsQueryKeyRef.current;
+              const currentClassSnapshot = classEligible && queryKey
+                ? queryClient.getQueryData(queryKey)
+                : undefined;
+              const nextClassSnapshot = classEligible && queryKey
+                ? applyStudentRealtimeEvents(currentClassSnapshot, [message], scope)
+                : currentClassSnapshot;
+              const classMutationAccepted = Boolean(
+                classEligible
+                && queryKey
+                && nextClassSnapshot !== currentClassSnapshot,
+              );
+              const coverageQueryKey = ['/api/coverage/claimed-students'];
+              const currentCoverageSnapshot = coverageEligible
+                ? queryClient.getQueryData(coverageQueryKey)
+                : undefined;
+              const nextCoverageSnapshot = coverageEligible
+                ? applyStudentRealtimeEvents(currentCoverageSnapshot, [message], {
+                    schoolId: scope.schoolId,
+                  })
+                : currentCoverageSnapshot;
+              const coverageMutationAccepted = coverageEligible
+                && nextCoverageSnapshot !== currentCoverageSnapshot;
+              if (!classMutationAccepted && !coverageMutationAccepted) return;
+              if (classMutationAccepted) webrtc.stopLiveView(message.studentId);
+              void purgeStudentTileCaches(queryClient, [message.studentId]);
               // A sign-out tombstone is terminal for the current binding. Drop
               // any older queued telemetry for the student, then apply the
-              // tombstone immediately to both classroom and coverage caches.
+              // tombstone immediately only to the independently authorized
+              // classroom and/or coverage cache.
               pendingRealtimeEventsRef.current = pendingRealtimeEventsRef.current.filter((queued) => (
-                queued.studentId !== message.studentId
+                queued.message?.studentId !== message.studentId
               ));
-              const scope = { schoolId: activeSchoolIdRef.current };
-              const queryKey = aggregatedStudentsQueryKeyRef.current;
-              if (queryKey) {
-                queryClient.setQueryData(queryKey, (old) => applyStudentRealtimeEvents(old, [message], scope));
+              if (classMutationAccepted) {
+                queryClient.setQueryData(queryKey, nextClassSnapshot);
                 queryClient.invalidateQueries({ queryKey, exact: true });
               }
-              queryClient.setQueryData(['/api/coverage/claimed-students'], (old) => (
-                applyStudentRealtimeEvents(old, [message], scope)
-              ));
-              queryClient.invalidateQueries({ queryKey: ['/api/coverage/claimed-students'], exact: true });
+              if (coverageMutationAccepted) {
+                queryClient.setQueryData(coverageQueryKey, nextCoverageSnapshot);
+                queryClient.invalidateQueries({ queryKey: coverageQueryKey, exact: true });
+              }
             }
             if (message.type === 'session-ended') {
               const endedOwnSession = Boolean(
@@ -1243,6 +1523,7 @@ export default function Dashboard() {
               }
             }
             if (message.type === 'safety-alert') {
+              if (!classRealtimeMessageEligibility(message)) return;
               toast({
                 title: "Safety Alert",
                 description: `${message.studentName || 'A student'} may need attention — ${message.classification?.reason || 'flagged content detected'}`,
@@ -1251,15 +1532,30 @@ export default function Dashboard() {
               queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
             }
             if (message.type === 'screenshot-available') {
-              // Intentionally passive. Every Chromebook emits this event, and
-              // the parent tile query already polls the complete cohort every
-              // 30 seconds; invalidation would recreate a forty-event burst.
+              if (!classRealtimeMessageEligibility(message)) return;
+              if (screenshotRefetchTimeoutRef.current) return;
+              const elapsedMs = Date.now() - lastScreenshotRefetchAtRef.current;
+              const delayMs = Math.max(
+                SCREENSHOT_EVENT_COALESCE_MS,
+                SCREENSHOT_EVENT_RATE_LIMIT_MS - elapsedMs,
+              );
+              screenshotRefetchTimeoutRef.current = setTimeout(() => {
+                screenshotRefetchTimeoutRef.current = null;
+                if (!isCurrentGeneration()) return;
+                lastScreenshotRefetchAtRef.current = Date.now();
+                void queryClient.refetchQueries({
+                  queryKey: [TILE_BATCH_QUERY_ROOTS.screenshots],
+                  exact: false,
+                  type: 'active',
+                });
+              }, delayMs);
             }
             if (message.type === 'student-event') {
+              if (!classRealtimeMessageEligibility(message)) return;
               if (message.eventType === 'blocked_domain') {
                 toast({
                   title: "Blocked Site",
-                  description: `${message.studentId} attempted to visit a blocked domain`,
+                  description: `${message.studentName || 'A student'} attempted to visit a blocked domain`,
                 });
               }
             }
@@ -1316,6 +1612,10 @@ export default function Dashboard() {
         clearTimeout(realtimeFlushTimeoutRef.current);
         realtimeFlushTimeoutRef.current = null;
       }
+      if (screenshotRefetchTimeoutRef.current) {
+        clearTimeout(screenshotRefetchTimeoutRef.current);
+        screenshotRefetchTimeoutRef.current = null;
+      }
       pendingRealtimeEventsRef.current = [];
       const socket = wsRef.current;
       if (socket && wsRef.current === socket) {
@@ -1353,16 +1653,138 @@ export default function Dashboard() {
   }, [currentUser?.id, currentUser?.role, currentUser?.schoolId, token, wsConnected, wsAuthenticated]);
 
   useEffect(() => {
-    const sessionId = effectiveSession?.id;
+    const subscriptionGeneration = sessionSubscriptionGenerationRef.current + 1;
+    sessionSubscriptionGenerationRef.current = subscriptionGeneration;
+    const sessionId = effectiveSessionId;
     const socket = wsRef.current;
-    if (!sessionId || !wsAuthenticated || !socket || socket.readyState !== WebSocket.OPEN) return undefined;
-    socket.send(JSON.stringify({ type: 'subscribe-session', sessionId }));
-    return () => {
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: 'unsubscribe-session', sessionId }));
+    const socketGeneration = websocketGenerationRef.current;
+    let stopped = false;
+
+    const clearTimers = () => {
+      if (sessionSubscriptionAckTimeoutRef.current) {
+        clearTimeout(sessionSubscriptionAckTimeoutRef.current);
+        sessionSubscriptionAckTimeoutRef.current = null;
+      }
+      if (sessionSubscriptionRetryTimeoutRef.current) {
+        clearTimeout(sessionSubscriptionRetryTimeoutRef.current);
+        sessionSubscriptionRetryTimeoutRef.current = null;
       }
     };
-  }, [effectiveSession?.id, wsAuthenticated, wsConnected]);
+    const publishState = (status, errorCode = null) => {
+      if (stopped || sessionSubscriptionGenerationRef.current !== subscriptionGeneration) return;
+      const next = { status, sessionId: sessionId || null, errorCode, socketGeneration };
+      sessionSubscriptionStateRef.current = next;
+      setSessionSubscriptionState(next);
+    };
+
+    clearTimers();
+    sessionSubscriptionPendingRef.current = null;
+    sessionSubscriptionAttemptRef.current = 0;
+
+    if (!sessionId) {
+      publishState('not_applicable');
+      return () => {
+        stopped = true;
+        clearTimers();
+      };
+    }
+    if (!wsAuthenticated || !wsConnected || !socket || socket.readyState !== WebSocket.OPEN) {
+      publishState('retrying');
+      return () => {
+        stopped = true;
+        clearTimers();
+      };
+    }
+
+    const isCurrentAttempt = () => (
+      !stopped
+      && sessionSubscriptionGenerationRef.current === subscriptionGeneration
+      && websocketGenerationRef.current === socketGeneration
+      && wsRef.current === socket
+      && effectiveSessionIdRef.current === sessionId
+    );
+    const scheduleRetry = () => {
+      if (!isCurrentAttempt()) return;
+      clearTimers();
+      sessionSubscriptionPendingRef.current = null;
+      const retryIndex = Math.min(
+        sessionSubscriptionAttemptRef.current,
+        SESSION_SUBSCRIPTION_RETRY_MS.length - 1,
+      );
+      const delayMs = SESSION_SUBSCRIPTION_RETRY_MS[retryIndex];
+      sessionSubscriptionAttemptRef.current += 1;
+      publishState('retrying');
+      sessionSubscriptionRetryTimeoutRef.current = setTimeout(sendSubscription, delayMs);
+    };
+    const sendSubscription = () => {
+      if (!isCurrentAttempt() || socket.readyState !== WebSocket.OPEN) return;
+      clearTimers();
+      const requestId = createRealtimeRequestId('subscribe');
+      publishState(sessionSubscriptionAttemptRef.current === 0 ? 'pending' : 'retrying');
+      const pending = {
+        subscriptionGeneration,
+        socketGeneration,
+        sessionId,
+        requestId,
+        handleMessage(message, messageSocketGeneration) {
+          if (!isCurrentAttempt() || messageSocketGeneration !== socketGeneration) return;
+          const acknowledgedSessionId = realtimeMessageSessionId(message);
+          if (!acknowledgedSessionId || String(acknowledgedSessionId) !== String(sessionId)) return;
+          const acknowledgedRequestId = message.requestId == null
+            ? null
+            : normalizedRequestId(message.requestId);
+          if (message.requestId != null && !acknowledgedRequestId) return;
+          // Old servers ACK by session only. New servers echo the opaque ID so
+          // a delayed A→B→A acknowledgement cannot activate the wrong request.
+          if (acknowledgedRequestId && acknowledgedRequestId !== requestId) return;
+          clearTimers();
+          sessionSubscriptionPendingRef.current = null;
+          if (message.type === 'session-subscription-success') {
+            publishState('active');
+            return;
+          }
+          const errorCode = typeof message.code === 'string'
+            ? message.code
+            : typeof message.errorCode === 'string'
+              ? message.errorCode
+              : 'SUBSCRIPTION_SERVICE_UNAVAILABLE';
+          if (
+            errorCode === 'SESSION_UNAVAILABLE'
+            || errorCode === 'SESSION_ID_REQUIRED'
+            || errorCode === 'REQUEST_ID_INVALID'
+          ) {
+            publishState('terminal_error', errorCode);
+            void queryClient.invalidateQueries({ queryKey: ['/api/sessions/active'], exact: false });
+            void queryClient.invalidateQueries({ queryKey: ['/api/sessions/all'], exact: false });
+            return;
+          }
+          scheduleRetry();
+        },
+      };
+      sessionSubscriptionPendingRef.current = pending;
+      socket.send(JSON.stringify({ type: 'subscribe-session', sessionId, requestId }));
+      sessionSubscriptionAckTimeoutRef.current = setTimeout(() => {
+        if (sessionSubscriptionPendingRef.current !== pending) return;
+        scheduleRetry();
+      }, SESSION_SUBSCRIPTION_ACK_TIMEOUT_MS);
+    };
+
+    sendSubscription();
+    return () => {
+      stopped = true;
+      clearTimers();
+      if (sessionSubscriptionPendingRef.current?.subscriptionGeneration === subscriptionGeneration) {
+        sessionSubscriptionPendingRef.current = null;
+      }
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({
+          type: 'unsubscribe-session',
+          sessionId,
+          requestId: createRealtimeRequestId('unsubscribe'),
+        }));
+      }
+    };
+  }, [effectiveSessionId, wsAuthenticated, wsConnected]);
 
   useEffect(() => {
     transientCommandOutcomesRef.current = new Map();
@@ -1427,7 +1849,10 @@ export default function Dashboard() {
 
   // Check if student is off-task
   const isStudentOffTask = (student) => {
-    if (!deriveStudentMonitoringDisplay(student, freshnessNowMs).telemetryCurrent) return false;
+    const monitoring = studentView === 'class'
+      ? monitoringDisplayFor(student)
+      : deriveStudentMonitoringDisplay(student, freshnessNowMs);
+    if (!monitoring.telemetryCurrent) return false;
     if (student.cameraActive) return true;
     if (!student.activeTabUrl) return false;
     if (student.status !== 'online') return false;
@@ -1463,18 +1888,38 @@ export default function Dashboard() {
     return nameParts[nameParts.length - 1].toLowerCase();
   };
 
-  const isStudentCommandable = (student) => !isStudentInTemporarySupervision(student) && !isStudentOwnedByAnotherClass(student);
+  const isStudentStructurallyCommandable = (student) => (
+    !isStudentInTemporarySupervision(student) && !isStudentOwnedByAnotherClass(student)
+  );
+  const isStudentCommandable = (student, { allowSafetyUnlock = false } = {}) => {
+    if (!isStudentStructurallyCommandable(student)) return false;
+    const display = studentView === 'class'
+      ? monitoringDisplayFor(student)
+      : deriveStudentMonitoringDisplay(student, freshnessNowMs);
+    return display.telemetryCurrent || (
+      allowSafetyUnlock
+      && student?.screenLocked === true
+      && studentSupportsCapability(student, 'screenOnlyUnlockV1')
+    );
+  };
 
   // Selection handlers
   const toggleStudentSelection = (studentId) => {
     const student = filteredStudents.find((row) => row.studentId === studentId);
     if (studentView === "class" && !isStudentCommandable(student)) {
+      const structurallyCommandable = isStudentStructurallyCommandable(student);
       toast({
         variant: "destructive",
-        title: isStudentInTemporarySupervision(student) ? "Student is in supervision" : "Student moved to another class",
-        description: isStudentInTemporarySupervision(student)
-          ? "Return the student to class before using ClassPilot controls."
-          : "The most recent active class session controls this student.",
+        title: structurallyCommandable
+          ? 'Monitoring is updating'
+          : isStudentInTemporarySupervision(student)
+            ? "Student is in supervision"
+            : "Student moved to another class",
+        description: structurallyCommandable
+          ? 'Wait for current monitoring to recover before targeting this student.'
+          : isStudentInTemporarySupervision(student)
+            ? "Return the student to class before using ClassPilot controls."
+            : "The most recent active class session controls this student.",
       });
       return;
     }
@@ -1685,10 +2130,105 @@ export default function Dashboard() {
     return studentIds.length > 0 ? { kind: 'students', studentIds } : null;
   }, [observationStudentIdsKey, selectedSubgroupId, studentView]);
   const observationLeaseStatus = useObservationLease({
-    enabled: studentView !== 'available' && Boolean(effectiveSession?.id),
+    // The only deployed observation lease is frozen-teaching-session scoped.
+    // Claimed coverage may be authorized by a separate supervision context,
+    // so it stays telemetry-only until a supervision observation lease exists.
+    enabled: studentView === 'class' && Boolean(effectiveSession?.id),
     teachingSessionId: effectiveSession?.id,
     scope: observationScope,
   });
+  const tileScreenshotObservationStatus = studentView === 'claimed'
+    ? 'denied'
+    : observationLeaseStatus;
+  useEffect(() => {
+    if (
+      tileScreenshotObservationStatus !== 'pending'
+      && tileScreenshotObservationStatus !== 'denied'
+      && tileScreenshotObservationStatus !== 'paused_unobserved'
+    ) return;
+    cleanupLiveViews();
+  }, [cleanupLiveViews, tileScreenshotObservationStatus]);
+  const detailHistoryTeachingSessionId = studentView === 'class'
+    ? effectiveSessionId
+    : null;
+  const selectedStudentDisplay = selectedStudentRow
+    ? monitoringDisplayFor(selectedStudentRow)
+    : null;
+  const selectedStudentHistoryRevoked = Boolean(
+    selectedStudentMonitoringSuppressed
+    || tileGlobalAuthorizationDenied
+    || observationLeaseStatus === 'denied'
+    || observationLeaseStatus === 'paused_unobserved'
+    || ['signed_out', 'delegated'].includes(selectedStudentDisplay?.kind),
+  );
+  const detailHistoryQueryKey = [
+    TILE_BATCH_QUERY_ROOTS.history,
+    'detail',
+    activeSchoolId || 'no-school',
+    currentUser?.id || 'no-viewer',
+    dashboardCapabilities.mode,
+    studentView,
+    detailHistoryTeachingSessionId || 'no-session',
+    selectedStudentRow?.studentId || 'no-student',
+    selectedStudentRow?.realtimeBinding || 'no-binding',
+  ];
+  const {
+    data: urlHistorySnapshot = EMPTY_LIST,
+    isError: detailHistoryError,
+    error: detailHistoryErrorValue,
+  } = useQuery({
+    queryKey: detailHistoryQueryKey,
+    queryFn: () => apiRequest('POST', '/classpilot/tiles/history', {
+      studentIds: [selectedStudentRow.studentId],
+      limit: 10,
+      ...(detailHistoryTeachingSessionId
+        ? { teachingSessionId: detailHistoryTeachingSessionId }
+        : {}),
+    }),
+    select: (data) => data?.tiles?.[0]?.heartbeats || [],
+    enabled: Boolean(
+      selectedStudentRow?.studentId
+      && !selectedStudentHistoryRevoked
+      && !tileGlobalAuthorizationDenied
+      && studentView !== 'available'
+      && (studentView !== 'class' || detailHistoryTeachingSessionId || adminSchoolMode)
+    ),
+    retry: false,
+    gcTime: 0,
+  });
+  const detailHistoryFailureScope = detailHistoryError
+    ? tileBatchFailureScope(detailHistoryErrorValue)
+    : 'transient';
+  const detailHistoryHardDenied = detailHistoryFailureScope !== 'transient';
+  const urlHistory = selectedStudentHistoryRevoked || detailHistoryHardDenied
+    ? EMPTY_LIST
+    : urlHistorySnapshot;
+  useEffect(() => {
+    if (!selectedStudentRow?.studentId) return;
+    if (!selectedStudentHistoryRevoked && !detailHistoryHardDenied) return;
+    if (detailHistoryFailureScope === 'global') {
+      setTileGlobalAuthorizationDenied(true);
+      void purgeAllStudentTileCaches(queryClient);
+    } else {
+      void purgeStudentTileCaches(queryClient, [selectedStudentRow.studentId]);
+    }
+  }, [
+    detailHistoryFailureScope,
+    detailHistoryHardDenied,
+    selectedStudentHistoryRevoked,
+    selectedStudentRow?.studentId,
+  ]);
+  useEffect(() => {
+    if (
+      observationLeaseStatus !== 'denied'
+      && observationLeaseStatus !== 'paused_unobserved'
+    ) return;
+    void purgeAllStudentTileCaches(queryClient);
+  }, [observationLeaseStatus]);
+  useEffect(() => {
+    if (studentView !== 'claimed') return;
+    void purgeAllScreenshotTileCaches(queryClient);
+  }, [studentView]);
   const {
     supported: viewportTrackingSupported,
     nearViewportStudentIds,
@@ -1702,18 +2242,44 @@ export default function Dashboard() {
     : filteredStudents;
   const monitorableTileStudents = tileStudents.filter((student) => (
     !isStudentMonitoringSuppressed(student)
+    && !['signed_out', 'delegated'].includes(monitoringDisplayFor(student).kind)
   ));
-  const tileStudentIdsKey = JSON.stringify(buildTileStudentIds(
-    studentView === "available" ? EMPTY_LIST : monitorableTileStudents
-  ));
+  const tileStudentBindingsKey = JSON.stringify(
+    (studentView === 'available' ? EMPTY_LIST : monitorableTileStudents)
+      .map((student) => ({
+        studentId: student.studentId,
+        realtimeBinding: student.realtimeBinding || '',
+      }))
+      .sort((left, right) => left.studentId.localeCompare(right.studentId)),
+  );
+  const tileBatchContext = useMemo(() => ({
+    schoolId: activeSchoolId || '',
+    viewerId: currentUser?.id || '',
+    authority: `${dashboardCapabilities.mode}:${studentView}`,
+    teachingSessionId: studentView === 'class' ? effectiveSessionId || '' : '',
+  }), [activeSchoolId, currentUser?.id, dashboardCapabilities.mode, effectiveSessionId, studentView]);
+  const tileBatchContextKey = JSON.stringify(tileBatchContext);
+  useLayoutEffect(() => {
+    setTileGlobalAuthorizationDenied(false);
+  }, [tileBatchContextKey]);
   const tileBatchRequests = useMemo(
-    () => createTileBatchRequests(JSON.parse(tileStudentIdsKey)),
-    [tileStudentIdsKey]
+    () => createTileBatchRequests(JSON.parse(tileStudentBindingsKey), tileBatchContext),
+    [tileBatchContext, tileStudentBindingsKey]
   );
   const [screenshotTileRequests, historyTileRequests] = useMemo(() => [
     tileBatchRequests.filter((request) => request.kind === 'screenshots'),
     tileBatchRequests.filter((request) => request.kind === 'history'),
   ], [tileBatchRequests]);
+  const observationReadsAllowed = observationLeaseStatus === 'observed'
+    || observationLeaseStatus === 'legacy'
+    || observationLeaseStatus === 'error';
+  const screenshotTileReadsEnabled = studentView !== 'available'
+    && studentView !== 'claimed'
+    && observationReadsAllowed
+    && !tileGlobalAuthorizationDenied;
+  const historyTileReadsEnabled = studentView !== 'available'
+    && observationReadsAllowed
+    && !tileGlobalAuthorizationDenied;
   const screenshotTileQueries = useQueries({
     queries: screenshotTileRequests.map((request) => ({
       queryKey: request.queryKey,
@@ -1724,6 +2290,12 @@ export default function Dashboard() {
       retry: false,
       staleTime: 15000,
       gcTime: 60000,
+      enabled: screenshotTileReadsEnabled,
+      structuralSharing: (previous, incoming) => retainFreshTileScreenshotsOnNull(
+        previous,
+        incoming,
+        Date.now(),
+      ),
     })),
   });
   const historyTileQueries = useQueries({
@@ -1736,16 +2308,70 @@ export default function Dashboard() {
       retry: false,
       staleTime: 15000,
       gcTime: 60000,
+      enabled: historyTileReadsEnabled,
     })),
   });
   const screenshotsByStudent = useMemo(() => {
     if (screenshotTileQueries.length === 0) return EMPTY_TILE_MAP;
     return new Map(screenshotTileQueries.flatMap((query) => [...(query.data || EMPTY_TILE_MAP)]));
   }, [screenshotTileQueries]);
+  const screenshotRefreshStateByStudent = useMemo(() => {
+    const refreshState = new Map();
+    screenshotTileRequests.forEach((request, index) => {
+      const query = screenshotTileQueries[index];
+      if (!query?.isError) return;
+      const failureScope = tileBatchFailureScope(query.error);
+      const hardDenied = failureScope !== 'transient';
+      for (const studentId of request.body.studentIds) {
+        refreshState.set(studentId, {
+          hardDenied,
+          transientUnavailable: !hardDenied,
+        });
+      }
+    });
+    return refreshState;
+  }, [screenshotTileQueries, screenshotTileRequests]);
   const historyByStudent = useMemo(() => {
     if (historyTileQueries.length === 0) return EMPTY_TILE_MAP;
     return new Map(historyTileQueries.flatMap((query) => [...(query.data || EMPTY_TILE_MAP)]));
   }, [historyTileQueries]);
+  const hardDeniedTileStudentIds = useMemo(() => {
+    const deniedIds = new Set();
+    const collectDenied = (requests, queries) => {
+      requests.forEach((request, index) => {
+        if (tileBatchFailureScope(queries[index]?.error) === 'transient') return;
+        for (const studentId of request.body.studentIds) deniedIds.add(studentId);
+      });
+    };
+    collectDenied(screenshotTileRequests, screenshotTileQueries);
+    collectDenied(historyTileRequests, historyTileQueries);
+    return deniedIds;
+  }, [historyTileQueries, historyTileRequests, screenshotTileQueries, screenshotTileRequests]);
+  const tileGlobalAuthorizationFailure = useMemo(() => (
+    [...screenshotTileQueries, ...historyTileQueries].some((query) => (
+      query?.isError && tileBatchFailureScope(query.error) === 'global'
+    ))
+  ), [historyTileQueries, screenshotTileQueries]);
+  useEffect(() => {
+    if (!tileGlobalAuthorizationFailure) return;
+    setTileGlobalAuthorizationDenied(true);
+    void purgeAllStudentTileCaches(queryClient);
+  }, [tileGlobalAuthorizationFailure]);
+  const tileCachePurgeStudentIdsKey = JSON.stringify([...new Set([
+    ...hardDeniedTileStudentIds,
+    ...((tileGlobalAuthorizationDenied || tileGlobalAuthorizationFailure)
+      ? filteredStudents.map((student) => student.studentId)
+      : EMPTY_LIST),
+    ...(['denied', 'paused_unobserved'].includes(observationLeaseStatus)
+      ? filteredStudents.map((student) => student.studentId)
+      : EMPTY_LIST),
+    ...filteredStudents
+      .filter((student) => (
+        isStudentMonitoringSuppressed(student)
+        || ['signed_out', 'delegated'].includes(monitoringDisplayFor(student).kind)
+      ))
+      .map((student) => student.studentId),
+  ])].sort());
   useEffect(() => {
     if (monitoringSuppressedStudentIdsKey === '[]') return;
     queryClient.removeQueries({
@@ -1760,11 +2386,28 @@ export default function Dashboard() {
     });
   }, [monitoringSuppressedStudentIdsKey]);
   useEffect(() => {
+    // Context and binding changes must evict inactive pixel caches instead of
+    // letting an A→B→A navigation resurrect an old authorized preview.
+    queryClient.removeQueries({
+      queryKey: [TILE_BATCH_QUERY_ROOTS.screenshots],
+      exact: false,
+      type: 'inactive',
+    });
+    queryClient.removeQueries({
+      queryKey: [TILE_BATCH_QUERY_ROOTS.history],
+      exact: false,
+      type: 'inactive',
+    });
+  }, [tileBatchContextKey, tileStudentBindingsKey]);
+  useEffect(() => {
+    void purgeStudentTileCaches(queryClient, JSON.parse(tileCachePurgeStudentIdsKey));
+  }, [tileCachePurgeStudentIdsKey]);
+  useEffect(() => {
     if (freshnessTimeoutRef.current) {
       clearTimeout(freshnessTimeoutRef.current);
       freshnessTimeoutRef.current = null;
     }
-    const now = new Date().getTime();
+    const now = Date.now();
     const freshnessStudents = studentView === 'claimed'
       ? claimedPickupStudents
       : studentView === 'available'
@@ -1776,14 +2419,15 @@ export default function Dashboard() {
     const boundary = findNextStudentFreshnessBoundary(
       freshnessStudents,
       screenshotsByStudent,
-      freshnessNowMs,
+      now,
+      studentView === 'class' ? monitoringDisplaysByStudent : null,
     );
     if (boundary === null) return undefined;
 
     freshnessTimeoutRef.current = setTimeout(() => {
       freshnessTimeoutRef.current = null;
-      setFreshnessNowMs(Date.now());
-    }, Math.max(0, boundary - now));
+      setFreshnessVersion((version) => version + 1);
+    }, Math.max(1, boundary - now + 5));
 
     return () => {
       if (freshnessTimeoutRef.current) {
@@ -1791,7 +2435,16 @@ export default function Dashboard() {
         freshnessTimeoutRef.current = null;
       }
     };
-  }, [availablePickupStudents, claimedPickupStudents, freshnessNowMs, scheduledCoverageGroups, screenshotsByStudent, studentView, students]);
+  }, [
+    availablePickupStudents,
+    claimedPickupStudents,
+    freshnessVersion,
+    monitoringDisplaysByStudent,
+    scheduledCoverageGroups,
+    screenshotsByStudent,
+    studentView,
+    students,
+  ]);
 
   const controllableStudents = filteredStudents.filter(isStudentCommandable);
   const subgroupCommandsDisabled = studentView === 'class'
@@ -1804,14 +2457,16 @@ export default function Dashboard() {
   const statsStudents = (studentView === "class" ? sessionFilteredStudents : filteredStudents)
     .filter((student) => !isStudentMonitoringSuppressed(student));
   const statsMonitoringDisplays = statsStudents.map((student) => (
-    deriveStudentMonitoringDisplay(student, freshnessNowMs)
+    studentView === 'class'
+      ? monitoringDisplayFor(student)
+      : deriveStudentMonitoringDisplay(student, freshnessNowMs)
   ));
   const onlineCount = statsMonitoringDisplays.filter((display) => display.kind === 'online').length;
   const idleCount = statsMonitoringDisplays.filter((display) => display.kind === 'idle').length;
   const offlineCount = statsMonitoringDisplays.filter((display) => display.kind === 'signed_out').length;
   const offTaskCount = statsStudents.filter(isStudentOffTask).length;
 
-  const resolveActiveCommandTarget = (overrideStudentIds = null) => {
+  const resolveActiveCommandTarget = (overrideStudentIds = null, { allowSafetyUnlock = false } = {}) => {
     if (classStudentTargetsUnavailable) {
       throw new Error('Student targets are unavailable until the class roster finishes loading.');
     }
@@ -1822,9 +2477,11 @@ export default function Dashboard() {
       mode: dashboardCapabilities.mode,
       sessionStudents: sessionFilteredStudents.map((student) => ({
         ...student,
-        commandable: isStudentCommandable(student),
+        commandable: isStudentCommandable(student, { allowSafetyUnlock }),
       })),
-      claimedStudents: claimedPickupStudents,
+      claimedStudents: claimedPickupStudents.filter((student) => (
+        isStudentCommandable(student, { allowSafetyUnlock })
+      )),
       selectedStudentIds: Array.from(selectedStudentIds),
       selectedSubgroupId: selectedSubgroupId || null,
       subgroupStudentIds: Array.from(subgroupMembers),
@@ -1832,9 +2489,9 @@ export default function Dashboard() {
     });
   };
 
-  const getActiveCommandStudents = (overrideStudentIds = null) => {
+  const getActiveCommandStudents = (overrideStudentIds = null, options = {}) => {
     try {
-      return resolveActiveCommandTarget(overrideStudentIds).targetStudents;
+      return resolveActiveCommandTarget(overrideStudentIds, options).targetStudents;
     } catch {
       return EMPTY_LIST;
     }
@@ -1854,11 +2511,17 @@ export default function Dashboard() {
   const explicitlySelectedStudents = explicitlySelectedStudentIds.length > 0
     ? getActiveCommandStudents(explicitlySelectedStudentIds)
     : EMPTY_LIST;
+  const explicitlySelectedUnlockStudents = explicitlySelectedStudentIds.length > 0
+    ? getActiveCommandStudents(explicitlySelectedStudentIds, { allowSafetyUnlock: true })
+    : EMPTY_LIST;
   const exactSelectedTargetsResolved = !screenToolbarRosterUnavailable
     && explicitlySelectedStudentIds.length > 0
     && explicitlySelectedStudents.length === explicitlySelectedStudentIds.length;
-  const selectedTargetsSupportScreenOnlyUnlock = exactSelectedTargetsResolved
-    && explicitlySelectedStudents.every((student) => studentSupportsCapability(student, 'screenOnlyUnlockV1'));
+  const exactSelectedUnlockTargetsResolved = !screenToolbarRosterUnavailable
+    && explicitlySelectedStudentIds.length > 0
+    && explicitlySelectedUnlockStudents.length === explicitlySelectedStudentIds.length;
+  const selectedTargetsSupportScreenOnlyUnlock = exactSelectedUnlockTargetsResolved
+    && explicitlySelectedUnlockStudents.every((student) => studentSupportsCapability(student, 'screenOnlyUnlockV1'));
   const activeClassName = studentView === "available"
     ? "Available"
     : studentView === "claimed"
@@ -1875,7 +2538,9 @@ export default function Dashboard() {
     : targetStudents;
   const bannerCounts = {
     connected: 0,
+    updating: 0,
     signalLost: 0,
+    updatesUnavailable: 0,
     signedOut: 0,
     inSupervision: 0,
   };
@@ -1888,7 +2553,9 @@ export default function Dashboard() {
       continue;
     }
 
-    const display = deriveStudentMonitoringDisplay(student, freshnessNowMs);
+    const display = studentView === 'class'
+      ? monitoringDisplayFor(student)
+      : deriveStudentMonitoringDisplay(student, freshnessNowMs);
     switch (display.kind) {
       case 'online':
       case 'idle':
@@ -1896,6 +2563,12 @@ export default function Dashboard() {
         break;
       case 'signal_lost':
         bannerCounts.signalLost += 1;
+        break;
+      case 'reconnecting':
+        bannerCounts.updating += 1;
+        break;
+      case 'updates_unavailable':
+        bannerCounts.updatesUnavailable += 1;
         break;
       case 'signed_out':
         bannerCounts.signedOut += 1;
@@ -1923,7 +2596,13 @@ export default function Dashboard() {
     : selectedSubgroupId
       ? `${subgroupName || "Subgroup"} - ${observedViewStudents.length} student${observedViewStudents.length === 1 ? "" : "s"}`
       : `All ${observedViewStudents.length} student${observedViewStudents.length === 1 ? "" : "s"}`;
-  const targetConnectionLabel = `${bannerCounts.connected} connected · ${bannerCounts.signalLost} signal lost · ${bannerCounts.signedOut} signed out`;
+  const targetConnectionLabel = [
+    `${bannerCounts.connected} connected`,
+    `${bannerCounts.updating} updating`,
+    `${bannerCounts.signalLost} signal lost`,
+    `${bannerCounts.updatesUnavailable} updates unavailable`,
+    `${bannerCounts.signedOut} signed out`,
+  ].join(' · ');
   const observedConnectionLabel = `${targetConnectionLabel}${bannerCounts.inSupervision > 0 ? ` · ${bannerCounts.inSupervision} in supervision` : ''}`;
   const bannerCountsKnown = classStudentCountsKnown
     && (!dashboardCapabilities.observedOtherClass || !subgroupCommandsDisabled);
@@ -1939,7 +2618,12 @@ export default function Dashboard() {
   const signOutSelectedCount = selectedSignOutStudents.length;
   const canSignOutSelectedStudents = studentView === "class" && !!effectiveSession?.id && signOutSelectedCount > 0;
   const canShowStudentWorkspace = isAdmin || (isTeacher && (activeSession || studentView !== "class"));
-  const canUseRemoteControls = dashboardCapabilities.canUseRemoteControls && !classStudentTargetsUnavailable;
+  const canUseRemoteControls = dashboardCapabilities.canUseRemoteControls
+    && !classStudentTargetsUnavailable
+    && !(
+      sessionSubscriptionState.status === 'terminal_error'
+      && sessionSubscriptionState.errorCode === 'SESSION_UNAVAILABLE'
+    );
   const selectedAvailableStudents = filteredStudents.filter((student) => selectedStudentIds.has(student.studentId));
   const availableGroupSections = (() => {
     const sections = new Map();
@@ -1973,22 +2657,42 @@ export default function Dashboard() {
     if (!dashboardCapabilities.effectiveSession?.id) {
       throw new Error("Start or select an active class session before sending classroom commands.");
     }
-    const target = resolveActiveCommandTarget(options.studentIds ?? null);
+    const allowSafetyUnlock = commandType === 'unlock-screen'
+      && Array.isArray(options.studentIds)
+      && options.studentIds.length > 0;
+    const target = resolveActiveCommandTarget(
+      options.studentIds ?? null,
+      { allowSafetyUnlock },
+    );
+    const subgroupTargetIds = new Set(selectedSubgroupId ? subgroupMembers : EMPTY_LIST);
+    const intendedRows = target.targetScope === 'subgroup'
+      ? sessionFilteredStudents.filter((student) => subgroupTargetIds.has(student.studentId))
+      : target.targetScope === 'class'
+        ? sessionFilteredStudents
+        : target.targetStudents;
+    const hasUnavailableCommandTarget = intendedRows.some((student) => (
+      isStudentStructurallyCommandable(student)
+      && !isStudentCommandable(student, { allowSafetyUnlock })
+    ));
+    const requestTargetScope = hasUnavailableCommandTarget
+      && (target.targetScope === 'class' || target.targetScope === 'subgroup')
+      ? 'students'
+      : target.targetScope;
     const request = {
       teachingSessionId: dashboardCapabilities.effectiveSession.id,
-      targetScope: target.targetScope,
+      targetScope: requestTargetScope,
       commandType,
       commandPayload,
     };
-    if (target.targetScope === 'students') request.targetStudentIds = target.targetStudentIds;
-    if (target.targetScope === 'subgroup') request.subgroupId = target.subgroupId;
+    if (requestTargetScope === 'students') request.targetStudentIds = target.targetStudentIds;
+    if (requestTargetScope === 'subgroup') request.subgroupId = target.subgroupId;
     return { request, target };
   };
 
   const manageTabsStudents = getActiveCommandStudents(manageTabsStudentIds);
   const openTabs = manageTabsStudents
     .flatMap(s => {
-      if (!deriveStudentMonitoringDisplay(s, freshnessNowMs).telemetryCurrent) return [];
+      if (!monitoringDisplayFor(s).telemetryCurrent) return [];
       if (s.allOpenTabs && s.allOpenTabs.length > 0) {
         return s.allOpenTabs
           .filter((tab) => tab.url && !tab.url.startsWith('chrome://'))
@@ -2025,7 +2729,7 @@ export default function Dashboard() {
       const studentId = student.studentId;
       if (
         isStudentMonitoringSuppressed(student)
-        || !deriveStudentMonitoringDisplay(student, freshnessNowMs).telemetryCurrent
+        || !monitoringDisplayFor(student).telemetryCurrent
         || !student.activeTabUrl
       ) {
         const keysToDelete = Array.from(notifiedViolations.current).filter(key => key.startsWith(studentId + '-'));
@@ -2050,7 +2754,7 @@ export default function Dashboard() {
         keysToDelete.forEach(key => notifiedViolations.current.delete(key));
       }
     });
-  }, [freshnessNowMs, isStudentMonitoringSuppressed, settings, students, toast]);
+  }, [freshnessNowMs, isStudentMonitoringSuppressed, monitoringDisplayFor, settings, students, toast]);
 
   useEffect(() => {
     const hasAttention = activeClassroomStates.some((state) => state.stateType === 'attention');
@@ -2596,7 +3300,7 @@ export default function Dashboard() {
 
   const handleUnlockScreen = () => {
     const command = toolbarScreenCommand('unlock-screen', selectedStudentIds);
-    if (!command || !exactSelectedTargetsResolved) {
+    if (!command || !exactSelectedUnlockTargetsResolved) {
       toast({ variant: "destructive", title: "Select students first", description: "Choose one or more students to unlock." });
       return;
     }
@@ -2949,6 +3653,31 @@ export default function Dashboard() {
   const removePollOption = (index) => { if (pollOptions.length > 2) setPollOptions(pollOptions.filter((_, i) => i !== index)); };
   const updatePollOption = (index, value) => { const newOptions = [...pollOptions]; newOptions[index] = value; setPollOptions(newOptions); };
 
+  const monitoringTransportUnavailable = studentsQueryError && !sessionRealtimeHealthy;
+  const connectionPresentation = !effectiveSessionId
+    ? monitoringTransportUnavailable
+      ? { label: 'Monitoring updates unavailable', tone: 'unavailable' }
+      : { label: 'Refreshing', tone: 'neutral' }
+    : sessionRealtimeHealthy
+      ? { label: 'Live updates', tone: 'live' }
+      : monitoringTransportUnavailable
+        ? { label: 'Monitoring updates unavailable', tone: 'unavailable' }
+        : sessionSubscriptionState.status === 'pending'
+          ? { label: 'Syncing', tone: 'syncing' }
+          : { label: 'Using server refresh', tone: 'syncing' };
+  const connectionToneClasses = connectionPresentation.tone === 'live'
+    ? 'bg-green-500/15 border border-green-500/30 text-green-400'
+    : connectionPresentation.tone === 'unavailable'
+      ? 'bg-amber-500/15 border border-amber-500/30 text-amber-300'
+      : connectionPresentation.tone === 'syncing'
+        ? 'bg-amber-400/15 border border-amber-400/30 text-amber-300'
+        : 'bg-slate-600/30 border border-slate-500/30 text-slate-300';
+  const connectionDotClasses = connectionPresentation.tone === 'live'
+    ? 'bg-green-400 animate-pulse'
+    : connectionPresentation.tone === 'unavailable' || connectionPresentation.tone === 'syncing'
+      ? 'bg-amber-400'
+      : 'bg-slate-400';
+
   return (
     <div className="min-h-screen">
       {/* Header */}
@@ -2974,9 +3703,9 @@ export default function Dashboard() {
             </div>
             {/* Center: Status badges */}
             <div className="flex items-center gap-3">
-              <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium ${wsAuthenticated ? 'bg-green-500/15 border border-green-500/30 text-green-400' : 'bg-slate-600/30 border border-slate-500/30 text-slate-400'}`} data-testid="badge-connection-status">
-                <div className={`h-2 w-2 rounded-full ${wsAuthenticated ? 'bg-green-400 animate-pulse' : 'bg-slate-500'}`} />
-                {wsAuthenticated ? 'Connected' : wsConnected ? 'Authenticating...' : 'Disconnected'}
+              <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium ${connectionToneClasses}`} data-testid="badge-connection-status">
+                <div className={`h-2 w-2 rounded-full ${connectionDotClasses}`} />
+                {connectionPresentation.label}
               </div>
               {isTeacher && activeSession && (
                 <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-amber-400/15 border border-amber-400/30 text-amber-400" data-testid="badge-active-session">
@@ -3302,7 +4031,7 @@ export default function Dashboard() {
             {dashboardCapabilities.allows('open-tab') && <Button size="sm" variant="outline" onClick={() => setShowOpenTabDialog(true)} disabled={subgroupCommandsDisabled} data-testid="button-open-tab" className="text-blue-600 dark:text-blue-400"><MonitorPlay className="h-4 w-4 mr-2" />Open URL</Button>}
             {dashboardCapabilities.allows('close-tabs') && <Button size="sm" variant="outline" onClick={() => openManageTabs(null)} disabled={subgroupCommandsDisabled} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Manage Tabs</Button>}
             {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={subgroupCommandsDisabled || !exactSelectedTargetsResolved || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={exactSelectedTargetsResolved ? 'Lock each selected student to their current domain' : 'Select one or more students to lock'} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Lock</Button>}
-            {dashboardCapabilities.allows('unlock-screen') && <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={subgroupCommandsDisabled || !selectedTargetsSupportScreenOnlyUnlock || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={!exactSelectedTargetsResolved ? 'Select one or more students to unlock' : selectedTargetsSupportScreenOnlyUnlock ? 'Unlock selected students while preserving Flight Paths and other restrictions' : 'ClassPilot extension update required for every selected student'} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />Unlock</Button>}
+            {dashboardCapabilities.allows('unlock-screen') && <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={subgroupCommandsDisabled || !selectedTargetsSupportScreenOnlyUnlock || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={!exactSelectedUnlockTargetsResolved ? 'Select one or more students to unlock' : selectedTargetsSupportScreenOnlyUnlock ? 'Unlock selected students while preserving Flight Paths and other restrictions' : 'ClassPilot extension update required for every selected student'} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />Unlock</Button>}
             {dashboardCapabilities.allows('apply-flight-path') && <Button size="sm" variant="outline" onClick={() => setShowApplyFlightPathDialog(true)} disabled={subgroupCommandsDisabled} data-testid="button-apply-flight-path" className="text-purple-600 dark:text-purple-400"><Layers className="h-4 w-4 mr-2" />Apply Flight Path</Button>}
             {studentView === "class" && <Button size="sm" variant="outline" onClick={() => setShowFlightPathViewerDialog(true)} data-testid="button-flight-path-status" className="text-purple-600 dark:text-purple-400"><Eye className="h-4 w-4 mr-2" />Flight Path Status</Button>}
             {dashboardCapabilities.allows('apply-block-list') && <Button size="sm" variant="outline" onClick={() => setShowApplyBlockListDialog(true)} disabled={subgroupCommandsDisabled} data-testid="button-apply-block-list" className="text-red-600 dark:text-red-400"><ShieldBan className="h-4 w-4 mr-2" />Apply Block List</Button>}
@@ -3357,6 +4086,19 @@ export default function Dashboard() {
           </div>
         ) : null}
 
+        {effectiveSessionId && sessionSubscriptionState.status === 'terminal_error' ? (
+          <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100" role="status" data-testid="session-subscription-error">
+            <span>
+              {sessionSubscriptionState.errorCode === 'SESSION_UNAVAILABLE'
+                ? 'This class session ended or is no longer available. Student controls remain disabled.'
+                : 'Live class updates are unavailable. The dashboard will continue using server refreshes.'}
+            </span>
+            <Button type="button" size="sm" variant="outline" onClick={() => refetchStudents()} disabled={studentsRefreshing}>
+              <RefreshCw className="mr-2 h-3.5 w-3.5" />Refresh
+            </Button>
+          </div>
+        ) : null}
+
         {studentView === 'class' && selectedSubgroupId && !subgroupSelectionReady ? (
           <div
             className={`mb-4 flex items-center justify-between gap-3 rounded-lg border px-4 py-3 text-sm ${subgroupMembersError ? 'border-red-200 bg-red-50 text-red-950 dark:border-red-900 dark:bg-red-950/30 dark:text-red-100' : 'border-blue-200 bg-blue-50 text-blue-950 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-100'}`}
@@ -3376,7 +4118,11 @@ export default function Dashboard() {
           </div>
         ) : null}
 
-        {observationLeaseStatus === 'paused_unobserved' ? (
+        {observationLeaseStatus === 'denied' ? (
+          <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-200" role="status" data-testid="screenshot-observation-denied">
+            Screen-preview authorization is no longer available for this class view. Cached previews and history were cleared.
+          </div>
+        ) : observationLeaseStatus === 'paused_unobserved' ? (
           <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-200" role="status" data-testid="screenshot-observation-paused">
             Screen previews are paused because this class view is not actively observed. Activity reporting continues from heartbeats.
           </div>
@@ -3623,7 +4369,9 @@ export default function Dashboard() {
               const supervisedElsewhere = isStudentMonitoringSuppressed(student);
               const monitoringDisplay = supervisedElsewhere
                 ? null
-                : deriveStudentMonitoringDisplay(student, freshnessNowMs);
+                : studentView === 'class'
+                  ? monitoringDisplayFor(student)
+                  : deriveStudentMonitoringDisplay(student, freshnessNowMs);
               const supervisionStaffName = student.supervisionContext?.assignedStaff?.displayName || "";
               const coverageLabel = student.supervisionState === "temporary_coverage"
                 ? `In supervision: ${[
@@ -3640,6 +4388,7 @@ export default function Dashboard() {
                 : "";
               const returnToClassPending = returnToClassMutation.isPending &&
                 returnToClassMutation.variables?.studentIds?.includes(student.studentId);
+              const screenshotRefreshState = screenshotRefreshStateByStudent.get(student.studentId);
               const dashboardReadOnly = !canUseRemoteControls;
               const tileActionsDisabled = supervisedElsewhere || dashboardReadOnly;
               const tileActionsDisabledReason = supervisedElsewhere
@@ -3657,6 +4406,18 @@ export default function Dashboard() {
                 student,
                 'liveViewNegotiationV1',
               );
+              const tileHistoryRevoked = supervisedElsewhere
+                || tileGlobalAuthorizationDenied
+                || tileGlobalAuthorizationFailure
+                || observationLeaseStatus === 'pending'
+                || observationLeaseStatus === 'denied'
+                || observationLeaseStatus === 'paused_unobserved'
+                || hardDeniedTileStudentIds.has(student.studentId)
+                || ['signed_out', 'delegated'].includes(monitoringDisplay?.kind);
+              const tileScreenshotRevoked = tileHistoryRevoked
+                || tileScreenshotObservationStatus === 'pending'
+                || tileScreenshotObservationStatus === 'denied'
+                || tileScreenshotObservationStatus === 'paused_unobserved';
               return (
                 <div
                   key={student.studentId}
@@ -3699,12 +4460,17 @@ export default function Dashboard() {
                     supervisionLabel={coverageLabel || ""}
                     onReturnToClass={supervisedElsewhere && dashboardCapabilities.ownedClassSession && activeSession ? () => handleReturnToClass(student) : undefined}
                     returnToClassPending={returnToClassPending}
-                    recentHeartbeats={supervisedElsewhere ? EMPTY_LIST : historyByStudent.get(student.studentId) || EMPTY_LIST}
-                    screenshotData={supervisedElsewhere ? null : screenshotsByStudent.get(student.studentId) || null}
+                    recentHeartbeats={tileHistoryRevoked
+                      ? EMPTY_LIST
+                      : historyByStudent.get(student.studentId) || EMPTY_LIST}
+                    screenshotData={tileScreenshotRevoked || screenshotRefreshState?.hardDenied
+                      ? null
+                      : screenshotsByStudent.get(student.studentId) || null}
+                    screenshotRefreshUnavailable={screenshotRefreshState?.transientUnavailable === true}
                     flightPaths={supervisedElsewhere ? EMPTY_LIST : flightPaths}
                     monitoringDisplay={monitoringDisplay || undefined}
                     freshnessNowMs={freshnessNowMs}
-                    screenshotObservationStatus={observationLeaseStatus}
+                    screenshotObservationStatus={tileScreenshotObservationStatus}
                     actionContextKey={`${activeSchoolId || ''}:${effectiveSession?.id || ''}:${studentView}:${selectedSubgroupId}:${canUseRemoteControls}:${dashboardCapabilities.canUseLiveView}`}
                   /> : (
                     <div className="h-[420px] rounded-lg border border-border/30 bg-muted/10" aria-hidden="true" />

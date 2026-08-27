@@ -13,6 +13,7 @@ import { credentialVersionMatches, verifyUserToken } from "../services/jwt.js";
 import errorMonitor from "../services/errorMonitor.js";
 import {
   registerWsClient,
+  getWsClient,
   closeStaffUserSocketsLocal,
   removeWsClient,
   authenticateWsClient,
@@ -113,6 +114,12 @@ import {
 import { stopActiveClasspilotLiveViewNegotiations } from "../services/classpilotLiveViewStop.js";
 import { resolveClasspilotStaffWebSocketAuthorization } from "../services/classpilotWebSocketAuthorization.js";
 import { registerCacheInvalidationHandler } from "./cacheInvalidation.js";
+import { resolveClasspilotScreenshotPolicy } from "../services/classpilotScreenshotPolicy.js";
+import {
+  beginClasspilotSessionSubscriptionMutation,
+  isCurrentClasspilotSessionSubscriptionMutation,
+  parseClasspilotSessionSubscription,
+} from "../services/classpilotSessionSubscription.js";
 
 // Ping/pong keepalive constants
 const WS_PING_INTERVAL_MS = 30_000; // 30 seconds
@@ -973,6 +980,7 @@ export function setupWebSocket(
                     schoolSettings,
                     fab,
                     studentSessionId: activeSession.id,
+                    teachingSessionId: classroomStateRow?.teachingSessionId ?? null,
                     classroomState: classroomStateRow
                       ? serializeClasspilotStudentControlState(classroomStateRow)
                       : null,
@@ -1005,6 +1013,12 @@ export function setupWebSocket(
                     studentSessionId: bootstrap.studentSessionId,
                   },
                 });
+                const screenshotPolicy = await resolveClasspilotScreenshotPolicy({
+                  schoolId,
+                  studentId: payload.studentId,
+                  teachingSessionId: bootstrap.teachingSessionId,
+                  acceptedCapabilities: protocol.acceptedCapabilities,
+                });
 
                 ws.send(JSON.stringify({
                   type: "auth-success",
@@ -1013,6 +1027,7 @@ export function setupWebSocket(
                   studentId: payload.studentId,
                   studentSessionId: bootstrap.studentSessionId,
                   ...protocol,
+                  screenshotPolicy,
                   exactBinding: classpilotControlStateExactBinding({
                     schoolId,
                     deviceId,
@@ -1281,35 +1296,118 @@ export function setupWebSocket(
           client.schoolId &&
           (client.role === "teacher" || client.role === "school_admin" || client.role === "super_admin")
         ) {
-          const sessionId = String(message.sessionId || message.teachingSessionId || "").trim();
-          if (!sessionId) {
-            ws.send(JSON.stringify({ type: "session-subscription-error", error: "sessionId required" }));
+          const parsed = parseClasspilotSessionSubscription(message);
+          if (!parsed.ok) {
+            ws.send(JSON.stringify({
+              type: "session-subscription-error",
+              code: parsed.code,
+              error: parsed.code === "REQUEST_ID_INVALID"
+                ? "Invalid request ID"
+                : "Teaching session required",
+              ...(parsed.requestId ? { requestId: parsed.requestId } : {}),
+            }));
+            return;
+          }
+          const sessionId = parsed.teachingSessionId;
+          const subscriptionMutation = beginClasspilotSessionSubscriptionMutation(client, sessionId);
+          const subscriptionMutationIsCurrent = () => {
+            const currentClient = getWsClient(ws);
+            return currentClient === client
+              && isCurrentClasspilotSessionSubscriptionMutation(currentClient, subscriptionMutation);
+          };
+
+          // Unsubscription only narrows this socket's access. It must remain
+          // available after a session ends or the staff member is reassigned;
+          // otherwise a socket that previously subscribed can be stranded on
+          // the old session fan-out after it has lost authority.
+          if (parsed.action === "unsubscribe") {
+            if (!unsubscribeWsClientFromSession(ws, sessionId)) {
+              ws.send(JSON.stringify({
+                type: "session-subscription-error",
+                teachingSessionId: sessionId,
+                sessionId,
+                code: "SUBSCRIPTION_SERVICE_UNAVAILABLE",
+                error: "Session subscription service unavailable",
+                ...(parsed.requestId ? { requestId: parsed.requestId } : {}),
+              }));
+              return;
+            }
+            ws.send(JSON.stringify({
+              type: "session-unsubscription-success",
+              teachingSessionId: sessionId,
+              sessionId,
+              ...(parsed.requestId ? { requestId: parsed.requestId } : {}),
+            }));
             return;
           }
 
-          const allowed = await runWithTenantContext({ schoolId: client.schoolId }, async () => {
-            const session = await getTeachingSessionByIdAndSchool(sessionId, client.schoolId!);
-            if (!session) return false;
-            if (client.role === "school_admin" || client.role === "super_admin") return true;
-            return isAuthorizedClasspilotSessionStaff(
-              client.schoolId!,
+          let allowed: boolean;
+          try {
+            allowed = await runWithTenantContext({ schoolId: client.schoolId }, async () => {
+              const session = await getTeachingSessionByIdAndSchool(sessionId, client.schoolId!);
+              if (
+                !session
+                || session.endTime
+                || session.sessionMode !== "live"
+                || !session.rosterSnapshotCompletedAt
+              ) return false;
+              if (client.role === "school_admin" || client.role === "super_admin") return true;
+              return isAuthorizedClasspilotSessionStaff(
+                client.schoolId!,
+                sessionId,
+                client.userId!
+              );
+            });
+          } catch (error) {
+            if (!subscriptionMutationIsCurrent()) return;
+            errorMonitor.trackError("database_connectivity", error as Error, {
+              job: "classpilotSessionSubscription",
+              messageType,
+            }, { persist: false, priority: "high" });
+            ws.send(JSON.stringify({
+              type: "session-subscription-error",
+              teachingSessionId: sessionId,
               sessionId,
-              client.userId!
-            );
-          });
+              code: "SUBSCRIPTION_SERVICE_UNAVAILABLE",
+              error: "Session subscription service unavailable",
+              ...(parsed.requestId ? { requestId: parsed.requestId } : {}),
+            }));
+            return;
+          }
+
+          // A later subscribe/unsubscribe for this session wins even if this
+          // authorization check resolves out of order.
+          if (!subscriptionMutationIsCurrent()) return;
 
           if (!allowed) {
-            ws.send(JSON.stringify({ type: "session-subscription-error", sessionId, error: "Session not found" }));
+            ws.send(JSON.stringify({
+              type: "session-subscription-error",
+              teachingSessionId: sessionId,
+              sessionId,
+              code: "SESSION_UNAVAILABLE",
+              error: "Teaching session unavailable",
+              ...(parsed.requestId ? { requestId: parsed.requestId } : {}),
+            }));
             return;
           }
 
-          if (message.type === "subscribe-session") {
-            subscribeWsClientToSession(ws, sessionId);
-            ws.send(JSON.stringify({ type: "session-subscription-success", sessionId }));
-          } else {
-            unsubscribeWsClientFromSession(ws, sessionId);
-            ws.send(JSON.stringify({ type: "session-unsubscription-success", sessionId }));
+          if (!subscribeWsClientToSession(ws, sessionId)) {
+            ws.send(JSON.stringify({
+              type: "session-subscription-error",
+              teachingSessionId: sessionId,
+              sessionId,
+              code: "SUBSCRIPTION_SERVICE_UNAVAILABLE",
+              error: "Session subscription service unavailable",
+              ...(parsed.requestId ? { requestId: parsed.requestId } : {}),
+            }));
+            return;
           }
+          ws.send(JSON.stringify({
+            type: "session-subscription-success",
+            teachingSessionId: sessionId,
+            sessionId,
+            ...(parsed.requestId ? { requestId: parsed.requestId } : {}),
+          }));
           return;
         }
 

@@ -1,4 +1,5 @@
 import { WebSocket } from "ws";
+import { correlateClasspilotSessionMessage } from "../services/classpilotSessionSubscription.js";
 
 export type WsRole = "teacher" | "office_staff" | "school_admin" | "super_admin" | "student";
 
@@ -12,6 +13,8 @@ export type WSClient = {
   authVersion?: number;
   schoolId?: string;
   subscribedSessionIds: Set<string>;
+  sessionSubscriptionEpochs: Map<string, number>;
+  sessionSubscriptionIdentityGeneration: number;
   authenticated: boolean;
   passiveAuthorizationExpiresAt?: number;
   passiveAuthorizationGeneration?: number;
@@ -71,6 +74,8 @@ export function registerWsClient(ws: WebSocket): WSClient {
     ws,
     role: "student",
     subscribedSessionIds: new Set(),
+    sessionSubscriptionEpochs: new Map(),
+    sessionSubscriptionIdentityGeneration: 0,
     authenticated: false,
   };
   wsClients.set(ws, client);
@@ -112,6 +117,8 @@ export function authenticateWsClient(
   client.passiveAuthorizationExpiresAt = undefined;
   client.passiveAuthorizationGeneration = undefined;
   client.subscribedSessionIds.clear();
+  client.sessionSubscriptionEpochs.clear();
+  client.sessionSubscriptionIdentityGeneration += 1;
 
   if (auth.role === "student") {
     addSocket(studentSocketsBySchool, auth.schoolId, ws);
@@ -242,7 +249,9 @@ export function broadcastToStaffSessionLocal(
   if (!sockets) {
     return 0;
   }
-  const messageStr = JSON.stringify(message);
+  const messageStr = JSON.stringify(
+    correlateClasspilotSessionMessage(sessionId, message)
+  );
   let sentCount = 0;
   sockets.forEach((ws) => {
     const client = wsClients.get(ws);

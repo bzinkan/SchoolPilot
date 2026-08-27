@@ -38,6 +38,9 @@ export type HeartbeatHotPathCounter =
   | "tileBatchHistoryItems"
   | "tileBatchAuthorizedItems"
   | "tileBatchScreenshotFallbackItems"
+  | "tileBatchScreenshotMissItems"
+  | "tileBatchScreenshotStoreUnavailable"
+  | "screenshotAvailableBroadcastFailures"
   | "tileBatchHistoryFallbackItems";
 
 export type HeartbeatHotPathTiming =

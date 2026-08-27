@@ -175,6 +175,40 @@ describe("ClassPilot cluster-safe realtime status", () => {
     assert.ok(Buffer.byteLength(JSON.stringify(result.snapshot), "utf8") <= CLASSPILOT_REALTIME_MAX_BYTES);
   });
 
+  it("retains only bounded, identifier-free screenshot policy health diagnostics", async () => {
+    const store = createClasspilotRealtimeStatusStore(async () => undefined, () => 1_000_000);
+    const result = await store.write(heartbeat({
+      screenshotHealth: {
+        lastSuccessAt: 900_000,
+        lastErrorAt: 0,
+        lastError: "",
+        attempts: 10,
+        successes: 9,
+        alarmActive: true,
+        lastSuccessfulHeartbeatAt: 995_000,
+        screenshotPolicySource: "websocket",
+        screenshotPolicyAdoptedAt: 996_000,
+        lastCaptureAttemptAt: 997_000,
+        deviceId: "must-not-survive",
+        studentId: "must-not-survive",
+      },
+    }));
+
+    assert.deepEqual(result.snapshot?.screenshotHealth, {
+      lastSuccessAt: 900_000,
+      lastErrorAt: 0,
+      lastError: "",
+      attempts: 10,
+      successes: 9,
+      alarmActive: true,
+      lastSuccessfulHeartbeatAt: 995_000,
+      screenshotPolicySource: "websocket",
+      screenshotPolicyAdoptedAt: 996_000,
+      lastCaptureAttemptAt: 997_000,
+    });
+    assert.doesNotMatch(JSON.stringify(result.snapshot?.screenshotHealth), /must-not-survive/);
+  });
+
   it("evicts one circular local snapshot without suppressing another student", async () => {
     const store = createClasspilotRealtimeStatusStore(async () => undefined, () => 1_000_000);
     const secondBinding = {

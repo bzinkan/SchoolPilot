@@ -1,5 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '../../../lib/queryClient';
+import {
+  normalizedObservationScope,
+  observationLeaseRenewalFailureDisposition,
+  observationLeaseResponseDisposition,
+} from '../lib/observationLeaseStatus';
 
 const RENEWAL_FALLBACK_MS = 30_000;
 const RETRY_MS = 10_000;
@@ -10,66 +15,99 @@ function viewerInstanceId() {
   return `viewer_${Date.now().toString(36)}_${random}`.slice(0, 128);
 }
 
-export function normalizedObservationScope(scope) {
-  if (scope?.kind === 'class') return { kind: 'class' };
-  if (scope?.kind !== 'students' || !Array.isArray(scope.studentIds)) return null;
-  const studentIds = [...new Set(scope.studentIds.filter(Boolean).map(String))].sort();
-  return studentIds.length > 0 && studentIds.length <= 500
-    ? { kind: 'students', studentIds }
-    : null;
-}
-
 export function useObservationLease({ enabled, teachingSessionId, scope }) {
-  const instanceIdRef = useRef(null);
-  if (!instanceIdRef.current) instanceIdRef.current = viewerInstanceId();
   const normalizedScope = useMemo(() => normalizedObservationScope(scope), [scope]);
   const scopeKey = JSON.stringify(normalizedScope);
-  const [status, setStatus] = useState('legacy');
+  const requestedSessionId = String(teachingSessionId || '');
+  const leaseContextKey = enabled && requestedSessionId && normalizedScope
+    ? `${requestedSessionId}:${scopeKey}`
+    : null;
+  const [leaseState, setLeaseState] = useState({ contextKey: null, status: 'legacy' });
+  const leaseConfigurationInvalid = enabled && (!requestedSessionId || !normalizedScope);
+  let status = 'pending';
+  if (!enabled) status = 'legacy';
+  else if (leaseConfigurationInvalid) status = 'denied';
+  else if (leaseState.contextKey === leaseContextKey) status = leaseState.status;
 
   useEffect(() => {
-    const sessionId = String(teachingSessionId || '');
-    if (!enabled || !sessionId || !normalizedScope) {
-      setStatus('legacy');
+    const sessionId = requestedSessionId;
+    if (!enabled) {
+      // Resetting the external lease state prevents A→disabled→A from
+      // reviving an observed result before the new PUT succeeds.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setLeaseState((current) => (
+        current.contextKey === null && current.status === 'legacy'
+          ? current
+          : { contextKey: null, status: 'legacy' }
+      ));
+      return undefined;
+    }
+    if (!sessionId || !normalizedScope) {
+      // Invalid enabled scopes fail private without issuing a lease request.
+      setLeaseState({ contextKey: null, status: 'denied' });
       return undefined;
     }
 
     const path = `/classpilot/teaching-sessions/${encodeURIComponent(sessionId)}/observation-lease`;
-    const viewerId = instanceIdRef.current;
     let stopped = false;
     let timer = null;
-    let controller = null;
+    let requestEpoch = 0;
+    let activeViewerId = viewerInstanceId();
+    const knownViewerIds = new Set([activeViewerId]);
     let leaseWasActive = false;
+    const setStatus = (nextStatus) => {
+      setLeaseState({ contextKey: leaseContextKey, status: nextStatus });
+    };
 
-    const clearWork = () => {
+    const clearTimer = () => {
       if (timer) clearTimeout(timer);
       timer = null;
-      controller?.abort();
-      controller = null;
     };
-    const release = () => {
-      if (!leaseWasActive) return;
-      leaseWasActive = false;
-      void apiRequest('DELETE', path, { viewerInstanceId: viewerId }).catch(() => {});
+    const deleteLease = (viewerId) => (
+      apiRequest('DELETE', path, { viewerInstanceId: viewerId }).catch(() => {})
+    );
+    const release = (viewerId = activeViewerId, force = false) => {
+      if (!force && (!leaseWasActive || viewerId !== activeViewerId)) return;
+      if (viewerId === activeViewerId) leaseWasActive = false;
+      void deleteLease(viewerId);
+    };
+    const invalidateRequest = () => {
+      requestEpoch += 1;
+      clearTimer();
     };
     const schedule = (delayMs) => {
       if (stopped) return;
       timer = setTimeout(renew, delayMs);
     };
     const renew = async () => {
-      clearWork();
+      clearTimer();
       if (stopped) return;
       if (document.visibilityState !== 'visible') {
-        release();
+        invalidateRequest();
+        release(activeViewerId, true);
         setStatus('paused_unobserved');
         return;
       }
-      controller = new AbortController();
+      const epoch = requestEpoch + 1;
+      requestEpoch = epoch;
+      const requestViewerId = activeViewerId;
       try {
         const response = await apiRequest('PUT', path, {
-          viewerInstanceId: viewerId,
+          viewerInstanceId: requestViewerId,
           scope: normalizedScope,
-        }, { signal: controller.signal });
-        if (stopped) return;
+        });
+        const disposition = observationLeaseResponseDisposition({
+          stopped,
+          requestEpoch: epoch,
+          currentEpoch: requestEpoch,
+          visibilityState: document.visibilityState,
+          requestViewerId,
+          activeViewerId,
+        });
+        if (disposition === 'release') {
+          await deleteLease(requestViewerId);
+          return;
+        }
         leaseWasActive = true;
         setStatus('observed');
         const renewSeconds = Number(response?.renewAfterSeconds);
@@ -77,21 +115,39 @@ export function useObservationLease({ enabled, teachingSessionId, scope }) {
           ? Math.min(renewSeconds * 1000, RENEWAL_FALLBACK_MS)
           : RENEWAL_FALLBACK_MS);
       } catch (error) {
-        if (stopped || error?.code === 'ERR_CANCELED') return;
-        leaseWasActive = false;
-        // A server without the additive endpoint remains on the legacy policy.
-        if (error?.response?.status === 404) setStatus('legacy');
-        else setStatus('error');
-        schedule(RETRY_MS);
-      } finally {
-        controller = null;
+        if (stopped || epoch !== requestEpoch) {
+          // The revoke path already sent an immediate DELETE. Send another
+          // after the PUT settles because the server mutation may have
+          // committed after that first DELETE reached Redis.
+          await deleteLease(requestViewerId);
+          return;
+        }
+        const failure = observationLeaseRenewalFailureDisposition(error);
+        if (!failure.releaseLease) {
+          // A transport outage does not revoke an otherwise unexpired exact-
+          // context lease. Keep it bounded by the server TTL and retry timer.
+          setStatus('error');
+          schedule(RETRY_MS);
+        } else {
+          leaseWasActive = false;
+          setStatus(failure.status);
+          // A terminal renewal denial revokes any lease previously created
+          // under this exact viewer id instead of waiting for its TTL.
+          await deleteLease(requestViewerId);
+        }
       }
     };
     const onVisibilityChange = () => {
-      clearWork();
-      if (document.visibilityState === 'visible') void renew();
+      invalidateRequest();
+      if (document.visibilityState === 'visible') {
+        activeViewerId = viewerInstanceId();
+        knownViewerIds.add(activeViewerId);
+        leaseWasActive = false;
+        setStatus('pending');
+        void renew();
+      }
       else {
-        release();
+        release(activeViewerId, true);
         setStatus('paused_unobserved');
       }
     };
@@ -103,10 +159,10 @@ export function useObservationLease({ enabled, teachingSessionId, scope }) {
     return () => {
       stopped = true;
       document.removeEventListener('visibilitychange', onVisibilityChange);
-      clearWork();
-      release();
+      invalidateRequest();
+      for (const viewerId of knownViewerIds) release(viewerId, true);
     };
-  }, [enabled, normalizedScope, scopeKey, teachingSessionId]);
+  }, [enabled, leaseContextKey, normalizedScope, requestedSessionId]);
 
   return status;
 }
