@@ -323,7 +323,11 @@ test('claimed coverage stays telemetry-only without misusing the class frozen-ro
   assert.match(dashboard, /studentView === 'claimed'[\s\S]{0,80}\? 'denied'/);
   assert.match(dashboard, /screenshotTileReadsEnabled = studentView === 'class'/);
   assert.match(dashboard, /historyTileReadsEnabled = studentView !== 'available'[\s\S]{0,80}observationReadsAllowed/);
-  assert.match(dashboard, /purgeAllScreenshotTileCaches\(queryClient\)/);
+  assert.match(
+    dashboard,
+    /if \(studentView === 'class'\) return;[\s\S]{0,300}purgeLegacyScreenshotTileCaches\(queryClient\)/,
+  );
+  assert.match(dashboard, /tileScreenshotRevoked = tileSharedPrivacyRevoked[\s\S]{0,160}studentView !== 'class'/);
 });
 
 test('A to B switches replace the complete realtime routing context before queued events can flush', async () => {

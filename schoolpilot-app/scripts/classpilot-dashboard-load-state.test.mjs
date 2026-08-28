@@ -34,7 +34,7 @@ const failure = ({ requestId, headerRequestId, status = 500 } = {}) => ({
   headerRequestId,
 });
 
-function authResponse() {
+function authResponse(role = "admin") {
   return {
     user: {
       id: ADMIN_ID,
@@ -51,7 +51,7 @@ function authResponse() {
       schoolId: SCHOOL_ID,
       schoolName: "Dashboard State School",
       schoolTimezone: "America/New_York",
-      role: "admin",
+      role,
     }],
   };
 }
@@ -166,6 +166,7 @@ async function waitUntil(predicate, message, timeoutMs = 7_500) {
 
 async function configureDashboard(page, {
   aggregate,
+  userRole = "admin",
   activeSession = null,
   allSessions = [],
   blockedDomains = [],
@@ -193,7 +194,7 @@ async function configureDashboard(page, {
       const parsed = JSON.parse(message);
       if (parsed.type !== "auth") return;
       dashboardSocket = socket;
-      assert.equal(parsed.role, "school_admin");
+      assert.equal(parsed.role, userRole === "teacher" ? "teacher" : "school_admin");
       assert.equal(parsed.userToken, "dashboard-load-state-token");
       assert.equal(Object.hasOwn(parsed, "token"), false);
     });
@@ -219,7 +220,7 @@ async function configureDashboard(page, {
     }
 
     if (pathname === "/api/auth/me") {
-      await route.fulfill({ json: authResponse() });
+      await route.fulfill({ json: authResponse(userRole) });
       return;
     }
     if (pathname === "/api/auth/csrf") {
@@ -715,6 +716,78 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     assert.equal(staleSignOutHarness.commandPosts.length, 1, "a replacement binding must not receive a delayed sign-out");
     assert.deepEqual(staleSignOutHarness.pageErrors, []);
 
+    const persistencePage = await browser.newPage();
+    pages.push(persistencePage);
+    const persistenceObservedAt = new Date(Date.now() - 500).toISOString();
+    const persistenceBindingVersion = "v2:persistent-owned-class-binding";
+    let persistenceScreenshotAvailable = true;
+    const persistenceAggregate = aggregateController({
+      school: success([]),
+      scoped: success({
+        students: [student({
+          lastSeenAt: persistenceObservedAt,
+          realtimeObservedAt: persistenceObservedAt,
+        })],
+      }),
+    });
+    const persistenceHarness = await configureDashboard(persistencePage, {
+      aggregate: persistenceAggregate,
+      userRole: "teacher",
+      activeSession: ownSession,
+      allSessions: [ownSession],
+      screenshotTiles: () => ({
+        tiles: [{
+          studentId: STUDENT_ID,
+          bindingVersion: persistenceBindingVersion,
+          screenshot: persistenceScreenshotAvailable ? {
+            screenshot: TINY_SCREENSHOT_DATA_URL,
+            timestamp: persistenceObservedAt,
+            tabTitle: "Persistent class preview",
+            tabUrl: "https://persistent.example.edu/current",
+            bindingVersion: persistenceBindingVersion,
+          } : null,
+        }],
+      }),
+    });
+    await persistencePage.goto(`${baseURL}/classpilot`);
+    const persistenceScreenshot = persistencePage.getByTestId(`screenshot-${STUDENT_ID}`);
+    await persistenceScreenshot.waitFor();
+    persistenceScreenshotAvailable = false;
+
+    for (let cycle = 0; cycle < 20; cycle += 1) {
+      const hiddenViewTestId = cycle % 2 === 0
+        ? "button-view-available-students"
+        : "button-view-claimed-students";
+      await persistencePage.getByTestId(hiddenViewTestId).click();
+      await persistenceScreenshot.waitFor({ state: "hidden" });
+      await persistencePage.getByTestId("button-view-class-students").click();
+      await persistenceScreenshot.waitFor();
+      assert.equal(
+        await persistenceScreenshot.getAttribute("src"),
+        TINY_SCREENSHOT_DATA_URL,
+        `cycle ${cycle + 1} must synchronously reuse the exact V2 class preview`,
+      );
+    }
+
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      await persistencePage.evaluate(() => {
+        Object.defineProperty(document, "visibilityState", {
+          configurable: true,
+          get: () => "hidden",
+        });
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      await persistencePage.evaluate(() => {
+        Object.defineProperty(document, "visibilityState", {
+          configurable: true,
+          get: () => "visible",
+        });
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      await persistenceScreenshot.waitFor();
+    }
+    assert.deepEqual(persistenceHarness.pageErrors, []);
+
     const observedSession = teachingSession({
       id: OBSERVED_SESSION_ID,
       groupId: OBSERVED_GROUP_ID,
@@ -784,6 +857,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
       scoped: success({ students: [observedStudent, movableObservedStudent] }),
     });
     let returnedTelemetryEnabled = false;
+    const observeBindingVersion = "v2:persistent-observe-binding";
     const observePreviewHarness = await configureDashboard(observePreviewPage, {
       aggregate: observePreviewAggregate,
       activeSession: null,
@@ -797,6 +871,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
       screenshotTiles: () => ({
         tiles: [{
           studentId: STUDENT_ID,
+          bindingVersion: observeBindingVersion,
           screenshot: {
             screenshot: TINY_SCREENSHOT_DATA_URL,
             timestamp: freshObservedAt,
@@ -804,6 +879,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
             tabUrl: returnedTelemetryEnabled
               ? "https://returned.example.edu/current"
               : "https://lesson.example.edu/current",
+            bindingVersion: observeBindingVersion,
           },
         }],
       }),
@@ -832,6 +908,23 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     const screenshot = observedCard.getByTestId(`screenshot-${STUDENT_ID}`);
     await screenshot.waitFor();
     assert.equal(await screenshot.getAttribute("src"), TINY_SCREENSHOT_DATA_URL);
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      await observePreviewPage.evaluate(() => {
+        Object.defineProperty(document, "visibilityState", {
+          configurable: true,
+          get: () => "hidden",
+        });
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      await observePreviewPage.evaluate(() => {
+        Object.defineProperty(document, "visibilityState", {
+          configurable: true,
+          get: () => "visible",
+        });
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      await screenshot.waitFor();
+    }
     await observedCard.getByText("Recent", { exact: true }).waitFor();
     await observedCard.locator('[title="Research history"]').waitFor();
     assert.equal(await observedCard.getByText(/In supervision/i).count(), 0);

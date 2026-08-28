@@ -8,6 +8,7 @@ param(
     [string]$TurnEvidencePath,
     [string]$SyntheticValidationPath,
     [string]$ManagedTestWaiverPath,
+    [string]$TrackingPilotEvidencePath,
     [string]$ExternalEvidenceRoot,
     [string]$PlanPath,
     [string]$ExpectedPlanSha256,
@@ -59,7 +60,11 @@ $script:ActivationOrder = @(
     "kioskLaunchTicketV2"
 )
 $script:RepairedCapabilities = @("scopedAuthorityChecksV1") + $script:ActivationOrder
-$script:AllCapabilities = @($script:RepairedCapabilities) + @("kioskLaunchTicketV1")
+$script:TrackingWindowCapability = "screenshotTrackingWindowLeaseV1"
+$script:AllCapabilities = @($script:RepairedCapabilities) + @(
+    $script:TrackingWindowCapability,
+    "kioskLaunchTicketV1"
+)
 $script:CapabilityFlags = [ordered]@{
     scopedAuthorityChecksV1       = "CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1"
     authBoundTelemetryV1          = "CLASSPILOT_CAP_AUTH_BOUND_TELEMETRY_V1"
@@ -67,6 +72,7 @@ $script:CapabilityFlags = [ordered]@{
     exactTabCloseV2               = "CLASSPILOT_CAP_EXACT_TAB_CLOSE_V2"
     studentChatIdempotencyV1      = "CLASSPILOT_CAP_STUDENT_CHAT_IDEMPOTENCY_V1"
     screenshotObservationLeaseV1 = "CLASSPILOT_CAP_SCREENSHOT_OBSERVATION_LEASE_V1"
+    screenshotTrackingWindowLeaseV1 = "CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1"
     safetyEvidenceCaptureV1       = "CLASSPILOT_CAP_SAFETY_EVIDENCE_CAPTURE_V1"
     liveViewIceServersV1          = "CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1"
     kioskLaunchTicketV1           = "CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V1"
@@ -231,15 +237,20 @@ function Assert-ExactProperties {
 function ConvertTo-RuntimeConfiguration {
     param([Parameter(Mandatory = $true)]$Profile)
     Assert-ExactProperties -Value $Profile -Allowed @(
-        "schemaVersion", "mode", "testSchoolId", "enabledCapabilities", "turn"
+        "schemaVersion", "mode", "testSchoolId", "enabledCapabilities", "pilotSchoolId", "turn"
     ) -Trail "profile"
-    if ([int]$Profile.schemaVersion -ne 1) { throw "Runtime profile schemaVersion must be 1." }
+    $schemaVersion = [int]$Profile.schemaVersion
     $mode = [string]$Profile.mode
-    if ($mode -cnotin @("off", "test-school", "global-on")) {
-        throw "Runtime profile mode must be off, test-school, or global-on."
+    $schemaOneModes = @("off", "test-school", "global-on")
+    $schemaTwoModes = @("tracking-window-pilot", "tracking-window-global-on")
+    if (($schemaVersion -eq 1 -and $mode -cnotin $schemaOneModes) -or
+        ($schemaVersion -eq 2 -and $mode -cnotin $schemaTwoModes) -or
+        $schemaVersion -notin @(1, 2)) {
+        throw "Runtime profile schemaVersion and mode do not match a reviewed profile contract."
     }
 
     $schoolId = ""
+    $pilotSchoolId = ""
     $enabledCapabilities = @()
     if ($mode -ceq "test-school") {
         $schoolId = [string]$Profile.testSchoolId
@@ -265,9 +276,19 @@ function ConvertTo-RuntimeConfiguration {
             throw "$mode profiles must not contain test-school fields."
         }
     }
+    if ($mode -ceq "tracking-window-pilot") {
+        $pilotSchoolId = [string]$Profile.pilotSchoolId
+        if ($pilotSchoolId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
+            throw "The tracking-window-pilot profile requires one canonical UUID school ID."
+        }
+    }
+    elseif ($Profile.PSObject.Properties.Name -contains "pilotSchoolId") {
+        throw "$mode profiles must not contain a pilot school field."
+    }
 
     $turn = $null
-    $turnRequired = $mode -ceq "global-on" -or $enabledCapabilities -contains "liveViewIceServersV1"
+    $turnRequired = $mode -cin @("global-on", "tracking-window-pilot", "tracking-window-global-on") -or
+        $enabledCapabilities -contains "liveViewIceServersV1"
     if ($mode -ceq "off" -and $Profile.PSObject.Properties.Name -contains "turn") {
         throw "The off profile must not mutate TURN runtime wiring."
     }
@@ -303,14 +324,19 @@ function ConvertTo-RuntimeConfiguration {
     $rollouts = [ordered]@{}
     foreach ($capability in $script:AllCapabilities) {
         $capabilityOn = $false
-        if ($mode -ceq "global-on") {
-            $capabilityOn = $capability -ne "kioskLaunchTicketV1"
+        if ($mode -cin @("global-on", "tracking-window-pilot", "tracking-window-global-on")) {
+            $capabilityOn = $capability -in $script:RepairedCapabilities -or
+                ($capability -ceq $script:TrackingWindowCapability -and
+                    $mode -cin @("tracking-window-pilot", "tracking-window-global-on"))
         }
         elseif ($mode -ceq "test-school") {
             $capabilityOn = $capability -ceq "scopedAuthorityChecksV1" -or $capability -in $enabledCapabilities
         }
         $entry = [ordered]@{ mode = if ($capabilityOn) { "on" } else { "off" } }
         if ($capabilityOn -and $mode -ceq "test-school") { $entry.schoolIds = @($schoolId) }
+        if ($capability -ceq $script:TrackingWindowCapability -and $mode -ceq "tracking-window-pilot") {
+            $entry.schoolIds = @($pilotSchoolId)
+        }
         $rollouts[$capability] = $entry
     }
     if ([string]$rollouts.kioskLaunchTicketV1.mode -cne "off") {
@@ -321,9 +347,13 @@ function ConvertTo-RuntimeConfiguration {
         CLASSPILOT_PROTOCOL_V3_ENABLED = if ($mode -ceq "off") { "false" } else { "true" }
     }
     foreach ($capability in $script:AllCapabilities) {
-        $environment[$script:CapabilityFlags[$capability]] = if (
+        $enabledKillSwitch = if ($capability -ceq $script:TrackingWindowCapability) {
+            $mode -cin @("tracking-window-pilot", "tracking-window-global-on")
+        }
+        else {
             $mode -ne "off" -and $capability -ne "kioskLaunchTicketV1"
-        ) { "true" } else { "false" }
+        }
+        $environment[$script:CapabilityFlags[$capability]] = if ($enabledKillSwitch) { "true" } else { "false" }
     }
     $environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = $rollouts | ConvertTo-Json -Depth 8 -Compress
     if ($null -ne $turn) {
@@ -333,8 +363,14 @@ function ConvertTo-RuntimeConfiguration {
 
     return [pscustomobject]@{
         Mode = $mode
-        SchoolScopeCount = if ($mode -ceq "test-school") { 1 } else { 0 }
-        EnabledCapabilities = if ($mode -ceq "global-on") { @($script:RepairedCapabilities) } elseif ($mode -ceq "test-school") { @("scopedAuthorityChecksV1") + $enabledCapabilities } else { @() }
+        SchoolScopeCount = if ($mode -cin @("test-school", "tracking-window-pilot")) { 1 } else { 0 }
+        EnabledCapabilities = if ($mode -cin @("tracking-window-pilot", "tracking-window-global-on")) {
+            @($script:RepairedCapabilities) + @($script:TrackingWindowCapability)
+        } elseif ($mode -ceq "global-on") {
+            @($script:RepairedCapabilities)
+        } elseif ($mode -ceq "test-school") {
+            @("scopedAuthorityChecksV1") + $enabledCapabilities
+        } else { @() }
         Environment = $environment
         Turn = $turn
     }
@@ -532,6 +568,100 @@ function Assert-ManagedTestWaiverEvidence {
         EvidenceSha256 = [string]$EvidenceSnapshot.Sha256
         ValidationLevel = "synthetic_only"
         ManagedValidation = "waived_not_passed"
+    }
+}
+
+function Assert-TrackingWindowPilotEvidence {
+    param(
+        [Parameter(Mandatory = $true)]$EvidenceSnapshot,
+        [Parameter(Mandatory = $true)][string]$PilotSchoolId,
+        [Parameter(Mandatory = $true)][string]$ToolSha,
+        [Parameter(Mandatory = $true)][string]$AppSha,
+        [Parameter(Mandatory = $true)][string]$ImageDigest,
+        [Parameter(Mandatory = $true)][string]$ApiTaskDefinitionArn,
+        [Parameter(Mandatory = $true)][string]$WorkerTaskDefinitionArn,
+        [Parameter(Mandatory = $true)][string]$RuntimeConfigurationSha256,
+        [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow
+    )
+    $evidence = $EvidenceSnapshot.Value
+    $allowed = @(
+        "schemaVersion", "validatedAt", "observedFrom", "observedThrough", "pilotSchoolId",
+        "schoolPilotToolSha", "schoolPilotAppSha", "schoolPilotImageDigest", "pilotApiTaskDefinitionArn",
+        "pilotWorkerTaskDefinitionArn", "pilotRuntimeConfigurationSha256", "checks"
+    )
+    Assert-ExactProperties -Value $evidence -Allowed $allowed -Trail "tracking-window pilot evidence"
+    $present = @($evidence.PSObject.Properties.Name)
+    if (@($allowed | Where-Object { $present -cnotcontains $_ }).Count -ne 0) {
+        throw "Tracking-window pilot evidence is incomplete."
+    }
+    if (-not (Test-IsJsonInteger -Value $evidence.schemaVersion) -or [long]$evidence.schemaVersion -ne 2) {
+        throw "Tracking-window pilot evidence schemaVersion must be the integer 2."
+    }
+    foreach ($name in @(
+        "validatedAt", "observedFrom", "observedThrough", "pilotSchoolId", "schoolPilotToolSha", "schoolPilotAppSha",
+        "schoolPilotImageDigest", "pilotApiTaskDefinitionArn", "pilotWorkerTaskDefinitionArn",
+        "pilotRuntimeConfigurationSha256"
+    )) {
+        if ($evidence.$name -isnot [string]) { throw "Tracking-window pilot evidence is incomplete." }
+    }
+    $validatedAtText = Get-FreshEvidenceTimestamp -Value ([string]$evidence.validatedAt) `
+        -Label "Tracking-window pilot evidence" -Now $Now
+    try {
+        $validatedAt = [DateTimeOffset]::ParseExact(
+            $validatedAtText, "o", [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::RoundtripKind
+        )
+        $observedFrom = [DateTimeOffset]::ParseExact(
+            [string]$evidence.observedFrom, "o", [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::RoundtripKind
+        )
+        $observedThrough = [DateTimeOffset]::ParseExact(
+            [string]$evidence.observedThrough, "o", [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::RoundtripKind
+        )
+    }
+    catch {
+        throw "Tracking-window pilot observation timestamps must use exact ISO-8601 values."
+    }
+    $observationDuration = $observedThrough - $observedFrom
+    $evidenceLag = $validatedAt - $observedThrough
+    if ($observationDuration.TotalMinutes -lt 30 -or $observationDuration.TotalHours -gt 24 -or
+        $evidenceLag.TotalMinutes -lt 0 -or $evidenceLag.TotalMinutes -gt 30) {
+        throw "Tracking-window pilot evidence does not cover the reviewed recent observation window."
+    }
+    if ([string]$evidence.pilotSchoolId -cne $PilotSchoolId -or
+        [string]$evidence.schoolPilotToolSha -cne $ToolSha -or
+        [string]$evidence.schoolPilotAppSha -cne $AppSha -or
+        [string]$evidence.schoolPilotImageDigest -cne $ImageDigest -or
+        [string]$evidence.pilotApiTaskDefinitionArn -cne $ApiTaskDefinitionArn -or
+        [string]$evidence.pilotWorkerTaskDefinitionArn -cne $WorkerTaskDefinitionArn -or
+        [string]$evidence.pilotRuntimeConfigurationSha256 -cne $RuntimeConfigurationSha256) {
+        throw "Tracking-window pilot evidence does not bind the exact pilot deployment authority."
+    }
+    $requiredChecks = @(
+        "fullSchoolActivityWindowObserved", "managedCapabilityNegotiated",
+        "teacherTabSwitchingPassed", "adminObserveTabSwitchingPassed",
+        "newScreenshotWithinThirtySecondsPassed", "authorizationPurgePassed",
+        "zeroScreenshotStoreErrors", "screenshotLatencyWithinBudget",
+        "noAuthorizationOrPrivacyDefects"
+    )
+    Assert-ExactProperties -Value $evidence.checks -Allowed $requiredChecks `
+        -Trail "tracking-window pilot evidence.checks"
+    $presentChecks = @($evidence.checks.PSObject.Properties.Name)
+    if (@($requiredChecks | Where-Object { $presentChecks -cnotcontains $_ }).Count -ne 0) {
+        throw "Tracking-window pilot evidence checks are incomplete."
+    }
+    foreach ($name in $requiredChecks) {
+        $value = $evidence.checks.$name
+        if ($value -isnot [bool] -or -not $value) {
+            throw "Tracking-window pilot evidence checks are incomplete."
+        }
+    }
+    return [pscustomobject]@{
+        ValidatedAt = $validatedAt.ToUniversalTime().ToString("o")
+        ObservedFrom = $observedFrom.ToUniversalTime().ToString("o")
+        ObservedThrough = $observedThrough.ToUniversalTime().ToString("o")
+        EvidenceSha256 = [string]$EvidenceSnapshot.Sha256
     }
 }
 
@@ -891,19 +1021,32 @@ function Invoke-GitText {
     return ($output | Out-String).Trim()
 }
 
+function Get-RepositoryHeadSha {
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
+    $head = Invoke-GitText -Arguments @("rev-parse", "HEAD") -RepositoryRoot $RepositoryRoot
+    if ($head -cnotmatch '^[0-9a-f]{40}$') {
+        throw "Reviewed runtime-tool SHA must be a full lowercase commit SHA."
+    }
+    return $head
+}
+
 function Assert-RepositoryIdentity {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
-        [Parameter(Mandatory = $true)][string]$ExpectedSha
+        [string]$ExpectedSha
     )
-    if ($ExpectedSha -cnotmatch '^[0-9a-f]{40}$') { throw "Expected app SHA must be a full lowercase commit SHA." }
+    if ($ExpectedSha -and $ExpectedSha -cnotmatch '^[0-9a-f]{40}$') {
+        throw "Expected runtime-tool SHA must be a full lowercase commit SHA."
+    }
     $branch = Invoke-GitText -Arguments @("branch", "--show-current") -RepositoryRoot $RepositoryRoot
-    $head = Invoke-GitText -Arguments @("rev-parse", "HEAD") -RepositoryRoot $RepositoryRoot
+    $head = Get-RepositoryHeadSha -RepositoryRoot $RepositoryRoot
     $originMain = Invoke-GitText -Arguments @("rev-parse", "origin/main") -RepositoryRoot $RepositoryRoot
     $dirty = Invoke-GitText -Arguments @("status", "--porcelain") -RepositoryRoot $RepositoryRoot
-    if ($branch -cne "main" -or $head -cne $ExpectedSha -or $originMain -cne $ExpectedSha -or $dirty) {
-        throw "Runtime configuration deployment requires clean main exactly equal to origin/main and the deployed app SHA."
+    if ($originMain -cnotmatch '^[0-9a-f]{40}$' -or $branch -cne "main" -or
+        $head -cne $originMain -or ($ExpectedSha -and $head -cne $ExpectedSha) -or $dirty) {
+        throw "Runtime configuration deployment requires clean main exactly equal to origin/main and the reviewed runtime-tool SHA."
     }
+    return $head
 }
 
 function Get-EasternNow {
@@ -1541,19 +1684,36 @@ function Get-RuntimeActivationState {
     if ($managed.Count -eq 0 -and $AllowBaseline) {
         return [pscustomobject]@{ Mode = "baseline"; SchoolId = $null; PrefixCount = -1 }
     }
-    if ($managed.Count -ne $script:RuntimeEnvironmentNames.Count -or
+    $trackingWindowFlag = [string]$script:CapabilityFlags[$script:TrackingWindowCapability]
+    $legacyTrackingWindowAbsent = $AllowBaseline -and
+        @($managed | Where-Object name -CEQ $trackingWindowFlag).Count -eq 0
+    $expectedEnvironmentNames = if ($legacyTrackingWindowAbsent) {
+        @($script:RuntimeEnvironmentNames | Where-Object { $_ -cne $trackingWindowFlag })
+    }
+    else { @($script:RuntimeEnvironmentNames) }
+    if ($managed.Count -ne $expectedEnvironmentNames.Count -or
+        @($expectedEnvironmentNames | Where-Object { $managed.name -cnotcontains $_ }).Count -ne 0 -or
         @($managed.name | Group-Object -CaseSensitive | Where-Object Count -ne 1).Count -ne 0) {
         throw "Active runtime configuration is partial or duplicated."
     }
     $values = @{}
     foreach ($entry in $managed) { $values[[string]$entry.name] = [string]$entry.value }
+    if ($legacyTrackingWindowAbsent) { $values[$trackingWindowFlag] = "false" }
     $protocol = $values.CLASSPILOT_PROTOCOL_V3_ENABLED
     if ($protocol -cnotin @("true", "false")) { throw "Active protocol mode is invalid." }
     $rollouts = ConvertFrom-StrictJsonText -Text $values.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON
-    Assert-ExactProperties -Value $rollouts -Allowed $script:AllCapabilities -Trail "active rollout registry"
+    $expectedRolloutCapabilities = if ($legacyTrackingWindowAbsent) {
+        @($script:AllCapabilities | Where-Object { $_ -cne $script:TrackingWindowCapability })
+    }
+    else { @($script:AllCapabilities) }
+    Assert-ExactProperties -Value $rollouts -Allowed $expectedRolloutCapabilities -Trail "active rollout registry"
     $presentCapabilities = @($rollouts.PSObject.Properties.Name)
-    if (@($script:AllCapabilities | Where-Object { $presentCapabilities -cnotcontains $_ }).Count -ne 0) {
+    if (@($expectedRolloutCapabilities | Where-Object { $presentCapabilities -cnotcontains $_ }).Count -ne 0) {
         throw "Active rollout registry is incomplete."
+    }
+    if ($legacyTrackingWindowAbsent) {
+        $rollouts | Add-Member -NotePropertyName $script:TrackingWindowCapability `
+            -NotePropertyValue ([pscustomobject]@{ mode = "off" })
     }
     foreach ($capability in $script:AllCapabilities) {
         $entry = $rollouts.$capability
@@ -1586,6 +1746,20 @@ function Get-RuntimeActivationState {
     if ([string]$rollouts.scopedAuthorityChecksV1.mode -cne "on") {
         throw "Protocol-on runtime configuration requires the repaired authority marker."
     }
+    $trackingWindowFlagValue = [string]$values[$trackingWindowFlag]
+    $trackingWindowRollout = $rollouts.$($script:TrackingWindowCapability)
+    if ($trackingWindowFlagValue -cnotin @("true", "false")) {
+        throw "Tracking-window screenshot kill switch is invalid."
+    }
+    if ($trackingWindowFlagValue -ceq "false") {
+        if ([string]$trackingWindowRollout.mode -cne "off" -or
+            $trackingWindowRollout.PSObject.Properties.Name -contains "schoolIds") {
+            throw "Tracking-window screenshots require both matching activation controls."
+        }
+    }
+    elseif ([string]$trackingWindowRollout.mode -cne "on") {
+        throw "Tracking-window screenshots require both matching activation controls."
+    }
 
     $markerSchoolIds = @()
     if ($rollouts.scopedAuthorityChecksV1.PSObject.Properties.Name -contains "schoolIds") {
@@ -1601,7 +1775,29 @@ function Get-RuntimeActivationState {
                 throw "Global runtime configuration must enable every repaired capability without school scope."
             }
         }
-        return [pscustomobject]@{ Mode = "global-on"; SchoolId = $null; PrefixCount = $script:ActivationOrder.Count }
+        if ($trackingWindowFlagValue -ceq "false") {
+            return [pscustomobject]@{ Mode = "global-on"; SchoolId = $null; PrefixCount = $script:ActivationOrder.Count }
+        }
+        if (-not ($trackingWindowRollout.PSObject.Properties.Name -contains "schoolIds")) {
+            return [pscustomobject]@{ Mode = "tracking-window-global-on"; SchoolId = $null; PrefixCount = $script:ActivationOrder.Count }
+        }
+        if ($trackingWindowRollout.schoolIds -isnot [Array]) {
+            throw "Tracking-window pilot school scope must be an array."
+        }
+        $trackingWindowSchoolIds = @($trackingWindowRollout.schoolIds)
+        if ($trackingWindowSchoolIds.Count -ne 1 -or
+            [string]$trackingWindowSchoolIds[0] -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
+            throw "Tracking-window pilot runtime configuration has invalid school scope."
+        }
+        return [pscustomobject]@{
+            Mode = "tracking-window-pilot"
+            SchoolId = [string]$trackingWindowSchoolIds[0]
+            PrefixCount = $script:ActivationOrder.Count
+        }
+    }
+
+    if ($trackingWindowFlagValue -cne "false") {
+        throw "Test-school activation must keep tracking-window screenshots disabled."
     }
 
     if ($markerSchoolIds.Count -ne 1 -or [string]$markerSchoolIds[0] -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
@@ -1659,11 +1855,21 @@ function Assert-AllowedRuntimeTransition {
         $source.PrefixCount -eq $script:ActivationOrder.Count) {
         return
     }
+    if ($target.Mode -ceq "global-on" -and
+        $source.Mode -cin @("tracking-window-pilot", "tracking-window-global-on")) {
+        return
+    }
     if ($target.Mode -ceq "global-on" -and $AllowSyntheticOnlyGlobalActivation -and
         $source.Mode -cin @("baseline", "off", "test-school")) {
         return
     }
-    throw "Global runtime activation requires the completed test-school prefix."
+    if ($target.Mode -ceq "tracking-window-pilot" -and $source.Mode -ceq "global-on") {
+        return
+    }
+    if ($target.Mode -ceq "tracking-window-global-on" -and $source.Mode -ceq "tracking-window-pilot") {
+        return
+    }
+    throw "Runtime activation does not follow the reviewed staged transition."
 }
 
 function Get-TaskTagsFingerprint {
@@ -1990,7 +2196,7 @@ function Write-OperationCheckpoint {
         [string]$CandidateWorkerArn
     )
     $checkpoint = [ordered]@{
-        schemaVersion = 1
+        schemaVersion = 2
         runId = [string]$Plan.runId
         recordedAt = [DateTimeOffset]::UtcNow.ToString("o")
         stage = $Stage
@@ -1998,6 +2204,7 @@ function Write-OperationCheckpoint {
         validationLevel = [string]$Plan.validationLevel
         managedValidation = [string]$Plan.managedValidation
         protectedWindowProductionMutation = [bool]$Plan.protectedWindowProductionMutation
+        toolSha = [string]$Plan.toolSha
         appSha = [string]$Plan.appSha
         imageDigest = [string]$Plan.imageDigest
         priorApiTaskDefinitionArn = [string]$Plan.priorApiTaskDefinitionArn
@@ -2208,6 +2415,7 @@ function Assert-ExpectedReleaseIdentity {
 function Get-ValidatedProductionSnapshot {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$ToolSha,
         [Parameter(Mandatory = $true)][string]$AppSha,
         [Parameter(Mandatory = $true)][string]$ImageDigest,
         [Parameter(Mandatory = $true)][string]$ApiTaskDefinitionArn,
@@ -2218,7 +2426,10 @@ function Get-ValidatedProductionSnapshot {
         [ValidateRange(2, 6)][int]$MaximumApiDesiredCount = 2
     )
     Assert-ExpectedReleaseIdentity -AppSha $AppSha -ImageDigest $ImageDigest -ApiTaskDefinitionArn $ApiTaskDefinitionArn -WorkerTaskDefinitionArn $WorkerTaskDefinitionArn
-    if (-not $SkipRepositoryCheck) { Assert-RepositoryIdentity -RepositoryRoot $RepositoryRoot -ExpectedSha $AppSha }
+    if ($ToolSha -cnotmatch '^[0-9a-f]{40}$') { throw "Reviewed runtime-tool SHA is malformed." }
+    if (-not $SkipRepositoryCheck) {
+        [void](Assert-RepositoryIdentity -RepositoryRoot $RepositoryRoot -ExpectedSha $ToolSha)
+    }
     $identity = Invoke-AwsJson -Arguments @("sts", "get-caller-identity", "--output", "json", "--no-cli-pager")
     if ([string]$identity.Account -cne $script:AccountId) { throw "AWS identity is outside the production account." }
     $services = Get-ServiceSnapshot
@@ -2266,6 +2477,7 @@ function New-RuntimeConfigPlan {
         [string]$PrivateTurnEvidencePath,
         [string]$PrivateSyntheticValidationPath,
         [string]$PrivateManagedTestWaiverPath,
+        [string]$PrivateTrackingPilotEvidencePath,
         [Parameter(Mandatory = $true)][string]$EvidenceRoot,
         [Parameter(Mandatory = $true)][string]$AppSha,
         [Parameter(Mandatory = $true)][string]$ImageDigest,
@@ -2304,6 +2516,25 @@ function New-RuntimeConfigPlan {
     $profileSnapshot = Read-StrictJsonSnapshot -Path $PrivateProfilePath
     $profile = $profileSnapshot.Value
     $runtime = ConvertTo-RuntimeConfiguration -Profile $profile
+    $toolSha = if ($SkipRepositoryCheck -or $runtime.Mode -ceq "off") {
+        Get-RepositoryHeadSha -RepositoryRoot $RepositoryRoot
+    }
+    else {
+        Assert-RepositoryIdentity -RepositoryRoot $RepositoryRoot
+    }
+    $trackingPilotEvidenceRequired = $runtime.Mode -ceq "tracking-window-global-on"
+    if ($trackingPilotEvidenceRequired -and [string]::IsNullOrWhiteSpace($PrivateTrackingPilotEvidencePath)) {
+        throw "Tracking-window global activation requires fresh pilot smoke and soak evidence."
+    }
+    if (-not $trackingPilotEvidenceRequired -and -not [string]::IsNullOrWhiteSpace($PrivateTrackingPilotEvidencePath)) {
+        throw "Tracking-window pilot evidence is valid only for tracking-window-global-on activation."
+    }
+    $trackingPilotEvidenceSnapshot = $null
+    if ($trackingPilotEvidenceRequired) {
+        $PrivateTrackingPilotEvidencePath = Assert-PrivateInputPath -Path $PrivateTrackingPilotEvidencePath `
+            -RepositoryRoot $RepositoryRoot
+        $trackingPilotEvidenceSnapshot = Read-StrictJsonSnapshot -Path $PrivateTrackingPilotEvidencePath
+    }
     if ($syntheticOnlyWaiver -and $runtime.Mode -cne "global-on") {
         throw "Synthetic-only waiver evidence is valid only for global-on activation."
     }
@@ -2312,7 +2543,7 @@ function New-RuntimeConfigPlan {
     }
     $turnEvidenceSnapshot = $null
     $turnEvidence = if ($null -ne $runtime.Turn) {
-        if (-not $PrivateTurnEvidencePath) { throw "TURN evidence is required for test-school and global-on profiles." }
+        if (-not $PrivateTurnEvidencePath) { throw "TURN evidence is required when the selected profile manages TURN wiring." }
         $turnEvidenceSnapshot = Read-StrictJsonSnapshot -Path $PrivateTurnEvidencePath
         Assert-TurnEvidence -RuntimeConfiguration $runtime -EvidenceSnapshot $turnEvidenceSnapshot -Now $Now `
             -SyntheticOnlyWaiver:$syntheticOnlyWaiver
@@ -2330,13 +2561,27 @@ function New-RuntimeConfigPlan {
             -SyntheticValidationSha256 ([string]$syntheticValidation.EvidenceSha256) `
             -TurnEvidenceSha256 ([string]$turnEvidence.EvidenceSha256) -Now $Now
     }
-    $snapshot = Get-ValidatedProductionSnapshot -RepositoryRoot $RepositoryRoot -AppSha $AppSha -ImageDigest $ImageDigest `
+    $snapshot = Get-ValidatedProductionSnapshot -RepositoryRoot $RepositoryRoot -ToolSha $toolSha `
+        -AppSha $AppSha -ImageDigest $ImageDigest `
         -ApiTaskDefinitionArn $ApiTaskDefinitionArn -WorkerTaskDefinitionArn $WorkerTaskDefinitionArn `
         -RuntimeConfiguration $runtime -SkipRepositoryCheck:($SkipRepositoryCheck -or $runtime.Mode -ceq "off") `
         -SkipEcrShaCheck:($runtime.Mode -ceq "off") `
         -MaximumApiDesiredCount $(if ($runtime.Mode -ceq "off" -or $ConfirmProtectedWindowProductionMutation) { 6 } else { 2 })
     Assert-AllowedRuntimeTransition -SourceTaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api" `
         -TargetRuntimeConfiguration $runtime -AllowSyntheticOnlyGlobalActivation:$syntheticOnlyWaiver
+    $trackingPilotEvidence = $null
+    if ($trackingPilotEvidenceRequired) {
+        $sourceContainer = @($snapshot.ApiTask.taskDefinition.containerDefinitions | Where-Object name -CEQ "api")
+        if ($sourceContainer.Count -ne 1) { throw "Pilot source runtime container is ambiguous." }
+        $sourceState = Get-RuntimeActivationState -Environment @($sourceContainer[0].environment) -AllowBaseline
+        $sourceRuntimeConfigurationSha256 = Get-ManagedRuntimeFingerprint `
+            -TaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api"
+        $trackingPilotEvidence = Assert-TrackingWindowPilotEvidence `
+            -EvidenceSnapshot $trackingPilotEvidenceSnapshot -PilotSchoolId ([string]$sourceState.SchoolId) `
+            -ToolSha $toolSha -AppSha $AppSha -ImageDigest $ImageDigest -ApiTaskDefinitionArn $ApiTaskDefinitionArn `
+            -WorkerTaskDefinitionArn $WorkerTaskDefinitionArn `
+            -RuntimeConfigurationSha256 $sourceRuntimeConfigurationSha256 -Now $Now
+    }
     $root = Assert-PrivateExternalRoot -Root $EvidenceRoot -RepositoryRoot $RepositoryRoot
     $runId = $Now.ToUniversalTime().ToString("yyyyMMddTHHmmssfffZ") + "-" + [Guid]::NewGuid().ToString("N").Substring(0, 12)
     $runDirectory = Join-Path $root $runId
@@ -2346,6 +2591,7 @@ function New-RuntimeConfigPlan {
     $turnEvidenceFile = if ($null -ne $turnEvidenceSnapshot) { "turn-evidence.json" } else { $null }
     $syntheticValidationFile = if ($null -ne $syntheticValidationSnapshot) { "synthetic-validation.json" } else { $null }
     $managedTestWaiverFile = if ($null -ne $managedTestWaiverSnapshot) { "managed-test-waiver.json" } else { $null }
+    $trackingPilotEvidenceFile = if ($null -ne $trackingPilotEvidenceSnapshot) { "tracking-pilot-evidence.json" } else { $null }
     Write-PrivateBytes -Path (Join-Path $runDirectory $profileFile) -Bytes $profileSnapshot.Bytes
     if ($null -ne $turnEvidenceSnapshot) {
         Write-PrivateBytes -Path (Join-Path $runDirectory $turnEvidenceFile) -Bytes $turnEvidenceSnapshot.Bytes
@@ -2354,8 +2600,12 @@ function New-RuntimeConfigPlan {
         Write-PrivateBytes -Path (Join-Path $runDirectory $syntheticValidationFile) -Bytes $syntheticValidationSnapshot.Bytes
         Write-PrivateBytes -Path (Join-Path $runDirectory $managedTestWaiverFile) -Bytes $managedTestWaiverSnapshot.Bytes
     }
+    if ($null -ne $trackingPilotEvidenceSnapshot) {
+        Write-PrivateBytes -Path (Join-Path $runDirectory $trackingPilotEvidenceFile) `
+            -Bytes $trackingPilotEvidenceSnapshot.Bytes
+    }
     $manifest = [ordered]@{
-        schemaVersion = 1
+        schemaVersion = 2
         runId = $runId
         createdAt = $Now.ToUniversalTime().ToString("o")
         profileFile = $profileFile
@@ -2370,10 +2620,13 @@ function New-RuntimeConfigPlan {
         syntheticValidationSha256 = if ($null -ne $syntheticValidation) { $syntheticValidation.EvidenceSha256 } else { $null }
         managedTestWaiverFile = $managedTestWaiverFile
         managedTestWaiverSha256 = if ($null -ne $managedTestWaiver) { $managedTestWaiver.EvidenceSha256 } else { $null }
-        validationLevel = if ($syntheticOnlyWaiver) { "synthetic_only" } elseif ($runtime.Mode -ceq "global-on") { "managed" } else { "not_applicable" }
-        managedValidation = if ($syntheticOnlyWaiver) { "waived_not_passed" } elseif ($runtime.Mode -ceq "global-on") { "passed" } else { "not_applicable" }
+        trackingPilotEvidenceFile = $trackingPilotEvidenceFile
+        trackingPilotEvidenceSha256 = if ($null -ne $trackingPilotEvidence) { $trackingPilotEvidence.EvidenceSha256 } else { $null }
+        validationLevel = if ($syntheticOnlyWaiver) { "synthetic_only" } elseif ($runtime.Mode -cin @("global-on", "tracking-window-global-on")) { "managed" } else { "not_applicable" }
+        managedValidation = if ($syntheticOnlyWaiver) { "waived_not_passed" } elseif ($runtime.Mode -cin @("global-on", "tracking-window-global-on")) { "passed" } else { "not_applicable" }
         protectedWindowProductionMutation = [bool]$ConfirmProtectedWindowProductionMutation
         repositoryRoot = [IO.Path]::GetFullPath($RepositoryRoot)
+        toolSha = $toolSha
         appSha = $AppSha
         imageDigest = $ImageDigest
         priorApiTaskDefinitionArn = $ApiTaskDefinitionArn
@@ -2413,12 +2666,18 @@ function Read-RuntimePlan {
         "schoolScopeCount", "enabledCapabilityCount", "runtimeConfigurationSha256",
         "turnEvidenceFile", "turnEvidenceSha256", "syntheticValidationFile", "syntheticValidationSha256",
         "managedTestWaiverFile", "managedTestWaiverSha256", "validationLevel", "managedValidation",
+        "trackingPilotEvidenceFile", "trackingPilotEvidenceSha256",
         "protectedWindowProductionMutation",
-        "repositoryRoot", "appSha", "imageDigest", "priorApiTaskDefinitionArn",
+        "repositoryRoot", "toolSha", "appSha", "imageDigest", "priorApiTaskDefinitionArn",
         "priorWorkerTaskDefinitionArn", "scaling", "deploymentBounds", "deploymentConfigurationSha256",
         "checkpointFile", "resultFile"
     ) -Trail "runtime plan"
-    if ([int]$plan.schemaVersion -ne 1) { throw "Runtime plan schemaVersion must be 1." }
+    if ([int]$plan.schemaVersion -ne 2) { throw "Runtime plan schemaVersion must be 2." }
+    if ([string]$plan.toolSha -cnotmatch '^[0-9a-f]{40}$' -or
+        [string]$plan.appSha -cnotmatch '^[0-9a-f]{40}$' -or
+        [string]$plan.imageDigest -cnotmatch '^sha256:[0-9a-f]{64}$') {
+        throw "Runtime plan tool and deployed-image identities are invalid."
+    }
     if ([string]$plan.runtimeConfigurationSha256 -cnotmatch '^[0-9a-f]{64}$') {
         throw "Runtime plan configuration identity is invalid."
     }
@@ -2457,6 +2716,14 @@ function Read-RuntimePlan {
             $null -ne $plan.managedTestWaiverSha256))) {
         throw "Runtime plan synthetic-only evidence identity is invalid."
     }
+    $hasTrackingPilotEvidence = [string]$plan.trackingPilotEvidenceSha256 -match '^[0-9a-f]{64}$'
+    if (($hasTrackingPilotEvidence -and ([string]$plan.profileMode -cne "tracking-window-global-on" -or
+            [string]$plan.trackingPilotEvidenceFile -cne "tracking-pilot-evidence.json")) -or
+        (-not $hasTrackingPilotEvidence -and ($null -ne $plan.trackingPilotEvidenceFile -or
+            $null -ne $plan.trackingPilotEvidenceSha256 -or
+            [string]$plan.profileMode -ceq "tracking-window-global-on"))) {
+        throw "Runtime plan tracking-window pilot evidence identity is invalid."
+    }
     if ($plan.protectedWindowProductionMutation -isnot [bool]) {
         throw "Runtime plan protected-window authority is invalid."
     }
@@ -2468,7 +2735,7 @@ function Read-RuntimePlan {
             throw "Runtime plan synthetic-only activation authority is invalid."
         }
     }
-    elseif ([string]$plan.profileMode -ceq "global-on") {
+    elseif ([string]$plan.profileMode -cin @("global-on", "tracking-window-global-on")) {
         if ([string]$plan.validationLevel -cne "managed" -or [string]$plan.managedValidation -cne "passed") {
             throw "Runtime plan strict managed activation authority is invalid."
         }
@@ -2488,6 +2755,9 @@ function Read-RuntimePlan {
     $plan | Add-Member -NotePropertyName managedTestWaiverPath -NotePropertyValue $(
         if ($hasManagedTestWaiver) { Join-Path $runDirectory "managed-test-waiver.json" } else { $null }
     )
+    $plan | Add-Member -NotePropertyName trackingPilotEvidencePath -NotePropertyValue $(
+        if ($hasTrackingPilotEvidence) { Join-Path $runDirectory "tracking-pilot-evidence.json" } else { $null }
+    )
     $plan | Add-Member -NotePropertyName checkpointPath -NotePropertyValue (Join-Path $runDirectory "checkpoint.json")
     $plan | Add-Member -NotePropertyName resultPath -NotePropertyValue (Join-Path $runDirectory "result.json")
     return $plan
@@ -2505,7 +2775,7 @@ function Write-ResultEvidence {
         [bool]$ScalingRestored
     )
     $result = [ordered]@{
-        schemaVersion = 1
+        schemaVersion = 2
         runId = [string]$Plan.runId
         recordedAt = [DateTimeOffset]::UtcNow.ToString("o")
         status = $Status
@@ -2517,9 +2787,11 @@ function Write-ResultEvidence {
         runtimeConfigurationSha256 = [string]$Plan.runtimeConfigurationSha256
         syntheticValidationSha256 = if ($null -ne $Plan.syntheticValidationSha256) { [string]$Plan.syntheticValidationSha256 } else { $null }
         managedTestWaiverSha256 = if ($null -ne $Plan.managedTestWaiverSha256) { [string]$Plan.managedTestWaiverSha256 } else { $null }
+        trackingPilotEvidenceSha256 = if ($null -ne $Plan.trackingPilotEvidenceSha256) { [string]$Plan.trackingPilotEvidenceSha256 } else { $null }
         validationLevel = [string]$Plan.validationLevel
         managedValidation = [string]$Plan.managedValidation
         protectedWindowProductionMutation = [bool]$Plan.protectedWindowProductionMutation
+        toolSha = [string]$Plan.toolSha
         appSha = [string]$Plan.appSha
         imageDigest = [string]$Plan.imageDigest
         priorApiTaskDefinitionArn = [string]$Plan.priorApiTaskDefinitionArn
@@ -2614,7 +2886,15 @@ function Invoke-RuntimeConfigApply {
             -SyntheticValidationSha256 ([string]$Plan.syntheticValidationSha256) `
             -TurnEvidenceSha256 ([string]$Plan.turnEvidenceSha256) -Now $Now)
     }
-    $snapshot = Get-ValidatedProductionSnapshot -RepositoryRoot ([string]$Plan.repositoryRoot) -AppSha ([string]$Plan.appSha) `
+    $trackingPilotEvidenceSnapshot = $null
+    if ($runtime.Mode -ceq "tracking-window-global-on") {
+        $trackingPilotEvidenceSnapshot = Read-StrictJsonSnapshot -Path ([string]$Plan.trackingPilotEvidencePath)
+        if ([string]$trackingPilotEvidenceSnapshot.Sha256 -cne [string]$Plan.trackingPilotEvidenceSha256) {
+            throw "Tracking-window pilot evidence changed after planning."
+        }
+    }
+    $snapshot = Get-ValidatedProductionSnapshot -RepositoryRoot ([string]$Plan.repositoryRoot) `
+        -ToolSha ([string]$Plan.toolSha) -AppSha ([string]$Plan.appSha) `
         -ImageDigest ([string]$Plan.imageDigest) -ApiTaskDefinitionArn ([string]$Plan.priorApiTaskDefinitionArn) `
         -WorkerTaskDefinitionArn ([string]$Plan.priorWorkerTaskDefinitionArn) -RuntimeConfiguration $runtime `
         -SkipRepositoryCheck:($SkipRepositoryCheck -or $runtime.Mode -ceq "off") `
@@ -2629,6 +2909,19 @@ function Invoke-RuntimeConfigApply {
     Assert-AllowedRuntimeTransition -SourceTaskDefinition $snapshot.ApiTask.taskDefinition `
         -ContainerName "api" -TargetRuntimeConfiguration $runtime `
         -AllowSyntheticOnlyGlobalActivation:$syntheticOnlyWaiver
+    if ($runtime.Mode -ceq "tracking-window-global-on") {
+        $sourceContainer = @($snapshot.ApiTask.taskDefinition.containerDefinitions | Where-Object name -CEQ "api")
+        if ($sourceContainer.Count -ne 1) { throw "Pilot source runtime container is ambiguous." }
+        $sourceState = Get-RuntimeActivationState -Environment @($sourceContainer[0].environment) -AllowBaseline
+        [void](Assert-TrackingWindowPilotEvidence -EvidenceSnapshot $trackingPilotEvidenceSnapshot `
+            -PilotSchoolId ([string]$sourceState.SchoolId) -ToolSha ([string]$Plan.toolSha) `
+            -AppSha ([string]$Plan.appSha) `
+            -ImageDigest ([string]$Plan.imageDigest) `
+            -ApiTaskDefinitionArn ([string]$Plan.priorApiTaskDefinitionArn) `
+            -WorkerTaskDefinitionArn ([string]$Plan.priorWorkerTaskDefinitionArn) `
+            -RuntimeConfigurationSha256 (Get-ManagedRuntimeFingerprint `
+                -TaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api") -Now $Now)
+    }
     $expectedApiDesiredCount = [int]$snapshot.Services.Api.desiredCount
     $apiSourceFingerprint = Get-TaskFingerprint -TaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api"
     $workerSourceFingerprint = Get-TaskFingerprint -TaskDefinition $snapshot.WorkerTask.taskDefinition -ContainerName "scheduler-worker"
@@ -2881,14 +3174,16 @@ function Invoke-RuntimeConfigRollback {
         "schemaVersion", "runId", "recordedAt", "status", "planSha256", "profileSha256",
         "profileMode", "schoolScopeCount", "enabledCapabilityCount", "runtimeConfigurationSha256",
         "syntheticValidationSha256", "managedTestWaiverSha256", "validationLevel", "managedValidation",
+        "trackingPilotEvidenceSha256",
         "protectedWindowProductionMutation",
-        "appSha", "imageDigest",
+        "toolSha", "appSha", "imageDigest",
         "priorApiTaskDefinitionArn", "priorWorkerTaskDefinitionArn", "priorDeploymentBounds",
         "priorDeploymentConfigurationSha256", "candidateApiTaskDefinitionArn",
         "candidateWorkerTaskDefinitionArn", "rollbackApiTaskDefinitionArn", "rollbackWorkerTaskDefinitionArn",
         "scalingRestored"
     ) -Trail "runtime result"
-    if ([string]$result.status -cnotin @("applied", "rollback_failed_candidate_restored", "rollback_failed_no_service_mutation") -or
+    if (-not (Test-IsJsonInteger -Value $result.schemaVersion) -or [long]$result.schemaVersion -ne 2 -or
+        [string]$result.status -cnotin @("applied", "rollback_failed_candidate_restored", "rollback_failed_no_service_mutation") -or
         [string]$result.planSha256 -cne $PlanSha256) {
         throw "Rollback requires exact successful apply evidence."
     }
@@ -2899,10 +3194,12 @@ function Invoke-RuntimeConfigRollback {
         [string]$result.runtimeConfigurationSha256 -cne [string]$Plan.runtimeConfigurationSha256 -or
         [string]$result.syntheticValidationSha256 -cne [string]$Plan.syntheticValidationSha256 -or
         [string]$result.managedTestWaiverSha256 -cne [string]$Plan.managedTestWaiverSha256 -or
+        [string]$result.trackingPilotEvidenceSha256 -cne [string]$Plan.trackingPilotEvidenceSha256 -or
         [string]$result.validationLevel -cne [string]$Plan.validationLevel -or
         [string]$result.managedValidation -cne [string]$Plan.managedValidation -or
         $result.protectedWindowProductionMutation -isnot [bool] -or
         [bool]$result.protectedWindowProductionMutation -ne [bool]$Plan.protectedWindowProductionMutation -or
+        [string]$result.toolSha -cne [string]$Plan.toolSha -or
         [string]$result.appSha -cne [string]$Plan.appSha -or [string]$result.imageDigest -cne [string]$Plan.imageDigest -or
         [string]$result.priorApiTaskDefinitionArn -cne [string]$Plan.priorApiTaskDefinitionArn -or
         [string]$result.priorWorkerTaskDefinitionArn -cne [string]$Plan.priorWorkerTaskDefinitionArn -or
@@ -3131,7 +3428,8 @@ function Invoke-Main {
             }
             $result = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $ProfilePath `
                 -PrivateTurnEvidencePath $TurnEvidencePath -PrivateSyntheticValidationPath $SyntheticValidationPath `
-                -PrivateManagedTestWaiverPath $ManagedTestWaiverPath -EvidenceRoot $ExternalEvidenceRoot `
+                -PrivateManagedTestWaiverPath $ManagedTestWaiverPath `
+                -PrivateTrackingPilotEvidencePath $TrackingPilotEvidencePath -EvidenceRoot $ExternalEvidenceRoot `
                 -AppSha $ExpectedAppSha -ImageDigest $ExpectedImageDigest `
                 -ApiTaskDefinitionArn $ExpectedApiTaskDefinitionArn -WorkerTaskDefinitionArn $ExpectedWorkerTaskDefinitionArn `
                 -ConfirmProductionMutation:$ConfirmProductionMutation `

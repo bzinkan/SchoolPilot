@@ -34,18 +34,19 @@ import { useAbsentStudents } from '../../../hooks/useAbsentStudents';
 import { isUrlAllowed } from '../../../lib/classpilot-utils';
 import {
   TILE_BATCH_QUERY_ROOTS,
+  TILE_SCREENSHOT_CACHE_GC_MS,
   changedTileBindingStudentIds,
   createTileBatchRequests,
   fetchTileBatch,
   indexTileHistory,
   indexTileScreenshots,
+  normalizedTileControlRevision,
   removeLegacyScreenshotsFromTileBatchData,
   removeStudentsFromTileBatchData,
   retainFreshTileScreenshotsOnNull,
   tileBatchRequestShouldPoll,
 } from '../lib/tileBatchPolling';
 import {
-  purgeAllScreenshotTileCaches,
   purgeAllStudentTileCaches,
   purgeLegacyScreenshotTileCaches,
   reconcileStudentTileBindingCaches,
@@ -652,6 +653,15 @@ export default function Dashboard() {
   const effectiveSession = isAdmin ? (observedSession || activeSession) : activeSession;
   const dashboardCapabilities = deriveDashboardCapabilities({
     studentView,
+    isTeacher,
+    isAdmin,
+    currentUserId: currentUser?.id,
+    activeSession,
+    observedSession,
+    coverageCommandTypes: coverageCapabilities.commandTypes || coverageCapabilities.allowedCommandTypes,
+  });
+  const classDashboardCapabilities = deriveDashboardCapabilities({
+    studentView: 'class',
     isTeacher,
     isAdmin,
     currentUserId: currentUser?.id,
@@ -2407,8 +2417,11 @@ export default function Dashboard() {
     selectedStudentRow?.studentId,
   ]);
   useEffect(() => {
-    if (studentView !== 'claimed') return;
-    void purgeAllScreenshotTileCaches(queryClient);
+    if (studentView === 'class') return;
+    // Class-bound V2 pixels may bridge a temporary dashboard-view change.
+    // Legacy pixels still depend on the active observation lease and must be
+    // removed as soon as the class view is no longer being observed.
+    void purgeLegacyScreenshotTileCaches(queryClient);
   }, [studentView]);
   useEffect(() => {
     if (!['denied', 'paused_unobserved'].includes(observationLeaseStatus)) return;
@@ -2421,7 +2434,10 @@ export default function Dashboard() {
     nearViewportStudentIds,
     getTileRef,
   } = useTileViewport();
-  const tileQueryStudents = studentView === 'available'
+  const screenshotTileQueryStudents = effectiveSessionId
+    ? students
+    : EMPTY_LIST;
+  const historyTileQueryStudents = studentView === 'available'
     ? EMPTY_LIST
     : studentView === 'class' && effectiveSessionId
       // A session-scoped aggregate is the immutable frozen roster. Keep every
@@ -2429,17 +2445,27 @@ export default function Dashboard() {
       // server decide whether a row may currently return pixels.
       ? students
       : filteredStudents;
-  const tileStudentBindingsKey = JSON.stringify(
-    tileQueryStudents
+  const screenshotTileStudentBindingsKey = JSON.stringify(
+    screenshotTileQueryStudents
       .map((student) => ({
         studentId: student.studentId,
         realtimeBinding: student.realtimeBinding || '',
+        classroomStateRevision: normalizedTileControlRevision(student),
+      }))
+      .sort((left, right) => left.studentId.localeCompare(right.studentId)),
+  );
+  const historyTileStudentBindingsKey = JSON.stringify(
+    historyTileQueryStudents
+      .map((student) => ({
+        studentId: student.studentId,
+        realtimeBinding: student.realtimeBinding || '',
+        classroomStateRevision: normalizedTileControlRevision(student),
       }))
       .sort((left, right) => left.studentId.localeCompare(right.studentId)),
   );
   const locallyRevokedTileStudentIdsKey = JSON.stringify([...new Set([
     ...JSON.parse(monitoringSuppressedStudentIdsKey),
-    ...tileQueryStudents
+    ...[...screenshotTileQueryStudents, ...historyTileQueryStudents]
       .filter((student) => ['signed_out', 'delegated'].includes(
         monitoringDisplayFor(student).kind,
       ))
@@ -2449,49 +2475,111 @@ export default function Dashboard() {
     () => new Set(JSON.parse(locallyRevokedTileStudentIdsKey)),
     [locallyRevokedTileStudentIdsKey],
   );
-  const tileBatchContext = useMemo(() => ({
+  const dashboardViewerRole = isAdmin ? 'admin' : isTeacher ? 'teacher' : 'staff';
+  const screenshotTileBatchContext = useMemo(() => ({
     schoolId: activeSchoolId || '',
     viewerId: currentUser?.id || '',
-    authority: `${dashboardCapabilities.mode}:${studentView}`,
+    authority: `${dashboardViewerRole}:${classDashboardCapabilities.mode}:class`,
+    teachingSessionId: effectiveSessionId || '',
+  }), [
+    activeSchoolId,
+    classDashboardCapabilities.mode,
+    currentUser?.id,
+    dashboardViewerRole,
+    effectiveSessionId,
+  ]);
+  const historyTileBatchContext = useMemo(() => ({
+    schoolId: activeSchoolId || '',
+    viewerId: currentUser?.id || '',
+    authority: `${dashboardViewerRole}:${dashboardCapabilities.mode}:${studentView}`,
     teachingSessionId: studentView === 'class' ? effectiveSessionId || '' : '',
-  }), [activeSchoolId, currentUser?.id, dashboardCapabilities.mode, effectiveSessionId, studentView]);
-  const tileBatchContextKey = JSON.stringify(tileBatchContext);
+  }), [
+    activeSchoolId,
+    currentUser?.id,
+    dashboardCapabilities.mode,
+    dashboardViewerRole,
+    effectiveSessionId,
+    studentView,
+  ]);
+  const screenshotTileBatchContextKey = JSON.stringify(screenshotTileBatchContext);
+  const historyTileBatchContextKey = JSON.stringify(historyTileBatchContext);
   useLayoutEffect(() => {
     setTileGlobalAuthorizationDenied(false);
-  }, [tileBatchContextKey]);
-  const previousTileBindingsRef = useRef({
+  }, [screenshotTileBatchContextKey]);
+  const previousScreenshotTileBindingsRef = useRef({
     contextKey: null,
     students: EMPTY_LIST,
   });
-  const pendingTileBindingChangeRef = useRef(null);
-  const tileBindingTransitionKey = `${tileBatchContextKey}\n${tileStudentBindingsKey}`;
+  const pendingScreenshotTileBindingChangeRef = useRef(null);
+  const screenshotTileBindingTransitionKey = `${screenshotTileBatchContextKey}\n${screenshotTileStudentBindingsKey}`;
   useLayoutEffect(() => {
-    const nextStudents = JSON.parse(tileStudentBindingsKey);
-    const previous = previousTileBindingsRef.current;
-    previousTileBindingsRef.current = {
-      contextKey: tileBatchContextKey,
+    const nextStudents = JSON.parse(screenshotTileStudentBindingsKey);
+    const previous = previousScreenshotTileBindingsRef.current;
+    previousScreenshotTileBindingsRef.current = {
+      contextKey: screenshotTileBatchContextKey,
       students: nextStudents,
     };
-    pendingTileBindingChangeRef.current = null;
-    if (previous.contextKey !== tileBatchContextKey) return;
+    pendingScreenshotTileBindingChangeRef.current = null;
+    if (previous.contextKey !== screenshotTileBatchContextKey) return;
     const changedStudentIds = changedTileBindingStudentIds(previous.students, nextStudents);
     if (changedStudentIds.length === 0) return;
-    pendingTileBindingChangeRef.current = {
-      key: tileBindingTransitionKey,
+    pendingScreenshotTileBindingChangeRef.current = {
+      key: screenshotTileBindingTransitionKey,
       studentIds: changedStudentIds,
     };
     // Fail closed before paint. The passive reconciliation below waits until
     // useQueries owns the replacement queryFn, then refetches the same cohort.
     scrubStudentTileCaches(queryClient, changedStudentIds);
-  }, [tileBatchContextKey, tileBindingTransitionKey, tileStudentBindingsKey]);
-  const tileBatchRequests = useMemo(
-    () => createTileBatchRequests(JSON.parse(tileStudentBindingsKey), tileBatchContext),
-    [tileBatchContext, tileStudentBindingsKey]
+  }, [
+    screenshotTileBatchContextKey,
+    screenshotTileBindingTransitionKey,
+    screenshotTileStudentBindingsKey,
+  ]);
+  const previousHistoryTileBindingsRef = useRef({
+    contextKey: null,
+    students: EMPTY_LIST,
+  });
+  const pendingHistoryTileBindingChangeRef = useRef(null);
+  const historyTileBindingTransitionKey = `${historyTileBatchContextKey}\n${historyTileStudentBindingsKey}`;
+  useLayoutEffect(() => {
+    const nextStudents = JSON.parse(historyTileStudentBindingsKey);
+    const previous = previousHistoryTileBindingsRef.current;
+    previousHistoryTileBindingsRef.current = {
+      contextKey: historyTileBatchContextKey,
+      students: nextStudents,
+    };
+    pendingHistoryTileBindingChangeRef.current = null;
+    if (previous.contextKey !== historyTileBatchContextKey) return;
+    const changedStudentIds = changedTileBindingStudentIds(previous.students, nextStudents);
+    if (changedStudentIds.length === 0) return;
+    pendingHistoryTileBindingChangeRef.current = {
+      key: historyTileBindingTransitionKey,
+      studentIds: changedStudentIds,
+    };
+    scrubStudentTileCaches(queryClient, changedStudentIds);
+  }, [
+    historyTileBatchContextKey,
+    historyTileBindingTransitionKey,
+    historyTileStudentBindingsKey,
+  ]);
+  const classScreenshotTileRequests = useMemo(
+    () => createTileBatchRequests(
+      JSON.parse(screenshotTileStudentBindingsKey),
+      screenshotTileBatchContext,
+    ).filter((request) => request.kind === 'screenshots'),
+    [screenshotTileBatchContext, screenshotTileStudentBindingsKey],
   );
-  const [screenshotTileRequests, historyTileRequests] = useMemo(() => [
-    tileBatchRequests.filter((request) => request.kind === 'screenshots'),
-    tileBatchRequests.filter((request) => request.kind === 'history'),
-  ], [tileBatchRequests]);
+  const screenshotTileRequests = studentView === 'class'
+    && observationLeaseStatus !== 'paused_unobserved'
+    ? classScreenshotTileRequests
+    : EMPTY_LIST;
+  const historyTileRequests = useMemo(
+    () => createTileBatchRequests(
+      JSON.parse(historyTileStudentBindingsKey),
+      historyTileBatchContext,
+    ).filter((request) => request.kind === 'history'),
+    [historyTileBatchContext, historyTileStudentBindingsKey],
+  );
   const observationReadsAllowed = observationLeaseStatus === 'observed'
     || observationLeaseStatus === 'legacy'
     || observationLeaseStatus === 'error';
@@ -2523,7 +2611,7 @@ export default function Dashboard() {
       refetchOnReconnect: 'always',
       retry: false,
       staleTime: 15000,
-      gcTime: 60000,
+      gcTime: TILE_SCREENSHOT_CACHE_GC_MS,
       enabled: screenshotTileReadsEnabled && tileBatchRequestShouldPoll(request, {
         viewportTrackingSupported,
         nearViewportStudentIds,
@@ -2559,11 +2647,30 @@ export default function Dashboard() {
     })),
   });
   useEffect(() => {
-    const pending = pendingTileBindingChangeRef.current;
-    if (!pending || pending.key !== tileBindingTransitionKey) return;
-    pendingTileBindingChangeRef.current = null;
+    const pending = pendingScreenshotTileBindingChangeRef.current;
+    if (!pending || pending.key !== screenshotTileBindingTransitionKey) return;
+    pendingScreenshotTileBindingChangeRef.current = null;
     void reconcileStudentTileBindingCaches(queryClient, pending.studentIds);
-  }, [tileBindingTransitionKey]);
+  }, [screenshotTileBindingTransitionKey]);
+  useEffect(() => {
+    const pending = pendingHistoryTileBindingChangeRef.current;
+    if (!pending || pending.key !== historyTileBindingTransitionKey) return;
+    pendingHistoryTileBindingChangeRef.current = null;
+    void reconcileStudentTileBindingCaches(queryClient, pending.studentIds);
+  }, [historyTileBindingTransitionKey]);
+  const previousStudentViewRef = useRef(studentView);
+  useEffect(() => {
+    const previousStudentView = previousStudentViewRef.current;
+    previousStudentViewRef.current = studentView;
+    if (studentView !== 'class' || previousStudentView === 'class') return;
+    // Reuse the exact cached V2 image for the first paint, then force a
+    // background reconciliation even when the cached query is still fresh.
+    void queryClient.refetchQueries({
+      queryKey: [TILE_BATCH_QUERY_ROOTS.screenshots, screenshotTileBatchContextKey],
+      exact: false,
+      type: 'active',
+    });
+  }, [screenshotTileBatchContextKey, studentView]);
   useEffect(() => {
     if (observationLeaseStatus !== 'observed') return;
     // V2 reads do not wait for this lease, but a newly acknowledged lease
@@ -2573,7 +2680,7 @@ export default function Dashboard() {
       exact: false,
       type: 'active',
     });
-  }, [observationLeaseStatus, tileBatchContextKey]);
+  }, [observationLeaseStatus, screenshotTileBatchContextKey]);
   const screenshotsByStudent = useMemo(() => {
     if (screenshotTileQueries.length === 0) return EMPTY_TILE_MAP;
     return new Map(screenshotTileQueries.flatMap((query) => [...(query.data || EMPTY_TILE_MAP)]));
@@ -2624,9 +2731,16 @@ export default function Dashboard() {
     setTileGlobalAuthorizationDenied(true);
     void purgeAllStudentTileCaches(queryClient);
   }, [tileGlobalAuthorizationFailure]);
-  const tilePrivacyStudents = studentView === 'class' && effectiveSessionId
-    ? students
-    : filteredStudents;
+  const tilePrivacyStudents = (() => {
+    const studentsById = new Map();
+    for (const student of [
+      ...(effectiveSessionId ? students : EMPTY_LIST),
+      ...filteredStudents,
+    ]) {
+      if (student?.studentId) studentsById.set(student.studentId, student);
+    }
+    return [...studentsById.values()];
+  })();
   const tileCachePurgeStudentIdsKey = JSON.stringify([...new Set([
     ...((tileGlobalAuthorizationDenied || tileGlobalAuthorizationFailure)
       ? tilePrivacyStudents.map((student) => student.studentId)
@@ -2639,19 +2753,6 @@ export default function Dashboard() {
       .map((student) => student.studentId),
   ])].sort());
   useEffect(() => {
-    if (monitoringSuppressedStudentIdsKey === '[]') return;
-    queryClient.removeQueries({
-      queryKey: [TILE_BATCH_QUERY_ROOTS.screenshots],
-      exact: false,
-      type: 'inactive',
-    });
-    queryClient.removeQueries({
-      queryKey: [TILE_BATCH_QUERY_ROOTS.history],
-      exact: false,
-      type: 'inactive',
-    });
-  }, [monitoringSuppressedStudentIdsKey]);
-  useEffect(() => {
     // Context and binding changes must evict inactive pixel caches instead of
     // letting an A→B→A navigation resurrect an old authorized preview.
     queryClient.removeQueries({
@@ -2659,12 +2760,14 @@ export default function Dashboard() {
       exact: false,
       type: 'inactive',
     });
+  }, [screenshotTileBatchContextKey]);
+  useEffect(() => {
     queryClient.removeQueries({
       queryKey: [TILE_BATCH_QUERY_ROOTS.history],
       exact: false,
       type: 'inactive',
     });
-  }, [tileBatchContextKey]);
+  }, [historyTileBatchContextKey]);
   useEffect(() => {
     void purgeStudentTileCaches(queryClient, JSON.parse(tileCachePurgeStudentIdsKey));
   }, [tileCachePurgeStudentIdsKey]);
@@ -4781,7 +4884,7 @@ export default function Dashboard() {
                 || observationLeaseStatus === 'paused_unobserved';
               const tileScreenshotRevoked = tileSharedPrivacyRevoked
                 || hardDeniedScreenshotStudentIds.has(student.studentId)
-                || studentView === 'claimed';
+                || studentView !== 'class';
               return (
                 <div
                   key={student.studentId}
