@@ -4298,12 +4298,13 @@ export default function Dashboard() {
         {(isAdmin || isTeacher) && (
           <RemoteControlToolbar
             selectedStudentIds={selectedStudentIds}
-            students={selectableStudents}
             onToggleStudent={toggleStudentSelection}
             onClearSelection={clearSelection}
             selectedGrade={selectedGrade}
             onGradeChange={setSelectedGrade}
-            userRole={currentUser?.role}
+            userRole={isAdmin ? 'admin' : 'teacher'}
+            schoolId={activeSchoolId}
+            viewerId={currentUser?.id}
             coverageCount={manageableCoverageCount || claimedContextCount}
             availableCount={availablePickupStudents.length + scheduledCoverageGroups.reduce((total, group) => total + (group.students?.length || group.claimableCount || 0), 0)}
             claimedCount={claimedPickupStudents.length}
@@ -4313,7 +4314,7 @@ export default function Dashboard() {
             onOpenCoverage={!dashboardCapabilities.observedOtherClass && canManageSupervisionSetup ? () => navigate("/classpilot/coverage") : undefined}
             canReroute={dashboardCapabilities.ownedClassSession && !signOutOnlySelectionActive}
             onReroute={dashboardCapabilities.ownedClassSession && !signOutOnlySelectionActive ? () => setShowRerouteDialog(true) : undefined}
-            canViewHistoricalTelemetry={isAdmin}
+            canViewHistoricalTelemetry={isAdmin || isTeacher}
           />
         )}
 
