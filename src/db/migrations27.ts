@@ -256,6 +256,25 @@ ALTER TABLE student_sessions
   VALIDATE CONSTRAINT student_sessions_recovery_token_hash_check;
 `;
 
+// Rows marked legacy were created before explicit session auth kinds were
+// issued. Retain any session with a heartbeat inside the manual-session lease
+// window, but release abandoned rows so they no longer hide students from the
+// login roster. The active/ended predicate makes this safe to run repeatedly.
+export const CLASSPILOT_STALE_LEGACY_STUDENT_SESSION_CLEANUP_SQL = `
+SET LOCAL lock_timeout = '15s';
+SET LOCAL statement_timeout = '2min';
+
+UPDATE student_sessions
+SET
+  is_active = false,
+  ended_at = now(),
+  session_recovery_token_hash = NULL
+WHERE auth_kind = 'legacy'
+  AND is_active = true
+  AND ended_at IS NULL
+  AND last_seen_at <= now() - interval '300 seconds';
+`;
+
 export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
   {
     id: "20260822_classpilot_2_7_expand",
@@ -317,6 +336,16 @@ export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
     mode: "nontransactional",
     apply: async (connection) => {
       await ensureClasspilotStudentSessionRecoveryIndexesOnline(connection);
+    },
+  },
+  {
+    id: "20260828_classpilot_stale_legacy_student_session_cleanup",
+    checksum: createHash("sha256")
+      .update(CLASSPILOT_STALE_LEGACY_STUDENT_SESSION_CLEANUP_SQL)
+      .digest("hex"),
+    mode: "transactional",
+    apply: async (connection) => {
+      await connection.query(CLASSPILOT_STALE_LEGACY_STUDENT_SESSION_CLEANUP_SQL);
     },
   },
   staffIdentityIntegrityMigration,

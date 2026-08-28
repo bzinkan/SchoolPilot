@@ -46,7 +46,7 @@ test("manual student sessions use database-time leases and exact recovery capabi
     storage.indexOf("export async function startStudentSessionWithReplacements"),
     storage.indexOf("export async function endStudentSessionExact(")
   );
-  assert.match(authority, /CLASSPILOT_MANUAL_SHARED_ISSUANCE_DEFAULT = false/);
+  assert.match(authority, /CLASSPILOT_MANUAL_SHARED_ISSUANCE_DEFAULT = true/);
   assert.ok(
     sessionStart.indexOf("assertClasspilotManualSharedSessionIssuanceEnabled()")
       < sessionStart.indexOf("db.transaction"),

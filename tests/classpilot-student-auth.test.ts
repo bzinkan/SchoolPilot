@@ -200,8 +200,8 @@ describe("active ClassPilot student token session resolver", () => {
 });
 
 describe("ClassPilot student session recovery capabilities", () => {
-  it("keeps Phase-A manual issuance dark unless it is explicitly enabled", () => {
-    assert.equal(classpilotManualSharedSessionIssuanceEnabled({}), false);
+  it("enables Phase-B manual issuance by default with an explicit kill switch", () => {
+    assert.equal(classpilotManualSharedSessionIssuanceEnabled({}), true);
     assert.equal(classpilotManualSharedSessionIssuanceEnabled({
       CLASSPILOT_MANUAL_SHARED_SESSION_ISSUANCE_ENABLED: "true",
     }), true);

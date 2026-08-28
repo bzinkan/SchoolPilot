@@ -9,10 +9,9 @@ export const CLASSPILOT_SESSION_RECOVERY_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 export const CLASSPILOT_MANUAL_SHARED_ISSUANCE_ENV =
   "CLASSPILOT_MANUAL_SHARED_SESSION_ISSUANCE_ENABLED";
 
-// Phase A deliberately ships lease-aware readers/reapers before any new
-// manual rows can be issued. Phase B is a separately reviewed one-line default
-// activation; an explicit env value other than "true" remains a kill switch.
-export const CLASSPILOT_MANUAL_SHARED_ISSUANCE_DEFAULT = false;
+// Phase B issues all new manual sign-ins with lease and recovery authority.
+// An explicit env value other than "true" remains the emergency kill switch.
+export const CLASSPILOT_MANUAL_SHARED_ISSUANCE_DEFAULT = true;
 
 export function classpilotManualSharedSessionIssuanceEnabled(
   env: NodeJS.ProcessEnv = process.env
