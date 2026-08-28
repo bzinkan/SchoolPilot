@@ -82,9 +82,10 @@ describe("ClassPilot authenticated HTTP recovery and rate limits", () => {
   });
 
   it("targets claimed-student realtime updates to only the assigned staff user", async () => {
-    const [devices, storage] = await Promise.all([
+    const [devices, storage, lifecycle] = await Promise.all([
       source("src/routes/classpilot/devices.ts"),
       source("src/services/storage.ts"),
+      source("src/services/classpilotStudentSessionLifecycle.ts"),
     ]);
     const publisher = devices.slice(
       devices.indexOf("async function publishRevisionedRealtimeUpdate"),
@@ -114,13 +115,14 @@ describe("ClassPilot authenticated HTTP recovery and rate limits", () => {
     assert.match(authority, /assignedStaffId: context\.assignedStaffId/);
     assert.match(bindingAuthority, /options\.allowEndedBinding/);
     assert.match(bindingAuthority, /ne\(studentSessions\.id, options\.studentSessionId\)/);
+    assert.match(lifecycle, /allowEndedBinding: true/);
     const heartbeat = devices.slice(
       devices.indexOf('router.post("/device/heartbeat"'),
       devices.indexOf('router.post("/device/screenshot"')
     );
     assert.match(heartbeat, /const telemetryAuthority = realtimeControlAuthority\(controlState\)/);
     assert.match(heartbeat, /publishRevisionedRealtimeUpdate\(realtimeSnapshot, update, telemetryAuthority\)/);
-    assert.match(devices, /allowEndedBinding: true/);
+    assert.match(lifecycle, /allowEndedBinding: true/);
     const coverageHydration = await source("src/services/classpilotCoverageHydration.ts");
     assert.match(devices, /liveViewNegotiationV1: extensionCapabilities\.has\("liveViewNegotiationV1"\)/);
     assert.match(coverageHydration, /liveViewNegotiationV1: capabilities\.has\("liveViewNegotiationV1"\)/);
@@ -666,11 +668,12 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
       devices.indexOf("async function recordRemoteActionTimeline")
     );
     assert.match(login, /schoolId: options\.schoolId/);
-    assert.match(login, /studentId: options\.student\.id/);
+    assert.match(login, /const student = options\.student/);
+    assert.match(login, /studentId: student\.id/);
     assert.match(login, /studentSessionId: session\.id/);
     assert.match(
       login,
-      /exactBinding: classpilotControlStateExactBinding\(\{[\s\S]*?schoolId: options\.schoolId,[\s\S]*?deviceId: options\.deviceId,[\s\S]*?studentId: options\.student\.id,[\s\S]*?studentSessionId: session\.id,[\s\S]*?controlRevision:/
+      /exactBinding: classpilotControlStateExactBinding\(\{[\s\S]*?schoolId: options\.schoolId,[\s\S]*?deviceId: options\.deviceId,[\s\S]*?studentId: student\.id,[\s\S]*?studentSessionId: session\.id,[\s\S]*?controlRevision:/
     );
     const legacy = devices.slice(
       devices.indexOf('router.post("/register-student"'),

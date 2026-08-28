@@ -63,6 +63,7 @@ import { runWithTenantContext } from "../middleware/tenantContext.js";
 import {
   resolveActiveStudentTokenSession,
   studentAuthenticationServiceError,
+  type ActiveStudentTokenSession,
 } from "../services/classpilotStudentAuth.js";
 import { buildStudentFabState } from "../services/classpilotFab.js";
 import {
@@ -128,8 +129,21 @@ export const CLASSPILOT_PASSIVE_AUTH_TTL_MS = 30_000;
 const MAX_PASSIVE_AUTH_SCHOOLS = 4_096;
 const MAX_PASSIVE_AUTH_INFLIGHT = 4_096;
 
+type PassiveAuthorizationDecision = {
+  authorized: boolean;
+  /**
+   * Absolute database-provided authority boundary for a manual student
+   * session. Null means this authority is not lease-bound (staff, legacy, or
+   * managed-profile student sessions).
+   */
+  authorityExpiresAtMs: number | null;
+};
+
 const passiveAuthorizationGenerationBySchool = new Map<string, number>();
-const passiveAuthorizationInflight = new Map<string, Promise<boolean>>();
+const passiveAuthorizationInflight = new Map<
+  string,
+  Promise<PassiveAuthorizationDecision>
+>();
 
 function passiveAuthorizationGeneration(schoolId: string): number {
   return passiveAuthorizationGenerationBySchool.get(schoolId) ?? 0;
@@ -168,20 +182,44 @@ export function hasFreshPassiveWebSocketAuthorization(
   );
 }
 
-function rememberPassiveWebSocketAuthorization(client: WSClient, now = Date.now()): void {
+/**
+ * Student authority is exact and lifecycle-sensitive, so even otherwise
+ * harmless pong/ping/heartbeat frames must use a fresh database check. Staff
+ * passive frames retain the bounded cache to avoid unnecessary membership
+ * reads while invalidation remains immediate.
+ */
+export function mayUsePassiveWebSocketAuthorizationCache(role: WsRole): boolean {
+  return role !== "student";
+}
+
+export function rememberPassiveWebSocketAuthorization(
+  client: Pick<
+    WSClient,
+    "schoolId" | "passiveAuthorizationExpiresAt" | "passiveAuthorizationGeneration"
+  >,
+  authorityExpiresAtMs: number | null,
+  now = Date.now()
+): void {
   if (!client.schoolId) return;
   client.passiveAuthorizationGeneration = passiveAuthorizationGeneration(client.schoolId);
-  client.passiveAuthorizationExpiresAt = now + CLASSPILOT_PASSIVE_AUTH_TTL_MS;
+  const ttlExpiresAt = now + CLASSPILOT_PASSIVE_AUTH_TTL_MS;
+  client.passiveAuthorizationExpiresAt = authorityExpiresAtMs === null
+    ? ttlExpiresAt
+    : Math.min(ttlExpiresAt, authorityExpiresAtMs);
 }
 
 async function singleFlightPassiveAuthorization(
   key: string,
-  load: () => Promise<boolean>
-): Promise<{ authorized: boolean; joined: boolean; bypassed: boolean }> {
+  load: () => Promise<PassiveAuthorizationDecision>
+): Promise<{
+  decision: PassiveAuthorizationDecision;
+  joined: boolean;
+  bypassed: boolean;
+}> {
   const existing = passiveAuthorizationInflight.get(key);
-  if (existing) return { authorized: await existing, joined: true, bypassed: false };
+  if (existing) return { decision: await existing, joined: true, bypassed: false };
   if (passiveAuthorizationInflight.size >= MAX_PASSIVE_AUTH_INFLIGHT) {
-    return { authorized: await load(), joined: false, bypassed: true };
+    return { decision: await load(), joined: false, bypassed: true };
   }
   const pending = load().finally(() => {
     if (passiveAuthorizationInflight.get(key) === pending) {
@@ -189,7 +227,7 @@ async function singleFlightPassiveAuthorization(
     }
   });
   passiveAuthorizationInflight.set(key, pending);
-  return { authorized: await pending, joined: false, bypassed: false };
+  return { decision: await pending, joined: false, bypassed: false };
 }
 
 function emitWebSocketMetric(metricName: "WebSocketDisconnect" | "WebSocketError") {
@@ -211,7 +249,7 @@ function emitWebSocketMetric(metricName: "WebSocketDisconnect" | "WebSocketError
 
 type StudentWebSocketSessionResolver = (
   payload: StudentTokenPayload
-) => Promise<unknown | undefined>;
+) => Promise<ActiveStudentTokenSession | undefined>;
 
 const defaultStudentWebSocketSessionResolver: StudentWebSocketSessionResolver = (payload) =>
   runWithTenantContext({ schoolId: payload.schoolId }, () =>
@@ -225,6 +263,47 @@ const defaultStudentWebSocketSessionResolver: StudentWebSocketSessionResolver = 
  * that was open during roster removal from acknowledging commands, mutating
  * chat delivery, or sending WebRTC signaling afterward.
  */
+async function resolveActiveStudentWebSocketAuthorization(
+  client: Pick<
+    WSClient,
+    "role" | "schoolId" | "studentId" | "studentSessionId" | "deviceId"
+  >,
+  resolveSession: StudentWebSocketSessionResolver = defaultStudentWebSocketSessionResolver
+): Promise<PassiveAuthorizationDecision> {
+  if (client.role !== "student") {
+    return { authorized: true, authorityExpiresAtMs: null };
+  }
+  if (
+    !client.schoolId ||
+    !client.studentId ||
+    !client.studentSessionId ||
+    !client.deviceId
+  ) {
+    return { authorized: false, authorityExpiresAtMs: null };
+  }
+  const active = await resolveSession({
+    schoolId: client.schoolId,
+    studentId: client.studentId,
+    sessionId: client.studentSessionId,
+    deviceId: client.deviceId,
+  });
+  if (!active) return { authorized: false, authorityExpiresAtMs: null };
+
+  // Unit callers may inject a binding resolver; production uses the default
+  // path and additionally revalidates school + license on every message/pong.
+  if (resolveSession !== defaultStudentWebSocketSessionResolver) {
+    return { authorized: true, authorityExpiresAtMs: null };
+  }
+  const entitled = (await runWithTenantContext(
+    { schoolId: client.schoolId },
+    () => resolveClasspilotEntitlement(client.schoolId!)
+  )).entitled;
+  if (!entitled) {
+    return { authorized: false, authorityExpiresAtMs: null };
+  }
+  return { authorized: true, authorityExpiresAtMs: null };
+}
+
 export async function hasActiveStudentWebSocketBinding(
   client: Pick<
     WSClient,
@@ -232,29 +311,7 @@ export async function hasActiveStudentWebSocketBinding(
   >,
   resolveSession: StudentWebSocketSessionResolver = defaultStudentWebSocketSessionResolver
 ): Promise<boolean> {
-  if (client.role !== "student") return true;
-  if (
-    !client.schoolId ||
-    !client.studentId ||
-    !client.studentSessionId ||
-    !client.deviceId
-  ) {
-    return false;
-  }
-  const active = Boolean(await resolveSession({
-    schoolId: client.schoolId,
-    studentId: client.studentId,
-    sessionId: client.studentSessionId,
-    deviceId: client.deviceId,
-  }));
-  if (!active) return false;
-  // Unit callers may inject a binding resolver; production uses the default
-  // path and additionally revalidates school + license on every message/pong.
-  if (resolveSession !== defaultStudentWebSocketSessionResolver) return true;
-  return (await runWithTenantContext(
-    { schoolId: client.schoolId },
-    () => resolveClasspilotEntitlement(client.schoolId!)
-  )).entitled;
+  return (await resolveActiveStudentWebSocketAuthorization(client, resolveSession)).authorized;
 }
 
 type StaffMembershipResolver = (
@@ -795,7 +852,10 @@ export function setupWebSocket(
     };
     const validatePassiveAuthorization = async (): Promise<boolean> => {
       if (!client.authenticated || !client.schoolId) return false;
-      if (hasFreshPassiveWebSocketAuthorization(client)) {
+      if (
+        mayUsePassiveWebSocketAuthorizationCache(client.role)
+        && hasFreshPassiveWebSocketAuthorization(client)
+      ) {
         activity.passiveAuthorizationCacheHits += 1;
         return true;
       }
@@ -825,15 +885,18 @@ export function setupWebSocket(
         : `staff:${binding.schoolId}:${binding.userId ?? ""}:${binding.role}:${binding.authVersion ?? 1}`;
       const outcome = await singleFlightPassiveAuthorization(key, async () => {
         if (binding.role === "student") {
-          return hasActiveStudentWebSocketBinding(binding);
+          return resolveActiveStudentWebSocketAuthorization(binding);
         }
         const [role, user] = await Promise.all([
           activeStaffWebSocketRole(binding),
           binding.userId ? getUserById(binding.userId) : Promise.resolve(undefined),
         ]);
-        return role === binding.role && Boolean(
-          user && credentialVersionMatches(binding.authVersion, user.authVersion)
-        );
+        return {
+          authorized: role === binding.role && Boolean(
+            user && credentialVersionMatches(binding.authVersion, user.authVersion)
+          ),
+          authorityExpiresAtMs: null,
+        };
       });
       if (outcome.joined) activity.passiveAuthorizationJoins += 1;
       else if (outcome.bypassed) activity.passiveAuthorizationBypasses += 1;
@@ -848,14 +911,20 @@ export function setupWebSocket(
         client.deviceId === binding.deviceId &&
         client.userId === binding.userId &&
         client.authVersion === binding.authVersion;
-      if (!outcome.authorized || !bindingUnchanged) {
+      if (!outcome.decision.authorized || !bindingUnchanged) {
         activity.passiveAuthorizationDenied += 1;
         return false;
       }
       // An invalidation racing the query prevents caching its result. The
       // passive frame is harmless, and the next ping immediately reloads.
-      if (passiveAuthorizationGeneration(binding.schoolId) === generation) {
-        rememberPassiveWebSocketAuthorization(client);
+      if (
+        mayUsePassiveWebSocketAuthorizationCache(binding.role)
+        && passiveAuthorizationGeneration(binding.schoolId) === generation
+      ) {
+        rememberPassiveWebSocketAuthorization(
+          client,
+          outcome.decision.authorityExpiresAtMs
+        );
       }
       return true;
     };

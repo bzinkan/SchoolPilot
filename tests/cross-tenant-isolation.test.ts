@@ -112,7 +112,8 @@ before(async () => {
     role: "teacher",
     status: "active",
   });
-  await createProductLicense({ schoolId: schoolA.id, product: "CLASSPILOT", status: "active" } as any);
+  await createProductLicense({ schoolId: schoolA.id, product: "CLASSPILOT", status: "active" });
+  await createProductLicense({ schoolId: schoolB.id, product: "CLASSPILOT", status: "active" });
 });
 
 after(async () => {
@@ -625,8 +626,8 @@ describe("cross-school isolation", () => {
     await inSchool(schoolA.id, () => setActiveStudentForDevice(deviceA, studentA.id));
     await inSchool(schoolB.id, () => setActiveStudentForDevice(deviceB, studentB.id));
     await asSystem(() => db.execute(sql`
-      INSERT INTO student_sessions (student_id, device_id, is_active)
-      VALUES (${corruptStudentA.id}, ${mismatchedDeviceB}, true)
+      INSERT INTO student_sessions (student_id, device_id, auth_kind, is_active)
+      VALUES (${corruptStudentA.id}, ${mismatchedDeviceB}, 'managed_profile', true)
     `).then(() => undefined));
 
     const requestedIds = [studentA.id, studentB.id, corruptStudentA.id, studentA.id];

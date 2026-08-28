@@ -11,17 +11,23 @@ import {
 } from "../schema/classpilot.js";
 import {
   createDevice,
-  getActiveSessionByDevice,
-  getActiveSessionByStudent,
+  endStudentSessionExact,
   getDeviceById,
   getSettingsForSchool,
-  linkStudentDevice,
-  startStudentSession,
+  startStudentSessionWithReplacements,
+  type StudentSessionIssuanceAuthKind,
 } from "./storage.js";
 import {
   createStudentToken,
   type StudentTokenPayload,
 } from "./deviceJwt.js";
+import {
+  assertClasspilotManualSharedSessionIssuanceEnabled,
+  createStudentSessionRecovery,
+  currentStudentSessionAuthorityPredicate,
+  hashStudentSessionRecoveryToken,
+  normalizeStudentSessionRecoveryToken,
+} from "./classpilotStudentSessionAuthority.js";
 
 export const CLASSPILOT_ENROLLMENT_KEY_HEADER = "x-classpilot-enrollment-key";
 export const CLASSPILOT_MANUAL_AUTH_TTL_SECONDS = 300;
@@ -148,7 +154,16 @@ export async function issueStudentDeviceSessionToken(options: {
   deviceName?: string | null;
   classId?: string | null;
   student: Student;
-}) {
+  authKind: StudentSessionIssuanceAuthKind;
+  reclaimRecoveryToken?: string | null;
+}, dependencies: {
+  signStudentToken?: typeof createStudentToken;
+} = {}) {
+  if (options.authKind === "manual_shared") {
+    // Check before device creation or any durable mutation. Storage repeats
+    // this guard so direct callers cannot bypass the Phase-A dark posture.
+    assertClasspilotManualSharedSessionIssuanceEnabled();
+  }
   if (options.student.schoolId !== options.schoolId || options.student.status !== "active") {
     throw Object.assign(new Error("Student is not enrolled"), {
       status: 403,
@@ -156,37 +171,79 @@ export async function issueStudentDeviceSessionToken(options: {
       expose: true,
     });
   }
+  const recovery = options.authKind === "manual_shared"
+    ? createStudentSessionRecovery()
+    : null;
+  const reclaimRecoveryToken = normalizeStudentSessionRecoveryToken(
+    options.reclaimRecoveryToken
+  );
+  const sessionId = crypto.randomUUID();
+  // Sign against a validated preallocated ID before device/session writes.
+  // If signing fails, no transaction has replaced or created authority and no
+  // recovery capability has been persisted.
+  const studentToken = (dependencies.signStudentToken ?? createStudentToken)({
+    studentId: options.student.id,
+    deviceId: options.deviceId,
+    schoolId: options.schoolId,
+    sessionId,
+    studentEmail: options.student.email || undefined,
+  });
   const device = await ensureClassPilotDeviceForSchool({
     deviceId: options.deviceId,
     deviceName: options.deviceName,
     schoolId: options.schoolId,
     classId: options.classId,
   });
-  const previousStudentSession = await getActiveSessionByStudent(options.student.id);
-  const previousDeviceSession = await getActiveSessionByDevice(options.deviceId);
-
-  await linkStudentDevice({ studentId: options.student.id, deviceId: options.deviceId });
-  const session = await startStudentSession(
+  const { session, replacedSessions } = await startStudentSessionWithReplacements(
     options.schoolId,
     options.student.id,
-    options.deviceId
+    options.deviceId,
+    {
+      authKind: options.authKind,
+      sessionId,
+      sessionRecoveryTokenHash: recovery?.tokenHash ?? null,
+      reclaimRecoveryTokenHash: reclaimRecoveryToken
+        ? hashStudentSessionRecoveryToken(reclaimRecoveryToken)
+        : null,
+    }
   );
-
-  const studentToken = createStudentToken({
-    studentId: options.student.id,
-    deviceId: options.deviceId,
-    schoolId: options.schoolId,
-    sessionId: session.id,
-    studentEmail: options.student.email || undefined,
-  });
 
   return {
     device,
     session,
-    previousStudentSession,
-    previousDeviceSession,
+    replacedSessions,
     studentToken,
+    sessionRecoveryToken: recovery?.token ?? null,
   };
+}
+
+/**
+ * Complete response shaping after a credential-bearing session transaction.
+ * If any later awaited step fails, end only the exact row just issued so a raw
+ * recovery capability that never reached the extension cannot strand the
+ * student. Cleanup and publication are deliberately best-effort and never
+ * replace the original failure.
+ */
+export async function finalizeStudentDeviceSessionIssuance<T>(options: {
+  schoolId: string;
+  issuedSession: StudentSession;
+  finalize: () => Promise<T>;
+  onCompensated?: (endedSession: StudentSession) => Promise<void> | void;
+}): Promise<T> {
+  try {
+    return await options.finalize();
+  } catch (error) {
+    const endedSession = await endStudentSessionExact({
+      schoolId: options.schoolId,
+      studentId: options.issuedSession.studentId,
+      deviceId: options.issuedSession.deviceId,
+      studentSessionId: options.issuedSession.id,
+    }).catch(() => undefined);
+    if (endedSession && options.onCompensated) {
+      await Promise.resolve(options.onCompensated(endedSession)).catch(() => undefined);
+    }
+    throw error;
+  }
 }
 
 async function lookupActiveStudentTokenSession(
@@ -220,7 +277,7 @@ async function lookupActiveStudentTokenSession(
         eq(studentSessions.id, payload.sessionId),
         eq(studentSessions.studentId, payload.studentId),
         eq(studentSessions.deviceId, payload.deviceId),
-        eq(studentSessions.isActive, true)
+        currentStudentSessionAuthorityPredicate()
       )
     )
     .limit(1);

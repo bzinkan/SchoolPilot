@@ -812,6 +812,11 @@ const TRANSACTIONAL_PLAN_SESSION_POSTURE_SQL = `
         SELECT 1
         FROM student_sessions AS active_session
         WHERE active_session.is_active = true
+          AND active_session.ended_at IS NULL
+          AND (
+            active_session.auth_kind <> 'manual_shared'
+            OR active_session.manual_lease_expires_at > now()
+          )
           AND active_session.student_id = requested.student_id
           AND active_session.device_id = requested.device_id
       ) AS exact_pair_exists,
@@ -820,14 +825,17 @@ const TRANSACTIONAL_PLAN_SESSION_POSTURE_SQL = `
         FROM student_sessions AS active_session
         WHERE active_session.is_active = true
           AND (
-            (
-              active_session.student_id = requested.student_id
-              AND active_session.device_id <> requested.device_id
+            active_session.student_id = requested.student_id
+            OR active_session.device_id = requested.device_id
+          )
+          AND NOT (
+            active_session.ended_at IS NULL
+            AND (
+              active_session.auth_kind <> 'manual_shared'
+              OR active_session.manual_lease_expires_at > now()
             )
-            OR (
-              active_session.device_id = requested.device_id
-              AND active_session.student_id <> requested.student_id
-            )
+            AND active_session.student_id = requested.student_id
+            AND active_session.device_id = requested.device_id
           )
       ) AS conflicting_pair_exists
     FROM requested
@@ -860,6 +868,11 @@ const SEED_STUDENT_SESSIONS_SQL = `
         SELECT 1
         FROM student_sessions AS active_session
         WHERE active_session.is_active = true
+          AND active_session.ended_at IS NULL
+          AND (
+            active_session.auth_kind <> 'manual_shared'
+            OR active_session.manual_lease_expires_at > now()
+          )
           AND active_session.student_id = requested.student_id
           AND active_session.device_id = requested.device_id
       ) AS exact_pair_exists,
@@ -868,14 +881,17 @@ const SEED_STUDENT_SESSIONS_SQL = `
         FROM student_sessions AS active_session
         WHERE active_session.is_active = true
           AND (
-            (
-              active_session.student_id = requested.student_id
-              AND active_session.device_id <> requested.device_id
+            active_session.student_id = requested.student_id
+            OR active_session.device_id = requested.device_id
+          )
+          AND NOT (
+            active_session.ended_at IS NULL
+            AND (
+              active_session.auth_kind <> 'manual_shared'
+              OR active_session.manual_lease_expires_at > now()
             )
-            OR (
-              active_session.device_id = requested.device_id
-              AND active_session.student_id <> requested.student_id
-            )
+            AND active_session.student_id = requested.student_id
+            AND active_session.device_id = requested.device_id
           )
       ) AS conflicting_pair_exists
     FROM requested
@@ -888,7 +904,8 @@ const SEED_STUDENT_SESSIONS_SQL = `
       started_at,
       last_seen_at,
       ended_at,
-      is_active
+      is_active,
+      auth_kind
     )
     SELECT
       classified.seed_id,
@@ -897,7 +914,8 @@ const SEED_STUDENT_SESSIONS_SQL = `
       now(),
       now(),
       NULL,
-      true
+      true,
+      'managed_profile'
     FROM classified
     WHERE classified.exact_pair_exists = false
       AND classified.conflicting_pair_exists = false
@@ -1080,6 +1098,11 @@ function modeJoin(mode: ClasspilotTilePlanMode): string {
       INNER JOIN student_sessions AS student_session
         ON student_session.student_id = candidate.student_id
        AND student_session.is_active = true
+       AND student_session.ended_at IS NULL
+       AND (
+         student_session.auth_kind <> 'manual_shared'
+         OR student_session.manual_lease_expires_at > now()
+       )
       INNER JOIN devices AS device
         ON device.device_id = student_session.device_id
        AND device.school_id = candidate.school_id

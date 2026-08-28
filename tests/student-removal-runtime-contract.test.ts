@@ -41,21 +41,25 @@ test("inactive students cannot authenticate, register, heartbeat, or switch onto
   );
   assert.match(
     storage,
-    /startStudentSession\([\s\S]*?takePasspilotClassLock\(tx, schoolId\)[\s\S]*?eq\(students\.status, "active"\)[\s\S]*?\.for\("update"\)/,
+    /startStudentSessionWithReplacements\([\s\S]*?takePasspilotClassLock\(tx, schoolId\)[\s\S]*?eq\(students\.status, "active"\)[\s\S]*?\.for\("update"\)/,
     "session issuance must serialize its active-student decision with roster removal"
   );
   assert.match(
     studentAuth,
-    /startStudentSession\(\s*options\.schoolId,\s*options\.student\.id,\s*options\.deviceId\s*\)/,
+    /startStudentSessionWithReplacements\(\s*options\.schoolId,\s*options\.student\.id,\s*options\.deviceId,/,
     "the credential issuer must bind atomic session creation to the selected school"
   );
   const deviceSwitch = storage.slice(
     storage.indexOf("export async function setActiveStudentForDevice"),
     storage.indexOf("// ClassPilot - Heartbeat operations")
   );
-  assert.match(deviceSwitch, /takePasspilotClassLock\(tx, candidate\.schoolId\)/);
-  assert.match(deviceSwitch, /eq\(students\.status, "active"\)[\s\S]*?\.for\("update"\)/);
-  assert.match(deviceSwitch, /tx[\s\S]*?\.insert\(studentSessions\)/);
+  assert.match(deviceSwitch, /student\.status !== "active"/);
+  assert.match(deviceSwitch, /student\.schoolId !== device\.schoolId/);
+  assert.match(
+    deviceSwitch,
+    /startStudentSessionWithReplacements\([\s\S]*?student\.schoolId[\s\S]*?authKind: "managed_profile"/
+  );
+  assert.doesNotMatch(deviceSwitch, /\.insert\(studentSessions\)/);
 });
 
 test("active PassPilot reads exclude removed students while history keeps their identity", async () => {

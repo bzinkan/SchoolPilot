@@ -24,8 +24,8 @@ import {
   getDevicesBySchool,
   createDevice,
   updateDevice,
-  deleteDevice,
   createHeartbeatAndRefreshPresence,
+  refreshStudentSessionAuthorityWithoutTelemetry,
   getHeartbeatsByDevice,
   getHeartbeatsByDeviceInRange,
   getStudentById,
@@ -41,9 +41,8 @@ import {
   updateEnrollmentSettings,
   getStudentsForDevice,
   getActiveStudentForDevice,
-  getActiveSessions,
+  getStudentIdsHiddenFromClasspilotLoginRoster,
   getActiveSessionByDevice,
-  setActiveStudentForDevice,
   getAdminEmailsBySchool,
   addCentralEmailRecipientForSchool,
   upsertSettings,
@@ -52,7 +51,9 @@ import {
   getStudentByEmail,
   createEvidenceArtifact,
   createStudentTimelineEvent,
-  endStudentSession,
+  endStudentSessionByRecoveryTokenHash,
+  endStudentSessionExact,
+  getReclaimableStudentSessionByRecoveryTokenHash,
   getBatchTileAccessForStaff,
   getClasspilotStudentControlState,
   acknowledgeClasspilotStudentControlState,
@@ -71,7 +72,7 @@ import {
   verifyStudentToken,
 } from "../../services/deviceJwt.js";
 import { comparePassword } from "../../util/password.js";
-import { updateDeviceStatus, updateDeviceClassification, removeDeviceStatus } from "../../realtime/student-statuses.js";
+import { updateDeviceStatus, updateDeviceClassification } from "../../realtime/student-statuses.js";
 import {
   broadcastToStaffSessionLocal,
   sendToDeviceLocal,
@@ -100,12 +101,20 @@ import { classPilotStudentDto, classPilotStudentDtos } from "../../util/safeStud
 import {
   CLASSPILOT_ENROLLMENT_KEY_HEADER,
   enrollmentKeyFromRequest,
+  finalizeStudentDeviceSessionIssuance,
   issueStudentDeviceSessionToken,
   setClassPilotNoStore,
   studentAuthenticationServiceError,
   validateEnrollmentKeyForSettings,
   verifyActiveStudentTokenSession,
 } from "../../services/classpilotStudentAuth.js";
+import {
+  classpilotManualSharedSessionIssuanceEnabled,
+  canShortCircuitAcceptedHeartbeat,
+  type ClasspilotAcceptedHeartbeatThrottle,
+  hashStudentSessionRecoveryToken,
+  studentSessionRecoveryTokenFromAuthorization,
+} from "../../services/classpilotStudentSessionAuthority.js";
 import {
   effectiveSharedChromebookLoginMethod,
 } from "../../services/classpilotSharedChromebook.js";
@@ -153,7 +162,6 @@ import {
   classpilotPublicRealtimeBinding,
   classpilotRealtimeFresh,
   classpilotRealtimeOrderingKey,
-  markClasspilotRealtimeSignedOut,
   normalizeClasspilotPublicCapabilities,
   normalizeClasspilotPublicClassroomControls,
   patchClasspilotRealtimeClassification,
@@ -166,6 +174,10 @@ import {
   serializeClasspilotStudentControlState,
 } from "../../services/classpilotClassroomState.js";
 import { recordClasspilotStudentSessionMonitoringEvent } from "../../services/classpilotMonitoringEvents.js";
+import {
+  publishClasspilotStudentSessionEnded,
+  removeClasspilotDeviceAndPublishSessionEnds,
+} from "../../services/classpilotStudentSessionLifecycle.js";
 import { resolveCurrentClasspilotSafetyAction } from "../../services/classpilotSafetyAction.js";
 import { resolveClasspilotEntitlement } from "../../services/classpilotEntitlement.js";
 import { scheduleClasspilotCommandUpdate } from "../../services/classpilotCommandUpdateScheduler.js";
@@ -322,6 +334,10 @@ const extensionRosterLimiter = rateLimit({
   ].join(":"),
   store: redisStore("rl:classpilot:extension:roster:"),
   passOnStoreError: true,
+  handler: (_req, res, _next, options) => {
+    recordHeartbeatHotPathCounter("manualSessionRosterRateLimited");
+    res.status(options.statusCode).send(options.message);
+  },
 });
 
 const extensionLoginLimiter = rateLimit({
@@ -337,6 +353,36 @@ const extensionLoginLimiter = rateLimit({
     String(req.body?.studentId || req.body?.studentEmail || "").toLowerCase(),
   ].join(":"),
   store: redisStore("rl:classpilot:extension:login:"),
+  passOnStoreError: true,
+});
+
+function recoveryCapabilityLimiterKey(req: Request): string {
+  const rawAuthorization = Array.isArray(req.headers.authorization)
+    ? req.headers.authorization[0] || ""
+    : req.headers.authorization || "";
+  if (!rawAuthorization) return `missing:${extensionIp(req)}`;
+  return `recovery:${crypto.createHash("sha256").update(rawAuthorization).digest("hex").slice(0, 32)}`;
+}
+
+const extensionSessionReleaseCapabilityLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  message: { error: "Too many session release requests, please wait" },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: recoveryCapabilityLimiterKey,
+  store: redisStore("rl:classpilot:extension:session-release-capability:"),
+  passOnStoreError: true,
+});
+
+const extensionSessionReleaseIpLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 2_000,
+  message: { error: "Too many session release requests, please wait" },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: extensionIp,
+  store: redisStore("rl:classpilot:extension:session-release-ip:"),
   passOnStoreError: true,
 });
 
@@ -951,34 +997,7 @@ async function broadcastStudentSignedOut(options: {
   deviceId: string;
   reason: string;
 }) {
-  const controlState = await runWithTenantContext({ schoolId: options.schoolId }, () =>
-    getClasspilotStudentControlState(options.schoolId, options.studentId)
-  ).catch(() => undefined);
-  void runWithTenantContext({ schoolId: options.schoolId }, () =>
-    recordClasspilotStudentSessionMonitoringEvent({
-      ...options,
-      type: "student_session_ended",
-      reason: options.reason,
-    })
-  ).catch(() => { /* lifecycle telemetry must not block sign-out */ });
-  const mutation = await markClasspilotRealtimeSignedOut(options);
-  if (mutation.status === "stale" || !mutation.snapshot) return;
-  removeDeviceStatus(options.schoolId, options.deviceId);
-  const signOutUpdate = {
-    type: "student-signed-out",
-    studentId: options.studentId,
-    schoolId: options.schoolId,
-    status: "offline",
-    reason: options.reason,
-    timestamp: new Date().toISOString(),
-    ...publicRealtimeFields(mutation.snapshot),
-  };
-  await publishRevisionedRealtimeUpdate(
-    mutation.snapshot,
-    signOutUpdate,
-    realtimeControlAuthority(controlState),
-    { allowEndedBinding: true }
-  );
+  await publishClasspilotStudentSessionEnded(options);
 }
 
 async function completeStudentDeviceLogin(options: {
@@ -987,11 +1006,14 @@ async function completeStudentDeviceLogin(options: {
   deviceName?: string | null;
   classId?: string | null;
   student: Awaited<ReturnType<typeof getStudentByEmail>>;
+  authKind: "managed_profile" | "manual_shared";
+  reclaimRecoveryToken?: string | null;
 }) {
   if (!options.student) {
     throw new Error("Student required");
   }
-  if (options.student.schoolId !== options.schoolId || options.student.status !== "active") {
+  const student = options.student;
+  if (student.schoolId !== options.schoolId || student.status !== "active") {
     throw Object.assign(new Error("Student is not enrolled"), {
       status: 403,
       code: "STUDENT_INACTIVE",
@@ -1014,17 +1036,45 @@ async function completeStudentDeviceLogin(options: {
   const {
     device,
     session,
-    previousStudentSession,
-    previousDeviceSession,
+    replacedSessions,
     studentToken,
+    sessionRecoveryToken,
   } = await issueStudentDeviceSessionToken({
     schoolId: options.schoolId,
     deviceId: options.deviceId,
     deviceName: options.deviceName,
     classId: options.classId,
-    student: options.student,
+    student,
+    authKind: options.authKind,
+    reclaimRecoveryToken: options.reclaimRecoveryToken,
   });
-  const studentEmail = options.student.email || undefined;
+  return finalizeStudentDeviceSessionIssuance({
+    schoolId: options.schoolId,
+    issuedSession: session,
+    onCompensated: (endedSession) => broadcastStudentSignedOut({
+      schoolId: options.schoolId,
+      studentId: endedSession.studentId,
+      studentSessionId: endedSession.id,
+      deviceId: endedSession.deviceId,
+      reason: "login_completion_failed",
+    }),
+    finalize: async () => {
+  const studentEmail = student.email || undefined;
+  if (options.authKind === "manual_shared") {
+    recordHeartbeatHotPathCounter("manualSessionLoginIssued");
+  }
+  const replacedLegacyCount = replacedSessions.filter(
+    (row) => row.authKind === "legacy"
+  ).length;
+  const replacedManualCount = replacedSessions.filter(
+    (row) => row.authKind === "manual_shared"
+  ).length;
+  if (replacedLegacyCount > 0) {
+    recordHeartbeatHotPathCounter("manualSessionLegacyReplaced", replacedLegacyCount);
+  }
+  if (replacedManualCount > 0) {
+    recordHeartbeatHotPathCounter("manualSessionManualReplaced", replacedManualCount);
+  }
 
   const tokenPayload = verifyStudentToken(studentToken);
   if (!(await verifyActiveStudentTokenSession(tokenPayload))) {
@@ -1036,46 +1086,47 @@ async function completeStudentDeviceLogin(options: {
   void runWithTenantContext({ schoolId: options.schoolId }, () =>
     recordClasspilotStudentSessionMonitoringEvent({
       schoolId: options.schoolId,
-      studentId: options.student!.id,
+      studentId: student.id,
       studentSessionId: session.id,
       deviceId: options.deviceId,
       type: "student_session_started",
     })
   ).catch(() => { /* lifecycle telemetry must not block login */ });
 
-  if (previousDeviceSession && previousDeviceSession.studentId !== options.student.id) {
-    await broadcastStudentSignedOut({
+  // The transaction returns the exact rows it replaced. Publish from that
+  // result instead of pre-reading mutable "current" sessions, and attempt every
+  // tombstone without allowing a transport failure to invalidate the durable
+  // login that already committed.
+  await Promise.allSettled(replacedSessions.flatMap((replacedSession) => {
+    const tasks: Promise<unknown>[] = [broadcastStudentSignedOut({
       schoolId: options.schoolId,
-      studentId: previousDeviceSession.studentId,
-      studentSessionId: previousDeviceSession.id,
-      deviceId: options.deviceId,
+      studentId: replacedSession.studentId,
+      studentSessionId: replacedSession.id,
+      deviceId: replacedSession.deviceId,
       reason: "session_replaced",
-    });
-  }
-
-  if (previousStudentSession && previousStudentSession.deviceId !== options.deviceId) {
-    const replacedMessage = {
-      type: "student-session-replaced",
-      studentId: options.student.id,
-      studentSessionId: previousStudentSession.id,
-      deviceId: previousStudentSession.deviceId,
-      replacementDeviceId: options.deviceId,
-      timestamp: new Date().toISOString(),
-    };
-    sendToDeviceLocal(options.schoolId, previousStudentSession.deviceId, replacedMessage);
-    await publishWS({ kind: "device", schoolId: options.schoolId, deviceId: previousStudentSession.deviceId }, replacedMessage);
-    await broadcastStudentSignedOut({
-      schoolId: options.schoolId,
-      studentId: options.student.id,
-      studentSessionId: previousStudentSession.id,
-      deviceId: previousStudentSession.deviceId,
-      reason: "session_replaced",
-    });
-  }
+    })];
+    if (replacedSession.deviceId !== options.deviceId) {
+      const replacedMessage = {
+        type: "student-session-replaced",
+        studentId: replacedSession.studentId,
+        studentSessionId: replacedSession.id,
+        deviceId: replacedSession.deviceId,
+        replacementDeviceId: options.deviceId,
+        timestamp: new Date().toISOString(),
+      };
+      sendToDeviceLocal(options.schoolId, replacedSession.deviceId, replacedMessage);
+      tasks.push(publishWS({
+        kind: "device",
+        schoolId: options.schoolId,
+        deviceId: replacedSession.deviceId,
+      }, replacedMessage));
+    }
+    return tasks;
+  }));
 
   const controlState = await getClasspilotStudentControlState(
     options.schoolId,
-    options.student.id
+    student.id
   );
   // The control state is student-scoped, but the login response is authorized
   // by this exact newly-issued student/session/device binding. Re-check as the
@@ -1094,21 +1145,26 @@ async function completeStudentDeviceLogin(options: {
   return {
     success: true,
     schoolId: options.schoolId,
-    studentId: options.student.id,
+    studentId: student.id,
     studentSessionId: session.id,
     exactBinding: classpilotControlStateExactBinding({
       schoolId: options.schoolId,
       deviceId: options.deviceId,
-      studentId: options.student.id,
+      studentId: student.id,
       studentSessionId: session.id,
       controlRevision: classroomState?.revision ?? 0,
     }),
     device,
-    student: classPilotStudentDto(options.student),
+    student: classPilotStudentDto(student),
     studentToken,
     manualExpiresInSeconds: 300,
+    ...(sessionRecoveryToken
+      ? { sessionRecovery: { token: sessionRecoveryToken } }
+      : {}),
     classroomState,
   };
+    },
+  });
 }
 
 async function recordRemoteActionTimeline(options: {
@@ -1143,7 +1199,7 @@ async function recordRemoteActionTimeline(options: {
 // ============================================================================
 // Per-device heartbeat rate limiting (item #9)
 // ============================================================================
-const deviceLastHeartbeat = new Map<string, number>();
+const deviceLastHeartbeat = new Map<string, ClasspilotAcceptedHeartbeatThrottle>();
 const HEARTBEAT_MIN_INTERVAL_MS = 5_000; // 5 seconds minimum between heartbeats
 const RATE_LIMIT_CLEANUP_INTERVAL_MS = 60_000; // clean stale entries every 60s
 const MAX_DEVICE_HEARTBEAT_ENTRIES = 20_000;
@@ -1166,8 +1222,8 @@ function setBoundedMap<K, V>(map: Map<K, V>, key: K, value: V, maximum: number):
 // lifetime; this maintenance timer should not strand migration/test workers.
 const heartbeatRateLimitCleanupTimer = setInterval(() => {
   const cutoff = Date.now() - 120_000; // remove entries older than 2 min
-  for (const [key, ts] of deviceLastHeartbeat) {
-    if (ts < cutoff) deviceLastHeartbeat.delete(key);
+  for (const [key, state] of deviceLastHeartbeat) {
+    if (state.acceptedAt < cutoff) deviceLastHeartbeat.delete(key);
   }
   const deliveredCutoff = Date.now() - DELIVERED_MESSAGE_CACHE_TTL_MS;
   for (const [key, state] of deliveredMessages) {
@@ -1599,6 +1655,9 @@ router.get("/extension/login-config", extensionConfigLimiter, async (req, res, n
 router.get("/extension/login-roster", extensionRosterLimiter, async (req, res, next) => {
   try {
     setClassPilotNoStore(res);
+    const recoveryToken = studentSessionRecoveryTokenFromAuthorization(
+      req.headers.authorization
+    );
     const schoolIdParam = String(req.query.schoolId || "").trim();
     const schoolSlug = String(req.query.schoolSlug || "").trim();
     const gradeLevel = normalizeGradeLevel(req.query.gradeLevel);
@@ -1635,6 +1694,7 @@ router.get("/extension/login-roster", extensionRosterLimiter, async (req, res, n
       }
       const rosterThrottle = await enforceSharedRosterFetchThrottle(school.id, gradeLevel);
       if (!rosterThrottle.ok) {
+        recordHeartbeatHotPathCounter("manualSessionRosterRateLimited");
         return res.status(429).json({
           error: "Too many roster requests, please wait",
           retryAfterSeconds: rosterThrottle.retryAfterSeconds,
@@ -1642,13 +1702,15 @@ router.get("/extension/login-roster", extensionRosterLimiter, async (req, res, n
       }
       let students = await getStudentsBySchool(school.id);
       const grades = rosterGradesForStudents(students);
-      const activeStudentIds = new Set(
-        (await getActiveSessions(school.id))
-          .filter((session) => {
-            const lastSeenAt = session.lastSeenAt?.getTime?.() ?? 0;
-            return lastSeenAt > 0 && Date.now() - lastSeenAt <= 5 * 60 * 1000;
+      const reclaimableSession = recoveryToken
+        ? await getReclaimableStudentSessionByRecoveryTokenHash({
+            schoolId: school.id,
+            tokenHash: hashStudentSessionRecoveryToken(recoveryToken),
           })
-          .map((session) => session.studentId)
+        : undefined;
+      const activeStudentIds = new Set(
+        (await getStudentIdsHiddenFromClasspilotLoginRoster(school.id))
+          .filter((studentId) => studentId !== reclaimableSession?.studentId)
       );
 
       if (!gradeLevel) {
@@ -1669,12 +1731,19 @@ router.get("/extension/login-roster", extensionRosterLimiter, async (req, res, n
           name: `${student.firstName || ""} ${student.lastName || ""}`.trim() || student.email || "Student",
           gradeLevel: student.gradeLevel,
           hasPin: !!student.classpilotPinHash,
+          ...(student.id === reclaimableSession?.studentId
+            ? { reclaimable: true }
+            : {}),
         }))
         .sort((a, b) => a.name.localeCompare(b.name));
+      if (roster.some((student) => student.reclaimable === true)) {
+        recordHeartbeatHotPathCounter("manualSessionReclaimOffered");
+      }
 
       return res.json({ students: roster, grades, loginMethod, pinLoginEnabled: true });
     });
   } catch (err) {
+    recordHeartbeatHotPathCounter("manualSessionRosterFailure");
     next(err);
   }
 });
@@ -1741,6 +1810,16 @@ router.get("/extension/settings", requireDeviceAuth, requireClasspilotEntitlemen
 router.post("/extension/student-login", extensionLoginLimiter, async (req, res, next) => {
   try {
     setClassPilotNoStore(res);
+    if (!classpilotManualSharedSessionIssuanceEnabled()) {
+      return res.status(503).json({
+        error: "Manual student sign-in is temporarily unavailable",
+        code: "CLASSPILOT_MANUAL_SESSION_ISSUANCE_UNAVAILABLE",
+        retryable: true,
+      });
+    }
+    const recoveryToken = studentSessionRecoveryTokenFromAuthorization(
+      req.headers.authorization
+    );
     const {
       deviceId,
       deviceName,
@@ -1815,6 +1894,8 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
           deviceName,
           classId,
           student,
+          authKind: "manual_shared",
+          reclaimRecoveryToken: recoveryToken,
         });
         return res.json(login);
       });
@@ -1880,6 +1961,8 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
         deviceName,
         classId,
         student,
+        authKind: "manual_shared",
+        reclaimRecoveryToken: recoveryToken,
       });
       return res.json(login);
     });
@@ -1888,25 +1971,92 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
   }
 });
 
-// POST /api/classpilot/extension/sign-out - End the active student session for this token/device
-router.post("/extension/sign-out", requireDeviceAuth, async (req, res, next) => {
+// POST /api/classpilot/extension/session-release - Idempotently release the
+// exact manual session represented by an opaque recovery capability. Cleanup
+// remains available after entitlement or school lifecycle changes.
+router.post(
+  "/extension/session-release",
+  extensionSessionReleaseIpLimiter,
+  extensionSessionReleaseCapabilityLimiter,
+  async (req, res) => {
+    setClassPilotNoStore(res);
+    const recoveryToken = studentSessionRecoveryTokenFromAuthorization(
+      req.headers.authorization
+    );
+    const schoolId = typeof req.body?.schoolId === "string"
+      ? req.body.schoolId.trim()
+      : "";
+    if (!recoveryToken || !/^[A-Za-z0-9_-]{1,128}$/.test(schoolId)) {
+      return res.status(400).json({
+        error: "Session release request is invalid",
+        code: "SESSION_RELEASE_INVALID",
+      });
+    }
+
+    try {
+      const school = await getSchoolById(schoolId);
+      if (!school) {
+        recordHeartbeatHotPathCounter("manualSessionReleaseNoop");
+        return res.status(204).end();
+      }
+      const ended = await runWithTenantContext({ schoolId }, () =>
+        endStudentSessionByRecoveryTokenHash({
+          schoolId,
+          tokenHash: hashStudentSessionRecoveryToken(recoveryToken),
+        })
+      );
+      if (ended) {
+        recordHeartbeatHotPathCounter("manualSessionReleaseTransitioned");
+        await broadcastStudentSignedOut({
+          schoolId,
+          studentId: ended.studentId,
+          studentSessionId: ended.id,
+          deviceId: ended.deviceId,
+          reason: normalizeExtensionSignOutReason(req.body?.reason),
+        }).catch(() => { /* durable release must not be undone by publication failure */ });
+      } else {
+        recordHeartbeatHotPathCounter("manualSessionReleaseNoop");
+      }
+      return res.status(204).end();
+    } catch {
+      recordHeartbeatHotPathCounter("manualSessionReleaseFailure");
+      return res.status(503).json({
+        error: "Session release service is unavailable",
+        code: "SESSION_RELEASE_UNAVAILABLE",
+      });
+    }
+  }
+);
+
+// POST /api/classpilot/extension/sign-out - Compatibility cleanup for 2.7.2.
+// Authenticate the signed claims without requiring the represented row to
+// remain active, then end only that exact tuple. A delayed request cannot end a
+// replacement session and repeated requests remain successful.
+router.post("/extension/sign-out", requireCryptographicDeviceAuth, async (req, res, next) => {
   try {
     setClassPilotNoStore(res);
     const deviceId = res.locals.deviceId as string;
     const studentId = res.locals.studentId as string;
     const schoolId = res.locals.schoolId as string;
+    const studentSessionId = res.locals.studentSessionId as string;
     const reason = normalizeExtensionSignOutReason(req.body?.reason);
-    const active = await getActiveStudentForDevice(deviceId);
-    if (active?.student.id === studentId) {
-      await endStudentSession(active.session.id);
+    const ended = await runWithTenantContext({ schoolId }, () =>
+      endStudentSessionExact({
+        schoolId,
+        studentId,
+        deviceId,
+        studentSessionId,
+      })
+    );
+    if (ended) {
+      await broadcastStudentSignedOut({
+        schoolId,
+        studentId,
+        studentSessionId,
+        deviceId,
+        reason,
+      }).catch(() => { /* durable exact cleanup remains a successful no-op contract */ });
     }
-    await broadcastStudentSignedOut({
-      schoolId,
-      studentId,
-      studentSessionId: active?.session.id || (res.locals.studentSessionId as string),
-      deviceId,
-      reason,
-    });
     return res.json({ success: true });
   } catch (err) {
     next(err);
@@ -2089,6 +2239,7 @@ router.post("/extension/register", extensionRegisterLimiter, async (req, res, ne
         deviceName,
         classId,
         student,
+        authKind: "managed_profile",
       });
       const protocol = negotiateClasspilotSurfaceProtocol({
         surface: "registration",
@@ -2201,6 +2352,7 @@ router.post("/register-student", extensionRegisterLimiter, async (req, res, next
         schoolId: resolvedSchoolId,
         deviceId,
         student,
+        authKind: "managed_profile",
       });
 
       return res.json({
@@ -2261,6 +2413,12 @@ router.post("/device/:deviceId/active-student", requireDeviceAuth, requireClassp
     if (!studentId) {
       return res.status(400).json({ error: "studentId required" });
     }
+    if (studentId !== res.locals.studentId) {
+      return res.status(403).json({
+        error: "Switching students requires a fresh student login",
+        code: "STUDENT_LOGIN_REQUIRED",
+      });
+    }
 
     const student = await getStudentById(studentId);
     if (!student) {
@@ -2278,7 +2436,10 @@ router.post("/device/:deviceId/active-student", requireDeviceAuth, requireClassp
       return res.status(403).json({ error: "Student is not linked to this device" });
     }
 
-    await setActiveStudentForDevice(deviceId, studentId);
+    // Compatibility no-op for older popup clients. The authenticated exact
+    // session is already authoritative; this endpoint must never mint or
+    // replace a session for a historically linked student without that
+    // student's credentials.
     return res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -2373,7 +2534,10 @@ router.post("/device/command-acks", requireDeviceAuth, requireClasspilotEntitlem
 // POST /api/classpilot/device/live-view/ice-servers - exact-bound short-lived TURN credentials
 router.post(
   "/device/live-view/ice-servers",
-  requireCryptographicDeviceAuth,
+  // TURN credentials are an active capability, not compatibility cleanup.
+  // Revalidate the exact persisted student/session/device binding (including
+  // the database-time manual lease) before minting any credentials.
+  requireDeviceAuthWithoutTenant,
   requireClasspilotEntitlement,
   deviceActionLimiter,
   async (req, res, next) => {
@@ -2507,12 +2671,57 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
     // --- Per-device rate limiting (item #9) ---
     const lastHb = deviceLastHeartbeat.get(deviceId);
     const now = Date.now();
-    if (lastHb && now - lastHb < HEARTBEAT_MIN_INTERVAL_MS) {
+    const lastAcceptedBindingMatches = lastHb?.studentId === studentId
+      && lastHb.studentSessionId === studentSessionId;
+    const refreshExactSessionAuthority = () => runWithTenantContext(
+      { schoolId },
+      () => refreshStudentSessionAuthorityWithoutTelemetry({
+        schoolId,
+        studentId,
+        deviceId,
+        studentSessionId,
+      })
+    );
+    if (canShortCircuitAcceptedHeartbeat({
+      previous: lastHb,
+      studentId,
+      studentSessionId,
+      nowMs: now,
+      minimumIntervalMs: HEARTBEAT_MIN_INTERVAL_MS,
+    })) {
+      const authority = await refreshExactSessionAuthority();
+      if (authority.outcome === "replaced_session") {
+        recordHeartbeatHotPathCounter("heartbeatReplacedSession");
+        await broadcastStudentSignedOut({
+          schoolId,
+          studentId,
+          studentSessionId,
+          deviceId,
+          reason: "session_replaced",
+        });
+        return res.status(409).json({
+          error: "student_session_replaced",
+          message: "This student is signed in on another Chromebook.",
+        });
+      }
+      if (authority.outcome === "inactive_session") {
+        recordHeartbeatHotPathCounter("heartbeatInactiveSession");
+        return res.status(401).json({ error: "Student session is no longer active" });
+      }
+      if (authority.leaseRenewed) {
+        recordHeartbeatHotPathCounter("manualSessionLeaseRenewed");
+      }
+      setBoundedMap(deviceLastHeartbeat, deviceId, {
+        acceptedAt: Date.now(),
+        studentId,
+        studentSessionId,
+        authorityExpiresAtMs: authority.authorityExpiresAt?.getTime() ?? null,
+      }, MAX_DEVICE_HEARTBEAT_ENTRIES);
       return res.status(204).send();
     }
     const pendingMessageRecoveryHeartbeat = !lastHb
-      || now - lastHb >= PENDING_MESSAGE_RECONNECT_GAP_MS;
-    setBoundedMap(deviceLastHeartbeat, deviceId, now, MAX_DEVICE_HEARTBEAT_ENTRIES);
+      || !lastAcceptedBindingMatches
+      || now - lastHb.acceptedAt >= PENDING_MESSAGE_RECONNECT_GAP_MS;
 
     // Keep the RLS connection only around the short database section. Redis,
     // WebSocket fan-out, classification, and response serialization must not
@@ -2525,7 +2734,14 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       if (trackingSettings && !isWithinTrackingWindow(trackingSettings)) {
         const afterMode = trackingSettings.afterHoursMode || "off";
         if (afterMode === "off") {
-          return { outcome: "outside_tracking_window" } as const;
+          const authority = await refreshStudentSessionAuthorityWithoutTelemetry({
+            schoolId,
+            studentId,
+            deviceId,
+            studentSessionId,
+          });
+          if (authority.outcome !== "accepted") return authority;
+          return { outcome: "outside_tracking_window", authority } as const;
         }
         // "limited" or "full" mode: continue processing.
       }
@@ -2608,6 +2824,16 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
     );
 
     if (heartbeatDbResult.outcome === "outside_tracking_window") {
+      if (heartbeatDbResult.authority.leaseRenewed) {
+        recordHeartbeatHotPathCounter("manualSessionLeaseRenewed");
+      }
+      setBoundedMap(deviceLastHeartbeat, deviceId, {
+        acceptedAt: Date.now(),
+        studentId,
+        studentSessionId,
+        authorityExpiresAtMs:
+          heartbeatDbResult.authority.authorityExpiresAt?.getTime() ?? null,
+      }, MAX_DEVICE_HEARTBEAT_ENTRIES);
       return res.status(204).send();
     }
     if (heartbeatDbResult.outcome === "inactive_school") {
@@ -2634,6 +2860,15 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       return res.status(401).json({ error: "Student session is no longer active" });
     }
     const { heartbeat, school, controlState } = heartbeatDbResult;
+    if (heartbeat.leaseRenewed) {
+      recordHeartbeatHotPathCounter("manualSessionLeaseRenewed");
+    }
+    setBoundedMap(deviceLastHeartbeat, deviceId, {
+      acceptedAt: Date.now(),
+      studentId,
+      studentSessionId,
+      authorityExpiresAtMs: heartbeat.authorityExpiresAt?.getTime() ?? null,
+    }, MAX_DEVICE_HEARTBEAT_ENTRIES);
     const classroomState = controlState
       ? serializeClasspilotStudentControlState(controlState)
       : null;
@@ -3822,7 +4057,10 @@ router.delete("/devices/:deviceId", ...deviceAdminAuth, requireRole("admin"), as
     if (!device || device.schoolId !== res.locals.schoolId) {
       return res.status(404).json({ error: "Device not found" });
     }
-    await deleteDevice(deviceId);
+    await removeClasspilotDeviceAndPublishSessionEnds({
+      schoolId: res.locals.schoolId!,
+      deviceId,
+    });
     return res.json({ ok: true });
   } catch (err) {
     next(err);

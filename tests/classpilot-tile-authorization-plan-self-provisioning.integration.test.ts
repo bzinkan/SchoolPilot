@@ -1987,7 +1987,8 @@ describe(
           await adminClient.query(
             `
               INSERT INTO student_sessions (
-                id, student_id, device_id, started_at, last_seen_at, is_active
+                id, student_id, device_id, started_at, last_seen_at,
+                auth_kind, is_active
               )
               SELECT
                 gen_random_uuid()::text,
@@ -1995,6 +1996,7 @@ describe(
                 fixture.device_id,
                 now(),
                 now(),
+                'managed_profile',
                 true
               FROM unnest($1::text[], $2::text[])
                 AS fixture(student_id, device_id)
@@ -2047,7 +2049,8 @@ describe(
           await adminClient.query(
             `
               INSERT INTO student_sessions (
-                id, student_id, device_id, started_at, last_seen_at, is_active
+                id, student_id, device_id, started_at, last_seen_at,
+                auth_kind, is_active
               )
               SELECT
                 gen_random_uuid()::text,
@@ -2055,6 +2058,7 @@ describe(
                 fixture.device_id,
                 now(),
                 now(),
+                'managed_profile',
                 true
               FROM unnest($1::text[], $2::text[])
                 AS fixture(student_id, device_id)
@@ -2122,9 +2126,18 @@ describe(
           await adminClient.query(
             `
               INSERT INTO student_sessions (
-                id, student_id, device_id, started_at, last_seen_at, is_active
+                id, student_id, device_id, started_at, last_seen_at,
+                auth_kind, is_active
               )
-              VALUES (gen_random_uuid()::text, $1, $2, now(), now(), true)
+              VALUES (
+                gen_random_uuid()::text,
+                $1,
+                $2,
+                now(),
+                now(),
+                'managed_profile',
+                true
+              )
             `,
             [allStudentIds[0], conflictingDeviceId]
           );
@@ -2140,6 +2153,51 @@ describe(
               error.funnelEvidence.firstEmptyStage === "none" &&
               error.funnelEvidence.sessionPosture
                 ?.conflictingSessionPairs === 1
+          );
+
+          await adminClient.query(
+            "DELETE FROM student_sessions WHERE student_id = $1",
+            [allStudentIds[0]]
+          );
+          await adminClient.query(
+            `
+              INSERT INTO student_sessions (
+                id, student_id, device_id, started_at, last_seen_at,
+                auth_kind, manual_lease_expires_at,
+                session_recovery_token_hash, is_active
+              )
+              VALUES (
+                gen_random_uuid()::text,
+                $1,
+                $2,
+                now() - interval '10 minutes',
+                now() - interval '10 minutes',
+                'manual_shared',
+                now() - interval '5 minutes',
+                $3,
+                true
+              )
+            `,
+            [allStudentIds[0], allDeviceIds[0], "a".repeat(64)]
+          );
+          const expiredSessionPlanCheckModule = planCheckModule;
+          assert.ok(expiredSessionPlanCheckModule);
+          await assert.rejects(
+            expiredSessionPlanCheckModule.runClasspilotTileAuthorizationPlanCheck({
+              client: firstClient,
+              residueClient: firstResidueClient,
+              buildQuery: storageModule.buildClassPilotTileAuthorizationQuery,
+              buildHistoryQuery:
+                storageModule.buildHeartbeatTileHistoryBatchQuery,
+            }),
+            (error) =>
+              error instanceof
+                expiredSessionPlanCheckModule.ClasspilotTileAuthorizationPlanCheckError &&
+              error.failureCode === "representative_scenario_missing" &&
+              error.funnelEvidence?.failureStage === "session_posture" &&
+              error.funnelEvidence?.sessionPosture
+                ?.conflictingSessionPairs === 1,
+            "an expired but physically active manual session must fail closed as a posture conflict, not reach the unique index"
           );
         } finally {
           releaseFirst.resolve();

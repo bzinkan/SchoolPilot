@@ -3,7 +3,7 @@ import {
   clearClasspilotClassroomStates,
   createClasspilotCommandWithTargets,
   createMessage,
-  endStudentSession,
+  endStudentSessionExact,
   getBlockListById,
   getClasspilotCommandByIdAndSchool,
   getFlightPathById,
@@ -24,9 +24,7 @@ import {
   recordCommandHotPathPhase,
   type PublishWSBatchItem,
 } from "../realtime/ws-redis.js";
-import { removeDeviceStatus } from "../realtime/student-statuses.js";
 import {
-  markClasspilotRealtimeSignedOut,
   readClasspilotRealtimeStatusBatch,
   classpilotRealtimeFresh,
 } from "./classpilotRealtimeStatus.js";
@@ -43,7 +41,7 @@ import {
   summarizeClasspilotCommandTargets,
   type ClasspilotCommandDeliveryPolicy,
 } from "./classpilotCommandDelivery.js";
-import { recordClasspilotStudentSessionMonitoringEvent } from "./classpilotMonitoringEvents.js";
+import { publishClasspilotStudentSessionEnded } from "./classpilotStudentSessionLifecycle.js";
 import type {
   ClasspilotClassroomState,
   ClasspilotStudentControlState,
@@ -552,62 +550,50 @@ async function endStudentSessionsForSignOut(options: {
   targets: ResolvedClasspilotCommandTarget[];
 }) {
   const seenSessionIds = new Set<string>();
-  const seenDeviceIds = new Set<string>();
   const completedStudentIds = new Set<string>();
+  let cleanupFailures = 0;
+  let publicationFailures = 0;
 
   for (const target of options.targets) {
-    if (!target.deviceId) continue;
-    if (target.studentSessionId && !seenSessionIds.has(target.studentSessionId)) {
-      seenSessionIds.add(target.studentSessionId);
-      const endedSession = await endStudentSession(target.studentSessionId);
-      if (endedSession) completedStudentIds.add(target.studentId);
-      void recordClasspilotStudentSessionMonitoringEvent({
+    if (!target.deviceId || !target.studentSessionId) continue;
+    if (seenSessionIds.has(target.studentSessionId)) continue;
+    seenSessionIds.add(target.studentSessionId);
+    let endedSession;
+    try {
+      endedSession = await endStudentSessionExact({
         schoolId: options.schoolId,
         studentId: target.studentId,
         studentSessionId: target.studentSessionId,
         deviceId: target.deviceId,
-        type: "student_session_ended",
-        reason: "teacher_sign_out",
-      }).catch(() => { /* lifecycle telemetry must not block sign-out */ });
+      });
+    } catch {
+      cleanupFailures += 1;
+      continue;
     }
-    if (seenDeviceIds.has(target.deviceId)) continue;
-    seenDeviceIds.add(target.deviceId);
-
-    removeDeviceStatus(options.schoolId, target.deviceId);
-    const realtimeMutation = target.studentSessionId
-      ? await markClasspilotRealtimeSignedOut({
-          schoolId: options.schoolId,
-          studentId: target.studentId,
-          studentSessionId: target.studentSessionId,
-          deviceId: target.deviceId,
-          reason: "teacher_sign_out",
-        })
-      : null;
-    const realtimeSnapshot = realtimeMutation?.snapshot;
-    const update = {
-      type: "student-signed-out",
-      studentId: target.studentId,
-      schoolId: options.schoolId,
-      sessionId: options.teachingSessionId,
-      status: "offline",
-      reason: "teacher_sign_out",
-      timestamp: new Date().toISOString(),
-      schemaVersion: 2,
-      ...(realtimeSnapshot ? {
-        realtimeRevision: realtimeSnapshot.revision,
-        revision: realtimeSnapshot.revision,
-        realtimeObservedAt: new Date(realtimeSnapshot.observedAt).toISOString(),
-        observedAtMs: realtimeSnapshot.observedAt,
-        state: "signed_out",
-      } : {}),
-    };
-    broadcastToStaffSessionLocal(options.schoolId, options.teachingSessionId, update);
-    await publishWS({ kind: "staff-session", schoolId: options.schoolId, sessionId: options.teachingSessionId }, update);
+    if (!endedSession) continue;
+    completedStudentIds.add(target.studentId);
+    try {
+      await publishClasspilotStudentSessionEnded({
+        schoolId: options.schoolId,
+        studentId: endedSession.studentId,
+        studentSessionId: endedSession.id,
+        deviceId: endedSession.deviceId,
+        reason: "teacher_sign_out",
+      });
+    } catch {
+      publicationFailures += 1;
+    }
   }
   await markClasspilotCommandTargetsServerCompleted(
     options.commandId,
     [...completedStudentIds]
   );
+  if (cleanupFailures > 0 || publicationFailures > 0) {
+    console.warn("[ClassPilot Command] Student sign-out follow-up was incomplete", {
+      cleanupFailureCount: cleanupFailures,
+      publicationFailureCount: publicationFailures,
+    });
+  }
 }
 
 async function persistActiveState(options: {

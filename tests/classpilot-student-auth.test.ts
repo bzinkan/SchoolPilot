@@ -6,6 +6,13 @@ import {
   studentAuthenticationServiceError,
   type ActiveStudentTokenSessionLookupResult,
 } from "../src/services/classpilotStudentAuth.ts";
+import {
+  canShortCircuitAcceptedHeartbeat,
+  classpilotManualSharedSessionIssuanceEnabled,
+  createStudentSessionRecovery,
+  hashStudentSessionRecoveryToken,
+  studentSessionRecoveryTokenFromAuthorization,
+} from "../src/services/classpilotStudentSessionAuthority.ts";
 import type { StudentTokenPayload } from "../src/services/deviceJwt.ts";
 
 function token(
@@ -40,6 +47,9 @@ function lookupResult(
       lastSeenAt: new Date("2026-07-12T00:01:00.000Z"),
       endedAt: null,
       isActive: true,
+      authKind: "legacy",
+      manualLeaseExpiresAt: null,
+      sessionRecoveryTokenHash: null,
       ...overrides.session,
     },
   };
@@ -186,5 +196,82 @@ describe("active ClassPilot student token session resolver", () => {
     assert.equal(safe.expose, true);
     assert.doesNotMatch(JSON.stringify(safe), /school-secret|device-secret|select|params/i);
     assert.equal((safe as Error & { cause?: unknown }).cause, undefined);
+  });
+});
+
+describe("ClassPilot student session recovery capabilities", () => {
+  it("keeps Phase-A manual issuance dark unless it is explicitly enabled", () => {
+    assert.equal(classpilotManualSharedSessionIssuanceEnabled({}), false);
+    assert.equal(classpilotManualSharedSessionIssuanceEnabled({
+      CLASSPILOT_MANUAL_SHARED_SESSION_ISSUANCE_ENABLED: "true",
+    }), true);
+    assert.equal(classpilotManualSharedSessionIssuanceEnabled({
+      CLASSPILOT_MANUAL_SHARED_SESSION_ISSUANCE_ENABLED: "false",
+    }), false);
+    assert.equal(classpilotManualSharedSessionIssuanceEnabled({
+      CLASSPILOT_MANUAL_SHARED_SESSION_ISSUANCE_ENABLED: "invalid",
+    }), false);
+  });
+
+  it("issues a 32-byte opaque capability and stores only its SHA-256 digest", () => {
+    const recovery = createStudentSessionRecovery();
+    assert.match(recovery.token, /^[A-Za-z0-9_-]{43}$/);
+    assert.match(recovery.tokenHash, /^[0-9a-f]{64}$/);
+    assert.equal(recovery.tokenHash, hashStudentSessionRecoveryToken(recovery.token));
+    assert.notEqual(recovery.tokenHash, recovery.token);
+  });
+
+  it("accepts only the exact recovery Authorization scheme and token shape", () => {
+    const { token } = createStudentSessionRecovery();
+    assert.equal(
+      studentSessionRecoveryTokenFromAuthorization(`ClassPilot-Recovery ${token}`),
+      token
+    );
+    assert.equal(
+      studentSessionRecoveryTokenFromAuthorization(`Bearer ${token}`),
+      null
+    );
+    assert.equal(
+      studentSessionRecoveryTokenFromAuthorization(`ClassPilot-Recovery ${token}extra`),
+      null
+    );
+    assert.equal(studentSessionRecoveryTokenFromAuthorization(undefined), null);
+  });
+
+  it("never short-circuits a rapid heartbeat once manual authority reaches expiry", () => {
+    const previous = {
+      acceptedAt: 1_000,
+      studentId: "student-a",
+      studentSessionId: "session-a",
+      authorityExpiresAtMs: 2_000,
+    };
+    assert.equal(canShortCircuitAcceptedHeartbeat({
+      previous,
+      studentId: "student-a",
+      studentSessionId: "session-a",
+      nowMs: 1_999,
+      minimumIntervalMs: 5_000,
+    }), true);
+    assert.equal(canShortCircuitAcceptedHeartbeat({
+      previous,
+      studentId: "student-a",
+      studentSessionId: "session-a",
+      nowMs: 2_000,
+      minimumIntervalMs: 5_000,
+    }), false);
+    assert.equal(canShortCircuitAcceptedHeartbeat({
+      previous,
+      studentId: "student-a",
+      studentSessionId: "session-a",
+      nowMs: 2_001,
+      minimumIntervalMs: 5_000,
+    }), false);
+    assert.equal(canShortCircuitAcceptedHeartbeat({
+      previous,
+      studentId: "student-a",
+      studentSessionId: "replacement-session",
+      nowMs: 1_500,
+      minimumIntervalMs: 5_000,
+    }), false);
   });
 });

@@ -8,6 +8,7 @@ import { requireProductLicense } from "../../middleware/requireProductLicense.js
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
 import { studentDevices, studentSessions } from "../../schema/classpilot.js";
+import { currentStudentSessionAuthorityPredicate } from "../../services/classpilotStudentSessionAuthority.js";
 import { dismissalQueue, dismissalSessions } from "../../schema/gopilot.js";
 import { importRuns } from "../../schema/shared.js";
 import {
@@ -388,7 +389,7 @@ async function buildReadinessPayload(req: any, res: any) {
         .from(studentSessions)
         .where(and(
           inArray(studentSessions.studentId, students.map((student) => student.id)),
-          eq(studentSessions.isActive, true)
+          currentStudentSessionAuthorityPredicate()
         ))
     : [];
   const realtimeBindings = activeStudentSessions.map((session) => ({
