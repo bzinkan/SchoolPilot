@@ -183,6 +183,23 @@ try {
     'signal-loss command controls remain disabled while the fresh screenshot stays visible',
   );
 
+  const signOutOnlyTile = page.getByTestId('card-student-signal-lost-sign-out-student');
+  const signOutOnlyCheckbox = page.getByTestId('checkbox-select-student-signal-lost-sign-out-student');
+  assert.equal(
+    await signOutOnlyCheckbox.isDisabled(),
+    false,
+    'an authoritative stale login may be selected specifically for Student Sign Out',
+  );
+  assert.equal(
+    await signOutOnlyCheckbox.getAttribute('title'),
+    'Select for Student Sign Out only',
+  );
+  assert.equal(
+    await signOutOnlyTile.getByTestId('button-lock-toggle-signal-lost-sign-out-student').isDisabled(),
+    true,
+    'sign-out-only selection must not re-enable realtime device commands',
+  );
+
   const retainedSignalLostTile = page.getByTestId('card-student-signal-lost-retained-student');
   await page.getByTestId('screenshot-retained-signal-lost-retained-student').waitFor();
   await page.getByTestId('screenshot-monitoring-warning-signal-lost-retained-student').waitFor();

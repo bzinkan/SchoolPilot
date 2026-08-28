@@ -420,3 +420,40 @@ test('dashboard command entry points fail closed until the class roster is autho
     'Teacher FAB and its messaging entry point must remain unavailable without a roster snapshot',
   );
 });
+
+test('sign-out-only selection closes command dialogs and cannot fall back to class-wide commands', async () => {
+  const dashboard = await readFile(
+    new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
+    'utf8',
+  );
+  const closeEffectStart = dashboard.indexOf('if (!signOutOnlySelectionActive) return;');
+  assert.ok(closeEffectStart >= 0, 'missing sign-out-only dialog shutdown effect');
+  const closeEffect = dashboard.slice(closeEffectStart, closeEffectStart + 1_200);
+  for (const setter of [
+    'setShowOpenTabDialog(false)',
+    'setShowCloseTabsDialog(false)',
+    'setShowApplyFlightPathDialog(false)',
+    'setShowFlightPathViewerDialog(false)',
+    'setShowApplyBlockListDialog(false)',
+    'setShowBlockListViewerDialog(false)',
+    'setShowSendMessageDialog(false)',
+    'setShowAttentionDialog(false)',
+    'setShowTimerDialog(false)',
+    'setShowPollDialog(false)',
+    'setShowPollResultsDialog(false)',
+    'setShowRerouteDialog(false)',
+  ]) {
+    assert.ok(closeEffect.includes(setter), `${setter} must close when sign-out-only selection starts`);
+  }
+  assert.match(
+    dashboard,
+    /assertClassroomCommandSelectionIsolation\(\s*commandType,\s*selectedServerSignOutStudentIds\.size,\s*\)/,
+    'the final command builder must reject non-sign-out commands before resolving a default class target',
+  );
+  assert.match(dashboard, /disabled=\{subgroupCommandsDisabled \|\| signOutOnlySelectionActive\} data-testid="button-open-tab"/);
+  assert.match(dashboard, /nonSignOutCommandsBlocked=\{signOutOnlySelectionActive\}/);
+  assert.match(
+    dashboard,
+    /dashboardCapabilities\.canUseTeacherFab && !classStudentTargetsUnavailable && !signOutOnlySelectionActive/,
+  );
+});

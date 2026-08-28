@@ -615,6 +615,106 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     assert.deepEqual(cachedStudentHarness.commandPosts, []);
     assert.deepEqual(cachedStudentHarness.pageErrors, []);
 
+    const staleSignOutPage = await browser.newPage();
+    pages.push(staleSignOutPage);
+    const staleObservedAt = new Date(Date.now() - 2 * 60_000).toISOString();
+    const staleSignOutAggregate = aggregateController({
+      school: success([]),
+      scoped: success({
+        students: [student({
+          monitoringState: "signal_lost",
+          activityFresh: false,
+          monitoringLostAt: staleObservedAt,
+          lastSeenAt: staleObservedAt,
+          realtimeObservedAt: staleObservedAt,
+          realtimeBinding: "binding-stale-login",
+        })],
+      }),
+    });
+    const staleSignOutHarness = await configureDashboard(staleSignOutPage, {
+      aggregate: staleSignOutAggregate,
+      activeSession: ownSession,
+      allSessions: [ownSession],
+    });
+    await staleSignOutPage.goto(`${baseURL}/classpilot`);
+    const staleCheckbox = staleSignOutPage.getByTestId(`checkbox-select-student-${STUDENT_ID}`);
+    await staleCheckbox.waitFor();
+    assert.equal(await staleCheckbox.isDisabled(), false);
+    await staleCheckbox.click();
+    await staleSignOutPage.waitForFunction((studentId) => (
+      document.querySelector(`[data-testid="checkbox-select-student-${studentId}"]`)?.getAttribute("data-state") === "checked"
+    ), STUDENT_ID);
+    assert.match(
+      await staleSignOutPage.getByTestId("badge-selection-count").innerText(),
+      /1 selected for sign-out only/,
+    );
+    for (const testId of [
+      "button-open-tab",
+      "button-tabs",
+      "button-lock-screen",
+      "button-unlock-screen",
+      "button-apply-flight-path",
+      "button-flight-path-status",
+      "button-apply-block-list",
+      "button-block-list-status",
+      "button-select-all-students",
+    ]) {
+      assert.equal(
+        await staleSignOutPage.getByTestId(testId).isDisabled(),
+        true,
+        `${testId} must stay disabled for a sign-out-only selection`,
+      );
+    }
+    assert.equal(
+      await staleSignOutPage.getByLabel("Quick Classroom Tools").count(),
+      0,
+      "Teacher FAB must close rather than fall back to a class-wide command",
+    );
+    assert.equal(
+      await staleSignOutPage.getByTestId("button-reroute-selected").count(),
+      0,
+      "coverage reroute must not receive a sign-out-only selection",
+    );
+    await staleSignOutPage.getByTestId("button-sign-out-students").click();
+    await staleSignOutPage.getByTestId("button-confirm-sign-out-students").click();
+    await waitUntil(
+      () => staleSignOutHarness.commandPosts.length === 1,
+      "the exact student-sign-out command must be submitted",
+    );
+    assert.deepEqual(staleSignOutHarness.commandPosts, [{
+      pathname: "/api/commands",
+      body: {
+        teachingSessionId: OWN_SESSION_ID,
+        targetScope: "students",
+        targetStudentIds: [STUDENT_ID],
+        commandType: "student-sign-out",
+        commandPayload: {},
+      },
+    }]);
+
+    const replacementObservedAt = new Date(Date.now() - 500).toISOString();
+    staleSignOutAggregate.setScopedResponse(success({
+      students: [student({
+        lastSeenAt: replacementObservedAt,
+        realtimeObservedAt: replacementObservedAt,
+        realtimeBinding: "binding-replacement-login",
+        realtimeRevision: 2,
+      })],
+    }));
+    const replacementRequestCount = staleSignOutAggregate.requests.length;
+    await staleSignOutPage.evaluate(() => window.dispatchEvent(new Event("online")));
+    await waitUntil(
+      () => staleSignOutAggregate.requests.length > replacementRequestCount,
+      "binding replacement must reconcile the current roster",
+    );
+    await staleSignOutPage.waitForFunction((studentId) => (
+      document.querySelector(`[data-testid="checkbox-select-student-${studentId}"]`)?.getAttribute("data-state") === "unchecked"
+    ), STUDENT_ID);
+    assert.equal(await staleSignOutPage.getByTestId("button-sign-out-students").isDisabled(), true);
+    assert.equal(await staleSignOutPage.getByTestId("button-confirm-sign-out-students").isDisabled(), true);
+    assert.equal(staleSignOutHarness.commandPosts.length, 1, "a replacement binding must not receive a delayed sign-out");
+    assert.deepEqual(staleSignOutHarness.pageErrors, []);
+
     const observedSession = teachingSession({
       id: OBSERVED_SESSION_ID,
       groupId: OBSERVED_GROUP_ID,

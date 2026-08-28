@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  assertClassroomCommandSelectionIsolation,
+  buildStudentSignOutCommandRequest,
   combineCommandSettlements,
   deriveDashboardCapabilities,
   exactTabCloseCapability,
@@ -10,6 +12,8 @@ import {
   normalizeSessionFabState,
   parseTabSelectionKey,
   resolveCommandTargets,
+  resolveStudentSignOutTargets,
+  studentSignOutSelectionBinding,
   studentSupportsCapability,
   studentTileFlightPathReleaseCommand,
   studentTileScreenToggleCommand,
@@ -73,6 +77,114 @@ test('class targets are narrowed only by explicit selection, subgroup, or tile o
     overrideStudentIds: ['b'],
   });
   assert.deepEqual(override.targetStudentIds, ['b']);
+});
+
+test('stale authoritative sessions are selectable only by the explicit owned-class sign-out resolver', () => {
+  const selectionContext = {
+    schoolId: 'school-1',
+    viewerId: 'teacher-1',
+    mode: 'owned-class',
+    teachingSessionId: 'session-1',
+  };
+  const rows = [
+    { studentId: 'fresh', realtimeBinding: 'binding-fresh', commandable: true, signOutEligible: true },
+    { studentId: 'stale', realtimeBinding: 'binding-stale', commandable: false, signOutEligible: true },
+    { studentId: 'signed-out', realtimeBinding: 'binding-signed-out', commandable: false, signOutEligible: false },
+  ].map((student) => ({
+    ...student,
+    signOutBindingSnapshot: studentSignOutSelectionBinding({ ...selectionContext, student }),
+  }));
+
+  assert.deepEqual(resolveCommandTargets({
+    mode: 'owned-class',
+    sessionStudents: rows,
+  }).targetStudentIds, ['fresh']);
+
+  const staleTarget = resolveStudentSignOutTargets({
+    mode: 'owned-class',
+    sessionStudents: rows,
+    selectedStudentIds: ['stale'],
+    selectedStudentBindings: [{
+      studentId: 'stale',
+      bindingSnapshot: rows[1].signOutBindingSnapshot,
+    }],
+  });
+  assert.deepEqual(staleTarget, {
+    mode: 'owned-class',
+    targetScope: 'students',
+    targetStudentIds: ['stale'],
+    targetStudents: [rows[1]],
+    groups: [{ kind: 'class', id: null, targetStudentIds: ['stale'] }],
+    targetCount: 1,
+    contextCount: 1,
+  });
+  assert.deepEqual(buildStudentSignOutCommandRequest('session-1', staleTarget), {
+    teachingSessionId: 'session-1',
+    targetScope: 'students',
+    targetStudentIds: ['stale'],
+    commandType: 'student-sign-out',
+    commandPayload: {},
+  });
+
+  assert.throws(() => resolveStudentSignOutTargets({
+    mode: 'observe-read-only',
+    sessionStudents: rows,
+    selectedStudentIds: ['stale'],
+  }), /only for your active class/i);
+  assert.throws(() => resolveStudentSignOutTargets({
+    mode: 'owned-class',
+    sessionStudents: rows,
+    selectedStudentIds: ['stale', 'signed-out'],
+  }), /can no longer be signed out/i);
+  assert.throws(() => resolveStudentSignOutTargets({
+    mode: 'owned-class',
+    sessionStudents: rows,
+    selectedStudentIds: [],
+  }), /select at least one/i);
+});
+
+test('sign-out selection is invalidated when the same student receives a new realtime binding', () => {
+  const context = {
+    schoolId: 'school-1',
+    viewerId: 'teacher-1',
+    mode: 'owned-class',
+    teachingSessionId: 'session-1',
+  };
+  const priorStudent = { studentId: 'stale', realtimeBinding: 'binding-old' };
+  const replacementStudent = {
+    studentId: 'stale',
+    realtimeBinding: 'binding-new',
+    signOutEligible: true,
+  };
+  const priorBindingSnapshot = studentSignOutSelectionBinding({ ...context, student: priorStudent });
+  const replacementBindingSnapshot = studentSignOutSelectionBinding({ ...context, student: replacementStudent });
+  assert.notEqual(priorBindingSnapshot, replacementBindingSnapshot);
+
+  assert.throws(() => resolveStudentSignOutTargets({
+    mode: 'owned-class',
+    sessionStudents: [{
+      ...replacementStudent,
+      signOutBindingSnapshot: replacementBindingSnapshot,
+    }],
+    selectedStudentIds: ['stale'],
+    selectedStudentBindings: [{ studentId: 'stale', bindingSnapshot: priorBindingSnapshot }],
+  }), /student session changed/i);
+  assert.equal(studentSignOutSelectionBinding({
+    ...context,
+    mode: 'observe-read-only',
+    student: replacementStudent,
+  }), null);
+});
+
+test('sign-out-only selection blocks every non-sign-out classroom command before target fallback', () => {
+  for (const commandType of ['open-tab', 'teacher-message', 'timer', 'lock-screen', 'unlock-screen']) {
+    assert.throws(
+      () => assertClassroomCommandSelectionIsolation(commandType, 1),
+      /clear the sign-out-only selection/i,
+    );
+  }
+  assert.doesNotThrow(() => assertClassroomCommandSelectionIsolation('student-sign-out', 1));
+  assert.doesNotThrow(() => assertClassroomCommandSelectionIsolation('open-tab', 0));
 });
 
 test('claimed targets always use the full claimed cohort when there is no explicit selection', () => {
