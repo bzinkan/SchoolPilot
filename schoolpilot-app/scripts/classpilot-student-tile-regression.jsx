@@ -251,6 +251,8 @@ function TileRegressionHarness() {
               nextBoundaryAtMs: null,
             }}
             signOutOnlySelectionAvailable
+            nonSignOutCommandsBlocked
+            actionsDisabledReason="Clear the sign-out-only selection before using other ClassPilot controls."
             onToggleSelect={() => {}}
             onCommand={() => {}}
           />

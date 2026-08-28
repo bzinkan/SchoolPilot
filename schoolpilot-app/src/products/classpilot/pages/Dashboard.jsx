@@ -83,6 +83,7 @@ import {
   transientEntryFeedback,
 } from '../lib/commandDeliveryTruth';
 import {
+  assertClassroomCommandSelectionIsolation,
   buildStudentSignOutCommandRequest,
   combineCommandSettlements,
   deriveDashboardCapabilities,
@@ -92,6 +93,7 @@ import {
   parseTabSelectionKey,
   resolveCommandTargets,
   resolveStudentSignOutTargets,
+  studentSignOutSelectionBinding,
   studentSupportsCapability,
   studentSignOutCommandPayload,
   sessionFabSettingsPayload,
@@ -344,6 +346,7 @@ export default function Dashboard() {
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [selectedStudentIds, setSelectedStudentIds] = useState(new Set());
   const [selectedServerSignOutStudentIds, setSelectedServerSignOutStudentIds] = useState(new Set());
+  const [selectedStudentBindingSnapshots, setSelectedStudentBindingSnapshots] = useState(new Map());
   const [searchQuery, setSearchQuery] = useState("");
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const [selectedGrade, setSelectedGrade] = useState(() => {
@@ -656,6 +659,7 @@ export default function Dashboard() {
     observedSession,
     coverageCommandTypes: coverageCapabilities.commandTypes || coverageCapabilities.allowedCommandTypes,
   });
+  const signOutOnlySelectionActive = selectedServerSignOutStudentIds.size > 0;
   useEffect(() => {
     // `/settings` carries the authoritative per-session FAB revision. Its
     // query key is intentionally stable for legacy consumers, so refresh it
@@ -666,8 +670,28 @@ export default function Dashboard() {
     void queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
   }, [effectiveSession?.id]);
   useEffect(() => {
+    setSelectedStudentIds(new Set());
     setSelectedServerSignOutStudentIds(new Set());
+    setSelectedStudentBindingSnapshots(new Map());
   }, [currentUser?.id, dashboardCapabilities.mode, effectiveSession?.id, school?.id]);
+  useEffect(() => {
+    if (!signOutOnlySelectionActive) return;
+    setShowOpenTabDialog(false);
+    setShowCloseTabsDialog(false);
+    setSelectedTabsToClose(new Set());
+    setManageTabsStudentIds(null);
+    setManageTabsTargetSnapshot("");
+    setShowApplyFlightPathDialog(false);
+    setShowFlightPathViewerDialog(false);
+    setShowApplyBlockListDialog(false);
+    setShowBlockListViewerDialog(false);
+    setShowSendMessageDialog(false);
+    setShowAttentionDialog(false);
+    setShowTimerDialog(false);
+    setShowPollDialog(false);
+    setShowPollResultsDialog(false);
+    setShowRerouteDialog(false);
+  }, [signOutOnlySelectionActive]);
   useEffect(() => {
     const sessionId = effectiveSession?.id || null;
     if (!dashboardCapabilities.canChangeFabSettings || !sessionId || settings?.activeSessionId !== sessionId) {
@@ -982,6 +1006,7 @@ export default function Dashboard() {
       setSelectedSubgroupId("");
       setSelectedStudentIds(new Set());
       setSelectedServerSignOutStudentIds(new Set());
+      setSelectedStudentBindingSnapshots(new Map());
     }
   }, [selectedSubgroupId, subgroups]);
 
@@ -1924,12 +1949,29 @@ export default function Dashboard() {
     && student?.isLoggedIn === true
     && student?.loginState !== 'not_logged_in'
   );
+  const signOutSelectionBindingFor = (student) => studentSignOutSelectionBinding({
+    schoolId: activeSchoolId,
+    viewerId: currentUser?.id,
+    mode: dashboardCapabilities.mode,
+    teachingSessionId: effectiveSession?.id,
+    student,
+  });
 
   // Selection handlers
   const toggleStudentSelection = (studentId) => {
     const student = filteredStudents.find((row) => row.studentId === studentId);
     if (studentView === "class" && !isStudentCommandable(student)) {
       if (isStudentServerSignOutEligible(student)) {
+        const bindingSnapshot = signOutSelectionBindingFor(student);
+        if (!bindingSnapshot) {
+          toast({
+            variant: "destructive",
+            title: "Student session changed",
+            description: "Refresh the dashboard and select the student again before signing out.",
+          });
+          return;
+        }
+        const wasSelectedForSignOutOnly = selectedServerSignOutStudentIds.has(studentId);
         setSelectedStudentIds((current) => {
           if (!current.has(studentId)) return current;
           const next = new Set(current);
@@ -1940,6 +1982,12 @@ export default function Dashboard() {
           const next = new Set(current);
           if (next.has(studentId)) next.delete(studentId);
           else next.add(studentId);
+          return next;
+        });
+        setSelectedStudentBindingSnapshots((current) => {
+          const next = new Map(current);
+          if (wasSelectedForSignOutOnly) next.delete(studentId);
+          else next.set(studentId, bindingSnapshot);
           return next;
         });
         return;
@@ -1967,28 +2015,53 @@ export default function Dashboard() {
         next.delete(studentId);
         return next;
       });
+      setSelectedStudentBindingSnapshots((current) => {
+        if (!current.has(studentId)) return current;
+        const next = new Map(current);
+        next.delete(studentId);
+        return next;
+      });
       return;
     }
+    const wasSelected = selectedStudentIds.has(studentId);
+    const bindingSnapshot = studentView === 'class'
+      ? signOutSelectionBindingFor(student)
+      : null;
     setSelectedStudentIds((prev) => {
       const newSet = new Set(prev);
       if (newSet.has(studentId)) { newSet.delete(studentId); } else { newSet.add(studentId); }
       return newSet;
+    });
+    setSelectedStudentBindingSnapshots((current) => {
+      const next = new Map(current);
+      if (wasSelected || !bindingSnapshot) next.delete(studentId);
+      else next.set(studentId, bindingSnapshot);
+      return next;
     });
   };
   const selectAll = () => {
     const allStudentIds = selectableStudents.map((s) => s.studentId);
     setSelectedStudentIds(new Set(allStudentIds));
     setSelectedServerSignOutStudentIds(new Set());
+    setSelectedStudentBindingSnapshots(new Map(
+      studentView === 'class'
+        ? selectableStudents
+          .map((student) => [student.studentId, signOutSelectionBindingFor(student)])
+          .filter(([, bindingSnapshot]) => bindingSnapshot)
+        : EMPTY_LIST,
+    ));
   };
   const clearSelection = () => {
     setSelectedStudentIds(new Set());
     setSelectedServerSignOutStudentIds(new Set());
+    setSelectedStudentBindingSnapshots(new Map());
   };
   const handleStudentViewChange = (view) => {
     if (dashboardCapabilities.observedOtherClass && view !== 'class') return;
     setStudentView(view);
     setSelectedStudentIds(new Set());
     setSelectedServerSignOutStudentIds(new Set());
+    setSelectedStudentBindingSnapshots(new Map());
     setSearchQuery("");
   };
   const handleAdminObservedSessionChange = (event) => {
@@ -1996,6 +2069,7 @@ export default function Dashboard() {
     setAdminObservedSessionId(sessionId);
     setSelectedStudentIds(new Set());
     setSelectedServerSignOutStudentIds(new Set());
+    setSelectedStudentBindingSnapshots(new Map());
     setSearchQuery("");
     setSelectedSubgroupId("");
     setSelectedStudent(null);
@@ -2167,19 +2241,60 @@ export default function Dashboard() {
     : studentView === "claimed"
       ? filteredClaimedStudents
       : filteredClassStudents;
-  const signOutEligibleStudentIdsKey = JSON.stringify(
+  const signOutEligibleBindingsKey = JSON.stringify(
     sessionFilteredStudents
       .filter(isStudentServerSignOutEligible)
-      .map((student) => student.studentId)
-      .sort(),
+      .map((student) => ({
+        studentId: student.studentId,
+        bindingSnapshot: signOutSelectionBindingFor(student),
+      }))
+      .filter((entry) => entry.bindingSnapshot)
+      .sort((left, right) => left.studentId.localeCompare(right.studentId)),
+  );
+  const signOutEligibleBindingsByStudent = useMemo(
+    () => new Map(JSON.parse(signOutEligibleBindingsKey).map((entry) => [
+      entry.studentId,
+      entry.bindingSnapshot,
+    ])),
+    [signOutEligibleBindingsKey],
   );
   useEffect(() => {
-    const eligibleStudentIds = new Set(JSON.parse(signOutEligibleStudentIdsKey));
-    setSelectedServerSignOutStudentIds((current) => {
-      const next = new Set([...current].filter((studentId) => eligibleStudentIds.has(studentId)));
+    if (!dashboardCapabilities.ownedClassSession || studentView !== 'class') return;
+    const selectedIds = new Set([
+      ...selectedStudentIds,
+      ...selectedServerSignOutStudentIds,
+    ]);
+    const invalidStudentIds = new Set([...selectedIds].filter((studentId) => (
+      !selectedStudentBindingSnapshots.has(studentId)
+      || signOutEligibleBindingsByStudent.get(studentId) !== selectedStudentBindingSnapshots.get(studentId)
+    )));
+    const hasOrphanedBindingSnapshot = [...selectedStudentBindingSnapshots.keys()]
+      .some((studentId) => !selectedIds.has(studentId));
+    if (invalidStudentIds.size === 0 && !hasOrphanedBindingSnapshot) return;
+    setSelectedStudentIds((current) => {
+      const next = new Set([...current].filter((studentId) => !invalidStudentIds.has(studentId)));
       return next.size === current.size ? current : next;
     });
-  }, [signOutEligibleStudentIdsKey]);
+    setSelectedServerSignOutStudentIds((current) => {
+      const next = new Set([...current].filter((studentId) => !invalidStudentIds.has(studentId)));
+      return next.size === current.size ? current : next;
+    });
+    setSelectedStudentBindingSnapshots((current) => {
+      const next = new Map(
+        [...current].filter(([studentId]) => (
+          selectedIds.has(studentId) && !invalidStudentIds.has(studentId)
+        )),
+      );
+      return next.size === current.size ? current : next;
+    });
+  }, [
+    dashboardCapabilities.ownedClassSession,
+    selectedServerSignOutStudentIds,
+    selectedStudentBindingSnapshots,
+    selectedStudentIds,
+    signOutEligibleBindingsByStudent,
+    studentView,
+  ]);
   const observationStudentIdsKey = JSON.stringify([...new Set(
     studentView === 'claimed'
       ? claimedPickupStudents.map((student) => student.studentId)
@@ -2673,8 +2788,13 @@ export default function Dashboard() {
       sessionStudents: sessionFilteredStudents.map((student) => ({
         ...student,
         signOutEligible: isStudentServerSignOutEligible(student),
+        signOutBindingSnapshot: signOutSelectionBindingFor(student),
       })),
       selectedStudentIds: studentIds,
+      selectedStudentBindings: studentIds.map((studentId) => ({
+        studentId,
+        bindingSnapshot: selectedStudentBindingSnapshots.get(studentId),
+      })),
     });
   };
 
@@ -2851,6 +2971,10 @@ export default function Dashboard() {
   })();
 
   const buildCommandRequest = (commandType, commandPayload = {}, options = {}) => {
+    assertClassroomCommandSelectionIsolation(
+      commandType,
+      selectedServerSignOutStudentIds.size,
+    );
     if (!dashboardCapabilities.allows(commandType)) {
       throw new Error(dashboardCapabilities.reason || 'This classroom command is not available in the current view.');
     }
@@ -3275,6 +3399,11 @@ export default function Dashboard() {
         (variables?.studentIds || []).forEach((studentId) => next.delete(studentId));
         return next;
       });
+      setSelectedStudentBindingSnapshots((prev) => {
+        const next = new Map(prev);
+        (variables?.studentIds || []).forEach((studentId) => next.delete(studentId));
+        return next;
+      });
       toast({ title: "Returned to class", description: "The student can now be monitored in this class session." });
     },
     onError: (error) => {
@@ -3299,6 +3428,15 @@ export default function Dashboard() {
 
   const handleRerouteSelected = () => {
     if (dashboardCapabilities.observedOtherClass) return;
+    try {
+      assertClassroomCommandSelectionIsolation(
+        'coverage-reroute',
+        selectedServerSignOutStudentIds.size,
+      );
+    } catch (error) {
+      toast({ variant: "destructive", title: "Clear sign-out selection", description: error.message });
+      return;
+    }
     const studentIds = Array.from(selectedStudentIds);
     if (studentIds.length === 0) {
       toast({ variant: "destructive", title: "Select students first" });
@@ -3406,6 +3544,10 @@ export default function Dashboard() {
   };
 
   const postActiveCommand = (commandType, commandPayload, options = {}) => {
+    assertClassroomCommandSelectionIsolation(
+      commandType,
+      selectedServerSignOutStudentIds.size,
+    );
     if (!dashboardCapabilities.allows(commandType)) {
       throw new Error(dashboardCapabilities.reason || 'This classroom command is not available in the current view.');
     }
@@ -4169,8 +4311,8 @@ export default function Dashboard() {
             showCoverageRail={!dashboardCapabilities.observedOtherClass}
             onPickupViewChange={dashboardCapabilities.observedOtherClass ? undefined : handleStudentViewChange}
             onOpenCoverage={!dashboardCapabilities.observedOtherClass && canManageSupervisionSetup ? () => navigate("/classpilot/coverage") : undefined}
-            canReroute={dashboardCapabilities.ownedClassSession}
-            onReroute={dashboardCapabilities.ownedClassSession ? () => setShowRerouteDialog(true) : undefined}
+            canReroute={dashboardCapabilities.ownedClassSession && !signOutOnlySelectionActive}
+            onReroute={dashboardCapabilities.ownedClassSession && !signOutOnlySelectionActive ? () => setShowRerouteDialog(true) : undefined}
             canViewHistoricalTelemetry={isAdmin}
           />
         )}
@@ -4225,7 +4367,7 @@ export default function Dashboard() {
                 <>
                   <button
                     onClick={selectAll}
-                    disabled={selectableStudents.length === 0 || selectedStudentIds.size === selectableStudents.length}
+                    disabled={signOutOnlySelectionActive || selectableStudents.length === 0 || selectedStudentIds.size === selectableStudents.length}
                     className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium bg-transparent border border-border text-muted-foreground hover:bg-card transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     data-testid="button-select-all-students"
                   >
@@ -4243,14 +4385,14 @@ export default function Dashboard() {
         {/* Control Buttons */}
         {canUseRemoteControls && studentView !== "available" && (
           <div className="flex items-center gap-2 flex-wrap mb-4">
-            {dashboardCapabilities.allows('open-tab') && <Button size="sm" variant="outline" onClick={() => setShowOpenTabDialog(true)} disabled={subgroupCommandsDisabled} data-testid="button-open-tab" className="text-blue-600 dark:text-blue-400"><MonitorPlay className="h-4 w-4 mr-2" />Open URL</Button>}
-            {dashboardCapabilities.allows('close-tabs') && <Button size="sm" variant="outline" onClick={() => openManageTabs(null)} disabled={subgroupCommandsDisabled} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Manage Tabs</Button>}
-            {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={subgroupCommandsDisabled || !exactSelectedTargetsResolved || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={exactSelectedTargetsResolved ? 'Lock each selected student to their current domain' : 'Select one or more students to lock'} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Lock</Button>}
-            {dashboardCapabilities.allows('unlock-screen') && <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={subgroupCommandsDisabled || !selectedTargetsSupportScreenOnlyUnlock || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={!exactSelectedUnlockTargetsResolved ? 'Select one or more students to unlock' : selectedTargetsSupportScreenOnlyUnlock ? 'Unlock selected students while preserving Flight Paths and other restrictions' : 'ClassPilot extension update required for every selected student'} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />Unlock</Button>}
-            {dashboardCapabilities.allows('apply-flight-path') && <Button size="sm" variant="outline" onClick={() => setShowApplyFlightPathDialog(true)} disabled={subgroupCommandsDisabled} data-testid="button-apply-flight-path" className="text-purple-600 dark:text-purple-400"><Layers className="h-4 w-4 mr-2" />Apply Flight Path</Button>}
-            {studentView === "class" && <Button size="sm" variant="outline" onClick={() => setShowFlightPathViewerDialog(true)} data-testid="button-flight-path-status" className="text-purple-600 dark:text-purple-400"><Eye className="h-4 w-4 mr-2" />Flight Path Status</Button>}
-            {dashboardCapabilities.allows('apply-block-list') && <Button size="sm" variant="outline" onClick={() => setShowApplyBlockListDialog(true)} disabled={subgroupCommandsDisabled} data-testid="button-apply-block-list" className="text-red-600 dark:text-red-400"><ShieldBan className="h-4 w-4 mr-2" />Apply Block List</Button>}
-            {studentView === "class" && <Button size="sm" variant="outline" onClick={() => setShowBlockListViewerDialog(true)} data-testid="button-block-list-status" className="text-red-600 dark:text-red-400"><Shield className="h-4 w-4 mr-2" />Block List Status</Button>}
+            {dashboardCapabilities.allows('open-tab') && <Button size="sm" variant="outline" onClick={() => setShowOpenTabDialog(true)} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive} data-testid="button-open-tab" className="text-blue-600 dark:text-blue-400"><MonitorPlay className="h-4 w-4 mr-2" />Open URL</Button>}
+            {dashboardCapabilities.allows('close-tabs') && <Button size="sm" variant="outline" onClick={() => openManageTabs(null)} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Manage Tabs</Button>}
+            {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !exactSelectedTargetsResolved || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={exactSelectedTargetsResolved ? 'Lock each selected student to their current domain' : 'Select one or more students to lock'} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Lock</Button>}
+            {dashboardCapabilities.allows('unlock-screen') && <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !selectedTargetsSupportScreenOnlyUnlock || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={!exactSelectedUnlockTargetsResolved ? 'Select one or more students to unlock' : selectedTargetsSupportScreenOnlyUnlock ? 'Unlock selected students while preserving Flight Paths and other restrictions' : 'ClassPilot extension update required for every selected student'} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />Unlock</Button>}
+            {dashboardCapabilities.allows('apply-flight-path') && <Button size="sm" variant="outline" onClick={() => setShowApplyFlightPathDialog(true)} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive} data-testid="button-apply-flight-path" className="text-purple-600 dark:text-purple-400"><Layers className="h-4 w-4 mr-2" />Apply Flight Path</Button>}
+            {studentView === "class" && <Button size="sm" variant="outline" onClick={() => setShowFlightPathViewerDialog(true)} disabled={signOutOnlySelectionActive} data-testid="button-flight-path-status" className="text-purple-600 dark:text-purple-400"><Eye className="h-4 w-4 mr-2" />Flight Path Status</Button>}
+            {dashboardCapabilities.allows('apply-block-list') && <Button size="sm" variant="outline" onClick={() => setShowApplyBlockListDialog(true)} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive} data-testid="button-apply-block-list" className="text-red-600 dark:text-red-400"><ShieldBan className="h-4 w-4 mr-2" />Apply Block List</Button>}
+            {studentView === "class" && <Button size="sm" variant="outline" onClick={() => setShowBlockListViewerDialog(true)} disabled={signOutOnlySelectionActive} data-testid="button-block-list-status" className="text-red-600 dark:text-red-400"><Shield className="h-4 w-4 mr-2" />Block List Status</Button>}
             {studentView === "class" && (
               <Button
                 size="sm"
@@ -4278,6 +4420,7 @@ export default function Dashboard() {
                   setSelectedSubgroupId(event.target.value);
                   setSelectedStudentIds(new Set());
                   setSelectedServerSignOutStudentIds(new Set());
+                  setSelectedStudentBindingSnapshots(new Map());
                 }}
                 data-testid="select-subgroup-filter"
                 aria-label="Filter by subgroup"
@@ -4609,7 +4752,9 @@ export default function Dashboard() {
               const tileActionsDisabled = supervisedElsewhere || dashboardReadOnly;
               const tileActionsDisabledReason = supervisedElsewhere
                 ? supervisionReason
-                : dashboardCapabilities.reason;
+                : signOutOnlySelectionActive
+                  ? 'Clear the sign-out-only selection before using other ClassPilot controls.'
+                  : dashboardCapabilities.reason;
               const signOutOnlySelectionAvailable = isStudentServerSignOutEligible(student)
                 && !isStudentCommandable(student);
               const tileStudent = supervisedElsewhere
@@ -4677,6 +4822,7 @@ export default function Dashboard() {
                     canRemoveFlightPath={dashboardCapabilities.allows('remove-flight-path')}
                     actionsDisabled={tileActionsDisabled}
                     actionsDisabledReason={tileActionsDisabledReason}
+                    nonSignOutCommandsBlocked={signOutOnlySelectionActive}
                     monitoringSuppressed={supervisedElsewhere}
                     monitoringSuppressedReason={supervisionReason}
                     supervisionLabel={coverageLabel || ""}
@@ -5421,7 +5567,7 @@ export default function Dashboard() {
       </Dialog>
 
       {/* TeacherFab */}
-      {dashboardCapabilities.canUseTeacherFab && !classStudentTargetsUnavailable && (
+      {dashboardCapabilities.canUseTeacherFab && !classStudentTargetsUnavailable && !signOutOnlySelectionActive && (
         <TeacherFab
           attentionActive={attentionActive}
           onAttentionClick={() => setShowAttentionDialog(true)}

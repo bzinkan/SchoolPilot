@@ -34,6 +34,49 @@ function studentId(row) {
   return String(row?.studentId || row?.id || '').trim();
 }
 
+function boundedContextValue(value, maxLength = 256) {
+  const normalized = String(value || '').trim();
+  return normalized && normalized.length <= maxLength ? normalized : null;
+}
+
+export function studentSignOutSelectionBinding({
+  schoolId,
+  viewerId,
+  mode,
+  teachingSessionId,
+  student,
+}) {
+  const normalizedStudentId = boundedContextValue(studentId(student));
+  const realtimeBinding = boundedContextValue(student?.realtimeBinding, 128);
+  const context = {
+    schoolId: boundedContextValue(schoolId),
+    viewerId: boundedContextValue(viewerId),
+    mode: boundedContextValue(mode, 64),
+    teachingSessionId: boundedContextValue(teachingSessionId),
+  };
+  if (
+    !normalizedStudentId
+    || !realtimeBinding
+    || !context.schoolId
+    || !context.viewerId
+    || context.mode !== 'owned-class'
+    || !context.teachingSessionId
+  ) return null;
+
+  return JSON.stringify({
+    ...context,
+    studentId: normalizedStudentId,
+    realtimeBinding,
+  });
+}
+
+export function assertClassroomCommandSelectionIsolation(commandType, signOutOnlySelectionCount) {
+  const count = Number(signOutOnlySelectionCount);
+  if (commandType !== 'student-sign-out' && Number.isSafeInteger(count) && count > 0) {
+    throw new Error('Clear the sign-out-only selection before using other ClassPilot controls.');
+  }
+}
+
 export function studentSupportsCapability(student, capabilityName) {
   if (!student || !capabilityName) return false;
   if (student.capabilities?.[capabilityName] === true) return true;
@@ -274,6 +317,7 @@ export function resolveStudentSignOutTargets({
   mode,
   sessionStudents = [],
   selectedStudentIds = [],
+  selectedStudentBindings = [],
 }) {
   if (mode !== 'owned-class') {
     throw new Error('Student sign out is available only for your active class.');
@@ -290,8 +334,24 @@ export function resolveStudentSignOutTargets({
       .map((student) => [studentId(student), student])
       .filter(([id]) => id),
   );
+  const selectedBindingsById = new Map(
+    (selectedStudentBindings || [])
+      .map((entry) => [
+        boundedContextValue(entry?.studentId),
+        boundedContextValue(entry?.bindingSnapshot, 1024),
+      ])
+      .filter(([id, bindingSnapshot]) => id && bindingSnapshot),
+  );
   if (selectedIds.some((id) => !eligibleRowsById.has(id))) {
     throw new Error('One or more selected students can no longer be signed out. Refresh and try again.');
+  }
+  if (
+    selectedBindingsById.size !== selectedIds.length
+    || selectedIds.some((id) => (
+      selectedBindingsById.get(id) !== eligibleRowsById.get(id)?.signOutBindingSnapshot
+    ))
+  ) {
+    throw new Error('A selected student session changed. Select the student again before signing out.');
   }
 
   const targetStudents = selectedIds.map((id) => eligibleRowsById.get(id));
