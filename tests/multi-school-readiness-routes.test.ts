@@ -331,11 +331,20 @@ after(async () => {
   try {
     await asSystem(async () => {
       await db.execute(sql`DELETE FROM student_sessions WHERE device_id LIKE ${`${TAG}-%`}`);
+      await db.execute(sql`DELETE FROM heartbeats WHERE device_id LIKE ${`${TAG}-%`}`);
       await db.execute(sql`DELETE FROM student_devices WHERE device_id LIKE ${`${TAG}-%`}`);
       await db.execute(sql`DELETE FROM devices WHERE device_id LIKE ${`${TAG}-%`}`);
       await db.execute(sql`DELETE FROM audit_logs WHERE user_email LIKE ${`${TAG}%@%`}`);
       await db.execute(sql`DELETE FROM student_timeline_events WHERE school_id IN (${schoolA.id}, ${schoolB.id})`);
+      await db.execute(sql`DELETE FROM classpilot_supervision_students WHERE context_id LIKE ${`${TAG}-student-data-supervision-%`}`);
+      await db.execute(sql`DELETE FROM classpilot_supervision_contexts WHERE id LIKE ${`${TAG}-student-data-supervision-%`}`);
       await db.execute(sql`DELETE FROM classpilot_session_usage WHERE school_id IN (${schoolA.id}, ${schoolB.id})`);
+      await db.execute(sql`DELETE FROM classpilot_session_reports WHERE teaching_session_id LIKE ${`${TAG}-student-data-session-%`}`);
+      await db.execute(sql`DELETE FROM classpilot_session_students WHERE teaching_session_id LIKE ${`${TAG}-student-data-session-%`}`);
+      await db.execute(sql`DELETE FROM classpilot_session_staff WHERE teaching_session_id LIKE ${`${TAG}-student-data-session-%`}`);
+      await db.execute(sql`DELETE FROM teaching_sessions WHERE id LIKE ${`${TAG}-student-data-session-%`}`);
+      await db.execute(sql`DELETE FROM group_students WHERE group_id LIKE ${`${TAG}-student-data-group-%`}`);
+      await db.execute(sql`DELETE FROM groups WHERE id LIKE ${`${TAG}-student-data-group-%`}`);
       await db.execute(sql`DELETE FROM dismissal_overrides WHERE session_id IN (SELECT id FROM dismissal_sessions WHERE school_id IN (${schoolA.id}, ${schoolB.id}))`);
       await db.execute(sql`DELETE FROM dismissal_changes WHERE session_id IN (SELECT id FROM dismissal_sessions WHERE school_id IN (${schoolA.id}, ${schoolB.id}))`);
       await db.execute(sql`DELETE FROM dismissal_queue WHERE session_id IN (SELECT id FROM dismissal_sessions WHERE school_id IN (${schoolA.id}, ${schoolB.id}))`);
@@ -383,18 +392,73 @@ describe("multi-school readiness route hardening", () => {
       month: "2-digit",
       day: "2-digit",
     }).format(new Date());
+    const groupAId = `${TAG}-student-data-group-a`;
+    const groupBId = `${TAG}-student-data-group-b`;
+    const sessionAId = `${TAG}-student-data-session-a`;
+    const sessionBId = `${TAG}-student-data-session-b`;
     await asSystem(async () => {
+      await db.execute(sql`
+        INSERT INTO groups (
+          id, school_id, teacher_id, name, group_type, status, created_at
+        ) VALUES (
+          ${groupAId}, ${schoolA.id}, ${teacherA.id}, 'Teacher A Science',
+          'admin_class', 'active', now()
+        ), (
+          ${groupBId}, ${schoolB.id}, ${teacherB.id}, 'Foreign Science',
+          'admin_class', 'active', now()
+        )
+      `);
+      await db.execute(sql`
+        INSERT INTO teaching_sessions (
+          id, school_id, group_id, teacher_id, session_mode,
+          start_time, end_time, class_name_snapshot, timezone_snapshot,
+          roster_snapshot_completed_at, created_at
+        ) VALUES (
+          ${sessionAId}, ${schoolA.id}, ${groupAId}, ${teacherA.id}, 'live',
+          now() - interval '50 minutes', now() - interval '20 minutes',
+          'Teacher A Science', ${timeZone}, now() - interval '50 minutes', now() - interval '50 minutes'
+        ), (
+          ${sessionBId}, ${schoolB.id}, ${groupBId}, ${teacherB.id}, 'live',
+          now() - interval '50 minutes', now() - interval '20 minutes',
+          'Foreign Science', ${schoolB.schoolTimezone || "America/New_York"},
+          now() - interval '50 minutes', now() - interval '50 minutes'
+        )
+      `);
+      await db.execute(sql`
+        INSERT INTO classpilot_session_staff (
+          school_id, teaching_session_id, staff_id, role,
+          staff_name_snapshot, staff_email_snapshot, captured_at
+        ) VALUES (
+          ${schoolA.id}, ${sessionAId}, ${teacherA.id}, 'primary',
+          'Teacher A', ${teacherA.email}, now() - interval '50 minutes'
+        ), (
+          ${schoolB.id}, ${sessionBId}, ${teacherB.id}, 'primary',
+          'Teacher B', ${teacherB.email}, now() - interval '50 minutes'
+        )
+      `);
+      await db.execute(sql`
+        INSERT INTO classpilot_session_students (
+          school_id, teaching_session_id, group_id, student_id,
+          student_name_snapshot, captured_at
+        ) VALUES (
+          ${schoolA.id}, ${sessionAId}, ${groupAId}, ${teacherAStudent.id},
+          'Assigned Alpha', now() - interval '50 minutes'
+        ), (
+          ${schoolB.id}, ${sessionBId}, ${groupBId}, ${foreignStudent.id},
+          'Foreign Student', now() - interval '50 minutes'
+        )
+      `);
       await db.execute(sql`
         INSERT INTO classpilot_session_usage (
           school_id, teaching_session_id, group_id, student_id, local_date,
           total_seconds, heartbeat_count, top_domains, computed_at
         ) VALUES (
-          ${schoolA.id}, ${`${TAG}-student-data-session-a`}, ${`${TAG}-student-data-group-a`},
+          ${schoolA.id}, ${sessionAId}, ${groupAId},
           ${teacherAStudent.id}, ${localDate}, 20, 2,
           ${JSON.stringify([{ domain: "https://www.example.com/private?token=secret", seconds: 9999 }])}::jsonb,
           now()
         ), (
-          ${schoolB.id}, ${`${TAG}-student-data-session-b`}, ${`${TAG}-student-data-group-b`},
+          ${schoolB.id}, ${sessionBId}, ${groupBId},
           ${foreignStudent.id}, ${localDate}, 40, 4,
           ${JSON.stringify([{ domain: "foreign.example/private", seconds: 40 }])}::jsonb,
           now()
@@ -447,13 +511,42 @@ describe("multi-school readiness route hardening", () => {
     );
     assert.equal(invalidCursor.status, 400);
 
-    const forbidden = await requestJson(
+    const scopes = await requestJson(
       "GET",
-      "/classpilot/student-data?period=today",
+      "/classpilot/student-data/scopes",
       undefined,
       authFor(teacherA, schoolA.id)
     );
-    assert.equal(forbidden.status, 403);
+    assert.equal(scopes.status, 200, JSON.stringify(scopes.body));
+    assert.equal(scopes.body.defaultScopeKey, "mine");
+    assert.ok(scopes.body.scopes.some((scope: any) => scope.key === "mine"));
+    assert.ok(scopes.body.scopes.some((scope: any) => scope.key === `class:${groupAId}`));
+    assert.ok(!scopes.body.scopes.some((scope: any) => scope.key === `class:${groupBId}`));
+
+    const teacherAggregate = await requestJson(
+      "GET",
+      "/classpilot/student-data?period=today&scope=mine",
+      undefined,
+      authFor(teacherA, schoolA.id)
+    );
+    assert.equal(teacherAggregate.status, 200, JSON.stringify(teacherAggregate.body));
+    assert.equal(teacherAggregate.body.scope.key, "mine");
+    assert.equal(teacherAggregate.body.dataState, "final");
+    assert.equal(teacherAggregate.body.students.length, 1);
+    assert.equal(teacherAggregate.body.students[0].studentId, teacherAStudent.id);
+    assert.equal(teacherAggregate.body.students[0].monitoredSeconds, 20);
+
+    const unauthorizedClass = await requestJson(
+      "GET",
+      `/classpilot/student-data?period=today&scope=class&groupId=${encodeURIComponent(groupAId)}`,
+      undefined,
+      authFor(teacherB, schoolA.id)
+    );
+    assert.equal(unauthorizedClass.status, 404);
+    assert.deepEqual(unauthorizedClass.body, {
+      error: "Student Data scope not found",
+      code: "CLASSPILOT_STUDENT_DATA_SCOPE_NOT_FOUND",
+    });
 
     const aggregate = await requestJson(
       "GET",
@@ -465,6 +558,8 @@ describe("multi-school readiness route hardening", () => {
     assert.equal(aggregate.body.studentsTruncated, false);
     assert.equal(aggregate.body.activitySource, "heartbeats");
     assert.equal(aggregate.body.screenshotsUsedForTimeCalculations, false);
+    assert.equal(aggregate.body.scope.key, "school");
+    assert.equal(aggregate.body.dataState, "final");
     const studentAggregate = aggregate.body.students.find(
       (student: any) => student.studentId === teacherAStudent.id
     );
@@ -483,6 +578,14 @@ describe("multi-school readiness route hardening", () => {
     );
     assert.equal(repeated.status, 200);
     assert.equal(repeated.body.revision, aggregate.body.revision);
+    const compatibilityAlias = await requestJson(
+      "GET",
+      "/student-data?period=today",
+      undefined,
+      auth
+    );
+    assert.equal(compatibilityAlias.status, 200, JSON.stringify(compatibilityAlias.body));
+    assert.equal(compatibilityAlias.body.revision, aggregate.body.revision);
     const selected = await requestJson(
       "GET",
       `/classpilot/student-data?period=today&studentId=${teacherAStudent.id}`,
@@ -499,6 +602,590 @@ describe("multi-school readiness route hardening", () => {
       auth
     );
     assert.equal(foreignTarget.status, 404);
+    assert.deepEqual(foreignTarget.body, {
+      error: "Student Data scope not found",
+      code: "CLASSPILOT_STUDENT_DATA_SCOPE_NOT_FOUND",
+    });
+  });
+
+  it("enforces immutable teacher authority, report retention, and scheduled live windows", async () => {
+    const unrelatedTeacher = await createUser({
+      email: `${TAG}-student-data-unrelated@${TAG}-a.example.edu`,
+      firstName: "Unrelated",
+      lastName: "Teacher",
+    });
+    const officeUser = await createUser({
+      email: `${TAG}-student-data-office@${TAG}-a.example.edu`,
+      firstName: "Office",
+      lastName: "Only",
+    });
+    await inSchool(schoolA.id, async () => {
+      await createMembership({
+        userId: unrelatedTeacher.id,
+        schoolId: schoolA.id,
+        role: "teacher",
+        status: "active",
+      });
+      await createMembership({
+        userId: officeUser.id,
+        schoolId: schoolA.id,
+        role: "office_staff",
+        status: "active",
+      });
+    });
+    const formerStudent = await inSchool(schoolA.id, () => createStudent({
+      schoolId: schoolA.id,
+      firstName: "Former",
+      lastName: "Private",
+      email: `former.private@${TAG}-a.example.edu`,
+      status: "active",
+    }));
+    const timeZone = schoolA.schoolTimezone || "America/New_York";
+    const localDate = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+    const priorLocalDate = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date(Date.now() - 48 * 60 * 60 * 1_000));
+    const reassignedGroupId = `${TAG}-student-data-group-reassigned`;
+    const expiredGroupId = `${TAG}-student-data-group-expired`;
+    const incompleteGroupId = `${TAG}-student-data-group-incomplete`;
+    const failedGroupId = `${TAG}-student-data-group-failed`;
+    const scheduledPastGroupId = `${TAG}-student-data-group-scheduled-past`;
+    const scheduledLiveGroupId = `${TAG}-student-data-group-scheduled-live`;
+    const overduePriorGroupId = `${TAG}-student-data-group-overdue-prior`;
+    const hardCappedGroupId = `${TAG}-student-data-group-hard-capped`;
+    const taughtSessionId = `${TAG}-student-data-session-reassigned-live`;
+    const scheduledReportSessionId = `${TAG}-student-data-session-reassigned-scheduled-report`;
+    const expiredSessionId = `${TAG}-student-data-session-expired`;
+    const incompleteSessionId = `${TAG}-student-data-session-incomplete`;
+    const failedSessionId = `${TAG}-student-data-session-failed`;
+    const scheduledPastSessionId = `${TAG}-student-data-session-scheduled-past`;
+    const scheduledLiveSessionId = `${TAG}-student-data-session-scheduled-live`;
+    const overduePriorSessionId = `${TAG}-student-data-session-overdue-prior`;
+    const hardCappedSessionId = `${TAG}-student-data-session-hard-capped`;
+    const liveSupervisionContextId = `${TAG}-student-data-supervision-live`;
+    const deviceA = `${TAG}-student-data-device-a`;
+    const deviceB = `${TAG}-student-data-device-b`;
+    const deviceC = `${TAG}-student-data-device-c`;
+
+    await asSystem(async () => {
+      await db.execute(sql`
+        UPDATE students SET status = 'inactive' WHERE id = ${formerStudent.id}
+      `);
+      await db.execute(sql`
+        INSERT INTO groups (
+          id, school_id, teacher_id, name, group_type, status, created_at
+        ) VALUES
+          (${reassignedGroupId}, ${schoolA.id}, ${teacherB.id}, 'Reassigned Current Class', 'admin_class', 'active', now()),
+          (${expiredGroupId}, ${schoolA.id}, ${teacherA.id}, 'Expired Private Class', 'admin_class', 'archived', now()),
+          (${incompleteGroupId}, ${schoolA.id}, ${teacherA.id}, 'Incomplete Snapshot Class', 'admin_class', 'archived', now()),
+          (${failedGroupId}, ${schoolA.id}, ${teacherA.id}, 'Failed Report Class', 'admin_class', 'archived', now()),
+          (${scheduledPastGroupId}, ${schoolA.id}, ${teacherA.id}, 'Past Scheduled Class', 'admin_class', 'active', now()),
+          (${scheduledLiveGroupId}, ${schoolA.id}, ${teacherA.id}, 'Current Scheduled Class', 'admin_class', 'active', now())
+          ,(${overduePriorGroupId}, ${schoolA.id}, ${teacherA.id}, 'Prior Overdue Class', 'admin_class', 'archived', now())
+          ,(${hardCappedGroupId}, ${schoolA.id}, ${teacherA.id}, 'Twelve Hour Capped Class', 'admin_class', 'archived', now())
+      `);
+      await db.execute(sql`
+        INSERT INTO group_students (group_id, student_id) VALUES
+          (${reassignedGroupId}, ${teacherBStudent.id}),
+          (${scheduledPastGroupId}, ${teacherAStudent.id}),
+          (${scheduledLiveGroupId}, ${teacherAStudent.id}),
+          (${scheduledLiveGroupId}, ${teacherBStudent.id})
+      `);
+      await db.execute(sql`
+        INSERT INTO teaching_sessions (
+          id, school_id, group_id, teacher_id, session_mode,
+          start_time, end_time, class_name_snapshot, timezone_snapshot,
+          roster_snapshot_completed_at, created_at
+        ) VALUES
+          (
+            ${taughtSessionId}, ${schoolA.id}, ${reassignedGroupId}, ${teacherA.id}, 'live',
+            now() - interval '3 hours', now() - interval '2 hours',
+            'Frozen Teacher A Class', ${timeZone}, now() - interval '3 hours', now() - interval '3 hours'
+          ),
+          (
+            ${scheduledReportSessionId}, ${schoolA.id}, ${reassignedGroupId}, ${teacherA.id}, 'scheduled_report',
+            now() - interval '3 hours', now() - interval '2 hours',
+            'Scheduled Report Only', ${timeZone}, now() - interval '3 hours', now() - interval '3 hours'
+          ),
+          (
+            ${expiredSessionId}, ${schoolA.id}, ${expiredGroupId}, ${teacherA.id}, 'live',
+            now() - interval '3 hours', now() - interval '2 hours',
+            'Frozen Expired Private Class', ${timeZone}, now() - interval '3 hours', now() - interval '3 hours'
+          ),
+          (
+            ${incompleteSessionId}, ${schoolA.id}, ${incompleteGroupId}, ${teacherA.id}, 'live',
+            now() - interval '3 hours', now() - interval '2 hours',
+            'Frozen Incomplete Class', ${timeZone}, NULL, now() - interval '3 hours'
+          ),
+          (
+            ${failedSessionId}, ${schoolA.id}, ${failedGroupId}, ${teacherA.id}, 'live',
+            now() - interval '3 hours', now() - interval '2 hours',
+            'Frozen Failed Report Class', ${timeZone}, now() - interval '3 hours', now() - interval '3 hours'
+          )
+      `);
+      await db.execute(sql`
+        INSERT INTO teaching_sessions (
+          id, school_id, group_id, teacher_id, session_mode,
+          scheduled_date, scheduled_timezone, scheduled_start_at, scheduled_end_at,
+          scheduled_state, start_time, end_time, class_name_snapshot,
+          timezone_snapshot, roster_snapshot_completed_at, created_at
+        ) VALUES
+          (
+            ${scheduledPastSessionId}, ${schoolA.id}, ${scheduledPastGroupId}, ${teacherA.id}, 'live',
+            ${localDate}, ${timeZone}, now() - interval '30 minutes', now() - interval '10 minutes',
+            'active', now() - interval '30 minutes', NULL, 'Past Scheduled Class',
+            ${timeZone}, now() - interval '30 minutes', now() - interval '30 minutes'
+          ),
+          (
+            ${scheduledLiveSessionId}, ${schoolA.id}, ${scheduledLiveGroupId}, ${teacherA.id}, 'live',
+            ${localDate}, ${timeZone}, now() - interval '5 minutes', now() + interval '10 minutes',
+            'active', now() - interval '5 minutes', NULL, 'Current Scheduled Class',
+            ${timeZone}, now() - interval '5 minutes', now() - interval '5 minutes'
+          ),
+          (
+            ${overduePriorSessionId}, ${schoolA.id}, ${overduePriorGroupId}, ${teacherA.id}, 'live',
+            ${priorLocalDate}, ${timeZone}, now() - interval '49 hours', now() - interval '48 hours',
+            'active', now() - interval '49 hours', NULL, 'Prior Overdue Class',
+            ${timeZone}, now() - interval '49 hours', now() - interval '49 hours'
+          )
+      `);
+      await db.execute(sql`
+        INSERT INTO teaching_sessions (
+          id, school_id, group_id, teacher_id, session_mode,
+          start_time, end_time, class_name_snapshot, timezone_snapshot,
+          roster_snapshot_completed_at, created_at
+        ) VALUES (
+          ${hardCappedSessionId}, ${schoolA.id}, ${hardCappedGroupId}, ${teacherA.id}, 'live',
+          now() - interval '13 hours', NULL, 'Twelve Hour Capped Class', ${timeZone},
+          now() - interval '13 hours', now() - interval '13 hours'
+        )
+      `);
+      await db.execute(sql`
+        INSERT INTO classpilot_session_staff (
+          school_id, teaching_session_id, staff_id, role,
+          staff_name_snapshot, staff_email_snapshot, captured_at
+        ) VALUES
+          (${schoolA.id}, ${taughtSessionId}, ${teacherA.id}, 'primary', 'Teacher A', ${teacherA.email}, now() - interval '3 hours'),
+          (${schoolA.id}, ${taughtSessionId}, ${multiSchoolTeacher.id}, 'co_teacher', 'Multi Teacher', ${multiSchoolTeacher.email}, now() - interval '3 hours'),
+          (${schoolA.id}, ${scheduledReportSessionId}, ${teacherA.id}, 'primary', 'Teacher A', ${teacherA.email}, now() - interval '3 hours'),
+          (${schoolA.id}, ${expiredSessionId}, ${teacherA.id}, 'primary', 'Teacher A', ${teacherA.email}, now() - interval '3 hours'),
+          (${schoolA.id}, ${incompleteSessionId}, ${teacherA.id}, 'primary', 'Teacher A', ${teacherA.email}, now() - interval '3 hours'),
+          (${schoolA.id}, ${failedSessionId}, ${teacherA.id}, 'primary', 'Teacher A', ${teacherA.email}, now() - interval '3 hours'),
+          (${schoolA.id}, ${scheduledPastSessionId}, ${teacherA.id}, 'primary', 'Teacher A', ${teacherA.email}, now() - interval '30 minutes'),
+          (${schoolA.id}, ${scheduledLiveSessionId}, ${teacherA.id}, 'primary', 'Teacher A', ${teacherA.email}, now() - interval '5 minutes')
+          ,(${schoolA.id}, ${overduePriorSessionId}, ${teacherA.id}, 'primary', 'Teacher A', ${teacherA.email}, now() - interval '49 hours')
+          ,(${schoolA.id}, ${hardCappedSessionId}, ${teacherA.id}, 'primary', 'Teacher A', ${teacherA.email}, now() - interval '13 hours')
+      `);
+      await db.execute(sql`
+        INSERT INTO classpilot_session_students (
+          school_id, teaching_session_id, group_id, student_id,
+          student_name_snapshot, captured_at
+        ) VALUES
+          (${schoolA.id}, ${taughtSessionId}, ${reassignedGroupId}, ${teacherAStudent.id}, 'Assigned Alpha', now() - interval '3 hours'),
+          (${schoolA.id}, ${scheduledReportSessionId}, ${reassignedGroupId}, ${teacherAStudent.id}, 'Assigned Alpha', now() - interval '3 hours'),
+          (${schoolA.id}, ${expiredSessionId}, ${expiredGroupId}, ${formerStudent.id}, 'Former Private Frozen Name', now() - interval '3 hours'),
+          (${schoolA.id}, ${incompleteSessionId}, ${incompleteGroupId}, ${teacherAStudent.id}, 'Assigned Alpha', now() - interval '3 hours'),
+          (${schoolA.id}, ${failedSessionId}, ${failedGroupId}, ${teacherAStudent.id}, 'Assigned Alpha', now() - interval '3 hours'),
+          (${schoolA.id}, ${scheduledPastSessionId}, ${scheduledPastGroupId}, ${teacherAStudent.id}, 'Assigned Alpha', now() - interval '30 minutes'),
+          (${schoolA.id}, ${scheduledLiveSessionId}, ${scheduledLiveGroupId}, ${teacherAStudent.id}, 'Assigned Alpha', now() - interval '5 minutes'),
+          (${schoolA.id}, ${scheduledLiveSessionId}, ${scheduledLiveGroupId}, ${teacherBStudent.id}, 'Assigned Beta', now() - interval '5 minutes')
+          ,(${schoolA.id}, ${overduePriorSessionId}, ${overduePriorGroupId}, ${formerStudent.id}, 'Prior Frozen Private Name', now() - interval '49 hours')
+          ,(${schoolA.id}, ${hardCappedSessionId}, ${hardCappedGroupId}, ${teacherBStudent.id}, 'Assigned Beta', now() - interval '13 hours')
+      `);
+      await db.execute(sql`
+        INSERT INTO classpilot_session_reports (
+          school_id, teaching_session_id, state, window_start, window_end,
+          timezone, authorization_marker, settle_at, next_attempt_at, expires_at
+        ) VALUES (
+          ${schoolA.id}, ${expiredSessionId}, 'ready',
+          now() - interval '3 hours', now() - interval '2 hours', ${timeZone},
+          ${JSON.stringify({ version: 1, salt: "0123456789abcdef", digests: [] })}::jsonb,
+          now() - interval '2 hours', now() - interval '2 hours', now() - interval '1 minute'
+        ), (
+          ${schoolA.id}, ${failedSessionId}, 'failed',
+          now() - interval '3 hours', now() - interval '2 hours', ${timeZone},
+          ${JSON.stringify({ version: 1, salt: "0011223344556677", digests: [] })}::jsonb,
+          now() - interval '2 hours', now() + interval '1 minute', now() + interval '30 days'
+        )
+      `);
+      await db.execute(sql`
+        INSERT INTO classpilot_session_usage (
+          school_id, teaching_session_id, group_id, student_id, local_date,
+          total_seconds, heartbeat_count, top_domains, computed_at
+        ) VALUES
+          (${schoolA.id}, ${taughtSessionId}, ${reassignedGroupId}, ${teacherAStudent.id}, ${localDate}, 33, 3, '[]'::jsonb, now()),
+          (${schoolA.id}, ${scheduledReportSessionId}, ${reassignedGroupId}, ${teacherAStudent.id}, ${localDate}, 444, 4, '[]'::jsonb, now()),
+          (${schoolA.id}, ${expiredSessionId}, ${expiredGroupId}, ${formerStudent.id}, ${localDate}, 777, 7, '[]'::jsonb, now()),
+          (${schoolA.id}, ${incompleteSessionId}, ${incompleteGroupId}, ${teacherAStudent.id}, ${localDate}, 888, 8, '[]'::jsonb, now()),
+          (${schoolA.id}, ${scheduledLiveSessionId}, ${scheduledLiveGroupId}, ${teacherAStudent.id}, ${localDate}, 7, 1, '[]'::jsonb, now())
+      `);
+      await db.execute(sql`
+        INSERT INTO student_sessions (
+          id, student_id, device_id, started_at, last_seen_at, ended_at, is_active, auth_kind
+        ) VALUES
+          (${`${TAG}-student-data-auth-a`}, ${teacherAStudent.id}, ${deviceA}, now() - interval '40 minutes', now(), now(), false, 'legacy'),
+          (${`${TAG}-student-data-auth-b`}, ${teacherBStudent.id}, ${deviceB}, now() - interval '40 minutes', now(), now(), false, 'legacy')
+          ,(${`${TAG}-student-data-auth-c`}, ${teacherBStudent.id}, ${deviceC}, now() - interval '14 hours', now(), now(), false, 'legacy')
+      `);
+      await db.execute(sql`
+        INSERT INTO heartbeats (
+          device_id, student_id, student_email, school_id,
+          active_tab_title, active_tab_url, timestamp
+        ) VALUES
+          (${deviceA}, ${teacherAStudent.id}, ${teacherAStudent.email}, ${schoolA.id}, 'A1', 'https://a.example', now() - interval '4 minutes'),
+          (${deviceA}, ${teacherAStudent.id}, ${teacherAStudent.email}, ${schoolA.id}, 'A2', 'https://a.example', now() - interval '3 minutes 50 seconds'),
+          (${deviceA}, ${teacherAStudent.id}, ${teacherAStudent.email}, ${schoolA.id}, 'Before past deadline', 'https://before.example', now() - interval '15 minutes'),
+          (${deviceA}, ${teacherAStudent.id}, ${teacherAStudent.email}, ${schoolA.id}, 'Before past deadline 2', 'https://before.example', now() - interval '14 minutes 50 seconds'),
+          (${deviceA}, ${teacherAStudent.id}, ${teacherAStudent.email}, ${schoolA.id}, 'Past deadline', 'https://late.example', now() - interval '5 minutes'),
+          (${deviceB}, ${teacherBStudent.id}, ${teacherBStudent.email}, ${schoolA.id}, 'B1', 'https://b.example', now() - interval '4 minutes'),
+          (${deviceB}, ${teacherBStudent.id}, ${teacherBStudent.email}, ${schoolA.id}, 'B2', 'https://b.example', now() - interval '3 minutes 50 seconds'),
+          (${deviceB}, ${teacherBStudent.id}, ${teacherBStudent.email}, ${schoolA.id}, 'B3', 'https://b.example', now() - interval '3 minutes 40 seconds')
+          ,(${deviceC}, ${teacherBStudent.id}, ${teacherBStudent.email}, ${schoolA.id}, 'Before hard cap 1', 'https://before-hardcap.example', now() - interval '2 hours')
+          ,(${deviceC}, ${teacherBStudent.id}, ${teacherBStudent.email}, ${schoolA.id}, 'Before hard cap 2', 'https://before-hardcap.example', now() - interval '1 hour 50 minutes')
+          ,(${deviceC}, ${teacherBStudent.id}, ${teacherBStudent.email}, ${schoolA.id}, 'After hard cap', 'https://after-hardcap.example', now() - interval '30 minutes')
+      `);
+    });
+
+    const teacherAAuth = authFor(teacherA, schoolA.id);
+    const teacherBAuth = authFor(teacherB, schoolA.id);
+    const coTeacherAuth = authFor(multiSchoolTeacher, schoolA.id);
+    const unrelatedAuth = authFor(unrelatedTeacher, schoolA.id);
+    const teacherAScopes = await requestJson(
+      "GET",
+      "/classpilot/student-data/scopes",
+      undefined,
+      teacherAAuth
+    );
+    assert.equal(teacherAScopes.status, 200, JSON.stringify(teacherAScopes.body));
+    const scopeRows: Array<{
+      key: string;
+      isActive: boolean;
+      activeTeachingSessionId: string | null;
+    }> = teacherAScopes.body.scopes;
+    const scopesByKey = new Map(
+      scopeRows.map((scope) => [scope.key, scope] as const)
+    );
+    assert.ok(scopesByKey.has(`class:${reassignedGroupId}`), "former teacher keeps the taught frozen class");
+    assert.ok(!scopesByKey.has(`class:${expiredGroupId}`), "expired report must not expose its frozen class label");
+    assert.ok(!scopesByKey.has(`class:${incompleteGroupId}`), "incomplete frozen roster must not create a zombie scope");
+    assert.ok(scopesByKey.has(`class:${failedGroupId}`), "retryable retained report remains an explicit scope");
+    assert.equal(scopesByKey.get(`class:${scheduledPastGroupId}`)?.isActive, false);
+    assert.equal(scopesByKey.get(`class:${scheduledPastGroupId}`)?.activeTeachingSessionId, null);
+    assert.equal(scopesByKey.get(`class:${scheduledLiveGroupId}`)?.isActive, true);
+    assert.equal(
+      scopesByKey.get(`class:${scheduledLiveGroupId}`)?.activeTeachingSessionId,
+      scheduledLiveSessionId
+    );
+    assert.equal(teacherAScopes.body.defaultScopeKey, `class:${scheduledLiveGroupId}`);
+    assert.equal(scopesByKey.get(`class:${overduePriorGroupId}`)?.isActive, false);
+    assert.equal(scopesByKey.get(`class:${hardCappedGroupId}`)?.isActive, false);
+
+    const priorToday = await requestJson(
+      "GET",
+      `/classpilot/student-data?period=today&scope=class&groupId=${encodeURIComponent(overduePriorGroupId)}`,
+      undefined,
+      teacherAAuth
+    );
+    assert.equal(priorToday.status, 200, JSON.stringify(priorToday.body));
+    assert.deepEqual(priorToday.body.students, []);
+    const priorStudentSelector = await requestJson(
+      "GET",
+      `/classpilot/student-data?period=today&scope=class&groupId=${encodeURIComponent(overduePriorGroupId)}&studentId=${encodeURIComponent(formerStudent.id)}`,
+      undefined,
+      teacherAAuth
+    );
+    assert.equal(priorStudentSelector.status, 404);
+    assert.equal(priorStudentSelector.body.code, "CLASSPILOT_STUDENT_DATA_SCOPE_NOT_FOUND");
+
+    const hardCappedSession = await requestJson(
+      "GET",
+      `/classpilot/student-data?period=today&sessionId=${encodeURIComponent(hardCappedSessionId)}`,
+      undefined,
+      teacherAAuth
+    );
+    assert.equal(hardCappedSession.status, 200, JSON.stringify(hardCappedSession.body));
+    assert.equal(hardCappedSession.body.dataState, "finalizing");
+    assert.ok(hardCappedSession.body.students[0].monitoredSeconds > 0);
+    assert.ok(
+      !(hardCappedSession.body.students[0].topDomains || []).some(
+        (domain: any) => domain.domain === "after-hardcap.example"
+      ),
+      "the absolute twelve-hour authority cap excludes later heartbeats"
+    );
+
+    const formerTeacherClass = await requestJson(
+      "GET",
+      `/classpilot/student-data?period=today&scope=class&groupId=${encodeURIComponent(reassignedGroupId)}`,
+      undefined,
+      teacherAAuth
+    );
+    assert.equal(formerTeacherClass.status, 200, JSON.stringify(formerTeacherClass.body));
+    assert.deepEqual(
+      formerTeacherClass.body.students.map((student: any) => [student.studentId, student.monitoredSeconds]),
+      [[teacherAStudent.id, 33]],
+      "only the immutable live session is counted; scheduled_report rows never grant authority"
+    );
+    const coTeacherClass = await requestJson(
+      "GET",
+      `/classpilot/student-data?period=today&scope=class&groupId=${encodeURIComponent(reassignedGroupId)}`,
+      undefined,
+      coTeacherAuth
+    );
+    assert.equal(coTeacherClass.status, 200, JSON.stringify(coTeacherClass.body));
+    assert.equal(coTeacherClass.body.students[0].monitoredSeconds, 33);
+
+    const currentTeacherClass = await requestJson(
+      "GET",
+      `/classpilot/student-data?period=today&scope=class&groupId=${encodeURIComponent(reassignedGroupId)}`,
+      undefined,
+      teacherBAuth
+    );
+    assert.equal(currentTeacherClass.status, 200, JSON.stringify(currentTeacherClass.body));
+    assert.deepEqual(
+      currentTeacherClass.body.students.map((student: any) => [student.studentId, student.monitoredSeconds]),
+      [[teacherBStudent.id, 0]],
+      "a new teacher gets the current roster but never inherits the former teacher's history"
+    );
+    const unrelatedClass = await requestJson(
+      "GET",
+      `/classpilot/student-data?period=today&scope=class&groupId=${encodeURIComponent(reassignedGroupId)}`,
+      undefined,
+      unrelatedAuth
+    );
+    assert.equal(unrelatedClass.status, 404);
+    assert.equal(unrelatedClass.body.code, "CLASSPILOT_STUDENT_DATA_SCOPE_NOT_FOUND");
+
+    for (const officePath of [
+      "/classpilot/student-data/scopes",
+      "/classpilot/student-data?period=today",
+    ]) {
+      const denied = await requestJson("GET", officePath, undefined, authFor(officeUser, schoolA.id));
+      assert.equal(denied.status, 403, `${officePath} is unavailable to office-only staff`);
+    }
+    const pollutedScope = await requestJson(
+      "GET",
+      "/classpilot/student-data?period=today&scope=mine&scope=class",
+      undefined,
+      teacherAAuth
+    );
+    assert.equal(pollutedScope.status, 400);
+    const conflictingSelectors = await requestJson(
+      "GET",
+      `/classpilot/student-data?period=today&sessionId=${encodeURIComponent(taughtSessionId)}&scope=class&groupId=${encodeURIComponent(reassignedGroupId)}`,
+      undefined,
+      teacherAAuth
+    );
+    assert.equal(conflictingSelectors.status, 400);
+
+    for (const hiddenSessionId of [
+      scheduledReportSessionId,
+      expiredSessionId,
+      incompleteSessionId,
+    ]) {
+      const hidden = await requestJson(
+        "GET",
+        `/classpilot/student-data?period=today&sessionId=${encodeURIComponent(hiddenSessionId)}`,
+        undefined,
+        teacherAAuth
+      );
+      assert.equal(hidden.status, 404, `${hiddenSessionId} must use neutral not-found authority`);
+      assert.deepEqual(hidden.body, {
+        error: "Student Data scope not found",
+        code: "CLASSPILOT_STUDENT_DATA_SCOPE_NOT_FOUND",
+      });
+    }
+
+    const expiredAdminSession = await requestJson(
+      "GET",
+      `/classpilot/student-data?period=today&sessionId=${encodeURIComponent(expiredSessionId)}`,
+      undefined,
+      authFor(adminUser, schoolA.id)
+    );
+    assert.equal(expiredAdminSession.status, 404);
+    assert.equal(expiredAdminSession.body.code, "CLASSPILOT_STUDENT_DATA_SCOPE_NOT_FOUND");
+
+    const failedReport = await requestJson(
+      "GET",
+      `/classpilot/student-data?period=today&sessionId=${encodeURIComponent(failedSessionId)}`,
+      undefined,
+      teacherAAuth
+    );
+    assert.equal(failedReport.status, 503, JSON.stringify(failedReport.body));
+    assert.equal(failedReport.body.code, "CLASSPILOT_STUDENT_DATA_UNAVAILABLE");
+
+    const schoolAggregate = await requestJson(
+      "GET",
+      "/classpilot/student-data?period=today&scope=school",
+      undefined,
+      authFor(adminUser, schoolA.id)
+    );
+    assert.equal(schoolAggregate.status, 200, JSON.stringify(schoolAggregate.body));
+    assert.ok(
+      !schoolAggregate.body.students.some((student: any) => student.studentId === formerStudent.id),
+      "an expired report cannot disclose a physically retained frozen student name"
+    );
+    const schoolTeacherA = schoolAggregate.body.students.find(
+      (student: any) => student.studentId === teacherAStudent.id
+    );
+    assert.ok(
+      schoolTeacherA.monitoredSeconds === 40 || schoolTeacherA.monitoredSeconds === 60,
+      "only retained live rows are counted; scheduled-report/incomplete rows must not add 444/888 seconds"
+    );
+
+    const liveClass = await requestJson(
+      "GET",
+      `/classpilot/student-data?period=today&scope=class&groupId=${encodeURIComponent(scheduledLiveGroupId)}`,
+      undefined,
+      teacherAAuth
+    );
+    assert.equal(liveClass.status, 200, JSON.stringify(liveClass.body));
+    assert.equal(liveClass.body.dataState, "live");
+    assert.ok(liveClass.body.provisionalAsOf);
+    const liveA = liveClass.body.students.find((student: any) => student.studentId === teacherAStudent.id);
+    const liveB = liveClass.body.students.find((student: any) => student.studentId === teacherBStudent.id);
+    assert.equal(liveA.monitoredSeconds, 7, "stored final key wins over provisional materialization");
+    assert.ok(liveB.monitoredSeconds > 0, "unfinalized frozen student receives read-only live materialization");
+
+    await asSystem(async () => {
+      await db.execute(sql`
+        INSERT INTO classpilot_supervision_contexts (
+          id, school_id, context_type, name, status, assigned_staff_id,
+          created_by, starts_at, ends_at, ended_at
+        ) VALUES (
+          ${liveSupervisionContextId}, ${schoolA.id}, 'manual',
+          'Student Data cache supervision fence', 'ended', ${teacherB.id},
+          ${teacherA.id}, now() - interval '4 minutes 5 seconds',
+          now() - interval '3 minutes 35 seconds',
+          now() - interval '3 minutes 35 seconds'
+        )
+      `);
+      await db.execute(sql`
+        INSERT INTO classpilot_supervision_students (
+          school_id, context_id, student_id, source, assigned_by,
+          assigned_at, released_at, release_reason
+        ) VALUES (
+          ${schoolA.id}, ${liveSupervisionContextId}, ${teacherBStudent.id},
+          'manual', ${teacherA.id}, now() - interval '4 minutes 5 seconds',
+          now() - interval '3 minutes 35 seconds', 'test_completed'
+        )
+      `);
+    });
+    const supervisedLiveClass = await requestJson(
+      "GET",
+      `/classpilot/student-data?period=today&scope=class&groupId=${encodeURIComponent(scheduledLiveGroupId)}`,
+      undefined,
+      teacherAAuth
+    );
+    assert.equal(supervisedLiveClass.status, 200, JSON.stringify(supervisedLiveClass.body));
+    const supervisedLiveB = supervisedLiveClass.body.students.find(
+      (student: any) => student.studentId === teacherBStudent.id
+    );
+    assert.equal(supervisedLiveClass.body.dataState, "live");
+    assert.ok(
+      supervisedLiveB.monitoredSeconds < liveB.monitoredSeconds,
+      "delegated supervision removes the overlapping provisional class interval"
+    );
+    assert.notEqual(
+      supervisedLiveClass.body.revision,
+      liveClass.body.revision,
+      "a changed supervision context must fence a warm provisional cache entry"
+    );
+
+    const pastClass = await requestJson(
+      "GET",
+      `/classpilot/student-data?period=today&scope=class&groupId=${encodeURIComponent(scheduledPastGroupId)}`,
+      undefined,
+      teacherAAuth
+    );
+    assert.equal(pastClass.status, 200, JSON.stringify(pastClass.body));
+    assert.equal(pastClass.body.dataState, "finalizing");
+    const cappedPastSeconds = pastClass.body.students[0].monitoredSeconds;
+    assert.ok(cappedPastSeconds > 0, "pre-deadline activity survives scheduler lag");
+    assert.ok(
+      !(pastClass.body.students[0].topDomains || []).some((domain: any) => domain.domain === "late.example"),
+      "the half-open scheduled deadline excludes later heartbeats"
+    );
+    const pastSessionDuringLag = await requestJson(
+      "GET",
+      `/classpilot/student-data?period=today&sessionId=${encodeURIComponent(scheduledPastSessionId)}`,
+      undefined,
+      teacherAAuth
+    );
+    assert.equal(pastSessionDuringLag.status, 200, JSON.stringify(pastSessionDuringLag.body));
+    assert.equal(pastSessionDuringLag.body.dataState, "finalizing");
+    assert.equal(pastSessionDuringLag.body.students[0].monitoredSeconds, cappedPastSeconds);
+
+    await asSystem(async () => {
+      await db.execute(sql`
+        UPDATE teaching_sessions
+        SET end_time = scheduled_end_at, scheduled_state = 'finalized'
+        WHERE id = ${scheduledPastSessionId}
+      `);
+      await db.execute(sql`
+        INSERT INTO classpilot_session_reports (
+          school_id, teaching_session_id, state, window_start, window_end,
+          timezone, authorization_marker, tracking_policy,
+          settle_at, next_attempt_at, expires_at
+        )
+        SELECT
+          school_id, id, 'pending', start_time, end_time, ${timeZone},
+          ${JSON.stringify({ version: 1, salt: "fedcba9876543210", digests: [] })}::jsonb,
+          ${JSON.stringify({
+            enableTrackingHours: false,
+            trackingStartTime: null,
+            trackingEndTime: null,
+            trackingDays: [],
+            schoolTimezone: timeZone,
+            afterHoursMode: "off",
+          })}::jsonb,
+          now(), now(), now() + interval '30 days'
+        FROM teaching_sessions WHERE id = ${scheduledPastSessionId}
+      `);
+    });
+    const pendingPast = await requestJson(
+      "GET",
+      `/classpilot/student-data?period=today&sessionId=${encodeURIComponent(scheduledPastSessionId)}`,
+      undefined,
+      teacherAAuth
+    );
+    assert.equal(pendingPast.status, 200, JSON.stringify(pendingPast.body));
+    assert.equal(pendingPast.body.dataState, "finalizing");
+    assert.equal(pendingPast.body.students[0].monitoredSeconds, cappedPastSeconds);
+
+    await asSystem(async () => {
+      await db.execute(sql`
+        UPDATE classpilot_session_reports
+        SET state = 'ready', materialized_at = now(), updated_at = now()
+        WHERE teaching_session_id = ${scheduledPastSessionId}
+      `);
+      await db.execute(sql`
+        INSERT INTO classpilot_session_usage (
+          school_id, teaching_session_id, group_id, student_id, local_date,
+          total_seconds, heartbeat_count, top_domains, computed_at
+        ) VALUES (
+          ${schoolA.id}, ${scheduledPastSessionId}, ${scheduledPastGroupId},
+          ${teacherAStudent.id}, ${localDate}, ${cappedPastSeconds}, 1,
+          '[]'::jsonb, now()
+        )
+      `);
+    });
+    const finalizedPast = await requestJson(
+      "GET",
+      `/classpilot/student-data?period=today&sessionId=${encodeURIComponent(scheduledPastSessionId)}`,
+      undefined,
+      teacherAAuth
+    );
+    assert.equal(finalizedPast.status, 200, JSON.stringify(finalizedPast.body));
+    assert.equal(finalizedPast.body.dataState, "final");
+    assert.equal(finalizedPast.body.students[0].monitoredSeconds, cappedPastSeconds);
   });
 
   it("denies the device aggregate to a GoPilot-only retained parent while preserving dual-product base-admin access", async () => {

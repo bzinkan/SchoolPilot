@@ -192,6 +192,9 @@ router.use((req: Request, res: Response, next: NextFunction) => {
   if (p.startsWith("/extension/")) { req.url = "/classpilot" + req.url; return next(); }
   if (p === "/register-student") { req.url = "/classpilot" + req.url; return next(); }
   if (p.startsWith("/roster/")) { req.url = "/classpilot" + req.url; return next(); }
+  // Temporary compatibility alias for already-cached Student Data clients.
+  // Keep this exact: new sub-routes use their canonical /classpilot prefix.
+  if (p === "/student-data" && m === "GET") { req.url = "/classpilot" + req.url; return next(); }
   if (p.startsWith("/student-analytics")) { req.url = "/classpilot" + req.url; return next(); }
   if (p === "/groups" || p.startsWith("/groups/")) {
     req.url = "/classpilot/groups" + req.url.slice("/groups".length);
