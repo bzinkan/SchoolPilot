@@ -76,8 +76,13 @@ test('malformed and over-limit enabled observation scopes fail private', async (
   assert.match(lease, /if \(!sessionId \|\| !normalizedScope\)[\s\S]{0,220}status: 'denied'/);
   assert.match(
     dashboard,
-    /observationReadsAllowed = observationLeaseStatus === 'observed'[\s\S]{0,180}observationLeaseStatus === 'error'/,
-    'denied invalid scopes must issue zero screenshot/history batch reads',
+    /historyTileReadsEnabled = studentView !== 'available'[\s\S]{0,100}observationReadsAllowed/,
+    'invalid observation scopes must still fail private for legacy history reads',
+  );
+  assert.match(
+    dashboard,
+    /screenshotTileReadsEnabled = studentView === 'class'[\s\S]{0,100}Boolean\(effectiveSessionId\)/,
+    'a live class must still ask the server for independently authorized V2 screenshots',
   );
 });
 
@@ -262,14 +267,31 @@ test('authorization loss purges active tile caches without retaining denied pixe
   assert.match(dashboard, /\['signed_out', 'delegated'\]\.includes\(monitoringDisplay\?\.kind\)/);
   assert.match(
     tile,
-    /screenshotAuthorizationRevoked = screenshotObservationStatus === 'pending'[\s\S]{0,180}screenshotObservationStatus === 'denied'[\s\S]{0,120}screenshotObservationStatus === 'paused_unobserved'/,
+    /observationAuthorizationRevoked = !screenshotIsClassBound[\s\S]{0,180}screenshotObservationStatus === 'pending'[\s\S]{0,120}screenshotObservationStatus === 'denied'[\s\S]{0,120}screenshotObservationStatus === 'paused_unobserved'/,
+    'legacy V1 pixels must retain every observation-lease privacy gate',
+  );
+  assert.match(
+    tile,
+    /screenshotAuthorizationRevoked = monitoringSuppressed[\s\S]{0,180}\['signed_out', 'delegated'\][\s\S]{0,120}screenshotAuthorizationDenied[\s\S]{0,120}observationAuthorizationRevoked/,
+    'supervision, signed-out/delegated state, explicit context denial, and legacy lease loss must hard-hide pixels',
   );
   assert.match(tile, /screenshotObservationStatus === 'denied'/);
-  assert.doesNotMatch(
-    tile,
-    /signal_lost['"]\s*\|\|[\s\S]{0,120}screenshotDisplay\.retained/,
-    'confirmed loss must never authorize retained screenshot pixels',
+  assert.match(
+    dashboard,
+    /legacyScreenshotReadsRevoked[\s\S]{0,900}removeLegacyScreenshotsFromTileBatchData\(response\)/,
+    'denied/paused mixed responses must discard V1 rows before React Query caches them',
   );
+  assert.match(
+    dashboard,
+    /\['denied', 'paused_unobserved'\]\.includes\(observationLeaseStatus\)[\s\S]{0,240}purgeLegacyScreenshotTileCaches/,
+    'legacy observation revocation must selectively scrub V1 caches while preserving V2',
+  );
+  assert.match(
+    tile,
+    /deriveScreenshotPreviewMode\([\s\S]{0,180}authorizationRevoked: screenshotAuthorizationRevoked/,
+    'screenshot aging must run only after all hard authorization gates are combined',
+  );
+  assert.match(tile, /screenshot-monitoring-warning-/);
 });
 
 test('enabled observation scopes remain pending across A to B to A until their exact PUT succeeds', async () => {
@@ -299,7 +321,7 @@ test('claimed coverage stays telemetry-only without misusing the class frozen-ro
   );
 
   assert.match(dashboard, /studentView === 'claimed'[\s\S]{0,80}\? 'denied'/);
-  assert.match(dashboard, /studentView !== 'claimed'[\s\S]{0,100}observationReadsAllowed/);
+  assert.match(dashboard, /screenshotTileReadsEnabled = studentView === 'class'/);
   assert.match(dashboard, /historyTileReadsEnabled = studentView !== 'available'[\s\S]{0,80}observationReadsAllowed/);
   assert.match(dashboard, /purgeAllScreenshotTileCaches\(queryClient\)/);
 });

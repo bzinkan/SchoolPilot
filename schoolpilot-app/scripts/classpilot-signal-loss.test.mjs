@@ -8,6 +8,7 @@ import {
   SCREENSHOT_RECONNECT_RETAIN_MS,
   SCREENSHOT_STALE_MS,
   deriveScreenshotDisplay,
+  deriveScreenshotPreviewMode,
   deriveStudentMonitoringDisplay,
   deriveUnavailablePreview,
   findNextStudentFreshnessBoundary,
@@ -258,6 +259,81 @@ test('screenshots become stale at 75 seconds independently of healthy URL teleme
 
   const student = monitoredStudent({ realtimeObservedAt: new Date(observedAt + 70_000).toISOString() });
   assert.equal(deriveStudentMonitoringDisplay(student, observedAt + SCREENSHOT_STALE_MS).telemetryCurrent, true);
+});
+
+test('authorized screenshot pixels use exact 75-second and 120-second display boundaries', () => {
+  const screenshotData = { screenshot: 'data:image/jpeg;base64,test', timestamp: observedAt };
+  assert.equal(deriveScreenshotPreviewMode({
+    screenshotData,
+    nowMs: observedAt + SCREENSHOT_STALE_MS - 1,
+  }), 'current');
+  assert.equal(deriveScreenshotPreviewMode({
+    screenshotData,
+    nowMs: observedAt + SCREENSHOT_STALE_MS,
+    telemetryCurrent: true,
+    transportHealthy: true,
+  }), 'retained', 'a healthy heartbeat cannot make a 75-second screenshot look current or disappear');
+  assert.equal(deriveScreenshotPreviewMode({
+    screenshotData,
+    nowMs: observedAt + SCREENSHOT_RECONNECT_RETAIN_MS - 1,
+    telemetryCurrent: false,
+    transportHealthy: false,
+  }), 'retained', 'a stale heartbeat keeps only the visibly aged authorized image');
+  assert.equal(deriveScreenshotPreviewMode({
+    screenshotData,
+    nowMs: observedAt + SCREENSHOT_RECONNECT_RETAIN_MS,
+  }), null);
+  assert.equal(deriveScreenshotPreviewMode({
+    screenshotData,
+    nowMs: observedAt + 1,
+    authorizationRevoked: true,
+  }), null, 'authorization loss wins even over a one-millisecond-old cached image');
+});
+
+test('signal-loss tiles schedule both screenshot-aging transitions', () => {
+  const student = monitoredStudent({ studentId: 'signal-loss-boundary-student' });
+  const screenshots = new Map([[
+    student.studentId,
+    { screenshot: 'data:image/jpeg;base64,test', timestamp: observedAt },
+  ]]);
+  const signalLostDisplays = new Map([[
+    student.studentId,
+    {
+      kind: 'signal_lost',
+      status: 'signal_lost',
+      label: 'Monitoring signal lost',
+      telemetryCurrent: false,
+      observedAtMs: observedAt,
+      nextBoundaryAtMs: null,
+    },
+  ]]);
+  assert.equal(
+    findNextStudentFreshnessBoundary(
+      [student],
+      screenshots,
+      observedAt + SCREENSHOT_STALE_MS - 1,
+      signalLostDisplays,
+    ),
+    observedAt + SCREENSHOT_STALE_MS,
+  );
+  assert.equal(
+    findNextStudentFreshnessBoundary(
+      [student],
+      screenshots,
+      observedAt + SCREENSHOT_STALE_MS,
+      signalLostDisplays,
+    ),
+    observedAt + SCREENSHOT_RECONNECT_RETAIN_MS,
+  );
+  assert.equal(
+    findNextStudentFreshnessBoundary(
+      [student],
+      screenshots,
+      observedAt + SCREENSHOT_RECONNECT_RETAIN_MS,
+      signalLostDisplays,
+    ),
+    null,
+  );
 });
 
 test('a stopped WebRTC stream cannot bypass the signal-loss preview', () => {

@@ -1,4 +1,7 @@
-import { deriveScreenshotDisplay } from './studentMonitoringDisplay.js';
+import {
+  deriveScreenshotDisplay,
+  isClassBoundScreenshot,
+} from './studentMonitoringDisplay.js';
 
 export const TILE_BATCH_MAX_STUDENTS = 50;
 export const TILE_BATCH_HISTORY_LIMIT = 10;
@@ -47,6 +50,23 @@ export function buildTileStudentBindings(students) {
     .sort(([left], [right]) => left.localeCompare(right));
 }
 
+export function changedTileBindingStudentIds(previousStudents, nextStudents) {
+  const previousBindings = new Map(buildTileStudentBindings(previousStudents));
+  const nextBindings = new Map(buildTileStudentBindings(nextStudents));
+  const changedStudentIds = [];
+
+  for (const [studentId, previousBinding] of previousBindings) {
+    if (
+      !nextBindings.has(studentId)
+      || nextBindings.get(studentId) !== previousBinding
+    ) {
+      changedStudentIds.push(studentId);
+    }
+  }
+
+  return changedStudentIds.sort((left, right) => left.localeCompare(right));
+}
+
 export function createTileBatchRequests(students, context = {}) {
   const normalizedStudentBindings = buildTileStudentBindings(students);
   const contextKey = JSON.stringify({
@@ -60,7 +80,11 @@ export function createTileBatchRequests(students, context = {}) {
   for (let index = 0; index < normalizedStudentBindings.length; index += TILE_BATCH_MAX_STUDENTS) {
     const cohortBindings = normalizedStudentBindings.slice(index, index + TILE_BATCH_MAX_STUDENTS);
     const cohort = cohortBindings.map(([studentId]) => studentId);
-    const cohortKey = JSON.stringify(cohortBindings);
+    // Binding changes must not strand unchanged classmates behind a brand-new
+    // whole-cohort cache key. Dashboard scrubs the exact changed student and
+    // refetches this stable roster cohort; server bindingVersion validation
+    // remains the authority for whether replacement pixels may be displayed.
+    const cohortKey = JSON.stringify(cohort);
     const teachingSessionId = typeof context.teachingSessionId === 'string'
       && context.teachingSessionId.trim()
       ? context.teachingSessionId.trim()
@@ -87,15 +111,64 @@ export function createTileBatchRequests(students, context = {}) {
   return requests;
 }
 
+export function tileBatchRequestShouldPoll(
+  request,
+  {
+    viewportTrackingSupported = false,
+    nearViewportStudentIds = new Set(),
+    liveViewStudentId = null,
+  } = {},
+) {
+  if (!viewportTrackingSupported) return true;
+  const nearby = nearViewportStudentIds instanceof Set
+    ? nearViewportStudentIds
+    : new Set(nearViewportStudentIds || []);
+  return (request?.body?.studentIds || []).some((studentId) => (
+    nearby.has(studentId) || studentId === liveViewStudentId
+  ));
+}
+
 export function indexTileScreenshots(response) {
   const screenshotsByStudent = new Map();
 
   for (const tile of response?.tiles || []) {
     if (typeof tile?.studentId !== 'string') continue;
-    screenshotsByStudent.set(tile.studentId, tile.screenshot ?? null);
+    screenshotsByStudent.set(tile.studentId, validatedTileScreenshot(tile));
   }
 
   return screenshotsByStudent;
+}
+
+function validatedTileScreenshot(tile) {
+  const screenshot = tile?.screenshot ?? null;
+  const expectedBindingVersion = typeof tile?.bindingVersion === 'string'
+    ? tile.bindingVersion
+    : null;
+  const screenshotBindingVersion = typeof screenshot?.bindingVersion === 'string'
+    ? screenshot.bindingVersion
+    : null;
+  const expectsV2 = expectedBindingVersion?.startsWith('v2:') === true;
+  const screenshotClaimsV2 = screenshotBindingVersion?.startsWith('v2:') === true;
+  if (expectsV2 || screenshotClaimsV2) {
+    return expectsV2
+      && screenshotClaimsV2
+      && expectedBindingVersion === screenshotBindingVersion
+      ? screenshot
+      : null;
+  }
+  return screenshot;
+}
+
+export function normalizeTileScreenshotBindings(response) {
+  if (!Array.isArray(response?.tiles)) return response;
+  let changed = false;
+  const tiles = response.tiles.map((tile) => {
+    const screenshot = validatedTileScreenshot(tile);
+    if (screenshot === (tile?.screenshot ?? null)) return tile;
+    changed = true;
+    return { ...tile, screenshot };
+  });
+  return changed ? { ...response, tiles } : response;
 }
 
 export function indexTileHistory(response) {
@@ -114,13 +187,32 @@ export function retainFreshTileScreenshotsOnNull(previous, incoming, nowMs = Dat
   const previousByStudent = new Map(
     previous.tiles
       .filter((tile) => typeof tile?.studentId === 'string')
-      .map((tile) => [tile.studentId, tile.screenshot]),
+      .map((tile) => [tile.studentId, tile]),
   );
   let changed = false;
   const tiles = incoming.tiles.map((tile) => {
     if (typeof tile?.studentId !== 'string' || tile.screenshot != null) return tile;
-    const priorScreenshot = previousByStudent.get(tile.studentId);
-    if (!deriveScreenshotDisplay(priorScreenshot, nowMs).fresh) return tile;
+    const priorTile = previousByStudent.get(tile.studentId);
+    const priorScreenshot = priorTile?.screenshot;
+    const priorBindingVersion = typeof priorTile?.bindingVersion === 'string'
+      ? priorTile.bindingVersion
+      : priorScreenshot?.bindingVersion;
+    const incomingBindingVersion = typeof tile.bindingVersion === 'string'
+      ? tile.bindingVersion
+      : null;
+    const priorWasClassBound = typeof priorBindingVersion === 'string'
+      && priorBindingVersion.startsWith('v2:');
+    const incomingIsClassBound = typeof incomingBindingVersion === 'string'
+      && incomingBindingVersion.startsWith('v2:');
+    if (
+      (priorWasClassBound || incomingIsClassBound)
+      && !(
+        priorWasClassBound
+        && incomingIsClassBound
+        && incomingBindingVersion === priorBindingVersion
+      )
+    ) return tile;
+    if (!deriveScreenshotDisplay(priorScreenshot, nowMs).retained) return tile;
     changed = true;
     return { ...tile, screenshot: priorScreenshot };
   });
@@ -145,6 +237,30 @@ export function removeStudentsFromTileBatchData(data, studentIds) {
   return tiles.length === data.tiles.length ? data : { ...data, tiles };
 }
 
-export function fetchTileBatch(request, requestApi, signal) {
-  return requestApi('POST', request.endpoint, request.body, { signal });
+export function removeLegacyScreenshotsFromTileBatchData(data) {
+  if (data instanceof Map) {
+    let changed = false;
+    const next = new Map(data);
+    for (const [studentId, screenshot] of next) {
+      if (!isClassBoundScreenshot(screenshot)) {
+        next.delete(studentId);
+        changed = true;
+      }
+    }
+    return changed ? next : data;
+  }
+
+  if (!Array.isArray(data?.tiles)) return data;
+  const tiles = data.tiles.filter((tile) => (
+    isClassBoundScreenshot(tile?.screenshot)
+    || (typeof tile?.bindingVersion === 'string' && tile.bindingVersion.startsWith('v2:'))
+  ));
+  return tiles.length === data.tiles.length ? data : { ...data, tiles };
+}
+
+export async function fetchTileBatch(request, requestApi, signal) {
+  const response = await requestApi('POST', request.endpoint, request.body, { signal });
+  return request.kind === 'screenshots'
+    ? normalizeTileScreenshotBindings(response)
+    : response;
 }

@@ -116,6 +116,11 @@ try {
     'center',
     'the unavailable-state truth must remain centered in the preview',
   );
+  assert.equal(
+    await page.getByTestId('screenshot-signed-out-student').count(),
+    0,
+    'signed-out state must hard-hide even a fresh cached screenshot',
+  );
   await signedOutTile.getByText('Last seen just now', { exact: true }).waitFor();
   assert.deepEqual(
     await page.evaluate(() => globalThis.__studentTileMinuteTimers()),
@@ -161,11 +166,46 @@ try {
 
   const signalLostTile = page.getByTestId('card-student-signal-lost-student');
   await signalLostTile.getByText('Monitoring signal lost', { exact: true }).waitFor();
-  await signalLostTile.getByText('Last seen 2 hours ago', { exact: true }).waitFor();
+  await page.getByTestId('screenshot-current-signal-lost-student').waitFor();
   assert.equal(
     await signalLostTile.getByText('Preview unavailable', { exact: true }).count(),
     0,
     'signal loss must use its specific truth instead of the generic preview heading',
+  );
+  assert.equal(
+    await page.getByTestId('checkbox-select-student-signal-lost-student').isDisabled(),
+    true,
+    'a fresh screenshot must not re-enable controls while heartbeat telemetry is stale',
+  );
+  assert.equal(
+    await page.getByTestId('button-lock-toggle-signal-lost-student').isDisabled(),
+    true,
+    'signal-loss command controls remain disabled while the fresh screenshot stays visible',
+  );
+
+  const retainedSignalLostTile = page.getByTestId('card-student-signal-lost-retained-student');
+  await page.getByTestId('screenshot-retained-signal-lost-retained-student').waitFor();
+  await page.getByTestId('screenshot-monitoring-warning-signal-lost-retained-student').waitFor();
+  assert.match(
+    await page.getByTestId('screenshot-updating-signal-lost-retained-student').textContent(),
+    /^Updating… · Captured /,
+    'the exact 75-second state must be dimmed and visibly age-labeled',
+  );
+  assert.equal(
+    await retainedSignalLostTile.getByText('Monitoring signal lost', { exact: true }).count(),
+    1,
+  );
+
+  const expiredSignalLostTile = page.getByTestId('card-student-signal-lost-expired-student');
+  await page.getByTestId('preview-unavailable-signal-lost-expired-student').waitFor();
+  assert.equal(
+    await page.getByTestId('screenshot-signal-lost-expired-student').count(),
+    0,
+    'the exact 120-second boundary must remove cached pixels',
+  );
+  assert.equal(
+    await expiredSignalLostTile.getByText('Monitoring signal lost', { exact: true }).count(),
+    1,
   );
 
   const onlineTile = page.getByTestId('card-student-online-student');
@@ -262,7 +302,7 @@ try {
   assert.equal(
     await page.getByTestId('screenshot-paused-student').count(),
     0,
-    'releasing a paused observation lease must immediately hide even a fresh cached screenshot',
+    'releasing a paused observation lease must immediately hide a fresh legacy V1 screenshot',
   );
   assert.equal(
     await page.getByTestId('screenshot-retained-paused-student').count(),
@@ -288,6 +328,27 @@ try {
     'pending authorization must not qualify for last-preview retention',
   );
   assert.equal(await page.getByTestId('video-live-pending-student').count(), 0);
+
+  const pausedV2Tile = page.getByTestId('card-student-paused-v2-student');
+  await page.getByTestId('screenshot-current-paused-v2-student').waitFor();
+  assert.equal(
+    await pausedV2Tile.getByText('Screenshots paused', { exact: true }).count(),
+    0,
+    'a valid class-bound V2 screenshot must not flap when the legacy observation lease pauses',
+  );
+  assert.equal(
+    await page.getByTestId('video-live-paused-v2-student').count(),
+    0,
+    'V2 screenshot authority must not revive a separately lease-gated live stream',
+  );
+
+  const deniedTile = page.getByTestId('card-student-denied-student');
+  await deniedTile.getByText('Screen preview unavailable', { exact: true }).waitFor();
+  assert.equal(
+    await page.getByTestId('screenshot-denied-student').count(),
+    0,
+    'claimed/denied observation context must hard-hide a fresh prior-context screenshot',
+  );
 
   await page.getByTestId('toggle-tiles').click();
   assert.deepEqual(
