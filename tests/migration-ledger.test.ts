@@ -6,6 +6,7 @@ import { Pool } from "pg";
 import { runSchoolPilotMigrationLedger } from "../src/db/migrationLedger.js";
 import {
   CLASSPILOT_27_EXPAND_SQL,
+  CLASSPILOT_STALE_LEGACY_STUDENT_SESSION_CLEANUP_SQL,
   CLASSPILOT_STUDENT_SESSION_RECOVERY_SQL,
   CLASSPILOT_STUDENT_SESSION_RECOVERY_VALIDATE_SQL,
   schoolPilot27Migrations,
@@ -235,6 +236,39 @@ test("ClassPilot manual student-session recovery is checksum-ledgered and additi
   assert.match(CLASSPILOT_STUDENT_SESSION_RECOVERY_VALIDATE_SQL, /VALIDATE CONSTRAINT student_sessions_auth_kind_check/);
   assert.match(CLASSPILOT_STUDENT_SESSION_RECOVERY_INDEXES_CONTRACT, /student_sessions_manual_lease_expiry_idx/);
   assert.match(CLASSPILOT_STUDENT_SESSION_RECOVERY_INDEXES_CONTRACT, /student_sessions_recovery_token_hash_unique/);
+});
+
+test("ClassPilot stale legacy-session cleanup is checksum-ledgered and preserves fresh rows", () => {
+  const cleanup = schoolPilot27Migrations.find(
+    (candidate) => candidate.id === "20260828_classpilot_stale_legacy_student_session_cleanup"
+  );
+  assert.ok(cleanup);
+  assert.equal(cleanup.mode, "transactional");
+  assert.equal(
+    cleanup.checksum,
+    createHash("sha256")
+      .update(CLASSPILOT_STALE_LEGACY_STUDENT_SESSION_CLEANUP_SQL)
+      .digest("hex")
+  );
+
+  assert.match(CLASSPILOT_STALE_LEGACY_STUDENT_SESSION_CLEANUP_SQL, /UPDATE student_sessions/);
+  assert.match(CLASSPILOT_STALE_LEGACY_STUDENT_SESSION_CLEANUP_SQL, /SET\s+is_active = false,/);
+  assert.match(CLASSPILOT_STALE_LEGACY_STUDENT_SESSION_CLEANUP_SQL, /ended_at = now\(\),/);
+  assert.match(
+    CLASSPILOT_STALE_LEGACY_STUDENT_SESSION_CLEANUP_SQL,
+    /session_recovery_token_hash = NULL/
+  );
+  assert.match(CLASSPILOT_STALE_LEGACY_STUDENT_SESSION_CLEANUP_SQL, /WHERE auth_kind = 'legacy'/);
+  assert.match(CLASSPILOT_STALE_LEGACY_STUDENT_SESSION_CLEANUP_SQL, /AND is_active = true/);
+  assert.match(CLASSPILOT_STALE_LEGACY_STUDENT_SESSION_CLEANUP_SQL, /AND ended_at IS NULL/);
+  assert.match(
+    CLASSPILOT_STALE_LEGACY_STUDENT_SESSION_CLEANUP_SQL,
+    /AND last_seen_at <= now\(\) - interval '300 seconds'/
+  );
+  assert.doesNotMatch(
+    CLASSPILOT_STALE_LEGACY_STUDENT_SESSION_CLEANUP_SQL,
+    /auth_kind\s+(?:=|IN)[^;]*(?:managed_profile|manual_shared)/
+  );
 });
 
 test("ClassPilot Phase-A recovery migration preserves old writers and freezes auth kind after insert", () => {
