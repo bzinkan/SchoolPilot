@@ -10,6 +10,9 @@ process.env.NODE_ENV = "test";
 process.env.SCHEDULER_ENABLED = "true";
 process.env.REDIS_URL = "";
 process.env.CLASSPILOT_MANUAL_SHARED_SESSION_ISSUANCE_ENABLED = "true";
+process.env.CLASSPILOT_PROTOCOL_V3_ENABLED = "true";
+process.env.CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1 = "true";
+process.env.CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V2 = "true";
 
 const { default: db, pool, sessionPool } = await import("../dist/db.js");
 const { runWithTenantContext } = await import(
@@ -29,6 +32,9 @@ const lifecycle = await import(
 );
 const heartbeatMetrics = await import(
   "../dist/services/heartbeatHotPathMetrics.js"
+);
+const managedDeviceContinuity = await import(
+  "../dist/services/classpilotManagedDeviceContinuity.js"
 );
 const classpilotDeviceRoutes = await import("../dist/routes/classpilot/devices.js");
 const { classpilotScreenshotFallback } = await import(
@@ -1718,6 +1724,7 @@ describe("ClassPilot manual-session recovery authority", () => {
       student?: { id?: string };
       studentSessionId: string;
       sessionRecovery?: { token?: string };
+      managedDeviceContinuityAccepted?: boolean;
     };
     try {
       const wrongPin = await login({
@@ -1739,6 +1746,7 @@ describe("ClassPilot manual-session recovery authority", () => {
       }, pinOwnerRecovery.token);
       assert.equal(correctPin.status, 200);
       const pinBody = await correctPin.json() as StudentLoginResponse;
+      assert.equal("managedDeviceContinuityAccepted" in pinBody, false);
       assert.equal(pinBody.student?.id, pinSelected.id);
       assert.match(pinBody.sessionRecovery?.token || "", /^[A-Za-z0-9_-]{43}$/);
       assert.equal(
@@ -1779,6 +1787,7 @@ describe("ClassPilot manual-session recovery authority", () => {
       }, emailOwnerRecovery.token);
       assert.equal(correctEmailId.status, 200);
       const emailBody = await correctEmailId.json() as StudentLoginResponse;
+      assert.equal("managedDeviceContinuityAccepted" in emailBody, false);
       assert.equal(emailBody.student?.id, emailSelected.id);
       assert.match(emailBody.sessionRecovery?.token || "", /^[A-Za-z0-9_-]{43}$/);
       assert.equal(
@@ -1800,6 +1809,609 @@ describe("ClassPilot manual-session recovery authority", () => {
         studentId: emailSelected.id,
         deviceId: emailDeviceId,
         studentSessionId: emailBody.studentSessionId,
+      }));
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => error ? reject(error) : resolve())
+      );
+    }
+  });
+
+  it("atomically transitions an exact recovered random binding to stable managed-device authority", async () => {
+    const enrollmentKey = `${tag}-managed-continuity-key`;
+    const rawDirectoryDeviceId = `${tag}-directory-device`;
+    const untrustedBodyDeviceId = `${tag}-untrusted-body-device`;
+    const oldRandomDeviceId = `${tag}-old-random-device`;
+    const oldStudent = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Old",
+      lastName: "Managed Owner",
+      email: `managed-old@${tag}.example.edu`,
+      emailLc: `managed-old@${tag}.example.edu`,
+      gradeLevel: "5",
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const selectedPinHash = await hashPassword("8642");
+    const selectedStudent = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "New",
+      lastName: "Managed Student",
+      email: `managed-new@${tag}.example.edu`,
+      emailLc: `managed-new@${tag}.example.edu`,
+      gradeLevel: "5",
+      studentIdNumber: "managed-8642",
+      classpilotPinHash: selectedPinHash,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    await inSchool(() => createDevice({
+      deviceId: oldRandomDeviceId,
+      deviceName: "Pre-continuity random binding",
+      schoolId,
+      classId: schoolId,
+    } as Parameters<typeof createDevice>[0]));
+    const oldRecovery = createStudentSessionRecovery();
+    const oldSession = await inSchool(() => startStudentSessionWithReplacements(
+      schoolId,
+      oldStudent.id,
+      oldRandomDeviceId,
+      {
+        authKind: "manual_shared",
+        sessionRecoveryTokenHash: oldRecovery.tokenHash,
+      }
+    ));
+    await inSchool(() => storage.upsertSettings(schoolId, {
+      enrollmentKey,
+      enrollmentKeyRequired: true,
+      sharedChromebookSignInEnabled: true,
+      sharedChromebookLoginMethod: "name_pin",
+      sharedChromebookPinLoginEnabled: true,
+    }));
+
+    heartbeatMetrics.snapshotHeartbeatHotPathMetrics({ reset: true });
+    const { createApp } = await import("../dist/app.js");
+    const server = createServer(createApp());
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    const baseUrl = `http://127.0.0.1:${port}/api`;
+    try {
+      const preflight = await fetch(
+        `${baseUrl}/extension/device-continuity/preflight`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-school-id": schoolId,
+            "x-classpilot-enrollment-key": enrollmentKey,
+          },
+          body: JSON.stringify({
+            clientProtocolVersion: 3,
+            capabilities: [
+              "scopedAuthorityChecksV1",
+              "kioskLaunchTicketV2",
+              "managedDeviceContinuityV1",
+            ],
+          }),
+        }
+      );
+      assert.equal(preflight.status, 200);
+      const preflightBody = await preflight.json() as {
+        preflightToken?: string;
+        acceptedCapabilities?: string[];
+      };
+      assert.match(preflightBody.preflightToken || "", /^cpmp1\./);
+      assert.deepEqual(preflightBody.acceptedCapabilities, [
+        "scopedAuthorityChecksV1",
+        "kioskLaunchTicketV2",
+        "managedDeviceContinuityV1",
+      ]);
+
+      const issuance = await fetch(
+        `${baseUrl}/classpilot/extension/device-continuity`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `ClassPilot-Preflight ${preflightBody.preflightToken}`,
+            "content-type": "application/json",
+            "x-school-id": schoolId,
+            "x-classpilot-enrollment-key": enrollmentKey,
+          },
+          body: JSON.stringify({
+            directoryDeviceId: rawDirectoryDeviceId,
+            recoveryToken: oldRecovery.token,
+          }),
+        }
+      );
+      assert.equal(issuance.status, 201);
+      const issuanceText = await issuance.text();
+      assert.equal(issuanceText.includes(rawDirectoryDeviceId), false);
+      assert.equal(issuanceText.includes(oldRecovery.token), false);
+      const issuanceBody = JSON.parse(issuanceText) as { continuityProof?: string };
+      assert.match(issuanceBody.continuityProof || "", /^cpmd1\./);
+
+      const roster = await fetch(
+        `${baseUrl}/classpilot/extension/login-roster?schoolId=${encodeURIComponent(schoolId)}&gradeLevel=5`,
+        {
+          headers: {
+            authorization: `ClassPilot-Device ${issuanceBody.continuityProof}`,
+            "x-classpilot-enrollment-key": enrollmentKey,
+          },
+        }
+      );
+      assert.equal(roster.status, 200);
+      const rosterBody = await roster.json() as {
+        students?: Array<{ id?: string; reclaimable?: boolean }>;
+        managedDeviceContinuityAccepted?: boolean;
+      };
+      assert.equal(rosterBody.managedDeviceContinuityAccepted, true);
+      assert.equal(
+        rosterBody.students?.some((row) =>
+          row.id === oldStudent.id && row.reclaimable === true
+        ),
+        true,
+        "the proof must carry the old exact recovery authority across the random-to-stable transition"
+      );
+      assert.equal(
+        rosterBody.students?.some((row) => row.id === selectedStudent.id),
+        true
+      );
+
+      const legacyRoster = await fetch(
+        `${baseUrl}/classpilot/extension/login-roster?schoolId=${encodeURIComponent(schoolId)}&gradeLevel=5`,
+        { headers: { "x-classpilot-enrollment-key": enrollmentKey } }
+      );
+      assert.equal(legacyRoster.status, 200);
+      const legacyRosterBody = await legacyRoster.json() as Record<string, unknown>;
+      assert.equal(
+        "managedDeviceContinuityAccepted" in legacyRosterBody,
+        false,
+        "legacy roster requests retain their existing response shape"
+      );
+
+      const wrongPin = await fetch(
+        `${baseUrl}/classpilot/extension/student-login`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `ClassPilot-Device ${issuanceBody.continuityProof}`,
+            "content-type": "application/json",
+            "x-classpilot-enrollment-key": enrollmentKey,
+          },
+          body: JSON.stringify({
+            schoolId,
+            deviceId: untrustedBodyDeviceId,
+            studentId: selectedStudent.id,
+            pin: "0000",
+          }),
+        }
+      );
+      assert.equal(wrongPin.status, 401);
+      assert.equal(
+        (await wrongPin.json() as { managedDeviceContinuityAccepted?: boolean })
+          .managedDeviceContinuityAccepted,
+        true
+      );
+      assert.equal(
+        (await inSchool(() => storage.getActiveSessionById(oldSession.session.id)))?.id,
+        oldSession.session.id,
+        "invalid selected-student credentials cannot consume transition authority"
+      );
+
+      const login = await fetch(
+        `${baseUrl}/classpilot/extension/student-login`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `ClassPilot-Device ${issuanceBody.continuityProof}`,
+            "content-type": "application/json",
+            "x-classpilot-enrollment-key": enrollmentKey,
+          },
+          body: JSON.stringify({
+            schoolId,
+            deviceId: untrustedBodyDeviceId,
+            studentId: selectedStudent.id,
+            pin: "8642",
+          }),
+        }
+      );
+      assert.equal(login.status, 200);
+      const loginBody = await login.json() as {
+        studentSessionId?: string;
+        studentToken?: string;
+        effectiveDeviceId?: string;
+        managedDeviceContinuityAccepted?: boolean;
+      };
+      assert.equal(loginBody.managedDeviceContinuityAccepted, true);
+      const expectedStableDeviceId =
+        managedDeviceContinuity.issueClasspilotManagedDeviceContinuityProof({
+          schoolId,
+          directoryDeviceId: rawDirectoryDeviceId,
+        });
+      const expectedProof = managedDeviceContinuity.verifyClasspilotManagedDeviceContinuityProof({
+        token: expectedStableDeviceId.continuityProof,
+        schoolId,
+      });
+      assert.ok(expectedProof);
+      assert.equal(loginBody.effectiveDeviceId, expectedProof.deviceId);
+      assert.notEqual(loginBody.effectiveDeviceId, untrustedBodyDeviceId);
+      assert.equal(await inSchool(() => storage.getActiveSessionById(oldSession.session.id)), undefined);
+      const active = await inSchool(() => storage.getActiveSessionById(loginBody.studentSessionId!));
+      assert.equal(active?.studentId, selectedStudent.id);
+      assert.equal(active?.deviceId, expectedProof.deviceId);
+      assert.equal(verifyStudentToken(loginBody.studentToken!).deviceId, expectedProof.deviceId);
+
+      const delayedRelease = await fetch(
+        `${baseUrl}/classpilot/extension/session-release`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `ClassPilot-Recovery ${oldRecovery.token}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ schoolId }),
+        }
+      );
+      assert.equal(delayedRelease.status, 204);
+      assert.equal(
+        (await inSchool(() => storage.getActiveSessionById(loginBody.studentSessionId!)))?.id,
+        loginBody.studentSessionId,
+        "delayed cleanup for the old random binding cannot end the stable replacement"
+      );
+
+      const otherManagedProof = managedDeviceContinuity.issueClasspilotManagedDeviceContinuityProof({
+        schoolId,
+        directoryDeviceId: `${rawDirectoryDeviceId}-other`,
+      });
+      const crossDevice = await fetch(
+        `${baseUrl}/classpilot/extension/student-login`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `ClassPilot-Device ${otherManagedProof.continuityProof}`,
+            "content-type": "application/json",
+            "x-classpilot-enrollment-key": enrollmentKey,
+          },
+          body: JSON.stringify({
+            schoolId,
+            deviceId: "ignored",
+            studentId: selectedStudent.id,
+            pin: "8642",
+          }),
+        }
+      );
+      assert.equal(crossDevice.status, 409);
+      const crossDeviceBody = await crossDevice.json() as {
+        code?: string;
+        managedDeviceContinuityAccepted?: boolean;
+      };
+      assert.equal(crossDeviceBody.code, "STUDENT_SESSION_ACTIVE");
+      assert.equal(crossDeviceBody.managedDeviceContinuityAccepted, true);
+
+      await inSchool(() => storage.upsertSettings(schoolId, {
+        enrollmentKey,
+        enrollmentKeyRequired: true,
+        sharedChromebookSignInEnabled: true,
+        sharedChromebookLoginMethod: "email_id",
+        sharedChromebookPinLoginEnabled: false,
+      }));
+      const emailConflict = await fetch(
+        `${baseUrl}/classpilot/extension/student-login`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `ClassPilot-Device ${otherManagedProof.continuityProof}`,
+            "content-type": "application/json",
+            "x-classpilot-enrollment-key": enrollmentKey,
+          },
+          body: JSON.stringify({
+            schoolId,
+            deviceId: "ignored",
+            studentEmail: selectedStudent.email,
+            studentIdNumber: selectedStudent.studentIdNumber,
+          }),
+        }
+      );
+      assert.equal(emailConflict.status, 409);
+      const emailConflictBody = await emailConflict.json() as {
+        code?: string;
+        managedDeviceContinuityAccepted?: boolean;
+      };
+      assert.equal(emailConflictBody.code, "STUDENT_SESSION_ACTIVE");
+      assert.equal(emailConflictBody.managedDeviceContinuityAccepted, true);
+
+      const metrics = heartbeatMetrics.snapshotHeartbeatHotPathMetrics({ reset: true });
+      assert.equal(metrics.counters.managedDeviceContinuityPreflightAccepted, 1);
+      assert.equal(metrics.counters.managedDeviceContinuityProofIssued, 1);
+      assert.equal(metrics.counters.managedDeviceContinuityReclaimOffered, 1);
+      assert.equal(metrics.counters.managedDeviceContinuityLoginIssued, 1);
+      assert.equal(metrics.counters.managedDeviceContinuityRecoveryTransitioned, 1);
+      assert.equal(metrics.counters.manualSessionCrossStudentHandoff, 1);
+
+      await inSchool(() => storage.endStudentSessionExact({
+        schoolId,
+        studentId: selectedStudent.id,
+        deviceId: expectedProof.deviceId,
+        studentSessionId: loginBody.studentSessionId!,
+      }));
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => error ? reject(error) : resolve())
+      );
+    }
+  });
+
+  it("serializes concurrent proof reuse and permits bounded credentialed sequential handoff", async () => {
+    const enrollmentKey = `${tag}-managed-continuity-race-key`;
+    const oldRandomDeviceId = `${tag}-managed-race-old-random`;
+    const rawDirectoryDeviceId = `${tag}-managed-race-directory`;
+    const pinHash = await hashPassword("9753");
+    const oldStudent = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Race",
+      lastName: "Old Owner",
+      email: `managed-race-old@${tag}.example.edu`,
+      emailLc: `managed-race-old@${tag}.example.edu`,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const candidates = await Promise.all(["One", "Two"].map((suffix) =>
+      inSchool(() => createStudent({
+        schoolId,
+        firstName: "Race",
+        lastName: suffix,
+        email: `managed-race-${suffix.toLowerCase()}@${tag}.example.edu`,
+        emailLc: `managed-race-${suffix.toLowerCase()}@${tag}.example.edu`,
+        classpilotPinHash: pinHash,
+        status: "active",
+      } as Parameters<typeof createStudent>[0]))
+    ));
+    await inSchool(() => createDevice({
+      deviceId: oldRandomDeviceId,
+      deviceName: "Managed continuity race old device",
+      schoolId,
+      classId: schoolId,
+    } as Parameters<typeof createDevice>[0]));
+    const recovery = createStudentSessionRecovery();
+    const old = await inSchool(() => startStudentSessionWithReplacements(
+      schoolId,
+      oldStudent.id,
+      oldRandomDeviceId,
+      {
+        authKind: "manual_shared",
+        sessionRecoveryTokenHash: recovery.tokenHash,
+      }
+    ));
+    await inSchool(() => storage.upsertSettings(schoolId, {
+      enrollmentKey,
+      enrollmentKeyRequired: true,
+      sharedChromebookSignInEnabled: true,
+      sharedChromebookLoginMethod: "name_pin",
+      sharedChromebookPinLoginEnabled: true,
+    }));
+    const issuedProof = managedDeviceContinuity.issueClasspilotManagedDeviceContinuityProof({
+      schoolId,
+      directoryDeviceId: rawDirectoryDeviceId,
+      recoveryToken: recovery.token,
+    });
+    const verifiedProof = managedDeviceContinuity.verifyClasspilotManagedDeviceContinuityProof({
+      token: issuedProof.continuityProof,
+      schoolId,
+    });
+    assert.ok(verifiedProof);
+
+    const { createApp } = await import("../dist/app.js");
+    const server = createServer(createApp());
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    try {
+      const responses = await Promise.all(candidates.map((candidate) => fetch(
+        `http://127.0.0.1:${port}/api/classpilot/extension/student-login`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `ClassPilot-Device ${issuedProof.continuityProof}`,
+            "content-type": "application/json",
+            "x-classpilot-enrollment-key": enrollmentKey,
+          },
+          body: JSON.stringify({
+            schoolId,
+            deviceId: `${tag}-ignored-${candidate.id}`,
+            studentId: candidate.id,
+            pin: "9753",
+          }),
+        }
+      )));
+      assert.deepEqual(
+        responses.map((response) => response.status).sort(),
+        [200, 409],
+        "one transition wins and the stale proof cannot replace that winner"
+      );
+      const successfulIndex = responses.findIndex((response) => response.status === 200);
+      const winnerBody = await responses[successfulIndex]!.json() as {
+        studentSessionId: string;
+        effectiveDeviceId: string;
+      };
+      assert.equal(winnerBody.effectiveDeviceId, verifiedProof.deviceId);
+      assert.equal(await inSchool(() => storage.getActiveSessionById(old.session.id)), undefined);
+      const active = await inSchool(() => storage.getActiveSessionById(winnerBody.studentSessionId));
+      assert.equal(active?.studentId, candidates[successfulIndex]!.id);
+      assert.equal(active?.deviceId, verifiedProof.deviceId);
+      const loser = responses.find((response) => response.status === 409)!;
+      assert.ok(
+        ["STUDENT_SESSION_ACTIVE", "STUDENT_SESSION_REPLACED"].includes(
+          (await loser.json() as { code?: string }).code || ""
+        ),
+        "the losing request is rejected whether it observes the winner before or after issuance"
+      );
+
+      // The stateless proof is deliberately reusable for its bounded lifetime:
+      // roster fetch and subsequent same-Chromebook handoffs still require the
+      // newly selected student's credentials. The extension discards it after
+      // success, but a credentialed sequential replay remains safe authority
+      // for this one derived device rather than a cross-device takeover.
+      const nextIndex = successfulIndex === 0 ? 1 : 0;
+      const sequential = await fetch(
+        `http://127.0.0.1:${port}/api/classpilot/extension/student-login`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `ClassPilot-Device ${issuedProof.continuityProof}`,
+            "content-type": "application/json",
+            "x-classpilot-enrollment-key": enrollmentKey,
+          },
+          body: JSON.stringify({
+            schoolId,
+            deviceId: `${tag}-ignored-sequential-replay`,
+            studentId: candidates[nextIndex]!.id,
+            pin: "9753",
+          }),
+        }
+      );
+      assert.equal(sequential.status, 200);
+      const sequentialBody = await sequential.json() as {
+        studentSessionId: string;
+        effectiveDeviceId: string;
+      };
+      assert.equal(sequentialBody.effectiveDeviceId, verifiedProof.deviceId);
+      assert.equal(
+        await inSchool(() => storage.getActiveSessionById(winnerBody.studentSessionId)),
+        undefined
+      );
+      const sequentialActive = await inSchool(() =>
+        storage.getActiveSessionById(sequentialBody.studentSessionId)
+      );
+      assert.equal(sequentialActive?.studentId, candidates[nextIndex]!.id);
+      assert.equal(sequentialActive?.deviceId, verifiedProof.deviceId);
+
+      await inSchool(() => storage.endStudentSessionExact({
+        schoolId,
+        studentId: candidates[nextIndex]!.id,
+        deviceId: verifiedProof.deviceId,
+        studentSessionId: sequentialBody.studentSessionId,
+      }));
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => error ? reject(error) : resolve())
+      );
+    }
+  });
+
+  it("falls back from a stale transition hash to the authoritative stable-device session", async () => {
+    const enrollmentKey = `${tag}-managed-continuity-stale-hash-key`;
+    const rawDirectoryDeviceId = `${tag}-managed-stale-hash-directory`;
+    const staleRecovery = createStudentSessionRecovery();
+    const issuedProof = managedDeviceContinuity.issueClasspilotManagedDeviceContinuityProof({
+      schoolId,
+      directoryDeviceId: rawDirectoryDeviceId,
+      recoveryToken: staleRecovery.token,
+    });
+    const verifiedProof = managedDeviceContinuity.verifyClasspilotManagedDeviceContinuityProof({
+      token: issuedProof.continuityProof,
+      schoolId,
+    });
+    assert.ok(verifiedProof);
+
+    const pinHash = await hashPassword("6420");
+    const oldStudent = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Stable",
+      lastName: "Old Owner",
+      email: `managed-stale-owner@${tag}.example.edu`,
+      emailLc: `managed-stale-owner@${tag}.example.edu`,
+      gradeLevel: "6",
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const selectedStudent = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Stable",
+      lastName: "New Student",
+      email: `managed-stale-selected@${tag}.example.edu`,
+      emailLc: `managed-stale-selected@${tag}.example.edu`,
+      gradeLevel: "6",
+      classpilotPinHash: pinHash,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    await inSchool(() => createDevice({
+      deviceId: verifiedProof.deviceId,
+      deviceName: "Managed continuity stable binding",
+      schoolId,
+      classId: schoolId,
+    } as Parameters<typeof createDevice>[0]));
+    const currentRecovery = createStudentSessionRecovery();
+    const old = await inSchool(() => startStudentSessionWithReplacements(
+      schoolId,
+      oldStudent.id,
+      verifiedProof.deviceId,
+      {
+        authKind: "manual_shared",
+        sessionRecoveryTokenHash: currentRecovery.tokenHash,
+      }
+    ));
+    await inSchool(() => storage.upsertSettings(schoolId, {
+      enrollmentKey,
+      enrollmentKeyRequired: true,
+      sharedChromebookSignInEnabled: true,
+      sharedChromebookLoginMethod: "name_pin",
+      sharedChromebookPinLoginEnabled: true,
+    }));
+
+    const { createApp } = await import("../dist/app.js");
+    const server = createServer(createApp());
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    try {
+      const baseUrl = `http://127.0.0.1:${port}/api/classpilot/extension`;
+      const roster = await fetch(
+        `${baseUrl}/login-roster?schoolId=${encodeURIComponent(schoolId)}&gradeLevel=6`,
+        {
+          headers: {
+            authorization: `ClassPilot-Device ${issuedProof.continuityProof}`,
+            "x-classpilot-enrollment-key": enrollmentKey,
+          },
+        }
+      );
+      assert.equal(roster.status, 200);
+      const rosterBody = await roster.json() as {
+        students?: Array<{ id?: string; reclaimable?: boolean }>;
+        managedDeviceContinuityAccepted?: boolean;
+      };
+      assert.equal(rosterBody.managedDeviceContinuityAccepted, true);
+      assert.equal(
+        rosterBody.students?.some((row) =>
+          row.id === oldStudent.id && row.reclaimable === true
+        ),
+        true,
+        "a stale transition hash must not hide the exact stable-device session"
+      );
+
+      const login = await fetch(`${baseUrl}/student-login`, {
+        method: "POST",
+        headers: {
+          authorization: `ClassPilot-Device ${issuedProof.continuityProof}`,
+          "content-type": "application/json",
+          "x-classpilot-enrollment-key": enrollmentKey,
+        },
+        body: JSON.stringify({
+          schoolId,
+          deviceId: `${tag}-ignored-stale-hash-binding`,
+          studentId: selectedStudent.id,
+          pin: "6420",
+        }),
+      });
+      assert.equal(login.status, 200);
+      const loginBody = await login.json() as {
+        studentSessionId: string;
+        effectiveDeviceId: string;
+      };
+      assert.equal(loginBody.effectiveDeviceId, verifiedProof.deviceId);
+      assert.equal(await inSchool(() => storage.getActiveSessionById(old.session.id)), undefined);
+      const active = await inSchool(() => storage.getActiveSessionById(loginBody.studentSessionId));
+      assert.equal(active?.studentId, selectedStudent.id);
+      assert.equal(active?.deviceId, verifiedProof.deviceId);
+
+      await inSchool(() => storage.endStudentSessionExact({
+        schoolId,
+        studentId: selectedStudent.id,
+        deviceId: verifiedProof.deviceId,
+        studentSessionId: loginBody.studentSessionId,
       }));
     } finally {
       await new Promise<void>((resolve, reject) =>
@@ -2353,10 +2965,14 @@ describe("ClassPilot manual-session recovery authority", () => {
     );
     await inSchool(async () => {
       await db.update(studentSessions)
-        .set({ manualLeaseExpiresAt: sql`now() - interval '10 seconds'` })
+        // Use the earliest PostgreSQL timestamp so unrelated expired fixtures
+        // in a shared test database cannot take this bounded reaper slot. The
+        // locked row is skipped and the exact due row below is deterministically
+        // selected next.
+        .set({ manualLeaseExpiresAt: sql`'-infinity'::timestamptz` })
         .where(eq(studentSessions.id, locked.session.id));
       await db.update(studentSessions)
-        .set({ manualLeaseExpiresAt: sql`now() - interval '5 seconds'` })
+        .set({ manualLeaseExpiresAt: sql`'-infinity'::timestamptz` })
         .where(eq(studentSessions.id, due.session.id));
     });
 

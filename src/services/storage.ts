@@ -10577,12 +10577,20 @@ export type StartStudentSessionWithReplacementsOptions = {
   sessionId?: string;
   sessionRecoveryTokenHash?: string | null;
   reclaimRecoveryTokenHash?: string | null;
+  /**
+   * Exact opaque device binding authorized by a verified managed-device proof.
+   * It may release only an authoritative manual session on this same binding.
+   */
+  reclaimManagedDeviceId?: string | null;
+  /** Exact legacy recovery authority carried inside the signed device proof. */
+  reclaimManagedDeviceRecoveryTokenHash?: string | null;
 };
 
 export type StartStudentSessionWithReplacementsResult = {
   session: StudentSession;
   replacedSessions: StudentSession[];
   crossStudentHandoff: boolean;
+  managedDeviceRecoveryTransition: boolean;
 };
 
 export async function startStudentSessionWithReplacements(
@@ -10622,6 +10630,26 @@ export async function startStudentSessionWithReplacements(
     !/^[0-9a-f]{64}$/.test(options.reclaimRecoveryTokenHash)
   ) {
     throw new TypeError("Invalid reclaim recovery token hash");
+  }
+  if (
+    options.reclaimManagedDeviceId != null
+    && (
+      options.reclaimManagedDeviceId !== deviceId
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+        options.reclaimManagedDeviceId
+      )
+    )
+  ) {
+    throw new TypeError("Invalid managed-device reclaim authority");
+  }
+  if (
+    options.reclaimManagedDeviceRecoveryTokenHash != null
+    && (
+      options.reclaimManagedDeviceId !== deviceId
+      || !/^[0-9a-f]{64}$/.test(options.reclaimManagedDeviceRecoveryTokenHash)
+    )
+  ) {
+    throw new TypeError("Invalid managed-device recovery transition authority");
   }
 
   const result = await db.transaction(async (tx) => {
@@ -10693,27 +10721,51 @@ export async function startStudentSessionWithReplacements(
       .where(and(
         or(
           eq(studentSessions.studentId, studentId),
-          eq(studentSessions.deviceId, deviceId)
+          eq(studentSessions.deviceId, deviceId),
+          options.reclaimManagedDeviceRecoveryTokenHash
+            ? eq(
+                studentSessions.sessionRecoveryTokenHash,
+                options.reclaimManagedDeviceRecoveryTokenHash
+              )
+            : undefined
         ),
         eq(studentSessions.isActive, true)
       ))
       .for("update", { of: studentSessions });
 
     let crossStudentHandoff = false;
+    let managedDeviceRecoveryTransition = false;
     if (options.authKind === "manual_shared") {
-      // A recovery capability may release exactly the authoritative manual
-      // session that created it, but only on the requested school-scoped
-      // device. The recovered student may differ from the newly authenticated
-      // student so a shared Chromebook can safely change hands. Every other
-      // authoritative student or device conflict remains a blocker.
-      const recoveredSession = options.reclaimRecoveryTokenHash == null
-        ? undefined
-        : conflicting.find(({ session, authoritative }) =>
-            authoritative &&
-            session.authKind === "manual_shared" &&
-            session.deviceId === deviceId &&
-            session.sessionRecoveryTokenHash === options.reclaimRecoveryTokenHash
-          );
+      // A managed proof may release either the exact legacy recovery session
+      // embedded during transition or the authoritative session already on its
+      // verified stable binding. An exact matching hash wins; a stale hash may
+      // fall back only to that stable binding. Every additional authoritative
+      // student/device conflict remains a blocker.
+      const managedRecoverySession = options.reclaimManagedDeviceRecoveryTokenHash != null
+        ? conflicting.find(({ session, authoritative }) =>
+            authoritative
+            && session.authKind === "manual_shared"
+            && session.sessionRecoveryTokenHash
+              === options.reclaimManagedDeviceRecoveryTokenHash
+          )
+        : undefined;
+      const managedStableDeviceSession = options.reclaimManagedDeviceId != null
+        ? conflicting.find(({ session, authoritative }) =>
+            authoritative
+            && session.authKind === "manual_shared"
+            && session.deviceId === options.reclaimManagedDeviceId
+          )
+        : undefined;
+      const recoveredSession = options.reclaimManagedDeviceRecoveryTokenHash != null
+        ? managedRecoverySession ?? managedStableDeviceSession
+        : options.reclaimRecoveryTokenHash != null
+          ? conflicting.find(({ session, authoritative }) =>
+              authoritative
+              && session.authKind === "manual_shared"
+              && session.deviceId === deviceId
+              && session.sessionRecoveryTokenHash === options.reclaimRecoveryTokenHash
+            )
+          : managedStableDeviceSession;
       const blockingSession = conflicting.find(({ session, authoritative }) =>
         authoritative && session.id !== recoveredSession?.session.id
       );
@@ -10726,6 +10778,11 @@ export async function startStudentSessionWithReplacements(
       }
       crossStudentHandoff =
         recoveredSession != null && recoveredSession.session.studentId !== studentId;
+      managedDeviceRecoveryTransition =
+        recoveredSession != null
+        && options.reclaimManagedDeviceRecoveryTokenHash != null
+        && recoveredSession.session.sessionRecoveryTokenHash
+          === options.reclaimManagedDeviceRecoveryTokenHash;
     }
 
     const conflictingIds = conflicting.map(({ session }) => session.id);
@@ -10768,7 +10825,12 @@ export async function startStudentSessionWithReplacements(
         target: [studentDevices.studentId, studentDevices.deviceId],
         set: { lastSeenAt: sql`now()` },
       });
-    return { session: session!, replacedSessions, crossStudentHandoff };
+    return {
+      session: session!,
+      replacedSessions,
+      crossStudentHandoff,
+      managedDeviceRecoveryTransition,
+    };
   });
   await invalidateClasspilotPassiveAuthorization(schoolId);
   return result;
@@ -10877,6 +10939,54 @@ export async function getReclaimableStudentSessionByRecoveryTokenHash(options: {
     ))
     .limit(1);
   return row?.session;
+}
+
+export async function getReclaimableStudentSessionByManagedDevice(options: {
+  schoolId: string;
+  deviceId: string;
+  recoveryTokenHash?: string | null;
+}): Promise<StudentSession | undefined> {
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+      options.deviceId
+    )
+  ) {
+    return undefined;
+  }
+  if (
+    options.recoveryTokenHash != null
+    && !/^[0-9a-f]{64}$/.test(options.recoveryTokenHash)
+  ) {
+    return undefined;
+  }
+  const rows = await db
+    .select({ session: studentSessions })
+    .from(studentSessions)
+    .innerJoin(students, and(
+      eq(students.id, studentSessions.studentId),
+      eq(students.schoolId, options.schoolId),
+      eq(students.status, "active")
+    ))
+    .innerJoin(devices, and(
+      eq(devices.deviceId, studentSessions.deviceId),
+      eq(devices.schoolId, options.schoolId)
+    ))
+    .where(and(
+      eq(studentSessions.authKind, "manual_shared"),
+      or(
+        eq(studentSessions.deviceId, options.deviceId),
+        options.recoveryTokenHash
+          ? eq(studentSessions.sessionRecoveryTokenHash, options.recoveryTokenHash)
+          : undefined
+      ),
+      currentStudentSessionAuthorityPredicate()
+    ))
+    .limit(2);
+  // A stable binding plus a different legacy recovery binding is an ambiguous
+  // device state. Reveal neither identity and let the atomic login path fail
+  // closed on its complete set of locked conflicts.
+  if (rows.length !== 1) return undefined;
+  return rows[0]?.session;
 }
 
 export async function endStudentSession(

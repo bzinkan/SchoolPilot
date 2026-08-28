@@ -41,6 +41,10 @@ describe("csrfProtection kiosk exemptions", () => {
     for (const path of [
       "/classpilot/kiosk/launch-ticket",
       "/classpilot/kiosk/launch-ticket/preflight",
+      "/classpilot/extension/device-continuity",
+      "/classpilot/extension/device-continuity/preflight",
+      "/extension/device-continuity",
+      "/extension/device-continuity/preflight",
       "/passpilot/kiosk/lookup",
       "/passpilot/kiosk/checkout",
       "/passpilot/kiosk/checkin",

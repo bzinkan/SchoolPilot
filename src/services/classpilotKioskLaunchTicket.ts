@@ -132,7 +132,15 @@ export class BoundedClasspilotKioskLaunchTicketStore {
 
 const localTickets = new BoundedClasspilotKioskLaunchTicketStore();
 
-function hmac(domain: string, values: readonly string[]): Buffer {
+/**
+ * Shared ClassPilot managed-device keyed digest. Callers must use a unique,
+ * versioned domain for every purpose so a projection, ticket key, preflight,
+ * or continuity proof can never be substituted for another artifact.
+ */
+export function classpilotManagedDeviceHmac(
+  domain: string,
+  values: readonly string[]
+): Buffer {
   return crypto
     .createHmac("sha256", ticketSecret)
     .update(JSON.stringify([domain, ...values]))
@@ -140,7 +148,10 @@ function hmac(domain: string, values: readonly string[]): Buffer {
 }
 
 function ticketStorageKey(ticket: string): string {
-  const digest = hmac("classpilot-kiosk-launch-ticket-key-v1", [ticket]).toString(
+  const digest = classpilotManagedDeviceHmac(
+    "classpilot-kiosk-launch-ticket-key-v1",
+    [ticket]
+  ).toString(
     "base64url"
   );
   const prefix = process.env.REDIS_PREFIX ?? "schoolpilot";
@@ -157,7 +168,10 @@ export function schoolScopedManagedKioskDeviceId(
   directoryDeviceId: string
 ): string {
   const bytes = Buffer.from(
-    hmac("classpilot-managed-kiosk-device-v1", [schoolId, directoryDeviceId]).subarray(0, 16)
+    classpilotManagedDeviceHmac(
+      "classpilot-managed-kiosk-device-v1",
+      [schoolId, directoryDeviceId]
+    ).subarray(0, 16)
   );
   bytes[6] = (bytes[6]! & 0x0f) | 0x80;
   bytes[8] = (bytes[8]! & 0x3f) | 0x80;
