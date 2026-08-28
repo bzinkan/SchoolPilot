@@ -160,5 +160,8 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
       ? { assignmentImpactRequired: true }
       : {}),
     ...(typeof err.managementUrl === "string" ? { managementUrl: err.managementUrl } : {}),
+    ...(res.locals?.managedDeviceContinuityAccepted === true
+      ? { managedDeviceContinuityAccepted: true }
+      : {}),
   });
 };

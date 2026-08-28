@@ -65,6 +65,10 @@ const CSRF_EXEMPT_EXACT_PATHS = new Set([
   // supplied by X-School-Id and verified against its enrollment key.
   "/classpilot/kiosk/launch-ticket",
   "/classpilot/kiosk/launch-ticket/preflight",
+  "/classpilot/extension/device-continuity",
+  "/classpilot/extension/device-continuity/preflight",
+  "/extension/device-continuity",
+  "/extension/device-continuity/preflight",
   "/passpilot/kiosk/auth",
   "/passpilot/kiosk/launch-ticket/redeem",
   "/passpilot/kiosk/lookup",

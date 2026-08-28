@@ -785,7 +785,7 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
     assert.match(login, /studentSessionId: session\.id/);
     assert.match(
       login,
-      /exactBinding: classpilotControlStateExactBinding\(\{[\s\S]*?schoolId: options\.schoolId,[\s\S]*?deviceId: options\.deviceId,[\s\S]*?studentId: student\.id,[\s\S]*?studentSessionId: session\.id,[\s\S]*?controlRevision:/
+      /exactBinding: classpilotControlStateExactBinding\(\{[\s\S]*?schoolId: options\.schoolId,[\s\S]*?deviceId: effectiveDeviceId,[\s\S]*?studentId: student\.id,[\s\S]*?studentSessionId: session\.id,[\s\S]*?controlRevision:/
     );
     const legacy = devices.slice(
       devices.indexOf('router.post("/register-student"'),

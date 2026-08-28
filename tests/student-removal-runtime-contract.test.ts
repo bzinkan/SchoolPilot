@@ -46,8 +46,8 @@ test("inactive students cannot authenticate, register, heartbeat, or switch onto
   );
   assert.match(
     studentAuth,
-    /startStudentSessionWithReplacements\(\s*options\.schoolId,\s*options\.student\.id,\s*options\.deviceId,/,
-    "the credential issuer must bind atomic session creation to the selected school"
+    /startStudentSessionWithReplacements\(\s*options\.schoolId,\s*options\.student\.id,\s*effectiveDeviceId,/,
+    "the credential issuer must bind atomic session creation to the selected school and verified effective device"
   );
   const deviceSwitch = storage.slice(
     storage.indexOf("export async function setActiveStudentForDevice"),

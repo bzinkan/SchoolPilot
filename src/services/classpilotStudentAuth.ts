@@ -10,7 +10,6 @@ import {
   type StudentSession,
 } from "../schema/classpilot.js";
 import {
-  createDevice,
   endStudentSessionExact,
   getDeviceById,
   getSettingsForSchool,
@@ -28,6 +27,7 @@ import {
   hashStudentSessionRecoveryToken,
   normalizeStudentSessionRecoveryToken,
 } from "./classpilotStudentSessionAuthority.js";
+import type { ClasspilotManagedDeviceContinuityProof } from "./classpilotManagedDeviceContinuity.js";
 
 export const CLASSPILOT_ENROLLMENT_KEY_HEADER = "x-classpilot-enrollment-key";
 export const CLASSPILOT_MANUAL_AUTH_TTL_SECONDS = 300;
@@ -138,11 +138,23 @@ export async function ensureClassPilotDeviceForSchool(options: {
 }) {
   let device = await getDeviceById(options.deviceId);
   if (!device) {
-    device = await createDevice({
-      deviceId: options.deviceId,
-      deviceName: options.deviceName || null,
-      schoolId: options.schoolId,
-      classId: options.classId || options.schoolId,
+    const [created] = await db
+      .insert(devices)
+      .values({
+        deviceId: options.deviceId,
+        deviceName: options.deviceName || null,
+        schoolId: options.schoolId,
+        classId: options.classId || options.schoolId,
+      })
+      .onConflictDoNothing({ target: devices.deviceId })
+      .returning();
+    device = created ?? await getDeviceById(options.deviceId);
+  }
+  if (!device || device.schoolId !== options.schoolId) {
+    throw Object.assign(new Error("Student device is unavailable"), {
+      status: 403,
+      code: "STUDENT_DEVICE_UNAVAILABLE",
+      expose: true,
     });
   }
   return device;
@@ -156,6 +168,7 @@ export async function issueStudentDeviceSessionToken(options: {
   student: Student;
   authKind: StudentSessionIssuanceAuthKind;
   reclaimRecoveryToken?: string | null;
+  managedDeviceContinuity?: ClasspilotManagedDeviceContinuityProof | null;
 }, dependencies: {
   signStudentToken?: typeof createStudentToken;
 } = {}) {
@@ -171,6 +184,17 @@ export async function issueStudentDeviceSessionToken(options: {
       expose: true,
     });
   }
+  if (
+    options.managedDeviceContinuity
+    && options.managedDeviceContinuity.schoolId !== options.schoolId
+  ) {
+    throw new TypeError("Managed-device continuity school authority does not match");
+  }
+  const effectiveDeviceId =
+    options.managedDeviceContinuity?.deviceId ?? options.deviceId;
+  if (!effectiveDeviceId) {
+    throw new TypeError("Student device binding is required");
+  }
   const recovery = options.authKind === "manual_shared"
     ? createStudentSessionRecovery()
     : null;
@@ -183,13 +207,13 @@ export async function issueStudentDeviceSessionToken(options: {
   // recovery capability has been persisted.
   const studentToken = (dependencies.signStudentToken ?? createStudentToken)({
     studentId: options.student.id,
-    deviceId: options.deviceId,
+    deviceId: effectiveDeviceId,
     schoolId: options.schoolId,
     sessionId,
     studentEmail: options.student.email || undefined,
   });
   const device = await ensureClassPilotDeviceForSchool({
-    deviceId: options.deviceId,
+    deviceId: effectiveDeviceId,
     deviceName: options.deviceName,
     schoolId: options.schoolId,
     classId: options.classId,
@@ -198,10 +222,11 @@ export async function issueStudentDeviceSessionToken(options: {
     session,
     replacedSessions,
     crossStudentHandoff,
+    managedDeviceRecoveryTransition,
   } = await startStudentSessionWithReplacements(
     options.schoolId,
     options.student.id,
-    options.deviceId,
+    effectiveDeviceId,
     {
       authKind: options.authKind,
       sessionId,
@@ -209,6 +234,11 @@ export async function issueStudentDeviceSessionToken(options: {
       reclaimRecoveryTokenHash: reclaimRecoveryToken
         ? hashStudentSessionRecoveryToken(reclaimRecoveryToken)
         : null,
+      reclaimManagedDeviceId: options.managedDeviceContinuity
+        ? effectiveDeviceId
+        : null,
+      reclaimManagedDeviceRecoveryTokenHash:
+        options.managedDeviceContinuity?.recoveryTokenHash ?? null,
     }
   );
 
@@ -217,6 +247,8 @@ export async function issueStudentDeviceSessionToken(options: {
     session,
     replacedSessions,
     crossStudentHandoff,
+    managedDeviceRecoveryTransition,
+    effectiveDeviceId,
     studentToken,
     sessionRecoveryToken: recovery?.token ?? null,
   };

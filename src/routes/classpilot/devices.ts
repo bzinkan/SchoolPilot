@@ -53,6 +53,7 @@ import {
   createStudentTimelineEvent,
   endStudentSessionByRecoveryTokenHash,
   endStudentSessionExact,
+  getReclaimableStudentSessionByManagedDevice,
   getReclaimableStudentSessionByRecoveryTokenHash,
   getBatchTileAccessForStaff,
   getClasspilotStudentControlState,
@@ -201,6 +202,21 @@ import {
   issueClasspilotKioskLaunchTicket,
 } from "../../services/classpilotKioskLaunchTicket.js";
 import {
+  CLASSPILOT_MANAGED_DEVICE_CONTINUITY_CAPABILITY,
+  CLASSPILOT_MANAGED_DEVICE_CONTINUITY_IP_REQUESTS_PER_MINUTE,
+  CLASSPILOT_MANAGED_DEVICE_CONTINUITY_REQUESTS_PER_MINUTE,
+  classpilotManagedDeviceAuthorizationPresented,
+  classpilotManagedDeviceIssuanceRequestSchema,
+  classpilotManagedDevicePreflightRequestSchema,
+  classpilotManagedDevicePreflightTokenFromAuthorization,
+  classpilotManagedDeviceProofFromAuthorization,
+  issueClasspilotManagedDeviceContinuityProof,
+  issueClasspilotManagedDevicePreflight,
+  verifyClasspilotManagedDeviceContinuityProof,
+  verifyClasspilotManagedDevicePreflight,
+  type ClasspilotManagedDeviceContinuityProof,
+} from "../../services/classpilotManagedDeviceContinuity.js";
+import {
   parseClasspilotScreenshotAuthority,
   resolveClasspilotScreenshotPolicy,
   validateClasspilotScreenshotCapturedAt,
@@ -330,6 +346,49 @@ const classpilotKioskLaunchTicketLimiter = rateLimit({
     return `${enrollmentKeyLimiterKey(req)}:${selectorDigest}`;
   },
   store: redisStore("rl:classpilot:kiosk-launch-ticket:"),
+  passOnStoreError: true,
+});
+
+const classpilotManagedDeviceContinuityLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: CLASSPILOT_MANAGED_DEVICE_CONTINUITY_REQUESTS_PER_MINUTE,
+  message: {
+    error: "Managed-device continuity is temporarily rate limited",
+    code: "CLASSPILOT_MANAGED_DEVICE_CONTINUITY_RATE_LIMITED",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  // Never include the raw directory identifier in a rate-limit key. The
+  // enrollment capability and school selector are reduced before Redis.
+  keyGenerator: (req) => {
+    const schoolSelector = String(req.get("x-school-id") || "");
+    const selectorDigest = crypto
+      .createHash("sha256")
+      .update(schoolSelector)
+      .digest("hex")
+      .slice(0, 24);
+    return `${enrollmentKeyLimiterKey(req)}:${selectorDigest}`;
+  },
+  store: redisStore("rl:classpilot:managed-device-continuity:"),
+  passOnStoreError: true,
+});
+
+// A separate IP ceiling is intentionally stacked before the enrollment-key
+// bucket. Otherwise an unauthenticated caller could rotate bogus keys and force
+// unbounded school/settings reads through fresh key buckets. The ceiling still
+// admits 800 managed devices performing preflight, issuance, and one retry
+// behind a single school NAT in the same minute.
+const classpilotManagedDeviceContinuityIpLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: CLASSPILOT_MANAGED_DEVICE_CONTINUITY_IP_REQUESTS_PER_MINUTE,
+  message: {
+    error: "Managed-device continuity is temporarily rate limited",
+    code: "CLASSPILOT_MANAGED_DEVICE_CONTINUITY_RATE_LIMITED",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: extensionIp,
+  store: redisStore("rl:classpilot:managed-device-continuity-ip:"),
   passOnStoreError: true,
 });
 
@@ -1075,6 +1134,7 @@ async function completeStudentDeviceLogin(options: {
   student: Awaited<ReturnType<typeof getStudentByEmail>>;
   authKind: "managed_profile" | "manual_shared";
   reclaimRecoveryToken?: string | null;
+  managedDeviceContinuity?: ClasspilotManagedDeviceContinuityProof | null;
 }) {
   if (!options.student) {
     throw new Error("Student required");
@@ -1105,6 +1165,8 @@ async function completeStudentDeviceLogin(options: {
     session,
     replacedSessions,
     crossStudentHandoff,
+    managedDeviceRecoveryTransition,
+    effectiveDeviceId,
     studentToken,
     sessionRecoveryToken,
   } = await issueStudentDeviceSessionToken({
@@ -1115,6 +1177,7 @@ async function completeStudentDeviceLogin(options: {
     student,
     authKind: options.authKind,
     reclaimRecoveryToken: options.reclaimRecoveryToken,
+    managedDeviceContinuity: options.managedDeviceContinuity,
   });
   return finalizeStudentDeviceSessionIssuance({
     schoolId: options.schoolId,
@@ -1133,6 +1196,12 @@ async function completeStudentDeviceLogin(options: {
   }
   if (crossStudentHandoff) {
     recordHeartbeatHotPathCounter("manualSessionCrossStudentHandoff");
+  }
+  if (options.managedDeviceContinuity) {
+    recordHeartbeatHotPathCounter("managedDeviceContinuityLoginIssued");
+  }
+  if (managedDeviceRecoveryTransition) {
+    recordHeartbeatHotPathCounter("managedDeviceContinuityRecoveryTransitioned");
   }
   const replacedLegacyCount = replacedSessions.filter(
     (row) => row.authKind === "legacy"
@@ -1159,7 +1228,7 @@ async function completeStudentDeviceLogin(options: {
       schoolId: options.schoolId,
       studentId: student.id,
       studentSessionId: session.id,
-      deviceId: options.deviceId,
+      deviceId: effectiveDeviceId,
       type: "student_session_started",
     })
   ).catch(() => { /* lifecycle telemetry must not block login */ });
@@ -1170,7 +1239,7 @@ async function completeStudentDeviceLogin(options: {
   // login that already committed.
   await publishCommittedStudentSessionReplacements({
     schoolId: options.schoolId,
-    replacementDeviceId: options.deviceId,
+    replacementDeviceId: effectiveDeviceId,
     replacedSessions,
   });
 
@@ -1199,7 +1268,7 @@ async function completeStudentDeviceLogin(options: {
     studentSessionId: session.id,
     exactBinding: classpilotControlStateExactBinding({
       schoolId: options.schoolId,
-      deviceId: options.deviceId,
+      deviceId: effectiveDeviceId,
       studentId: student.id,
       studentSessionId: session.id,
       controlRevision: classroomState?.revision ?? 0,
@@ -1208,6 +1277,12 @@ async function completeStudentDeviceLogin(options: {
     student: classPilotStudentDto(student),
     studentToken,
     manualExpiresInSeconds: 300,
+    ...(options.managedDeviceContinuity
+      ? {
+          managedDeviceContinuityAccepted: true,
+          effectiveDeviceId,
+        }
+      : {}),
     ...(sessionRecoveryToken
       ? { sessionRecovery: { token: sessionRecoveryToken } }
       : {}),
@@ -1517,6 +1592,43 @@ async function authorizeClasspilotKioskLaunch(
   return school;
 }
 
+async function authorizeClasspilotManagedDeviceContinuity(
+  res: Response,
+  schoolId: string,
+  enrollmentKey: string | undefined
+) {
+  const school = await getSchoolById(schoolId);
+  const settings = school ? await getSettingsForSchool(schoolId) : undefined;
+  if (!school) {
+    res.status(404).json({
+      error: "Managed-device continuity is not configured",
+      code: "CLASSPILOT_MANAGED_DEVICE_CONTINUITY_UNAVAILABLE",
+    });
+    return null;
+  }
+  const keyCheck = validateEnrollmentKeyForSettings(settings, enrollmentKey, {
+    requireConfiguredKey: true,
+  });
+  if (!keyCheck.ok) {
+    res.status(keyCheck.status).json({
+      error: "Managed-device continuity authorization failed",
+      code: "CLASSPILOT_MANAGED_DEVICE_CONTINUITY_UNAUTHORIZED",
+    });
+    return null;
+  }
+  if (!(await requireUncachedClasspilotEntitlementForIssuance(res, schoolId))) {
+    return null;
+  }
+  if (!settings?.sharedChromebookSignInEnabled) {
+    res.status(403).json({
+      error: "Managed-device continuity is not available",
+      code: "CLASSPILOT_MANAGED_DEVICE_CONTINUITY_UNAVAILABLE",
+    });
+    return null;
+  }
+  return school;
+}
+
 // POST /api/classpilot/kiosk/launch-ticket/preflight - Authenticate the
 // exact school/capability envelope before the extension reads the enterprise
 // directory id. This request never accepts an identifier in its body.
@@ -1635,6 +1747,138 @@ router.post(
   }
 );
 
+// POST /api/classpilot/extension/device-continuity/preflight - Authenticate
+// the exact school and repaired-client authority before enterprise APIs are
+// allowed to read a directory identifier. This strict request cannot carry a
+// device identifier.
+router.post(
+  "/extension/device-continuity/preflight",
+  classpilotManagedDeviceContinuityIpLimiter,
+  classpilotManagedDeviceContinuityLimiter,
+  async (req, res, next) => {
+    try {
+      setClassPilotNoStore(res);
+      const parsed = classpilotManagedDevicePreflightRequestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          error: "Invalid managed-device continuity preflight request",
+          code: "CLASSPILOT_MANAGED_DEVICE_CONTINUITY_PREFLIGHT_INVALID",
+        });
+      }
+      const schoolId = String(req.get("x-school-id") || "").trim();
+      if (!/^[A-Za-z0-9._:-]{1,128}$/.test(schoolId)) {
+        return res.status(400).json({
+          error: "School authentication is required",
+          code: "CLASSPILOT_MANAGED_DEVICE_CONTINUITY_SCHOOL_REQUIRED",
+        });
+      }
+      const enrollmentKey = enrollmentKeyFromRequest(req);
+      const protocol = negotiateClasspilotProtocol({
+        clientProtocolVersion: parsed.data.clientProtocolVersion,
+        advertisedCapabilities: parsed.data.capabilities,
+        scope: { serverOrigin: process.env.PUBLIC_BASE_URL, schoolId },
+      });
+      return await runWithTenantContext({ schoolId }, async () => {
+        if (!(await authorizeClasspilotManagedDeviceContinuity(
+          res,
+          schoolId,
+          enrollmentKey
+        ))) {
+          return;
+        }
+        if (
+          !protocol.acceptedCapabilities.includes("scopedAuthorityChecksV1")
+          || !protocol.acceptedCapabilities.includes("kioskLaunchTicketV2")
+        ) {
+          return res.status(426).json({
+            error: "Managed-device continuity is not available for this client",
+            code: "CLASSPILOT_MANAGED_DEVICE_CONTINUITY_CAPABILITY_REQUIRED",
+            serverProtocolVersion: protocol.serverProtocolVersion,
+            acceptedCapabilities: protocol.acceptedCapabilities,
+          });
+        }
+        const issued = issueClasspilotManagedDevicePreflight({ schoolId });
+        recordHeartbeatHotPathCounter("managedDeviceContinuityPreflightAccepted");
+        return res.json({
+          serverProtocolVersion: 3,
+          acceptedCapabilities: [
+            "scopedAuthorityChecksV1",
+            "kioskLaunchTicketV2",
+            CLASSPILOT_MANAGED_DEVICE_CONTINUITY_CAPABILITY,
+          ],
+          preflightToken: issued.preflightToken,
+          expiresInSeconds: issued.expiresInSeconds,
+          expiresAt: issued.expiresAt.toISOString(),
+        });
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// POST /api/classpilot/extension/device-continuity - Accept the raw managed
+// directory identifier only after a signed preflight and the enrollment-key
+// authority are both revalidated. The identifier is immediately reduced to a
+// school-scoped opaque binding and is never stored, logged, or returned.
+router.post(
+  "/extension/device-continuity",
+  classpilotManagedDeviceContinuityIpLimiter,
+  classpilotManagedDeviceContinuityLimiter,
+  async (req, res, next) => {
+    try {
+      setClassPilotNoStore(res);
+      const parsed = classpilotManagedDeviceIssuanceRequestSchema.safeParse(req.body);
+      const schoolId = String(req.get("x-school-id") || "").trim();
+      const preflightToken = classpilotManagedDevicePreflightTokenFromAuthorization(
+        req.headers.authorization
+      );
+      if (
+        !parsed.success
+        || !/^[A-Za-z0-9._:-]{1,128}$/.test(schoolId)
+        || !preflightToken
+      ) {
+        return res.status(400).json({
+          error: "Invalid managed-device continuity request",
+          code: "CLASSPILOT_MANAGED_DEVICE_CONTINUITY_INVALID",
+        });
+      }
+      const enrollmentKey = enrollmentKeyFromRequest(req);
+      return await runWithTenantContext({ schoolId }, async () => {
+        if (!(await authorizeClasspilotManagedDeviceContinuity(
+          res,
+          schoolId,
+          enrollmentKey
+        ))) {
+          return;
+        }
+        if (!verifyClasspilotManagedDevicePreflight({
+          token: preflightToken,
+          schoolId,
+        })) {
+          return res.status(401).json({
+            error: "Managed-device continuity authorization failed",
+            code: "CLASSPILOT_MANAGED_DEVICE_CONTINUITY_UNAUTHORIZED",
+          });
+        }
+        const issued = issueClasspilotManagedDeviceContinuityProof({
+          schoolId,
+          directoryDeviceId: parsed.data.directoryDeviceId,
+          recoveryToken: parsed.data.recoveryToken,
+        });
+        recordHeartbeatHotPathCounter("managedDeviceContinuityProofIssued");
+        return res.status(201).json({
+          continuityProof: issued.continuityProof,
+          expiresInSeconds: issued.expiresInSeconds,
+          expiresAt: issued.expiresAt.toISOString(),
+        });
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 // GET /api/classpilot/extension/login-config - Shared Chromebook login capabilities
 router.get("/extension/login-config", extensionConfigLimiter, async (req, res, next) => {
   try {
@@ -1708,6 +1952,11 @@ router.get("/extension/login-roster", extensionRosterLimiter, async (req, res, n
     const recoveryToken = studentSessionRecoveryTokenFromAuthorization(
       req.headers.authorization
     );
+    const managedDeviceAuthorizationPresented =
+      classpilotManagedDeviceAuthorizationPresented(req.headers.authorization);
+    const managedDeviceProofToken = classpilotManagedDeviceProofFromAuthorization(
+      req.headers.authorization
+    );
     const schoolIdParam = String(req.query.schoolId || "").trim();
     const schoolSlug = String(req.query.schoolSlug || "").trim();
     const gradeLevel = normalizeGradeLevel(req.query.gradeLevel);
@@ -1742,22 +1991,46 @@ router.get("/extension/login-roster", extensionRosterLimiter, async (req, res, n
       if (!keyCheck.ok) {
         return res.status(keyCheck.status).json({ error: keyCheck.error });
       }
+      const managedDeviceContinuity = managedDeviceProofToken
+        ? verifyClasspilotManagedDeviceContinuityProof({
+            token: managedDeviceProofToken,
+            schoolId: school.id,
+          })
+        : null;
+      if (managedDeviceAuthorizationPresented && !managedDeviceContinuity) {
+        return res.status(401).json({
+          error: "Managed-device continuity authorization failed",
+          code: "CLASSPILOT_MANAGED_DEVICE_CONTINUITY_UNAUTHORIZED",
+        });
+      }
+      if (managedDeviceContinuity) {
+        res.locals.managedDeviceContinuityAccepted = true;
+      }
       const rosterThrottle = await enforceSharedRosterFetchThrottle(school.id, gradeLevel);
       if (!rosterThrottle.ok) {
         recordHeartbeatHotPathCounter("manualSessionRosterRateLimited");
         return res.status(429).json({
           error: "Too many roster requests, please wait",
           retryAfterSeconds: rosterThrottle.retryAfterSeconds,
+          ...(managedDeviceContinuity
+            ? { managedDeviceContinuityAccepted: true }
+            : {}),
         });
       }
       let students = await getStudentsBySchool(school.id);
       const grades = rosterGradesForStudents(students);
-      const reclaimableSession = recoveryToken
-        ? await getReclaimableStudentSessionByRecoveryTokenHash({
+      const reclaimableSession = managedDeviceContinuity
+        ? await getReclaimableStudentSessionByManagedDevice({
+            schoolId: school.id,
+            deviceId: managedDeviceContinuity.deviceId,
+            recoveryTokenHash: managedDeviceContinuity.recoveryTokenHash,
+          })
+        : recoveryToken
+          ? await getReclaimableStudentSessionByRecoveryTokenHash({
             schoolId: school.id,
             tokenHash: hashStudentSessionRecoveryToken(recoveryToken),
           })
-        : undefined;
+          : undefined;
       const activeStudentIds = new Set(
         (await getStudentIdsHiddenFromClasspilotLoginRoster(school.id))
           .filter((studentId) => studentId !== reclaimableSession?.studentId)
@@ -1769,6 +2042,9 @@ router.get("/extension/login-roster", extensionRosterLimiter, async (req, res, n
           grades,
           loginMethod,
           pinLoginEnabled: true,
+          ...(managedDeviceContinuity
+            ? { managedDeviceContinuityAccepted: true }
+            : {}),
         });
       }
 
@@ -1788,9 +2064,20 @@ router.get("/extension/login-roster", extensionRosterLimiter, async (req, res, n
         .sort((a, b) => a.name.localeCompare(b.name));
       if (roster.some((student) => student.reclaimable === true)) {
         recordHeartbeatHotPathCounter("manualSessionReclaimOffered");
+        if (managedDeviceContinuity) {
+          recordHeartbeatHotPathCounter("managedDeviceContinuityReclaimOffered");
+        }
       }
 
-      return res.json({ students: roster, grades, loginMethod, pinLoginEnabled: true });
+      return res.json({
+        students: roster,
+        grades,
+        loginMethod,
+        pinLoginEnabled: true,
+        ...(managedDeviceContinuity
+          ? { managedDeviceContinuityAccepted: true }
+          : {}),
+      });
     });
   } catch (err) {
     recordHeartbeatHotPathCounter("manualSessionRosterFailure");
@@ -1870,6 +2157,11 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
     const recoveryToken = studentSessionRecoveryTokenFromAuthorization(
       req.headers.authorization
     );
+    const managedDeviceAuthorizationPresented =
+      classpilotManagedDeviceAuthorizationPresented(req.headers.authorization);
+    const managedDeviceProofToken = classpilotManagedDeviceProofFromAuthorization(
+      req.headers.authorization
+    );
     const {
       deviceId,
       deviceName,
@@ -1883,7 +2175,7 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
     } = req.body;
     const enrollmentKey = enrollmentKeyFromRequest(req, { allowBody: true });
 
-    if (!deviceId) {
+    if (!deviceId && !managedDeviceAuthorizationPresented) {
       return res.status(400).json({ error: "deviceId required" });
     }
 
@@ -1928,6 +2220,21 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
         if (!keyCheck.ok) {
           return res.status(keyCheck.status).json({ error: keyCheck.error });
         }
+        const managedDeviceContinuity = managedDeviceProofToken
+          ? verifyClasspilotManagedDeviceContinuityProof({
+              token: managedDeviceProofToken,
+              schoolId: resolved.school.id,
+            })
+          : null;
+        if (managedDeviceAuthorizationPresented && !managedDeviceContinuity) {
+          return res.status(401).json({
+            error: "Managed-device continuity authorization failed",
+            code: "CLASSPILOT_MANAGED_DEVICE_CONTINUITY_UNAUTHORIZED",
+          });
+        }
+        if (managedDeviceContinuity) {
+          res.locals.managedDeviceContinuityAccepted = true;
+        }
 
         const student = await getStudentByEmail(resolved.school.id, emailLc);
         if (
@@ -1935,7 +2242,12 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
           student.status !== "active" ||
           String(student.studentIdNumber || "").trim() !== idNumber
         ) {
-          return res.status(401).json({ error: "Invalid student credentials" });
+          return res.status(401).json({
+            error: "Invalid student credentials",
+            ...(managedDeviceContinuity
+              ? { managedDeviceContinuityAccepted: true }
+              : {}),
+          });
         }
 
         const login = await completeStudentDeviceLogin({
@@ -1946,6 +2258,7 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
           student,
           authKind: "manual_shared",
           reclaimRecoveryToken: recoveryToken,
+          managedDeviceContinuity,
         });
         return res.json(login);
       });
@@ -1984,6 +2297,21 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
       if (!keyCheck.ok) {
         return res.status(keyCheck.status).json({ error: keyCheck.error });
       }
+      const managedDeviceContinuity = managedDeviceProofToken
+        ? verifyClasspilotManagedDeviceContinuityProof({
+            token: managedDeviceProofToken,
+            schoolId: school.id,
+          })
+        : null;
+      if (managedDeviceAuthorizationPresented && !managedDeviceContinuity) {
+        return res.status(401).json({
+          error: "Managed-device continuity authorization failed",
+          code: "CLASSPILOT_MANAGED_DEVICE_CONTINUITY_UNAUTHORIZED",
+        });
+      }
+      if (managedDeviceContinuity) {
+        res.locals.managedDeviceContinuityAccepted = true;
+      }
 
       const student = await getStudentById(selectedStudentId);
       const lockout = await getPinLockout(school.id, selectedStudentId);
@@ -1991,6 +2319,9 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
         return res.status(429).json({
           error: "Too many PIN attempts. Try again later.",
           retryAfterSeconds: lockout.retryAfterSeconds,
+          ...(managedDeviceContinuity
+            ? { managedDeviceContinuityAccepted: true }
+            : {}),
         });
       }
       if (
@@ -2001,7 +2332,12 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
         !(await comparePassword(enteredPin, student.classpilotPinHash))
       ) {
         await recordPinFailure(school.id, selectedStudentId);
-        return res.status(401).json({ error: "Invalid student credentials" });
+        return res.status(401).json({
+          error: "Invalid student credentials",
+          ...(managedDeviceContinuity
+            ? { managedDeviceContinuityAccepted: true }
+            : {}),
+        });
       }
       await clearPinFailures(school.id, selectedStudentId);
 
@@ -2013,6 +2349,7 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
         student,
         authKind: "manual_shared",
         reclaimRecoveryToken: recoveryToken,
+        managedDeviceContinuity,
       });
       return res.json(login);
     });
