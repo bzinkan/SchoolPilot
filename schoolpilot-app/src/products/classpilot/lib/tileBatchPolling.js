@@ -1,11 +1,15 @@
 import {
   deriveScreenshotDisplay,
   isClassBoundScreenshot,
+  SCREENSHOT_RECONNECT_RETAIN_MS,
+  SCREENSHOT_STALE_MS,
+  SCREENSHOT_SUCCESSFUL_NULL_RETAIN_UNTIL_FIELD,
 } from './studentMonitoringDisplay.js';
 
 export const TILE_BATCH_MAX_STUDENTS = 50;
 export const TILE_BATCH_HISTORY_LIMIT = 10;
 export const TILE_BATCH_REFETCH_INTERVAL_MS = 30_000;
+export const TILE_SCREENSHOT_CACHE_GC_MS = SCREENSHOT_RECONNECT_RETAIN_MS;
 
 export const TILE_BATCH_QUERY_ROOTS = Object.freeze({
   screenshots: '/api/classpilot/tiles/screenshots',
@@ -31,6 +35,13 @@ export function buildTileStudentIds(students) {
     .sort((left, right) => left.localeCompare(right));
 }
 
+export function normalizedTileControlRevision(student) {
+  const revision = Number(
+    student?.classroomState?.revision ?? student?.classroomStateRevision,
+  );
+  return Number.isSafeInteger(revision) && revision >= 0 ? revision : 'unknown';
+}
+
 function normalizedContextValue(value, fallback) {
   const normalized = typeof value === 'string' ? value.trim() : '';
   return normalized || fallback;
@@ -44,15 +55,29 @@ export function buildTileStudentBindings(students) {
     const binding = typeof student === 'object' && typeof student?.realtimeBinding === 'string'
       ? student.realtimeBinding.trim()
       : '';
-    bindingsByStudent.set(studentId, binding);
+    bindingsByStudent.set(studentId, {
+      binding,
+      controlRevision: normalizedTileControlRevision(student),
+    });
   }
   return [...bindingsByStudent.entries()]
+    .map(([studentId, authority]) => [
+      studentId,
+      authority.binding,
+      authority.controlRevision,
+    ])
     .sort(([left], [right]) => left.localeCompare(right));
 }
 
 export function changedTileBindingStudentIds(previousStudents, nextStudents) {
-  const previousBindings = new Map(buildTileStudentBindings(previousStudents));
-  const nextBindings = new Map(buildTileStudentBindings(nextStudents));
+  const authorityByStudent = (students) => new Map(
+    buildTileStudentBindings(students).map(([studentId, binding, controlRevision]) => [
+      studentId,
+      JSON.stringify([binding, controlRevision]),
+    ]),
+  );
+  const previousBindings = authorityByStudent(previousStudents);
+  const nextBindings = authorityByStudent(nextStudents);
   const changedStudentIds = [];
 
   for (const [studentId, previousBinding] of previousBindings) {
@@ -80,11 +105,11 @@ export function createTileBatchRequests(students, context = {}) {
   for (let index = 0; index < normalizedStudentBindings.length; index += TILE_BATCH_MAX_STUDENTS) {
     const cohortBindings = normalizedStudentBindings.slice(index, index + TILE_BATCH_MAX_STUDENTS);
     const cohort = cohortBindings.map(([studentId]) => studentId);
-    // Binding changes must not strand unchanged classmates behind a brand-new
-    // whole-cohort cache key. Dashboard scrubs the exact changed student and
-    // refetches this stable roster cohort; server bindingVersion validation
-    // remains the authority for whether replacement pixels may be displayed.
-    const cohortKey = JSON.stringify(cohort);
+    // Screenshot pixels are authorization-sensitive, so their identity must
+    // include every exact realtime binding. History contains no pixels and may
+    // keep the stable student-ID cohort key.
+    const screenshotCohortKey = JSON.stringify(cohortBindings);
+    const historyCohortKey = JSON.stringify(cohort);
     const teachingSessionId = typeof context.teachingSessionId === 'string'
       && context.teachingSessionId.trim()
       ? context.teachingSessionId.trim()
@@ -94,14 +119,14 @@ export function createTileBatchRequests(students, context = {}) {
       {
         kind: 'screenshots',
         endpoint: TILE_BATCH_ENDPOINTS.screenshots,
-        queryKey: [TILE_BATCH_QUERY_ROOTS.screenshots, contextKey, cohortKey],
+        queryKey: [TILE_BATCH_QUERY_ROOTS.screenshots, contextKey, screenshotCohortKey],
         body: { studentIds: cohort, ...sessionBody },
         refetchInterval: TILE_BATCH_REFETCH_INTERVAL_MS,
       },
       {
         kind: 'history',
         endpoint: TILE_BATCH_ENDPOINTS.history,
-        queryKey: [TILE_BATCH_QUERY_ROOTS.history, contextKey, cohortKey],
+        queryKey: [TILE_BATCH_QUERY_ROOTS.history, contextKey, historyCohortKey],
         body: { studentIds: cohort, limit: TILE_BATCH_HISTORY_LIMIT, ...sessionBody },
         refetchInterval: TILE_BATCH_REFETCH_INTERVAL_MS,
       }
@@ -212,9 +237,22 @@ export function retainFreshTileScreenshotsOnNull(previous, incoming, nowMs = Dat
         && incomingBindingVersion === priorBindingVersion
       )
     ) return tile;
-    if (!deriveScreenshotDisplay(priorScreenshot, nowMs).retained) return tile;
+    // A successful null is authoritative: it may bridge only the normal
+    // freshness window. Transport failures never invoke structural sharing,
+    // so React Query can still retain the last exact-binding preview through
+    // the separate 120-second reconnect window.
+    const priorDisplay = deriveScreenshotDisplay(priorScreenshot, nowMs);
+    if (!priorDisplay.fresh || priorDisplay.observedAtMs === null) return tile;
+    const successfulNullRetainUntilMs = priorDisplay.observedAtMs + SCREENSHOT_STALE_MS;
+    const retainedScreenshot = priorScreenshot?.[SCREENSHOT_SUCCESSFUL_NULL_RETAIN_UNTIL_FIELD]
+      === successfulNullRetainUntilMs
+      ? priorScreenshot
+      : {
+          ...priorScreenshot,
+          [SCREENSHOT_SUCCESSFUL_NULL_RETAIN_UNTIL_FIELD]: successfulNullRetainUntilMs,
+        };
     changed = true;
-    return { ...tile, screenshot: priorScreenshot };
+    return { ...tile, screenshot: retainedScreenshot };
   });
   return changed ? { ...incoming, tiles } : incoming;
 }

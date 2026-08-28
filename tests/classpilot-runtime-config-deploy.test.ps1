@@ -385,8 +385,53 @@ try {
         Assert-Condition ($globalRollouts.$capability.mode -ceq "on") "Global profile must enable $capability."
         Assert-Condition (-not ($globalRollouts.$capability.PSObject.Properties.Name -contains "schoolIds")) "Global profile must not retain school identifiers."
     }
+    Assert-Condition ($globalRuntime.Environment.CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1 -ceq "false" -and
+        $globalRollouts.screenshotTrackingWindowLeaseV1.mode -ceq "off") `
+        "Existing global-on must remain the explicit tracking-window rollback profile."
     Assert-Condition ($globalRollouts.kioskLaunchTicketV1.mode -ceq "off") "Global profile must leave superseded V1 off."
     Assert-Condition ($globalRuntime.Turn.Hosts.Count -eq 2 -and $globalRuntime.Turn.Hosts[0] -ceq "turn-a.school-pilot.net") "TURN hosts must normalize to the reviewed pair."
+
+    $trackingPilotProfile = [pscustomobject]@{
+        schemaVersion = 2
+        mode = "tracking-window-pilot"
+        pilotSchoolId = $testSchoolId
+        turn = $turn
+    }
+    $trackingPilotRuntime = ConvertTo-RuntimeConfiguration -Profile $trackingPilotProfile
+    $trackingPilotRollouts = $trackingPilotRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON | ConvertFrom-Json -Depth 10
+    Assert-Condition ($trackingPilotRuntime.Mode -ceq "tracking-window-pilot" -and
+        $trackingPilotRuntime.SchoolScopeCount -eq 1 -and
+        @($trackingPilotRuntime.EnabledCapabilities).Count -eq 10) `
+        "Tracking-window pilot must preserve all repaired capabilities and add one scoped capability."
+    foreach ($capability in $script:RepairedCapabilities) {
+        Assert-Condition ($trackingPilotRollouts.$capability.mode -ceq "on" -and
+            -not ($trackingPilotRollouts.$capability.PSObject.Properties.Name -contains "schoolIds")) `
+            "Tracking-window pilot must preserve the existing global $capability rollout."
+    }
+    Assert-Condition ($trackingPilotRuntime.Environment.CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1 -ceq "true" -and
+        $trackingPilotRollouts.screenshotTrackingWindowLeaseV1.mode -ceq "on" -and
+        @($trackingPilotRollouts.screenshotTrackingWindowLeaseV1.schoolIds).Count -eq 1 -and
+        [string]$trackingPilotRollouts.screenshotTrackingWindowLeaseV1.schoolIds[0] -ceq $testSchoolId) `
+        "Tracking-window pilot must require the kill switch and exactly one rollout school."
+    Assert-Condition ($trackingPilotRollouts.screenshotObservationLeaseV1.mode -ceq "on") `
+        "Tracking-window pilot must keep the legacy observation lease available."
+
+    $trackingGlobalProfile = [pscustomobject]@{
+        schemaVersion = 2
+        mode = "tracking-window-global-on"
+        turn = $turn
+    }
+    $trackingGlobalRuntime = ConvertTo-RuntimeConfiguration -Profile $trackingGlobalProfile
+    $trackingGlobalRollouts = $trackingGlobalRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON | ConvertFrom-Json -Depth 10
+    Assert-Condition ($trackingGlobalRuntime.Mode -ceq "tracking-window-global-on" -and
+        $trackingGlobalRuntime.SchoolScopeCount -eq 0 -and
+        @($trackingGlobalRuntime.EnabledCapabilities).Count -eq 10) `
+        "Tracking-window global mode must expose all ten accepted repaired capabilities."
+    Assert-Condition ($trackingGlobalRollouts.screenshotTrackingWindowLeaseV1.mode -ceq "on" -and
+        -not ($trackingGlobalRollouts.screenshotTrackingWindowLeaseV1.PSObject.Properties.Name -contains "schoolIds")) `
+        "Tracking-window global mode must remove the pilot school scope."
+    Assert-Condition ($trackingGlobalRollouts.kioskLaunchTicketV1.mode -ceq "off") `
+        "Tracking-window global mode must keep superseded kiosk ticket V1 off."
 
     function New-TransitionSourceTask {
         param($RuntimeConfiguration)
@@ -439,6 +484,54 @@ try {
         Assert-AllowedRuntimeTransition -SourceTaskDefinition $waivedSource -ContainerName "api" `
             -TargetRuntimeConfiguration $globalRuntime -AllowSyntheticOnlyGlobalActivation
     }
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition (New-TransitionSourceTask -RuntimeConfiguration $globalRuntime) `
+        -ContainerName "api" -TargetRuntimeConfiguration $trackingPilotRuntime
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition (New-TransitionSourceTask -RuntimeConfiguration $trackingPilotRuntime) `
+        -ContainerName "api" -TargetRuntimeConfiguration $trackingGlobalRuntime
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition (New-TransitionSourceTask -RuntimeConfiguration $trackingPilotRuntime) `
+        -ContainerName "api" -TargetRuntimeConfiguration $globalRuntime
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition (New-TransitionSourceTask -RuntimeConfiguration $trackingGlobalRuntime) `
+        -ContainerName "api" -TargetRuntimeConfiguration $globalRuntime
+    Assert-Throws {
+        Assert-AllowedRuntimeTransition -SourceTaskDefinition (New-TransitionSourceTask -RuntimeConfiguration $globalRuntime) `
+            -ContainerName "api" -TargetRuntimeConfiguration $trackingGlobalRuntime
+    } "Tracking-window global activation must not skip the school-scoped pilot."
+    Assert-Throws {
+        Assert-AllowedRuntimeTransition -SourceTaskDefinition (New-TransitionSourceTask -RuntimeConfiguration $fullTestRuntime) `
+            -ContainerName "api" -TargetRuntimeConfiguration $trackingPilotRuntime
+    } "Tracking-window pilot must start from the completed global repaired-capability profile."
+
+    $legacyGlobalSource = New-TransitionSourceTask -RuntimeConfiguration $globalRuntime
+    $legacyGlobalEnvironment = @($legacyGlobalSource.containerDefinitions[0].environment)
+    $legacyGlobalRolloutEntry = @($legacyGlobalEnvironment | Where-Object name -CEQ "CLASSPILOT_CAPABILITY_ROLLOUTS_JSON")[0]
+    $legacyGlobalRollout = [string]$legacyGlobalRolloutEntry.value | ConvertFrom-Json -Depth 10
+    $legacyGlobalRollout.PSObject.Properties.Remove("screenshotTrackingWindowLeaseV1")
+    $legacyGlobalRolloutEntry.value = $legacyGlobalRollout | ConvertTo-Json -Depth 10 -Compress
+    $legacyGlobalSource.containerDefinitions[0].environment = @($legacyGlobalEnvironment | Where-Object {
+        [string]$_.name -cne "CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1"
+    })
+    $legacyGlobalState = Get-RuntimeActivationState `
+        -Environment @($legacyGlobalSource.containerDefinitions[0].environment) -AllowBaseline
+    Assert-Condition ($legacyGlobalState.Mode -ceq "global-on") `
+        "The exact pre-additive global task shape must be recognized as tracking-window off."
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $legacyGlobalSource -ContainerName "api" `
+        -TargetRuntimeConfiguration $trackingPilotRuntime
+
+    $partialTrackingSource = New-TransitionSourceTask -RuntimeConfiguration $globalRuntime
+    $partialTrackingSource.containerDefinitions[0].environment = @($partialTrackingSource.containerDefinitions[0].environment | Where-Object {
+        [string]$_.name -cne "CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1"
+    })
+    Assert-Throws {
+        Get-RuntimeActivationState -Environment @($partialTrackingSource.containerDefinitions[0].environment) -AllowBaseline
+    } "An absent tracking kill switch with a present rollout entry must fail closed."
+
+    $mismatchedTrackingSource = New-TransitionSourceTask -RuntimeConfiguration $trackingPilotRuntime
+    @($mismatchedTrackingSource.containerDefinitions[0].environment | Where-Object {
+        [string]$_.name -ceq "CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1"
+    })[0].value = "false"
+    Assert-Throws {
+        Get-RuntimeActivationState -Environment @($mismatchedTrackingSource.containerDefinitions[0].environment) -AllowBaseline
+    } "Tracking-window rollout and kill-switch disagreement must fail closed."
 
     $normalDeploymentService = New-TestService -Role api `
         -TaskDefinitionArn "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:1"
@@ -481,6 +574,42 @@ try {
     } "Global activation with the wrong TURN secret shape must fail closed."
     Assert-Throws {
         ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 1; mode = "tracking-window-pilot"; pilotSchoolId = $testSchoolId; turn = $turn
+        })
+    } "Tracking-window profiles must require the additive schema version."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 2; mode = "global-on"; turn = $turn
+        })
+    } "The existing global-on rollback profile must retain schema version 1."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 2; mode = "tracking-window-pilot"; turn = $turn
+        })
+    } "Tracking-window pilot must require one school."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 2; mode = "tracking-window-pilot"; pilotSchoolId = "NOT-A-UUID"; turn = $turn
+        })
+    } "Tracking-window pilot must reject a malformed school identifier."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 2; mode = "tracking-window-global-on"; pilotSchoolId = $testSchoolId; turn = $turn
+        })
+    } "Tracking-window global activation must not retain pilot scope."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 2; mode = "tracking-window-global-on"
+        })
+    } "Tracking-window global activation must retain verified TURN inputs."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 2; mode = "tracking-window-pilot"; pilotSchoolId = $testSchoolId
+            enabledCapabilities = @("screenshotTrackingWindowLeaseV1"); turn = $turn
+        })
+    } "Tracking-window pilot must not reuse ordered test-school capability fields."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
             schemaVersion = 1; mode = "test-school"; testSchoolId = $testSchoolId
             enabledCapabilities = @($script:ActivationOrder[0..6])
         })
@@ -488,9 +617,14 @@ try {
     Assert-Throws {
         ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{ schemaVersion = 1; mode = "off"; turn = $turn })
     } "Off mode must not rewrite TURN wiring."
-    foreach ($misCasedMode in @("OFF", "Off", "TEST-SCHOOL", "Test-School", "GLOBAL-ON", "Global-On")) {
+    foreach ($misCasedMode in @(
+        "OFF", "Off", "TEST-SCHOOL", "Test-School", "GLOBAL-ON", "Global-On",
+        "TRACKING-WINDOW-PILOT", "Tracking-Window-Pilot",
+        "TRACKING-WINDOW-GLOBAL-ON", "Tracking-Window-Global-On"
+    )) {
         Assert-Throws {
-            ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{ schemaVersion = 1; mode = $misCasedMode })
+            $misCasedSchema = if ($misCasedMode -clike "*TRACKING*" -or $misCasedMode -clike "Tracking*") { 2 } else { 1 }
+            ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{ schemaVersion = $misCasedSchema; mode = $misCasedMode })
         } "Runtime profile modes must use the exact reviewed lowercase spelling."
     }
 
@@ -628,7 +762,8 @@ try {
     } "Protected confirmation must be rejected on weekends."
     Assert-ProductionDeploymentWindow -NowEastern ([DateTimeOffset]::Parse("2026-08-23T05:00:00-04:00"))
 
-    $global:RuntimeConfigGitState = [ordered]@{ Branch = "main"; Sha = "a" * 40; Dirty = "" }
+    $toolSha = "b" * 40
+    $global:RuntimeConfigGitState = [ordered]@{ Branch = "main"; Sha = $toolSha; Dirty = "" }
     $global:SchoolPilotRuntimeConfigGitHandler = {
         param([string[]]$Arguments)
         if ($Arguments[0] -ceq "branch") { return $global:RuntimeConfigGitState.Branch }
@@ -636,11 +771,14 @@ try {
         if ($Arguments[0] -ceq "rev-parse") { return $global:RuntimeConfigGitState.Sha }
         throw "Unexpected mocked git operation."
     }
-    Assert-RepositoryIdentity -RepositoryRoot $repositoryRoot -ExpectedSha ("a" * 40)
-    $global:RuntimeConfigGitState.Branch = "feature"
+    [void](Assert-RepositoryIdentity -RepositoryRoot $repositoryRoot -ExpectedSha $toolSha)
     Assert-Throws {
         Assert-RepositoryIdentity -RepositoryRoot $repositoryRoot -ExpectedSha ("a" * 40)
-    } "Runtime deployment must require clean main at the exact deployed SHA."
+    } "The reviewed runtime-tool SHA must be independent from the deployed application SHA."
+    $global:RuntimeConfigGitState.Branch = "feature"
+    Assert-Throws {
+        Assert-RepositoryIdentity -RepositoryRoot $repositoryRoot -ExpectedSha $toolSha
+    } "Runtime deployment must require clean main at the exact reviewed tool SHA."
     $global:RuntimeConfigGitState.Branch = "main"
 
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
@@ -1225,7 +1363,8 @@ try {
     $apiSourceContainerForDrift = @($global:RuntimeConfigTestState.TaskResponses[$apiSourceArn].taskDefinition.containerDefinitions | Where-Object name -CEQ "api")[0]
     $apiSourceContainerForDrift.environment += [pscustomobject]@{ name = "CLASSPILOT_PROTOCOL_V3_ENABLED"; value = "true" }
     Assert-Throws {
-        Get-ValidatedProductionSnapshot -RepositoryRoot $repositoryRoot -AppSha $appSha -ImageDigest $digest `
+        Get-ValidatedProductionSnapshot -RepositoryRoot $repositoryRoot -ToolSha $toolSha `
+            -AppSha $appSha -ImageDigest $digest `
             -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn `
             -RuntimeConfiguration $globalRuntime -SkipRepositoryCheck
     } "API/worker managed runtime drift must block activation."
@@ -1263,6 +1402,10 @@ try {
         }
     }
     $testDeployPlan = Read-RuntimePlan -Path $testDeployPlanResult.PlanPath -ExpectedSha256 $testDeployPlanResult.PlanSha256
+    Assert-Condition ([int]$testDeployPlan.schemaVersion -eq 2 -and
+        [string]$testDeployPlan.toolSha -ceq $toolSha -and
+        [string]$testDeployPlan.appSha -ceq $appSha -and $toolSha -cne $appSha) `
+        "Runtime plans must independently bind the reviewed tool SHA and deployed image application SHA."
     Assert-Condition ([string]$testDeployPlan.appSha -ceq $appSha) "Plan verification must hash and parse the same captured bytes during path replacement."
     Assert-Condition ((Read-StrictJson -Path $testDeployPlanResult.PlanPath).appSha -ceq ("f" * 40)) "Plan replacement regression must actually exchange the path after the bounded read."
     [IO.File]::WriteAllText($testDeployPlanResult.PlanPath, $originalTestPlanText, [Text.UTF8Encoding]::new($false))
@@ -1271,6 +1414,12 @@ try {
     Assert-Condition (-not ([string]$testDeployPlanResult.PlanRelativePath).Contains($testSchoolId)) "Operator output must use an identifier-free plan-relative path."
     $testDeployPlanDocument = $testDeployPlanText | ConvertFrom-Json -Depth 30
     Assert-Condition ([string]$testDeployPlanDocument.profileFile -ceq "profile.json" -and [string]$testDeployPlanDocument.turnEvidenceFile -ceq "turn-evidence.json") "The durable plan must reference only neutral private snapshot names."
+    $global:RuntimeConfigGitState.Sha = "c" * 40
+    Assert-Throws {
+        Invoke-RuntimeConfigApply -Plan $testDeployPlan -PlanSha256 $testDeployPlanResult.PlanSha256 -Now $now `
+            -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0
+    } "Apply must reject a repository that no longer matches the plan's reviewed runtime-tool SHA."
+    $global:RuntimeConfigGitState.Sha = $toolSha
     $swappedSchoolId = "123e4567-e89b-42d3-a456-426614174111"
     $swappedTurnSecretArn = "arn:aws:secretsmanager:us-east-1:135775632425:secret:/schoolpilot/production/CLASSPILOT_TURN_REST_SECRET-ZzYy99"
     $replacementTestProfile = [pscustomobject]@{
@@ -1282,6 +1431,10 @@ try {
     $testDeployResult = Invoke-RuntimeConfigApply -Plan $testDeployPlan -PlanSha256 $testDeployPlanResult.PlanSha256 -Now $now `
         -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck
     Assert-Condition ($testDeployResult.status -ceq "applied" -and $testDeployResult.profileMode -ceq "test-school") "Full test-school apply must converge."
+    Assert-Condition ([int]$testDeployResult.schemaVersion -eq 2 -and
+        [string]$testDeployResult.toolSha -ceq $toolSha -and
+        [string]$testDeployResult.appSha -ceq $appSha) `
+        "Result evidence must preserve separate reviewed-tool and deployed-image identities."
     foreach ($candidateContract in @(
         [pscustomobject]@{ Arn = [string]$testDeployResult.candidateApiTaskDefinitionArn; Container = "api" },
         [pscustomobject]@{ Arn = [string]$testDeployResult.candidateWorkerTaskDefinitionArn; Container = "scheduler-worker" }
@@ -1303,6 +1456,250 @@ try {
     Assert-Condition (-not $testDeployResultText.Contains($testSchoolId) -and -not $testDeployCheckpointText.Contains($testSchoolId)) "Test-school result and checkpoint evidence must not expose the school ID."
     [void](Invoke-RuntimeConfigRollback -Plan $testDeployPlan -PlanSha256 $testDeployPlanResult.PlanSha256 -Now $now `
         -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0)
+    Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
+
+    Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $globalRuntime
+    $trackingPilotProfilePath = Join-Path $testRoot "tracking-window-pilot-profile.json"
+    Write-TestJson -Path $trackingPilotProfilePath -Value $trackingPilotProfile
+    $trackingPilotPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
+        -PrivateProfilePath $trackingPilotProfilePath -PrivateTurnEvidencePath $evidencePath `
+        -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+        -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn `
+        -Now $now -SkipRepositoryCheck
+    $trackingPilotPlan = Read-RuntimePlan -Path $trackingPilotPlanResult.PlanPath `
+        -ExpectedSha256 $trackingPilotPlanResult.PlanSha256
+    Assert-Condition ($trackingPilotPlan.profileMode -ceq "tracking-window-pilot" -and
+        [int]$trackingPilotPlan.schoolScopeCount -eq 1 -and
+        [int]$trackingPilotPlan.enabledCapabilityCount -eq 10 -and
+        [string]$trackingPilotPlan.validationLevel -ceq "not_applicable") `
+        "Tracking-window pilot plan must retain only identifier-free activation metadata."
+    $trackingPilotPlanText = [IO.File]::ReadAllText($trackingPilotPlanResult.PlanPath)
+    Assert-Condition (-not $trackingPilotPlanText.Contains($testSchoolId) -and
+        -not $trackingPilotPlanText.Contains("turn-a.school-pilot.net") -and
+        -not $trackingPilotPlanText.Contains($turnSecretArn)) `
+        "Tracking-window pilot plan must not expose school or TURN authority."
+    $trackingPilotApplyResult = Invoke-RuntimeConfigApply -Plan $trackingPilotPlan `
+        -PlanSha256 $trackingPilotPlanResult.PlanSha256 -Now $now `
+        -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck
+    Assert-Condition ($trackingPilotApplyResult.status -ceq "applied" -and
+        $trackingPilotApplyResult.profileMode -ceq "tracking-window-pilot" -and
+        $trackingPilotApplyResult.scalingRestored) `
+        "Tracking-window pilot apply must converge as one coherent service pair."
+    $trackingPilotCandidateTasks = @(
+        [pscustomobject]@{ Arn = [string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn; Container = "api" },
+        [pscustomobject]@{ Arn = [string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn; Container = "scheduler-worker" }
+    )
+    foreach ($candidateContract in $trackingPilotCandidateTasks) {
+        $candidate = $global:RuntimeConfigTestState.TaskResponses[$candidateContract.Arn].taskDefinition
+        $candidateContainer = @($candidate.containerDefinitions | Where-Object name -CEQ $candidateContract.Container)[0]
+        $candidateState = Get-RuntimeActivationState -Environment @($candidateContainer.environment)
+        Assert-Condition ($candidateState.Mode -ceq "tracking-window-pilot" -and
+            [string]$candidateState.SchoolId -ceq $testSchoolId) `
+            "API and worker candidates must contain the same exact pilot scope."
+        Assert-Condition ([string]$candidateContainer.image -ceq
+            "135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api@$digest") `
+            "Runtime-only pilot apply must preserve the immutable image digest."
+        Assert-Condition (@($candidateContainer.environment | Where-Object {
+            [string]$_.name -ceq "NODE_ENV" -and [string]$_.value -ceq "production"
+        }).Count -eq 1) "Runtime-only pilot apply must preserve unrelated environment values."
+        $candidateTurnSecret = @($candidateContainer.secrets | Where-Object name -CEQ "CLASSPILOT_TURN_REST_SECRET")
+        Assert-Condition ($candidateTurnSecret.Count -eq 1 -and
+            [string]$candidateTurnSecret[0].valueFrom -ceq $turnSecretArn) `
+            "Runtime-only pilot apply must preserve the exact TURN secret authority."
+    }
+    $trackingPilotApiTask = $global:RuntimeConfigTestState.TaskResponses[[string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn].taskDefinition
+    $trackingPilotWorkerTask = $global:RuntimeConfigTestState.TaskResponses[[string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn].taskDefinition
+    Assert-Condition ((Get-ManagedRuntimeFingerprint -TaskDefinition $trackingPilotApiTask -ContainerName "api") -ceq
+        (Get-ManagedRuntimeFingerprint -TaskDefinition $trackingPilotWorkerTask -ContainerName "scheduler-worker")) `
+        "Tracking-window pilot API and worker runtime configuration must be identical."
+    $trackingGlobalProfilePath = Join-Path $testRoot "tracking-window-global-profile.json"
+    Write-TestJson -Path $trackingGlobalProfilePath -Value $trackingGlobalProfile
+    $trackingPilotRuntimeConfigurationSha256 = Get-ManagedRuntimeFingerprint `
+        -TaskDefinition $trackingPilotApiTask -ContainerName "api"
+    $trackingPilotEvidencePath = Join-Path $testRoot "tracking-window-pilot-evidence.json"
+    $trackingPilotEvidence = [ordered]@{
+        schemaVersion = 2
+        validatedAt = $now.ToString("o")
+        observedFrom = $now.AddMinutes(-60).ToString("o")
+        observedThrough = $now.ToString("o")
+        pilotSchoolId = $testSchoolId
+        schoolPilotToolSha = $toolSha
+        schoolPilotAppSha = $appSha
+        schoolPilotImageDigest = $digest
+        pilotApiTaskDefinitionArn = [string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn
+        pilotWorkerTaskDefinitionArn = [string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn
+        pilotRuntimeConfigurationSha256 = $trackingPilotRuntimeConfigurationSha256
+        checks = [ordered]@{
+            fullSchoolActivityWindowObserved = $true
+            managedCapabilityNegotiated = $true
+            teacherTabSwitchingPassed = $true
+            adminObserveTabSwitchingPassed = $true
+            newScreenshotWithinThirtySecondsPassed = $true
+            authorizationPurgePassed = $true
+            zeroScreenshotStoreErrors = $true
+            screenshotLatencyWithinBudget = $true
+            noAuthorizationOrPrivacyDefects = $true
+        }
+    }
+    Write-TestJson -Path $trackingPilotEvidencePath -Value $trackingPilotEvidence
+    $trackingPilotEvidenceSnapshot = Read-StrictJsonSnapshot -Path $trackingPilotEvidencePath
+    [void](Assert-TrackingWindowPilotEvidence -EvidenceSnapshot $trackingPilotEvidenceSnapshot `
+        -PilotSchoolId $testSchoolId -ToolSha $toolSha -AppSha $appSha -ImageDigest $digest `
+        -ApiTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn) `
+        -WorkerTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn) `
+        -RuntimeConfigurationSha256 $trackingPilotRuntimeConfigurationSha256 -Now $now)
+    $invalidTrackingPilotEvidence = $trackingPilotEvidence | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30 -DateKind String
+    $invalidTrackingPilotEvidence.checks.teacherTabSwitchingPassed = $false
+    Write-TestJson -Path $trackingPilotEvidencePath -Value $invalidTrackingPilotEvidence
+    Assert-Throws {
+        Assert-TrackingWindowPilotEvidence -EvidenceSnapshot (Read-StrictJsonSnapshot -Path $trackingPilotEvidencePath) `
+            -PilotSchoolId $testSchoolId -ToolSha $toolSha -AppSha $appSha -ImageDigest $digest `
+            -ApiTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn) `
+            -WorkerTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn) `
+            -RuntimeConfigurationSha256 $trackingPilotRuntimeConfigurationSha256 -Now $now
+    } "A failed managed teacher tab-switch smoke must block tracking-window global activation."
+    $invalidTrackingPilotEvidence = $trackingPilotEvidence | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30 -DateKind String
+    $invalidTrackingPilotEvidence.schoolPilotToolSha = "c" * 40
+    Write-TestJson -Path $trackingPilotEvidencePath -Value $invalidTrackingPilotEvidence
+    Assert-Throws {
+        Assert-TrackingWindowPilotEvidence -EvidenceSnapshot (Read-StrictJsonSnapshot -Path $trackingPilotEvidencePath) `
+            -PilotSchoolId $testSchoolId -ToolSha $toolSha -AppSha $appSha -ImageDigest $digest `
+            -ApiTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn) `
+            -WorkerTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn) `
+            -RuntimeConfigurationSha256 $trackingPilotRuntimeConfigurationSha256 -Now $now
+    } "Pilot evidence created by another reviewed runtime-tool revision must fail closed."
+    $invalidTrackingPilotEvidence = $trackingPilotEvidence | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30 -DateKind String
+    $invalidTrackingPilotEvidence.pilotRuntimeConfigurationSha256 = "0" * 64
+    Write-TestJson -Path $trackingPilotEvidencePath -Value $invalidTrackingPilotEvidence
+    Assert-Throws {
+        Assert-TrackingWindowPilotEvidence -EvidenceSnapshot (Read-StrictJsonSnapshot -Path $trackingPilotEvidencePath) `
+            -PilotSchoolId $testSchoolId -ToolSha $toolSha -AppSha $appSha -ImageDigest $digest `
+            -ApiTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn) `
+            -WorkerTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn) `
+            -RuntimeConfigurationSha256 $trackingPilotRuntimeConfigurationSha256 -Now $now
+    } "Pilot evidence from another runtime configuration must fail closed."
+    $invalidTrackingPilotEvidence = $trackingPilotEvidence | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30 -DateKind String
+    $invalidTrackingPilotEvidence.validatedAt = $now.AddHours(-2).AddSeconds(-1).ToString("o")
+    $invalidTrackingPilotEvidence.observedFrom = $now.AddHours(-3).ToString("o")
+    $invalidTrackingPilotEvidence.observedThrough = $now.AddHours(-2).AddSeconds(-1).ToString("o")
+    Write-TestJson -Path $trackingPilotEvidencePath -Value $invalidTrackingPilotEvidence
+    Assert-Throws {
+        Assert-TrackingWindowPilotEvidence -EvidenceSnapshot (Read-StrictJsonSnapshot -Path $trackingPilotEvidencePath) `
+            -PilotSchoolId $testSchoolId -ToolSha $toolSha -AppSha $appSha -ImageDigest $digest `
+            -ApiTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn) `
+            -WorkerTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn) `
+            -RuntimeConfigurationSha256 $trackingPilotRuntimeConfigurationSha256 -Now $now
+    } "Stale tracking-window pilot evidence must fail closed."
+    $invalidTrackingPilotEvidence = $trackingPilotEvidence | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30 -DateKind String
+    $invalidTrackingPilotEvidence.observedThrough = $now.AddSeconds(1).ToString("o")
+    Write-TestJson -Path $trackingPilotEvidencePath -Value $invalidTrackingPilotEvidence
+    Assert-Throws {
+        Assert-TrackingWindowPilotEvidence -EvidenceSnapshot (Read-StrictJsonSnapshot -Path $trackingPilotEvidencePath) `
+            -PilotSchoolId $testSchoolId -ToolSha $toolSha -AppSha $appSha -ImageDigest $digest `
+            -ApiTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn) `
+            -WorkerTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn) `
+            -RuntimeConfigurationSha256 $trackingPilotRuntimeConfigurationSha256 -Now $now
+    } "Pilot evidence with an observation ending after validation must fail closed."
+    Write-TestJson -Path $trackingPilotEvidencePath -Value $trackingPilotEvidence
+    Assert-Throws {
+        New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
+            -PrivateProfilePath $trackingGlobalProfilePath -PrivateTurnEvidencePath $evidencePath `
+            -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+            -ApiTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn) `
+            -WorkerTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn) `
+            -Now $now -SkipRepositoryCheck
+    } "Tracking-window global planning must fail without pilot smoke and soak evidence."
+    $trackingGlobalPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
+        -PrivateProfilePath $trackingGlobalProfilePath -PrivateTurnEvidencePath $evidencePath `
+        -PrivateTrackingPilotEvidencePath $trackingPilotEvidencePath `
+        -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+        -ApiTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn) `
+        -WorkerTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn) `
+        -Now $now -SkipRepositoryCheck
+    $trackingGlobalPlan = Read-RuntimePlan -Path $trackingGlobalPlanResult.PlanPath `
+        -ExpectedSha256 $trackingGlobalPlanResult.PlanSha256
+    Assert-Condition ($trackingGlobalPlan.profileMode -ceq "tracking-window-global-on" -and
+        [int]$trackingGlobalPlan.schoolScopeCount -eq 0 -and
+        [int]$trackingGlobalPlan.enabledCapabilityCount -eq 10 -and
+        [string]$trackingGlobalPlan.validationLevel -ceq "managed" -and
+        [string]$trackingGlobalPlan.managedValidation -ceq "passed" -and
+        [string]$trackingGlobalPlan.trackingPilotEvidenceSha256 -ceq
+            (Get-FileSha256 -Path $trackingPilotEvidencePath)) `
+        "Tracking-window global plan must be admitted only after the live pilot state and retain managed validation authority."
+    $trackingGlobalPlanText = [IO.File]::ReadAllText($trackingGlobalPlanResult.PlanPath)
+    Assert-Condition (-not $trackingGlobalPlanText.Contains($testSchoolId) -and
+        -not $trackingGlobalPlanText.Contains([string]$trackingPilotEvidence.pilotRuntimeConfigurationSha256)) `
+        "Tracking-window global plan must retain only the pilot evidence hash, never its private contents."
+    $capturedTrackingPilotEvidenceBytes = [IO.File]::ReadAllBytes([string]$trackingGlobalPlan.trackingPilotEvidencePath)
+    $tamperedTrackingPilotEvidence = Read-StrictJson -Path ([string]$trackingGlobalPlan.trackingPilotEvidencePath)
+    $tamperedTrackingPilotEvidence.checks.adminObserveTabSwitchingPassed = $false
+    Write-TestJson -Path ([string]$trackingGlobalPlan.trackingPilotEvidencePath) -Value $tamperedTrackingPilotEvidence
+    Assert-Throws {
+        Invoke-RuntimeConfigApply -Plan $trackingGlobalPlan `
+            -PlanSha256 $trackingGlobalPlanResult.PlanSha256 -Now $now `
+            -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck
+    } "Tracking-window global apply must reject pilot evidence changed after planning."
+    [IO.File]::WriteAllBytes(
+        [string]$trackingGlobalPlan.trackingPilotEvidencePath,
+        $capturedTrackingPilotEvidenceBytes
+    )
+    Set-PrivatePathPermissions -Path ([string]$trackingGlobalPlan.trackingPilotEvidencePath)
+    Assert-Throws {
+        Invoke-RuntimeConfigApply -Plan $trackingGlobalPlan `
+            -PlanSha256 $trackingGlobalPlanResult.PlanSha256 -Now $now.AddHours(2).AddMinutes(1) `
+            -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck
+    } "Tracking-window global apply must revalidate pilot evidence freshness."
+    $trackingGlobalApplyResult = Invoke-RuntimeConfigApply -Plan $trackingGlobalPlan `
+        -PlanSha256 $trackingGlobalPlanResult.PlanSha256 -Now $now `
+        -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck
+    Assert-Condition ($trackingGlobalApplyResult.status -ceq "applied" -and
+        $trackingGlobalApplyResult.profileMode -ceq "tracking-window-global-on" -and
+        [string]$trackingGlobalApplyResult.trackingPilotEvidenceSha256 -ceq
+            [string]$trackingGlobalPlan.trackingPilotEvidenceSha256 -and
+        $trackingGlobalApplyResult.scalingRestored) `
+        "Tracking-window global apply must revalidate the hash-bound pilot evidence and converge."
+    foreach ($globalCandidateContract in @(
+        [pscustomobject]@{ Arn = [string]$trackingGlobalApplyResult.candidateApiTaskDefinitionArn; Container = "api" },
+        [pscustomobject]@{ Arn = [string]$trackingGlobalApplyResult.candidateWorkerTaskDefinitionArn; Container = "scheduler-worker" }
+    )) {
+        $globalCandidate = $global:RuntimeConfigTestState.TaskResponses[$globalCandidateContract.Arn].taskDefinition
+        $globalCandidateContainer = @($globalCandidate.containerDefinitions | Where-Object name -CEQ $globalCandidateContract.Container)[0]
+        $globalCandidateState = Get-RuntimeActivationState -Environment @($globalCandidateContainer.environment)
+        Assert-Condition ($globalCandidateState.Mode -ceq "tracking-window-global-on" -and
+            $null -eq $globalCandidateState.SchoolId) `
+            "Tracking-window global apply must remove pilot scope identically from API and worker."
+    }
+    $trackingGlobalRollbackResult = Invoke-RuntimeConfigRollback -Plan $trackingGlobalPlan `
+        -PlanSha256 $trackingGlobalPlanResult.PlanSha256 -Now $now `
+        -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0
+    Assert-Condition ($trackingGlobalRollbackResult.status -ceq "rolled_back" -and
+        $global:RuntimeConfigTestState.ApiCurrentArn -ceq
+            [string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn -and
+        $global:RuntimeConfigTestState.WorkerCurrentArn -ceq
+            [string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn) `
+        "Tracking-window global rollback must restore the exact school-scoped pilot pair."
+    $trackingPilotResultText = [IO.File]::ReadAllText([string]$trackingPilotPlan.resultPath)
+    $trackingPilotCheckpointText = [IO.File]::ReadAllText([string]$trackingPilotPlan.checkpointPath)
+    Assert-Condition (-not $trackingPilotResultText.Contains($testSchoolId) -and
+        -not $trackingPilotCheckpointText.Contains($testSchoolId)) `
+        "Tracking-window pilot result and checkpoint evidence must remain identifier-free."
+    $trackingPilotRollbackResult = Invoke-RuntimeConfigRollback -Plan $trackingPilotPlan `
+        -PlanSha256 $trackingPilotPlanResult.PlanSha256 -Now $now `
+        -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0
+    Assert-Condition ($trackingPilotRollbackResult.status -ceq "rolled_back" -and
+        $global:RuntimeConfigTestState.ApiCurrentArn -ceq $apiSourceArn -and
+        $global:RuntimeConfigTestState.WorkerCurrentArn -ceq $workerSourceArn) `
+        "Tracking-window pilot rollback must restore the exact pre-pilot API and worker revisions."
+    foreach ($sourceContract in @(
+        [pscustomobject]@{ Arn = $apiSourceArn; Container = "api" },
+        [pscustomobject]@{ Arn = $workerSourceArn; Container = "scheduler-worker" }
+    )) {
+        $sourceTask = $global:RuntimeConfigTestState.TaskResponses[$sourceContract.Arn].taskDefinition
+        $sourceContainer = @($sourceTask.containerDefinitions | Where-Object name -CEQ $sourceContract.Container)[0]
+        $sourceState = Get-RuntimeActivationState -Environment @($sourceContainer.environment) -AllowBaseline
+        Assert-Condition ($sourceState.Mode -ceq "global-on") `
+            "Tracking-window pilot rollback must return both services to the explicit global-on tracking-off profile."
+    }
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
 
     $offProfilePath = Join-Path $testRoot "off-profile.json"

@@ -7,6 +7,7 @@ export const MONITORING_SIGNAL_LOSS_CONFIRMED_MS =
 export const MONITORING_CONFIRMATION_FRESH_MS = 45_000;
 export const SCREENSHOT_STALE_MS = 75_000;
 export const SCREENSHOT_RECONNECT_RETAIN_MS = 120_000;
+export const SCREENSHOT_SUCCESSFUL_NULL_RETAIN_UNTIL_FIELD = '__classpilotSuccessfulNullRetainUntilMs';
 export const OBSERVED_AT_DISPLAY_FUTURE_SKEW_MS = 60_000;
 
 const MINUTE_MS = 60_000;
@@ -238,21 +239,34 @@ export function deriveScreenshotDisplay(screenshotData, nowMs = Date.now()) {
     nowMs,
   );
   const available = Boolean(screenshotData?.screenshot);
+  const normalFreshUntilMs = observedAtMs === null
+    ? null
+    : observedAtMs + SCREENSHOT_STALE_MS;
+  const successfulNullRetainUntilValue = Number(
+    screenshotData?.[SCREENSHOT_SUCCESSFUL_NULL_RETAIN_UNTIL_FIELD],
+  );
+  const successfulNullRetainUntilMs = Number.isFinite(successfulNullRetainUntilValue)
+    && successfulNullRetainUntilValue > 0
+    && normalFreshUntilMs !== null
+    ? Math.min(successfulNullRetainUntilValue, normalFreshUntilMs)
+    : null;
+  const retainedUntilMs = successfulNullRetainUntilMs
+    ?? (observedAtMs === null ? null : observedAtMs + SCREENSHOT_RECONNECT_RETAIN_MS);
   const fresh = available
-    && observedAtMs !== null
-    && nowMs < observedAtMs + SCREENSHOT_STALE_MS;
+    && normalFreshUntilMs !== null
+    && nowMs < normalFreshUntilMs;
   const retained = available
-    && observedAtMs !== null
-    && nowMs < observedAtMs + SCREENSHOT_RECONNECT_RETAIN_MS;
+    && retainedUntilMs !== null
+    && nowMs < retainedUntilMs;
   return {
     available,
     fresh,
     retained,
     observedAtMs,
     nextBoundaryAtMs: fresh
-      ? observedAtMs + SCREENSHOT_STALE_MS
+      ? normalFreshUntilMs
       : retained
-        ? observedAtMs + SCREENSHOT_RECONNECT_RETAIN_MS
+        ? retainedUntilMs
         : null,
   };
 }
