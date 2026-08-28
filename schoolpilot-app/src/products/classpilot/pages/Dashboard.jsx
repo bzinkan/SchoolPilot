@@ -83,6 +83,7 @@ import {
   transientEntryFeedback,
 } from '../lib/commandDeliveryTruth';
 import {
+  buildStudentSignOutCommandRequest,
   combineCommandSettlements,
   deriveDashboardCapabilities,
   exactTabCloseCapability,
@@ -90,6 +91,7 @@ import {
   normalizeSessionFabState,
   parseTabSelectionKey,
   resolveCommandTargets,
+  resolveStudentSignOutTargets,
   studentSupportsCapability,
   studentSignOutCommandPayload,
   sessionFabSettingsPayload,
@@ -341,6 +343,7 @@ export default function Dashboard() {
   const showSidebar = (hasPassPilot || hasGoPilot) && sidebarOpen;
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [selectedStudentIds, setSelectedStudentIds] = useState(new Set());
+  const [selectedServerSignOutStudentIds, setSelectedServerSignOutStudentIds] = useState(new Set());
   const [searchQuery, setSearchQuery] = useState("");
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const [selectedGrade, setSelectedGrade] = useState(() => {
@@ -663,6 +666,9 @@ export default function Dashboard() {
     void queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
   }, [effectiveSession?.id]);
   useEffect(() => {
+    setSelectedServerSignOutStudentIds(new Set());
+  }, [currentUser?.id, dashboardCapabilities.mode, effectiveSession?.id, school?.id]);
+  useEffect(() => {
     const sessionId = effectiveSession?.id || null;
     if (!dashboardCapabilities.canChangeFabSettings || !sessionId || settings?.activeSessionId !== sessionId) {
       setSessionFabState(null);
@@ -975,6 +981,7 @@ export default function Dashboard() {
     ) {
       setSelectedSubgroupId("");
       setSelectedStudentIds(new Set());
+      setSelectedServerSignOutStudentIds(new Set());
     }
   }, [selectedSubgroupId, subgroups]);
 
@@ -1911,11 +1918,32 @@ export default function Dashboard() {
       && studentSupportsCapability(student, 'screenOnlyUnlockV1')
     );
   };
+  const isStudentServerSignOutEligible = (student) => (
+    dashboardCapabilities.ownedClassSession
+    && isStudentStructurallyCommandable(student)
+    && student?.isLoggedIn === true
+    && student?.loginState !== 'not_logged_in'
+  );
 
   // Selection handlers
   const toggleStudentSelection = (studentId) => {
     const student = filteredStudents.find((row) => row.studentId === studentId);
     if (studentView === "class" && !isStudentCommandable(student)) {
+      if (isStudentServerSignOutEligible(student)) {
+        setSelectedStudentIds((current) => {
+          if (!current.has(studentId)) return current;
+          const next = new Set(current);
+          next.delete(studentId);
+          return next;
+        });
+        setSelectedServerSignOutStudentIds((current) => {
+          const next = new Set(current);
+          if (next.has(studentId)) next.delete(studentId);
+          else next.add(studentId);
+          return next;
+        });
+        return;
+      }
       const structurallyCommandable = isStudentStructurallyCommandable(student);
       toast({
         variant: "destructive",
@@ -1932,6 +1960,15 @@ export default function Dashboard() {
       });
       return;
     }
+    if (selectedServerSignOutStudentIds.has(studentId)) {
+      setSelectedServerSignOutStudentIds((current) => {
+        if (!current.has(studentId)) return current;
+        const next = new Set(current);
+        next.delete(studentId);
+        return next;
+      });
+      return;
+    }
     setSelectedStudentIds((prev) => {
       const newSet = new Set(prev);
       if (newSet.has(studentId)) { newSet.delete(studentId); } else { newSet.add(studentId); }
@@ -1941,18 +1978,24 @@ export default function Dashboard() {
   const selectAll = () => {
     const allStudentIds = selectableStudents.map((s) => s.studentId);
     setSelectedStudentIds(new Set(allStudentIds));
+    setSelectedServerSignOutStudentIds(new Set());
   };
-  const clearSelection = () => { setSelectedStudentIds(new Set()); };
+  const clearSelection = () => {
+    setSelectedStudentIds(new Set());
+    setSelectedServerSignOutStudentIds(new Set());
+  };
   const handleStudentViewChange = (view) => {
     if (dashboardCapabilities.observedOtherClass && view !== 'class') return;
     setStudentView(view);
     setSelectedStudentIds(new Set());
+    setSelectedServerSignOutStudentIds(new Set());
     setSearchQuery("");
   };
   const handleAdminObservedSessionChange = (event) => {
     const sessionId = event.target.value || null;
     setAdminObservedSessionId(sessionId);
     setSelectedStudentIds(new Set());
+    setSelectedServerSignOutStudentIds(new Set());
     setSearchQuery("");
     setSelectedSubgroupId("");
     setSelectedStudent(null);
@@ -2124,6 +2167,19 @@ export default function Dashboard() {
     : studentView === "claimed"
       ? filteredClaimedStudents
       : filteredClassStudents;
+  const signOutEligibleStudentIdsKey = JSON.stringify(
+    sessionFilteredStudents
+      .filter(isStudentServerSignOutEligible)
+      .map((student) => student.studentId)
+      .sort(),
+  );
+  useEffect(() => {
+    const eligibleStudentIds = new Set(JSON.parse(signOutEligibleStudentIdsKey));
+    setSelectedServerSignOutStudentIds((current) => {
+      const next = new Set([...current].filter((studentId) => eligibleStudentIds.has(studentId)));
+      return next.size === current.size ? current : next;
+    });
+  }, [signOutEligibleStudentIdsKey]);
   const observationStudentIdsKey = JSON.stringify([...new Set(
     studentView === 'claimed'
       ? claimedPickupStudents.map((student) => student.studentId)
@@ -2605,9 +2661,22 @@ export default function Dashboard() {
       return EMPTY_LIST;
     }
   };
-  const getStudentsForCommandTarget = (overrideStudentIds = null) => (
-    dashboardCapabilities.mode === 'owned-class' ? getActiveCommandStudents(overrideStudentIds) : EMPTY_LIST
-  );
+  const resolveActiveStudentSignOutTarget = (studentIds) => {
+    if (classStudentTargetsUnavailable) {
+      throw new Error('Student targets are unavailable until the class roster finishes loading.');
+    }
+    if (subgroupCommandsDisabled) {
+      throw new Error('Wait for the selected subgroup roster to finish loading before signing students out.');
+    }
+    return resolveStudentSignOutTargets({
+      mode: dashboardCapabilities.mode,
+      sessionStudents: sessionFilteredStudents.map((student) => ({
+        ...student,
+        signOutEligible: isStudentServerSignOutEligible(student),
+      })),
+      selectedStudentIds: studentIds,
+    });
+  };
 
   const targetStudents = studentView === "available" ? filteredStudents : getActiveCommandStudents();
   const screenToolbarRosterUnavailable = studentView === 'class'
@@ -2642,9 +2711,16 @@ export default function Dashboard() {
         !selectedSubgroupId || subgroupMembers.has(student.studentId)
       ))
     : EMPTY_LIST;
+  const ownedClassBannerStudents = dashboardCapabilities.ownedClassSession
+    ? sessionFilteredStudents.filter((student) => (
+        !selectedSubgroupId || subgroupMembers.has(student.studentId)
+      ))
+    : EMPTY_LIST;
   const bannerStudents = dashboardCapabilities.observedOtherClass
     ? observedViewStudents
-    : targetStudents;
+    : dashboardCapabilities.ownedClassSession
+      ? ownedClassBannerStudents
+      : targetStudents;
   const bannerCounts = {
     connected: 0,
     updating: 0,
@@ -2696,10 +2772,12 @@ export default function Dashboard() {
     : studentView === 'claimed' && selectedStudentIds.size === 0
     ? `${targetStudents.length} claimed student${targetStudents.length === 1 ? '' : 's'} in ${claimedTargetContextCount} supervision group${claimedTargetContextCount === 1 ? '' : 's'}${claimedSearchDisclosure}`
     : selectedStudentIds.size > 0
-    ? `${targetStudents.length} selected ${studentView === "class" ? "controllable " : "claimed "}student${targetStudents.length === 1 ? "" : "s"}${studentView === 'claimed' ? ` in ${claimedTargetContextCount} supervision group${claimedTargetContextCount === 1 ? '' : 's'}` : ''}`
+    ? `${targetStudents.length} selected ${studentView === "class" ? "controllable " : "claimed "}student${targetStudents.length === 1 ? "" : "s"}${selectedServerSignOutStudentIds.size > 0 ? ` · ${selectedServerSignOutStudentIds.size} selected for sign-out only` : ''}${studentView === 'claimed' ? ` in ${claimedTargetContextCount} supervision group${claimedTargetContextCount === 1 ? '' : 's'}` : ''}`
+    : selectedServerSignOutStudentIds.size > 0
+      ? `${selectedServerSignOutStudentIds.size} selected for sign-out only`
     : selectedSubgroupId && studentView === "class"
-      ? `${subgroupName || "Subgroup"} - ${targetStudents.length} student${targetStudents.length === 1 ? "" : "s"}`
-      : `All ${targetStudents.length} student${targetStudents.length === 1 ? "" : "s"}`;
+      ? `${subgroupName || "Subgroup"} - ${ownedClassBannerStudents.length} student${ownedClassBannerStudents.length === 1 ? "" : "s"}`
+      : `All ${dashboardCapabilities.ownedClassSession ? ownedClassBannerStudents.length : targetStudents.length} student${(dashboardCapabilities.ownedClassSession ? ownedClassBannerStudents.length : targetStudents.length) === 1 ? "" : "s"}`;
   const observedViewLabel = subgroupCommandsDisabled
     ? `${subgroupName || 'Subgroup'} roster unavailable`
     : selectedSubgroupId
@@ -2721,10 +2799,23 @@ export default function Dashboard() {
   const displayedTargetConnectionLabel = bannerCountsKnown
     ? dashboardCapabilities.observedOtherClass ? observedConnectionLabel : targetConnectionLabel
     : 'Counts unavailable';
-  const selectedSignOutStudents = studentView === "class"
-    ? getStudentsForCommandTarget(Array.from(selectedStudentIds))
-    : [];
+  const selectedSignOutStudentIds = [
+    ...new Set([
+      ...selectedStudentIds,
+      ...selectedServerSignOutStudentIds,
+    ]),
+  ];
+  let selectedSignOutTarget = null;
+  if (studentView === "class" && selectedSignOutStudentIds.length > 0) {
+    try {
+      selectedSignOutTarget = resolveActiveStudentSignOutTarget(selectedSignOutStudentIds);
+    } catch {
+      selectedSignOutTarget = null;
+    }
+  }
+  const selectedSignOutStudents = selectedSignOutTarget?.targetStudents || EMPTY_LIST;
   const signOutSelectedCount = selectedSignOutStudents.length;
+  const signOutSelectionLabel = `${signOutSelectedCount} explicitly selected student${signOutSelectedCount === 1 ? '' : 's'}`;
   const canSignOutSelectedStudents = studentView === "class" && !!effectiveSession?.id && signOutSelectedCount > 0;
   const canShowStudentWorkspace = isAdmin || (isTeacher && (activeSession || studentView !== "class"));
   const canUseRemoteControls = dashboardCapabilities.canUseRemoteControls
@@ -2765,6 +2856,16 @@ export default function Dashboard() {
     }
     if (!dashboardCapabilities.effectiveSession?.id) {
       throw new Error("Start or select an active class session before sending classroom commands.");
+    }
+    if (commandType === 'student-sign-out') {
+      const target = resolveActiveStudentSignOutTarget(options.studentIds ?? EMPTY_LIST);
+      return {
+        request: buildStudentSignOutCommandRequest(
+          dashboardCapabilities.effectiveSession.id,
+          target,
+        ),
+        target,
+      };
     }
     const allowSafetyUnlock = commandType === 'unlock-screen'
       && Array.isArray(options.studentIds)
@@ -3165,6 +3266,11 @@ export default function Dashboard() {
       queryClient.invalidateQueries({ queryKey: ['/api/coverage/claimed-students'] });
       queryClient.invalidateQueries({ queryKey: ['/api/coverage/contexts'] });
       setSelectedStudentIds((prev) => {
+        const next = new Set(prev);
+        (variables?.studentIds || []).forEach((studentId) => next.delete(studentId));
+        return next;
+      });
+      setSelectedServerSignOutStudentIds((prev) => {
         const next = new Set(prev);
         (variables?.studentIds || []).forEach((studentId) => next.delete(studentId));
         return next;
@@ -4125,7 +4231,7 @@ export default function Dashboard() {
                   >
                     <Users className="h-4 w-4" /> Select All ({selectableStudents.length})
                   </button>
-                  <button onClick={clearSelection} disabled={selectedStudentIds.size === 0} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium bg-transparent border border-border text-muted-foreground hover:bg-card transition-colors disabled:opacity-50 disabled:cursor-not-allowed" data-testid="button-clear-selection">
+                  <button onClick={clearSelection} disabled={selectedStudentIds.size === 0 && selectedServerSignOutStudentIds.size === 0} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium bg-transparent border border-border text-muted-foreground hover:bg-card transition-colors disabled:opacity-50 disabled:cursor-not-allowed" data-testid="button-clear-selection">
                     Clear Selection
                   </button>
                 </>
@@ -4149,7 +4255,7 @@ export default function Dashboard() {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => { setSignOutTargetSnapshot(targetBannerLabel); setShowSignOutDialog(true); }}
+                onClick={() => { setSignOutTargetSnapshot(signOutSelectionLabel); setShowSignOutDialog(true); }}
                 disabled={subgroupCommandsDisabled || !canSignOutSelectedStudents || signOutStudentsMutation.isPending}
                 data-testid="button-sign-out-students"
                 className="border-gray-300 bg-gray-200 text-black hover:bg-gray-300 hover:text-black disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-200 disabled:text-black/60 disabled:opacity-40"
@@ -4171,6 +4277,7 @@ export default function Dashboard() {
                 onChange={(event) => {
                   setSelectedSubgroupId(event.target.value);
                   setSelectedStudentIds(new Set());
+                  setSelectedServerSignOutStudentIds(new Set());
                 }}
                 data-testid="select-subgroup-filter"
                 aria-label="Filter by subgroup"
@@ -4503,6 +4610,8 @@ export default function Dashboard() {
               const tileActionsDisabledReason = supervisedElsewhere
                 ? supervisionReason
                 : dashboardCapabilities.reason;
+              const signOutOnlySelectionAvailable = isStudentServerSignOutEligible(student)
+                && !isStudentCommandable(student);
               const tileStudent = supervisedElsewhere
                 ? {
                     studentId: student.studentId,
@@ -4544,8 +4653,12 @@ export default function Dashboard() {
                     blockedDomains={supervisedElsewhere ? EMPTY_LIST : settings?.blockedDomains || []}
                     isOffTask={!supervisedElsewhere && isStudentOffTask(student)}
                     isAbsent={!supervisedElsewhere && absentIds.has(student.studentId)}
-                    isSelected={!supervisedElsewhere && selectedStudentIds.has(student.studentId)}
+                    isSelected={!supervisedElsewhere && (
+                      selectedStudentIds.has(student.studentId)
+                      || selectedServerSignOutStudentIds.has(student.studentId)
+                    )}
                     onToggleSelect={!dashboardCapabilities.canSelectStudents || supervisedElsewhere ? undefined : () => toggleStudentSelection(student.studentId)}
+                    signOutOnlySelectionAvailable={signOutOnlySelectionAvailable}
                     liveStream={!supervisedElsewhere && liveViewState.studentId === studentRealtimeKey ? liveViewState.stream : null}
                     liveViewPending={!supervisedElsewhere && liveViewState.studentId === studentRealtimeKey && liveViewState.pending}
                     onStartLiveView={dashboardCapabilities.canUseLiveView && supportsNegotiatedLiveView && !supervisedElsewhere && student.isLoggedIn && effectiveSession?.id ? () => handleStartLiveView(studentRealtimeKey, student.studentName) : undefined}
@@ -4898,7 +5011,7 @@ export default function Dashboard() {
           <DialogHeader>
             <DialogTitle>Sign out selected students?</DialogTitle>
             <DialogDescription>
-              Target: {signOutTargetSnapshot || targetBannerLabel}. This will sign {signOutSelectedCount} selected student{signOutSelectedCount === 1 ? "" : "s"} out of ClassPilot on their current Chromebook{signOutSelectedCount === 1 ? "" : "s"}. They will need to sign back in before monitoring, messaging, and hand raising resume.
+              Target: {signOutTargetSnapshot || signOutSelectionLabel}. This will sign {signOutSelectedCount} selected student{signOutSelectedCount === 1 ? "" : "s"} out of ClassPilot on their current Chromebook{signOutSelectedCount === 1 ? "" : "s"}. They will need to sign back in before monitoring, messaging, and hand raising resume.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

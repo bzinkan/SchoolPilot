@@ -49,6 +49,12 @@ const SIGNAL_LOST_RETAINED_STUDENT = Object.freeze({
   studentName: 'Signal Lost Retained Student',
 });
 
+const SIGNAL_LOST_SIGN_OUT_STUDENT = Object.freeze({
+  ...SIGNAL_LOST_STUDENT,
+  studentId: 'signal-lost-sign-out-student',
+  studentName: 'Signal Lost Sign Out Student',
+});
+
 const SIGNAL_LOST_EXPIRED_STUDENT = Object.freeze({
   ...SIGNAL_LOST_STUDENT,
   studentId: 'signal-lost-expired-student',
@@ -233,6 +239,23 @@ function TileRegressionHarness() {
           />
         </div>
 
+        <div data-testid="signal-lost-sign-out-tile-host">
+          <StudentTile
+            student={{ ...SIGNAL_LOST_SIGN_OUT_STUDENT, lastSeenAt: observedAtMs }}
+            monitoringDisplay={{
+              kind: 'signal_lost',
+              status: 'signal_lost',
+              label: 'Monitoring signal lost',
+              telemetryCurrent: false,
+              observedAtMs,
+              nextBoundaryAtMs: null,
+            }}
+            signOutOnlySelectionAvailable
+            onToggleSelect={() => {}}
+            onCommand={() => {}}
+          />
+        </div>
+
         <div data-testid="signal-lost-expired-tile-host">
           <StudentTile
             student={{ ...SIGNAL_LOST_EXPIRED_STUDENT, lastSeenAt: observedAtMs }}
@@ -268,6 +291,7 @@ function TileRegressionHarness() {
             }}
             actionsDisabled
             actionsDisabledReason="Observe mode is read-only."
+            signOutOnlySelectionAvailable
             onClick={() => setCardClicks((count) => count + 1)}
             onToggleSelect={() => {}}
             onManageTabs={() => {}}

@@ -270,6 +270,57 @@ export function resolveCommandTargets({
   };
 }
 
+export function resolveStudentSignOutTargets({
+  mode,
+  sessionStudents = [],
+  selectedStudentIds = [],
+}) {
+  if (mode !== 'owned-class') {
+    throw new Error('Student sign out is available only for your active class.');
+  }
+
+  const selectedIds = normalizedIds(selectedStudentIds);
+  if (selectedIds.length === 0) {
+    throw new Error('Select at least one student to sign out.');
+  }
+
+  const eligibleRowsById = new Map(
+    (sessionStudents || [])
+      .filter((student) => student?.signOutEligible === true)
+      .map((student) => [studentId(student), student])
+      .filter(([id]) => id),
+  );
+  if (selectedIds.some((id) => !eligibleRowsById.has(id))) {
+    throw new Error('One or more selected students can no longer be signed out. Refresh and try again.');
+  }
+
+  const targetStudents = selectedIds.map((id) => eligibleRowsById.get(id));
+  return {
+    mode,
+    targetScope: 'students',
+    targetStudentIds: selectedIds,
+    targetStudents,
+    groups: [{ kind: 'class', id: null, targetStudentIds: selectedIds }],
+    targetCount: selectedIds.length,
+    contextCount: 1,
+  };
+}
+
+export function buildStudentSignOutCommandRequest(teachingSessionId, target) {
+  const sessionId = String(teachingSessionId || '').trim();
+  const targetStudentIds = normalizedIds(target?.targetStudentIds);
+  if (!sessionId || target?.targetScope !== 'students' || targetStudentIds.length === 0) {
+    throw new Error('Student sign out requires an active class and explicit student targets.');
+  }
+  return {
+    teachingSessionId: sessionId,
+    targetScope: 'students',
+    targetStudentIds,
+    commandType: 'student-sign-out',
+    commandPayload: {},
+  };
+}
+
 function errorMessage(reason) {
   return reason?.response?.data?.error || reason?.data?.error || reason?.message || 'Command request failed';
 }

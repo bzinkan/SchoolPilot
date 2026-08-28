@@ -66,6 +66,7 @@ function StudentTile({
   isAbsent = false,
   isSelected = false,
   onToggleSelect,
+  signOutOnlySelectionAvailable = false,
   liveStream,
   onStartLiveView,
   onStopLiveView,
@@ -101,6 +102,9 @@ function StudentTile({
   const currentTelemetry = effectiveMonitoringDisplay.telemetryCurrent;
   const monitoringActionsDisabled = !currentTelemetry;
   const interactionsDisabled = actionsDisabled || monitoringSuppressed || monitoringActionsDisabled;
+  const selectionDisabled = actionsDisabled
+    || monitoringSuppressed
+    || (monitoringActionsDisabled && !signOutOnlySelectionAvailable);
   const screenshotDisplay = deriveScreenshotDisplay(
     monitoringSuppressed ? null : screenshotData,
     freshnessNowMs,
@@ -303,10 +307,14 @@ function StudentTile({
             {onToggleSelect && !monitoringSuppressed && (
               <Checkbox
                 checked={isSelected}
-                disabled={interactionsDisabled}
+                disabled={selectionDisabled}
                 onCheckedChange={onToggleSelect}
                 onClick={(e) => e.stopPropagation()}
-                title={interactionsDisabled ? unavailableActionReason : "Select this student"}
+                title={selectionDisabled
+                  ? unavailableActionReason
+                  : signOutOnlySelectionAvailable
+                    ? "Select for Student Sign Out only"
+                    : "Select this student"}
                 data-testid={`checkbox-select-student-${student.studentId}`}
               />
             )}

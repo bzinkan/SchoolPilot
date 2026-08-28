@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  buildStudentSignOutCommandRequest,
   combineCommandSettlements,
   deriveDashboardCapabilities,
   exactTabCloseCapability,
@@ -10,6 +11,7 @@ import {
   normalizeSessionFabState,
   parseTabSelectionKey,
   resolveCommandTargets,
+  resolveStudentSignOutTargets,
   studentSupportsCapability,
   studentTileFlightPathReleaseCommand,
   studentTileScreenToggleCommand,
@@ -73,6 +75,57 @@ test('class targets are narrowed only by explicit selection, subgroup, or tile o
     overrideStudentIds: ['b'],
   });
   assert.deepEqual(override.targetStudentIds, ['b']);
+});
+
+test('stale authoritative sessions are selectable only by the explicit owned-class sign-out resolver', () => {
+  const rows = [
+    { studentId: 'fresh', commandable: true, signOutEligible: true },
+    { studentId: 'stale', commandable: false, signOutEligible: true },
+    { studentId: 'signed-out', commandable: false, signOutEligible: false },
+  ];
+
+  assert.deepEqual(resolveCommandTargets({
+    mode: 'owned-class',
+    sessionStudents: rows,
+  }).targetStudentIds, ['fresh']);
+
+  const staleTarget = resolveStudentSignOutTargets({
+    mode: 'owned-class',
+    sessionStudents: rows,
+    selectedStudentIds: ['stale'],
+  });
+  assert.deepEqual(staleTarget, {
+    mode: 'owned-class',
+    targetScope: 'students',
+    targetStudentIds: ['stale'],
+    targetStudents: [rows[1]],
+    groups: [{ kind: 'class', id: null, targetStudentIds: ['stale'] }],
+    targetCount: 1,
+    contextCount: 1,
+  });
+  assert.deepEqual(buildStudentSignOutCommandRequest('session-1', staleTarget), {
+    teachingSessionId: 'session-1',
+    targetScope: 'students',
+    targetStudentIds: ['stale'],
+    commandType: 'student-sign-out',
+    commandPayload: {},
+  });
+
+  assert.throws(() => resolveStudentSignOutTargets({
+    mode: 'observe-read-only',
+    sessionStudents: rows,
+    selectedStudentIds: ['stale'],
+  }), /only for your active class/i);
+  assert.throws(() => resolveStudentSignOutTargets({
+    mode: 'owned-class',
+    sessionStudents: rows,
+    selectedStudentIds: ['stale', 'signed-out'],
+  }), /can no longer be signed out/i);
+  assert.throws(() => resolveStudentSignOutTargets({
+    mode: 'owned-class',
+    sessionStudents: rows,
+    selectedStudentIds: [],
+  }), /select at least one/i);
 });
 
 test('claimed targets always use the full claimed cohort when there is no explicit selection', () => {
