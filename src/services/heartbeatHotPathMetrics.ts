@@ -12,6 +12,7 @@ export type HeartbeatHotPathCounter =
   | "heartbeatReplacedSession"
   | "manualSessionLeaseRenewed"
   | "manualSessionLoginIssued"
+  | "manualSessionCrossStudentHandoff"
   | "manualSessionLegacyReplaced"
   | "manualSessionManualReplaced"
   | "manualSessionReleaseTransitioned"

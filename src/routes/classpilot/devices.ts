@@ -1023,6 +1023,50 @@ async function broadcastStudentSignedOut(options: {
   await publishClasspilotStudentSessionEnded(options);
 }
 
+export async function publishCommittedStudentSessionReplacements(options: {
+  schoolId: string;
+  replacementDeviceId: string;
+  replacedSessions: Array<{
+    id: string;
+    studentId: string;
+    deviceId: string;
+  }>;
+}, dependencies: {
+  broadcastEnded?: typeof broadcastStudentSignedOut;
+  sendLocal?: typeof sendToDeviceLocal;
+  publishRemote?: typeof publishWS;
+} = {}): Promise<void> {
+  const broadcastEnded = dependencies.broadcastEnded ?? broadcastStudentSignedOut;
+  const sendLocal = dependencies.sendLocal ?? sendToDeviceLocal;
+  const publishRemote = dependencies.publishRemote ?? publishWS;
+  await Promise.allSettled(options.replacedSessions.flatMap((replacedSession) => {
+    const tasks: Promise<unknown>[] = [broadcastEnded({
+      schoolId: options.schoolId,
+      studentId: replacedSession.studentId,
+      studentSessionId: replacedSession.id,
+      deviceId: replacedSession.deviceId,
+      reason: "session_replaced",
+    })];
+    if (replacedSession.deviceId !== options.replacementDeviceId) {
+      const replacedMessage = {
+        type: "student-session-replaced",
+        studentId: replacedSession.studentId,
+        studentSessionId: replacedSession.id,
+        deviceId: replacedSession.deviceId,
+        replacementDeviceId: options.replacementDeviceId,
+        timestamp: new Date().toISOString(),
+      };
+      sendLocal(options.schoolId, replacedSession.deviceId, replacedMessage);
+      tasks.push(publishRemote({
+        kind: "device",
+        schoolId: options.schoolId,
+        deviceId: replacedSession.deviceId,
+      }, replacedMessage));
+    }
+    return tasks;
+  }));
+}
+
 async function completeStudentDeviceLogin(options: {
   schoolId: string;
   deviceId: string;
@@ -1060,6 +1104,7 @@ async function completeStudentDeviceLogin(options: {
     device,
     session,
     replacedSessions,
+    crossStudentHandoff,
     studentToken,
     sessionRecoveryToken,
   } = await issueStudentDeviceSessionToken({
@@ -1085,6 +1130,9 @@ async function completeStudentDeviceLogin(options: {
   const studentEmail = student.email || undefined;
   if (options.authKind === "manual_shared") {
     recordHeartbeatHotPathCounter("manualSessionLoginIssued");
+  }
+  if (crossStudentHandoff) {
+    recordHeartbeatHotPathCounter("manualSessionCrossStudentHandoff");
   }
   const replacedLegacyCount = replacedSessions.filter(
     (row) => row.authKind === "legacy"
@@ -1120,32 +1168,11 @@ async function completeStudentDeviceLogin(options: {
   // result instead of pre-reading mutable "current" sessions, and attempt every
   // tombstone without allowing a transport failure to invalidate the durable
   // login that already committed.
-  await Promise.allSettled(replacedSessions.flatMap((replacedSession) => {
-    const tasks: Promise<unknown>[] = [broadcastStudentSignedOut({
-      schoolId: options.schoolId,
-      studentId: replacedSession.studentId,
-      studentSessionId: replacedSession.id,
-      deviceId: replacedSession.deviceId,
-      reason: "session_replaced",
-    })];
-    if (replacedSession.deviceId !== options.deviceId) {
-      const replacedMessage = {
-        type: "student-session-replaced",
-        studentId: replacedSession.studentId,
-        studentSessionId: replacedSession.id,
-        deviceId: replacedSession.deviceId,
-        replacementDeviceId: options.deviceId,
-        timestamp: new Date().toISOString(),
-      };
-      sendToDeviceLocal(options.schoolId, replacedSession.deviceId, replacedMessage);
-      tasks.push(publishWS({
-        kind: "device",
-        schoolId: options.schoolId,
-        deviceId: replacedSession.deviceId,
-      }, replacedMessage));
-    }
-    return tasks;
-  }));
+  await publishCommittedStudentSessionReplacements({
+    schoolId: options.schoolId,
+    replacementDeviceId: options.deviceId,
+    replacedSessions,
+  });
 
   const controlState = await getClasspilotStudentControlState(
     options.schoolId,

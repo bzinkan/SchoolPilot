@@ -10582,6 +10582,7 @@ export type StartStudentSessionWithReplacementsOptions = {
 export type StartStudentSessionWithReplacementsResult = {
   session: StudentSession;
   replacedSessions: StudentSession[];
+  crossStudentHandoff: boolean;
 };
 
 export async function startStudentSessionWithReplacements(
@@ -10698,17 +10699,24 @@ export async function startStudentSessionWithReplacements(
       ))
       .for("update", { of: studentSessions });
 
+    let crossStudentHandoff = false;
     if (options.authKind === "manual_shared") {
-      const blockingSession = conflicting.find(({ session, authoritative }) => {
-        if (!authoritative) return false;
-        return !(
-          session.authKind === "manual_shared" &&
-          session.studentId === studentId &&
-          session.deviceId === deviceId &&
-          options.reclaimRecoveryTokenHash != null &&
-          session.sessionRecoveryTokenHash === options.reclaimRecoveryTokenHash
-        );
-      });
+      // A recovery capability may release exactly the authoritative manual
+      // session that created it, but only on the requested school-scoped
+      // device. The recovered student may differ from the newly authenticated
+      // student so a shared Chromebook can safely change hands. Every other
+      // authoritative student or device conflict remains a blocker.
+      const recoveredSession = options.reclaimRecoveryTokenHash == null
+        ? undefined
+        : conflicting.find(({ session, authoritative }) =>
+            authoritative &&
+            session.authKind === "manual_shared" &&
+            session.deviceId === deviceId &&
+            session.sessionRecoveryTokenHash === options.reclaimRecoveryTokenHash
+          );
+      const blockingSession = conflicting.find(({ session, authoritative }) =>
+        authoritative && session.id !== recoveredSession?.session.id
+      );
       if (blockingSession) {
         throw Object.assign(new Error("Student session is active on another sign-in context"), {
           status: 409,
@@ -10716,6 +10724,8 @@ export async function startStudentSessionWithReplacements(
           expose: true,
         });
       }
+      crossStudentHandoff =
+        recoveredSession != null && recoveredSession.session.studentId !== studentId;
     }
 
     const conflictingIds = conflicting.map(({ session }) => session.id);
@@ -10758,7 +10768,7 @@ export async function startStudentSessionWithReplacements(
         target: [studentDevices.studentId, studentDevices.deviceId],
         set: { lastSeenAt: sql`now()` },
       });
-    return { session: session!, replacedSessions };
+    return { session: session!, replacedSessions, crossStudentHandoff };
   });
   await invalidateClasspilotPassiveAuthorization(schoolId);
   return result;

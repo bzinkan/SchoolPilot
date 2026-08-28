@@ -26,6 +26,11 @@ const websocket = await import("../dist/realtime/websocket.js");
 const lifecycle = await import(
   "../dist/services/classpilotStudentSessionLifecycle.js"
 );
+const heartbeatMetrics = await import(
+  "../dist/services/heartbeatHotPathMetrics.js"
+);
+const classpilotDeviceRoutes = await import("../dist/routes/classpilot/devices.js");
+const { hashPassword } = await import("../dist/util/password.js");
 const { schedulerPool } = await import("../dist/services/schedulerDb.js");
 
 const {
@@ -580,6 +585,801 @@ describe("ClassPilot manual-session recovery authority", () => {
         await inSchool(() => storage.getActiveSessionById(releasable.session.id)),
         undefined
       );
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => error ? reject(error) : resolve())
+      );
+    }
+  });
+
+  it("atomically hands one recovered Chromebook session to a different student", async () => {
+    const handoffDeviceId = `${tag}-cross-student-handoff`;
+    await inSchool(() => createDevice({
+      deviceId: handoffDeviceId,
+      deviceName: "Cross-student handoff device",
+      schoolId,
+      classId: schoolId,
+    } as Parameters<typeof createDevice>[0]));
+    const alex = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Alex",
+      lastName: "Recovered",
+      email: `alex-recovered@${tag}.example.edu`,
+      emailLc: `alex-recovered@${tag}.example.edu`,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const bob = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Bob",
+      lastName: "Replacement",
+      email: `bob-replacement@${tag}.example.edu`,
+      emailLc: `bob-replacement@${tag}.example.edu`,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const alexRecovery = createStudentSessionRecovery();
+    const alexSession = await inSchool(() =>
+      startStudentSessionWithReplacements(schoolId, alex.id, handoffDeviceId, {
+        authKind: "manual_shared",
+        sessionRecoveryTokenHash: alexRecovery.tokenHash,
+      })
+    );
+
+    const bobRecovery = createStudentSessionRecovery();
+    const handoff = await inSchool(() =>
+      startStudentSessionWithReplacements(schoolId, bob.id, handoffDeviceId, {
+        authKind: "manual_shared",
+        sessionRecoveryTokenHash: bobRecovery.tokenHash,
+        reclaimRecoveryTokenHash: alexRecovery.tokenHash,
+      })
+    );
+    assert.equal(handoff.crossStudentHandoff, true);
+    assert.deepEqual(
+      handoff.replacedSessions.map((row) => row.id),
+      [alexSession.session.id],
+      "the transaction must return exactly the recovered row for one tombstone"
+    );
+    const [endedAlex] = await inSchool(() => db.select({
+      isActive: studentSessions.isActive,
+      endedAt: studentSessions.endedAt,
+      recoveryHash: studentSessions.sessionRecoveryTokenHash,
+    }).from(studentSessions).where(eq(studentSessions.id, alexSession.session.id)));
+    assert.equal(endedAlex?.isActive, false);
+    assert.ok(endedAlex?.endedAt instanceof Date);
+    assert.equal(endedAlex?.recoveryHash, null);
+    assert.equal(
+      (await inSchool(() => storage.getActiveSessionById(handoff.session.id)))?.studentId,
+      bob.id
+    );
+
+    assert.equal(
+      await inSchool(() => storage.endStudentSessionByRecoveryTokenHash({
+        schoolId,
+        tokenHash: alexRecovery.tokenHash,
+      })),
+      undefined,
+      "delayed recovery cleanup for Alex must not end Bob"
+    );
+    assert.equal(
+      await inSchool(() => storage.endStudentSessionExact({
+        schoolId,
+        studentId: alex.id,
+        deviceId: handoffDeviceId,
+        studentSessionId: alexSession.session.id,
+      })),
+      undefined,
+      "delayed exact cleanup for Alex must remain a no-op"
+    );
+    assert.equal(
+      (await inSchool(() => storage.getActiveSessionById(handoff.session.id)))?.id,
+      handoff.session.id
+    );
+
+    const resumedRecovery = createStudentSessionRecovery();
+    const sameStudentResume = await inSchool(() =>
+      startStudentSessionWithReplacements(schoolId, bob.id, handoffDeviceId, {
+        authKind: "manual_shared",
+        sessionRecoveryTokenHash: resumedRecovery.tokenHash,
+        reclaimRecoveryTokenHash: bobRecovery.tokenHash,
+      })
+    );
+    assert.equal(sameStudentResume.crossStudentHandoff, false);
+    assert.deepEqual(
+      sameStudentResume.replacedSessions.map((row) => row.id),
+      [handoff.session.id]
+    );
+
+    const releasedBeforeLogin = await inSchool(() =>
+      storage.endStudentSessionByRecoveryTokenHash({
+        schoolId,
+        tokenHash: resumedRecovery.tokenHash,
+      })
+    );
+    assert.equal(releasedBeforeLogin?.id, sameStudentResume.session.id);
+    const loginAfterReleaseRecovery = createStudentSessionRecovery();
+    const loginAfterRelease = await inSchool(() =>
+      startStudentSessionWithReplacements(schoolId, alex.id, handoffDeviceId, {
+        authKind: "manual_shared",
+        sessionRecoveryTokenHash: loginAfterReleaseRecovery.tokenHash,
+        reclaimRecoveryTokenHash: resumedRecovery.tokenHash,
+      })
+    );
+    assert.equal(loginAfterRelease.crossStudentHandoff, false);
+    assert.deepEqual(loginAfterRelease.replacedSessions, []);
+    assert.equal(
+      await inSchool(() => storage.endStudentSessionByRecoveryTokenHash({
+        schoolId,
+        tokenHash: resumedRecovery.tokenHash,
+      })),
+      undefined
+    );
+    assert.equal(
+      (await inSchool(() => storage.getActiveSessionById(loginAfterRelease.session.id)))?.studentId,
+      alex.id
+    );
+    await inSchool(() => storage.endStudentSessionExact({
+      schoolId,
+      studentId: alex.id,
+      deviceId: handoffDeviceId,
+      studentSessionId: loginAfterRelease.session.id,
+    }));
+  });
+
+  it("publishes exactly one session_replaced tombstone for one committed handoff row", async () => {
+    const tombstones: Array<{
+      schoolId: string;
+      studentId: string;
+      studentSessionId: string;
+      deviceId: string;
+      reason: string;
+    }> = [];
+    let localReplacementNotices = 0;
+    let remoteReplacementNotices = 0;
+    await classpilotDeviceRoutes.publishCommittedStudentSessionReplacements({
+      schoolId: "school-publication-test",
+      replacementDeviceId: "device-same",
+      replacedSessions: [{
+        id: "session-old",
+        studentId: "student-old",
+        deviceId: "device-same",
+      }],
+    }, {
+      broadcastEnded: async (options) => {
+        tombstones.push(options);
+      },
+      sendLocal: () => {
+        localReplacementNotices += 1;
+        return true;
+      },
+      publishRemote: async () => {
+        remoteReplacementNotices += 1;
+        return true;
+      },
+    });
+    assert.deepEqual(tombstones, [{
+      schoolId: "school-publication-test",
+      studentId: "student-old",
+      studentSessionId: "session-old",
+      deviceId: "device-same",
+      reason: "session_replaced",
+    }]);
+    assert.equal(localReplacementNotices, 0);
+    assert.equal(remoteReplacementNotices, 0);
+  });
+
+  it("keeps cross-device and unmatched same-device authority as hard blockers", async () => {
+    const requestedDeviceId = `${tag}-handoff-blocked-requested`;
+    const otherDeviceId = `${tag}-handoff-blocked-other`;
+    const tokenDeviceId = `${tag}-handoff-token-other-device`;
+    await inSchool(() => createDevice({
+      deviceId: requestedDeviceId,
+      deviceName: "Requested handoff device",
+      schoolId,
+      classId: schoolId,
+    } as Parameters<typeof createDevice>[0]));
+    await inSchool(() => createDevice({
+      deviceId: otherDeviceId,
+      deviceName: "Other active device",
+      schoolId,
+      classId: schoolId,
+    } as Parameters<typeof createDevice>[0]));
+    await inSchool(() => createDevice({
+      deviceId: tokenDeviceId,
+      deviceName: "Recovery token's other device",
+      schoolId,
+      classId: schoolId,
+    } as Parameters<typeof createDevice>[0]));
+    const owner = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Recovery",
+      lastName: "Owner",
+      email: `recovery-owner@${tag}.example.edu`,
+      emailLc: `recovery-owner@${tag}.example.edu`,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const selected = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Selected",
+      lastName: "Student",
+      email: `selected-student@${tag}.example.edu`,
+      emailLc: `selected-student@${tag}.example.edu`,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const unmatched = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Unmatched",
+      lastName: "Authority",
+      email: `unmatched-authority@${tag}.example.edu`,
+      emailLc: `unmatched-authority@${tag}.example.edu`,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const tokenOwner = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Other Device",
+      lastName: "Token Owner",
+      email: `other-device-token@${tag}.example.edu`,
+      emailLc: `other-device-token@${tag}.example.edu`,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const ownerRecovery = createStudentSessionRecovery();
+    const ownerSession = await inSchool(() =>
+      startStudentSessionWithReplacements(schoolId, owner.id, requestedDeviceId, {
+        authKind: "manual_shared",
+        sessionRecoveryTokenHash: ownerRecovery.tokenHash,
+      })
+    );
+    const selectedOtherDevice = await inSchool(() =>
+      startStudentSessionWithReplacements(schoolId, selected.id, otherDeviceId, {
+        authKind: "manual_shared",
+        sessionRecoveryTokenHash: createStudentSessionRecovery().tokenHash,
+      })
+    );
+    const otherDeviceRecovery = createStudentSessionRecovery();
+    const otherDeviceTokenSession = await inSchool(() =>
+      startStudentSessionWithReplacements(schoolId, tokenOwner.id, tokenDeviceId, {
+        authKind: "manual_shared",
+        sessionRecoveryTokenHash: otherDeviceRecovery.tokenHash,
+      })
+    );
+
+    await assert.rejects(
+      () => inSchool(() => startStudentSessionWithReplacements(
+        schoolId,
+        selected.id,
+        requestedDeviceId,
+        {
+          authKind: "manual_shared",
+          sessionRecoveryTokenHash: createStudentSessionRecovery().tokenHash,
+          reclaimRecoveryTokenHash: ownerRecovery.tokenHash,
+        }
+      )),
+      (error: any) => error?.code === "STUDENT_SESSION_ACTIVE"
+    );
+    assert.equal(
+      (await inSchool(() => storage.getActiveSessionById(ownerSession.session.id)))?.id,
+      ownerSession.session.id
+    );
+    assert.equal(
+      (await inSchool(() => storage.getActiveSessionById(selectedOtherDevice.session.id)))?.id,
+      selectedOtherDevice.session.id
+    );
+
+    await inSchool(() => storage.endStudentSessionExact({
+      schoolId,
+      studentId: selected.id,
+      deviceId: otherDeviceId,
+      studentSessionId: selectedOtherDevice.session.id,
+    }));
+    await assert.rejects(
+      () => inSchool(() => startStudentSessionWithReplacements(
+        schoolId,
+        selected.id,
+        requestedDeviceId,
+        {
+          authKind: "manual_shared",
+          sessionRecoveryTokenHash: createStudentSessionRecovery().tokenHash,
+          reclaimRecoveryTokenHash: otherDeviceRecovery.tokenHash,
+        }
+      )),
+      (error: any) => error?.code === "STUDENT_SESSION_ACTIVE",
+      "a real recovery token from another device must not authorize this device"
+    );
+    await assert.rejects(
+      () => inSchool(() => startStudentSessionWithReplacements(
+        schoolId,
+        selected.id,
+        requestedDeviceId,
+        {
+          authKind: "manual_shared",
+          sessionRecoveryTokenHash: createStudentSessionRecovery().tokenHash,
+          reclaimRecoveryTokenHash: createStudentSessionRecovery().tokenHash,
+        }
+      )),
+      (error: any) => error?.code === "STUDENT_SESSION_ACTIVE",
+      "a wrong, stale, or cross-school recovery digest must not authorize the device conflict"
+    );
+
+    const foreignSchool = await createSchool({
+      name: `${tag} foreign recovery token`,
+      domain: `${tag}-foreign-recovery.example.edu`,
+      slug: `${tag}-foreign-recovery`,
+      status: "active",
+      planStatus: "active",
+    } as Parameters<typeof createSchool>[0]);
+    await storage.createProductLicense({
+      schoolId: foreignSchool.id,
+      product: "CLASSPILOT",
+      status: "active",
+    } as Parameters<typeof storage.createProductLicense>[0]);
+    const foreignDeviceId = `${tag}-foreign-recovery-device`;
+    const foreignRecovery = createStudentSessionRecovery();
+    let foreignTokenSessionId = "";
+    let foreignTokenStudentId = "";
+    try {
+      const foreignTokenStudent = await runWithTenantContext(
+        { schoolId: foreignSchool.id },
+        () => createStudent({
+          schoolId: foreignSchool.id,
+          firstName: "Foreign",
+          lastName: "Token Owner",
+          email: `foreign-token@${tag}.example.edu`,
+          emailLc: `foreign-token@${tag}.example.edu`,
+          status: "active",
+        } as Parameters<typeof createStudent>[0])
+      );
+      foreignTokenStudentId = foreignTokenStudent.id;
+      await runWithTenantContext({ schoolId: foreignSchool.id }, () => createDevice({
+        deviceId: foreignDeviceId,
+        deviceName: "Foreign recovery device",
+        schoolId: foreignSchool.id,
+        classId: foreignSchool.id,
+      } as Parameters<typeof createDevice>[0]));
+      const foreignTokenSession = await runWithTenantContext(
+        { schoolId: foreignSchool.id },
+        () => startStudentSessionWithReplacements(
+          foreignSchool.id,
+          foreignTokenStudent.id,
+          foreignDeviceId,
+          {
+            authKind: "manual_shared",
+            sessionRecoveryTokenHash: foreignRecovery.tokenHash,
+          }
+        )
+      );
+      foreignTokenSessionId = foreignTokenSession.session.id;
+
+      await assert.rejects(
+        () => inSchool(() => startStudentSessionWithReplacements(
+          schoolId,
+          selected.id,
+          requestedDeviceId,
+          {
+            authKind: "manual_shared",
+            sessionRecoveryTokenHash: createStudentSessionRecovery().tokenHash,
+            reclaimRecoveryTokenHash: foreignRecovery.tokenHash,
+          }
+        )),
+        (error: any) => error?.code === "STUDENT_SESSION_ACTIVE",
+        "a recovery token backed by another school must not authorize this school's device"
+      );
+    } finally {
+      await runWithTenantContext({ isSuper: true }, async () => {
+        if (foreignTokenSessionId) {
+          await db.delete(studentSessions).where(eq(studentSessions.id, foreignTokenSessionId));
+        }
+        if (foreignTokenStudentId) {
+          await db.delete(studentDevices).where(eq(studentDevices.studentId, foreignTokenStudentId));
+        }
+        await db.delete(devices).where(eq(devices.schoolId, foreignSchool.id));
+        await db.delete(students).where(eq(students.schoolId, foreignSchool.id));
+        await db.delete(productLicenses).where(eq(productLicenses.schoolId, foreignSchool.id));
+        await db.delete(schools).where(eq(schools.id, foreignSchool.id));
+      });
+    }
+
+    await assert.rejects(
+      () => inSchool(() => db.insert(studentSessions).values({
+        studentId: unmatched.id,
+        deviceId: requestedDeviceId,
+        authKind: "managed_profile",
+      })),
+      (error: any) =>
+        error?.constraint === "student_sessions_active_device_unique"
+        || error?.cause?.constraint === "student_sessions_active_device_unique",
+      "the database must prevent two active rows from existing on one device"
+    );
+    await inSchool(() => storage.endStudentSessionExact({
+      schoolId,
+      studentId: owner.id,
+      deviceId: requestedDeviceId,
+      studentSessionId: ownerSession.session.id,
+    }));
+
+    const unmatchedManaged = await inSchool(() =>
+      startStudentSessionWithReplacements(
+        schoolId,
+        unmatched.id,
+        requestedDeviceId,
+        { authKind: "managed_profile" }
+      )
+    );
+    await assert.rejects(
+      () => inSchool(() => startStudentSessionWithReplacements(
+        schoolId,
+        selected.id,
+        requestedDeviceId,
+        {
+          authKind: "manual_shared",
+          sessionRecoveryTokenHash: createStudentSessionRecovery().tokenHash,
+          reclaimRecoveryTokenHash: ownerRecovery.tokenHash,
+        }
+      )),
+      (error: any) => error?.code === "STUDENT_SESSION_ACTIVE",
+      "a stale manual recovery capability must not replace managed authority"
+    );
+    assert.equal(
+      (await inSchool(() => storage.getActiveSessionById(unmatchedManaged.session.id)))?.id,
+      unmatchedManaged.session.id
+    );
+    await inSchool(() => storage.endStudentSessionExact({
+      schoolId,
+      studentId: unmatched.id,
+      deviceId: requestedDeviceId,
+      studentSessionId: unmatchedManaged.session.id,
+    }));
+
+    const [unmatchedLegacy] = await inSchool(() => db.insert(studentSessions).values({
+      studentId: unmatched.id,
+      deviceId: requestedDeviceId,
+      authKind: "legacy",
+    }).returning());
+    await assert.rejects(
+      () => inSchool(() => startStudentSessionWithReplacements(
+        schoolId,
+        selected.id,
+        requestedDeviceId,
+        {
+          authKind: "manual_shared",
+          sessionRecoveryTokenHash: createStudentSessionRecovery().tokenHash,
+          reclaimRecoveryTokenHash: ownerRecovery.tokenHash,
+        }
+      )),
+      (error: any) => error?.code === "STUDENT_SESSION_ACTIVE",
+      "a stale manual recovery capability must not replace legacy authority"
+    );
+    await inSchool(() => storage.endStudentSessionExact({
+      schoolId,
+      studentId: unmatched.id,
+      deviceId: requestedDeviceId,
+      studentSessionId: unmatchedLegacy!.id,
+    }));
+    await inSchool(() => storage.endStudentSessionExact({
+      schoolId,
+      studentId: tokenOwner.id,
+      deviceId: tokenDeviceId,
+      studentSessionId: otherDeviceTokenSession.session.id,
+    }));
+  });
+
+  it("treats an expired recovered row as non-authoritative rather than token authority", async () => {
+    const expiredDeviceId = `${tag}-expired-handoff-device`;
+    await inSchool(() => createDevice({
+      deviceId: expiredDeviceId,
+      deviceName: "Expired handoff device",
+      schoolId,
+      classId: schoolId,
+    } as Parameters<typeof createDevice>[0]));
+    const expiredOwner = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Expired",
+      lastName: "Owner",
+      email: `expired-owner@${tag}.example.edu`,
+      emailLc: `expired-owner@${tag}.example.edu`,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const nextStudent = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Expired",
+      lastName: "Replacement",
+      email: `expired-replacement@${tag}.example.edu`,
+      emailLc: `expired-replacement@${tag}.example.edu`,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const expiredRecovery = createStudentSessionRecovery();
+    const expired = await inSchool(() => startStudentSessionWithReplacements(
+      schoolId,
+      expiredOwner.id,
+      expiredDeviceId,
+      {
+        authKind: "manual_shared",
+        sessionRecoveryTokenHash: expiredRecovery.tokenHash,
+      }
+    ));
+    await inSchool(() => db.update(studentSessions)
+      .set({ manualLeaseExpiresAt: sql`now()` })
+      .where(eq(studentSessions.id, expired.session.id)));
+
+    const replacement = await inSchool(() => startStudentSessionWithReplacements(
+      schoolId,
+      nextStudent.id,
+      expiredDeviceId,
+      {
+        authKind: "manual_shared",
+        sessionRecoveryTokenHash: createStudentSessionRecovery().tokenHash,
+        reclaimRecoveryTokenHash: expiredRecovery.tokenHash,
+      }
+    ));
+    assert.equal(replacement.crossStudentHandoff, false);
+    assert.deepEqual(replacement.replacedSessions.map((row) => row.id), [expired.session.id]);
+    await inSchool(() => storage.endStudentSessionExact({
+      schoolId,
+      studentId: nextStudent.id,
+      deviceId: expiredDeviceId,
+      studentSessionId: replacement.session.id,
+    }));
+  });
+
+  it("serializes a recovery release racing a cross-student login", async () => {
+    const raceDeviceId = `${tag}-handoff-release-race`;
+    await inSchool(() => createDevice({
+      deviceId: raceDeviceId,
+      deviceName: "Release race device",
+      schoolId,
+      classId: schoolId,
+    } as Parameters<typeof createDevice>[0]));
+    const raceOwner = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Race",
+      lastName: "Owner",
+      email: `race-owner@${tag}.example.edu`,
+      emailLc: `race-owner@${tag}.example.edu`,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const raceSelected = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Race",
+      lastName: "Selected",
+      email: `race-selected@${tag}.example.edu`,
+      emailLc: `race-selected@${tag}.example.edu`,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const raceRecovery = createStudentSessionRecovery();
+    const old = await inSchool(() => startStudentSessionWithReplacements(
+      schoolId,
+      raceOwner.id,
+      raceDeviceId,
+      {
+        authKind: "manual_shared",
+        sessionRecoveryTokenHash: raceRecovery.tokenHash,
+      }
+    ));
+
+    const [releaseResult, loginResult] = await Promise.allSettled([
+      inSchool(() => storage.endStudentSessionByRecoveryTokenHash({
+        schoolId,
+        tokenHash: raceRecovery.tokenHash,
+      })),
+      inSchool(() => startStudentSessionWithReplacements(
+        schoolId,
+        raceSelected.id,
+        raceDeviceId,
+        {
+          authKind: "manual_shared",
+          sessionRecoveryTokenHash: createStudentSessionRecovery().tokenHash,
+          reclaimRecoveryTokenHash: raceRecovery.tokenHash,
+        }
+      )),
+    ]);
+    assert.equal(releaseResult.status, "fulfilled");
+    assert.equal(loginResult.status, "fulfilled");
+    assert.ok(loginResult.status === "fulfilled");
+    const replacement = loginResult.value;
+    assert.equal(
+      (await inSchool(() => storage.getActiveSessionById(replacement.session.id)))?.studentId,
+      raceSelected.id
+    );
+    assert.equal(await inSchool(() => storage.getActiveSessionById(old.session.id)), undefined);
+    assert.equal(
+      await inSchool(() => storage.endStudentSessionByRecoveryTokenHash({
+        schoolId,
+        tokenHash: raceRecovery.tokenHash,
+      })),
+      undefined,
+      "a late completion of the old release cannot end the replacement"
+    );
+    const activeRows = await inSchool(() => db.select({
+      id: studentSessions.id,
+      studentId: studentSessions.studentId,
+    }).from(studentSessions).where(and(
+      eq(studentSessions.deviceId, raceDeviceId),
+      eq(studentSessions.isActive, true),
+      sql`${studentSessions.endedAt} IS NULL`
+    )));
+    assert.deepEqual(activeRows, [{ id: replacement.session.id, studentId: raceSelected.id }]);
+    await inSchool(() => storage.endStudentSessionExact({
+      schoolId,
+      studentId: raceSelected.id,
+      deviceId: raceDeviceId,
+      studentSessionId: replacement.session.id,
+    }));
+  });
+
+  it("validates PIN and email/ID credentials before cross-student replacement", async () => {
+    const enrollmentKey = `${tag}-handoff-enrollment-key`;
+    const pinDeviceId = `${tag}-handoff-pin-device`;
+    const emailDeviceId = `${tag}-handoff-email-device`;
+    await inSchool(() => createDevice({
+      deviceId: pinDeviceId,
+      deviceName: "PIN handoff device",
+      schoolId,
+      classId: schoolId,
+    } as Parameters<typeof createDevice>[0]));
+    await inSchool(() => createDevice({
+      deviceId: emailDeviceId,
+      deviceName: "Email handoff device",
+      schoolId,
+      classId: schoolId,
+    } as Parameters<typeof createDevice>[0]));
+    const pinOwner = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Pin",
+      lastName: "Owner",
+      email: `pin-owner@${tag}.example.edu`,
+      emailLc: `pin-owner@${tag}.example.edu`,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const pinHash = await hashPassword("2468");
+    const pinSelected = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Pin",
+      lastName: "Selected",
+      email: `pin-selected@${tag}.example.edu`,
+      emailLc: `pin-selected@${tag}.example.edu`,
+      classpilotPinHash: pinHash,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const emailOwner = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Email",
+      lastName: "Owner",
+      email: `email-owner@${tag}.example.edu`,
+      emailLc: `email-owner@${tag}.example.edu`,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const emailSelected = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Email",
+      lastName: "Selected",
+      email: `email-selected@${tag}.example.edu`,
+      emailLc: `email-selected@${tag}.example.edu`,
+      studentIdNumber: `${tag}-student-number`,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const pinOwnerRecovery = createStudentSessionRecovery();
+    const pinOwnerSession = await inSchool(() =>
+      startStudentSessionWithReplacements(schoolId, pinOwner.id, pinDeviceId, {
+        authKind: "manual_shared",
+        sessionRecoveryTokenHash: pinOwnerRecovery.tokenHash,
+      })
+    );
+    const emailOwnerRecovery = createStudentSessionRecovery();
+    const emailOwnerSession = await inSchool(() =>
+      startStudentSessionWithReplacements(schoolId, emailOwner.id, emailDeviceId, {
+        authKind: "manual_shared",
+        sessionRecoveryTokenHash: emailOwnerRecovery.tokenHash,
+      })
+    );
+
+    await inSchool(() => storage.upsertSettings(schoolId, {
+      enrollmentKey,
+      enrollmentKeyRequired: true,
+      sharedChromebookSignInEnabled: true,
+      sharedChromebookLoginMethod: "name_pin",
+      sharedChromebookPinLoginEnabled: true,
+    }));
+    heartbeatMetrics.snapshotHeartbeatHotPathMetrics({ reset: true });
+    const { createApp } = await import("../dist/app.js");
+    const server = createServer(createApp());
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    const login = (body: Record<string, unknown>, recoveryToken: string) => fetch(
+      `http://127.0.0.1:${port}/api/classpilot/extension/student-login`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `ClassPilot-Recovery ${recoveryToken}`,
+          "content-type": "application/json",
+          "x-classpilot-enrollment-key": enrollmentKey,
+        },
+        body: JSON.stringify({ schoolId, ...body }),
+      }
+    );
+    type StudentLoginResponse = {
+      student?: { id?: string };
+      studentSessionId: string;
+      sessionRecovery?: { token?: string };
+    };
+    try {
+      const wrongPin = await login({
+        deviceId: pinDeviceId,
+        studentId: pinSelected.id,
+        pin: "1357",
+      }, pinOwnerRecovery.token);
+      assert.equal(wrongPin.status, 401);
+      assert.equal(
+        (await inSchool(() => storage.getActiveSessionById(pinOwnerSession.session.id)))?.id,
+        pinOwnerSession.session.id,
+        "an incorrect selected-student PIN must not consume the recovery session"
+      );
+
+      const correctPin = await login({
+        deviceId: pinDeviceId,
+        studentId: pinSelected.id,
+        pin: "2468",
+      }, pinOwnerRecovery.token);
+      assert.equal(correctPin.status, 200);
+      const pinBody = await correctPin.json() as StudentLoginResponse;
+      assert.equal(pinBody.student?.id, pinSelected.id);
+      assert.match(pinBody.sessionRecovery?.token || "", /^[A-Za-z0-9_-]{43}$/);
+      assert.equal(
+        await inSchool(() => storage.getActiveSessionById(pinOwnerSession.session.id)),
+        undefined
+      );
+
+      await inSchool(() => storage.endStudentSessionExact({
+        schoolId,
+        studentId: pinSelected.id,
+        deviceId: pinDeviceId,
+        studentSessionId: pinBody.studentSessionId,
+      }));
+      await inSchool(() => storage.upsertSettings(schoolId, {
+        enrollmentKey,
+        enrollmentKeyRequired: true,
+        sharedChromebookSignInEnabled: true,
+        sharedChromebookLoginMethod: "email_id",
+        sharedChromebookPinLoginEnabled: false,
+      }));
+
+      const wrongId = await login({
+        deviceId: emailDeviceId,
+        studentEmail: emailSelected.email,
+        studentIdNumber: "wrong-id",
+      }, emailOwnerRecovery.token);
+      assert.equal(wrongId.status, 401);
+      assert.equal(
+        (await inSchool(() => storage.getActiveSessionById(emailOwnerSession.session.id)))?.id,
+        emailOwnerSession.session.id,
+        "incorrect email/ID credentials must not consume the recovery session"
+      );
+
+      const correctEmailId = await login({
+        deviceId: emailDeviceId,
+        studentEmail: emailSelected.email,
+        studentIdNumber: emailSelected.studentIdNumber,
+      }, emailOwnerRecovery.token);
+      assert.equal(correctEmailId.status, 200);
+      const emailBody = await correctEmailId.json() as StudentLoginResponse;
+      assert.equal(emailBody.student?.id, emailSelected.id);
+      assert.match(emailBody.sessionRecovery?.token || "", /^[A-Za-z0-9_-]{43}$/);
+      assert.equal(
+        await inSchool(() => storage.getActiveSessionById(emailOwnerSession.session.id)),
+        undefined
+      );
+
+      const metricSnapshot = heartbeatMetrics.snapshotHeartbeatHotPathMetrics({ reset: true });
+      assert.equal(metricSnapshot.counters.manualSessionCrossStudentHandoff, 2);
+      assert.deepEqual(
+        Object.keys(metricSnapshot.counters).filter((key) =>
+          key === "manualSessionCrossStudentHandoff"
+        ),
+        ["manualSessionCrossStudentHandoff"],
+        "the handoff metric is a process-wide counter with no identifier dimensions"
+      );
+      await inSchool(() => storage.endStudentSessionExact({
+        schoolId,
+        studentId: emailSelected.id,
+        deviceId: emailDeviceId,
+        studentSessionId: emailBody.studentSessionId,
+      }));
     } finally {
       await new Promise<void>((resolve, reject) =>
         server.close((error) => error ? reject(error) : resolve())

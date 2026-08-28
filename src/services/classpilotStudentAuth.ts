@@ -194,7 +194,11 @@ export async function issueStudentDeviceSessionToken(options: {
     schoolId: options.schoolId,
     classId: options.classId,
   });
-  const { session, replacedSessions } = await startStudentSessionWithReplacements(
+  const {
+    session,
+    replacedSessions,
+    crossStudentHandoff,
+  } = await startStudentSessionWithReplacements(
     options.schoolId,
     options.student.id,
     options.deviceId,
@@ -212,6 +216,7 @@ export async function issueStudentDeviceSessionToken(options: {
     device,
     session,
     replacedSessions,
+    crossStudentHandoff,
     studentToken,
     sessionRecoveryToken: recovery?.token ?? null,
   };
