@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   buildClasspilotStudentDataResponse,
+  parseClasspilotStudentDataScope,
   resolveClasspilotStudentDataWindow,
 } from "../src/services/classpilotStudentData.js";
 import {
@@ -101,6 +102,59 @@ test("Student Data aggregation is deterministic, privacy-safe, and bounded by mo
   )));
   const serialized = JSON.stringify(first);
   assert.doesNotMatch(serialized, /private|token=secret|chrome:\/\/|deviceId/i);
+});
+
+test("Student Data scope and live-state metadata are revision-bound without retrieval-time churn", () => {
+  assert.equal(parseClasspilotStudentDataScope(undefined), undefined);
+  assert.equal(parseClasspilotStudentDataScope("school"), "school");
+  assert.equal(parseClasspilotStudentDataScope("mine"), "mine");
+  assert.equal(parseClasspilotStudentDataScope("class"), "class");
+  assert.throws(() => parseClasspilotStudentDataScope(["class"]));
+  assert.throws(() => parseClasspilotStudentDataScope("other"));
+
+  const base = {
+    period: "today" as const,
+    scope: {
+      key: "class:science",
+      kind: "class" as const,
+      label: "Science",
+      groupId: "science",
+    },
+    dataState: "live" as const,
+    provisionalAsOf: new Date("2026-08-28T14:00:00.000Z"),
+    timeZone: "America/New_York",
+    startLocalDate: "2026-08-28",
+    endLocalDate: "2026-08-28",
+    rangeStart: new Date("2026-08-28T04:00:00.000Z"),
+    rangeEnd: new Date("2026-08-28T14:00:00.000Z"),
+    identities: [{ studentId: "student-a", name: "Ada Student" }],
+    usageRows: [{
+      studentId: "student-a",
+      totalSeconds: 10,
+      heartbeatCount: 1,
+      topDomains: [{ domain: "school.example", seconds: 10 }],
+      computedAt: new Date("2026-08-28T14:00:00.000Z"),
+    }],
+  };
+  const first = buildClasspilotStudentDataResponse({
+    ...base,
+    generatedAt: new Date("2026-08-28T14:00:00.000Z"),
+  });
+  const laterRead = buildClasspilotStudentDataResponse({
+    ...base,
+    generatedAt: new Date("2026-08-28T14:00:30.000Z"),
+  });
+  const final = buildClasspilotStudentDataResponse({
+    ...base,
+    dataState: "final" as const,
+    provisionalAsOf: null,
+    generatedAt: new Date("2026-08-28T14:00:30.000Z"),
+  });
+  assert.equal(first.revision, laterRead.revision);
+  assert.notEqual(first.revision, final.revision);
+  assert.equal(first.scope.key, "class:science");
+  assert.equal(first.dataState, "live");
+  assert.equal(first.provisionalAsOf, "2026-08-28T14:00:00.000Z");
 });
 
 test("roster cursors are stable and page inputs are strictly bounded", () => {

@@ -5,7 +5,10 @@ import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
-import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
+import {
+  requestHasAnySchoolRole,
+  selectRequestSchoolRole,
+} from "../../services/schoolAuthorization.js";
 import {
   searchStudents,
   getStudentsBySchool,
@@ -46,8 +49,11 @@ import { stopMailpilotMonitoringForStudent } from "../../services/mailpilotProvi
 import { revokeClasspilotStudentSocketsAfterRosterRemoval } from "../../realtime/studentSocketRevocation.js";
 import {
   ClasspilotStudentDataNotFoundError,
+  ClasspilotStudentDataUnavailableError,
   getClasspilotStudentData,
+  getClasspilotStudentDataScopes,
   parseClasspilotStudentDataPeriod,
+  parseClasspilotStudentDataScope,
 } from "../../services/classpilotStudentData.js";
 import {
   InvalidRosterCursorError,
@@ -91,6 +97,39 @@ const adminAuth = [
   requireRole("admin", "school_admin"),
 ] as const;
 
+const studentDataAuth = [
+  authenticate,
+  requireSchoolContext,
+  requireClasspilotEntitlement,
+  requireActiveSchool,
+  requireProductLicense("CLASSPILOT"),
+  requireRole("admin", "school_admin", "teacher"),
+] as const;
+
+function boundedStudentDataQueryString(
+  value: unknown,
+  field: string,
+  maximumLength = 128
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !value || value.length > maximumLength) {
+    throw Object.assign(new Error(`${field} must be a non-empty string`), {
+      code: "INVALID_STUDENT_DATA_SELECTOR",
+    });
+  }
+  return value;
+}
+
+function studentDataRequestRole(
+  req: any,
+  res: any
+): "admin" | "school_admin" | "teacher" | null {
+  const role = selectRequestSchoolRole(req, res, ["admin", "school_admin", "teacher"]);
+  return role === "admin" || role === "school_admin" || role === "teacher"
+    ? role
+    : null;
+}
+
 // GET /api/classpilot/students - List all students with optional filters
 router.get("/students", ...auth, async (req, res, next) => {
   try {
@@ -120,26 +159,38 @@ router.get("/student-analytics", ...auth, async (req, res, next) => {
 // GET /api/classpilot/student-data - One immutable-revision aggregate for the
 // Student Data screen and its CSV export. The underlying usage rows are
 // heartbeat-derived; screenshots are never read by this contract.
-router.get("/student-data", ...adminAuth, async (req, res, next) => {
+router.get("/student-data/scopes", ...studentDataAuth, async (req, res, next) => {
+  try {
+    const role = studentDataRequestRole(req, res);
+    if (!role) return res.status(403).json({ error: "Insufficient permissions" });
+    const result = await getClasspilotStudentDataScopes({
+      schoolId: res.locals.schoolId!,
+      actorId: req.authUser!.id,
+      role,
+    });
+    res.setHeader("Cache-Control", "no-store");
+    return res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get("/student-data", ...studentDataAuth, async (req, res, next) => {
   try {
     const period = parseClasspilotStudentDataPeriod(req.query.period);
-    const sessionId = req.query.sessionId;
-    const studentId = req.query.studentId;
-    if (sessionId !== undefined && (typeof sessionId !== "string" || !sessionId || sessionId.length > 128)) {
-      return res.status(400).json({
-        error: "sessionId must be a non-empty string",
-        code: "INVALID_STUDENT_DATA_SESSION",
-      });
-    }
-    if (studentId !== undefined && (typeof studentId !== "string" || !studentId || studentId.length > 128)) {
-      return res.status(400).json({
-        error: "studentId must be a non-empty string",
-        code: "INVALID_STUDENT_DATA_STUDENT",
-      });
-    }
+    const scope = parseClasspilotStudentDataScope(req.query.scope);
+    const sessionId = boundedStudentDataQueryString(req.query.sessionId, "sessionId");
+    const groupId = boundedStudentDataQueryString(req.query.groupId, "groupId");
+    const studentId = boundedStudentDataQueryString(req.query.studentId, "studentId");
+    const role = studentDataRequestRole(req, res);
+    if (!role) return res.status(403).json({ error: "Insufficient permissions" });
     const result = await getClasspilotStudentData({
       schoolId: res.locals.schoolId!,
+      actorId: req.authUser!.id,
+      role,
       period,
+      scope,
+      groupId,
       sessionId,
       studentId,
       schoolTimeZone: res.locals.school?.schoolTimezone,
@@ -148,12 +199,26 @@ router.get("/student-data", ...adminAuth, async (req, res, next) => {
     return res.json(result);
   } catch (err) {
     if (err instanceof ClasspilotStudentDataNotFoundError) {
-      return res.status(404).json({ error: err.message, code: err.code });
+      return res.status(404).json({
+        error: "Student Data scope not found",
+        code: "CLASSPILOT_STUDENT_DATA_SCOPE_NOT_FOUND",
+      });
     }
-    if ((err as { code?: string })?.code === "INVALID_STUDENT_DATA_PERIOD") {
+    if (err instanceof ClasspilotStudentDataUnavailableError) {
+      return res.status(503).json({
+        error: err.message,
+        code: err.code,
+      });
+    }
+    const code = (err as { code?: string })?.code;
+    if (
+      code === "INVALID_STUDENT_DATA_PERIOD"
+      || code === "INVALID_STUDENT_DATA_SCOPE"
+      || code === "INVALID_STUDENT_DATA_SELECTOR"
+    ) {
       return res.status(400).json({
         error: (err as Error).message,
-        code: "INVALID_STUDENT_DATA_PERIOD",
+        code,
       });
     }
     next(err);

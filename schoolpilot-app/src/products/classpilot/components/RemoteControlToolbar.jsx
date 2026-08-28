@@ -9,10 +9,11 @@ const StudentDataDialog = lazy(() => import("./StudentDataDialog"));
 
 function RemoteControlToolbar({
   selectedStudentIds,
-  students,
   selectedGrade,
   onGradeChange,
   userRole,
+  schoolId,
+  viewerId,
   coverageCount = 0,
   availableCount = 0,
   claimedCount = 0,
@@ -166,7 +167,9 @@ function RemoteControlToolbar({
         <Suspense fallback={<div className="sr-only" role="status">Loading Student Data…</div>}>
           <StudentDataDialog
             open
-            students={students}
+            schoolId={schoolId}
+            viewerId={viewerId}
+            viewerRole={userRole}
             onOpenChange={setShowStudentDataDialog}
           />
         </Suspense>
