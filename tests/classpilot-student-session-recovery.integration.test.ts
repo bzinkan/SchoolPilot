@@ -22,6 +22,7 @@ const recoveryAuthority = await import(
 );
 const studentAuth = await import("../dist/services/classpilotStudentAuth.js");
 const { createStudentToken, verifyStudentToken } = await import("../dist/services/deviceJwt.js");
+const { signUserToken } = await import("../dist/services/jwt.js");
 const websocket = await import("../dist/realtime/websocket.js");
 const lifecycle = await import(
   "../dist/services/classpilotStudentSessionLifecycle.js"
@@ -30,6 +31,15 @@ const heartbeatMetrics = await import(
   "../dist/services/heartbeatHotPathMetrics.js"
 );
 const classpilotDeviceRoutes = await import("../dist/routes/classpilot/devices.js");
+const { classpilotScreenshotFallback } = await import(
+  "../dist/services/classpilotScreenshotFallback.js"
+);
+const { classBoundScreenshotBindingVersion } = await import(
+  "../dist/realtime/ws-redis.js"
+);
+const { validateClasspilotScreenshotCapturedAt } = await import(
+  "../dist/services/classpilotScreenshotPolicy.js"
+);
 const { hashPassword } = await import("../dist/util/password.js");
 const { schedulerPool } = await import("../dist/services/schedulerDb.js");
 
@@ -41,12 +51,21 @@ const {
 } = storage;
 const {
   devices,
+  classpilotSessionStaff,
+  classpilotSessionStudents,
+  classpilotStudentControlStates,
+  groupStudents,
+  groupTeachers,
+  groups,
   heartbeats,
   productLicenses,
+  schoolMemberships,
   schools,
   studentDevices,
   studentSessions,
   students,
+  teachingSessions,
+  users,
 } = schema;
 const {
   createStudentSessionRecovery,
@@ -722,6 +741,408 @@ describe("ClassPilot manual-session recovery authority", () => {
       deviceId: handoffDeviceId,
       studentSessionId: loginAfterRelease.session.id,
     }));
+  });
+
+  it("keeps class-bound pixels private across an atomic same-device handoff", async () => {
+    type ScreenshotAuthority =
+      | { kind: "student_session"; controlRevision: number }
+      | {
+          kind: "teaching_session";
+          teachingSessionId: string;
+          controlRevision: number;
+        };
+    type DeviceResponse = {
+      ok?: boolean;
+      code?: string;
+    };
+    type TileResponse = {
+      tiles: Array<{
+        studentId: string;
+        bindingVersion?: string;
+        screenshot: null | {
+          screenshot: string;
+          timestamp: number;
+          bindingVersion?: string;
+        };
+      }>;
+    };
+
+    const handoffDeviceId = `${tag}-screenshot-privacy-handoff`;
+    const alexPixels = `data:image/jpeg;base64,${Buffer.from("alex-class-pixels").toString("base64")}`;
+    const bobPixels = `data:image/jpeg;base64,${Buffer.from("bob-class-pixels").toString("base64")}`;
+    let teacherId = "";
+    let alexId = "";
+    let bobId = "";
+    let groupId = "";
+    let teachingSessionId = "";
+    let server: ReturnType<typeof createServer> | undefined;
+
+    const parseResponse = async <T>(response: Response): Promise<{
+      status: number;
+      body: T;
+    }> => {
+      const body = JSON.parse(await response.text()) as T;
+      return { status: response.status, body };
+    };
+
+    try {
+      const teacher = await storage.createUser({
+        email: `${tag}-screenshot-teacher@${tag}.example.edu`,
+        firstName: "Screenshot",
+        lastName: "Teacher",
+      } as Parameters<typeof storage.createUser>[0]);
+      teacherId = teacher.id;
+      await inSchool(() => storage.createMembership({
+        userId: teacher.id,
+        schoolId,
+        role: "teacher",
+        status: "active",
+      } as Parameters<typeof storage.createMembership>[0]));
+
+      const alex = await inSchool(() => createStudent({
+        schoolId,
+        firstName: "Alex",
+        lastName: "Screenshot",
+        email: `alex-screenshot@${tag}.example.edu`,
+        emailLc: `alex-screenshot@${tag}.example.edu`,
+        status: "active",
+      } as Parameters<typeof createStudent>[0]));
+      alexId = alex.id;
+      const bob = await inSchool(() => createStudent({
+        schoolId,
+        firstName: "Bob",
+        lastName: "Screenshot",
+        email: `bob-screenshot@${tag}.example.edu`,
+        emailLc: `bob-screenshot@${tag}.example.edu`,
+        status: "active",
+      } as Parameters<typeof createStudent>[0]));
+      bobId = bob.id;
+      await inSchool(() => createDevice({
+        deviceId: handoffDeviceId,
+        deviceName: "Screenshot privacy handoff device",
+        schoolId,
+        classId: schoolId,
+      } as Parameters<typeof createDevice>[0]));
+      await inSchool(() => storage.upsertSettings(schoolId, {
+        enableTrackingHours: false,
+        afterHoursMode: "off",
+      }));
+
+      const group = await inSchool(() => storage.createGroup({
+        schoolId,
+        teacherId: teacher.id,
+        name: `${tag} screenshot handoff class`,
+        groupType: "admin_class",
+        status: "active",
+      } as Parameters<typeof storage.createGroup>[0]));
+      groupId = group.id;
+      await inSchool(() => db.insert(groupStudents).values([
+        { groupId: group.id, studentId: alex.id },
+        { groupId: group.id, studentId: bob.id },
+      ]));
+      const teachingSession = await inSchool(() => storage.createTeachingSession({
+        groupId: group.id,
+        teacherId: teacher.id,
+        sessionMode: "live",
+      } as Parameters<typeof storage.createTeachingSession>[0]));
+      teachingSessionId = teachingSession.id;
+      assert.ok(teachingSession.rosterSnapshotCompletedAt);
+
+      const alexRecovery = createStudentSessionRecovery();
+      const alexSession = await inSchool(() => startStudentSessionWithReplacements(
+        schoolId,
+        alex.id,
+        handoffDeviceId,
+        {
+          authKind: "manual_shared",
+          sessionRecoveryTokenHash: alexRecovery.tokenHash,
+        }
+      ));
+      const alexToken = createStudentToken({
+        schoolId,
+        studentId: alex.id,
+        deviceId: handoffDeviceId,
+        sessionId: alexSession.session.id,
+        studentEmail: alex.email || undefined,
+      });
+
+      const { createApp } = await import("../dist/app.js");
+      server = createServer(createApp());
+      await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
+      const { port } = server.address() as AddressInfo;
+      const baseUrl = `http://127.0.0.1:${port}`;
+      const postDevice = async <T>(
+        path: string,
+        token: string,
+        body: Record<string, unknown>
+      ) => parseResponse<T>(await fetch(`${baseUrl}${path}`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(body),
+      }));
+      const teacherToken = signUserToken({
+        userId: teacher.id,
+        email: teacher.email,
+        isSuperAdmin: false,
+      });
+      const readTiles = async (studentIds: string[]) => parseResponse<TileResponse>(
+        await fetch(`${baseUrl}/api/classpilot/tiles/screenshots`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${teacherToken}`,
+            "content-type": "application/json",
+            "x-school-id": schoolId,
+          },
+          body: JSON.stringify({ studentIds, teachingSessionId }),
+        })
+      );
+      const retainExactClassScreenshot = async (options: {
+        studentId: string;
+        studentSessionId: string;
+        authority: ScreenshotAuthority;
+        screenshot: string;
+      }) => inSchool(() => storage.withClasspilotScreenshotUploadAuthority({
+        schoolId,
+        studentId: options.studentId,
+        studentSessionId: options.studentSessionId,
+        deviceId: handoffDeviceId,
+        expectedAuthority: options.authority,
+      }, ({ current, trackingSettings }) => {
+        if (current.authority.kind !== "teaching_session") {
+          throw new Error("Screenshot authority was not class-bound at retention time");
+        }
+        const capturedAt = new Date();
+        assert.equal(validateClasspilotScreenshotCapturedAt({
+          capturedAt,
+          trackingSettings,
+          trackingAuthority: current,
+        }), "ok");
+        const classBinding = {
+          schoolId,
+          deviceId: handoffDeviceId,
+          studentId: options.studentId,
+          studentSessionId: options.studentSessionId,
+          teachingSessionId: current.authority.teachingSessionId,
+          controlRevision: current.authority.controlRevision,
+        };
+        assert.equal(classpilotScreenshotFallback.setClassBound(classBinding, {
+          screenshot: options.screenshot,
+          timestamp: capturedAt.getTime(),
+          capturedAt: capturedAt.toISOString(),
+          tabTitle: "Synthetic handoff capture",
+          ...classBinding,
+          bindingVersion: classBoundScreenshotBindingVersion(classBinding),
+        }), true);
+        return classBinding;
+      }));
+
+      const alexProjection = await inSchool(() =>
+        storage.getClasspilotScreenshotAuthorityProjection({
+          schoolId,
+          studentId: alex.id,
+          studentSessionId: alexSession.session.id,
+          deviceId: handoffDeviceId,
+        })
+      );
+      assert.ok(alexProjection);
+      const alexAuthority = alexProjection.authority;
+      if (alexAuthority.kind !== "teaching_session") {
+        throw new Error("Alex did not receive exact teaching-session screenshot authority");
+      }
+      assert.equal(alexAuthority.teachingSessionId, teachingSession.id);
+
+      const alexCapture = await retainExactClassScreenshot({
+        studentId: alex.id,
+        studentSessionId: alexSession.session.id,
+        authority: alexAuthority,
+        screenshot: alexPixels,
+      });
+      assert.equal(alexCapture.status, "accepted");
+      if (alexCapture.status !== "accepted") {
+        throw new Error("Alex's exact screenshot authority was not accepted");
+      }
+      const alexClassBinding = alexCapture.value;
+      assert.equal(
+        classpilotScreenshotFallback.getClassBound(alexClassBinding)?.screenshot,
+        alexPixels,
+        "the old class-bound pixels must physically exist before the handoff"
+      );
+      const alexBeforeHandoff = await readTiles([alex.id]);
+      assert.equal(alexBeforeHandoff.status, 200);
+      assert.equal(alexBeforeHandoff.body.tiles[0]?.screenshot?.screenshot, alexPixels);
+
+      const bobRecovery = createStudentSessionRecovery();
+      const handoff = await inSchool(() => startStudentSessionWithReplacements(
+        schoolId,
+        bob.id,
+        handoffDeviceId,
+        {
+          authKind: "manual_shared",
+          sessionRecoveryTokenHash: bobRecovery.tokenHash,
+          reclaimRecoveryTokenHash: alexRecovery.tokenHash,
+        }
+      ));
+      assert.equal(handoff.crossStudentHandoff, true);
+      assert.deepEqual(
+        handoff.replacedSessions.map((row) => row.id),
+        [alexSession.session.id]
+      );
+      assert.equal(
+        await inSchool(() => storage.getActiveSessionById(alexSession.session.id)),
+        undefined,
+        "the atomic handoff must retire Alex before Bob becomes authoritative"
+      );
+      assert.equal(
+        (await inSchool(() => storage.getActiveSessionById(handoff.session.id)))?.studentId,
+        bob.id
+      );
+
+      const staffFacingTombstones: Array<{
+        schoolId: string;
+        studentId: string;
+        studentSessionId: string;
+        deviceId: string;
+        reason: string;
+      }> = [];
+      let sameDeviceLocalMessages = 0;
+      let sameDeviceRemoteMessages = 0;
+      await classpilotDeviceRoutes.publishCommittedStudentSessionReplacements({
+        schoolId,
+        replacementDeviceId: handoffDeviceId,
+        replacedSessions: handoff.replacedSessions,
+      }, {
+        broadcastEnded: async (options) => {
+          staffFacingTombstones.push(options);
+        },
+        sendLocal: () => {
+          sameDeviceLocalMessages += 1;
+          return true;
+        },
+        publishRemote: async () => {
+          sameDeviceRemoteMessages += 1;
+          return true;
+        },
+      });
+      assert.deepEqual(staffFacingTombstones, [{
+        schoolId,
+        studentId: alex.id,
+        studentSessionId: alexSession.session.id,
+        deviceId: handoffDeviceId,
+        reason: "session_replaced",
+      }]);
+      assert.equal(sameDeviceLocalMessages, 0);
+      assert.equal(sameDeviceRemoteMessages, 0);
+
+      let staleAuthorityCallbackRan = false;
+      const staleAuthority = await inSchool(() =>
+        storage.withClasspilotScreenshotUploadAuthority({
+          schoolId,
+          studentId: alex.id,
+          studentSessionId: alexSession.session.id,
+          deviceId: handoffDeviceId,
+          expectedAuthority: alexAuthority,
+        }, () => {
+          staleAuthorityCallbackRan = true;
+        })
+      );
+      assert.equal(staleAuthority.status, "superseded");
+      assert.equal(staleAuthorityCallbackRan, false);
+      const alexLateUpload = await postDevice<DeviceResponse>(
+        "/api/classpilot/device/screenshot",
+        alexToken,
+        {
+          screenshot: alexPixels,
+          tabTitle: "Late Alex capture",
+          capturedAt: new Date().toISOString(),
+          screenshotAuthority: alexAuthority,
+        }
+      );
+      assert.equal(alexLateUpload.status, 401);
+
+      const alexAfterHandoff = await readTiles([alex.id]);
+      const bobBeforeCapture = await readTiles([bob.id]);
+      assert.equal(alexAfterHandoff.status, 404);
+      assert.equal(bobBeforeCapture.status, 200);
+      assert.equal(bobBeforeCapture.body.tiles[0]?.screenshot, null);
+      assert.equal(JSON.stringify(alexAfterHandoff.body).includes(alexPixels), false);
+      assert.equal(JSON.stringify(bobBeforeCapture.body).includes(alexPixels), false);
+      assert.equal(
+        classpilotScreenshotFallback.getClassBound(alexClassBinding)?.screenshot,
+        alexPixels,
+        "privacy must come from exact authority, not eager deletion of the old cache entry"
+      );
+
+      const bobProjection = await inSchool(() =>
+        storage.getClasspilotScreenshotAuthorityProjection({
+          schoolId,
+          studentId: bob.id,
+          studentSessionId: handoff.session.id,
+          deviceId: handoffDeviceId,
+        })
+      );
+      assert.ok(bobProjection);
+      const bobAuthority = bobProjection.authority;
+      if (bobAuthority.kind !== "teaching_session") {
+        throw new Error("Bob did not receive new exact teaching-session screenshot authority");
+      }
+      assert.equal(bobAuthority.teachingSessionId, teachingSession.id);
+      const bobCapture = await retainExactClassScreenshot({
+        studentId: bob.id,
+        studentSessionId: handoff.session.id,
+        authority: bobAuthority,
+        screenshot: bobPixels,
+      });
+      assert.equal(bobCapture.status, "accepted");
+
+      const finalTiles = await readTiles([alex.id, bob.id]);
+      assert.equal(finalTiles.status, 200);
+      const finalAlex = finalTiles.body.tiles.find((tile) => tile.studentId === alex.id);
+      const finalBob = finalTiles.body.tiles.find((tile) => tile.studentId === bob.id);
+      assert.equal(finalAlex, undefined);
+      assert.equal(finalBob?.screenshot?.screenshot, bobPixels);
+      assert.equal(JSON.stringify(finalTiles.body).includes(alexPixels), false);
+    } finally {
+      if (server) {
+        await new Promise<void>((resolve) => {
+          server!.close(() => resolve());
+          server!.closeAllConnections();
+        });
+      }
+      classpilotScreenshotFallback.clear();
+      await runWithTenantContext({ isSuper: true }, async () => {
+        if (teachingSessionId) {
+          await db.delete(classpilotStudentControlStates).where(
+            eq(classpilotStudentControlStates.teachingSessionId, teachingSessionId)
+          );
+          await db.delete(classpilotSessionStudents).where(
+            eq(classpilotSessionStudents.teachingSessionId, teachingSessionId)
+          );
+          await db.delete(classpilotSessionStaff).where(
+            eq(classpilotSessionStaff.teachingSessionId, teachingSessionId)
+          );
+          await db.delete(teachingSessions).where(eq(teachingSessions.id, teachingSessionId));
+        }
+        if (groupId) {
+          await db.delete(groupStudents).where(eq(groupStudents.groupId, groupId));
+          await db.delete(groupTeachers).where(eq(groupTeachers.groupId, groupId));
+          await db.delete(groups).where(eq(groups.id, groupId));
+        }
+        await db.delete(heartbeats).where(eq(heartbeats.deviceId, handoffDeviceId));
+        await db.delete(studentSessions).where(eq(studentSessions.deviceId, handoffDeviceId));
+        await db.delete(studentDevices).where(eq(studentDevices.deviceId, handoffDeviceId));
+        await db.delete(devices).where(eq(devices.deviceId, handoffDeviceId));
+        for (const id of [alexId, bobId].filter(Boolean)) {
+          await db.delete(students).where(eq(students.id, id));
+        }
+        if (teacherId) {
+          await db.delete(schoolMemberships).where(eq(schoolMemberships.userId, teacherId));
+          await db.delete(users).where(eq(users.id, teacherId));
+        }
+      });
+    }
   });
 
   it("publishes exactly one session_replaced tombstone for one committed handoff row", async () => {
