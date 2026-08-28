@@ -19,6 +19,7 @@ const REPAIRED_CLIENT_DEPENDENT_CAPABILITIES = [
   "exactTabCloseV2",
   "studentChatIdempotencyV1",
   "screenshotObservationLeaseV1",
+  "screenshotTrackingWindowLeaseV1",
   "safetyEvidenceCaptureV1",
   "liveViewIceServersV1",
   "kioskLaunchTicketV2",
@@ -47,7 +48,7 @@ test("protocol v3 activates only the advertised and server-enabled intersection"
   ]);
 });
 
-test("all 2.7.1-dependent capabilities require the repaired scoping marker", () => {
+test("all scoped-authority-dependent capabilities require the repaired scoping marker", () => {
   const env: NodeJS.ProcessEnv = {
     CLASSPILOT_PROTOCOL_V3_ENABLED: "true",
     CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1: "true",
@@ -56,6 +57,7 @@ test("all 2.7.1-dependent capabilities require the repaired scoping marker", () 
     CLASSPILOT_CAP_EXACT_TAB_CLOSE_V2: "true",
     CLASSPILOT_CAP_STUDENT_CHAT_IDEMPOTENCY_V1: "true",
     CLASSPILOT_CAP_SCREENSHOT_OBSERVATION_LEASE_V1: "true",
+    CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1: "true",
     CLASSPILOT_CAP_SAFETY_EVIDENCE_CAPTURE_V1: "true",
     CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1: "true",
     CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V2: "true",

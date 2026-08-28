@@ -920,16 +920,20 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     assert.equal(
       observePreviewHarness.tileRequests.slice(tileRequestCountBeforeSupervision).some((request) => (
         request.body?.studentIds?.includes(STUDENT_ID)
-        || request.body?.studentIds?.includes(MOVED_CLASS_STUDENT_ID)
+        && request.body?.studentIds?.includes(MOVED_CLASS_STUDENT_ID)
+        && request.body?.studentIds?.includes(SIGNAL_LOST_STUDENT_ID)
       )),
-      false,
-      "suppressed or differently owned students must not enter screenshot or history batches",
+      true,
+      "presentation filters and supervision state must not reshape the frozen-roster query cohort",
     );
+    const tileRequestCountBeforeSupervisedClick = observePreviewHarness.tileRequests.length;
     await supervisedCard.click();
     await observePreviewPage.waitForTimeout(200);
     assert.equal(await observePreviewPage.getByTestId("student-tabs").count(), 0, "a supervised tile must not open the detail drawer");
     assert.equal(
-      observePreviewHarness.tileRequests.slice(tileRequestCountBeforeSupervision).some((request) => (
+      observePreviewHarness.tileRequests.slice(tileRequestCountBeforeSupervisedClick).some((request) => (
+        request.body?.studentIds?.length === 1
+        &&
         request.body?.studentIds?.includes(STUDENT_ID)
       )),
       false,

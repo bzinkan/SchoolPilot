@@ -274,4 +274,24 @@ describe("ClassPilot student session recovery capabilities", () => {
       minimumIntervalMs: 5_000,
     }), false);
   });
+
+  it("never short-circuits a rapid tracking-window transition heartbeat", () => {
+    const rapidHeartbeat = {
+      previous: {
+        acceptedAt: 1_000,
+        studentId: "student-a",
+        studentSessionId: "session-a",
+        authorityExpiresAtMs: null,
+      },
+      studentId: "student-a",
+      studentSessionId: "session-a",
+      nowMs: 1_100,
+      minimumIntervalMs: 5_000,
+    };
+    assert.equal(canShortCircuitAcceptedHeartbeat(rapidHeartbeat), true);
+    assert.equal(canShortCircuitAcceptedHeartbeat({
+      ...rapidHeartbeat,
+      acceptedCapabilities: ["screenshotTrackingWindowLeaseV1"],
+    }), false);
+  });
 });

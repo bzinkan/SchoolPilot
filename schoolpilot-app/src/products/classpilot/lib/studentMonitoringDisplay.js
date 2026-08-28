@@ -257,6 +257,23 @@ export function deriveScreenshotDisplay(screenshotData, nowMs = Date.now()) {
   };
 }
 
+export function deriveScreenshotPreviewMode({
+  screenshotData,
+  nowMs = Date.now(),
+  authorizationRevoked = false,
+} = {}) {
+  if (authorizationRevoked) return null;
+  const screenshot = deriveScreenshotDisplay(screenshotData, nowMs);
+  if (screenshot.fresh) return 'current';
+  if (screenshot.retained) return 'retained';
+  return null;
+}
+
+export function isClassBoundScreenshot(screenshotData) {
+  return typeof screenshotData?.bindingVersion === 'string'
+    && screenshotData.bindingVersion.startsWith('v2:');
+}
+
 export function deriveUnavailablePreview(monitoringDisplay) {
   switch (monitoringDisplay?.kind) {
     case 'signed_out':
@@ -315,7 +332,12 @@ export function findNextStudentFreshnessBoundary(
     const screenshot = screenshotsByStudent?.get?.(student?.studentId);
     const screenshotDisplay = deriveScreenshotDisplay(screenshot, nowMs);
     if (
-      (monitoring.telemetryCurrent || monitoring.kind === 'reconnecting' || monitoring.kind === 'updates_unavailable')
+      (
+        monitoring.telemetryCurrent
+        || monitoring.kind === 'reconnecting'
+        || monitoring.kind === 'updates_unavailable'
+        || monitoring.kind === 'signal_lost'
+      )
       && screenshotDisplay.nextBoundaryAtMs !== null
       && screenshotDisplay.nextBoundaryAtMs > nowMs
       && (earliest === null || screenshotDisplay.nextBoundaryAtMs < earliest)

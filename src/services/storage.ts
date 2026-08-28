@@ -9030,6 +9030,8 @@ export type ClassPilotStudentTileAccess = {
   deviceId: string;
   schoolId: string;
   studentSessionId: string | null;
+  teachingSessionId?: string | null;
+  controlRevision?: number | null;
 };
 
 type ClassPilotTileAuthorizationRow = ClassPilotStudentTileAccess & {
@@ -9085,10 +9087,17 @@ export function buildClassPilotTileAuthorizationQuery(
            AND selected_session.session_mode = 'live'
            AND selected_session.end_time IS NULL
            AND selected_session.roster_snapshot_completed_at IS NOT NULL
+           AND (
+             selected_session.scheduled_end_at IS NULL
+             OR selected_session.scheduled_end_at > now()
+           )
           INNER JOIN requested_students AS requested
             ON requested.student_id = roster.student_id
+          LEFT JOIN active_supervision AS reassigned
+            ON reassigned.student_id = roster.student_id
           WHERE roster.school_id = ${options.schoolId}
             AND roster.teaching_session_id = ${options.teachingSessionId}
+            AND reassigned.student_id IS NULL
         `
       : options.role === "teacher"
         ? sql`
@@ -9100,6 +9109,10 @@ export function buildClassPilotTileAuthorizationQuery(
              AND selected_session.session_mode = 'live'
              AND selected_session.end_time IS NULL
              AND selected_session.roster_snapshot_completed_at IS NOT NULL
+             AND (
+               selected_session.scheduled_end_at IS NULL
+               OR selected_session.scheduled_end_at > now()
+             )
             INNER JOIN ${classpilotSessionStaff} AS selected_staff
               ON selected_staff.school_id = ${options.schoolId}
              AND selected_staff.teaching_session_id = selected_session.id
@@ -9108,7 +9121,6 @@ export function buildClassPilotTileAuthorizationQuery(
               ON requested.student_id = roster.student_id
             LEFT JOIN active_supervision AS reassigned
               ON reassigned.student_id = roster.student_id
-             AND reassigned.assigned_staff_id <> ${options.staffId}
             WHERE roster.school_id = ${options.schoolId}
               AND roster.teaching_session_id = ${options.teachingSessionId}
               AND reassigned.student_id IS NULL
@@ -9210,7 +9222,21 @@ export function buildClassPilotTileAuthorizationQuery(
           INNER JOIN ${devices} AS device
             ON device.device_id = mapping.device_id
            AND device.school_id = ${options.schoolId}
-        `;
+          `;
+
+  const controlRevision = accessMode === "live" && options.teachingSessionId
+    ? sql`(
+        SELECT control.revision
+        FROM ${classpilotStudentControlStates} AS control
+        WHERE control.school_id = ${options.schoolId}
+          AND control.student_id = resolved.student_id
+          AND control.teaching_session_id = ${options.teachingSessionId}
+          AND control.supervision_context_id IS NULL
+          AND control.hard_expires_at > now()
+          AND (control.scheduled_end_at IS NULL OR control.scheduled_end_at > now())
+        LIMIT 1
+      )`
+    : sql`NULL::integer`;
 
   return sql`
     WITH
@@ -9273,6 +9299,7 @@ export function buildClassPilotTileAuthorizationQuery(
       resolved.student_id,
       resolved.ordinal,
       resolved.student_session_id,
+      ${controlRevision} AS control_revision,
       device.device_id,
       device.device_name,
       device.school_id,
@@ -9352,6 +9379,14 @@ async function loadClassPilotTileAuthorizationRows(
       schoolId: device.schoolId,
       studentSessionId:
         typeof raw.student_session_id === "string" ? raw.student_session_id : null,
+      teachingSessionId: accessMode === "live"
+        ? options.teachingSessionId ?? null
+        : null,
+      controlRevision: raw.control_revision !== null
+        && raw.control_revision !== undefined
+        && Number.isSafeInteger(Number(raw.control_revision))
+        ? Number(raw.control_revision)
+        : null,
       ordinal: Number(raw.ordinal),
       device,
     });
@@ -9374,6 +9409,8 @@ export async function getBatchTileAccessForStaff(
     deviceId: row.deviceId,
     schoolId: row.schoolId,
     studentSessionId: row.studentSessionId,
+    teachingSessionId: row.teachingSessionId,
+    controlRevision: row.controlRevision,
   }]));
 }
 
@@ -10545,6 +10582,7 @@ export type StartStudentSessionWithReplacementsOptions = {
 export type StartStudentSessionWithReplacementsResult = {
   session: StudentSession;
   replacedSessions: StudentSession[];
+  crossStudentHandoff: boolean;
 };
 
 export async function startStudentSessionWithReplacements(
@@ -10661,17 +10699,24 @@ export async function startStudentSessionWithReplacements(
       ))
       .for("update", { of: studentSessions });
 
+    let crossStudentHandoff = false;
     if (options.authKind === "manual_shared") {
-      const blockingSession = conflicting.find(({ session, authoritative }) => {
-        if (!authoritative) return false;
-        return !(
-          session.authKind === "manual_shared" &&
-          session.studentId === studentId &&
-          session.deviceId === deviceId &&
-          options.reclaimRecoveryTokenHash != null &&
-          session.sessionRecoveryTokenHash === options.reclaimRecoveryTokenHash
-        );
-      });
+      // A recovery capability may release exactly the authoritative manual
+      // session that created it, but only on the requested school-scoped
+      // device. The recovered student may differ from the newly authenticated
+      // student so a shared Chromebook can safely change hands. Every other
+      // authoritative student or device conflict remains a blocker.
+      const recoveredSession = options.reclaimRecoveryTokenHash == null
+        ? undefined
+        : conflicting.find(({ session, authoritative }) =>
+            authoritative &&
+            session.authKind === "manual_shared" &&
+            session.deviceId === deviceId &&
+            session.sessionRecoveryTokenHash === options.reclaimRecoveryTokenHash
+          );
+      const blockingSession = conflicting.find(({ session, authoritative }) =>
+        authoritative && session.id !== recoveredSession?.session.id
+      );
       if (blockingSession) {
         throw Object.assign(new Error("Student session is active on another sign-in context"), {
           status: 409,
@@ -10679,6 +10724,8 @@ export async function startStudentSessionWithReplacements(
           expose: true,
         });
       }
+      crossStudentHandoff =
+        recoveredSession != null && recoveredSession.session.studentId !== studentId;
     }
 
     const conflictingIds = conflicting.map(({ session }) => session.id);
@@ -10721,7 +10768,7 @@ export async function startStudentSessionWithReplacements(
         target: [studentDevices.studentId, studentDevices.deviceId],
         set: { lastSeenAt: sql`now()` },
       });
-    return { session: session!, replacedSessions };
+    return { session: session!, replacedSessions, crossStudentHandoff };
   });
   await invalidateClasspilotPassiveAuthorization(schoolId);
   return result;
@@ -21535,6 +21582,282 @@ async function hasExactClasspilotTelemetryBinding(
     .limit(1)
     .for("share");
   return !replacement;
+}
+
+export type ClasspilotScreenshotAuthorityClaim =
+  | {
+      kind: "student_session";
+      controlRevision: number;
+    }
+  | {
+      kind: "teaching_session";
+      teachingSessionId: string;
+      controlRevision: number;
+    };
+
+export type ClasspilotScreenshotAuthorityProjection = {
+  authority: ClasspilotScreenshotAuthorityClaim;
+  /** Earliest server-authoritative instant at which this exact authority existed. */
+  authorityStartedAt: Date;
+  /** Manual-session/class deadline, if one is earlier than the rolling screenshot lease. */
+  authorityExpiresAt: Date | null;
+};
+
+function latestClasspilotAuthorityStart(...values: Array<Date | null | undefined>): Date {
+  return values.reduce<Date>(
+    (latest, value) => value && value > latest ? value : latest,
+    new Date(0)
+  );
+}
+
+function earliestClasspilotAuthorityExpiry(
+  ...values: Array<Date | null | undefined>
+): Date | null {
+  let earliest: Date | null = null;
+  for (const value of values) {
+    if (value && (!earliest || value < earliest)) earliest = value;
+  }
+  return earliest;
+}
+
+/**
+ * Resolve the exact screenshot capture authority for one authenticated student
+ * binding. A teaching authority is deliberately stricter than the legacy
+ * active-owner helper: it requires a live session, completed frozen roster,
+ * frozen membership, current control revision, unexpired control deadlines,
+ * and no delegated supervision. Every other current binding resolves to the
+ * non-pixel student-session authority.
+ */
+export async function getClasspilotScreenshotAuthorityProjection(options: {
+  schoolId: string;
+  studentId: string;
+  studentSessionId: string;
+  deviceId: string;
+}, dbInstance: typeof db = db): Promise<ClasspilotScreenshotAuthorityProjection | undefined> {
+  const [session] = await dbInstance
+    .select({
+      id: studentSessions.id,
+      startedAt: studentSessions.startedAt,
+      authKind: studentSessions.authKind,
+      manualLeaseExpiresAt: studentSessions.manualLeaseExpiresAt,
+    })
+    .from(studentSessions)
+    .innerJoin(students, and(
+      eq(students.id, studentSessions.studentId),
+      eq(students.schoolId, options.schoolId),
+      eq(students.status, "active")
+    ))
+    .innerJoin(devices, and(
+      eq(devices.deviceId, studentSessions.deviceId),
+      eq(devices.schoolId, options.schoolId)
+    ))
+    .where(and(
+      eq(studentSessions.id, options.studentSessionId),
+      eq(studentSessions.studentId, options.studentId),
+      eq(studentSessions.deviceId, options.deviceId),
+      currentStudentSessionAuthorityPredicate()
+    ))
+    .limit(1)
+    .for("share");
+  if (!session) return undefined;
+
+  const [controlState] = await dbInstance
+    .select({
+      teachingSessionId: classpilotStudentControlStates.teachingSessionId,
+      supervisionContextId: classpilotStudentControlStates.supervisionContextId,
+      revision: classpilotStudentControlStates.revision,
+      scheduledEndAt: classpilotStudentControlStates.scheduledEndAt,
+      hardExpiresAt: classpilotStudentControlStates.hardExpiresAt,
+      updatedAt: classpilotStudentControlStates.updatedAt,
+    })
+    .from(classpilotStudentControlStates)
+    .where(and(
+      eq(classpilotStudentControlStates.schoolId, options.schoolId),
+      eq(classpilotStudentControlStates.studentId, options.studentId)
+    ))
+    .limit(1)
+    .for("share");
+
+  const controlRevision = controlState?.revision ?? 0;
+  const studentAuthority: ClasspilotScreenshotAuthorityProjection = {
+    authority: { kind: "student_session", controlRevision },
+    authorityStartedAt: latestClasspilotAuthorityStart(
+      session.startedAt,
+      controlState?.updatedAt
+    ),
+    authorityExpiresAt: session.authKind === "manual_shared"
+      ? session.manualLeaseExpiresAt
+      : null,
+  };
+  if (
+    !controlState?.teachingSessionId
+    || controlState.supervisionContextId !== null
+    || !controlState.hardExpiresAt
+  ) {
+    return studentAuthority;
+  }
+
+  const [candidate] = await dbInstance
+    .select({
+      teachingSessionId: teachingSessions.id,
+      startTime: teachingSessions.startTime,
+      rosterSnapshotCompletedAt: teachingSessions.rosterSnapshotCompletedAt,
+      teachingScheduledEndAt: teachingSessions.scheduledEndAt,
+      controlRevision: classpilotStudentControlStates.revision,
+      controlUpdatedAt: classpilotStudentControlStates.updatedAt,
+      controlScheduledEndAt: classpilotStudentControlStates.scheduledEndAt,
+      controlHardExpiresAt: classpilotStudentControlStates.hardExpiresAt,
+    })
+    .from(classpilotStudentControlStates)
+    .innerJoin(teachingSessions, and(
+      eq(teachingSessions.id, classpilotStudentControlStates.teachingSessionId),
+      eq(teachingSessions.schoolId, options.schoolId),
+      eq(teachingSessions.sessionMode, LIVE_TEACHING_SESSION_MODE),
+      isNull(teachingSessions.endTime),
+      isNotNull(teachingSessions.rosterSnapshotCompletedAt)
+    ))
+    .innerJoin(classpilotSessionStudents, and(
+      eq(classpilotSessionStudents.schoolId, options.schoolId),
+      eq(classpilotSessionStudents.teachingSessionId, teachingSessions.id),
+      eq(classpilotSessionStudents.studentId, options.studentId)
+    ))
+    .where(and(
+      eq(classpilotStudentControlStates.schoolId, options.schoolId),
+      eq(classpilotStudentControlStates.studentId, options.studentId),
+      eq(classpilotStudentControlStates.teachingSessionId, controlState.teachingSessionId),
+      isNull(classpilotStudentControlStates.supervisionContextId),
+      isNotNull(classpilotStudentControlStates.hardExpiresAt),
+      sql`${classpilotStudentControlStates.hardExpiresAt} > now()`,
+      or(
+        isNull(classpilotStudentControlStates.scheduledEndAt),
+        sql`${classpilotStudentControlStates.scheduledEndAt} > now()`
+      ),
+      or(
+        isNull(teachingSessions.scheduledEndAt),
+        sql`${teachingSessions.scheduledEndAt} > now()`
+      )
+    ))
+    .limit(1)
+    .for("share");
+  if (!candidate) return studentAuthority;
+
+  // Drizzle transactions share one pg client. Keep these checks sequential so
+  // the authority projection remains compatible with pg@9's single-query rule.
+  const supervision = await getActiveSupervisionForStudents(
+    options.schoolId,
+    [options.studentId],
+    dbInstance
+  );
+  const owner = await getActiveClassOwnerForStudent(
+    options.schoolId,
+    options.studentId,
+    dbInstance
+  );
+  if (
+    supervision.length > 0
+    || owner?.session.id !== candidate.teachingSessionId
+    || !candidate.rosterSnapshotCompletedAt
+  ) {
+    return studentAuthority;
+  }
+
+  return {
+    authority: {
+      kind: "teaching_session",
+      teachingSessionId: candidate.teachingSessionId,
+      controlRevision: candidate.controlRevision,
+    },
+    authorityStartedAt: latestClasspilotAuthorityStart(
+      session.startedAt,
+      candidate.startTime,
+      candidate.rosterSnapshotCompletedAt,
+      candidate.controlUpdatedAt
+    ),
+    authorityExpiresAt: earliestClasspilotAuthorityExpiry(
+      session.authKind === "manual_shared" ? session.manualLeaseExpiresAt : null,
+      candidate.teachingScheduledEndAt,
+      candidate.controlScheduledEndAt,
+      candidate.controlHardExpiresAt
+    ),
+  };
+}
+
+function classpilotScreenshotAuthorityMatches(
+  expected: ClasspilotScreenshotAuthorityClaim,
+  current: ClasspilotScreenshotAuthorityClaim
+): boolean {
+  if (
+    expected.kind !== current.kind
+    || expected.controlRevision !== current.controlRevision
+  ) return false;
+  return expected.kind === "student_session"
+    || (
+      current.kind === "teaching_session"
+      && expected.teachingSessionId === current.teachingSessionId
+    );
+}
+
+export async function withClasspilotScreenshotUploadAuthority<T>(options: {
+  schoolId: string;
+  studentId: string;
+  studentSessionId: string;
+  deviceId: string;
+  expectedAuthority: ClasspilotScreenshotAuthorityClaim;
+}, callback: (authority: {
+  current: ClasspilotScreenshotAuthorityProjection;
+  trackingSettings: HeartbeatTrackingSettings;
+}) => Promise<T> | T, dbInstance: typeof db = db): Promise<
+  | {
+      status: "accepted";
+      current: ClasspilotScreenshotAuthorityProjection;
+      trackingSettings: HeartbeatTrackingSettings;
+      value: T;
+    }
+  | {
+      status: "superseded" | "unavailable";
+      current: ClasspilotScreenshotAuthorityProjection | undefined;
+      trackingSettings: HeartbeatTrackingSettings | undefined;
+    }
+> {
+  return dbInstance.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    await assertClasspilotEntitled(options.schoolId, transactionDb, { lock: true });
+    await lockClasspilotStudentControlAuthorities(
+      options.schoolId,
+      [options.studentId],
+      transactionDb
+    );
+    // Both reads use the transaction's single pg client; issue them in order.
+    const current = await getClasspilotScreenshotAuthorityProjection(options, transactionDb);
+    const [trackingSettings] = await tx
+      .select({
+        enableTrackingHours: settings.enableTrackingHours,
+        trackingStartTime: settings.trackingStartTime,
+        trackingEndTime: settings.trackingEndTime,
+        trackingDays: settings.trackingDays,
+        schoolTimezone: settings.schoolTimezone,
+        afterHoursMode: settings.afterHoursMode,
+      })
+      .from(settings)
+      .where(eq(settings.schoolId, options.schoolId))
+      .limit(1)
+      .for("share");
+    // The authenticated tuple disappeared or was replaced after middleware ran.
+    // Treat that as an authority transition, not a transient storage condition.
+    if (!current) return { status: "superseded" as const, current, trackingSettings };
+    if (!trackingSettings) {
+      return { status: "unavailable" as const, current, trackingSettings };
+    }
+    if (!classpilotScreenshotAuthorityMatches(options.expectedAuthority, current.authority)) {
+      return { status: "superseded" as const, current, trackingSettings };
+    }
+    return {
+      status: "accepted" as const,
+      current,
+      trackingSettings,
+      value: await callback({ current, trackingSettings }),
+    };
+  });
 }
 
 /** Linearize ordinary class telemetry with every ownership/binding transition. */

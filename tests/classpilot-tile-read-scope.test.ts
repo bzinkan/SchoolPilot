@@ -524,7 +524,9 @@ describe("ClassPilot tile-read tenant scope", () => {
       screenshots.body.tiles.map((tile: { studentId: string }) => tile.studentId),
       [authorizedStudentIds[0]]
     );
-    assert.match(screenshots.body.tiles[0].screenshot.screenshot, /^data:image\/jpeg;base64,/);
+    // Without fresh exact capability telemetry, the new reader is V2-only and
+    // must not downgrade to the seeded legacy screenshot.
+    assert.equal(screenshots.body.tiles[0].screenshot, null);
     assert.doesNotMatch(JSON.stringify(screenshots.body), /deviceId|device_id|denied/i);
 
     const history = await postJson(
@@ -840,9 +842,9 @@ describe("ClassPilot tile-read tenant scope", () => {
 
     for (const allowed of [admin, schoolAdmin, superAdmin]) {
       const response = await requestJson(path, allowed);
-      assert.equal(response.status, 200);
+      assert.equal(response.status, 404);
       assert.equal(response.rateLimit, "5000");
-      assert.match(response.body.screenshot, /^data:image\/jpeg;base64,/);
+      assert.equal(response.body.error, "No screenshot available");
     }
     for (const denied of [teacher, coTeacher, officeStaff, parent]) {
       const response = await requestJson(path, denied);

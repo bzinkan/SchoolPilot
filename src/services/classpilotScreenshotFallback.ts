@@ -1,5 +1,12 @@
-import type { ScreenshotBinding, ScreenshotData } from "../realtime/ws-redis.js";
-import { screenshotBindingCacheKey } from "../realtime/ws-redis.js";
+import type {
+  ClassBoundScreenshotBinding,
+  ScreenshotBinding,
+  ScreenshotData,
+} from "../realtime/ws-redis.js";
+import {
+  classBoundScreenshotBindingCacheKey,
+  screenshotBindingCacheKey,
+} from "../realtime/ws-redis.js";
 
 export const CLASSPILOT_SCREENSHOT_FALLBACK_MAX_BYTES = 64 * 1024 * 1024;
 export const CLASSPILOT_SCREENSHOT_FALLBACK_TTL_MS = 120_000;
@@ -24,6 +31,8 @@ function estimateBytes(key: string, value: ScreenshotData): number {
       deviceId: value.deviceId,
       studentId: value.studentId,
       studentSessionId: value.studentSessionId,
+      teachingSessionId: value.teachingSessionId,
+      controlRevision: value.controlRevision,
       bindingVersion: value.bindingVersion,
     }), "utf8");
 }
@@ -45,7 +54,14 @@ export class ClasspilotScreenshotFallbackStore {
   ) {}
 
   set(binding: ScreenshotBinding, value: ScreenshotData): boolean {
-    const key = screenshotBindingCacheKey(binding);
+    return this.setForKey(screenshotBindingCacheKey(binding), value);
+  }
+
+  setClassBound(binding: ClassBoundScreenshotBinding, value: ScreenshotData): boolean {
+    return this.setForKey(classBoundScreenshotBindingCacheKey(binding), value);
+  }
+
+  private setForKey(key: string, value: ScreenshotData): boolean {
     const bytes = estimateBytes(key, value);
     const now = this.now();
     const capturedExpiresAt = Number.isFinite(value.timestamp)
@@ -79,7 +95,14 @@ export class ClasspilotScreenshotFallbackStore {
   }
 
   get(binding: ScreenshotBinding): ScreenshotData | null {
-    const key = screenshotBindingCacheKey(binding);
+    return this.getForKey(screenshotBindingCacheKey(binding));
+  }
+
+  getClassBound(binding: ClassBoundScreenshotBinding): ScreenshotData | null {
+    return this.getForKey(classBoundScreenshotBindingCacheKey(binding));
+  }
+
+  private getForKey(key: string): ScreenshotData | null {
     const entry = this.entries.get(key);
     if (!entry) return null;
     if (entry.expiresAt <= this.now()) {

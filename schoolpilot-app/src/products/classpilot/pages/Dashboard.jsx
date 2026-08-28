@@ -34,15 +34,24 @@ import { useAbsentStudents } from '../../../hooks/useAbsentStudents';
 import { isUrlAllowed } from '../../../lib/classpilot-utils';
 import {
   TILE_BATCH_QUERY_ROOTS,
+  changedTileBindingStudentIds,
   createTileBatchRequests,
   fetchTileBatch,
   indexTileHistory,
   indexTileScreenshots,
+  removeLegacyScreenshotsFromTileBatchData,
+  removeStudentsFromTileBatchData,
   retainFreshTileScreenshotsOnNull,
+  tileBatchRequestShouldPoll,
 } from '../lib/tileBatchPolling';
 import {
   purgeAllScreenshotTileCaches,
   purgeAllStudentTileCaches,
+  purgeLegacyScreenshotTileCaches,
+  reconcileStudentTileBindingCaches,
+  scrubStudentTileCaches,
+  purgeStudentHistoryTileCaches,
+  purgeStudentScreenshotTileCaches,
   purgeStudentTileCaches,
   tileBatchFailureScope,
 } from '../lib/tileCachePrivacy';
@@ -2154,12 +2163,15 @@ export default function Dashboard() {
   const selectedStudentDisplay = selectedStudentRow
     ? monitoringDisplayFor(selectedStudentRow)
     : null;
-  const selectedStudentHistoryRevoked = Boolean(
+  const selectedStudentHardPrivacyRevoked = Boolean(
     selectedStudentMonitoringSuppressed
     || tileGlobalAuthorizationDenied
+    || ['signed_out', 'delegated'].includes(selectedStudentDisplay?.kind),
+  );
+  const selectedStudentHistoryRevoked = Boolean(
+    selectedStudentHardPrivacyRevoked
     || observationLeaseStatus === 'denied'
     || observationLeaseStatus === 'paused_unobserved'
-    || ['signed_out', 'delegated'].includes(selectedStudentDisplay?.kind),
   );
   const detailHistoryQueryKey = [
     TILE_BATCH_QUERY_ROOTS.history,
@@ -2195,6 +2207,8 @@ export default function Dashboard() {
     ),
     retry: false,
     gcTime: 0,
+    refetchOnWindowFocus: 'always',
+    refetchOnReconnect: 'always',
   });
   const detailHistoryFailureScope = detailHistoryError
     ? tileBatchFailureScope(detailHistoryErrorValue)
@@ -2209,48 +2223,60 @@ export default function Dashboard() {
     if (detailHistoryFailureScope === 'global') {
       setTileGlobalAuthorizationDenied(true);
       void purgeAllStudentTileCaches(queryClient);
-    } else {
+    } else if (selectedStudentHardPrivacyRevoked) {
       void purgeStudentTileCaches(queryClient, [selectedStudentRow.studentId]);
+    } else {
+      void purgeStudentHistoryTileCaches(queryClient, [selectedStudentRow.studentId]);
     }
   }, [
     detailHistoryFailureScope,
     detailHistoryHardDenied,
+    selectedStudentHardPrivacyRevoked,
     selectedStudentHistoryRevoked,
     selectedStudentRow?.studentId,
   ]);
   useEffect(() => {
-    if (
-      observationLeaseStatus !== 'denied'
-      && observationLeaseStatus !== 'paused_unobserved'
-    ) return;
-    void purgeAllStudentTileCaches(queryClient);
-  }, [observationLeaseStatus]);
-  useEffect(() => {
     if (studentView !== 'claimed') return;
     void purgeAllScreenshotTileCaches(queryClient);
   }, [studentView]);
+  useEffect(() => {
+    if (!['denied', 'paused_unobserved'].includes(observationLeaseStatus)) return;
+    // Lease revocation invalidates only legacy V1 pixels. V2 rows carry their
+    // own class-bound authority and remain available through focus churn.
+    void purgeLegacyScreenshotTileCaches(queryClient);
+  }, [observationLeaseStatus]);
   const {
     supported: viewportTrackingSupported,
     nearViewportStudentIds,
     getTileRef,
   } = useTileViewport();
-  const tileStudents = viewportTrackingSupported
-    ? filteredStudents.filter((student) => (
-        nearViewportStudentIds.has(student.studentId)
-        || liveViewState.studentId === student.studentId
-      ))
-    : filteredStudents;
-  const monitorableTileStudents = tileStudents.filter((student) => (
-    !isStudentMonitoringSuppressed(student)
-    && !['signed_out', 'delegated'].includes(monitoringDisplayFor(student).kind)
-  ));
+  const tileQueryStudents = studentView === 'available'
+    ? EMPTY_LIST
+    : studentView === 'class' && effectiveSessionId
+      // A session-scoped aggregate is the immutable frozen roster. Keep every
+      // row in deterministic cohorts; per-student authorization gates and the
+      // server decide whether a row may currently return pixels.
+      ? students
+      : filteredStudents;
   const tileStudentBindingsKey = JSON.stringify(
-    (studentView === 'available' ? EMPTY_LIST : monitorableTileStudents)
+    tileQueryStudents
       .map((student) => ({
         studentId: student.studentId,
         realtimeBinding: student.realtimeBinding || '',
       }))
       .sort((left, right) => left.studentId.localeCompare(right.studentId)),
+  );
+  const locallyRevokedTileStudentIdsKey = JSON.stringify([...new Set([
+    ...JSON.parse(monitoringSuppressedStudentIdsKey),
+    ...tileQueryStudents
+      .filter((student) => ['signed_out', 'delegated'].includes(
+        monitoringDisplayFor(student).kind,
+      ))
+      .map((student) => student.studentId),
+  ])].sort());
+  const locallyRevokedTileStudentIds = useMemo(
+    () => new Set(JSON.parse(locallyRevokedTileStudentIdsKey)),
+    [locallyRevokedTileStudentIdsKey],
   );
   const tileBatchContext = useMemo(() => ({
     schoolId: activeSchoolId || '',
@@ -2262,6 +2288,31 @@ export default function Dashboard() {
   useLayoutEffect(() => {
     setTileGlobalAuthorizationDenied(false);
   }, [tileBatchContextKey]);
+  const previousTileBindingsRef = useRef({
+    contextKey: null,
+    students: EMPTY_LIST,
+  });
+  const pendingTileBindingChangeRef = useRef(null);
+  const tileBindingTransitionKey = `${tileBatchContextKey}\n${tileStudentBindingsKey}`;
+  useLayoutEffect(() => {
+    const nextStudents = JSON.parse(tileStudentBindingsKey);
+    const previous = previousTileBindingsRef.current;
+    previousTileBindingsRef.current = {
+      contextKey: tileBatchContextKey,
+      students: nextStudents,
+    };
+    pendingTileBindingChangeRef.current = null;
+    if (previous.contextKey !== tileBatchContextKey) return;
+    const changedStudentIds = changedTileBindingStudentIds(previous.students, nextStudents);
+    if (changedStudentIds.length === 0) return;
+    pendingTileBindingChangeRef.current = {
+      key: tileBindingTransitionKey,
+      studentIds: changedStudentIds,
+    };
+    // Fail closed before paint. The passive reconciliation below waits until
+    // useQueries owns the replacement queryFn, then refetches the same cohort.
+    scrubStudentTileCaches(queryClient, changedStudentIds);
+  }, [tileBatchContextKey, tileBindingTransitionKey, tileStudentBindingsKey]);
   const tileBatchRequests = useMemo(
     () => createTileBatchRequests(JSON.parse(tileStudentBindingsKey), tileBatchContext),
     [tileBatchContext, tileStudentBindingsKey]
@@ -2273,24 +2324,40 @@ export default function Dashboard() {
   const observationReadsAllowed = observationLeaseStatus === 'observed'
     || observationLeaseStatus === 'legacy'
     || observationLeaseStatus === 'error';
-  const screenshotTileReadsEnabled = studentView !== 'available'
-    && studentView !== 'claimed'
-    && observationReadsAllowed
+  const screenshotTileReadsEnabled = studentView === 'class'
+    && Boolean(effectiveSessionId)
     && !tileGlobalAuthorizationDenied;
+  const legacyScreenshotReadsRevoked = ['denied', 'paused_unobserved'].includes(
+    observationLeaseStatus,
+  );
   const historyTileReadsEnabled = studentView !== 'available'
     && observationReadsAllowed
     && !tileGlobalAuthorizationDenied;
   const screenshotTileQueries = useQueries({
     queries: screenshotTileRequests.map((request) => ({
       queryKey: request.queryKey,
-      queryFn: ({ signal }) => fetchTileBatch(request, apiRequest, signal),
+      queryFn: async ({ signal }) => {
+        const response = removeStudentsFromTileBatchData(
+          await fetchTileBatch(request, apiRequest, signal),
+          locallyRevokedTileStudentIds,
+        );
+        return legacyScreenshotReadsRevoked
+          ? removeLegacyScreenshotsFromTileBatchData(response)
+          : response;
+      },
       select: indexTileScreenshots,
       refetchInterval: request.refetchInterval,
       refetchIntervalInBackground: false,
+      refetchOnWindowFocus: 'always',
+      refetchOnReconnect: 'always',
       retry: false,
       staleTime: 15000,
       gcTime: 60000,
-      enabled: screenshotTileReadsEnabled,
+      enabled: screenshotTileReadsEnabled && tileBatchRequestShouldPoll(request, {
+        viewportTrackingSupported,
+        nearViewportStudentIds,
+        liveViewStudentId: liveViewState.studentId,
+      }),
       structuralSharing: (previous, incoming) => retainFreshTileScreenshotsOnNull(
         previous,
         incoming,
@@ -2301,16 +2368,41 @@ export default function Dashboard() {
   const historyTileQueries = useQueries({
     queries: historyTileRequests.map((request) => ({
       queryKey: request.queryKey,
-      queryFn: ({ signal }) => fetchTileBatch(request, apiRequest, signal),
+      queryFn: async ({ signal }) => removeStudentsFromTileBatchData(
+        await fetchTileBatch(request, apiRequest, signal),
+        locallyRevokedTileStudentIds,
+      ),
       select: indexTileHistory,
       refetchInterval: request.refetchInterval,
       refetchIntervalInBackground: false,
+      refetchOnWindowFocus: 'always',
+      refetchOnReconnect: 'always',
       retry: false,
       staleTime: 15000,
       gcTime: 60000,
-      enabled: historyTileReadsEnabled,
+      enabled: historyTileReadsEnabled && tileBatchRequestShouldPoll(request, {
+        viewportTrackingSupported,
+        nearViewportStudentIds,
+        liveViewStudentId: liveViewState.studentId,
+      }),
     })),
   });
+  useEffect(() => {
+    const pending = pendingTileBindingChangeRef.current;
+    if (!pending || pending.key !== tileBindingTransitionKey) return;
+    pendingTileBindingChangeRef.current = null;
+    void reconcileStudentTileBindingCaches(queryClient, pending.studentIds);
+  }, [tileBindingTransitionKey]);
+  useEffect(() => {
+    if (observationLeaseStatus !== 'observed') return;
+    // V2 reads do not wait for this lease, but a newly acknowledged lease
+    // should reconcile any V1 compatibility rows immediately as well.
+    void queryClient.refetchQueries({
+      queryKey: [TILE_BATCH_QUERY_ROOTS.screenshots],
+      exact: false,
+      type: 'active',
+    });
+  }, [observationLeaseStatus, tileBatchContextKey]);
   const screenshotsByStudent = useMemo(() => {
     if (screenshotTileQueries.length === 0) return EMPTY_TILE_MAP;
     return new Map(screenshotTileQueries.flatMap((query) => [...(query.data || EMPTY_TILE_MAP)]));
@@ -2335,18 +2427,22 @@ export default function Dashboard() {
     if (historyTileQueries.length === 0) return EMPTY_TILE_MAP;
     return new Map(historyTileQueries.flatMap((query) => [...(query.data || EMPTY_TILE_MAP)]));
   }, [historyTileQueries]);
-  const hardDeniedTileStudentIds = useMemo(() => {
+  const hardDeniedScreenshotStudentIds = useMemo(() => {
     const deniedIds = new Set();
-    const collectDenied = (requests, queries) => {
-      requests.forEach((request, index) => {
-        if (tileBatchFailureScope(queries[index]?.error) === 'transient') return;
-        for (const studentId of request.body.studentIds) deniedIds.add(studentId);
-      });
-    };
-    collectDenied(screenshotTileRequests, screenshotTileQueries);
-    collectDenied(historyTileRequests, historyTileQueries);
+    screenshotTileRequests.forEach((request, index) => {
+      if (tileBatchFailureScope(screenshotTileQueries[index]?.error) === 'transient') return;
+      for (const studentId of request.body.studentIds) deniedIds.add(studentId);
+    });
     return deniedIds;
-  }, [historyTileQueries, historyTileRequests, screenshotTileQueries, screenshotTileRequests]);
+  }, [screenshotTileQueries, screenshotTileRequests]);
+  const hardDeniedHistoryStudentIds = useMemo(() => {
+    const deniedIds = new Set();
+    historyTileRequests.forEach((request, index) => {
+      if (tileBatchFailureScope(historyTileQueries[index]?.error) === 'transient') return;
+      for (const studentId of request.body.studentIds) deniedIds.add(studentId);
+    });
+    return deniedIds;
+  }, [historyTileQueries, historyTileRequests]);
   const tileGlobalAuthorizationFailure = useMemo(() => (
     [...screenshotTileQueries, ...historyTileQueries].some((query) => (
       query?.isError && tileBatchFailureScope(query.error) === 'global'
@@ -2357,15 +2453,14 @@ export default function Dashboard() {
     setTileGlobalAuthorizationDenied(true);
     void purgeAllStudentTileCaches(queryClient);
   }, [tileGlobalAuthorizationFailure]);
+  const tilePrivacyStudents = studentView === 'class' && effectiveSessionId
+    ? students
+    : filteredStudents;
   const tileCachePurgeStudentIdsKey = JSON.stringify([...new Set([
-    ...hardDeniedTileStudentIds,
     ...((tileGlobalAuthorizationDenied || tileGlobalAuthorizationFailure)
-      ? filteredStudents.map((student) => student.studentId)
+      ? tilePrivacyStudents.map((student) => student.studentId)
       : EMPTY_LIST),
-    ...(['denied', 'paused_unobserved'].includes(observationLeaseStatus)
-      ? filteredStudents.map((student) => student.studentId)
-      : EMPTY_LIST),
-    ...filteredStudents
+    ...tilePrivacyStudents
       .filter((student) => (
         isStudentMonitoringSuppressed(student)
         || ['signed_out', 'delegated'].includes(monitoringDisplayFor(student).kind)
@@ -2398,10 +2493,24 @@ export default function Dashboard() {
       exact: false,
       type: 'inactive',
     });
-  }, [tileBatchContextKey, tileStudentBindingsKey]);
+  }, [tileBatchContextKey]);
   useEffect(() => {
     void purgeStudentTileCaches(queryClient, JSON.parse(tileCachePurgeStudentIdsKey));
   }, [tileCachePurgeStudentIdsKey]);
+  const hardDeniedScreenshotStudentIdsKey = JSON.stringify([...hardDeniedScreenshotStudentIds].sort());
+  const hardDeniedHistoryStudentIdsKey = JSON.stringify([...hardDeniedHistoryStudentIds].sort());
+  useEffect(() => {
+    void purgeStudentScreenshotTileCaches(
+      queryClient,
+      JSON.parse(hardDeniedScreenshotStudentIdsKey),
+    );
+  }, [hardDeniedScreenshotStudentIdsKey]);
+  useEffect(() => {
+    void purgeStudentHistoryTileCaches(
+      queryClient,
+      JSON.parse(hardDeniedHistoryStudentIdsKey),
+    );
+  }, [hardDeniedHistoryStudentIdsKey]);
   useEffect(() => {
     if (freshnessTimeoutRef.current) {
       clearTimeout(freshnessTimeoutRef.current);
@@ -4406,18 +4515,18 @@ export default function Dashboard() {
                 student,
                 'liveViewNegotiationV1',
               );
-              const tileHistoryRevoked = supervisedElsewhere
+              const tileSharedPrivacyRevoked = supervisedElsewhere
                 || tileGlobalAuthorizationDenied
                 || tileGlobalAuthorizationFailure
+                || ['signed_out', 'delegated'].includes(monitoringDisplay?.kind);
+              const tileHistoryRevoked = tileSharedPrivacyRevoked
+                || hardDeniedHistoryStudentIds.has(student.studentId)
                 || observationLeaseStatus === 'pending'
                 || observationLeaseStatus === 'denied'
-                || observationLeaseStatus === 'paused_unobserved'
-                || hardDeniedTileStudentIds.has(student.studentId)
-                || ['signed_out', 'delegated'].includes(monitoringDisplay?.kind);
-              const tileScreenshotRevoked = tileHistoryRevoked
-                || tileScreenshotObservationStatus === 'pending'
-                || tileScreenshotObservationStatus === 'denied'
-                || tileScreenshotObservationStatus === 'paused_unobserved';
+                || observationLeaseStatus === 'paused_unobserved';
+              const tileScreenshotRevoked = tileSharedPrivacyRevoked
+                || hardDeniedScreenshotStudentIds.has(student.studentId)
+                || studentView === 'claimed';
               return (
                 <div
                   key={student.studentId}
@@ -4471,6 +4580,7 @@ export default function Dashboard() {
                     monitoringDisplay={monitoringDisplay || undefined}
                     freshnessNowMs={freshnessNowMs}
                     screenshotObservationStatus={tileScreenshotObservationStatus}
+                    screenshotAuthorizationDenied={tileScreenshotRevoked}
                     actionContextKey={`${activeSchoolId || ''}:${effectiveSession?.id || ''}:${studentView}:${selectedSubgroupId}:${canUseRemoteControls}:${dashboardCapabilities.canUseLiveView}`}
                   /> : (
                     <div className="h-[420px] rounded-lg border border-border/30 bg-muted/10" aria-hidden="true" />

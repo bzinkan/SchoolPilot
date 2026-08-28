@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 function source(path: string): string {
-  return readFileSync(new URL(path, import.meta.url), "utf8");
+  return readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 }
 
 test("manual student sessions use database-time leases and exact recovery capabilities", () => {
@@ -20,7 +20,10 @@ test("manual student sessions use database-time leases and exact recovery capabi
   assert.match(migrations, /20260827_classpilot_student_session_recovery_expand/);
   assert.match(migrations, /session_recovery_token_hash ~ '\^\[0-9a-f\]\{64\}\$'/);
   assert.match(storage, /now\(\) \+ interval '300 seconds'/);
+  assert.match(storage, /session\.deviceId === deviceId/);
   assert.match(storage, /session\.sessionRecoveryTokenHash === options\.reclaimRecoveryTokenHash/);
+  assert.match(storage, /authoritative && session\.id !== recoveredSession\?\.session\.id/);
+  assert.match(storage, /recoveredSession\.session\.studentId !== studentId/);
   assert.match(storage, /code: "STUDENT_SESSION_ACTIVE"/);
   assert.match(storage, /endStudentSessionExact[\s\S]*studentSessionId[\s\S]*deviceId/);
   const issuance = source("../src/services/classpilotStudentAuth.ts");
@@ -75,6 +78,12 @@ test("manual student sessions use database-time leases and exact recovery capabi
       < sessionStart.indexOf(".insert(studentDevices)"),
     "student/device association must follow the authoritative conflict guard"
   );
+  assert.doesNotMatch(
+    sessionStart,
+    /session\.studentId === studentId[\s\S]{0,200}sessionRecoveryTokenHash/,
+    "same-device recovery must not be limited to resuming the previous student"
+  );
+  assert.match(routes, /manualSessionCrossStudentHandoff/);
   assert.doesNotMatch(storage, /export async function startStudentSession\(/);
 });
 
@@ -121,7 +130,7 @@ test("heartbeat authority expires atomically and renews only an accepted manual 
 
 test("recovery release and legacy sign-out are exact, generic, and do not enumerate bindings", () => {
   const routes = source("../src/routes/classpilot/devices.ts");
-  const releaseStart = routes.indexOf('router.post(\n  "/extension/session-release"');
+  const releaseStart = routes.search(/router\.post\(\r?\n  "\/extension\/session-release"/);
   const signOutStart = routes.indexOf('router.post("/extension/sign-out"');
   const signOutEnd = routes.indexOf("// POST /api/classpilot/register", signOutStart);
   assert.notEqual(releaseStart, -1);

@@ -62,7 +62,7 @@ export default function PrivacyPolicy() {
             <ul className="list-disc pl-6 text-slate-700 space-y-2 mb-4">
               <li>Google Classroom roster information (class names, student enrollments)</li>
               <li>Active-tab activity, including current tab URLs, titles, favicons, and timestamps during authorized monitoring</li>
-              <li>Observation-bound screen capture thumbnails and exact-bound safety evidence captures, which may contain visible website content</li>
+              <li>Authorized, class-bound screen capture thumbnails and exact-bound safety evidence captures, which may contain visible website content</li>
               <li>Temporary authorized Live View media. The extension and Schoolpilot servers do not record the stream, but an authorized teacher can explicitly save a local recording or still image governed by school policy</li>
               <li>Student and teacher communications sent through ClassPilot</li>
               <li>Device connection status</li>
@@ -109,7 +109,7 @@ export default function PrivacyPolicy() {
               We retain data only as long as necessary to provide our services:
             </p>
             <ul className="list-disc pl-6 text-slate-700 space-y-2">
-              <li><strong>Ordinary screen previews:</strong> The latest image is normally held for only 60–120 seconds and expires automatically</li>
+              <li><strong>Ordinary screen previews:</strong> An image retained for an authorized class is held for no more than 120 seconds and expires automatically; out-of-class capture-health checks do not retain image pixels</li>
               <li><strong>Safety and evidence captures:</strong> Image content uses a separate deployment retention policy (30 days by default), after which the image is purged while bounded review metadata may remain</li>
               <li><strong>ClassPilot heartbeat history and session-report detail:</strong> Uses the school's selected whole-number period from 1 through 365 days, default 30, and is purged or redacted by an hourly scheduled job</li>
               <li><strong>Hall pass records:</strong> Retained for the current school year for analytics</li>
@@ -201,6 +201,8 @@ export default function PrivacyPolicy() {
               <li>Teachers can only monitor students in their assigned classes</li>
               <li>Personal devices are not monitored outside of school-managed contexts</li>
               <li>In observation-lease mode, ambient screenshots are captured only while an authorized teacher or administrator is actively observing; an exact-bound safety capture may be requested separately</li>
+              <li>For managed extensions using tracking-window leases, capture-health checks may continue without an open teacher dashboard while the student is authenticated and school tracking policy permits it. Outside an authorized live class, Schoolpilot discards the image pixels immediately and retains only non-image operational timing evidence</li>
+              <li>Every class-readable preview is newly captured and bound to that exact class session and authorization revision; images from an earlier class or an out-of-class interval are not shown</li>
               <li>During mixed-version rollout, a school may explicitly retain the legacy scheduled-screenshot mode for older managed extensions</li>
               <li>Authorized Live View streams are not recorded by the extension or Schoolpilot servers; an authorized teacher can explicitly save a local recording or still image, which the school controls</li>
             </ul>

@@ -1,18 +1,40 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { QueryClient } from '@tanstack/react-query';
+import {
+  QueryClient,
+  QueryObserver,
+  focusManager,
+  onlineManager,
+} from '@tanstack/react-query';
 import {
   TILE_BATCH_REFETCH_INTERVAL_MS,
+  changedTileBindingStudentIds,
   createTileBatchRequests,
   fetchTileBatch,
+  indexTileScreenshots,
+  removeLegacyScreenshotsFromTileBatchData,
   removeStudentsFromTileBatchData,
   retainFreshTileScreenshotsOnNull,
+  tileBatchRequestShouldPoll,
 } from '../src/products/classpilot/lib/tileBatchPolling.js';
 import {
   purgeAllScreenshotTileCaches,
   purgeAllStudentTileCaches,
+  purgeLegacyScreenshotTileCaches,
+  reconcileStudentTileBindingCaches,
+  scrubStudentTileCaches,
+  purgeStudentTileCaches,
   tileBatchFailureScope,
 } from '../src/products/classpilot/lib/tileCachePrivacy.js';
+
+async function waitUntil(predicate, message) {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.fail(message);
+}
 
 const studentIds = Array.from({ length: 40 }, (_, index) =>
   `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`
@@ -58,16 +80,47 @@ assert.equal(
   false,
   'claimed coverage reads must retain supervision-context authorization without a class session ID',
 );
-assert.notDeepEqual(
+assert.deepEqual(
   contextBoundRequests[0].queryKey,
   replacementBindingRequests[0].queryKey,
-  'a public realtime-binding change must isolate cached screenshot pixels',
+  'a binding change must preserve the stable frozen-roster cohort key',
 );
 assert.equal(
   JSON.stringify(contextBoundRequests).includes('deviceId'),
   false,
   'context-bound requests must still expose no device IDs',
 );
+
+const exactV2Screenshot = {
+  screenshot: 'data:image/jpeg;base64,v2',
+  bindingVersion: 'v2:expected-binding',
+};
+const indexedBindingCases = indexTileScreenshots({
+  tiles: [
+    {
+      studentId: 'valid-v2',
+      bindingVersion: 'v2:expected-binding',
+      screenshot: exactV2Screenshot,
+    },
+    {
+      studentId: 'mismatched-v2',
+      bindingVersion: 'v2:expected-binding',
+      screenshot: { ...exactV2Screenshot, bindingVersion: 'v2:different-binding' },
+    },
+    { studentId: 'missing-row-v2', screenshot: exactV2Screenshot },
+    {
+      studentId: 'missing-screenshot-v2',
+      bindingVersion: 'v2:expected-binding',
+      screenshot: { screenshot: 'unmarked-pixel' },
+    },
+    { studentId: 'legacy-v1', screenshot: { screenshot: 'legacy-pixel' } },
+  ],
+});
+assert.equal(indexedBindingCases.get('valid-v2'), exactV2Screenshot);
+assert.equal(indexedBindingCases.get('mismatched-v2'), null);
+assert.equal(indexedBindingCases.get('missing-row-v2'), null);
+assert.equal(indexedBindingCases.get('missing-screenshot-v2'), null);
+assert.deepEqual(indexedBindingCases.get('legacy-v1'), { screenshot: 'legacy-pixel' });
 
 let healthyRequests = 0;
 const requestSignal = new AbortController().signal;
@@ -85,6 +138,21 @@ const healthy = await fetchTileBatch(
 );
 assert.deepEqual(healthy, { tiles: [] });
 assert.equal(healthyRequests, 1, 'healthy batch polling must make one network request per request descriptor');
+const normalizedMismatchedFetch = await fetchTileBatch(
+  requests[0],
+  async () => ({
+    tiles: [{
+      studentId: studentIds[0],
+      bindingVersion: 'v2:expected-binding',
+      screenshot: { screenshot: 'wrong-pixel', bindingVersion: 'v2:different-binding' },
+    }],
+  }),
+);
+assert.equal(
+  normalizedMismatchedFetch.tiles[0].screenshot,
+  null,
+  'mismatched V2 pixels must be nulled before the raw response enters React Query',
+);
 
 let failedBatchRequests = 0;
 await assert.rejects(
@@ -154,20 +222,73 @@ assert.equal(
   priorScreenshot,
   'a same-query 200 null may retain its original screenshot inside the 75-second window',
 );
-const hiddenAtSeventyFiveSeconds = retainFreshTileScreenshotsOnNull(
+const retainedAtSeventyFiveSeconds = retainFreshTileScreenshotsOnNull(
   priorScreenshotResponse,
   successfulNullResponse,
   screenshotCapturedAtMs + 75_000,
 );
 assert.equal(
-  hiddenAtSeventyFiveSeconds.tiles[0].screenshot,
+  retainedAtSeventyFiveSeconds.tiles[0].screenshot,
+  priorScreenshot,
+  'a same-binding null may preserve pixels for the visibly aged 75-to-120-second state',
+);
+const hiddenAtOneHundredTwentySeconds = retainFreshTileScreenshotsOnNull(
+  priorScreenshotResponse,
+  successfulNullResponse,
+  screenshotCapturedAtMs + 120_000,
+);
+assert.equal(
+  hiddenAtOneHundredTwentySeconds.tiles[0].screenshot,
   null,
-  'a successful null must hide the prior preview at its original 75-second boundary',
+  'a successful null must hide the prior preview at the exact 120-second boundary',
 );
 assert.deepEqual(
   retainFreshTileScreenshotsOnNull(priorScreenshotResponse, { tiles: [] }, screenshotCapturedAtMs + 30_000),
   { tiles: [] },
   'an omitted/unauthorized row must never inherit a prior screenshot',
+);
+const v2BindingVersion = 'v2:opaque-binding-a';
+const v2PriorScreenshot = { ...priorScreenshot, bindingVersion: v2BindingVersion };
+const v2PriorResponse = {
+  tiles: [{
+    studentId: studentIds[0],
+    bindingVersion: v2BindingVersion,
+    screenshot: v2PriorScreenshot,
+  }],
+};
+assert.equal(
+  retainFreshTileScreenshotsOnNull(v2PriorResponse, {
+    tiles: [{ studentId: studentIds[0], bindingVersion: v2BindingVersion, screenshot: null }],
+  }, screenshotCapturedAtMs + 90_000).tiles[0].screenshot,
+  v2PriorScreenshot,
+  'a null V2 row may retain pixels only under the exact same expected opaque binding',
+);
+assert.equal(
+  retainFreshTileScreenshotsOnNull(v2PriorResponse, {
+    tiles: [{ studentId: studentIds[0], bindingVersion: 'v2:opaque-binding-b', screenshot: null }],
+  }, screenshotCapturedAtMs + 90_000).tiles[0].screenshot,
+  null,
+  'a changed V2 expected binding must scrub prior pixels immediately',
+);
+assert.equal(
+  retainFreshTileScreenshotsOnNull(v2PriorResponse, successfulNullResponse, screenshotCapturedAtMs + 90_000)
+    .tiles[0].screenshot,
+  null,
+  'an absent expected V2 binding must fail private rather than retaining class-bound pixels',
+);
+assert.equal(
+  retainFreshTileScreenshotsOnNull(priorScreenshotResponse, {
+    tiles: [{ studentId: studentIds[0], bindingVersion: v2BindingVersion, screenshot: null }],
+  }, screenshotCapturedAtMs + 90_000).tiles[0].screenshot,
+  null,
+  'a V1 screenshot must never cross into an incoming V2 authority binding',
+);
+assert.equal(
+  retainFreshTileScreenshotsOnNull(v2PriorResponse, {
+    tiles: [{ studentId: studentIds[0], bindingVersion: 'v1:legacy-binding', screenshot: null }],
+  }, screenshotCapturedAtMs + 90_000).tiles[0].screenshot,
+  null,
+  'a V2 screenshot must never cross into an incoming V1 authority binding',
 );
 
 const privacyQueryClient = new QueryClient();
@@ -204,6 +325,86 @@ assert.equal(
 );
 privacyQueryClient.clear();
 
+const legacyScrubClient = new QueryClient();
+const legacyAndV2Key = ['/api/classpilot/tiles/screenshots', 'authority-a', 'mixed'];
+const v2Pixel = { screenshot: 'v2-pixel', bindingVersion: 'v2:exact-class-binding' };
+legacyScrubClient.setQueryData(legacyAndV2Key, {
+  tiles: [
+    { studentId: studentIds[0], screenshot: { screenshot: 'legacy-pixel' } },
+    { studentId: studentIds[1], screenshot: v2Pixel },
+  ],
+});
+await purgeLegacyScreenshotTileCaches(legacyScrubClient);
+assert.deepEqual(
+  legacyScrubClient.getQueryData(legacyAndV2Key).tiles.map((tile) => tile.studentId),
+  [studentIds[1]],
+  'V1 observation revocation must scrub only legacy pixels from a mixed cohort',
+);
+assert.deepEqual(
+  legacyScrubClient.getQueryData(legacyAndV2Key).tiles[0].screenshot,
+  v2Pixel,
+  'V2 class-bound pixels must survive legacy observation-lease revocation',
+);
+assert.equal(
+  removeLegacyScreenshotsFromTileBatchData(new Map([
+    [studentIds[0], { screenshot: 'legacy-pixel' }],
+    [studentIds[1], v2Pixel],
+  ])).has(studentIds[0]),
+  false,
+  'selected Map-shaped caches must also drop legacy pixels',
+);
+assert.equal(
+  removeLegacyScreenshotsFromTileBatchData(new Map([
+    [studentIds[0], { screenshot: 'legacy-pixel' }],
+    [studentIds[1], v2Pixel],
+  ])).has(studentIds[1]),
+  true,
+  'selected Map-shaped caches must preserve V2 pixels',
+);
+assert.deepEqual(
+  retainFreshTileScreenshotsOnNull(
+    priorScreenshotResponse,
+    removeLegacyScreenshotsFromTileBatchData(successfulNullResponse),
+    screenshotCapturedAtMs + 30_000,
+  ),
+  { tiles: [] },
+  'a denied/paused V1 null row must be removed before structural sharing can repopulate it',
+);
+legacyScrubClient.clear();
+
+let failingLegacyCache = {
+  tiles: [
+    { studentId: studentIds[0], screenshot: { screenshot: 'legacy-before-cancel' } },
+    { studentId: studentIds[1], screenshot: v2Pixel },
+  ],
+};
+const failingLegacyScrubClient = {
+  setQueriesData(_query, updater) {
+    failingLegacyCache = updater(failingLegacyCache);
+  },
+  async cancelQueries() {
+    throw new Error('cancel failed');
+  },
+  async refetchQueries() {
+    failingLegacyCache = {
+      tiles: [
+        { studentId: studentIds[0], screenshot: { screenshot: 'legacy-after-refetch' } },
+        { studentId: studentIds[1], screenshot: v2Pixel },
+      ],
+    };
+    throw new Error('refetch failed');
+  },
+};
+await assert.doesNotReject(
+  purgeLegacyScreenshotTileCaches(failingLegacyScrubClient),
+  'privacy scrubbing must resolve even when cancellation and refetch fail',
+);
+assert.deepEqual(
+  failingLegacyCache.tiles.map((tile) => tile.studentId),
+  [studentIds[1]],
+  'the final fail-safe scrub must remove V1 pixels reintroduced by a failed refetch',
+);
+
 const fiftyStudentIds = Array.from({ length: 50 }, (_, index) =>
   `10000000-0000-4000-8000-${String(index).padStart(12, '0')}`
 );
@@ -226,6 +427,223 @@ assert.equal(
   'chunking must not drop students'
 );
 
+const sixtyStudents = Array.from({ length: 60 }, (_, index) => ({
+  studentId: `30000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+  realtimeBinding: `binding-${index}`,
+}));
+const sixtyStudentRequests = createTileBatchRequests(sixtyStudents, {
+  schoolId: 'school-1',
+  viewerId: 'staff-1',
+  authority: 'teacher:class',
+  teachingSessionId: 'session-1',
+});
+assert.equal(sixtyStudentRequests.length, 4, 'a 60-student frozen roster has two fixed cohort pairs');
+assert.deepEqual(
+  sixtyStudentRequests.map((request) => request.body.studentIds.length),
+  [50, 50, 10, 10],
+);
+const sixtyScreenshotRequests = sixtyStudentRequests.filter((request) => request.kind === 'screenshots');
+const frozenQueryKeys = sixtyScreenshotRequests.map((request) => request.queryKey);
+assert.deepEqual(
+  createTileBatchRequests([...sixtyStudents].reverse(), {
+    schoolId: 'school-1',
+    viewerId: 'staff-1',
+    authority: 'teacher:class',
+    teachingSessionId: 'session-1',
+  }).filter((request) => request.kind === 'screenshots').map((request) => request.queryKey),
+  frozenQueryKeys,
+  'sorting the full binding roster must keep cohort identities stable across presentation ordering',
+);
+assert.equal(tileBatchRequestShouldPoll(sixtyScreenshotRequests[0], {
+  viewportTrackingSupported: true,
+  nearViewportStudentIds: new Set([sixtyStudents[0].studentId]),
+}), true);
+assert.equal(tileBatchRequestShouldPoll(sixtyScreenshotRequests[1], {
+  viewportTrackingSupported: true,
+  nearViewportStudentIds: new Set([sixtyStudents[0].studentId]),
+}), false);
+assert.equal(tileBatchRequestShouldPoll(sixtyScreenshotRequests[1], {
+  viewportTrackingSupported: true,
+  nearViewportStudentIds: new Set([sixtyStudents[59].studentId]),
+}), true);
+assert.equal(tileBatchRequestShouldPoll(sixtyScreenshotRequests[1], {
+  viewportTrackingSupported: true,
+  nearViewportStudentIds: new Set(),
+  liveViewStudentId: sixtyStudents[59].studentId,
+}), true, 'Live View keeps its fixed cohort active even when its tile is offscreen');
+assert.equal(tileBatchRequestShouldPoll(sixtyScreenshotRequests[1]), true, 'unsupported viewport tracking polls every cohort');
+
+const exactScrubClient = new QueryClient();
+const exactScrubRawKey = sixtyScreenshotRequests[0].queryKey;
+const exactScrubSelectedKey = [...exactScrubRawKey, 'selected-map'];
+const changedStudentId = sixtyStudents[0].studentId;
+const unchangedStudentId = sixtyStudents[1].studentId;
+const unchangedScreenshot = { screenshot: 'classmate-pixel' };
+exactScrubClient.setQueryData(exactScrubRawKey, {
+  tiles: [
+    { studentId: changedStudentId, screenshot: { screenshot: 'old-binding-pixel' } },
+    { studentId: unchangedStudentId, screenshot: unchangedScreenshot },
+  ],
+});
+exactScrubClient.setQueryData(exactScrubSelectedKey, new Map([
+  [changedStudentId, { screenshot: 'old-binding-pixel' }],
+  [unchangedStudentId, unchangedScreenshot],
+]));
+const cachedUnchangedScreenshot = exactScrubClient.getQueryData(exactScrubRawKey).tiles[1].screenshot;
+const cachedUnchangedMapScreenshot = exactScrubClient.getQueryData(exactScrubSelectedKey).get(unchangedStudentId);
+const replacementSixtyStudents = sixtyStudents.map((student) => (
+  student.studentId === changedStudentId
+    ? { ...student, realtimeBinding: 'replacement-binding' }
+    : student
+));
+const replacementSixtyScreenshotRequests = createTileBatchRequests(replacementSixtyStudents, {
+  schoolId: 'school-1',
+  viewerId: 'staff-1',
+  authority: 'teacher:class',
+  teachingSessionId: 'session-1',
+}).filter((request) => request.kind === 'screenshots');
+assert.deepEqual(
+  replacementSixtyScreenshotRequests.map((request) => request.queryKey),
+  frozenQueryKeys,
+  'an actual binding transition must not replace either frozen-roster cohort query',
+);
+const changedBindingStudentIds = changedTileBindingStudentIds(
+  sixtyStudents,
+  replacementSixtyStudents,
+);
+assert.deepEqual(
+  changedBindingStudentIds,
+  [changedStudentId],
+  'an actual binding transition must identify only the student whose binding changed',
+);
+scrubStudentTileCaches(exactScrubClient, changedBindingStudentIds);
+assert.deepEqual(
+  exactScrubClient.getQueryData(exactScrubRawKey).tiles.map((tile) => tile.studentId),
+  [unchangedStudentId],
+  'an exact binding/privacy change scrubs only that student from the raw cohort cache',
+);
+assert.deepEqual(
+  exactScrubClient.getQueryData(exactScrubRawKey).tiles[0].screenshot,
+  cachedUnchangedScreenshot,
+  'an exact cache scrub must preserve the unchanged classmate payload',
+);
+assert.equal(exactScrubClient.getQueryData(exactScrubSelectedKey).has(changedStudentId), false);
+assert.equal(
+  exactScrubClient.getQueryData(exactScrubSelectedKey).get(unchangedStudentId),
+  cachedUnchangedMapScreenshot,
+);
+exactScrubClient.clear();
+
+const bindingTransitionClient = new QueryClient({
+  defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+});
+bindingTransitionClient.mount();
+const bindingTransitionKey = replacementSixtyScreenshotRequests[0].queryKey;
+const bindingTransitionNow = Date.now();
+const retainedClassmateScreenshot = {
+  screenshot: 'retained-classmate-pixel',
+  timestamp: new Date(bindingTransitionNow).toISOString(),
+};
+bindingTransitionClient.setQueryData(bindingTransitionKey, {
+  tiles: [
+    { studentId: changedStudentId, screenshot: { screenshot: 'former-binding-pixel' } },
+    { studentId: unchangedStudentId, screenshot: retainedClassmateScreenshot },
+  ],
+});
+let bindingTransitionFetches = 0;
+const replacementScreenshot = {
+  screenshot: 'replacement-binding-pixel',
+  timestamp: new Date(bindingTransitionNow).toISOString(),
+};
+const bindingTransitionObserver = new QueryObserver(bindingTransitionClient, {
+  queryKey: bindingTransitionKey,
+  queryFn: async () => {
+    bindingTransitionFetches += 1;
+    return {
+      tiles: [
+        { studentId: changedStudentId, screenshot: replacementScreenshot },
+        { studentId: unchangedStudentId, screenshot: null },
+      ],
+    };
+  },
+  staleTime: Number.POSITIVE_INFINITY,
+  structuralSharing: (previous, incoming) => retainFreshTileScreenshotsOnNull(
+    previous,
+    incoming,
+    bindingTransitionNow,
+  ),
+});
+const unsubscribeBindingTransition = bindingTransitionObserver.subscribe(() => {});
+try {
+  scrubStudentTileCaches(bindingTransitionClient, changedBindingStudentIds);
+  await reconcileStudentTileBindingCaches(bindingTransitionClient, changedBindingStudentIds);
+  await waitUntil(
+    () => bindingTransitionFetches === 1,
+    'the same active cohort must refetch after its exact binding transition',
+  );
+  const transitionedTiles = bindingTransitionClient.getQueryData(bindingTransitionKey).tiles;
+  assert.equal(
+    transitionedTiles.find((tile) => tile.studentId === changedStudentId)?.screenshot,
+    replacementScreenshot,
+    'the replacement binding may populate new authorized pixels after the old row is scrubbed',
+  );
+  assert.equal(
+    transitionedTiles.find((tile) => tile.studentId === unchangedStudentId)?.screenshot,
+    retainedClassmateScreenshot,
+    'the same-key transition must preserve an unchanged classmate screenshot on a null poll',
+  );
+} finally {
+  unsubscribeBindingTransition();
+  bindingTransitionClient.unmount();
+  bindingTransitionClient.clear();
+}
+
+const lifecycleClient = new QueryClient({
+  defaultOptions: { queries: { retry: false, staleTime: 0 } },
+});
+lifecycleClient.mount();
+let lifecycleFetches = 0;
+const lifecycleOptions = {
+  queryKey: sixtyScreenshotRequests[0].queryKey,
+  queryFn: async () => {
+    lifecycleFetches += 1;
+    return { tiles: [] };
+  },
+  enabled: true,
+  staleTime: Number.POSITIVE_INFINITY,
+  refetchOnWindowFocus: 'always',
+  refetchOnReconnect: 'always',
+};
+const lifecycleObserver = new QueryObserver(lifecycleClient, lifecycleOptions);
+const unsubscribeLifecycle = lifecycleObserver.subscribe(() => {});
+try {
+  await waitUntil(() => lifecycleFetches === 1, 'an enabled visible cohort must fetch immediately');
+  focusManager.setFocused(false);
+  focusManager.setFocused(true);
+  await waitUntil(() => lifecycleFetches === 2, 'focus recovery must immediately refetch the stale active cohort');
+  onlineManager.setOnline(false);
+  onlineManager.setOnline(true);
+  await waitUntil(() => lifecycleFetches === 3, 'network recovery must immediately refetch the stale active cohort');
+  lifecycleObserver.setOptions({ ...lifecycleOptions, enabled: false });
+  focusManager.setFocused(false);
+  focusManager.setFocused(true);
+  onlineManager.setOnline(false);
+  onlineManager.setOnline(true);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(lifecycleFetches, 3, 'an offscreen disabled cohort must not refetch on focus or reconnect');
+  assert.deepEqual(
+    lifecycleObserver.options.queryKey,
+    frozenQueryKeys[0],
+    'viewport enablement changes must never change the frozen cohort query key',
+  );
+} finally {
+  unsubscribeLifecycle();
+  lifecycleClient.unmount();
+  lifecycleClient.clear();
+  focusManager.setFocused(undefined);
+  onlineManager.setOnline(true);
+}
+
 const studentTileSource = await readFile(
   new URL('../src/products/classpilot/components/StudentTile.jsx', import.meta.url),
   'utf8'
@@ -247,6 +665,41 @@ assert.equal(
 );
 assert.match(dashboardSource, /historyByStudent\.get\(student\.studentId\)/);
 assert.match(dashboardSource, /screenshotsByStudent\.get\(student\.studentId\)/);
+assert.match(
+  dashboardSource,
+  /const tileQueryStudents = studentView === 'available'[\s\S]{0,220}studentView === 'class' && effectiveSessionId[\s\S]{0,500}\? students/,
+  'class query cohorts must come from the full frozen aggregate rather than the filtered render list',
+);
+assert.doesNotMatch(
+  dashboardSource,
+  /const tileStudents = viewportTrackingSupported/,
+  'viewport state must not rebuild query identities from a partial roster',
+);
+assert.match(
+  dashboardSource,
+  /enabled: screenshotTileReadsEnabled && tileBatchRequestShouldPoll\(/,
+  'viewport state may enable a fixed screenshot cohort without changing its identity',
+);
+assert.match(
+  dashboardSource,
+  /refetchOnWindowFocus: 'always',[\s\S]{0,80}refetchOnReconnect: 'always'/,
+  'tile reads must reconcile immediately after focus or network recovery',
+);
+assert.match(
+  dashboardSource,
+  /changedTileBindingStudentIds\(previous\.students, nextStudents\)[\s\S]{0,600}scrubStudentTileCaches\(queryClient, changedStudentIds\)/,
+  'binding transitions must scrub only the changed student while retaining the stable cohort cache',
+);
+assert.match(
+  dashboardSource,
+  /reconcileStudentTileBindingCaches\(queryClient, pending\.studentIds\)/,
+  'the stable active cohort must refetch after its replacement query function is installed',
+);
+assert.match(
+  dashboardSource,
+  /if \(studentView !== 'claimed'\) return;[\s\S]{0,80}purgeAllScreenshotTileCaches/,
+  'claimed coverage must preserve the explicit screenshot-cache purge',
+);
 assert.match(
   dashboardSource,
   /teachingSessionId: studentView === 'class' \? effectiveSessionId \|\| '' : ''/,

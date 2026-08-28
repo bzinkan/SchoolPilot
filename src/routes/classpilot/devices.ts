@@ -56,6 +56,8 @@ import {
   getReclaimableStudentSessionByRecoveryTokenHash,
   getBatchTileAccessForStaff,
   getClasspilotStudentControlState,
+  getClasspilotScreenshotAuthorityProjection,
+  withClasspilotScreenshotUploadAuthority,
   acknowledgeClasspilotStudentControlState,
   getHeartbeatTileHistoryBatch,
   getHeartbeatTileHistoryBatchSqlShapeIdentity,
@@ -83,12 +85,18 @@ import {
   publishOrderedWS,
   recordLocalOrderedDelivery,
   setScreenshot,
+  setClassBoundScreenshot,
   getScreenshot,
+  getClassBoundScreenshot,
   setFlightPathStatus,
   recordScreenshotUpload,
   getScreenshots,
+  getClassBoundScreenshots,
   screenshotBindingVersion,
+  classBoundScreenshotBindingVersion,
   screenshotMatchesBinding,
+  classBoundScreenshotMatchesBinding,
+  type ClassBoundScreenshotBinding,
   type ScreenshotBinding,
   type ScreenshotData,
   type WsRedisTarget,
@@ -192,7 +200,11 @@ import {
   classpilotKioskLaunchTicketRequestSchema,
   issueClasspilotKioskLaunchTicket,
 } from "../../services/classpilotKioskLaunchTicket.js";
-import { resolveClasspilotScreenshotPolicy } from "../../services/classpilotScreenshotPolicy.js";
+import {
+  parseClasspilotScreenshotAuthority,
+  resolveClasspilotScreenshotPolicy,
+  validateClasspilotScreenshotCapturedAt,
+} from "../../services/classpilotScreenshotPolicy.js";
 import {
   CLASSPILOT_SCREENSHOT_AVAILABLE_ORDERING_NAMESPACE,
   classpilotScreenshotAvailableEvent,
@@ -627,6 +639,9 @@ function publicScreenshotData(data: ScreenshotData) {
     ...(data.tabTitle !== undefined ? { tabTitle: data.tabTitle } : {}),
     ...(data.tabUrl !== undefined ? { tabUrl: data.tabUrl } : {}),
     ...(data.tabFavicon !== undefined ? { tabFavicon: data.tabFavicon } : {}),
+    ...(data.bindingVersion?.startsWith("v2:")
+      ? { bindingVersion: data.bindingVersion }
+      : {}),
   };
 }
 
@@ -655,6 +670,14 @@ function screenshotForAuthorizedStudent(
     studentSessionId: access.studentSessionId,
   };
   if (!data || !screenshotMatchesBinding(data, binding, { allowLegacy: true })) return null;
+  return publicScreenshotData(data);
+}
+
+function classBoundScreenshotForAuthorizedStudent(
+  data: ScreenshotData | null,
+  binding: ClassBoundScreenshotBinding
+) {
+  if (!data || !classBoundScreenshotMatchesBinding(data, binding)) return null;
   return publicScreenshotData(data);
 }
 
@@ -1000,6 +1023,50 @@ async function broadcastStudentSignedOut(options: {
   await publishClasspilotStudentSessionEnded(options);
 }
 
+export async function publishCommittedStudentSessionReplacements(options: {
+  schoolId: string;
+  replacementDeviceId: string;
+  replacedSessions: Array<{
+    id: string;
+    studentId: string;
+    deviceId: string;
+  }>;
+}, dependencies: {
+  broadcastEnded?: typeof broadcastStudentSignedOut;
+  sendLocal?: typeof sendToDeviceLocal;
+  publishRemote?: typeof publishWS;
+} = {}): Promise<void> {
+  const broadcastEnded = dependencies.broadcastEnded ?? broadcastStudentSignedOut;
+  const sendLocal = dependencies.sendLocal ?? sendToDeviceLocal;
+  const publishRemote = dependencies.publishRemote ?? publishWS;
+  await Promise.allSettled(options.replacedSessions.flatMap((replacedSession) => {
+    const tasks: Promise<unknown>[] = [broadcastEnded({
+      schoolId: options.schoolId,
+      studentId: replacedSession.studentId,
+      studentSessionId: replacedSession.id,
+      deviceId: replacedSession.deviceId,
+      reason: "session_replaced",
+    })];
+    if (replacedSession.deviceId !== options.replacementDeviceId) {
+      const replacedMessage = {
+        type: "student-session-replaced",
+        studentId: replacedSession.studentId,
+        studentSessionId: replacedSession.id,
+        deviceId: replacedSession.deviceId,
+        replacementDeviceId: options.replacementDeviceId,
+        timestamp: new Date().toISOString(),
+      };
+      sendLocal(options.schoolId, replacedSession.deviceId, replacedMessage);
+      tasks.push(publishRemote({
+        kind: "device",
+        schoolId: options.schoolId,
+        deviceId: replacedSession.deviceId,
+      }, replacedMessage));
+    }
+    return tasks;
+  }));
+}
+
 async function completeStudentDeviceLogin(options: {
   schoolId: string;
   deviceId: string;
@@ -1037,6 +1104,7 @@ async function completeStudentDeviceLogin(options: {
     device,
     session,
     replacedSessions,
+    crossStudentHandoff,
     studentToken,
     sessionRecoveryToken,
   } = await issueStudentDeviceSessionToken({
@@ -1062,6 +1130,9 @@ async function completeStudentDeviceLogin(options: {
   const studentEmail = student.email || undefined;
   if (options.authKind === "manual_shared") {
     recordHeartbeatHotPathCounter("manualSessionLoginIssued");
+  }
+  if (crossStudentHandoff) {
+    recordHeartbeatHotPathCounter("manualSessionCrossStudentHandoff");
   }
   const replacedLegacyCount = replacedSessions.filter(
     (row) => row.authKind === "legacy"
@@ -1097,32 +1168,11 @@ async function completeStudentDeviceLogin(options: {
   // result instead of pre-reading mutable "current" sessions, and attempt every
   // tombstone without allowing a transport failure to invalidate the durable
   // login that already committed.
-  await Promise.allSettled(replacedSessions.flatMap((replacedSession) => {
-    const tasks: Promise<unknown>[] = [broadcastStudentSignedOut({
-      schoolId: options.schoolId,
-      studentId: replacedSession.studentId,
-      studentSessionId: replacedSession.id,
-      deviceId: replacedSession.deviceId,
-      reason: "session_replaced",
-    })];
-    if (replacedSession.deviceId !== options.deviceId) {
-      const replacedMessage = {
-        type: "student-session-replaced",
-        studentId: replacedSession.studentId,
-        studentSessionId: replacedSession.id,
-        deviceId: replacedSession.deviceId,
-        replacementDeviceId: options.deviceId,
-        timestamp: new Date().toISOString(),
-      };
-      sendToDeviceLocal(options.schoolId, replacedSession.deviceId, replacedMessage);
-      tasks.push(publishWS({
-        kind: "device",
-        schoolId: options.schoolId,
-        deviceId: replacedSession.deviceId,
-      }, replacedMessage));
-    }
-    return tasks;
-  }));
+  await publishCommittedStudentSessionReplacements({
+    schoolId: options.schoolId,
+    replacementDeviceId: options.deviceId,
+    replacedSessions,
+  });
 
   const controlState = await getClasspilotStudentControlState(
     options.schoolId,
@@ -2667,6 +2717,9 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
         studentSessionId,
       },
     });
+    const trackingWindowScreenshotLeaseNegotiated = protocol.acceptedCapabilities.includes(
+      "screenshotTrackingWindowLeaseV1"
+    );
 
     // --- Per-device rate limiting (item #9) ---
     const lastHb = deviceLastHeartbeat.get(deviceId);
@@ -2688,6 +2741,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       studentSessionId,
       nowMs: now,
       minimumIntervalMs: HEARTBEAT_MIN_INTERVAL_MS,
+      acceptedCapabilities: protocol.acceptedCapabilities,
     })) {
       const authority = await refreshExactSessionAuthority();
       if (authority.outcome === "replaced_session") {
@@ -2816,7 +2870,23 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
         }
       }
 
-      return { outcome: "recorded", heartbeat, school, controlState } as const;
+      const screenshotTrackingAuthority = trackingWindowScreenshotLeaseNegotiated
+        ? await getClasspilotScreenshotAuthorityProjection({
+            schoolId,
+            studentId,
+            studentSessionId,
+            deviceId,
+          })
+        : undefined;
+
+      return {
+        outcome: "recorded",
+        heartbeat,
+        school,
+        controlState,
+        trackingSettings,
+        screenshotTrackingAuthority,
+      } as const;
     });
     recordHeartbeatHotPathTiming(
       "heartbeatDatabaseMs",
@@ -2859,7 +2929,13 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       // letting the insert CTE remain the sole database authority.
       return res.status(401).json({ error: "Student session is no longer active" });
     }
-    const { heartbeat, school, controlState } = heartbeatDbResult;
+    const {
+      heartbeat,
+      school,
+      controlState,
+      trackingSettings,
+      screenshotTrackingAuthority,
+    } = heartbeatDbResult;
     if (heartbeat.leaseRenewed) {
       recordHeartbeatHotPathCounter("manualSessionLeaseRenewed");
     }
@@ -2880,6 +2956,8 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       teachingSessionId: controlState?.teachingSessionId,
       studentId,
       acceptedCapabilities: protocol.acceptedCapabilities,
+      trackingSettings,
+      trackingAuthority: screenshotTrackingAuthority,
     });
     const studentEmail = heartbeat.studentEmail;
     recordHeartbeatHotPathCounter("heartbeatRecorded");
@@ -3529,6 +3607,7 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
       tabRef,
       tabSnapshotRevision,
       capturedAt,
+      screenshotAuthority,
     } = req.body;
     const deviceId = res.locals.deviceId as string;
     const schoolId = res.locals.schoolId as string;
@@ -3544,6 +3623,10 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
       "screenshotObservationLeaseV1",
       binding
     );
+    const trackingLeaseRolloutActive = isClasspilotCapabilityActive(
+      "screenshotTrackingWindowLeaseV1",
+      binding
+    );
     const safetyCaptureRolloutActive = isClasspilotCapabilityActive(
       "safetyEvidenceCaptureV1",
       binding
@@ -3551,7 +3634,7 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
     let acceptedHeartbeatCapabilities = new Set<string>();
     let screenshotRealtimeSnapshot: ClasspilotRealtimeStatus | null = null;
     let screenshotControlAuthority: ClasspilotRealtimeControlAuthority | undefined;
-    if (leaseRolloutActive || safetyCaptureRolloutActive) {
+    if (leaseRolloutActive || trackingLeaseRolloutActive || safetyCaptureRolloutActive) {
       const realtime = (await readClasspilotRealtimeStatusBatch(schoolId, [binding]))
         .get(studentId);
       if (
@@ -3570,6 +3653,8 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
     }
     const leaseNegotiated = leaseRolloutActive
       && acceptedHeartbeatCapabilities.has("screenshotObservationLeaseV1");
+    const trackingLeaseNegotiated = trackingLeaseRolloutActive
+      && acceptedHeartbeatCapabilities.has("screenshotTrackingWindowLeaseV1");
     const safetyCaptureNegotiated = safetyCaptureRolloutActive
       && acceptedHeartbeatCapabilities.has("safetyEvidenceCaptureV1");
 
@@ -3631,6 +3716,191 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
       });
     }
 
+    if (trackingLeaseNegotiated) {
+      const parsedScreenshotAuthority = parseClasspilotScreenshotAuthority(screenshotAuthority);
+      const capturedAtDate = typeof capturedAt === "string" ? new Date(capturedAt) : null;
+      if (
+        !parsedScreenshotAuthority
+        || !capturedAtDate
+        || !Number.isFinite(capturedAtDate.getTime())
+        || capturedAtDate.toISOString() !== capturedAt
+      ) {
+        return res.status(400).json({
+          ok: false,
+          code: "SCREENSHOT_AUTHORITY_INVALID",
+        });
+      }
+
+      const strictResult = await runWithTenantContext(
+        { schoolId },
+        () => withClasspilotScreenshotUploadAuthority({
+          schoolId,
+          deviceId,
+          studentId,
+          studentSessionId,
+          expectedAuthority: parsedScreenshotAuthority,
+        }, async ({ current, trackingSettings }) => {
+          const checkedAt = Date.now();
+          const screenshotPolicy = await resolveClasspilotScreenshotPolicy({
+            schoolId,
+            teachingSessionId: current.authority.kind === "teaching_session"
+              ? current.authority.teachingSessionId
+              : null,
+            studentId,
+            acceptedCapabilities: ["screenshotTrackingWindowLeaseV1"],
+            trackingSettings,
+            trackingAuthority: current,
+            now: checkedAt,
+          });
+          if (
+            screenshotPolicy.mode !== "tracking_window_lease"
+            || !screenshotPolicy.captureAllowed
+          ) {
+            return { outcome: "tracking_window_closed" as const, screenshotPolicy };
+          }
+
+          const capturedAtValidation = validateClasspilotScreenshotCapturedAt({
+            capturedAt: capturedAtDate,
+            now: checkedAt,
+            trackingSettings,
+            trackingAuthority: current,
+          });
+          if (capturedAtValidation !== "ok") {
+            return {
+              outcome: "capture_rejected" as const,
+              capturedAtValidation,
+              screenshotPolicy,
+            };
+          }
+
+          if (current.authority.kind === "student_session") {
+            return { outcome: "discarded" as const, screenshotPolicy };
+          }
+
+          const classBinding: ClassBoundScreenshotBinding = {
+            ...binding,
+            teachingSessionId: current.authority.teachingSessionId,
+            controlRevision: current.authority.controlRevision,
+          };
+          const data = {
+            screenshot,
+            timestamp: capturedAtDate.getTime(),
+            capturedAt: capturedAtDate.toISOString(),
+            tabTitle,
+            tabUrl,
+            tabFavicon,
+            ...classBinding,
+            bindingVersion: classBoundScreenshotBindingVersion(classBinding),
+          };
+          const stored = await setClassBoundScreenshot(classBinding, data);
+          const screenshotStoreRequired = classpilotScreenshotStoreRequired();
+          if (!stored && !screenshotStoreRequired) {
+            classpilotScreenshotFallback.setClassBound(classBinding, data);
+          }
+          return {
+            outcome: stored
+              ? "redis" as const
+              : screenshotStoreRequired
+                ? "unavailable" as const
+                : "local_fallback" as const,
+            screenshotPolicy,
+            classBinding,
+            data,
+          };
+        })
+      );
+
+      if (strictResult.status !== "accepted") {
+        const screenshotPolicy = await resolveClasspilotScreenshotPolicy({
+          schoolId,
+          teachingSessionId: strictResult.current?.authority.kind === "teaching_session"
+            ? strictResult.current.authority.teachingSessionId
+            : null,
+          studentId,
+          acceptedCapabilities: ["screenshotTrackingWindowLeaseV1"],
+          trackingSettings: strictResult.trackingSettings,
+          trackingAuthority: strictResult.current,
+        });
+        return res.status(409).json({
+          ok: false,
+          code: strictResult.status === "superseded"
+            ? "SCREENSHOT_AUTHORITY_SUPERSEDED"
+            : "SCREENSHOT_CAPTURE_PAUSED",
+          screenshotPolicy,
+        });
+      }
+
+      const strictValue = strictResult.value;
+      if (strictValue.outcome === "tracking_window_closed") {
+        return res.status(409).json({
+          ok: false,
+          code: "SCREENSHOT_CAPTURE_PAUSED",
+          screenshotPolicy: strictValue.screenshotPolicy,
+        });
+      }
+      if (strictValue.outcome === "capture_rejected") {
+        const superseded = strictValue.capturedAtValidation === "before_authority"
+          || strictValue.capturedAtValidation === "after_authority";
+        return res.status(409).json({
+          ok: false,
+          code: superseded
+            ? "SCREENSHOT_AUTHORITY_SUPERSEDED"
+            : strictValue.capturedAtValidation === "outside_tracking_window"
+              ? "SCREENSHOT_CAPTURE_PAUSED"
+              : strictValue.capturedAtValidation === "expired"
+                ? "SCREENSHOT_CAPTURE_EXPIRED"
+                : "SCREENSHOT_CAPTURE_TIME_INVALID",
+          screenshotPolicy: strictValue.screenshotPolicy,
+        });
+      }
+      if (strictValue.outcome === "discarded") {
+        recordScreenshotUpload(Buffer.byteLength(screenshot, "utf8"), "discarded");
+        return res.json({
+          ok: true,
+          retained: false,
+          screenshotPolicy: strictValue.screenshotPolicy,
+        });
+      }
+
+      recordScreenshotUpload(Buffer.byteLength(screenshot, "utf8"), strictValue.outcome);
+      if (strictValue.outcome === "unavailable") {
+        return res.status(503).json({
+          ok: false,
+          error: "Screenshot service unavailable",
+          code: "SCREENSHOT_STORE_UNAVAILABLE",
+        });
+      }
+
+      screenshotControlAuthority = {
+        teachingSessionId: strictValue.classBinding.teachingSessionId,
+        supervisionContextId: null,
+        revision: strictValue.classBinding.controlRevision,
+      };
+      if (screenshotRealtimeSnapshot && screenshotControlAuthority) {
+        const screenshotAvailable = classpilotScreenshotAvailableEvent({
+          studentId,
+          capturedAt: strictValue.data.capturedAt,
+          timestamp: strictValue.data.timestamp,
+        });
+        void publishRevisionedRealtimeUpdate(
+          screenshotRealtimeSnapshot,
+          screenshotAvailable,
+          screenshotControlAuthority,
+          {
+            orderingNamespace: CLASSPILOT_SCREENSHOT_AVAILABLE_ORDERING_NAMESPACE,
+            orderingRevision: String(strictValue.data.timestamp),
+          }
+        ).catch(() => {
+          recordHeartbeatHotPathCounter("screenshotAvailableBroadcastFailures");
+        });
+      }
+      return res.json({
+        ok: true,
+        retained: true,
+        screenshotPolicy: strictValue.screenshotPolicy,
+      });
+    }
+
     if (leaseNegotiated) {
       const resolvedPolicy = await runWithTenantContext(
         { schoolId },
@@ -3649,6 +3919,12 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
       );
       const screenshotPolicy = resolvedPolicy.screenshotPolicy;
       screenshotControlAuthority = realtimeControlAuthority(resolvedPolicy.controlState);
+      if (screenshotPolicy.mode !== "lease") {
+        return res.status(409).json({
+          ok: false,
+          code: "OBSERVATION_LEASE_UNAVAILABLE",
+        });
+      }
       if ("diagnostic" in screenshotPolicy && screenshotPolicy.diagnostic === "unavailable") {
         return res.status(503).json({
           ok: false,
@@ -3761,7 +4037,7 @@ router.post("/tiles/screenshots", ...tileReadAuth, async (req, res, next) => {
     recordHeartbeatHotPathCounter("tileBatchAuthorizedItems", accesses.length);
 
     const redisStartedAt = Date.now();
-    const screenshotBindings = accesses.flatMap((access) =>
+    const exactBindings = accesses.flatMap((access) =>
       access.studentSessionId
         ? [{
             schoolId: access.schoolId,
@@ -3771,26 +4047,126 @@ router.post("/tiles/screenshots", ...tileReadAuth, async (req, res, next) => {
           }]
         : []
     );
-    const screenshotRead = await getScreenshots(screenshotBindings);
+    const realtimeByStudent = await readClasspilotRealtimeStatusBatch(
+      scope.schoolId,
+      exactBindings
+    );
+    const classBindings: ClassBoundScreenshotBinding[] = [];
+    const legacyBindings: ScreenshotBinding[] = [];
+    const classBindingByStudent = new Map<string, ClassBoundScreenshotBinding>();
+    const legacyBindingByStudent = new Map<string, ScreenshotBinding>();
+    for (const access of accesses) {
+      if (!access.studentSessionId) continue;
+      const exactBinding: ScreenshotBinding = {
+        schoolId: access.schoolId,
+        deviceId: access.deviceId,
+        studentId: access.studentId,
+        studentSessionId: access.studentSessionId,
+      };
+      const classBinding = (
+        access.teachingSessionId
+        && Number.isSafeInteger(access.controlRevision)
+        && access.controlRevision! >= 0
+      )
+        ? {
+          ...exactBinding,
+          teachingSessionId: access.teachingSessionId,
+          controlRevision: access.controlRevision!,
+        } satisfies ClassBoundScreenshotBinding
+        : null;
+      const realtime = realtimeByStudent.get(access.studentId);
+      const freshCapabilities = (
+        realtime?.status !== "hit"
+        || !classpilotRealtimeFresh(realtime.snapshot)
+        || !Array.isArray(realtime.snapshot.acceptedCapabilities)
+      ) ? null : realtime.snapshot.acceptedCapabilities;
+      if (freshCapabilities === null) {
+        if (classBinding) {
+          classBindings.push(classBinding);
+          classBindingByStudent.set(access.studentId, classBinding);
+        }
+        continue;
+      }
+      if (freshCapabilities.includes("screenshotTrackingWindowLeaseV1")) {
+        if (classBinding) {
+          classBindings.push(classBinding);
+          classBindingByStudent.set(access.studentId, classBinding);
+        }
+      } else {
+        // V1 compatibility is exclusive and allowed only when a fresh exact
+        // heartbeat proves the current binding did not negotiate V2.
+        legacyBindings.push(exactBinding);
+        legacyBindingByStudent.set(access.studentId, exactBinding);
+      }
+    }
+    const [classScreenshotRead, legacyScreenshotRead] = await Promise.all([
+      getClassBoundScreenshots(classBindings),
+      getScreenshots(legacyBindings),
+    ]);
     recordHeartbeatHotPathTiming(
       "tileBatchScreenshotRedisMs",
       Date.now() - redisStartedAt
     );
-    if (screenshotRead.status === "unavailable") {
+    if (
+      classScreenshotRead.status === "unavailable"
+      || legacyScreenshotRead.status === "unavailable"
+    ) {
       recordHeartbeatHotPathCounter("tileBatchScreenshotStoreUnavailable");
       return res.status(503).json({
         error: "Screenshot service unavailable",
         code: "SCREENSHOT_STORE_UNAVAILABLE",
       });
     }
-    const screenshots = screenshotRead.screenshots;
     const localFallbackAllowed = !classpilotScreenshotStoreRequired();
-    const screenshotByStudent = new Map(
-      screenshotBindings.map((binding, index) => [binding.studentId, screenshots[index] ?? null])
+    const classScreenshotByStudent = new Map(
+      classBindings.map((binding, index) => [
+        binding.studentId,
+        classScreenshotRead.screenshots[index] ?? null,
+      ])
     );
-    const screenshotFallbackItems = screenshots.filter(
-      (screenshot) => screenshot === null
-    ).length;
+    const legacyScreenshotByStudent = new Map(
+      legacyBindings.map((binding, index) => [
+        binding.studentId,
+        legacyScreenshotRead.screenshots[index] ?? null,
+      ])
+    );
+    const tiles = accesses.map((access) => {
+      const classBinding = classBindingByStudent.get(access.studentId);
+      if (classBinding) {
+        const screenshot = classScreenshotByStudent.get(access.studentId)
+          ?? (localFallbackAllowed
+            ? classpilotScreenshotFallback.getClassBound(classBinding)
+            : null);
+        const authorizedClassScreenshot = classBoundScreenshotForAuthorizedStudent(
+          screenshot,
+          classBinding
+        );
+        if (authorizedClassScreenshot) return {
+          studentId: access.studentId,
+          bindingVersion: classBoundScreenshotBindingVersion(classBinding),
+          screenshot: authorizedClassScreenshot,
+        };
+      }
+      const legacyBinding = legacyBindingByStudent.get(access.studentId);
+      if (legacyBinding) {
+        const screenshot = legacyScreenshotByStudent.get(access.studentId)
+          ?? (localFallbackAllowed
+            ? classpilotScreenshotFallback.get(legacyBinding)
+            : null);
+        return {
+          studentId: access.studentId,
+          screenshot: screenshotForAuthorizedStudent(screenshot, access),
+        };
+      }
+      return classBinding
+        ? {
+            studentId: access.studentId,
+            bindingVersion: classBoundScreenshotBindingVersion(classBinding),
+            screenshot: null,
+          }
+        : { studentId: access.studentId, screenshot: null };
+    });
+    const screenshotFallbackItems = tiles.filter((tile) => tile.screenshot === null).length;
     if (screenshotFallbackItems > 0) {
       recordHeartbeatHotPathCounter(
         "tileBatchScreenshotMissItems",
@@ -3801,23 +4177,7 @@ router.post("/tiles/screenshots", ...tileReadAuth, async (req, res, next) => {
         screenshotFallbackItems
       );
     }
-    return res.json({
-      tiles: accesses.map((access) => ({
-        studentId: access.studentId,
-        screenshot: screenshotForAuthorizedStudent(
-          screenshotByStudent.get(access.studentId) ??
-            (localFallbackAllowed && access.studentSessionId
-              ? classpilotScreenshotFallback.get({
-                  schoolId: access.schoolId,
-                  deviceId: access.deviceId,
-                  studentId: access.studentId,
-                  studentSessionId: access.studentSessionId,
-                })
-              : null),
-          access
-        ),
-      })),
-    });
+    return res.json({ tiles });
   } catch (err) {
     next(err);
   }
@@ -3937,11 +4297,20 @@ router.get("/device/screenshot/:deviceId", ...deviceAdminAuth, async (req, res, 
           : access.schoolWide
             ? await getActiveSessionByDevice(deviceId)
             : undefined;
+        const screenshotTrackingAuthority = activeSession
+          ? await getClasspilotScreenshotAuthorityProjection({
+              schoolId: device.schoolId,
+              deviceId,
+              studentId: activeSession.studentId,
+              studentSessionId: activeSession.id,
+            })
+          : undefined;
         return {
           schoolId: device.schoolId,
           deviceId,
           studentId: activeSession?.studentId ?? null,
           studentSessionId: activeSession?.id ?? null,
+          screenshotTrackingAuthority,
         };
       }
     );
@@ -3960,23 +4329,54 @@ router.get("/device/screenshot/:deviceId", ...deviceAdminAuth, async (req, res, 
           studentSessionId: authorization.value.studentSessionId,
         }
       : null;
-    const screenshotRead = binding
-      ? await getScreenshot(binding)
-      : { status: "ok" as const, screenshot: null };
-    if (screenshotRead.status === "unavailable") {
+    let authorizedScreenshot: ReturnType<typeof publicScreenshotData> | null = null;
+    let screenshotReadStatus: "ok" | "unavailable" = "ok";
+    if (binding) {
+      const realtime = (await readClasspilotRealtimeStatusBatch(
+        binding.schoolId,
+        [binding]
+      )).get(binding.studentId);
+      const freshCapabilities = (
+        realtime?.status === "hit"
+        && classpilotRealtimeFresh(realtime.snapshot)
+        && Array.isArray(realtime.snapshot.acceptedCapabilities)
+      ) ? realtime.snapshot.acceptedCapabilities : null;
+      const useLegacy = freshCapabilities !== null
+        && !freshCapabilities.includes("screenshotTrackingWindowLeaseV1");
+      if (useLegacy) {
+        const screenshotRead = await getScreenshot(binding);
+        screenshotReadStatus = screenshotRead.status;
+        let data = screenshotRead.status === "ok" ? screenshotRead.screenshot : null;
+        if (!data && !classpilotScreenshotStoreRequired()) {
+          data = classpilotScreenshotFallback.get(binding);
+        }
+        authorizedScreenshot = screenshotForAuthorizedStudent(data, binding);
+      } else {
+        // Missing/stale capability telemetry is V2-only. It never authorizes a
+        // downgrade to the observation-gated V1 compatibility store.
+        const trackingAuthority = authorization.value.screenshotTrackingAuthority;
+        if (trackingAuthority?.authority.kind === "teaching_session") {
+          const classBinding: ClassBoundScreenshotBinding = {
+            ...binding,
+            teachingSessionId: trackingAuthority.authority.teachingSessionId,
+            controlRevision: trackingAuthority.authority.controlRevision,
+          };
+          const screenshotRead = await getClassBoundScreenshot(classBinding);
+          screenshotReadStatus = screenshotRead.status;
+          let data = screenshotRead.status === "ok" ? screenshotRead.screenshot : null;
+          if (!data && !classpilotScreenshotStoreRequired()) {
+            data = classpilotScreenshotFallback.getClassBound(classBinding);
+          }
+          authorizedScreenshot = classBoundScreenshotForAuthorizedStudent(data, classBinding);
+        }
+      }
+    }
+    if (screenshotReadStatus === "unavailable") {
       return res.status(503).json({
         error: "Screenshot service unavailable",
         code: "SCREENSHOT_STORE_UNAVAILABLE",
       });
     }
-    let data = screenshotRead.screenshot;
-    if (!data && binding && !classpilotScreenshotStoreRequired()) {
-      data = classpilotScreenshotFallback.get(binding);
-    }
-
-    const authorizedScreenshot = binding
-      ? screenshotForAuthorizedStudent(data, binding)
-      : null;
     if (!authorizedScreenshot) {
       return res.status(404).json({ error: "No screenshot available" });
     }

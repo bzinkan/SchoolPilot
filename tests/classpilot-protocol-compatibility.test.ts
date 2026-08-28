@@ -70,6 +70,7 @@ function allV3CapabilitiesEnabled(): NodeJS.ProcessEnv {
     CLASSPILOT_CAP_EXACT_TAB_CLOSE_V2: "true",
     CLASSPILOT_CAP_STUDENT_CHAT_IDEMPOTENCY_V1: "true",
     CLASSPILOT_CAP_SCREENSHOT_OBSERVATION_LEASE_V1: "true",
+    CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1: "true",
     CLASSPILOT_CAP_SAFETY_EVIDENCE_CAPTURE_V1: "true",
     CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1: "true",
     CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V1: "true",
@@ -198,6 +199,20 @@ test("a markerless 2.7.0-shaped client receives no 2.7.1 capability under global
   assert.deepEqual(negotiated.acceptedCapabilities, []);
 });
 
+test("a 2.7.2-shaped client keeps the observation lease when the additive tracking lease is enabled", () => {
+  const advertisedCapabilities = CLASSPILOT_PROTOCOL_V3_CAPABILITIES.filter(
+    (capability) => capability !== "screenshotTrackingWindowLeaseV1"
+      && capability !== "kioskLaunchTicketV1"
+  );
+  const negotiated = negotiateClasspilotProtocol({
+    clientProtocolVersion: 3,
+    advertisedCapabilities,
+    env: allV3CapabilitiesEnabled(),
+  });
+  assert.ok(negotiated.acceptedCapabilities.includes("screenshotObservationLeaseV1"));
+  assert.ok(!negotiated.acceptedCapabilities.includes("screenshotTrackingWindowLeaseV1"));
+});
+
 test("protocol v3 accepts only the client-advertised and server-enabled capability intersection", () => {
   const advertisedCapabilities = [
     ...LEGACY_V2_CAPABILITIES,
@@ -220,6 +235,7 @@ test("protocol v3 accepts only the client-advertised and server-enabled capabili
     CLASSPILOT_CAP_EXACT_TAB_CLOSE_V2: "true",
     CLASSPILOT_CAP_STUDENT_CHAT_IDEMPOTENCY_V1: "true",
     CLASSPILOT_CAP_SCREENSHOT_OBSERVATION_LEASE_V1: "false",
+    CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1: "false",
     CLASSPILOT_CAP_SAFETY_EVIDENCE_CAPTURE_V1: "true",
     CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1: "true",
     CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V1: "false",
