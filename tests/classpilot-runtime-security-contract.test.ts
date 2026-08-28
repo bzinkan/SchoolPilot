@@ -129,6 +129,118 @@ describe("ClassPilot authenticated HTTP recovery and rate limits", () => {
   });
 });
 
+describe("ClassPilot tracking-window screenshot authority", () => {
+  it("keeps the new capability additive and issues the locked policy schema", async () => {
+    const [protocol, policy] = await Promise.all([
+      source("src/services/classpilotProtocol.ts"),
+      source("src/services/classpilotScreenshotPolicy.ts"),
+    ]);
+    assert.match(protocol, /"screenshotObservationLeaseV1"/);
+    assert.match(protocol, /"screenshotTrackingWindowLeaseV1"/);
+    assert.match(protocol, /CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1/);
+    assert.match(policy, /mode: "tracking_window_lease"/);
+    assert.match(policy, /captureAllowed:/);
+    const trackingPolicy = policy.slice(
+      policy.indexOf("export function resolveClasspilotScreenshotTrackingWindowPolicy"),
+      policy.indexOf("export function parseClasspilotScreenshotAuthority")
+    );
+    assert.doesNotMatch(trackingPolicy, /observed:/);
+  });
+
+  it("never short-circuits a tracking-window transition heartbeat before issuing policy", async () => {
+    const devices = await source("src/routes/classpilot/devices.ts");
+    const heartbeat = devices.slice(
+      devices.indexOf('router.post("/device/heartbeat"'),
+      devices.indexOf('router.post("/device/screenshot"')
+    );
+    assert.match(
+      heartbeat,
+      /const trackingWindowScreenshotLeaseNegotiated = protocol\.acceptedCapabilities\.includes\([\s\S]*?"screenshotTrackingWindowLeaseV1"[\s\S]*?\)/
+    );
+    assert.match(
+      heartbeat,
+      /canShortCircuitAcceptedHeartbeat\(\{[\s\S]*?acceptedCapabilities: protocol\.acceptedCapabilities,[\s\S]*?\}\)/
+    );
+    assert.match(
+      heartbeat,
+      /const screenshotTrackingAuthority = trackingWindowScreenshotLeaseNegotiated[\s\S]*?getClasspilotScreenshotAuthorityProjection/
+    );
+  });
+
+  it("linearizes exact authority, uncached settings, and storage in one transaction", async () => {
+    const [devices, storage] = await Promise.all([
+      source("src/routes/classpilot/devices.ts"),
+      source("src/services/storage.ts"),
+    ]);
+    const upload = devices.slice(
+      devices.indexOf('router.post("/device/screenshot"'),
+      devices.indexOf('router.post("/tiles/screenshots"')
+    );
+    assert.match(upload, /parseClasspilotScreenshotAuthority\(screenshotAuthority\)/);
+    assert.match(upload, /withClasspilotScreenshotUploadAuthority/);
+    assert.match(upload, /validateClasspilotScreenshotCapturedAt/);
+    assert.match(upload, /SCREENSHOT_AUTHORITY_SUPERSEDED/);
+    assert.match(upload, /SCREENSHOT_CAPTURE_PAUSED/);
+    assert.doesNotMatch(upload, /SCREENSHOT_AUTHORITY_UNAVAILABLE|SCREENSHOT_TRACKING_WINDOW_CLOSED/);
+    assert.match(upload, /outcome: "discarded"/);
+    assert.match(upload, /setClassBoundScreenshot/);
+    assert.match(upload, /retained: false/);
+    const authority = storage.slice(
+      storage.indexOf("export async function withClasspilotScreenshotUploadAuthority"),
+      storage.indexOf("/** Linearize ordinary class telemetry")
+    );
+    assert.match(authority, /assertClasspilotEntitled[\s\S]*lock: true/);
+    assert.match(authority, /lockClasspilotStudentControlAuthorities/);
+    assert.match(authority, /\.from\(settings\)[\s\S]*\.for\("share"\)/);
+    assert.match(authority, /value: await callback/);
+  });
+
+  it("keeps V2 class storage isolated and never downgrades without fresh proof", async () => {
+    const [devices, redis, storage] = await Promise.all([
+      source("src/routes/classpilot/devices.ts"),
+      source("src/realtime/ws-redis.ts"),
+      source("src/services/storage.ts"),
+    ]);
+    const tileRoute = devices.slice(
+      devices.indexOf('router.post("/tiles/screenshots"'),
+      devices.indexOf('router.post("/tiles/history"')
+    );
+    assert.match(tileRoute, /access\.controlRevision/);
+    assert.match(tileRoute, /getClassBoundScreenshots\(classBindings\)/);
+    assert.match(tileRoute, /classpilotRealtimeFresh\(realtime\.snapshot\)/);
+    assert.match(tileRoute, /freshCapabilities === null[\s\S]*classBindings\.push\(classBinding\)[\s\S]*continue/);
+    assert.match(tileRoute, /freshCapabilities\.includes\("screenshotTrackingWindowLeaseV1"\)[\s\S]*classBindings\.push\(classBinding\)[\s\S]*else[\s\S]*legacyBindings\.push\(exactBinding\)/);
+    assert.match(tileRoute, /bindingVersion: classBoundScreenshotBindingVersion\(classBinding\)/);
+    const tileAuthority = storage.slice(
+      storage.indexOf("export function buildClassPilotTileAuthorizationQuery"),
+      storage.indexOf("function tileDeviceFromRow")
+    );
+    assert.ok(
+      (tileAuthority.match(/selected_session\.scheduled_end_at > now\(\)/g) || []).length >= 2,
+      "both selected-class reader branches must reject an expired teaching session"
+    );
+    assert.ok(
+      (tileAuthority.match(/LEFT JOIN active_supervision AS reassigned/g) || []).length >= 2,
+      "selected-class readers must withhold class-bound pixels during any active supervision"
+    );
+    assert.ok(
+      (tileAuthority.match(/AND reassigned\.student_id IS NULL/g) || []).length >= 2,
+      "active supervision must fail closed for both admin and teacher selected-class reads"
+    );
+    assert.match(redis, /class-bound:/);
+    const classWriter = redis.slice(
+      redis.indexOf("export async function setClassBoundScreenshot"),
+      redis.indexOf("export async function getScreenshot")
+    );
+    const classReader = redis.slice(
+      redis.indexOf("export async function getClassBoundScreenshots"),
+      redis.indexOf("// Flight path status storage")
+    );
+    assert.doesNotMatch(classWriter, /legacyKey|allowLegacy/);
+    assert.doesNotMatch(classReader, /legacyKey|allowLegacy/);
+  });
+});
+
 describe("ClassPilot command authority envelopes", () => {
   it("serializes persisted classroom authority with compatibility aliases", async () => {
     assert.deepEqual(classpilotCommandAuthorityEnvelope({ teachingSessionId: "session-1" }), {

@@ -58,6 +58,31 @@ describe("ClassPilot bounded process state", () => {
     assert.equal(store.get(binding), null);
   });
 
+  it("isolates class-bound fallback entries by class and control revision", () => {
+    const now = Date.now();
+    const store = new ClasspilotScreenshotFallbackStore(10_000, 1_000, 10, () => now);
+    const classBinding = {
+      ...binding,
+      teachingSessionId: "class-a",
+      controlRevision: 5,
+    };
+    assert.equal(store.setClassBound(classBinding, {
+      screenshot: "class-a-pixels",
+      timestamp: now,
+      teachingSessionId: "class-a",
+      controlRevision: 5,
+    }), true);
+    assert.equal(store.getClassBound(classBinding)?.screenshot, "class-a-pixels");
+    assert.equal(store.getClassBound({
+      ...classBinding,
+      teachingSessionId: "class-b",
+    }), null);
+    assert.equal(store.getClassBound({
+      ...classBinding,
+      controlRevision: 6,
+    }), null);
+  });
+
   it("uses a non-identifying HMAC Redis key and deduplicates locally", async () => {
     const previousRedis = process.env.REDIS_URL;
     delete process.env.REDIS_URL;

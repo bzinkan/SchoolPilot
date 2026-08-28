@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  parseClasspilotScreenshotAuthority,
   resolveClasspilotScreenshotPolicy,
+  resolveClasspilotScreenshotTrackingWindowPolicy,
+  validateClasspilotScreenshotCapturedAt,
 } from "../src/services/classpilotScreenshotPolicy.js";
 import {
   beginClasspilotSessionSubscriptionMutation,
@@ -10,10 +13,14 @@ import {
   parseClasspilotSessionSubscription,
 } from "../src/services/classpilotSessionSubscription.js";
 import {
+  classBoundScreenshotBindingVersion,
+  classBoundScreenshotMatchesBinding,
+  decodeClassBoundScreenshotBatchRead,
   decodeScreenshotBatchRead,
   getScreenshot,
   recordLocalOrderedDelivery,
   screenshotBindingVersion,
+  type ClassBoundScreenshotBinding,
   type ScreenshotBinding,
 } from "../src/realtime/ws-redis.js";
 import {
@@ -79,6 +86,137 @@ test("screenshot policy is shared, lease-aware, and fail-private", async () => {
     serverTime: new Date(3_000).toISOString(),
     diagnostic: "unavailable",
   });
+});
+
+test("tracking-window screenshot policy is class-authority bound and capped at 90 seconds", async () => {
+  const now = Date.parse("2026-08-27T14:00:30.000Z");
+  const trackingSettings = {
+    enableTrackingHours: true,
+    trackingStartTime: "08:00",
+    trackingEndTime: "14:00",
+    trackingDays: ["Thursday"],
+    schoolTimezone: "UTC",
+    afterHoursMode: "off" as const,
+  };
+  const trackingAuthority = {
+    authority: {
+      kind: "teaching_session" as const,
+      teachingSessionId: "teaching-session",
+      controlRevision: 7,
+    },
+    authorityStartedAt: new Date(now - 60_000),
+    authorityExpiresAt: new Date(now + 80_000),
+  };
+  assert.deepEqual(await resolveClasspilotScreenshotPolicy({
+    schoolId: "school",
+    studentId: "student",
+    teachingSessionId: "teaching-session",
+    acceptedCapabilities: [
+      "screenshotObservationLeaseV1",
+      "screenshotTrackingWindowLeaseV1",
+    ],
+    trackingSettings,
+    trackingAuthority,
+    now,
+    observationStatus: async () => {
+      throw new Error("new policy must not consult dashboard observation");
+    },
+  }), {
+    mode: "tracking_window_lease",
+    captureAllowed: true,
+    expiresInSeconds: 30,
+    serverTime: new Date(now).toISOString(),
+    authority: trackingAuthority.authority,
+  });
+
+  const bounded = resolveClasspilotScreenshotTrackingWindowPolicy({
+    trackingSettings: { ...trackingSettings, enableTrackingHours: false },
+    trackingAuthority: {
+      ...trackingAuthority,
+      authorityExpiresAt: new Date(now + 45_500),
+    },
+    now,
+  });
+  assert.equal(bounded.captureAllowed, true);
+  assert.equal(bounded.expiresInSeconds, 45);
+  assert.ok(bounded.expiresInSeconds <= 90);
+
+  assert.deepEqual(resolveClasspilotScreenshotTrackingWindowPolicy({
+    trackingSettings: undefined,
+    trackingAuthority,
+    now,
+  }), {
+    mode: "tracking_window_lease",
+    captureAllowed: false,
+    expiresInSeconds: 0,
+    serverTime: new Date(now).toISOString(),
+    authority: trackingAuthority.authority,
+    diagnostic: "unavailable",
+  });
+});
+
+test("tracking screenshot authority and capturedAt validation are strict", () => {
+  assert.deepEqual(parseClasspilotScreenshotAuthority({
+    kind: "student_session",
+    controlRevision: 2,
+  }), { kind: "student_session", controlRevision: 2 });
+  assert.deepEqual(parseClasspilotScreenshotAuthority({
+    kind: "teaching_session",
+    teachingSessionId: "session",
+    controlRevision: 3,
+  }), {
+    kind: "teaching_session",
+    teachingSessionId: "session",
+    controlRevision: 3,
+  });
+  assert.equal(parseClasspilotScreenshotAuthority({
+    kind: "teaching_session",
+    teachingSessionId: "session",
+    controlRevision: 3,
+    deviceId: "must-not-be-accepted",
+  }), null);
+  assert.equal(parseClasspilotScreenshotAuthority({
+    kind: "student_session",
+    controlRevision: "3",
+  }), null);
+  assert.equal(parseClasspilotScreenshotAuthority({
+    kind: "teaching_session",
+    teachingSessionId: " session ",
+    controlRevision: 3,
+  }), null);
+
+  const now = Date.parse("2026-08-27T15:00:00.000Z");
+  const trackingSettings = {
+    enableTrackingHours: false,
+    trackingStartTime: null,
+    trackingEndTime: null,
+    trackingDays: null,
+    schoolTimezone: "UTC",
+    afterHoursMode: "off" as const,
+  };
+  const trackingAuthority = {
+    authority: { kind: "student_session" as const, controlRevision: 4 },
+    authorityStartedAt: new Date(now - 10_000),
+    authorityExpiresAt: null,
+  };
+  assert.equal(validateClasspilotScreenshotCapturedAt({
+    capturedAt: new Date(now - 5_000),
+    trackingSettings,
+    trackingAuthority,
+    now,
+  }), "ok");
+  assert.equal(validateClasspilotScreenshotCapturedAt({
+    capturedAt: new Date(now - 11_000),
+    trackingSettings,
+    trackingAuthority,
+    now,
+  }), "before_authority");
+  assert.equal(validateClasspilotScreenshotCapturedAt({
+    capturedAt: new Date(now - 91_000),
+    trackingSettings,
+    trackingAuthority,
+    now,
+  }), "expired");
 });
 
 test("screenshot availability uses an independent ordered stream without identifiers", () => {
@@ -340,6 +478,47 @@ test("screenshot batch reads separate transport failure from per-row misses", ()
     decodeScreenshotBatchRead([bindingA, bindingB], undefined),
     { status: "unavailable" }
   );
+});
+
+test("class-bound screenshot reads bind class and control revision without V1 fallback", () => {
+  const now = Date.now();
+  const binding: ClassBoundScreenshotBinding = {
+    schoolId: "school",
+    deviceId: "device",
+    studentId: "student",
+    studentSessionId: "student-session",
+    teachingSessionId: "class-a",
+    controlRevision: 11,
+  };
+  const exact = {
+    screenshot: "data:image/jpeg;base64,AA==",
+    timestamp: now,
+    capturedAt: new Date(now).toISOString(),
+    ...binding,
+    bindingVersion: classBoundScreenshotBindingVersion(binding),
+  };
+  assert.equal(classBoundScreenshotMatchesBinding(exact, binding), true);
+  assert.equal(classBoundScreenshotMatchesBinding(exact, {
+    ...binding,
+    teachingSessionId: "class-b",
+  }), false);
+  assert.equal(classBoundScreenshotMatchesBinding(exact, {
+    ...binding,
+    controlRevision: 12,
+  }), false);
+  assert.deepEqual(decodeClassBoundScreenshotBatchRead(
+    [binding],
+    [JSON.stringify(exact)]
+  ), { status: "ok", screenshots: [exact] });
+  assert.deepEqual(decodeClassBoundScreenshotBatchRead(
+    [binding],
+    [JSON.stringify({
+      ...exact,
+      bindingVersion: screenshotBindingVersion(binding),
+      teachingSessionId: undefined,
+      controlRevision: undefined,
+    })]
+  ), { status: "ok", screenshots: [null] });
 });
 
 test("production single screenshot reads report store unavailability", async () => {

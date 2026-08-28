@@ -48,7 +48,14 @@ export function canShortCircuitAcceptedHeartbeat(options: {
   studentSessionId: string;
   nowMs: number;
   minimumIntervalMs: number;
+  acceptedCapabilities?: readonly string[];
 }): boolean {
+  // Tracking-window clients use a deliberate rapid heartbeat to acquire the
+  // next immutable screenshot authority at gap -> class and class -> class
+  // transitions. A 204 here would omit screenshotPolicy and delay capture.
+  if (options.acceptedCapabilities?.includes("screenshotTrackingWindowLeaseV1")) {
+    return false;
+  }
   const previous = options.previous;
   if (!previous) return false;
   if (

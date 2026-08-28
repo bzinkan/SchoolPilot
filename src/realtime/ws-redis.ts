@@ -117,6 +117,7 @@ type HotPathActivity = {
   screenshotRedisStores: number;
   screenshotMemoryFallbacks: number;
   screenshotStoreUnavailable: number;
+  screenshotDiscardedUploads: number;
   commandPhases: Partial<Record<CommandHotPathPhase, {
     count: number;
     failures: number;
@@ -136,6 +137,7 @@ function emptyHotPathActivity(): HotPathActivity {
     screenshotRedisStores: 0,
     screenshotMemoryFallbacks: 0,
     screenshotStoreUnavailable: 0,
+    screenshotDiscardedUploads: 0,
     commandPhases: {},
   };
 }
@@ -168,7 +170,7 @@ hotPathLogTimer.unref?.();
 
 export function recordScreenshotUpload(
   payloadBytes: number,
-  outcome: "redis" | "local_fallback" | "unavailable"
+  outcome: "redis" | "local_fallback" | "unavailable" | "discarded"
 ): void {
   hotPathActivity.screenshotUploads += 1;
   hotPathActivity.screenshotPayloadBytes += Math.max(0, payloadBytes);
@@ -176,8 +178,10 @@ export function recordScreenshotUpload(
     hotPathActivity.screenshotRedisStores += 1;
   } else if (outcome === "local_fallback") {
     hotPathActivity.screenshotMemoryFallbacks += 1;
-  } else {
+  } else if (outcome === "unavailable") {
     hotPathActivity.screenshotStoreUnavailable += 1;
+  } else {
+    hotPathActivity.screenshotDiscardedUploads += 1;
   }
 }
 
@@ -684,6 +688,8 @@ export type ScreenshotData = {
   deviceId?: string;
   studentId?: string;
   studentSessionId?: string;
+  teachingSessionId?: string;
+  controlRevision?: number;
   bindingVersion?: string;
 };
 
@@ -698,6 +704,13 @@ export type BoundScreenshotData = ScreenshotData & ScreenshotBinding & {
   capturedAt: string;
   bindingVersion: string;
 };
+
+export type ClassBoundScreenshotBinding = ScreenshotBinding & {
+  teachingSessionId: string;
+  controlRevision: number;
+};
+
+export type ClassBoundScreenshotData = BoundScreenshotData & ClassBoundScreenshotBinding;
 
 export type ScreenshotBatchReadResult =
   | { status: "ok"; screenshots: (ScreenshotData | null)[] }
@@ -715,12 +728,40 @@ function screenshotBindingDigest(binding: ScreenshotBinding): string {
     .digest("hex");
 }
 
+function classBoundScreenshotBindingDigest(binding: ClassBoundScreenshotBinding): string {
+  return createHash("sha256")
+    .update(binding.schoolId)
+    .update("\0")
+    .update(binding.deviceId)
+    .update("\0")
+    .update(binding.studentId)
+    .update("\0")
+    .update(binding.studentSessionId)
+    .update("\0")
+    .update(binding.teachingSessionId)
+    .update("\0")
+    .update(String(binding.controlRevision))
+    .digest("hex");
+}
+
 export function screenshotBindingVersion(binding: ScreenshotBinding): string {
   return `v1:${screenshotBindingDigest(binding)}`;
 }
 
 export function screenshotBindingCacheKey(binding: ScreenshotBinding): string {
   return `${SCREENSHOT_KEY_PREFIX}bound:${screenshotBindingDigest(binding)}`;
+}
+
+export function classBoundScreenshotBindingVersion(
+  binding: ClassBoundScreenshotBinding
+): string {
+  return `v2:${classBoundScreenshotBindingDigest(binding)}`;
+}
+
+export function classBoundScreenshotBindingCacheKey(
+  binding: ClassBoundScreenshotBinding
+): string {
+  return `${SCREENSHOT_KEY_PREFIX}class-bound:${classBoundScreenshotBindingDigest(binding)}`;
 }
 
 const SCREENSHOT_MAX_CLOCK_SKEW_MS = 30_000;
@@ -763,6 +804,12 @@ export function decodeScreenshotData(value: unknown): ScreenshotData | null {
     ...(typeof candidate.studentSessionId === "string"
       ? { studentSessionId: candidate.studentSessionId }
       : {}),
+    ...(typeof candidate.teachingSessionId === "string"
+      ? { teachingSessionId: candidate.teachingSessionId }
+      : {}),
+    ...(Number.isSafeInteger(candidate.controlRevision)
+      ? { controlRevision: candidate.controlRevision }
+      : {}),
     ...(typeof candidate.bindingVersion === "string"
       ? { bindingVersion: candidate.bindingVersion }
       : {}),
@@ -792,6 +839,25 @@ export function screenshotMatchesBinding(
   ) return false;
   const capturedAtMs = Date.parse(data.capturedAt!);
   return Number.isFinite(capturedAtMs)
+    && Math.abs(capturedAtMs - data.timestamp) <= 1_000;
+}
+
+export function classBoundScreenshotMatchesBinding(
+  data: ScreenshotData | null,
+  binding: ClassBoundScreenshotBinding
+): boolean {
+  if (!data) return false;
+  const capturedAtMs = typeof data.capturedAt === "string"
+    ? Date.parse(data.capturedAt)
+    : Number.NaN;
+  return data.schoolId === binding.schoolId
+    && data.deviceId === binding.deviceId
+    && data.studentId === binding.studentId
+    && data.studentSessionId === binding.studentSessionId
+    && data.teachingSessionId === binding.teachingSessionId
+    && data.controlRevision === binding.controlRevision
+    && data.bindingVersion === classBoundScreenshotBindingVersion(binding)
+    && Number.isFinite(capturedAtMs)
     && Math.abs(capturedAtMs - data.timestamp) <= 1_000;
 }
 
@@ -826,6 +892,27 @@ export async function setScreenshot(
   }
 }
 
+export async function setClassBoundScreenshot(
+  binding: ClassBoundScreenshotBinding,
+  data: ClassBoundScreenshotData
+): Promise<boolean> {
+  if (!classBoundScreenshotMatchesBinding(data, binding)) return false;
+  if (!redisUrl) return false;
+  await ensureRedisReady();
+  if (!redisEnabled || !redisPublisher) return false;
+  try {
+    await redisPublisher.setEx(
+      classBoundScreenshotBindingCacheKey(binding),
+      SCREENSHOT_TTL_SECONDS,
+      JSON.stringify(data)
+    );
+    return true;
+  } catch (error) {
+    console.warn("[Screenshot] Redis class-bound setEx failed:", safeErrorMetadata(error));
+    return false;
+  }
+}
+
 export async function getScreenshot(
   binding: ScreenshotBinding
 ): Promise<
@@ -833,6 +920,18 @@ export async function getScreenshot(
   | { status: "unavailable" }
 > {
   const batch = await getScreenshots([binding]);
+  return batch.status === "unavailable"
+    ? batch
+    : { status: "ok", screenshot: batch.screenshots[0] ?? null };
+}
+
+export async function getClassBoundScreenshot(
+  binding: ClassBoundScreenshotBinding
+): Promise<
+  | { status: "ok"; screenshot: ScreenshotData | null }
+  | { status: "unavailable" }
+> {
+  const batch = await getClassBoundScreenshots([binding]);
   return batch.status === "unavailable"
     ? batch
     : { status: "ok", screenshot: batch.screenshots[0] ?? null };
@@ -855,6 +954,22 @@ export function decodeScreenshotBatchRead(
       return screenshotMatchesBinding(legacy, binding, { allowLegacy: true })
         ? legacy
         : null;
+    }),
+  };
+}
+
+export function decodeClassBoundScreenshotBatchRead(
+  bindings: readonly ClassBoundScreenshotBinding[],
+  result: unknown
+): ScreenshotBatchReadResult {
+  if (!Array.isArray(result) || result.length !== bindings.length) {
+    return { status: "unavailable" };
+  }
+  return {
+    status: "ok",
+    screenshots: bindings.map((binding, index) => {
+      const screenshot = decodeScreenshotData(result[index]);
+      return classBoundScreenshotMatchesBinding(screenshot, binding) ? screenshot : null;
     }),
   };
 }
@@ -892,6 +1007,34 @@ export async function getScreenshots(
     return decodeScreenshotBatchRead(bindings, result);
   } catch (error) {
     console.warn("[Screenshot] Redis mGet failed:", safeErrorMetadata(error));
+    return { status: "unavailable" };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/** V2 class reads never consult V1 or device-only compatibility keys. */
+export async function getClassBoundScreenshots(
+  bindings: readonly ClassBoundScreenshotBinding[]
+): Promise<ScreenshotBatchReadResult> {
+  if (bindings.length === 0) return { status: "ok", screenshots: [] };
+  if (!redisUrl) {
+    return process.env.NODE_ENV === "production" || process.env.APP_ENV === "production"
+      ? { status: "unavailable" }
+      : { status: "ok", screenshots: bindings.map(() => null) };
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 250);
+  timeout.unref?.();
+  try {
+    const { redisCommand } = await import("../middleware/rateLimiter.js");
+    const result = await redisCommand(
+      ["MGET", ...bindings.map(classBoundScreenshotBindingCacheKey)],
+      { readyTimeoutMs: 100, signal: controller.signal }
+    );
+    return decodeClassBoundScreenshotBatchRead(bindings, result);
+  } catch (error) {
+    console.warn("[Screenshot] Redis class-bound mGet failed:", safeErrorMetadata(error));
     return { status: "unavailable" };
   } finally {
     clearTimeout(timeout);

@@ -50,6 +50,7 @@ import {
   withClasspilotTeachingTelemetryAuthority,
   getAuthorizedClasspilotSessionStaffIds,
   getClasspilotStudentControlState,
+  getClasspilotScreenshotAuthorityProjection,
   getActiveSessionsForStudents,
   acknowledgeClasspilotStudentControlState,
   acknowledgeTeacherChatDelivery,
@@ -1038,7 +1039,13 @@ export function setupWebSocket(
                     schoolSettings,
                     studentSessionId: activeSession.id,
                   });
-                  const classroomStateRow = await getClasspilotStudentControlState(schoolId, payload.studentId);
+                   const classroomStateRow = await getClasspilotStudentControlState(schoolId, payload.studentId);
+                   const screenshotTrackingAuthority = await getClasspilotScreenshotAuthorityProjection({
+                     schoolId,
+                     studentId: payload.studentId,
+                     studentSessionId: activeSession.id,
+                     deviceId,
+                   });
                   const teacherReplies = await claimDueTeacherChatDeliveriesForBinding({
                     schoolId,
                     studentId: payload.studentId,
@@ -1049,7 +1056,8 @@ export function setupWebSocket(
                     schoolSettings,
                     fab,
                     studentSessionId: activeSession.id,
-                    teachingSessionId: classroomStateRow?.teachingSessionId ?? null,
+                     teachingSessionId: classroomStateRow?.teachingSessionId ?? null,
+                     screenshotTrackingAuthority,
                     classroomState: classroomStateRow
                       ? serializeClasspilotStudentControlState(classroomStateRow)
                       : null,
@@ -1086,8 +1094,10 @@ export function setupWebSocket(
                   schoolId,
                   studentId: payload.studentId,
                   teachingSessionId: bootstrap.teachingSessionId,
-                  acceptedCapabilities: protocol.acceptedCapabilities,
-                });
+                   acceptedCapabilities: protocol.acceptedCapabilities,
+                   trackingSettings: bootstrap.schoolSettings,
+                   trackingAuthority: bootstrap.screenshotTrackingAuthority,
+                 });
 
                 ws.send(JSON.stringify({
                   type: "auth-success",
