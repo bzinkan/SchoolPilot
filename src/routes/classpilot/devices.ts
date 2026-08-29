@@ -917,6 +917,7 @@ function publicRealtimeFields(snapshot: ClasspilotRealtimeStatus) {
       commandAckReceiptV1: extensionCapabilities.has("commandAckReceiptV1"),
       classroomOverlayRestoreV1: extensionCapabilities.has("classroomOverlayRestoreV1"),
       liveViewNegotiationV1: extensionCapabilities.has("liveViewNegotiationV1"),
+      domainPreservingRestrictionsV1: extensionCapabilities.has("domainPreservingRestrictionsV1"),
       minExtensionVersion: "2.6.0",
     },
     activityFresh,

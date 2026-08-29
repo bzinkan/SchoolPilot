@@ -126,6 +126,8 @@ describe("ClassPilot authenticated HTTP recovery and rate limits", () => {
     const coverageHydration = await source("src/services/classpilotCoverageHydration.ts");
     assert.match(devices, /liveViewNegotiationV1: extensionCapabilities\.has\("liveViewNegotiationV1"\)/);
     assert.match(coverageHydration, /liveViewNegotiationV1: capabilities\.has\("liveViewNegotiationV1"\)/);
+    assert.match(devices, /domainPreservingRestrictionsV1: extensionCapabilities\.has\("domainPreservingRestrictionsV1"\)/);
+    assert.match(coverageHydration, /domainPreservingRestrictionsV1: capabilities\.has\("domainPreservingRestrictionsV1"\)/);
   });
 });
 

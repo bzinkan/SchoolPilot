@@ -740,6 +740,10 @@ const dashboardSource = await readFile(
   new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
   'utf8'
 );
+const coverageSource = await readFile(
+  new URL('../src/products/classpilot/pages/Coverage.jsx', import.meta.url),
+  'utf8'
+);
 
 assert.equal(
   /`\/heartbeats\/\$\{student\.primaryDeviceId\}`/.test(studentTileSource),
@@ -911,6 +915,31 @@ assert.match(
   dashboardSource,
   /data-testid="button-unlock-screen"[\s\S]{0,220}>Clear Waypoint<\/Button>/,
   'the screen-only release action must use button-unlock-screen and display Clear Waypoint',
+);
+assert.match(
+  dashboardSource,
+  /data-testid="waypoint-domain-preservation-message"[\s\S]{0,120}\{waypointDomainRestrictionMessage\}/,
+  'the Waypoint dialog must show capability-aware preservation copy for its exact targets',
+);
+assert.match(
+  dashboardSource,
+  /data-testid="flight-path-domain-preservation-message"[\s\S]{0,120}\{flightPathDomainRestrictionMessage\}/,
+  'the Flight Path dialog must show capability-aware preservation copy for its exact targets',
+);
+assert.match(
+  dashboardSource,
+  /\{DOMAIN_RESTRICTION_URL_HELP\}/,
+  'the Waypoint URL field must use the shared honest landing-page help',
+);
+assert.doesNotMatch(
+  dashboardSource,
+  /full URL to lock to that exact page/i,
+  'the dashboard must not describe a hostname restriction as an exact-page lock',
+);
+assert.match(
+  coverageSource,
+  /data-testid="coverage-domain-preservation-message"[\s\S]{0,120}\{commandTargetDomainRestrictionMessage\}/,
+  'Coverage must show capability-aware preservation copy without disabling Waypoint or Flight Path',
 );
 assert.doesNotMatch(
   dashboardSource,

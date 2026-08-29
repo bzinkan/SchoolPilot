@@ -33,7 +33,11 @@ import { Textarea } from "../../../components/ui/textarea";
 import { Badge } from "../../../components/ui/badge";
 import { useToast } from "../../../hooks/use-toast";
 import { useClassPilotAuth } from "../../../hooks/useClassPilotAuth";
-import { flightPathApplyCapability } from "../lib/dashboardCommandContext";
+import {
+  domainRestrictionMessageForStudents,
+  flightPathApplyCapability,
+} from "../lib/dashboardCommandContext";
+import { deriveStudentMonitoringDisplay } from "../lib/studentMonitoringDisplay";
 
 const coverageTypes = [
   ["state_testing", "State Testing"],
@@ -462,6 +466,10 @@ export default function Coverage() {
   const commandTargetCount = commandTargetStudents.length;
   const commandTargetsSupportScreenOnlyUnlock = commandTargetStudents.length > 0
     && commandTargetStudents.every((student) => student.capabilities?.screenOnlyUnlockV1 === true);
+  const commandTargetDomainRestrictionMessage = domainRestrictionMessageForStudents(
+    commandTargetStudents,
+    (student) => deriveStudentMonitoringDisplay(student).telemetryCurrent,
+  );
   const assignmentScopeCount =
     (assignmentForm.schoolwide ? 1 : 0) +
     assignmentForm.gradeValues.length +
@@ -1003,7 +1011,7 @@ export default function Coverage() {
                       <X className="h-4 w-4 mr-2" />
                       Close Tabs
                     </Button>
-                    <Button size="sm" variant="outline" onClick={() => sendCoverageCommand("lock-screen", { url: "CURRENT_URL" })} disabled={commandTargetCount === 0 || commandMutation.isPending}>
+                    <Button size="sm" variant="outline" onClick={() => sendCoverageCommand("lock-screen", { url: "CURRENT_URL" })} disabled={commandTargetCount === 0 || commandMutation.isPending} title={commandTargetDomainRestrictionMessage}>
                       <Lock className="h-4 w-4 mr-2" />
                       Set Waypoint
                     </Button>
@@ -1021,7 +1029,7 @@ export default function Coverage() {
                       <MessageSquare className="h-4 w-4 mr-2" />
                       Message
                     </Button>
-                    <Button size="sm" variant="outline" onClick={() => setCommandDialog("apply-flight-path")} disabled={commandTargetCount === 0}>
+                    <Button size="sm" variant="outline" onClick={() => setCommandDialog("apply-flight-path")} disabled={commandTargetCount === 0} title={commandTargetDomainRestrictionMessage}>
                       <LinkIcon className="h-4 w-4 mr-2" />
                       Flight Path
                     </Button>
@@ -1042,6 +1050,13 @@ export default function Coverage() {
                       Release Selected
                     </Button>
                   </div>
+
+                  <p
+                    className="border-b px-4 py-2 text-xs text-muted-foreground"
+                    data-testid="coverage-domain-preservation-message"
+                  >
+                    {commandTargetDomainRestrictionMessage}
+                  </p>
 
                   <div className="flex items-center gap-3 px-4 py-3">
                     <div className="relative w-full max-w-sm">
@@ -1739,8 +1754,15 @@ export default function Coverage() {
               {commandDialog === "apply-flight-path" && "Apply Flight Path"}
               {commandDialog === "apply-block-list" && "Apply Block List"}
             </DialogTitle>
-            <DialogDescription>
-              Targets {commandTargetCount} student{commandTargetCount === 1 ? "" : "s"} in {selectedContext?.name || "coverage"}.
+            <DialogDescription className="space-y-1">
+              <span className="block">
+                Targets {commandTargetCount} student{commandTargetCount === 1 ? "" : "s"} in {selectedContext?.name || "coverage"}.
+              </span>
+              {commandDialog === "apply-flight-path" ? (
+                <span className="block" data-testid="coverage-flight-path-domain-preservation-message">
+                  {commandTargetDomainRestrictionMessage}
+                </span>
+              ) : null}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">

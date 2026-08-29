@@ -637,6 +637,7 @@ describe("ClassPilot cluster-safe realtime status", () => {
       "commandAckReceiptV1",
       "classroomOverlayRestoreV1",
       "liveViewNegotiationV1",
+      "domainPreservingRestrictionsV1",
     ]) {
       assert.match(contract, new RegExp(`${capability}: extensionCapabilities\\.has\\("${capability}"\\)`));
     }
@@ -653,6 +654,10 @@ describe("ClassPilot cluster-safe realtime status", () => {
     assert.match(deviceProjection, /normalizeClasspilotPublicCapabilities\(snapshot\.extensionCapabilities\)/);
     assert.match(deviceProjection, /normalizeClasspilotPublicCapabilities\(snapshot\.acceptedCapabilities\)/);
     assert.match(deviceProjection, /normalizeClasspilotPublicClassroomControls\([\s\S]*?snapshot\.classroomControls/);
+    assert.match(
+      deviceProjection,
+      /domainPreservingRestrictionsV1: extensionCapabilities\.has\("domainPreservingRestrictionsV1"\)/
+    );
     assert.doesNotMatch(deviceProjection, /snapshot\.classroomControls\.(?:screenLocked|flightPathActive|activeFlightPathName|isSharing|cameraActive)/);
   });
 });

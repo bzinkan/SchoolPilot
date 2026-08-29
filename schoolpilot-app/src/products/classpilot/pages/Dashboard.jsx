@@ -31,7 +31,6 @@ import { useLicenses } from '../../../contexts/LicenseContext';
 import { ThemeToggle } from '../../../components/ThemeToggle';
 import ClassPilotSidebar from '../components/ClassPilotSidebar';
 import { useAbsentStudents } from '../../../hooks/useAbsentStudents';
-import { isUrlAllowed } from '../../../lib/classpilot-utils';
 import {
   TILE_BATCH_QUERY_ROOTS,
   TILE_SCREENSHOT_CACHE_GC_MS,
@@ -87,9 +86,12 @@ import {
   assertClassroomCommandSelectionIsolation,
   buildStudentSignOutCommandRequest,
   combineCommandSettlements,
+  DOMAIN_RESTRICTION_URL_HELP,
   deriveDashboardCapabilities,
+  domainRestrictionMessageForStudents,
   exactTabCloseCapability,
   flightPathApplyCapability,
+  isStudentUrlOffTask,
   normalizeSessionFabState,
   parseTabSelectionKey,
   resolveCommandTargets,
@@ -361,6 +363,10 @@ export default function Dashboard() {
   const [wsConnected, setWsConnected] = useState(false);
   const [liveViewState, setLiveViewState] = useState(EMPTY_LIVE_VIEW);
   const [teacherAllowedDomains, setTeacherAllowedDomains] = useState(new Set());
+  const teacherAllowedDomainPatterns = useMemo(
+    () => Array.from(teacherAllowedDomains),
+    [teacherAllowedDomains],
+  );
   const [showGradeDialog, setShowGradeDialog] = useState(false);
   const [newGrade, setNewGrade] = useState("");
   const [showOpenTabDialog, setShowOpenTabDialog] = useState(false);
@@ -1911,24 +1917,12 @@ export default function Dashboard() {
     if (!student.activeTabUrl) return false;
     if (student.status !== 'online') return false;
 
-    // AI classification check — respect teacher overrides
-    if (student.aiClassification?.category === 'non-educational') {
-      try {
-        const domain = new URL(student.activeTabUrl).hostname.toLowerCase().replace(/^www\./, '');
-        // Skip if teacher explicitly allowed this domain (Open Tab, dismiss, etc.)
-        if (teacherAllowedDomains.has(domain)) return false;
-        // Skip if domain is in active flight path's allowed list
-        if (student.flightPathActive && student.activeFlightPathName) {
-          const fp = flightPaths.find(f => f.flightPathName === student.activeFlightPathName);
-          if (isUrlAllowed(student.activeTabUrl, fp?.allowedDomains || [])) return false;
-        }
-        return true;
-      } catch { return false; }
-    }
-
-    // Allowed domains list check (school settings)
-    if (!settings?.allowedDomains || settings.allowedDomains.length === 0) return false;
-    return !isUrlAllowed(student.activeTabUrl, settings.allowedDomains);
+    return isStudentUrlOffTask({
+      student,
+      teacherAllowedDomains: teacherAllowedDomainPatterns,
+      schoolAllowedDomains: settings?.allowedDomains || EMPTY_LIST,
+      flightPaths,
+    });
   };
 
   const handleAllowDomain = (domain) => {
@@ -2926,6 +2920,16 @@ export default function Dashboard() {
     && explicitlySelectedUnlockStudents.length === explicitlySelectedStudentIds.length;
   const selectedTargetsSupportScreenOnlyUnlock = exactSelectedUnlockTargetsResolved
     && explicitlySelectedUnlockStudents.every((student) => studentSupportsCapability(student, 'screenOnlyUnlockV1'));
+  const restrictionMessageForStudents = (targetStudentRows) => domainRestrictionMessageForStudents(
+    targetStudentRows,
+    (student) => (
+      studentView === 'class'
+        ? monitoringDisplayFor(student).telemetryCurrent
+        : deriveStudentMonitoringDisplay(student, freshnessNowMs).telemetryCurrent
+    ),
+  );
+  const waypointDomainRestrictionMessage = restrictionMessageForStudents(explicitlySelectedStudents);
+  const flightPathDomainRestrictionMessage = restrictionMessageForStudents(targetStudents);
   const activeClassName = studentView === "available"
     ? "Available"
     : studentView === "claimed"
@@ -5325,7 +5329,15 @@ export default function Dashboard() {
       {/* Waypoint (lock-screen) Dialog */}
       <Dialog open={showLockScreenDialog} onOpenChange={setShowLockScreenDialog}>
         <DialogContent data-testid="dialog-lock-screen">
-          <DialogHeader><DialogTitle>Set Waypoint</DialogTitle><DialogDescription>Target: {targetBannerLabel}. Students already at the waypoint keep their page; everyone else is taken there.</DialogDescription></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Set Waypoint</DialogTitle>
+            <DialogDescription className="space-y-1">
+              <span className="block">Target: {targetBannerLabel}.</span>
+              <span className="block" data-testid="waypoint-domain-preservation-message">
+                {waypointDomainRestrictionMessage}
+              </span>
+            </DialogDescription>
+          </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <label className="flex items-center gap-2 text-sm">
@@ -5341,7 +5353,7 @@ export default function Dashboard() {
               <div className="space-y-2">
                 <Label htmlFor="lock-screen-url">Domain or URL</Label>
                 <Input id="lock-screen-url" type="url" placeholder="ixl.com" value={lockScreenUrl} onChange={(e) => setLockScreenUrl(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !lockScreenMutation.isPending) handleConfirmLockScreen(); }} data-testid="input-lock-screen-url" />
-                <p className="text-xs text-muted-foreground">Enter a domain (ixl.com) to allow the whole site including subdomains, or a full URL to lock to that exact page.</p>
+                <p className="text-xs text-muted-foreground">{DOMAIN_RESTRICTION_URL_HELP}</p>
               </div>
             )}
           </div>
@@ -5417,7 +5429,15 @@ export default function Dashboard() {
       {/* Apply Flight Path Dialog */}
       <Dialog open={showApplyFlightPathDialog} onOpenChange={setShowApplyFlightPathDialog}>
         <DialogContent data-testid="dialog-apply-flight-path">
-          <DialogHeader><DialogTitle>Apply Flight Path to Students</DialogTitle><DialogDescription>Target: {targetBannerLabel}</DialogDescription></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Apply Flight Path to Students</DialogTitle>
+            <DialogDescription className="space-y-1">
+              <span className="block">Target: {targetBannerLabel}.</span>
+              <span className="block" data-testid="flight-path-domain-preservation-message">
+                {flightPathDomainRestrictionMessage}
+              </span>
+            </DialogDescription>
+          </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label htmlFor="flight-path-select">Select Flight Path</Label>
