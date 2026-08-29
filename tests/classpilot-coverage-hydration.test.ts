@@ -5,6 +5,7 @@ import {
   hydrateClasspilotCoverageStatuses,
   snapshotClasspilotCoverageHydrationMetrics,
 } from "../src/services/classpilotCoverageHydration.js";
+import { writeClasspilotRealtimeStatus } from "../src/services/classpilotRealtimeStatus.js";
 
 describe("ClassPilot coverage bulk hydration", () => {
   it("hydrates 500 known exact bindings with no SQL and one Redis batch", async () => {
@@ -72,5 +73,42 @@ describe("ClassPilot coverage bulk hydration", () => {
     assert.equal(metrics.students, 1);
     assert.equal(metrics.sessionSqlStatements, 0);
     assert.equal(metrics.realtimeRedisCommands, 1);
+  });
+
+  it("projects domain preservation from the raw extension advertisement", async () => {
+    const now = Date.now();
+    const schoolId = "coverage-hydration-domain-preservation-school";
+    const studentId = "coverage-hydration-domain-preservation-student";
+    const studentSessionId = "coverage-hydration-domain-preservation-session";
+    const deviceId = "coverage-hydration-domain-preservation-device";
+    const write = await writeClasspilotRealtimeStatus({
+      schoolId,
+      studentId,
+      studentSessionId,
+      deviceId,
+      heartbeatId: "coverage-hydration-domain-preservation-heartbeat",
+      observedAt: now,
+      trackingStatus: "ACTIVE",
+      extensionCapabilities: ["domainPreservingRestrictionsV1"],
+      acceptedCapabilities: [],
+    });
+    assert.ok(write.snapshot);
+
+    const result = await hydrateClasspilotCoverageStatuses({
+      schoolId,
+      studentIds: [studentId],
+      knownSessions: [{
+        id: studentSessionId,
+        studentId,
+        deviceId,
+        lastSeenAt: new Date(now),
+      }],
+      now,
+    });
+
+    assert.equal(
+      result.get(studentId)?.capabilities.domainPreservingRestrictionsV1,
+      true
+    );
   });
 });

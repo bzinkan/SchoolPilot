@@ -5,9 +5,14 @@ import {
   assertClassroomCommandSelectionIsolation,
   buildStudentSignOutCommandRequest,
   combineCommandSettlements,
+  CONSERVATIVE_DOMAIN_RESTRICTION_MESSAGE,
+  DOMAIN_PRESERVING_RESTRICTION_MESSAGE,
+  DOMAIN_RESTRICTION_URL_HELP,
   deriveDashboardCapabilities,
+  domainRestrictionMessageForStudents,
   exactTabCloseCapability,
   flightPathApplyCapability,
+  isStudentUrlOffTask,
   mergeCommandUpdateIntoBatches,
   normalizeSessionFabState,
   parseTabSelectionKey,
@@ -38,6 +43,99 @@ test('strict command helpers reject empty Flight Paths and keep sign-out payload
     enabled: true,
     reason: '',
   });
+});
+
+test('domain-preservation copy fails closed for mixed, offline, stale, and unknown clients', () => {
+  assert.equal(
+    DOMAIN_PRESERVING_RESTRICTION_MESSAGE,
+    'Students already on the selected site keep their current page; other students go to the landing page.',
+  );
+  assert.equal(
+    CONSERVATIVE_DOMAIN_RESTRICTION_MESSAGE,
+    'Some selected Chromebooks may reload or move to the landing page when this restriction is applied.',
+  );
+  assert.equal(
+    DOMAIN_RESTRICTION_URL_HELP,
+    'The full URL is the landing page. Browsing remains allowed on its hostname and subdomains; it is not an exact-page lock.',
+  );
+  const current = (student) => student.telemetryCurrent === true;
+  const version277Targets = [
+    {
+      studentId: 'student-a',
+      extensionVersion: '2.7.7',
+      telemetryCurrent: true,
+      capabilities: { domainPreservingRestrictionsV1: true },
+    },
+    {
+      studentId: 'student-b',
+      extensionVersion: '2.7.7',
+      telemetryCurrent: true,
+      extensionCapabilities: ['domainPreservingRestrictionsV1'],
+    },
+  ];
+
+  assert.equal(
+    domainRestrictionMessageForStudents(version277Targets, current),
+    DOMAIN_PRESERVING_RESTRICTION_MESSAGE,
+  );
+  assert.equal(
+    domainRestrictionMessageForStudents([
+      version277Targets[0],
+      { studentId: 'student-legacy', extensionVersion: '2.7.6', telemetryCurrent: true },
+    ], current),
+    CONSERVATIVE_DOMAIN_RESTRICTION_MESSAGE,
+    'one 2.7.6 client without the raw capability keeps mixed-version copy conservative',
+  );
+  assert.equal(
+    domainRestrictionMessageForStudents([
+      { ...version277Targets[0], telemetryCurrent: false },
+    ], current),
+    CONSERVATIVE_DOMAIN_RESTRICTION_MESSAGE,
+    'a stale or offline 2.7.7 client must not support the stronger promise',
+  );
+  assert.equal(
+    domainRestrictionMessageForStudents([], current),
+    CONSERVATIVE_DOMAIN_RESTRICTION_MESSAGE,
+    'an unknown target cohort must fail closed',
+  );
+  assert.equal(
+    domainRestrictionMessageForStudents([{
+      status: 'online',
+      capabilities: { domainPreservingRestrictionsV1: true },
+    }]),
+    CONSERVATIVE_DOMAIN_RESTRICTION_MESSAGE,
+    'raw online status alone must not support the stronger promise without explicit freshness',
+  );
+});
+
+test('teacher auto-allow covers exact hosts and subdomains before both off-task branches', () => {
+  const baseStudent = {
+    activeTabUrl: 'https://app.ixl.com/math',
+  };
+  const policy = {
+    teacherAllowedDomains: ['ixl.com'],
+    schoolAllowedDomains: ['school.example'],
+    flightPaths: [],
+  };
+
+  assert.equal(isStudentUrlOffTask({
+    ...policy,
+    student: { ...baseStudent, aiClassification: { category: 'non-educational' } },
+  }), false, 'teacher approval must override the AI off-task branch for a subdomain');
+  assert.equal(isStudentUrlOffTask({
+    ...policy,
+    student: baseStudent,
+  }), false, 'teacher approval must override the school-allowlist branch for a subdomain');
+
+  const lookalike = { activeTabUrl: 'https://notixl.com/math' };
+  assert.equal(isStudentUrlOffTask({
+    ...policy,
+    student: { ...lookalike, aiClassification: { category: 'non-educational' } },
+  }), true, 'teacher approval must not cover a lookalike in the AI branch');
+  assert.equal(isStudentUrlOffTask({
+    ...policy,
+    student: lookalike,
+  }), true, 'teacher approval must not cover a lookalike in the school-allowlist branch');
 });
 
 test('class targets are narrowed only by explicit selection, subgroup, or tile override', () => {

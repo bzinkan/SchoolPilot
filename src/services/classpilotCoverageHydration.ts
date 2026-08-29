@@ -32,6 +32,7 @@ export type ClasspilotCoverageStatus = {
     screenOnlyUnlockV1: boolean;
     fabStateRevisionV1: boolean;
     liveViewNegotiationV1: boolean;
+    domainPreservingRestrictionsV1: boolean;
     minExtensionVersion: "2.6.0";
   };
   screenshotHealth: ClasspilotRealtimeStatus["screenshotHealth"];
@@ -83,6 +84,7 @@ function coverageRealtimeCapabilities(status: ClasspilotRealtimeStatus | null) {
     screenOnlyUnlockV1: capabilities.has("screenOnlyUnlockV1"),
     fabStateRevisionV1: capabilities.has("fabStateRevisionV1"),
     liveViewNegotiationV1: capabilities.has("liveViewNegotiationV1"),
+    domainPreservingRestrictionsV1: capabilities.has("domainPreservingRestrictionsV1"),
     minExtensionVersion: "2.6.0" as const,
   };
 }

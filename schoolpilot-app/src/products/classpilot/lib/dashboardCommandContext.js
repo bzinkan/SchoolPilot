@@ -1,3 +1,5 @@
+import { isUrlAllowed } from '../../../lib/classpilot-utils.js';
+
 const CLASS_COMMANDS = Object.freeze([
   'open-tab',
   'close-tabs',
@@ -86,6 +88,69 @@ export function studentSupportsCapability(student, capabilityName) {
       ? student.capabilities
       : [];
   return advertised.includes(capabilityName);
+}
+
+export const DOMAIN_PRESERVING_RESTRICTION_MESSAGE =
+  'Students already on the selected site keep their current page; other students go to the landing page.';
+export const CONSERVATIVE_DOMAIN_RESTRICTION_MESSAGE =
+  'Some selected Chromebooks may reload or move to the landing page when this restriction is applied.';
+export const DOMAIN_RESTRICTION_URL_HELP =
+  'The full URL is the landing page. Browsing remains allowed on its hostname and subdomains; it is not an exact-page lock.';
+
+function defaultStudentTelemetryCurrent(student) {
+  return student?.telemetryCurrent === true;
+}
+
+export function domainRestrictionMessageForStudents(
+  students,
+  isStudentTelemetryCurrent = defaultStudentTelemetryCurrent,
+) {
+  const targets = Array.isArray(students) ? students : [];
+  const allTargetsCanPreserve = targets.length > 0 && targets.every((student) => (
+    isStudentTelemetryCurrent(student) === true
+    && studentSupportsCapability(student, 'domainPreservingRestrictionsV1')
+  ));
+  return allTargetsCanPreserve
+    ? DOMAIN_PRESERVING_RESTRICTION_MESSAGE
+    : CONSERVATIVE_DOMAIN_RESTRICTION_MESSAGE;
+}
+
+export function isStudentUrlOffTask({
+  student,
+  teacherAllowedDomains = [],
+  schoolAllowedDomains = [],
+  flightPaths = [],
+}) {
+  const activeTabUrl = String(student?.activeTabUrl || '').trim();
+  if (!activeTabUrl) return false;
+  try {
+    new URL(activeTabUrl);
+  } catch {
+    return false;
+  }
+
+  if (
+    teacherAllowedDomains.length > 0
+    && isUrlAllowed(activeTabUrl, teacherAllowedDomains)
+  ) {
+    return false;
+  }
+
+  if (student?.aiClassification?.category === 'non-educational') {
+    if (student.flightPathActive && student.activeFlightPathName) {
+      const flightPath = flightPaths.find(
+        (candidate) => candidate.flightPathName === student.activeFlightPathName,
+      );
+      const allowedDomains = flightPath?.allowedDomains || [];
+      if (allowedDomains.length > 0 && isUrlAllowed(activeTabUrl, allowedDomains)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  if (schoolAllowedDomains.length === 0) return false;
+  return !isUrlAllowed(activeTabUrl, schoolAllowedDomains);
 }
 
 export function toolbarScreenCommand(commandType, selectedStudentIds) {
