@@ -24,6 +24,26 @@ describe("ClassPilot teacher command payload validation", () => {
     }));
   });
 
+  it("locks to the CURRENT_URL sentinel or a normalized HTTP URL only", () => {
+    assert.deepEqual(validateClasspilotCommandPayload("lock-screen", { url: "CURRENT_URL" }), {
+      url: "CURRENT_URL",
+    });
+    assert.deepEqual(validateClasspilotCommandPayload("lock-screen", {
+      url: "https://www.ixl.com/math/grade-5",
+    }), { url: "https://www.ixl.com/math/grade-5" });
+    assert.deepEqual(validateClasspilotCommandPayload("lock-screen", { url: "ixl.com" }), {
+      url: "https://ixl.com/",
+    });
+    invalid(() => validateClasspilotCommandPayload("lock-screen", { url: "javascript:alert(1)" }), "url");
+    invalid(() => validateClasspilotCommandPayload("lock-screen", { url: "https://" }), "url");
+    invalid(() => validateClasspilotCommandPayload("lock-screen", { url: "" }));
+    invalid(() => validateClasspilotCommandPayload("lock-screen", {}));
+    invalid(() => validateClasspilotCommandPayload("lock-screen", {
+      url: "CURRENT_URL",
+      deviceId: "must-not-cross-public-contract",
+    }));
+  });
+
   it("requires exact tab identity and never accepts URL fallback rows", () => {
     assert.deepEqual(validateClasspilotCommandPayload("close-tabs", {
       tabsToClose: [{ studentId: "student-1", tabRef: "tab-2", observedRevision: 9 }],
