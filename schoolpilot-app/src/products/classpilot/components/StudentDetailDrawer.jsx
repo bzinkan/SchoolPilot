@@ -988,7 +988,7 @@ function StudentDetailDrawer({
                                       )}
                                       {session.hasLocked && (
                                         <Badge variant="outline" className="text-xs">
-                                          Locked
+                                          Waypoint
                                         </Badge>
                                       )}
                                       {session.hasCamera && (

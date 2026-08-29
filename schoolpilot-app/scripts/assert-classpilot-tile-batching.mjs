@@ -876,10 +876,12 @@ assert.doesNotMatch(
   'the removed Lock URL action must leave no dialog, state, validation, or handler behind',
 );
 // Lock-to-URL was deliberately reinstated (2026-08) as a mode inside the
-// single Lock dialog: the toolbar keeps one concise Lock button, and the
-// dialog defaults to the CURRENT_URL sentinel with an optional explicit
-// domain/URL mode. The historical bans above stay: the superseded
-// standalone Lock URL control must never return as a second toolbar button.
+// single Waypoint dialog (teacher-facing rename of Lock; command types and
+// testids keep the lock-screen names): the toolbar keeps one concise
+// Set Waypoint button, and the dialog defaults to the CURRENT_URL sentinel
+// with an optional explicit domain/URL mode. The historical bans above stay:
+// the superseded standalone Lock URL control must never return as a second
+// toolbar button.
 assert.match(
   dashboardSource,
   /data-testid="dialog-lock-screen"/,
@@ -902,13 +904,13 @@ assert.match(
 );
 assert.match(
   dashboardSource,
-  /data-testid="button-lock-screen"[\s\S]{0,180}>Lock<\/Button>/,
-  'the current-domain action must retain button-lock-screen and display the concise Lock label',
+  /data-testid="button-lock-screen"[\s\S]{0,180}>Set Waypoint<\/Button>/,
+  'the waypoint action must retain button-lock-screen and display the Set Waypoint label',
 );
 assert.match(
   dashboardSource,
-  /data-testid="button-unlock-screen"[\s\S]{0,220}>Unlock<\/Button>/,
-  'the screen-only release action must use button-unlock-screen and display Unlock',
+  /data-testid="button-unlock-screen"[\s\S]{0,220}>Clear Waypoint<\/Button>/,
+  'the screen-only release action must use button-unlock-screen and display Clear Waypoint',
 );
 assert.doesNotMatch(
   dashboardSource,
