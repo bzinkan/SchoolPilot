@@ -150,6 +150,7 @@ export function materializeV1Students(
       }),
       eventCounts,
       topDomains: coverage.topDomains,
+      topActivities: coverage.topActivities,
       // Kept on the strict in-memory shape so callers cannot accidentally
       // treat missing values as v2 evidence. completeClasspilotSessionReport
       // deliberately omits these columns when the stored reportVersion is 1.
@@ -303,6 +304,7 @@ export function materializeV2Students(
       }),
       eventCounts,
       topDomains: coverage.topDomains,
+      topActivities: coverage.topActivities,
       unclassifiedSeconds: coverage.unclassifiedSeconds,
       offTaskSeconds: coverage.offTaskSeconds,
       offTaskEventCount: coverage.offTaskEventCount,

@@ -2760,12 +2760,14 @@ export async function runStartupMigrations(): Promise<void> {
         total_seconds INTEGER NOT NULL DEFAULT 0,
         heartbeat_count INTEGER NOT NULL DEFAULT 0,
         top_domains JSONB,
+        top_activities JSONB,
         first_seen TIMESTAMPTZ,
         last_seen TIMESTAMPTZ,
         computed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         CONSTRAINT classpilot_session_usage_session_student_date_unique UNIQUE (teaching_session_id, student_id, local_date)
       )
     `);
+    await pool.query(`ALTER TABLE classpilot_session_usage ADD COLUMN IF NOT EXISTS top_activities JSONB`);
     await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_session_usage_school_date_idx ON classpilot_session_usage (school_id, local_date)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_session_usage_school_group_date_idx ON classpilot_session_usage (school_id, group_id, local_date)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_session_usage_school_session_idx ON classpilot_session_usage (school_id, teaching_session_id)`);

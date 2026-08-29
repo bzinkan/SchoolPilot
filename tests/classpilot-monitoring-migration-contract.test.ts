@@ -58,6 +58,34 @@ test("startup migration and Drizzle schema include all monitoring tenant tables"
   );
 });
 
+test("Student Data app attribution is additive, privacy-safe storage outside immutable report detail", async () => {
+  const [schema, migration, storage] = await Promise.all([
+    readFile(new URL("src/schema/classpilot.ts", root), "utf8"),
+    readFile(new URL("src/index.ts", root), "utf8"),
+    readFile(new URL("src/services/storage.ts", root), "utf8"),
+  ]);
+  assert.match(schema, /topActivities: jsonb\("top_activities"\)/);
+  assert.match(
+    migration,
+    /ALTER TABLE classpilot_session_usage ADD COLUMN IF NOT EXISTS top_activities JSONB/
+  );
+
+  const completion = storage.slice(
+    storage.indexOf("export async function completeClasspilotSessionReport"),
+    storage.indexOf("export async function failClasspilotSessionReport")
+  );
+  const immutableDetail = completion.slice(
+    completion.indexOf("await tx.insert(classpilotSessionStudentReports)"),
+    completion.indexOf("const gapEvents")
+  );
+  const studentDataUsage = completion.slice(
+    completion.indexOf(".insert(classpilotSessionUsage)"),
+    completion.indexOf("const counts")
+  );
+  assert.doesNotMatch(immutableDetail, /topActivities/);
+  assert.match(studentDataUsage, /topActivities: student\.topActivities/);
+});
+
 test("monitoring event scope, idempotency, retention, and privacy constraints are database-enforced", async () => {
   const migration = await readFile(new URL("src/index.ts", root), "utf8");
   assert.match(migration, /num_nonnulls\(teaching_session_id, supervision_context_id\) = 1/);

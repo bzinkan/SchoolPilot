@@ -3,6 +3,11 @@ import {
   localDateInTimeZone,
   localDateTimeUtc,
 } from "../util/schoolTime.js";
+import {
+  classpilotActivityKey,
+  classifyClasspilotActivity,
+  type ClasspilotTopActivity,
+} from "./classpilotActivityAttribution.js";
 
 export const HEARTBEAT_COVERAGE_ALGORITHM_VERSION = "heartbeat-coverage-v2";
 export const HEARTBEAT_COVERAGE_ALGORITHM_VERSION_V1 = "heartbeat-coverage-v1";
@@ -217,6 +222,7 @@ export function calculateHeartbeatCoverage(options: {
       lastObservedAt: null as Date | null,
       gaps: [] as MonitoringGap[],
       topDomains: [] as Array<{ domain: string; seconds: number; visits: number }>,
+      topActivities: [] as ClasspilotTopActivity[],
       unclassifiedSeconds: 0,
       offTaskSeconds: 0,
       offTaskEventCount: 0,
@@ -294,6 +300,12 @@ export function calculateHeartbeatCoverage(options: {
   const coveragePercent = Math.max(0, Math.min(100, Math.round((observedSeconds / eligibleSeconds) * 100)));
   const attributionLimitMs = HEARTBEAT_ATTRIBUTION_LIMIT_SECONDS * 1000;
   const domains = new Map<string, { milliseconds: number; visits: number }>();
+  const activities = new Map<string, {
+    kind: ClasspilotTopActivity["kind"];
+    domain: string;
+    milliseconds: number;
+    visits: number;
+  }>();
   const offTaskSegments: Array<{
     domain: string;
     category: "non-educational";
@@ -307,6 +319,7 @@ export function calculateHeartbeatCoverage(options: {
       (heartbeat) => heartbeat.timestamp >= interval.start && heartbeat.timestamp < interval.end
     );
     let previousDomain: string | null = null;
+    let previousActivityKey: string | null = null;
     for (let index = 0; index < within.length; index += 1) {
       const heartbeat = within[index]!;
       const nextTimestamp = within[index + 1]?.timestamp.getTime() ?? interval.end.getTime();
@@ -315,6 +328,7 @@ export function calculateHeartbeatCoverage(options: {
       if (endMs <= startMs) continue;
 
       const domain = normalizedHeartbeatDomain(heartbeat.url);
+      const activity = classifyClasspilotActivity(heartbeat.url);
       const category = normalizedHeartbeatCategory(heartbeat.category);
       if (domain) {
         const value = domains.get(domain) || { milliseconds: 0, visits: 0 };
@@ -323,6 +337,20 @@ export function calculateHeartbeatCoverage(options: {
         domains.set(domain, value);
       }
       previousDomain = domain;
+      if (activity) {
+        const activityKey = classpilotActivityKey(activity);
+        const value = activities.get(activityKey) || {
+          ...activity,
+          milliseconds: 0,
+          visits: 0,
+        };
+        value.milliseconds += endMs - startMs;
+        if (activityKey !== previousActivityKey) value.visits += 1;
+        activities.set(activityKey, value);
+        previousActivityKey = activityKey;
+      } else {
+        previousActivityKey = null;
+      }
 
       // Only a known category is removed from the uncertainty bucket. An
       // unknown/missing classification can still contribute a known domain to
@@ -391,6 +419,17 @@ export function calculateHeartbeatCoverage(options: {
         seconds: Math.round(value.milliseconds / 1000),
         visits: value.visits,
       })),
+    topActivities: Array.from(activities.values())
+      .sort((a, b) => b.milliseconds - a.milliseconds
+        || a.kind.localeCompare(b.kind)
+        || a.domain.localeCompare(b.domain))
+      .slice(0, 10)
+      .map(({ kind, domain, milliseconds, visits }) => ({
+        kind,
+        domain,
+        seconds: Math.round(milliseconds / 1000),
+        visits,
+      })),
     unclassifiedSeconds,
     offTaskSeconds,
     offTaskEventCount: offTaskEvents.length,
@@ -434,6 +473,7 @@ export function calculateHeartbeatCoverageV1(options: {
       lastObservedAt: null as Date | null,
       gaps: [] as MonitoringGap[],
       topDomains: [] as Array<{ domain: string; seconds: number; visits: number }>,
+      topActivities: [] as ClasspilotTopActivity[],
     };
   }
 
@@ -500,6 +540,7 @@ export function calculateHeartbeatCoverageV1(options: {
   const observedSeconds = Math.max(0, eligibleSeconds - gapSeconds);
   const coveragePercent = Math.max(0, Math.min(100, Math.round((observedSeconds / eligibleSeconds) * 100)));
   const domains = new Map<string, { seconds: number; visits: number }>();
+  const activities = new Map<string, ClasspilotTopActivity>();
   for (const heartbeat of eligibleHeartbeats) {
     if (!heartbeat.url) continue;
     try {
@@ -511,6 +552,19 @@ export function calculateHeartbeatCoverageV1(options: {
       value.seconds += 10;
       value.visits += 1;
       domains.set(domain, value);
+
+      const activity = classifyClasspilotActivity(heartbeat.url);
+      if (activity) {
+        const activityKey = classpilotActivityKey(activity);
+        const activityValue = activities.get(activityKey) || {
+          ...activity,
+          seconds: 0,
+          visits: 0,
+        };
+        activityValue.seconds += 10;
+        activityValue.visits += 1;
+        activities.set(activityKey, activityValue);
+      }
     } catch {
       // Invalid URLs are excluded from domain rollups, never from coverage.
     }
@@ -536,5 +590,10 @@ export function calculateHeartbeatCoverageV1(options: {
       .sort((a, b) => b[1].seconds - a[1].seconds || a[0].localeCompare(b[0]))
       .slice(0, 10)
       .map(([domain, value]) => ({ domain, ...value })),
+    topActivities: Array.from(activities.values())
+      .sort((a, b) => b.seconds - a.seconds
+        || a.kind.localeCompare(b.kind)
+        || a.domain.localeCompare(b.domain))
+      .slice(0, 10),
   };
 }

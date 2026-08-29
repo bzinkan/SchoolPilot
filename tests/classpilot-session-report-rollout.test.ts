@@ -172,9 +172,16 @@ test("stored report version selects frozen v1 or v2 arithmetic", () => {
   const v2 = materializeStudents(report(2), input);
   assert.equal(v1[0]?.heartbeatCount, 2);
   assert.equal(v1[0]?.topDomains.reduce((sum, domain) => sum + domain.seconds, 0), 20);
+  assert.deepEqual(v1[0]?.topActivities, [
+    { kind: "domain", domain: "a.example", seconds: 10, visits: 1 },
+    { kind: "domain", domain: "b.example", seconds: 10, visits: 1 },
+  ]);
   assert.equal(v1[0]?.unclassifiedSeconds, 0);
   assert.equal(v2[0]?.heartbeatCount, 1);
   assert.equal(v2[0]?.topDomains.reduce((sum, domain) => sum + domain.seconds, 0), 15);
+  assert.deepEqual(v2[0]?.topActivities, [
+    { kind: "domain", domain: "b.example", seconds: 15, visits: 1 },
+  ]);
   assert.equal(v2[0]?.unclassifiedSeconds, 45);
   assert.deepEqual(classpilotReportV2ShadowComparison(v1, v2), {
     aggregateMismatch: true,

@@ -35,6 +35,7 @@ import {
   isExactIdempotentStudentMessage,
 } from "./classpilotStudentChat.js";
 import { assertClasspilotScreenshotEvidenceAuthority } from "./classpilotEvidenceAuthority.js";
+import type { ClasspilotTopActivity } from "./classpilotActivityAttribution.js";
 import {
   ACTIVE_INSTRUCTIONAL_GROUP_TYPES,
   assertStaffLifecycleMutationAllowed,
@@ -13327,6 +13328,7 @@ export type MaterializedClasspilotStudentReport = {
   }>;
   eventCounts: Record<string, number>;
   topDomains: Array<{ domain: string; seconds: number; visits: number }>;
+  topActivities: ClasspilotTopActivity[];
   unclassifiedSeconds: number;
   offTaskSeconds: number;
   offTaskEventCount: number;
@@ -13507,6 +13509,7 @@ export async function completeClasspilotSessionReport(
             totalSeconds: student.observedSeconds,
             heartbeatCount: student.heartbeatCount,
             topDomains: student.topDomains,
+            topActivities: student.topActivities,
             firstSeen: student.firstObservedAt,
             lastSeen: student.lastObservedAt,
             computedAt: completedAt,
@@ -13521,6 +13524,7 @@ export async function completeClasspilotSessionReport(
               totalSeconds: student.observedSeconds,
               heartbeatCount: student.heartbeatCount,
               topDomains: student.topDomains,
+              topActivities: student.topActivities,
               firstSeen: student.firstObservedAt,
               lastSeen: student.lastObservedAt,
               computedAt: completedAt,
