@@ -17,6 +17,7 @@ import {
   isProvisionalStudentDataState,
   normalizeStudentDataResponse,
   normalizeStudentDataScopesResponse,
+  studentDataActivityLabel,
   studentDataCsv,
   studentDataQueryUrl,
   studentDataScopesQueryUrl,
@@ -77,27 +78,49 @@ function formatAsOf(value) {
   }).format(date);
 }
 
-function DomainRows({ domains, emptyMessage }) {
-  if (!domains?.length) {
+function ActivityRows({ activities, emptyMessage }) {
+  if (!activities?.length) {
     return <p className="py-4 text-center text-sm text-muted-foreground">{emptyMessage}</p>;
   }
 
+  const hasUnspecifiedWorkspaceActivity = activities.some(
+    (activity) => activity.kind === 'google_workspace_unspecified',
+  );
+
   return (
-    <div className="space-y-1.5">
-      {domains.map((domain, index) => (
-        <div
-          key={domain.domain}
-          className="flex items-center justify-between gap-3 rounded bg-muted/50 px-2 py-1 text-sm"
-        >
-          <span className="flex min-w-0 items-center gap-2">
-            <span className="w-4 shrink-0 text-right font-mono text-muted-foreground">{index + 1}.</span>
-            <span className="truncate font-medium" title={domain.domain}>{domain.domain}</span>
-          </span>
-          <span className="shrink-0 text-xs text-muted-foreground">
-            {formatStudentDataSeconds(domain.seconds)}
-          </span>
-        </div>
-      ))}
+    <div className="space-y-2">
+      <div className="space-y-1.5">
+        {activities.map((activity, index) => {
+          const label = studentDataActivityLabel(activity);
+          const showDomain = label !== activity.domain;
+          return (
+            <div
+              key={`${activity.kind}:${activity.domain}`}
+              className="flex items-center justify-between gap-3 rounded bg-muted/50 px-2 py-1 text-sm"
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="w-4 shrink-0 text-right font-mono text-muted-foreground">{index + 1}.</span>
+                <span className="flex min-w-0 flex-col">
+                  <span className="truncate font-medium" title={label}>{label}</span>
+                  {showDomain ? (
+                    <span className="truncate text-xs text-muted-foreground" title={activity.domain}>
+                      {activity.domain}
+                    </span>
+                  ) : null}
+                </span>
+              </span>
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {formatStudentDataSeconds(activity.seconds)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      {hasUnspecifiedWorkspaceActivity ? (
+        <p className="text-xs text-muted-foreground" data-testid="student-data-workspace-legacy-note">
+          Older Google Workspace activity may not identify the specific app. App-level detail begins with newly recorded activity.
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -657,10 +680,10 @@ export default function StudentDataDialog({
                         <section className="space-y-2">
                           <h4 className="flex items-center gap-1.5 text-sm font-semibold">
                             <Clock className="h-4 w-4 text-blue-600" />
-                            Top Domains
+                            Top Sites &amp; Apps
                           </h4>
-                          <DomainRows
-                            domains={report.student.domains}
+                          <ActivityRows
+                            activities={report.student.activities}
                             emptyMessage="No monitored activity for this student in this period"
                           />
                         </section>
@@ -697,10 +720,10 @@ export default function StudentDataDialog({
                         <section className="space-y-2">
                           <h4 className="flex items-center gap-1.5 text-sm font-semibold">
                             <Clock className="h-4 w-4 text-blue-600" />
-                            Top Domains ({selectedScope?.label || 'Scope'})
+                            Top Sites &amp; Apps ({selectedScope?.label || 'Scope'})
                           </h4>
-                          <DomainRows
-                            domains={report.topDomains}
+                          <ActivityRows
+                            activities={report.topActivities}
                             emptyMessage="No monitored activity for this period"
                           />
                         </section>

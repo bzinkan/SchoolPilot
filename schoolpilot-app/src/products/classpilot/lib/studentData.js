@@ -1,6 +1,25 @@
 const STUDENT_DATA_PERIODS = new Set(['today', 'week', 'month', 'year']);
 const STUDENT_DATA_SCOPE_KINDS = new Set(['school', 'mine', 'class']);
 const STUDENT_DATA_STATES = new Set(['final', 'live', 'finalizing']);
+const STUDENT_DATA_ACTIVITY_KINDS = new Set([
+  'domain',
+  'google_docs',
+  'google_slides',
+  'google_forms',
+  'google_sheets',
+  'google_classroom',
+  'google_drive',
+  'google_workspace_unspecified',
+]);
+const STUDENT_DATA_ACTIVITY_LABELS = Object.freeze({
+  google_docs: 'Google Docs',
+  google_slides: 'Google Slides',
+  google_forms: 'Google Forms',
+  google_sheets: 'Google Sheets',
+  google_classroom: 'Google Classroom',
+  google_drive: 'Google Drive',
+  google_workspace_unspecified: 'Google Workspace (app unavailable)',
+});
 
 function record(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -16,7 +35,7 @@ function domainName(value) {
   if (!raw) return null;
   try {
     const candidate = raw.includes('://') ? raw : `https://${raw}`;
-    return new URL(candidate).hostname.toLowerCase() || null;
+    return new URL(candidate).hostname.toLowerCase().replace(/^www\./, '') || null;
   } catch {
     return null;
   }
@@ -47,6 +66,70 @@ function normalizeDomains(value, maximumSeconds = Number.POSITIVE_INFINITY) {
     .sort((left, right) => right.seconds - left.seconds || left.domain.localeCompare(right.domain));
 }
 
+function legacyActivityKind(domain) {
+  if (domain === 'docs.google.com') return 'google_workspace_unspecified';
+  if (domain === 'slides.google.com') return 'google_slides';
+  if (domain === 'forms.google.com') return 'google_forms';
+  if (domain === 'sheets.google.com' || domain === 'spreadsheets.google.com') {
+    return 'google_sheets';
+  }
+  if (domain === 'classroom.google.com') return 'google_classroom';
+  if (domain === 'drive.google.com') return 'google_drive';
+  return 'domain';
+}
+
+function normalizeActivity(value, maximumSeconds = Number.POSITIVE_INFINITY) {
+  const entry = typeof value === 'string' ? { domain: value } : record(value);
+  const domain = domainName(entry.domain ?? entry.normalizedDomain ?? entry.hostname);
+  if (!domain) return null;
+  const kind = STUDENT_DATA_ACTIVITY_KINDS.has(entry.kind) && entry.kind !== 'domain'
+    ? entry.kind
+    : legacyActivityKind(domain);
+  const seconds = Math.min(
+    nonnegativeInteger(
+      entry.seconds
+        ?? entry.boundedSeconds
+        ?? entry.monitoredSeconds
+        ?? entry.durationSeconds
+        ?? entry.value,
+    ),
+    maximumSeconds,
+  );
+  return { kind, domain, seconds };
+}
+
+function normalizeActivities(value, maximumSeconds = Number.POSITIVE_INFINITY) {
+  if (!Array.isArray(value)) return [];
+  const activities = value
+    .map((item) => normalizeActivity(item, maximumSeconds))
+    .filter(Boolean)
+    .sort((left, right) => (
+      right.seconds - left.seconds
+        || left.kind.localeCompare(right.kind)
+        || left.domain.localeCompare(right.domain)
+    ));
+  if (!Number.isFinite(maximumSeconds)) return activities;
+
+  let remainingSeconds = maximumSeconds;
+  return activities.flatMap((activity) => {
+    if (remainingSeconds <= 0) return [];
+    const seconds = Math.min(activity.seconds, remainingSeconds);
+    remainingSeconds -= seconds;
+    return seconds > 0 ? [{ ...activity, seconds }] : [];
+  });
+}
+
+function activitiesFromDomains(domains, maximumSeconds = Number.POSITIVE_INFINITY) {
+  return normalizeActivities(domains, maximumSeconds);
+}
+
+export function studentDataActivityLabel(value) {
+  const activity = record(value);
+  const domain = domainName(activity.domain);
+  if (activity.kind === 'domain') return domain ?? 'Website';
+  return STUDENT_DATA_ACTIVITY_LABELS[activity.kind] ?? domain ?? 'Website';
+}
+
 function studentIdentity(student) {
   const row = record(student);
   return {
@@ -74,19 +157,47 @@ function normalizeStudentSummary(value, fallback = {}) {
     row.topDomains ?? row.domains ?? row.domainTotals,
     monitoredSeconds || Number.POSITIVE_INFINITY,
   );
+  const maximumSeconds = monitoredSeconds || Number.POSITIVE_INFINITY;
+  const fallbackActivities = activitiesFromDomains(domains, maximumSeconds);
+  const activities = Array.isArray(row.activities)
+    ? normalizeActivities(row.activities, maximumSeconds)
+    : Array.isArray(row.topActivities)
+      ? normalizeActivities(row.topActivities, maximumSeconds)
+      : fallbackActivities;
+  const topActivities = (Array.isArray(row.topActivities)
+    ? normalizeActivities(row.topActivities, maximumSeconds)
+    : Array.isArray(row.activities)
+      ? normalizeActivities(row.activities, maximumSeconds)
+      : fallbackActivities).slice(0, 10);
+  const requestedTopActivity = normalizeActivity(row.topActivity, maximumSeconds);
+  const topActivity = requestedTopActivity
+    ? topActivities.find((activity) => (
+        activity.kind === requestedTopActivity.kind
+          && activity.domain === requestedTopActivity.domain
+      )) ?? requestedTopActivity
+    : topActivities[0] ?? null;
   const topDomain = domainName(
     record(row.topDomain).domain
       ?? record(row.topDomain).name
       ?? row.topDomain,
-  ) ?? domains[0]?.domain ?? null;
+  ) ?? domains[0]?.domain ?? topActivity?.domain ?? null;
+  const distinctActivityDomains = new Set(activities.map((activity) => activity.domain)).size;
 
   return {
     studentId: identity.studentId,
     name: identity.name,
     monitoredSeconds,
-    siteCount: nonnegativeInteger(row.siteCount ?? row.totalSites ?? row.distinctDomains ?? domains.length),
+    siteCount: nonnegativeInteger(
+      row.siteCount
+        ?? row.totalSites
+        ?? row.distinctDomains
+        ?? (domains.length > 0 ? domains.length : distinctActivityDomains),
+    ),
     topDomain,
     domains,
+    topActivity,
+    topActivities,
+    activities,
   };
 }
 
@@ -245,6 +356,15 @@ export function normalizeStudentDataResponse(payload, {
           ?? record(root.student).domains
           ?? root.topDomains
           ?? root.domains,
+        activities: record(root.student).activities
+          ?? record(root.student).topActivities
+          ?? root.activities
+          ?? root.topActivities,
+        topActivities: record(root.student).topActivities
+          ?? record(root.student).activities
+          ?? root.topActivities
+          ?? root.activities,
+        topActivity: record(root.student).topActivity ?? root.topActivity,
       }
     : aggregateById.get(String(studentId || ''));
   const selectedStudent = studentId && selectedRaw
@@ -293,8 +413,19 @@ export function normalizeStudentDataResponse(payload, {
   }
   const dataState = root.dataState;
   const generatedAt = root.generatedAt ?? root.frozenAt ?? null;
+  const maximumSeconds = monitoredSeconds || Number.POSITIVE_INFINITY;
+  const topDomains = normalizeDomains(
+    root.topDomains ?? root.domains ?? record(root.class).topDomains,
+    maximumSeconds,
+  ).slice(0, 10);
+  const topActivities = (Array.isArray(root.topActivities)
+    ? normalizeActivities(root.topActivities, maximumSeconds)
+    : Array.isArray(root.activities)
+      ? normalizeActivities(root.activities, maximumSeconds)
+      : activitiesFromDomains(topDomains, maximumSeconds)).slice(0, 10);
 
   return {
+    schemaVersion: nonnegativeInteger(root.schemaVersion) || 1,
     reportVersion: nonnegativeInteger(root.reportVersion ?? root.version) || 1,
     revision: root.revision ?? root.aggregateRevision ?? root.dataRevision ?? null,
     period: responsePeriod,
@@ -304,10 +435,8 @@ export function normalizeStudentDataResponse(payload, {
     asOf: root.asOf ?? generatedAt,
     provisionalAsOf: root.provisionalAsOf ?? null,
     monitoredSeconds,
-    topDomains: normalizeDomains(
-      root.topDomains ?? root.domains ?? record(root.class).topDomains,
-      monitoredSeconds || Number.POSITIVE_INFINITY,
-    ).slice(0, 10),
+    topDomains,
+    topActivities,
     students: sortedStudents([...aggregateById.values()]),
     student: selectedStudent,
   };
@@ -356,12 +485,38 @@ export function studentDataCsv(report, { period = 'today', studentId = null } = 
     rows.push(['Monitored seconds', selected.monitoredSeconds]);
     rows.push(['Sites visited', selected.siteCount]);
     rows.push([]);
-    rows.push(['Domain', 'Bounded seconds']);
-    for (const domain of selected.domains) rows.push([domain.domain, domain.seconds]);
+    rows.push(['Site or app', 'Domain', 'Bounded seconds']);
+    const selectedActivities = Array.isArray(selected.activities)
+      ? normalizeActivities(selected.activities, selected.monitoredSeconds || Number.POSITIVE_INFINITY)
+      : Array.isArray(selected.topActivities)
+        ? normalizeActivities(selected.topActivities, selected.monitoredSeconds || Number.POSITIVE_INFINITY)
+        : activitiesFromDomains(selected.domains, selected.monitoredSeconds || Number.POSITIVE_INFINITY);
+    for (const activity of selectedActivities) {
+      rows.push([
+        studentDataActivityLabel(activity),
+        activity.domain,
+        activity.seconds,
+      ]);
+    }
   } else {
-    rows.push(['Student', 'Monitored seconds', 'Top domain', 'Sites visited']);
+    rows.push([
+      'Student',
+      'Monitored seconds',
+      'Top site or app',
+      'Domain',
+      'Sites visited',
+    ]);
     for (const student of normalized.students ?? []) {
-      rows.push([student.name, student.monitoredSeconds, student.topDomain ?? '', student.siteCount]);
+      const topActivity = normalizeActivity(student.topActivity)
+        ?? normalizeActivities(student.topActivities)[0]
+        ?? normalizeActivity(student.topDomain);
+      rows.push([
+        student.name,
+        student.monitoredSeconds,
+        topActivity ? studentDataActivityLabel(topActivity) : '',
+        topActivity?.domain ?? '',
+        student.siteCount,
+      ]);
     }
   }
 

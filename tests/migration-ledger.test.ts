@@ -7,6 +7,7 @@ import { runSchoolPilotMigrationLedger } from "../src/db/migrationLedger.js";
 import {
   CLASSPILOT_27_EXPAND_SQL,
   CLASSPILOT_STALE_LEGACY_STUDENT_SESSION_CLEANUP_SQL,
+  CLASSPILOT_STUDENT_DATA_TOP_ACTIVITIES_SQL,
   CLASSPILOT_STUDENT_SESSION_RECOVERY_SQL,
   CLASSPILOT_STUDENT_SESSION_RECOVERY_VALIDATE_SQL,
   schoolPilot27Migrations,
@@ -268,6 +269,29 @@ test("ClassPilot stale legacy-session cleanup is checksum-ledgered and preserves
   assert.doesNotMatch(
     CLASSPILOT_STALE_LEGACY_STUDENT_SESSION_CLEANUP_SQL,
     /auth_kind\s+(?:=|IN)[^;]*(?:managed_profile|manual_shared)/
+  );
+});
+
+test("ClassPilot Student Data activity storage is additive and leaves legacy rows unspecified", () => {
+  const migration = schoolPilot27Migrations.find(
+    (candidate) => candidate.id === "20260828_classpilot_student_data_top_activities_expand"
+  );
+  assert.ok(migration);
+  assert.equal(migration.mode, "transactional");
+  assert.equal(
+    migration.checksum,
+    createHash("sha256")
+      .update(CLASSPILOT_STUDENT_DATA_TOP_ACTIVITIES_SQL)
+      .digest("hex")
+  );
+  assert.match(
+    CLASSPILOT_STUDENT_DATA_TOP_ACTIVITIES_SQL,
+    /ALTER TABLE classpilot_session_usage\s+ADD COLUMN IF NOT EXISTS top_activities JSONB/
+  );
+  assert.doesNotMatch(
+    CLASSPILOT_STUDENT_DATA_TOP_ACTIVITIES_SQL,
+    /UPDATE|DEFAULT|NOT NULL/i,
+    "legacy rows must remain NULL so readers can label their app detail as unavailable"
   );
 });
 

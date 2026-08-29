@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { redisCommand } from "../middleware/rateLimiter.js";
+import { CLASSPILOT_ACTIVITY_KINDS } from "./classpilotActivityAttribution.js";
 
 export const CLASSPILOT_STUDENT_DATA_CACHE_BUCKET_MS = 30_000;
 export const CLASSPILOT_STUDENT_DATA_CACHE_MAX_TTL_SECONDS = 90;
@@ -9,6 +10,7 @@ const CACHE_MAX_ROWS = 5_000;
 const CACHE_MAX_BYTES = 2 * 1024 * 1024;
 const REDIS_READY_TIMEOUT_MS = 100;
 const REDIS_COMMAND_TIMEOUT_MS = 250;
+const STUDENT_DATA_ACTIVITY_KINDS = new Set<string>(CLASSPILOT_ACTIVITY_KINDS);
 
 export type ClasspilotStudentDataCachedRow = {
   teachingSessionId: string;
@@ -17,11 +19,12 @@ export type ClasspilotStudentDataCachedRow = {
   totalSeconds: number;
   heartbeatCount: number;
   topDomains: unknown;
+  topActivities: unknown;
   computedAt: Date;
 };
 
 export type ClasspilotStudentDataCacheBinding = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   schoolId: string;
   teachingSessionId: string;
   groupId: string;
@@ -45,7 +48,7 @@ export type ClasspilotStudentDataCachedComputation = {
 type RedisCommand = (args: string[]) => Promise<unknown | undefined>;
 
 type EncodedCacheValue = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   bindingDigest: string;
   schoolId: string;
   teachingSessionId: string;
@@ -60,7 +63,7 @@ function cacheDigest(binding: ClasspilotStudentDataCacheBinding): string {
 
 function redisKey(digest: string): string {
   const prefix = process.env.REDIS_PREFIX ?? "schoolpilot";
-  return `${prefix}:classpilot:student-data-provisional:v1:${digest}`;
+  return `${prefix}:classpilot:student-data-provisional:v2:${digest}`;
 }
 
 function finiteNonnegativeInteger(value: unknown): value is number {
@@ -102,6 +105,44 @@ function decodedDomains(value: unknown, totalSeconds: number): unknown[] | undef
   return domains;
 }
 
+function decodedActivities(value: unknown, totalSeconds: number): unknown[] | undefined {
+  if (!Array.isArray(value) || value.length > 10) return undefined;
+  let sum = 0;
+  const activities: unknown[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return undefined;
+    const record = item as Record<string, unknown>;
+    if (
+      typeof record.kind !== "string"
+      || !STUDENT_DATA_ACTIVITY_KINDS.has(record.kind)
+      || typeof record.domain !== "string"
+      || record.domain.length === 0
+      || record.domain.length > 253
+      || record.domain !== record.domain.trim().toLowerCase()
+      || record.domain.includes("/")
+      || record.domain.includes(":")
+      || !finiteNonnegativeInteger(record.seconds)
+      || record.seconds > totalSeconds
+      || (record.visits !== undefined && !finiteNonnegativeInteger(record.visits))
+    ) return undefined;
+    try {
+      const parsed = new URL(`https://${record.domain}`);
+      if (parsed.hostname !== record.domain) return undefined;
+    } catch {
+      return undefined;
+    }
+    sum += record.seconds;
+    if (sum > totalSeconds) return undefined;
+    activities.push({
+      kind: record.kind,
+      domain: record.domain,
+      seconds: record.seconds,
+      ...(record.visits === undefined ? {} : { visits: record.visits }),
+    });
+  }
+  return activities;
+}
+
 function decodeValue(
   raw: unknown,
   binding: ClasspilotStudentDataCacheBinding,
@@ -121,7 +162,7 @@ function decodeValue(
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const record = value as Partial<EncodedCacheValue>;
   if (
-    record.schemaVersion !== 1
+    record.schemaVersion !== 2
     || record.bindingDigest !== digest
     || record.schoolId !== binding.schoolId
     || record.teachingSessionId !== binding.teachingSessionId
@@ -146,15 +187,17 @@ function decodeValue(
     ) return undefined;
     const computedAt = new Date(row.computedAt);
     const topDomains = decodedDomains(row.topDomains, row.totalSeconds);
+    const topActivities = decodedActivities(row.topActivities, row.totalSeconds);
     const rowKey = `${row.teachingSessionId}\u0000${row.studentId}\u0000${row.localDate}`;
     if (
       Number.isNaN(computedAt.getTime())
       || computedAt.toISOString() !== binding.windowEnd
       || !topDomains
+      || !topActivities
       || keys.has(rowKey)
     ) return undefined;
     keys.add(rowKey);
-    rows.push({ ...row, topDomains, computedAt });
+    rows.push({ ...row, topDomains, topActivities, computedAt });
   }
   return { rows, asOf };
 }
@@ -166,7 +209,7 @@ function encodeValue(
 ): string | undefined {
   if (value.rows.length > CACHE_MAX_ROWS) return undefined;
   const encoded: EncodedCacheValue = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     bindingDigest: digest,
     schoolId: binding.schoolId,
     teachingSessionId: binding.teachingSessionId,

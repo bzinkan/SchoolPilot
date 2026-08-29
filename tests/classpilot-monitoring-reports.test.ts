@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   calculateHeartbeatCoverage,
+  calculateHeartbeatCoverageV1,
   HEARTBEAT_COVERAGE_ALGORITHM_VERSION,
   HEARTBEAT_HEALTH_TOLERANCE_SECONDS,
   trackingPolicyDisabledIntervals,
@@ -136,7 +137,77 @@ test("report v2 attributes forward for at most fifteen seconds without burst inf
   assert.equal(result.topDomains.find((entry) => entry.domain === "example.com")?.seconds, 25);
   assert.equal(result.topDomains.find((entry) => entry.domain === "unknown.example")?.seconds, 15);
   assert.equal(result.topDomains.reduce((sum, entry) => sum + entry.seconds, 0), 40);
+  assert.deepEqual(result.topActivities, [
+    { kind: "domain", domain: "example.com", seconds: 25, visits: 1 },
+    { kind: "domain", domain: "unknown.example", seconds: 15, visits: 1 },
+  ]);
   assert.equal(result.unclassifiedSeconds, 35);
+});
+
+test("v1 and v2 add Google app activities without changing their domain attribution", () => {
+  const heartbeats = [
+    { timestamp: at(0), url: "https://docs.google.com/document/d/private-doc/edit", category: "educational" },
+    { timestamp: at(10), url: "https://docs.google.com/presentation/d/private-slides/edit", category: "educational" },
+    { timestamp: at(20), url: "https://docs.google.com/forms/d/private-form/viewform", category: "educational" },
+    { timestamp: at(30), url: "https://docs.google.com/spreadsheets/d/private-sheet/edit", category: "educational" },
+    { timestamp: at(40), url: "https://classroom.google.com/u/0/h", category: "educational" },
+    { timestamp: at(50), url: "https://drive.google.com/drive/my-drive", category: "educational" },
+  ];
+  const common = {
+    windowStart: at(0),
+    windowEnd: at(60),
+    authenticatedIntervals: [{ start: at(0), end: at(60), studentSessionId: "a" }],
+  };
+  const v1 = calculateHeartbeatCoverageV1({ ...common, heartbeats });
+  const v2 = calculateHeartbeatCoverage({ ...common, heartbeats });
+
+  assert.deepEqual(v1.topDomains, [
+    { domain: "docs.google.com", seconds: 40, visits: 4 },
+    { domain: "classroom.google.com", seconds: 10, visits: 1 },
+    { domain: "drive.google.com", seconds: 10, visits: 1 },
+  ]);
+  assert.deepEqual(v2.topDomains, [
+    { domain: "docs.google.com", seconds: 40, visits: 1 },
+    { domain: "classroom.google.com", seconds: 10, visits: 1 },
+    { domain: "drive.google.com", seconds: 10, visits: 1 },
+  ]);
+  const expectedActivities = [
+    { kind: "google_classroom", domain: "classroom.google.com", seconds: 10, visits: 1 },
+    { kind: "google_docs", domain: "docs.google.com", seconds: 10, visits: 1 },
+    { kind: "google_drive", domain: "drive.google.com", seconds: 10, visits: 1 },
+    { kind: "google_forms", domain: "docs.google.com", seconds: 10, visits: 1 },
+    { kind: "google_sheets", domain: "docs.google.com", seconds: 10, visits: 1 },
+    { kind: "google_slides", domain: "docs.google.com", seconds: 10, visits: 1 },
+  ];
+  assert.deepEqual(v1.topActivities, expectedActivities);
+  assert.deepEqual(v2.topActivities, expectedActivities);
+  assert.equal(JSON.stringify(v2.topActivities).includes("private-"), false);
+});
+
+test("heartbeat activity rollups are deterministically bounded to ten entries", () => {
+  const heartbeats = Array.from({ length: 12 }, (_, index) => ({
+    timestamp: at(index),
+    url: `https://site-${String(index).padStart(2, "0")}.example/private`,
+    category: "educational",
+  }));
+  const common = {
+    windowStart: at(0),
+    windowEnd: at(30),
+    authenticatedIntervals: [{ start: at(0), end: at(30) }],
+  };
+  const v1 = calculateHeartbeatCoverageV1({ ...common, heartbeats });
+  const v2 = calculateHeartbeatCoverage({ ...common, heartbeats });
+
+  assert.equal(v1.topActivities.length, 10);
+  assert.equal(v2.topActivities.length, 10);
+  assert.deepEqual(v1.topActivities, [...v1.topActivities].sort((left, right) =>
+    right.seconds - left.seconds
+      || left.kind.localeCompare(right.kind)
+      || left.domain.localeCompare(right.domain)));
+  assert.deepEqual(v2.topActivities, [...v2.topActivities].sort((left, right) =>
+    right.seconds - left.seconds
+      || left.kind.localeCompare(right.kind)
+      || left.domain.localeCompare(right.domain)));
 });
 
 test("report v2 groups off-task samples and applies teacher-intent exemptions first", () => {

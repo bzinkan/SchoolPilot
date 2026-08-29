@@ -49,9 +49,12 @@ const STUDENTS = Object.freeze([
     name: 'Ada Student',
     monitoredSeconds: 90,
     siteCount: 1,
-    topDomain: 'example.org',
-    domains: [{ domain: 'example.org', seconds: 90 }],
-    topDomains: [{ domain: 'example.org', seconds: 90 }],
+    topDomain: 'docs.google.com',
+    domains: [{ domain: 'docs.google.com', seconds: 90 }],
+    topDomains: [{ domain: 'docs.google.com', seconds: 90 }],
+    topActivity: { kind: 'google_slides', domain: 'docs.google.com', seconds: 90 },
+    topActivities: [{ kind: 'google_slides', domain: 'docs.google.com', seconds: 90 }],
+    activities: [{ kind: 'google_slides', domain: 'docs.google.com', seconds: 90 }],
   }),
   Object.freeze({
     studentId: 'student-b',
@@ -114,7 +117,7 @@ function reportFor(scope, url, availableStudents = STUDENTS) {
   const monitoredSeconds = students.reduce((sum, student) => sum + student.monitoredSeconds, 0);
   const dataState = scope.key === MATH_SCOPE.key ? 'live' : 'final';
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     revision: `browser-${scope.key}-${url.searchParams.get('period')}-${studentId || 'all'}`,
     period: url.searchParams.get('period'),
     scope,
@@ -122,7 +125,16 @@ function reportFor(scope, url, availableStudents = STUDENTS) {
     asOf: '2026-08-28T12:00:00.000Z',
     provisionalAsOf: dataState === 'live' ? '2026-08-28T12:00:00.000Z' : null,
     monitoredSeconds,
-    topDomains: monitoredSeconds > 0 ? [{ domain: 'example.org', seconds: monitoredSeconds }] : [],
+    topDomains: monitoredSeconds > 0 ? [{ domain: 'docs.google.com', seconds: monitoredSeconds }] : [],
+    ...(scope.key !== MINE_SCOPE.key && monitoredSeconds > 0
+      ? {
+          topActivities: [{
+            kind: 'google_slides',
+            domain: 'docs.google.com',
+            seconds: monitoredSeconds,
+          }],
+        }
+      : {}),
     students,
     student: studentId ? students[0] || null : null,
   };
@@ -226,15 +238,20 @@ async function teacherScenario(browser) {
     assert.equal(await scopeSelect.inputValue(), 'class:math', 'active owned class must be the teacher default');
     await page.getByTestId('student-data-state').filter({ hasText: 'Live' }).waitFor();
     assert.equal((await page.getByTestId('button-student-data-scope-root').innerText()).trim(), 'Grade 5 Math');
+    await page.getByRole('heading', { name: 'Top Sites & Apps (Grade 5 Math)' }).waitFor();
+    await page.getByText('Google Slides', { exact: true }).waitFor();
+    await page.getByText('docs.google.com', { exact: true }).waitFor();
     assert.ok(requests.some((entry) => entry.includes('/api/classpilot/student-data?period=today&scope=class&groupId=math')));
 
     await page.getByTestId('button-student-data-student-student-a').click();
     await page.getByText('Ada Student', { exact: true }).last().waitFor();
+    await page.getByRole('heading', { name: 'Top Sites & Apps', exact: true }).waitFor();
     assert.ok(requests.some((entry) => entry.includes('studentId=student-a')));
     await scopeSelect.selectOption('mine');
     await page.getByTestId('student-data-state').filter({ hasText: 'Final' }).waitFor();
     assert.equal((await page.getByTestId('button-student-data-scope-root').innerText()).trim(), 'My Classes');
     assert.equal(await page.getByText('Ada Student', { exact: true }).count(), 1, 'scope change must clear the selected-student breadcrumb');
+    await page.getByTestId('student-data-workspace-legacy-note').waitFor();
 
     await page.getByTestId('button-student-data-period-week').click();
     await page.getByTestId('student-data-revision').filter({ hasText: 'browser-mine-week-all' }).waitFor();
@@ -249,6 +266,8 @@ async function teacherScenario(browser) {
     assert.match(csv, /"Period","week"/);
     assert.match(csv, /"Data state","Final"/);
     assert.match(csv, /"As of","2026-08-28T12:00:00.000Z"/);
+    assert.match(csv, /"Top site or app","Domain","Sites visited"/);
+    assert.match(csv, /"Google Slides","docs.google.com","1"/);
 
     await scopeSelect.selectOption('class:science');
     await page.getByTestId('student-data-access-changed').waitFor();

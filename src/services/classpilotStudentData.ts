@@ -50,6 +50,10 @@ import {
   localDateStartUtc,
 } from "../util/schoolTime.js";
 import { parseClasspilotRetentionDays } from "../util/classpilotRetention.js";
+import {
+  CLASSPILOT_ACTIVITY_KINDS,
+  type ClasspilotActivityKind,
+} from "./classpilotActivityAttribution.js";
 
 export type ClasspilotStudentDataPeriod = "today" | "week" | "month" | "year";
 export type ClasspilotStudentDataRole = "admin" | "school_admin" | "teacher";
@@ -69,6 +73,18 @@ export type ClasspilotStudentDataScopeOption = ClasspilotStudentDataScope & {
 
 export type ClasspilotStudentDataState = "final" | "live" | "finalizing";
 
+export type ClasspilotStudentDataActivityKind = ClasspilotActivityKind;
+
+export type ClasspilotStudentDataActivity = {
+  kind: ClasspilotStudentDataActivityKind;
+  domain: string;
+  seconds: number;
+};
+
+const STUDENT_DATA_ACTIVITY_KINDS = new Set<ClasspilotStudentDataActivityKind>(
+  CLASSPILOT_ACTIVITY_KINDS
+);
+
 const CLASSPILOT_SESSION_MAX_MS = 12 * 60 * 60 * 1_000;
 
 type StudentIdentity = {
@@ -81,6 +97,7 @@ type StoredUsageRow = {
   totalSeconds: number;
   heartbeatCount: number;
   topDomains: unknown;
+  topActivities?: unknown;
   computedAt: Date;
 };
 
@@ -93,6 +110,7 @@ type StudentAccumulator = StudentIdentity & {
   monitoredSeconds: number;
   heartbeatCount: number;
   domains: Map<string, number>;
+  activities: Map<string, ClasspilotStudentDataActivity>;
 };
 
 export class ClasspilotStudentDataNotFoundError extends Error {
@@ -230,6 +248,60 @@ function storedDomains(value: unknown, monitoredSeconds: number): Array<{ domain
   return domains;
 }
 
+function fallbackActivityKind(domain: string): ClasspilotStudentDataActivityKind {
+  if (domain === "docs.google.com") return "google_workspace_unspecified";
+  if (domain === "slides.google.com") return "google_slides";
+  if (domain === "forms.google.com") return "google_forms";
+  if (domain === "sheets.google.com" || domain === "spreadsheets.google.com") {
+    return "google_sheets";
+  }
+  if (domain === "classroom.google.com") return "google_classroom";
+  if (domain === "drive.google.com") return "google_drive";
+  return "domain";
+}
+
+function activityKind(value: unknown): ClasspilotStudentDataActivityKind | null {
+  return typeof value === "string"
+    && STUDENT_DATA_ACTIVITY_KINDS.has(value as ClasspilotStudentDataActivityKind)
+    ? value as ClasspilotStudentDataActivityKind
+    : null;
+}
+
+function storedActivities(
+  value: unknown,
+  monitoredSeconds: number,
+  fallbackDomains: Array<{ domain: string; seconds: number }>
+): ClasspilotStudentDataActivity[] {
+  const source = Array.isArray(value)
+    ? value
+    : fallbackDomains.map((domain) => ({
+        kind: fallbackActivityKind(domain.domain),
+        domain: domain.domain,
+        seconds: domain.seconds,
+      }));
+  let remaining = monitoredSeconds;
+  const activities: ClasspilotStudentDataActivity[] = [];
+  for (const raw of source) {
+    if (!raw || typeof raw !== "object" || remaining <= 0) continue;
+    const item = raw as Record<string, unknown>;
+    const kind = activityKind(item.kind);
+    const domain = normalizeDomain(item.domain ?? item.hostname);
+    if (!kind || !domain) continue;
+    const seconds = Math.min(
+      remaining,
+      nonnegativeInteger(item.seconds ?? item.boundedSeconds ?? item.durationSeconds)
+    );
+    if (seconds <= 0) continue;
+    activities.push({ kind, domain, seconds });
+    remaining -= seconds;
+  }
+  return activities;
+}
+
+function studentDataActivityKey(activity: Pick<ClasspilotStudentDataActivity, "kind" | "domain">) {
+  return `${activity.kind}\u0000${activity.domain}`;
+}
+
 function sortedBoundedDomains(domains: Map<string, number>, maximumSeconds: number) {
   let remaining = maximumSeconds;
   return [...domains.entries()]
@@ -239,6 +311,23 @@ function sortedBoundedDomains(domains: Map<string, number>, maximumSeconds: numb
       const seconds = Math.min(remaining, nonnegativeInteger(rawSeconds));
       remaining -= seconds;
       return seconds > 0 ? [{ domain, seconds }] : [];
+    });
+}
+
+function sortedBoundedActivities(
+  activities: Map<string, ClasspilotStudentDataActivity>,
+  maximumSeconds: number
+): ClasspilotStudentDataActivity[] {
+  let remaining = maximumSeconds;
+  return [...activities.values()]
+    .sort((left, right) => right.seconds - left.seconds
+      || left.kind.localeCompare(right.kind)
+      || left.domain.localeCompare(right.domain))
+    .flatMap((activity) => {
+      if (remaining <= 0) return [];
+      const seconds = Math.min(remaining, nonnegativeInteger(activity.seconds));
+      remaining -= seconds;
+      return seconds > 0 ? [{ ...activity, seconds }] : [];
     });
 }
 
@@ -264,6 +353,7 @@ export function buildClasspilotStudentDataResponse(options: {
       monitoredSeconds: 0,
       heartbeatCount: 0,
       domains: new Map<string, number>(),
+      activities: new Map<string, ClasspilotStudentDataActivity>(),
     }])
   );
 
@@ -273,18 +363,36 @@ export function buildClasspilotStudentDataResponse(options: {
     const totalSeconds = nonnegativeInteger(row.totalSeconds);
     accumulator.monitoredSeconds += totalSeconds;
     accumulator.heartbeatCount += nonnegativeInteger(row.heartbeatCount);
-    for (const domain of storedDomains(row.topDomains, totalSeconds)) {
+    const domains = storedDomains(row.topDomains, totalSeconds);
+    for (const domain of domains) {
       accumulator.domains.set(
         domain.domain,
         (accumulator.domains.get(domain.domain) || 0) + domain.seconds
       );
     }
+    for (const activity of storedActivities(row.topActivities, totalSeconds, domains)) {
+      const key = studentDataActivityKey(activity);
+      const current = accumulator.activities.get(key);
+      accumulator.activities.set(key, {
+        ...activity,
+        seconds: (current?.seconds || 0) + activity.seconds,
+      });
+    }
   }
 
   const allDomainTotals = new Map<string, number>();
+  const allActivityTotals = new Map<string, ClasspilotStudentDataActivity>();
   for (const accumulator of accumulators.values()) {
     for (const [domain, seconds] of accumulator.domains) {
       allDomainTotals.set(domain, (allDomainTotals.get(domain) || 0) + seconds);
+    }
+    for (const activity of accumulator.activities.values()) {
+      const key = studentDataActivityKey(activity);
+      const current = allActivityTotals.get(key);
+      allActivityTotals.set(key, {
+        ...activity,
+        seconds: (current?.seconds || 0) + activity.seconds,
+      });
     }
   }
 
@@ -292,6 +400,7 @@ export function buildClasspilotStudentDataResponse(options: {
     .sort((left, right) => left.name.localeCompare(right.name) || left.studentId.localeCompare(right.studentId))
     .map((student) => {
       const domains = sortedBoundedDomains(student.domains, student.monitoredSeconds);
+      const activities = sortedBoundedActivities(student.activities, student.monitoredSeconds);
       return {
         studentId: student.studentId,
         name: student.name,
@@ -302,15 +411,19 @@ export function buildClasspilotStudentDataResponse(options: {
         topDomain: domains[0]?.domain ?? null,
         domains: domains.slice(0, 10),
         topDomains: domains.slice(0, 10),
+        topActivity: activities[0] ?? null,
+        activities: activities.slice(0, 10),
+        topActivities: activities.slice(0, 10),
       };
     });
   const monitoredSeconds = summaries.reduce((sum, student) => sum + student.monitoredSeconds, 0);
   const topDomains = sortedBoundedDomains(allDomainTotals, monitoredSeconds).slice(0, 10);
+  const topActivities = sortedBoundedActivities(allActivityTotals, monitoredSeconds).slice(0, 10);
   const selectedStudent = options.selectedStudentId
     ? summaries.find((student) => student.studentId === options.selectedStudentId) ?? null
     : null;
   const revisionInput = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     period: options.period,
     sessionId: options.sessionId ?? null,
     selectedStudentId: options.selectedStudentId ?? null,
@@ -321,15 +434,16 @@ export function buildClasspilotStudentDataResponse(options: {
     endLocalDate: options.endLocalDate,
     monitoredSeconds,
     topDomains,
+    topActivities,
     students: summaries,
   };
-  const revision = `student-data-v1:${createHash("sha256")
+  const revision = `student-data-v2:${createHash("sha256")
     .update(JSON.stringify(revisionInput))
     .digest("base64url")
     .slice(0, 32)}`;
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     revision,
     period: options.period,
     sessionId: options.sessionId ?? null,
@@ -355,9 +469,12 @@ export function buildClasspilotStudentDataResponse(options: {
     studentsTruncated: false,
     topDomainsLimit: 10,
     domainCoverage: "stored-session-top-domains" as const,
+    topActivitiesLimit: 10,
+    activityCoverage: "stored-session-top-activities" as const,
     studentCount: summaries.length,
     monitoredSeconds,
     topDomains,
+    topActivities,
     students: summaries,
     student: selectedStudent,
   };
@@ -880,6 +997,7 @@ async function loadAggregatedStoredUsage(options: {
         usage.total_seconds,
         usage.heartbeat_count,
         usage.top_domains,
+        usage.top_activities,
         usage.computed_at
       FROM ${classpilotSessionUsage} AS usage
       INNER JOIN ${teachingSessions} AS session
@@ -940,6 +1058,85 @@ async function loadAggregatedStoredUsage(options: {
           ORDER BY GREATEST(seconds, 0) DESC, domain
         ) AS domain_rank
       FROM domain_totals
+    ),
+    activity_items AS (
+      SELECT
+        scoped.student_id,
+        activity_item.value AS value
+      FROM scoped_usage AS scoped
+      CROSS JOIN LATERAL jsonb_array_elements(
+        CASE
+          WHEN jsonb_typeof(scoped.top_activities) = 'array' THEN scoped.top_activities
+          ELSE '[]'::jsonb
+        END
+      ) AS activity_item(value)
+      WHERE scoped.top_activities IS NOT NULL
+        AND jsonb_typeof(activity_item.value) = 'object'
+
+      UNION ALL
+
+      SELECT
+        scoped.student_id,
+        JSONB_BUILD_OBJECT(
+          'kind', CASE NULLIF(BTRIM(domain_item.value->>'domain'), '')
+            WHEN 'docs.google.com' THEN 'google_workspace_unspecified'
+            WHEN 'slides.google.com' THEN 'google_slides'
+            WHEN 'forms.google.com' THEN 'google_forms'
+            WHEN 'sheets.google.com' THEN 'google_sheets'
+            WHEN 'spreadsheets.google.com' THEN 'google_sheets'
+            WHEN 'classroom.google.com' THEN 'google_classroom'
+            WHEN 'drive.google.com' THEN 'google_drive'
+            ELSE 'domain'
+          END,
+          'domain', NULLIF(BTRIM(domain_item.value->>'domain'), ''),
+          'seconds', CASE
+            WHEN COALESCE(domain_item.value->>'seconds', '') ~ '^[0-9]+$'
+              THEN (domain_item.value->>'seconds')::numeric
+            ELSE 0
+          END
+        ) AS value
+      FROM scoped_usage AS scoped
+      CROSS JOIN LATERAL jsonb_array_elements(
+        CASE
+          WHEN jsonb_typeof(scoped.top_domains) = 'array' THEN scoped.top_domains
+          ELSE '[]'::jsonb
+        END
+      ) AS domain_item(value)
+      WHERE scoped.top_activities IS NULL
+        AND jsonb_typeof(domain_item.value) = 'object'
+        AND NULLIF(BTRIM(domain_item.value->>'domain'), '') IS NOT NULL
+    ),
+    activity_totals AS (
+      SELECT
+        student_id,
+        NULLIF(BTRIM(value->>'kind'), '') AS kind,
+        NULLIF(BTRIM(value->>'domain'), '') AS domain,
+        SUM(
+          CASE
+            WHEN COALESCE(value->>'seconds', '') ~ '^[0-9]+$'
+              THEN (value->>'seconds')::numeric
+            ELSE 0
+          END
+        )::bigint AS seconds
+      FROM activity_items
+      WHERE NULLIF(BTRIM(value->>'kind'), '') IS NOT NULL
+        AND NULLIF(BTRIM(value->>'domain'), '') IS NOT NULL
+      GROUP BY
+        student_id,
+        NULLIF(BTRIM(value->>'kind'), ''),
+        NULLIF(BTRIM(value->>'domain'), '')
+    ),
+    ranked_activities AS (
+      SELECT
+        student_id,
+        kind,
+        domain,
+        GREATEST(seconds, 0) AS seconds,
+        ROW_NUMBER() OVER (
+          PARTITION BY student_id
+          ORDER BY GREATEST(seconds, 0) DESC, kind, domain
+        ) AS activity_rank
+      FROM activity_totals
     )
     SELECT
       totals.student_id,
@@ -952,7 +1149,20 @@ async function loadAggregatedStoredUsage(options: {
           ORDER BY domains.seconds DESC, domains.domain
         ) FILTER (WHERE domains.domain_rank <= 50),
         '[]'::jsonb
-      ) AS top_domains
+      ) AS top_domains,
+      COALESCE((
+        SELECT JSONB_AGG(
+          JSONB_BUILD_OBJECT(
+            'kind', activities.kind,
+            'domain', activities.domain,
+            'seconds', activities.seconds
+          )
+          ORDER BY activities.seconds DESC, activities.kind, activities.domain
+        )
+        FROM ranked_activities AS activities
+        WHERE activities.student_id = totals.student_id
+          AND activities.activity_rank <= 50
+      ), '[]'::jsonb) AS top_activities
     FROM student_totals AS totals
     LEFT JOIN ranked_domains AS domains
       ON domains.student_id = totals.student_id
@@ -971,6 +1181,7 @@ async function loadAggregatedStoredUsage(options: {
       totalSeconds: nonnegativeInteger(row.total_seconds),
       heartbeatCount: nonnegativeInteger(row.heartbeat_count),
       topDomains: jsonArray(row.top_domains),
+      topActivities: jsonArray(row.top_activities),
       computedAt: dateFromUnknown(row.computed_at, new Date(0)),
     }];
   });
@@ -1573,7 +1784,7 @@ async function materializeReadOnlyProvisionalUsage(options: {
         || classpilotSessionReportVersionForNewRow(),
     } as ClasspilotSessionReport;
     const binding: ClasspilotStudentDataCacheBinding = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       schoolId: options.schoolId,
       teachingSessionId: candidate.session.id,
       groupId: candidate.session.groupId,
@@ -1620,6 +1831,7 @@ async function materializeReadOnlyProvisionalUsage(options: {
           totalSeconds: student.observedSeconds,
           heartbeatCount: student.heartbeatCount,
           topDomains: student.topDomains,
+          topActivities: student.topActivities,
           computedAt: windowEnd,
         }));
         return { rows: computedRows, asOf: windowEnd };

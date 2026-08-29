@@ -1010,6 +1010,7 @@ export const classpilotSessionUsage = pgTable(
     totalSeconds: integer("total_seconds").notNull().default(0),
     heartbeatCount: integer("heartbeat_count").notNull().default(0),
     topDomains: jsonb("top_domains"),
+    topActivities: jsonb("top_activities"),
     firstSeen: timestamp("first_seen", { withTimezone: true }),
     lastSeen: timestamp("last_seen", { withTimezone: true }),
     computedAt: timestamp("computed_at", { withTimezone: true }).notNull().default(sql`now()`),

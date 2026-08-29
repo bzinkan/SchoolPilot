@@ -12,7 +12,7 @@ function binding(
   patch: Partial<ClasspilotStudentDataCacheBinding> = {}
 ): ClasspilotStudentDataCacheBinding {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     schoolId: "school-a",
     teachingSessionId: "session-a",
     groupId: "group-a",
@@ -39,10 +39,45 @@ function computation(seconds = 20): ClasspilotStudentDataCachedComputation {
       localDate: "2026-08-28",
       totalSeconds: seconds,
       heartbeatCount: 2,
-      topDomains: [{ domain: "example.com", seconds, visits: 1 }],
+      topDomains: [{ domain: "docs.google.com", seconds, visits: 1 }],
+      topActivities: [{
+        kind: "google_docs",
+        domain: "docs.google.com",
+        seconds,
+        visits: 1,
+      }],
       computedAt: new Date(windowEnd),
     }],
   };
+}
+
+function memoryRedis() {
+  const values = new Map<string, string>();
+  const command = async (args: string[]): Promise<unknown> => {
+    const key = args[1];
+    if (!key) return undefined;
+    if (args[0] === "GET") return values.get(key) ?? null;
+    if (args[0] === "SET" && args.includes("NX")) {
+      const value = args[2];
+      if (value === undefined) return undefined;
+      if (values.has(key)) return null;
+      values.set(key, value);
+      return "OK";
+    }
+    if (args[0] === "SET") {
+      const value = args[2];
+      if (value === undefined) return undefined;
+      values.set(key, value);
+      return "OK";
+    }
+    if (args[0] === "EVAL") {
+      const lockKey = args[3];
+      if (lockKey) values.delete(lockKey);
+      return 1;
+    }
+    return undefined;
+  };
+  return { command, values };
 }
 
 describe("ClassPilot Student Data provisional cache", () => {
@@ -77,31 +112,7 @@ describe("ClassPilot Student Data provisional cache", () => {
   });
 
   it("shares valid rows through Redis without caching names or trusting malformed rows", async () => {
-    const redis = new Map<string, string>();
-    const command = async (args: string[]): Promise<unknown> => {
-      const key = args[1];
-      if (!key) return undefined;
-      if (args[0] === "GET") return redis.get(key) ?? null;
-      if (args[0] === "SET" && args.includes("NX")) {
-        const value = args[2];
-        if (value === undefined) return undefined;
-        if (redis.has(key)) return null;
-        redis.set(key, value);
-        return "OK";
-      }
-      if (args[0] === "SET") {
-        const value = args[2];
-        if (value === undefined) return undefined;
-        redis.set(key, value);
-        return "OK";
-      }
-      if (args[0] === "EVAL") {
-        const lockKey = args[3];
-        if (lockKey) redis.delete(lockKey);
-        return 1;
-      }
-      return undefined;
-    };
+    const { command, values: redis } = memoryRedis();
     let firstComputes = 0;
     const firstCache = createClasspilotStudentDataProvisionalCache(command);
     await firstCache.getOrCompute({
@@ -114,6 +125,19 @@ describe("ClassPilot Student Data provisional cache", () => {
     });
     assert.equal(firstComputes, 1);
     assert.doesNotMatch([...redis.values()].join("\n"), /student name|firstName|lastName/i);
+    const valueKey = [...redis.keys()].find((key) => !key.endsWith(":lock"));
+    assert.ok(valueKey);
+    assert.match(valueKey, /:classpilot:student-data-provisional:v2:/);
+    const firstEncoded = redis.get(valueKey);
+    assert.ok(firstEncoded);
+    const firstDecoded = JSON.parse(firstEncoded);
+    assert.equal(firstDecoded.schemaVersion, 2);
+    assert.deepEqual(firstDecoded.rows[0].topActivities, [{
+      kind: "google_docs",
+      domain: "docs.google.com",
+      seconds: 20,
+      visits: 1,
+    }]);
 
     let secondComputes = 0;
     const secondCache = createClasspilotStudentDataProvisionalCache(command);
@@ -128,9 +152,13 @@ describe("ClassPilot Student Data provisional cache", () => {
     assert.equal(secondComputes, 0);
     assert.ok(shared.rows[0]);
     assert.equal(shared.rows[0].totalSeconds, 20);
+    assert.deepEqual(shared.rows[0].topActivities, [{
+      kind: "google_docs",
+      domain: "docs.google.com",
+      seconds: 20,
+      visits: 1,
+    }]);
 
-    const valueKey = [...redis.keys()].find((key) => !key.endsWith(":lock"));
-    assert.ok(valueKey);
     const encoded = redis.get(valueKey);
     assert.ok(encoded);
     const malformed = JSON.parse(encoded);
@@ -149,6 +177,95 @@ describe("ClassPilot Student Data provisional cache", () => {
     assert.equal(recoveryComputes, 1, "duplicate cached usage keys must be rejected");
     assert.ok(recovered.rows[0]);
     assert.equal(recovered.rows[0].totalSeconds, 30);
+  });
+
+  it("rejects v1, malformed, or privacy-leaking activity rows from Redis", async () => {
+    const { command, values: redis } = memoryRedis();
+    const primer = createClasspilotStudentDataProvisionalCache(command);
+    await primer.getOrCompute({
+      binding: binding(),
+      ttlSeconds: 60,
+      compute: async () => computation(),
+    });
+    const valueKey = [...redis.keys()].find((key) => !key.endsWith(":lock"));
+    assert.ok(valueKey);
+    const validEncoded = redis.get(valueKey);
+    assert.ok(validEncoded);
+
+    type EncodedForMutation = {
+      schemaVersion: number;
+      rows: Array<{
+        topActivities?: Array<Record<string, unknown>>;
+      }>;
+    };
+    const cases: Array<{
+      label: string;
+      mutate: (value: EncodedForMutation) => void;
+    }> = [
+      {
+        label: "v1 schema",
+        mutate: (value) => { value.schemaVersion = 1; },
+      },
+      {
+        label: "missing activity dimension",
+        mutate: (value) => { delete value.rows[0]!.topActivities; },
+      },
+      {
+        label: "unknown activity kind",
+        mutate: (value) => { value.rows[0]!.topActivities![0]!.kind = "google_unknown"; },
+      },
+      {
+        label: "document path leakage",
+        mutate: (value) => {
+          value.rows[0]!.topActivities![0]!.domain =
+            "docs.google.com/document/d/private-document-id/edit";
+        },
+      },
+      {
+        label: "query leakage",
+        mutate: (value) => {
+          value.rows[0]!.topActivities![0]!.domain = "docs.google.com?student-secret=1";
+        },
+      },
+      {
+        label: "full URL leakage",
+        mutate: (value) => {
+          value.rows[0]!.topActivities![0]!.domain =
+            "https://docs.google.com/document/d/private-document-id/edit?student-secret=1";
+        },
+      },
+    ];
+
+    for (const malformedCase of cases) {
+      const malformed = JSON.parse(validEncoded) as EncodedForMutation;
+      malformedCase.mutate(malformed);
+      redis.set(valueKey, JSON.stringify(malformed));
+      let computes = 0;
+      const cache = createClasspilotStudentDataProvisionalCache(command);
+      const recovered = await cache.getOrCompute({
+        binding: binding(),
+        ttlSeconds: 60,
+        compute: async () => {
+          computes += 1;
+          return computation(30);
+        },
+      });
+      assert.equal(computes, 1, `${malformedCase.label} must be a cache miss`);
+      assert.deepEqual(recovered.rows[0]?.topActivities, [{
+        kind: "google_docs",
+        domain: "docs.google.com",
+        seconds: 30,
+        visits: 1,
+      }]);
+      assert.doesNotMatch(
+        JSON.stringify(recovered),
+        /private-document-id|student-secret|document\/d|https:\/\//i
+      );
+      assert.doesNotMatch(
+        redis.get(valueKey) || "",
+        /private-document-id|student-secret|document\/d|https:\/\//i
+      );
+    }
   });
 
   it("does not retain a failed computation", async () => {

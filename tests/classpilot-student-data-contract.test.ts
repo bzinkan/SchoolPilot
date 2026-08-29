@@ -61,22 +61,40 @@ test("Student Data aggregation is deterministic, privacy-safe, and bounded by mo
     usageRows: [
       {
         studentId: "student-a",
-        totalSeconds: 20,
-        heartbeatCount: 2,
+        totalSeconds: 80,
+        heartbeatCount: 8,
         topDomains: [
-          { domain: "https://www.example.com/private?token=secret", seconds: 9_999 },
+          { domain: "https://www.example.com/private?token=secret", seconds: 20 },
+          { domain: "docs.google.com", seconds: 20 },
+          { domain: "classroom.google.com", seconds: 10 },
+          { domain: "drive.google.com", seconds: 10 },
+          { domain: "slides.google.com", seconds: 10 },
+          { domain: "forms.google.com", seconds: 10 },
           { domain: "chrome://settings", seconds: 10 },
+        ],
+        topActivities: [
+          {
+            kind: "google_docs",
+            domain: "https://docs.google.com/document/d/private-document-id/edit?token=activity-secret#fragment",
+            seconds: 20,
+          },
+          { kind: "google_slides", domain: "docs.google.com", seconds: 10 },
+          { kind: "google_forms", domain: "docs.google.com", seconds: 10 },
+          { kind: "google_sheets", domain: "docs.google.com", seconds: 10 },
+          { kind: "google_classroom", domain: "classroom.google.com", seconds: 10 },
+          { kind: "google_drive", domain: "drive.google.com", seconds: 10 },
+          { kind: "domain", domain: "example.com", seconds: 10 },
+          { kind: "not-a-real-activity", domain: "docs.google.com/private", seconds: 10 },
         ],
         computedAt: new Date("2026-08-22T16:01:00.000Z"),
       },
       {
         studentId: "student-b",
-        totalSeconds: 30,
-        heartbeatCount: 3,
-        topDomains: [
-          { domain: "school.example", seconds: 20 },
-          { domain: "docs.example", seconds: 10 },
-        ],
+        totalSeconds: 20,
+        heartbeatCount: 2,
+        // A legacy row has no topActivities. The host alone cannot honestly
+        // distinguish Docs, Slides, Forms, or Sheets on docs.google.com.
+        topDomains: [{ domain: "docs.google.com", seconds: 20 }],
         computedAt: new Date("2026-08-22T16:01:00.000Z"),
       },
     ],
@@ -91,17 +109,47 @@ test("Student Data aggregation is deterministic, privacy-safe, and bounded by mo
   });
 
   assert.equal(first.revision, repeated.revision, "retrieval time must not rewrite the content revision");
-  assert.equal(first.monitoredSeconds, 50);
+  assert.equal(first.schemaVersion, 2);
+  assert.match(first.revision, /^student-data-v2:[A-Za-z0-9_-]{32}$/);
+  assert.equal(first.monitoredSeconds, 100);
   assert.equal(first.studentsTruncated, false);
   assert.equal(first.activitySource, "heartbeats");
   assert.equal(first.screenshotsUsedForTimeCalculations, false);
-  assert.equal(first.students[0]?.topDomains[0]?.domain, "example.com");
-  assert.equal(first.students[0]?.topDomains[0]?.seconds, 20);
+  assert.equal(first.topActivitiesLimit, 10);
+  assert.equal(first.activityCoverage, "stored-session-top-activities");
+  const ada = first.students.find((student) => student.studentId === "student-a");
+  const bert = first.students.find((student) => student.studentId === "student-b");
+  assert.ok(ada);
+  assert.ok(bert);
+  assert.deepEqual(
+    new Set(ada.topActivities.map((activity) => activity.kind)),
+    new Set([
+      "domain",
+      "google_docs",
+      "google_slides",
+      "google_forms",
+      "google_sheets",
+      "google_classroom",
+      "google_drive",
+    ])
+  );
+  assert.deepEqual(bert.topActivities, [{
+    kind: "google_workspace_unspecified",
+    domain: "docs.google.com",
+    seconds: 20,
+  }]);
+  assert.deepEqual(bert.topActivity, bert.topActivities[0]);
   assert.ok(first.students.every((student) => (
     student.topDomains.reduce((sum, domain) => sum + domain.seconds, 0) <= student.monitoredSeconds
   )));
+  assert.ok(first.students.every((student) => (
+    student.topActivities.reduce((sum, activity) => sum + activity.seconds, 0) <= student.monitoredSeconds
+  )));
   const serialized = JSON.stringify(first);
-  assert.doesNotMatch(serialized, /private|token=secret|chrome:\/\/|deviceId/i);
+  assert.doesNotMatch(
+    serialized,
+    /private|token=secret|activity-secret|document\/d|chrome:\/\/|deviceId|not-a-real-activity/i
+  );
 });
 
 test("Student Data scope and live-state metadata are revision-bound without retrieval-time churn", () => {

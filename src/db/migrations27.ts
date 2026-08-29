@@ -275,6 +275,14 @@ WHERE auth_kind = 'legacy'
   AND last_seen_at <= now() - interval '300 seconds';
 `;
 
+// Additive, Student Data-only persistence. Existing rows deliberately remain
+// NULL so readers can distinguish legacy hostname-only aggregates from new
+// rows whose safe site/app projection was computed from the active-tab URL.
+export const CLASSPILOT_STUDENT_DATA_TOP_ACTIVITIES_SQL = `
+ALTER TABLE classpilot_session_usage
+  ADD COLUMN IF NOT EXISTS top_activities JSONB;
+`;
+
 export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
   {
     id: "20260822_classpilot_2_7_expand",
@@ -346,6 +354,16 @@ export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
     mode: "transactional",
     apply: async (connection) => {
       await connection.query(CLASSPILOT_STALE_LEGACY_STUDENT_SESSION_CLEANUP_SQL);
+    },
+  },
+  {
+    id: "20260828_classpilot_student_data_top_activities_expand",
+    checksum: createHash("sha256")
+      .update(CLASSPILOT_STUDENT_DATA_TOP_ACTIVITIES_SQL)
+      .digest("hex"),
+    mode: "transactional",
+    apply: async (connection) => {
+      await connection.query(CLASSPILOT_STUDENT_DATA_TOP_ACTIVITIES_SQL);
     },
   },
   staffIdentityIntegrityMigration,
