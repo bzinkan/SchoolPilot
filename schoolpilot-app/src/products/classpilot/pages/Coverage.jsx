@@ -1005,17 +1005,17 @@ export default function Coverage() {
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => sendCoverageCommand("lock-screen", { url: "CURRENT_URL" })} disabled={commandTargetCount === 0 || commandMutation.isPending}>
                       <Lock className="h-4 w-4 mr-2" />
-                      Lock
+                      Set Waypoint
                     </Button>
                     <Button
                       size="sm"
                       variant="outline"
                       onClick={() => sendCoverageCommand("unlock-screen", { screenOnly: true })}
                       disabled={commandTargetCount === 0 || commandMutation.isPending || !commandTargetsSupportScreenOnlyUnlock}
-                      title={commandTargetsSupportScreenOnlyUnlock ? "Unlock screen only" : "Extension update required for screen-only unlock"}
+                      title={commandTargetsSupportScreenOnlyUnlock ? "Clear the waypoint (screen only)" : "Extension update required for screen-only unlock"}
                     >
                       <Unlock className="h-4 w-4 mr-2" />
-                      {commandTargetsSupportScreenOnlyUnlock ? "Unlock Screen Only" : "Extension update required"}
+                      {commandTargetsSupportScreenOnlyUnlock ? "Clear Waypoint" : "Extension update required"}
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => setCommandDialog("teacher-message")} disabled={commandTargetCount === 0}>
                       <MessageSquare className="h-4 w-4 mr-2" />

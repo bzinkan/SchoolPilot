@@ -152,7 +152,7 @@ function StudentTile({
   const neverObserved = effectiveMonitoringDisplay.kind === 'signed_out' && !hasLastObservation;
   const supportsScreenOnlyUnlock = studentSupportsCapability(student, 'screenOnlyUnlockV1');
   const unlockLabel = supportsScreenOnlyUnlock
-    ? "Unlock this student's screen only"
+    ? "Clear this student's waypoint (screen only)"
     : "Extension update required for screen-only unlock";
   const activeLiveStream = interactionsDisabled || liveStreamAuthorizationRevoked
     ? null
@@ -379,7 +379,7 @@ function StudentTile({
                   : student.screenLocked
                   ? unlockLabel
                   : currentTelemetry
-                    ? "Save a lock restriction for the current screen"
+                    ? "Set a waypoint at this student's current screen"
                     : "Current screen unavailable while monitoring signal is lost"}
               data-testid={`button-lock-toggle-${student.studentId}`}
             >

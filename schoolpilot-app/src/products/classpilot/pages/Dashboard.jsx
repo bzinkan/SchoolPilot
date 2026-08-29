@@ -365,6 +365,9 @@ export default function Dashboard() {
   const [newGrade, setNewGrade] = useState("");
   const [showOpenTabDialog, setShowOpenTabDialog] = useState(false);
   const [openTabUrl, setOpenTabUrl] = useState("");
+  const [showLockScreenDialog, setShowLockScreenDialog] = useState(false);
+  const [lockScreenMode, setLockScreenMode] = useState("current");
+  const [lockScreenUrl, setLockScreenUrl] = useState("");
   const [showCloseTabsDialog, setShowCloseTabsDialog] = useState(false);
   const [selectedTabsToClose, setSelectedTabsToClose] = useState(new Set());
   const [manageTabsStudentIds, setManageTabsStudentIds] = useState(null);
@@ -3688,8 +3691,15 @@ export default function Dashboard() {
 
   const lockScreenMutation = useMutation({
     mutationFn: async ({ url, studentIds }) => postActiveCommand('lock-screen', { url }, { studentIds }),
-    onSuccess: (data) => {
+    onSuccess: (data, variables) => {
       toast(data.deliveryFeedback);
+      setShowLockScreenDialog(false);
+      // Auto-allow an explicit lock domain so on-task students aren't flagged
+      if (variables.url !== 'CURRENT_URL') {
+        try { const d = new URL(variables.url).hostname.toLowerCase().replace(/^www\./, ''); handleAllowDomain(d); } catch { /* ignore invalid URL */ }
+      }
+      setLockScreenUrl("");
+      setLockScreenMode("current");
       refreshScreenshotsForDevices();
     },
     onError: (error) => {
@@ -3749,19 +3759,33 @@ export default function Dashboard() {
   const handleLockScreen = () => {
     const command = toolbarScreenCommand('lock-screen', selectedStudentIds);
     if (!command || !exactSelectedTargetsResolved) {
-      toast({ variant: "destructive", title: "Select students first", description: "Choose one or more students to lock." });
+      toast({ variant: "destructive", title: "Select students first", description: "Choose one or more students first." });
       return;
     }
-    lockScreenMutation.mutate({
-      url: command.commandPayload.url,
-      studentIds: command.studentIds,
-    });
+    setLockScreenMode("current");
+    setLockScreenUrl("");
+    setShowLockScreenDialog(true);
+  };
+
+  const handleConfirmLockScreen = () => {
+    const command = toolbarScreenCommand('lock-screen', selectedStudentIds);
+    if (!command || !exactSelectedTargetsResolved) {
+      toast({ variant: "destructive", title: "Select students first", description: "Choose one or more students first." });
+      return;
+    }
+    let url = command.commandPayload.url;
+    if (lockScreenMode === "url") {
+      if (!lockScreenUrl.trim()) { toast({ variant: "destructive", title: "Invalid URL", description: "Enter a domain or URL to set as the waypoint" }); return; }
+      url = lockScreenUrl.trim();
+      if (!url.match(/^https?:\/\//i)) url = 'https://' + url;
+    }
+    lockScreenMutation.mutate({ url, studentIds: command.studentIds });
   };
 
   const handleUnlockScreen = () => {
     const command = toolbarScreenCommand('unlock-screen', selectedStudentIds);
     if (!command || !exactSelectedUnlockTargetsResolved) {
-      toast({ variant: "destructive", title: "Select students first", description: "Choose one or more students to unlock." });
+      toast({ variant: "destructive", title: "Select students first", description: "Choose one or more students first." });
       return;
     }
     if (!selectedTargetsSupportScreenOnlyUnlock) {
@@ -4491,8 +4515,8 @@ export default function Dashboard() {
           <div className="flex items-center gap-2 flex-wrap mb-4">
             {dashboardCapabilities.allows('open-tab') && <Button size="sm" variant="outline" onClick={() => setShowOpenTabDialog(true)} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive} data-testid="button-open-tab" className="text-blue-600 dark:text-blue-400"><MonitorPlay className="h-4 w-4 mr-2" />Open URL</Button>}
             {dashboardCapabilities.allows('close-tabs') && <Button size="sm" variant="outline" onClick={() => openManageTabs(null)} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Manage Tabs</Button>}
-            {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !exactSelectedTargetsResolved || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={exactSelectedTargetsResolved ? 'Lock each selected student to their current domain' : 'Select one or more students to lock'} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Lock</Button>}
-            {dashboardCapabilities.allows('unlock-screen') && <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !selectedTargetsSupportScreenOnlyUnlock || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={!exactSelectedUnlockTargetsResolved ? 'Select one or more students to unlock' : selectedTargetsSupportScreenOnlyUnlock ? 'Unlock selected students while preserving Flight Paths and other restrictions' : 'ClassPilot extension update required for every selected student'} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />Unlock</Button>}
+            {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !exactSelectedTargetsResolved || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={exactSelectedTargetsResolved ? 'Set a waypoint: hold selected students at their current page or a specific domain' : 'Select one or more students first'} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Set Waypoint</Button>}
+            {dashboardCapabilities.allows('unlock-screen') && <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !selectedTargetsSupportScreenOnlyUnlock || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={!exactSelectedUnlockTargetsResolved ? 'Select one or more students first' : selectedTargetsSupportScreenOnlyUnlock ? 'Clear the waypoint while preserving Flight Paths and other restrictions' : 'ClassPilot extension update required for every selected student'} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />Clear Waypoint</Button>}
             {dashboardCapabilities.allows('apply-flight-path') && <Button size="sm" variant="outline" onClick={() => setShowApplyFlightPathDialog(true)} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive} data-testid="button-apply-flight-path" className="text-purple-600 dark:text-purple-400"><Layers className="h-4 w-4 mr-2" />Apply Flight Path</Button>}
             {studentView === "class" && <Button size="sm" variant="outline" onClick={() => setShowFlightPathViewerDialog(true)} disabled={signOutOnlySelectionActive} data-testid="button-flight-path-status" className="text-purple-600 dark:text-purple-400"><Eye className="h-4 w-4 mr-2" />Flight Path Status</Button>}
             {dashboardCapabilities.allows('apply-block-list') && <Button size="sm" variant="outline" onClick={() => setShowApplyBlockListDialog(true)} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive} data-testid="button-apply-block-list" className="text-red-600 dark:text-red-400"><ShieldBan className="h-4 w-4 mr-2" />Apply Block List</Button>}
@@ -5298,6 +5322,36 @@ export default function Dashboard() {
         </DialogContent>
       </Dialog>
 
+      {/* Waypoint (lock-screen) Dialog */}
+      <Dialog open={showLockScreenDialog} onOpenChange={setShowLockScreenDialog}>
+        <DialogContent data-testid="dialog-lock-screen">
+          <DialogHeader><DialogTitle>Set Waypoint</DialogTitle><DialogDescription>Target: {targetBannerLabel}. Students already at the waypoint keep their page; everyone else is taken there.</DialogDescription></DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm">
+                <input type="radio" name="lock-screen-mode" value="current" checked={lockScreenMode === "current"} onChange={() => setLockScreenMode("current")} data-testid="radio-lock-screen-current" />
+                Each student's current page
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="radio" name="lock-screen-mode" value="url" checked={lockScreenMode === "url"} onChange={() => setLockScreenMode("url")} data-testid="radio-lock-screen-specific" />
+                A specific domain or URL for everyone
+              </label>
+            </div>
+            {lockScreenMode === "url" && (
+              <div className="space-y-2">
+                <Label htmlFor="lock-screen-url">Domain or URL</Label>
+                <Input id="lock-screen-url" type="url" placeholder="ixl.com" value={lockScreenUrl} onChange={(e) => setLockScreenUrl(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !lockScreenMutation.isPending) handleConfirmLockScreen(); }} data-testid="input-lock-screen-url" />
+                <p className="text-xs text-muted-foreground">Enter a domain (ixl.com) to allow the whole site including subdomains, or a full URL to lock to that exact page.</p>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowLockScreenDialog(false)} data-testid="button-cancel-lock-screen">Cancel</Button>
+            <Button onClick={handleConfirmLockScreen} disabled={lockScreenMutation.isPending} data-testid="button-confirm-lock-screen"><Lock className="h-4 w-4 mr-2" />Set Waypoint</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Tabs Dialog */}
       <Dialog open={showCloseTabsDialog} onOpenChange={(open) => {
         setShowCloseTabsDialog(open);
@@ -5430,7 +5484,7 @@ export default function Dashboard() {
                         {student.flightPathActive && student.isLoggedIn ? (
                           <Button size="sm" variant="ghost" onClick={() => handleRemoveFlightPath(student.studentId)} disabled={removeFlightPathMutation.isPending} data-testid={`button-remove-flight-path-${student.studentId}`} className="h-7 px-2 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"><X className="h-3 w-3 mr-1" />Remove</Button>
                         ) : student.screenLocked && student.isLoggedIn ? (
-                          <Button size="sm" variant="outline" onClick={() => unlockScreenMutation.mutate({ studentIds: [student.studentId] })} disabled={unlockScreenMutation.isPending || !studentSupportsCapability(student, 'screenOnlyUnlockV1')} title={studentSupportsCapability(student, 'screenOnlyUnlockV1') ? 'Unlock screen only' : 'ClassPilot extension 2.6.0 or newer is required'} data-testid={`button-unlock-screen-${student.studentId}`} className="h-7 px-2 text-xs"><Unlock className="h-3 w-3 mr-1" />{studentSupportsCapability(student, 'screenOnlyUnlockV1') ? 'Unlock Screen' : 'Update Required'}</Button>
+                          <Button size="sm" variant="outline" onClick={() => unlockScreenMutation.mutate({ studentIds: [student.studentId] })} disabled={unlockScreenMutation.isPending || !studentSupportsCapability(student, 'screenOnlyUnlockV1')} title={studentSupportsCapability(student, 'screenOnlyUnlockV1') ? 'Clear the waypoint (screen only)' : 'ClassPilot extension 2.6.0 or newer is required'} data-testid={`button-unlock-screen-${student.studentId}`} className="h-7 px-2 text-xs"><Unlock className="h-3 w-3 mr-1" />{studentSupportsCapability(student, 'screenOnlyUnlockV1') ? 'Clear Waypoint' : 'Update Required'}</Button>
                         ) : <span className="text-xs text-muted-foreground">&mdash;</span>}
                       </td>
                     </tr>

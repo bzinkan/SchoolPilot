@@ -423,6 +423,7 @@ async function assertCommandEntryPointsUnavailable(page, commandPosts) {
     "button-block-list-status",
     "button-sign-out-students",
     "dialog-open-tab",
+    "dialog-lock-screen",
     "dialog-send-message",
   ]) {
     assert.equal(await page.getByTestId(testId).count(), 0, `${testId} must not be reachable`);

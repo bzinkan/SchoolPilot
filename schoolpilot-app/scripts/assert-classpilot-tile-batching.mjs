@@ -875,15 +875,42 @@ assert.doesNotMatch(
   /showLockUrlDialog|handleLockToUrl|dialog-lock-url|input-lock-url|button-confirm-lock-url/,
   'the removed Lock URL action must leave no dialog, state, validation, or handler behind',
 );
+// Lock-to-URL was deliberately reinstated (2026-08) as a mode inside the
+// single Waypoint dialog (teacher-facing rename of Lock; command types and
+// testids keep the lock-screen names): the toolbar keeps one concise
+// Set Waypoint button, and the dialog defaults to the CURRENT_URL sentinel
+// with an optional explicit domain/URL mode. The historical bans above stay:
+// the superseded standalone Lock URL control must never return as a second
+// toolbar button.
 assert.match(
   dashboardSource,
-  /data-testid="button-lock-screen"[\s\S]{0,180}>Lock<\/Button>/,
-  'the current-domain action must retain button-lock-screen and display the concise Lock label',
+  /data-testid="dialog-lock-screen"/,
+  'toolbar Lock must open the lock-screen dialog',
 );
 assert.match(
   dashboardSource,
-  /data-testid="button-unlock-screen"[\s\S]{0,220}>Unlock<\/Button>/,
-  'the screen-only release action must use button-unlock-screen and display Unlock',
+  /data-testid="input-lock-screen-url"/,
+  'the lock-screen dialog must offer the explicit domain/URL mode input',
+);
+assert.match(
+  dashboardSource,
+  /lockScreenMode === "url"[\s\S]{0,400}if \(!url\.match\(\/\^https\?:\\\/\\\/\/i\)\) url = 'https:\/\/' \+ url;/,
+  'the explicit lock URL must be normalized with an https:// prefix before sending',
+);
+assert.match(
+  dashboardSource,
+  /setLockScreenMode\("current"\);\s*\n\s*setLockScreenUrl\(""\);\s*\n\s*setShowLockScreenDialog\(true\);/,
+  'opening the lock dialog must reset to the CURRENT_URL default mode',
+);
+assert.match(
+  dashboardSource,
+  /data-testid="button-lock-screen"[\s\S]{0,180}>Set Waypoint<\/Button>/,
+  'the waypoint action must retain button-lock-screen and display the Set Waypoint label',
+);
+assert.match(
+  dashboardSource,
+  /data-testid="button-unlock-screen"[\s\S]{0,220}>Clear Waypoint<\/Button>/,
+  'the screen-only release action must use button-unlock-screen and display Clear Waypoint',
 );
 assert.doesNotMatch(
   dashboardSource,
