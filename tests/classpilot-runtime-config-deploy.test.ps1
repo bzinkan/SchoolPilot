@@ -47,7 +47,7 @@ function New-TestTaskResponse {
     )
     $isApi = $Role -ceq "api"
     $containerName = if ($isApi) { "api" } else { "scheduler-worker" }
-    $family = if ($isApi) { "schoolpilot-production-api-emergency" } else { "schoolpilot-production-scheduler-worker" }
+    $family = [string]$Arn.Split("/")[-1].Split(":")[0]
     $cpu = if ($isApi) { "512" } else { "256" }
     $memory = if ($isApi) { "2048" } else { "512" }
     $environment = @([pscustomobject]@{ name = "NODE_ENV"; value = "production" }) + @($ManagedEnvironment)
@@ -247,12 +247,12 @@ try {
     Assert-Condition ($errors.Count -eq 0) "Runtime-config deployment helper must parse."
 
     $source = [IO.File]::ReadAllText($helperPath)
-    Assert-Condition ($source.Contains('ExpectedFamily $script:ApiFamily') -and $source.Contains('ExpectedFamily $script:WorkerFamily')) "Helper must patch both exact task families."
+    Assert-Condition ($source.Contains('ExpectedFamily $apiFamily') -and $source.Contains('ExpectedFamily $script:WorkerFamily')) "Helper must patch both exact task families."
     Assert-Condition (-not ($source -match '(?i)docker\s+(build|push)|terraform\s+apply|s3\s+sync|cloudfront\s+create-invalidation')) "Config-only helper must not build, migrate, apply Terraform, or deploy the frontend."
     Assert-Condition (-not ($source -match '(?i)Write-Host\s+.*(schoolId|turn\.Hosts|secretArn|ROLLOUTS_JSON)')) "Operator output must not print private profile inputs."
     Assert-Condition ($source.Contains('$process.Kill($true)') -and $source.Contains('--cli-connect-timeout') -and $source.Contains('--cli-read-timeout')) "Every real AWS call must have bounded connect, read, and process timeouts."
     Assert-Condition ($source.Contains('[int]$MaxWallClockSeconds = 3600') -and $source.Contains('[Diagnostics.Stopwatch]::StartNew()')) "Sequential drain-aware convergence must retain the reviewed one-hour outer deadline."
-    Assert-Condition (-not $source.Contains('AppSha.Substring(0, 12)')) "Immutable ECR identity must use the full application SHA tag."
+    Assert-Condition ($source.Contains('$AppSha.Substring(0, 12)')) "Immutable ECR identity must use the repository's reviewed 12-character deployment tag."
 
     $env:SCHOOLPILOT_RUNTIME_CONFIG_TEST_MODE = "I_UNDERSTAND_TEST_ONLY"
     $global:SchoolPilotRuntimeConfigAwsHandler = $null
@@ -267,6 +267,17 @@ try {
         return [DateTimeOffset]::Parse("2026-08-23T08:30:00-04:00")
     }
     . $helperPath
+
+    Assert-Condition ((Get-ApiFamilyFromTaskDefinitionArn `
+        -TaskDefinitionArn "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api:190") `
+        -ceq "schoolpilot-production-api") "The guarded helper must accept the normal production API family."
+    Assert-Condition ((Get-ApiFamilyFromTaskDefinitionArn `
+        -TaskDefinitionArn "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:91") `
+        -ceq "schoolpilot-production-api-emergency") "The guarded helper must retain emergency-family compatibility."
+    Assert-Throws {
+        Get-ApiFamilyFromTaskDefinitionArn `
+            -TaskDefinitionArn "arn:aws:ecs:us-east-1:135775632425:task-definition/unreviewed-api:1"
+    } "An unreviewed API task family must fail closed."
 
     $emptyTagsFingerprint = Get-TaskTagsFingerprint -Tags @()
     Assert-Condition ($emptyTagsFingerprint -ceq "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945") `
@@ -395,7 +406,6 @@ try {
         schemaVersion = 2
         mode = "tracking-window-pilot"
         pilotSchoolId = $testSchoolId
-        turn = $turn
     }
     $trackingPilotRuntime = ConvertTo-RuntimeConfiguration -Profile $trackingPilotProfile
     $trackingPilotRollouts = $trackingPilotRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON | ConvertFrom-Json -Depth 10
@@ -415,6 +425,10 @@ try {
         "Tracking-window pilot must require the kill switch and exactly one rollout school."
     Assert-Condition ($trackingPilotRollouts.screenshotObservationLeaseV1.mode -ceq "on") `
         "Tracking-window pilot must keep the legacy observation lease available."
+    Assert-Condition ($null -eq $trackingPilotRuntime.Turn -and
+        -not $trackingPilotRuntime.Environment.Contains("CLASSPILOT_TURN_HOSTS") -and
+        -not $trackingPilotRuntime.Environment.Contains("CLASSPILOT_STUN_URLS")) `
+        "Tracking-window pilot must preserve rather than rewrite the active TURN wiring."
 
     $trackingGlobalProfile = [pscustomobject]@{
         schemaVersion = 2
@@ -594,6 +608,11 @@ try {
     } "Tracking-window pilot must reject a malformed school identifier."
     Assert-Throws {
         ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 2; mode = "tracking-window-pilot"; pilotSchoolId = $testSchoolId; turn = $turn
+        })
+    } "Tracking-window pilot must not rewrite existing TURN wiring."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
             schemaVersion = 2; mode = "tracking-window-global-on"; pilotSchoolId = $testSchoolId; turn = $turn
         })
     } "Tracking-window global activation must not retain pilot scope."
@@ -694,11 +713,11 @@ try {
     Write-TestJson -Path $evidencePath -Value $evidence
 
     $digest = "sha256:" + ("b" * 64)
-    $apiSourceArn = "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:68"
+    $apiSourceArn = "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api:68"
     $workerSourceArn = "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:83"
     $apiSource = New-TestTaskResponse -Role api -Arn $apiSourceArn -Digest $digest
     $apiRequest = New-RuntimeTaskDefinitionRequest -SourceResponse $apiSource -RuntimeConfiguration $globalRuntime `
-        -ExpectedDigest $digest -ExpectedArn $apiSourceArn -ExpectedFamily $script:ApiFamily `
+        -ExpectedDigest $digest -ExpectedArn $apiSourceArn -ExpectedFamily "schoolpilot-production-api" `
         -ContainerName "api" -ExpectedCpu "512" -ExpectedMemory "2048"
     $apiContainer = @($apiRequest.containerDefinitions | Where-Object name -CEQ "api")[0]
     Assert-Condition (@($apiContainer.environment | Where-Object name -CEQ "NODE_ENV").Count -eq 1) "Unrelated environment must survive the clone."
@@ -712,7 +731,7 @@ try {
             [pscustomobject]@{ name = "CLASSPILOT_STUN_URLS"; value = "stun:turn-a.school-pilot.net:3478,stun:turn-b.school-pilot.net:3478" }
         ) -ManagedSecrets @([pscustomobject]@{ name = "CLASSPILOT_TURN_REST_SECRET"; valueFrom = $turnSecretArn })
     $offRequest = New-RuntimeTaskDefinitionRequest -SourceResponse $turnWiredSource -RuntimeConfiguration $offRuntime `
-        -ExpectedDigest $digest -ExpectedArn $apiSourceArn -ExpectedFamily $script:ApiFamily `
+        -ExpectedDigest $digest -ExpectedArn $apiSourceArn -ExpectedFamily "schoolpilot-production-api" `
         -ContainerName "api" -ExpectedCpu "512" -ExpectedMemory "2048"
     $offContainer = @($offRequest.containerDefinitions | Where-Object name -CEQ "api")[0]
     Assert-Condition (@($offContainer.environment | Where-Object name -CEQ "CLASSPILOT_TURN_HOSTS").Count -eq 1) "Off mode must preserve provisioned TURN hosts."
@@ -721,7 +740,7 @@ try {
         -ManagedEnvironment @([pscustomobject]@{ name = "classpilot_cap_exact_tab_close_v2"; value = "unrelated-case-sensitive-value" }) `
         -ManagedSecrets @([pscustomobject]@{ name = "classpilot_turn_rest_secret"; valueFrom = "arn:example:unrelated" })
     $caseVariantRequest = New-RuntimeTaskDefinitionRequest -SourceResponse $caseVariantSource -RuntimeConfiguration $globalRuntime `
-        -ExpectedDigest $digest -ExpectedArn $apiSourceArn -ExpectedFamily $script:ApiFamily `
+        -ExpectedDigest $digest -ExpectedArn $apiSourceArn -ExpectedFamily "schoolpilot-production-api" `
         -ContainerName "api" -ExpectedCpu "512" -ExpectedMemory "2048"
     $caseVariantContainer = @($caseVariantRequest.containerDefinitions | Where-Object name -CEQ "api")[0]
     Assert-Condition (@($caseVariantContainer.environment | Where-Object name -CEQ "classpilot_cap_exact_tab_close_v2").Count -eq 1) "Lowercase unrelated environment names must survive the case-sensitive allowlist."
@@ -733,9 +752,9 @@ try {
     $badSource.taskDefinition.memory = "1024"
     Assert-Throws {
         New-RuntimeTaskDefinitionRequest -SourceResponse $badSource -RuntimeConfiguration $globalRuntime `
-            -ExpectedDigest $digest -ExpectedArn $apiSourceArn -ExpectedFamily $script:ApiFamily `
+            -ExpectedDigest $digest -ExpectedArn $apiSourceArn -ExpectedFamily "schoolpilot-production-api" `
             -ContainerName "api" -ExpectedCpu "512" -ExpectedMemory "2048"
-    } "Lower emergency API memory must fail closed."
+    } "Lower API memory must fail closed."
 
     Assert-Throws {
         Assert-ProductionDeploymentWindow -NowEastern ([DateTimeOffset]::Parse("2026-08-24T05:00:00-04:00"))
@@ -908,7 +927,8 @@ try {
                 }
                 $apiArn = $state.ApiCurrentArn
                 if ($state.DriftAfterRegistration -and $state.RegisterCount -ge 2) {
-                    $apiArn = "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:999"
+                    $apiFamily = [string]$state.ApiSourceArn.Split("/")[-1].Split(":")[0]
+                    $apiArn = "arn:aws:ecs:us-east-1:135775632425:task-definition/${apiFamily}:999"
                 }
                 $apiMinimum = $state.ApiMinimumHealthyPercent
                 $apiMaximum = $state.ApiMaximumPercent
@@ -956,8 +976,8 @@ try {
                 $input = Get-ArgumentValue -Arguments $Arguments -Name "--cli-input-json"
                 $path = $input.Substring("file://".Length)
                 $request = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -Depth 50
-                if ([string]$request.family -ceq $script:ApiFamily) {
-                    $arn = "arn:aws:ecs:us-east-1:135775632425:task-definition/$($script:ApiFamily):$($state.NextApiRevision)"
+                if ([string]$request.family -cin $script:AllowedApiFamilies) {
+                    $arn = "arn:aws:ecs:us-east-1:135775632425:task-definition/$([string]$request.family):$($state.NextApiRevision)"
                     $state.NextApiRevision++
                     $state.Events.Add("register:api")
                 }
@@ -1064,7 +1084,7 @@ try {
             "ecr describe-images" {
                 if ($state.RejectEcrLookup) { throw "ECR lookup must be skipped for emergency off containment." }
                 $imageId = Get-ArgumentValue -Arguments $Arguments -Name "--image-ids"
-                if ($imageId -cne "imageTag=$($state.AppSha)") { throw "Immutable image lookup did not use the full app SHA." }
+                if ($imageId -cne "imageTag=$([string]$state.AppSha.Substring(0, 12))") { throw "Immutable image lookup did not use the reviewed deployment tag." }
                 return [pscustomobject]@{ imageDetails = @([pscustomobject]@{ imageDigest = $state.Digest }) }
             }
             "ec2 describe-instances" {
@@ -1462,7 +1482,7 @@ try {
     $trackingPilotProfilePath = Join-Path $testRoot "tracking-window-pilot-profile.json"
     Write-TestJson -Path $trackingPilotProfilePath -Value $trackingPilotProfile
     $trackingPilotPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
-        -PrivateProfilePath $trackingPilotProfilePath -PrivateTurnEvidencePath $evidencePath `
+        -PrivateProfilePath $trackingPilotProfilePath `
         -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
         -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn `
         -Now $now -SkipRepositoryCheck
@@ -1471,8 +1491,10 @@ try {
     Assert-Condition ($trackingPilotPlan.profileMode -ceq "tracking-window-pilot" -and
         [int]$trackingPilotPlan.schoolScopeCount -eq 1 -and
         [int]$trackingPilotPlan.enabledCapabilityCount -eq 10 -and
+        $null -eq $trackingPilotPlan.turnEvidenceFile -and
+        $null -eq $trackingPilotPlan.turnEvidenceSha256 -and
         [string]$trackingPilotPlan.validationLevel -ceq "not_applicable") `
-        "Tracking-window pilot plan must retain only identifier-free activation metadata."
+        "Tracking-window pilot plan must retain only identifier-free capability activation metadata."
     $trackingPilotPlanText = [IO.File]::ReadAllText($trackingPilotPlanResult.PlanPath)
     Assert-Condition (-not $trackingPilotPlanText.Contains($testSchoolId) -and
         -not $trackingPilotPlanText.Contains("turn-a.school-pilot.net") -and
@@ -1506,6 +1528,13 @@ try {
         Assert-Condition ($candidateTurnSecret.Count -eq 1 -and
             [string]$candidateTurnSecret[0].valueFrom -ceq $turnSecretArn) `
             "Runtime-only pilot apply must preserve the exact TURN secret authority."
+        Assert-Condition ([string]@($candidateContainer.environment | Where-Object {
+            [string]$_.name -ceq "CLASSPILOT_TURN_HOSTS"
+        })[0].value -ceq "turn-a.school-pilot.net,turn-b.school-pilot.net" -and
+            [string]@($candidateContainer.environment | Where-Object {
+                [string]$_.name -ceq "CLASSPILOT_STUN_URLS"
+            })[0].value -ceq "stun:turn-a.school-pilot.net:3478,stun:turn-b.school-pilot.net:3478") `
+            "Runtime-only pilot apply must preserve the exact TURN and STUN host wiring."
     }
     $trackingPilotApiTask = $global:RuntimeConfigTestState.TaskResponses[[string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn].taskDefinition
     $trackingPilotWorkerTask = $global:RuntimeConfigTestState.TaskResponses[[string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn].taskDefinition
