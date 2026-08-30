@@ -105,8 +105,8 @@ submission still requires explicit operator approval.
 Use `scripts/deploy-classpilot-runtime-config.ps1` for this capability. The
 additive profiles use schema version 2 so they cannot be confused with the
 original protocol-v3 activation sequence. Keep profile files, the canonical
-school UUID, TURN evidence, plans, checkpoints, and results in the existing
-owner-only external evidence directory.
+school UUID, any required TURN evidence, plans, checkpoints, and results in
+the existing owner-only external evidence directory.
 
 The school-scoped pilot profile is:
 
@@ -114,11 +114,7 @@ The school-scoped pilot profile is:
 {
   "schemaVersion": 2,
   "mode": "tracking-window-pilot",
-  "pilotSchoolId": "<canonical-school-uuid>",
-  "turn": {
-    "hosts": ["turn-a.school-pilot.net", "turn-b.school-pilot.net"],
-    "secretArn": "<exact-production-turn-secret-arn>"
-  }
+  "pilotSchoolId": "<canonical-school-uuid>"
 }
 ```
 
@@ -126,7 +122,12 @@ This profile preserves every existing repaired capability globally, keeps
 `screenshotObservationLeaseV1` available, sets
 `CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1=true`, and scopes only
 `screenshotTrackingWindowLeaseV1` to the pilot school. It is admitted only from
-the completed `global-on` runtime state.
+the completed `global-on` runtime state. The pilot must omit `turn`: it is a
+screenshot-only capability transition, so the helper verifies API/worker
+runtime parity and preserves their current TURN/STUN environment and secret
+reference byte-for-byte. Supplying `turn` fails closed. This keeps Live View
+unchanged and avoids requiring a fresh managed-device TURN test for a
+capability that does not use TURN.
 
 After the pilot and managed-browser smoke evidence pass, global expansion uses:
 
@@ -141,10 +142,10 @@ After the pilot and managed-browser smoke evidence pass, global expansion uses:
 }
 ```
 
-Global expansion is admitted only from `tracking-window-pilot`. Both profiles
-require the same fresh TURN evidence and exact reviewed API/worker image and
-task-definition inputs as the original helper. The helper registers matching
-API and worker revisions, preserves the image digest, TURN secret channel,
+Global expansion is admitted only from `tracking-window-pilot` and retains the
+existing fresh TURN-evidence requirement. Both profiles require exact reviewed
+API/worker image and task-definition inputs. The helper registers matching API
+and worker revisions, preserves the image digest, TURN secret channel,
 unrelated environment and secrets, service bounds, and autoscaling posture,
 and never builds an image or deploys the frontend.
 
@@ -159,6 +160,15 @@ use that exact digest. Apply rechecks the repository against the captured
 `toolSha` while preserving the deployed digest. This permits a reviewed
 tool-only merge without rebuilding or replacing the backend image and fails
 closed if either authority changes.
+
+The helper accepts the exact active API task only from the normal production
+family or its reviewed emergency twin, requires the same `512/2048` resource
+contract, and registers the candidate in that same source family. It resolves
+the deployed application through the normal deployment pipeline's immutable
+12-character commit tag and still requires its digest to equal the complete
+operator-supplied image digest; the full application SHA remains recorded in
+the plan and result evidence. This avoids an extra family-only service rotation
+before a runtime-only capability change.
 
 Global planning also requires `-TrackingPilotEvidencePath` pointing to a fresh,
 owner-only JSON receipt. The schema-version-2 receipt is hash-snapshotted into

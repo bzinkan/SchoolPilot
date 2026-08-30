@@ -29,7 +29,7 @@ $script:AccountId = "135775632425"
 $script:Cluster = "schoolpilot-production-cluster"
 $script:ApiService = "schoolpilot-production-api"
 $script:WorkerService = "schoolpilot-production-scheduler-worker"
-$script:ApiFamily = "schoolpilot-production-api-emergency"
+$script:AllowedApiFamilies = @("schoolpilot-production-api", "schoolpilot-production-api-emergency")
 $script:WorkerFamily = "schoolpilot-production-scheduler-worker"
 $script:EcrRepository = "schoolpilot-production-api"
 $script:OperationLockTable = "schoolpilot-terraform-locks"
@@ -287,10 +287,13 @@ function ConvertTo-RuntimeConfiguration {
     }
 
     $turn = $null
-    $turnRequired = $mode -cin @("global-on", "tracking-window-pilot", "tracking-window-global-on") -or
+    $turnRequired = $mode -cin @("global-on", "tracking-window-global-on") -or
         $enabledCapabilities -contains "liveViewIceServersV1"
     if ($mode -ceq "off" -and $Profile.PSObject.Properties.Name -contains "turn") {
         throw "The off profile must not mutate TURN runtime wiring."
+    }
+    if ($mode -ceq "tracking-window-pilot" -and $Profile.PSObject.Properties.Name -contains "turn") {
+        throw "The tracking-window-pilot profile must preserve existing TURN runtime wiring."
     }
     if ($Profile.PSObject.Properties.Name -contains "turn" -and $null -ne $Profile.turn) {
         Assert-ExactProperties -Value $Profile.turn -Allowed @("hosts", "secretArn") -Trail "profile.turn"
@@ -2406,10 +2409,20 @@ function Assert-ExpectedReleaseIdentity {
         [Parameter(Mandatory = $true)][string]$WorkerTaskDefinitionArn
     )
     if ($AppSha -cnotmatch '^[0-9a-f]{40}$' -or $ImageDigest -cnotmatch '^sha256:[0-9a-f]{64}$' -or
-        $ApiTaskDefinitionArn -cnotmatch '^arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:[1-9][0-9]*$' -or
         $WorkerTaskDefinitionArn -cnotmatch '^arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:[1-9][0-9]*$') {
         throw "Exact production release identity inputs are malformed."
     }
+    [void](Get-ApiFamilyFromTaskDefinitionArn -TaskDefinitionArn $ApiTaskDefinitionArn)
+}
+
+function Get-ApiFamilyFromTaskDefinitionArn {
+    param([Parameter(Mandatory = $true)][string]$TaskDefinitionArn)
+    foreach ($family in $script:AllowedApiFamilies) {
+        $pattern = '^arn:aws:ecs:us-east-1:135775632425:task-definition/' +
+            [Regex]::Escape($family) + ':[1-9][0-9]*$'
+        if ($TaskDefinitionArn -cmatch $pattern) { return $family }
+    }
+    throw "API task definition must use one reviewed production family."
 }
 
 function Get-ValidatedProductionSnapshot {
@@ -2442,7 +2455,8 @@ function Get-ValidatedProductionSnapshot {
     }
     $apiResponse = Get-TaskDefinitionResponse -TaskDefinitionArn $ApiTaskDefinitionArn
     $workerResponse = Get-TaskDefinitionResponse -TaskDefinitionArn $WorkerTaskDefinitionArn
-    [void](Assert-TaskDefinitionContract -Response $apiResponse -ExpectedArn $ApiTaskDefinitionArn -ExpectedFamily $script:ApiFamily -ContainerName "api" -ExpectedDigest $ImageDigest -ExpectedCpu "512" -ExpectedMemory "2048")
+    $apiFamily = Get-ApiFamilyFromTaskDefinitionArn -TaskDefinitionArn $ApiTaskDefinitionArn
+    [void](Assert-TaskDefinitionContract -Response $apiResponse -ExpectedArn $ApiTaskDefinitionArn -ExpectedFamily $apiFamily -ContainerName "api" -ExpectedDigest $ImageDigest -ExpectedCpu "512" -ExpectedMemory "2048")
     [void](Assert-TaskDefinitionContract -Response $workerResponse -ExpectedArn $WorkerTaskDefinitionArn -ExpectedFamily $script:WorkerFamily -ContainerName "scheduler-worker" -ExpectedDigest $ImageDigest -ExpectedCpu "256" -ExpectedMemory "512")
     $apiManagedFingerprint = Get-ManagedRuntimeFingerprint -TaskDefinition $apiResponse.taskDefinition -ContainerName "api"
     $workerManagedFingerprint = Get-ManagedRuntimeFingerprint -TaskDefinition $workerResponse.taskDefinition -ContainerName "scheduler-worker"
@@ -2450,9 +2464,10 @@ function Get-ValidatedProductionSnapshot {
         throw "API and worker ClassPilot runtime configuration has drifted; recover the exact pair before activation."
     }
     if (-not $SkipEcrShaCheck) {
+        $immutableImageTag = $AppSha.Substring(0, 12)
         $ecr = Invoke-AwsJson -Arguments @(
             "ecr", "describe-images", "--repository-name", $script:EcrRepository,
-            "--image-ids", "imageTag=$AppSha", "--region", $script:Region, "--output", "json", "--no-cli-pager"
+            "--image-ids", "imageTag=$immutableImageTag", "--region", $script:Region, "--output", "json", "--no-cli-pager"
         )
         if (@($ecr.imageDetails).Count -ne 1 -or [string]$ecr.imageDetails[0].imageDigest -cne $ImageDigest) {
             throw "The deployed app SHA tag does not resolve to the expected image digest."
@@ -2927,9 +2942,10 @@ function Invoke-RuntimeConfigApply {
     $workerSourceFingerprint = Get-TaskFingerprint -TaskDefinition $snapshot.WorkerTask.taskDefinition -ContainerName "scheduler-worker"
     $apiSourceTagsFingerprint = Get-TaskTagsFingerprint -Tags @($snapshot.ApiTask.tags)
     $workerSourceTagsFingerprint = Get-TaskTagsFingerprint -Tags @($snapshot.WorkerTask.tags)
+    $apiFamily = Get-ApiFamilyFromTaskDefinitionArn -TaskDefinitionArn ([string]$Plan.priorApiTaskDefinitionArn)
     $apiRequest = New-RuntimeTaskDefinitionRequest -SourceResponse $snapshot.ApiTask -RuntimeConfiguration $runtime `
         -ExpectedDigest ([string]$Plan.imageDigest) -ExpectedArn ([string]$Plan.priorApiTaskDefinitionArn) `
-        -ExpectedFamily $script:ApiFamily -ContainerName "api" -ExpectedCpu "512" -ExpectedMemory "2048"
+        -ExpectedFamily $apiFamily -ContainerName "api" -ExpectedCpu "512" -ExpectedMemory "2048"
     $workerRequest = New-RuntimeTaskDefinitionRequest -SourceResponse $snapshot.WorkerTask -RuntimeConfiguration $runtime `
         -ExpectedDigest ([string]$Plan.imageDigest) -ExpectedArn ([string]$Plan.priorWorkerTaskDefinitionArn) `
         -ExpectedFamily $script:WorkerFamily -ContainerName "scheduler-worker" -ExpectedCpu "256" -ExpectedMemory "512"
@@ -2939,7 +2955,7 @@ function Invoke-RuntimeConfigApply {
     $candidateApiArn = Register-RuntimeTaskDefinition -Request $apiRequest -Directory $runDirectory -RuntimeConfiguration $runtime `
         -ExpectedDigest ([string]$Plan.imageDigest) -SourceFingerprint $apiSourceFingerprint `
         -SourceTagsFingerprint $apiSourceTagsFingerprint `
-        -ExpectedFamily $script:ApiFamily -ContainerName "api" -ExpectedCpu "512" -ExpectedMemory "2048"
+        -ExpectedFamily $apiFamily -ContainerName "api" -ExpectedCpu "512" -ExpectedMemory "2048"
     $candidateWorkerArn = Register-RuntimeTaskDefinition -Request $workerRequest -Directory $runDirectory -RuntimeConfiguration $runtime `
         -ExpectedDigest ([string]$Plan.imageDigest) -SourceFingerprint $workerSourceFingerprint `
         -SourceTagsFingerprint $workerSourceTagsFingerprint `
@@ -3208,7 +3224,10 @@ function Invoke-RuntimeConfigRollback {
             (Get-CanonicalJsonSha256 -Value $Plan.deploymentConfigurationSha256)) {
         throw "Rollback evidence does not bind the exact planned release identity."
     }
-    if ([string]$result.candidateApiTaskDefinitionArn -cnotmatch '^arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:[1-9][0-9]*$' -or
+    $apiFamily = Get-ApiFamilyFromTaskDefinitionArn -TaskDefinitionArn ([string]$Plan.priorApiTaskDefinitionArn)
+    $candidateApiPattern = '^arn:aws:ecs:us-east-1:135775632425:task-definition/' +
+        [Regex]::Escape($apiFamily) + ':[1-9][0-9]*$'
+    if ([string]$result.candidateApiTaskDefinitionArn -cnotmatch $candidateApiPattern -or
         [string]$result.candidateWorkerTaskDefinitionArn -cnotmatch '^arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:[1-9][0-9]*$') {
         throw "Rollback evidence contains malformed candidate task identities."
     }
@@ -3218,9 +3237,9 @@ function Invoke-RuntimeConfigRollback {
     $identity = Invoke-AwsJson -Arguments @("sts", "get-caller-identity", "--output", "json", "--no-cli-pager")
     if ([string]$identity.Account -cne $script:AccountId) { throw "AWS identity is outside the production account." }
     foreach ($contract in @(
-        [pscustomobject]@{ Arn = [string]$Plan.priorApiTaskDefinitionArn; Family = $script:ApiFamily; Container = "api"; Cpu = "512"; Memory = "2048" },
+        [pscustomobject]@{ Arn = [string]$Plan.priorApiTaskDefinitionArn; Family = $apiFamily; Container = "api"; Cpu = "512"; Memory = "2048" },
         [pscustomobject]@{ Arn = [string]$Plan.priorWorkerTaskDefinitionArn; Family = $script:WorkerFamily; Container = "scheduler-worker"; Cpu = "256"; Memory = "512" },
-        [pscustomobject]@{ Arn = [string]$result.candidateApiTaskDefinitionArn; Family = $script:ApiFamily; Container = "api"; Cpu = "512"; Memory = "2048" },
+        [pscustomobject]@{ Arn = [string]$result.candidateApiTaskDefinitionArn; Family = $apiFamily; Container = "api"; Cpu = "512"; Memory = "2048" },
         [pscustomobject]@{ Arn = [string]$result.candidateWorkerTaskDefinitionArn; Family = $script:WorkerFamily; Container = "scheduler-worker"; Cpu = "256"; Memory = "512" }
     )) {
         $response = Get-TaskDefinitionResponse -TaskDefinitionArn $contract.Arn
