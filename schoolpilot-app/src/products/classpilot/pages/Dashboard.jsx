@@ -7,6 +7,7 @@ import { Input } from '../../../components/ui/input';
 import { Badge } from '../../../components/ui/badge';
 import StudentTile from '../components/StudentTile';
 import VideoPortal from '../components/VideoPortal';
+import ScreenshotPreviewDialog from '../components/ScreenshotPreviewDialog';
 import StudentDetailDrawer from '../components/StudentDetailDrawer';
 import RemoteControlToolbar from '../components/RemoteControlToolbar';
 import SessionMonitoringReportDialog from '../components/SessionMonitoringReportDialog';
@@ -39,6 +40,7 @@ import {
   fetchTileBatch,
   indexTileHistory,
   indexTileScreenshots,
+  mergeTargetedTileScreenshotResponse,
   normalizedTileControlRevision,
   removeLegacyScreenshotsFromTileBatchData,
   removeStudentsFromTileBatchData,
@@ -65,6 +67,7 @@ import {
   mergeAggregatedStudents,
 } from '../lib/studentRealtimeCache';
 import {
+  deriveScreenshotDisplay,
   deriveStudentMonitoringDisplay,
   findNextStudentFreshnessBoundary,
   formatAbsoluteObservedAt,
@@ -140,7 +143,10 @@ const REQUEST_ID_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
 const SESSION_SUBSCRIPTION_ACK_TIMEOUT_MS = 5_000;
 const SESSION_SUBSCRIPTION_RETRY_MS = Object.freeze([1_000, 2_000, 5_000, 10_000, 30_000]);
 const SCREENSHOT_EVENT_COALESCE_MS = 1_000;
-const SCREENSHOT_EVENT_RATE_LIMIT_MS = 5_000;
+const SCREENSHOT_EVENT_RATE_LIMIT_MS = 1_000;
+// The WebRTC implementation remains dormant for a future managed-Chromebook
+// validation, but screenshots are the only student-tile viewing surface.
+const LIVE_VIEW_UI_ENABLED = false;
 const CLASSROOM_SELECTION_STORAGE_PREFIX = "classpilot:classroom-selection:v1";
 const classroomSelectionCache = new Map();
 
@@ -353,6 +359,7 @@ export default function Dashboard() {
   };
   const showSidebar = (hasPassPilot || hasGoPilot) && sidebarOpen;
   const [selectedStudent, setSelectedStudent] = useState(null);
+  const [expandedScreenshot, setExpandedScreenshot] = useState(null);
   const [selectedStudentIds, setSelectedStudentIds] = useState(new Set());
   const [selectedServerSignOutStudentIds, setSelectedServerSignOutStudentIds] = useState(new Set());
   const [selectedStudentBindingSnapshots, setSelectedStudentBindingSnapshots] = useState(new Map());
@@ -458,6 +465,14 @@ export default function Dashboard() {
   const pendingRealtimeEventsRef = useRef([]);
   const screenshotRefetchTimeoutRef = useRef(null);
   const lastScreenshotRefetchAtRef = useRef(0);
+  const pendingScreenshotStudentIdsRef = useRef(new Set());
+  const targetedScreenshotFlushRef = useRef(() => Promise.resolve());
+  const targetedScreenshotContextRef = useRef(null);
+  const targetedScreenshotFenceGenerationRef = useRef({ key: null, generation: 0 });
+  const targetedScreenshotAbortControllersRef = useRef(new Set());
+  const expandedScreenshotOpenerRef = useRef(null);
+  const restoreExpandedScreenshotFocusRef = useRef(false);
+  const expandedScreenshotContextGenerationRef = useRef({ key: null, generation: 0 });
   const freshnessTimeoutRef = useRef(null);
   const graceReconciliationLatchRef = useRef({ scopeKey: null, cohortActive: false });
   const commandExpiryTimeoutRef = useRef(null);
@@ -485,6 +500,7 @@ export default function Dashboard() {
     errorCode: null,
   });
   const [tileGlobalAuthorizationDenied, setTileGlobalAuthorizationDenied] = useState(false);
+  const [targetedScreenshotFailureByStudent, setTargetedScreenshotFailureByStudent] = useState(() => new Map());
   sessionSubscriptionStateRef.current = sessionSubscriptionState;
   const [freshnessVersion, setFreshnessVersion] = useState(0);
   const freshnessNowMs = Date.now();
@@ -504,6 +520,38 @@ export default function Dashboard() {
   const liveViewGenerationRef = useRef(0);
   const liveViewTimerRef = useRef(null);
   const liveViewConnectTimerRef = useRef(null);
+
+  const queueTargetedScreenshotRefresh = useCallback((studentIds, { immediate = false } = {}) => {
+    const ids = Array.isArray(studentIds) ? studentIds : [studentIds];
+    for (const studentId of ids) {
+      if (typeof studentId === 'string' && studentId) {
+        pendingScreenshotStudentIdsRef.current.add(studentId);
+      }
+    }
+    if (pendingScreenshotStudentIdsRef.current.size === 0) return;
+    if (immediate && screenshotRefetchTimeoutRef.current) {
+      clearTimeout(screenshotRefetchTimeoutRef.current);
+      screenshotRefetchTimeoutRef.current = null;
+    } else if (screenshotRefetchTimeoutRef.current) {
+      return;
+    }
+
+    const elapsedMs = Date.now() - lastScreenshotRefetchAtRef.current;
+    const delayMs = immediate
+      ? Math.max(0, SCREENSHOT_EVENT_RATE_LIMIT_MS - elapsedMs)
+      : Math.max(
+          SCREENSHOT_EVENT_COALESCE_MS,
+          SCREENSHOT_EVENT_RATE_LIMIT_MS - elapsedMs,
+        );
+    screenshotRefetchTimeoutRef.current = setTimeout(() => {
+      screenshotRefetchTimeoutRef.current = null;
+      const pendingIds = [...pendingScreenshotStudentIdsRef.current];
+      pendingScreenshotStudentIdsRef.current.clear();
+      if (pendingIds.length === 0) return;
+      lastScreenshotRefetchAtRef.current = Date.now();
+      void targetedScreenshotFlushRef.current(pendingIds);
+    }, delayMs);
+  }, []);
 
   const handleLiveStreamStopped = useCallback((studentId) => {
     if (activeLiveViewStudentIdRef.current !== studentId) return;
@@ -1147,6 +1195,8 @@ export default function Dashboard() {
   useEffect(() => {
     const generation = websocketGenerationRef.current + 1;
     websocketGenerationRef.current = generation;
+    const pendingScreenshotStudentIds = pendingScreenshotStudentIdsRef.current;
+    const targetedScreenshotAbortControllers = targetedScreenshotAbortControllersRef.current;
     let disposed = false;
     const isCurrentGeneration = () => !disposed && websocketGenerationRef.current === generation;
     const isCurrentSocket = (socket) => isCurrentGeneration() && wsRef.current === socket;
@@ -1599,22 +1649,7 @@ export default function Dashboard() {
             }
             if (message.type === 'screenshot-available') {
               if (!classRealtimeMessageEligibility(message)) return;
-              if (screenshotRefetchTimeoutRef.current) return;
-              const elapsedMs = Date.now() - lastScreenshotRefetchAtRef.current;
-              const delayMs = Math.max(
-                SCREENSHOT_EVENT_COALESCE_MS,
-                SCREENSHOT_EVENT_RATE_LIMIT_MS - elapsedMs,
-              );
-              screenshotRefetchTimeoutRef.current = setTimeout(() => {
-                screenshotRefetchTimeoutRef.current = null;
-                if (!isCurrentGeneration()) return;
-                lastScreenshotRefetchAtRef.current = Date.now();
-                void queryClient.refetchQueries({
-                  queryKey: [TILE_BATCH_QUERY_ROOTS.screenshots],
-                  exact: false,
-                  type: 'active',
-                });
-              }, delayMs);
+              queueTargetedScreenshotRefresh(message.studentId);
             }
             if (message.type === 'student-event') {
               if (!classRealtimeMessageEligibility(message)) return;
@@ -1682,6 +1717,11 @@ export default function Dashboard() {
         clearTimeout(screenshotRefetchTimeoutRef.current);
         screenshotRefetchTimeoutRef.current = null;
       }
+      pendingScreenshotStudentIds.clear();
+      for (const controller of targetedScreenshotAbortControllers) {
+        controller.abort();
+      }
+      targetedScreenshotAbortControllers.clear();
       pendingRealtimeEventsRef.current = [];
       const socket = wsRef.current;
       if (socket && wsRef.current === socket) {
@@ -2651,6 +2691,124 @@ export default function Dashboard() {
   const historyTileReadsEnabled = studentView !== 'available'
     && observationReadsAllowed
     && !tileGlobalAuthorizationDenied;
+  const targetedScreenshotFenceKey = `${screenshotTileBindingTransitionKey}\n${studentView}\n${observationLeaseStatus}\n${tileGlobalAuthorizationDenied}`;
+  if (targetedScreenshotFenceGenerationRef.current.key !== targetedScreenshotFenceKey) {
+    targetedScreenshotFenceGenerationRef.current = {
+      key: targetedScreenshotFenceKey,
+      generation: targetedScreenshotFenceGenerationRef.current.generation + 1,
+    };
+  }
+  targetedScreenshotContextRef.current = {
+    fenceKey: targetedScreenshotFenceKey,
+    fenceGeneration: targetedScreenshotFenceGenerationRef.current.generation,
+    enabled: screenshotTileReadsEnabled
+      && observationLeaseStatus !== 'paused_unobserved',
+    teachingSessionId: effectiveSessionId,
+    requests: classScreenshotTileRequests,
+    locallyRevokedStudentIds: locallyRevokedTileStudentIds,
+    removeLegacy: legacyScreenshotReadsRevoked,
+  };
+  targetedScreenshotFlushRef.current = async (studentIds) => {
+    const snapshot = targetedScreenshotContextRef.current;
+    if (
+      !snapshot?.enabled
+      || !snapshot.teachingSessionId
+      || (typeof document !== 'undefined' && document.visibilityState !== 'visible')
+    ) return;
+    const pendingIds = new Set(studentIds);
+    const jobs = snapshot.requests.flatMap((request) => {
+      const requestedIds = request.body.studentIds.filter((studentId) => (
+        pendingIds.has(studentId) && !snapshot.locallyRevokedStudentIds.has(studentId)
+      ));
+      if (requestedIds.length === 0) return EMPTY_LIST;
+      return [{ request, requestedIds }];
+    });
+
+    await Promise.allSettled(jobs.map(async ({ request, requestedIds }) => {
+      const controller = new AbortController();
+      targetedScreenshotAbortControllersRef.current.add(controller);
+      try {
+        let response = await apiRequest('POST', '/classpilot/tiles/screenshots', {
+          studentIds: requestedIds,
+          teachingSessionId: snapshot.teachingSessionId,
+        }, { signal: controller.signal });
+        if (
+          targetedScreenshotContextRef.current?.fenceKey !== snapshot.fenceKey
+          || targetedScreenshotContextRef.current?.fenceGeneration !== snapshot.fenceGeneration
+        ) return;
+        response = removeStudentsFromTileBatchData(
+          response,
+          snapshot.locallyRevokedStudentIds,
+        );
+        if (snapshot.removeLegacy) {
+          response = removeLegacyScreenshotsFromTileBatchData(response);
+        }
+        queryClient.setQueryData(request.queryKey, (previous) => (
+          mergeTargetedTileScreenshotResponse(
+            previous,
+            response,
+            requestedIds,
+            Date.now(),
+          )
+        ));
+        setTargetedScreenshotFailureByStudent((current) => {
+          if (!requestedIds.some((studentId) => current.has(studentId))) return current;
+          const next = new Map(current);
+          for (const studentId of requestedIds) next.delete(studentId);
+          return next;
+        });
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        if (
+          targetedScreenshotContextRef.current?.fenceKey !== snapshot.fenceKey
+          || targetedScreenshotContextRef.current?.fenceGeneration !== snapshot.fenceGeneration
+        ) return;
+        const failureScope = tileBatchFailureScope(error);
+        if (failureScope === 'global') {
+          setTileGlobalAuthorizationDenied(true);
+          await purgeAllStudentTileCaches(queryClient);
+        } else if (failureScope === 'cohort') {
+          await purgeStudentScreenshotTileCaches(queryClient, requestedIds);
+          const failedAt = Date.now();
+          setTargetedScreenshotFailureByStudent((current) => {
+            const next = new Map(current);
+            for (const studentId of requestedIds) {
+              next.set(studentId, { failedAt, hardDenied: true });
+            }
+            return next;
+          });
+        } else {
+          const failedAt = Date.now();
+          setTargetedScreenshotFailureByStudent((current) => {
+            const next = new Map(current);
+            for (const studentId of requestedIds) {
+              next.set(studentId, { failedAt, hardDenied: false });
+            }
+            return next;
+          });
+        }
+      } finally {
+        targetedScreenshotAbortControllersRef.current.delete(controller);
+      }
+    }));
+  };
+  useEffect(() => {
+    if (screenshotRefetchTimeoutRef.current) {
+      clearTimeout(screenshotRefetchTimeoutRef.current);
+      screenshotRefetchTimeoutRef.current = null;
+    }
+    pendingScreenshotStudentIdsRef.current.clear();
+    for (const controller of targetedScreenshotAbortControllersRef.current) {
+      controller.abort();
+    }
+    targetedScreenshotAbortControllersRef.current.clear();
+    const frame = requestAnimationFrame(() => {
+      setTargetedScreenshotFailureByStudent((current) => (
+        current.size === 0 ? current : new Map()
+      ));
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [targetedScreenshotFenceKey]);
   const screenshotTileQueries = useQueries({
     queries: screenshotTileRequests.map((request) => ({
       queryKey: request.queryKey,
@@ -2674,7 +2832,9 @@ export default function Dashboard() {
       enabled: screenshotTileReadsEnabled && tileBatchRequestShouldPoll(request, {
         viewportTrackingSupported,
         nearViewportStudentIds,
-        liveViewStudentId: liveViewState.studentId,
+        // Keep an enlarged screenshot's cohort active even when its tile is
+        // outside the virtualized viewport.
+        priorityStudentId: expandedScreenshot?.studentId || null,
       }),
       structuralSharing: (previous, incoming) => retainFreshTileScreenshotsOnNull(
         previous,
@@ -2746,6 +2906,19 @@ export default function Dashboard() {
   }, [screenshotTileQueries]);
   const screenshotRefreshStateByStudent = useMemo(() => {
     const refreshState = new Map();
+    for (const [studentId, failure] of targetedScreenshotFailureByStudent) {
+      const recoveredByCohort = screenshotTileRequests.some((request, index) => (
+        request.body.studentIds.includes(studentId)
+        && !screenshotTileQueries[index]?.isError
+        && Number(screenshotTileQueries[index]?.dataUpdatedAt) > failure.failedAt
+      ));
+      if (!recoveredByCohort) {
+        refreshState.set(studentId, {
+          hardDenied: failure.hardDenied,
+          transientUnavailable: !failure.hardDenied,
+        });
+      }
+    }
     screenshotTileRequests.forEach((request, index) => {
       const query = screenshotTileQueries[index];
       if (!query?.isError) return;
@@ -2759,19 +2932,22 @@ export default function Dashboard() {
       }
     });
     return refreshState;
-  }, [screenshotTileQueries, screenshotTileRequests]);
+  }, [screenshotTileQueries, screenshotTileRequests, targetedScreenshotFailureByStudent]);
   const historyByStudent = useMemo(() => {
     if (historyTileQueries.length === 0) return EMPTY_TILE_MAP;
     return new Map(historyTileQueries.flatMap((query) => [...(query.data || EMPTY_TILE_MAP)]));
   }, [historyTileQueries]);
   const hardDeniedScreenshotStudentIds = useMemo(() => {
     const deniedIds = new Set();
+    for (const [studentId, refreshState] of screenshotRefreshStateByStudent) {
+      if (refreshState.hardDenied) deniedIds.add(studentId);
+    }
     screenshotTileRequests.forEach((request, index) => {
       if (tileBatchFailureScope(screenshotTileQueries[index]?.error) === 'transient') return;
       for (const studentId of request.body.studentIds) deniedIds.add(studentId);
     });
     return deniedIds;
-  }, [screenshotTileQueries, screenshotTileRequests]);
+  }, [screenshotRefreshStateByStudent, screenshotTileQueries, screenshotTileRequests]);
   const hardDeniedHistoryStudentIds = useMemo(() => {
     const deniedIds = new Set();
     historyTileRequests.forEach((request, index) => {
@@ -2790,6 +2966,72 @@ export default function Dashboard() {
     setTileGlobalAuthorizationDenied(true);
     void purgeAllStudentTileCaches(queryClient);
   }, [tileGlobalAuthorizationFailure]);
+  const expandedScreenshotContextBaseKey = `${screenshotTileBindingTransitionKey}\n${studentView}`;
+  if (expandedScreenshotContextGenerationRef.current.key !== expandedScreenshotContextBaseKey) {
+    expandedScreenshotContextGenerationRef.current = {
+      key: expandedScreenshotContextBaseKey,
+      generation: expandedScreenshotContextGenerationRef.current.generation + 1,
+    };
+  }
+  const expandedScreenshotContextKey = `${expandedScreenshotContextBaseKey}\n${expandedScreenshotContextGenerationRef.current.generation}`;
+  const expandedScreenshotStudent = expandedScreenshot?.studentId
+    ? screenshotTileQueryStudents.find((student) => student.studentId === expandedScreenshot.studentId) || null
+    : null;
+  const expandedScreenshotMonitoringDisplay = expandedScreenshotStudent
+    ? monitoringDisplayFor(expandedScreenshotStudent)
+    : null;
+  const expandedScreenshotRefreshState = expandedScreenshotStudent
+    ? screenshotRefreshStateByStudent.get(expandedScreenshotStudent.studentId)
+    : null;
+  const expandedScreenshotData = expandedScreenshotStudent
+    ? screenshotsByStudent.get(expandedScreenshotStudent.studentId) || null
+    : null;
+  const expandedScreenshotHardRevoked = Boolean(
+    !expandedScreenshotStudent
+    || expandedScreenshot?.contextKey !== expandedScreenshotContextKey
+    || studentView !== 'class'
+    || tileGlobalAuthorizationDenied
+    || tileGlobalAuthorizationFailure
+    || hardDeniedScreenshotStudentIds.has(expandedScreenshotStudent?.studentId)
+    || observationLeaseStatus === 'denied'
+    || isStudentMonitoringSuppressed(expandedScreenshotStudent)
+    || ['signed_out', 'delegated'].includes(expandedScreenshotMonitoringDisplay?.kind),
+  );
+  const expandedScreenshotDisplay = deriveScreenshotDisplay(
+    expandedScreenshotHardRevoked ? null : expandedScreenshotData,
+    freshnessNowMs,
+  );
+  const expandedScreenshotPixelsAvailable = expandedScreenshotDisplay.available
+    && expandedScreenshotMonitoringDisplay?.kind !== 'signal_lost';
+  const expandedScreenshotSelection = expandedScreenshot && !expandedScreenshotHardRevoked
+    ? {
+        student: expandedScreenshotStudent,
+        screenshotData: expandedScreenshotPixelsAvailable ? expandedScreenshotData : null,
+        refreshUnavailable: expandedScreenshotRefreshState?.transientUnavailable === true,
+        privacyKey: `${expandedScreenshotContextKey}:${expandedScreenshotStudent.realtimeBinding || ''}:${normalizedTileControlRevision(expandedScreenshotStudent)}:${expandedScreenshotData?.bindingVersion || ''}`,
+        unavailableMessage: expandedScreenshotMonitoringDisplay?.kind === 'signal_lost'
+          ? 'Monitoring signal lost. A current screen preview is unavailable.'
+          : expandedScreenshotMonitoringDisplay?.kind === 'updates_unavailable'
+            ? 'Monitoring updates are unavailable. Waiting for a current screenshot.'
+            : 'Current screenshot unavailable. Waiting for the next authorized capture.',
+      }
+    : null;
+  useEffect(() => {
+    if (!expandedScreenshot || !expandedScreenshotHardRevoked) return undefined;
+    expandedScreenshotOpenerRef.current = null;
+    restoreExpandedScreenshotFocusRef.current = false;
+    const frame = requestAnimationFrame(() => setExpandedScreenshot(null));
+    return () => cancelAnimationFrame(frame);
+  }, [expandedScreenshot, expandedScreenshotHardRevoked]);
+  const openExpandedScreenshot = (studentId, opener) => {
+    expandedScreenshotOpenerRef.current = opener || null;
+    restoreExpandedScreenshotFocusRef.current = false;
+    setExpandedScreenshot({
+      studentId,
+      contextKey: expandedScreenshotContextKey,
+    });
+    queueTargetedScreenshotRefresh(studentId, { immediate: true });
+  };
   const tilePrivacyStudents = (() => {
     const studentsById = new Map();
     for (const student of [
@@ -4612,8 +4854,14 @@ export default function Dashboard() {
         {dashboardCapabilities.observedOtherClass ? (
           <div className="mb-6 flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-950 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-100" role="status" data-testid="observe-read-only-banner">
             <Eye className="mt-0.5 h-4 w-4 shrink-0" />
-            <div><p className="font-semibold">Observe mode is read-only</p><p className="mt-1 text-xs opacity-80">Screens and activity can be reviewed, but selections, Live View, device commands, and Teacher FAB tools are disabled for another teacher&apos;s class.</p></div>
+            <div><p className="font-semibold">Observe mode is read-only</p><p className="mt-1 text-xs opacity-80">Screen previews and activity can be reviewed, but selections, device commands, and Teacher FAB tools are disabled for another teacher&apos;s class.</p></div>
           </div>
+        ) : null}
+
+        {studentView === 'class' && effectiveSessionId ? (
+          <p className="mb-4 text-xs text-muted-foreground" data-testid="screenshot-refresh-disclosure">
+            Screen previews update automatically while this class is open. They are recent screenshots, not live video.
+          </p>
         ) : null}
 
         {/* Stats Cards */}
@@ -5100,15 +5348,15 @@ export default function Dashboard() {
                     onToggleSelect={!dashboardCapabilities.canSelectStudents || supervisedElsewhere ? undefined : () => toggleStudentSelection(student.studentId)}
                     signOutOnlySelectionAvailable={signOutOnlySelectionAvailable}
                     persistentRestrictionSelectionAvailable={persistentRestrictionSelectionAvailable}
-                    liveStream={!supervisedElsewhere && liveViewState.studentId === studentRealtimeKey ? liveViewState.stream : null}
-                    liveViewPending={!supervisedElsewhere && liveViewState.studentId === studentRealtimeKey && liveViewState.pending}
-                    onStartLiveView={dashboardCapabilities.canUseLiveView && supportsNegotiatedLiveView && !supervisedElsewhere && student.isLoggedIn && effectiveSession?.id ? () => handleStartLiveView(studentRealtimeKey, student.studentName) : undefined}
-                    onStopLiveView={dashboardCapabilities.canUseLiveView && !supervisedElsewhere ? () => handleStopLiveView(studentRealtimeKey) : undefined}
-                    onExpandLiveView={() => setLiveViewState((current) => (
+                    liveStream={LIVE_VIEW_UI_ENABLED && !supervisedElsewhere && liveViewState.studentId === studentRealtimeKey ? liveViewState.stream : null}
+                    liveViewPending={LIVE_VIEW_UI_ENABLED && !supervisedElsewhere && liveViewState.studentId === studentRealtimeKey && liveViewState.pending}
+                    onStartLiveView={LIVE_VIEW_UI_ENABLED && dashboardCapabilities.canUseLiveView && supportsNegotiatedLiveView && !supervisedElsewhere && student.isLoggedIn && effectiveSession?.id ? () => handleStartLiveView(studentRealtimeKey, student.studentName) : undefined}
+                    onStopLiveView={LIVE_VIEW_UI_ENABLED && dashboardCapabilities.canUseLiveView && !supervisedElsewhere ? () => handleStopLiveView(studentRealtimeKey) : undefined}
+                    onExpandLiveView={LIVE_VIEW_UI_ENABLED ? () => setLiveViewState((current) => (
                       current.studentId === studentRealtimeKey && current.stream
                         ? { ...current, expanded: true }
                         : current
-                    ))}
+                    )) : undefined}
                     onAllowDomain={tileActionsDisabled ? undefined : handleAllowDomain}
                     onManageTabs={!tileActionsDisabled && dashboardCapabilities.allows('close-tabs') ? () => openManageTabs([student.studentId]) : undefined}
                     onCommand={tileActionsDisabled ? undefined : handleTileCommand}
@@ -5131,6 +5379,9 @@ export default function Dashboard() {
                     screenshotData={tileScreenshotRevoked || screenshotRefreshState?.hardDenied
                       ? null
                       : screenshotsByStudent.get(student.studentId) || null}
+                    onOpenScreenshot={tileScreenshotRevoked || screenshotRefreshState?.hardDenied
+                      ? undefined
+                      : (opener) => openExpandedScreenshot(student.studentId, opener)}
                     screenshotRefreshUnavailable={screenshotRefreshState?.transientUnavailable === true}
                     flightPaths={supervisedElsewhere ? EMPTY_LIST : flightPaths}
                     monitoringDisplay={monitoringDisplay || undefined}
@@ -5149,12 +5400,37 @@ export default function Dashboard() {
         </div>
       </main>
 
-      {dashboardCapabilities.canUseLiveView && liveViewState.expanded && liveViewState.stream && !activeLiveViewMonitoringSuppressed ? (
+      {LIVE_VIEW_UI_ENABLED && dashboardCapabilities.canUseLiveView && liveViewState.expanded && liveViewState.stream && !activeLiveViewMonitoringSuppressed ? (
         <VideoPortal
           stream={liveViewState.stream}
           studentName={liveViewState.studentName}
           onClose={() => setLiveViewState((current) => ({ ...current, expanded: false }))}
           onStopLiveView={() => handleStopLiveView(liveViewState.studentId)}
+        />
+      ) : null}
+
+      {expandedScreenshotSelection ? (
+        <ScreenshotPreviewDialog
+          key={expandedScreenshotSelection.privacyKey}
+          studentName={expandedScreenshotSelection.student.studentName || 'Student'}
+          screenshotData={expandedScreenshotSelection.screenshotData}
+          freshnessNowMs={freshnessNowMs}
+          privacyKey={expandedScreenshotSelection.privacyKey}
+          refreshUnavailable={expandedScreenshotSelection.refreshUnavailable}
+          unavailableMessage={expandedScreenshotSelection.unavailableMessage}
+          onOpenChange={(open) => {
+            if (!open) {
+              restoreExpandedScreenshotFocusRef.current = true;
+              setExpandedScreenshot(null);
+            }
+          }}
+          onReturnFocus={() => {
+            if (!restoreExpandedScreenshotFocusRef.current) return;
+            restoreExpandedScreenshotFocusRef.current = false;
+            const opener = expandedScreenshotOpenerRef.current;
+            expandedScreenshotOpenerRef.current = null;
+            if (opener?.isConnected) opener.focus();
+          }}
         />
       ) : null}
 

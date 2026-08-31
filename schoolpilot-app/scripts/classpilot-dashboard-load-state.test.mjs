@@ -21,6 +21,8 @@ const SIGNED_OUT_STUDENT_ID = "99999999-9999-4999-8999-999999999999";
 const SIGNAL_LOST_STUDENT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const MOVED_CLASS_STUDENT_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const TINY_SCREENSHOT_DATA_URL = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
+const UPDATED_SCREENSHOT_DATA_URL = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2' height='2'%3E%3Crect width='2' height='2' fill='%230ea5e9'/%3E%3C/svg%3E";
+const VIEWER_SCREENSHOT_DATA_URL = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2' height='2'%3E%3Crect width='2' height='2' fill='%2316a34a'/%3E%3C/svg%3E";
 
 const success = (body) => ({ kind: "success", body });
 const pending = () => ({ kind: "pending" });
@@ -485,8 +487,13 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
   );
   assert.match(
     dashboardSource,
-    /\{dashboardCapabilities\.canUseLiveView\s*&&\s*liveViewState\.expanded\s*&&\s*liveViewState\.stream(?:\s*&&\s*!activeLiveViewMonitoringSuppressed)?\s*\?\s*\(/,
-    "expanded Live View must remain capability-gated when Observe revokes Live View",
+    /const LIVE_VIEW_UI_ENABLED = false;/,
+    "the unstable WebRTC entrypoint must stay dormant while its implementation is retained",
+  );
+  assert.match(
+    dashboardSource,
+    /\{LIVE_VIEW_UI_ENABLED\s*&&\s*dashboardCapabilities\.canUseLiveView\s*&&\s*liveViewState\.expanded/,
+    "the retained WebRTC portal must remain behind the dormant UI gate",
   );
 
   const vite = await createServer({
@@ -722,13 +729,26 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     const persistenceObservedAt = new Date(Date.now() - 500).toISOString();
     const persistenceBindingVersion = "v2:persistent-owned-class-binding";
     let persistenceScreenshotAvailable = true;
+    let persistenceScreenshotSource = TINY_SCREENSHOT_DATA_URL;
+    let persistenceScreenshotCapturedAt = persistenceObservedAt;
+    const persistenceClassmate = student({
+      studentId: SIGNAL_LOST_STUDENT_ID,
+      studentName: "Grace Classmate",
+      studentEmail: "grace@example.edu",
+      lastSeenAt: persistenceObservedAt,
+      realtimeObservedAt: persistenceObservedAt,
+      realtimeBinding: "binding-persistent-classmate",
+    });
     const persistenceAggregate = aggregateController({
       school: success([]),
       scoped: success({
-        students: [student({
-          lastSeenAt: persistenceObservedAt,
-          realtimeObservedAt: persistenceObservedAt,
-        })],
+        students: [
+          student({
+            lastSeenAt: persistenceObservedAt,
+            realtimeObservedAt: persistenceObservedAt,
+          }),
+          persistenceClassmate,
+        ],
       }),
     });
     const persistenceHarness = await configureDashboard(persistencePage, {
@@ -736,13 +756,14 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
       userRole: "teacher",
       activeSession: ownSession,
       allSessions: [ownSession],
+      groupStudentIds: [STUDENT_ID, SIGNAL_LOST_STUDENT_ID],
       screenshotTiles: () => ({
         tiles: [{
           studentId: STUDENT_ID,
           bindingVersion: persistenceBindingVersion,
           screenshot: persistenceScreenshotAvailable ? {
-            screenshot: TINY_SCREENSHOT_DATA_URL,
-            timestamp: persistenceObservedAt,
+            screenshot: persistenceScreenshotSource,
+            timestamp: persistenceScreenshotCapturedAt,
             tabTitle: "Persistent class preview",
             tabUrl: "https://persistent.example.edu/current",
             bindingVersion: persistenceBindingVersion,
@@ -753,6 +774,141 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     await persistencePage.goto(`${baseURL}/classpilot`);
     const persistenceScreenshot = persistencePage.getByTestId(`screenshot-${STUDENT_ID}`);
     await persistenceScreenshot.waitFor();
+    assert.ok(
+      persistenceHarness.tileRequests.some((request) => (
+        request.pathname === "/api/classpilot/tiles/screenshots"
+        && request.body?.studentIds?.length === 2
+      )),
+      "the recovery poll must retain the complete fixed screenshot cohort",
+    );
+    assert.equal(
+      await persistencePage.getByTestId(`button-live-view-${STUDENT_ID}`).count(),
+      0,
+      "teacher tiles must hide the dormant WebRTC View entrypoint",
+    );
+    assert.equal(
+      await persistencePage.getByTestId(`button-manage-tabs-${STUDENT_ID}`).count(),
+      1,
+      "hiding WebRTC View must retain the teacher's View Tabs action",
+    );
+    await persistenceHarness.authenticateWebSocket();
+    const targetedRequestStart = persistenceHarness.tileRequests.length;
+    persistenceScreenshotSource = UPDATED_SCREENSHOT_DATA_URL;
+    persistenceScreenshotCapturedAt = new Date().toISOString();
+    await persistenceHarness.sendWebSocketMessage({
+      type: "screenshot-available",
+      schoolId: SCHOOL_ID,
+      studentId: STUDENT_ID,
+      teachingSessionId: OWN_SESSION_ID,
+      capturedAt: persistenceScreenshotCapturedAt,
+    });
+    await waitUntil(
+      () => persistenceHarness.tileRequests.slice(targetedRequestStart).some((request) => (
+        request.pathname === "/api/classpilot/tiles/screenshots"
+        && request.body?.teachingSessionId === OWN_SESSION_ID
+        && request.body?.studentIds?.length === 1
+        && request.body.studentIds[0] === STUDENT_ID
+      )),
+      "a screenshot event must fetch only the changed student in the exact teaching session",
+    );
+    await persistencePage.waitForFunction(
+      ({ studentId, expectedSource }) => document.querySelector(`[data-testid="screenshot-${studentId}"]`)?.getAttribute("src") === expectedSource,
+      { studentId: STUDENT_ID, expectedSource: UPDATED_SCREENSHOT_DATA_URL },
+    );
+
+    const screenshotOpener = persistencePage.getByTestId(`screenshot-current-${STUDENT_ID}`);
+    await screenshotOpener.click();
+    await persistencePage.getByTestId("expanded-screenshot-dialog").waitFor();
+    await persistencePage.getByText("Automatically refreshed screenshot. Not live video.", { exact: true }).waitFor();
+    assert.equal(
+      await persistencePage.getByTestId("expanded-screenshot-dialog").getByRole("button", { name: /download/i }).count(),
+      0,
+      "the student screenshot viewer must not expose a download action",
+    );
+    assert.match(
+      await persistencePage.getByTestId("expanded-screenshot-status").innerText(),
+      /Updated .*Captured/,
+      "the large viewer must show capture age and time",
+    );
+    for (const zoom of ["fit", "100", "125", "150", "200"]) {
+      assert.equal(
+        await persistencePage.getByTestId(`expanded-screenshot-zoom-${zoom}`).count(),
+        1,
+        `the large viewer must expose the ${zoom} zoom option`,
+      );
+    }
+    await persistencePage.getByTestId("expanded-screenshot-zoom-125").click();
+    assert.equal(
+      await persistencePage.getByTestId("expanded-screenshot-zoom-125").getAttribute("aria-pressed"),
+      "true",
+    );
+
+    persistenceScreenshotSource = VIEWER_SCREENSHOT_DATA_URL;
+    persistenceScreenshotCapturedAt = new Date().toISOString();
+    await persistenceHarness.sendWebSocketMessage({
+      type: "screenshot-available",
+      schoolId: SCHOOL_ID,
+      studentId: STUDENT_ID,
+      teachingSessionId: OWN_SESSION_ID,
+      capturedAt: persistenceScreenshotCapturedAt,
+    });
+    await persistencePage.waitForFunction(
+      (expectedSource) => document.querySelector('[data-testid="expanded-screenshot-image"]')?.getAttribute("src") === expectedSource,
+      VIEWER_SCREENSHOT_DATA_URL,
+    );
+    assert.equal(await persistencePage.getByTestId("expanded-screenshot-dialog").count(), 1);
+
+    const confirmedLossAt = new Date(Date.now() - 95_000).toISOString();
+    persistenceAggregate.setScopedResponse(success({
+      students: [
+        student({
+          monitoringState: "signal_lost",
+          activityFresh: false,
+          monitoringLostAt: confirmedLossAt,
+          lastSeenAt: confirmedLossAt,
+          realtimeObservedAt: confirmedLossAt,
+          realtimeRevision: 2,
+        }),
+        persistenceClassmate,
+      ],
+    }));
+    await persistencePage.evaluate(() => window.dispatchEvent(new Event("online")));
+    await persistencePage.getByTestId("expanded-screenshot-unavailable").waitFor();
+    assert.equal(
+      await persistencePage.getByTestId("expanded-screenshot-image").count(),
+      0,
+      "confirmed signal loss must remove pixels without closing the large viewer",
+    );
+    assert.equal(await persistencePage.getByTestId("expanded-screenshot-dialog").count(), 1);
+
+    const recoveredAt = new Date().toISOString();
+    persistenceAggregate.setScopedResponse(success({
+      students: [
+        student({
+          lastSeenAt: recoveredAt,
+          realtimeObservedAt: recoveredAt,
+          realtimeRevision: 3,
+        }),
+        persistenceClassmate,
+      ],
+    }));
+    await persistencePage.evaluate(() => window.dispatchEvent(new Event("online")));
+    await persistencePage.waitForFunction(
+      (expectedSource) => document.querySelector('[data-testid="expanded-screenshot-image"]')?.getAttribute("src") === expectedSource,
+      VIEWER_SCREENSHOT_DATA_URL,
+    );
+    assert.equal(
+      await persistencePage.getByTestId("expanded-screenshot-zoom-125").getAttribute("aria-pressed"),
+      "true",
+      "soft monitoring loss and recovery must preserve the viewer zoom",
+    );
+    await persistencePage.keyboard.press("Escape");
+    await persistencePage.getByTestId("expanded-screenshot-dialog").waitFor({ state: "hidden" });
+    assert.equal(
+      await screenshotOpener.evaluate((element) => document.activeElement === element),
+      true,
+      "closing the large viewer must restore keyboard focus to its screenshot tile",
+    );
     persistenceScreenshotAvailable = false;
 
     for (let cycle = 0; cycle < 20; cycle += 1) {
@@ -765,7 +921,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
       await persistenceScreenshot.waitFor();
       assert.equal(
         await persistenceScreenshot.getAttribute("src"),
-        TINY_SCREENSHOT_DATA_URL,
+        VIEWER_SCREENSHOT_DATA_URL,
         `cycle ${cycle + 1} must synchronously reuse the exact V2 class preview`,
       );
     }
@@ -909,6 +1065,11 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     const screenshot = observedCard.getByTestId(`screenshot-${STUDENT_ID}`);
     await screenshot.waitFor();
     assert.equal(await screenshot.getAttribute("src"), TINY_SCREENSHOT_DATA_URL);
+    await observedCard.getByTestId(`screenshot-current-${STUDENT_ID}`).click();
+    await observePreviewPage.getByTestId("expanded-screenshot-dialog").waitFor();
+    await observePreviewPage.getByText("Automatically refreshed screenshot. Not live video.", { exact: true }).waitFor();
+    await observePreviewPage.getByTestId("expanded-screenshot-dialog").getByRole("button", { name: "Close" }).click();
+    await observePreviewPage.getByTestId("expanded-screenshot-dialog").waitFor({ state: "hidden" });
     for (let cycle = 0; cycle < 3; cycle += 1) {
       await observePreviewPage.evaluate(() => {
         Object.defineProperty(document, "visibilityState", {
@@ -930,7 +1091,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     await observedCard.locator('[title="Research history"]').waitFor();
     assert.equal(await observedCard.getByText(/In supervision/i).count(), 0);
     assert.equal(await observedCard.getByText("Controls locked", { exact: true }).count(), 0);
-    await observedCard.click();
+    await observedCard.getByText("Ada Student", { exact: true }).click();
     await observePreviewPage.getByTestId("student-tabs").waitFor();
     assert.equal(await observePreviewPage.getByTestId("tab-screens").count(), 1, "ordinary Observe must open the read-only detail drawer");
     await observePreviewPage.getByRole("button", { name: "Close" }).click();

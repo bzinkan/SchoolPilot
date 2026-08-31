@@ -212,7 +212,7 @@ test('subgroup membership queries are fenced by group and subgroup identity', as
   assert.equal(calls[0][3].signal, signal);
 });
 
-test('dashboard owns one Live View portal without global video selectors', async () => {
+test('dashboard retains dormant Live View code without exposing its portal or tile entrypoint', async () => {
   const [dashboard, tile, portal, sidebar] = await Promise.all([
     readFile(new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/products/classpilot/components/StudentTile.jsx', import.meta.url), 'utf8'),
@@ -221,10 +221,35 @@ test('dashboard owns one Live View portal without global video selectors', async
   ]);
 
   assert.equal(dashboard.match(/<VideoPortal/g)?.length, 1, 'dashboard must render exactly one Live View portal');
+  assert.match(dashboard, /const LIVE_VIEW_UI_ENABLED = false;/);
+  assert.match(dashboard, /LIVE_VIEW_UI_ENABLED && dashboardCapabilities\.canUseLiveView && liveViewState\.expanded/);
+  assert.match(dashboard, /onStartLiveView=\{LIVE_VIEW_UI_ENABLED &&/);
   assert.doesNotMatch(tile, /<VideoPortal|querySelector|portal-video-slot/);
   assert.doesNotMatch(portal, /querySelector|portal-video-slot/);
   assert.match(portal, /stream=|srcObject = stream/);
   assert.match(sidebar, /isOpen \? \(/, 'closed sidebar must not mount polling mini views');
+});
+
+test('screenshot events coalesce one-second targeted refreshes without replacing cohort identity', async () => {
+  const dashboard = await readFile(
+    new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
+    'utf8',
+  );
+  const handlerStart = dashboard.indexOf("if (message.type === 'screenshot-available')");
+  const handlerEnd = dashboard.indexOf('if (message.type ===', handlerStart + 1);
+  const handler = dashboard.slice(handlerStart, handlerEnd);
+  assert.ok(handlerStart >= 0);
+  assert.match(handler, /queueTargetedScreenshotRefresh\(message\.studentId\)/);
+  assert.doesNotMatch(handler, /refetchQueries/);
+  assert.match(dashboard, /const SCREENSHOT_EVENT_COALESCE_MS = 1_000;/);
+  assert.match(dashboard, /const SCREENSHOT_EVENT_RATE_LIMIT_MS = 1_000;/);
+  assert.match(dashboard, /mergeTargetedTileScreenshotResponse/);
+  assert.match(dashboard, /teachingSessionId: snapshot\.teachingSessionId/);
+  assert.match(
+    dashboard,
+    /fenceGeneration:\s*targetedScreenshotFenceGenerationRef\.current\.generation/,
+    'A to B to A must not let an old targeted screenshot response match by string key alone',
+  );
 });
 
 test('dashboard renews observation only for a visible exact scope and virtualizes tile work', async () => {

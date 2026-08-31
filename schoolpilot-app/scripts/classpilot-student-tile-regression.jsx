@@ -110,6 +110,7 @@ function TileRegressionHarness() {
   const [observedAtMs, setObservedAtMs] = useState(() => Date.now());
   const [tabClicks, setTabClicks] = useState(0);
   const [cardClicks, setCardClicks] = useState(0);
+  const [screenshotClicks, setScreenshotClicks] = useState(0);
   const [returnClicks, setReturnClicks] = useState(0);
   const [tilesVisible, setTilesVisible] = useState(false);
   const staleLiveStreamRef = useRef(null);
@@ -138,6 +139,7 @@ function TileRegressionHarness() {
       </Button>
       <p data-testid="tab-clicks">Tab clicks: {tabClicks}</p>
       <p data-testid="card-clicks">Card clicks: {cardClicks}</p>
+      <p data-testid="screenshot-clicks">Screenshot clicks: {screenshotClicks}</p>
       <p data-testid="return-clicks">Return clicks: {returnClicks}</p>
       <p data-testid="parent-renders">Parent renders: {renderCount.current}</p>
 
@@ -300,6 +302,7 @@ function TileRegressionHarness() {
             actionsDisabledReason="Observe mode is read-only."
             signOutOnlySelectionAvailable
             onClick={() => setCardClicks((count) => count + 1)}
+            onOpenScreenshot={() => setScreenshotClicks((count) => count + 1)}
             onToggleSelect={() => {}}
             onManageTabs={() => {}}
             onStartLiveView={() => {}}

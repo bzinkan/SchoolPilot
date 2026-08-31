@@ -141,6 +141,7 @@ export function tileBatchRequestShouldPoll(
   {
     viewportTrackingSupported = false,
     nearViewportStudentIds = new Set(),
+    priorityStudentId = null,
     liveViewStudentId = null,
   } = {},
 ) {
@@ -149,7 +150,7 @@ export function tileBatchRequestShouldPoll(
     ? nearViewportStudentIds
     : new Set(nearViewportStudentIds || []);
   return (request?.body?.studentIds || []).some((studentId) => (
-    nearby.has(studentId) || studentId === liveViewStudentId
+    nearby.has(studentId) || studentId === priorityStudentId || studentId === liveViewStudentId
   ));
 }
 
@@ -255,6 +256,110 @@ export function retainFreshTileScreenshotsOnNull(previous, incoming, nowMs = Dat
     return { ...tile, screenshot: retainedScreenshot };
   });
   return changed ? { ...incoming, tiles } : incoming;
+}
+
+function screenshotObservedAtMs(screenshot) {
+  const value = screenshot?.capturedAt ?? screenshot?.timestamp;
+  const parsed = typeof value === 'number' ? value : Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * Merge a small, event-driven screenshot response into an existing fixed
+ * cohort without replacing unchanged tile objects. The server remains the
+ * authority: an omitted requested row is removed, a successful null follows
+ * the normal 75-second bridge, and an older response cannot overwrite a newer
+ * exact-binding screenshot.
+ */
+export function mergeTargetedTileScreenshotResponse(
+  previous,
+  incoming,
+  requestedStudentIds,
+  nowMs = Date.now(),
+) {
+  if (!Array.isArray(previous?.tiles) || !Array.isArray(incoming?.tiles)) return previous;
+  const requestedIds = requestedStudentIds instanceof Set
+    ? requestedStudentIds
+    : new Set(requestedStudentIds || []);
+  if (requestedIds.size === 0) return previous;
+
+  const rawIncomingByStudent = new Map(
+    incoming.tiles
+      .filter((tile) => requestedIds.has(tile?.studentId))
+      .map((tile) => [tile.studentId, tile]),
+  );
+  const normalizedIncoming = normalizeTileScreenshotBindings(incoming);
+  const incomingByStudent = new Map(
+    normalizedIncoming.tiles
+      .filter((tile) => requestedIds.has(tile?.studentId))
+      .map((tile) => [tile.studentId, tile]),
+  );
+  const previousByStudent = new Map(
+    previous.tiles
+      .filter((tile) => typeof tile?.studentId === 'string')
+      .map((tile) => [tile.studentId, tile]),
+  );
+  const mergedTiles = [];
+  let changed = false;
+
+  for (const previousTile of previous.tiles) {
+    const studentId = previousTile?.studentId;
+    if (!requestedIds.has(studentId)) {
+      mergedTiles.push(previousTile);
+      continue;
+    }
+
+    const incomingTile = incomingByStudent.get(studentId);
+    if (!incomingTile) {
+      changed = true;
+      continue;
+    }
+
+    const rawIncomingTile = rawIncomingByStudent.get(studentId);
+    if (rawIncomingTile?.screenshot != null && incomingTile.screenshot == null) {
+      // A V2 row whose pixel binding does not match its row binding is not a
+      // successful null and must never receive the 75-second bridge.
+      mergedTiles.push(incomingTile);
+      changed = true;
+      continue;
+    }
+
+    const previousScreenshot = previousTile?.screenshot;
+    const incomingScreenshot = incomingTile?.screenshot;
+    const previousBinding = previousScreenshot?.bindingVersion ?? previousTile?.bindingVersion;
+    const incomingBinding = incomingScreenshot?.bindingVersion ?? incomingTile?.bindingVersion;
+    const previousObservedAt = screenshotObservedAtMs(previousScreenshot);
+    const incomingObservedAt = screenshotObservedAtMs(incomingScreenshot);
+    if (
+      previousScreenshot
+      && incomingScreenshot
+      && previousBinding === incomingBinding
+      && previousObservedAt !== null
+      && incomingObservedAt !== null
+      && incomingObservedAt < previousObservedAt
+    ) {
+      mergedTiles.push(previousTile);
+      continue;
+    }
+
+    const bridged = retainFreshTileScreenshotsOnNull(
+      { tiles: [previousTile] },
+      { tiles: [incomingTile] },
+      nowMs,
+    ).tiles[0];
+    mergedTiles.push(bridged);
+    if (bridged !== previousTile) changed = true;
+  }
+
+  for (const studentId of requestedIds) {
+    if (previousByStudent.has(studentId)) continue;
+    const incomingTile = incomingByStudent.get(studentId);
+    if (!incomingTile) continue;
+    mergedTiles.push(incomingTile);
+    changed = true;
+  }
+
+  return changed ? { ...previous, tiles: mergedTiles } : previous;
 }
 
 export function removeStudentsFromTileBatchData(data, studentIds) {

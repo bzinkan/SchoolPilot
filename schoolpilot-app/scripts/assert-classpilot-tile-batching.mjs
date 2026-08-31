@@ -12,6 +12,7 @@ import {
   createTileBatchRequests,
   fetchTileBatch,
   indexTileScreenshots,
+  mergeTargetedTileScreenshotResponse,
   removeLegacyScreenshotsFromTileBatchData,
   removeStudentsFromTileBatchData,
   retainFreshTileScreenshotsOnNull,
@@ -257,6 +258,78 @@ const retainedAtSixtySeconds = retainFreshTileScreenshotsOnNull(
   priorScreenshotResponse,
   successfulNullResponse,
   screenshotCapturedAtMs + 60_000,
+);
+
+const unchangedTargetedScreenshot = {
+  screenshot: 'data:image/jpeg;base64,unchanged',
+  timestamp: screenshotCapturedAtMs + 5_000,
+  bindingVersion: 'v2:unchanged-binding',
+};
+const changedTargetedScreenshot = {
+  screenshot: 'data:image/jpeg;base64,changed',
+  timestamp: screenshotCapturedAtMs + 10_000,
+  bindingVersion: 'v2:changed-binding',
+};
+const priorTargetedScreenshot = {
+  ...priorScreenshot,
+  bindingVersion: 'v2:changed-binding',
+};
+const targetedPrevious = {
+  tiles: [
+    { studentId: studentIds[0], bindingVersion: 'v2:changed-binding', screenshot: priorTargetedScreenshot },
+    { studentId: studentIds[1], bindingVersion: 'v2:unchanged-binding', screenshot: unchangedTargetedScreenshot },
+  ],
+};
+const targetedMerged = mergeTargetedTileScreenshotResponse(
+  targetedPrevious,
+  { tiles: [{ studentId: studentIds[0], bindingVersion: 'v2:changed-binding', screenshot: changedTargetedScreenshot }] },
+  [studentIds[0]],
+  screenshotCapturedAtMs + 10_000,
+);
+assert.equal(targetedMerged.tiles[0].screenshot, changedTargetedScreenshot);
+assert.equal(
+  targetedMerged.tiles[1],
+  targetedPrevious.tiles[1],
+  'targeted refreshes must preserve unchanged tile identity',
+);
+assert.equal(
+  mergeTargetedTileScreenshotResponse(
+    targetedMerged,
+    { tiles: [{ studentId: studentIds[0], bindingVersion: 'v2:changed-binding', screenshot: priorTargetedScreenshot }] },
+    [studentIds[0]],
+    screenshotCapturedAtMs + 11_000,
+  ).tiles[0].screenshot,
+  changedTargetedScreenshot,
+  'an older targeted response must not replace a newer exact-binding screenshot',
+);
+assert.equal(
+  mergeTargetedTileScreenshotResponse(
+    targetedPrevious,
+    { tiles: [] },
+    [studentIds[0]],
+    screenshotCapturedAtMs + 10_000,
+  ).tiles.some((tile) => tile.studentId === studentIds[0]),
+  false,
+  'an omitted requested row must purge the prior targeted screenshot',
+);
+assert.equal(
+  mergeTargetedTileScreenshotResponse(
+    targetedPrevious,
+    {
+      tiles: [{
+        studentId: studentIds[0],
+        bindingVersion: 'v2:changed-binding',
+        screenshot: {
+          ...changedTargetedScreenshot,
+          bindingVersion: 'v2:wrong-binding',
+        },
+      }],
+    },
+    [studentIds[0]],
+    screenshotCapturedAtMs + 10_000,
+  ).tiles[0].screenshot,
+  null,
+  'a mismatched V2 targeted response must purge pixels instead of receiving the successful-null bridge',
 );
 assert.equal(
   retainedAtSixtySeconds.tiles[0].screenshot.screenshot,
@@ -547,8 +620,8 @@ assert.equal(tileBatchRequestShouldPoll(sixtyScreenshotRequests[1], {
 assert.equal(tileBatchRequestShouldPoll(sixtyScreenshotRequests[1], {
   viewportTrackingSupported: true,
   nearViewportStudentIds: new Set(),
-  liveViewStudentId: sixtyStudents[59].studentId,
-}), true, 'Live View keeps its fixed cohort active even when its tile is offscreen');
+  priorityStudentId: sixtyStudents[59].studentId,
+}), true, 'the large screenshot viewer keeps its fixed cohort active even when its tile is offscreen');
 assert.equal(tileBatchRequestShouldPoll(sixtyScreenshotRequests[1]), true, 'unsupported viewport tracking polls every cohort');
 
 const exactScrubClient = new QueryClient();
