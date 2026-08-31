@@ -399,6 +399,9 @@ try {
     Assert-Condition ($globalRuntime.Environment.CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1 -ceq "false" -and
         $globalRollouts.screenshotTrackingWindowLeaseV1.mode -ceq "off") `
         "Existing global-on must remain the explicit tracking-window rollback profile."
+    Assert-Condition ($globalRuntime.Environment.CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1 -ceq "false" -and
+        $globalRollouts.studentAuthGatePresenceV1.mode -ceq "off") `
+        "Existing global-on must explicitly keep student auth-gate presence disabled."
     Assert-Condition ($globalRollouts.kioskLaunchTicketV1.mode -ceq "off") "Global profile must leave superseded V1 off."
     Assert-Condition ($globalRuntime.Turn.Hosts.Count -eq 2 -and $globalRuntime.Turn.Hosts[0] -ceq "turn-a.school-pilot.net") "TURN hosts must normalize to the reviewed pair."
 
@@ -515,6 +518,81 @@ try {
             -ContainerName "api" -TargetRuntimeConfiguration $trackingPilotRuntime
     } "Tracking-window pilot must start from the completed global repaired-capability profile."
 
+    $studentGatePilotIntent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+        schemaVersion = 3; mode = "student-gate-pilot"; pilotSchoolId = $testSchoolId
+    })
+    Assert-Condition ($studentGatePilotIntent.RequiresSourceRuntime -and
+        $studentGatePilotIntent.Environment.Count -eq 0 -and
+        $null -eq $studentGatePilotIntent.Turn) `
+        "Student-gate profiles must be source-preserving intents rather than reconstructed full profiles."
+    $studentGatePilotSource = New-TransitionSourceTask -RuntimeConfiguration $trackingPilotRuntime
+    $studentGatePilotRuntime = Resolve-SourcePreservingRuntimeConfiguration `
+        -RuntimeIntent $studentGatePilotIntent -SourceTaskDefinition $studentGatePilotSource -ContainerName "api"
+    $studentGatePilotRollouts = [string]$studentGatePilotRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON |
+        ConvertFrom-Json -Depth 10
+    Assert-Condition ($studentGatePilotRuntime.Environment.CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1 -ceq "true" -and
+        [string]$studentGatePilotRollouts.studentAuthGatePresenceV1.mode -ceq "on" -and
+        @($studentGatePilotRollouts.studentAuthGatePresenceV1.schoolIds).Count -eq 1 -and
+        [string]$studentGatePilotRollouts.studentAuthGatePresenceV1.schoolIds[0] -ceq $testSchoolId) `
+        "Student-gate pilot must require both controls and exactly one canonical school."
+    Assert-Condition ($studentGatePilotRuntime.Environment.CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1 -ceq "true" -and
+        [string]$studentGatePilotRollouts.screenshotTrackingWindowLeaseV1.mode -ceq "on" -and
+        [string]$studentGatePilotRollouts.screenshotTrackingWindowLeaseV1.schoolIds[0] -ceq $testSchoolId) `
+        "Student-gate pilot must preserve the current tracking-window screenshot pilot exactly."
+    foreach ($capability in @($script:AllCapabilities | Where-Object {
+        $_ -cne $script:StudentGatePresenceCapability
+    })) {
+        $sourceEntry = $trackingPilotRollouts.$capability | ConvertTo-Json -Depth 10 -Compress
+        $targetEntry = $studentGatePilotRollouts.$capability | ConvertTo-Json -Depth 10 -Compress
+        Assert-Condition ($sourceEntry -ceq $targetEntry) `
+            "Student-gate pilot must preserve the existing $capability rollout entry."
+        Assert-Condition ([string]$studentGatePilotRuntime.Environment[[string]$script:CapabilityFlags[$capability]] -ceq
+            [string]$trackingPilotRuntime.Environment[[string]$script:CapabilityFlags[$capability]]) `
+            "Student-gate pilot must preserve the existing $capability kill switch."
+    }
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $studentGatePilotSource -ContainerName "api" `
+        -TargetRuntimeConfiguration $studentGatePilotRuntime
+
+    $studentGateGlobalIntent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+        schemaVersion = 3; mode = "student-gate-global-on"
+    })
+    $studentGateGlobalSource = New-TransitionSourceTask -RuntimeConfiguration $studentGatePilotRuntime
+    $studentGateGlobalRuntime = Resolve-SourcePreservingRuntimeConfiguration `
+        -RuntimeIntent $studentGateGlobalIntent -SourceTaskDefinition $studentGateGlobalSource -ContainerName "api"
+    $studentGateGlobalRollouts = [string]$studentGateGlobalRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON |
+        ConvertFrom-Json -Depth 10
+    Assert-Condition ([string]$studentGateGlobalRollouts.studentAuthGatePresenceV1.mode -ceq "on" -and
+        -not ($studentGateGlobalRollouts.studentAuthGatePresenceV1.PSObject.Properties.Name -contains "schoolIds")) `
+        "Student-gate global activation must remove only its pilot school scope."
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $studentGateGlobalSource -ContainerName "api" `
+        -TargetRuntimeConfiguration $studentGateGlobalRuntime
+
+    $studentGateOffIntent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+        schemaVersion = 3; mode = "student-gate-off"
+    })
+    $studentGateOffSource = New-TransitionSourceTask -RuntimeConfiguration $studentGateGlobalRuntime
+    $studentGateOffRuntime = Resolve-SourcePreservingRuntimeConfiguration `
+        -RuntimeIntent $studentGateOffIntent -SourceTaskDefinition $studentGateOffSource -ContainerName "api"
+    $studentGateOffRollouts = [string]$studentGateOffRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON |
+        ConvertFrom-Json -Depth 10
+    Assert-Condition ($studentGateOffRuntime.Environment.CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1 -ceq "false" -and
+        [string]$studentGateOffRollouts.studentAuthGatePresenceV1.mode -ceq "off" -and
+        $studentGateOffRuntime.Environment.CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1 -ceq "true" -and
+        [string]$studentGateOffRollouts.screenshotTrackingWindowLeaseV1.mode -ceq "on") `
+        "Student-gate rollback must disable only student auth-gate presence and preserve screenshot tracking."
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $studentGateOffSource -ContainerName "api" `
+        -TargetRuntimeConfiguration $studentGateOffRuntime
+    Assert-Throws {
+        Assert-AllowedRuntimeTransition -SourceTaskDefinition $studentGateGlobalSource -ContainerName "api" `
+            -TargetRuntimeConfiguration $trackingGlobalRuntime
+    } "Tracking-window activation must not silently disable an active student-gate rollout."
+    Assert-Throws {
+        $skippedStudentGateGlobal = Resolve-SourcePreservingRuntimeConfiguration `
+            -RuntimeIntent $studentGateGlobalIntent -SourceTaskDefinition $studentGatePilotSource -ContainerName "api"
+        Assert-AllowedRuntimeTransition -SourceTaskDefinition $studentGatePilotSource -ContainerName "api" `
+            -TargetRuntimeConfiguration $skippedStudentGateGlobal
+    } "Student-gate global activation must not skip its school-scoped pilot."
+
     $legacyGlobalSource = New-TransitionSourceTask -RuntimeConfiguration $globalRuntime
     $legacyGlobalEnvironment = @($legacyGlobalSource.containerDefinitions[0].environment)
     $legacyGlobalRolloutEntry = @($legacyGlobalEnvironment | Where-Object name -CEQ "CLASSPILOT_CAPABILITY_ROLLOUTS_JSON")[0]
@@ -530,6 +608,41 @@ try {
         "The exact pre-additive global task shape must be recognized as tracking-window off."
     Assert-AllowedRuntimeTransition -SourceTaskDefinition $legacyGlobalSource -ContainerName "api" `
         -TargetRuntimeConfiguration $trackingPilotRuntime
+
+    $legacyStudentGateSource = New-TransitionSourceTask -RuntimeConfiguration $trackingPilotRuntime
+    $legacyStudentGateEnvironment = @($legacyStudentGateSource.containerDefinitions[0].environment)
+    $legacyStudentGateRolloutEntry = @($legacyStudentGateEnvironment | Where-Object name -CEQ "CLASSPILOT_CAPABILITY_ROLLOUTS_JSON")[0]
+    $legacyStudentGateRollout = [string]$legacyStudentGateRolloutEntry.value | ConvertFrom-Json -Depth 10
+    $legacyStudentGateRollout.PSObject.Properties.Remove("studentAuthGatePresenceV1")
+    $legacyStudentGateRolloutEntry.value = $legacyStudentGateRollout | ConvertTo-Json -Depth 10 -Compress
+    $legacyStudentGateSource.containerDefinitions[0].environment = @($legacyStudentGateEnvironment | Where-Object {
+        [string]$_.name -cne "CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1"
+    })
+    $legacyStudentGateState = Get-RuntimeActivationState `
+        -Environment @($legacyStudentGateSource.containerDefinitions[0].environment) -AllowBaseline
+    Assert-Condition ($legacyStudentGateState.Mode -ceq "tracking-window-pilot" -and
+        $legacyStudentGateState.StudentGateMode -ceq "off") `
+        "The exact pre-student-gate task shape must be recognized as student-gate off."
+    $legacyStudentGateTarget = Resolve-SourcePreservingRuntimeConfiguration `
+        -RuntimeIntent $studentGatePilotIntent -SourceTaskDefinition $legacyStudentGateSource -ContainerName "api"
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $legacyStudentGateSource -ContainerName "api" `
+        -TargetRuntimeConfiguration $legacyStudentGateTarget
+
+    $partialStudentGateSource = New-TransitionSourceTask -RuntimeConfiguration $trackingPilotRuntime
+    $partialStudentGateSource.containerDefinitions[0].environment = @($partialStudentGateSource.containerDefinitions[0].environment | Where-Object {
+        [string]$_.name -cne "CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1"
+    })
+    Assert-Throws {
+        Get-RuntimeActivationState -Environment @($partialStudentGateSource.containerDefinitions[0].environment) -AllowBaseline
+    } "An absent student-gate kill switch with a present rollout entry must fail closed."
+
+    $mismatchedStudentGateSource = New-TransitionSourceTask -RuntimeConfiguration $studentGatePilotRuntime
+    @($mismatchedStudentGateSource.containerDefinitions[0].environment | Where-Object {
+        [string]$_.name -ceq "CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1"
+    })[0].value = "false"
+    Assert-Throws {
+        Get-RuntimeActivationState -Environment @($mismatchedStudentGateSource.containerDefinitions[0].environment) -AllowBaseline
+    } "Student-gate rollout and kill-switch disagreement must fail closed."
 
     $partialTrackingSource = New-TransitionSourceTask -RuntimeConfiguration $globalRuntime
     $partialTrackingSource.containerDefinitions[0].environment = @($partialTrackingSource.containerDefinitions[0].environment | Where-Object {
@@ -629,6 +742,26 @@ try {
     } "Tracking-window pilot must not reuse ordered test-school capability fields."
     Assert-Throws {
         ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 2; mode = "student-gate-pilot"; pilotSchoolId = $testSchoolId
+        })
+    } "Student-gate profiles must require their independent schema version."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 3; mode = "student-gate-pilot"; pilotSchoolId = "NOT-A-UUID"
+        })
+    } "Student-gate pilot must reject malformed school scope."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 3; mode = "student-gate-global-on"; pilotSchoolId = $testSchoolId
+        })
+    } "Student-gate global activation must not retain pilot scope."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 3; mode = "student-gate-off"; turn = $turn
+        })
+    } "Student-gate rollback must preserve existing TURN wiring."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
             schemaVersion = 1; mode = "test-school"; testSchoolId = $testSchoolId
             enabledCapabilities = @($script:ActivationOrder[0..6])
         })
@@ -639,10 +772,15 @@ try {
     foreach ($misCasedMode in @(
         "OFF", "Off", "TEST-SCHOOL", "Test-School", "GLOBAL-ON", "Global-On",
         "TRACKING-WINDOW-PILOT", "Tracking-Window-Pilot",
-        "TRACKING-WINDOW-GLOBAL-ON", "Tracking-Window-Global-On"
+        "TRACKING-WINDOW-GLOBAL-ON", "Tracking-Window-Global-On",
+        "STUDENT-GATE-PILOT", "Student-Gate-Pilot",
+        "STUDENT-GATE-GLOBAL-ON", "Student-Gate-Global-On",
+        "STUDENT-GATE-OFF", "Student-Gate-Off"
     )) {
         Assert-Throws {
-            $misCasedSchema = if ($misCasedMode -clike "*TRACKING*" -or $misCasedMode -clike "Tracking*") { 2 } else { 1 }
+            $misCasedSchema = if ($misCasedMode -clike "*STUDENT*" -or $misCasedMode -clike "Student*") {
+                3
+            } elseif ($misCasedMode -clike "*TRACKING*" -or $misCasedMode -clike "Tracking*") { 2 } else { 1 }
             ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{ schemaVersion = $misCasedSchema; mode = $misCasedMode })
         } "Runtime profile modes must use the exact reviewed lowercase spelling."
     }
@@ -1541,6 +1679,185 @@ try {
     Assert-Condition ((Get-ManagedRuntimeFingerprint -TaskDefinition $trackingPilotApiTask -ContainerName "api") -ceq
         (Get-ManagedRuntimeFingerprint -TaskDefinition $trackingPilotWorkerTask -ContainerName "scheduler-worker")) `
         "Tracking-window pilot API and worker runtime configuration must be identical."
+
+    $studentGatePilotProfilePath = Join-Path $testRoot "student-gate-pilot-profile.json"
+    Write-TestJson -Path $studentGatePilotProfilePath -Value ([ordered]@{
+        schemaVersion = 3; mode = "student-gate-pilot"; pilotSchoolId = $testSchoolId
+    })
+    $studentGatePilotPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
+        -PrivateProfilePath $studentGatePilotProfilePath -EvidenceRoot $evidenceRoot `
+        -AppSha $appSha -ImageDigest $digest `
+        -ApiTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn) `
+        -WorkerTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn) `
+        -Now $now -SkipRepositoryCheck
+    $studentGatePilotPlan = Read-RuntimePlan -Path $studentGatePilotPlanResult.PlanPath `
+        -ExpectedSha256 $studentGatePilotPlanResult.PlanSha256
+    Assert-Condition ($studentGatePilotPlan.profileMode -ceq "student-gate-pilot" -and
+        [int]$studentGatePilotPlan.schoolScopeCount -eq 1 -and
+        [int]$studentGatePilotPlan.enabledCapabilityCount -eq 11 -and
+        $null -eq $studentGatePilotPlan.turnEvidenceSha256) `
+        "Student-gate pilot plan must resolve against and preserve the active full runtime profile."
+    Assert-Condition (-not ([IO.File]::ReadAllText($studentGatePilotPlanResult.PlanPath)).Contains($testSchoolId)) `
+        "Student-gate pilot plan must not expose its private school scope."
+    $studentGatePilotApplyResult = Invoke-RuntimeConfigApply -Plan $studentGatePilotPlan `
+        -PlanSha256 $studentGatePilotPlanResult.PlanSha256 -Now $now `
+        -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck
+    Assert-Condition ($studentGatePilotApplyResult.status -ceq "applied" -and
+        $studentGatePilotApplyResult.profileMode -ceq "student-gate-pilot" -and
+        $studentGatePilotApplyResult.scalingRestored) `
+        "Student-gate pilot apply must converge as one coherent API/worker pair."
+    foreach ($studentGateCandidateContract in @(
+        [pscustomobject]@{ Arn = [string]$studentGatePilotApplyResult.candidateApiTaskDefinitionArn; Container = "api" },
+        [pscustomobject]@{ Arn = [string]$studentGatePilotApplyResult.candidateWorkerTaskDefinitionArn; Container = "scheduler-worker" }
+    )) {
+        $studentGateCandidate = $global:RuntimeConfigTestState.TaskResponses[$studentGateCandidateContract.Arn].taskDefinition
+        $studentGateCandidateContainer = @($studentGateCandidate.containerDefinitions | Where-Object name -CEQ $studentGateCandidateContract.Container)[0]
+        $studentGateCandidateState = Get-RuntimeActivationState -Environment @($studentGateCandidateContainer.environment)
+        Assert-Condition ($studentGateCandidateState.Mode -ceq "tracking-window-pilot" -and
+            [string]$studentGateCandidateState.SchoolId -ceq $testSchoolId -and
+            $studentGateCandidateState.StudentGateMode -ceq "pilot" -and
+            [string]$studentGateCandidateState.StudentGateSchoolId -ceq $testSchoolId) `
+            "Student-gate apply must preserve screenshot scope and apply only its own school pilot."
+        Assert-Condition ([string]$studentGateCandidateContainer.image -ceq
+            "135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api@$digest") `
+            "Student-gate runtime-only apply must preserve the immutable image digest."
+        Assert-Condition (@($studentGateCandidateContainer.environment | Where-Object {
+            [string]$_.name -ceq "NODE_ENV" -and [string]$_.value -ceq "production"
+        }).Count -eq 1) "Student-gate apply must preserve unrelated environment values."
+        Assert-Condition (@($studentGateCandidateContainer.secrets | Where-Object {
+            [string]$_.name -ceq "CLASSPILOT_TURN_REST_SECRET" -and [string]$_.valueFrom -ceq $turnSecretArn
+        }).Count -eq 1) "Student-gate apply must preserve the exact TURN secret reference."
+    }
+    $studentGatePilotApiTask = $global:RuntimeConfigTestState.TaskResponses[
+        [string]$studentGatePilotApplyResult.candidateApiTaskDefinitionArn
+    ].taskDefinition
+    $studentGatePilotRuntimeConfigurationSha256 = Get-ManagedRuntimeFingerprint `
+        -TaskDefinition $studentGatePilotApiTask -ContainerName "api"
+    $studentGatePilotEvidencePath = Join-Path $testRoot "student-gate-pilot-evidence.json"
+    $studentGatePilotEvidence = [ordered]@{
+        schemaVersion = 1
+        validatedAt = $now.ToString("o")
+        observedFrom = $now.AddMinutes(-60).ToString("o")
+        observedThrough = $now.ToString("o")
+        pilotSchoolId = $testSchoolId
+        schoolPilotToolSha = $toolSha
+        schoolPilotAppSha = $appSha
+        schoolPilotImageDigest = $digest
+        pilotApiTaskDefinitionArn = [string]$studentGatePilotApplyResult.candidateApiTaskDefinitionArn
+        pilotWorkerTaskDefinitionArn = [string]$studentGatePilotApplyResult.candidateWorkerTaskDefinitionArn
+        pilotRuntimeConfigurationSha256 = $studentGatePilotRuntimeConfigurationSha256
+        checks = [ordered]@{
+            fullSchoolActivityWindowObserved = $true
+            managedCapabilityNegotiated = $true
+            freshActiveStudentHidden = $true
+            sameChromebookResumePassed = $true
+            crossChromebookPlainNamePassed = $true
+            correctPinTransferPassed = $true
+            wrongPinPreservedSession = $true
+            cancelSignOutHeartbeatRehides = $true
+            concurrentTransferSingleWinner = $true
+            runtimeAndRosterErrorsWithinBudget = $true
+            noAuthorizationOrPrivacyDefects = $true
+        }
+    }
+    Write-TestJson -Path $studentGatePilotEvidencePath -Value $studentGatePilotEvidence
+    [void](Assert-StudentGatePilotEvidence `
+        -EvidenceSnapshot (Read-StrictJsonSnapshot -Path $studentGatePilotEvidencePath) `
+        -PilotSchoolId $testSchoolId -ToolSha $toolSha -AppSha $appSha -ImageDigest $digest `
+        -ApiTaskDefinitionArn ([string]$studentGatePilotApplyResult.candidateApiTaskDefinitionArn) `
+        -WorkerTaskDefinitionArn ([string]$studentGatePilotApplyResult.candidateWorkerTaskDefinitionArn) `
+        -RuntimeConfigurationSha256 $studentGatePilotRuntimeConfigurationSha256 -Now $now)
+    $invalidStudentGatePilotEvidence = $studentGatePilotEvidence | ConvertTo-Json -Depth 30 |
+        ConvertFrom-Json -Depth 30 -DateKind String
+    $invalidStudentGatePilotEvidence.checks.wrongPinPreservedSession = $false
+    Write-TestJson -Path $studentGatePilotEvidencePath -Value $invalidStudentGatePilotEvidence
+    Assert-Throws {
+        Assert-StudentGatePilotEvidence `
+            -EvidenceSnapshot (Read-StrictJsonSnapshot -Path $studentGatePilotEvidencePath) `
+            -PilotSchoolId $testSchoolId -ToolSha $toolSha -AppSha $appSha -ImageDigest $digest `
+            -ApiTaskDefinitionArn ([string]$studentGatePilotApplyResult.candidateApiTaskDefinitionArn) `
+            -WorkerTaskDefinitionArn ([string]$studentGatePilotApplyResult.candidateWorkerTaskDefinitionArn) `
+            -RuntimeConfigurationSha256 $studentGatePilotRuntimeConfigurationSha256 -Now $now
+    } "A failed wrong-PIN preservation check must block student-gate global activation."
+    Write-TestJson -Path $studentGatePilotEvidencePath -Value $studentGatePilotEvidence
+
+    $studentGateGlobalProfilePath = Join-Path $testRoot "student-gate-global-profile.json"
+    Write-TestJson -Path $studentGateGlobalProfilePath -Value ([ordered]@{
+        schemaVersion = 3; mode = "student-gate-global-on"
+    })
+    Assert-Throws {
+        New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
+            -PrivateProfilePath $studentGateGlobalProfilePath -EvidenceRoot $evidenceRoot `
+            -AppSha $appSha -ImageDigest $digest `
+            -ApiTaskDefinitionArn ([string]$studentGatePilotApplyResult.candidateApiTaskDefinitionArn) `
+            -WorkerTaskDefinitionArn ([string]$studentGatePilotApplyResult.candidateWorkerTaskDefinitionArn) `
+            -Now $now -SkipRepositoryCheck
+    } "Student-gate global planning must fail without pilot smoke and soak evidence."
+    $studentGateGlobalPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
+        -PrivateProfilePath $studentGateGlobalProfilePath `
+        -PrivateStudentGatePilotEvidencePath $studentGatePilotEvidencePath `
+        -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+        -ApiTaskDefinitionArn ([string]$studentGatePilotApplyResult.candidateApiTaskDefinitionArn) `
+        -WorkerTaskDefinitionArn ([string]$studentGatePilotApplyResult.candidateWorkerTaskDefinitionArn) `
+        -Now $now -SkipRepositoryCheck
+    $studentGateGlobalPlan = Read-RuntimePlan -Path $studentGateGlobalPlanResult.PlanPath `
+        -ExpectedSha256 $studentGateGlobalPlanResult.PlanSha256
+    Assert-Condition ($studentGateGlobalPlan.profileMode -ceq "student-gate-global-on" -and
+        [string]$studentGateGlobalPlan.validationLevel -ceq "managed" -and
+        [string]$studentGateGlobalPlan.managedValidation -ceq "passed" -and
+        [string]$studentGateGlobalPlan.studentGatePilotEvidenceSha256 -ceq
+            (Get-FileSha256 -Path $studentGatePilotEvidencePath)) `
+        "Student-gate global planning must require exact managed pilot evidence."
+    $studentGateGlobalApplyResult = Invoke-RuntimeConfigApply -Plan $studentGateGlobalPlan `
+        -PlanSha256 $studentGateGlobalPlanResult.PlanSha256 -Now $now `
+        -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck
+    Assert-Condition ($studentGateGlobalApplyResult.status -ceq "applied" -and
+        $studentGateGlobalApplyResult.profileMode -ceq "student-gate-global-on") `
+        "Student-gate global apply must converge only after evidence revalidation."
+
+    $studentGateOffProfilePath = Join-Path $testRoot "student-gate-off-profile.json"
+    Write-TestJson -Path $studentGateOffProfilePath -Value ([ordered]@{
+        schemaVersion = 3; mode = "student-gate-off"
+    })
+    $studentGateOffPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
+        -PrivateProfilePath $studentGateOffProfilePath -EvidenceRoot $evidenceRoot `
+        -AppSha $appSha -ImageDigest $digest `
+        -ApiTaskDefinitionArn ([string]$studentGateGlobalApplyResult.candidateApiTaskDefinitionArn) `
+        -WorkerTaskDefinitionArn ([string]$studentGateGlobalApplyResult.candidateWorkerTaskDefinitionArn) `
+        -Now $now -SkipRepositoryCheck
+    $studentGateOffPlan = Read-RuntimePlan -Path $studentGateOffPlanResult.PlanPath `
+        -ExpectedSha256 $studentGateOffPlanResult.PlanSha256
+    $studentGateOffApplyResult = Invoke-RuntimeConfigApply -Plan $studentGateOffPlan `
+        -PlanSha256 $studentGateOffPlanResult.PlanSha256 -Now $now `
+        -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck
+    foreach ($studentGateOffCandidateContract in @(
+        [pscustomobject]@{ Arn = [string]$studentGateOffApplyResult.candidateApiTaskDefinitionArn; Container = "api" },
+        [pscustomobject]@{ Arn = [string]$studentGateOffApplyResult.candidateWorkerTaskDefinitionArn; Container = "scheduler-worker" }
+    )) {
+        $studentGateOffCandidate = $global:RuntimeConfigTestState.TaskResponses[$studentGateOffCandidateContract.Arn].taskDefinition
+        $studentGateOffCandidateContainer = @($studentGateOffCandidate.containerDefinitions | Where-Object name -CEQ $studentGateOffCandidateContract.Container)[0]
+        $studentGateOffCandidateState = Get-RuntimeActivationState -Environment @($studentGateOffCandidateContainer.environment)
+        Assert-Condition ($studentGateOffCandidateState.Mode -ceq "tracking-window-pilot" -and
+            [string]$studentGateOffCandidateState.SchoolId -ceq $testSchoolId -and
+            $studentGateOffCandidateState.StudentGateMode -ceq "off") `
+            "Student-gate-off must preserve the screenshot pilot and disable only auth-gate presence."
+    }
+    [void](Invoke-RuntimeConfigRollback -Plan $studentGateOffPlan `
+        -PlanSha256 $studentGateOffPlanResult.PlanSha256 -Now $now `
+        -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0)
+    [void](Invoke-RuntimeConfigRollback -Plan $studentGateGlobalPlan `
+        -PlanSha256 $studentGateGlobalPlanResult.PlanSha256 -Now $now `
+        -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0)
+    $studentGatePilotRollbackResult = Invoke-RuntimeConfigRollback -Plan $studentGatePilotPlan `
+        -PlanSha256 $studentGatePilotPlanResult.PlanSha256 -Now $now `
+        -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0
+    Assert-Condition ($studentGatePilotRollbackResult.status -ceq "rolled_back" -and
+        $global:RuntimeConfigTestState.ApiCurrentArn -ceq
+            [string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn -and
+        $global:RuntimeConfigTestState.WorkerCurrentArn -ceq
+            [string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn) `
+        "Student-gate pilot rollback must restore the exact prior tracking-window pair."
+
     $trackingGlobalProfilePath = Join-Path $testRoot "tracking-window-global-profile.json"
     Write-TestJson -Path $trackingGlobalProfilePath -Value $trackingGlobalProfile
     $trackingPilotRuntimeConfigurationSha256 = Get-ManagedRuntimeFingerprint `

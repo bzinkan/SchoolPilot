@@ -9,6 +9,7 @@ param(
     [string]$SyntheticValidationPath,
     [string]$ManagedTestWaiverPath,
     [string]$TrackingPilotEvidencePath,
+    [string]$StudentGatePilotEvidencePath,
     [string]$ExternalEvidenceRoot,
     [string]$PlanPath,
     [string]$ExpectedPlanSha256,
@@ -61,8 +62,12 @@ $script:ActivationOrder = @(
 )
 $script:RepairedCapabilities = @("scopedAuthorityChecksV1") + $script:ActivationOrder
 $script:TrackingWindowCapability = "screenshotTrackingWindowLeaseV1"
-$script:AllCapabilities = @($script:RepairedCapabilities) + @(
+$script:StudentGatePresenceCapability = "studentAuthGatePresenceV1"
+$script:AdditiveCapabilities = @(
     $script:TrackingWindowCapability,
+    $script:StudentGatePresenceCapability
+)
+$script:AllCapabilities = @($script:RepairedCapabilities) + @($script:AdditiveCapabilities) + @(
     "kioskLaunchTicketV1"
 )
 $script:CapabilityFlags = [ordered]@{
@@ -73,6 +78,7 @@ $script:CapabilityFlags = [ordered]@{
     studentChatIdempotencyV1      = "CLASSPILOT_CAP_STUDENT_CHAT_IDEMPOTENCY_V1"
     screenshotObservationLeaseV1 = "CLASSPILOT_CAP_SCREENSHOT_OBSERVATION_LEASE_V1"
     screenshotTrackingWindowLeaseV1 = "CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1"
+    studentAuthGatePresenceV1    = "CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1"
     safetyEvidenceCaptureV1       = "CLASSPILOT_CAP_SAFETY_EVIDENCE_CAPTURE_V1"
     liveViewIceServersV1          = "CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1"
     kioskLaunchTicketV1           = "CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V1"
@@ -243,9 +249,11 @@ function ConvertTo-RuntimeConfiguration {
     $mode = [string]$Profile.mode
     $schemaOneModes = @("off", "test-school", "global-on")
     $schemaTwoModes = @("tracking-window-pilot", "tracking-window-global-on")
+    $schemaThreeModes = @("student-gate-pilot", "student-gate-global-on", "student-gate-off")
     if (($schemaVersion -eq 1 -and $mode -cnotin $schemaOneModes) -or
         ($schemaVersion -eq 2 -and $mode -cnotin $schemaTwoModes) -or
-        $schemaVersion -notin @(1, 2)) {
+        ($schemaVersion -eq 3 -and $mode -cnotin $schemaThreeModes) -or
+        $schemaVersion -notin @(1, 2, 3)) {
         throw "Runtime profile schemaVersion and mode do not match a reviewed profile contract."
     }
 
@@ -276,10 +284,10 @@ function ConvertTo-RuntimeConfiguration {
             throw "$mode profiles must not contain test-school fields."
         }
     }
-    if ($mode -ceq "tracking-window-pilot") {
+    if ($mode -cin @("tracking-window-pilot", "student-gate-pilot")) {
         $pilotSchoolId = [string]$Profile.pilotSchoolId
         if ($pilotSchoolId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
-            throw "The tracking-window-pilot profile requires one canonical UUID school ID."
+            throw "The selected pilot profile requires one canonical UUID school ID."
         }
     }
     elseif ($Profile.PSObject.Properties.Name -contains "pilotSchoolId") {
@@ -291,6 +299,9 @@ function ConvertTo-RuntimeConfiguration {
         $enabledCapabilities -contains "liveViewIceServersV1"
     if ($mode -ceq "off" -and $Profile.PSObject.Properties.Name -contains "turn") {
         throw "The off profile must not mutate TURN runtime wiring."
+    }
+    if ($mode -cin $schemaThreeModes -and $Profile.PSObject.Properties.Name -contains "turn") {
+        throw "Student-gate profiles must preserve existing TURN runtime wiring."
     }
     if ($mode -ceq "tracking-window-pilot" -and $Profile.PSObject.Properties.Name -contains "turn") {
         throw "The tracking-window-pilot profile must preserve existing TURN runtime wiring."
@@ -324,6 +335,20 @@ function ConvertTo-RuntimeConfiguration {
         throw "The selected profile requires verified TURN inputs."
     }
 
+    if ($mode -cin $schemaThreeModes) {
+        return [pscustomobject]@{
+            Mode = $mode
+            SchoolScopeCount = if ($mode -ceq "student-gate-pilot") { 1 } else { 0 }
+            EnabledCapabilities = if ($mode -ceq "student-gate-off") { @() } else {
+                @($script:StudentGatePresenceCapability)
+            }
+            Environment = [ordered]@{}
+            Turn = $null
+            RequiresSourceRuntime = $true
+            PilotSchoolId = if ($mode -ceq "student-gate-pilot") { $pilotSchoolId } else { $null }
+        }
+    }
+
     $rollouts = [ordered]@{}
     foreach ($capability in $script:AllCapabilities) {
         $capabilityOn = $false
@@ -350,8 +375,9 @@ function ConvertTo-RuntimeConfiguration {
         CLASSPILOT_PROTOCOL_V3_ENABLED = if ($mode -ceq "off") { "false" } else { "true" }
     }
     foreach ($capability in $script:AllCapabilities) {
-        $enabledKillSwitch = if ($capability -ceq $script:TrackingWindowCapability) {
-            $mode -cin @("tracking-window-pilot", "tracking-window-global-on")
+        $enabledKillSwitch = if ($capability -cin $script:AdditiveCapabilities) {
+            $capability -ceq $script:TrackingWindowCapability -and
+                $mode -cin @("tracking-window-pilot", "tracking-window-global-on")
         }
         else {
             $mode -ne "off" -and $capability -ne "kioskLaunchTicketV1"
@@ -376,6 +402,97 @@ function ConvertTo-RuntimeConfiguration {
         } else { @() }
         Environment = $environment
         Turn = $turn
+        RequiresSourceRuntime = $false
+    }
+}
+
+function Resolve-SourcePreservingRuntimeConfiguration {
+    param(
+        [Parameter(Mandatory = $true)]$RuntimeIntent,
+        [Parameter(Mandatory = $true)]$SourceTaskDefinition,
+        [Parameter(Mandatory = $true)][string]$ContainerName
+    )
+    if (-not [bool]$RuntimeIntent.RequiresSourceRuntime) { return $RuntimeIntent }
+    if ([string]$RuntimeIntent.Mode -cnotin @(
+        "student-gate-pilot", "student-gate-global-on", "student-gate-off"
+    )) {
+        throw "The source-preserving runtime intent is unsupported."
+    }
+
+    $containers = @($SourceTaskDefinition.containerDefinitions | Where-Object name -CEQ $ContainerName)
+    if ($containers.Count -ne 1) { throw "Source-preserving runtime container is ambiguous." }
+    $sourceEnvironment = @($containers[0].environment)
+    $sourceState = Get-RuntimeActivationState -Environment $sourceEnvironment -AllowBaseline
+    if ([string]$sourceState.Mode -cnotin @(
+        "global-on", "tracking-window-pilot", "tracking-window-global-on"
+    )) {
+        throw "Student-gate rollout requires the completed global repaired-capability runtime."
+    }
+
+    $values = [ordered]@{}
+    foreach ($entry in @($sourceEnvironment | Where-Object {
+        [string]$_.name -cin $script:RuntimeEnvironmentNames
+    })) {
+        $values[[string]$entry.name] = [string]$entry.value
+    }
+    foreach ($capability in $script:AdditiveCapabilities) {
+        $flag = [string]$script:CapabilityFlags[$capability]
+        if (-not $values.Contains($flag)) { $values[$flag] = "false" }
+    }
+
+    $sourceRollouts = ConvertFrom-StrictJsonText -Text ([string]$values.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON)
+    $rollouts = [ordered]@{}
+    foreach ($capability in $script:AllCapabilities) {
+        if (-not ($sourceRollouts.PSObject.Properties.Name -ccontains $capability)) {
+            if ($capability -cnotin $script:AdditiveCapabilities) {
+                throw "Source runtime rollout registry is incomplete."
+            }
+            $rollouts[$capability] = [ordered]@{ mode = "off" }
+            continue
+        }
+        $entry = $sourceRollouts.$capability
+        $copy = [ordered]@{ mode = [string]$entry.mode }
+        if ($entry.PSObject.Properties.Name -contains "schoolIds") {
+            $copy.schoolIds = @($entry.schoolIds | ForEach-Object { [string]$_ })
+        }
+        $rollouts[$capability] = $copy
+    }
+
+    $gateOn = [string]$RuntimeIntent.Mode -cne "student-gate-off"
+    $gateEntry = [ordered]@{ mode = if ($gateOn) { "on" } else { "off" } }
+    if ([string]$RuntimeIntent.Mode -ceq "student-gate-pilot") {
+        $profileSchoolId = [string]$RuntimeIntent.PilotSchoolId
+        if ($profileSchoolId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
+            throw "Student-gate pilot intent has an invalid school scope."
+        }
+        $gateEntry.schoolIds = @($profileSchoolId)
+    }
+    $rollouts[$script:StudentGatePresenceCapability] = $gateEntry
+    $values[[string]$script:CapabilityFlags[$script:StudentGatePresenceCapability]] = if ($gateOn) { "true" } else { "false" }
+    $values.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = $rollouts | ConvertTo-Json -Depth 8 -Compress
+
+    $environment = [ordered]@{}
+    foreach ($name in $script:RuntimeEnvironmentNames) {
+        if (-not $values.Contains([string]$name)) {
+            throw "Source-preserving runtime environment is incomplete."
+        }
+        $environment[[string]$name] = [string]$values[[string]$name]
+    }
+    $enabledCapabilities = @($script:AllCapabilities | Where-Object {
+        [string]$environment[[string]$script:CapabilityFlags[$_]] -ceq "true" -and
+            [string]$rollouts.$_.mode -ceq "on"
+    })
+    return [pscustomobject]@{
+        Mode = [string]$RuntimeIntent.Mode
+        SchoolScopeCount = [int]$RuntimeIntent.SchoolScopeCount
+        EnabledCapabilities = $enabledCapabilities
+        Environment = $environment
+        Turn = $null
+        RequiresSourceRuntime = $false
+        SourceMode = [string]$sourceState.Mode
+        PilotSchoolId = if ([string]$RuntimeIntent.Mode -ceq "student-gate-pilot") {
+            [string]$RuntimeIntent.PilotSchoolId
+        } else { $null }
     }
 }
 
@@ -658,6 +775,101 @@ function Assert-TrackingWindowPilotEvidence {
         $value = $evidence.checks.$name
         if ($value -isnot [bool] -or -not $value) {
             throw "Tracking-window pilot evidence checks are incomplete."
+        }
+    }
+    return [pscustomobject]@{
+        ValidatedAt = $validatedAt.ToUniversalTime().ToString("o")
+        ObservedFrom = $observedFrom.ToUniversalTime().ToString("o")
+        ObservedThrough = $observedThrough.ToUniversalTime().ToString("o")
+        EvidenceSha256 = [string]$EvidenceSnapshot.Sha256
+    }
+}
+
+function Assert-StudentGatePilotEvidence {
+    param(
+        [Parameter(Mandatory = $true)]$EvidenceSnapshot,
+        [Parameter(Mandatory = $true)][string]$PilotSchoolId,
+        [Parameter(Mandatory = $true)][string]$ToolSha,
+        [Parameter(Mandatory = $true)][string]$AppSha,
+        [Parameter(Mandatory = $true)][string]$ImageDigest,
+        [Parameter(Mandatory = $true)][string]$ApiTaskDefinitionArn,
+        [Parameter(Mandatory = $true)][string]$WorkerTaskDefinitionArn,
+        [Parameter(Mandatory = $true)][string]$RuntimeConfigurationSha256,
+        [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow
+    )
+    $evidence = $EvidenceSnapshot.Value
+    $allowed = @(
+        "schemaVersion", "validatedAt", "observedFrom", "observedThrough", "pilotSchoolId",
+        "schoolPilotToolSha", "schoolPilotAppSha", "schoolPilotImageDigest", "pilotApiTaskDefinitionArn",
+        "pilotWorkerTaskDefinitionArn", "pilotRuntimeConfigurationSha256", "checks"
+    )
+    Assert-ExactProperties -Value $evidence -Allowed $allowed -Trail "student-gate pilot evidence"
+    $present = @($evidence.PSObject.Properties.Name)
+    if (@($allowed | Where-Object { $present -cnotcontains $_ }).Count -ne 0) {
+        throw "Student-gate pilot evidence is incomplete."
+    }
+    if (-not (Test-IsJsonInteger -Value $evidence.schemaVersion) -or [long]$evidence.schemaVersion -ne 1) {
+        throw "Student-gate pilot evidence schemaVersion must be the integer 1."
+    }
+    foreach ($name in @(
+        "validatedAt", "observedFrom", "observedThrough", "pilotSchoolId", "schoolPilotToolSha", "schoolPilotAppSha",
+        "schoolPilotImageDigest", "pilotApiTaskDefinitionArn", "pilotWorkerTaskDefinitionArn",
+        "pilotRuntimeConfigurationSha256"
+    )) {
+        if ($evidence.$name -isnot [string]) { throw "Student-gate pilot evidence is incomplete." }
+    }
+    $validatedAtText = Get-FreshEvidenceTimestamp -Value ([string]$evidence.validatedAt) `
+        -Label "Student-gate pilot evidence" -Now $Now
+    try {
+        $validatedAt = [DateTimeOffset]::ParseExact(
+            $validatedAtText, "o", [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::RoundtripKind
+        )
+        $observedFrom = [DateTimeOffset]::ParseExact(
+            [string]$evidence.observedFrom, "o", [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::RoundtripKind
+        )
+        $observedThrough = [DateTimeOffset]::ParseExact(
+            [string]$evidence.observedThrough, "o", [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::RoundtripKind
+        )
+    }
+    catch {
+        throw "Student-gate pilot observation timestamps must use exact ISO-8601 values."
+    }
+    $observationDuration = $observedThrough - $observedFrom
+    $evidenceLag = $validatedAt - $observedThrough
+    if ($observationDuration.TotalMinutes -lt 30 -or $observationDuration.TotalHours -gt 24 -or
+        $evidenceLag.TotalMinutes -lt 0 -or $evidenceLag.TotalMinutes -gt 30) {
+        throw "Student-gate pilot evidence does not cover the reviewed recent observation window."
+    }
+    if ([string]$evidence.pilotSchoolId -cne $PilotSchoolId -or
+        [string]$evidence.schoolPilotToolSha -cne $ToolSha -or
+        [string]$evidence.schoolPilotAppSha -cne $AppSha -or
+        [string]$evidence.schoolPilotImageDigest -cne $ImageDigest -or
+        [string]$evidence.pilotApiTaskDefinitionArn -cne $ApiTaskDefinitionArn -or
+        [string]$evidence.pilotWorkerTaskDefinitionArn -cne $WorkerTaskDefinitionArn -or
+        [string]$evidence.pilotRuntimeConfigurationSha256 -cne $RuntimeConfigurationSha256) {
+        throw "Student-gate pilot evidence does not bind the exact pilot deployment authority."
+    }
+    $requiredChecks = @(
+        "fullSchoolActivityWindowObserved", "managedCapabilityNegotiated",
+        "freshActiveStudentHidden", "sameChromebookResumePassed",
+        "crossChromebookPlainNamePassed", "correctPinTransferPassed",
+        "wrongPinPreservedSession", "cancelSignOutHeartbeatRehides",
+        "concurrentTransferSingleWinner", "runtimeAndRosterErrorsWithinBudget",
+        "noAuthorizationOrPrivacyDefects"
+    )
+    Assert-ExactProperties -Value $evidence.checks -Allowed $requiredChecks `
+        -Trail "student-gate pilot evidence.checks"
+    $presentChecks = @($evidence.checks.PSObject.Properties.Name)
+    if (@($requiredChecks | Where-Object { $presentChecks -cnotcontains $_ }).Count -ne 0) {
+        throw "Student-gate pilot evidence checks are incomplete."
+    }
+    foreach ($name in $requiredChecks) {
+        $value = $evidence.checks.$name
+        if ($value -isnot [bool] -or -not $value) {
+            throw "Student-gate pilot evidence checks are incomplete."
         }
     }
     return [pscustomobject]@{
@@ -1685,15 +1897,21 @@ function Get-RuntimeActivationState {
     if ($wrongCase.Count -ne 0) { throw "Runtime configuration contains a mis-cased managed environment name." }
     $managed = @($Environment | Where-Object { [string]$_.name -cin $script:RuntimeEnvironmentNames })
     if ($managed.Count -eq 0 -and $AllowBaseline) {
-        return [pscustomobject]@{ Mode = "baseline"; SchoolId = $null; PrefixCount = -1 }
+        return [pscustomobject]@{
+            Mode = "baseline"; SchoolId = $null; PrefixCount = -1
+            StudentGateMode = "off"; StudentGateSchoolId = $null
+        }
     }
-    $trackingWindowFlag = [string]$script:CapabilityFlags[$script:TrackingWindowCapability]
-    $legacyTrackingWindowAbsent = $AllowBaseline -and
-        @($managed | Where-Object name -CEQ $trackingWindowFlag).Count -eq 0
-    $expectedEnvironmentNames = if ($legacyTrackingWindowAbsent) {
-        @($script:RuntimeEnvironmentNames | Where-Object { $_ -cne $trackingWindowFlag })
-    }
-    else { @($script:RuntimeEnvironmentNames) }
+    $absentAdditiveCapabilities = @($script:AdditiveCapabilities | Where-Object {
+        $flagName = [string]$script:CapabilityFlags[$_]
+        $AllowBaseline -and @($managed | Where-Object name -CEQ $flagName).Count -eq 0
+    })
+    $absentAdditiveFlags = @($absentAdditiveCapabilities | ForEach-Object {
+        [string]$script:CapabilityFlags[$_]
+    })
+    $expectedEnvironmentNames = @($script:RuntimeEnvironmentNames | Where-Object {
+        $_ -cnotin $absentAdditiveFlags
+    })
     if ($managed.Count -ne $expectedEnvironmentNames.Count -or
         @($expectedEnvironmentNames | Where-Object { $managed.name -cnotcontains $_ }).Count -ne 0 -or
         @($managed.name | Group-Object -CaseSensitive | Where-Object Count -ne 1).Count -ne 0) {
@@ -1701,21 +1919,22 @@ function Get-RuntimeActivationState {
     }
     $values = @{}
     foreach ($entry in $managed) { $values[[string]$entry.name] = [string]$entry.value }
-    if ($legacyTrackingWindowAbsent) { $values[$trackingWindowFlag] = "false" }
+    foreach ($capability in $absentAdditiveCapabilities) {
+        $values[[string]$script:CapabilityFlags[$capability]] = "false"
+    }
     $protocol = $values.CLASSPILOT_PROTOCOL_V3_ENABLED
     if ($protocol -cnotin @("true", "false")) { throw "Active protocol mode is invalid." }
     $rollouts = ConvertFrom-StrictJsonText -Text $values.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON
-    $expectedRolloutCapabilities = if ($legacyTrackingWindowAbsent) {
-        @($script:AllCapabilities | Where-Object { $_ -cne $script:TrackingWindowCapability })
-    }
-    else { @($script:AllCapabilities) }
+    $expectedRolloutCapabilities = @($script:AllCapabilities | Where-Object {
+        $_ -cnotin $absentAdditiveCapabilities
+    })
     Assert-ExactProperties -Value $rollouts -Allowed $expectedRolloutCapabilities -Trail "active rollout registry"
     $presentCapabilities = @($rollouts.PSObject.Properties.Name)
     if (@($expectedRolloutCapabilities | Where-Object { $presentCapabilities -cnotcontains $_ }).Count -ne 0) {
         throw "Active rollout registry is incomplete."
     }
-    if ($legacyTrackingWindowAbsent) {
-        $rollouts | Add-Member -NotePropertyName $script:TrackingWindowCapability `
+    foreach ($capability in $absentAdditiveCapabilities) {
+        $rollouts | Add-Member -NotePropertyName $capability `
             -NotePropertyValue ([pscustomobject]@{ mode = "off" })
     }
     foreach ($capability in $script:AllCapabilities) {
@@ -1734,7 +1953,10 @@ function Get-RuntimeActivationState {
                 throw "Protocol-off runtime configuration is not fully contained."
             }
         }
-        return [pscustomobject]@{ Mode = "off"; SchoolId = $null; PrefixCount = -1 }
+        return [pscustomobject]@{
+            Mode = "off"; SchoolId = $null; PrefixCount = -1
+            StudentGateMode = "off"; StudentGateSchoolId = $null
+        }
     }
 
     foreach ($capability in $script:RepairedCapabilities) {
@@ -1749,6 +1971,7 @@ function Get-RuntimeActivationState {
     if ([string]$rollouts.scopedAuthorityChecksV1.mode -cne "on") {
         throw "Protocol-on runtime configuration requires the repaired authority marker."
     }
+    $trackingWindowFlag = [string]$script:CapabilityFlags[$script:TrackingWindowCapability]
     $trackingWindowFlagValue = [string]$values[$trackingWindowFlag]
     $trackingWindowRollout = $rollouts.$($script:TrackingWindowCapability)
     if ($trackingWindowFlagValue -cnotin @("true", "false")) {
@@ -1762,6 +1985,39 @@ function Get-RuntimeActivationState {
     }
     elseif ([string]$trackingWindowRollout.mode -cne "on") {
         throw "Tracking-window screenshots require both matching activation controls."
+    }
+
+    $studentGateFlag = [string]$script:CapabilityFlags[$script:StudentGatePresenceCapability]
+    $studentGateFlagValue = [string]$values[$studentGateFlag]
+    $studentGateRollout = $rollouts.$($script:StudentGatePresenceCapability)
+    if ($studentGateFlagValue -cnotin @("true", "false")) {
+        throw "Student auth-gate presence kill switch is invalid."
+    }
+    $studentGateMode = "off"
+    $studentGateSchoolId = $null
+    if ($studentGateFlagValue -ceq "false") {
+        if ([string]$studentGateRollout.mode -cne "off" -or
+            $studentGateRollout.PSObject.Properties.Name -contains "schoolIds") {
+            throw "Student auth-gate presence requires both matching activation controls."
+        }
+    }
+    elseif ([string]$studentGateRollout.mode -cne "on") {
+        throw "Student auth-gate presence requires both matching activation controls."
+    }
+    elseif (-not ($studentGateRollout.PSObject.Properties.Name -contains "schoolIds")) {
+        $studentGateMode = "global-on"
+    }
+    else {
+        if ($studentGateRollout.schoolIds -isnot [Array]) {
+            throw "Student auth-gate pilot school scope must be an array."
+        }
+        $studentGateSchoolIds = @($studentGateRollout.schoolIds)
+        if ($studentGateSchoolIds.Count -ne 1 -or
+            [string]$studentGateSchoolIds[0] -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
+            throw "Student auth-gate pilot runtime configuration has invalid school scope."
+        }
+        $studentGateMode = "pilot"
+        $studentGateSchoolId = [string]$studentGateSchoolIds[0]
     }
 
     $markerSchoolIds = @()
@@ -1779,10 +2035,16 @@ function Get-RuntimeActivationState {
             }
         }
         if ($trackingWindowFlagValue -ceq "false") {
-            return [pscustomobject]@{ Mode = "global-on"; SchoolId = $null; PrefixCount = $script:ActivationOrder.Count }
+            return [pscustomobject]@{
+                Mode = "global-on"; SchoolId = $null; PrefixCount = $script:ActivationOrder.Count
+                StudentGateMode = $studentGateMode; StudentGateSchoolId = $studentGateSchoolId
+            }
         }
         if (-not ($trackingWindowRollout.PSObject.Properties.Name -contains "schoolIds")) {
-            return [pscustomobject]@{ Mode = "tracking-window-global-on"; SchoolId = $null; PrefixCount = $script:ActivationOrder.Count }
+            return [pscustomobject]@{
+                Mode = "tracking-window-global-on"; SchoolId = $null; PrefixCount = $script:ActivationOrder.Count
+                StudentGateMode = $studentGateMode; StudentGateSchoolId = $studentGateSchoolId
+            }
         }
         if ($trackingWindowRollout.schoolIds -isnot [Array]) {
             throw "Tracking-window pilot school scope must be an array."
@@ -1796,11 +2058,13 @@ function Get-RuntimeActivationState {
             Mode = "tracking-window-pilot"
             SchoolId = [string]$trackingWindowSchoolIds[0]
             PrefixCount = $script:ActivationOrder.Count
+            StudentGateMode = $studentGateMode
+            StudentGateSchoolId = $studentGateSchoolId
         }
     }
 
-    if ($trackingWindowFlagValue -cne "false") {
-        throw "Test-school activation must keep tracking-window screenshots disabled."
+    if ($trackingWindowFlagValue -cne "false" -or $studentGateMode -cne "off") {
+        throw "Test-school activation must keep additive capabilities disabled."
     }
 
     if ($markerSchoolIds.Count -ne 1 -or [string]$markerSchoolIds[0] -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
@@ -1825,7 +2089,10 @@ function Get-RuntimeActivationState {
         }
         else { $encounteredOff = $true }
     }
-    return [pscustomobject]@{ Mode = "test-school"; SchoolId = $schoolId; PrefixCount = $prefixCount }
+    return [pscustomobject]@{
+        Mode = "test-school"; SchoolId = $schoolId; PrefixCount = $prefixCount
+        StudentGateMode = "off"; StudentGateSchoolId = $null
+    }
 }
 
 function Assert-AllowedRuntimeTransition {
@@ -1842,6 +2109,43 @@ function Assert-AllowedRuntimeTransition {
         [pscustomobject]@{ name = [string]$_.Key; value = [string]$_.Value }
     })
     $target = Get-RuntimeActivationState -Environment $targetEnvironment
+    if ([string]$TargetRuntimeConfiguration.Mode -cin @(
+        "student-gate-pilot", "student-gate-global-on", "student-gate-off"
+    )) {
+        if ([string]$source.Mode -cne [string]$target.Mode -or
+            [string]$source.SchoolId -cne [string]$target.SchoolId -or
+            [int]$source.PrefixCount -ne [int]$target.PrefixCount) {
+            throw "Student-gate rollout must preserve the existing repaired and screenshot runtime state."
+        }
+        if ($TargetRuntimeConfiguration.PSObject.Properties.Name -contains "SourceMode" -and
+            [string]$TargetRuntimeConfiguration.SourceMode -cne [string]$source.Mode) {
+            throw "Student-gate rollout source identity changed after resolution."
+        }
+        if ([string]$TargetRuntimeConfiguration.Mode -ceq "student-gate-pilot") {
+            if ([string]$source.StudentGateMode -cne "off" -or
+                [string]$target.StudentGateMode -cne "pilot" -or
+                [string]$target.StudentGateSchoolId -cne [string]$TargetRuntimeConfiguration.PilotSchoolId) {
+                throw "Student-gate activation must begin with one exact school-scoped pilot."
+            }
+            return
+        }
+        if ([string]$TargetRuntimeConfiguration.Mode -ceq "student-gate-global-on") {
+            if ([string]$source.StudentGateMode -cne "pilot" -or
+                [string]$target.StudentGateMode -cne "global-on") {
+                throw "Student-gate global activation must advance from the school-scoped pilot."
+            }
+            return
+        }
+        if ([string]$source.StudentGateMode -cnotin @("pilot", "global-on") -or
+            [string]$target.StudentGateMode -cne "off") {
+            throw "Student-gate rollback requires an active student-gate rollout."
+        }
+        return
+    }
+    if ([string]$target.Mode -cin @("tracking-window-pilot", "tracking-window-global-on") -and
+        [string]$source.StudentGateMode -cne "off") {
+        throw "Tracking-window transitions require student auth-gate presence to be disabled independently first."
+    }
     if ($target.Mode -ceq "off") { return }
     if ($target.Mode -ceq "test-school") {
         if ($source.Mode -cin @("baseline", "off")) {
@@ -2493,6 +2797,7 @@ function New-RuntimeConfigPlan {
         [string]$PrivateSyntheticValidationPath,
         [string]$PrivateManagedTestWaiverPath,
         [string]$PrivateTrackingPilotEvidencePath,
+        [string]$PrivateStudentGatePilotEvidencePath,
         [Parameter(Mandatory = $true)][string]$EvidenceRoot,
         [Parameter(Mandatory = $true)][string]$AppSha,
         [Parameter(Mandatory = $true)][string]$ImageDigest,
@@ -2530,7 +2835,8 @@ function New-RuntimeConfigPlan {
     }
     $profileSnapshot = Read-StrictJsonSnapshot -Path $PrivateProfilePath
     $profile = $profileSnapshot.Value
-    $runtime = ConvertTo-RuntimeConfiguration -Profile $profile
+    $runtimeIntent = ConvertTo-RuntimeConfiguration -Profile $profile
+    $runtime = $runtimeIntent
     $toolSha = if ($SkipRepositoryCheck -or $runtime.Mode -ceq "off") {
         Get-RepositoryHeadSha -RepositoryRoot $RepositoryRoot
     }
@@ -2549,6 +2855,20 @@ function New-RuntimeConfigPlan {
         $PrivateTrackingPilotEvidencePath = Assert-PrivateInputPath -Path $PrivateTrackingPilotEvidencePath `
             -RepositoryRoot $RepositoryRoot
         $trackingPilotEvidenceSnapshot = Read-StrictJsonSnapshot -Path $PrivateTrackingPilotEvidencePath
+    }
+    $studentGatePilotEvidenceRequired = $runtime.Mode -ceq "student-gate-global-on"
+    if ($studentGatePilotEvidenceRequired -and [string]::IsNullOrWhiteSpace($PrivateStudentGatePilotEvidencePath)) {
+        throw "Student-gate global activation requires fresh pilot smoke and soak evidence."
+    }
+    if (-not $studentGatePilotEvidenceRequired -and
+        -not [string]::IsNullOrWhiteSpace($PrivateStudentGatePilotEvidencePath)) {
+        throw "Student-gate pilot evidence is valid only for student-gate-global-on activation."
+    }
+    $studentGatePilotEvidenceSnapshot = $null
+    if ($studentGatePilotEvidenceRequired) {
+        $PrivateStudentGatePilotEvidencePath = Assert-PrivateInputPath `
+            -Path $PrivateStudentGatePilotEvidencePath -RepositoryRoot $RepositoryRoot
+        $studentGatePilotEvidenceSnapshot = Read-StrictJsonSnapshot -Path $PrivateStudentGatePilotEvidencePath
     }
     if ($syntheticOnlyWaiver -and $runtime.Mode -cne "global-on") {
         throw "Synthetic-only waiver evidence is valid only for global-on activation."
@@ -2582,6 +2902,8 @@ function New-RuntimeConfigPlan {
         -RuntimeConfiguration $runtime -SkipRepositoryCheck:($SkipRepositoryCheck -or $runtime.Mode -ceq "off") `
         -SkipEcrShaCheck:($runtime.Mode -ceq "off") `
         -MaximumApiDesiredCount $(if ($runtime.Mode -ceq "off" -or $ConfirmProtectedWindowProductionMutation) { 6 } else { 2 })
+    $runtime = Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $runtimeIntent `
+        -SourceTaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api"
     Assert-AllowedRuntimeTransition -SourceTaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api" `
         -TargetRuntimeConfiguration $runtime -AllowSyntheticOnlyGlobalActivation:$syntheticOnlyWaiver
     $trackingPilotEvidence = $null
@@ -2597,6 +2919,24 @@ function New-RuntimeConfigPlan {
             -WorkerTaskDefinitionArn $WorkerTaskDefinitionArn `
             -RuntimeConfigurationSha256 $sourceRuntimeConfigurationSha256 -Now $Now
     }
+    $studentGatePilotEvidence = $null
+    if ($studentGatePilotEvidenceRequired) {
+        $sourceContainer = @($snapshot.ApiTask.taskDefinition.containerDefinitions | Where-Object name -CEQ "api")
+        if ($sourceContainer.Count -ne 1) { throw "Student-gate pilot source runtime container is ambiguous." }
+        $sourceState = Get-RuntimeActivationState -Environment @($sourceContainer[0].environment) -AllowBaseline
+        if ([string]$sourceState.StudentGateMode -cne "pilot") {
+            throw "Student-gate global activation requires the exact active school-scoped pilot."
+        }
+        $sourceRuntimeConfigurationSha256 = Get-ManagedRuntimeFingerprint `
+            -TaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api"
+        $studentGatePilotEvidence = Assert-StudentGatePilotEvidence `
+            -EvidenceSnapshot $studentGatePilotEvidenceSnapshot `
+            -PilotSchoolId ([string]$sourceState.StudentGateSchoolId) `
+            -ToolSha $toolSha -AppSha $AppSha -ImageDigest $ImageDigest `
+            -ApiTaskDefinitionArn $ApiTaskDefinitionArn `
+            -WorkerTaskDefinitionArn $WorkerTaskDefinitionArn `
+            -RuntimeConfigurationSha256 $sourceRuntimeConfigurationSha256 -Now $Now
+    }
     $root = Assert-PrivateExternalRoot -Root $EvidenceRoot -RepositoryRoot $RepositoryRoot
     $runId = $Now.ToUniversalTime().ToString("yyyyMMddTHHmmssfffZ") + "-" + [Guid]::NewGuid().ToString("N").Substring(0, 12)
     $runDirectory = Join-Path $root $runId
@@ -2607,6 +2947,9 @@ function New-RuntimeConfigPlan {
     $syntheticValidationFile = if ($null -ne $syntheticValidationSnapshot) { "synthetic-validation.json" } else { $null }
     $managedTestWaiverFile = if ($null -ne $managedTestWaiverSnapshot) { "managed-test-waiver.json" } else { $null }
     $trackingPilotEvidenceFile = if ($null -ne $trackingPilotEvidenceSnapshot) { "tracking-pilot-evidence.json" } else { $null }
+    $studentGatePilotEvidenceFile = if ($null -ne $studentGatePilotEvidenceSnapshot) {
+        "student-gate-pilot-evidence.json"
+    } else { $null }
     Write-PrivateBytes -Path (Join-Path $runDirectory $profileFile) -Bytes $profileSnapshot.Bytes
     if ($null -ne $turnEvidenceSnapshot) {
         Write-PrivateBytes -Path (Join-Path $runDirectory $turnEvidenceFile) -Bytes $turnEvidenceSnapshot.Bytes
@@ -2618,6 +2961,10 @@ function New-RuntimeConfigPlan {
     if ($null -ne $trackingPilotEvidenceSnapshot) {
         Write-PrivateBytes -Path (Join-Path $runDirectory $trackingPilotEvidenceFile) `
             -Bytes $trackingPilotEvidenceSnapshot.Bytes
+    }
+    if ($null -ne $studentGatePilotEvidenceSnapshot) {
+        Write-PrivateBytes -Path (Join-Path $runDirectory $studentGatePilotEvidenceFile) `
+            -Bytes $studentGatePilotEvidenceSnapshot.Bytes
     }
     $manifest = [ordered]@{
         schemaVersion = 2
@@ -2637,8 +2984,12 @@ function New-RuntimeConfigPlan {
         managedTestWaiverSha256 = if ($null -ne $managedTestWaiver) { $managedTestWaiver.EvidenceSha256 } else { $null }
         trackingPilotEvidenceFile = $trackingPilotEvidenceFile
         trackingPilotEvidenceSha256 = if ($null -ne $trackingPilotEvidence) { $trackingPilotEvidence.EvidenceSha256 } else { $null }
-        validationLevel = if ($syntheticOnlyWaiver) { "synthetic_only" } elseif ($runtime.Mode -cin @("global-on", "tracking-window-global-on")) { "managed" } else { "not_applicable" }
-        managedValidation = if ($syntheticOnlyWaiver) { "waived_not_passed" } elseif ($runtime.Mode -cin @("global-on", "tracking-window-global-on")) { "passed" } else { "not_applicable" }
+        studentGatePilotEvidenceFile = $studentGatePilotEvidenceFile
+        studentGatePilotEvidenceSha256 = if ($null -ne $studentGatePilotEvidence) {
+            $studentGatePilotEvidence.EvidenceSha256
+        } else { $null }
+        validationLevel = if ($syntheticOnlyWaiver) { "synthetic_only" } elseif ($runtime.Mode -cin @("global-on", "tracking-window-global-on", "student-gate-global-on")) { "managed" } else { "not_applicable" }
+        managedValidation = if ($syntheticOnlyWaiver) { "waived_not_passed" } elseif ($runtime.Mode -cin @("global-on", "tracking-window-global-on", "student-gate-global-on")) { "passed" } else { "not_applicable" }
         protectedWindowProductionMutation = [bool]$ConfirmProtectedWindowProductionMutation
         repositoryRoot = [IO.Path]::GetFullPath($RepositoryRoot)
         toolSha = $toolSha
@@ -2682,6 +3033,7 @@ function Read-RuntimePlan {
         "turnEvidenceFile", "turnEvidenceSha256", "syntheticValidationFile", "syntheticValidationSha256",
         "managedTestWaiverFile", "managedTestWaiverSha256", "validationLevel", "managedValidation",
         "trackingPilotEvidenceFile", "trackingPilotEvidenceSha256",
+        "studentGatePilotEvidenceFile", "studentGatePilotEvidenceSha256",
         "protectedWindowProductionMutation",
         "repositoryRoot", "toolSha", "appSha", "imageDigest", "priorApiTaskDefinitionArn",
         "priorWorkerTaskDefinitionArn", "scaling", "deploymentBounds", "deploymentConfigurationSha256",
@@ -2739,6 +3091,16 @@ function Read-RuntimePlan {
             [string]$plan.profileMode -ceq "tracking-window-global-on"))) {
         throw "Runtime plan tracking-window pilot evidence identity is invalid."
     }
+    $hasStudentGatePilotEvidence = [string]$plan.studentGatePilotEvidenceSha256 -match '^[0-9a-f]{64}$'
+    if (($hasStudentGatePilotEvidence -and
+            ([string]$plan.profileMode -cne "student-gate-global-on" -or
+                [string]$plan.studentGatePilotEvidenceFile -cne "student-gate-pilot-evidence.json")) -or
+        (-not $hasStudentGatePilotEvidence -and
+            ($null -ne $plan.studentGatePilotEvidenceFile -or
+                $null -ne $plan.studentGatePilotEvidenceSha256 -or
+                [string]$plan.profileMode -ceq "student-gate-global-on"))) {
+        throw "Runtime plan student-gate pilot evidence identity is invalid."
+    }
     if ($plan.protectedWindowProductionMutation -isnot [bool]) {
         throw "Runtime plan protected-window authority is invalid."
     }
@@ -2750,7 +3112,7 @@ function Read-RuntimePlan {
             throw "Runtime plan synthetic-only activation authority is invalid."
         }
     }
-    elseif ([string]$plan.profileMode -cin @("global-on", "tracking-window-global-on")) {
+    elseif ([string]$plan.profileMode -cin @("global-on", "tracking-window-global-on", "student-gate-global-on")) {
         if ([string]$plan.validationLevel -cne "managed" -or [string]$plan.managedValidation -cne "passed") {
             throw "Runtime plan strict managed activation authority is invalid."
         }
@@ -2772,6 +3134,9 @@ function Read-RuntimePlan {
     )
     $plan | Add-Member -NotePropertyName trackingPilotEvidencePath -NotePropertyValue $(
         if ($hasTrackingPilotEvidence) { Join-Path $runDirectory "tracking-pilot-evidence.json" } else { $null }
+    )
+    $plan | Add-Member -NotePropertyName studentGatePilotEvidencePath -NotePropertyValue $(
+        if ($hasStudentGatePilotEvidence) { Join-Path $runDirectory "student-gate-pilot-evidence.json" } else { $null }
     )
     $plan | Add-Member -NotePropertyName checkpointPath -NotePropertyValue (Join-Path $runDirectory "checkpoint.json")
     $plan | Add-Member -NotePropertyName resultPath -NotePropertyValue (Join-Path $runDirectory "result.json")
@@ -2803,6 +3168,9 @@ function Write-ResultEvidence {
         syntheticValidationSha256 = if ($null -ne $Plan.syntheticValidationSha256) { [string]$Plan.syntheticValidationSha256 } else { $null }
         managedTestWaiverSha256 = if ($null -ne $Plan.managedTestWaiverSha256) { [string]$Plan.managedTestWaiverSha256 } else { $null }
         trackingPilotEvidenceSha256 = if ($null -ne $Plan.trackingPilotEvidenceSha256) { [string]$Plan.trackingPilotEvidenceSha256 } else { $null }
+        studentGatePilotEvidenceSha256 = if ($null -ne $Plan.studentGatePilotEvidenceSha256) {
+            [string]$Plan.studentGatePilotEvidenceSha256
+        } else { $null }
         validationLevel = [string]$Plan.validationLevel
         managedValidation = [string]$Plan.managedValidation
         protectedWindowProductionMutation = [bool]$Plan.protectedWindowProductionMutation
@@ -2863,13 +3231,10 @@ function Invoke-RuntimeConfigApply {
     if ([string]$profileSnapshot.Sha256 -cne [string]$Plan.profileSha256) {
         throw "Private runtime profile changed after planning."
     }
-    $runtime = ConvertTo-RuntimeConfiguration -Profile $profileSnapshot.Value
-    if ($runtime.Mode -cne [string]$Plan.profileMode -or $runtime.SchoolScopeCount -ne [int]$Plan.schoolScopeCount -or
-        @($runtime.EnabledCapabilities).Count -ne [int]$Plan.enabledCapabilityCount) {
+    $runtimeIntent = ConvertTo-RuntimeConfiguration -Profile $profileSnapshot.Value
+    $runtime = $runtimeIntent
+    if ($runtime.Mode -cne [string]$Plan.profileMode -or $runtime.SchoolScopeCount -ne [int]$Plan.schoolScopeCount) {
         throw "Runtime profile semantics changed after planning."
-    }
-    if ((Get-RuntimeConfigurationSha256 -RuntimeConfiguration $runtime) -cne [string]$Plan.runtimeConfigurationSha256) {
-        throw "Runtime profile authority changed after planning."
     }
     $runtimeMutationEasternTime = $null
     if ($runtime.Mode -cne "off") {
@@ -2908,12 +3273,29 @@ function Invoke-RuntimeConfigApply {
             throw "Tracking-window pilot evidence changed after planning."
         }
     }
+    $studentGatePilotEvidenceSnapshot = $null
+    if ($runtime.Mode -ceq "student-gate-global-on") {
+        $studentGatePilotEvidenceSnapshot = Read-StrictJsonSnapshot `
+            -Path ([string]$Plan.studentGatePilotEvidencePath)
+        if ([string]$studentGatePilotEvidenceSnapshot.Sha256 -cne
+            [string]$Plan.studentGatePilotEvidenceSha256) {
+            throw "Student-gate pilot evidence changed after planning."
+        }
+    }
     $snapshot = Get-ValidatedProductionSnapshot -RepositoryRoot ([string]$Plan.repositoryRoot) `
         -ToolSha ([string]$Plan.toolSha) -AppSha ([string]$Plan.appSha) `
         -ImageDigest ([string]$Plan.imageDigest) -ApiTaskDefinitionArn ([string]$Plan.priorApiTaskDefinitionArn) `
         -WorkerTaskDefinitionArn ([string]$Plan.priorWorkerTaskDefinitionArn) -RuntimeConfiguration $runtime `
         -SkipRepositoryCheck:($SkipRepositoryCheck -or $runtime.Mode -ceq "off") `
         -SkipEcrShaCheck:($runtime.Mode -ceq "off") -MaximumApiDesiredCount $maximumApiDesiredCount
+    $runtime = Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $runtimeIntent `
+        -SourceTaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api"
+    if (@($runtime.EnabledCapabilities).Count -ne [int]$Plan.enabledCapabilityCount) {
+        throw "Runtime profile enabled-capability semantics changed after planning."
+    }
+    if ((Get-RuntimeConfigurationSha256 -RuntimeConfiguration $runtime) -cne [string]$Plan.runtimeConfigurationSha256) {
+        throw "Runtime profile authority changed after planning."
+    }
     if ($runtime.Mode -cne "off" -and
         [int]$snapshot.Scaling.Min -ne (Get-ScheduledApiMinimum -NowEastern $runtimeMutationEasternTime)) {
         throw "Production API MinCapacity does not match the reviewed current 05:45/10:00 schedule."
@@ -2931,6 +3313,22 @@ function Invoke-RuntimeConfigApply {
         [void](Assert-TrackingWindowPilotEvidence -EvidenceSnapshot $trackingPilotEvidenceSnapshot `
             -PilotSchoolId ([string]$sourceState.SchoolId) -ToolSha ([string]$Plan.toolSha) `
             -AppSha ([string]$Plan.appSha) `
+            -ImageDigest ([string]$Plan.imageDigest) `
+            -ApiTaskDefinitionArn ([string]$Plan.priorApiTaskDefinitionArn) `
+            -WorkerTaskDefinitionArn ([string]$Plan.priorWorkerTaskDefinitionArn) `
+            -RuntimeConfigurationSha256 (Get-ManagedRuntimeFingerprint `
+                -TaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api") -Now $Now)
+    }
+    if ($runtime.Mode -ceq "student-gate-global-on") {
+        $sourceContainer = @($snapshot.ApiTask.taskDefinition.containerDefinitions | Where-Object name -CEQ "api")
+        if ($sourceContainer.Count -ne 1) { throw "Student-gate pilot source runtime container is ambiguous." }
+        $sourceState = Get-RuntimeActivationState -Environment @($sourceContainer[0].environment) -AllowBaseline
+        if ([string]$sourceState.StudentGateMode -cne "pilot") {
+            throw "Student-gate global activation requires the exact active school-scoped pilot."
+        }
+        [void](Assert-StudentGatePilotEvidence -EvidenceSnapshot $studentGatePilotEvidenceSnapshot `
+            -PilotSchoolId ([string]$sourceState.StudentGateSchoolId) `
+            -ToolSha ([string]$Plan.toolSha) -AppSha ([string]$Plan.appSha) `
             -ImageDigest ([string]$Plan.imageDigest) `
             -ApiTaskDefinitionArn ([string]$Plan.priorApiTaskDefinitionArn) `
             -WorkerTaskDefinitionArn ([string]$Plan.priorWorkerTaskDefinitionArn) `
@@ -3190,7 +3588,7 @@ function Invoke-RuntimeConfigRollback {
         "schemaVersion", "runId", "recordedAt", "status", "planSha256", "profileSha256",
         "profileMode", "schoolScopeCount", "enabledCapabilityCount", "runtimeConfigurationSha256",
         "syntheticValidationSha256", "managedTestWaiverSha256", "validationLevel", "managedValidation",
-        "trackingPilotEvidenceSha256",
+        "trackingPilotEvidenceSha256", "studentGatePilotEvidenceSha256",
         "protectedWindowProductionMutation",
         "toolSha", "appSha", "imageDigest",
         "priorApiTaskDefinitionArn", "priorWorkerTaskDefinitionArn", "priorDeploymentBounds",
@@ -3211,6 +3609,7 @@ function Invoke-RuntimeConfigRollback {
         [string]$result.syntheticValidationSha256 -cne [string]$Plan.syntheticValidationSha256 -or
         [string]$result.managedTestWaiverSha256 -cne [string]$Plan.managedTestWaiverSha256 -or
         [string]$result.trackingPilotEvidenceSha256 -cne [string]$Plan.trackingPilotEvidenceSha256 -or
+        [string]$result.studentGatePilotEvidenceSha256 -cne [string]$Plan.studentGatePilotEvidenceSha256 -or
         [string]$result.validationLevel -cne [string]$Plan.validationLevel -or
         [string]$result.managedValidation -cne [string]$Plan.managedValidation -or
         $result.protectedWindowProductionMutation -isnot [bool] -or
@@ -3448,7 +3847,9 @@ function Invoke-Main {
             $result = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $ProfilePath `
                 -PrivateTurnEvidencePath $TurnEvidencePath -PrivateSyntheticValidationPath $SyntheticValidationPath `
                 -PrivateManagedTestWaiverPath $ManagedTestWaiverPath `
-                -PrivateTrackingPilotEvidencePath $TrackingPilotEvidencePath -EvidenceRoot $ExternalEvidenceRoot `
+                -PrivateTrackingPilotEvidencePath $TrackingPilotEvidencePath `
+                -PrivateStudentGatePilotEvidencePath $StudentGatePilotEvidencePath `
+                -EvidenceRoot $ExternalEvidenceRoot `
                 -AppSha $ExpectedAppSha -ImageDigest $ExpectedImageDigest `
                 -ApiTaskDefinitionArn $ExpectedApiTaskDefinitionArn -WorkerTaskDefinitionArn $ExpectedWorkerTaskDefinitionArn `
                 -ConfirmProductionMutation:$ConfirmProductionMutation `
