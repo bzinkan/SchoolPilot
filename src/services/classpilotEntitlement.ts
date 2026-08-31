@@ -8,6 +8,21 @@ export type ClasspilotEntitlement = {
   reason: "active" | "school_missing" | "school_inactive" | "license_inactive";
 };
 
+export type ResolveClasspilotEntitlementOptions = {
+  lock?: boolean;
+  /**
+   * Optional lock-order bridge for transactions that also need a
+   * school-scoped product/configuration lock. The school row remains locked
+   * while this hook runs; the ClassPilot license row is locked immediately
+   * afterwards. This keeps the canonical order:
+   *
+   *   school row -> product/configuration lock -> product license row
+   *
+   * The hook is intentionally unavailable to unlocked entitlement reads.
+   */
+  afterSchoolLockBeforeLicense?: () => Promise<void>;
+};
+
 type ClasspilotSchoolEntitlementRecord = {
   status: string;
   isActive: boolean;
@@ -39,8 +54,11 @@ export function isClasspilotSchoolActive(
 export async function resolveClasspilotEntitlement(
   schoolId: string,
   dbInstance: typeof db = db,
-  options: { lock?: boolean } = {}
+  options: ResolveClasspilotEntitlementOptions = {}
 ): Promise<ClasspilotEntitlement> {
+  if (options.afterSchoolLockBeforeLicense && !options.lock) {
+    throw new TypeError("ClassPilot entitlement lock bridge requires lock: true");
+  }
   const schoolQuery = dbInstance
     .select({
       id: schools.id,
@@ -58,8 +76,13 @@ export async function resolveClasspilotEntitlement(
     ? await schoolQuery.for("share")
     : await schoolQuery;
   if (!school) return { schoolId, entitled: false, reason: "school_missing" };
-  const now = new Date();
-  if (!isClasspilotSchoolActive(school, now)) {
+  if (!isClasspilotSchoolActive(school, new Date())) {
+    return { schoolId, entitled: false, reason: "school_inactive" };
+  }
+  await options.afterSchoolLockBeforeLicense?.();
+  // activeUntil advances independently of row locks. Recheck after a
+  // potentially blocked configuration-lock bridge before issuing authority.
+  if (!isClasspilotSchoolActive(school, new Date())) {
     return { schoolId, entitled: false, reason: "school_inactive" };
   }
   const licenseQuery = dbInstance
@@ -69,7 +92,10 @@ export async function resolveClasspilotEntitlement(
       eq(productLicenses.schoolId, schoolId),
       eq(productLicenses.product, "CLASSPILOT"),
       eq(productLicenses.status, "active"),
-      or(isNull(productLicenses.expiresAt), gt(productLicenses.expiresAt, sql`now()`))
+      or(
+        isNull(productLicenses.expiresAt),
+        gt(productLicenses.expiresAt, sql`clock_timestamp()`)
+      )
     ))
     .limit(1);
   const [license] = options.lock
@@ -83,7 +109,7 @@ export async function resolveClasspilotEntitlement(
 export async function assertClasspilotEntitled(
   schoolId: string,
   dbInstance: typeof db = db,
-  options: { lock?: boolean } = {}
+  options: ResolveClasspilotEntitlementOptions = {}
 ): Promise<void> {
   const entitlement = await resolveClasspilotEntitlement(schoolId, dbInstance, options);
   if (!entitlement.entitled) {

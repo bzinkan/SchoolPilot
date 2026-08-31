@@ -410,7 +410,7 @@ test('dashboard command entry points fail closed until the class roster is autho
 
   assert.match(
     dashboard,
-    /const resolveActiveCommandTarget = \(overrideStudentIds = null,[\s\S]{0,120}\) => \{\s*if \(classStudentTargetsUnavailable\) \{\s*throw new Error/,
+    /const resolveActiveCommandTarget = \([\s\S]{0,320}overrideStudentIds = null,[\s\S]{0,320}\) => \{\s*if \(classStudentTargetsUnavailable\) \{\s*throw new Error/,
     'the final command-target resolver must reject an unknown class roster',
   );
   assert.match(
@@ -422,6 +422,48 @@ test('dashboard command entry points fail closed until the class roster is autho
     dashboard,
     /dashboardCapabilities\.canUseTeacherFab && !classStudentTargetsUnavailable/,
     'Teacher FAB and its messaging entry point must remain unavailable without a roster snapshot',
+  );
+});
+
+test('late-sign-in restriction authoring is row-gated and command-specific', async () => {
+  const dashboard = await readFile(
+    new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(
+    dashboard,
+    /lateSignInRestrictionsEnabled = dashboardCapabilities\.ownedClassSession\s*&& lateSignInRestrictionGateEnabled\(sessionFilteredStudents\)/,
+    'the exact-school row projection must gate the signed-out authoring lane',
+  );
+  assert.match(
+    dashboard,
+    /commandSupportsLateSignInRestriction\(commandType, commandPayload\)[\s\S]{0,120}isStudentLateSignInRestrictionEligible\(student\)/,
+    'signed-out students must be commandable only for persistent restriction commands',
+  );
+  const genericCommandability = dashboard.slice(
+    dashboard.indexOf('const isStudentCommandable ='),
+    dashboard.indexOf('const isStudentServerSignOutEligible ='),
+  );
+  assert.doesNotMatch(
+    genericCommandability,
+    /lateSignInRestrictionSsoV1Enabled|signed_out|isStudentLateSignInRestrictionEligible/,
+    'a row-local capability must not make a signed-out student generically commandable',
+  );
+  assert.match(
+    dashboard,
+    /isStudentLateSignInRestrictionEligible = \(student\) => \([\s\S]{0,180}operatorEnabled: lateSignInRestrictionsEnabled/,
+    'signed-out restriction eligibility must fail closed on the aggregate exact-school gate',
+  );
+  assert.match(
+    dashboard,
+    /selectableStudents[\s\S]{0,220}\[\.\.\.controllableStudents, \.\.\.lateSignInRestrictionStudents\]/,
+    'Select All must include both online and gated signed-out students',
+  );
+  assert.match(
+    dashboard,
+    /partitionCurrentPageWaypointTargets\([\s\S]{0,180}explicitlySelectedStudents/,
+    'current-page Waypoints must partition away students without fresh telemetry',
   );
 });
 
@@ -454,10 +496,20 @@ test('sign-out-only selection closes command dialogs and cannot fall back to cla
     /assertClassroomCommandSelectionIsolation\(\s*commandType,\s*selectedServerSignOutStudentIds\.size,\s*\)/,
     'the final command builder must reject non-sign-out commands before resolving a default class target',
   );
-  assert.match(dashboard, /disabled=\{subgroupCommandsDisabled \|\| signOutOnlySelectionActive\} data-testid="button-open-tab"/);
+  assert.match(
+    dashboard,
+    /const nonRestrictionSelectionActive = signOutOnlySelectionActive\s*\|\| lateSignInRestrictionSelectionActive/,
+    'transient controls must treat both sign-out-only and deferred-restriction selections as unavailable',
+  );
+  assert.match(dashboard, /disabled=\{subgroupCommandsDisabled \|\| nonRestrictionSelectionActive\} data-testid="button-open-tab"/);
   assert.match(dashboard, /nonSignOutCommandsBlocked=\{signOutOnlySelectionActive\}/);
   assert.match(
     dashboard,
-    /dashboardCapabilities\.canUseTeacherFab && !classStudentTargetsUnavailable && !signOutOnlySelectionActive/,
+    /restrictionSelectionActive=\{lateSignInRestrictionSelectionActive\}/,
+    'individual student actions must be blocked while a deferred-restriction selection is active',
+  );
+  assert.match(
+    dashboard,
+    /dashboardCapabilities\.canUseTeacherFab && !classStudentTargetsUnavailable && !nonRestrictionSelectionActive/,
   );
 });

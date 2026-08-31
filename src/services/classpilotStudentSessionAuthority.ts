@@ -80,7 +80,7 @@ export function currentStudentSessionAuthorityPredicate(): SQL {
       ne(studentSessions.authKind, "manual_shared"),
       and(
         isNotNull(studentSessions.manualLeaseExpiresAt),
-        sql`${studentSessions.manualLeaseExpiresAt} > now()`
+        sql`${studentSessions.manualLeaseExpiresAt} > clock_timestamp()`
       )
     )
   )!;

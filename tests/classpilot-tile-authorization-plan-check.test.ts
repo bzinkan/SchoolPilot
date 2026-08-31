@@ -2151,7 +2151,7 @@ describe("ClassPilot tile authorization plan checker", () => {
     assert.match(service, /active_session\.is_active = true/);
     assert.match(
       service,
-      /active_session\.is_active = true[\s\S]*?AND NOT \([\s\S]*?active_session\.manual_lease_expires_at > now\(\)[\s\S]*?active_session\.student_id = requested\.student_id[\s\S]*?active_session\.device_id = requested\.device_id/
+      /active_session\.is_active = true[\s\S]*?AND NOT \([\s\S]*?active_session\.manual_lease_expires_at > clock_timestamp\(\)[\s\S]*?active_session\.student_id = requested\.student_id[\s\S]*?active_session\.device_id = requested\.device_id/
     );
     assert.match(
       service,

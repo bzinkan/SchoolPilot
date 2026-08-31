@@ -25,6 +25,13 @@ import {
 } from "../../services/classpilotCommandDispatcher.js";
 import { publicClasspilotCommand } from "../../services/classpilotCommandPublic.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
+import {
+  classpilotRealtimeFresh,
+  readClasspilotRealtimeStatusBatch,
+} from "../../services/classpilotRealtimeStatus.js";
+import { isClasspilotCapabilityActive } from "../../services/classpilotProtocol.js";
+import { classpilotCurrentPageSignedOutSkipReason } from "../../services/classpilotCurrentPage.js";
+import { classpilotCommandDeliveryPolicy } from "../../services/classpilotCommandDelivery.js";
 
 const router = Router();
 
@@ -36,6 +43,15 @@ const auth = [
 ] as const;
 
 type ClassroomTargetScope = "class" | "subgroup" | "students";
+
+const LATE_SIGN_IN_PERSISTENT_COMMANDS = new Set([
+  "lock-screen",
+  "unlock-screen",
+  "apply-flight-path",
+  "remove-flight-path",
+  "apply-block-list",
+  "remove-block-list",
+]);
 
 function normalizeTargetScope(value: unknown): ClassroomTargetScope | null {
   if (value === "class" || value === "subgroup" || value === "students") return value;
@@ -96,9 +112,17 @@ async function resolveTargets(req: Request, res: Response, body: any): Promise<R
     }
   }
 
-  const now = Date.now();
-  const activeWindowMs = 5 * 60 * 1000;
+  const commandType = String(body.commandType || "").trim();
   const serverAuthoritativeSignOut = String(body.commandType || "").trim() === "student-sign-out";
+  const currentPageWaypoint = commandType === "lock-screen"
+    && String(body.commandPayload?.url || "").trim() === "CURRENT_URL";
+  const lateSignInGateActive = isClasspilotCapabilityActive(
+    "lateSignInRestrictionSsoV1",
+    { schoolId }
+  );
+  const lateSignInAuthoringAllowed = lateSignInGateActive
+    && LATE_SIGN_IN_PERSISTENT_COMMANDS.has(commandType)
+    && !currentPageWaypoint;
   const resolved: ResolvedClasspilotCommandTarget[] = [];
   const selectedStudentIds = selectedRows.map((row) => row.studentId);
   // These queries intentionally run sequentially. Under RLS they share the
@@ -110,6 +134,16 @@ async function resolveTargets(req: Request, res: Response, body: any): Promise<R
   const coverageByStudent = new Map(activeCoverage.map((entry) => [entry.studentId, entry.context]));
   const classOwnerByStudent = new Map(activeClassOwners.map((owner) => [owner.studentId, owner]));
   const studentSessionByStudent = new Map(activeStudentSessions.map((session) => [session.studentId, session]));
+  const realtime = serverAuthoritativeSignOut
+    ? new Map()
+    : await readClasspilotRealtimeStatusBatch(
+        schoolId,
+        activeStudentSessions.map((session) => ({
+          studentId: session.studentId,
+          studentSessionId: session.id,
+          deviceId: session.deviceId,
+        }))
+      );
   for (const row of selectedRows) {
     const coverage = coverageByStudent.get(row.studentId);
     const studentName = row.student
@@ -141,24 +175,47 @@ async function resolveTargets(req: Request, res: Response, body: any): Promise<R
       continue;
     }
     const studentSession = studentSessionByStudent.get(row.studentId);
-    const lastSeenAt = studentSession?.lastSeenAt?.getTime?.() ?? 0;
-    const deviceReachable = !!studentSession && lastSeenAt > 0 && now - lastSeenAt <= activeWindowMs;
+    const realtimeRead = realtime.get(row.studentId);
+    const realtimeSnapshot = realtimeRead?.status === "hit" ? realtimeRead.snapshot : null;
+    const deviceReachable = !!studentSession
+      && !!realtimeSnapshot
+      && classpilotRealtimeFresh(realtimeSnapshot);
     // Sign-out is authoritative on the authenticated server session. A stale
     // heartbeat makes device delivery uncertain, but it must not preserve a
     // still-active session that the teacher explicitly selected for sign-out.
     const available = serverAuthoritativeSignOut ? !!studentSession : deviceReachable;
+    const explicitlySignedOut = !studentSession;
+    const deferredAuthorized = explicitlySignedOut && lateSignInAuthoringAllowed;
     resolved.push({
       studentId: row.studentId,
       studentName,
       studentSessionId: available ? studentSession!.id : null,
       deviceId: available ? studentSession!.deviceId : null,
       available,
-      stateAuthorized: true,
+      // Late-sign-in gating governs persistent desired-state changes. Preserve
+      // the established authority of non-persistent commands (notably durable
+      // teacher messages) even when their device delivery is currently
+      // unavailable; their own delivery policy decides whether anything is
+      // queued. Persistent controls remain fail-closed unless the exact device
+      // is reachable or the signed-out target passed the school-scoped gate.
+      stateAuthorized: available
+        || classpilotCommandDeliveryPolicy(commandType) !== "persistent_control"
+        || deferredAuthorized,
+      lateSignInEligible: deferredAuthorized,
       unavailableReason: available
         ? undefined
         : serverAuthoritativeSignOut
           ? "Student has no active extension session"
-          : "Student is not signed in to the extension",
+          : explicitlySignedOut
+            ? currentPageWaypoint
+              ? classpilotCurrentPageSignedOutSkipReason({
+                  currentPageRequested: currentPageWaypoint,
+                  explicitlySignedOut,
+                })
+              : deferredAuthorized
+                ? "Restriction will apply after sign-in"
+                : "Student is not signed in to the extension"
+            : "Student signal is unavailable; restriction was not changed",
     });
   }
   return resolved;

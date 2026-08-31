@@ -71,6 +71,13 @@ import {
   publishClasspilotCoverageSummaryUpdated,
 } from "../../services/classpilotCoverageSummary.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
+import {
+  classpilotRealtimeFresh,
+  readClasspilotRealtimeStatusBatch,
+} from "../../services/classpilotRealtimeStatus.js";
+import { isClasspilotCapabilityActive } from "../../services/classpilotProtocol.js";
+import { classpilotCurrentPageSignedOutSkipReason } from "../../services/classpilotCurrentPage.js";
+import { classpilotCommandDeliveryPolicy } from "../../services/classpilotCommandDelivery.js";
 
 const router = Router();
 
@@ -101,6 +108,14 @@ const COVERAGE_TYPES = new Set([
   "office",
   "assembly",
   "other",
+]);
+const COVERAGE_LATE_SIGN_IN_COMMANDS = new Set([
+  "lock-screen",
+  "unlock-screen",
+  "apply-flight-path",
+  "remove-flight-path",
+  "apply-block-list",
+  "remove-block-list",
 ]);
 const COVERAGE_SCOPE_TYPES = new Set(["school", "grade", "group", "students", "coverage_group", "setup"]);
 
@@ -794,6 +809,8 @@ function setupClassPayload(rows: any[]) {
 function coverageStatusPayload(status: ClasspilotCoverageStatus) {
   return {
     status: status.status,
+    isLoggedIn: status.isLoggedIn,
+    loginState: status.loginState,
     lastSeenAt: status.lastSeenAt,
     activeTabTitle: status.activeTabTitle,
     activeTabUrl: status.activeTabUrl,
@@ -803,6 +820,9 @@ function coverageStatusPayload(status: ClasspilotCoverageStatus) {
     tabSnapshotRevision: status.tabSnapshotRevision,
     extensionVersion: status.extensionVersion,
     capabilities: status.capabilities,
+    operatorCapabilities: status.operatorCapabilities,
+    studentAuthGatePresenceV1Enabled: status.studentAuthGatePresenceV1Enabled,
+    lateSignInRestrictionSsoV1Enabled: status.lateSignInRestrictionSsoV1Enabled,
   };
 }
 
@@ -823,8 +843,6 @@ function availableStudentPayload(
     studentName: studentName(row.student),
     studentEmail: row.student.email || undefined,
     gradeLevel: row.student.gradeLevel || undefined,
-    isLoggedIn: true,
-    loginState: "logged_in",
     supervisionState: "available",
     supervisionContext: null,
     ...coverageStatusPayload(status),
@@ -847,8 +865,6 @@ function scheduledCoverageStudentPayload(
     studentName: studentName(student),
     studentEmail: student.email || undefined,
     gradeLevel: student.gradeLevel || undefined,
-    isLoggedIn: true,
-    loginState: "logged_in",
     supervisionState: "available",
     supervisionContext: null,
     ...coverageStatusPayload(status),
@@ -1094,8 +1110,13 @@ async function resolveCoverageCommandTargets(
     selectedRows.map((row) => row.studentId)
   );
 
-  const now = Date.now();
-  const activeWindowMs = 5 * 60 * 1000;
+  const commandType = String(body.commandType || "").trim();
+  const currentPageWaypoint = commandType === "lock-screen"
+    && String(body.commandPayload?.url || "").trim() === "CURRENT_URL";
+  const lateSignInAuthoring = isClasspilotCapabilityActive(
+    "lateSignInRestrictionSsoV1",
+    { schoolId }
+  ) && COVERAGE_LATE_SIGN_IN_COMMANDS.has(commandType) && !currentPageWaypoint;
   const sessions = await getActiveSessionsForStudents(
     schoolId,
     selectedRows.map((row) => row.studentId)
@@ -1107,18 +1128,48 @@ async function resolveCoverageCommandTargets(
       sessionsByStudent.set(session.studentId, session);
     }
   }
+  const realtime = await readClasspilotRealtimeStatusBatch(
+    schoolId,
+    [...sessionsByStudent.values()].map((session) => ({
+      studentId: session.studentId,
+      studentSessionId: session.id,
+      deviceId: session.deviceId,
+    }))
+  );
   const targets: ResolvedClasspilotCommandTarget[] = [];
   for (const row of selectedRows) {
     const session = sessionsByStudent.get(row.studentId);
-    const lastSeenAt = session?.lastSeenAt?.getTime?.() ?? 0;
-    const active = !!session && lastSeenAt > 0 && now - lastSeenAt <= activeWindowMs;
+    const read = realtime.get(row.studentId);
+    const snapshot = read?.status === "hit" ? read.snapshot : null;
+    const active = !!session && !!snapshot && classpilotRealtimeFresh(snapshot);
+    const explicitlySignedOut = !session;
+    const deferredAuthorized = explicitlySignedOut && lateSignInAuthoring;
     targets.push({
       studentId: row.studentId,
       studentName: studentName(row.student),
       studentSessionId: active ? session!.id : null,
       deviceId: active ? session!.deviceId : null,
       available: active,
-      unavailableReason: active ? undefined : "Student is not signed in to the extension",
+      // Persistent desired-state changes remain fail-closed unless the exact
+      // device is reachable or the signed-out target passed the school gate.
+      // Non-persistent commands (notably durable teacher messages) retain
+      // their own queueing policy while delivery is unavailable.
+      stateAuthorized: active
+        || classpilotCommandDeliveryPolicy(commandType) !== "persistent_control"
+        || deferredAuthorized,
+      lateSignInEligible: deferredAuthorized,
+      unavailableReason: active
+        ? undefined
+        : explicitlySignedOut
+          ? currentPageWaypoint
+            ? classpilotCurrentPageSignedOutSkipReason({
+                currentPageRequested: currentPageWaypoint,
+                explicitlySignedOut,
+              })
+            : deferredAuthorized
+              ? "Restriction will apply after sign-in"
+              : "Student is not signed in to the extension"
+          : "Student signal is unavailable; restriction was not changed",
     });
   }
   return targets;
@@ -1145,8 +1196,6 @@ router.get("/coverage/unassigned", ...auth, async (req, res, next) => {
       studentName: studentName(row.student),
       studentEmail: row.student.email || undefined,
       gradeLevel: row.student.gradeLevel || undefined,
-      isLoggedIn: true,
-      loginState: "logged_in",
       supervisionState: "online_unassigned",
       supervisionContext: null,
       deviceCount: 1,

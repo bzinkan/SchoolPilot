@@ -10,6 +10,7 @@ test("manual student sessions use database-time leases and exact recovery capabi
   const schema = source("../src/schema/classpilot.ts");
   const migrations = source("../src/db/migrations27.ts");
   const storage = source("../src/services/storage.ts");
+  const entitlement = source("../src/services/classpilotEntitlement.ts");
   const authority = source("../src/services/classpilotStudentSessionAuthority.ts");
   const routes = source("../src/routes/classpilot/devices.ts");
   const requestId = source("../src/middleware/requestId.ts");
@@ -20,7 +21,7 @@ test("manual student sessions use database-time leases and exact recovery capabi
   assert.match(schema, /student_sessions_recovery_token_hash_check/);
   assert.match(migrations, /20260827_classpilot_student_session_recovery_expand/);
   assert.match(migrations, /session_recovery_token_hash ~ '\^\[0-9a-f\]\{64\}\$'/);
-  assert.match(storage, /now\(\) \+ interval '300 seconds'/);
+  assert.match(storage, /clock_timestamp\(\) \+ interval '300 seconds'/);
   assert.match(storage, /session\.deviceId === deviceId/);
   assert.match(storage, /session\.sessionRecoveryTokenHash === options\.reclaimRecoveryTokenHash/);
   assert.match(
@@ -70,10 +71,51 @@ test("manual student sessions use database-time leases and exact recovery capabi
   );
   assert.match(
     sessionStart,
-    /takePasspilotClassLock\(tx, schoolId\)[\s\S]*assertClasspilotEntitled\(schoolId, transactionDb, \{ lock: true \}\)/
+    /assertClasspilotEntitled\(schoolId, transactionDb, \{[\s\S]*lock: true,[\s\S]*afterSchoolLockBeforeLicense: \(\) => takePasspilotClassLock\(tx, schoolId\),[\s\S]*\}\)[\s\S]*lockClasspilotStudentControlAuthorities\(/
   );
   assert.ok(
-    sessionStart.indexOf("assertClasspilotEntitled(schoolId, transactionDb, { lock: true })")
+    sessionStart.indexOf("assertClasspilotEntitled(schoolId, transactionDb, {")
+      < sessionStart.indexOf("lockClasspilotStudentControlAuthorities("),
+    "session transfer must finish combined entitlement/config authority before student-control locking"
+  );
+  const schoolLock = entitlement.indexOf("const [school] = options.lock");
+  const bridge = entitlement.indexOf("await options.afterSchoolLockBeforeLicense?.()");
+  const schoolRecheck = entitlement.indexOf(
+    "if (!isClasspilotSchoolActive(school, new Date()))",
+    bridge
+  );
+  const licenseQuery = entitlement.indexOf("const licenseQuery", bridge);
+  assert.ok(
+    schoolLock >= 0 && schoolLock < bridge && bridge < schoolRecheck && schoolRecheck < licenseQuery,
+    "combined entitlement authority must use school-row -> class bridge -> fresh school check -> license-row order"
+  );
+  assert.match(
+    entitlement,
+    /afterSchoolLockBeforeLicense && !options\.lock[\s\S]*requires lock: true/
+  );
+  assert.match(entitlement, /productLicenses\.expiresAt, sql`clock_timestamp\(\)`/);
+  assert.ok(
+    sessionStart.indexOf("const conflictStudentCandidates")
+      < sessionStart.indexOf("lockClasspilotStudentControlAuthorities("),
+    "session transfer must discover every affected source/destination before authority locking"
+  );
+  assert.match(
+    sessionStart,
+    /lockClasspilotStudentControlAuthorities\([\s\S]{0,180}\[studentId, \.\.\.conflictStudentCandidates\.map\(\(row\) => row\.studentId\)\]/,
+    "cross-student recovery must lock the source and destination authority keys together"
+  );
+  assert.ok(
+    sessionStart.indexOf("lockClasspilotStudentControlAuthorities(")
+      < sessionStart.indexOf(".from(devices)"),
+    "session transfer must serialize against deferred state before locking its source device"
+  );
+  assert.ok(
+    sessionStart.indexOf("const [device] =")
+      < sessionStart.indexOf("const conflicting ="),
+    "session transfer must keep the heartbeat-compatible device-before-session lock order"
+  );
+  assert.ok(
+    sessionStart.indexOf("assertClasspilotEntitled(schoolId, transactionDb, {")
       < sessionStart.indexOf(".insert(studentSessions)"),
     "locked entitlement must be checked before credential-bearing session issuance"
   );
@@ -100,6 +142,70 @@ test("manual student sessions use database-time leases and exact recovery capabi
     "post-lock transfer expiry must use a wall clock that advances during lock waits"
   );
   assert.doesNotMatch(storage, /export async function startStudentSession\(/);
+
+  const latePersistence = storage.slice(
+    storage.indexOf("export async function persistClasspilotControlCommandState"),
+    storage.indexOf("export async function upsertClasspilotClassroomStates", storage.indexOf("export async function persistClasspilotControlCommandState"))
+  );
+  assert.ok(
+    latePersistence.indexOf("lockClasspilotStudentControlAuthorities")
+      < latePersistence.indexOf("expectedDeviceIds"),
+    "late-sign-in persistence must take shared authority before exact binding locks"
+  );
+  assert.ok(
+    latePersistence.indexOf(".from(devices)")
+      < latePersistence.indexOf(".from(studentSessions)"),
+    "late-sign-in exact persistence must lock devices before represented sessions"
+  );
+  assert.match(
+    latePersistence,
+    /manualLeaseExpiresAt} > clock_timestamp\(\)/,
+    "late-sign-in persistence must revalidate the manual-session lease against database time under lock"
+  );
+  const deliveryAuthority = storage.slice(
+    storage.indexOf("export async function withClasspilotStudentControlDeliveryAuthority"),
+    storage.indexOf("export async function withClasspilotStudentWebSocketBootstrapAuthority")
+  );
+  assert.ok(
+    deliveryAuthority.indexOf("assertClasspilotEntitled(options.schoolId, transactionDb, { lock: true })")
+      < deliveryAuthority.indexOf("lockClasspilotStudentControlAuthorities("),
+    "exact-bound delivery must use entitlement -> student-control lock order"
+  );
+});
+
+test("school lifecycle rows precede the shared class-configuration lock", () => {
+  const storage = source("../src/services/storage.ts");
+  const staffLifecycle = source("../src/services/staffAssignmentLifecycle.ts");
+  const slices = [
+    ["createLegacyPass", "returnPass"],
+    ["getKioskStudentState", "returnKioskPassForStudent"],
+    ["returnKioskPassForStudent", "getAllActivePasses"],
+    ["createCanonicalPass", "updateCanonicalKioskClass"],
+    ["updateCanonicalKioskClass", "updateLegacyKioskClass"],
+    ["updateLegacyKioskClass", "getPasspilotClassMigrationInventory"],
+    ["completePasspilotClassMigration", "export type InstructionalCalendarMonthState"],
+  ] as const;
+  for (const [functionName, nextMarker] of slices) {
+    const start = storage.indexOf(`export async function ${functionName}`);
+    const body = storage.slice(start, storage.indexOf(nextMarker, start));
+    const schoolRow = body.indexOf(".from(schools)");
+    const schoolForUpdate = body.indexOf('.for("update")', schoolRow);
+    const classLock = body.indexOf("takePasspilotClassLock(");
+    assert.ok(
+      start >= 0
+        && schoolRow >= 0
+        && schoolForUpdate > schoolRow
+        && schoolForUpdate < classLock,
+      `${functionName} must lock its school row before the class-configuration advisory lock`);
+  }
+  const transitionStart = staffLifecycle.indexOf("export async function transitionStaffAssignments");
+  const transition = staffLifecycle.slice(transitionStart);
+  assert.ok(
+    transitionStart >= 0
+      && transition.indexOf("lockStaffAssignmentLifecycleSchool(")
+        < transition.indexOf("passpilot-class-source:"),
+    "staff assignment transitions must retain the repo-wide school-row -> class-config order"
+  );
 });
 
 test("heartbeat authority expires atomically and renews only an accepted manual session", () => {
@@ -109,15 +215,31 @@ test("heartbeat authority expires atomically and renews only an accepted manual 
     storage.indexOf("export async function createHeartbeatAndRefreshPresence"),
     storage.indexOf("export async function updateHeartbeatClassification")
   );
+  const refresh = storage.slice(
+    storage.indexOf("export async function refreshStudentSessionAuthorityWithoutTelemetry"),
+    storage.indexOf("export async function createHeartbeat(")
+  );
   assert.ok(
-    heartbeat.indexOf("WITH locked_device AS MATERIALIZED")
+    heartbeat.indexOf("locked_student_authority AS MATERIALIZED")
+      < heartbeat.indexOf("locked_device AS MATERIALIZED"),
+    "heartbeat authority must serialize with transfer before device/session locks"
+  );
+  assert.ok(
+    heartbeat.indexOf("locked_device AS MATERIALIZED")
       < heartbeat.indexOf("represented_session AS MATERIALIZED"),
     "heartbeat authority must lock the device before the represented session"
   );
+  assert.match(heartbeat, /classpilot:student-control:\$\{data\.schoolId\}:\$\{data\.studentId\}/);
   assert.match(heartbeat, /locked_device[\s\S]*FOR UPDATE/);
-  assert.match(heartbeat, /auth_kind <> 'manual_shared'[\s\S]*manual_lease_expires_at > now\(\)/);
-  assert.match(heartbeat, /WHEN auth_kind = 'manual_shared' THEN now\(\) \+ interval '300 seconds'/);
+  assert.match(heartbeat, /auth_kind <> 'manual_shared'[\s\S]*manual_lease_expires_at > clock_timestamp\(\)/);
+  assert.match(heartbeat, /WHEN auth_kind = 'manual_shared' THEN clock_timestamp\(\) \+ interval '300 seconds'/);
   assert.match(heartbeat, /FOR UPDATE OF represented/);
+  assert.ok(
+    refresh.indexOf("locked_student_authority AS MATERIALIZED")
+      < refresh.indexOf("locked_device AS MATERIALIZED"),
+    "short-circuit resume must serialize with transfer before device/session locks"
+  );
+  assert.match(refresh, /classpilot:student-control:\$\{options\.schoolId\}:\$\{options\.studentId\}/);
   const route = routes.slice(
     routes.indexOf('router.post("/device/heartbeat"'),
     routes.indexOf('router.get("/device/screenshot/:deviceId"')
@@ -173,7 +295,7 @@ test("manual roster authority uses the database lease without an app-clock fresh
     storage.indexOf("export async function getStudentIdsHiddenFromClasspilotLoginRoster"),
     storage.indexOf("// ============================================================================\n// ClassPilot - Teaching Session operations")
   );
-  assert.match(hidden, /manualLeaseExpiresAt} > now\(\)/);
+  assert.match(hidden, /manualLeaseExpiresAt} > clock_timestamp\(\)/);
   assert.match(hidden, /authKind, "managed_profile"/);
   assert.match(hidden, /authKind, "legacy"/);
   assert.doesNotMatch(hidden, /lastSeenAt} > now\(\) - interval '300 seconds'/);
@@ -183,7 +305,7 @@ test("the worker reaps expired leases in bounded locked batches", () => {
   const lifecycle = source("../src/services/classpilotStudentSessionLifecycle.ts");
   const scheduler = source("../src/services/scheduler.ts");
   assert.match(lifecycle, /FOR UPDATE OF session SKIP LOCKED/);
-  assert.match(lifecycle, /session\.manual_lease_expires_at <= now\(\)/);
+  assert.match(lifecycle, /session\.manual_lease_expires_at <= clock_timestamp\(\)/);
   assert.match(lifecycle, /session_recovery_token_hash = NULL/);
   assert.match(lifecycle, /publicationConcurrency/);
   assert.match(lifecycle, /dbInstance: schedulerDb/);
@@ -195,8 +317,8 @@ test("dashboard and authorization projections exclude expired manual sessions", 
   const snapshot = source("../src/services/classpilotDashboardSnapshot.ts");
   const authority = source("../src/services/classpilotStudentSessionAuthority.ts");
   const auth = source("../src/services/classpilotStudentAuth.ts");
-  assert.match(snapshot, /session\.auth_kind <> 'manual_shared'[\s\S]*session\.manual_lease_expires_at > now\(\)/);
-  assert.match(authority, /manualLeaseExpiresAt} > now\(\)/);
+  assert.match(snapshot, /session\.auth_kind <> 'manual_shared'[\s\S]*session\.manual_lease_expires_at > clock_timestamp\(\)/);
+  assert.match(authority, /manualLeaseExpiresAt} > clock_timestamp\(\)/);
   assert.match(auth, /currentStudentSessionAuthorityPredicate\(\)/);
 });
 
@@ -266,7 +388,9 @@ test("startup duplicate-session cleanup preserves current authority before fresh
   const end = index.indexOf("// Reassign student_sessions", start);
   const duplicateSessionCleanup = index.slice(start, end);
   const authorityRank = duplicateSessionCleanup.indexOf("session.auth_kind IN ('legacy', 'managed_profile')");
-  const manualLeaseRank = duplicateSessionCleanup.indexOf("session.manual_lease_expires_at > now()");
+  const manualLeaseRank = duplicateSessionCleanup.indexOf(
+    "session.manual_lease_expires_at > clock_timestamp()"
+  );
   const freshnessRank = duplicateSessionCleanup.indexOf("session.last_seen_at DESC");
   assert.match(duplicateSessionCleanup, /session\.ended_at IS NULL/);
   assert.ok(authorityRank >= 0, "legacy and managed sessions must rank as authoritative");
@@ -278,6 +402,26 @@ test("startup duplicate-session cleanup preserves current authority before fresh
   assert.match(duplicateSessionCleanup, /WHERE session\.is_active = true/);
   assert.match(duplicateSessionCleanup, /SET is_active = false/);
   assert.match(duplicateSessionCleanup, /session_recovery_token_hash = NULL/);
+});
+
+test("manual-session authority always rechecks the database wall clock after lock waits", () => {
+  const sources = [
+    source("../src/index.ts"),
+    source("../src/services/classpilotDashboardSnapshot.ts"),
+    source("../src/services/classpilotStudentSessionAuthority.ts"),
+    source("../src/services/classpilotStudentSessionLifecycle.ts"),
+    source("../src/services/classpilotTileAuthorizationPlanCheck.ts"),
+    source("../src/services/storage.ts"),
+  ].join("\n");
+  assert.doesNotMatch(
+    sources,
+    /manual(?:_lease_expires_at|LeaseExpiresAt)[^\n]*(?:>|<=)[^\n]*\bnow\(\)/,
+    "transaction-start time must not preserve a manual lease that expires while authority waits on a lock"
+  );
+  assert.match(
+    source("../src/services/classpilotStudentSessionAuthority.ts"),
+    /manualLeaseExpiresAt} > clock_timestamp\(\)/
+  );
 });
 
 test("post-commit login failure compensates only the exact issued session", () => {

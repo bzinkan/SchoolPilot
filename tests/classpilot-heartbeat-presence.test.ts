@@ -129,10 +129,15 @@ describe("ClassPilot heartbeat presence hot path", () => {
       1,
       "the hot path must issue one database statement"
     );
-    assert.match(functionSource, /WITH\s+locked_device\s+AS\s+MATERIALIZED/i);
+    assert.match(functionSource, /WITH\s+locked_student_authority\s+AS\s+MATERIALIZED/i);
     assert.match(
       functionSource,
-      /locked_device\s+AS\s+MATERIALIZED[\s\S]*?FOR\s+UPDATE[\s\S]*?represented_session\s+AS\s+MATERIALIZED/i,
+      /locked_student_authority\s+AS\s+MATERIALIZED[\s\S]*?pg_advisory_xact_lock\(hashtextextended\([\s\S]*?classpilot:student-control:[\s\S]*?locked_device\s+AS\s+MATERIALIZED/i,
+      "heartbeat authority must enter the shared student-control lock before device/session rows"
+    );
+    assert.match(
+      functionSource,
+      /locked_device\s+AS\s+MATERIALIZED[\s\S]*?CROSS\s+JOIN\s+locked_student_authority[\s\S]*?FOR\s+UPDATE[\s\S]*?represented_session\s+AS\s+MATERIALIZED/i,
       "the hot path must lock the exact same-school device before the session"
     );
     assert.match(functionSource, /eligible_session\s+AS\s+MATERIALIZED/i);

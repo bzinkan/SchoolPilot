@@ -45,11 +45,11 @@ import {
   getStudentIdsHiddenFromClasspilotLoginRoster,
   getClasspilotLoginSessionAuthorities,
   getActiveSessionByDevice,
+  getActiveSessionsForStudents,
   getAdminEmailsBySchool,
   addCentralEmailRecipientForSchool,
   upsertSettings,
   getPendingMessagesForStudent,
-  claimDueTeacherChatDeliveriesForBinding,
   getStudentByEmail,
   createEvidenceArtifact,
   createStudentTimelineEvent,
@@ -60,6 +60,8 @@ import {
   getBatchTileAccessForStaff,
   getClasspilotStudentControlState,
   getClasspilotScreenshotAuthorityProjection,
+  withClasspilotStudentControlDeliveryAuthority,
+  withClasspilotStudentWebSocketBootstrapAuthority,
   withClasspilotScreenshotUploadAuthority,
   acknowledgeClasspilotStudentControlState,
   getHeartbeatTileHistoryBatch,
@@ -70,6 +72,8 @@ import {
   getProductLicenses,
   isAuthorizedClasspilotSessionStaff,
 } from "../../services/storage.js";
+import type { ClasspilotSynchronousAuthorityResult } from
+  "../../services/classpilotSynchronousAuthority.js";
 import { sendSafetyAlertEmail } from "../../services/email.js";
 import {
   InvalidTokenError,
@@ -81,6 +85,7 @@ import { updateDeviceStatus, updateDeviceClassification } from "../../realtime/s
 import {
   broadcastToStaffSessionLocal,
   sendToDeviceLocal,
+  sendToStudentBindingLocal,
   sendToStaffUserLocal,
 } from "../../realtime/ws-broadcast.js";
 import {
@@ -181,8 +186,11 @@ import {
   type ClasspilotRealtimeStatus,
 } from "../../services/classpilotRealtimeStatus.js";
 import {
+  classpilotLateSignInRevisionAppliedToBinding,
+  classpilotControlStateHasLateSignInOrigin,
   effectiveClasspilotControlEnforcementHealth,
   serializeClasspilotStudentControlState,
+  serializeClasspilotStudentControlStateForDelivery,
 } from "../../services/classpilotClassroomState.js";
 import { recordClasspilotStudentSessionMonitoringEvent } from "../../services/classpilotMonitoringEvents.js";
 import {
@@ -228,6 +236,7 @@ import {
   type ClasspilotManagedDeviceContinuityProof,
 } from "../../services/classpilotManagedDeviceContinuity.js";
 import {
+  classpilotScreenshotAuthorityForDeliveredControl,
   parseClasspilotScreenshotAuthority,
   resolveClasspilotScreenshotPolicy,
   validateClasspilotScreenshotCapturedAt,
@@ -981,6 +990,8 @@ function publicRealtimeFields(snapshot: ClasspilotRealtimeStatus) {
       classroomOverlayRestoreV1: extensionCapabilities.has("classroomOverlayRestoreV1"),
       liveViewNegotiationV1: extensionCapabilities.has("liveViewNegotiationV1"),
       domainPreservingRestrictionsV1: extensionCapabilities.has("domainPreservingRestrictionsV1"),
+      studentAuthGatePresenceV1: extensionCapabilities.has("studentAuthGatePresenceV1"),
+      lateSignInRestrictionSsoV1: extensionCapabilities.has("lateSignInRestrictionSsoV1"),
       minExtensionVersion: "2.6.0",
     },
     activityFresh,
@@ -1253,7 +1264,60 @@ async function resolveClasspilotStudentTransferAuthority(options: {
   };
 }
 
-async function completeStudentDeviceLogin(options: {
+type ClasspilotStudentDeviceLoginResponse =
+  ReturnType<typeof negotiateClasspilotSurfaceProtocol> & {
+    success: true;
+    schoolId: string;
+    studentId: string;
+    studentSessionId: string;
+    exactBinding: ReturnType<typeof classpilotControlStateExactBinding>;
+    device: Awaited<ReturnType<typeof issueStudentDeviceSessionToken>>["device"];
+    student: ReturnType<typeof classPilotStudentDto>;
+    studentToken: string;
+    manualExpiresInSeconds: number;
+    managedDeviceContinuityAccepted?: true;
+    effectiveDeviceId?: string;
+    sessionRecovery?: { token: string };
+    classroomState: ReturnType<
+      typeof serializeClasspilotStudentControlStateForDelivery
+    >["classroomState"];
+  };
+
+/**
+ * Keep the final login payload preparation and synchronous HTTP serialization
+ * on the same exact-binding authority interval used by session transfer.
+ */
+export async function withClasspilotStudentLoginResponseAuthority<
+  Prepared,
+  T extends ClasspilotSynchronousAuthorityResult,
+>(
+  options: {
+    schoolId: string;
+    studentId: string;
+    studentSessionId: string;
+    deviceId: string;
+  },
+  prepareResponse: (transactionDb: typeof import("../../db.js").default) =>
+    Prepared | Promise<Prepared>,
+  sendResponse: (prepared: Prepared) => T
+): Promise<T> {
+  const delivery = await withClasspilotStudentControlDeliveryAuthority(
+    options,
+    prepareResponse,
+    (_claimed, prepared) => sendResponse(prepared)
+  );
+  if (!delivery.authorized) {
+    throw Object.assign(new Error("Student session was replaced before login completed"), {
+      status: 409,
+      code: "STUDENT_SESSION_REPLACED",
+    });
+  }
+  return delivery.value;
+}
+
+async function completeStudentDeviceLogin<
+  T extends ClasspilotSynchronousAuthorityResult,
+>(options: {
   schoolId: string;
   deviceId: string;
   deviceName?: string | null;
@@ -1262,7 +1326,12 @@ async function completeStudentDeviceLogin(options: {
   authKind: "managed_profile" | "manual_shared";
   reclaimRecoveryToken?: string | null;
   managedDeviceContinuity?: ClasspilotManagedDeviceContinuityProof | null;
-}) {
+  protocolPayload?: {
+    clientProtocolVersion?: unknown;
+    capabilities?: unknown;
+    extensionCapabilities?: unknown;
+  };
+}, sendResponse: (login: ClasspilotStudentDeviceLoginResponse) => T): Promise<T> {
   if (!options.student) {
     throw new Error("Student required");
   }
@@ -1386,51 +1455,87 @@ async function completeStudentDeviceLogin(options: {
     replacedSessions,
   });
 
-  const controlState = await getClasspilotStudentControlState(
-    options.schoolId,
-    student.id
-  );
-  // The control state is student-scoped, but the login response is authorized
-  // by this exact newly-issued student/session/device binding. Re-check as the
-  // final awaited operation so a concurrent replacement cannot receive a
-  // stale token together with an apparently authoritative snapshot.
-  if (!(await verifyActiveStudentTokenSession(tokenPayload))) {
-    throw Object.assign(new Error("Student session was replaced before login completed"), {
-      status: 409,
-      code: "STUDENT_SESSION_REPLACED",
-    });
-  }
-  const classroomState = controlState
-    ? serializeClasspilotStudentControlState(controlState)
-    : null;
-
-  return {
-    success: true,
-    schoolId: options.schoolId,
-    studentId: student.id,
-    studentSessionId: session.id,
-    exactBinding: classpilotControlStateExactBinding({
+  return withClasspilotStudentLoginResponseAuthority(
+    {
       schoolId: options.schoolId,
-      deviceId: effectiveDeviceId,
       studentId: student.id,
       studentSessionId: session.id,
-      controlRevision: classroomState?.revision ?? 0,
-    }),
-    device,
-    student: classPilotStudentDto(student),
-    studentToken,
-    manualExpiresInSeconds: 300,
-    ...(options.managedDeviceContinuity
-      ? {
-          managedDeviceContinuityAccepted: true,
-          effectiveDeviceId,
-        }
-      : {}),
-    ...(sessionRecoveryToken
-      ? { sessionRecovery: { token: sessionRecoveryToken } }
-      : {}),
-    classroomState,
-  };
+      deviceId: effectiveDeviceId,
+    },
+    async (transactionDb) => {
+      const controlState = await getClasspilotStudentControlState(
+        options.schoolId,
+        student.id,
+        transactionDb
+      );
+      const loginProtocol = negotiateClasspilotSurfaceProtocol({
+        surface: "registration",
+        payload: options.protocolPayload ?? {},
+        scope: {
+          serverOrigin: process.env.PUBLIC_BASE_URL,
+          schoolId: options.schoolId,
+          deviceId: effectiveDeviceId,
+          studentId: student.id,
+          studentSessionId: session.id,
+        },
+      });
+      const loginDelivery = controlState
+        ? serializeClasspilotStudentControlStateForDelivery({
+            state: controlState,
+            gateActive: isClasspilotCapabilityActive(
+              "lateSignInRestrictionSsoV1",
+              { schoolId: options.schoolId }
+            ),
+            acceptedCapabilities: loginProtocol.acceptedCapabilities,
+            exactBinding: {
+              schoolId: options.schoolId,
+              studentId: student.id,
+              studentSessionId: session.id,
+              deviceId: effectiveDeviceId,
+            },
+          })
+        : { classroomState: null, withheld: false };
+      const classroomState = loginDelivery.classroomState;
+      return {
+        success: true as const,
+        ...loginProtocol,
+        schoolId: options.schoolId,
+        studentId: student.id,
+        studentSessionId: session.id,
+        exactBinding: classpilotControlStateExactBinding({
+          schoolId: options.schoolId,
+          deviceId: effectiveDeviceId,
+          studentId: student.id,
+          studentSessionId: session.id,
+          controlRevision: classroomState?.revision ?? 0,
+        }),
+        device,
+        student: classPilotStudentDto(student),
+        studentToken,
+        manualExpiresInSeconds: 300,
+        ...(options.managedDeviceContinuity
+          ? {
+              managedDeviceContinuityAccepted: true as const,
+              effectiveDeviceId,
+            }
+          : {}),
+        ...(sessionRecoveryToken
+          ? { sessionRecovery: { token: sessionRecoveryToken } }
+          : {}),
+        classroomState,
+        withheld: loginDelivery.withheld,
+      };
+    },
+    (prepared) => {
+      if (prepared.withheld) {
+        recordHeartbeatHotPathCounter("lateSignInDeliveryWithheld");
+      } else if (prepared.classroomState?.deliveryContext?.lateSignInRestrictionSso) {
+        recordHeartbeatHotPathCounter("lateSignInCapableDelivery");
+      }
+      const { withheld: _withheld, ...login } = prepared;
+      return sendResponse(login);
+    }
+  );
     },
   });
 }
@@ -2308,6 +2413,18 @@ router.get("/extension/settings", requireDeviceAuth, requireClasspilotEntitlemen
       studentSessionId,
     });
     const controlState = await getClasspilotStudentControlState(schoolId, studentId);
+    // Settings carries no capability negotiation evidence. Ordinary control
+    // state may continue to bind FAB/settings authority, but a deferred-origin
+    // revision must remain completely hidden until an authenticated negotiated
+    // login/heartbeat/WebSocket delivery surface authorizes it.
+    const settingsControlRevision = controlState
+      && !classpilotControlStateHasLateSignInOrigin(controlState.desiredState)
+      ? controlState.revision
+      : 0;
+    const settingsFab = {
+      ...fab,
+      ownershipRevision: settingsControlRevision,
+    };
 
     return res.json({
       schoolId,
@@ -2318,7 +2435,7 @@ router.get("/extension/settings", requireDeviceAuth, requireClasspilotEntitlemen
         deviceId,
         studentId,
         studentSessionId,
-        controlRevision: controlState?.revision ?? 0,
+        controlRevision: settingsControlRevision,
       }),
       enableTrackingHours: schoolSettings?.enableTrackingHours ?? false,
       trackingStartTime: schoolSettings?.trackingStartTime ?? null,
@@ -2332,10 +2449,10 @@ router.get("/extension/settings", requireDeviceAuth, requireClasspilotEntitlemen
       maxTabsPerStudent: schoolSettings?.maxTabsPerStudent
         ? parseInt(schoolSettings.maxTabsPerStudent, 10)
         : null,
-      fab,
-      messagingEnabled: fab.messagingEnabled,
-      handRaisingEnabled: fab.handRaisingEnabled,
-      handRaised: fab.handRaised,
+      fab: settingsFab,
+      messagingEnabled: settingsFab.messagingEnabled,
+      handRaisingEnabled: settingsFab.handRaisingEnabled,
+      handRaised: settingsFab.handRaised,
     });
   } catch (err) {
     next(err);
@@ -2462,8 +2579,9 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
           authKind: "manual_shared",
           reclaimRecoveryToken: recoveryToken,
           managedDeviceContinuity,
-        });
-        return res.json(login);
+          protocolPayload: req.body,
+        }, (prepared) => res.json(prepared));
+        return login;
       });
       return;
     }
@@ -2553,8 +2671,9 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
         authKind: "manual_shared",
         reclaimRecoveryToken: recoveryToken,
         managedDeviceContinuity,
-      });
-      return res.json(login);
+        protocolPayload: req.body,
+      }, (prepared) => res.json(prepared));
+      return login;
     });
   } catch (err) {
     next(err);
@@ -2953,24 +3072,26 @@ router.post("/extension/register", extensionRegisterLimiter, async (req, res, ne
         classId,
         student,
         authKind: "managed_profile",
+        protocolPayload: req.body,
+      }, (prepared) => {
+        const protocol = negotiateClasspilotSurfaceProtocol({
+          surface: "registration",
+          payload: req.body,
+          scope: {
+            serverOrigin: process.env.PUBLIC_BASE_URL,
+            schoolId: resolvedSchoolId,
+            deviceId,
+            studentId: prepared.studentId,
+            studentSessionId: prepared.studentSessionId,
+          },
+        });
+        return res.json({
+          ...prepared,
+          ...protocol,
+          studentName: studentName || `${student.firstName || ""} ${student.lastName || ""}`.trim() || student.email,
+        });
       });
-      const protocol = negotiateClasspilotSurfaceProtocol({
-        surface: "registration",
-        payload: req.body,
-        scope: {
-          serverOrigin: process.env.PUBLIC_BASE_URL,
-          schoolId: resolvedSchoolId,
-          deviceId,
-          studentId: login.studentId,
-          studentSessionId: login.studentSessionId,
-        },
-      });
-
-      return res.json({
-        ...login,
-        ...protocol,
-        studentName: studentName || `${student.firstName || ""} ${student.lastName || ""}`.trim() || student.email,
-      });
+      return login;
     }
 
     return res.json({
@@ -3066,18 +3187,21 @@ router.post("/register-student", extensionRegisterLimiter, async (req, res, next
         deviceId,
         student,
         authKind: "managed_profile",
-      });
+        protocolPayload: req.body,
+      }, (prepared) => res.json({
+        studentToken: prepared.studentToken,
+        schoolId: prepared.schoolId,
+        studentId: prepared.studentId,
+        studentSessionId: prepared.studentSessionId,
+        exactBinding: prepared.exactBinding,
+        student: prepared.student,
+        manualExpiresInSeconds: prepared.manualExpiresInSeconds,
+        classroomState: prepared.classroomState,
+        serverProtocolVersion: prepared.serverProtocolVersion,
+        acceptedCapabilities: prepared.acceptedCapabilities,
+      }));
 
-      return res.json({
-        studentToken: login.studentToken,
-        schoolId: login.schoolId,
-        studentId: login.studentId,
-        studentSessionId: login.studentSessionId,
-        exactBinding: login.exactBinding,
-        student: login.student,
-        manualExpiresInSeconds: login.manualExpiresInSeconds,
-        classroomState: login.classroomState,
-      });
+      return login;
     });
   } catch (err) {
     next(err);
@@ -3398,7 +3522,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
         studentSessionId,
       })
     );
-    if (canShortCircuitAcceptedHeartbeat({
+    if (!protocol.acceptedCapabilities.includes("lateSignInRestrictionSsoV1") && canShortCircuitAcceptedHeartbeat({
       previous: lastHb,
       studentId,
       studentSessionId,
@@ -3514,9 +3638,16 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
                 ? "expired"
                 : null;
         const expectedHealth = ackOutcome === "applied" ? "synced" : ackOutcome;
+        const deferredBindingAlreadyApplied = classpilotLateSignInRevisionAppliedToBinding({
+          desiredState: controlState.desiredState,
+          binding: { schoolId, studentId, studentSessionId, deviceId },
+          revision: Number(appliedClassroomStateRevision),
+        });
         if (
           ackOutcome
-          && (controlState.appliedRevision !== Number(appliedClassroomStateRevision)
+          && ((!deferredBindingAlreadyApplied
+              && classpilotControlStateHasLateSignInOrigin(controlState.desiredState))
+            || controlState.appliedRevision !== Number(appliedClassroomStateRevision)
             || controlState.enforcementHealth !== expectedHealth)
         ) {
           const acknowledgedState = await acknowledgeClasspilotStudentControlState({
@@ -3526,9 +3657,16 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
             deviceId,
             appliedRevision: Number(appliedClassroomStateRevision),
             outcome: ackOutcome,
+            acceptedCapabilities: protocol.acceptedCapabilities,
           });
           if (acknowledgedState?.sourceCommandId) {
             scheduleClasspilotCommandUpdate(schoolId, acknowledgedState.sourceCommandId);
+          }
+          if (
+            acknowledgedState
+            && classpilotControlStateHasLateSignInOrigin(acknowledgedState.desiredState)
+          ) {
+            recordHeartbeatHotPathCounter("lateSignInDeferredAck");
           }
         }
       }
@@ -3608,11 +3746,27 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       studentSessionId,
       authorityExpiresAtMs: heartbeat.authorityExpiresAt?.getTime() ?? null,
     }, MAX_DEVICE_HEARTBEAT_ENTRIES);
-    const classroomState = controlState
-      ? serializeClasspilotStudentControlState(controlState)
-      : null;
+    const heartbeatDelivery = controlState
+      ? serializeClasspilotStudentControlStateForDelivery({
+          state: controlState,
+          gateActive: isClasspilotCapabilityActive(
+            "lateSignInRestrictionSsoV1",
+            { schoolId }
+          ),
+          acceptedCapabilities: protocol.acceptedCapabilities,
+          exactBinding: { schoolId, studentId, studentSessionId, deviceId },
+        })
+      : { classroomState: null, withheld: false };
+    const classroomState = heartbeatDelivery.classroomState;
     const enforcementHealth = controlState
-      ? effectiveClasspilotControlEnforcementHealth(controlState, extensionVersion)
+      ? effectiveClasspilotControlEnforcementHealth(controlState, extensionVersion, new Date(), {
+          gateActive: isClasspilotCapabilityActive(
+            "lateSignInRestrictionSsoV1",
+            { schoolId }
+          ),
+          acceptedCapabilities: protocol.acceptedCapabilities,
+          exactBinding: { schoolId, studentId, studentSessionId, deviceId },
+        })
       : undefined;
     const screenshotPolicyPromise = resolveClasspilotScreenshotPolicy({
       schoolId,
@@ -3620,7 +3774,10 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       studentId,
       acceptedCapabilities: protocol.acceptedCapabilities,
       trackingSettings,
-      trackingAuthority: screenshotTrackingAuthority,
+      trackingAuthority: classpilotScreenshotAuthorityForDeliveredControl({
+        projection: screenshotTrackingAuthority,
+        deliveredControlRevision: classroomState?.revision ?? 0,
+      }),
     });
     const studentEmail = heartbeat.studentEmail;
     recordHeartbeatHotPathCounter("heartbeatRecorded");
@@ -3710,9 +3867,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
         return res.json({
           ok: true,
           planStatus: school.planStatus || "active",
-          classroomState,
           ...protocol,
-          screenshotPolicy,
         });
       }
       throw new Error("Realtime heartbeat snapshot was not created");
@@ -3866,6 +4021,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
                     studentSessionId,
                     deviceId,
                     expectedControlRevision: controlState?.revision ?? 0,
+                    deliveredControlRevision: classroomState?.revision ?? 0,
                   })
                 ).then((binding) => binding ? ({
                   exactBinding: classpilotControlStateExactBinding({
@@ -4189,64 +4345,144 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
         MAX_TEACHER_REPLY_CHECKS
       );
       try {
-        const teacherReplies = await runWithTenantContext(
+        const teacherReplyDelivery = await runWithTenantContext(
           { schoolId },
-          () => claimDueTeacherChatDeliveriesForBinding({
-            schoolId,
-            studentId,
-            studentSessionId,
-            deviceId,
-          })
+          () => withClasspilotStudentWebSocketBootstrapAuthority(
+            { schoolId, studentId, studentSessionId, deviceId },
+            () => undefined,
+            (teacherReplies) => teacherReplies.map(({ message }) => {
+              const replyPayload = {
+                type: "teacher-message",
+                _msgId: message.id,
+                chatMessageId: message.id,
+                messageId: message.id,
+                sessionId: message.sessionId,
+                studentId,
+                studentSessionId,
+                message: message.content,
+                fromName: "Teacher",
+              };
+              const exactTarget = {
+                kind: "student-binding" as const,
+                schoolId,
+                studentId,
+                studentSessionId,
+                deviceId,
+              };
+              sendToStudentBindingLocal(exactTarget, replyPayload);
+              return publishWS(exactTarget, replyPayload);
+            })
+          )
         );
-        for (const { message } of teacherReplies) {
-          const replyPayload = {
-            type: "teacher-message",
-            _msgId: message.id,
-            chatMessageId: message.id,
-            messageId: message.id,
-            sessionId: message.sessionId,
-            studentId,
-            studentSessionId,
-            message: message.content,
-            fromName: "Teacher",
-          };
-          sendToDeviceLocal(schoolId, deviceId, replyPayload);
-          await publishWS({ kind: "device", schoolId, deviceId }, replyPayload);
+        if (teacherReplyDelivery.authorized) {
+          await Promise.all(teacherReplyDelivery.value);
         }
       } catch {
         // The outbox remains due; a later heartbeat retries the stable id.
       }
     }
 
-    // Explicit, throttled recovery hook for clients whose WebSocket FAB sync
-    // was interrupted. Normal heartbeats keep the existing no-FAB-query path.
-    const fab = req.body?.requestFabState === true
-      ? await runWithTenantContext(
-          { schoolId },
-          () => buildStudentFabState(schoolId, studentId, { studentSessionId })
-        )
-      : undefined;
-
-    // --- Return planStatus (item #3) ---
-    return res.json({
-      ok: true,
-      schoolId,
-      studentId,
-      studentSessionId,
-      exactBinding: classpilotControlStateExactBinding({
-        schoolId,
-        deviceId,
-        studentId,
-        studentSessionId,
-        controlRevision: classroomState?.revision ?? 0,
-      }),
-      planStatus: school.planStatus || "active",
-      classroomState,
-      ...protocol,
-      screenshotPolicy,
-      ...(fab ? { fab } : {}),
-      ...(pendingMessages.length > 0 ? { pendingMessages } : {}),
-    });
+    // All work after the initial heartbeat transaction can race a correct-PIN
+    // transfer. Re-materialize the public classroom snapshot under the same
+    // student-control lock used by transfer, then synchronously end the HTTP
+    // response before releasing that lock. This closes the post-check gap in
+    // which a retired binding could otherwise receive the old student's state.
+    const finalDelivery = await runWithTenantContext(
+      { schoolId },
+      () => withClasspilotStudentControlDeliveryAuthority(
+        { schoolId, studentId, studentSessionId, deviceId },
+        async (transactionDb) => {
+          const finalControlState = await getClasspilotStudentControlState(
+            schoolId,
+            studentId,
+            transactionDb
+          );
+          const serialized = finalControlState
+            ? serializeClasspilotStudentControlStateForDelivery({
+                state: finalControlState,
+                gateActive: isClasspilotCapabilityActive(
+                  "lateSignInRestrictionSsoV1",
+                  { schoolId }
+                ),
+                acceptedCapabilities: protocol.acceptedCapabilities,
+                exactBinding: { schoolId, studentId, studentSessionId, deviceId },
+              })
+            : { classroomState: null, withheld: false };
+          const finalClassroomState = serialized.classroomState;
+          const finalScreenshotPolicy = trackingWindowScreenshotLeaseNegotiated
+            ? await resolveClasspilotScreenshotPolicy({
+                schoolId,
+                teachingSessionId: finalControlState?.teachingSessionId,
+                studentId,
+                acceptedCapabilities: protocol.acceptedCapabilities,
+                trackingSettings,
+                trackingAuthority: classpilotScreenshotAuthorityForDeliveredControl({
+                  projection: await getClasspilotScreenshotAuthorityProjection({
+                    schoolId,
+                    studentId,
+                    studentSessionId,
+                    deviceId,
+                  }, transactionDb),
+                  deliveredControlRevision: finalClassroomState?.revision ?? 0,
+                }),
+              })
+            : screenshotPolicy;
+          const finalFab = req.body?.requestFabState === true
+            ? await buildStudentFabState(schoolId, studentId, {
+                studentSessionId,
+                dbInstance: transactionDb,
+              })
+            : undefined;
+          return {
+            classroomState: finalClassroomState,
+            screenshotPolicy: finalScreenshotPolicy,
+            deliveredFab: finalFab
+              ? {
+                  ...finalFab,
+                  ownershipRevision: finalClassroomState?.revision ?? 0,
+                }
+              : undefined,
+            withheld: serialized.withheld,
+          };
+        },
+        (_claimed, prepared) => {
+          if (prepared.withheld) {
+            recordHeartbeatHotPathCounter("lateSignInDeliveryWithheld");
+          } else if (
+            prepared.classroomState?.deliveryContext?.lateSignInRestrictionSso
+          ) {
+            recordHeartbeatHotPathCounter("lateSignInCapableDelivery");
+          }
+          return res.json({
+            ok: true,
+            schoolId,
+            studentId,
+            studentSessionId,
+            exactBinding: classpilotControlStateExactBinding({
+              schoolId,
+              deviceId,
+              studentId,
+              studentSessionId,
+              controlRevision: prepared.classroomState?.revision ?? 0,
+            }),
+            planStatus: school.planStatus || "active",
+            classroomState: prepared.classroomState,
+            ...protocol,
+            screenshotPolicy: prepared.screenshotPolicy,
+            ...(prepared.deliveredFab ? { fab: prepared.deliveredFab } : {}),
+            ...(pendingMessages.length > 0 ? { pendingMessages } : {}),
+          });
+        }
+      )
+    );
+    if (!finalDelivery.authorized) {
+      return res.status(409).json({
+        error: "Student session is no longer active",
+        code: "STUDENT_SESSION_REPLACED",
+        ...protocol,
+      });
+    }
+    return finalDelivery.value;
   } catch (err) {
     next(err);
   }

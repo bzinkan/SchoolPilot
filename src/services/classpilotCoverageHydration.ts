@@ -9,9 +9,12 @@ import {
   type ClasspilotRealtimeStatus,
 } from "./classpilotRealtimeStatus.js";
 import { getActiveSessionsForStudents } from "./storage.js";
+import { isClasspilotCapabilityActive } from "./classpilotProtocol.js";
 
 export type ClasspilotCoverageStatus = {
   status: "online" | "idle" | "offline";
+  isLoggedIn: boolean;
+  loginState: "logged_in" | "not_logged_in";
   lastSeenAt: number | null;
   activeTabTitle: string;
   activeTabUrl: string;
@@ -33,9 +36,17 @@ export type ClasspilotCoverageStatus = {
     fabStateRevisionV1: boolean;
     liveViewNegotiationV1: boolean;
     domainPreservingRestrictionsV1: boolean;
+    studentAuthGatePresenceV1: boolean;
+    lateSignInRestrictionSsoV1: boolean;
     minExtensionVersion: "2.6.0";
   };
   screenshotHealth: ClasspilotRealtimeStatus["screenshotHealth"];
+  operatorCapabilities: {
+    studentAuthGatePresenceV1: boolean;
+    lateSignInRestrictionSsoV1: boolean;
+  };
+  studentAuthGatePresenceV1Enabled: boolean;
+  lateSignInRestrictionSsoV1Enabled: boolean;
 };
 
 type CoverageHydrationMetrics = {
@@ -85,6 +96,8 @@ function coverageRealtimeCapabilities(status: ClasspilotRealtimeStatus | null) {
     fabStateRevisionV1: capabilities.has("fabStateRevisionV1"),
     liveViewNegotiationV1: capabilities.has("liveViewNegotiationV1"),
     domainPreservingRestrictionsV1: capabilities.has("domainPreservingRestrictionsV1"),
+    studentAuthGatePresenceV1: capabilities.has("studentAuthGatePresenceV1"),
+    lateSignInRestrictionSsoV1: capabilities.has("lateSignInRestrictionSsoV1"),
     minExtensionVersion: "2.6.0" as const,
   };
 }
@@ -102,10 +115,12 @@ function sanitizeTabs(status: ClasspilotRealtimeStatus | null) {
 function publicStatus(
   session: CoverageHydrationSession | undefined,
   candidate: ClasspilotRealtimeStatus | null,
-  now: number
+  now: number,
+  operatorCapabilities: ClasspilotCoverageStatus["operatorCapabilities"]
 ): ClasspilotCoverageStatus {
   const realtime = candidate?.state === "active" ? candidate : null;
   const signedOut = candidate?.state === "signed_out";
+  const isLoggedIn = !!session && !signedOut;
   const sessionLastSeenAt = session ? sessionTimestamp(session) : Number.NaN;
   const lastSeenAt = candidate?.observedAt ||
     (Number.isFinite(sessionLastSeenAt) ? sessionLastSeenAt : null);
@@ -118,6 +133,8 @@ function publicStatus(
         : age < CLASSPILOT_REALTIME_EXPIRED_AFTER_MS
           ? "idle"
           : "offline",
+    isLoggedIn,
+    loginState: isLoggedIn ? "logged_in" : "not_logged_in",
     lastSeenAt,
     activeTabTitle: realtime?.activeTabTitle || "",
     activeTabUrl: realtime?.activeTabUrl || "",
@@ -130,6 +147,9 @@ function publicStatus(
     clientProtocolVersion: realtime?.clientProtocolVersion ?? null,
     capabilities: coverageRealtimeCapabilities(realtime),
     screenshotHealth: realtime?.screenshotHealth,
+    operatorCapabilities,
+    studentAuthGatePresenceV1Enabled: operatorCapabilities.studentAuthGatePresenceV1,
+    lateSignInRestrictionSsoV1Enabled: operatorCapabilities.lateSignInRestrictionSsoV1,
   };
 }
 
@@ -188,6 +208,16 @@ export async function hydrateClasspilotCoverageStatuses(options: {
   }
 
   const now = options.now ?? Date.now();
+  const operatorCapabilities = {
+    studentAuthGatePresenceV1: isClasspilotCapabilityActive(
+      "studentAuthGatePresenceV1",
+      { schoolId: options.schoolId }
+    ),
+    lateSignInRestrictionSsoV1: isClasspilotCapabilityActive(
+      "lateSignInRestrictionSsoV1",
+      { schoolId: options.schoolId }
+    ),
+  };
   const result = new Map<string, ClasspilotCoverageStatus>();
   for (const studentId of studentIds) {
     result.set(
@@ -195,7 +225,8 @@ export async function hydrateClasspilotCoverageStatuses(options: {
       publicStatus(
         sessionsByStudent.get(studentId),
         candidateByStudent.get(studentId) || null,
-        now
+        now,
+        operatorCapabilities
       )
     );
   }

@@ -25,8 +25,21 @@ export const DEFAULT_COVERAGE_COMMANDS = Object.freeze([
   'unlock-screen',
   'teacher-message',
   'apply-flight-path',
+  'remove-flight-path',
   'apply-block-list',
+  'remove-block-list',
 ]);
+
+export const LATE_SIGN_IN_RESTRICTION_COMMANDS = Object.freeze([
+  'lock-screen',
+  'unlock-screen',
+  'apply-flight-path',
+  'remove-flight-path',
+  'apply-block-list',
+  'remove-block-list',
+]);
+
+const LATE_SIGN_IN_RESTRICTION_COMMAND_SET = new Set(LATE_SIGN_IN_RESTRICTION_COMMANDS);
 
 function normalizedIds(values) {
   return [...new Set((values || []).map((value) => String(value || '').trim()).filter(Boolean))];
@@ -34,6 +47,43 @@ function normalizedIds(values) {
 
 function studentId(row) {
   return String(row?.studentId || row?.id || '').trim();
+}
+
+export function uniqueStudentsById(students) {
+  const unique = new Map();
+  for (const student of Array.isArray(students) ? students : []) {
+    const id = studentId(student);
+    if (id && !unique.has(id)) unique.set(id, student);
+  }
+  return [...unique.values()];
+}
+
+export function effectiveStudentRestrictions(student) {
+  const snapshot = student?.classroomState?.restrictions;
+  const snapshotScreenLock = snapshot?.screenLock;
+  const snapshotFlightPath = snapshot?.flightPath;
+  const snapshotBlockList = snapshot?.blockList;
+  const hasSnapshotScreenLock = typeof snapshotScreenLock?.active === 'boolean';
+  const hasSnapshotFlightPath = typeof snapshotFlightPath?.active === 'boolean';
+  const hasSnapshotBlockList = typeof snapshotBlockList?.active === 'boolean';
+
+  return {
+    screenLockActive: hasSnapshotScreenLock
+      ? snapshotScreenLock.active
+      : student?.screenLocked === true,
+    flightPathActive: hasSnapshotFlightPath
+      ? snapshotFlightPath.active
+      : student?.flightPathActive === true,
+    flightPathName: hasSnapshotFlightPath && snapshotFlightPath.active
+      ? String(snapshotFlightPath.name || student?.activeFlightPathName || '').trim()
+      : String(student?.activeFlightPathName || '').trim(),
+    blockListActive: hasSnapshotBlockList
+      ? snapshotBlockList.active
+      : student?.blockListActive === true,
+    blockListName: hasSnapshotBlockList && snapshotBlockList.active
+      ? String(snapshotBlockList.name || student?.activeBlockListName || '').trim()
+      : String(student?.activeBlockListName || '').trim(),
+  };
 }
 
 function boundedContextValue(value, maxLength = 256) {
@@ -88,6 +138,77 @@ export function studentSupportsCapability(student, capabilityName) {
       ? student.capabilities
       : [];
   return advertised.includes(capabilityName);
+}
+
+export function isExplicitlySignedOutStudent(student) {
+  return student?.loginState === 'not_logged_in'
+    || student?.isLoggedIn === false
+    || student?._realtimeSignedOut === true;
+}
+
+export function lateSignInRestrictionGateEnabled(students) {
+  const rows = Array.isArray(students) ? students : [];
+  return rows.length > 0 && rows.every((student) => (
+    student?.lateSignInRestrictionSsoV1Enabled === true
+  ));
+}
+
+export function commandSupportsLateSignInRestriction(commandType, commandPayload = {}) {
+  if (!LATE_SIGN_IN_RESTRICTION_COMMAND_SET.has(commandType)) return false;
+  return commandType !== 'lock-screen' || commandPayload?.url !== 'CURRENT_URL';
+}
+
+export function isLateSignInRestrictionTarget({
+  student,
+  operatorEnabled,
+  structurallyCommandable,
+}) {
+  return operatorEnabled === true
+    && structurallyCommandable === true
+    && isExplicitlySignedOutStudent(student);
+}
+
+export function coverageStudentCommandSelectionEligible({
+  student,
+  monitoringDisplay,
+  structurallyCommandable,
+}) {
+  if (structurallyCommandable !== true) return false;
+  if (monitoringDisplay?.telemetryCurrent === true) return true;
+  const operatorEnabled = student?.operatorCapabilities?.lateSignInRestrictionSsoV1 === true
+    && student?.lateSignInRestrictionSsoV1Enabled === true;
+  return isLateSignInRestrictionTarget({
+    student,
+    operatorEnabled,
+    structurallyCommandable,
+  });
+}
+
+export function partitionCurrentPageWaypointTargets(
+  students,
+  isTelemetryCurrent = defaultStudentTelemetryCurrent,
+) {
+  const targetStudentIds = [];
+  const skippedStudentIds = [];
+  for (const student of Array.isArray(students) ? students : []) {
+    const id = studentId(student);
+    if (!id) continue;
+    if (isTelemetryCurrent(student) === true) targetStudentIds.push(id);
+    else skippedStudentIds.push(id);
+  }
+  return { targetStudentIds, skippedStudentIds };
+}
+
+export function partitionCoverageCurrentPageWaypointTargets(students) {
+  const targetStudentIds = [];
+  const skippedStudentIds = [];
+  for (const student of Array.isArray(students) ? students : []) {
+    const id = studentId(student);
+    if (!id) continue;
+    if (isExplicitlySignedOutStudent(student)) skippedStudentIds.push(id);
+    else targetStudentIds.push(id);
+  }
+  return { targetStudentIds, skippedStudentIds };
 }
 
 export const DOMAIN_PRESERVING_RESTRICTION_MESSAGE =

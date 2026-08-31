@@ -245,7 +245,7 @@ export async function reapExpiredManualStudentSessions(options: {
         WHERE session.auth_kind = 'manual_shared'
           AND session.is_active = true
           AND session.ended_at IS NULL
-          AND session.manual_lease_expires_at <= now()
+          AND session.manual_lease_expires_at <= clock_timestamp()
         ORDER BY session.manual_lease_expires_at, session.id
         LIMIT $1
         FOR UPDATE OF session SKIP LOCKED
@@ -259,7 +259,7 @@ export async function reapExpiredManualStudentSessions(options: {
         WHERE session.id = due.id
           AND session.is_active = true
           AND session.ended_at IS NULL
-          AND session.manual_lease_expires_at <= now()
+          AND session.manual_lease_expires_at <= clock_timestamp()
         RETURNING session.id, session.student_id, session.device_id
       )
       SELECT
@@ -303,7 +303,7 @@ export async function reapExpiredManualStudentSessions(options: {
       WHERE auth_kind = 'manual_shared'
         AND is_active = true
         AND ended_at IS NULL
-        AND manual_lease_expires_at <= now()
+        AND manual_lease_expires_at <= clock_timestamp()
     ) AS backlog
   `);
   return {

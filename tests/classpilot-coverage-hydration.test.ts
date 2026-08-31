@@ -28,6 +28,8 @@ describe("ClassPilot coverage bulk hydration", () => {
 
     assert.equal(result.size, 500);
     assert.equal(result.get("student-0")?.status, "online");
+    assert.equal(result.get("student-0")?.isLoggedIn, true);
+    assert.equal(result.get("student-0")?.loginState, "logged_in");
     assert.equal(result.get("student-0")?.lastSeenAt, now);
     const metrics = snapshotClasspilotCoverageHydrationMetrics();
     assert.equal(metrics.requests, 1);
@@ -89,7 +91,11 @@ describe("ClassPilot coverage bulk hydration", () => {
       heartbeatId: "coverage-hydration-domain-preservation-heartbeat",
       observedAt: now,
       trackingStatus: "ACTIVE",
-      extensionCapabilities: ["domainPreservingRestrictionsV1"],
+      extensionCapabilities: [
+        "domainPreservingRestrictionsV1",
+        "studentAuthGatePresenceV1",
+        "lateSignInRestrictionSsoV1",
+      ],
       acceptedCapabilities: [],
     });
     assert.ok(write.snapshot);
@@ -110,5 +116,9 @@ describe("ClassPilot coverage bulk hydration", () => {
       result.get(studentId)?.capabilities.domainPreservingRestrictionsV1,
       true
     );
+    assert.equal(result.get(studentId)?.capabilities.studentAuthGatePresenceV1, true);
+    assert.equal(result.get(studentId)?.capabilities.lateSignInRestrictionSsoV1, true);
+    assert.equal(result.get(studentId)?.studentAuthGatePresenceV1Enabled, false);
+    assert.equal(result.get(studentId)?.lateSignInRestrictionSsoV1Enabled, false);
   });
 });

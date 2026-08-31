@@ -11,6 +11,7 @@ export type WSClient = {
   studentSessionId?: string;
   userId?: string;
   authVersion?: number;
+  acceptedCapabilities?: string[];
   schoolId?: string;
   subscribedSessionIds: Set<string>;
   sessionSubscriptionEpochs: Map<string, number>;
@@ -43,6 +44,22 @@ function dedupKey(deviceId: string, msgId: string): boolean {
 function extractMsgId(message: unknown): string | null {
   const msg = message as { _msgId?: string };
   return msg?._msgId ?? null;
+}
+
+function requiredStudentCapability(message: unknown): string | null {
+  if (!message || typeof message !== "object" || Array.isArray(message)) return null;
+  const classroomState = (message as { classroomState?: unknown }).classroomState;
+  if (!classroomState || typeof classroomState !== "object" || Array.isArray(classroomState)) {
+    return null;
+  }
+  const deliveryContext = (classroomState as { deliveryContext?: unknown }).deliveryContext;
+  if (!deliveryContext || typeof deliveryContext !== "object" || Array.isArray(deliveryContext)) {
+    return null;
+  }
+  return (deliveryContext as { lateSignInRestrictionSso?: unknown })
+    .lateSignInRestrictionSso === true
+    ? "lateSignInRestrictionSsoV1"
+    : null;
 }
 
 function addSocket(map: Map<string, Set<WebSocket>>, schoolId: string, ws: WebSocket) {
@@ -96,6 +113,7 @@ export function authenticateWsClient(
     studentSessionId?: string;
     userId?: string;
     authVersion?: number;
+    acceptedCapabilities?: string[];
   }
 ): WSClient | undefined {
   const client = wsClients.get(ws);
@@ -113,6 +131,7 @@ export function authenticateWsClient(
   client.studentSessionId = auth.studentSessionId;
   client.userId = auth.userId;
   client.authVersion = auth.authVersion;
+  client.acceptedCapabilities = auth.acceptedCapabilities ? [...auth.acceptedCapabilities] : [];
   client.authenticated = true;
   client.passiveAuthorizationExpiresAt = undefined;
   client.passiveAuthorizationGeneration = undefined;
@@ -333,6 +352,74 @@ export function sendToDeviceLocal(schoolId: string, deviceId: string, message: u
     console.log(`[WS-Local] Exact-bound local target unavailable for ${msgType}`);
   }
   return sent;
+}
+
+export type ExactStudentSocketBinding = {
+  schoolId: string;
+  studentId: string;
+  studentSessionId: string;
+  deviceId: string;
+};
+
+function validExactStudentSocketBinding(binding: ExactStudentSocketBinding): boolean {
+  return [
+    binding.schoolId,
+    binding.studentId,
+    binding.studentSessionId,
+    binding.deviceId,
+  ].every((value) => typeof value === "string" && value.length > 0 && value.length <= 256);
+}
+
+/**
+ * Deliver only to the socket authenticated for one immutable student binding.
+ * Redis delivery can run after the publishing transaction releases its
+ * student-control lock, so a device-only lookup is insufficient after a
+ * correct-PIN handoff reuses the same Chromebook.
+ */
+export function sendToStudentBindingLocal(
+  binding: ExactStudentSocketBinding,
+  message: unknown,
+  options: { requiredCapability?: string } = {}
+): boolean {
+  const msgType = (message as { type?: string })?.type ?? "unknown";
+  if (!validExactStudentSocketBinding(binding)) {
+    console.log(`[WS-Local] Invalid exact student binding for ${msgType}`);
+    return false;
+  }
+  const sockets = studentSocketsBySchool.get(binding.schoolId);
+  if (!sockets) {
+    console.log(`[WS-Local] No exact student-binding socket available for ${msgType}`);
+    return false;
+  }
+  const requiredCapability = options.requiredCapability
+    ?? requiredStudentCapability(message);
+  const matchingSockets = [...sockets].filter((ws) => {
+    const client = wsClients.get(ws);
+    return client?.authenticated === true
+      && client.role === "student"
+      && client.deviceId === binding.deviceId
+      && client.studentId === binding.studentId
+      && client.studentSessionId === binding.studentSessionId
+      && (
+        !requiredCapability
+        || client.acceptedCapabilities?.includes(requiredCapability) === true
+      )
+      && ws.readyState === WebSocket.OPEN;
+  });
+  if (matchingSockets.length === 0) {
+    console.log(`[WS-Local] Exact student-binding target unavailable for ${msgType}`);
+    return false;
+  }
+  const msgId = extractMsgId(message);
+  if (msgId && dedupKey(`${binding.deviceId}:${binding.studentSessionId}`, msgId)) {
+    return true;
+  }
+  const messageStr = JSON.stringify(message);
+  for (const ws of matchingSockets) {
+    ws.send(messageStr);
+  }
+  console.log(`[WS-Local] Sent exact student-binding ${msgType}`);
+  return true;
 }
 
 export function sendToRoleLocal(schoolId: string, role: WsRole, message: unknown) {

@@ -14,17 +14,60 @@ test("student login returns classroom state only for the exact active token sess
   assert.match(login, /const tokenPayload = verifyStudentToken\(studentToken\)/);
   assert.equal(
     (login.match(/verifyActiveStudentTokenSession\(tokenPayload\)/g) || []).length,
-    2,
-    "the exact student/session/device token binding must be checked before and after reading state"
+    1,
+    "the issued token must fail fast before final response delivery authority is acquired"
   );
   const firstAuthorization = login.indexOf("verifyActiveStudentTokenSession(tokenPayload)");
+  const responseAuthority = login.indexOf("withClasspilotStudentLoginResponseAuthority(");
   const stateRead = login.indexOf("getClasspilotStudentControlState(");
-  const secondAuthorization = login.lastIndexOf("verifyActiveStudentTokenSession(tokenPayload)");
-  assert.ok(firstAuthorization < stateRead && stateRead < secondAuthorization);
-  assert.match(login, /serializeClasspilotStudentControlState\(controlState\)/);
-  assert.match(login, /: null;/);
+  const synchronousSend = login.indexOf("return sendResponse(login)");
+  assert.ok(
+    firstAuthorization < responseAuthority
+      && responseAuthority < stateRead
+      && stateRead < synchronousSend,
+    "state preparation and response serialization must remain inside exact binding authority"
+  );
+  const authorityStart = devices.indexOf(
+    "export async function withClasspilotStudentLoginResponseAuthority"
+  );
+  assert.ok(authorityStart >= 0 && authorityStart < start);
+  const responseAuthoritySource = devices.slice(authorityStart, start);
+  assert.match(responseAuthoritySource, /withClasspilotStudentControlDeliveryAuthority\(/);
+  assert.match(responseAuthoritySource, /\(_claimed, prepared\) => sendResponse\(prepared\)/);
+  assert.match(login, /getClasspilotStudentControlState\([\s\S]*?transactionDb/);
+  assert.match(login, /serializeClasspilotStudentControlStateForDelivery\(\{/);
+  assert.match(login, /gateActive: isClasspilotCapabilityActive\([\s\S]*?"lateSignInRestrictionSsoV1"/);
+  assert.match(login, /acceptedCapabilities: loginProtocol\.acceptedCapabilities/);
+  assert.match(
+    login,
+    /exactBinding: \{[\s\S]*?schoolId: options\.schoolId,[\s\S]*?studentId: student\.id,[\s\S]*?studentSessionId: session\.id,[\s\S]*?deviceId: effectiveDeviceId/
+  );
+  assert.match(login, /: \{ classroomState: null, withheld: false \};/);
+  assert.match(login, /const classroomState = loginDelivery\.classroomState/);
   assert.match(login, /classroomState,/);
   assert.match(login, /exactBinding: classpilotControlStateExactBinding\(\{/);
+
+  const studentLoginRoute = devices.slice(
+    devices.indexOf('router.post("/extension/student-login"'),
+    devices.indexOf('router.post("/extension/session-gate-presence"')
+  );
+  assert.equal(
+    studentLoginRoute.match(/\}, \(prepared\) => res\.json\(prepared\)\)/g)?.length,
+    2,
+    "email/ID and PIN login responses must serialize inside response authority"
+  );
+  const registrationRoutes = devices.slice(
+    devices.indexOf('router.post("/extension/register"'),
+    devices.indexOf("// Popup Endpoints")
+  );
+  assert.match(
+    registrationRoutes,
+    /completeStudentDeviceLogin\([\s\S]*?\}, \(prepared\) => \{[\s\S]*?return res\.json\(\{[\s\S]*?\.\.\.prepared/
+  );
+  assert.match(
+    registrationRoutes,
+    /router\.post\("\/register-student"[\s\S]*?completeStudentDeviceLogin\([\s\S]*?\}, \(prepared\) => res\.json\(\{[\s\S]*?studentToken: prepared\.studentToken/
+  );
 });
 
 test("heartbeat and WebSocket reconciliation carry authoritative explicit-null state", async () => {
@@ -37,21 +80,38 @@ test("heartbeat and WebSocket reconciliation carry authoritative explicit-null s
   const heartbeatEnd = devices.indexOf('router.post("/device/screenshot"', heartbeatStart);
   assert.ok(heartbeatStart >= 0 && heartbeatEnd > heartbeatStart);
   const heartbeat = devices.slice(heartbeatStart, heartbeatEnd);
-  assert.match(heartbeat, /const classroomState = controlState[\s\S]*?: null;/);
-  assert.ok(
-    (heartbeat.match(/planStatus: school\.planStatus \|\| "active",\s*classroomState,/g) || []).length >= 2,
-    "both stale-current and normal heartbeat responses must include explicit null"
+  assert.match(
+    heartbeat,
+    /const heartbeatDelivery = controlState[\s\S]*?: \{ classroomState: null, withheld: false \};/
+  );
+  assert.match(heartbeat, /const classroomState = heartbeatDelivery\.classroomState/);
+  assert.match(
+    heartbeat,
+    /planStatus: school\.planStatus \|\| "active",\s*classroomState: prepared\.classroomState,/
+  );
+  const staleResponseStart = heartbeat.indexOf('realtimeStatusMutation.status === "stale"');
+  const staleResponseEnd = heartbeat.indexOf('throw new Error("Realtime heartbeat snapshot was not created")');
+  assert.ok(staleResponseStart >= 0 && staleResponseEnd > staleResponseStart);
+  assert.doesNotMatch(
+    heartbeat.slice(staleResponseStart, staleResponseEnd),
+    /classroomState|controlRevision/,
+    "a stale heartbeat must not leak a hidden control revision or classroom state"
   );
 
-  assert.match(websocket, /classroomState: classroomStateRow[\s\S]*?: null,/);
-  assert.match(websocket, /classroomState: bootstrap\.classroomState,/);
-  assert.match(websocket, /type: "auth-success"[\s\S]*?exactBinding: classpilotControlStateExactBinding\(\{/);
-  assert.match(websocket, /message\.type === "classroom-state-request"/);
-  assert.match(websocket, /session\.id === client\.studentSessionId/);
-  assert.match(websocket, /session\.deviceId === client\.deviceId/);
   assert.match(
     websocket,
-    /classpilotClassroomStatePushFrame\(\{[\s\S]*?type: "classroom-state-sync",[\s\S]*?studentId: client\.studentId,[\s\S]*?studentSessionId: client\.studentSessionId,[\s\S]*?controlRevision: reconciliation\.state\?\.revision \?\? 0,[\s\S]*?classroomState: reconciliation\.state/
+    /const authDelivery = classroomStateRow[\s\S]*?serializeClasspilotStudentControlStateForDelivery\(\{[\s\S]*?acceptedCapabilities: protocol\.acceptedCapabilities[\s\S]*?: \{ classroomState: null, withheld: false \}/
+  );
+  assert.match(websocket, /const classroomState = authDelivery\.classroomState/);
+  assert.match(websocket, /type: "auth-success"[\s\S]*?classroomState: prepared\.classroomState,/);
+  assert.match(websocket, /type: "auth-success"[\s\S]*?exactBinding: classpilotControlStateExactBinding\(\{/);
+  assert.match(websocket, /message\.type === "classroom-state-request"/);
+  assert.match(websocket, /withClasspilotStudentControlDeliveryAuthority\(/);
+  assert.match(websocket, /studentSessionId: client\.studentSessionId/);
+  assert.match(websocket, /deviceId: client\.deviceId/);
+  assert.match(
+    websocket,
+    /classpilotClassroomStatePushFrame\(\{[\s\S]*?type: "classroom-state-sync",[\s\S]*?binding: \{[\s\S]*?schoolId: client\.schoolId!?,[\s\S]*?deviceId: client\.deviceId!?,[\s\S]*?studentId: client\.studentId!?,[\s\S]*?studentSessionId: client\.studentSessionId!?,[\s\S]*?controlRevision: delivered\?\.revision \?\? 0,[\s\S]*?classroomState: delivered/
   );
   assert.equal(
     (devices.match(/exactBinding: classpilotControlStateExactBinding\(\{/g) || []).length,

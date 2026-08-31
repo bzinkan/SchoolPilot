@@ -615,6 +615,120 @@ try {
             -TargetRuntimeConfiguration $skippedStudentGateGlobal
     } "Student-gate global activation must not skip its school-scoped pilot."
 
+    $staleLateSignInReleaseTag = [string]$script:ClassPilotReleaseTag
+    $staleLateSignInMergeSha = [string]$script:ClassPilotMergeSha
+    $staleLateSignInZipSha256 = [string]$script:ClassPilotZipSha256
+    $productionClassPilotExtensionId = [string]$script:ClassPilotExtensionId
+    Assert-Condition ($staleLateSignInReleaseTag -ceq "v2.7.1") `
+        "The rollout helper must retain the last reviewed release identity until the final 2.7.9 package exists."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 4; mode = "late-signin-pilot"; pilotSchoolId = $testSchoolId
+        })
+    } "Late-sign-in activation must fail closed while release evidence still identifies v2.7.1."
+    $lateSignInOffWithStaleEvidence = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+        schemaVersion = 4; mode = "late-signin-off"
+    })
+    Assert-Condition ($lateSignInOffWithStaleEvidence.Mode -ceq "late-signin-off") `
+        "Late-sign-in rollback must remain available while release evidence is stale."
+    $script:ClassPilotReleaseTag = "v2.7.9-rc.1"
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 4; mode = "late-signin-pilot"; pilotSchoolId = $testSchoolId
+        })
+    } "Late-sign-in activation must require the exact v2.7.9 release tag."
+    $script:ClassPilotReleaseTag = "v2.7.9"
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 4; mode = "late-signin-pilot"; pilotSchoolId = $testSchoolId
+        })
+    } "Changing only the release tag must not unlock late-sign-in with stale merge and ZIP evidence."
+    $script:ClassPilotMergeSha = "7e3c129315d9e7c94ee4f6084e769e759a7e2b6a"
+    $script:ClassPilotZipSha256 = "c" * 64
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 4; mode = "late-signin-pilot"; pilotSchoolId = $testSchoolId
+        })
+    } "The incomplete auth-only v2.7.9 merge must never unlock late-sign-in."
+    $script:ClassPilotMergeSha = "b" * 40
+    $script:ClassPilotZipSha256 = "cd2d9c26f989a64203c52f460a1366d642ea371d7cadbb68aec9ef9a16c1884e"
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 4; mode = "late-signin-pilot"; pilotSchoolId = $testSchoolId
+        })
+    } "The obsolete auth-only v2.7.9 ZIP must never unlock late-sign-in."
+    $script:ClassPilotZipSha256 = "c" * 64
+    $script:ClassPilotExtensionId = "iggbfegfcjkfieoemeolfmfnapepalcb"
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 4; mode = "late-signin-pilot"; pilotSchoolId = $testSchoolId
+        })
+    } "Late-sign-in release evidence must bind the exact production extension ID."
+    $script:ClassPilotExtensionId = $productionClassPilotExtensionId
+    $lateSignInPilotIntent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+        schemaVersion = 4; mode = "late-signin-pilot"; pilotSchoolId = $testSchoolId
+    })
+    Assert-Condition ($lateSignInPilotIntent.RequiresSourceRuntime -and
+        $lateSignInPilotIntent.Environment.Count -eq 0 -and
+        $null -eq $lateSignInPilotIntent.Turn) `
+        "Late-sign-in profiles must be source-preserving intents."
+    $lateSignInPilotSource = New-TransitionSourceTask -RuntimeConfiguration $studentGatePilotRuntime
+    $lateSignInPilotRuntime = Resolve-SourcePreservingRuntimeConfiguration `
+        -RuntimeIntent $lateSignInPilotIntent -SourceTaskDefinition $lateSignInPilotSource -ContainerName "api"
+    $lateSignInPilotRollouts = [string]$lateSignInPilotRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON |
+        ConvertFrom-Json -Depth 10
+    Assert-Condition ($lateSignInPilotRuntime.Environment.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1 -ceq "true" -and
+        [string]$lateSignInPilotRollouts.lateSignInRestrictionSsoV1.mode -ceq "on" -and
+        @($lateSignInPilotRollouts.lateSignInRestrictionSsoV1.schoolIds).Count -eq 1 -and
+        [string]$lateSignInPilotRollouts.lateSignInRestrictionSsoV1.schoolIds[0] -ceq $testSchoolId) `
+        "Late-sign-in pilot must require both controls and exactly one canonical school."
+    Assert-Condition ([string]$lateSignInPilotRuntime.Environment.CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1 -ceq "true" -and
+        [string]$lateSignInPilotRollouts.studentAuthGatePresenceV1.mode -ceq "on" -and
+        [string]$lateSignInPilotRollouts.studentAuthGatePresenceV1.schoolIds[0] -ceq $testSchoolId) `
+        "Late-sign-in pilot must preserve the exact existing student-gate pilot."
+    foreach ($capability in @($script:AllCapabilities | Where-Object {
+        $_ -cne $script:LateSignInRestrictionSsoCapability
+    })) {
+        $sourceEntry = $studentGatePilotRollouts.$capability | ConvertTo-Json -Depth 10 -Compress
+        $targetEntry = $lateSignInPilotRollouts.$capability | ConvertTo-Json -Depth 10 -Compress
+        Assert-Condition ($sourceEntry -ceq $targetEntry) `
+            "Late-sign-in pilot must preserve the existing $capability rollout entry."
+        Assert-Condition ([string]$lateSignInPilotRuntime.Environment[[string]$script:CapabilityFlags[$capability]] -ceq
+            [string]$studentGatePilotRuntime.Environment[[string]$script:CapabilityFlags[$capability]]) `
+            "Late-sign-in pilot must preserve the existing $capability kill switch."
+    }
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $lateSignInPilotSource -ContainerName "api" `
+        -TargetRuntimeConfiguration $lateSignInPilotRuntime
+
+    $lateSignInOffIntent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+        schemaVersion = 4; mode = "late-signin-off"
+    })
+    $lateSignInOffSource = New-TransitionSourceTask -RuntimeConfiguration $lateSignInPilotRuntime
+    $lateSignInOffRuntime = Resolve-SourcePreservingRuntimeConfiguration `
+        -RuntimeIntent $lateSignInOffIntent -SourceTaskDefinition $lateSignInOffSource -ContainerName "api"
+    $lateSignInOffRollouts = [string]$lateSignInOffRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON |
+        ConvertFrom-Json -Depth 10
+    Assert-Condition ($lateSignInOffRuntime.Environment.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1 -ceq "false" -and
+        [string]$lateSignInOffRollouts.lateSignInRestrictionSsoV1.mode -ceq "off" -and
+        $lateSignInOffRuntime.Environment.CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1 -ceq "true" -and
+        [string]$lateSignInOffRollouts.studentAuthGatePresenceV1.mode -ceq "on") `
+        "Late-sign-in rollback must disable only late delivery and preserve student-gate state."
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $lateSignInOffSource -ContainerName "api" `
+        -TargetRuntimeConfiguration $lateSignInOffRuntime
+    Assert-Throws {
+        $unsafeGlobalLateSource = New-TransitionSourceTask -RuntimeConfiguration $lateSignInPilotRuntime
+        $unsafeGlobalLateEnvironment = @($unsafeGlobalLateSource.containerDefinitions[0].environment)
+        $unsafeGlobalLateRolloutEntry = @($unsafeGlobalLateEnvironment | Where-Object name -CEQ "CLASSPILOT_CAPABILITY_ROLLOUTS_JSON")[0]
+        $unsafeGlobalLateRollouts = [string]$unsafeGlobalLateRolloutEntry.value | ConvertFrom-Json -Depth 10
+        $unsafeGlobalLateRollouts.lateSignInRestrictionSsoV1.PSObject.Properties.Remove("schoolIds")
+        $unsafeGlobalLateRolloutEntry.value = $unsafeGlobalLateRollouts | ConvertTo-Json -Depth 10 -Compress
+        Get-RuntimeActivationState -Environment $unsafeGlobalLateEnvironment -AllowBaseline
+    } "Late-sign-in activation must reject a global rollout."
+    $script:ClassPilotReleaseTag = $staleLateSignInReleaseTag
+    $script:ClassPilotMergeSha = $staleLateSignInMergeSha
+    $script:ClassPilotZipSha256 = $staleLateSignInZipSha256
+    $script:ClassPilotExtensionId = $productionClassPilotExtensionId
+
     $legacyGlobalSource = New-TransitionSourceTask -RuntimeConfiguration $globalRuntime
     $legacyGlobalEnvironment = @($legacyGlobalSource.containerDefinitions[0].environment)
     $legacyGlobalRolloutEntry = @($legacyGlobalEnvironment | Where-Object name -CEQ "CLASSPILOT_CAPABILITY_ROLLOUTS_JSON")[0]
@@ -784,6 +898,21 @@ try {
     } "Student-gate rollback must preserve existing TURN wiring."
     Assert-Throws {
         ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 3; mode = "late-signin-pilot"; pilotSchoolId = $testSchoolId
+        })
+    } "Late-sign-in profiles must require their independent schema version."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 4; mode = "late-signin-pilot"; pilotSchoolId = "NOT-A-UUID"
+        })
+    } "Late-sign-in pilot must reject malformed school scope."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 4; mode = "late-signin-off"; turn = $turn
+        })
+    } "Late-sign-in rollback must preserve existing TURN wiring."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
             schemaVersion = 1; mode = "test-school"; testSchoolId = $testSchoolId
             enabledCapabilities = @($script:ActivationOrder[0..6])
         })
@@ -797,10 +926,14 @@ try {
         "TRACKING-WINDOW-GLOBAL-ON", "Tracking-Window-Global-On",
         "STUDENT-GATE-PILOT", "Student-Gate-Pilot",
         "STUDENT-GATE-GLOBAL-ON", "Student-Gate-Global-On",
-        "STUDENT-GATE-OFF", "Student-Gate-Off"
+        "STUDENT-GATE-OFF", "Student-Gate-Off",
+        "LATE-SIGNIN-PILOT", "Late-Signin-Pilot",
+        "LATE-SIGNIN-OFF", "Late-Signin-Off"
     )) {
         Assert-Throws {
-            $misCasedSchema = if ($misCasedMode -clike "*STUDENT*" -or $misCasedMode -clike "Student*") {
+            $misCasedSchema = if ($misCasedMode -clike "*LATE*" -or $misCasedMode -clike "Late*") {
+                4
+            } elseif ($misCasedMode -clike "*STUDENT*" -or $misCasedMode -clike "Student*") {
                 3
             } elseif ($misCasedMode -clike "*TRACKING*" -or $misCasedMode -clike "Tracking*") { 2 } else { 1 }
             ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{ schemaVersion = $misCasedSchema; mode = $misCasedMode })
@@ -1435,6 +1568,7 @@ try {
         schoolPilotImageDigest = $digest
         classPilotTag = "v2.7.1"
         classPilotMergeSha = "a3b096d6a74ab6979f4e4c656d75e2397eb8648f"
+        classPilotExtensionId = "iggbfegfcjkfieoemeolfmfnapepalca"
         classPilotZipSha256 = "40fed2c455d5c50fe3a947d23e3798a0c81832a67e717a2767b62970c024307c"
         turnEvidenceSha256 = [string]$waiverTurnSnapshot.Sha256
         checks = [ordered]@{
@@ -1473,6 +1607,13 @@ try {
         Assert-SyntheticValidationEvidence -EvidenceSnapshot (Read-StrictJsonSnapshot -Path $syntheticValidationPath) `
             -AppSha $appSha -ImageDigest $digest -TurnEvidenceSha256 ([string]$waiverTurnSnapshot.Sha256) -Now $now
     } "Synthetic validation must bind the exact TURN evidence hash."
+    $invalidSyntheticValidation = $validSyntheticValidationText | ConvertFrom-Json -Depth 30 -DateKind String
+    $invalidSyntheticValidation.classPilotExtensionId = "iggbfegfcjkfieoemeolfmfnapepalcb"
+    Write-TestJson -Path $syntheticValidationPath -Value $invalidSyntheticValidation
+    Assert-Throws {
+        Assert-SyntheticValidationEvidence -EvidenceSnapshot (Read-StrictJsonSnapshot -Path $syntheticValidationPath) `
+            -AppSha $appSha -ImageDigest $digest -TurnEvidenceSha256 ([string]$waiverTurnSnapshot.Sha256) -Now $now
+    } "Synthetic validation must bind the exact production ClassPilot extension ID."
     $invalidSyntheticValidation = $validSyntheticValidationText | ConvertFrom-Json -Depth 30 -DateKind String
     $invalidSyntheticValidation.checks.PSObject.Properties.Remove("markerless270LegacyPassed")
     Write-TestJson -Path $syntheticValidationPath -Value $invalidSyntheticValidation

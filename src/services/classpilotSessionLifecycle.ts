@@ -4,7 +4,7 @@ import type db from "../db.js";
 import type { TeachingSession } from "../schema/classpilot.js";
 import {
   broadcastToTeachersLocal,
-  sendToDeviceLocal,
+  sendToStudentBindingLocal,
 } from "../realtime/ws-broadcast.js";
 import { publishWS } from "../realtime/ws-redis.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
@@ -21,17 +21,23 @@ import {
   getClasspilotSessionStudentReports,
   getActiveSessionsForStudents,
   getClasspilotSessionStudents,
+  getClasspilotStudentControlState,
   getClasspilotStudentControlStates,
   getTeachingSessionByIdAndSchool,
   getActiveTeachingSessionForSchool,
   getUserById,
   markSessionSummarySubmissionStarted,
   recoverExpiredSessionSummaryLeases,
+  withClasspilotStudentControlDeliveryAuthority,
   withTeachingSessionStartLock,
   type TeachingSessionFinalizationReason,
   type FinalizeTeachingSessionResult,
 } from "./storage.js";
-import { serializeClasspilotStudentControlState } from "./classpilotClassroomState.js";
+import {
+  classpilotControlStateHasLateSignInOrigin,
+  serializeClasspilotStudentControlStateForDelivery,
+} from "./classpilotClassroomState.js";
+import { isClasspilotCapabilityActive } from "./classpilotProtocol.js";
 import { getSessionStudentBindings } from "./classpilotFab.js";
 import { syncClasspilotControlStatesToActiveDevices } from "./classpilotControlStateDelivery.js";
 import { stopActiveClasspilotLiveViewNegotiations } from "./classpilotLiveViewStop.js";
@@ -74,26 +80,76 @@ async function publishControlStateRows(
   await Promise.all(states.map(async (state) => {
     const studentSession = sessionByStudent.get(state.studentId);
     if (!studentSession) return;
-    const classroomState = {
-      ...serializeClasspilotStudentControlState(state),
-      ...(teachingSessionIdOverride ? { teachingSessionId: teachingSessionIdOverride } : {}),
+    const exactTarget = {
+      kind: "student-binding" as const,
+      schoolId,
+      deviceId: studentSession.deviceId,
+      studentId: state.studentId,
+      studentSessionId: studentSession.id,
     };
-    const message = classpilotClassroomStatePushFrame({
-      type: "classroom-state",
-      binding: {
-        schoolId,
-        deviceId: studentSession.deviceId,
-        studentId: state.studentId,
-        studentSessionId: studentSession.id,
-        controlRevision: state.revision,
+    const delivery = await withClasspilotStudentControlDeliveryAuthority(
+      exactTarget,
+      async (transactionDb) => {
+        const current = await getClasspilotStudentControlState(
+          schoolId,
+          state.studentId,
+          transactionDb
+        );
+        // A newer lifecycle or teacher command supersedes this post-commit
+        // side effect. Provenance is immutable, so stamped clears and expired
+        // rows still require the exact-school gate and per-socket capability.
+        if (!current || current.revision !== state.revision) return null;
+        const lateSignInRequired = classpilotControlStateHasLateSignInOrigin(
+          current.desiredState
+        );
+        if (lateSignInRequired && !isClasspilotCapabilityActive(
+          "lateSignInRestrictionSsoV1",
+          { schoolId }
+        )) return null;
+        return { current, lateSignInRequired };
       },
-      classroomState,
-    });
-    sendToDeviceLocal(schoolId, studentSession.deviceId, message);
-    await publishWS(
-      { kind: "device", schoolId, deviceId: studentSession.deviceId },
-      message
+      (_claimed, prepared) => {
+        if (!prepared) return null;
+        const gateActive = !prepared.lateSignInRequired || isClasspilotCapabilityActive(
+          "lateSignInRestrictionSsoV1",
+          { schoolId }
+        );
+        if (!gateActive) return null;
+        const requiredCapability = prepared.lateSignInRequired
+          ? "lateSignInRestrictionSsoV1" as const
+          : undefined;
+        const deliveryTarget = requiredCapability
+          ? { ...exactTarget, requiredCapability }
+          : exactTarget;
+        const delivered = serializeClasspilotStudentControlStateForDelivery({
+          state: prepared.current,
+          gateActive,
+          acceptedCapabilities: requiredCapability ? [requiredCapability] : [],
+          exactBinding: exactTarget,
+        });
+        if (!delivered.classroomState || delivered.withheld) return null;
+        const classroomState = {
+          ...delivered.classroomState,
+          ...(teachingSessionIdOverride ? { teachingSessionId: teachingSessionIdOverride } : {}),
+        };
+        const message = classpilotClassroomStatePushFrame({
+          type: "classroom-state",
+          binding: {
+            schoolId,
+            deviceId: studentSession.deviceId,
+            studentId: state.studentId,
+            studentSessionId: studentSession.id,
+            controlRevision: prepared.current.revision,
+          },
+          classroomState,
+        });
+        sendToStudentBindingLocal(deliveryTarget, message, { requiredCapability });
+        return { target: deliveryTarget, message };
+      }
     );
+    if (delivery.authorized && delivery.value) {
+      await publishWS(delivery.value.target, delivery.value.message);
+    }
   }));
 }
 

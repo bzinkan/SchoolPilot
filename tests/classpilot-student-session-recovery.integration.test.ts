@@ -1,10 +1,12 @@
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { and, eq, sql } from "drizzle-orm";
 import { Client } from "pg";
+import { WebSocket as WebSocketClient, WebSocketServer } from "ws";
 
 process.env.NODE_ENV = "test";
 process.env.SCHEDULER_ENABLED = "true";
@@ -43,13 +45,16 @@ const authGatePresence = await import(
 const studentSessionTransfer = await import(
   "../dist/services/classpilotStudentSessionTransfer.js"
 );
+const commandDispatcher = await import(
+  "../dist/services/classpilotCommandDispatcher.js"
+);
 const classpilotDeviceRoutes = await import("../dist/routes/classpilot/devices.js");
+const websocketBroadcast = await import("../dist/realtime/ws-broadcast.js");
 const { classpilotScreenshotFallback } = await import(
   "../dist/services/classpilotScreenshotFallback.js"
 );
-const { classBoundScreenshotBindingVersion } = await import(
-  "../dist/realtime/ws-redis.js"
-);
+const websocketRedis = await import("../dist/realtime/ws-redis.js");
+const { classBoundScreenshotBindingVersion } = websocketRedis;
 const { validateClasspilotScreenshotCapturedAt } = await import(
   "../dist/services/classpilotScreenshotPolicy.js"
 );
@@ -66,7 +71,9 @@ const {
   devices,
   classpilotSessionStaff,
   classpilotSessionStudents,
+  classpilotChatDeliveries,
   classpilotStudentControlStates,
+  chatMessages,
   groupStudents,
   groupTeachers,
   groups,
@@ -96,6 +103,190 @@ const blockedDeviceId = `${tag}-blocked`;
 
 const inSchool = <T>(fn: () => Promise<T>): Promise<T> =>
   runWithTenantContext({ schoolId }, fn);
+
+async function assertExactDeliverySerializedWithTransfer(
+  surface: "state-request" | "heartbeat-response" | "login-response"
+): Promise<void> {
+  const suffix = `${surface}-${randomUUID().slice(0, 8)}`;
+  const transferDeviceId = `${tag}-${suffix}`;
+  await inSchool(() => createDevice({
+    deviceId: transferDeviceId,
+    deviceName: `${surface} transfer device`,
+    schoolId,
+    classId: schoolId,
+  } as Parameters<typeof createDevice>[0]));
+  const sourceStudent = await inSchool(() => createStudent({
+    schoolId,
+    firstName: "Delivery",
+    lastName: "Source",
+    email: `${suffix}-source@${tag}.example.edu`,
+    emailLc: `${suffix}-source@${tag}.example.edu`,
+    status: "active",
+  } as Parameters<typeof createStudent>[0]));
+  const destinationStudent = await inSchool(() => createStudent({
+    schoolId,
+    firstName: "Delivery",
+    lastName: "Destination",
+    email: `${suffix}-destination@${tag}.example.edu`,
+    emailLc: `${suffix}-destination@${tag}.example.edu`,
+    status: "active",
+  } as Parameters<typeof createStudent>[0]));
+  const sourceRecovery = createStudentSessionRecovery();
+  const sourceSession = await inSchool(() => startStudentSessionWithReplacements(
+    schoolId,
+    sourceStudent.id,
+    transferDeviceId,
+    {
+      authKind: "manual_shared",
+      sessionRecoveryTokenHash: sourceRecovery.tokenHash,
+    }
+  ));
+
+  let releasePreparation!: () => void;
+  const preparationMayFinish = new Promise<void>((resolve) => {
+    releasePreparation = resolve;
+  });
+  let authorityLocked!: () => void;
+  const deliveryHasAuthority = new Promise<void>((resolve) => {
+    authorityLocked = resolve;
+  });
+  const ordering: string[] = [];
+  const exactBinding = {
+    schoolId,
+    studentId: sourceStudent.id,
+    studentSessionId: sourceSession.session.id,
+    deviceId: transferDeviceId,
+  };
+  const prepareDelivery = async () => {
+    ordering.push(`${surface}-prepared`);
+    authorityLocked();
+    await preparationMayFinish;
+    return { revision: 7 };
+  };
+  const sendDelivery = (prepared: { revision: number }) => {
+    assert.equal(prepared.revision, 7);
+    ordering.push(`${surface}-delivered`);
+    return prepared.revision;
+  };
+  const delivery = surface === "login-response"
+    ? inSchool(() => classpilotDeviceRoutes.withClasspilotStudentLoginResponseAuthority(
+        exactBinding,
+        prepareDelivery,
+        sendDelivery
+      ))
+    : inSchool(() => storage.withClasspilotStudentControlDeliveryAuthority(
+        exactBinding,
+        prepareDelivery,
+        (_claimed, prepared) => sendDelivery(prepared)
+      ));
+  await deliveryHasAuthority;
+
+  const lockProbe = new Client({ connectionString: process.env.DATABASE_URL });
+  await lockProbe.connect();
+  let transfer:
+    | ReturnType<typeof startStudentSessionWithReplacements>
+    | undefined;
+  let transferSettled = false;
+  try {
+    transfer = inSchool(() => startStudentSessionWithReplacements(
+      schoolId,
+      destinationStudent.id,
+      transferDeviceId,
+      {
+        authKind: "manual_shared",
+        sessionRecoveryTokenHash: createStudentSessionRecovery().tokenHash,
+        reclaimRecoveryTokenHash: sourceRecovery.tokenHash,
+      }
+    ));
+    void transfer.then(() => {
+      transferSettled = true;
+      ordering.push("transfer-completed");
+    }, () => {
+      transferSettled = true;
+    });
+
+    const authorityLockKey =
+      `classpilot:student-control:${schoolId}:${sourceStudent.id}`;
+    let waitingTransferCount = 0;
+    const waitDeadline = Date.now() + 5_000;
+    while (waitingTransferCount === 0 && Date.now() < waitDeadline) {
+      const lockSnapshot = await lockProbe.query(`
+        WITH requested_lock AS (
+          SELECT hashtextextended($1, 0::bigint) AS value
+        )
+        SELECT count(*) FILTER (WHERE lock_row.granted = false)::integer AS "waitingCount"
+        FROM pg_locks AS lock_row
+        CROSS JOIN requested_lock
+        WHERE lock_row.locktype = 'advisory'
+          AND lock_row.objsubid = 1
+          AND lock_row.classid::bigint =
+            ((requested_lock.value >> 32) & 4294967295::bigint)
+          AND lock_row.objid::bigint =
+            (requested_lock.value & 4294967295::bigint)
+      `, [authorityLockKey]);
+      waitingTransferCount = Number(lockSnapshot.rows[0]?.waitingCount ?? 0);
+      if (waitingTransferCount === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    }
+    assert.equal(
+      waitingTransferCount,
+      1,
+      `${surface} transfer must wait on the response delivery authority lock`
+    );
+    assert.equal(
+      transferSettled,
+      false,
+      `${surface} transfer must not commit before synchronous response delivery`
+    );
+
+    releasePreparation();
+    const [deliveryResult, transferResult] = await Promise.all([delivery, transfer]);
+    if (surface === "login-response") {
+      assert.equal(deliveryResult, 7);
+    } else {
+      assert.deepEqual(deliveryResult, { authorized: true, value: 7 });
+    }
+    assert.equal(transferResult.crossStudentHandoff, true);
+    assert.deepEqual(ordering, [
+      `${surface}-prepared`,
+      `${surface}-delivered`,
+      "transfer-completed",
+    ]);
+    assert.equal(
+      await inSchool(() => storage.getActiveSessionById(sourceSession.session.id)),
+      undefined
+    );
+    assert.equal(
+      (await inSchool(() => storage.getActiveSessionById(transferResult.session.id)))
+        ?.studentId,
+      destinationStudent.id
+    );
+  } finally {
+    releasePreparation();
+    await Promise.allSettled([
+      delivery,
+      ...(transfer ? [transfer] : []),
+    ]);
+    await lockProbe.end();
+    const activeSessions = await inSchool(() => storage.getActiveSessionsForStudents(
+      schoolId,
+      [sourceStudent.id, destinationStudent.id]
+    ));
+    for (const active of activeSessions) {
+      await inSchool(() => storage.endStudentSessionExact({
+        schoolId,
+        studentId: active.studentId,
+        deviceId: active.deviceId,
+        studentSessionId: active.id,
+      }));
+    }
+    await inSchool(() => storage.deleteDeviceWithEndedSessions(
+      schoolId,
+      transferDeviceId
+    ));
+  }
+}
 
 before(async () => {
   const school = await createSchool({
@@ -167,6 +358,590 @@ after(async () => {
 });
 
 describe("ClassPilot manual-session recovery authority", () => {
+  it("serializes a login response send before correct-PIN transfer", async () => {
+    await assertExactDeliverySerializedWithTransfer("login-response");
+  });
+
+  it("serializes a WebSocket classroom-state request send before correct-PIN transfer", async () => {
+    await assertExactDeliverySerializedWithTransfer("state-request");
+  });
+
+  it("serializes a heartbeat classroom-state response before correct-PIN transfer", async () => {
+    await assertExactDeliverySerializedWithTransfer("heartbeat-response");
+  });
+
+  it("lets transfer win between persistent command state and exact local or Redis delivery", async () => {
+    const suffix = `persistent-command-transfer-${randomUUID().slice(0, 8)}`;
+    const transferDeviceId = `${tag}-${suffix}`;
+    const teacher = await storage.createUser({
+      email: `${suffix}-teacher@${tag}.example.edu`,
+      firstName: "Command",
+      lastName: "Teacher",
+    } as Parameters<typeof storage.createUser>[0]);
+    await inSchool(() => storage.createMembership({
+      userId: teacher.id,
+      schoolId,
+      role: "teacher",
+      status: "active",
+    } as Parameters<typeof storage.createMembership>[0]));
+    const sourceStudent = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Command",
+      lastName: "Source",
+      email: `${suffix}-source@${tag}.example.edu`,
+      emailLc: `${suffix}-source@${tag}.example.edu`,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const destinationStudent = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Command",
+      lastName: "Destination",
+      email: `${suffix}-destination@${tag}.example.edu`,
+      emailLc: `${suffix}-destination@${tag}.example.edu`,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    await inSchool(() => createDevice({
+      deviceId: transferDeviceId,
+      deviceName: "Persistent command transfer fixture",
+      schoolId,
+      classId: schoolId,
+    } as Parameters<typeof createDevice>[0]));
+    const group = await inSchool(() => storage.createGroup({
+      schoolId,
+      teacherId: teacher.id,
+      name: `${suffix} class`,
+      groupType: "admin_class",
+      status: "active",
+    } as Parameters<typeof storage.createGroup>[0]));
+    await inSchool(() => db.insert(groupStudents).values({
+      groupId: group.id,
+      studentId: sourceStudent.id,
+    }));
+    const teachingSession = await inSchool(() => storage.createTeachingSession({
+      groupId: group.id,
+      teacherId: teacher.id,
+      sessionMode: "live",
+    } as Parameters<typeof storage.createTeachingSession>[0]));
+    const sourceControl = await inSchool(() =>
+      storage.getClasspilotStudentControlState(schoolId, sourceStudent.id)
+    );
+    assert.equal(sourceControl?.teachingSessionId, teachingSession.id);
+    const sourceRecovery = createStudentSessionRecovery();
+    const sourceSession = await inSchool(() => startStudentSessionWithReplacements(
+      schoolId,
+      sourceStudent.id,
+      transferDeviceId,
+      {
+        authKind: "manual_shared",
+        sessionRecoveryTokenHash: sourceRecovery.tokenHash,
+      }
+    ));
+
+    const socketServer = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    await once(socketServer, "listening");
+    const socketAddress = socketServer.address();
+    assert.ok(socketAddress && typeof socketAddress !== "string");
+    const serverSocketConnected = once(socketServer, "connection");
+    const clientSocket = new WebSocketClient(`ws://127.0.0.1:${socketAddress.port}`);
+    const clientMessages: string[] = [];
+    clientSocket.on("message", (data) => clientMessages.push(data.toString()));
+    await once(clientSocket, "open");
+    const [serverSocket] = await serverSocketConnected;
+    websocketBroadcast.registerWsClient(serverSocket);
+    websocketBroadcast.authenticateWsClient(serverSocket, {
+      role: "student",
+      schoolId,
+      studentId: sourceStudent.id,
+      studentSessionId: sourceSession.session.id,
+      deviceId: transferDeviceId,
+    });
+
+    const blocker = new Client({ connectionString: process.env.DATABASE_URL });
+    await blocker.connect();
+    let blockerOpen = false;
+    let command:
+      | ReturnType<typeof commandDispatcher.executeClasspilotCommand>
+      | undefined;
+    let transfer:
+      | ReturnType<typeof startStudentSessionWithReplacements>
+      | undefined;
+    try {
+      await blocker.query("BEGIN");
+      blockerOpen = true;
+      const locked = await blocker.query(`
+        SELECT id
+        FROM classpilot_student_control_states
+        WHERE school_id = $1 AND student_id = $2
+        FOR UPDATE
+      `, [schoolId, sourceStudent.id]);
+      assert.equal(locked.rowCount, 1);
+      const blockerPid = Number(
+        (await blocker.query("SELECT pg_backend_pid() AS pid")).rows[0]?.pid
+      );
+      assert.equal(Number.isSafeInteger(blockerPid), true);
+
+      let commandSettled = false;
+      command = inSchool(() => commandDispatcher.executeClasspilotCommand({
+        schoolId,
+        actorId: teacher.id,
+        teachingSessionId: teachingSession.id,
+        targetScope: "students",
+        commandType: "lock-screen",
+        rawCommandPayload: { url: "https://example.edu/persistence-transfer-race" },
+        targets: [{
+          studentId: sourceStudent.id,
+          studentName: "Command Source",
+          studentSessionId: sourceSession.session.id,
+          deviceId: transferDeviceId,
+          available: true,
+          stateAuthorized: true,
+        }],
+      }));
+      void command.then(
+        () => { commandSettled = true; },
+        () => { commandSettled = true; }
+      );
+
+      let persistenceWaitingCount = 0;
+      const persistenceDeadline = Date.now() + 5_000;
+      while (persistenceWaitingCount === 0 && Date.now() < persistenceDeadline) {
+        const snapshot = await blocker.query(`
+          SELECT count(*)::integer AS "waitingCount"
+          FROM pg_stat_activity AS waiter
+          WHERE $1::integer = ANY(pg_blocking_pids(waiter.pid))
+        `, [blockerPid]);
+        persistenceWaitingCount = Number(snapshot.rows[0]?.waitingCount ?? 0);
+        if (persistenceWaitingCount === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      }
+      assert.equal(
+        persistenceWaitingCount,
+        1,
+        "persistent command state must reach the blocked control-state row"
+      );
+      assert.equal(commandSettled, false);
+
+      let transferSettled = false;
+      transfer = inSchool(() => startStudentSessionWithReplacements(
+        schoolId,
+        destinationStudent.id,
+        transferDeviceId,
+        {
+          authKind: "manual_shared",
+          sessionRecoveryTokenHash: createStudentSessionRecovery().tokenHash,
+          reclaimRecoveryTokenHash: sourceRecovery.tokenHash,
+        }
+      ));
+      void transfer.then(
+        () => { transferSettled = true; },
+        () => { transferSettled = true; }
+      );
+
+      const studentLockKey =
+        `classpilot:student-control:${schoolId}:${sourceStudent.id}`;
+      let waitingTransferCount = 0;
+      const transferDeadline = Date.now() + 5_000;
+      while (waitingTransferCount === 0 && Date.now() < transferDeadline) {
+        const snapshot = await blocker.query(`
+          WITH requested_lock AS (
+            SELECT hashtextextended($1, 0::bigint) AS value
+          )
+          SELECT count(*) FILTER (WHERE lock_row.granted = false)::integer AS "waitingCount"
+          FROM pg_locks AS lock_row
+          CROSS JOIN requested_lock
+          WHERE lock_row.locktype = 'advisory'
+            AND lock_row.objsubid = 1
+            AND lock_row.classid::bigint =
+              ((requested_lock.value >> 32) & 4294967295::bigint)
+            AND lock_row.objid::bigint =
+              (requested_lock.value & 4294967295::bigint)
+        `, [studentLockKey]);
+        waitingTransferCount = Number(snapshot.rows[0]?.waitingCount ?? 0);
+        if (waitingTransferCount === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      }
+      assert.equal(
+        waitingTransferCount,
+        1,
+        "transfer must be queued before persistent command delivery requests authority"
+      );
+      assert.equal(commandSettled, false);
+      assert.equal(transferSettled, false);
+
+      await blocker.query("COMMIT");
+      blockerOpen = false;
+      const [commandResult, transferResult] = await Promise.all([command, transfer]);
+      assert.equal(transferResult.crossStudentHandoff, true);
+      assert.deepEqual(
+        transferResult.replacedSessions.map((session) => session.id),
+        [sourceSession.session.id]
+      );
+      assert.equal(
+        await inSchool(() => storage.getActiveSessionById(sourceSession.session.id)),
+        undefined
+      );
+      assert.equal(
+        (await inSchool(() => storage.getActiveSessionById(transferResult.session.id)))
+          ?.studentId,
+        destinationStudent.id
+      );
+
+      const commandTarget = commandResult.command.targets[0];
+      assert.ok(commandTarget);
+      assert.notEqual(commandTarget.status, "sent");
+      assert.equal(commandTarget.sentAt, null);
+      assert.equal(commandResult.summary.attempted, 0);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(
+        clientMessages.some((message) => message.includes(commandResult.command.id)),
+        false,
+        "the retired local binding must not receive the command"
+      );
+
+      const messagesBeforeDelayedRedis = clientMessages.length;
+      assert.equal(
+        await websocket.deliverClasspilotStudentBindingRedisMessage(
+          {
+            kind: "student-binding",
+            schoolId,
+            studentId: sourceStudent.id,
+            studentSessionId: sourceSession.session.id,
+            deviceId: transferDeviceId,
+          },
+          {
+            type: "LOCK_SCREEN",
+            commandId: commandResult.command.id,
+            _msgId: `${commandResult.command.id}-delayed-redis`,
+          }
+        ),
+        false,
+        "a delayed Redis copy must reject the retired exact binding"
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(clientMessages.length, messagesBeforeDelayedRedis);
+    } finally {
+      if (blockerOpen) await blocker.query("ROLLBACK").catch(() => {});
+      await Promise.allSettled([
+        ...(command ? [command] : []),
+        ...(transfer ? [transfer] : []),
+      ]);
+      await blocker.end();
+      websocketBroadcast.resetWsState();
+      clientSocket.terminate();
+      for (const socket of socketServer.clients) socket.terminate();
+      await new Promise<void>((resolve) => socketServer.close(() => resolve()));
+
+      await runWithTenantContext({ isSuper: true }, async () => {
+        await db.execute(sql`
+          DELETE FROM classpilot_command_targets
+          WHERE teaching_session_id = ${teachingSession.id}
+        `);
+        await db.execute(sql`
+          DELETE FROM classpilot_commands
+          WHERE teaching_session_id = ${teachingSession.id}
+        `);
+        await db.execute(sql`
+          DELETE FROM classpilot_classroom_states
+          WHERE teaching_session_id = ${teachingSession.id}
+        `);
+        await db.delete(classpilotStudentControlStates).where(
+          eq(classpilotStudentControlStates.teachingSessionId, teachingSession.id)
+        );
+        await db.delete(classpilotSessionStudents).where(
+          eq(classpilotSessionStudents.teachingSessionId, teachingSession.id)
+        );
+        await db.delete(classpilotSessionStaff).where(
+          eq(classpilotSessionStaff.teachingSessionId, teachingSession.id)
+        );
+        await db.delete(teachingSessions).where(eq(teachingSessions.id, teachingSession.id));
+        await db.delete(groupStudents).where(eq(groupStudents.groupId, group.id));
+        await db.delete(groupTeachers).where(eq(groupTeachers.groupId, group.id));
+        await db.delete(groups).where(eq(groups.id, group.id));
+        await db.delete(studentSessions).where(eq(studentSessions.deviceId, transferDeviceId));
+        await db.delete(studentDevices).where(eq(studentDevices.deviceId, transferDeviceId));
+        await db.delete(devices).where(eq(devices.deviceId, transferDeviceId));
+        await db.delete(students).where(eq(students.id, sourceStudent.id));
+        await db.delete(students).where(eq(students.id, destinationStudent.id));
+        await db.delete(schoolMemberships).where(eq(schoolMemberships.userId, teacher.id));
+        await db.delete(users).where(eq(users.id, teacher.id));
+      });
+    }
+  });
+
+  it("fences heartbeat teacher-reply recovery and rejects delayed cross-process delivery after transfer", async () => {
+    const suffix = `heartbeat-teacher-reply-${randomUUID().slice(0, 8)}`;
+    const transferDeviceId = `${tag}-${suffix}`;
+    const teacher = await storage.createUser({
+      email: `${suffix}-teacher@${tag}.example.edu`,
+      firstName: "Reply",
+      lastName: "Teacher",
+    } as Parameters<typeof storage.createUser>[0]);
+    await inSchool(() => storage.createMembership({
+      userId: teacher.id,
+      schoolId,
+      role: "teacher",
+      status: "active",
+    } as Parameters<typeof storage.createMembership>[0]));
+    const sourceStudent = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Reply",
+      lastName: "Source",
+      email: `${suffix}-source@${tag}.example.edu`,
+      emailLc: `${suffix}-source@${tag}.example.edu`,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const destinationStudent = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Reply",
+      lastName: "Destination",
+      email: `${suffix}-destination@${tag}.example.edu`,
+      emailLc: `${suffix}-destination@${tag}.example.edu`,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    await inSchool(() => createDevice({
+      deviceId: transferDeviceId,
+      deviceName: "Heartbeat teacher reply transfer device",
+      schoolId,
+      classId: schoolId,
+    } as Parameters<typeof createDevice>[0]));
+    const group = await inSchool(() => storage.createGroup({
+      schoolId,
+      teacherId: teacher.id,
+      name: `${suffix} class`,
+      groupType: "admin_class",
+      status: "active",
+    } as Parameters<typeof storage.createGroup>[0]));
+    await inSchool(() => db.insert(groupStudents).values({
+      groupId: group.id,
+      studentId: sourceStudent.id,
+    }));
+    const teachingSession = await inSchool(() => storage.createTeachingSession({
+      groupId: group.id,
+      teacherId: teacher.id,
+      sessionMode: "live",
+    } as Parameters<typeof storage.createTeachingSession>[0]));
+    const sourceRecovery = createStudentSessionRecovery();
+    const sourceSession = await inSchool(() => startStudentSessionWithReplacements(
+      schoolId,
+      sourceStudent.id,
+      transferDeviceId,
+      {
+        authKind: "manual_shared",
+        sessionRecoveryTokenHash: sourceRecovery.tokenHash,
+      }
+    ));
+    const queuedReply = await inSchool(() => storage.createTeacherChatReplyWithDelivery({
+      schoolId,
+      teachingSessionId: teachingSession.id,
+      studentId: sourceStudent.id,
+      teacherId: teacher.id,
+      content: `Exact heartbeat reply ${suffix}`,
+    }));
+
+    const socketServer = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    await once(socketServer, "listening");
+    const socketAddress = socketServer.address();
+    assert.ok(socketAddress && typeof socketAddress !== "string");
+    const serverSocketConnected = once(socketServer, "connection");
+    const clientSocket = new WebSocketClient(`ws://127.0.0.1:${socketAddress.port}`);
+    const clientMessages: string[] = [];
+    clientSocket.on("message", (data) => clientMessages.push(data.toString()));
+    await once(clientSocket, "open");
+    const [serverSocket] = await serverSocketConnected;
+    websocketBroadcast.registerWsClient(serverSocket);
+    websocketBroadcast.authenticateWsClient(serverSocket, {
+      role: "student",
+      schoolId,
+      studentId: sourceStudent.id,
+      studentSessionId: sourceSession.session.id,
+      deviceId: transferDeviceId,
+    });
+
+    let releaseRecovery!: () => void;
+    const recoveryMayDeliver = new Promise<void>((resolve) => {
+      releaseRecovery = resolve;
+    });
+    let recoveryLocked!: () => void;
+    const recoveryHasAuthority = new Promise<void>((resolve) => {
+      recoveryLocked = resolve;
+    });
+    const ordering: string[] = [];
+    const recovery = inSchool(() =>
+      storage.withClasspilotStudentWebSocketBootstrapAuthority(
+        {
+          schoolId,
+          studentId: sourceStudent.id,
+          studentSessionId: sourceSession.session.id,
+          deviceId: transferDeviceId,
+        },
+        async () => {
+          ordering.push("reply-claimed");
+          recoveryLocked();
+          await recoveryMayDeliver;
+        },
+        (claimed) => {
+          assert.deepEqual(
+            claimed.map(({ message }) => message.id),
+            [queuedReply.message.id]
+          );
+          const payload = {
+            type: "teacher-message",
+            _msgId: queuedReply.message.id,
+            chatMessageId: queuedReply.message.id,
+            messageId: queuedReply.message.id,
+            sessionId: teachingSession.id,
+            studentId: sourceStudent.id,
+            studentSessionId: sourceSession.session.id,
+            message: queuedReply.message.content,
+            fromName: "Teacher",
+          };
+          const target = {
+            kind: "student-binding" as const,
+            schoolId,
+            studentId: sourceStudent.id,
+            studentSessionId: sourceSession.session.id,
+            deviceId: transferDeviceId,
+          };
+          assert.equal(websocketBroadcast.sendToStudentBindingLocal(target, payload), true);
+          ordering.push("local-delivered");
+          const publication = websocketRedis.publishWS(target, payload);
+          ordering.push("publish-invoked");
+          return { payload, publication, target };
+        }
+      )
+    );
+    await recoveryHasAuthority;
+
+    const lockProbe = new Client({ connectionString: process.env.DATABASE_URL });
+    await lockProbe.connect();
+    let transfer:
+      | ReturnType<typeof startStudentSessionWithReplacements>
+      | undefined;
+    let transferSettled = false;
+    try {
+      transfer = inSchool(() => startStudentSessionWithReplacements(
+        schoolId,
+        destinationStudent.id,
+        transferDeviceId,
+        {
+          authKind: "manual_shared",
+          sessionRecoveryTokenHash: createStudentSessionRecovery().tokenHash,
+          reclaimRecoveryTokenHash: sourceRecovery.tokenHash,
+        }
+      ));
+      void transfer.then(() => {
+        transferSettled = true;
+        ordering.push("transfer-completed");
+      }, () => {
+        transferSettled = true;
+      });
+
+      const authorityLockKey =
+        `classpilot:student-control:${schoolId}:${sourceStudent.id}`;
+      let waitingTransferCount = 0;
+      const waitDeadline = Date.now() + 5_000;
+      while (waitingTransferCount === 0 && Date.now() < waitDeadline) {
+        const lockSnapshot = await lockProbe.query(`
+          WITH requested_lock AS (
+            SELECT hashtextextended($1, 0::bigint) AS value
+          )
+          SELECT count(*) FILTER (WHERE lock_row.granted = false)::integer AS "waitingCount"
+          FROM pg_locks AS lock_row
+          CROSS JOIN requested_lock
+          WHERE lock_row.locktype = 'advisory'
+            AND lock_row.objsubid = 1
+            AND lock_row.classid::bigint =
+              ((requested_lock.value >> 32) & 4294967295::bigint)
+            AND lock_row.objid::bigint =
+              (requested_lock.value & 4294967295::bigint)
+        `, [authorityLockKey]);
+        waitingTransferCount = Number(lockSnapshot.rows[0]?.waitingCount ?? 0);
+        if (waitingTransferCount === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      }
+      assert.equal(waitingTransferCount, 1);
+      assert.equal(transferSettled, false);
+
+      const localMessageReceived = once(clientSocket, "message");
+      releaseRecovery();
+      const [recoveryResult, transferResult] = await Promise.all([recovery, transfer]);
+      assert.equal(recoveryResult.authorized, true);
+      if (!recoveryResult.authorized) assert.fail("teacher-reply recovery lost authority");
+      assert.equal(await recoveryResult.value.publication, false);
+      const [localMessage] = await localMessageReceived;
+      assert.deepEqual(JSON.parse(localMessage.toString()), recoveryResult.value.payload);
+      assert.equal(transferResult.crossStudentHandoff, true);
+      assert.deepEqual(ordering, [
+        "reply-claimed",
+        "local-delivered",
+        "publish-invoked",
+        "transfer-completed",
+      ]);
+
+      const deliveredBeforeDelayedRedis = clientMessages.length;
+      assert.equal(
+        await websocket.deliverClasspilotStudentBindingRedisMessage(
+          recoveryResult.value.target,
+          { ...recoveryResult.value.payload, _msgId: `${queuedReply.message.id}-delayed` }
+        ),
+        false,
+        "a delayed cross-process delivery must reject a retired binding even when the remote socket still advertises it"
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(clientMessages.length, deliveredBeforeDelayedRedis);
+    } finally {
+      releaseRecovery();
+      await Promise.allSettled([recovery, ...(transfer ? [transfer] : [])]);
+      await lockProbe.end();
+      websocketBroadcast.resetWsState();
+      clientSocket.terminate();
+      for (const socket of socketServer.clients) socket.terminate();
+      await new Promise<void>((resolve) => socketServer.close(() => resolve()));
+
+      const activeSessions = await inSchool(() => storage.getActiveSessionsForStudents(
+        schoolId,
+        [sourceStudent.id, destinationStudent.id]
+      ));
+      for (const active of activeSessions) {
+        await inSchool(() => storage.endStudentSessionExact({
+          schoolId,
+          studentId: active.studentId,
+          deviceId: active.deviceId,
+          studentSessionId: active.id,
+        }));
+      }
+      await runWithTenantContext({ isSuper: true }, async () => {
+        await db.delete(classpilotChatDeliveries).where(
+          eq(classpilotChatDeliveries.chatMessageId, queuedReply.message.id)
+        );
+        await db.delete(chatMessages).where(eq(chatMessages.id, queuedReply.message.id));
+        await db.delete(classpilotStudentControlStates).where(
+          eq(classpilotStudentControlStates.teachingSessionId, teachingSession.id)
+        );
+        await db.delete(classpilotSessionStudents).where(
+          eq(classpilotSessionStudents.teachingSessionId, teachingSession.id)
+        );
+        await db.delete(classpilotSessionStaff).where(
+          eq(classpilotSessionStaff.teachingSessionId, teachingSession.id)
+        );
+        await db.delete(teachingSessions).where(eq(teachingSessions.id, teachingSession.id));
+        await db.delete(groupStudents).where(eq(groupStudents.groupId, group.id));
+        await db.delete(groupTeachers).where(eq(groupTeachers.groupId, group.id));
+        await db.delete(groups).where(eq(groups.id, group.id));
+        await db.delete(studentSessions).where(eq(studentSessions.deviceId, transferDeviceId));
+        await db.delete(studentDevices).where(eq(studentDevices.deviceId, transferDeviceId));
+        await db.delete(devices).where(eq(devices.deviceId, transferDeviceId));
+        await db.delete(students).where(eq(students.id, sourceStudent.id));
+        await db.delete(students).where(eq(students.id, destinationStudent.id));
+        await db.delete(schoolMemberships).where(eq(schoolMemberships.userId, teacher.id));
+        await db.delete(users).where(eq(users.id, teacher.id));
+      });
+    }
+  });
+
   it("keeps Phase-A manual issuance dark with a retryable 503 and no durable side effects", async () => {
     const darkDeviceId = `${tag}-phase-a-dark`;
     const darkStudent = await inSchool(() => storage.getStudentById(studentId));
@@ -754,6 +1529,354 @@ describe("ClassPilot manual-session recovery authority", () => {
       deviceId: handoffDeviceId,
       studentSessionId: loginAfterRelease.session.id,
     }));
+  });
+
+  it("serializes a cross-student handoff behind the source student's control ACK", async () => {
+    const handoffDeviceId = `${tag}-cross-student-ack-race`;
+    await inSchool(() => createDevice({
+      deviceId: handoffDeviceId,
+      deviceName: "Cross-student ACK race device",
+      schoolId,
+      classId: schoolId,
+    } as Parameters<typeof createDevice>[0]));
+    const sourceStudent = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Source",
+      lastName: "Acknowledgement",
+      email: `source-ack@${tag}.example.edu`,
+      emailLc: `source-ack@${tag}.example.edu`,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const destinationStudent = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Destination",
+      lastName: "Handoff",
+      email: `destination-handoff@${tag}.example.edu`,
+      emailLc: `destination-handoff@${tag}.example.edu`,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const sourceRecovery = createStudentSessionRecovery();
+    const sourceSession = await inSchool(() => startStudentSessionWithReplacements(
+      schoolId,
+      sourceStudent.id,
+      handoffDeviceId,
+      {
+        authKind: "manual_shared",
+        sessionRecoveryTokenHash: sourceRecovery.tokenHash,
+      }
+    ));
+    await inSchool(() => db.insert(classpilotStudentControlStates).values({
+      schoolId,
+      studentId: sourceStudent.id,
+      revision: 7,
+      desiredState: { restrictions: { locked: true } },
+      enforcementHealth: "pending",
+    }));
+
+    let releaseAck!: () => void;
+    const ackMayProceed = new Promise<void>((resolve) => {
+      releaseAck = resolve;
+    });
+    let ackAuthorityLocked!: () => void;
+    const ackHasAuthority = new Promise<void>((resolve) => {
+      ackAuthorityLocked = resolve;
+    });
+    const acknowledgement = inSchool(() => db.transaction(async (tx) => {
+      const transactionDb = Object.assign(tx, { $client: db.$client });
+      await storage.lockClasspilotStudentControlAuthorities(
+        schoolId,
+        [sourceStudent.id],
+        transactionDb
+      );
+      ackAuthorityLocked();
+      await ackMayProceed;
+      return storage.acknowledgeClasspilotStudentControlState({
+        schoolId,
+        studentId: sourceStudent.id,
+        studentSessionId: sourceSession.session.id,
+        deviceId: handoffDeviceId,
+        appliedRevision: 7,
+        outcome: "applied",
+      }, transactionDb);
+    }));
+    await ackHasAuthority;
+
+    const lockProbe = new Client({ connectionString: process.env.DATABASE_URL });
+    await lockProbe.connect();
+    let handoff: ReturnType<typeof startStudentSessionWithReplacements> | undefined;
+    let completedHandoff: Awaited<ReturnType<typeof startStudentSessionWithReplacements>>
+      | undefined;
+    try {
+      handoff = inSchool(() => startStudentSessionWithReplacements(
+        schoolId,
+        destinationStudent.id,
+        handoffDeviceId,
+        {
+          authKind: "manual_shared",
+          sessionRecoveryTokenHash: createStudentSessionRecovery().tokenHash,
+          reclaimRecoveryTokenHash: sourceRecovery.tokenHash,
+        }
+      ));
+
+      const authorityLockKey =
+        `classpilot:student-control:${schoolId}:${sourceStudent.id}`;
+      let waitingHandoffCount = 0;
+      const waitDeadline = Date.now() + 5_000;
+      while (waitingHandoffCount === 0 && Date.now() < waitDeadline) {
+        const lockSnapshot = await lockProbe.query(`
+          WITH requested_lock AS (
+            SELECT hashtextextended($1, 0::bigint) AS value
+          )
+          SELECT count(*) FILTER (WHERE lock_row.granted = false)::integer AS "waitingCount"
+          FROM pg_locks AS lock_row
+          CROSS JOIN requested_lock
+          WHERE lock_row.locktype = 'advisory'
+            AND lock_row.objsubid = 1
+            AND lock_row.classid::bigint =
+              ((requested_lock.value >> 32) & 4294967295::bigint)
+            AND lock_row.objid::bigint =
+              (requested_lock.value & 4294967295::bigint)
+        `, [authorityLockKey]);
+        waitingHandoffCount = Number(lockSnapshot.rows[0]?.waitingCount ?? 0);
+        if (waitingHandoffCount === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      }
+      assert.equal(
+        waitingHandoffCount,
+        1,
+        "the handoff must wait on the source ACK authority before retiring its session"
+      );
+
+      releaseAck();
+      const [acknowledged, resolvedHandoff] = await Promise.all([
+        acknowledgement,
+        handoff,
+      ]);
+      completedHandoff = resolvedHandoff;
+      assert.equal(acknowledged?.appliedRevision, 7);
+      assert.equal(completedHandoff.crossStudentHandoff, true);
+      assert.deepEqual(
+        completedHandoff.replacedSessions.map((row) => row.id),
+        [sourceSession.session.id]
+      );
+      assert.equal(
+        (await inSchool(() => storage.getActiveSessionById(completedHandoff!.session.id)))
+          ?.studentId,
+        destinationStudent.id
+      );
+    } finally {
+      releaseAck();
+      await Promise.allSettled([
+        acknowledgement,
+        ...(handoff ? [handoff] : []),
+      ]);
+      await lockProbe.end();
+      const activeSessions = await inSchool(() => storage.getActiveSessionsForStudents(
+        schoolId,
+        [sourceStudent.id, destinationStudent.id]
+      ));
+      for (const active of activeSessions) {
+        await inSchool(() => storage.endStudentSessionExact({
+          schoolId,
+          studentId: active.studentId,
+          deviceId: active.deviceId,
+          studentSessionId: active.id,
+        }));
+      }
+      await inSchool(() => db.delete(classpilotStudentControlStates).where(and(
+        eq(classpilotStudentControlStates.schoolId, schoolId),
+        eq(classpilotStudentControlStates.studentId, sourceStudent.id)
+      )));
+      await inSchool(() => storage.deleteDeviceWithEndedSessions(
+        schoolId,
+        handoffDeviceId
+      ));
+    }
+  });
+
+  it("serializes WebSocket bootstrap delivery before a same-device student transfer", async () => {
+    const transferDeviceId = `${tag}-websocket-bootstrap-transfer`;
+    await inSchool(() => createDevice({
+      deviceId: transferDeviceId,
+      deviceName: "WebSocket bootstrap transfer device",
+      schoolId,
+      classId: schoolId,
+    } as Parameters<typeof createDevice>[0]));
+    const sourceStudent = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "WebSocket",
+      lastName: "Bootstrap",
+      email: `websocket-bootstrap@${tag}.example.edu`,
+      emailLc: `websocket-bootstrap@${tag}.example.edu`,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const destinationStudent = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "WebSocket",
+      lastName: "Transfer",
+      email: `websocket-transfer@${tag}.example.edu`,
+      emailLc: `websocket-transfer@${tag}.example.edu`,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const sourceRecovery = createStudentSessionRecovery();
+    const sourceSession = await inSchool(() => startStudentSessionWithReplacements(
+      schoolId,
+      sourceStudent.id,
+      transferDeviceId,
+      {
+        authKind: "manual_shared",
+        sessionRecoveryTokenHash: sourceRecovery.tokenHash,
+      }
+    ));
+
+    let releaseBootstrap!: () => void;
+    const bootstrapMayDeliver = new Promise<void>((resolve) => {
+      releaseBootstrap = resolve;
+    });
+    let bootstrapAuthorityLocked!: () => void;
+    const bootstrapHasAuthority = new Promise<void>((resolve) => {
+      bootstrapAuthorityLocked = resolve;
+    });
+    const ordering: string[] = [];
+    const bootstrap = inSchool(() =>
+      storage.withClasspilotStudentWebSocketBootstrapAuthority(
+        {
+          schoolId,
+          studentId: sourceStudent.id,
+          studentSessionId: sourceSession.session.id,
+          deviceId: transferDeviceId,
+        },
+        async () => {
+          ordering.push("bootstrap-prepared");
+          bootstrapAuthorityLocked();
+          await bootstrapMayDeliver;
+          return { studentSessionId: sourceSession.session.id };
+        },
+        (_claimed, prepared) => {
+          assert.equal(prepared.studentSessionId, sourceSession.session.id);
+          ordering.push("bootstrap-delivered");
+          return prepared.studentSessionId;
+        }
+      )
+    );
+    await bootstrapHasAuthority;
+
+    const lockProbe = new Client({ connectionString: process.env.DATABASE_URL });
+    await lockProbe.connect();
+    let transfer:
+      | ReturnType<typeof startStudentSessionWithReplacements>
+      | undefined;
+    let transferSettled = false;
+    let completedTransfer:
+      | Awaited<ReturnType<typeof startStudentSessionWithReplacements>>
+      | undefined;
+    try {
+      transfer = inSchool(() => startStudentSessionWithReplacements(
+        schoolId,
+        destinationStudent.id,
+        transferDeviceId,
+        {
+          authKind: "manual_shared",
+          sessionRecoveryTokenHash: createStudentSessionRecovery().tokenHash,
+          reclaimRecoveryTokenHash: sourceRecovery.tokenHash,
+        }
+      ));
+      void transfer.then(() => {
+        transferSettled = true;
+        ordering.push("transfer-completed");
+      }, () => {
+        transferSettled = true;
+      });
+
+      const authorityLockKey =
+        `classpilot:student-control:${schoolId}:${sourceStudent.id}`;
+      let waitingTransferCount = 0;
+      const waitDeadline = Date.now() + 5_000;
+      while (waitingTransferCount === 0 && Date.now() < waitDeadline) {
+        const lockSnapshot = await lockProbe.query(`
+          WITH requested_lock AS (
+            SELECT hashtextextended($1, 0::bigint) AS value
+          )
+          SELECT count(*) FILTER (WHERE lock_row.granted = false)::integer AS "waitingCount"
+          FROM pg_locks AS lock_row
+          CROSS JOIN requested_lock
+          WHERE lock_row.locktype = 'advisory'
+            AND lock_row.objsubid = 1
+            AND lock_row.classid::bigint =
+              ((requested_lock.value >> 32) & 4294967295::bigint)
+            AND lock_row.objid::bigint =
+              (requested_lock.value & 4294967295::bigint)
+        `, [authorityLockKey]);
+        waitingTransferCount = Number(lockSnapshot.rows[0]?.waitingCount ?? 0);
+        if (waitingTransferCount === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      }
+      assert.equal(
+        waitingTransferCount,
+        1,
+        "the transfer must wait on WebSocket bootstrap's student-control authority"
+      );
+      assert.equal(
+        transferSettled,
+        false,
+        "the replacement binding must not commit before bootstrap delivery releases"
+      );
+
+      releaseBootstrap();
+      const [bootstrapResult, transferResult] = await Promise.all([
+        bootstrap,
+        transfer,
+      ]);
+      completedTransfer = transferResult;
+      assert.deepEqual(bootstrapResult, {
+        authorized: true,
+        value: sourceSession.session.id,
+      });
+      assert.equal(completedTransfer.crossStudentHandoff, true);
+      assert.deepEqual(
+        completedTransfer.replacedSessions.map((row) => row.id),
+        [sourceSession.session.id]
+      );
+      assert.deepEqual(ordering, [
+        "bootstrap-prepared",
+        "bootstrap-delivered",
+        "transfer-completed",
+      ]);
+      assert.equal(
+        await inSchool(() => storage.getActiveSessionById(sourceSession.session.id)),
+        undefined
+      );
+      assert.equal(
+        (await inSchool(() => storage.getActiveSessionById(completedTransfer!.session.id)))
+          ?.studentId,
+        destinationStudent.id
+      );
+    } finally {
+      releaseBootstrap();
+      await Promise.allSettled([
+        bootstrap,
+        ...(transfer ? [transfer] : []),
+      ]);
+      await lockProbe.end();
+      const activeSessions = await inSchool(() => storage.getActiveSessionsForStudents(
+        schoolId,
+        [sourceStudent.id, destinationStudent.id]
+      ));
+      for (const active of activeSessions) {
+        await inSchool(() => storage.endStudentSessionExact({
+          schoolId,
+          studentId: active.studentId,
+          deviceId: active.deviceId,
+          studentSessionId: active.id,
+        }));
+      }
+      await inSchool(() => storage.deleteDeviceWithEndedSessions(
+        schoolId,
+        transferDeviceId
+      ));
+    }
   });
 
   it("keeps class-bound pixels private across an atomic same-device handoff", async () => {
@@ -3062,6 +4185,212 @@ describe("ClassPilot manual-session recovery authority", () => {
     }));
   });
 
+  it("takes school, class, license, and sorted student locks in one canonical order", async () => {
+    const suffix = `canonical-lock-order-${randomUUID().slice(0, 8)}`;
+    const lockOrderDeviceId = `${tag}-${suffix}`;
+    await inSchool(() => createDevice({
+      deviceId: lockOrderDeviceId,
+      deviceName: "Canonical lock order fixture",
+      schoolId,
+      classId: schoolId,
+    } as Parameters<typeof createDevice>[0]));
+    const sourceStudent = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Canonical",
+      lastName: "Source",
+      email: `${suffix}-source@${tag}.example.edu`,
+      emailLc: `${suffix}-source@${tag}.example.edu`,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const destinationStudent = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Canonical",
+      lastName: "Destination",
+      email: `${suffix}-destination@${tag}.example.edu`,
+      emailLc: `${suffix}-destination@${tag}.example.edu`,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const sourceRecovery = createStudentSessionRecovery();
+    const source = await inSchool(() => startStudentSessionWithReplacements(
+      schoolId,
+      sourceStudent.id,
+      lockOrderDeviceId,
+      {
+        authKind: "manual_shared",
+        sessionRecoveryTokenHash: sourceRecovery.tokenHash,
+      }
+    ));
+
+    const schoolBlocker = new Client({ connectionString: process.env.DATABASE_URL });
+    const classBlocker = new Client({ connectionString: process.env.DATABASE_URL });
+    const licenseBlocker = new Client({ connectionString: process.env.DATABASE_URL });
+    const studentBlocker = new Client({ connectionString: process.env.DATABASE_URL });
+    const lockProbe = new Client({ connectionString: process.env.DATABASE_URL });
+    await Promise.all([
+      schoolBlocker.connect(),
+      classBlocker.connect(),
+      licenseBlocker.connect(),
+      studentBlocker.connect(),
+      lockProbe.connect(),
+    ]);
+    const blockerClients = [schoolBlocker, classBlocker, licenseBlocker, studentBlocker];
+    const blockerOpen = [false, false, false, false];
+    let transfer:
+      | ReturnType<typeof startStudentSessionWithReplacements>
+      | undefined;
+    let transferSettled = false;
+    try {
+      for (let index = 0; index < blockerClients.length; index += 1) {
+        await blockerClients[index]!.query("BEGIN");
+        blockerOpen[index] = true;
+      }
+      await schoolBlocker.query(
+        "SELECT id FROM schools WHERE id = $1 FOR UPDATE",
+        [schoolId]
+      );
+      const classLockKey = `passpilot-class-source:${schoolId}`;
+      await classBlocker.query(
+        "SELECT pg_advisory_xact_lock(hashtext($1))",
+        [classLockKey]
+      );
+      await licenseBlocker.query(`
+        SELECT id
+        FROM product_licenses
+        WHERE school_id = $1 AND product = 'CLASSPILOT'
+        FOR UPDATE
+      `, [schoolId]);
+      const firstStudentId = [sourceStudent.id, destinationStudent.id]
+        .sort((left, right) => left.localeCompare(right))[0]!;
+      const studentLockKey =
+        `classpilot:student-control:${schoolId}:${firstStudentId}`;
+      await studentBlocker.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0::bigint))",
+        [studentLockKey]
+      );
+
+      const blockerPids = await Promise.all(blockerClients.map(async (client) =>
+        Number((await client.query("SELECT pg_backend_pid() AS pid")).rows[0]?.pid)
+      ));
+      assert.equal(blockerPids.every(Number.isSafeInteger), true);
+      const blockerNames = ["school", "class", "license", "student"] as const;
+      const blockingSnapshot = async (): Promise<number[]> => {
+        const result = await lockProbe.query(`
+          SELECT blocker.pid AS "blockerPid",
+                 count(waiter.pid)::integer AS "waitingCount"
+          FROM unnest($1::integer[]) AS blocker(pid)
+          LEFT JOIN pg_stat_activity AS waiter
+            ON blocker.pid = ANY(pg_blocking_pids(waiter.pid))
+          GROUP BY blocker.pid
+        `, [blockerPids]);
+        const byPid = new Map(
+          result.rows.map((row) => [Number(row.blockerPid), Number(row.waitingCount)])
+        );
+        return blockerPids.map((pid) => byPid.get(pid) ?? 0);
+      };
+      const waitForBarrier = async (expectedIndex: number): Promise<void> => {
+        const deadline = Date.now() + 5_000;
+        let snapshot = [0, 0, 0, 0];
+        while (Date.now() < deadline) {
+          snapshot = await blockingSnapshot();
+          for (let index = expectedIndex + 1; index < snapshot.length; index += 1) {
+            assert.equal(
+              snapshot[index],
+              0,
+              `${blockerNames[index]} lock gained a waiter before ${blockerNames[expectedIndex]}`
+            );
+          }
+          assert.ok(
+            snapshot[expectedIndex]! <= 1,
+            `${blockerNames[expectedIndex]} lock unexpectedly blocked multiple backends`
+          );
+          if (snapshot[expectedIndex] === 1) return;
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        assert.fail(
+          `transfer did not reach ${blockerNames[expectedIndex]} barrier: ${JSON.stringify(snapshot)}`
+        );
+      };
+
+      transfer = inSchool(() => startStudentSessionWithReplacements(
+        schoolId,
+        destinationStudent.id,
+        lockOrderDeviceId,
+        {
+          authKind: "manual_shared",
+          sessionRecoveryTokenHash: createStudentSessionRecovery().tokenHash,
+          reclaimRecoveryTokenHash: sourceRecovery.tokenHash,
+        }
+      ));
+      void transfer.then(
+        () => { transferSettled = true; },
+        () => { transferSettled = true; }
+      );
+
+      for (let expectedIndex = 0; expectedIndex < blockerClients.length; expectedIndex += 1) {
+        await waitForBarrier(expectedIndex);
+        assert.equal(
+          transferSettled,
+          false,
+          `transfer settled before ${blockerNames[expectedIndex]} barrier was released`
+        );
+        await blockerClients[expectedIndex]!.query("COMMIT");
+        blockerOpen[expectedIndex] = false;
+      }
+
+      const transferResult = await Promise.race([
+        transfer,
+        new Promise<never>((_resolve, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error("canonical lock-order transfer timed out")),
+            5_000
+          );
+          timer.unref();
+        }),
+      ]);
+      assert.equal(transferResult.crossStudentHandoff, true);
+      assert.deepEqual(
+        transferResult.replacedSessions.map((session) => session.id),
+        [source.session.id]
+      );
+      assert.equal(
+        await inSchool(() => storage.getActiveSessionById(source.session.id)),
+        undefined
+      );
+      const activeReplacement = await inSchool(() =>
+        storage.getActiveSessionById(transferResult.session.id)
+      );
+      assert.equal(activeReplacement?.studentId, destinationStudent.id);
+      assert.equal(activeReplacement?.deviceId, lockOrderDeviceId);
+    } finally {
+      for (let index = 0; index < blockerClients.length; index += 1) {
+        if (blockerOpen[index]) {
+          await blockerClients[index]!.query("ROLLBACK").catch(() => {});
+        }
+      }
+      await transfer?.catch(() => {});
+      await Promise.all([
+        ...blockerClients.map((client) => client.end()),
+        lockProbe.end(),
+      ]);
+      const activeSessions = await inSchool(() => storage.getActiveSessionsForStudents(
+        schoolId,
+        [sourceStudent.id, destinationStudent.id]
+      ));
+      for (const active of activeSessions) {
+        await inSchool(() => storage.endStudentSessionExact({
+          schoolId,
+          studentId: active.studentId,
+          deviceId: active.deviceId,
+          studentSessionId: active.id,
+        }));
+      }
+      await inSchool(() => storage.deleteDeviceWithEndedSessions(
+        schoolId,
+        lockOrderDeviceId
+      ));
+    }
+  });
+
   it("lets a committed ClassPilot revocation win before session issuance", async () => {
     const entitlementRaceDeviceId = `${tag}-entitlement-race`;
     const entitlementRaceStudent = await inSchool(() => createStudent({
@@ -3253,6 +4582,112 @@ describe("ClassPilot manual-session recovery authority", () => {
         [raceSession.session.id]
       );
     }
+  });
+
+  it("serializes concurrent heartbeat resume and stale transfer to one authority winner", async () => {
+    const sourceDeviceId = `${tag}-heartbeat-transfer-source`;
+    const destinationDeviceId = `${tag}-heartbeat-transfer-destination`;
+    const raceStudent = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Heartbeat",
+      lastName: "Transfer",
+      email: `heartbeat-transfer@${tag}.example.edu`,
+      emailLc: `heartbeat-transfer@${tag}.example.edu`,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    await inSchool(async () => {
+      await createDevice({
+        deviceId: sourceDeviceId,
+        deviceName: "Heartbeat transfer source",
+        schoolId,
+        classId: schoolId,
+      } as Parameters<typeof createDevice>[0]);
+      await createDevice({
+        deviceId: destinationDeviceId,
+        deviceName: "Heartbeat transfer destination",
+        schoolId,
+        classId: schoolId,
+      } as Parameters<typeof createDevice>[0]);
+    });
+    const source = await inSchool(() => startStudentSessionWithReplacements(
+      schoolId,
+      raceStudent.id,
+      sourceDeviceId,
+      {
+        authKind: "manual_shared",
+        sessionRecoveryTokenHash: createStudentSessionRecovery().tokenHash,
+      }
+    ));
+    // With no heartbeat row, stale-transfer authority falls back to the
+    // represented session start. Make that source stale before releasing the
+    // two contenders together.
+    await inSchool(() => db.update(studentSessions).set({
+      startedAt: sql`now() - interval '61 seconds'`,
+      lastSeenAt: sql`now() - interval '61 seconds'`,
+    }).where(eq(studentSessions.id, source.session.id)));
+
+    const [heartbeatResult, transferResult] = await Promise.race([
+      Promise.allSettled([
+        inSchool(() => storage.createHeartbeatAndRefreshPresence({
+          deviceId: sourceDeviceId,
+          schoolId,
+          studentId: raceStudent.id,
+          activeTabTitle: "Concurrent resume",
+        }, source.session.id)),
+        inSchool(() => startStudentSessionWithReplacements(
+          schoolId,
+          raceStudent.id,
+          destinationDeviceId,
+          {
+            authKind: "manual_shared",
+            sessionRecoveryTokenHash: createStudentSessionRecovery().tokenHash,
+            studentTransferAuthority: {
+              studentSessionId: source.session.id,
+              source: "stale_heartbeat",
+            },
+          }
+        )),
+      ]),
+      new Promise<never>((_resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error("heartbeat/transfer authority timeout")),
+          5_000
+        );
+        timer.unref();
+      }),
+    ]);
+
+    assert.equal(heartbeatResult.status, "fulfilled");
+    const heartbeatRecorded = heartbeatResult.status === "fulfilled"
+      && heartbeatResult.value.outcome === "recorded";
+    const transferSucceeded = transferResult.status === "fulfilled";
+    assert.notEqual(
+      heartbeatRecorded,
+      transferSucceeded,
+      "exactly one contender may retain or transfer student authority"
+    );
+    if (transferResult.status === "rejected") {
+      assert.equal((transferResult.reason as any)?.code, "STUDENT_SESSION_ACTIVE");
+      assert.equal(heartbeatResult.value.outcome, "recorded");
+    } else {
+      assert.ok(
+        ["replaced_session", "inactive_session"].includes(heartbeatResult.value.outcome),
+        "a transfer winner must make the retired heartbeat non-authoritative"
+      );
+    }
+
+    const active = await inSchool(() => storage.getActiveSessionsForStudents(
+      schoolId,
+      [raceStudent.id]
+    ));
+    assert.equal(active.length, 1);
+    assert.equal(
+      active[0]?.deviceId,
+      transferSucceeded ? destinationDeviceId : sourceDeviceId
+    );
+
+    await inSchool(() => storage.deleteDeviceWithEndedSessions(schoolId, sourceDeviceId));
+    await inSchool(() => storage.deleteDeviceWithEndedSessions(schoolId, destinationDeviceId));
   });
 
   it("fails closed without mutating a corrupt cross-school device conflict", async () => {

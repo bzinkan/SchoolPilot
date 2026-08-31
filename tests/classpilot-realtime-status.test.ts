@@ -638,12 +638,14 @@ describe("ClassPilot cluster-safe realtime status", () => {
       "classroomOverlayRestoreV1",
       "liveViewNegotiationV1",
       "domainPreservingRestrictionsV1",
+      "studentAuthGatePresenceV1",
+      "lateSignInRestrictionSsoV1",
     ]) {
       assert.match(contract, new RegExp(`${capability}: extensionCapabilities\\.has\\("${capability}"\\)`));
     }
     assert.match(contract, /minExtensionVersion: "2\.6\.0"/);
     assert.doesNotMatch(contract, /deviceId|studentSessionId|schoolId/);
-    assert.match(aggregate, /publicClasspilotExtensionContract\(visibleRealtime\)/);
+    assert.match(aggregate, /publicClasspilotExtensionContract\(capabilityRealtime\)/);
     assert.match(aggregate, /normalizeClasspilotPublicClassroomControls\([\s\S]*?visibleRealtime\?\.classroomControls/);
     assert.match(serializer, /\.\.\.publicExtensionContract/);
     assert.doesNotMatch(serializer, /\bdeviceId\s*:/);
@@ -657,6 +659,14 @@ describe("ClassPilot cluster-safe realtime status", () => {
     assert.match(
       deviceProjection,
       /domainPreservingRestrictionsV1: extensionCapabilities\.has\("domainPreservingRestrictionsV1"\)/
+    );
+    assert.match(
+      deviceProjection,
+      /studentAuthGatePresenceV1: extensionCapabilities\.has\("studentAuthGatePresenceV1"\)/
+    );
+    assert.match(
+      deviceProjection,
+      /lateSignInRestrictionSsoV1: extensionCapabilities\.has\("lateSignInRestrictionSsoV1"\)/
     );
     assert.doesNotMatch(deviceProjection, /snapshot\.classroomControls\.(?:screenLocked|flightPathActive|activeFlightPathName|isSharing|cameraActive)/);
   });

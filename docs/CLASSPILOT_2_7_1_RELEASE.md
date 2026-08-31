@@ -269,6 +269,7 @@ strict shape. Its bound TURN evidence uses schema version 2 above with
   "schoolPilotImageDigest": "sha256:<64_HEX>",
   "classPilotTag": "v2.7.1",
   "classPilotMergeSha": "a3b096d6a74ab6979f4e4c656d75e2397eb8648f",
+  "classPilotExtensionId": "iggbfegfcjkfieoemeolfmfnapepalca",
   "classPilotZipSha256": "40fed2c455d5c50fe3a947d23e3798a0c81832a67e717a2767b62970c024307c",
   "turnEvidenceSha256": "<SHA256_OF_EXACT_TURN_EVIDENCE_FILE>",
   "checks": {

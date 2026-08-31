@@ -24,6 +24,7 @@ const REPAIRED_CLIENT_DEPENDENT_CAPABILITIES = [
   "liveViewIceServersV1",
   "kioskLaunchTicketV2",
   "studentAuthGatePresenceV1",
+  "lateSignInRestrictionSsoV1",
 ] as const;
 
 test("protocol v3 activates only the advertised and server-enabled intersection", () => {
@@ -63,6 +64,7 @@ test("all scoped-authority-dependent capabilities require the repaired scoping m
     CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1: "true",
     CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V2: "true",
     CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1: "true",
+    CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1: "true",
   };
   assert.deepEqual(negotiateClasspilotProtocol({
     clientProtocolVersion: 3,
@@ -152,6 +154,56 @@ test("capability rollout modes are school-scoped and fail closed", () => {
     screenshotObservationLeaseV1: { mode: "on", schoolIds: ["school-a"] },
   }), []);
   assert.deepEqual(negotiate("school-a", "{not-json"), []);
+});
+
+test("late-sign-in delivery requires the repaired marker and one exact enabled school", () => {
+  const negotiate = (schoolId: string, rollout: unknown) => negotiateClasspilotProtocol({
+    clientProtocolVersion: 3,
+    advertisedCapabilities: [
+      "scopedAuthorityChecksV1",
+      "lateSignInRestrictionSsoV1",
+    ],
+    scope: {
+      serverOrigin: "https://api.example.test",
+      schoolId,
+      deviceId: "device",
+      studentId: "student",
+      studentSessionId: "student-session",
+    },
+    env: {
+      CLASSPILOT_PROTOCOL_V3_ENABLED: "true",
+      CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1: "true",
+      CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1: "true",
+      CLASSPILOT_CAPABILITY_ROLLOUTS_JSON: JSON.stringify(rollout),
+    },
+  }).acceptedCapabilities;
+
+  const rollout = {
+    scopedAuthorityChecksV1: { mode: "on", schoolIds: ["school-a"] },
+    lateSignInRestrictionSsoV1: { mode: "on", schoolIds: ["school-a"] },
+  };
+  assert.deepEqual(negotiate("school-a", rollout), [
+    "scopedAuthorityChecksV1",
+    "lateSignInRestrictionSsoV1",
+  ]);
+  assert.deepEqual(negotiate("school-b", rollout), []);
+  assert.deepEqual(negotiate("school-a", {
+    ...rollout,
+    lateSignInRestrictionSsoV1: { mode: "off" },
+  }), ["scopedAuthorityChecksV1"]);
+
+  assert.deepEqual(negotiateClasspilotProtocol({
+    clientProtocolVersion: 3,
+    advertisedCapabilities: ["lateSignInRestrictionSsoV1"],
+    scope: { schoolId: "school-a" },
+    env: {
+      CLASSPILOT_PROTOCOL_V3_ENABLED: "true",
+      CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1: "true",
+      CLASSPILOT_CAPABILITY_ROLLOUTS_JSON: JSON.stringify({
+        lateSignInRestrictionSsoV1: { mode: "on", schoolIds: ["school-a"] },
+      }),
+    },
+  }).acceptedCapabilities, []);
 });
 
 test("canary activation is deterministic for the whole school", () => {

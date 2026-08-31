@@ -63,9 +63,11 @@ $script:ActivationOrder = @(
 $script:RepairedCapabilities = @("scopedAuthorityChecksV1") + $script:ActivationOrder
 $script:TrackingWindowCapability = "screenshotTrackingWindowLeaseV1"
 $script:StudentGatePresenceCapability = "studentAuthGatePresenceV1"
+$script:LateSignInRestrictionSsoCapability = "lateSignInRestrictionSsoV1"
 $script:AdditiveCapabilities = @(
     $script:TrackingWindowCapability,
-    $script:StudentGatePresenceCapability
+    $script:StudentGatePresenceCapability,
+    $script:LateSignInRestrictionSsoCapability
 )
 $script:AllCapabilities = @($script:RepairedCapabilities) + @($script:AdditiveCapabilities) + @(
     "kioskLaunchTicketV1"
@@ -79,6 +81,7 @@ $script:CapabilityFlags = [ordered]@{
     screenshotObservationLeaseV1 = "CLASSPILOT_CAP_SCREENSHOT_OBSERVATION_LEASE_V1"
     screenshotTrackingWindowLeaseV1 = "CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1"
     studentAuthGatePresenceV1    = "CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1"
+    lateSignInRestrictionSsoV1   = "CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1"
     safetyEvidenceCaptureV1       = "CLASSPILOT_CAP_SAFETY_EVIDENCE_CAPTURE_V1"
     liveViewIceServersV1          = "CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1"
     kioskLaunchTicketV1           = "CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V1"
@@ -99,6 +102,34 @@ $script:EvidenceRootMarkerBytes = [Text.Encoding]::UTF8.GetBytes("schoolpilot-cl
 $script:ClassPilotReleaseTag = "v2.7.1"
 $script:ClassPilotMergeSha = "a3b096d6a74ab6979f4e4c656d75e2397eb8648f"
 $script:ClassPilotZipSha256 = "40fed2c455d5c50fe3a947d23e3798a0c81832a67e717a2767b62970c024307c"
+$script:ClassPilotExtensionId = "iggbfegfcjkfieoemeolfmfnapepalca"
+$script:LateSignInRequiredReleaseTag = "v2.7.9"
+$script:LateSignInRequiredExtensionId = "iggbfegfcjkfieoemeolfmfnapepalca"
+$script:LateSignInBlockedMergeShas = @(
+    "a3b096d6a74ab6979f4e4c656d75e2397eb8648f",
+    "7e3c129315d9e7c94ee4f6084e769e759a7e2b6a"
+)
+$script:LateSignInBlockedZipSha256s = @(
+    "40fed2c455d5c50fe3a947d23e3798a0c81832a67e717a2767b62970c024307c",
+    "cd2d9c26f989a64203c52f460a1366d642ea371d7cadbb68aec9ef9a16c1884e"
+)
+
+function Assert-LateSignInPilotReleaseEvidenceBound {
+    if ([string]$script:ClassPilotReleaseTag -cne $script:LateSignInRequiredReleaseTag) {
+        throw "late-signin-pilot requires release evidence rebound to the exact v2.7.9 clean-tag package."
+    }
+    if ([string]$script:ClassPilotExtensionId -cne $script:LateSignInRequiredExtensionId) {
+        throw "late-signin-pilot release evidence is not bound to the production ClassPilot extension ID."
+    }
+    if ([string]$script:ClassPilotMergeSha -cnotmatch '^[0-9a-f]{40}$' -or
+        [string]$script:ClassPilotMergeSha -cin $script:LateSignInBlockedMergeShas) {
+        throw "late-signin-pilot requires the exact final v2.7.9 merged extension commit."
+    }
+    if ([string]$script:ClassPilotZipSha256 -cnotmatch '^[0-9a-f]{64}$' -or
+        [string]$script:ClassPilotZipSha256 -cin $script:LateSignInBlockedZipSha256s) {
+        throw "late-signin-pilot requires the exact final v2.7.9 clean-tag ZIP SHA-256."
+    }
+}
 
 function Get-Sha256Text {
     param([Parameter(Mandatory = $true)][string]$Value)
@@ -250,10 +281,12 @@ function ConvertTo-RuntimeConfiguration {
     $schemaOneModes = @("off", "test-school", "global-on")
     $schemaTwoModes = @("tracking-window-pilot", "tracking-window-global-on")
     $schemaThreeModes = @("student-gate-pilot", "student-gate-global-on", "student-gate-off")
+    $schemaFourModes = @("late-signin-pilot", "late-signin-off")
     if (($schemaVersion -eq 1 -and $mode -cnotin $schemaOneModes) -or
         ($schemaVersion -eq 2 -and $mode -cnotin $schemaTwoModes) -or
         ($schemaVersion -eq 3 -and $mode -cnotin $schemaThreeModes) -or
-        $schemaVersion -notin @(1, 2, 3)) {
+        ($schemaVersion -eq 4 -and $mode -cnotin $schemaFourModes) -or
+        $schemaVersion -notin @(1, 2, 3, 4)) {
         throw "Runtime profile schemaVersion and mode do not match a reviewed profile contract."
     }
 
@@ -284,10 +317,13 @@ function ConvertTo-RuntimeConfiguration {
             throw "$mode profiles must not contain test-school fields."
         }
     }
-    if ($mode -cin @("tracking-window-pilot", "student-gate-pilot")) {
+    if ($mode -cin @("tracking-window-pilot", "student-gate-pilot", "late-signin-pilot")) {
         $pilotSchoolId = [string]$Profile.pilotSchoolId
         if ($pilotSchoolId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
             throw "The selected pilot profile requires one canonical UUID school ID."
+        }
+        if ($mode -ceq "late-signin-pilot") {
+            Assert-LateSignInPilotReleaseEvidenceBound
         }
     }
     elseif ($Profile.PSObject.Properties.Name -contains "pilotSchoolId") {
@@ -302,6 +338,9 @@ function ConvertTo-RuntimeConfiguration {
     }
     if ($mode -cin $schemaThreeModes -and $Profile.PSObject.Properties.Name -contains "turn") {
         throw "Student-gate profiles must preserve existing TURN runtime wiring."
+    }
+    if ($mode -cin $schemaFourModes -and $Profile.PSObject.Properties.Name -contains "turn") {
+        throw "Late-sign-in profiles must preserve existing TURN runtime wiring."
     }
     if ($mode -ceq "tracking-window-pilot" -and $Profile.PSObject.Properties.Name -contains "turn") {
         throw "The tracking-window-pilot profile must preserve existing TURN runtime wiring."
@@ -335,17 +374,22 @@ function ConvertTo-RuntimeConfiguration {
         throw "The selected profile requires verified TURN inputs."
     }
 
-    if ($mode -cin $schemaThreeModes) {
+    if ($mode -cin @($schemaThreeModes + $schemaFourModes)) {
+        $selectedCapability = if ($mode -cin $schemaFourModes) {
+            $script:LateSignInRestrictionSsoCapability
+        } else { $script:StudentGatePresenceCapability }
+        $isPilot = $mode -cin @("student-gate-pilot", "late-signin-pilot")
+        $isOff = $mode -cin @("student-gate-off", "late-signin-off")
         return [pscustomobject]@{
             Mode = $mode
-            SchoolScopeCount = if ($mode -ceq "student-gate-pilot") { 1 } else { 0 }
-            EnabledCapabilities = if ($mode -ceq "student-gate-off") { @() } else {
-                @($script:StudentGatePresenceCapability)
+            SchoolScopeCount = if ($isPilot) { 1 } else { 0 }
+            EnabledCapabilities = if ($isOff) { @() } else {
+                @($selectedCapability)
             }
             Environment = [ordered]@{}
             Turn = $null
             RequiresSourceRuntime = $true
-            PilotSchoolId = if ($mode -ceq "student-gate-pilot") { $pilotSchoolId } else { $null }
+            PilotSchoolId = if ($isPilot) { $pilotSchoolId } else { $null }
         }
     }
 
@@ -414,7 +458,8 @@ function Resolve-SourcePreservingRuntimeConfiguration {
     )
     if (-not [bool]$RuntimeIntent.RequiresSourceRuntime) { return $RuntimeIntent }
     if ([string]$RuntimeIntent.Mode -cnotin @(
-        "student-gate-pilot", "student-gate-global-on", "student-gate-off"
+        "student-gate-pilot", "student-gate-global-on", "student-gate-off",
+        "late-signin-pilot", "late-signin-off"
     )) {
         throw "The source-preserving runtime intent is unsupported."
     }
@@ -458,17 +503,30 @@ function Resolve-SourcePreservingRuntimeConfiguration {
         $rollouts[$capability] = $copy
     }
 
-    $gateOn = [string]$RuntimeIntent.Mode -cne "student-gate-off"
+    $isLateSignInIntent = [string]$RuntimeIntent.Mode -cin @(
+        "late-signin-pilot", "late-signin-off"
+    )
+    $selectedCapability = if ($isLateSignInIntent) {
+        $script:LateSignInRestrictionSsoCapability
+    } else { $script:StudentGatePresenceCapability }
+    $gateOn = [string]$RuntimeIntent.Mode -cnotin @("student-gate-off", "late-signin-off")
     $gateEntry = [ordered]@{ mode = if ($gateOn) { "on" } else { "off" } }
-    if ([string]$RuntimeIntent.Mode -ceq "student-gate-pilot") {
+    if ([string]$RuntimeIntent.Mode -cin @("student-gate-pilot", "late-signin-pilot")) {
         $profileSchoolId = [string]$RuntimeIntent.PilotSchoolId
         if ($profileSchoolId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
-            throw "Student-gate pilot intent has an invalid school scope."
+            throw "School-scoped capability pilot intent has an invalid school scope."
         }
         $gateEntry.schoolIds = @($profileSchoolId)
     }
-    $rollouts[$script:StudentGatePresenceCapability] = $gateEntry
-    $values[[string]$script:CapabilityFlags[$script:StudentGatePresenceCapability]] = if ($gateOn) { "true" } else { "false" }
+    $sourceSelectedMode = if ($sourceRollouts.PSObject.Properties.Name -ccontains $selectedCapability) {
+        [string]$sourceRollouts.$selectedCapability.mode
+    } else { "off" }
+    if ([string]$RuntimeIntent.Mode -cin @("student-gate-pilot", "late-signin-pilot") -and
+        $sourceSelectedMode -cne "off") {
+        throw "A school-scoped capability pilot must begin from its off profile."
+    }
+    $rollouts[$selectedCapability] = $gateEntry
+    $values[[string]$script:CapabilityFlags[$selectedCapability]] = if ($gateOn) { "true" } else { "false" }
     $values.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = $rollouts | ConvertTo-Json -Depth 8 -Compress
 
     $environment = [ordered]@{}
@@ -490,7 +548,7 @@ function Resolve-SourcePreservingRuntimeConfiguration {
         Turn = $null
         RequiresSourceRuntime = $false
         SourceMode = [string]$sourceState.Mode
-        PilotSchoolId = if ([string]$RuntimeIntent.Mode -ceq "student-gate-pilot") {
+        PilotSchoolId = if ([string]$RuntimeIntent.Mode -cin @("student-gate-pilot", "late-signin-pilot")) {
             [string]$RuntimeIntent.PilotSchoolId
         } else { $null }
     }
@@ -596,7 +654,8 @@ function Assert-SyntheticValidationEvidence {
     $evidence = $EvidenceSnapshot.Value
     $allowed = @(
         "schemaVersion", "validatedAt", "schoolPilotAppSha", "schoolPilotImageDigest",
-        "classPilotTag", "classPilotMergeSha", "classPilotZipSha256", "turnEvidenceSha256", "checks"
+        "classPilotTag", "classPilotMergeSha", "classPilotExtensionId", "classPilotZipSha256",
+        "turnEvidenceSha256", "checks"
     )
     Assert-ExactProperties -Value $evidence -Allowed $allowed -Trail "synthetic validation evidence"
     $present = @($evidence.PSObject.Properties.Name)
@@ -608,7 +667,7 @@ function Assert-SyntheticValidationEvidence {
     }
     foreach ($name in @(
         "validatedAt", "schoolPilotAppSha", "schoolPilotImageDigest", "classPilotTag",
-        "classPilotMergeSha", "classPilotZipSha256", "turnEvidenceSha256"
+        "classPilotMergeSha", "classPilotExtensionId", "classPilotZipSha256", "turnEvidenceSha256"
     )) {
         if ($evidence.$name -isnot [string]) { throw "Synthetic validation evidence is incomplete." }
     }
@@ -618,6 +677,7 @@ function Assert-SyntheticValidationEvidence {
         [string]$evidence.schoolPilotImageDigest -cne $ImageDigest -or
         [string]$evidence.classPilotTag -cne $script:ClassPilotReleaseTag -or
         [string]$evidence.classPilotMergeSha -cne $script:ClassPilotMergeSha -or
+        [string]$evidence.classPilotExtensionId -cne $script:ClassPilotExtensionId -or
         [string]$evidence.classPilotZipSha256 -cne $script:ClassPilotZipSha256 -or
         [string]$evidence.turnEvidenceSha256 -cne $TurnEvidenceSha256) {
         throw "Synthetic validation evidence does not bind the exact reviewed release and TURN evidence."
@@ -1900,6 +1960,7 @@ function Get-RuntimeActivationState {
         return [pscustomobject]@{
             Mode = "baseline"; SchoolId = $null; PrefixCount = -1
             StudentGateMode = "off"; StudentGateSchoolId = $null
+            LateSignInMode = "off"; LateSignInSchoolId = $null
         }
     }
     $absentAdditiveCapabilities = @($script:AdditiveCapabilities | Where-Object {
@@ -1956,6 +2017,7 @@ function Get-RuntimeActivationState {
         return [pscustomobject]@{
             Mode = "off"; SchoolId = $null; PrefixCount = -1
             StudentGateMode = "off"; StudentGateSchoolId = $null
+            LateSignInMode = "off"; LateSignInSchoolId = $null
         }
     }
 
@@ -2020,6 +2082,37 @@ function Get-RuntimeActivationState {
         $studentGateSchoolId = [string]$studentGateSchoolIds[0]
     }
 
+    $lateSignInFlag = [string]$script:CapabilityFlags[$script:LateSignInRestrictionSsoCapability]
+    $lateSignInFlagValue = [string]$values[$lateSignInFlag]
+    $lateSignInRollout = $rollouts.$($script:LateSignInRestrictionSsoCapability)
+    if ($lateSignInFlagValue -cnotin @("true", "false")) {
+        throw "Late-sign-in restriction/SSO kill switch is invalid."
+    }
+    $lateSignInMode = "off"
+    $lateSignInSchoolId = $null
+    if ($lateSignInFlagValue -ceq "false") {
+        if ([string]$lateSignInRollout.mode -cne "off" -or
+            $lateSignInRollout.PSObject.Properties.Name -contains "schoolIds") {
+            throw "Late-sign-in restriction/SSO requires both matching activation controls."
+        }
+    }
+    elseif ([string]$lateSignInRollout.mode -cne "on" -or
+        -not ($lateSignInRollout.PSObject.Properties.Name -contains "schoolIds")) {
+        throw "Late-sign-in restriction/SSO may be enabled only for one exact school."
+    }
+    else {
+        if ($lateSignInRollout.schoolIds -isnot [Array]) {
+            throw "Late-sign-in pilot school scope must be an array."
+        }
+        $lateSignInSchoolIds = @($lateSignInRollout.schoolIds)
+        if ($lateSignInSchoolIds.Count -ne 1 -or
+            [string]$lateSignInSchoolIds[0] -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
+            throw "Late-sign-in pilot runtime configuration has invalid school scope."
+        }
+        $lateSignInMode = "pilot"
+        $lateSignInSchoolId = [string]$lateSignInSchoolIds[0]
+    }
+
     $markerSchoolIds = @()
     if ($rollouts.scopedAuthorityChecksV1.PSObject.Properties.Name -contains "schoolIds") {
         if ($rollouts.scopedAuthorityChecksV1.schoolIds -isnot [Array]) {
@@ -2038,12 +2131,14 @@ function Get-RuntimeActivationState {
             return [pscustomobject]@{
                 Mode = "global-on"; SchoolId = $null; PrefixCount = $script:ActivationOrder.Count
                 StudentGateMode = $studentGateMode; StudentGateSchoolId = $studentGateSchoolId
+                LateSignInMode = $lateSignInMode; LateSignInSchoolId = $lateSignInSchoolId
             }
         }
         if (-not ($trackingWindowRollout.PSObject.Properties.Name -contains "schoolIds")) {
             return [pscustomobject]@{
                 Mode = "tracking-window-global-on"; SchoolId = $null; PrefixCount = $script:ActivationOrder.Count
                 StudentGateMode = $studentGateMode; StudentGateSchoolId = $studentGateSchoolId
+                LateSignInMode = $lateSignInMode; LateSignInSchoolId = $lateSignInSchoolId
             }
         }
         if ($trackingWindowRollout.schoolIds -isnot [Array]) {
@@ -2060,10 +2155,13 @@ function Get-RuntimeActivationState {
             PrefixCount = $script:ActivationOrder.Count
             StudentGateMode = $studentGateMode
             StudentGateSchoolId = $studentGateSchoolId
+            LateSignInMode = $lateSignInMode
+            LateSignInSchoolId = $lateSignInSchoolId
         }
     }
 
-    if ($trackingWindowFlagValue -cne "false" -or $studentGateMode -cne "off") {
+    if ($trackingWindowFlagValue -cne "false" -or $studentGateMode -cne "off" -or
+        $lateSignInMode -cne "off") {
         throw "Test-school activation must keep additive capabilities disabled."
     }
 
@@ -2092,6 +2190,7 @@ function Get-RuntimeActivationState {
     return [pscustomobject]@{
         Mode = "test-school"; SchoolId = $schoolId; PrefixCount = $prefixCount
         StudentGateMode = "off"; StudentGateSchoolId = $null
+        LateSignInMode = "off"; LateSignInSchoolId = $null
     }
 }
 
@@ -2114,7 +2213,9 @@ function Assert-AllowedRuntimeTransition {
     )) {
         if ([string]$source.Mode -cne [string]$target.Mode -or
             [string]$source.SchoolId -cne [string]$target.SchoolId -or
-            [int]$source.PrefixCount -ne [int]$target.PrefixCount) {
+            [int]$source.PrefixCount -ne [int]$target.PrefixCount -or
+            [string]$source.LateSignInMode -cne [string]$target.LateSignInMode -or
+            [string]$source.LateSignInSchoolId -cne [string]$target.LateSignInSchoolId) {
             throw "Student-gate rollout must preserve the existing repaired and screenshot runtime state."
         }
         if ($TargetRuntimeConfiguration.PSObject.Properties.Name -contains "SourceMode" -and
@@ -2142,9 +2243,37 @@ function Assert-AllowedRuntimeTransition {
         }
         return
     }
+    if ([string]$TargetRuntimeConfiguration.Mode -cin @(
+        "late-signin-pilot", "late-signin-off"
+    )) {
+        if ([string]$source.Mode -cne [string]$target.Mode -or
+            [string]$source.SchoolId -cne [string]$target.SchoolId -or
+            [int]$source.PrefixCount -ne [int]$target.PrefixCount -or
+            [string]$source.StudentGateMode -cne [string]$target.StudentGateMode -or
+            [string]$source.StudentGateSchoolId -cne [string]$target.StudentGateSchoolId) {
+            throw "Late-sign-in rollout must preserve the existing repaired, screenshot, and student-gate runtime state."
+        }
+        if ([string]$TargetRuntimeConfiguration.Mode -ceq "late-signin-pilot") {
+            if ([string]$source.LateSignInMode -cne "off" -or
+                [string]$target.LateSignInMode -cne "pilot" -or
+                [string]$target.LateSignInSchoolId -cne [string]$TargetRuntimeConfiguration.PilotSchoolId) {
+                throw "Late-sign-in activation requires a single exact-school pilot from off."
+            }
+        }
+        elseif ([string]$source.LateSignInMode -cnotin @("off", "pilot") -or
+            [string]$target.LateSignInMode -cne "off") {
+            throw "Late-sign-in rollback must disable only the late-sign-in capability."
+        }
+        if ($TargetRuntimeConfiguration.PSObject.Properties.Name -contains "SourceMode" -and
+            [string]$TargetRuntimeConfiguration.SourceMode -cne [string]$source.Mode) {
+            throw "Late-sign-in rollout source identity changed after resolution."
+        }
+        return
+    }
     if ([string]$target.Mode -cin @("tracking-window-pilot", "tracking-window-global-on") -and
-        [string]$source.StudentGateMode -cne "off") {
-        throw "Tracking-window transitions require student auth-gate presence to be disabled independently first."
+        ([string]$source.StudentGateMode -cne "off" -or
+         [string]$source.LateSignInMode -cne "off")) {
+        throw "Tracking-window transitions require student auth-gate and late-sign-in capabilities to be disabled independently first."
     }
     if ($target.Mode -ceq "off") { return }
     if ($target.Mode -ceq "test-school") {
@@ -2164,11 +2293,14 @@ function Assert-AllowedRuntimeTransition {
     }
     if ($target.Mode -ceq "global-on" -and $source.Mode -ceq "global-on" -and
         [string]$source.StudentGateMode -cin @("pilot", "global-on") -and
+        [string]$source.LateSignInMode -ceq "off" -and
         [string]$target.StudentGateMode -ceq "off") {
         return
     }
     if ($target.Mode -ceq "global-on" -and
-        $source.Mode -cin @("tracking-window-pilot", "tracking-window-global-on")) {
+        $source.Mode -cin @("tracking-window-pilot", "tracking-window-global-on") -and
+        [string]$source.StudentGateMode -ceq "off" -and
+        [string]$source.LateSignInMode -ceq "off") {
         return
     }
     if ($target.Mode -ceq "global-on" -and $AllowSyntheticOnlyGlobalActivation -and

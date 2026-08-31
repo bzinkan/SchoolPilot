@@ -4704,7 +4704,7 @@ export async function runStartupMigrations(): Promise<void> {
                          session.auth_kind IN ('legacy', 'managed_profile')
                          OR (
                            session.auth_kind = 'manual_shared'
-                           AND session.manual_lease_expires_at > now()
+                           AND session.manual_lease_expires_at > clock_timestamp()
                          )
                        )
                      THEN 0

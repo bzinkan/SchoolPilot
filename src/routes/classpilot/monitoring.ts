@@ -26,7 +26,9 @@ import {
   getActiveSessions,
   getActiveTeachingSessions,
   getDailyUsageForStudent,
+  countClasspilotLateSignInStampedStates,
 } from "../../services/storage.js";
+import { isClasspilotCapabilityActive } from "../../services/classpilotProtocol.js";
 import {
   checkStudentEmail,
   existingEmailSets,
@@ -105,6 +107,27 @@ const studentDataAuth = [
   requireProductLicense("CLASSPILOT"),
   requireRole("admin", "school_admin", "teacher"),
 ] as const;
+
+// Aggregate-only, database-backed rollout evidence. Zero is meaningful for
+// rollback and the response contains no student/device/session identifiers.
+router.get("/late-signin-rollout-status", ...adminAuth, async (_req, res, next) => {
+  try {
+    const schoolId = res.locals.schoolId!;
+    const lateSignInRestrictionSsoV1Enabled = isClasspilotCapabilityActive(
+      "lateSignInRestrictionSsoV1",
+      { schoolId }
+    );
+    const stampedStateCount = await countClasspilotLateSignInStampedStates(schoolId);
+    res.setHeader("Cache-Control", "no-store");
+    return res.json({
+      lateSignInRestrictionSsoV1Enabled,
+      stampedStateCount,
+      safeForBackendRollback: !lateSignInRestrictionSsoV1Enabled && stampedStateCount === 0,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
 
 function boundedStudentDataQueryString(
   value: unknown,

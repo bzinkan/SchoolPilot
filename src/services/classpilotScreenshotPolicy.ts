@@ -12,6 +12,33 @@ import type {
 export const CLASSPILOT_SCREENSHOT_TRACKING_LEASE_SECONDS = 90;
 export const CLASSPILOT_SCREENSHOT_CAPTURE_FUTURE_SKEW_MS = 30_000;
 
+/**
+ * Keep screenshot-policy authority on the same public revision boundary as
+ * the classroom snapshot delivered to this exact client. A hidden deferred
+ * revision must not escape through tracking-window authority, and a client
+ * that cannot receive that state must not continue class-bound capture under
+ * its unseen revision.
+ */
+export function classpilotScreenshotAuthorityForDeliveredControl(options: {
+  projection?: ClasspilotScreenshotAuthorityProjection;
+  deliveredControlRevision: number;
+}): ClasspilotScreenshotAuthorityProjection | undefined {
+  const projection = options.projection;
+  const deliveredControlRevision = options.deliveredControlRevision;
+  if (!projection) return undefined;
+  if (!Number.isSafeInteger(deliveredControlRevision) || deliveredControlRevision < 0) {
+    throw new TypeError("Invalid delivered ClassPilot control revision");
+  }
+  if (projection.authority.controlRevision === deliveredControlRevision) return projection;
+  return {
+    ...projection,
+    authority: {
+      kind: "student_session",
+      controlRevision: deliveredControlRevision,
+    },
+  };
+}
+
 export type ClasspilotScreenshotPolicy =
   | {
       mode: "legacy";

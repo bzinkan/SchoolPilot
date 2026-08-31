@@ -8,11 +8,16 @@ import db, { pool } from "../dist/db.js";
 import { runWithTenantContext } from "../dist/middleware/tenantContext.js";
 import { signUserToken } from "../dist/services/jwt.js";
 import { createStudentToken } from "../dist/services/deviceJwt.js";
+import {
+  readClasspilotLateSignInDeliveryProvenance,
+  withClasspilotLateSignInOrigin,
+} from "../dist/services/classpilotClassroomState.js";
 import { redisCommand } from "../dist/middleware/rateLimiter.js";
 import {
   addGroupStudentsDetailed,
   acknowledgeClasspilotStudentControlState,
   createCoverageAssignment,
+  countClasspilotLateSignInStampedStates,
   createCoverageScopeGroup,
   createFlightPath,
   deleteFlightPath,
@@ -69,6 +74,8 @@ import {
   releaseSupervisionStudents,
   resyncActiveClasspilotSessionStudents,
   persistClasspilotCommandTargetAck,
+  persistClasspilotControlCommandState,
+  replaceClasspilotSupervisionControlSnapshots,
   setActiveStudentForDevice,
   updateCoverageAssignment,
   updateCoverageScopeGroup,
@@ -88,6 +95,7 @@ import { buildStudentFabState } from "../dist/services/classpilotFab.js";
 import { snapshotClasspilotCoverageHydrationMetrics } from "../dist/services/classpilotCoverageHydration.js";
 import {
   classpilotRealtimeStatusKey,
+  setClasspilotRealtimeStatusCommandForTests,
   writeClasspilotRealtimeStatus,
 } from "../dist/services/classpilotRealtimeStatus.js";
 import {
@@ -127,6 +135,54 @@ const deviceUnassigned = `${TAG}-device-unassigned`;
 const deviceInClass = `${TAG}-device-class`;
 const deviceCoverage = `${TAG}-device-coverage`;
 const deviceGuard = `${TAG}-device-guard`;
+const sharedRealtimeRows = new Map<string, string>();
+let sharedRealtimeAvailable = false;
+
+async function sharedRealtimeCommand(args: string[]): Promise<unknown> {
+  if (!sharedRealtimeAvailable) throw new Error("shared realtime unavailable in test");
+  if (args[0] === "MGET") {
+    return args.slice(1).map((key) => sharedRealtimeRows.get(key) ?? null);
+  }
+  if (args[0] === "DEL") {
+    let deleted = 0;
+    for (const key of args.slice(1)) {
+      if (sharedRealtimeRows.delete(key)) deleted += 1;
+    }
+    return deleted;
+  }
+  if (args[0] === "EVAL") {
+    const key = args[3];
+    const snapshotJson = args[5];
+    if (!key || !snapshotJson) {
+      throw new Error("Malformed shared realtime EVAL command in test");
+    }
+    const proposedRevision = Number(args[4]) || 0;
+    const snapshot = JSON.parse(snapshotJson) as Record<string, unknown>;
+    const currentRaw = sharedRealtimeRows.get(key);
+    const current = currentRaw
+      ? JSON.parse(currentRaw) as Record<string, unknown>
+      : undefined;
+    snapshot.revision = Math.max(
+      proposedRevision,
+      Number(current?.revision || 0) + 1
+    );
+    const encoded = JSON.stringify(snapshot);
+    sharedRealtimeRows.set(key, encoded);
+    return encoded;
+  }
+  throw new Error(`Unsupported shared realtime command in test: ${args[0] || ""}`);
+}
+
+async function withSharedRealtime<T>(run: () => Promise<T>): Promise<T> {
+  sharedRealtimeRows.clear();
+  sharedRealtimeAvailable = true;
+  try {
+    return await run();
+  } finally {
+    sharedRealtimeAvailable = false;
+    sharedRealtimeRows.clear();
+  }
+}
 
 function inSchool<T>(schoolId: string, fn: () => Promise<T>): Promise<T> {
   return runWithTenantContext({ schoolId }, fn);
@@ -403,6 +459,7 @@ function ids(rows: Array<{ student: { id: string } }>) {
 before(async () => {
   originalRedisUrl = process.env.REDIS_URL;
   process.env.REDIS_URL = "";
+  setClasspilotRealtimeStatusCommandForTests(sharedRealtimeCommand);
   mock.timers.enable({ apis: ["setInterval"] });
 
   await ensureCoverageTables();
@@ -534,6 +591,7 @@ after(async () => {
     /* best-effort cleanup */
   }
   mock.timers.reset();
+  setClasspilotRealtimeStatusCommandForTests(undefined);
   if (originalRedisUrl === undefined) delete process.env.REDIS_URL;
   else process.env.REDIS_URL = originalRedisUrl;
   await pool.end();
@@ -2243,40 +2301,54 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       await db.execute(sql`UPDATE teaching_sessions SET start_time = ${new Date(Date.now() - 60_000)} WHERE id = ${oldSession.id}`);
       await db.execute(sql`UPDATE teaching_sessions SET start_time = ${new Date()} WHERE id = ${newSession.id}`);
     });
+    try {
+      await withSharedRealtime(async () => {
+        await writeClasspilotRealtimeStatus({
+          schoolId: school.id,
+          studentId: studentDeviceGuard.id,
+          studentSessionId: sessionGuard.id,
+          deviceId: deviceGuard,
+          heartbeatId: `${TAG}-newest-class-owner-heartbeat`,
+          observedAt: Date.now(),
+          activeTabUrl: "https://example.edu/newest-owner",
+          activeTabTitle: "Newest class owner",
+        });
 
-    const aggregated = await requestJson("GET", "/students-aggregated", undefined, authFor(teacher, school.id));
-    assert.equal(aggregated.status, 200);
-    const overlappingStudent = aggregated.body.find((student: any) => student.studentId === studentDeviceGuard.id);
-    assert.equal(overlappingStudent?.supervisionContext?.id, newSession.id);
-    assert.equal(overlappingStudent?.supervisionContext?.type, "class");
+        const aggregated = await requestJson("GET", "/students-aggregated", undefined, authFor(teacher, school.id));
+        assert.equal(aggregated.status, 200);
+        const overlappingStudent = aggregated.body.find((student: any) => student.studentId === studentDeviceGuard.id);
+        assert.equal(overlappingStudent?.supervisionContext?.id, newSession.id);
+        assert.equal(overlappingStudent?.supervisionContext?.type, "class");
 
-    const oldCommand = await requestJson("POST", "/commands", {
-      teachingSessionId: oldSession.id,
-      targetScope: "students",
-      targetStudentIds: [studentDeviceGuard.id],
-      commandType: "open-tab",
-      commandPayload: { url: "https://example.com/old" },
-    }, authFor(teacher, school.id));
-    assert.equal(oldCommand.status, 201);
-    assert.equal(oldCommand.body.summary.requested, 1);
-    assert.equal(oldCommand.body.summary.unavailable, 1);
-    assert.equal(oldCommand.body.summary.sent, 0);
-    assert.match(oldCommand.body.command.targets[0].errorMessage, /active in|authority changed before dispatch/);
+        const oldCommand = await requestJson("POST", "/commands", {
+          teachingSessionId: oldSession.id,
+          targetScope: "students",
+          targetStudentIds: [studentDeviceGuard.id],
+          commandType: "open-tab",
+          commandPayload: { url: "https://example.com/old" },
+        }, authFor(teacher, school.id));
+        assert.equal(oldCommand.status, 201);
+        assert.equal(oldCommand.body.summary.requested, 1);
+        assert.equal(oldCommand.body.summary.unavailable, 1);
+        assert.equal(oldCommand.body.summary.sent, 0);
+        assert.match(oldCommand.body.command.targets[0].errorMessage, /active in|authority changed before dispatch/);
 
-    const newCommand = await requestJson("POST", "/commands", {
-      teachingSessionId: newSession.id,
-      targetScope: "students",
-      targetStudentIds: [studentDeviceGuard.id],
-      commandType: "open-tab",
-      commandPayload: { url: "https://example.com/new" },
-    }, authFor(secondTeacher, school.id));
-    assert.equal(newCommand.status, 201);
-    assert.equal(newCommand.body.summary.requested, 1);
-    assert.equal(newCommand.body.summary.unavailable, 0);
-    assert.equal(newCommand.body.summary.sent, 1);
-
-    await inSchool(school.id, () => endTeachingSession(oldSession.id));
-    await inSchool(school.id, () => endTeachingSession(newSession.id));
+        const newCommand = await requestJson("POST", "/commands", {
+          teachingSessionId: newSession.id,
+          targetScope: "students",
+          targetStudentIds: [studentDeviceGuard.id],
+          commandType: "open-tab",
+          commandPayload: { url: "https://example.com/new" },
+        }, authFor(secondTeacher, school.id));
+        assert.equal(newCommand.status, 201);
+        assert.equal(newCommand.body.summary.requested, 1);
+        assert.equal(newCommand.body.summary.unavailable, 0);
+        assert.equal(newCommand.body.summary.sent, 1);
+      });
+    } finally {
+      await inSchool(school.id, () => endTeachingSession(oldSession.id));
+      await inSchool(school.id, () => endTeachingSession(newSession.id));
+    }
   });
 
   it("batch-resolves multiple command targets without changing class-row order", async () => {
@@ -2318,15 +2390,15 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       status: "active",
     } as any));
 
-    await inSchool(school.id, async () => {
+    const activeSessions = await inSchool(school.id, async () => {
       await createDevice({ deviceId: activeDeviceA, schoolId: school.id, classId: "default", deviceName: "Batch A" } as any);
       await createDevice({ deviceId: activeDeviceB, schoolId: school.id, classId: "default", deviceName: "Batch B" } as any);
       await createDevice({ deviceId: staleDevice, schoolId: school.id, classId: "default", deviceName: "Batch Stale" } as any);
       await linkStudentDevice({ studentId: activeStudentA.id, deviceId: activeDeviceA });
       await linkStudentDevice({ studentId: activeStudentB.id, deviceId: activeDeviceB });
       await linkStudentDevice({ studentId: staleStudent.id, deviceId: staleDevice });
-      await setActiveStudentForDevice(activeDeviceA, activeStudentA.id);
-      await setActiveStudentForDevice(activeDeviceB, activeStudentB.id);
+      const activeSessionA = await setActiveStudentForDevice(activeDeviceA, activeStudentA.id);
+      const activeSessionB = await setActiveStudentForDevice(activeDeviceB, activeStudentB.id);
       const staleSession = await setActiveStudentForDevice(staleDevice, staleStudent.id);
       await db.execute(sql`
         UPDATE student_sessions
@@ -2334,48 +2406,79 @@ describe("ClassPilot supervision coverage storage contracts", () => {
         WHERE id = ${staleSession.id}
       `);
       await addGroupStudentsDetailed(group.id, [activeStudentA.id, staleStudent.id, activeStudentB.id]);
+      return { activeSessionA, activeSessionB };
     });
-
     const teachingSession = await inSchool(school.id, () => createTeachingSession({
       groupId: group.id,
       teacherId: teacher.id,
     }));
     try {
-      const requestedStudentIds = [staleStudent.id, activeStudentB.id, activeStudentA.id];
-      const requestedSet = new Set(requestedStudentIds);
-      const classRows = await inSchool(school.id, () =>
-        getClasspilotSessionStudentRoster(school.id, teachingSession.id)
-      );
-      const expectedTargetOrder = classRows
-        .filter((row) => requestedSet.has(row.studentId))
-        .map((row) => row.studentId);
+      await withSharedRealtime(async () => {
+        const observedAt = Date.now();
+        await writeClasspilotRealtimeStatus({
+          schoolId: school.id,
+          studentId: activeStudentA.id,
+          studentSessionId: activeSessions.activeSessionA.id,
+          deviceId: activeDeviceA,
+          heartbeatId: `${TAG}-batch-active-a-heartbeat`,
+          observedAt,
+          activeTabUrl: "https://example.edu/batch-a",
+          activeTabTitle: "Batch active A",
+        });
+        await writeClasspilotRealtimeStatus({
+          schoolId: school.id,
+          studentId: activeStudentB.id,
+          studentSessionId: activeSessions.activeSessionB.id,
+          deviceId: activeDeviceB,
+          heartbeatId: `${TAG}-batch-active-b-heartbeat`,
+          observedAt,
+          activeTabUrl: "https://example.edu/batch-b",
+          activeTabTitle: "Batch active B",
+        });
 
-      const command = await requestJson("POST", "/commands", {
-        teachingSessionId: teachingSession.id,
-        targetScope: "students",
-        targetStudentIds: requestedStudentIds,
-        commandType: "open-tab",
-        commandPayload: { url: "https://example.com/batch-targets" },
-      }, authFor(teacher, school.id));
+        const requestedStudentIds = [staleStudent.id, activeStudentB.id, activeStudentA.id];
+        const requestedSet = new Set(requestedStudentIds);
+        const classRows = await inSchool(school.id, () =>
+          getClasspilotSessionStudentRoster(school.id, teachingSession.id)
+        );
+        const expectedTargetOrder = classRows
+          .filter((row) => requestedSet.has(row.studentId))
+          .map((row) => row.studentId);
 
-      assert.equal(command.status, 201);
-      assert.equal(command.body.summary.requested, 3);
-      assert.equal(command.body.summary.sent, 2);
-      assert.equal(command.body.summary.unavailable, 1);
-      assert.deepEqual(
-        command.body.command.targets.map((target: any) => target.studentId),
-        expectedTargetOrder
-      );
-      const targetsByStudent = new Map(
-        command.body.command.targets.map((target: any) => [target.studentId, target])
-      );
-      assert.equal((targetsByStudent.get(activeStudentA.id) as any)?.status, "sent");
-      assert.equal((targetsByStudent.get(activeStudentB.id) as any)?.status, "sent");
-      assert.equal((targetsByStudent.get(staleStudent.id) as any)?.status, "unavailable");
-      assert.match(
-        (targetsByStudent.get(staleStudent.id) as any)?.errorMessage,
-        /not signed in to the extension/
-      );
+        const command = await requestJson("POST", "/commands", {
+          teachingSessionId: teachingSession.id,
+          targetScope: "students",
+          targetStudentIds: requestedStudentIds,
+          commandType: "open-tab",
+          commandPayload: { url: "https://example.com/batch-targets" },
+        }, authFor(teacher, school.id));
+
+        assert.equal(command.status, 201);
+        assert.equal(command.body.summary.requested, 3);
+        assert.equal(command.body.summary.sent, 2);
+        assert.equal(command.body.summary.unavailable, 1);
+        assert.deepEqual(
+          command.body.command.targets.map((target: any) => target.studentId),
+          expectedTargetOrder
+        );
+        type CommandTargetView = {
+          studentId: string;
+          status?: string;
+          errorMessage?: string;
+        };
+        const targetsByStudent = new Map<string, CommandTargetView>(
+          command.body.command.targets.map(
+            (target: CommandTargetView): [string, CommandTargetView] => [target.studentId, target]
+          )
+        );
+        assert.equal(targetsByStudent.get(activeStudentA.id)?.status, "sent");
+        assert.equal(targetsByStudent.get(activeStudentB.id)?.status, "sent");
+        assert.equal(targetsByStudent.get(staleStudent.id)?.status, "unavailable");
+        assert.match(
+          targetsByStudent.get(staleStudent.id)?.errorMessage ?? "",
+          /signal is unavailable/
+        );
+      });
     } finally {
       await inSchool(school.id, () => endTeachingSession(teachingSession.id));
     }
@@ -3087,25 +3190,38 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       scopeValue: directScopeGroup.id,
     }, adminAuth);
 
-    const directScopeQueue = await requestJson("GET", "/coverage/available-students", undefined, teacherAuth);
-    assert.equal(directScopeQueue.status, 200);
-    const directScopeStudent = directScopeQueue.body.students.find((student: any) => student.studentId === studentDeviceGuard.id);
-    assert.ok(directScopeStudent);
-    assert.equal(directScopeStudent.matchingGroups.length, 0);
-    assert.ok(directScopeStudent.matchingScopes.some((scope: any) => scope.name === "Class: 8th"));
-    expectNoDeviceIds(directScopeQueue.body);
+    await withSharedRealtime(async () => {
+      await writeClasspilotRealtimeStatus({
+        schoolId: school.id,
+        studentId: studentDeviceGuard.id,
+        studentSessionId: sessionGuard.id,
+        deviceId: deviceGuard,
+        heartbeatId: `${TAG}-direct-scope-heartbeat`,
+        observedAt: Date.now(),
+        activeTabUrl: "https://example.edu/direct-scope",
+        activeTabTitle: "Direct scope",
+      });
 
-    const directClaimRes = await requestJson("POST", "/coverage/claim", {
-      studentIds: [studentDeviceGuard.id],
-    }, teacherAuth);
-    assert.equal(directClaimRes.status, 201);
-    assert.equal(directClaimRes.body.context.coverageGroupId, null);
-    assert.equal(directClaimRes.body.context.name, "Class: 8th");
-    expectNoDeviceIds(directClaimRes.body);
-    await requestJson("POST", `/coverage/contexts/${directClaimRes.body.context.id}/release`, {
-      studentIds: [studentDeviceGuard.id],
-      releaseReason: "test_release",
-    }, teacherAuth);
+      const directScopeQueue = await requestJson("GET", "/coverage/available-students", undefined, teacherAuth);
+      assert.equal(directScopeQueue.status, 200);
+      const directScopeStudent = directScopeQueue.body.students.find((student: any) => student.studentId === studentDeviceGuard.id);
+      assert.ok(directScopeStudent);
+      assert.equal(directScopeStudent.matchingGroups.length, 0);
+      assert.ok(directScopeStudent.matchingScopes.some((scope: any) => scope.name === "Class: 8th"));
+      expectNoDeviceIds(directScopeQueue.body);
+
+      const directClaimRes = await requestJson("POST", "/coverage/claim", {
+        studentIds: [studentDeviceGuard.id],
+      }, teacherAuth);
+      assert.equal(directClaimRes.status, 201);
+      assert.equal(directClaimRes.body.context.coverageGroupId, null);
+      assert.equal(directClaimRes.body.context.name, "Class: 8th");
+      expectNoDeviceIds(directClaimRes.body);
+      await requestJson("POST", `/coverage/contexts/${directClaimRes.body.context.id}/release`, {
+        studentIds: [studentDeviceGuard.id],
+        releaseReason: "test_release",
+      }, teacherAuth);
+    });
 
     const claimRes = await requestJson("POST", "/coverage/claim", {
       supervisionGroupId: groupRes.body.group.id,
@@ -3224,6 +3340,138 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     }, staffAuth);
     assert.equal(releaseRes.status, 200);
     await inSchool(school.id, () => endTeachingSession(teachingSession.id));
+  });
+
+  it("serializes exact operator gates and explicit login state for Coverage students", async () => {
+    const suffix = `${TAG}-coverage-route-projection`;
+    const signedOutStudent = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Signed",
+      lastName: "Out",
+      email: `signed-out@${suffix}.example.edu`,
+      emailLc: `signed-out@${suffix}.example.edu`,
+      gradeLevel: "8",
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const signalLostStudent = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Signal",
+      lastName: "Lost",
+      email: `signal-lost@${suffix}.example.edu`,
+      emailLc: `signal-lost@${suffix}.example.edu`,
+      gradeLevel: "8",
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const signalLostDeviceId = `${suffix}-device`;
+    let context: any;
+    const previousProtocolV3 = process.env.CLASSPILOT_PROTOCOL_V3_ENABLED;
+    const previousStudentGate = process.env.CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1;
+    const previousLateSignIn = process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1;
+    const previousRollouts = process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON;
+
+    try {
+      process.env.CLASSPILOT_PROTOCOL_V3_ENABLED = "true";
+      process.env.CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1 = "true";
+      process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1 = "true";
+      process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = JSON.stringify({
+        studentAuthGatePresenceV1: { mode: "on", schoolIds: [school.id] },
+        lateSignInRestrictionSsoV1: { mode: "on", schoolIds: [school.id] },
+      });
+
+      const signalLostSession = await inSchool(school.id, async () => {
+        await createDevice({
+          deviceId: signalLostDeviceId,
+          schoolId: school.id,
+          classId: "default",
+          deviceName: "Coverage signal lost",
+        } as Parameters<typeof createDevice>[0]);
+        await linkStudentDevice({
+          studentId: signalLostStudent.id,
+          deviceId: signalLostDeviceId,
+        });
+        return setActiveStudentForDevice(signalLostDeviceId, signalLostStudent.id);
+      });
+      context = await inSchool(school.id, () => createSupervisionContextWithStudents({
+        context: {
+          schoolId: school.id,
+          contextType: "office",
+          name: "Coverage projection test",
+          status: "active",
+          assignedStaffId: coverageStaff.id,
+          createdBy: admin.id,
+          endsAt: new Date(Date.now() + 60 * 60 * 1000),
+        },
+        studentIds: [signedOutStudent.id, signalLostStudent.id],
+        assignedBy: admin.id,
+        source: "admin_reroute",
+      }));
+
+      await withSharedRealtime(async () => {
+        await writeClasspilotRealtimeStatus({
+          schoolId: school.id,
+          studentId: signalLostStudent.id,
+          studentSessionId: signalLostSession.id,
+          deviceId: signalLostDeviceId,
+          heartbeatId: `${suffix}-stale-heartbeat`,
+          observedAt: Date.now() - 2 * 60 * 1000,
+          trackingStatus: "ACTIVE",
+        });
+
+        const response = await requestJson(
+          "GET",
+          `/coverage/contexts/${context.id}/students`,
+          undefined,
+          authFor(coverageStaff, school.id)
+        );
+        assert.equal(response.status, 200);
+        const signedOutRow = response.body.students.find(
+          (student: any) => student.studentId === signedOutStudent.id
+        );
+        const signalLostRow = response.body.students.find(
+          (student: any) => student.studentId === signalLostStudent.id
+        );
+        assert.ok(signedOutRow);
+        assert.ok(signalLostRow);
+        for (const row of [signedOutRow, signalLostRow]) {
+          assert.deepEqual(row.operatorCapabilities, {
+            studentAuthGatePresenceV1: true,
+            lateSignInRestrictionSsoV1: true,
+          });
+          assert.equal(row.studentAuthGatePresenceV1Enabled, true);
+          assert.equal(row.lateSignInRestrictionSsoV1Enabled, true);
+        }
+        assert.equal(signedOutRow.isLoggedIn, false);
+        assert.equal(signedOutRow.loginState, "not_logged_in");
+        assert.equal(signedOutRow.status, "offline");
+        assert.equal(signalLostRow.isLoggedIn, true);
+        assert.equal(signalLostRow.loginState, "logged_in");
+        assert.equal(signalLostRow.status, "idle");
+        expectNoInternalRealtimeBindings(response.body, [
+          signalLostDeviceId,
+          signalLostSession.id,
+        ]);
+      });
+    } finally {
+      if (previousProtocolV3 === undefined) delete process.env.CLASSPILOT_PROTOCOL_V3_ENABLED;
+      else process.env.CLASSPILOT_PROTOCOL_V3_ENABLED = previousProtocolV3;
+      if (previousStudentGate === undefined) delete process.env.CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1;
+      else process.env.CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1 = previousStudentGate;
+      if (previousLateSignIn === undefined) delete process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1;
+      else process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1 = previousLateSignIn;
+      if (previousRollouts === undefined) delete process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON;
+      else process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = previousRollouts;
+
+      await inSchool(school.id, async () => {
+        if (context?.id) {
+          await db.execute(sql`DELETE FROM classpilot_supervision_students WHERE context_id = ${context.id}`);
+          await db.execute(sql`DELETE FROM classpilot_supervision_contexts WHERE id = ${context.id}`);
+        }
+        await db.execute(sql`DELETE FROM student_sessions WHERE student_id IN (${signedOutStudent.id}, ${signalLostStudent.id})`);
+        await db.execute(sql`DELETE FROM student_devices WHERE student_id IN (${signedOutStudent.id}, ${signalLostStudent.id})`);
+        await db.execute(sql`DELETE FROM devices WHERE device_id = ${signalLostDeviceId}`);
+        await db.execute(sql`DELETE FROM students WHERE id IN (${signedOutStudent.id}, ${signalLostStudent.id})`);
+      });
+    }
   });
 
   it("records coverage commands against a supervision context without a teaching session", async () => {
@@ -4220,6 +4468,184 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.equal(expiredAck?.ackState, "expired");
   });
 
+  it("queues and recovers a durable teacher message through the class route when the active session loses signal", async () => {
+    const signalLostStudent = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Class",
+      lastName: "Signal Lost",
+      email: `class-signal-lost-message@${TAG}.example.edu`,
+      emailLc: `class-signal-lost-message@${TAG}.example.edu`,
+      gradeLevel: "8",
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const signalLostDeviceId = `${TAG}-class-signal-lost-message-device`;
+    const group = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: teacher.id,
+      name: `${TAG}_Class_Signal_Lost_Message`,
+      groupType: "admin_class",
+      status: "active",
+    } as Parameters<typeof createGroup>[0]));
+    await inSchool(school.id, async () => {
+      await createDevice({
+        deviceId: signalLostDeviceId,
+        schoolId: school.id,
+        classId: "default",
+        deviceName: "Class Signal Lost Message",
+      } as Parameters<typeof createDevice>[0]);
+      await linkStudentDevice({
+        studentId: signalLostStudent.id,
+        deviceId: signalLostDeviceId,
+      });
+      await addGroupStudentsDetailed(group.id, [signalLostStudent.id]);
+    });
+    const studentSession = await inSchool(school.id, () =>
+      setActiveStudentForDevice(signalLostDeviceId, signalLostStudent.id)
+    );
+    const teachingSession = await inSchool(school.id, () => createTeachingSession({
+      groupId: group.id,
+      teacherId: teacher.id,
+    }));
+    const message = `Class route queued while signal lost ${TAG}`;
+    try {
+      const response = await requestJson("POST", "/commands", {
+        teachingSessionId: teachingSession.id,
+        targetScope: "students",
+        targetStudentIds: [signalLostStudent.id],
+        commandType: "teacher-message",
+        commandPayload: { message },
+      }, authFor(teacher, school.id));
+
+      assert.equal(response.status, 201);
+      assert.equal(response.body.deliveryPolicy, "durable_message");
+      assert.equal(response.body.summary.requested, 1);
+      assert.equal(response.body.summary.attempted, 0);
+      assert.equal(response.body.summary.unavailable, 1);
+      assert.match(response.body.command.targets[0]?.errorMessage || "", /signal is unavailable/);
+
+      const queued = await inSchool(school.id, () =>
+        getRecentMessagesForStudent(signalLostStudent.id, 10)
+      );
+      assert.equal(queued.some((entry) =>
+        entry.commandId === response.body.command.id && entry.message === message
+      ), true);
+
+      const pending = await inSchool(school.id, () => getPendingMessagesForStudent({
+        schoolId: school.id,
+        studentId: signalLostStudent.id,
+        studentSessionId: studentSession.id,
+        deviceId: signalLostDeviceId,
+      }));
+      const recovered = pending.find((entry) => entry.commandId === response.body.command.id);
+      assert.ok(recovered);
+      assert.equal(recovered.message, message);
+      const claimed = await inSchool(school.id, () =>
+        getClasspilotCommandByIdAndSchool(response.body.command.id, school.id)
+      );
+      assert.equal(claimed?.targets[0]?.studentSessionId, studentSession.id);
+      assert.equal(claimed?.targets[0]?.deviceId, signalLostDeviceId);
+      assert.equal(claimed?.targets[0]?.status, "sent");
+    } finally {
+      await inSchool(school.id, () => endTeachingSession(teachingSession.id));
+      await inSchool(school.id, () => endStudentSession(studentSession.id));
+      await inSchool(school.id, () => deleteDevice(signalLostDeviceId));
+    }
+  });
+
+  it("queues and recovers a durable teacher message through Coverage when the active session loses signal", async () => {
+    const signalLostStudent = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Coverage",
+      lastName: "Signal Lost",
+      email: `coverage-signal-lost-message@${TAG}.example.edu`,
+      emailLc: `coverage-signal-lost-message@${TAG}.example.edu`,
+      gradeLevel: "8",
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const signalLostDeviceId = `${TAG}-coverage-signal-lost-message-device`;
+    await inSchool(school.id, async () => {
+      await createDevice({
+        deviceId: signalLostDeviceId,
+        schoolId: school.id,
+        classId: "default",
+        deviceName: "Coverage Signal Lost Message",
+      } as Parameters<typeof createDevice>[0]);
+      await linkStudentDevice({
+        studentId: signalLostStudent.id,
+        deviceId: signalLostDeviceId,
+      });
+    });
+    const studentSession = await inSchool(school.id, () =>
+      setActiveStudentForDevice(signalLostDeviceId, signalLostStudent.id)
+    );
+    const context = await inSchool(school.id, () => createSupervisionContextWithStudents({
+      context: {
+        schoolId: school.id,
+        contextType: "office",
+        name: "Coverage Signal Lost Message",
+        status: "active",
+        assignedStaffId: coverageStaff.id,
+        createdBy: admin.id,
+        endsAt: new Date(Date.now() + 60 * 60 * 1000),
+      },
+      studentIds: [signalLostStudent.id],
+      assignedBy: admin.id,
+      source: "admin_reroute",
+    }));
+    const message = `Coverage route queued while signal lost ${TAG}`;
+    try {
+      const response = await requestJson(
+        "POST",
+        `/coverage/contexts/${context.id}/commands`,
+        {
+          targetScope: "students",
+          targetStudentIds: [signalLostStudent.id],
+          commandType: "teacher-message",
+          commandPayload: { message },
+        },
+        authFor(coverageStaff, school.id)
+      );
+
+      assert.equal(response.status, 201);
+      assert.equal(response.body.deliveryPolicy, "durable_message");
+      assert.equal(response.body.summary.requested, 1);
+      assert.equal(response.body.summary.attempted, 0);
+      assert.equal(response.body.summary.unavailable, 1);
+      assert.match(response.body.command.targets[0]?.errorMessage || "", /signal is unavailable/);
+
+      const queued = await inSchool(school.id, () =>
+        getRecentMessagesForStudent(signalLostStudent.id, 10)
+      );
+      assert.equal(queued.some((entry) =>
+        entry.commandId === response.body.command.id && entry.message === message
+      ), true);
+
+      const pending = await inSchool(school.id, () => getPendingMessagesForStudent({
+        schoolId: school.id,
+        studentId: signalLostStudent.id,
+        studentSessionId: studentSession.id,
+        deviceId: signalLostDeviceId,
+      }));
+      const recovered = pending.find((entry) => entry.commandId === response.body.command.id);
+      assert.ok(recovered);
+      assert.equal(recovered.message, message);
+      const claimed = await inSchool(school.id, () =>
+        getClasspilotCommandByIdAndSchool(response.body.command.id, school.id)
+      );
+      assert.equal(claimed?.targets[0]?.studentSessionId, studentSession.id);
+      assert.equal(claimed?.targets[0]?.deviceId, signalLostDeviceId);
+      assert.equal(claimed?.targets[0]?.status, "sent");
+    } finally {
+      await inSchool(school.id, () => releaseSupervisionStudents({
+        schoolId: school.id,
+        contextId: context.id,
+        releaseReason: "test_release",
+      }));
+      await inSchool(school.id, () => endStudentSession(studentSession.id));
+      await inSchool(school.id, () => deleteDevice(signalLostDeviceId));
+    }
+  });
+
   it("recovers a durable teacher message after an outage longer than five minutes", async () => {
     const offlineStudent = await inSchool(school.id, () => createStudent({
       schoolId: school.id,
@@ -4382,7 +4808,380 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     await inSchool(school.id, () => deleteDevice(recoveryDeviceId));
   });
 
+  it("does not author an offline persistent-control state while the operator gate is off", async () => {
+    const previousProtocol = process.env.CLASSPILOT_PROTOCOL_V3_ENABLED;
+    const previousLateSignIn = process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1;
+    const previousRollouts = process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON;
+    process.env.CLASSPILOT_PROTOCOL_V3_ENABLED = "true";
+    process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1 = "false";
+    process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = JSON.stringify({
+      lateSignInRestrictionSsoV1: { mode: "off", schoolIds: [school.id] },
+    });
+    try {
+      const offlineStudent = await inSchool(school.id, () => createStudent({
+        schoolId: school.id,
+        firstName: "Gate Off",
+        lastName: "Control",
+        email: `gate-off-control@${TAG}.example.edu`,
+        emailLc: `gate-off-control@${TAG}.example.edu`,
+        gradeLevel: "8",
+        status: "active",
+      } as any));
+      const group = await inSchool(school.id, () => createGroup({
+        schoolId: school.id,
+        teacherId: teacher.id,
+        name: `${TAG}_Gate_Off_Control`,
+        groupType: "admin_class",
+        status: "active",
+      } as any));
+      await inSchool(school.id, () => addGroupStudentsDetailed(group.id, [offlineStudent.id]));
+      const teachingSession = await inSchool(school.id, () => createTeachingSession({
+        groupId: group.id,
+        teacherId: teacher.id,
+      }));
+      const result = await inSchool(school.id, () => executeClasspilotCommand({
+        schoolId: school.id,
+        actorId: teacher.id,
+        teachingSessionId: teachingSession.id,
+        targetScope: "students",
+        commandType: "lock-screen",
+        rawCommandPayload: { url: "https://example.edu/must-not-persist" },
+        targets: [{
+          studentId: offlineStudent.id,
+          studentName: "Gate Off Control",
+          studentSessionId: null,
+          deviceId: null,
+          available: false,
+          stateAuthorized: true,
+          lateSignInEligible: true,
+          unavailableReason: "Student is not signed in to the extension",
+        }],
+      }));
+      assert.equal(result.command.targets[0]?.status, "unavailable");
+      const control = await inSchool(school.id, () =>
+        getClasspilotStudentControlState(school.id, offlineStudent.id)
+      );
+      assert.notEqual(control?.sourceCommandId, result.command.id);
+      await inSchool(school.id, () => endTeachingSession(teachingSession.id));
+    } finally {
+      if (previousProtocol === undefined) delete process.env.CLASSPILOT_PROTOCOL_V3_ENABLED;
+      else process.env.CLASSPILOT_PROTOCOL_V3_ENABLED = previousProtocol;
+      if (previousLateSignIn === undefined) {
+        delete process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1;
+      } else {
+        process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1 = previousLateSignIn;
+      }
+      if (previousRollouts === undefined) delete process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON;
+      else process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = previousRollouts;
+    }
+  });
+
+  it("rechecks the late-sign-in gate under the class persistence lock", async () => {
+    const previousProtocol = process.env.CLASSPILOT_PROTOCOL_V3_ENABLED;
+    const previousLateSignIn = process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1;
+    const previousRollouts = process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON;
+    process.env.CLASSPILOT_PROTOCOL_V3_ENABLED = "true";
+    process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1 = "true";
+    process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = JSON.stringify({
+      lateSignInRestrictionSsoV1: { mode: "on", schoolIds: [school.id] },
+    });
+
+    const blocker = await pool.connect();
+    let blockerOpen = false;
+    let teachingSession: any;
+    let mutation: ReturnType<typeof persistClasspilotControlCommandState> | undefined;
+    try {
+      const offlineStudent = await inSchool(school.id, () => createStudent({
+        schoolId: school.id,
+        firstName: "Gate",
+        lastName: "Class Race",
+        email: `gate-class-race@${TAG}.example.edu`,
+        emailLc: `gate-class-race@${TAG}.example.edu`,
+        gradeLevel: "8",
+        status: "active",
+      } as Parameters<typeof createStudent>[0]));
+      const group = await inSchool(school.id, () => createGroup({
+        schoolId: school.id,
+        teacherId: teacher.id,
+        name: `${TAG}_Gate_Class_Race`,
+        groupType: "admin_class",
+        status: "active",
+      } as Parameters<typeof createGroup>[0]));
+      await inSchool(school.id, () => addGroupStudentsDetailed(group.id, [offlineStudent.id]));
+      teachingSession = await inSchool(school.id, () => createTeachingSession({
+        groupId: group.id,
+        teacherId: teacher.id,
+      }));
+      const before = await inSchool(school.id, () =>
+        getClasspilotStudentControlState(school.id, offlineStudent.id)
+      );
+      assert.ok(before);
+      const stampedBefore = await inSchool(school.id, () =>
+        countClasspilotLateSignInStampedStates(school.id)
+      );
+      const attemptedCommandId = `${TAG}-gate-class-race-command`;
+
+      await blocker.query("BEGIN");
+      blockerOpen = true;
+      await blocker.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0::bigint))",
+        [`classpilot:student-control:${school.id}:${offlineStudent.id}`]
+      );
+      const blockerPid = Number(
+        (await blocker.query("SELECT pg_backend_pid() AS pid")).rows[0]?.pid
+      );
+      assert.equal(Number.isSafeInteger(blockerPid), true);
+
+      let mutationSettled = false;
+      mutation = inSchool(school.id, () => persistClasspilotControlCommandState({
+        lateSignInGateRequiredStudentIds: [offlineStudent.id],
+        classroomStateUpserts: [{
+          schoolId: school.id,
+          teachingSessionId: teachingSession.id,
+          studentId: offlineStudent.id,
+          stateType: "screen-lock",
+          stateKey: "active",
+          payload: { url: "https://example.edu/gate-class-race" },
+          commandId: attemptedCommandId,
+          appliedBy: teacher.id,
+        }],
+        studentSnapshots: {
+          schoolId: school.id,
+          teachingSessionId: teachingSession.id,
+          studentIds: [offlineStudent.id],
+          sourceCommandId: attemptedCommandId,
+          bindingExpectationByStudent: new Map([
+            [offlineStudent.id, { kind: "signed_out" as const }],
+          ]),
+          desiredState: () => withClasspilotLateSignInOrigin({
+            desiredState: {
+              restrictions: {
+                locked: true,
+                url: "https://example.edu/gate-class-race",
+              },
+            },
+            commandId: attemptedCommandId,
+          }),
+        },
+      }));
+      void mutation.then(
+        () => { mutationSettled = true; },
+        () => { mutationSettled = true; }
+      );
+
+      let waitingCount = 0;
+      const waitDeadline = Date.now() + 5_000;
+      while (waitingCount === 0 && Date.now() < waitDeadline) {
+        const snapshot = await blocker.query(`
+          SELECT count(*)::integer AS "waitingCount"
+          FROM pg_stat_activity AS waiter
+          WHERE $1::integer = ANY(pg_blocking_pids(waiter.pid))
+        `, [blockerPid]);
+        waitingCount = Number(snapshot.rows[0]?.waitingCount ?? 0);
+        if (waitingCount === 0) await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.equal(waitingCount, 1, "class persistence must wait on the exact student-control lock");
+      assert.equal(mutationSettled, false);
+
+      process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1 = "false";
+      process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = JSON.stringify({
+        lateSignInRestrictionSsoV1: { mode: "off", schoolIds: [school.id] },
+      });
+      await blocker.query("COMMIT");
+      blockerOpen = false;
+
+      const result = await mutation;
+      assert.deepEqual(result.classroomStates, []);
+      assert.deepEqual(result.studentControlStates, []);
+      assert.deepEqual(result.rejectedStudentIds, [offlineStudent.id]);
+      const after = await inSchool(school.id, () =>
+        getClasspilotStudentControlState(school.id, offlineStudent.id)
+      );
+      assert.equal(after?.revision, before.revision);
+      assert.equal(after?.sourceCommandId, before.sourceCommandId);
+      assert.deepEqual(after?.desiredState, before.desiredState);
+      assert.equal(
+        await inSchool(school.id, () => countClasspilotLateSignInStampedStates(school.id)),
+        stampedBefore
+      );
+      assert.equal(
+        (await inSchool(school.id, () =>
+          getActiveClasspilotClassroomStates(school.id, teachingSession.id)
+        )).some((state) => state.commandId === attemptedCommandId),
+        false
+      );
+    } finally {
+      if (blockerOpen) await blocker.query("ROLLBACK").catch(() => {});
+      blocker.release();
+      await mutation?.catch(() => {});
+      if (teachingSession?.id) {
+        await inSchool(school.id, () => endTeachingSession(teachingSession.id)).catch(() => {});
+      }
+      if (previousProtocol === undefined) delete process.env.CLASSPILOT_PROTOCOL_V3_ENABLED;
+      else process.env.CLASSPILOT_PROTOCOL_V3_ENABLED = previousProtocol;
+      if (previousLateSignIn === undefined) {
+        delete process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1;
+      } else {
+        process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1 = previousLateSignIn;
+      }
+      if (previousRollouts === undefined) delete process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON;
+      else process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = previousRollouts;
+    }
+  });
+
+  it("rechecks the late-sign-in gate under the Coverage persistence lock", async () => {
+    const previousProtocol = process.env.CLASSPILOT_PROTOCOL_V3_ENABLED;
+    const previousLateSignIn = process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1;
+    const previousRollouts = process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON;
+    process.env.CLASSPILOT_PROTOCOL_V3_ENABLED = "true";
+    process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1 = "true";
+    process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = JSON.stringify({
+      lateSignInRestrictionSsoV1: { mode: "on", schoolIds: [school.id] },
+    });
+
+    const blocker = await pool.connect();
+    let blockerOpen = false;
+    let context: any;
+    let mutation: ReturnType<typeof replaceClasspilotSupervisionControlSnapshots> | undefined;
+    try {
+      const offlineStudent = await inSchool(school.id, () => createStudent({
+        schoolId: school.id,
+        firstName: "Gate",
+        lastName: "Coverage Race",
+        email: `gate-coverage-race@${TAG}.example.edu`,
+        emailLc: `gate-coverage-race@${TAG}.example.edu`,
+        gradeLevel: "8",
+        status: "active",
+      } as Parameters<typeof createStudent>[0]));
+      context = await inSchool(school.id, () => createSupervisionContextWithStudents({
+        context: {
+          schoolId: school.id,
+          contextType: "office",
+          name: "Late-sign-in gate Coverage race",
+          status: "active",
+          assignedStaffId: coverageStaff.id,
+          createdBy: admin.id,
+          endsAt: new Date(Date.now() + 60 * 60 * 1000),
+        },
+        studentIds: [offlineStudent.id],
+        assignedBy: admin.id,
+        source: "admin_reroute",
+      }));
+      const before = await inSchool(school.id, () =>
+        getClasspilotStudentControlState(school.id, offlineStudent.id)
+      );
+      assert.ok(before);
+      const stampedBefore = await inSchool(school.id, () =>
+        countClasspilotLateSignInStampedStates(school.id)
+      );
+      const attemptedCommandId = `${TAG}-gate-coverage-race-command`;
+
+      await blocker.query("BEGIN");
+      blockerOpen = true;
+      await blocker.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0::bigint))",
+        [`classpilot:student-control:${school.id}:${offlineStudent.id}`]
+      );
+      const blockerPid = Number(
+        (await blocker.query("SELECT pg_backend_pid() AS pid")).rows[0]?.pid
+      );
+      assert.equal(Number.isSafeInteger(blockerPid), true);
+
+      let mutationSettled = false;
+      mutation = inSchool(school.id, () => replaceClasspilotSupervisionControlSnapshots({
+        schoolId: school.id,
+        supervisionContextId: context.id,
+        studentIds: [offlineStudent.id],
+        sourceCommandId: attemptedCommandId,
+        authorizedActorId: coverageStaff.id,
+        actorIsAdmin: false,
+        bindingExpectationByStudent: new Map([
+          [offlineStudent.id, { kind: "signed_out" as const }],
+        ]),
+        lateSignInGateRequiredStudentIds: [offlineStudent.id],
+        desiredState: () => withClasspilotLateSignInOrigin({
+          desiredState: {
+            restrictions: {
+              locked: true,
+              url: "https://example.edu/gate-coverage-race",
+            },
+          },
+          commandId: attemptedCommandId,
+        }),
+      }));
+      void mutation.then(
+        () => { mutationSettled = true; },
+        () => { mutationSettled = true; }
+      );
+
+      let waitingCount = 0;
+      const waitDeadline = Date.now() + 5_000;
+      while (waitingCount === 0 && Date.now() < waitDeadline) {
+        const snapshot = await blocker.query(`
+          SELECT count(*)::integer AS "waitingCount"
+          FROM pg_stat_activity AS waiter
+          WHERE $1::integer = ANY(pg_blocking_pids(waiter.pid))
+        `, [blockerPid]);
+        waitingCount = Number(snapshot.rows[0]?.waitingCount ?? 0);
+        if (waitingCount === 0) await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.equal(waitingCount, 1, "Coverage persistence must wait on the exact student-control lock");
+      assert.equal(mutationSettled, false);
+
+      process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1 = "false";
+      process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = JSON.stringify({
+        lateSignInRestrictionSsoV1: { mode: "off", schoolIds: [school.id] },
+      });
+      await blocker.query("COMMIT");
+      blockerOpen = false;
+
+      assert.deepEqual(await mutation, []);
+      const after = await inSchool(school.id, () =>
+        getClasspilotStudentControlState(school.id, offlineStudent.id)
+      );
+      assert.equal(after?.revision, before.revision);
+      assert.equal(after?.sourceCommandId, before.sourceCommandId);
+      assert.deepEqual(after?.desiredState, before.desiredState);
+      assert.equal(
+        await inSchool(school.id, () => countClasspilotLateSignInStampedStates(school.id)),
+        stampedBefore
+      );
+    } finally {
+      if (blockerOpen) await blocker.query("ROLLBACK").catch(() => {});
+      blocker.release();
+      await mutation?.catch(() => {});
+      if (context?.id) {
+        await inSchool(school.id, () => releaseSupervisionStudents({
+          schoolId: school.id,
+          contextId: context.id,
+          releaseReason: "test_cleanup",
+        })).catch(() => {});
+      }
+      if (previousProtocol === undefined) delete process.env.CLASSPILOT_PROTOCOL_V3_ENABLED;
+      else process.env.CLASSPILOT_PROTOCOL_V3_ENABLED = previousProtocol;
+      if (previousLateSignIn === undefined) {
+        delete process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1;
+      } else {
+        process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1 = previousLateSignIn;
+      }
+      if (previousRollouts === undefined) delete process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON;
+      else process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = previousRollouts;
+    }
+  });
+
   it("completes an offline persistent-control command from authoritative state reconciliation", async () => {
+    const previousProtocol = process.env.CLASSPILOT_PROTOCOL_V3_ENABLED;
+    const previousLateSignIn = process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1;
+    const previousRollouts = process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON;
+    process.env.CLASSPILOT_PROTOCOL_V3_ENABLED = "true";
+    process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1 = "true";
+    process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = JSON.stringify({
+      lateSignInRestrictionSsoV1: { mode: "on", schoolIds: [school.id] },
+    });
+    try {
+    const stampedBefore = await inSchool(school.id, () =>
+      countClasspilotLateSignInStampedStates(school.id)
+    );
     const offlineStudent = await inSchool(school.id, () => createStudent({
       schoolId: school.id,
       firstName: "Offline",
@@ -4418,6 +5217,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
         deviceId: null,
         available: false,
         stateAuthorized: true,
+        lateSignInEligible: true,
         unavailableReason: "Student is not signed in to the extension",
       }],
     }));
@@ -4426,6 +5226,65 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       getClasspilotStudentControlState(school.id, offlineStudent.id)
     );
     assert.equal(control?.sourceCommandId, result.command.id);
+    assert.equal(await inSchool(school.id, () =>
+      countClasspilotLateSignInStampedStates(school.id)
+    ), stampedBefore + 1);
+    await inSchool(school.id, () => db.execute(sql`
+      UPDATE classpilot_student_control_states
+      SET scheduled_end_at = clock_timestamp() - interval '1 second',
+          hard_expires_at = clock_timestamp() + interval '1 hour'
+      WHERE school_id = ${school.id}
+        AND student_id = ${offlineStudent.id}
+    `));
+    const topLevelExpirySnapshot = await inSchool(school.id, () => db.execute(sql`
+      SELECT
+        scheduled_end_at <= clock_timestamp() AS scheduled_expired,
+        hard_expires_at > clock_timestamp() AS hard_expiry_live,
+        desired_state #>> '{restorableClassState,desiredState,lateSignInDelivery,origin}'
+          AS nested_origin
+      FROM classpilot_student_control_states
+      WHERE school_id = ${school.id}
+        AND student_id = ${offlineStudent.id}
+    `));
+    const topLevelExpiryRow = topLevelExpirySnapshot.rows[0] as {
+      scheduled_expired?: boolean;
+      hard_expiry_live?: boolean;
+      nested_origin?: string | null;
+    } | undefined;
+    assert.equal(topLevelExpiryRow?.scheduled_expired, true);
+    assert.equal(topLevelExpiryRow?.hard_expiry_live, true);
+    assert.equal(topLevelExpiryRow?.nested_origin, null);
+    const directRollbackCount = await inSchool(school.id, () => db.execute(sql`
+      SELECT count(*)::int AS count
+      FROM classpilot_student_control_states
+      WHERE school_id = ${school.id}
+        AND (
+          (
+            desired_state -> 'lateSignInDelivery' ->> 'origin' = 'deferred'
+            AND (scheduled_end_at IS NULL OR scheduled_end_at > clock_timestamp())
+            AND (hard_expires_at IS NULL OR hard_expires_at > clock_timestamp())
+          )
+          OR desired_state #>> '{restorableClassState,desiredState,lateSignInDelivery,origin}' = 'deferred'
+        )
+    `));
+    assert.equal(Number(directRollbackCount.rows[0]?.count ?? 0), stampedBefore);
+    assert.equal(await inSchool(school.id, () =>
+      countClasspilotLateSignInStampedStates(school.id)
+    ), stampedBefore);
+    const expiredTopLevelStamped = await inSchool(school.id, () =>
+      getClasspilotStudentControlState(school.id, offlineStudent.id)
+    );
+    assert.equal(
+      readClasspilotLateSignInDeliveryProvenance(expiredTopLevelStamped?.desiredState)?.origin,
+      "deferred"
+    );
+    await inSchool(school.id, () => db.execute(sql`
+      UPDATE classpilot_student_control_states
+      SET scheduled_end_at = NULL,
+          hard_expires_at = clock_timestamp() + interval '12 hours'
+      WHERE school_id = ${school.id}
+        AND student_id = ${offlineStudent.id}
+    `));
 
     const recoveryDeviceId = `${TAG}-offline-control-recovery`;
     await inSchool(school.id, () => createDevice({
@@ -4449,6 +5308,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
         deviceId: recoveryDeviceId,
         appliedRevision: control!.revision,
         outcome: "applied",
+        acceptedCapabilities: ["lateSignInRestrictionSsoV1"],
       })
     );
     assert.equal(acknowledged?.sourceCommandId, result.command.id);
@@ -4463,8 +5323,99 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       outcome: "applied",
       reconciliation: true,
     });
+    const replacementDeviceId = `${TAG}-offline-control-replacement`;
+    await inSchool(school.id, () => createDevice({
+      deviceId: replacementDeviceId,
+      schoolId: school.id,
+      classId: "default",
+      deviceName: "Offline Control Replacement",
+    } as any));
+    await inSchool(school.id, () => linkStudentDevice({
+      studentId: offlineStudent.id,
+      deviceId: replacementDeviceId,
+    }));
+    const replacementSession = await inSchool(school.id, () =>
+      setActiveStudentForDevice(replacementDeviceId, offlineStudent.id)
+    );
+    const replacementAck = await inSchool(school.id, () =>
+      acknowledgeClasspilotStudentControlState({
+        schoolId: school.id,
+        studentId: offlineStudent.id,
+        studentSessionId: replacementSession.id,
+        deviceId: replacementDeviceId,
+        appliedRevision: control!.revision,
+        outcome: "applied",
+        acceptedCapabilities: ["lateSignInRestrictionSsoV1"],
+      })
+    );
+    assert.equal(replacementAck?.revision, control!.revision);
+    const bindingHistory = readClasspilotLateSignInDeliveryProvenance(
+      replacementAck?.desiredState
+    )?.appliedBindings ?? [];
+    assert.equal(bindingHistory.some((entry) =>
+      entry.studentSessionId === recoverySession.id
+      && entry.deviceId === recoveryDeviceId
+      && entry.revision === control!.revision
+    ), true);
+    assert.equal(bindingHistory.some((entry) =>
+      entry.studentSessionId === replacementSession.id
+      && entry.deviceId === replacementDeviceId
+      && entry.revision === control!.revision
+    ), true);
+    // Coverage owns desired state temporarily by nesting the former class
+    // snapshot. The rollback gauge must continue to count that durable stamp.
+    const nestedCoverageDesiredState = {
+      restrictions: {},
+      restorableClassState: {
+        desiredState: replacementAck!.desiredState,
+        sourceCommandId: replacementAck!.sourceCommandId,
+      },
+    };
+    await inSchool(school.id, () => db.execute(sql`
+      UPDATE classpilot_student_control_states
+      SET desired_state = ${JSON.stringify(nestedCoverageDesiredState)}::jsonb
+      WHERE school_id = ${school.id}
+        AND student_id = ${offlineStudent.id}
+    `));
+    assert.equal(await inSchool(school.id, () =>
+      countClasspilotLateSignInStampedStates(school.id)
+    ), stampedBefore + 1);
+    await inSchool(school.id, () => db.execute(sql`
+      UPDATE classpilot_student_control_states
+      SET scheduled_end_at = clock_timestamp() - interval '1 second',
+          hard_expires_at = clock_timestamp() + interval '1 hour'
+      WHERE school_id = ${school.id}
+        AND student_id = ${offlineStudent.id}
+    `));
+    assert.equal(await inSchool(school.id, () =>
+      countClasspilotLateSignInStampedStates(school.id)
+    ), stampedBefore + 1);
+    const expiredStamped = await inSchool(school.id, () =>
+      getClasspilotStudentControlState(school.id, offlineStudent.id)
+    );
+    const expiredDesiredState = expiredStamped?.desiredState as {
+      restorableClassState?: { desiredState?: unknown };
+    } | undefined;
+    assert.equal(
+      readClasspilotLateSignInDeliveryProvenance(
+        expiredDesiredState?.restorableClassState?.desiredState
+      )?.origin,
+      "deferred"
+    );
     await inSchool(school.id, () => endTeachingSession(teachingSession.id));
     await inSchool(school.id, () => deleteDevice(recoveryDeviceId));
+    await inSchool(school.id, () => deleteDevice(replacementDeviceId));
+    } finally {
+      if (previousProtocol === undefined) delete process.env.CLASSPILOT_PROTOCOL_V3_ENABLED;
+      else process.env.CLASSPILOT_PROTOCOL_V3_ENABLED = previousProtocol;
+      if (previousLateSignIn === undefined) {
+        delete process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1;
+      } else {
+        process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1 = previousLateSignIn;
+      }
+      if (previousRollouts === undefined) delete process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON;
+      else process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = previousRollouts;
+    }
   });
 
   it("never represents transient timer or poll dispatch as active classroom state", async () => {

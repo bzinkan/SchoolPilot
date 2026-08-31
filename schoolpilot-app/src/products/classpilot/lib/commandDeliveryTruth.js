@@ -110,7 +110,7 @@ export function commandDeliveryFeedback(value, commandType = value?.command?.com
   const expiresAt = value?.expiresAt ?? value?.command?.expiresAt;
 
   if (policy === 'persistent_control') {
-    const pendingRestrictionCount = summary.pending || summary.unavailable;
+    const pendingRestrictionCount = summary.pending + summary.unavailable;
     const pendingText = summary.pending > 0 || summary.unavailable > 0
       ? `${plural(pendingRestrictionCount, 'restriction is', 'restrictions are')} pending — will apply when monitoring resumes.`
       : summary.acknowledged > 0
@@ -122,6 +122,9 @@ export function commandDeliveryFeedback(value, commandType = value?.command?.com
         pendingText,
         summary.failed > 0 ? `${plural(summary.failed, 'target')} failed.` : null,
         summary.unavailable > 0 ? `${plural(summary.unavailable, 'student is', 'students are')} currently unavailable.` : null,
+        Number(value?.skippedCurrentPageCount) > 0
+          ? `${plural(Number(value.skippedCurrentPageCount), 'signed-out student was', 'signed-out students were')} skipped because a current-page Waypoint needs a fresh online page.`
+          : null,
         'Acknowledgements are device-reported and are not tamper proof.',
       ].filter(Boolean).join(' '),
       variant: summary.failed > 0 ? 'destructive' : undefined,

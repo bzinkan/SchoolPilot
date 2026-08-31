@@ -358,7 +358,7 @@ async function loadSnapshotChunk(
         AND session.ended_at IS NULL
         AND (
           session.auth_kind <> 'manual_shared'
-          OR session.manual_lease_expires_at > now()
+          OR session.manual_lease_expires_at > clock_timestamp()
         )
       ORDER BY session.student_id, session.last_seen_at DESC, session.id
     ),
