@@ -553,6 +553,19 @@ try {
     Assert-AllowedRuntimeTransition -SourceTaskDefinition $studentGatePilotSource -ContainerName "api" `
         -TargetRuntimeConfiguration $studentGatePilotRuntime
 
+    $globalStudentGatePilotSource = New-TransitionSourceTask -RuntimeConfiguration $globalRuntime
+    $globalStudentGatePilotRuntime = Resolve-SourcePreservingRuntimeConfiguration `
+        -RuntimeIntent $studentGatePilotIntent -SourceTaskDefinition $globalStudentGatePilotSource -ContainerName "api"
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $globalStudentGatePilotSource -ContainerName "api" `
+        -TargetRuntimeConfiguration $globalStudentGatePilotRuntime
+    Assert-AllowedRuntimeTransition `
+        -SourceTaskDefinition (New-TransitionSourceTask -RuntimeConfiguration $globalStudentGatePilotRuntime) `
+        -ContainerName "api" -TargetRuntimeConfiguration $globalRuntime
+    Assert-Throws {
+        Assert-AllowedRuntimeTransition -SourceTaskDefinition $globalStudentGatePilotSource -ContainerName "api" `
+            -TargetRuntimeConfiguration $globalRuntime
+    } "Schema-v1 global-on must not become a general no-op transition."
+
     $studentGateGlobalIntent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
         schemaVersion = 3; mode = "student-gate-global-on"
     })
@@ -566,6 +579,15 @@ try {
         "Student-gate global activation must remove only its pilot school scope."
     Assert-AllowedRuntimeTransition -SourceTaskDefinition $studentGateGlobalSource -ContainerName "api" `
         -TargetRuntimeConfiguration $studentGateGlobalRuntime
+
+    $globalStudentGateGlobalSource = New-TransitionSourceTask -RuntimeConfiguration $globalStudentGatePilotRuntime
+    $globalStudentGateGlobalRuntime = Resolve-SourcePreservingRuntimeConfiguration `
+        -RuntimeIntent $studentGateGlobalIntent -SourceTaskDefinition $globalStudentGateGlobalSource -ContainerName "api"
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $globalStudentGateGlobalSource -ContainerName "api" `
+        -TargetRuntimeConfiguration $globalStudentGateGlobalRuntime
+    Assert-AllowedRuntimeTransition `
+        -SourceTaskDefinition (New-TransitionSourceTask -RuntimeConfiguration $globalStudentGateGlobalRuntime) `
+        -ContainerName "api" -TargetRuntimeConfiguration $globalRuntime
 
     $studentGateOffIntent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
         schemaVersion = 3; mode = "student-gate-off"

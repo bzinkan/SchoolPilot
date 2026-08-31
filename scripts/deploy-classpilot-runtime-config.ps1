@@ -2162,6 +2162,11 @@ function Assert-AllowedRuntimeTransition {
         $source.PrefixCount -eq $script:ActivationOrder.Count) {
         return
     }
+    if ($target.Mode -ceq "global-on" -and $source.Mode -ceq "global-on" -and
+        [string]$source.StudentGateMode -cin @("pilot", "global-on") -and
+        [string]$target.StudentGateMode -ceq "off") {
+        return
+    }
     if ($target.Mode -ceq "global-on" -and
         $source.Mode -cin @("tracking-window-pilot", "tracking-window-global-on")) {
         return
