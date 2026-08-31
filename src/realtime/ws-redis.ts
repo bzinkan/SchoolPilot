@@ -20,7 +20,9 @@ export type WsRedisTarget =
       studentId: string;
       studentSessionId: string;
       deviceId: string;
-      requiredCapability?: "lateSignInRestrictionSsoV1";
+      requiredCapability?:
+        | "lateSignInRestrictionSsoV1"
+        | "screenshotActiveObservationCadenceV1";
     }
   | { kind: "student-disconnect"; schoolId: string; studentIds: string[] }
   | { kind: "role"; schoolId: string; role: "teacher" | "office_staff" | "school_admin" | "super_admin" | "student" }

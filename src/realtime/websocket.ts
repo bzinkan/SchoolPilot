@@ -130,6 +130,10 @@ import {
   resolveClasspilotScreenshotPolicy,
 } from "../services/classpilotScreenshotPolicy.js";
 import {
+  classpilotObservationStatus,
+  type ClasspilotObservationStatus,
+} from "../services/classpilotObservationLease.js";
+import {
   beginClasspilotSessionSubscriptionMutation,
   isCurrentClasspilotSessionSubscriptionMutation,
   parseClasspilotSessionSubscription,
@@ -1115,6 +1119,29 @@ export function setupWebSocket(
                     },
                   });
 
+                  // Resolve the optional Redis-backed observation hint before
+                  // entering the exact student-control transaction. The
+                  // resolver below accepts this result only if the locked
+                  // authority still names the same teaching session, so a
+                  // concurrent class change can only degrade to background
+                  // cadence and cannot widen screenshot authority.
+                  const cadenceState = protocol.acceptedCapabilities.includes(
+                    "screenshotActiveObservationCadenceV1"
+                  )
+                    ? await getClasspilotStudentControlState(schoolId, payload.studentId)
+                    : null;
+                  const cadenceTeachingSessionId = cadenceState?.supervisionContextId
+                    ? null
+                    : cadenceState?.teachingSessionId ?? null;
+                  const cadenceObservationCheckedAt = Date.now();
+                  const cadenceObservation: ClasspilotObservationStatus = cadenceTeachingSessionId
+                    ? await classpilotObservationStatus({
+                        schoolId,
+                        teachingSessionId: cadenceTeachingSessionId,
+                        studentId: payload.studentId,
+                      })
+                    : { status: "unavailable", expiresInSeconds: 0 };
+
                   const authority = await withClasspilotStudentWebSocketBootstrapAuthority(
                     {
                       schoolId,
@@ -1170,6 +1197,22 @@ export function setupWebSocket(
                           projection: screenshotTrackingAuthority,
                           deliveredControlRevision: classroomState?.revision ?? 0,
                         }),
+                        observationStatus: async ({ teachingSessionId, now }) => {
+                          if (teachingSessionId !== cadenceTeachingSessionId) {
+                            return { status: "unavailable", expiresInSeconds: 0 };
+                          }
+                          if (cadenceObservation.status !== "observed") return cadenceObservation;
+                          return {
+                            status: "observed",
+                            expiresInSeconds: Math.max(
+                              0,
+                              cadenceObservation.expiresInSeconds - Math.ceil(
+                                (Math.max(cadenceObservationCheckedAt, now ?? Date.now())
+                                  - cadenceObservationCheckedAt) / 1000
+                              )
+                            ),
+                          };
+                        },
                       });
                       return {
                         fab,

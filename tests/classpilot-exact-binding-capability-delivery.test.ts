@@ -26,6 +26,7 @@ test("deferred exact-binding fanout excludes a same-binding legacy socket", asyn
 
   const legacy = await connect();
   const capable = await connect();
+  const previewCapable = await connect();
   const binding = {
     schoolId: "capability-filter-school",
     studentId: "capability-filter-student",
@@ -35,6 +36,7 @@ test("deferred exact-binding fanout excludes a same-binding legacy socket", asyn
   for (const [connection, acceptedCapabilities] of [
     [legacy, []],
     [capable, ["lateSignInRestrictionSsoV1"]],
+    [previewCapable, ["screenshotActiveObservationCadenceV1"]],
   ] as const) {
     registerWsClient(connection.serverSocket);
     authenticateWsClient(connection.serverSocket, {
@@ -45,6 +47,25 @@ test("deferred exact-binding fanout excludes a same-binding legacy socket", asyn
   }
 
   try {
+    const previewRefresh = once(previewCapable.client, "message");
+    let otherRefreshCount = 0;
+    const countOtherRefresh = () => { otherRefreshCount += 1; };
+    legacy.client.on("message", countOtherRefresh);
+    capable.client.on("message", countOtherRefresh);
+    assert.equal(sendToStudentBindingLocal(binding, {
+      type: "screenshot-policy-refresh",
+      _msgId: "preview-capability-filter",
+      reason: "observation_changed",
+    }, {
+      requiredCapability: "screenshotActiveObservationCadenceV1",
+    }), true);
+    const [previewFrame] = await previewRefresh;
+    assert.equal(JSON.parse(previewFrame.toString())._msgId, "preview-capability-filter");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(otherRefreshCount, 0);
+    legacy.client.off("message", countOtherRefresh);
+    capable.client.off("message", countOtherRefresh);
+
     const capableDeferred = once(capable.client, "message");
     let legacyDeferredCount = 0;
     const onLegacyDeferred = () => { legacyDeferredCount += 1; };
@@ -97,8 +118,10 @@ test("deferred exact-binding fanout excludes a same-binding legacy socket", asyn
   } finally {
     removeWsClient(legacy.serverSocket);
     removeWsClient(capable.serverSocket);
+    removeWsClient(previewCapable.serverSocket);
     legacy.client.terminate();
     capable.client.terminate();
+    previewCapable.client.terminate();
     for (const socket of server.clients) socket.terminate();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

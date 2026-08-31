@@ -155,6 +155,89 @@ test("tracking-window screenshot policy is class-authority bound and capped at 9
   });
 });
 
+test("active observation cadence is exact-class bound and fails back to 30 seconds", async () => {
+  const now = Date.parse("2026-08-27T14:00:30.000Z");
+  const trackingSettings = {
+    enableTrackingHours: false,
+    trackingStartTime: "08:00",
+    trackingEndTime: "15:00",
+    trackingDays: ["Thursday"],
+    schoolTimezone: "UTC",
+    afterHoursMode: "off" as const,
+  };
+  const trackingAuthority = {
+    authority: {
+      kind: "teaching_session" as const,
+      teachingSessionId: "teaching-session",
+      controlRevision: 7,
+    },
+    authorityStartedAt: new Date(now - 60_000),
+    authorityExpiresAt: new Date(now + 80_000),
+  };
+  const acceptedCapabilities = [
+    "screenshotTrackingWindowLeaseV1",
+    "screenshotActiveObservationCadenceV1",
+  ];
+
+  const active = await resolveClasspilotScreenshotPolicy({
+    schoolId: "school",
+    studentId: "student",
+    teachingSessionId: "teaching-session",
+    acceptedCapabilities,
+    trackingSettings,
+    trackingAuthority,
+    now,
+    observationStatus: async () => ({ status: "observed", expiresInSeconds: 40 }),
+  });
+  assert.equal(active.mode, "tracking_window_lease");
+  assert.deepEqual(active.mode === "tracking_window_lease" ? active.captureCadence : null, {
+    mode: "active_view",
+    intervalSeconds: 5,
+    expiresInSeconds: 40,
+  });
+
+  for (const observationStatus of [
+    { status: "unobserved", expiresInSeconds: 0 } as const,
+    { status: "unavailable", expiresInSeconds: 0 } as const,
+    { status: "observed", expiresInSeconds: 0 } as const,
+  ]) {
+    const background = await resolveClasspilotScreenshotPolicy({
+      schoolId: "school",
+      studentId: "student",
+      teachingSessionId: "teaching-session",
+      acceptedCapabilities,
+      trackingSettings,
+      trackingAuthority,
+      now,
+      observationStatus: async () => observationStatus,
+    });
+    assert.deepEqual(
+      background.mode === "tracking_window_lease" ? background.captureCadence : null,
+      { mode: "background", intervalSeconds: 30, expiresInSeconds: 80 }
+    );
+  }
+
+  let wrongSessionObservationCalls = 0;
+  const wrongSession = await resolveClasspilotScreenshotPolicy({
+    schoolId: "school",
+    studentId: "student",
+    teachingSessionId: "other-session",
+    acceptedCapabilities,
+    trackingSettings,
+    trackingAuthority,
+    now,
+    observationStatus: async () => {
+      wrongSessionObservationCalls += 1;
+      return { status: "observed", expiresInSeconds: 90 };
+    },
+  });
+  assert.equal(wrongSessionObservationCalls, 0);
+  assert.deepEqual(
+    wrongSession.mode === "tracking_window_lease" ? wrongSession.captureCadence : null,
+    { mode: "background", intervalSeconds: 30, expiresInSeconds: 80 }
+  );
+});
+
 test("tracking screenshot authority and capturedAt validation are strict", () => {
   assert.deepEqual(parseClasspilotScreenshotAuthority({
     kind: "student_session",

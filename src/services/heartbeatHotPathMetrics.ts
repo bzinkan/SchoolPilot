@@ -72,6 +72,11 @@ export type HeartbeatHotPathCounter =
   | "tileBatchScreenshotMissItems"
   | "tileBatchScreenshotStoreUnavailable"
   | "screenshotAvailableBroadcastFailures"
+  | "screenshotActiveCadencePolicyIssued"
+  | "screenshotBackgroundCadencePolicyIssued"
+  | "screenshotCadenceObservationUnavailable"
+  | "screenshotPolicyRefreshTargets"
+  | "screenshotPolicyRefreshFailures"
   | "tileBatchHistoryFallbackItems";
 
 export type HeartbeatHotPathTiming =

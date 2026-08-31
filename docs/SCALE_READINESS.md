@@ -2,6 +2,36 @@
 
 ## Launch posture: up to 800 active ClassPilot devices
 
+### Fast-preview traffic profile (active-view screenshot cadence)
+
+The `screenshotActiveObservationCadenceV1` rollout is a distinct capacity
+profile. It does not inherit 800-device acceptance from the 30-second
+screenshot workload. While an exact class observation lease is active, each
+covered Chromebook may upload one screenshot every five seconds (12/minute);
+all other authorized Chromebooks remain at one every 30 seconds (2/minute).
+Heartbeat traffic remains one request every ten seconds.
+
+Before `fast-preview-global-on`, evidence must exercise these exact fully
+observed upper-bound cohorts with the existing 40 KiB screenshot body:
+
+| Observed devices | Screenshot requests/min | Heartbeats/min | Combined device requests/5 min |
+|---:|---:|---:|---:|
+| 40 | 480 | 240 | 3,600 |
+| 500 | 6,000 | 3,000 | 45,000 |
+| 800 | 9,600 | 4,800 | 72,000 |
+
+The 800-device shape is 72% of the current 100,000 device-ingest requests per
+five-minute WAF allowance before retries or other device traffic. It also
+represents about 23.6 GB (22.0 GiB) of screenshot request bodies per hour at
+40 KiB. These calculations are planning bounds, not proof that production can
+sustain the workload. The guarded fast-preview evidence must separately prove
+the 40-, 500-, and 800-device profiles, WAF and network headroom, API/worker
+stability, screenshot-store p95 within the existing 750 ms endpoint budget,
+Redis read p95 at or below 200 ms, no authorization/privacy defects, and no
+more than a 20% endpoint p95 regression. Any failed gate keeps global cadence
+off. `fast-preview-off` is the first rollback and leaves the 30-second
+tracking-window screenshot capability intact.
+
 > **Real-device acceptance boundary:** simulated AWS capacity acceptance does
 > not replace managed-Chromebook validation. Before expanding a release to a
 > new school or organizational unit, require enrollment, real screenshot

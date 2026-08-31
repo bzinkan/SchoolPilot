@@ -38,6 +38,10 @@ import {
   classpilotSessionReportCsv,
   classpilotSessionReportDto,
 } from "../../services/classpilotSessionReportPresentation.js";
+import { nudgeClasspilotScreenshotPolicyRefresh } from
+  "../../services/classpilotScreenshotPolicyRefresh.js";
+import { recordHeartbeatHotPathCounter } from
+  "../../services/heartbeatHotPathMetrics.js";
 
 const router = Router();
 
@@ -293,6 +297,11 @@ router.put(
       });
     }
     const rawScope = req.body?.scope;
+    const roster = await getClasspilotSessionStudentRoster(
+      schoolId,
+      teachingSessionId
+    );
+    const rosterStudentIds = roster.map((student) => student.studentId);
     let scope: { kind: "class" } | { kind: "students"; studentIds: string[] };
     if (rawScope?.kind === "class") {
       scope = { kind: "class" };
@@ -304,10 +313,6 @@ router.put(
       if (studentIds.length < 1 || studentIds.length > 500) {
         return res.status(400).json({ error: "Explicit student scope is required", code: "OBSERVATION_SCOPE_INVALID" });
       }
-      const roster = await getClasspilotSessionStudentRoster(
-        schoolId,
-        teachingSessionId
-      );
       const authorizedStudents = new Set(roster.map((student) => student.studentId));
       if (studentIds.some((studentId) => !authorizedStudents.has(studentId))) {
         return res.status(404).json({
@@ -329,6 +334,18 @@ router.put(
       viewerInstanceId,
       scope,
     });
+    if (lease.changed) {
+      void nudgeClasspilotScreenshotPolicyRefresh({
+        schoolId,
+        teachingSessionId,
+        // A scope change can both add and remove students. Refreshing the
+        // frozen roster lets newly covered bindings accelerate and students
+        // removed from the scope immediately fall back to background cadence.
+        studentIds: rosterStudentIds,
+      }).catch(() => {
+        recordHeartbeatHotPathCounter("screenshotPolicyRefreshFailures");
+      });
+    }
     return res.json({
       state: "active",
       renewAfterSeconds: CLASSPILOT_OBSERVATION_RENEW_SECONDS,
@@ -359,12 +376,23 @@ router.delete("/teaching-sessions/:id/observation-lease", ...staffAuth, async (r
     if (!/^[a-zA-Z0-9_-]{8,128}$/.test(viewerInstanceId)) {
       return res.status(400).json({ error: "Invalid viewerInstanceId", code: "OBSERVATION_SCOPE_INVALID" });
     }
-    await releaseClasspilotObservationLease({
+    const released = await releaseClasspilotObservationLease({
       schoolId,
       teachingSessionId,
       viewerUserId: req.authUser!.id,
       viewerInstanceId,
     });
+    if (released) {
+      void getClasspilotSessionStudentRoster(schoolId, teachingSessionId)
+        .then((roster) => nudgeClasspilotScreenshotPolicyRefresh({
+          schoolId,
+          teachingSessionId,
+          studentIds: roster.map((student) => student.studentId),
+        }))
+        .catch(() => {
+          recordHeartbeatHotPathCounter("screenshotPolicyRefreshFailures");
+        });
+    }
     return res.status(204).send();
   } catch (error) {
     next(error);

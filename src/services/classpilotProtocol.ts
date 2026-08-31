@@ -10,6 +10,7 @@ export const CLASSPILOT_PROTOCOL_V3_CAPABILITIES = [
   "studentChatIdempotencyV1",
   "screenshotObservationLeaseV1",
   "screenshotTrackingWindowLeaseV1",
+  "screenshotActiveObservationCadenceV1",
   "safetyEvidenceCaptureV1",
   "liveViewIceServersV1",
   "kioskLaunchTicketV1",
@@ -29,6 +30,8 @@ const CAPABILITY_FLAGS: Record<ClasspilotProtocolCapability, string> = {
   studentChatIdempotencyV1: "CLASSPILOT_CAP_STUDENT_CHAT_IDEMPOTENCY_V1",
   screenshotObservationLeaseV1: "CLASSPILOT_CAP_SCREENSHOT_OBSERVATION_LEASE_V1",
   screenshotTrackingWindowLeaseV1: "CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1",
+  screenshotActiveObservationCadenceV1:
+    "CLASSPILOT_CAP_SCREENSHOT_ACTIVE_OBSERVATION_CADENCE_V1",
   safetyEvidenceCaptureV1: "CLASSPILOT_CAP_SAFETY_EVIDENCE_CAPTURE_V1",
   liveViewIceServersV1: "CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1",
   kioskLaunchTicketV1: "CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V1",
@@ -44,6 +47,7 @@ const SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES = new Set<ClasspilotProtocolCapabi
   "studentChatIdempotencyV1",
   "screenshotObservationLeaseV1",
   "screenshotTrackingWindowLeaseV1",
+  "screenshotActiveObservationCadenceV1",
   "safetyEvidenceCaptureV1",
   "liveViewIceServersV1",
   "kioskLaunchTicketV2",
@@ -230,6 +234,10 @@ export function negotiateClasspilotProtocol(options: {
   const repairedScopedAuthorityAccepted =
     advertised.has("scopedAuthorityChecksV1")
     && serverEnabled.has("scopedAuthorityChecksV1");
+  const trackingWindowLeaseAccepted =
+    advertised.has("screenshotTrackingWindowLeaseV1")
+    && serverEnabled.has("screenshotTrackingWindowLeaseV1")
+    && repairedScopedAuthorityAccepted;
   return {
     serverProtocolVersion: CLASSPILOT_SERVER_PROTOCOL_VERSION,
     acceptedCapabilities: CLASSPILOT_PROTOCOL_V3_CAPABILITIES.filter(
@@ -239,6 +247,10 @@ export function negotiateClasspilotProtocol(options: {
         && (
           !SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES.has(capability)
           || repairedScopedAuthorityAccepted
+        )
+        && (
+          capability !== "screenshotActiveObservationCadenceV1"
+          || trackingWindowLeaseAccepted
         )
     ),
   };

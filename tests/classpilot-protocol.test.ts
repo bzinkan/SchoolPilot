@@ -20,6 +20,7 @@ const REPAIRED_CLIENT_DEPENDENT_CAPABILITIES = [
   "studentChatIdempotencyV1",
   "screenshotObservationLeaseV1",
   "screenshotTrackingWindowLeaseV1",
+  "screenshotActiveObservationCadenceV1",
   "safetyEvidenceCaptureV1",
   "liveViewIceServersV1",
   "kioskLaunchTicketV2",
@@ -60,6 +61,7 @@ test("all scoped-authority-dependent capabilities require the repaired scoping m
     CLASSPILOT_CAP_STUDENT_CHAT_IDEMPOTENCY_V1: "true",
     CLASSPILOT_CAP_SCREENSHOT_OBSERVATION_LEASE_V1: "true",
     CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1: "true",
+    CLASSPILOT_CAP_SCREENSHOT_ACTIVE_OBSERVATION_CADENCE_V1: "true",
     CLASSPILOT_CAP_SAFETY_EVIDENCE_CAPTURE_V1: "true",
     CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1: "true",
     CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V2: "true",
@@ -81,6 +83,36 @@ test("all scoped-authority-dependent capabilities require the repaired scoping m
   }).acceptedCapabilities, [
     "scopedAuthorityChecksV1",
     ...REPAIRED_CLIENT_DEPENDENT_CAPABILITIES,
+  ]);
+});
+
+test("active screenshot cadence requires the negotiated tracking-window lease", () => {
+  const base = {
+    CLASSPILOT_PROTOCOL_V3_ENABLED: "true",
+    CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1: "true",
+    CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1: "true",
+    CLASSPILOT_CAP_SCREENSHOT_ACTIVE_OBSERVATION_CADENCE_V1: "true",
+  };
+  assert.deepEqual(negotiateClasspilotProtocol({
+    clientProtocolVersion: 3,
+    advertisedCapabilities: [
+      "scopedAuthorityChecksV1",
+      "screenshotActiveObservationCadenceV1",
+    ],
+    env: base,
+  }).acceptedCapabilities, ["scopedAuthorityChecksV1"]);
+  assert.deepEqual(negotiateClasspilotProtocol({
+    clientProtocolVersion: 3,
+    advertisedCapabilities: [
+      "scopedAuthorityChecksV1",
+      "screenshotTrackingWindowLeaseV1",
+      "screenshotActiveObservationCadenceV1",
+    ],
+    env: base,
+  }).acceptedCapabilities, [
+    "scopedAuthorityChecksV1",
+    "screenshotTrackingWindowLeaseV1",
+    "screenshotActiveObservationCadenceV1",
   ]);
 });
 
@@ -233,7 +265,7 @@ test("observation leases keep class and explicit student scopes fail closed", as
   delete process.env.REDIS_URL;
   resetClasspilotObservationLeasesForTests();
   try {
-    await renewClasspilotObservationLease({
+    const firstLease = await renewClasspilotObservationLease({
       schoolId: "school",
       teachingSessionId: "session",
       viewerUserId: "teacher",
@@ -241,31 +273,78 @@ test("observation leases keep class and explicit student scopes fail closed", as
       scope: { kind: "students", studentIds: ["student-a"] },
       now: 1_000,
     });
+    assert.equal(firstLease.created, true);
+    assert.equal(firstLease.changed, true);
+    const renewedLease = await renewClasspilotObservationLease({
+      schoolId: "school",
+      teachingSessionId: "session",
+      viewerUserId: "teacher",
+      viewerInstanceId: "viewer-a",
+      scope: { kind: "students", studentIds: ["student-a"] },
+      now: 2_000,
+    });
+    assert.equal(renewedLease.created, false);
+    assert.equal(renewedLease.changed, false);
     assert.deepEqual(await classpilotObservationStatus({
       schoolId: "school",
       teachingSessionId: "session",
       studentId: "student-a",
       now: 2_000,
-    }), { status: "observed", expiresInSeconds: 89 });
+    }), { status: "observed", expiresInSeconds: 90 });
     assert.deepEqual(await classpilotObservationStatus({
       schoolId: "school",
       teachingSessionId: "session",
       studentId: "student-b",
       now: 2_000,
     }), { status: "unobserved", expiresInSeconds: 0 });
-
-    await releaseClasspilotObservationLease({
+    const changedLease = await renewClasspilotObservationLease({
       schoolId: "school",
       teachingSessionId: "session",
       viewerUserId: "teacher",
       viewerInstanceId: "viewer-a",
+      scope: { kind: "class" },
+      now: 3_000,
     });
+    assert.equal(changedLease.created, false);
+    assert.equal(changedLease.changed, true);
+
+    assert.equal(await releaseClasspilotObservationLease({
+      schoolId: "school",
+      teachingSessionId: "session",
+      viewerUserId: "teacher",
+      viewerInstanceId: "viewer-a",
+    }), true);
+    assert.equal(await releaseClasspilotObservationLease({
+      schoolId: "school",
+      teachingSessionId: "session",
+      viewerUserId: "teacher",
+      viewerInstanceId: "viewer-a",
+    }), false);
     assert.equal((await classpilotObservationStatus({
       schoolId: "school",
       teachingSessionId: "session",
       studentId: "student-a",
       now: 2_000,
     })).status, "unobserved");
+
+    await renewClasspilotObservationLease({
+      schoolId: "school",
+      teachingSessionId: "session",
+      viewerUserId: "teacher",
+      viewerInstanceId: "viewer-expired",
+      scope: { kind: "class" },
+      now: 10_000,
+    });
+    const replacedExpiredLease = await renewClasspilotObservationLease({
+      schoolId: "school",
+      teachingSessionId: "session",
+      viewerUserId: "teacher",
+      viewerInstanceId: "viewer-expired",
+      scope: { kind: "class" },
+      now: 100_000,
+    });
+    assert.equal(replacedExpiredLease.created, true);
+    assert.equal(replacedExpiredLease.changed, true);
   } finally {
     if (previousRedis === undefined) delete process.env.REDIS_URL;
     else process.env.REDIS_URL = previousRedis;

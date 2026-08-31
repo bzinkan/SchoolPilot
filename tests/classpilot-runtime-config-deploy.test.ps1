@@ -518,6 +518,61 @@ try {
             -ContainerName "api" -TargetRuntimeConfiguration $trackingPilotRuntime
     } "Tracking-window pilot must start from the completed global repaired-capability profile."
 
+    $fastPreviewPilotIntent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+        schemaVersion = 5; mode = "fast-preview-pilot"; pilotSchoolId = $testSchoolId
+    })
+    Assert-Condition ($fastPreviewPilotIntent.RequiresSourceRuntime -and
+        $fastPreviewPilotIntent.Environment.Count -eq 0 -and $null -eq $fastPreviewPilotIntent.Turn) `
+        "Fast-preview pilot must be a source-preserving intent."
+    $fastPreviewPilotSource = New-TransitionSourceTask -RuntimeConfiguration $trackingGlobalRuntime
+    $fastPreviewPilotRuntime = Resolve-SourcePreservingRuntimeConfiguration `
+        -RuntimeIntent $fastPreviewPilotIntent -SourceTaskDefinition $fastPreviewPilotSource -ContainerName "api"
+    $fastPreviewPilotRollouts = [string]$fastPreviewPilotRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON |
+        ConvertFrom-Json -Depth 10
+    Assert-Condition ($fastPreviewPilotRuntime.Environment.CLASSPILOT_CAP_SCREENSHOT_ACTIVE_OBSERVATION_CADENCE_V1 -ceq "true" -and
+        [string]$fastPreviewPilotRollouts.screenshotActiveObservationCadenceV1.mode -ceq "on" -and
+        @($fastPreviewPilotRollouts.screenshotActiveObservationCadenceV1.schoolIds).Count -eq 1 -and
+        [string]$fastPreviewPilotRollouts.screenshotActiveObservationCadenceV1.schoolIds[0] -ceq $testSchoolId -and
+        [string]$fastPreviewPilotRollouts.screenshotTrackingWindowLeaseV1.mode -ceq "on") `
+        "Fast-preview pilot must require both controls for one school while preserving tracking."
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $fastPreviewPilotSource -ContainerName "api" `
+        -TargetRuntimeConfiguration $fastPreviewPilotRuntime
+
+    $fastPreviewGlobalIntent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+        schemaVersion = 5; mode = "fast-preview-global-on"
+    })
+    $fastPreviewGlobalSource = New-TransitionSourceTask -RuntimeConfiguration $fastPreviewPilotRuntime
+    $fastPreviewGlobalRuntime = Resolve-SourcePreservingRuntimeConfiguration `
+        -RuntimeIntent $fastPreviewGlobalIntent -SourceTaskDefinition $fastPreviewGlobalSource -ContainerName "api"
+    $fastPreviewGlobalRollouts = [string]$fastPreviewGlobalRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON |
+        ConvertFrom-Json -Depth 10
+    Assert-Condition ([string]$fastPreviewGlobalRollouts.screenshotActiveObservationCadenceV1.mode -ceq "on" -and
+        -not ($fastPreviewGlobalRollouts.screenshotActiveObservationCadenceV1.PSObject.Properties.Name -contains "schoolIds")) `
+        "Fast-preview global activation must remove only its pilot school scope."
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $fastPreviewGlobalSource -ContainerName "api" `
+        -TargetRuntimeConfiguration $fastPreviewGlobalRuntime
+
+    $fastPreviewOffIntent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+        schemaVersion = 5; mode = "fast-preview-off"
+    })
+    $fastPreviewOffSource = New-TransitionSourceTask -RuntimeConfiguration $fastPreviewGlobalRuntime
+    $fastPreviewOffRuntime = Resolve-SourcePreservingRuntimeConfiguration `
+        -RuntimeIntent $fastPreviewOffIntent -SourceTaskDefinition $fastPreviewOffSource -ContainerName "api"
+    $fastPreviewOffRollouts = [string]$fastPreviewOffRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON |
+        ConvertFrom-Json -Depth 10
+    Assert-Condition ($fastPreviewOffRuntime.Environment.CLASSPILOT_CAP_SCREENSHOT_ACTIVE_OBSERVATION_CADENCE_V1 -ceq "false" -and
+        [string]$fastPreviewOffRollouts.screenshotActiveObservationCadenceV1.mode -ceq "off" -and
+        $fastPreviewOffRuntime.Environment.CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1 -ceq "true") `
+        "Fast-preview rollback must disable only the cadence capability."
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $fastPreviewOffSource -ContainerName "api" `
+        -TargetRuntimeConfiguration $fastPreviewOffRuntime
+    Assert-Throws {
+        $skippedFastPreviewGlobal = Resolve-SourcePreservingRuntimeConfiguration `
+            -RuntimeIntent $fastPreviewGlobalIntent -SourceTaskDefinition $fastPreviewPilotSource -ContainerName "api"
+        Assert-AllowedRuntimeTransition -SourceTaskDefinition $fastPreviewPilotSource -ContainerName "api" `
+            -TargetRuntimeConfiguration $skippedFastPreviewGlobal
+    } "Fast-preview global activation must not skip its school-scoped pilot."
+
     $studentGatePilotIntent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
         schemaVersion = 3; mode = "student-gate-pilot"; pilotSchoolId = $testSchoolId
     })
@@ -757,6 +812,25 @@ try {
     Assert-AllowedRuntimeTransition -SourceTaskDefinition $legacyGlobalSource -ContainerName "api" `
         -TargetRuntimeConfiguration $trackingPilotRuntime
 
+    $legacyFastPreviewSource = New-TransitionSourceTask -RuntimeConfiguration $trackingGlobalRuntime
+    $legacyFastPreviewEnvironment = @($legacyFastPreviewSource.containerDefinitions[0].environment)
+    $legacyFastPreviewRolloutEntry = @($legacyFastPreviewEnvironment | Where-Object name -CEQ "CLASSPILOT_CAPABILITY_ROLLOUTS_JSON")[0]
+    $legacyFastPreviewRollout = [string]$legacyFastPreviewRolloutEntry.value | ConvertFrom-Json -Depth 10
+    $legacyFastPreviewRollout.PSObject.Properties.Remove("screenshotActiveObservationCadenceV1")
+    $legacyFastPreviewRolloutEntry.value = $legacyFastPreviewRollout | ConvertTo-Json -Depth 10 -Compress
+    $legacyFastPreviewSource.containerDefinitions[0].environment = @($legacyFastPreviewEnvironment | Where-Object {
+        [string]$_.name -cne "CLASSPILOT_CAP_SCREENSHOT_ACTIVE_OBSERVATION_CADENCE_V1"
+    })
+    $legacyFastPreviewState = Get-RuntimeActivationState `
+        -Environment @($legacyFastPreviewSource.containerDefinitions[0].environment) -AllowBaseline
+    Assert-Condition ($legacyFastPreviewState.Mode -ceq "tracking-window-global-on" -and
+        $legacyFastPreviewState.FastPreviewMode -ceq "off") `
+        "The exact pre-fast-preview task shape must be recognized as fast preview off."
+    $legacyFastPreviewTarget = Resolve-SourcePreservingRuntimeConfiguration `
+        -RuntimeIntent $fastPreviewPilotIntent -SourceTaskDefinition $legacyFastPreviewSource -ContainerName "api"
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $legacyFastPreviewSource -ContainerName "api" `
+        -TargetRuntimeConfiguration $legacyFastPreviewTarget
+
     $legacyStudentGateSource = New-TransitionSourceTask -RuntimeConfiguration $trackingPilotRuntime
     $legacyStudentGateEnvironment = @($legacyStudentGateSource.containerDefinitions[0].environment)
     $legacyStudentGateRolloutEntry = @($legacyStudentGateEnvironment | Where-Object name -CEQ "CLASSPILOT_CAPABILITY_ROLLOUTS_JSON")[0]
@@ -799,6 +873,22 @@ try {
     Assert-Throws {
         Get-RuntimeActivationState -Environment @($partialTrackingSource.containerDefinitions[0].environment) -AllowBaseline
     } "An absent tracking kill switch with a present rollout entry must fail closed."
+
+    $partialFastPreviewSource = New-TransitionSourceTask -RuntimeConfiguration $trackingGlobalRuntime
+    $partialFastPreviewSource.containerDefinitions[0].environment = @($partialFastPreviewSource.containerDefinitions[0].environment | Where-Object {
+        [string]$_.name -cne "CLASSPILOT_CAP_SCREENSHOT_ACTIVE_OBSERVATION_CADENCE_V1"
+    })
+    Assert-Throws {
+        Get-RuntimeActivationState -Environment @($partialFastPreviewSource.containerDefinitions[0].environment) -AllowBaseline
+    } "An absent fast-preview kill switch with a present rollout entry must fail closed."
+
+    $mismatchedFastPreviewSource = New-TransitionSourceTask -RuntimeConfiguration $fastPreviewPilotRuntime
+    @($mismatchedFastPreviewSource.containerDefinitions[0].environment | Where-Object {
+        [string]$_.name -ceq "CLASSPILOT_CAP_SCREENSHOT_ACTIVE_OBSERVATION_CADENCE_V1"
+    })[0].value = "false"
+    Assert-Throws {
+        Get-RuntimeActivationState -Environment @($mismatchedFastPreviewSource.containerDefinitions[0].environment) -AllowBaseline
+    } "Fast-preview rollout and kill-switch disagreement must fail closed."
 
     $mismatchedTrackingSource = New-TransitionSourceTask -RuntimeConfiguration $trackingPilotRuntime
     @($mismatchedTrackingSource.containerDefinitions[0].environment | Where-Object {
@@ -2069,6 +2159,55 @@ try {
         -ApiTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn) `
         -WorkerTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn) `
         -RuntimeConfigurationSha256 $trackingPilotRuntimeConfigurationSha256 -Now $now)
+    $fastPreviewPilotEvidencePath = Join-Path $testRoot "fast-preview-pilot-evidence.json"
+    $fastPreviewPilotEvidence = [ordered]@{
+        schemaVersion = 1
+        validatedAt = $now.ToString("o")
+        observedFrom = $now.AddMinutes(-60).ToString("o")
+        observedThrough = $now.ToString("o")
+        pilotSchoolId = $testSchoolId
+        schoolPilotToolSha = $toolSha
+        schoolPilotAppSha = $appSha
+        schoolPilotImageDigest = $digest
+        pilotApiTaskDefinitionArn = [string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn
+        pilotWorkerTaskDefinitionArn = [string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn
+        pilotRuntimeConfigurationSha256 = $trackingPilotRuntimeConfigurationSha256
+        checks = [ordered]@{
+            fullSchoolActivityWindowObserved = $true
+            managedCapabilityNegotiated = $true
+            exactObservationFiveSecondCadencePassed = $true
+            backgroundThirtySecondCadencePassed = $true
+            observationExpiryFallbackPassed = $true
+            screenshotTtlOneHundredTwentySecondsPassed = $true
+            fortyStudentLoadPassed = $true
+            fiveHundredStudentLoadPassed = $true
+            eightHundredStudentLoadPassed = $true
+            wafHeadroomWithinBudget = $true
+            screenshotIngressWithinBudget = $true
+            apiWorkerStable = $true
+            screenshotStoreLatencyWithinBudget = $true
+            noAuthorizationOrPrivacyDefects = $true
+        }
+    }
+    Write-TestJson -Path $fastPreviewPilotEvidencePath -Value $fastPreviewPilotEvidence
+    [void](Assert-FastPreviewPilotEvidence `
+        -EvidenceSnapshot (Read-StrictJsonSnapshot -Path $fastPreviewPilotEvidencePath) `
+        -PilotSchoolId $testSchoolId -ToolSha $toolSha -AppSha $appSha -ImageDigest $digest `
+        -ApiTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn) `
+        -WorkerTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn) `
+        -RuntimeConfigurationSha256 $trackingPilotRuntimeConfigurationSha256 -Now $now)
+    $invalidFastPreviewPilotEvidence = $fastPreviewPilotEvidence | ConvertTo-Json -Depth 30 |
+        ConvertFrom-Json -Depth 30 -DateKind String
+    $invalidFastPreviewPilotEvidence.checks.eightHundredStudentLoadPassed = $false
+    Write-TestJson -Path $fastPreviewPilotEvidencePath -Value $invalidFastPreviewPilotEvidence
+    Assert-Throws {
+        Assert-FastPreviewPilotEvidence `
+            -EvidenceSnapshot (Read-StrictJsonSnapshot -Path $fastPreviewPilotEvidencePath) `
+            -PilotSchoolId $testSchoolId -ToolSha $toolSha -AppSha $appSha -ImageDigest $digest `
+            -ApiTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn) `
+            -WorkerTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn) `
+            -RuntimeConfigurationSha256 $trackingPilotRuntimeConfigurationSha256 -Now $now
+    } "Fast-preview global activation must reject a failed 800-device load gate."
     $invalidTrackingPilotEvidence = $trackingPilotEvidence | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30 -DateKind String
     $invalidTrackingPilotEvidence.checks.teacherTabSwitchingPassed = $false
     Write-TestJson -Path $trackingPilotEvidencePath -Value $invalidTrackingPilotEvidence
@@ -2190,6 +2329,178 @@ try {
             $null -eq $globalCandidateState.SchoolId) `
             "Tracking-window global apply must remove pilot scope identically from API and worker."
     }
+
+    $fastPreviewPilotProfilePath = Join-Path $testRoot "fast-preview-pilot-profile.json"
+    Write-TestJson -Path $fastPreviewPilotProfilePath -Value ([ordered]@{
+        schemaVersion = 5; mode = "fast-preview-pilot"; pilotSchoolId = $testSchoolId
+    })
+    $fastPreviewPilotPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
+        -PrivateProfilePath $fastPreviewPilotProfilePath -EvidenceRoot $evidenceRoot `
+        -AppSha $appSha -ImageDigest $digest `
+        -ApiTaskDefinitionArn ([string]$trackingGlobalApplyResult.candidateApiTaskDefinitionArn) `
+        -WorkerTaskDefinitionArn ([string]$trackingGlobalApplyResult.candidateWorkerTaskDefinitionArn) `
+        -Now $now -SkipRepositoryCheck
+    $fastPreviewPilotPlan = Read-RuntimePlan -Path $fastPreviewPilotPlanResult.PlanPath `
+        -ExpectedSha256 $fastPreviewPilotPlanResult.PlanSha256
+    Assert-Condition ($fastPreviewPilotPlan.profileMode -ceq "fast-preview-pilot" -and
+        [int]$fastPreviewPilotPlan.schoolScopeCount -eq 1 -and
+        [int]$fastPreviewPilotPlan.enabledCapabilityCount -eq 11 -and
+        $null -eq $fastPreviewPilotPlan.fastPreviewPilotEvidenceSha256) `
+        "Fast-preview pilot planning must preserve the active runtime while adding one school-scoped capability."
+    Assert-Condition (-not ([IO.File]::ReadAllText($fastPreviewPilotPlanResult.PlanPath)).Contains($testSchoolId)) `
+        "Fast-preview pilot plan evidence must not expose the private school scope."
+    $fastPreviewPilotApplyResult = Invoke-RuntimeConfigApply -Plan $fastPreviewPilotPlan `
+        -PlanSha256 $fastPreviewPilotPlanResult.PlanSha256 -Now $now `
+        -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck
+    Assert-Condition ($fastPreviewPilotApplyResult.status -ceq "applied" -and
+        $fastPreviewPilotApplyResult.profileMode -ceq "fast-preview-pilot" -and
+        $fastPreviewPilotApplyResult.scalingRestored) `
+        "Fast-preview pilot apply must converge as one coherent API/worker pair."
+    foreach ($fastPreviewPilotCandidateContract in @(
+        [pscustomobject]@{ Arn = [string]$fastPreviewPilotApplyResult.candidateApiTaskDefinitionArn; Container = "api" },
+        [pscustomobject]@{ Arn = [string]$fastPreviewPilotApplyResult.candidateWorkerTaskDefinitionArn; Container = "scheduler-worker" }
+    )) {
+        $fastPreviewPilotCandidate = $global:RuntimeConfigTestState.TaskResponses[$fastPreviewPilotCandidateContract.Arn].taskDefinition
+        $fastPreviewPilotContainer = @($fastPreviewPilotCandidate.containerDefinitions | Where-Object name -CEQ $fastPreviewPilotCandidateContract.Container)[0]
+        $fastPreviewPilotState = Get-RuntimeActivationState -Environment @($fastPreviewPilotContainer.environment)
+        Assert-Condition ($fastPreviewPilotState.Mode -ceq "tracking-window-global-on" -and
+            $fastPreviewPilotState.FastPreviewMode -ceq "pilot" -and
+            [string]$fastPreviewPilotState.FastPreviewSchoolId -ceq $testSchoolId -and
+            [string]$fastPreviewPilotContainer.image -ceq
+                "135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api@$digest") `
+            "Fast-preview pilot API and worker candidates must preserve the image and exact school scope."
+    }
+    $fastPreviewPilotApiTask = $global:RuntimeConfigTestState.TaskResponses[
+        [string]$fastPreviewPilotApplyResult.candidateApiTaskDefinitionArn
+    ].taskDefinition
+    $fastPreviewPilotWorkerTask = $global:RuntimeConfigTestState.TaskResponses[
+        [string]$fastPreviewPilotApplyResult.candidateWorkerTaskDefinitionArn
+    ].taskDefinition
+    $fastPreviewPilotRuntimeConfigurationSha256 = Get-ManagedRuntimeFingerprint `
+        -TaskDefinition $fastPreviewPilotApiTask -ContainerName "api"
+    Assert-Condition ($fastPreviewPilotRuntimeConfigurationSha256 -ceq
+        (Get-ManagedRuntimeFingerprint -TaskDefinition $fastPreviewPilotWorkerTask -ContainerName "scheduler-worker")) `
+        "Fast-preview pilot API and worker runtime configuration must be identical."
+
+    $fastPreviewPilotEvidence = [ordered]@{
+        schemaVersion = 1
+        validatedAt = $now.ToString("o")
+        observedFrom = $now.AddMinutes(-60).ToString("o")
+        observedThrough = $now.ToString("o")
+        pilotSchoolId = $testSchoolId
+        schoolPilotToolSha = $toolSha
+        schoolPilotAppSha = $appSha
+        schoolPilotImageDigest = $digest
+        pilotApiTaskDefinitionArn = [string]$fastPreviewPilotApplyResult.candidateApiTaskDefinitionArn
+        pilotWorkerTaskDefinitionArn = [string]$fastPreviewPilotApplyResult.candidateWorkerTaskDefinitionArn
+        pilotRuntimeConfigurationSha256 = $fastPreviewPilotRuntimeConfigurationSha256
+        checks = [ordered]@{
+            fullSchoolActivityWindowObserved = $true
+            managedCapabilityNegotiated = $true
+            exactObservationFiveSecondCadencePassed = $true
+            backgroundThirtySecondCadencePassed = $true
+            observationExpiryFallbackPassed = $true
+            screenshotTtlOneHundredTwentySecondsPassed = $true
+            fortyStudentLoadPassed = $true
+            fiveHundredStudentLoadPassed = $true
+            eightHundredStudentLoadPassed = $true
+            wafHeadroomWithinBudget = $true
+            screenshotIngressWithinBudget = $true
+            apiWorkerStable = $true
+            screenshotStoreLatencyWithinBudget = $true
+            noAuthorizationOrPrivacyDefects = $true
+        }
+    }
+    Write-TestJson -Path $fastPreviewPilotEvidencePath -Value $fastPreviewPilotEvidence
+    $fastPreviewGlobalProfilePath = Join-Path $testRoot "fast-preview-global-profile.json"
+    Write-TestJson -Path $fastPreviewGlobalProfilePath -Value ([ordered]@{
+        schemaVersion = 5; mode = "fast-preview-global-on"
+    })
+    Assert-Throws {
+        New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
+            -PrivateProfilePath $fastPreviewGlobalProfilePath -EvidenceRoot $evidenceRoot `
+            -AppSha $appSha -ImageDigest $digest `
+            -ApiTaskDefinitionArn ([string]$fastPreviewPilotApplyResult.candidateApiTaskDefinitionArn) `
+            -WorkerTaskDefinitionArn ([string]$fastPreviewPilotApplyResult.candidateWorkerTaskDefinitionArn) `
+            -Now $now -SkipRepositoryCheck
+    } "Fast-preview global planning must fail without exact pilot evidence."
+    $fastPreviewGlobalPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
+        -PrivateProfilePath $fastPreviewGlobalProfilePath `
+        -PrivateFastPreviewPilotEvidencePath $fastPreviewPilotEvidencePath `
+        -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+        -ApiTaskDefinitionArn ([string]$fastPreviewPilotApplyResult.candidateApiTaskDefinitionArn) `
+        -WorkerTaskDefinitionArn ([string]$fastPreviewPilotApplyResult.candidateWorkerTaskDefinitionArn) `
+        -Now $now -SkipRepositoryCheck
+    $fastPreviewGlobalPlan = Read-RuntimePlan -Path $fastPreviewGlobalPlanResult.PlanPath `
+        -ExpectedSha256 $fastPreviewGlobalPlanResult.PlanSha256
+    Assert-Condition ($fastPreviewGlobalPlan.profileMode -ceq "fast-preview-global-on" -and
+        [string]$fastPreviewGlobalPlan.validationLevel -ceq "managed" -and
+        [string]$fastPreviewGlobalPlan.managedValidation -ceq "passed" -and
+        [string]$fastPreviewGlobalPlan.fastPreviewPilotEvidenceSha256 -ceq
+            (Get-FileSha256 -Path $fastPreviewPilotEvidencePath)) `
+        "Fast-preview global planning must retain only exact managed pilot evidence authority."
+    $fastPreviewGlobalApplyResult = Invoke-RuntimeConfigApply -Plan $fastPreviewGlobalPlan `
+        -PlanSha256 $fastPreviewGlobalPlanResult.PlanSha256 -Now $now `
+        -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck
+    Assert-Condition ($fastPreviewGlobalApplyResult.status -ceq "applied" -and
+        $fastPreviewGlobalApplyResult.profileMode -ceq "fast-preview-global-on" -and
+        [string]$fastPreviewGlobalApplyResult.fastPreviewPilotEvidenceSha256 -ceq
+            [string]$fastPreviewGlobalPlan.fastPreviewPilotEvidenceSha256) `
+        "Fast-preview global apply must revalidate pilot evidence before convergence."
+    foreach ($fastPreviewGlobalCandidateContract in @(
+        [pscustomobject]@{ Arn = [string]$fastPreviewGlobalApplyResult.candidateApiTaskDefinitionArn; Container = "api" },
+        [pscustomobject]@{ Arn = [string]$fastPreviewGlobalApplyResult.candidateWorkerTaskDefinitionArn; Container = "scheduler-worker" }
+    )) {
+        $fastPreviewGlobalCandidate = $global:RuntimeConfigTestState.TaskResponses[$fastPreviewGlobalCandidateContract.Arn].taskDefinition
+        $fastPreviewGlobalContainer = @($fastPreviewGlobalCandidate.containerDefinitions | Where-Object name -CEQ $fastPreviewGlobalCandidateContract.Container)[0]
+        $fastPreviewGlobalState = Get-RuntimeActivationState -Environment @($fastPreviewGlobalContainer.environment)
+        Assert-Condition ($fastPreviewGlobalState.Mode -ceq "tracking-window-global-on" -and
+            $fastPreviewGlobalState.FastPreviewMode -ceq "global-on") `
+            "Fast-preview global apply must remove only its pilot scope on API and worker."
+    }
+
+    $fastPreviewOffProfilePath = Join-Path $testRoot "fast-preview-off-profile.json"
+    Write-TestJson -Path $fastPreviewOffProfilePath -Value ([ordered]@{
+        schemaVersion = 5; mode = "fast-preview-off"
+    })
+    $fastPreviewOffPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
+        -PrivateProfilePath $fastPreviewOffProfilePath -EvidenceRoot $evidenceRoot `
+        -AppSha $appSha -ImageDigest $digest `
+        -ApiTaskDefinitionArn ([string]$fastPreviewGlobalApplyResult.candidateApiTaskDefinitionArn) `
+        -WorkerTaskDefinitionArn ([string]$fastPreviewGlobalApplyResult.candidateWorkerTaskDefinitionArn) `
+        -Now $now -SkipRepositoryCheck
+    $fastPreviewOffPlan = Read-RuntimePlan -Path $fastPreviewOffPlanResult.PlanPath `
+        -ExpectedSha256 $fastPreviewOffPlanResult.PlanSha256
+    $fastPreviewOffApplyResult = Invoke-RuntimeConfigApply -Plan $fastPreviewOffPlan `
+        -PlanSha256 $fastPreviewOffPlanResult.PlanSha256 -Now $now `
+        -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck
+    foreach ($fastPreviewOffCandidateContract in @(
+        [pscustomobject]@{ Arn = [string]$fastPreviewOffApplyResult.candidateApiTaskDefinitionArn; Container = "api" },
+        [pscustomobject]@{ Arn = [string]$fastPreviewOffApplyResult.candidateWorkerTaskDefinitionArn; Container = "scheduler-worker" }
+    )) {
+        $fastPreviewOffCandidate = $global:RuntimeConfigTestState.TaskResponses[$fastPreviewOffCandidateContract.Arn].taskDefinition
+        $fastPreviewOffContainer = @($fastPreviewOffCandidate.containerDefinitions | Where-Object name -CEQ $fastPreviewOffCandidateContract.Container)[0]
+        $fastPreviewOffState = Get-RuntimeActivationState -Environment @($fastPreviewOffContainer.environment)
+        Assert-Condition ($fastPreviewOffState.Mode -ceq "tracking-window-global-on" -and
+            $fastPreviewOffState.FastPreviewMode -ceq "off") `
+            "Fast-preview rollback profile must preserve global tracking-window screenshots on API and worker."
+    }
+    [void](Invoke-RuntimeConfigRollback -Plan $fastPreviewOffPlan `
+        -PlanSha256 $fastPreviewOffPlanResult.PlanSha256 -Now $now `
+        -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0)
+    [void](Invoke-RuntimeConfigRollback -Plan $fastPreviewGlobalPlan `
+        -PlanSha256 $fastPreviewGlobalPlanResult.PlanSha256 -Now $now `
+        -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0)
+    $fastPreviewPilotRollbackResult = Invoke-RuntimeConfigRollback -Plan $fastPreviewPilotPlan `
+        -PlanSha256 $fastPreviewPilotPlanResult.PlanSha256 -Now $now `
+        -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0
+    Assert-Condition ($fastPreviewPilotRollbackResult.status -ceq "rolled_back" -and
+        $global:RuntimeConfigTestState.ApiCurrentArn -ceq
+            [string]$trackingGlobalApplyResult.candidateApiTaskDefinitionArn -and
+        $global:RuntimeConfigTestState.WorkerCurrentArn -ceq
+            [string]$trackingGlobalApplyResult.candidateWorkerTaskDefinitionArn) `
+        "Fast-preview rollback chain must restore the exact tracking-window global pair."
+
     $trackingGlobalRollbackResult = Invoke-RuntimeConfigRollback -Plan $trackingGlobalPlan `
         -PlanSha256 $trackingGlobalPlanResult.PlanSha256 -Now $now `
         -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0

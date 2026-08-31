@@ -8,9 +8,18 @@ import type {
   ClasspilotScreenshotAuthorityProjection,
   HeartbeatTrackingSettings,
 } from "./storage.js";
+import { recordHeartbeatHotPathCounter } from "./heartbeatHotPathMetrics.js";
 
 export const CLASSPILOT_SCREENSHOT_TRACKING_LEASE_SECONDS = 90;
 export const CLASSPILOT_SCREENSHOT_CAPTURE_FUTURE_SKEW_MS = 30_000;
+export const CLASSPILOT_SCREENSHOT_ACTIVE_CAPTURE_SECONDS = 5;
+export const CLASSPILOT_SCREENSHOT_BACKGROUND_CAPTURE_SECONDS = 30;
+
+export type ClasspilotScreenshotCaptureCadence = {
+  mode: "active_view" | "background";
+  intervalSeconds: 5 | 30;
+  expiresInSeconds: number;
+};
 
 /**
  * Keep screenshot-policy authority on the same public revision boundary as
@@ -60,6 +69,7 @@ export type ClasspilotScreenshotPolicy =
       serverTime: string;
       authority: ClasspilotScreenshotAuthorityClaim;
       diagnostic?: "unavailable";
+      captureCadence?: ClasspilotScreenshotCaptureCadence;
     };
 
 type ObservationStatusLoader = (options: {
@@ -88,11 +98,51 @@ export async function resolveClasspilotScreenshotPolicy(options: {
   const now = options.now ?? Date.now();
   const serverTime = new Date(now).toISOString();
   if (options.acceptedCapabilities.includes("screenshotTrackingWindowLeaseV1")) {
-    return resolveClasspilotScreenshotTrackingWindowPolicy({
+    const policy = resolveClasspilotScreenshotTrackingWindowPolicy({
       trackingSettings: options.trackingSettings,
       trackingAuthority: options.trackingAuthority,
       now,
     });
+    if (!options.acceptedCapabilities.includes("screenshotActiveObservationCadenceV1")) {
+      return policy;
+    }
+
+    let captureCadence: ClasspilotScreenshotCaptureCadence = {
+      mode: "background",
+      intervalSeconds: CLASSPILOT_SCREENSHOT_BACKGROUND_CAPTURE_SECONDS,
+      expiresInSeconds: policy.expiresInSeconds,
+    };
+    if (
+      policy.captureAllowed
+      && policy.authority.kind === "teaching_session"
+      && policy.authority.teachingSessionId === options.teachingSessionId
+    ) {
+      try {
+        const status = await (options.observationStatus ?? classpilotObservationStatus)({
+          schoolId: options.schoolId,
+          teachingSessionId: options.teachingSessionId,
+          studentId: options.studentId,
+          now,
+        });
+        if (status.status === "observed" && status.expiresInSeconds > 0) {
+          captureCadence = {
+            mode: "active_view",
+            intervalSeconds: CLASSPILOT_SCREENSHOT_ACTIVE_CAPTURE_SECONDS,
+            expiresInSeconds: Math.min(policy.expiresInSeconds, status.expiresInSeconds),
+          };
+        } else if (status.status === "unavailable") {
+          recordHeartbeatHotPathCounter("screenshotCadenceObservationUnavailable");
+        }
+      } catch {
+        recordHeartbeatHotPathCounter("screenshotCadenceObservationUnavailable");
+      }
+    }
+    recordHeartbeatHotPathCounter(
+      captureCadence.mode === "active_view"
+        ? "screenshotActiveCadencePolicyIssued"
+        : "screenshotBackgroundCadencePolicyIssued"
+    );
+    return { ...policy, captureCadence };
   }
   if (!options.acceptedCapabilities.includes("screenshotObservationLeaseV1")) {
     return {
