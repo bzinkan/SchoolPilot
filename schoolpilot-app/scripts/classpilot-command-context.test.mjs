@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   assertClassroomCommandSelectionIsolation,
   buildStudentSignOutCommandRequest,
+  commandSupportsLateSignInRestriction,
   combineCommandSettlements,
   CONSERVATIVE_DOMAIN_RESTRICTION_MESSAGE,
   DEFAULT_COVERAGE_COMMANDS,
@@ -14,9 +15,12 @@ import {
   exactTabCloseCapability,
   flightPathApplyCapability,
   isStudentUrlOffTask,
+  isLateSignInRestrictionTarget,
+  lateSignInRestrictionGateEnabled,
   mergeCommandUpdateIntoBatches,
   normalizeSessionFabState,
   parseTabSelectionKey,
+  partitionCurrentPageWaypointTargets,
   resolveCommandTargets,
   resolveStudentSignOutTargets,
   studentSignOutSelectionBinding,
@@ -284,6 +288,86 @@ test('sign-out-only selection blocks every non-sign-out classroom command before
   }
   assert.doesNotThrow(() => assertClassroomCommandSelectionIsolation('student-sign-out', 1));
   assert.doesNotThrow(() => assertClassroomCommandSelectionIsolation('open-tab', 0));
+});
+
+test('late-sign-in restriction eligibility fails closed on the exact-school operator projection', () => {
+  const signedOut = {
+    studentId: 'signed-out',
+    loginState: 'not_logged_in',
+    isLoggedIn: false,
+    lateSignInRestrictionSsoV1Enabled: true,
+    capabilities: {},
+  };
+  assert.equal(lateSignInRestrictionGateEnabled([signedOut]), true);
+  assert.equal(lateSignInRestrictionGateEnabled([]), false);
+  assert.equal(lateSignInRestrictionGateEnabled([
+    signedOut,
+    { ...signedOut, studentId: 'missing-projection', lateSignInRestrictionSsoV1Enabled: undefined },
+  ]), false, 'an inconsistent or missing row projection keeps the school UI off');
+
+  assert.equal(isLateSignInRestrictionTarget({
+    student: signedOut,
+    operatorEnabled: true,
+    structurallyCommandable: true,
+  }), true, 'raw client capability is intentionally not required while the student is signed out');
+  assert.equal(isLateSignInRestrictionTarget({
+    student: signedOut,
+    operatorEnabled: false,
+    structurallyCommandable: true,
+  }), false);
+  assert.equal(isLateSignInRestrictionTarget({
+    student: { ...signedOut, loginState: 'logged_in', isLoggedIn: true },
+    operatorEnabled: true,
+    structurallyCommandable: true,
+  }), false, 'signal loss or stale reachability must not be treated as explicit sign-out');
+  assert.equal(isLateSignInRestrictionTarget({
+    student: signedOut,
+    operatorEnabled: true,
+    structurallyCommandable: false,
+  }), false, 'supervision and ownership still fence signed-out selection');
+});
+
+test('only persistent restrictions can include deferred signed-out targets', () => {
+  for (const commandType of [
+    'unlock-screen',
+    'apply-flight-path',
+    'remove-flight-path',
+    'apply-block-list',
+    'remove-block-list',
+  ]) {
+    assert.equal(commandSupportsLateSignInRestriction(commandType), true, commandType);
+  }
+  assert.equal(
+    commandSupportsLateSignInRestriction('lock-screen', { url: 'https://classroom.example/landing' }),
+    true,
+  );
+  assert.equal(
+    commandSupportsLateSignInRestriction('lock-screen', { url: 'CURRENT_URL' }),
+    false,
+    'current-page Waypoints cannot be authored for signed-out students',
+  );
+  for (const commandType of ['open-tab', 'close-tabs', 'teacher-message', 'attention-mode', 'timer', 'poll']) {
+    assert.equal(commandSupportsLateSignInRestriction(commandType), false, commandType);
+  }
+});
+
+test('current-page Waypoints report and skip every target without fresh telemetry', () => {
+  assert.deepEqual(partitionCurrentPageWaypointTargets([
+    { studentId: 'online', telemetryCurrent: true },
+    { studentId: 'signed-out', telemetryCurrent: false },
+    { studentId: 'signal-lost', telemetryCurrent: false },
+  ]), {
+    targetStudentIds: ['online'],
+    skippedStudentIds: ['signed-out', 'signal-lost'],
+  });
+});
+
+test('persistent restriction feedback adds pending and unavailable outcomes', () => {
+  const feedback = commandDeliveryFeedback({
+    command: { commandType: 'apply-flight-path' },
+    summary: { requested: 5, completed: 2, pending: 2, unavailable: 1 },
+  }, 'apply-flight-path');
+  assert.match(feedback.description, /3 restrictions are pending/);
 });
 
 test('claimed targets always use the full claimed cohort when there is no explicit selection', () => {

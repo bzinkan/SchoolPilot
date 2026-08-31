@@ -162,6 +162,8 @@ function TileRegressionHarness() {
             }}
             onClick={() => setCardClicks((count) => count + 1)}
             onManageTabs={() => setTabClicks((count) => count + 1)}
+            onToggleSelect={() => {}}
+            persistentRestrictionSelectionAvailable
           />
         </div>
 
@@ -176,6 +178,9 @@ function TileRegressionHarness() {
               observedAtMs: Date.now(),
               nextBoundaryAtMs: Date.now() + 60_000,
             }}
+            onManageTabs={() => setTabClicks((count) => count + 1)}
+            onToggleSelect={() => {}}
+            restrictionSelectionActive
           />
         </div>
 

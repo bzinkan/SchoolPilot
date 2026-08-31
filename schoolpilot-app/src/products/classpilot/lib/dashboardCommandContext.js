@@ -30,6 +30,17 @@ export const DEFAULT_COVERAGE_COMMANDS = Object.freeze([
   'remove-block-list',
 ]);
 
+export const LATE_SIGN_IN_RESTRICTION_COMMANDS = Object.freeze([
+  'lock-screen',
+  'unlock-screen',
+  'apply-flight-path',
+  'remove-flight-path',
+  'apply-block-list',
+  'remove-block-list',
+]);
+
+const LATE_SIGN_IN_RESTRICTION_COMMAND_SET = new Set(LATE_SIGN_IN_RESTRICTION_COMMANDS);
+
 function normalizedIds(values) {
   return [...new Set((values || []).map((value) => String(value || '').trim()).filter(Boolean))];
 }
@@ -90,6 +101,49 @@ export function studentSupportsCapability(student, capabilityName) {
       ? student.capabilities
       : [];
   return advertised.includes(capabilityName);
+}
+
+export function isExplicitlySignedOutStudent(student) {
+  return student?.loginState === 'not_logged_in'
+    || student?.isLoggedIn === false
+    || student?._realtimeSignedOut === true;
+}
+
+export function lateSignInRestrictionGateEnabled(students) {
+  const rows = Array.isArray(students) ? students : [];
+  return rows.length > 0 && rows.every((student) => (
+    student?.lateSignInRestrictionSsoV1Enabled === true
+  ));
+}
+
+export function commandSupportsLateSignInRestriction(commandType, commandPayload = {}) {
+  if (!LATE_SIGN_IN_RESTRICTION_COMMAND_SET.has(commandType)) return false;
+  return commandType !== 'lock-screen' || commandPayload?.url !== 'CURRENT_URL';
+}
+
+export function isLateSignInRestrictionTarget({
+  student,
+  operatorEnabled,
+  structurallyCommandable,
+}) {
+  return operatorEnabled === true
+    && structurallyCommandable === true
+    && isExplicitlySignedOutStudent(student);
+}
+
+export function partitionCurrentPageWaypointTargets(
+  students,
+  isTelemetryCurrent = defaultStudentTelemetryCurrent,
+) {
+  const targetStudentIds = [];
+  const skippedStudentIds = [];
+  for (const student of Array.isArray(students) ? students : []) {
+    const id = studentId(student);
+    if (!id) continue;
+    if (isTelemetryCurrent(student) === true) targetStudentIds.push(id);
+    else skippedStudentIds.push(id);
+  }
+  return { targetStudentIds, skippedStudentIds };
 }
 
 export const DOMAIN_PRESERVING_RESTRICTION_MESSAGE =

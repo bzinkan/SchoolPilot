@@ -121,6 +121,26 @@ try {
     0,
     'signed-out state must hard-hide even a fresh cached screenshot',
   );
+  const signedOutRestrictionCheckbox = page.getByTestId('checkbox-select-student-signed-out-student');
+  assert.equal(
+    await signedOutRestrictionCheckbox.isDisabled(),
+    false,
+    'an operator-enabled signed-out student may be selected for persistent restrictions',
+  );
+  assert.equal(
+    await signedOutRestrictionCheckbox.getAttribute('title'),
+    'Select for restrictions that will apply after sign-in',
+  );
+  assert.equal(
+    await page.getByTestId('checkbox-select-student-online-student').isDisabled(),
+    false,
+    'online students remain selectable into a mixed persistent-restriction cohort',
+  );
+  assert.equal(
+    await page.getByTestId('button-manage-tabs-online-student').count(),
+    0,
+    'individual transient actions stay hidden while a deferred-restriction selection is active',
+  );
   await signedOutTile.getByText('Last seen just now', { exact: true }).waitFor();
   assert.deepEqual(
     await page.evaluate(() => globalThis.__studentTileMinuteTimers()),

@@ -87,13 +87,17 @@ import {
   buildStudentSignOutCommandRequest,
   combineCommandSettlements,
   DOMAIN_RESTRICTION_URL_HELP,
+  commandSupportsLateSignInRestriction,
   deriveDashboardCapabilities,
   domainRestrictionMessageForStudents,
   exactTabCloseCapability,
   flightPathApplyCapability,
+  isLateSignInRestrictionTarget,
   isStudentUrlOffTask,
+  lateSignInRestrictionGateEnabled,
   normalizeSessionFabState,
   parseTabSelectionKey,
+  partitionCurrentPageWaypointTargets,
   resolveCommandTargets,
   resolveStudentSignOutTargets,
   studentSignOutSelectionBinding,
@@ -1970,6 +1974,28 @@ export default function Dashboard() {
   const toggleStudentSelection = (studentId) => {
     const student = filteredStudents.find((row) => row.studentId === studentId);
     if (studentView === "class" && !isStudentCommandable(student)) {
+      if (isStudentLateSignInRestrictionEligible(student)) {
+        const wasSelected = selectedStudentIds.has(studentId);
+        setSelectedStudentIds((current) => {
+          const next = new Set(current);
+          if (next.has(studentId)) next.delete(studentId);
+          else next.add(studentId);
+          return next;
+        });
+        setSelectedServerSignOutStudentIds((current) => {
+          if (!current.has(studentId)) return current;
+          const next = new Set(current);
+          next.delete(studentId);
+          return next;
+        });
+        setSelectedStudentBindingSnapshots((current) => {
+          if (!wasSelected && !current.has(studentId)) return current;
+          const next = new Map(current);
+          next.delete(studentId);
+          return next;
+        });
+        return;
+      }
       if (isStudentServerSignOutEligible(student)) {
         const bindingSnapshot = signOutSelectionBindingFor(student);
         if (!bindingSnapshot) {
@@ -2206,6 +2232,27 @@ export default function Dashboard() {
     }
     return true;
   });
+  const lateSignInRestrictionsEnabled = dashboardCapabilities.ownedClassSession
+    && lateSignInRestrictionGateEnabled(sessionFilteredStudents);
+  const isStudentLateSignInRestrictionEligible = (student) => (
+    isLateSignInRestrictionTarget({
+      student,
+      operatorEnabled: lateSignInRestrictionsEnabled,
+      structurallyCommandable: isStudentStructurallyCommandable(student),
+    })
+  );
+  const isStudentCommandableForCommand = (
+    student,
+    commandType,
+    commandPayload = {},
+    { allowSafetyUnlock = false } = {},
+  ) => (
+    isStudentCommandable(student, { allowSafetyUnlock })
+    || (
+      commandSupportsLateSignInRestriction(commandType, commandPayload)
+      && isStudentLateSignInRestrictionEligible(student)
+    )
+  );
 
   const normalizedSearchQuery = deferredSearchQuery.trim().toLowerCase();
   const matchesStudentSearch = (student) => {
@@ -2267,6 +2314,16 @@ export default function Dashboard() {
     ])),
     [signOutEligibleBindingsKey],
   );
+  const lateSignInRestrictionEligibleStudentIdsKey = JSON.stringify(
+    sessionFilteredStudents
+      .filter(isStudentLateSignInRestrictionEligible)
+      .map((student) => student.studentId)
+      .sort(),
+  );
+  const lateSignInRestrictionEligibleStudentIds = useMemo(
+    () => new Set(JSON.parse(lateSignInRestrictionEligibleStudentIdsKey)),
+    [lateSignInRestrictionEligibleStudentIdsKey],
+  );
   useEffect(() => {
     if (!dashboardCapabilities.ownedClassSession || studentView !== 'class') return;
     const selectedIds = new Set([
@@ -2274,8 +2331,10 @@ export default function Dashboard() {
       ...selectedServerSignOutStudentIds,
     ]);
     const invalidStudentIds = new Set([...selectedIds].filter((studentId) => (
-      !selectedStudentBindingSnapshots.has(studentId)
-      || signOutEligibleBindingsByStudent.get(studentId) !== selectedStudentBindingSnapshots.get(studentId)
+      lateSignInRestrictionEligibleStudentIds.has(studentId)
+        ? selectedStudentBindingSnapshots.has(studentId)
+        : !selectedStudentBindingSnapshots.has(studentId)
+          || signOutEligibleBindingsByStudent.get(studentId) !== selectedStudentBindingSnapshots.get(studentId)
     )));
     const hasOrphanedBindingSnapshot = [...selectedStudentBindingSnapshots.keys()]
       .some((studentId) => !selectedIds.has(studentId));
@@ -2298,6 +2357,7 @@ export default function Dashboard() {
     });
   }, [
     dashboardCapabilities.ownedClassSession,
+    lateSignInRestrictionEligibleStudentIds,
     selectedServerSignOutStudentIds,
     selectedStudentBindingSnapshots,
     selectedStudentIds,
@@ -2829,11 +2889,16 @@ export default function Dashboard() {
   ]);
 
   const controllableStudents = filteredStudents.filter(isStudentCommandable);
+  const lateSignInRestrictionStudents = studentView === 'class'
+    ? filteredStudents.filter(isStudentLateSignInRestrictionEligible)
+    : EMPTY_LIST;
   const subgroupCommandsDisabled = studentView === 'class'
     && Boolean(selectedSubgroupId)
     && !subgroupSelectionReady;
   const selectableStudents = dashboardCapabilities.canSelectStudents && !subgroupCommandsDisabled
-    ? (studentView === "class" ? controllableStudents : filteredStudents)
+    ? (studentView === "class"
+        ? [...controllableStudents, ...lateSignInRestrictionStudents]
+        : filteredStudents)
     : EMPTY_LIST;
 
   const statsStudents = (studentView === "class" ? sessionFilteredStudents : filteredStudents)
@@ -2848,18 +2913,32 @@ export default function Dashboard() {
   const offlineCount = statsMonitoringDisplays.filter((display) => display.kind === 'signed_out').length;
   const offTaskCount = statsStudents.filter(isStudentOffTask).length;
 
-  const resolveActiveCommandTarget = (overrideStudentIds = null, { allowSafetyUnlock = false } = {}) => {
+  const resolveActiveCommandTarget = (
+    overrideStudentIds = null,
+    {
+      allowSafetyUnlock = false,
+      commandType = null,
+      commandPayload = {},
+    } = {},
+  ) => {
     if (classStudentTargetsUnavailable) {
       throw new Error('Student targets are unavailable until the class roster finishes loading.');
     }
     if (subgroupCommandsDisabled) {
       throw new Error('Wait for the selected subgroup roster to finish loading before sending commands.');
     }
-    return resolveCommandTargets({
+    const target = resolveCommandTargets({
       mode: dashboardCapabilities.mode,
       sessionStudents: sessionFilteredStudents.map((student) => ({
         ...student,
-        commandable: isStudentCommandable(student, { allowSafetyUnlock }),
+        commandable: commandType
+          ? isStudentCommandableForCommand(
+              student,
+              commandType,
+              commandPayload,
+              { allowSafetyUnlock },
+            )
+          : isStudentCommandable(student, { allowSafetyUnlock }),
       })),
       claimedStudents: claimedPickupStudents.filter((student) => (
         isStudentCommandable(student, { allowSafetyUnlock })
@@ -2869,6 +2948,17 @@ export default function Dashboard() {
       subgroupStudentIds: Array.from(subgroupMembers),
       overrideStudentIds,
     });
+    const selectedIds = overrideStudentIds === null
+      ? Array.from(selectedStudentIds)
+      : overrideStudentIds;
+    if (
+      Array.isArray(selectedIds)
+      && selectedIds.length > 0
+      && target.targetStudentIds.length !== new Set(selectedIds).size
+    ) {
+      throw new Error('One or more selected students are unavailable for this command. Clear the selection and try again.');
+    }
+    return target;
   };
 
   const getActiveCommandStudents = (overrideStudentIds = null, options = {}) => {
@@ -2900,7 +2990,31 @@ export default function Dashboard() {
     });
   };
 
-  const targetStudents = studentView === "available" ? filteredStudents : getActiveCommandStudents();
+  const targetStudents = studentView === "available"
+    ? filteredStudents
+    : getActiveCommandStudents(null, {
+        commandType: 'apply-flight-path',
+      });
+  const selectedLateSignInRestrictionStudentIds = [...selectedStudentIds].filter((studentId) => (
+    lateSignInRestrictionEligibleStudentIds.has(studentId)
+  ));
+  const lateSignInRestrictionSelectionActive = selectedLateSignInRestrictionStudentIds.length > 0;
+  const nonRestrictionSelectionActive = signOutOnlySelectionActive
+    || lateSignInRestrictionSelectionActive;
+  useEffect(() => {
+    if (!lateSignInRestrictionSelectionActive) return;
+    setShowOpenTabDialog(false);
+    setShowCloseTabsDialog(false);
+    setSelectedTabsToClose(new Set());
+    setManageTabsStudentIds(null);
+    setManageTabsTargetSnapshot("");
+    setShowSendMessageDialog(false);
+    setShowAttentionDialog(false);
+    setShowTimerDialog(false);
+    setShowPollDialog(false);
+    setShowPollResultsDialog(false);
+    setShowRerouteDialog(false);
+  }, [lateSignInRestrictionSelectionActive]);
   const screenToolbarRosterUnavailable = studentView === 'class'
     ? studentsLoading || studentsQueryError
     : studentView === 'claimed'
@@ -2909,10 +3023,16 @@ export default function Dashboard() {
   const lockToolbarCommand = toolbarScreenCommand('lock-screen', selectedStudentIds);
   const explicitlySelectedStudentIds = lockToolbarCommand?.studentIds || EMPTY_LIST;
   const explicitlySelectedStudents = explicitlySelectedStudentIds.length > 0
-    ? getActiveCommandStudents(explicitlySelectedStudentIds)
+    ? getActiveCommandStudents(explicitlySelectedStudentIds, {
+        commandType: 'lock-screen',
+        commandPayload: { url: 'https://late-sign-in-target.invalid/' },
+      })
     : EMPTY_LIST;
   const explicitlySelectedUnlockStudents = explicitlySelectedStudentIds.length > 0
-    ? getActiveCommandStudents(explicitlySelectedStudentIds, { allowSafetyUnlock: true })
+    ? getActiveCommandStudents(explicitlySelectedStudentIds, {
+        allowSafetyUnlock: true,
+        commandType: 'unlock-screen',
+      })
     : EMPTY_LIST;
   const exactSelectedTargetsResolved = !screenToolbarRosterUnavailable
     && explicitlySelectedStudentIds.length > 0
@@ -2922,11 +3042,8 @@ export default function Dashboard() {
     && explicitlySelectedUnlockStudents.length === explicitlySelectedStudentIds.length;
   const selectedTargetsSupportScreenOnlyUnlock = exactSelectedUnlockTargetsResolved
     && explicitlySelectedUnlockStudents.every((student) => (
-      studentSupportsCapability(student, 'screenOnlyUnlockV1')
-      || (
-        student?.lateSignInRestrictionSsoV1Enabled === true
-        && student?.isLoggedIn !== true
-      )
+      isStudentLateSignInRestrictionEligible(student)
+      || studentSupportsCapability(student, 'screenOnlyUnlockV1')
     ));
   const restrictionMessageForStudents = (targetStudentRows) => domainRestrictionMessageForStudents(
     targetStudentRows,
@@ -3010,7 +3127,7 @@ export default function Dashboard() {
     : studentView === 'claimed' && selectedStudentIds.size === 0
     ? `${targetStudents.length} claimed student${targetStudents.length === 1 ? '' : 's'} in ${claimedTargetContextCount} supervision group${claimedTargetContextCount === 1 ? '' : 's'}${claimedSearchDisclosure}`
     : selectedStudentIds.size > 0
-    ? `${targetStudents.length} selected ${studentView === "class" ? "controllable " : "claimed "}student${targetStudents.length === 1 ? "" : "s"}${selectedServerSignOutStudentIds.size > 0 ? ` · ${selectedServerSignOutStudentIds.size} selected for sign-out only` : ''}${studentView === 'claimed' ? ` in ${claimedTargetContextCount} supervision group${claimedTargetContextCount === 1 ? '' : 's'}` : ''}`
+    ? `${targetStudents.length} selected ${studentView === "class" ? selectedLateSignInRestrictionStudentIds.length > 0 ? "restriction-eligible " : "controllable " : "claimed "}student${targetStudents.length === 1 ? "" : "s"}${selectedLateSignInRestrictionStudentIds.length > 0 ? ` · ${selectedLateSignInRestrictionStudentIds.length} signed out` : ''}${selectedServerSignOutStudentIds.size > 0 ? ` · ${selectedServerSignOutStudentIds.size} selected for sign-out only` : ''}${studentView === 'claimed' ? ` in ${claimedTargetContextCount} supervision group${claimedTargetContextCount === 1 ? '' : 's'}` : ''}`
     : selectedServerSignOutStudentIds.size > 0
       ? `${selectedServerSignOutStudentIds.size} selected for sign-out only`
     : selectedSubgroupId && studentView === "class"
@@ -3114,7 +3231,7 @@ export default function Dashboard() {
       && options.studentIds.length > 0;
     const target = resolveActiveCommandTarget(
       options.studentIds ?? null,
-      { allowSafetyUnlock },
+      { allowSafetyUnlock, commandType, commandPayload },
     );
     const subgroupTargetIds = new Set(selectedSubgroupId ? subgroupMembers : EMPTY_LIST);
     const intendedRows = target.targetScope === 'subgroup'
@@ -3124,7 +3241,12 @@ export default function Dashboard() {
         : target.targetStudents;
     const hasUnavailableCommandTarget = intendedRows.some((student) => (
       isStudentStructurallyCommandable(student)
-      && !isStudentCommandable(student, { allowSafetyUnlock })
+      && !isStudentCommandableForCommand(
+        student,
+        commandType,
+        commandPayload,
+        { allowSafetyUnlock },
+      )
     ));
     const requestTargetScope = hasUnavailableCommandTarget
       && (target.targetScope === 'class' || target.targetScope === 'subgroup')
@@ -3704,7 +3826,13 @@ export default function Dashboard() {
   const lockScreenMutation = useMutation({
     mutationFn: async ({ url, studentIds }) => postActiveCommand('lock-screen', { url }, { studentIds }),
     onSuccess: (data, variables) => {
-      toast(data.deliveryFeedback);
+      const skippedCount = Number(variables.skippedSignedOutCount || 0);
+      toast(skippedCount > 0
+        ? {
+            ...data.deliveryFeedback,
+            description: `${data.deliveryFeedback.description} ${skippedCount} signed-out student${skippedCount === 1 ? ' was' : 's were'} skipped because a current page is not available before sign-in.`,
+          }
+        : data.deliveryFeedback);
       setShowLockScreenDialog(false);
       // Auto-allow an explicit lock domain so on-task students aren't flagged
       if (variables.url !== 'CURRENT_URL') {
@@ -3786,12 +3914,28 @@ export default function Dashboard() {
       return;
     }
     let url = command.commandPayload.url;
+    let studentIds = command.studentIds;
+    let skippedSignedOutCount = 0;
     if (lockScreenMode === "url") {
       if (!lockScreenUrl.trim()) { toast({ variant: "destructive", title: "Invalid URL", description: "Enter a domain or URL to set as the waypoint" }); return; }
       url = lockScreenUrl.trim();
       if (!url.match(/^https?:\/\//i)) url = 'https://' + url;
+    } else {
+      const partition = partitionCurrentPageWaypointTargets(
+        explicitlySelectedStudents,
+        (student) => monitoringDisplayFor(student).telemetryCurrent,
+      );
+      studentIds = partition.targetStudentIds;
+      skippedSignedOutCount = partition.skippedStudentIds.length;
+      if (studentIds.length === 0) {
+        toast({
+          title: 'No current pages available',
+          description: `${skippedSignedOutCount} signed-out student${skippedSignedOutCount === 1 ? ' was' : 's were'} skipped. Choose a specific domain or URL to save a Waypoint before sign-in.`,
+        });
+        return;
+      }
     }
-    lockScreenMutation.mutate({ url, studentIds: command.studentIds });
+    lockScreenMutation.mutate({ url, studentIds, skippedSignedOutCount });
   };
 
   const handleUnlockScreen = () => {
@@ -3888,6 +4032,14 @@ export default function Dashboard() {
   const handleTileCommand = async ({ commandType, commandPayload = {}, studentIds = [] }) => {
     const studentId = studentIds[0];
     if (!studentId) return;
+    if (nonRestrictionSelectionActive) {
+      toast({
+        variant: 'destructive',
+        title: 'Clear the current selection',
+        description: 'Clear signed-out or sign-out-only selections before using an individual student action.',
+      });
+      return;
+    }
     setTileCommandState((current) => ({ ...current, [studentId]: { pending: true, error: '' } }));
     try {
       const data = await postActiveCommand(commandType, commandPayload, { studentIds });
@@ -4451,8 +4603,8 @@ export default function Dashboard() {
             showCoverageRail={!dashboardCapabilities.observedOtherClass}
             onPickupViewChange={dashboardCapabilities.observedOtherClass ? undefined : handleStudentViewChange}
             onOpenCoverage={!dashboardCapabilities.observedOtherClass && canManageSupervisionSetup ? () => navigate("/classpilot/coverage") : undefined}
-            canReroute={dashboardCapabilities.ownedClassSession && !signOutOnlySelectionActive}
-            onReroute={dashboardCapabilities.ownedClassSession && !signOutOnlySelectionActive ? () => setShowRerouteDialog(true) : undefined}
+            canReroute={dashboardCapabilities.ownedClassSession && !nonRestrictionSelectionActive}
+            onReroute={dashboardCapabilities.ownedClassSession && !nonRestrictionSelectionActive ? () => setShowRerouteDialog(true) : undefined}
             canViewHistoricalTelemetry={isAdmin || isTeacher}
           />
         )}
@@ -4525,8 +4677,8 @@ export default function Dashboard() {
         {/* Control Buttons */}
         {canUseRemoteControls && studentView !== "available" && (
           <div className="flex items-center gap-2 flex-wrap mb-4">
-            {dashboardCapabilities.allows('open-tab') && <Button size="sm" variant="outline" onClick={() => setShowOpenTabDialog(true)} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive} data-testid="button-open-tab" className="text-blue-600 dark:text-blue-400"><MonitorPlay className="h-4 w-4 mr-2" />Open URL</Button>}
-            {dashboardCapabilities.allows('close-tabs') && <Button size="sm" variant="outline" onClick={() => openManageTabs(null)} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Manage Tabs</Button>}
+            {dashboardCapabilities.allows('open-tab') && <Button size="sm" variant="outline" onClick={() => setShowOpenTabDialog(true)} disabled={subgroupCommandsDisabled || nonRestrictionSelectionActive} data-testid="button-open-tab" className="text-blue-600 dark:text-blue-400"><MonitorPlay className="h-4 w-4 mr-2" />Open URL</Button>}
+            {dashboardCapabilities.allows('close-tabs') && <Button size="sm" variant="outline" onClick={() => openManageTabs(null)} disabled={subgroupCommandsDisabled || nonRestrictionSelectionActive} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Manage Tabs</Button>}
             {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !exactSelectedTargetsResolved || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={exactSelectedTargetsResolved ? 'Set a waypoint: hold selected students at their current page or a specific domain' : 'Select one or more students first'} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Set Waypoint</Button>}
             {dashboardCapabilities.allows('unlock-screen') && <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !selectedTargetsSupportScreenOnlyUnlock || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={!exactSelectedUnlockTargetsResolved ? 'Select one or more students first' : selectedTargetsSupportScreenOnlyUnlock ? 'Clear the waypoint while preserving Flight Paths and other restrictions' : 'ClassPilot extension update required for every selected student'} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />Clear Waypoint</Button>}
             {dashboardCapabilities.allows('apply-flight-path') && <Button size="sm" variant="outline" onClick={() => setShowApplyFlightPathDialog(true)} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive} data-testid="button-apply-flight-path" className="text-purple-600 dark:text-purple-400"><Layers className="h-4 w-4 mr-2" />Apply Flight Path</Button>}
@@ -4897,6 +5049,7 @@ export default function Dashboard() {
                   : dashboardCapabilities.reason;
               const signOutOnlySelectionAvailable = isStudentServerSignOutEligible(student)
                 && !isStudentCommandable(student);
+              const persistentRestrictionSelectionAvailable = isStudentLateSignInRestrictionEligible(student);
               const tileStudent = supervisedElsewhere
                 ? {
                     studentId: student.studentId,
@@ -4944,6 +5097,7 @@ export default function Dashboard() {
                     )}
                     onToggleSelect={!dashboardCapabilities.canSelectStudents || supervisedElsewhere ? undefined : () => toggleStudentSelection(student.studentId)}
                     signOutOnlySelectionAvailable={signOutOnlySelectionAvailable}
+                    persistentRestrictionSelectionAvailable={persistentRestrictionSelectionAvailable}
                     liveStream={!supervisedElsewhere && liveViewState.studentId === studentRealtimeKey ? liveViewState.stream : null}
                     liveViewPending={!supervisedElsewhere && liveViewState.studentId === studentRealtimeKey && liveViewState.pending}
                     onStartLiveView={dashboardCapabilities.canUseLiveView && supportsNegotiatedLiveView && !supervisedElsewhere && student.isLoggedIn && effectiveSession?.id ? () => handleStartLiveView(studentRealtimeKey, student.studentName) : undefined}
@@ -4963,6 +5117,7 @@ export default function Dashboard() {
                     actionsDisabled={tileActionsDisabled}
                     actionsDisabledReason={tileActionsDisabledReason}
                     nonSignOutCommandsBlocked={signOutOnlySelectionActive}
+                    restrictionSelectionActive={lateSignInRestrictionSelectionActive}
                     monitoringSuppressed={supervisedElsewhere}
                     monitoringSuppressedReason={supervisionReason}
                     supervisionLabel={coverageLabel || ""}
@@ -5357,6 +5512,11 @@ export default function Dashboard() {
                 A specific domain or URL for everyone
               </label>
             </div>
+            {lockScreenMode === "current" && selectedLateSignInRestrictionStudentIds.length > 0 && (
+              <p className="text-xs text-amber-700 dark:text-amber-300" data-testid="waypoint-current-page-skipped-count">
+                {selectedLateSignInRestrictionStudentIds.length} signed-out student{selectedLateSignInRestrictionStudentIds.length === 1 ? '' : 's'} will be skipped because no current page exists before sign-in. Choose a specific URL to save their Waypoint.
+              </p>
+            )}
             {lockScreenMode === "url" && (
               <div className="space-y-2">
                 <Label htmlFor="lock-screen-url">Domain or URL</Label>
@@ -5503,16 +5663,19 @@ export default function Dashboard() {
               <thead className="border-b sticky top-0 bg-background"><tr><th className="text-left p-2 text-sm font-medium">Student</th><th className="text-left p-2 text-sm font-medium">Flight Path</th><th className="text-left p-2 text-sm font-medium">Status</th><th className="text-left p-2 text-sm font-medium">Actions</th></tr></thead>
               <tbody>
                 {students.map((student) => {
+                  const lateSignInTarget = isStudentLateSignInRestrictionEligible(student);
+                  const canClearWaypoint = lateSignInTarget
+                    || studentSupportsCapability(student, 'screenOnlyUnlockV1');
                   return (
                     <tr key={student.studentId} className="border-b" data-testid={`row-student-${student.studentId}`}>
                       <td className="p-2 text-sm">{student.studentName}</td>
                       <td className="p-2">{student.flightPathActive && student.activeFlightPathName ? <Badge variant="secondary" className="text-xs" data-testid={`badge-flight-path-${student.studentId}`}>{student.activeFlightPathName}</Badge> : <span className="text-xs text-muted-foreground">No flight path</span>}</td>
                       <td className="p-2"><Badge variant={student.status === 'online' ? 'default' : student.status === 'idle' ? 'secondary' : 'outline'} className="text-xs" data-testid={`badge-status-${student.studentId}`}>{student.status}</Badge></td>
                       <td className="p-2">
-                        {student.flightPathActive && student.isLoggedIn ? (
+                        {student.flightPathActive && (student.isLoggedIn || lateSignInTarget) ? (
                           <Button size="sm" variant="ghost" onClick={() => handleRemoveFlightPath(student.studentId)} disabled={removeFlightPathMutation.isPending} data-testid={`button-remove-flight-path-${student.studentId}`} className="h-7 px-2 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"><X className="h-3 w-3 mr-1" />Remove</Button>
-                        ) : student.screenLocked && student.isLoggedIn ? (
-                          <Button size="sm" variant="outline" onClick={() => unlockScreenMutation.mutate({ studentIds: [student.studentId] })} disabled={unlockScreenMutation.isPending || !studentSupportsCapability(student, 'screenOnlyUnlockV1')} title={studentSupportsCapability(student, 'screenOnlyUnlockV1') ? 'Clear the waypoint (screen only)' : 'ClassPilot extension 2.6.0 or newer is required'} data-testid={`button-unlock-screen-${student.studentId}`} className="h-7 px-2 text-xs"><Unlock className="h-3 w-3 mr-1" />{studentSupportsCapability(student, 'screenOnlyUnlockV1') ? 'Clear Waypoint' : 'Update Required'}</Button>
+                        ) : student.screenLocked && (student.isLoggedIn || lateSignInTarget) ? (
+                          <Button size="sm" variant="outline" onClick={() => unlockScreenMutation.mutate({ studentIds: [student.studentId] })} disabled={unlockScreenMutation.isPending || !canClearWaypoint} title={canClearWaypoint ? 'Clear the waypoint (screen only)' : 'ClassPilot extension 2.6.0 or newer is required'} data-testid={`button-unlock-screen-${student.studentId}`} className="h-7 px-2 text-xs"><Unlock className="h-3 w-3 mr-1" />{canClearWaypoint ? 'Clear Waypoint' : 'Update Required'}</Button>
                         ) : <span className="text-xs text-muted-foreground">&mdash;</span>}
                       </td>
                     </tr>
@@ -5562,10 +5725,10 @@ export default function Dashboard() {
       {/* Block List Viewer Dialog */}
       <Dialog open={showBlockListViewerDialog} onOpenChange={setShowBlockListViewerDialog}>
         <DialogContent className="max-w-2xl" data-testid="dialog-block-list-viewer">
-          <DialogHeader><DialogTitle>Block List Status</DialogTitle><DialogDescription>Manage active block lists for your students. Block lists are session-based and will be removed when students disconnect.</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>Block List Status</DialogTitle><DialogDescription>{lateSignInRestrictionsEnabled ? 'Manage teacher-applied block lists. Saved restrictions may remain pending until a signed-out student returns.' : 'Manage active block lists for your online students.'}</DialogDescription></DialogHeader>
           <div className="space-y-4">
             <div className="flex items-center justify-between p-3 bg-muted/30 rounded-md">
-              <div><p className="text-sm font-medium">Remove Block List from All Students</p><p className="text-xs text-muted-foreground">This will remove any teacher-applied block list from all online students</p></div>
+              <div><p className="text-sm font-medium">Remove Block List from All Students</p><p className="text-xs text-muted-foreground">{lateSignInRestrictionsEnabled ? 'This removes the teacher-applied block list from eligible online and signed-out students.' : 'This removes the teacher-applied block list from eligible online students.'}</p></div>
               <Button variant="outline" size="sm" onClick={handleRemoveBlockList} disabled={removeBlockListMutation.isPending} className="text-destructive hover:text-destructive" data-testid="button-remove-all-block-lists"><X className="h-4 w-4 mr-2" />Remove All</Button>
             </div>
             <div className="border-t pt-4">
@@ -5753,7 +5916,7 @@ export default function Dashboard() {
       </Dialog>
 
       {/* TeacherFab */}
-      {dashboardCapabilities.canUseTeacherFab && !classStudentTargetsUnavailable && !signOutOnlySelectionActive && (
+      {dashboardCapabilities.canUseTeacherFab && !classStudentTargetsUnavailable && !nonRestrictionSelectionActive && (
         <TeacherFab
           attentionActive={attentionActive}
           onAttentionClick={() => setShowAttentionDialog(true)}

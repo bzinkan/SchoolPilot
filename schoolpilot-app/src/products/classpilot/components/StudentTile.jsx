@@ -67,6 +67,7 @@ function StudentTile({
   isSelected = false,
   onToggleSelect,
   signOutOnlySelectionAvailable = false,
+  persistentRestrictionSelectionAvailable = false,
   liveStream,
   onStartLiveView,
   onStopLiveView,
@@ -82,6 +83,7 @@ function StudentTile({
   actionsDisabled = false,
   actionsDisabledReason = "",
   nonSignOutCommandsBlocked = false,
+  restrictionSelectionActive = false,
   monitoringSuppressed = false,
   monitoringSuppressedReason = "",
   supervisionLabel = "",
@@ -105,10 +107,15 @@ function StudentTile({
   const interactionsDisabled = actionsDisabled
     || monitoringSuppressed
     || monitoringActionsDisabled
-    || nonSignOutCommandsBlocked;
+    || nonSignOutCommandsBlocked
+    || restrictionSelectionActive;
   const selectionDisabled = actionsDisabled
     || monitoringSuppressed
-    || ((monitoringActionsDisabled || nonSignOutCommandsBlocked) && !signOutOnlySelectionAvailable);
+    || (
+      (monitoringActionsDisabled || nonSignOutCommandsBlocked)
+      && !signOutOnlySelectionAvailable
+      && !persistentRestrictionSelectionAvailable
+    );
   const screenshotDisplay = deriveScreenshotDisplay(
     monitoringSuppressed ? null : screenshotData,
     freshnessNowMs,
@@ -158,12 +165,15 @@ function StudentTile({
     ? null
     : liveStream;
   const unavailableActionReason = actionsDisabledReason
-    || (monitoringActionsDisabled
-      ? 'Student actions are disabled while monitoring updates'
-      : "Student actions are unavailable in this view");
+    || (restrictionSelectionActive
+      ? 'Clear the signed-out restriction selection before using individual student actions'
+      : monitoringActionsDisabled
+        ? 'Student actions are disabled while monitoring updates'
+        : "Student actions are unavailable in this view");
   const safetyUnlockAvailable = !actionsDisabled
     && !monitoringSuppressed
     && !nonSignOutCommandsBlocked
+    && !restrictionSelectionActive
     && monitoringActionsDisabled
     && student.screenLocked
     && supportsScreenOnlyUnlock
@@ -317,9 +327,11 @@ function StudentTile({
                 onClick={(e) => e.stopPropagation()}
                 title={selectionDisabled
                   ? unavailableActionReason
-                  : signOutOnlySelectionAvailable
-                    ? "Select for Student Sign Out only"
-                    : "Select this student"}
+                  : persistentRestrictionSelectionAvailable
+                    ? "Select for restrictions that will apply after sign-in"
+                    : signOutOnlySelectionAvailable
+                      ? "Select for Student Sign Out only"
+                      : "Select this student"}
                 data-testid={`checkbox-select-student-${student.studentId}`}
               />
             )}

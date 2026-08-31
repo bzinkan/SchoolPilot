@@ -968,8 +968,8 @@ assert.match(
 );
 assert.match(
   dashboardSource,
-  /explicitlySelectedUnlockStudents\.every\(\(student\) => studentSupportsCapability\(student, 'screenOnlyUnlockV1'\)\)/,
-  'one unsupported student in a mixed selection must disable toolbar Unlock',
+  /explicitlySelectedUnlockStudents\.every\(\(student\) => \([\s\S]{0,160}isStudentLateSignInRestrictionEligible\(student\)[\s\S]{0,80}\|\| studentSupportsCapability\(student, 'screenOnlyUnlockV1'\)/,
+  'toolbar Unlock must allow gated signed-out authoring while rejecting unsupported online students',
 );
 assert.match(
   dashboardSource,
