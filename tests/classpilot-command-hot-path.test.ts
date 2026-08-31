@@ -7,7 +7,7 @@ function source(relativePath: string): string {
 }
 
 describe("ClassPilot command and ACK hot path", () => {
-  it("publishes device commands in one ordered Redis batch and refreshes the sent summary once", () => {
+  it("authorizes exact student bindings, publishes one Redis batch, and refreshes the sent summary once", () => {
     const dispatcher = source("src/services/classpilotCommandDispatcher.ts");
     const redis = source("src/realtime/ws-redis.ts");
     const dispatchSection = dispatcher.slice(
@@ -15,9 +15,21 @@ describe("ClassPilot command and ACK hot path", () => {
       dispatcher.indexOf("const command = await getClasspilotCommandByIdAndSchool")
     );
 
-    assert.match(dispatchSection, /remotePublications\.push\(\{[\s\S]*?deliveryCandidates\.push\(target\)/);
+    assert.match(
+      dispatchSection,
+      /withClasspilotStudentControlDeliveryAuthority\([\s\S]*?sendToStudentBindingLocal\(exactTarget, message,[\s\S]*?requiredCapability: exactTarget\.requiredCapability/,
+    );
+    assert.match(dispatchSection, /kind: "student-binding" as const/);
+    assert.match(
+      dispatchSection,
+      /deferredIds\.has\(target\.studentId\)[\s\S]*requiredCapability: "lateSignInRestrictionSsoV1"/,
+    );
+    assert.match(
+      dispatchSection,
+      /deliveryCandidates\.push\(delivery\.target\)[\s\S]*?remotePublications\.push\(delivery\.publication\)/,
+    );
     assert.match(dispatchSection, /await publishWSBatch\(remotePublications\)/);
-    assert.doesNotMatch(dispatchSection, /await publishWS\(\{ kind: "device"/);
+    assert.doesNotMatch(dispatchSection, /sendToDeviceLocal|kind: "device"/);
     assert.match(dispatchSection, /redisPublishSucceeded = publicationResults\.every\(Boolean\)/);
     assert.match(
       dispatchSection,

@@ -75,9 +75,13 @@ describe("ClassPilot authenticated HTTP recovery and rate limits", () => {
     assert.match(heartbeat, /req\.body\?\.requestFabState === true/);
     assert.match(
       heartbeat,
-      /runWithTenantContext\([\s\S]*?\{ schoolId \}[\s\S]*?buildStudentFabState\(schoolId, studentId, \{ studentSessionId \}\)/
+      /withClasspilotStudentControlDeliveryAuthority\([\s\S]*?buildStudentFabState\(schoolId, studentId, \{[\s\S]*?studentSessionId,[\s\S]*?dbInstance: transactionDb/
     );
-    assert.match(heartbeat, /\.\.\.\(fab \? \{ fab \} : \{\}\)/);
+    assert.match(
+      heartbeat,
+      /deliveredFab: finalFab[\s\S]*?ownershipRevision: finalClassroomState\?\.revision \?\? 0/
+    );
+    assert.match(heartbeat, /\.\.\.\(prepared\.deliveredFab \? \{ fab: prepared\.deliveredFab \} : \{\}\)/);
     assert.equal(heartbeat.match(/buildStudentFabState\(/g)?.length, 1);
   });
 
@@ -793,9 +797,9 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
       devices.indexOf('router.post("/register-student"'),
       devices.indexOf("// Popup Endpoints")
     );
-    assert.match(legacy, /schoolId: login\.schoolId/);
-    assert.match(legacy, /studentId: login\.studentId/);
-    assert.match(legacy, /studentSessionId: login\.studentSessionId/);
+    assert.match(legacy, /schoolId: prepared\.schoolId/);
+    assert.match(legacy, /studentId: prepared\.studentId/);
+    assert.match(legacy, /studentSessionId: prepared\.studentSessionId/);
     const heartbeat = devices.slice(
       devices.indexOf('router.post("/device/heartbeat"'),
       devices.indexOf('router.post("/device/screenshot"')
@@ -818,7 +822,7 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
     );
     assert.match(authSuccess, /type: "auth-success",[\s\S]*?role: "student",[\s\S]*?schoolId,/);
     assert.match(authSuccess, /studentId: payload\.studentId/);
-    assert.match(authSuccess, /studentSessionId: bootstrap\.studentSessionId/);
+    assert.match(authSuccess, /studentSessionId: activeSession\.id/);
     assert.match(authSuccess, /exactBinding:/);
     assert.match(authSuccess, /exactBinding: classpilotControlStateExactBinding\(\{[\s\S]*?schoolId,[\s\S]*?deviceId,[\s\S]*?controlRevision:/);
     const classroomStateRecovery = websocket.slice(

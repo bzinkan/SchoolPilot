@@ -102,7 +102,14 @@ describe("ClassPilot FAB lifecycle publication contract", () => {
     assert.match(fanout, /studentSessionId: binding\.studentSessionId/);
     assert.match(delivery, /studentSessionId: session\.id/);
     assert.match(websocket, /studentSessionId: activeSession\.id/);
-    assert.match(devices, /buildStudentFabState\(schoolId, studentId, \{ studentSessionId \}\)/);
+    const heartbeatRoute = devices.slice(
+      devices.indexOf('router.post("/device/heartbeat"'),
+      devices.indexOf('router.post("/device/screenshot"')
+    );
+    assert.match(
+      heartbeatRoute,
+      /buildStudentFabState\(schoolId, studentId, \{[\s\S]*studentSessionId,[\s\S]*dbInstance: transactionDb,/
+    );
     const atomicAuthority = storage.slice(
       storage.indexOf("export async function getClasspilotFabAuthoritySnapshot"),
       storage.indexOf("async function lockActiveSchoolStudentsForOperationalWrite")

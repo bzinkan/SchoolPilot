@@ -28,6 +28,8 @@ describe("ClassPilot coverage bulk hydration", () => {
 
     assert.equal(result.size, 500);
     assert.equal(result.get("student-0")?.status, "online");
+    assert.equal(result.get("student-0")?.isLoggedIn, true);
+    assert.equal(result.get("student-0")?.loginState, "logged_in");
     assert.equal(result.get("student-0")?.lastSeenAt, now);
     const metrics = snapshotClasspilotCoverageHydrationMetrics();
     assert.equal(metrics.requests, 1);

@@ -32,6 +32,10 @@ import {
 } from "./classpilotReportAuthorization.js";
 import { isPersistentClasspilotControl } from "./classpilotCommandDelivery.js";
 import { assertClasspilotEntitled } from "./classpilotEntitlement.js";
+import {
+  assertClasspilotSynchronousAuthorityResult,
+  type ClasspilotSynchronousAuthorityResult,
+} from "./classpilotSynchronousAuthority.js";
 import { assertGopilotEntitled } from "./gopilotEntitlement.js";
 import {
   isCurrentClasspilotStudentMessageSession,
@@ -4159,6 +4163,15 @@ export async function createLegacyPass(
   authorization: LegacyPasspilotClassAuthorization
 ): Promise<Pass> {
   return db.transaction(async (tx) => {
+    let lockedKioskSchool: { kioskGradeId: string | null } | undefined;
+    if (authorization?.kiosk && !authorization.kioskSessionId) {
+      [lockedKioskSchool] = await tx
+        .select({ kioskGradeId: schools.kioskGradeId })
+        .from(schools)
+        .where(eq(schools.id, data.schoolId))
+        .limit(1)
+        .for("update");
+    }
     await takePasspilotClassLock(tx, data.schoolId);
     const [settingsRow] = await tx
       .select({ source: settings.passpilotClassSource })
@@ -4289,12 +4302,7 @@ export async function createLegacyPass(
           classId: resolvedGradeId ?? null,
         });
       } else {
-        const [school] = await tx
-          .select({ kioskGradeId: schools.kioskGradeId })
-          .from(schools)
-          .where(eq(schools.id, data.schoolId))
-          .limit(1)
-          .for("update");
+        const school = lockedKioskSchool;
         if (
           !school ||
           school.kioskGradeId !== (authorization.expectedKioskClassId ?? null) ||
@@ -4368,6 +4376,18 @@ export async function getKioskStudentState(
   hasActivePassInAnotherClass: boolean;
 }> {
   return db.transaction(async (tx) => {
+    const [school] = await tx
+      .select({
+        kioskGradeId: schools.kioskGradeId,
+        classId: schools.kioskClasspilotGroupId,
+      })
+      .from(schools)
+      .where(eq(schools.id, schoolId))
+      .limit(1)
+      .for("update");
+    if (!school) {
+      throw passpilotClassError("SCHOOL_NOT_FOUND", "School not found.", 404);
+    }
     await takePasspilotClassLock(tx, schoolId);
     const [source] = await tx
       .select({ value: settings.passpilotClassSource })
@@ -4382,18 +4402,6 @@ export async function getKioskStudentState(
         "PassPilot class configuration changed. Reload the kiosk.",
         409
       );
-    }
-    const [school] = await tx
-      .select({
-        kioskGradeId: schools.kioskGradeId,
-        classId: schools.kioskClasspilotGroupId,
-      })
-      .from(schools)
-      .where(eq(schools.id, schoolId))
-      .limit(1)
-      .for("update");
-    if (!school) {
-      throw passpilotClassError("SCHOOL_NOT_FOUND", "School not found.", 404);
     }
     const [activePassRow] = await tx
       .select({ pass: passes })
@@ -4556,6 +4564,16 @@ export async function returnKioskPassForStudent(
   override?: KioskConfiguredClassOverride
 ): Promise<Pass | undefined> {
   return db.transaction(async (tx) => {
+    const [school] = await tx
+      .select({
+        kioskGradeId: schools.kioskGradeId,
+        kioskClasspilotGroupId: schools.kioskClasspilotGroupId,
+      })
+      .from(schools)
+      .where(eq(schools.id, schoolId))
+      .limit(1)
+      .for("update");
+    if (!school) return undefined;
     await takePasspilotClassLock(tx, schoolId);
     const [source] = await tx
       .select({ value: settings.passpilotClassSource })
@@ -4570,17 +4588,6 @@ export async function returnKioskPassForStudent(
         409
       );
     }
-    const [school] = await tx
-      .select({
-        kioskGradeId: schools.kioskGradeId,
-        kioskClasspilotGroupId: schools.kioskClasspilotGroupId,
-      })
-      .from(schools)
-      .where(eq(schools.id, schoolId))
-      .limit(1)
-      .for("update");
-    if (!school) return undefined;
-
     const [activePassRow] = await tx
       .select({ pass: passes })
       .from(passes)
@@ -9169,7 +9176,7 @@ export function buildClassPilotTileAuthorizationQuery(
          AND session.ended_at IS NULL
          AND (
            session.auth_kind <> 'manual_shared'
-           OR session.manual_lease_expires_at > now()
+           OR session.manual_lease_expires_at > clock_timestamp()
          )
       `
     : studentIds
@@ -9207,7 +9214,7 @@ export function buildClassPilotTileAuthorizationQuery(
            AND active_session.ended_at IS NULL
            AND (
              active_session.auth_kind <> 'manual_shared'
-             OR active_session.manual_lease_expires_at > now()
+             OR active_session.manual_lease_expires_at > clock_timestamp()
            )
         ) AS ranked
         WHERE ranked.device_rank = 1
@@ -9828,7 +9835,7 @@ export async function refreshStudentSessionAuthorityWithoutTelemetry(options: {
         AND ended_at IS NULL
         AND (
           auth_kind <> 'manual_shared'
-          OR manual_lease_expires_at > now()
+          OR manual_lease_expires_at > clock_timestamp()
         )
     ),
     refreshed_session AS (
@@ -9836,7 +9843,7 @@ export async function refreshStudentSessionAuthorityWithoutTelemetry(options: {
       SET
         last_seen_at = now(),
         manual_lease_expires_at = CASE
-          WHEN auth_kind = 'manual_shared' THEN now() + interval '300 seconds'
+          WHEN auth_kind = 'manual_shared' THEN clock_timestamp() + interval '300 seconds'
           ELSE manual_lease_expires_at
         END
       WHERE id = ${options.studentSessionId}
@@ -9871,7 +9878,7 @@ export async function refreshStudentSessionAuthorityWithoutTelemetry(options: {
             AND replacement.ended_at IS NULL
             AND (
               replacement.auth_kind <> 'manual_shared'
-              OR replacement.manual_lease_expires_at > now()
+              OR replacement.manual_lease_expires_at > clock_timestamp()
             )
         ) THEN 'replaced_session'::text
         ELSE 'inactive_session'::text
@@ -9991,7 +9998,7 @@ export async function createHeartbeatAndRefreshPresence(
         AND ended_at IS NULL
         AND (
           auth_kind <> 'manual_shared'
-          OR manual_lease_expires_at > now()
+          OR manual_lease_expires_at > clock_timestamp()
         )
     ),
     inserted_heartbeat AS (
@@ -10060,7 +10067,7 @@ export async function createHeartbeatAndRefreshPresence(
       SET
         last_seen_at = now(),
         manual_lease_expires_at = CASE
-          WHEN auth_kind = 'manual_shared' THEN now() + interval '300 seconds'
+          WHEN auth_kind = 'manual_shared' THEN clock_timestamp() + interval '300 seconds'
           ELSE manual_lease_expires_at
         END
       WHERE id = ${studentSessionId}
@@ -10098,7 +10105,7 @@ export async function createHeartbeatAndRefreshPresence(
             AND replacement.ended_at IS NULL
             AND (
               replacement.auth_kind <> 'manual_shared'
-              OR replacement.manual_lease_expires_at > now()
+              OR replacement.manual_lease_expires_at > clock_timestamp()
             )
         ) THEN 'replaced_session'::text
         ELSE 'inactive_session'::text
@@ -10720,7 +10727,15 @@ export async function startStudentSessionWithReplacements(
     // Student roster removal/restoration and session issuance take this lock in
     // the same order. The row-level active check is therefore authoritative at
     // the point the credential-bearing session is created.
-    await takePasspilotClassLock(tx, schoolId);
+    // Session issuance spans both roster/class configuration and ClassPilot
+    // entitlement. Bridge those lock domains without reversing the established
+    // school -> class -> license order used by lifecycle and billing writers.
+    // The final entitlement decision is made only after both locked rows and
+    // the class-config advisory lock are held.
+    await assertClasspilotEntitled(schoolId, transactionDb, {
+      lock: true,
+      afterSchoolLockBeforeLicense: () => takePasspilotClassLock(tx, schoolId),
+    });
     // Discover every student whose active session this issuance could retire
     // while the school-wide issuance lock prevents another writer from adding
     // a new conflict. Cross-student recovery must serialize with both the
@@ -10752,11 +10767,6 @@ export async function startStudentSessionWithReplacements(
       [studentId, ...conflictStudentCandidates.map((row) => row.studentId)],
       transactionDb
     );
-    // The route-level entitlement check may race a school/license revocation.
-    // Re-read and share-lock the canonical school + ClassPilot license rows
-    // inside the issuance transaction so a revocation that acquired its row
-    // lock first wins before any credential-bearing session can be inserted.
-    await assertClasspilotEntitled(schoolId, transactionDb, { lock: true });
     const [student] = await tx
       .select({ id: students.id })
       .from(students)
@@ -10802,7 +10812,7 @@ export async function startStudentSessionWithReplacements(
             OR ${studentSessions.authKind} = 'legacy'
             OR (
               ${studentSessions.authKind} = 'manual_shared'
-              AND ${studentSessions.manualLeaseExpiresAt} > now()
+              AND ${studentSessions.manualLeaseExpiresAt} > clock_timestamp()
             )
           )
         )`,
@@ -10968,7 +10978,7 @@ export async function startStudentSessionWithReplacements(
         deviceId,
         authKind: options.authKind,
         manualLeaseExpiresAt: options.authKind === "manual_shared"
-          ? sql`now() + interval '300 seconds'`
+          ? sql`clock_timestamp() + interval '300 seconds'`
           : null,
         sessionRecoveryTokenHash: options.authKind === "manual_shared"
           ? options.sessionRecoveryTokenHash!
@@ -11352,7 +11362,7 @@ export async function getClasspilotLoginSessionAuthorities(
         represented.auth_kind IN ('legacy', 'managed_profile')
         OR (
           represented.auth_kind = 'manual_shared'
-          AND represented.manual_lease_expires_at > now()
+          AND represented.manual_lease_expires_at > clock_timestamp()
         )
       )
       ${studentFilter}
@@ -11409,7 +11419,7 @@ export async function getStudentIdsHiddenFromClasspilotLoginRoster(
         and(
           eq(studentSessions.authKind, "manual_shared"),
           isNotNull(studentSessions.manualLeaseExpiresAt),
-          sql`${studentSessions.manualLeaseExpiresAt} > now()`
+          sql`${studentSessions.manualLeaseExpiresAt} > clock_timestamp()`
         )
       )
     ));
@@ -15309,9 +15319,10 @@ export async function getTeachingSessionForStudent(
 
 export async function getSessionSettings(
   schoolId: string,
-  sessionId: string
+  sessionId: string,
+  dbInstance: typeof db = db
 ): Promise<SessionSetting | undefined> {
-  const [settings] = await db
+  const [settings] = await dbInstance
     .select()
     .from(sessionSettings)
     .where(and(
@@ -18357,102 +18368,197 @@ export async function acknowledgeTeacherChatDelivery(options: {
   });
 }
 
-export async function claimDueTeacherChatDeliveriesForBinding(options: {
+type ClasspilotTeacherChatBinding = {
   schoolId: string;
   studentId: string;
   studentSessionId: string;
   deviceId: string;
   limit?: number;
-}): Promise<Array<{ message: ChatMessage; delivery: ClasspilotChatDelivery }>> {
+  claimTeacherChatDeliveries?: boolean;
+};
+
+type ClasspilotClaimedTeacherChatDelivery = {
+  message: ChatMessage;
+  delivery: ClasspilotChatDelivery;
+};
+
+class ClasspilotTeacherChatBindingLostError extends Error {}
+
+/**
+ * Linearize an exact-bound student response against student-session transfer.
+ * The transfer path takes the same student-control transaction lock, so the
+ * callback completes either wholly before a transfer commits or after the
+ * exact binding has already failed closed. Preparation may be async for state
+ * materialization and deterministic concurrency tests; delivery is type-bound
+ * to remain synchronous while this transaction remains authoritative.
+ */
+export async function withClasspilotStudentControlDeliveryAuthority<
+  Prepared,
+  T extends ClasspilotSynchronousAuthorityResult,
+>(
+  options: ClasspilotTeacherChatBinding,
+  prepareAuthorized: (transactionDb: typeof db) => Prepared | Promise<Prepared>,
+  onAuthorized: (
+    claimed: ClasspilotClaimedTeacherChatDelivery[],
+    prepared: Prepared
+  ) => T
+): Promise<{ authorized: true; value: T } | { authorized: false }> {
   const limit = Math.max(1, Math.min(20, options.limit ?? 10));
-  return db.transaction(async (tx) => {
-    const transactionDb = tx as unknown as typeof db;
-    await assertClasspilotEntitled(options.schoolId, transactionDb, { lock: true });
-    await lockClasspilotStudentControlAuthorities(
-      options.schoolId,
-      [options.studentId],
-      transactionDb
-    );
-    if (!(await hasExactClasspilotTelemetryBinding(options, transactionDb))) return [];
-    const owner = await getActiveClassOwnerForStudent(
-      options.schoolId,
-      options.studentId,
-      transactionDb
-    );
-    if (!owner) return [];
-    if (!(await hasCurrentClasspilotStudentControlAuthority({
-      schoolId: options.schoolId,
-      studentId: options.studentId,
-      teachingSessionId: owner.session.id,
-    }, transactionDb))) return [];
-    const now = new Date();
-    await tx
-      .update(classpilotChatDeliveries)
-      .set({ state: "expired", updatedAt: now, lastError: "Class session or delivery window ended" })
-      .where(and(
-        eq(classpilotChatDeliveries.schoolId, options.schoolId),
-        eq(classpilotChatDeliveries.studentId, options.studentId),
-        eq(classpilotChatDeliveries.teachingSessionId, owner.session.id),
-        inArray(classpilotChatDeliveries.state, ["queued", "leased", "attempted", "retry"]),
-        sql`${classpilotChatDeliveries.expiresAt} <= ${now}`
-      ));
-    const due = await tx
-      .select({ delivery: classpilotChatDeliveries, message: chatMessages })
-      .from(classpilotChatDeliveries)
-      .innerJoin(chatMessages, and(
-        eq(chatMessages.id, classpilotChatDeliveries.chatMessageId),
-        eq(chatMessages.schoolId, classpilotChatDeliveries.schoolId),
-        eq(chatMessages.studentId, classpilotChatDeliveries.studentId)
-      ))
-      .innerJoin(teachingSessions, and(
-        eq(teachingSessions.id, classpilotChatDeliveries.teachingSessionId),
-        eq(teachingSessions.schoolId, classpilotChatDeliveries.schoolId),
-        isNull(teachingSessions.endTime)
-      ))
-      .innerJoin(classpilotSessionStudents, and(
-        eq(classpilotSessionStudents.schoolId, classpilotChatDeliveries.schoolId),
-        eq(classpilotSessionStudents.teachingSessionId, classpilotChatDeliveries.teachingSessionId),
-        eq(classpilotSessionStudents.studentId, classpilotChatDeliveries.studentId)
-      ))
-      .where(and(
-        eq(classpilotChatDeliveries.schoolId, options.schoolId),
-        eq(classpilotChatDeliveries.studentId, options.studentId),
-        eq(classpilotChatDeliveries.teachingSessionId, owner.session.id),
-        inArray(classpilotChatDeliveries.state, ["queued", "attempted", "retry"]),
-        sql`${classpilotChatDeliveries.nextAttemptAt} <= ${now}`,
-        gt(classpilotChatDeliveries.expiresAt, now)
-      ))
-      .orderBy(classpilotChatDeliveries.createdAt)
-      .limit(limit)
-      .for("update", { skipLocked: true });
-    const claimed: Array<{ message: ChatMessage; delivery: ClasspilotChatDelivery }> = [];
-    for (const row of due) {
-      const [delivery] = await tx
-        .update(classpilotChatDeliveries)
-        .set({
-          state: "attempted",
-          attemptCount: sql<number>`${classpilotChatDeliveries.attemptCount} + 1`,
-          lastAttemptAt: now,
-          lastAttemptStudentSessionId: options.studentSessionId,
-          lastAttemptDeviceId: options.deviceId,
-          nextAttemptAt: new Date(now.getTime() + Math.min(5 * 60_000, 30_000 * Math.max(1, row.delivery.attemptCount + 1))),
-          updatedAt: now,
-        })
-        .where(eq(classpilotChatDeliveries.id, row.delivery.id))
-        .returning();
-      await tx.update(chatMessages).set({
-        deviceId: options.deviceId,
-        recipientId: options.deviceId,
-        deliveryStatus: "sent",
-        errorMessage: null,
-      }).where(and(
-        eq(chatMessages.id, row.message.id),
-        ne(chatMessages.deliveryStatus, "delivered")
-      ));
-      if (delivery) claimed.push({ message: { ...row.message, deviceId: options.deviceId, recipientId: options.deviceId }, delivery });
+  try {
+    return await db.transaction(async (tx) => {
+      const transactionDb = tx as unknown as typeof db;
+      await assertClasspilotEntitled(options.schoolId, transactionDb, { lock: true });
+      await lockClasspilotStudentControlAuthorities(
+        options.schoolId,
+        [options.studentId],
+        transactionDb
+      );
+      if (!(await hasExactClasspilotTelemetryBinding(options, transactionDb))) {
+        return { authorized: false as const };
+      }
+      const owner = options.claimTeacherChatDeliveries
+        ? await getActiveClassOwnerForStudent(
+            options.schoolId,
+            options.studentId,
+            transactionDb
+          )
+        : undefined;
+      const claimed: ClasspilotClaimedTeacherChatDelivery[] = [];
+      if (
+        owner
+        && await hasCurrentClasspilotStudentControlAuthority({
+          schoolId: options.schoolId,
+          studentId: options.studentId,
+          teachingSessionId: owner.session.id,
+        }, transactionDb)
+      ) {
+        const now = new Date();
+        await tx
+          .update(classpilotChatDeliveries)
+          .set({ state: "expired", updatedAt: now, lastError: "Class session or delivery window ended" })
+          .where(and(
+            eq(classpilotChatDeliveries.schoolId, options.schoolId),
+            eq(classpilotChatDeliveries.studentId, options.studentId),
+            eq(classpilotChatDeliveries.teachingSessionId, owner.session.id),
+            inArray(classpilotChatDeliveries.state, ["queued", "leased", "attempted", "retry"]),
+            sql`${classpilotChatDeliveries.expiresAt} <= ${now}`
+          ));
+        const due = await tx
+          .select({ delivery: classpilotChatDeliveries, message: chatMessages })
+          .from(classpilotChatDeliveries)
+          .innerJoin(chatMessages, and(
+            eq(chatMessages.id, classpilotChatDeliveries.chatMessageId),
+            eq(chatMessages.schoolId, classpilotChatDeliveries.schoolId),
+            eq(chatMessages.studentId, classpilotChatDeliveries.studentId)
+          ))
+          .innerJoin(teachingSessions, and(
+            eq(teachingSessions.id, classpilotChatDeliveries.teachingSessionId),
+            eq(teachingSessions.schoolId, classpilotChatDeliveries.schoolId),
+            isNull(teachingSessions.endTime)
+          ))
+          .innerJoin(classpilotSessionStudents, and(
+            eq(classpilotSessionStudents.schoolId, classpilotChatDeliveries.schoolId),
+            eq(classpilotSessionStudents.teachingSessionId, classpilotChatDeliveries.teachingSessionId),
+            eq(classpilotSessionStudents.studentId, classpilotChatDeliveries.studentId)
+          ))
+          .where(and(
+            eq(classpilotChatDeliveries.schoolId, options.schoolId),
+            eq(classpilotChatDeliveries.studentId, options.studentId),
+            eq(classpilotChatDeliveries.teachingSessionId, owner.session.id),
+            inArray(classpilotChatDeliveries.state, ["queued", "attempted", "retry"]),
+            sql`${classpilotChatDeliveries.nextAttemptAt} <= ${now}`,
+            gt(classpilotChatDeliveries.expiresAt, now)
+          ))
+          .orderBy(classpilotChatDeliveries.createdAt)
+          .limit(limit)
+          .for("update", { skipLocked: true });
+        for (const row of due) {
+          const [delivery] = await tx
+            .update(classpilotChatDeliveries)
+            .set({
+              state: "attempted",
+              attemptCount: sql<number>`${classpilotChatDeliveries.attemptCount} + 1`,
+              lastAttemptAt: now,
+              lastAttemptStudentSessionId: options.studentSessionId,
+              lastAttemptDeviceId: options.deviceId,
+              nextAttemptAt: new Date(now.getTime() + Math.min(5 * 60_000, 30_000 * Math.max(1, row.delivery.attemptCount + 1))),
+              updatedAt: now,
+            })
+            .where(eq(classpilotChatDeliveries.id, row.delivery.id))
+            .returning();
+          await tx.update(chatMessages).set({
+            deviceId: options.deviceId,
+            recipientId: options.deviceId,
+            deliveryStatus: "sent",
+            errorMessage: null,
+          }).where(and(
+            eq(chatMessages.id, row.message.id),
+            ne(chatMessages.deliveryStatus, "delivered")
+          ));
+          if (delivery) {
+            claimed.push({
+              message: {
+                ...row.message,
+                deviceId: options.deviceId,
+                recipientId: options.deviceId,
+              },
+              delivery,
+            });
+          }
+        }
+      }
+
+      // The xact-scoped student-control lock prevents a transfer from
+      // committing between this final database-clock lease check and the
+      // bootstrap callback. If the manual lease expired while chat was being
+      // claimed, roll the claim back instead of committing it for a stale
+      // binding.
+      const prepared = await prepareAuthorized(transactionDb);
+      if (!(await hasExactClasspilotTelemetryBinding(options, transactionDb))) {
+        throw new ClasspilotTeacherChatBindingLostError();
+      }
+      const value = onAuthorized(claimed, prepared);
+      assertClasspilotSynchronousAuthorityResult(value);
+      return {
+        authorized: true as const,
+        value,
+      };
+    });
+  } catch (error) {
+    if (error instanceof ClasspilotTeacherChatBindingLostError) {
+      return { authorized: false };
     }
-    return claimed;
-  });
+    throw error;
+  }
+}
+
+export async function withClasspilotStudentWebSocketBootstrapAuthority<
+  Prepared,
+  T extends ClasspilotSynchronousAuthorityResult,
+>(
+  options: ClasspilotTeacherChatBinding,
+  prepareAuthorized: (transactionDb: typeof db) => Prepared | Promise<Prepared>,
+  onAuthorized: (
+    claimed: ClasspilotClaimedTeacherChatDelivery[],
+    prepared: Prepared
+  ) => T
+): Promise<{ authorized: true; value: T } | { authorized: false }> {
+  return withClasspilotStudentControlDeliveryAuthority(
+    { ...options, claimTeacherChatDeliveries: true },
+    prepareAuthorized,
+    onAuthorized
+  );
+}
+
+export async function claimDueTeacherChatDeliveriesForBinding(
+  options: ClasspilotTeacherChatBinding
+): Promise<ClasspilotClaimedTeacherChatDelivery[]> {
+  const result = await withClasspilotStudentWebSocketBootstrapAuthority(
+    options,
+    () => undefined,
+    (claimed) => claimed
+  );
+  return result.authorized ? result.value : [];
 }
 
 export async function getChatMessageByIdAndSchool(
@@ -18622,9 +18728,10 @@ export async function getActiveHandsBySession(
 
 export async function getActiveHandsForStudent(
   schoolId: string,
-  studentId: string
+  studentId: string,
+  dbInstance: typeof db = db
 ): Promise<ClasspilotActiveHand[]> {
-  const rows = await db
+  const rows = await dbInstance
     .select({ hand: classpilotActiveHands })
     .from(classpilotActiveHands)
     .innerJoin(
@@ -20330,13 +20437,12 @@ export type ClasspilotFabAuthoritySnapshot = {
 export async function getClasspilotFabAuthoritySnapshot(
   schoolId: string,
   studentId: string,
-  dbInstance: typeof db = db
+  dbInstance?: typeof db
 ): Promise<ClasspilotFabAuthoritySnapshot> {
-  return dbInstance.transaction(async (tx) => {
-    const transactionDb = tx as unknown as typeof db;
-    await assertClasspilotEntitled(schoolId, transactionDb, { lock: true });
-    await lockClasspilotStudentControlAuthorities(schoolId, [studentId], transactionDb);
-    const [controlState] = await tx
+  const resolveSnapshot = async (snapshotDb: typeof db): Promise<ClasspilotFabAuthoritySnapshot> => {
+    await assertClasspilotEntitled(schoolId, snapshotDb, { lock: true });
+    await lockClasspilotStudentControlAuthorities(schoolId, [studentId], snapshotDb);
+    const [controlState] = await snapshotDb
       .select({
         revision: classpilotStudentControlStates.revision,
         teachingSessionId: classpilotStudentControlStates.teachingSessionId,
@@ -20352,7 +20458,7 @@ export async function getClasspilotFabAuthoritySnapshot(
     const [studentSession] = await getActiveSessionsForStudents(
       schoolId,
       [studentId],
-      transactionDb
+      snapshotDb
     );
     const empty = {
       ownershipRevision: controlState?.revision ?? 0,
@@ -20366,21 +20472,27 @@ export async function getClasspilotFabAuthoritySnapshot(
       const supervision = (await getActiveSupervisionForStudents(
         schoolId,
         [studentId],
-        transactionDb
+        snapshotDb
       )).find((entry) => entry.context.id === controlState.supervisionContextId);
       return supervision ? { ...empty, supervision } : empty;
     }
     if (controlState.teachingSessionId && !controlState.supervisionContextId) {
       const [supervision, owner] = await Promise.all([
-        getActiveSupervisionForStudents(schoolId, [studentId], transactionDb),
-        getActiveClassOwnerForStudent(schoolId, studentId, transactionDb),
+        getActiveSupervisionForStudents(schoolId, [studentId], snapshotDb),
+        getActiveClassOwnerForStudent(schoolId, studentId, snapshotDb),
       ]);
       return supervision.length === 0 && owner?.session.id === controlState.teachingSessionId
         ? { ...empty, teachingSession: owner.session }
         : empty;
     }
     return empty;
-  });
+  };
+
+  // An already-open transaction is the caller's authority fence. Reuse it
+  // directly so WebSocket bootstrap cannot create a nested transaction or
+  // escape to the tenant-context proxy while session transfer is serialized.
+  if (dbInstance) return resolveSnapshot(dbInstance);
+  return db.transaction(async (tx) => resolveSnapshot(tx as unknown as typeof db));
 }
 
 async function lockActiveSchoolStudentsForOperationalWrite(
@@ -20706,6 +20818,12 @@ export async function replaceClasspilotSupervisionControlSnapshots(
     authorizedActorId?: string;
     actorIsAdmin?: boolean;
     bindingExpectationByStudent?: Map<string, ClasspilotControlBindingExpectation>;
+    /**
+     * Signed-out targets whose persistence was admitted only by the
+     * late-sign-in operator gate. Rechecked under the student-control lock so
+     * disabling the gate cannot race a waiting deferred write.
+     */
+    lateSignInGateRequiredStudentIds?: readonly string[];
     now?: Date;
   },
   dbInstance: typeof db = db
@@ -20800,7 +20918,7 @@ export async function replaceClasspilotSupervisionControlSnapshots(
           isNull(studentSessions.endedAt),
           or(
             ne(studentSessions.authKind, "manual_shared"),
-            sql`${studentSessions.manualLeaseExpiresAt} > now()`
+            sql`${studentSessions.manualLeaseExpiresAt} > clock_timestamp()`
           )
         ))
         .orderBy(studentSessions.studentId, studentSessions.id)
@@ -20817,6 +20935,18 @@ export async function replaceClasspilotSupervisionControlSnapshots(
             && active.studentSessionId === expectation.studentSessionId
             && active.deviceId === expectation.deviceId;
       });
+      if (studentIds.length === 0) return [];
+    }
+
+    if (
+      options.lateSignInGateRequiredStudentIds?.length
+      && !isClasspilotCapabilityActive(
+        "lateSignInRestrictionSsoV1",
+        { schoolId: options.schoolId }
+      )
+    ) {
+      const gateRequiredStudentIds = new Set(options.lateSignInGateRequiredStudentIds);
+      studentIds = studentIds.filter((studentId) => !gateRequiredStudentIds.has(studentId));
       if (studentIds.length === 0) return [];
     }
 
@@ -21151,7 +21281,16 @@ export async function getClasspilotStudentControlStates(
     ));
 }
 
-/** Database-backed, aggregate-only rollback gauge for one exact tenant. */
+/**
+ * Database-backed, aggregate-only rollback gauge for one exact tenant.
+ *
+ * Top-level deferred provenance remains immutable audit history after a
+ * restriction expires, but that row serializes only an empty control state
+ * and is no longer a rollback blocker. Nested Coverage provenance remains a
+ * blocker regardless of the Coverage row's expiry: lifecycle restoration can
+ * copy it back into a still-live class with a fresh expiry. Null top-level
+ * expiry columns remain fail-closed and count as live.
+ */
 export async function countClasspilotLateSignInStampedStates(
   schoolId: string,
   dbInstance: typeof db = db
@@ -21161,11 +21300,21 @@ export async function countClasspilotLateSignInStampedStates(
     .from(classpilotStudentControlStates)
     .where(and(
       eq(classpilotStudentControlStates.schoolId, schoolId),
-      sql`(
-        ${classpilotStudentControlStates.desiredState} -> 'lateSignInDelivery' ->> 'origin' = 'deferred'
-        OR ${classpilotStudentControlStates.desiredState}
-          #>> '{restorableClassState,desiredState,lateSignInDelivery,origin}' = 'deferred'
-      )`
+      or(
+        and(
+          sql`${classpilotStudentControlStates.desiredState} -> 'lateSignInDelivery' ->> 'origin' = 'deferred'`,
+          or(
+            isNull(classpilotStudentControlStates.scheduledEndAt),
+            sql`${classpilotStudentControlStates.scheduledEndAt} > clock_timestamp()`
+          ),
+          or(
+            isNull(classpilotStudentControlStates.hardExpiresAt),
+            sql`${classpilotStudentControlStates.hardExpiresAt} > clock_timestamp()`
+          )
+        ),
+        sql`${classpilotStudentControlStates.desiredState}
+          #>> '{restorableClassState,desiredState,lateSignInDelivery,origin}' = 'deferred'`
+      )
     ));
   return Number(row?.count ?? 0);
 }
@@ -21270,7 +21419,7 @@ export async function acknowledgeClasspilotStudentControlState(
             AND active_session.ended_at IS NULL
             AND (
               active_session.auth_kind <> 'manual_shared'
-              OR active_session.manual_lease_expires_at > now()
+              OR active_session.manual_lease_expires_at > clock_timestamp()
             )
             AND active_device.school_id = ${options.schoolId}
         )`
@@ -21341,6 +21490,12 @@ export async function acknowledgeClasspilotStudentControlState(
  */
 export async function persistClasspilotControlCommandState(
   options: {
+    /**
+     * Signed-out targets whose persistence was admitted only by the
+     * late-sign-in operator gate. Rechecked under the student-control lock so
+     * disabling the gate cannot race a waiting deferred write.
+     */
+    lateSignInGateRequiredStudentIds?: readonly string[];
     classroomStateUpserts?: InsertClasspilotClassroomState[];
     classroomStateClears?: Array<{
       schoolId: string;
@@ -21443,7 +21598,7 @@ export async function persistClasspilotControlCommandState(
           isNull(studentSessions.endedAt),
           or(
             ne(studentSessions.authKind, "manual_shared"),
-            sql`${studentSessions.manualLeaseExpiresAt} > now()`
+            sql`${studentSessions.manualLeaseExpiresAt} > clock_timestamp()`
           )
         ))
         .orderBy(studentSessions.studentId, studentSessions.id)
@@ -21461,6 +21616,21 @@ export async function persistClasspilotControlCommandState(
             && active.deviceId === expectation.deviceId;
         if (!accepted) rejectedStudentIds.push(studentId);
         return accepted;
+      });
+    }
+
+    if (
+      options.lateSignInGateRequiredStudentIds?.length
+      && !isClasspilotCapabilityActive(
+        "lateSignInRestrictionSsoV1",
+        { schoolId: options.studentSnapshots.schoolId }
+      )
+    ) {
+      const gateRequiredStudentIds = new Set(options.lateSignInGateRequiredStudentIds);
+      acceptedStudentIds = acceptedStudentIds.filter((studentId) => {
+        if (!gateRequiredStudentIds.has(studentId)) return true;
+        if (!rejectedStudentIds.includes(studentId)) rejectedStudentIds.push(studentId);
+        return false;
       });
     }
 
@@ -24319,6 +24489,15 @@ export async function createCanonicalPass(
   } = {}
 ): Promise<Pass> {
   return db.transaction(async (tx) => {
+    let lockedKioskSchool: { kioskClasspilotGroupId: string | null } | undefined;
+    if (authorization.kiosk && !authorization.kioskSessionId) {
+      [lockedKioskSchool] = await tx
+        .select({ kioskClasspilotGroupId: schools.kioskClasspilotGroupId })
+        .from(schools)
+        .where(eq(schools.id, data.schoolId))
+        .limit(1)
+        .for("update");
+    }
     await takePasspilotClassLock(tx, data.schoolId);
     const [settingsRow] = await tx
       .select({ source: settings.passpilotClassSource })
@@ -24341,12 +24520,7 @@ export async function createCanonicalPass(
           classId: data.classId,
         });
       } else {
-        const [school] = await tx
-          .select({ kioskClasspilotGroupId: schools.kioskClasspilotGroupId })
-          .from(schools)
-          .where(eq(schools.id, data.schoolId))
-          .limit(1)
-          .for("update");
+        const school = lockedKioskSchool;
         if (!school?.kioskClasspilotGroupId || school.kioskClasspilotGroupId !== data.classId) {
           throw passpilotClassError(
             "PASSPILOT_KIOSK_CLASS_CHANGED",
@@ -24447,6 +24621,15 @@ export async function updateCanonicalKioskClass(
   manager: boolean
 ): Promise<School | undefined> {
   return db.transaction(async (tx) => {
+    const [currentSchool] = await tx
+      .select({ kioskClasspilotGroupId: schools.kioskClasspilotGroupId })
+      .from(schools)
+      .where(eq(schools.id, schoolId))
+      .limit(1)
+      .for("update");
+    if (!currentSchool) {
+      throw passpilotClassError("SCHOOL_NOT_FOUND", "School not found.", 404);
+    }
     await takePasspilotClassLock(tx, schoolId);
     const [settingsRow] = await tx
       .select({ source: settings.passpilotClassSource })
@@ -24460,16 +24643,6 @@ export async function updateCanonicalKioskClass(
         "PassPilot class configuration changed. Reload classes before saving kiosk settings.",
         409
       );
-    }
-
-    const [currentSchool] = await tx
-      .select({ kioskClasspilotGroupId: schools.kioskClasspilotGroupId })
-      .from(schools)
-      .where(eq(schools.id, schoolId))
-      .limit(1)
-      .for("update");
-    if (!currentSchool) {
-      throw passpilotClassError("SCHOOL_NOT_FOUND", "School not found.", 404);
     }
 
     const authorizationClassId = classId ?? currentSchool.kioskClasspilotGroupId;
@@ -24524,6 +24697,15 @@ export async function updateLegacyKioskClass(
   manager = false
 ): Promise<School | undefined> {
   return db.transaction(async (tx) => {
+    const [currentSchool] = await tx
+      .select({ kioskGradeId: schools.kioskGradeId })
+      .from(schools)
+      .where(eq(schools.id, schoolId))
+      .limit(1)
+      .for("update");
+    if (!currentSchool) {
+      throw passpilotClassError("SCHOOL_NOT_FOUND", "School not found.", 404);
+    }
     await takePasspilotClassLock(tx, schoolId);
     const [settingsRow] = await tx
       .select({ source: settings.passpilotClassSource })
@@ -24537,15 +24719,6 @@ export async function updateLegacyKioskClass(
         "PassPilot class configuration changed. Reload classes before saving kiosk settings.",
         409
       );
-    }
-    const [currentSchool] = await tx
-      .select({ kioskGradeId: schools.kioskGradeId })
-      .from(schools)
-      .where(eq(schools.id, schoolId))
-      .limit(1)
-      .for("update");
-    if (!currentSchool) {
-      throw passpilotClassError("SCHOOL_NOT_FOUND", "School not found.", 404);
     }
     if (gradeId) {
       const [grade] = await tx
@@ -25378,6 +25551,15 @@ export async function completePasspilotClassMigration(
   requireClean = false
 ): Promise<PasspilotClassMigrationInventory> {
   return db.transaction(async (tx) => {
+    const [lockedSchool] = await tx
+      .select({ id: schools.id })
+      .from(schools)
+      .where(eq(schools.id, schoolId))
+      .limit(1)
+      .for("update");
+    if (!lockedSchool) {
+      throw passpilotClassError("SCHOOL_NOT_FOUND", "School not found.", 404);
+    }
     await takePasspilotClassLock(tx, schoolId);
     if (!classModelAcknowledged) {
       throw passpilotClassError(

@@ -102,6 +102,34 @@ $script:EvidenceRootMarkerBytes = [Text.Encoding]::UTF8.GetBytes("schoolpilot-cl
 $script:ClassPilotReleaseTag = "v2.7.1"
 $script:ClassPilotMergeSha = "a3b096d6a74ab6979f4e4c656d75e2397eb8648f"
 $script:ClassPilotZipSha256 = "40fed2c455d5c50fe3a947d23e3798a0c81832a67e717a2767b62970c024307c"
+$script:ClassPilotExtensionId = "iggbfegfcjkfieoemeolfmfnapepalca"
+$script:LateSignInRequiredReleaseTag = "v2.7.9"
+$script:LateSignInRequiredExtensionId = "iggbfegfcjkfieoemeolfmfnapepalca"
+$script:LateSignInBlockedMergeShas = @(
+    "a3b096d6a74ab6979f4e4c656d75e2397eb8648f",
+    "7e3c129315d9e7c94ee4f6084e769e759a7e2b6a"
+)
+$script:LateSignInBlockedZipSha256s = @(
+    "40fed2c455d5c50fe3a947d23e3798a0c81832a67e717a2767b62970c024307c",
+    "cd2d9c26f989a64203c52f460a1366d642ea371d7cadbb68aec9ef9a16c1884e"
+)
+
+function Assert-LateSignInPilotReleaseEvidenceBound {
+    if ([string]$script:ClassPilotReleaseTag -cne $script:LateSignInRequiredReleaseTag) {
+        throw "late-signin-pilot requires release evidence rebound to the exact v2.7.9 clean-tag package."
+    }
+    if ([string]$script:ClassPilotExtensionId -cne $script:LateSignInRequiredExtensionId) {
+        throw "late-signin-pilot release evidence is not bound to the production ClassPilot extension ID."
+    }
+    if ([string]$script:ClassPilotMergeSha -cnotmatch '^[0-9a-f]{40}$' -or
+        [string]$script:ClassPilotMergeSha -cin $script:LateSignInBlockedMergeShas) {
+        throw "late-signin-pilot requires the exact final v2.7.9 merged extension commit."
+    }
+    if ([string]$script:ClassPilotZipSha256 -cnotmatch '^[0-9a-f]{64}$' -or
+        [string]$script:ClassPilotZipSha256 -cin $script:LateSignInBlockedZipSha256s) {
+        throw "late-signin-pilot requires the exact final v2.7.9 clean-tag ZIP SHA-256."
+    }
+}
 
 function Get-Sha256Text {
     param([Parameter(Mandatory = $true)][string]$Value)
@@ -293,6 +321,9 @@ function ConvertTo-RuntimeConfiguration {
         $pilotSchoolId = [string]$Profile.pilotSchoolId
         if ($pilotSchoolId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
             throw "The selected pilot profile requires one canonical UUID school ID."
+        }
+        if ($mode -ceq "late-signin-pilot") {
+            Assert-LateSignInPilotReleaseEvidenceBound
         }
     }
     elseif ($Profile.PSObject.Properties.Name -contains "pilotSchoolId") {
@@ -623,7 +654,8 @@ function Assert-SyntheticValidationEvidence {
     $evidence = $EvidenceSnapshot.Value
     $allowed = @(
         "schemaVersion", "validatedAt", "schoolPilotAppSha", "schoolPilotImageDigest",
-        "classPilotTag", "classPilotMergeSha", "classPilotZipSha256", "turnEvidenceSha256", "checks"
+        "classPilotTag", "classPilotMergeSha", "classPilotExtensionId", "classPilotZipSha256",
+        "turnEvidenceSha256", "checks"
     )
     Assert-ExactProperties -Value $evidence -Allowed $allowed -Trail "synthetic validation evidence"
     $present = @($evidence.PSObject.Properties.Name)
@@ -635,7 +667,7 @@ function Assert-SyntheticValidationEvidence {
     }
     foreach ($name in @(
         "validatedAt", "schoolPilotAppSha", "schoolPilotImageDigest", "classPilotTag",
-        "classPilotMergeSha", "classPilotZipSha256", "turnEvidenceSha256"
+        "classPilotMergeSha", "classPilotExtensionId", "classPilotZipSha256", "turnEvidenceSha256"
     )) {
         if ($evidence.$name -isnot [string]) { throw "Synthetic validation evidence is incomplete." }
     }
@@ -645,6 +677,7 @@ function Assert-SyntheticValidationEvidence {
         [string]$evidence.schoolPilotImageDigest -cne $ImageDigest -or
         [string]$evidence.classPilotTag -cne $script:ClassPilotReleaseTag -or
         [string]$evidence.classPilotMergeSha -cne $script:ClassPilotMergeSha -or
+        [string]$evidence.classPilotExtensionId -cne $script:ClassPilotExtensionId -or
         [string]$evidence.classPilotZipSha256 -cne $script:ClassPilotZipSha256 -or
         [string]$evidence.turnEvidenceSha256 -cne $TurnEvidenceSha256) {
         throw "Synthetic validation evidence does not bind the exact reviewed release and TURN evidence."

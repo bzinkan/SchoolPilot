@@ -441,6 +441,20 @@ test('late-sign-in restriction authoring is row-gated and command-specific', asy
     /commandSupportsLateSignInRestriction\(commandType, commandPayload\)[\s\S]{0,120}isStudentLateSignInRestrictionEligible\(student\)/,
     'signed-out students must be commandable only for persistent restriction commands',
   );
+  const genericCommandability = dashboard.slice(
+    dashboard.indexOf('const isStudentCommandable ='),
+    dashboard.indexOf('const isStudentServerSignOutEligible ='),
+  );
+  assert.doesNotMatch(
+    genericCommandability,
+    /lateSignInRestrictionSsoV1Enabled|signed_out|isStudentLateSignInRestrictionEligible/,
+    'a row-local capability must not make a signed-out student generically commandable',
+  );
+  assert.match(
+    dashboard,
+    /isStudentLateSignInRestrictionEligible = \(student\) => \([\s\S]{0,180}operatorEnabled: lateSignInRestrictionsEnabled/,
+    'signed-out restriction eligibility must fail closed on the aggregate exact-school gate',
+  );
   assert.match(
     dashboard,
     /selectableStudents[\s\S]{0,220}\[\.\.\.controllableStudents, \.\.\.lateSignInRestrictionStudents\]/,

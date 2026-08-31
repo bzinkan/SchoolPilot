@@ -30,6 +30,19 @@ Use the source-preserving schema 4 profiles with
 school UUID. `late-signin-off` preserves the registry while setting both the
 kill switch and rollout entry off.
 
+The deployment helper intentionally rejects `late-signin-pilot` until the
+reviewed ClassPilot evidence is bound to all four final identities: tag
+`v2.7.9`, the merged extension commit, production extension ID
+`iggbfegfcjkfieoemeolfmfnapepalca`, and the clean-tag ZIP SHA-256. The
+checked-in tag, merge SHA, and ZIP SHA-256 continue to identify the last
+completed release until the final `v2.7.9` tag is corrected and a clean tag
+checkout produces the retained Store ZIP. Rebind the tag, merge SHA, extension
+ID, and ZIP SHA-256 together only after that package exists; never insert a
+provisional commit or hash. The helper explicitly rejects both the prematurely
+tagged auth-only commit and its obsolete ZIP hash. Synthetic evidence must
+repeat all four exact values. The `late-signin-off` rollback profile remains
+usable before and after rebinding.
+
 The older `student-gate-global-on` compatibility profile remains accepted by
 the deployment tool for prior rollout recovery. It is not authorized for this
 2.7.9 single-school deployment. Neither student-gate presence nor late-sign-in
@@ -39,11 +52,14 @@ delivery may be enabled globally.
 
 1. Deploy the API and web application with both new capabilities off.
 2. Confirm API, worker, Redis, and frontend health with public 2.7.8 clients.
-3. Publish 2.7.9 only after controlled-Chromebook acceptance.
-4. Wait until every recently active managed Chromebook reports 2.7.9 and raw
+3. After the final tag is packaged from a clean checkout, rebind the deployment
+   helper's ClassPilot tag, merge SHA, extension ID, and ZIP SHA-256 and
+   regenerate the matching reviewed evidence.
+4. Publish 2.7.9 only after controlled-Chromebook acceptance.
+5. Wait until every recently active managed Chromebook reports 2.7.9 and raw
    `studentAuthGatePresenceV1` and `lateSignInRestrictionSsoV1` capabilities.
-5. Enable `student-gate-pilot` for the exact school and complete its pilot.
-6. Enable `late-signin-pilot` for the same exact school and observe a normal
+6. Enable `student-gate-pilot` for the exact school and complete its pilot.
+7. Enable `late-signin-pilot` for the same exact school and observe a normal
    school day.
 
 Unknown, offline, stale, and older bindings remain withheld. A raw capability
@@ -55,17 +71,23 @@ binding.
 
 Run `late-signin-off` before changing any extension or backend deployment. The
 off profile stops new offline authoring, deferred delivery, and deferred ACK
-processing. Durable deferred-origin provenance remains until the restriction
-is explicitly cleared or expires. Do not deploy backend code that predates the
-feature while stamped states remain. After 2.7.9 is published, extension repair
+processing. Explicit clear removes deferred-origin provenance. Effective
+expiry leaves that provenance as immutable audit history, but the expired row
+serializes only an empty restriction revision and no longer counts as a
+rollback blocker. Do not deploy backend code that predates the feature while
+unexpired stamped states remain. After 2.7.9 is published, extension repair
 requires a higher Chrome Web Store version, normally 2.7.10.
 
 Use the school-admin `GET /api/classpilot/late-signin-rollout-status` response
 as the rollback backlog gauge. `stampedStateCount` is read directly from
-durable control state and contains no student identifiers. A pre-feature
+durable control state, excludes effectively expired top-level stamps, and
+contains no student identifiers. A pre-feature
 backend is eligible only after the late-sign-in gate is off and the response
 reports both `stampedStateCount: 0` and `safeForBackendRollback: true`;
 hot-path event counts are not proof of a zero backlog.
-The count includes both top-level deferred state and deferred provenance nested
-under Coverage's `restorableClassState`, so an active Coverage handoff cannot
-produce a false zero.
+The count includes deferred provenance nested under Coverage's
+`restorableClassState` even after the Coverage row expires, because lifecycle
+restoration can still copy that state into a live class with a fresh expiry.
+That nested stamp blocks rollback until Coverage lifecycle restores or clears
+it. Null top-level expiry metadata remains fail-closed and continues to count
+until an explicit clear supplies a safe terminal state.

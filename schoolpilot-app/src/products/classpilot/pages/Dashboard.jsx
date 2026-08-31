@@ -90,6 +90,7 @@ import {
   commandSupportsLateSignInRestriction,
   deriveDashboardCapabilities,
   domainRestrictionMessageForStudents,
+  effectiveStudentRestrictions,
   exactTabCloseCapability,
   flightPathApplyCapability,
   isLateSignInRestrictionTarget,
@@ -106,6 +107,7 @@ import {
   sessionFabSettingsPayload,
   tabSelectionKey,
   toolbarScreenCommand,
+  uniqueStudentsById,
 } from '../lib/dashboardCommandContext';
 import {
   className as scheduleClassName,
@@ -1948,9 +1950,7 @@ export default function Dashboard() {
     const display = studentView === 'class'
       ? monitoringDisplayFor(student)
       : deriveStudentMonitoringDisplay(student, freshnessNowMs);
-    const lateSignInCommandable = display.kind === 'signed_out'
-      && student?.lateSignInRestrictionSsoV1Enabled === true;
-    return display.telemetryCurrent || lateSignInCommandable || (
+    return display.telemetryCurrent || (
       allowSafetyUnlock
       && student?.screenLocked === true
       && studentSupportsCapability(student, 'screenOnlyUnlockV1')
@@ -2897,7 +2897,7 @@ export default function Dashboard() {
     && !subgroupSelectionReady;
   const selectableStudents = dashboardCapabilities.canSelectStudents && !subgroupCommandsDisabled
     ? (studentView === "class"
-        ? [...controllableStudents, ...lateSignInRestrictionStudents]
+        ? uniqueStudentsById([...controllableStudents, ...lateSignInRestrictionStudents])
         : filteredStudents)
     : EMPTY_LIST;
 
@@ -4682,8 +4682,10 @@ export default function Dashboard() {
             {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !exactSelectedTargetsResolved || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={exactSelectedTargetsResolved ? 'Set a waypoint: hold selected students at their current page or a specific domain' : 'Select one or more students first'} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Set Waypoint</Button>}
             {dashboardCapabilities.allows('unlock-screen') && <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !selectedTargetsSupportScreenOnlyUnlock || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={!exactSelectedUnlockTargetsResolved ? 'Select one or more students first' : selectedTargetsSupportScreenOnlyUnlock ? 'Clear the waypoint while preserving Flight Paths and other restrictions' : 'ClassPilot extension update required for every selected student'} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />Clear Waypoint</Button>}
             {dashboardCapabilities.allows('apply-flight-path') && <Button size="sm" variant="outline" onClick={() => setShowApplyFlightPathDialog(true)} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive} data-testid="button-apply-flight-path" className="text-purple-600 dark:text-purple-400"><Layers className="h-4 w-4 mr-2" />Apply Flight Path</Button>}
+            {dashboardCapabilities.allows('remove-flight-path') && <Button size="sm" variant="outline" onClick={() => removeFlightPathMutation.mutate({})} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || removeFlightPathMutation.isPending} data-testid="button-remove-flight-path" className="text-purple-600 dark:text-purple-400"><X className="h-4 w-4 mr-2" />Remove Flight Path</Button>}
             {studentView === "class" && <Button size="sm" variant="outline" onClick={() => setShowFlightPathViewerDialog(true)} disabled={signOutOnlySelectionActive} data-testid="button-flight-path-status" className="text-purple-600 dark:text-purple-400"><Eye className="h-4 w-4 mr-2" />Flight Path Status</Button>}
             {dashboardCapabilities.allows('apply-block-list') && <Button size="sm" variant="outline" onClick={() => setShowApplyBlockListDialog(true)} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive} data-testid="button-apply-block-list" className="text-red-600 dark:text-red-400"><ShieldBan className="h-4 w-4 mr-2" />Apply Block List</Button>}
+            {dashboardCapabilities.allows('remove-block-list') && <Button size="sm" variant="outline" onClick={() => removeBlockListMutation.mutate({})} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || removeBlockListMutation.isPending} data-testid="button-remove-block-list" className="text-red-600 dark:text-red-400"><X className="h-4 w-4 mr-2" />Remove Block List</Button>}
             {studentView === "class" && <Button size="sm" variant="outline" onClick={() => setShowBlockListViewerDialog(true)} disabled={signOutOnlySelectionActive} data-testid="button-block-list-status" className="text-red-600 dark:text-red-400"><Shield className="h-4 w-4 mr-2" />Block List Status</Button>}
             {studentView === "class" && (
               <Button
@@ -5664,17 +5666,18 @@ export default function Dashboard() {
               <tbody>
                 {students.map((student) => {
                   const lateSignInTarget = isStudentLateSignInRestrictionEligible(student);
+                  const effectiveRestrictions = effectiveStudentRestrictions(student);
                   const canClearWaypoint = lateSignInTarget
                     || studentSupportsCapability(student, 'screenOnlyUnlockV1');
                   return (
                     <tr key={student.studentId} className="border-b" data-testid={`row-student-${student.studentId}`}>
                       <td className="p-2 text-sm">{student.studentName}</td>
-                      <td className="p-2">{student.flightPathActive && student.activeFlightPathName ? <Badge variant="secondary" className="text-xs" data-testid={`badge-flight-path-${student.studentId}`}>{student.activeFlightPathName}</Badge> : <span className="text-xs text-muted-foreground">No flight path</span>}</td>
+                      <td className="p-2">{effectiveRestrictions.flightPathActive ? <Badge variant="secondary" className="text-xs" data-testid={`badge-flight-path-${student.studentId}`}>{effectiveRestrictions.flightPathName || 'Active Flight Path'}</Badge> : <span className="text-xs text-muted-foreground">No flight path</span>}</td>
                       <td className="p-2"><Badge variant={student.status === 'online' ? 'default' : student.status === 'idle' ? 'secondary' : 'outline'} className="text-xs" data-testid={`badge-status-${student.studentId}`}>{student.status}</Badge></td>
                       <td className="p-2">
-                        {student.flightPathActive && (student.isLoggedIn || lateSignInTarget) ? (
+                        {effectiveRestrictions.flightPathActive && (student.isLoggedIn || lateSignInTarget) ? (
                           <Button size="sm" variant="ghost" onClick={() => handleRemoveFlightPath(student.studentId)} disabled={removeFlightPathMutation.isPending} data-testid={`button-remove-flight-path-${student.studentId}`} className="h-7 px-2 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"><X className="h-3 w-3 mr-1" />Remove</Button>
-                        ) : student.screenLocked && (student.isLoggedIn || lateSignInTarget) ? (
+                        ) : effectiveRestrictions.screenLockActive && (student.isLoggedIn || lateSignInTarget) ? (
                           <Button size="sm" variant="outline" onClick={() => unlockScreenMutation.mutate({ studentIds: [student.studentId] })} disabled={unlockScreenMutation.isPending || !canClearWaypoint} title={canClearWaypoint ? 'Clear the waypoint (screen only)' : 'ClassPilot extension 2.6.0 or newer is required'} data-testid={`button-unlock-screen-${student.studentId}`} className="h-7 px-2 text-xs"><Unlock className="h-3 w-3 mr-1" />{canClearWaypoint ? 'Clear Waypoint' : 'Update Required'}</Button>
                         ) : <span className="text-xs text-muted-foreground">&mdash;</span>}
                       </td>

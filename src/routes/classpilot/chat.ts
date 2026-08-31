@@ -12,7 +12,6 @@ import {
   raiseAuthorizedClasspilotStudentHand,
   lowerAuthorizedClasspilotStudentHand,
   createTeacherChatReplyWithDelivery,
-  markTeacherChatDeliveryAttempt,
   acknowledgeTeacherChatDelivery,
   getPollsBySession,
   getPollById,
@@ -25,10 +24,12 @@ import {
   authorizeClasspilotTeacherCloseChat,
   getActiveSessionsForStudents,
   isAuthorizedClasspilotSessionStaff,
+  withClasspilotStudentControlDeliveryAuthority,
 } from "../../services/storage.js";
 import {
   broadcastToStaffSessionLocal,
   sendToDeviceLocal,
+  sendToStudentBindingLocal,
 } from "../../realtime/ws-broadcast.js";
 import { publishWS } from "../../realtime/ws-redis.js";
 import {
@@ -419,26 +420,42 @@ router.post("/teacher/reply", ...staffAuth, async (req, res, next) => {
     const activeSessions = await getActiveSessionsForStudents(schoolId, [targetStudentId]);
     const targetBinding = activeSessions.find((row) => row.studentId === targetStudentId);
 
-    if (targetBinding && await markTeacherChatDeliveryAttempt({
-      schoolId,
-      chatMessageId: msg.id,
-      studentId: targetStudentId,
-      studentSessionId: targetBinding.id,
-      deviceId: targetBinding.deviceId,
-    })) {
-      const replyPayload = {
-        type: "teacher-message",
-        _msgId: msg.id,
-        chatMessageId: msg.id,
-        messageId: msg.id,
-        sessionId: session.id,
+    if (targetBinding) {
+      const exactTarget = {
+        kind: "student-binding" as const,
+        schoolId,
         studentId: targetStudentId,
         studentSessionId: targetBinding.id,
-        message: content,
-        fromName: "Teacher",
+        deviceId: targetBinding.deviceId,
       };
-      sendToDeviceLocal(schoolId, targetBinding.deviceId, replyPayload);
-      await publishWS({ kind: "device", schoolId, deviceId: targetBinding.deviceId }, replyPayload);
+      const immediateDelivery = await withClasspilotStudentControlDeliveryAuthority(
+        {
+          ...exactTarget,
+          claimTeacherChatDeliveries: true,
+          limit: 20,
+        },
+        () => undefined,
+        (claimed) => claimed.map(({ message: claimedMessage }) => {
+          const replyPayload = {
+            type: "teacher-message",
+            _msgId: claimedMessage.id,
+            chatMessageId: claimedMessage.id,
+            messageId: claimedMessage.id,
+            sessionId: claimedMessage.sessionId,
+            studentId: targetStudentId,
+            studentSessionId: targetBinding.id,
+            message: claimedMessage.content,
+            fromName: "Teacher",
+          };
+          sendToStudentBindingLocal(exactTarget, replyPayload);
+          // A delayed cross-process publish is safe because every receiving
+          // task revalidates this durable exact binding before local fan-out.
+          return publishWS(exactTarget, replyPayload);
+        })
+      );
+      if (immediateDelivery.authorized) {
+        await Promise.all(immediateDelivery.value);
+      }
     }
 
     return res.status(202).json({ message: publicChatMessage(msg), queued: true });

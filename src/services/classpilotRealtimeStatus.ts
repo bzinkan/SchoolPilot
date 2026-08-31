@@ -59,6 +59,7 @@ const realtimeMetricsTimer = setInterval(() => {
 realtimeMetricsTimer.unref?.();
 
 type RedisCommand = (args: string[]) => Promise<unknown | undefined>;
+let commandForTests: RedisCommand | undefined;
 
 export type ClasspilotActivityState = "active" | "idle" | "off" | "unknown";
 
@@ -1135,7 +1136,16 @@ export function createClasspilotRealtimeStatusStore(
   return { write, patchClassification, markSignedOut, readBatch, readLocal, resetLocal };
 }
 
-const realtimeStatusStore = createClasspilotRealtimeStatusStore();
+const realtimeStatusStore = createClasspilotRealtimeStatusStore((args) => (
+  commandForTests ? commandForTests(args) : boundedRedisCommand(args)
+));
+
+/** Injects a deterministic shared-cache transport for integration tests. */
+export function setClasspilotRealtimeStatusCommandForTests(
+  command: RedisCommand | undefined
+): void {
+  commandForTests = command;
+}
 
 export const writeClasspilotRealtimeStatus = realtimeStatusStore.write;
 export const patchClasspilotRealtimeClassification = realtimeStatusStore.patchClassification;

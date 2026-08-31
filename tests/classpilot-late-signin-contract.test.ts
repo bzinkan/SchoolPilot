@@ -96,6 +96,7 @@ test("CURRENT_URL remains an exact live lookup and never durable command metadat
 
 test("persistence serializes transfer races and rejects changed or expired bindings", () => {
   const storage = source("../src/services/storage.ts");
+  const dispatcher = source("../src/services/classpilotCommandDispatcher.ts");
   const persist = section(
     storage,
     "export async function persistClasspilotControlCommandState",
@@ -121,13 +122,24 @@ test("persistence serializes transfer races and rejects changed or expired bindi
       writer.indexOf(".from(devices)") < writer.indexOf(".from(studentSessions)"),
       "writers must keep device-before-session lock ordering",
     );
-    assert.match(writer, /manualLeaseExpiresAt} > now\(\)/);
+    assert.match(writer, /manualLeaseExpiresAt} > clock_timestamp\(\)/);
     assert.match(writer, /expectation\.kind === "signed_out"[\s\S]*!active/);
     assert.match(
       writer,
       /active\.schoolId === options\.(?:studentSnapshots\.)?schoolId[\s\S]*active\.studentSessionId === expectation\.studentSessionId[\s\S]*active\.deviceId === expectation\.deviceId/,
     );
+    assert.ok(
+      writer.lastIndexOf('isClasspilotCapabilityActive(\n        "lateSignInRestrictionSsoV1"')
+        > writer.indexOf("activeByStudent"),
+      "the operator gate must be rechecked after locked binding revalidation",
+    );
+    assert.match(writer, /lateSignInGateRequiredStudentIds/);
   }
+  assert.equal(
+    dispatcher.match(/lateSignInGateRequiredStudentIds: \[\.\.\.\(options\.deferredStudentIds \?\? \[\]\)\]/g)?.length,
+    2,
+    "class and Coverage persistence must identify every gate-required deferred target",
+  );
   assert.match(persist, /rejectedStudentIds\.push\(studentId\)/);
   assert.match(persist, /acceptedStudentIds\.length === 0[\s\S]*rejectedStudentIds/);
   assert.match(unavailable, /status: "unavailable"/);
@@ -150,7 +162,7 @@ test("deferred ACK requires gate, capability, exact active binding, and a live m
   assert.match(ack, /active_session\.student_id = \$\{options\.studentId\}/);
   assert.match(ack, /active_session\.device_id = \$\{options\.deviceId\}/);
   assert.match(ack, /active_device\.school_id = \$\{options\.schoolId\}/);
-  assert.match(ack, /active_session\.manual_lease_expires_at > now\(\)/);
+  assert.match(ack, /active_session\.manual_lease_expires_at > clock_timestamp\(\)/);
   assert.doesNotMatch(ack, /delete\([^)]*lateSignInDelivery/);
 
   const devices = source("../src/routes/classpilot/devices.ts");
@@ -193,22 +205,27 @@ test("mixed-version delivery and every unauthenticated fallback hide deferred re
   assert.match(wsRequest, /acceptedCapabilities: client\.acceptedCapabilities \?\? \[\]/);
   assert.match(
     wsRequest,
-    /finalSessions = await getActiveSessionsForStudents[\s\S]*exactBindingStillActive[\s\S]*if \(!exactBindingStillActive\) return \{ active: false as const, state: null \}/,
+    /withClasspilotStudentControlDeliveryAuthority\([\s\S]*getClasspilotStudentControlState\([\s\S]*transactionDb[\s\S]*\(_claimed, delivered\) => \{[\s\S]*ws\.send\(JSON\.stringify\(classpilotClassroomStatePushFrame/,
   );
-  assert.match(wsRequest, /controlRevision: reconciliation\.state\?\.revision \?\? 0/);
+  assert.match(wsRequest, /controlRevision: delivered\?\.revision \?\? 0/);
+  assert.match(wsRequest, /classroomState: delivered/);
+  assert.doesNotMatch(wsRequest, /getActiveSessionsForStudents/);
 
-  assert.match(lifecycle, /classpilotControlStateHasLateSignInOrigin\(state\.desiredState\)[\s\S]*return/);
+  assert.match(
+    lifecycle,
+    /current\.revision !== state\.revision[\s\S]*classpilotControlStateHasLateSignInOrigin\([\s\S]*isClasspilotCapabilityActive\([\s\S]*lateSignInRestrictionSsoV1[\s\S]*requiredCapability[\s\S]*serializeClasspilotStudentControlStateForDelivery/,
+  );
   assert.match(
     delivery,
-    /state && classpilotControlStateHasLateSignInOrigin\(state\.desiredState\)[\s\S]*continue/,
+    /classpilotControlStateHasLateSignInOrigin\(state\.desiredState\)[\s\S]*isClasspilotCapabilityActive\([\s\S]*lateSignInRestrictionSsoV1[\s\S]*requiredCapability[\s\S]*serializeClasspilotStudentControlStateForDelivery/,
   );
   assert.match(
     websocket,
-    /fab: \{[\s\S]*\.\.\.bootstrap\.fab,[\s\S]*ownershipRevision: classroomState\?\.revision \?\? 0/,
+    /fab: \{[\s\S]*\.\.\.prepared\.fab,[\s\S]*ownershipRevision: prepared\.classroomState\?\.revision \?\? 0/,
   );
   assert.match(
     devices,
-    /deliveredFab = fab[\s\S]*ownershipRevision: classroomState\?\.revision \?\? 0/,
+    /deliveredFab: finalFab[\s\S]*ownershipRevision: finalClassroomState\?\.revision \?\? 0/,
   );
   assert.match(
     websocket,
@@ -236,7 +253,7 @@ test("mixed-version delivery and every unauthenticated fallback hide deferred re
   );
   assert.match(
     dispatcher,
-    /deferredIds\.has\(target\.studentId\) && !classroomStateByStudent\.has\(target\.studentId\)[\s\S]*continue/,
+    /deferredIds\.has\(target\.studentId\) && !classroomStateByStudent\.has\(target\.studentId\)[\s\S]*return null/,
   );
   assert.match(dispatcher, /delivered\.withheld[\s\S]*lateSignInDeliveryWithheld/);
 });
@@ -256,6 +273,10 @@ test("registration responses return the exact accepted-capability negotiation us
 test("deferred command frames and WebSocket auth revalidate exact binding authority", () => {
   const dispatcher = source("../src/services/classpilotCommandDispatcher.ts");
   const websocket = source("../src/realtime/websocket.ts");
+  const websocketBroadcast = source("../src/realtime/ws-broadcast.ts");
+  const websocketRedis = source("../src/realtime/ws-redis.ts");
+  const chat = source("../src/routes/classpilot/chat.ts");
+  const storage = source("../src/services/storage.ts");
   const devices = source("../src/routes/classpilot/devices.ts");
   const frame = section(
     dispatcher,
@@ -273,7 +294,7 @@ test("deferred command frames and WebSocket auth revalidate exact binding author
 
   assert.match(
     frame,
-    /classroomState\?\.deliveryContext\?\.lateSignInRestrictionSso === true[\s\S]*exactBinding: classpilotControlStateExactBinding\([\s\S]*controlRevision: classroomState\.revision/,
+    /delivery\.requiredCapability === "lateSignInRestrictionSsoV1"[\s\S]*exactBinding: classpilotControlStateExactBinding\([\s\S]*controlRevision: classroomState\.revision/,
   );
   assert.match(
     frame,
@@ -285,26 +306,129 @@ test("deferred command frames and WebSocket auth revalidate exact binding author
     /command:\s*\{[\s\S]*\.\.\.deferredExactBindingEnvelope/,
     "the exact binding has one canonical outer envelope",
   );
-  assert.match(studentAuth, /const finalAuthority = await runWithTenantContext/);
-  assert.match(
-    studentAuth,
-    /beforeClaim = await resolveActiveStudentTokenSession\(payload\)[\s\S]*claimDueTeacherChatDeliveriesForBinding[\s\S]*afterClaim = await resolveActiveStudentTokenSession\(payload\)/,
+  assert.equal(
+    studentAuth.match(/runWithTenantContext\(\{ schoolId \}/g)?.length,
+    1,
+    "student WebSocket bootstrap must use one tenant lease",
+  );
+  const bootstrapFence = section(
+    storage,
+    "export async function withClasspilotStudentControlDeliveryAuthority",
+    "export async function withClasspilotStudentWebSocketBootstrapAuthority",
+  );
+  assert.equal(
+    bootstrapFence.match(/hasExactClasspilotTelemetryBinding\(options, transactionDb\)/g)?.length,
+    2,
+    "bootstrap authority must validate the exact binding before work and again before delivery",
   );
   assert.ok(
-    studentAuth.indexOf("if (!finalAuthority)") < studentAuth.indexOf("authenticateWsClient(ws"),
-    "final exact authority must be checked before socket authentication",
+    bootstrapFence.indexOf("lockClasspilotStudentControlAuthorities")
+      < bootstrapFence.indexOf("prepareAuthorized(transactionDb)"),
+    "state preparation must occur under the shared transfer/control lock",
   );
+  assert.ok(
+    bootstrapFence.indexOf("prepareAuthorized(transactionDb)")
+      < bootstrapFence.lastIndexOf("hasExactClasspilotTelemetryBinding(options, transactionDb)"),
+    "database-clock binding authority must be rechecked after preparation",
+  );
+  assert.ok(
+    bootstrapFence.lastIndexOf("hasExactClasspilotTelemetryBinding(options, transactionDb)")
+      < bootstrapFence.indexOf("onAuthorized(claimed, prepared)"),
+    "delivery must occur only after the final exact-binding check",
+  );
+  assert.match(
+    studentAuth,
+    /withClasspilotStudentWebSocketBootstrapAuthority\([\s\S]*getClasspilotStudentControlState\([\s\S]*transactionDb[\s\S]*getClasspilotScreenshotAuthorityProjection\([\s\S]*transactionDb[\s\S]*\(teacherReplies, prepared\) => \{[\s\S]*authenticateWsClient\(ws[\s\S]*type: "auth-success"[\s\S]*type: "teacher-message"/,
+  );
+  assert.ok(
+    studentAuth.indexOf("withClasspilotStudentWebSocketBootstrapAuthority")
+      < studentAuth.indexOf("authenticateWsClient(ws"),
+    "socket registration must be inside the transaction-fenced authority callback",
+  );
+  assert.match(studentAuth, /studentBootstrapAuthenticated[\s\S]*removeWsClient\(ws\)/);
   assert.doesNotMatch(staleHeartbeat, /classroomState/);
   assert.doesNotMatch(staleHeartbeat, /screenshotPolicy/);
   const finalHeartbeat = section(
     devices,
-    "const deliveredFab = fab",
-    "// --- Return planStatus",
+    "const finalDelivery = await runWithTenantContext",
+    "return finalDelivery.value;",
   );
   assert.match(
     finalHeartbeat,
-    /getActiveSessionsForStudents\(schoolId, \[studentId\]\)[\s\S]*session\.id === studentSessionId[\s\S]*session\.deviceId === deviceId[\s\S]*if \(!finalExactBindingActive\)/,
+    /withClasspilotStudentControlDeliveryAuthority\([\s\S]*getClasspilotStudentControlState\([\s\S]*transactionDb[\s\S]*\(_claimed, prepared\) => \{[\s\S]*return res\.json\([\s\S]*classroomState: prepared\.classroomState/,
   );
+  assert.match(finalHeartbeat, /controlRevision: prepared\.classroomState\?\.revision \?\? 0/);
+  assert.doesNotMatch(finalHeartbeat, /getActiveSessionsForStudents/);
+
+  const teacherReplyRecovery = section(
+    devices,
+    "const teacherReplyCheckKey",
+    "// All work after the initial heartbeat transaction",
+  );
+  assert.match(
+    teacherReplyRecovery,
+    /withClasspilotStudentWebSocketBootstrapAuthority\([\s\S]*\(teacherReplies\) => teacherReplies\.map[\s\S]*sendToStudentBindingLocal\(exactTarget, replyPayload\)[\s\S]*publishWS\(exactTarget, replyPayload\)/,
+  );
+  assert.match(teacherReplyRecovery, /kind: "student-binding" as const/);
+  assert.doesNotMatch(teacherReplyRecovery, /claimDueTeacherChatDeliveriesForBinding/);
+  assert.match(
+    websocketRedis,
+    /kind: "student-binding";[\s\S]*studentId: string;[\s\S]*studentSessionId: string;[\s\S]*deviceId: string;[\s\S]*requiredCapability\?: "lateSignInRestrictionSsoV1";/,
+  );
+  const redisDeviceCase = section(websocket, 'case "device":', 'case "student-binding":');
+  assert.match(
+    redisDeviceCase,
+    /msgType === "teacher-message"[\s\S]*Dropping teacher message without an exact student binding[\s\S]*deliverClasspilotStudentBindingRedisMessage/,
+  );
+  assert.doesNotMatch(redisDeviceCase, /sendToStudentBindingLocal/);
+  const redisStudentBindingCase = section(
+    websocket,
+    'case "student-binding":',
+    'case "student-disconnect":',
+  );
+  assert.match(
+    redisStudentBindingCase,
+    /deliverClasspilotStudentBindingRedisMessage\(target, message\)/,
+  );
+  assert.doesNotMatch(redisStudentBindingCase, /sendToStudentBindingLocal/);
+  assert.match(
+    websocketBroadcast,
+    /sendToStudentBindingLocal[\s\S]*client\.deviceId === binding\.deviceId[\s\S]*client\.studentId === binding\.studentId[\s\S]*client\.studentSessionId === binding\.studentSessionId/,
+  );
+  assert.match(
+    websocket,
+    /deliverClasspilotStudentBindingRedisMessage[\s\S]*withClasspilotStudentControlDeliveryAuthority\([\s\S]*sendToStudentBindingLocal\(target, message,[\s\S]*requiredCapability: target\.requiredCapability/,
+    "cross-process exact-binding envelopes require durable receiver-side revalidation",
+  );
+  const immediateReply = section(
+    chat,
+    'router.post("/teacher/reply"',
+    '// DELETE /api/classpilot/teacher/messages/:messageId',
+  );
+  assert.match(
+    immediateReply,
+    /withClasspilotStudentControlDeliveryAuthority\([\s\S]*claimTeacherChatDeliveries: true[\s\S]*sendToStudentBindingLocal\(exactTarget, replyPayload\)[\s\S]*publishWS\(exactTarget, replyPayload\)/,
+    "immediate teacher replies must claim and send under exact binding authority",
+  );
+  assert.doesNotMatch(immediateReply, /markTeacherChatDeliveryAttempt|sendToDeviceLocal/);
+
+  const commandDelivery = section(
+    dispatcher,
+    "const authorizedDeliveries = await Promise.all",
+    "const redisPublishStartedAt",
+  );
+  assert.match(
+    commandDelivery,
+    /withClasspilotStudentControlDeliveryAuthority\([\s\S]*sendToStudentBindingLocal\(exactTarget, message,[\s\S]*requiredCapability: exactTarget\.requiredCapability/,
+    "post-persistence command delivery must remain inside exact binding authority",
+  );
+  assert.match(commandDelivery, /kind: "student-binding" as const/);
+  assert.match(
+    commandDelivery,
+    /deferredIds\.has\(target\.studentId\)[\s\S]*requiredCapability: "lateSignInRestrictionSsoV1"/,
+  );
+  assert.match(commandDelivery, /delivery\.authorized[\s\S]*remotePublications\.push/);
+  assert.doesNotMatch(commandDelivery, /sendToDeviceLocal|kind: "device"/);
 });
 
 test("Dashboard rollback projection cannot masquerade a deferred revision as applied realtime state", () => {
@@ -357,6 +481,14 @@ test("clear-before-sign-in, expiry, and identifier-free rollback metrics have ac
   assert.match(
     storage,
     /countClasspilotLateSignInStampedStates[\s\S]*lateSignInDelivery[\s\S]*restorableClassState,desiredState,lateSignInDelivery,origin[\s\S]*deferred/,
+  );
+  assert.match(
+    storage,
+    /countClasspilotLateSignInStampedStates[\s\S]*scheduledEndAt}[\s\S]*clock_timestamp\(\)[\s\S]*hardExpiresAt}[\s\S]*clock_timestamp\(\)/,
+  );
+  assert.match(
+    storage,
+    /countClasspilotLateSignInStampedStates[\s\S]*restorableClassState,desiredState,lateSignInDelivery,origin[\s\S]*deferred/,
   );
   assert.match(
     monitoring,

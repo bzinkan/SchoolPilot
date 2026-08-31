@@ -31,6 +31,7 @@ import {
 } from "../../services/classpilotRealtimeStatus.js";
 import { isClasspilotCapabilityActive } from "../../services/classpilotProtocol.js";
 import { classpilotCurrentPageSignedOutSkipReason } from "../../services/classpilotCurrentPage.js";
+import { classpilotCommandDeliveryPolicy } from "../../services/classpilotCommandDelivery.js";
 
 const router = Router();
 
@@ -191,7 +192,15 @@ async function resolveTargets(req: Request, res: Response, body: any): Promise<R
       studentSessionId: available ? studentSession!.id : null,
       deviceId: available ? studentSession!.deviceId : null,
       available,
-      stateAuthorized: available || deferredAuthorized,
+      // Late-sign-in gating governs persistent desired-state changes. Preserve
+      // the established authority of non-persistent commands (notably durable
+      // teacher messages) even when their device delivery is currently
+      // unavailable; their own delivery policy decides whether anything is
+      // queued. Persistent controls remain fail-closed unless the exact device
+      // is reachable or the signed-out target passed the school-scoped gate.
+      stateAuthorized: available
+        || classpilotCommandDeliveryPolicy(commandType) !== "persistent_control"
+        || deferredAuthorized,
       lateSignInEligible: deferredAuthorized,
       unavailableReason: available
         ? undefined

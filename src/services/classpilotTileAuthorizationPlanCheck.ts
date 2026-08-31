@@ -815,7 +815,7 @@ const TRANSACTIONAL_PLAN_SESSION_POSTURE_SQL = `
           AND active_session.ended_at IS NULL
           AND (
             active_session.auth_kind <> 'manual_shared'
-            OR active_session.manual_lease_expires_at > now()
+            OR active_session.manual_lease_expires_at > clock_timestamp()
           )
           AND active_session.student_id = requested.student_id
           AND active_session.device_id = requested.device_id
@@ -832,7 +832,7 @@ const TRANSACTIONAL_PLAN_SESSION_POSTURE_SQL = `
             active_session.ended_at IS NULL
             AND (
               active_session.auth_kind <> 'manual_shared'
-              OR active_session.manual_lease_expires_at > now()
+              OR active_session.manual_lease_expires_at > clock_timestamp()
             )
             AND active_session.student_id = requested.student_id
             AND active_session.device_id = requested.device_id
@@ -871,7 +871,7 @@ const SEED_STUDENT_SESSIONS_SQL = `
           AND active_session.ended_at IS NULL
           AND (
             active_session.auth_kind <> 'manual_shared'
-            OR active_session.manual_lease_expires_at > now()
+            OR active_session.manual_lease_expires_at > clock_timestamp()
           )
           AND active_session.student_id = requested.student_id
           AND active_session.device_id = requested.device_id
@@ -888,7 +888,7 @@ const SEED_STUDENT_SESSIONS_SQL = `
             active_session.ended_at IS NULL
             AND (
               active_session.auth_kind <> 'manual_shared'
-              OR active_session.manual_lease_expires_at > now()
+              OR active_session.manual_lease_expires_at > clock_timestamp()
             )
             AND active_session.student_id = requested.student_id
             AND active_session.device_id = requested.device_id
@@ -1101,7 +1101,7 @@ function modeJoin(mode: ClasspilotTilePlanMode): string {
        AND student_session.ended_at IS NULL
        AND (
          student_session.auth_kind <> 'manual_shared'
-         OR student_session.manual_lease_expires_at > now()
+         OR student_session.manual_lease_expires_at > clock_timestamp()
        )
       INNER JOIN devices AS device
         ON device.device_id = student_session.device_id

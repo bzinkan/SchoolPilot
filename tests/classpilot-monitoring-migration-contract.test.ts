@@ -214,7 +214,11 @@ test("control snapshots and legacy classroom states share one transaction bounda
   const storage = await readFile(new URL("src/services/storage.ts", root), "utf8");
   assert.match(storage, /export async function persistClasspilotControlCommandState/);
   assert.match(storage, /dbInstance\.transaction\(async \(tx\)/);
-  assert.match(storage, /clearClasspilotClassroomStates\(clear, transactionDb\)/);
+  assert.match(storage, /const acceptedSet = new Set\(acceptedStudentIds\)/);
+  assert.match(
+    storage,
+    /for \(const clear of options\.classroomStateClears \|\| \[\]\) \{[\s\S]*?studentIds: \(clear\.studentIds \|\| \[\]\)\.filter\(\(studentId\) => acceptedSet\.has\(studentId\)\)[\s\S]*?\}, transactionDb\);/
+  );
   assert.match(storage, /upsertClasspilotClassroomStates\([\s\S]*transactionDb/);
   assert.match(storage, /replaceClasspilotStudentControlSnapshots\([\s\S]*transactionDb/);
   assert.match(storage, /\.from\(teachingSessions\)[\s\S]*\.for\("update"\)/);

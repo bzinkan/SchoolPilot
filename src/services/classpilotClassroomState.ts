@@ -418,7 +418,9 @@ export function serializeClasspilotStudentControlStateForDelivery(options: {
   return {
     // An expired stamped row still reconciles an exact capable client to the
     // empty revision, but it must not trigger the cold Clever/SSO landing flow.
-    // Provenance remains durable for rollback evidence until normal cleanup.
+    // Provenance remains durable audit history. The database-backed rollback
+    // gauge excludes this row after its effective expiry because only this
+    // empty revision can be serialized from then on.
     classroomState: stillRestricted
       ? { ...classroomState, deliveryContext: { lateSignInRestrictionSso: true } }
       : classroomState,

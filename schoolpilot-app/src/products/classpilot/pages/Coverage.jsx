@@ -34,9 +34,12 @@ import { Badge } from "../../../components/ui/badge";
 import { useToast } from "../../../hooks/use-toast";
 import { useClassPilotAuth } from "../../../hooks/useClassPilotAuth";
 import {
+  coverageStudentCommandSelectionEligible,
   domainRestrictionMessageForStudents,
   flightPathApplyCapability,
+  partitionCoverageCurrentPageWaypointTargets,
 } from "../lib/dashboardCommandContext";
+import { commandDeliveryFeedback } from "../lib/commandDeliveryTruth";
 import { deriveStudentMonitoringDisplay } from "../lib/studentMonitoringDisplay";
 
 const coverageTypes = [
@@ -450,22 +453,36 @@ export default function Coverage() {
     () => (contextStudentsQuery.data || []).filter((student) => !student.releasedAt),
     [contextStudentsQuery.data]
   );
-  const activeCoverageStudentIds = useMemo(
-    () => new Set(allActiveCoverageStudents.map((student) => student.studentId)),
+  const commandSelectableCoverageStudents = useMemo(
+    () => allActiveCoverageStudents.filter((student) => coverageStudentCommandSelectionEligible({
+      student,
+      monitoringDisplay: deriveStudentMonitoringDisplay(student),
+      structurallyCommandable: !student.releasedAt,
+    })),
     [allActiveCoverageStudents]
   );
+  const commandSelectableCoverageStudentIds = useMemo(
+    () => new Set(commandSelectableCoverageStudents.map((student) => student.studentId)),
+    [commandSelectableCoverageStudents]
+  );
   const selectedCoverageStudentIds = useMemo(
-    () => Array.from(selectedCoverageIds).filter((studentId) => activeCoverageStudentIds.has(studentId)),
-    [activeCoverageStudentIds, selectedCoverageIds]
+    () => Array.from(selectedCoverageIds).filter((studentId) => commandSelectableCoverageStudentIds.has(studentId)),
+    [commandSelectableCoverageStudentIds, selectedCoverageIds]
   );
   const commandTargetStudents = useMemo(() => {
-    if (selectedCoverageStudentIds.length === 0) return allActiveCoverageStudents;
+    if (selectedCoverageIds.size === 0) return allActiveCoverageStudents;
     const selected = new Set(selectedCoverageStudentIds);
     return allActiveCoverageStudents.filter((student) => selected.has(student.studentId));
-  }, [allActiveCoverageStudents, selectedCoverageStudentIds]);
+  }, [allActiveCoverageStudents, selectedCoverageIds, selectedCoverageStudentIds]);
   const commandTargetCount = commandTargetStudents.length;
   const commandTargetsSupportScreenOnlyUnlock = commandTargetStudents.length > 0
-    && commandTargetStudents.every((student) => student.capabilities?.screenOnlyUnlockV1 === true);
+    && commandTargetStudents.every((student) => (
+      student.capabilities?.screenOnlyUnlockV1 === true
+      || (
+        student.lateSignInRestrictionSsoV1Enabled === true
+        && student.isLoggedIn !== true
+      )
+    ));
   const commandTargetDomainRestrictionMessage = domainRestrictionMessageForStudents(
     commandTargetStudents,
     (student) => deriveStudentMonitoringDisplay(student).telemetryCurrent,
@@ -535,12 +552,15 @@ export default function Coverage() {
       commandType,
       commandPayload,
     }),
-    onSuccess: (data) => {
+    onSuccess: (data, variables) => {
       invalidateCoverage();
       setCommandDialog(null);
       setCommandUrl("");
       setCommandMessage("");
-      toast({ title: "Command sent", description: data?.message });
+      toast(commandDeliveryFeedback({
+        ...(data || {}),
+        skippedCurrentPageCount: Number(variables?.skippedCurrentPageCount || 0),
+      }, variables?.commandType));
     },
     onError: (error) => toast({ variant: "destructive", title: "Could not send command", description: error.message }),
   });
@@ -888,13 +908,33 @@ export default function Coverage() {
       toast({ variant: "destructive", title: "No active students in coverage" });
       return;
     }
-    const targetStudentIds = [...selectedCoverageStudentIds];
+    let targetStudentIds = [...selectedCoverageStudentIds];
+    let targetScope = targetStudentIds.length > 0 ? "students" : "context";
+    let skippedCurrentPageCount = 0;
+    if (
+      commandType === "lock-screen"
+      && commandPayload?.url === "CURRENT_URL"
+    ) {
+      const partition = partitionCoverageCurrentPageWaypointTargets(commandTargetStudents);
+      targetStudentIds = partition.targetStudentIds;
+      skippedCurrentPageCount = partition.skippedStudentIds.length;
+      targetScope = "students";
+      if (targetStudentIds.length === 0) {
+        toast({
+          variant: "destructive",
+          title: "No current pages available",
+          description: `${skippedCurrentPageCount} signed-out student${skippedCurrentPageCount === 1 ? " was" : "s were"} skipped. Choose a specific URL to save a Waypoint before sign-in.`,
+        });
+        return;
+      }
+    }
     commandMutation.mutate({
       contextId: selectedContext.id,
       commandType,
       commandPayload,
-      targetScope: targetStudentIds.length > 0 ? "students" : "context",
+      targetScope,
       targetStudentIds,
+      skippedCurrentPageCount,
     });
   };
 
@@ -1033,9 +1073,17 @@ export default function Coverage() {
                       <LinkIcon className="h-4 w-4 mr-2" />
                       Flight Path
                     </Button>
+                    <Button size="sm" variant="outline" onClick={() => sendCoverageCommand("remove-flight-path")} disabled={commandTargetCount === 0 || commandMutation.isPending}>
+                      <X className="h-4 w-4 mr-2" />
+                      Remove Flight Path
+                    </Button>
                     <Button size="sm" variant="outline" onClick={() => setCommandDialog("apply-block-list")} disabled={commandTargetCount === 0}>
                       <ShieldBan className="h-4 w-4 mr-2" />
                       Block List
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => sendCoverageCommand("remove-block-list")} disabled={commandTargetCount === 0 || commandMutation.isPending}>
+                      <X className="h-4 w-4 mr-2" />
+                      Remove Block List
                     </Button>
                     <Button
                       size="sm"
@@ -1063,10 +1111,10 @@ export default function Coverage() {
                       <Search className="h-4 w-4 absolute left-3 top-3 text-muted-foreground" />
                       <Input className="pl-9" placeholder="Search claimed students" value={coverageSearch} onChange={(e) => setCoverageSearch(e.target.value)} />
                     </div>
-                    <Button variant="outline" size="sm" onClick={() => setSelectedCoverageIds(new Set(allActiveCoverageStudents.map((student) => student.studentId)))} disabled={allActiveCoverageStudents.length === 0}>
+                    <Button variant="outline" size="sm" onClick={() => setSelectedCoverageIds(new Set(commandSelectableCoverageStudents.map((student) => student.studentId)))} disabled={commandSelectableCoverageStudents.length === 0}>
                       Select All
                     </Button>
-                    <Button variant="ghost" size="sm" onClick={() => setSelectedCoverageIds(new Set())} disabled={selectedCoverageStudentIds.length === 0}>
+                    <Button variant="ghost" size="sm" onClick={() => setSelectedCoverageIds(new Set())} disabled={selectedCoverageIds.size === 0}>
                       Clear
                     </Button>
                   </div>
@@ -1085,7 +1133,7 @@ export default function Coverage() {
                       <div className="px-4 py-10 text-center text-sm text-muted-foreground">No students claimed in this group</div>
                     ) : coverageStudents.map((student) => (
                       <div key={student.studentId} className="grid min-w-[860px] grid-cols-[44px_1.1fr_90px_110px_1.4fr_130px_120px] gap-3 border-t px-4 py-3 text-sm items-center">
-                        <Checkbox checked={selectedCoverageIds.has(student.studentId)} onCheckedChange={() => toggleCoverageStudent(student.studentId)} disabled={!!student.releasedAt} />
+                        <Checkbox checked={selectedCoverageIds.has(student.studentId)} onCheckedChange={() => toggleCoverageStudent(student.studentId)} disabled={!commandSelectableCoverageStudentIds.has(student.studentId)} />
                         <div>
                           <p className="font-medium">{student.studentName}</p>
                           <p className="text-xs text-muted-foreground">{student.studentEmail}</p>

@@ -13,6 +13,8 @@ import { isClasspilotCapabilityActive } from "./classpilotProtocol.js";
 
 export type ClasspilotCoverageStatus = {
   status: "online" | "idle" | "offline";
+  isLoggedIn: boolean;
+  loginState: "logged_in" | "not_logged_in";
   lastSeenAt: number | null;
   activeTabTitle: string;
   activeTabUrl: string;
@@ -118,6 +120,7 @@ function publicStatus(
 ): ClasspilotCoverageStatus {
   const realtime = candidate?.state === "active" ? candidate : null;
   const signedOut = candidate?.state === "signed_out";
+  const isLoggedIn = !!session && !signedOut;
   const sessionLastSeenAt = session ? sessionTimestamp(session) : Number.NaN;
   const lastSeenAt = candidate?.observedAt ||
     (Number.isFinite(sessionLastSeenAt) ? sessionLastSeenAt : null);
@@ -130,6 +133,8 @@ function publicStatus(
         : age < CLASSPILOT_REALTIME_EXPIRED_AFTER_MS
           ? "idle"
           : "offline",
+    isLoggedIn,
+    loginState: isLoggedIn ? "logged_in" : "not_logged_in",
     lastSeenAt,
     activeTabTitle: realtime?.activeTabTitle || "",
     activeTabUrl: realtime?.activeTabUrl || "",

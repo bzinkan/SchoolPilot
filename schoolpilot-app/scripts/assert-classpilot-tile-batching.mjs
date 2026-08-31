@@ -941,6 +941,41 @@ assert.match(
   /data-testid="coverage-domain-preservation-message"[\s\S]{0,120}\{commandTargetDomainRestrictionMessage\}/,
   'Coverage must show capability-aware preservation copy without disabling Waypoint or Flight Path',
 );
+assert.match(
+  coverageSource,
+  /sendCoverageCommand\("remove-flight-path"\)[\s\S]{0,180}Remove Flight Path/,
+  'Coverage must expose Flight Path removal for exact selected online or deferred targets',
+);
+assert.match(
+  coverageSource,
+  /sendCoverageCommand\("remove-block-list"\)[\s\S]{0,180}Remove Block List/,
+  'Coverage must expose block-list removal for exact selected online or deferred targets',
+);
+assert.match(
+  coverageSource,
+  /coverageStudentCommandSelectionEligible\(\{[\s\S]{0,240}deriveStudentMonitoringDisplay\(student\)[\s\S]{0,240}structurallyCommandable: !student\.releasedAt/,
+  'Coverage selection must distinguish fresh, explicitly signed-out, and signal-lost rows',
+);
+assert.match(
+  coverageSource,
+  /toast\(commandDeliveryFeedback\(\{[\s\S]{0,240}skippedCurrentPageCount:[\s\S]{0,160}variables\?\.commandType/,
+  'Coverage must use the shared delivery feedback for pending, unavailable, and current-page skip counts',
+);
+assert.match(
+  coverageSource,
+  /partitionCoverageCurrentPageWaypointTargets\(commandTargetStudents\)[\s\S]{0,240}targetScope = "students"/,
+  'Coverage current-page Waypoints must omit explicit sign-outs while retaining signal-loss targets for unavailable reporting',
+);
+assert.match(
+  dashboardSource,
+  /uniqueStudentsById\(\[\.\.\.controllableStudents, \.\.\.lateSignInRestrictionStudents\]\)/,
+  'Dashboard Select All must not double-count a signed-out student eligible through both lanes',
+);
+assert.match(
+  dashboardSource,
+  /effectiveStudentRestrictions\(student\)[\s\S]{0,1600}button-remove-flight-path-/,
+  'the Flight Path viewer must use authoritative classroom state for clear-before-sign-in',
+);
 assert.doesNotMatch(
   dashboardSource,
   />Lock Current<|>Lock URL</,

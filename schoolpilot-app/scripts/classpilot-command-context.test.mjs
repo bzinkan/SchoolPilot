@@ -7,11 +7,13 @@ import {
   commandSupportsLateSignInRestriction,
   combineCommandSettlements,
   CONSERVATIVE_DOMAIN_RESTRICTION_MESSAGE,
+  coverageStudentCommandSelectionEligible,
   DEFAULT_COVERAGE_COMMANDS,
   DOMAIN_PRESERVING_RESTRICTION_MESSAGE,
   DOMAIN_RESTRICTION_URL_HELP,
   deriveDashboardCapabilities,
   domainRestrictionMessageForStudents,
+  effectiveStudentRestrictions,
   exactTabCloseCapability,
   flightPathApplyCapability,
   isStudentUrlOffTask,
@@ -20,6 +22,7 @@ import {
   mergeCommandUpdateIntoBatches,
   normalizeSessionFabState,
   parseTabSelectionKey,
+  partitionCoverageCurrentPageWaypointTargets,
   partitionCurrentPageWaypointTargets,
   resolveCommandTargets,
   resolveStudentSignOutTargets,
@@ -31,6 +34,7 @@ import {
   sessionFabSettingsPayload,
   tabSelectionKey,
   toolbarScreenCommand,
+  uniqueStudentsById,
 } from '../src/products/classpilot/lib/dashboardCommandContext.js';
 import { commandDeliveryFeedback } from '../src/products/classpilot/lib/commandDeliveryTruth.js';
 
@@ -349,6 +353,106 @@ test('only persistent restrictions can include deferred signed-out targets', () 
   for (const commandType of ['open-tab', 'close-tabs', 'teacher-message', 'attention-mode', 'timer', 'poll']) {
     assert.equal(commandSupportsLateSignInRestriction(commandType), false, commandType);
   }
+});
+
+test('Coverage selection admits current rows and only exact-gated explicit sign-outs', () => {
+  const signedOut = {
+    studentId: 'signed-out',
+    loginState: 'not_logged_in',
+    isLoggedIn: false,
+    operatorCapabilities: { lateSignInRestrictionSsoV1: true },
+    lateSignInRestrictionSsoV1Enabled: true,
+  };
+  assert.equal(coverageStudentCommandSelectionEligible({
+    student: { studentId: 'online', loginState: 'logged_in', isLoggedIn: true },
+    monitoringDisplay: { telemetryCurrent: true },
+    structurallyCommandable: true,
+  }), true);
+  assert.equal(coverageStudentCommandSelectionEligible({
+    student: signedOut,
+    monitoringDisplay: { telemetryCurrent: false },
+    structurallyCommandable: true,
+  }), true);
+  assert.equal(coverageStudentCommandSelectionEligible({
+    student: { ...signedOut, operatorCapabilities: {} },
+    monitoringDisplay: { telemetryCurrent: false },
+    structurallyCommandable: true,
+  }), false, 'a missing exact-school operator projection fails closed');
+  assert.equal(coverageStudentCommandSelectionEligible({
+    student: { ...signedOut, lateSignInRestrictionSsoV1Enabled: false },
+    monitoringDisplay: { telemetryCurrent: false },
+    structurallyCommandable: true,
+  }), false, 'the row-level gate projection must also be active');
+  assert.equal(coverageStudentCommandSelectionEligible({
+    student: {
+      ...signedOut,
+      studentId: 'signal-lost',
+      loginState: 'logged_in',
+      isLoggedIn: true,
+    },
+    monitoringDisplay: { telemetryCurrent: false },
+    structurallyCommandable: true,
+  }), false, 'signal loss is not explicit sign-out');
+  assert.equal(coverageStudentCommandSelectionEligible({
+    student: signedOut,
+    monitoringDisplay: { telemetryCurrent: false },
+    structurallyCommandable: false,
+  }), false, 'released or foreign-context rows remain structurally fenced');
+});
+
+test('Select All deduplicates students eligible through both current and late-sign-in lanes', () => {
+  const signedOut = { studentId: 'signed-out', loginState: 'not_logged_in' };
+  assert.deepEqual(
+    uniqueStudentsById([
+      { studentId: 'online' },
+      signedOut,
+      signedOut,
+      { studentId: 'online' },
+    ]).map((student) => student.studentId),
+    ['online', 'signed-out'],
+  );
+});
+
+test('Coverage current-page Waypoints skip explicit sign-outs but preserve signal-loss truth', () => {
+  assert.deepEqual(partitionCoverageCurrentPageWaypointTargets([
+    { studentId: 'online', loginState: 'logged_in', isLoggedIn: true },
+    { studentId: 'signal-lost', loginState: 'logged_in', isLoggedIn: true },
+    { studentId: 'signed-out', loginState: 'not_logged_in', isLoggedIn: false },
+  ]), {
+    targetStudentIds: ['online', 'signal-lost'],
+    skippedStudentIds: ['signed-out'],
+  });
+});
+
+test('deferred classroom state remains visible for clear-before-sign-in actions', () => {
+  assert.deepEqual(effectiveStudentRestrictions({
+    isLoggedIn: false,
+    screenLocked: false,
+    flightPathActive: false,
+    activeFlightPathName: null,
+    classroomState: {
+      restrictions: {
+        screenLock: { active: true },
+        flightPath: { active: true, name: 'Deferred Path', allowedDomains: ['example.test'] },
+        blockList: { active: true, name: 'Deferred Blocks', blockedDomains: ['blocked.test'] },
+      },
+    },
+  }), {
+    screenLockActive: true,
+    flightPathActive: true,
+    flightPathName: 'Deferred Path',
+    blockListActive: true,
+    blockListName: 'Deferred Blocks',
+  });
+
+  assert.equal(
+    effectiveStudentRestrictions({
+      flightPathActive: true,
+      classroomState: { restrictions: { flightPath: { active: false } } },
+    }).flightPathActive,
+    false,
+    'the authoritative snapshot must override stale realtime controls',
+  );
 });
 
 test('current-page Waypoints report and skip every target without fresh telemetry', () => {

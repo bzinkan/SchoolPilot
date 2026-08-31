@@ -24,6 +24,7 @@ import {
   broadcastToStaffSessionLocal,
   broadcastToStudentsLocal,
   sendToDeviceLocal,
+  sendToStudentBindingLocal,
   sendToStaffUserLocal,
   sendToRoleLocal,
   subscribeWsClientToSession,
@@ -57,7 +58,8 @@ import {
   getActiveSessionsForStudents,
   acknowledgeClasspilotStudentControlState,
   acknowledgeTeacherChatDelivery,
-  claimDueTeacherChatDeliveriesForBinding,
+  withClasspilotStudentControlDeliveryAuthority,
+  withClasspilotStudentWebSocketBootstrapAuthority,
 } from "../services/storage.js";
 import {
   classpilotCommandAckReceipt,
@@ -139,6 +141,36 @@ const WS_PONG_TIMEOUT_MS = 10_000;  // 10 seconds to respond
 export const CLASSPILOT_PASSIVE_AUTH_TTL_MS = 30_000;
 const MAX_PASSIVE_AUTH_SCHOOLS = 4_096;
 const MAX_PASSIVE_AUTH_INFLIGHT = 4_096;
+
+/**
+ * Redis can deliver an exact-binding envelope after the publishing task has
+ * released its transaction lock. Recheck durable authority on the receiving
+ * task and perform the local send while that same lock is held; socket-local
+ * binding metadata alone can describe a retired same-device session.
+ */
+export async function deliverClasspilotStudentBindingRedisMessage(
+  target: Extract<WsRedisTarget, { kind: "student-binding" }>,
+  message: unknown
+): Promise<boolean> {
+  try {
+    return await runWithTenantContext({ schoolId: target.schoolId }, async () => {
+      const delivery = await withClasspilotStudentControlDeliveryAuthority(
+        target,
+        () => undefined,
+        () => sendToStudentBindingLocal(target, message, {
+          requiredCapability: target.requiredCapability,
+        })
+      );
+      return delivery.authorized && delivery.value;
+    });
+  } catch (error) {
+    console.warn(
+      "[Redis] Exact student-binding delivery revalidation failed",
+      safeErrorMetadata(error)
+    );
+    return false;
+  }
+}
 
 type PassiveAuthorizationDecision = {
   authorized: boolean;
@@ -671,8 +703,33 @@ export function setupWebSocket(
         broadcastToStudentsLocal(target.schoolId, message, undefined, target.targetDeviceIds);
         break;
       case "device":
+        if (msgType === "teacher-message") {
+          const legacyBinding = message && typeof message === "object"
+            ? message as { studentId?: unknown; studentSessionId?: unknown }
+            : null;
+          if (
+            !legacyBinding
+            || typeof legacyBinding.studentId !== "string"
+            || typeof legacyBinding.studentSessionId !== "string"
+          ) {
+            console.log("[Redis] Dropping teacher message without an exact student binding");
+            break;
+          }
+          void deliverClasspilotStudentBindingRedisMessage({
+            kind: "student-binding",
+            schoolId: target.schoolId,
+            studentId: legacyBinding.studentId,
+            studentSessionId: legacyBinding.studentSessionId,
+            deviceId: target.deviceId,
+          }, message);
+          break;
+        }
         console.log(`[Redis] Delivering exact-bound ${msgType}`);
         sendToDeviceLocal(target.schoolId, target.deviceId, message);
+        break;
+      case "student-binding":
+        console.log(`[Redis] Revalidating exact student-binding ${msgType}`);
+        void deliverClasspilotStudentBindingRedisMessage(target, message);
         break;
       case "student-disconnect":
         closeStudentSocketsLocal(target.schoolId, target.studentIds);
@@ -1037,162 +1094,173 @@ export function setupWebSocket(
                 return;
               }
 
+              let studentBootstrapAuthenticated = false;
               try {
                 const schoolId = payload.schoolId;
                 const deviceId = payload.deviceId;
-                const bootstrap = await runWithTenantContext({ schoolId }, async () => {
+                const bootstrapAuthorized = await runWithTenantContext({ schoolId }, async () => {
                   const activeSession = await resolveActiveStudentTokenSession(payload);
-                  if (!activeSession) return null;
-                  if (!(await resolveClasspilotEntitlement(schoolId)).entitled) return null;
+                  if (!activeSession) return false;
+                  if (!(await resolveClasspilotEntitlement(schoolId)).entitled) return false;
                   const schoolSettings = await getSettingsForSchool(schoolId);
-                  const fab = await buildStudentFabState(schoolId, payload.studentId, {
-                    schoolSettings,
-                    studentSessionId: activeSession.id,
-                  });
-                   const classroomStateRow = await getClasspilotStudentControlState(schoolId, payload.studentId);
-                   const screenshotTrackingAuthority = await getClasspilotScreenshotAuthorityProjection({
-                     schoolId,
-                     studentId: payload.studentId,
-                     studentSessionId: activeSession.id,
-                     deviceId,
-                   });
-                  return {
-                    schoolSettings,
-                    fab,
-                    studentSessionId: activeSession.id,
-                     teachingSessionId: classroomStateRow?.teachingSessionId ?? null,
-                     screenshotTrackingAuthority,
-                    classroomStateRow,
-                  };
-                });
-                if (!bootstrap) {
-                  ws.send(JSON.stringify({ type: "auth-error", message: "Student session is no longer active" }));
-                  ws.close();
-                  return;
-                }
-
-                const protocol = negotiateClasspilotSurfaceProtocol({
-                  surface: "websocket_auth",
-                  payload: message,
-                  scope: {
-                    serverOrigin: process.env.PUBLIC_BASE_URL,
-                    schoolId,
-                    deviceId,
-                    studentId: payload.studentId,
-                    studentSessionId: bootstrap.studentSessionId,
-                  },
-                });
-                const authDelivery = bootstrap.classroomStateRow
-                  ? serializeClasspilotStudentControlStateForDelivery({
-                      state: bootstrap.classroomStateRow,
-                      gateActive: isClasspilotCapabilityActive(
-                        "lateSignInRestrictionSsoV1",
-                        { schoolId }
-                      ),
-                      acceptedCapabilities: protocol.acceptedCapabilities,
-                      exactBinding: {
-                        schoolId,
-                        deviceId,
-                        studentId: payload.studentId,
-                        studentSessionId: bootstrap.studentSessionId,
-                      },
-                    })
-                  : { classroomState: null, withheld: false };
-                const classroomState = authDelivery.classroomState;
-                const screenshotPolicy = await resolveClasspilotScreenshotPolicy({
-                  schoolId,
-                  studentId: payload.studentId,
-                  teachingSessionId: bootstrap.teachingSessionId,
-                   acceptedCapabilities: protocol.acceptedCapabilities,
-                   trackingSettings: bootstrap.schoolSettings,
-                   trackingAuthority: classpilotScreenshotAuthorityForDeliveredControl({
-                     projection: bootstrap.screenshotTrackingAuthority,
-                     deliveredControlRevision: classroomState?.revision ?? 0,
-                   }),
-                 });
-
-                // Everything above may await storage, entitlement, screenshot,
-                // and policy work. A correct-PIN transfer can retire this exact
-                // binding during that window. Claim due chat only after a fresh
-                // authority check, then check once more after the claim so no
-                // retired binding is authenticated or receives a deferred state.
-                const finalAuthority = await runWithTenantContext({ schoolId }, async () => {
-                  const beforeClaim = await resolveActiveStudentTokenSession(payload);
-                  if (!beforeClaim || beforeClaim.id !== bootstrap.studentSessionId) return null;
-                  const teacherReplies = await claimDueTeacherChatDeliveriesForBinding({
-                    schoolId,
-                    studentId: payload.studentId,
-                    studentSessionId: bootstrap.studentSessionId,
-                    deviceId,
-                  });
-                  const afterClaim = await resolveActiveStudentTokenSession(payload);
-                  if (!afterClaim || afterClaim.id !== bootstrap.studentSessionId) return null;
-                  return { teacherReplies };
-                });
-                if (!finalAuthority) {
-                  ws.send(JSON.stringify({ type: "auth-error", message: "Student session is no longer active" }));
-                  ws.close();
-                  return;
-                }
-
-                if (authDelivery.withheld) recordHeartbeatHotPathCounter("lateSignInDeliveryWithheld");
-                else if (classroomState?.deliveryContext?.lateSignInRestrictionSso) {
-                  recordHeartbeatHotPathCounter("lateSignInCapableDelivery");
-                }
-                clearStaffPresence();
-                authenticateWsClient(ws, {
-                  role: "student",
-                  deviceId,
-                  schoolId,
-                  studentId: payload.studentId,
-                  studentSessionId: bootstrap.studentSessionId,
-                  acceptedCapabilities: protocol.acceptedCapabilities,
-                });
-
-                ws.send(JSON.stringify({
-                  type: "auth-success",
-                  role: "student",
-                  schoolId,
-                  studentId: payload.studentId,
-                  studentSessionId: bootstrap.studentSessionId,
-                  ...protocol,
-                  screenshotPolicy,
-                  exactBinding: classpilotControlStateExactBinding({
-                    schoolId,
-                    deviceId,
-                    studentId: payload.studentId,
-                    studentSessionId: bootstrap.studentSessionId,
-                    controlRevision: classroomState?.revision ?? 0,
-                  }),
-                  settings: {
-                    maxTabsPerStudent: bootstrap.schoolSettings?.maxTabsPerStudent
-                      ? parseInt(bootstrap.schoolSettings.maxTabsPerStudent, 10) : null,
-                    globalBlockedDomains: bootstrap.schoolSettings?.blockedDomains || [],
-                    fab: {
-                      ...bootstrap.fab,
-                      ownershipRevision: classroomState?.revision ?? 0,
+                  const protocol = negotiateClasspilotSurfaceProtocol({
+                    surface: "websocket_auth",
+                    payload: message,
+                    scope: {
+                      serverOrigin: process.env.PUBLIC_BASE_URL,
+                      schoolId,
+                      deviceId,
+                      studentId: payload.studentId,
+                      studentSessionId: activeSession.id,
                     },
-                  },
-                  // Explicit null is authoritative on shared Chromebooks. If
-                  // the new student has no desired row, omitting the field
-                  // would leave the former student's persisted restrictions.
-                  classroomState,
-                }));
-                for (const { message: teacherMessage } of finalAuthority.teacherReplies) {
-                  ws.send(JSON.stringify({
-                    type: "teacher-message",
-                    _msgId: teacherMessage.id,
-                    chatMessageId: teacherMessage.id,
-                    messageId: teacherMessage.id,
-                    sessionId: teacherMessage.sessionId,
-                    studentId: payload.studentId,
-                    studentSessionId: bootstrap.studentSessionId,
-                    message: teacherMessage.content,
-                    fromName: "Teacher",
-                  }));
+                  });
+
+                  const authority = await withClasspilotStudentWebSocketBootstrapAuthority(
+                    {
+                      schoolId,
+                      studentId: payload.studentId,
+                      studentSessionId: activeSession.id,
+                      deviceId,
+                    },
+                    async (transactionDb) => {
+                      // Read state only after taking the same student-control
+                      // lock used by command persistence and session transfer.
+                      // A push committed before this socket was registered can
+                      // therefore never be overwritten by an older bootstrap.
+                      const fab = await buildStudentFabState(schoolId, payload.studentId, {
+                        schoolSettings,
+                        studentSessionId: activeSession.id,
+                        dbInstance: transactionDb,
+                      });
+                      const classroomStateRow = await getClasspilotStudentControlState(
+                        schoolId,
+                        payload.studentId,
+                        transactionDb
+                      );
+                      const screenshotTrackingAuthority = await getClasspilotScreenshotAuthorityProjection({
+                        schoolId,
+                        studentId: payload.studentId,
+                        studentSessionId: activeSession.id,
+                        deviceId,
+                      }, transactionDb);
+                      const authDelivery = classroomStateRow
+                        ? serializeClasspilotStudentControlStateForDelivery({
+                            state: classroomStateRow,
+                            gateActive: isClasspilotCapabilityActive(
+                              "lateSignInRestrictionSsoV1",
+                              { schoolId }
+                            ),
+                            acceptedCapabilities: protocol.acceptedCapabilities,
+                            exactBinding: {
+                              schoolId,
+                              deviceId,
+                              studentId: payload.studentId,
+                              studentSessionId: activeSession.id,
+                            },
+                          })
+                        : { classroomState: null, withheld: false };
+                      const classroomState = authDelivery.classroomState;
+                      const screenshotPolicy = await resolveClasspilotScreenshotPolicy({
+                        schoolId,
+                        studentId: payload.studentId,
+                        teachingSessionId: classroomStateRow?.teachingSessionId ?? null,
+                        acceptedCapabilities: protocol.acceptedCapabilities,
+                        trackingSettings: schoolSettings,
+                        trackingAuthority: classpilotScreenshotAuthorityForDeliveredControl({
+                          projection: screenshotTrackingAuthority,
+                          deliveredControlRevision: classroomState?.revision ?? 0,
+                        }),
+                      });
+                      return {
+                        fab,
+                        classroomState,
+                        screenshotPolicy,
+                        deliveryWithheld: authDelivery.withheld,
+                      };
+                    },
+                    (teacherReplies, prepared) => {
+                      if (ws.readyState !== WebSocket.OPEN) {
+                        throw new Error("Student WebSocket closed during authentication");
+                      }
+                      if (prepared.deliveryWithheld) {
+                        recordHeartbeatHotPathCounter("lateSignInDeliveryWithheld");
+                      } else if (prepared.classroomState?.deliveryContext?.lateSignInRestrictionSso) {
+                        recordHeartbeatHotPathCounter("lateSignInCapableDelivery");
+                      }
+                      clearStaffPresence();
+                      const authenticated = authenticateWsClient(ws, {
+                        role: "student",
+                        deviceId,
+                        schoolId,
+                        studentId: payload.studentId,
+                        studentSessionId: activeSession.id,
+                        acceptedCapabilities: protocol.acceptedCapabilities,
+                      });
+                      if (!authenticated) {
+                        throw new Error("Student WebSocket registration is unavailable");
+                      }
+                      studentBootstrapAuthenticated = true;
+
+                      // These frames are synchronously queued while the exact
+                      // binding's transaction lock is held. Session transfer
+                      // cannot commit between final authority validation and
+                      // delivery of the authoritative bootstrap state.
+                      ws.send(JSON.stringify({
+                        type: "auth-success",
+                        role: "student",
+                        schoolId,
+                        studentId: payload.studentId,
+                        studentSessionId: activeSession.id,
+                        ...protocol,
+                        screenshotPolicy: prepared.screenshotPolicy,
+                        exactBinding: classpilotControlStateExactBinding({
+                          schoolId,
+                          deviceId,
+                          studentId: payload.studentId,
+                          studentSessionId: activeSession.id,
+                          controlRevision: prepared.classroomState?.revision ?? 0,
+                        }),
+                        settings: {
+                          maxTabsPerStudent: schoolSettings?.maxTabsPerStudent
+                            ? parseInt(schoolSettings.maxTabsPerStudent, 10) : null,
+                          globalBlockedDomains: schoolSettings?.blockedDomains || [],
+                          fab: {
+                            ...prepared.fab,
+                            ownershipRevision: prepared.classroomState?.revision ?? 0,
+                          },
+                        },
+                        // Explicit null is authoritative on shared Chromebooks.
+                        // If the new student has no desired row, omitting the
+                        // field would preserve the former student's controls.
+                        classroomState: prepared.classroomState,
+                      }));
+                      for (const { message: teacherMessage } of teacherReplies) {
+                        ws.send(JSON.stringify({
+                          type: "teacher-message",
+                          _msgId: teacherMessage.id,
+                          chatMessageId: teacherMessage.id,
+                          messageId: teacherMessage.id,
+                          sessionId: teacherMessage.sessionId,
+                          studentId: payload.studentId,
+                          studentSessionId: activeSession.id,
+                          message: teacherMessage.content,
+                          fromName: "Teacher",
+                        }));
+                      }
+                    }
+                  );
+                  return authority.authorized;
+                });
+                if (!bootstrapAuthorized) {
+                  ws.send(JSON.stringify({ type: "auth-error", message: "Student session is no longer active" }));
+                  ws.close();
+                  return;
                 }
                 activity.studentAuthenticated += 1;
               } catch (error) {
+                if (studentBootstrapAuthenticated) {
+                  removeWsClient(ws);
+                }
                 const safeError = studentAuthenticationServiceError(error);
                 console.error("[WebSocket] Student authentication service unavailable", {
                   errorCode: (safeError as NodeJS.ErrnoException).code ?? "unknown",
@@ -1648,73 +1716,64 @@ export function setupWebSocket(
         ) {
           const reconciliation = await runWithTenantContext(
             { schoolId: client.schoolId },
-            async () => {
-              const activeSessions = await getActiveSessionsForStudents(
-                client.schoolId!,
-                [client.studentId!]
-              );
-              const exactBindingIsActive = activeSessions.some((session) =>
-                session.id === client.studentSessionId
-                && session.studentId === client.studentId
-                && session.deviceId === client.deviceId
-              );
-              if (!exactBindingIsActive) return { active: false as const, state: null };
-              const state = await getClasspilotStudentControlState(
-                client.schoolId!,
-                client.studentId!
-              );
-              const delivered = state
-                ? serializeClasspilotStudentControlStateForDelivery({
-                    state,
-                    gateActive: isClasspilotCapabilityActive(
-                      "lateSignInRestrictionSsoV1",
-                      { schoolId: client.schoolId! }
-                    ),
-                    acceptedCapabilities: client.acceptedCapabilities ?? [],
-                    exactBinding: {
-                      schoolId: client.schoolId!,
-                      studentId: client.studentId!,
-                      studentSessionId: client.studentSessionId!,
-                      deviceId: client.deviceId!,
-                    },
-                  }).classroomState
-                : null;
-              // State lookup/serialization may race an exact-session transfer.
-              // Re-read database-time authority immediately before returning
-              // the snapshot to the socket and fail closed if this binding was
-              // retired or its manual lease expired during reconciliation.
-              const finalSessions = await getActiveSessionsForStudents(
-                client.schoolId!,
-                [client.studentId!]
-              );
-              const exactBindingStillActive = finalSessions.some((session) =>
-                session.id === client.studentSessionId
-                && session.studentId === client.studentId
-                && session.deviceId === client.deviceId
-              );
-              if (!exactBindingStillActive) return { active: false as const, state: null };
-              return {
-                active: true as const,
-                state: delivered,
-              };
-            }
+            () => withClasspilotStudentControlDeliveryAuthority(
+              {
+                schoolId: client.schoolId!,
+                studentId: client.studentId!,
+                studentSessionId: client.studentSessionId!,
+                deviceId: client.deviceId!,
+              },
+              async (transactionDb) => {
+                const state = await getClasspilotStudentControlState(
+                  client.schoolId!,
+                  client.studentId!,
+                  transactionDb
+                );
+                const delivered = state
+                  ? serializeClasspilotStudentControlStateForDelivery({
+                      state,
+                      gateActive: isClasspilotCapabilityActive(
+                        "lateSignInRestrictionSsoV1",
+                        { schoolId: client.schoolId! }
+                      ),
+                      acceptedCapabilities: client.acceptedCapabilities ?? [],
+                      exactBinding: {
+                        schoolId: client.schoolId!,
+                        studentId: client.studentId!,
+                        studentSessionId: client.studentSessionId!,
+                        deviceId: client.deviceId!,
+                      },
+                    }).classroomState
+                  : null;
+                return delivered;
+              },
+              (_claimed, delivered) => {
+                if (ws.readyState !== WebSocket.OPEN) {
+                  throw new Error("Student WebSocket closed during classroom-state recovery");
+                }
+                // Queue the authoritative frame synchronously while the same
+                // student-control lock used by correct-PIN transfer remains
+                // held. Transfer cannot retire this binding after the final
+                // database-clock check but before this send.
+                ws.send(JSON.stringify(classpilotClassroomStatePushFrame({
+                  type: "classroom-state-sync",
+                  binding: {
+                    schoolId: client.schoolId!,
+                    deviceId: client.deviceId!,
+                    studentId: client.studentId!,
+                    studentSessionId: client.studentSessionId!,
+                    controlRevision: delivered?.revision ?? 0,
+                  },
+                  classroomState: delivered,
+                })));
+              }
+            )
           );
-          if (!reconciliation.active) {
+          if (!reconciliation.authorized) {
             ws.send(JSON.stringify({ type: "auth-error", message: "Student session is no longer active" }));
             ws.close();
             return;
           }
-          ws.send(JSON.stringify(classpilotClassroomStatePushFrame({
-            type: "classroom-state-sync",
-            binding: {
-              schoolId: client.schoolId,
-              deviceId: client.deviceId,
-              studentId: client.studentId,
-              studentSessionId: client.studentSessionId,
-              controlRevision: reconciliation.state?.revision ?? 0,
-            },
-            classroomState: reconciliation.state,
-          })));
           return;
         }
 

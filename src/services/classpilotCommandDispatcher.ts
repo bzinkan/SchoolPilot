@@ -15,11 +15,15 @@ import {
   persistClasspilotControlCommandState,
   replaceClasspilotSupervisionControlSnapshots,
   revalidateClasspilotExactCommandTargetsForDispatch,
+  withClasspilotStudentControlDeliveryAuthority,
   type ClasspilotCommandWithTargets,
   type ClasspilotCommandPollMutation,
 } from "./storage.js";
 import { validateClasspilotCommandPayload } from "./classpilotCommandValidation.js";
-import { broadcastToStaffSessionLocal, sendToDeviceLocal } from "../realtime/ws-broadcast.js";
+import {
+  broadcastToStaffSessionLocal,
+  sendToStudentBindingLocal,
+} from "../realtime/ws-broadcast.js";
 import {
   publishWS,
   publishWSBatch,
@@ -528,12 +532,17 @@ function applyOfflineRestrictionPolicy(options: {
   targets: ResolvedClasspilotCommandTarget[];
 }): { targets: ResolvedClasspilotCommandTarget[]; deferredStudentIds: Set<string> } {
   const deferredStudentIds = new Set<string>();
+  // This gate is intentionally scoped to the late-sign-in restriction set.
+  // Durable messages and unrelated command policies retain their established
+  // offline behavior; they are not deferred restriction state.
+  if (options.deliveryPolicy !== "persistent_control") {
+    return { targets: options.targets, deferredStudentIds };
+  }
   const gateActive = isClasspilotCapabilityActive(
     "lateSignInRestrictionSsoV1",
     { schoolId: options.schoolId }
   );
-  const allowlisted = options.deliveryPolicy === "persistent_control"
-    && OFFLINE_PERSISTENCE_COMMAND_TYPES.has(options.commandType);
+  const allowlisted = OFFLINE_PERSISTENCE_COMMAND_TYPES.has(options.commandType);
   const targets = options.targets.map((target) => {
     if (!classpilotTargetIsOffline(target)) return target;
     if (
@@ -574,6 +583,7 @@ export function classpilotCommandFrameForTarget(
   delivery: {
     policy: ClasspilotCommandDeliveryPolicy;
     expiresAt: Date | null;
+    requiredCapability?: "lateSignInRestrictionSsoV1";
   },
   classroomState: ReturnType<typeof serializeClasspilotStudentControlState> | undefined,
   commandAuthority: ReturnType<typeof classpilotCommandAuthorityEnvelope>
@@ -590,9 +600,10 @@ export function classpilotCommandFrameForTarget(
     studentId: target.studentId,
     studentSessionId: target.studentSessionId,
   };
-  const deferredExactBindingEnvelope = classroomState?.deliveryContext?.lateSignInRestrictionSso === true
+  const deferredExactBindingEnvelope = delivery.requiredCapability === "lateSignInRestrictionSsoV1"
     && target.deviceId
     && target.studentSessionId
+    && classroomState
     && Number.isSafeInteger(classroomState.revision)
     ? {
         exactBinding: classpilotControlStateExactBinding({
@@ -869,6 +880,7 @@ async function persistActiveState(options: {
   }
 
   const result = await persistClasspilotControlCommandState({
+    lateSignInGateRequiredStudentIds: [...(options.deferredStudentIds ?? [])],
     classroomStateClears,
     classroomStateUpserts: stateType ? options.targets.map((target) => ({
       ...base,
@@ -970,6 +982,7 @@ async function persistActiveSupervisionState(options: {
     authorizedActorId: options.actorId,
     actorIsAdmin: options.actorIsAdmin,
     bindingExpectationByStudent: options.bindingExpectationByStudent,
+    lateSignInGateRequiredStudentIds: [...(options.deferredStudentIds ?? [])],
     desiredState: (studentId: string, current: ClasspilotStudentControlState | null) => {
       const currentDesired = current?.supervisionContextId === options.supervisionContextId
         && current.desiredState && typeof current.desiredState === "object"
@@ -1349,35 +1362,74 @@ export async function executeClasspilotCommand(options: {
   const localDeliveryStartedAt = performance.now();
   let localDeliverySucceeded = false;
   try {
-    for (const target of committedTargets.filter((target) => target.available && target.deviceId)) {
-      // A durable row that still carries deferred origin must never fall back
-      // to the raw legacy command envelope. That would bypass the same
-      // capability gate that withheld its authoritative snapshot.
-      if (deferredIds.has(target.studentId) && !classroomStateByStudent.has(target.studentId)) {
-        continue;
-      }
-      const message = classpilotCommandFrameForTarget(options.schoolId, options.commandType, normalized.extensionType, {
-        ...committedCommandPayload,
-        ...(payloadByStudent?.get(target.studentId)?.url
-          ? { url: payloadByStudent.get(target.studentId)!.url, currentPage: undefined }
-          : {}),
-        commandId: created.id,
-        messageId: durableMessageIdByStudent.get(target.studentId),
-      }, target, {
-        policy: deliveryPolicy,
-        expiresAt,
-      }, classroomStateByStudent.get(target.studentId), commandAuthority);
-      if (!message) continue;
+    const authorizedDeliveries = await Promise.all(
+      committedTargets
+        .filter((target) =>
+          target.available
+          && target.studentSessionId
+          && target.deviceId
+        )
+        .map(async (target) => {
+          // A durable row that still carries deferred origin must never fall
+          // back to the raw legacy command envelope. That would bypass the
+          // same capability gate that withheld its authoritative snapshot.
+          if (deferredIds.has(target.studentId) && !classroomStateByStudent.has(target.studentId)) {
+            return null;
+          }
+          const message = classpilotCommandFrameForTarget(
+            options.schoolId,
+            options.commandType,
+            normalized.extensionType,
+            {
+              ...committedCommandPayload,
+              ...(payloadByStudent?.get(target.studentId)?.url
+                ? { url: payloadByStudent.get(target.studentId)!.url, currentPage: undefined }
+                : {}),
+              commandId: created.id,
+              messageId: durableMessageIdByStudent.get(target.studentId),
+            },
+            target,
+            {
+              policy: deliveryPolicy,
+              expiresAt,
+              ...(deferredIds.has(target.studentId)
+                ? { requiredCapability: "lateSignInRestrictionSsoV1" as const }
+                : {}),
+            },
+            classroomStateByStudent.get(target.studentId),
+            commandAuthority
+          );
+          if (!message) return null;
 
-      // Keep both arrays in the caller's exact target order. Local delivery is
-      // immediate; Redis publication below sends the corresponding envelopes in
-      // that same order using one network round trip.
-      sendToDeviceLocal(options.schoolId, target.deviceId!, message);
-      remotePublications.push({
-        target: { kind: "device", schoolId: options.schoolId, deviceId: target.deviceId! },
-        message,
-      });
-      deliveryCandidates.push(target);
+          const exactTarget = {
+            kind: "student-binding" as const,
+            schoolId: options.schoolId,
+            studentId: target.studentId,
+            studentSessionId: target.studentSessionId!,
+            deviceId: target.deviceId!,
+            ...(deferredIds.has(target.studentId)
+              ? { requiredCapability: "lateSignInRestrictionSsoV1" as const }
+              : {}),
+          };
+          const delivery = await withClasspilotStudentControlDeliveryAuthority(
+            exactTarget,
+            () => undefined,
+            () => sendToStudentBindingLocal(exactTarget, message, {
+              requiredCapability: exactTarget.requiredCapability,
+            })
+          );
+          return delivery.authorized
+            ? {
+                target,
+                publication: { target: exactTarget, message } satisfies PublishWSBatchItem,
+              }
+            : null;
+        })
+    );
+    for (const delivery of authorizedDeliveries) {
+      if (!delivery) continue;
+      deliveryCandidates.push(delivery.target);
+      remotePublications.push(delivery.publication);
     }
     localDeliverySucceeded = true;
   } finally {
