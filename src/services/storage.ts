@@ -10585,6 +10585,17 @@ export type StartStudentSessionWithReplacementsOptions = {
   reclaimManagedDeviceId?: string | null;
   /** Exact legacy recovery authority carried inside the signed device proof. */
   reclaimManagedDeviceRecoveryTokenHash?: string | null;
+  /**
+   * Server-resolved authority to move this selected student's exact active
+   * manual session from another Chromebook. It is never accepted from a wire
+   * request and is revalidated under the session/device locks below.
+   */
+  studentTransferAuthority?: {
+    studentSessionId: string;
+    source: "gate_presence" | "stale_heartbeat";
+    gatePresenceObservedAt?: number;
+    gatePresenceExpiresAt?: number;
+  } | null;
 };
 
 export type StartStudentSessionWithReplacementsResult = {
@@ -10592,6 +10603,7 @@ export type StartStudentSessionWithReplacementsResult = {
   replacedSessions: StudentSession[];
   crossStudentHandoff: boolean;
   managedDeviceRecoveryTransition: boolean;
+  studentTransferSource: "gate_presence" | "stale_heartbeat" | null;
 };
 
 export async function startStudentSessionWithReplacements(
@@ -10651,6 +10663,39 @@ export async function startStudentSessionWithReplacements(
     )
   ) {
     throw new TypeError("Invalid managed-device recovery transition authority");
+  }
+  const studentTransferAuthority = options.studentTransferAuthority ?? null;
+  if (
+    studentTransferAuthority
+    && (
+      options.authKind !== "manual_shared"
+      || (
+        studentTransferAuthority.source !== "gate_presence"
+        && studentTransferAuthority.source !== "stale_heartbeat"
+      )
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        studentTransferAuthority.studentSessionId
+      )
+      || (
+        studentTransferAuthority.source === "gate_presence"
+        && (
+          !Number.isSafeInteger(studentTransferAuthority.gatePresenceObservedAt)
+          || !Number.isSafeInteger(studentTransferAuthority.gatePresenceExpiresAt)
+          || studentTransferAuthority.gatePresenceObservedAt! <= 0
+          || studentTransferAuthority.gatePresenceExpiresAt!
+            <= studentTransferAuthority.gatePresenceObservedAt!
+        )
+      )
+      || (
+        studentTransferAuthority.source === "stale_heartbeat"
+        && (
+          studentTransferAuthority.gatePresenceObservedAt !== undefined
+          || studentTransferAuthority.gatePresenceExpiresAt !== undefined
+        )
+      )
+    )
+  ) {
+    throw new TypeError("Invalid student transfer authority");
   }
 
   const result = await db.transaction(async (tx) => {
@@ -10736,6 +10781,7 @@ export async function startStudentSessionWithReplacements(
 
     let crossStudentHandoff = false;
     let managedDeviceRecoveryTransition = false;
+    let studentTransferSource: "gate_presence" | "stale_heartbeat" | null = null;
     if (options.authKind === "manual_shared") {
       // A managed proof may release either the exact legacy recovery session
       // embedded during transition or the authoritative session already on its
@@ -10767,8 +10813,74 @@ export async function startStudentSessionWithReplacements(
               && session.sessionRecoveryTokenHash === options.reclaimRecoveryTokenHash
             )
           : managedStableDeviceSession;
+      const selectedTransferSession = studentTransferAuthority
+        ? conflicting.find(({ session, authoritative }) =>
+            authoritative
+            && session.id === studentTransferAuthority.studentSessionId
+            && session.studentId === studentId
+            && session.deviceId !== deviceId
+            && session.authKind === "manual_shared"
+          )
+        : undefined;
+      if (studentTransferAuthority && !selectedTransferSession) {
+        throw Object.assign(new Error("Student session is active on another sign-in context"), {
+          status: 409,
+          code: "STUDENT_SESSION_ACTIVE",
+          expose: true,
+        });
+      }
+      if (selectedTransferSession) {
+        const clockResult = await tx.execute(sql`
+          SELECT
+            -- clock_timestamp(), unlike now(), advances while this transaction
+            -- waits on locks so an expired 30-second gate pulse cannot transfer.
+            EXTRACT(EPOCH FROM clock_timestamp()) * 1000 AS "databaseNowMs",
+            COALESCE(
+              (
+                SELECT
+                  EXTRACT(EPOCH FROM heartbeat.timestamp AT TIME ZONE 'UTC') * 1000
+                FROM heartbeats AS heartbeat
+                WHERE heartbeat.school_id = ${schoolId}
+                  AND heartbeat.student_id = ${studentId}
+                  AND heartbeat.device_id = ${selectedTransferSession.session.deviceId}
+                  AND heartbeat.timestamp >= represented.started_at
+                ORDER BY heartbeat.timestamp DESC
+                LIMIT 1
+              ),
+              EXTRACT(EPOCH FROM represented.started_at AT TIME ZONE 'UTC') * 1000
+            ) AS "latestHeartbeatAtMs"
+          FROM student_sessions AS represented
+          WHERE represented.id = ${selectedTransferSession.session.id}
+            AND represented.student_id = ${studentId}
+            AND represented.device_id = ${selectedTransferSession.session.deviceId}
+          LIMIT 1
+        `);
+        const clock = clockResult.rows[0] as {
+          databaseNowMs?: unknown;
+          latestHeartbeatAtMs?: unknown;
+        } | undefined;
+        const databaseNowMs = Number(clock?.databaseNowMs);
+        const latestHeartbeatAtMs = Number(clock?.latestHeartbeatAtMs);
+        if (!Number.isFinite(databaseNowMs) || !Number.isFinite(latestHeartbeatAtMs)) {
+          throw new Error("Student transfer database clock is unavailable");
+        }
+        const allowed = studentTransferAuthority!.source === "gate_presence"
+          ? studentTransferAuthority!.gatePresenceExpiresAt! > databaseNowMs
+            && studentTransferAuthority!.gatePresenceObservedAt! > latestHeartbeatAtMs
+          : databaseNowMs - latestHeartbeatAtMs >= 60_000;
+        if (!allowed) {
+          throw Object.assign(new Error("Student session is active on another sign-in context"), {
+            status: 409,
+            code: "STUDENT_SESSION_ACTIVE",
+            expose: true,
+          });
+        }
+        studentTransferSource = studentTransferAuthority!.source;
+      }
       const blockingSession = conflicting.find(({ session, authoritative }) =>
-        authoritative && session.id !== recoveredSession?.session.id
+        authoritative
+        && session.id !== recoveredSession?.session.id
+        && session.id !== selectedTransferSession?.session.id
       );
       if (blockingSession) {
         throw Object.assign(new Error("Student session is active on another sign-in context"), {
@@ -10831,6 +10943,7 @@ export async function startStudentSessionWithReplacements(
       replacedSessions,
       crossStudentHandoff,
       managedDeviceRecoveryTransition,
+      studentTransferSource,
     };
   });
   await invalidateClasspilotPassiveAuthorization(schoolId);
@@ -11121,6 +11234,108 @@ export async function getActiveSessions(
       )
     );
   return rows.map((r) => ({ ...r.session, student: r.student }));
+}
+
+export type ClasspilotLoginSessionAuthority = {
+  id: string;
+  studentId: string;
+  deviceId: string;
+  startedAt: Date;
+  lastSeenAt: Date;
+  authKind: StudentSessionAuthKind;
+  latestHeartbeatAt: Date | null;
+};
+
+function loginSessionAuthorityDateFromEpoch(value: unknown, field: string): Date {
+  const date = new Date(Number(value));
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`Invalid ClassPilot login session ${field}`);
+  }
+  return date;
+}
+
+/**
+ * Current login-roster authority with the latest exact student/device
+ * heartbeat constrained to each session's own start. The correlated lookup is
+ * backed by heartbeats_school_device_student_timestamp_idx and keeps the
+ * PostgreSQL fallback exact when shared realtime storage is unavailable.
+ */
+export async function getClasspilotLoginSessionAuthorities(
+  schoolId: string,
+  options: { studentId?: string } = {}
+): Promise<ClasspilotLoginSessionAuthority[]> {
+  const studentFilter = options.studentId
+    ? sql`AND represented.student_id = ${options.studentId}`
+    : sql``;
+  const result = await db.execute(sql`
+    SELECT
+      represented.id AS "id",
+      represented.student_id AS "studentId",
+      represented.device_id AS "deviceId",
+      EXTRACT(EPOCH FROM represented.started_at AT TIME ZONE 'UTC') * 1000
+        AS "startedAtMs",
+      EXTRACT(EPOCH FROM represented.last_seen_at AT TIME ZONE 'UTC') * 1000
+        AS "lastSeenAtMs",
+      represented.auth_kind AS "authKind",
+      latest_heartbeat."timestampMs" AS "latestHeartbeatAtMs"
+    FROM student_sessions AS represented
+    INNER JOIN students AS student
+      ON student.id = represented.student_id
+     AND student.school_id = ${schoolId}
+     AND student.status = 'active'
+    INNER JOIN devices AS device
+      ON device.device_id = represented.device_id
+     AND device.school_id = ${schoolId}
+    LEFT JOIN LATERAL (
+      SELECT
+        EXTRACT(EPOCH FROM heartbeat.timestamp AT TIME ZONE 'UTC') * 1000
+          AS "timestampMs"
+      FROM heartbeats AS heartbeat
+      WHERE heartbeat.school_id = ${schoolId}
+        AND heartbeat.student_id = represented.student_id
+        AND heartbeat.device_id = represented.device_id
+        AND heartbeat.timestamp >= represented.started_at
+      ORDER BY heartbeat.timestamp DESC
+      LIMIT 1
+    ) AS latest_heartbeat ON true
+    WHERE represented.is_active = true
+      AND represented.ended_at IS NULL
+      AND (
+        represented.auth_kind IN ('legacy', 'managed_profile')
+        OR (
+          represented.auth_kind = 'manual_shared'
+          AND represented.manual_lease_expires_at > now()
+        )
+      )
+      ${studentFilter}
+    ORDER BY represented.student_id ASC
+  `);
+  return result.rows.map((raw) => {
+    const row = raw as Record<string, unknown>;
+    const authKind = row.authKind;
+    if (
+      typeof row.id !== "string"
+      || typeof row.studentId !== "string"
+      || typeof row.deviceId !== "string"
+      || (authKind !== "legacy" && authKind !== "managed_profile" && authKind !== "manual_shared")
+    ) {
+      throw new Error("Invalid ClassPilot login session authority row");
+    }
+    return {
+      id: row.id,
+      studentId: row.studentId,
+      deviceId: row.deviceId,
+      startedAt: loginSessionAuthorityDateFromEpoch(row.startedAtMs, "start timestamp"),
+      lastSeenAt: loginSessionAuthorityDateFromEpoch(row.lastSeenAtMs, "last-seen timestamp"),
+      authKind,
+      latestHeartbeatAt: row.latestHeartbeatAtMs == null
+        ? null
+        : loginSessionAuthorityDateFromEpoch(
+            row.latestHeartbeatAtMs,
+            "heartbeat timestamp"
+          ),
+    };
+  });
 }
 
 /** Login-roster exclusion uses the same authority contract as current session

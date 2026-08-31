@@ -12,6 +12,7 @@ test("manual student sessions use database-time leases and exact recovery capabi
   const storage = source("../src/services/storage.ts");
   const authority = source("../src/services/classpilotStudentSessionAuthority.ts");
   const routes = source("../src/routes/classpilot/devices.ts");
+  const requestId = source("../src/middleware/requestId.ts");
 
   assert.match(schema, /authKind: text\("auth_kind"\).*default\("legacy"\)/);
   assert.match(schema, /manualLeaseExpiresAt: timestamp\("manual_lease_expires_at"/);
@@ -22,7 +23,10 @@ test("manual student sessions use database-time leases and exact recovery capabi
   assert.match(storage, /now\(\) \+ interval '300 seconds'/);
   assert.match(storage, /session\.deviceId === deviceId/);
   assert.match(storage, /session\.sessionRecoveryTokenHash === options\.reclaimRecoveryTokenHash/);
-  assert.match(storage, /authoritative && session\.id !== recoveredSession\?\.session\.id/);
+  assert.match(
+    storage,
+    /authoritative[\s\S]{0,160}session\.id !== recoveredSession\?\.session\.id[\s\S]{0,160}session\.id !== selectedTransferSession\?\.session\.id/
+  );
   assert.match(storage, /recoveredSession\.session\.studentId !== studentId/);
   assert.match(storage, /code: "STUDENT_SESSION_ACTIVE"/);
   assert.match(storage, /endStudentSessionExact[\s\S]*studentSessionId[\s\S]*deviceId/);
@@ -84,6 +88,17 @@ test("manual student sessions use database-time leases and exact recovery capabi
     "same-device recovery must not be limited to resuming the previous student"
   );
   assert.match(routes, /manualSessionCrossStudentHandoff/);
+  assert.match(
+    routes,
+    /captureClasspilotStudentAuthGateIngress[\s\S]*req\.requestReceivedAtMs[\s\S]*router\.post\([\s\S]*"\/extension\/session-gate-presence",[\s\S]*captureClasspilotStudentAuthGateIngress,[\s\S]*extensionSessionGatePresenceIpLimiter[\s\S]*renewClasspilotStudentAuthGatePresence\([\s\S]*requestObservedAt\)/,
+    "gate presence must preserve request ordering before limiter and authorization awaits"
+  );
+  assert.match(requestId, /req\.requestReceivedAtMs = Date\.now\(\)/);
+  assert.match(
+    storage,
+    /EXTRACT\(EPOCH FROM clock_timestamp\(\)\) \* 1000 AS "databaseNowMs"/,
+    "post-lock transfer expiry must use a wall clock that advances during lock waits"
+  );
   assert.doesNotMatch(storage, /export async function startStudentSession\(/);
 });
 

@@ -169,6 +169,12 @@ export async function issueStudentDeviceSessionToken(options: {
   authKind: StudentSessionIssuanceAuthKind;
   reclaimRecoveryToken?: string | null;
   managedDeviceContinuity?: ClasspilotManagedDeviceContinuityProof | null;
+  studentTransferAuthority?: {
+    studentSessionId: string;
+    source: "gate_presence" | "stale_heartbeat";
+    gatePresenceObservedAt?: number;
+    gatePresenceExpiresAt?: number;
+  } | null;
 }, dependencies: {
   signStudentToken?: typeof createStudentToken;
 } = {}) {
@@ -223,6 +229,7 @@ export async function issueStudentDeviceSessionToken(options: {
     replacedSessions,
     crossStudentHandoff,
     managedDeviceRecoveryTransition,
+    studentTransferSource,
   } = await startStudentSessionWithReplacements(
     options.schoolId,
     options.student.id,
@@ -239,6 +246,7 @@ export async function issueStudentDeviceSessionToken(options: {
         : null,
       reclaimManagedDeviceRecoveryTokenHash:
         options.managedDeviceContinuity?.recoveryTokenHash ?? null,
+      studentTransferAuthority: options.studentTransferAuthority ?? null,
     }
   );
 
@@ -248,6 +256,7 @@ export async function issueStudentDeviceSessionToken(options: {
     replacedSessions,
     crossStudentHandoff,
     managedDeviceRecoveryTransition,
+    studentTransferSource,
     effectiveDeviceId,
     studentToken,
     sessionRecoveryToken: recovery?.token ?? null,

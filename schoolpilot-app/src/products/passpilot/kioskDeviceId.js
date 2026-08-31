@@ -137,6 +137,26 @@ export function forgetKioskLaunchTicket(ticket) {
   if (ticket && pendingLaunchTicket === ticket) pendingLaunchTicket = null;
 }
 
+// Gate-launched kiosks can be exited before launch-ticket redemption settles.
+// Clear the module-scoped capability and scrub any fragment copy without
+// touching the durable, non-secret kiosk continuity id in localStorage.
+export function discardKioskLaunchTicket() {
+  pendingLaunchTicket = null;
+  try {
+    const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    if (!fragment.has('launchTicket')) return;
+    fragment.delete('launchTicket');
+    const remaining = fragment.toString();
+    window.history.replaceState(
+      {},
+      '',
+      `${window.location.pathname}${window.location.search}${remaining ? `#${remaining}` : ''}`,
+    );
+  } catch {
+    // Navigation still proceeds; the next document cannot retain module state.
+  }
+}
+
 export function isKioskLaunchTicketPending(ticket) {
   return Boolean(ticket && pendingLaunchTicket === ticket);
 }

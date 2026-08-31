@@ -13,6 +13,7 @@ process.env.CLASSPILOT_MANUAL_SHARED_SESSION_ISSUANCE_ENABLED = "true";
 process.env.CLASSPILOT_PROTOCOL_V3_ENABLED = "true";
 process.env.CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1 = "true";
 process.env.CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V2 = "true";
+process.env.CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1 = "true";
 
 const { default: db, pool, sessionPool } = await import("../dist/db.js");
 const { runWithTenantContext } = await import(
@@ -35,6 +36,12 @@ const heartbeatMetrics = await import(
 );
 const managedDeviceContinuity = await import(
   "../dist/services/classpilotManagedDeviceContinuity.js"
+);
+const authGatePresence = await import(
+  "../dist/services/classpilotStudentAuthGatePresence.js"
+);
+const studentSessionTransfer = await import(
+  "../dist/services/classpilotStudentSessionTransfer.js"
 );
 const classpilotDeviceRoutes = await import("../dist/routes/classpilot/devices.js");
 const { classpilotScreenshotFallback } = await import(
@@ -2286,6 +2293,404 @@ describe("ClassPilot manual-session recovery authority", () => {
         studentId: candidates[nextIndex]!.id,
         deviceId: verifiedProof.deviceId,
         studentSessionId: sequentialBody.studentSessionId,
+      }));
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => error ? reject(error) : resolve())
+      );
+    }
+  });
+
+  it("offers a gate-visible manual student and atomically transfers a correct-PIN login", async () => {
+    const gateSchoolEnrollmentKey = `${tag}-gate-presence-key`;
+    const sourceRecovery = createStudentSessionRecovery();
+    const sourceContinuity = managedDeviceContinuity.issueClasspilotManagedDeviceContinuityProof({
+      schoolId,
+      directoryDeviceId: `${tag}-gate-source-directory`,
+      recoveryToken: sourceRecovery.token,
+    });
+    const verifiedSourceContinuity =
+      managedDeviceContinuity.verifyClasspilotManagedDeviceContinuityProof({
+        token: sourceContinuity.continuityProof,
+        schoolId,
+      });
+    assert.ok(verifiedSourceContinuity);
+    const gateSourceDeviceId = verifiedSourceContinuity.deviceId;
+    const gateTargetDeviceId = `${tag}-gate-target-device`;
+    const gatePin = "7913";
+    const gatePinHash = await hashPassword(gatePin);
+    const gateStudent = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Gate",
+      lastName: "Transfer",
+      email: `gate-transfer@${tag}.example.edu`,
+      emailLc: `gate-transfer@${tag}.example.edu`,
+      gradeLevel: "7",
+      classpilotPinHash: gatePinHash,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    await inSchool(() => createDevice({
+      deviceId: gateSourceDeviceId,
+      deviceName: "Gate transfer source",
+      schoolId,
+      classId: schoolId,
+    } as Parameters<typeof createDevice>[0]));
+    const source = await inSchool(() => startStudentSessionWithReplacements(
+      schoolId,
+      gateStudent.id,
+      gateSourceDeviceId,
+      {
+        authKind: "manual_shared",
+        sessionRecoveryTokenHash: sourceRecovery.tokenHash,
+      }
+    ));
+    await inSchool(() => storage.upsertSettings(schoolId, {
+      enrollmentKey: gateSchoolEnrollmentKey,
+      enrollmentKeyRequired: true,
+      sharedChromebookSignInEnabled: true,
+      sharedChromebookLoginMethod: "name_pin",
+      sharedChromebookPinLoginEnabled: true,
+    }));
+
+    const { createApp } = await import("../dist/app.js");
+    const server = createServer(createApp());
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    const baseUrl = `http://127.0.0.1:${port}/api/extension`;
+    try {
+      const rosterHeaders = {
+        "x-classpilot-enrollment-key": gateSchoolEnrollmentKey,
+      };
+      const beforePresence = await fetch(
+        `${baseUrl}/login-roster?schoolId=${encodeURIComponent(schoolId)}&gradeLevel=7`,
+        { headers: rosterHeaders }
+      );
+      assert.equal(beforePresence.status, 200);
+      assert.equal(
+        ((await beforePresence.json()) as { students: Array<{ id: string }> })
+          .students.some((row) => row.id === gateStudent.id),
+        false,
+        "a fresh active student must remain hidden before the gate signal"
+      );
+
+      const protocolUpgrade = await fetch(`${baseUrl}/session-gate-presence`, {
+        method: "POST",
+        headers: {
+          authorization: `ClassPilot-Recovery ${sourceRecovery.token}`,
+          "content-type": "application/json",
+          ...rosterHeaders,
+        },
+        body: JSON.stringify({
+          schoolId,
+          clientProtocolVersion: 3,
+          capabilities: ["scopedAuthorityChecksV1"],
+        }),
+      });
+      assert.equal(protocolUpgrade.status, 426);
+      assert.equal(
+        (await protocolUpgrade.json() as { code?: string }).code,
+        "CLASSPILOT_PROTOCOL_UPGRADE_REQUIRED"
+      );
+
+      const unsupportedProtocol = await fetch(`${baseUrl}/session-gate-presence`, {
+        method: "POST",
+        headers: {
+          authorization: `ClassPilot-Recovery ${sourceRecovery.token}`,
+          "content-type": "application/json",
+          ...rosterHeaders,
+        },
+        body: JSON.stringify({
+          schoolId,
+          clientProtocolVersion: 2,
+          capabilities: ["scopedAuthorityChecksV1", "studentAuthGatePresenceV1"],
+        }),
+      });
+      assert.equal(unsupportedProtocol.status, 426);
+
+      const managedPresence = await fetch(`${baseUrl}/session-gate-presence`, {
+        method: "POST",
+        headers: {
+          authorization: `ClassPilot-Device ${sourceContinuity.continuityProof}`,
+          "content-type": "application/json",
+          ...rosterHeaders,
+        },
+        body: JSON.stringify({
+          schoolId,
+          clientProtocolVersion: 3,
+          capabilities: ["scopedAuthorityChecksV1", "studentAuthGatePresenceV1"],
+        }),
+      });
+      assert.equal(managedPresence.status, 204);
+
+      process.env.REDIS_URL = "redis://configured-but-unavailable.test";
+      try {
+        const unavailableTransfer = await fetch(`${baseUrl}/student-login`, {
+          method: "POST",
+          headers: { "content-type": "application/json", ...rosterHeaders },
+          body: JSON.stringify({
+            schoolId,
+            deviceId: gateTargetDeviceId,
+            studentId: gateStudent.id,
+            pin: gatePin,
+          }),
+        });
+        assert.equal(unavailableTransfer.status, 503);
+        assert.equal(
+          (await unavailableTransfer.json() as { code?: string }).code,
+          "STUDENT_SESSION_TRANSFER_UNAVAILABLE"
+        );
+        assert.equal(
+          (await inSchool(() => storage.getActiveSessionById(source.session.id)))?.id,
+          source.session.id
+        );
+      } finally {
+        process.env.REDIS_URL = "";
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const unnegotiated = await fetch(`${baseUrl}/session-gate-presence`, {
+        method: "POST",
+        headers: {
+          authorization: `ClassPilot-Recovery ${sourceRecovery.token}`,
+          "content-type": "application/json",
+          ...rosterHeaders,
+        },
+        body: JSON.stringify({
+          schoolId,
+          clientProtocolVersion: 3,
+          capabilities: ["scopedAuthorityChecksV1", "studentAuthGatePresenceV1"],
+        }),
+      });
+      assert.equal(unnegotiated.status, 204);
+      const exactPresence = await authGatePresence.readClasspilotStudentAuthGatePresence({
+        schoolId,
+        studentId: gateStudent.id,
+        studentSessionId: source.session.id,
+        deviceId: gateSourceDeviceId,
+      });
+      assert.equal(exactPresence.status, "present");
+      const [gateAuthority] = await inSchool(() =>
+        storage.getClasspilotLoginSessionAuthorities(schoolId, {
+          studentId: gateStudent.id,
+        })
+      );
+      assert.ok(gateAuthority);
+      assert.ok(
+        exactPresence.status === "present"
+          && exactPresence.presence.observedAt
+            > (gateAuthority.latestHeartbeatAt ?? gateAuthority.startedAt).getTime(),
+        `presence must be newer than the exact heartbeat: ${JSON.stringify({
+          presence: exactPresence,
+          startedAt: gateAuthority.startedAt,
+          latestHeartbeatAt: gateAuthority.latestHeartbeatAt,
+        })}`
+      );
+      assert.deepEqual(studentSessionTransfer.classpilotStudentSessionTransferDecision({
+        authKind: gateAuthority.authKind,
+        sessionStartedAt: gateAuthority.startedAt,
+        latestHeartbeatAt: gateAuthority.latestHeartbeatAt,
+        gatePresence: exactPresence,
+      }), { status: "allowed", source: "gate_presence" });
+
+      const afterPresence = await fetch(
+        `${baseUrl}/login-roster?schoolId=${encodeURIComponent(schoolId)}&gradeLevel=7`,
+        { headers: rosterHeaders }
+      );
+      assert.equal(afterPresence.status, 200);
+      const afterPresenceBody = (await afterPresence.json()) as {
+        students: Array<{ id: string; reclaimable?: boolean }>;
+      };
+      const offered = afterPresenceBody.students.find((row) => row.id === gateStudent.id);
+      assert.ok(
+        offered,
+        `the other Chromebook must receive the plain student row: ${JSON.stringify(afterPresenceBody)}`
+      );
+      assert.equal(offered.reclaimable, undefined);
+
+      const resumedHeartbeat = await inSchool(() =>
+        storage.createHeartbeatAndRefreshPresence({
+          deviceId: gateSourceDeviceId,
+          schoolId,
+          studentId: gateStudent.id,
+          activeTabTitle: "Student resumed after gate pulse",
+        }, source.session.id)
+      );
+      assert.equal(resumedHeartbeat.outcome, "recorded");
+      const hiddenAfterResume = await fetch(
+        `${baseUrl}/login-roster?schoolId=${encodeURIComponent(schoolId)}&gradeLevel=7`,
+        { headers: rosterHeaders }
+      );
+      assert.equal(hiddenAfterResume.status, 200);
+      assert.equal(
+        ((await hiddenAfterResume.json()) as { students: Array<{ id: string }> })
+          .students.some((row) => row.id === gateStudent.id),
+        false,
+        "a newer exact heartbeat must supersede the remaining gate-presence TTL"
+      );
+      const blockedWhileFresh = await fetch(`${baseUrl}/student-login`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...rosterHeaders },
+        body: JSON.stringify({
+          schoolId,
+          deviceId: gateTargetDeviceId,
+          studentId: gateStudent.id,
+          pin: gatePin,
+        }),
+      });
+      assert.equal(blockedWhileFresh.status, 409);
+      assert.equal(
+        (await blockedWhileFresh.json() as { code?: string }).code,
+        "STUDENT_SESSION_ACTIVE"
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const renewedPresence = await fetch(`${baseUrl}/session-gate-presence`, {
+        method: "POST",
+        headers: {
+          authorization: `ClassPilot-Recovery ${sourceRecovery.token}`,
+          "content-type": "application/json",
+          ...rosterHeaders,
+        },
+        body: JSON.stringify({
+          schoolId,
+          clientProtocolVersion: 3,
+          capabilities: ["scopedAuthorityChecksV1", "studentAuthGatePresenceV1"],
+        }),
+      });
+      assert.equal(renewedPresence.status, 204);
+
+      const wrongPin = await fetch(`${baseUrl}/student-login`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...rosterHeaders },
+        body: JSON.stringify({
+          schoolId,
+          deviceId: gateTargetDeviceId,
+          studentId: gateStudent.id,
+          pin: "0000",
+        }),
+      });
+      assert.equal(wrongPin.status, 401);
+      assert.equal(
+        (await inSchool(() => storage.getActiveSessionById(source.session.id)))?.id,
+        source.session.id,
+        "incorrect credentials cannot consume transfer authority"
+      );
+
+      const login = await fetch(`${baseUrl}/student-login`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...rosterHeaders },
+        body: JSON.stringify({
+          schoolId,
+          deviceId: gateTargetDeviceId,
+          studentId: gateStudent.id,
+          pin: gatePin,
+        }),
+      });
+      assert.equal(login.status, 200);
+      const loginBody = await login.json() as { studentSessionId: string };
+      assert.equal(await inSchool(() => storage.getActiveSessionById(source.session.id)), undefined);
+      const replacement = await inSchool(() =>
+        storage.getActiveSessionById(loginBody.studentSessionId)
+      );
+      assert.equal(replacement?.studentId, gateStudent.id);
+      assert.equal(replacement?.deviceId, gateTargetDeviceId);
+
+      const delayedRelease = await fetch(`${baseUrl}/session-release`, {
+        method: "POST",
+        headers: {
+          authorization: `ClassPilot-Recovery ${sourceRecovery.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ schoolId }),
+      });
+      assert.equal(delayedRelease.status, 204);
+      assert.equal(
+        (await inSchool(() => storage.getActiveSessionById(loginBody.studentSessionId)))?.id,
+        loginBody.studentSessionId
+      );
+      await inSchool(() => storage.endStudentSessionExact({
+        schoolId,
+        studentId: gateStudent.id,
+        deviceId: gateTargetDeviceId,
+        studentSessionId: loginBody.studentSessionId,
+      }));
+
+      const emailSourceDeviceId = `${tag}-gate-email-source`;
+      const emailTargetDeviceId = `${tag}-gate-email-target`;
+      const emailStudentIdNumber = "gate-email-3141";
+      const emailStudent = await inSchool(() => createStudent({
+        schoolId,
+        firstName: "Gate",
+        lastName: "Email Transfer",
+        email: `gate-email@${tag}.example.edu`,
+        emailLc: `gate-email@${tag}.example.edu`,
+        gradeLevel: "8",
+        studentIdNumber: emailStudentIdNumber,
+        status: "active",
+      } as Parameters<typeof createStudent>[0]));
+      await inSchool(() => createDevice({
+        deviceId: emailSourceDeviceId,
+        deviceName: "Gate email transfer source",
+        schoolId,
+        classId: schoolId,
+      } as Parameters<typeof createDevice>[0]));
+      const emailRecovery = createStudentSessionRecovery();
+      const emailSource = await inSchool(() => startStudentSessionWithReplacements(
+        schoolId,
+        emailStudent.id,
+        emailSourceDeviceId,
+        {
+          authKind: "manual_shared",
+          sessionRecoveryTokenHash: emailRecovery.tokenHash,
+        }
+      ));
+      await inSchool(() => storage.upsertSettings(schoolId, {
+        enrollmentKey: gateSchoolEnrollmentKey,
+        enrollmentKeyRequired: true,
+        sharedChromebookSignInEnabled: true,
+        sharedChromebookLoginMethod: "email_id",
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const emailPresence = await fetch(`${baseUrl}/session-gate-presence`, {
+        method: "POST",
+        headers: {
+          authorization: `ClassPilot-Recovery ${emailRecovery.token}`,
+          "content-type": "application/json",
+          ...rosterHeaders,
+        },
+        body: JSON.stringify({
+          schoolId,
+          clientProtocolVersion: 3,
+          capabilities: ["scopedAuthorityChecksV1", "studentAuthGatePresenceV1"],
+        }),
+      });
+      assert.equal(emailPresence.status, 204);
+      const emailLogin = await fetch(`${baseUrl}/student-login`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...rosterHeaders },
+        body: JSON.stringify({
+          schoolId,
+          deviceId: emailTargetDeviceId,
+          studentEmail: emailStudent.email,
+          studentIdNumber: emailStudentIdNumber,
+        }),
+      });
+      assert.equal(emailLogin.status, 200);
+      const emailLoginBody = await emailLogin.json() as { studentSessionId: string };
+      assert.equal(
+        await inSchool(() => storage.getActiveSessionById(emailSource.session.id)),
+        undefined
+      );
+      assert.equal(
+        (await inSchool(() => storage.getActiveSessionById(emailLoginBody.studentSessionId)))
+          ?.deviceId,
+        emailTargetDeviceId
+      );
+      await inSchool(() => storage.endStudentSessionExact({
+        schoolId,
+        studentId: emailStudent.id,
+        deviceId: emailTargetDeviceId,
+        studentSessionId: emailLoginBody.studentSessionId,
       }));
     } finally {
       await new Promise<void>((resolve, reject) =>

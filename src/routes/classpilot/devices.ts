@@ -1,5 +1,6 @@
 import crypto from "crypto";
-import { Router, type Request, type Response } from "express";
+import { Router, type NextFunction, type Request, type Response } from "express";
+import { z } from "zod";
 import type { ClasspilotStudentControlState, Heartbeat } from "../../schema/classpilot.js";
 import { authenticate } from "../../middleware/authenticate.js";
 import {
@@ -42,6 +43,7 @@ import {
   getStudentsForDevice,
   getActiveStudentForDevice,
   getStudentIdsHiddenFromClasspilotLoginRoster,
+  getClasspilotLoginSessionAuthorities,
   getActiveSessionByDevice,
   getAdminEmailsBySchool,
   addCentralEmailRecipientForSchool,
@@ -197,6 +199,15 @@ import {
   negotiateClasspilotSurfaceProtocol,
 } from "../../services/classpilotProtocol.js";
 import {
+  readClasspilotStudentAuthGatePresence,
+  readClasspilotStudentAuthGatePresenceBatch,
+  renewClasspilotStudentAuthGatePresence,
+} from "../../services/classpilotStudentAuthGatePresence.js";
+import {
+  classpilotStudentRosterTransferDecision,
+  classpilotStudentSessionTransferDecision,
+} from "../../services/classpilotStudentSessionTransfer.js";
+import {
   classpilotKioskLaunchTicketPreflightSchema,
   classpilotKioskLaunchTicketRequestSchema,
   issueClasspilotKioskLaunchTicket,
@@ -242,6 +253,30 @@ bindHeartbeatHotPathHistoryFallbackSqlIdentity(
 );
 
 const router = Router();
+
+const STUDENT_AUTH_GATE_INGRESS_AT = "classpilotStudentAuthGateIngressAt";
+
+function captureClasspilotStudentAuthGateIngress(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void {
+  // requestId captured this before the global Redis-backed limiter. Copy it
+  // before the route-specific limiters so every async wait preserves the same
+  // immutable causal boundary.
+  res.locals[STUDENT_AUTH_GATE_INGRESS_AT] = req.requestReceivedAtMs;
+  next();
+}
+
+const classpilotStudentAuthGatePresenceRequestSchema = z
+  .object({
+    schoolId: z.string().trim().regex(/^[A-Za-z0-9._:-]{1,128}$/),
+    // A syntactically valid but unsupported protocol is negotiated below and
+    // receives 426. Malformed or missing protocol input remains a 400.
+    clientProtocolVersion: z.number().int().min(1).max(1_000),
+    capabilities: z.array(z.string().trim().min(1).max(64)).max(32),
+  })
+  .strict();
 
 const EXTENSION_SIGN_OUT_REASONS = new Set([
   "explicit_sign_out",
@@ -454,6 +489,34 @@ const extensionSessionReleaseIpLimiter = rateLimit({
   legacyHeaders: false,
   keyGenerator: extensionIp,
   store: redisStore("rl:classpilot:extension:session-release-ip:"),
+  passOnStoreError: true,
+});
+
+const extensionSessionGatePresenceCapabilityLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  message: {
+    error: "Student sign-in presence is temporarily rate limited",
+    code: "SESSION_GATE_PRESENCE_RATE_LIMITED",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: recoveryCapabilityLimiterKey,
+  store: redisStore("rl:classpilot:extension:session-gate-presence-capability:"),
+  passOnStoreError: true,
+});
+
+const extensionSessionGatePresenceIpLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10_000,
+  message: {
+    error: "Student sign-in presence is temporarily rate limited",
+    code: "SESSION_GATE_PRESENCE_RATE_LIMITED",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: extensionIp,
+  store: redisStore("rl:classpilot:extension:session-gate-presence-ip:"),
   passOnStoreError: true,
 });
 
@@ -1127,6 +1190,69 @@ export async function publishCommittedStudentSessionReplacements(options: {
   }));
 }
 
+type ClasspilotStudentTransferAuthority = {
+  studentSessionId: string;
+  source: "gate_presence" | "stale_heartbeat";
+  gatePresenceObservedAt?: number;
+  gatePresenceExpiresAt?: number;
+};
+
+async function resolveClasspilotStudentTransferAuthority(options: {
+  schoolId: string;
+  studentId: string;
+  targetDeviceId: string;
+}): Promise<ClasspilotStudentTransferAuthority | null> {
+  if (!isClasspilotCapabilityActive("studentAuthGatePresenceV1", {
+    schoolId: options.schoolId,
+  })) {
+    return null;
+  }
+  const authorities = await getClasspilotLoginSessionAuthorities(options.schoolId, {
+    studentId: options.studentId,
+  });
+  if (authorities.length > 1) {
+    recordHeartbeatHotPathCounter("studentAuthGateTransferBlockedFresh");
+    return null;
+  }
+  const [authority] = authorities;
+  if (!authority || authority.deviceId === options.targetDeviceId) return null;
+  if (authority.authKind !== "manual_shared") return null;
+  const gatePresence = await readClasspilotStudentAuthGatePresence({
+    schoolId: options.schoolId,
+    studentId: authority.studentId,
+    studentSessionId: authority.id,
+    deviceId: authority.deviceId,
+  });
+  const decision = classpilotStudentSessionTransferDecision({
+    authKind: authority.authKind,
+    sessionStartedAt: authority.startedAt,
+    latestHeartbeatAt: authority.latestHeartbeatAt,
+    gatePresence,
+  });
+  if (decision.status === "unavailable") {
+    recordHeartbeatHotPathCounter("studentAuthGateTransferStoreUnavailable");
+    throw Object.assign(new Error("Student session transfer service is unavailable"), {
+      status: 503,
+      code: "STUDENT_SESSION_TRANSFER_UNAVAILABLE",
+      expose: true,
+    });
+  }
+  if (decision.status !== "allowed") {
+    recordHeartbeatHotPathCounter("studentAuthGateTransferBlockedFresh");
+    return null;
+  }
+  return {
+    studentSessionId: authority.id,
+    source: decision.source,
+    ...(decision.source === "gate_presence" && gatePresence.status === "present"
+      ? {
+          gatePresenceObservedAt: gatePresence.presence.observedAt,
+          gatePresenceExpiresAt: gatePresence.presence.expiresAt,
+        }
+      : {}),
+  };
+}
+
 async function completeStudentDeviceLogin(options: {
   schoolId: string;
   deviceId: string;
@@ -1161,6 +1287,15 @@ async function completeStudentDeviceLogin(options: {
     });
   }
 
+  const targetDeviceId = options.managedDeviceContinuity?.deviceId ?? options.deviceId;
+  const studentTransferAuthority = options.authKind === "manual_shared"
+    ? await resolveClasspilotStudentTransferAuthority({
+        schoolId: options.schoolId,
+        studentId: student.id,
+        targetDeviceId,
+      })
+    : null;
+
   const {
     device,
     session,
@@ -1170,6 +1305,7 @@ async function completeStudentDeviceLogin(options: {
     effectiveDeviceId,
     studentToken,
     sessionRecoveryToken,
+    studentTransferSource,
   } = await issueStudentDeviceSessionToken({
     schoolId: options.schoolId,
     deviceId: options.deviceId,
@@ -1179,6 +1315,7 @@ async function completeStudentDeviceLogin(options: {
     authKind: options.authKind,
     reclaimRecoveryToken: options.reclaimRecoveryToken,
     managedDeviceContinuity: options.managedDeviceContinuity,
+    studentTransferAuthority,
   });
   return finalizeStudentDeviceSessionIssuance({
     schoolId: options.schoolId,
@@ -1203,6 +1340,11 @@ async function completeStudentDeviceLogin(options: {
   }
   if (managedDeviceRecoveryTransition) {
     recordHeartbeatHotPathCounter("managedDeviceContinuityRecoveryTransitioned");
+  }
+  if (studentTransferSource === "gate_presence") {
+    recordHeartbeatHotPathCounter("studentAuthGateTransferSucceededGate");
+  } else if (studentTransferSource === "stale_heartbeat") {
+    recordHeartbeatHotPathCounter("studentAuthGateTransferSucceededStale");
   }
   const replacedLegacyCount = replacedSessions.filter(
     (row) => row.authKind === "legacy"
@@ -2032,10 +2174,58 @@ router.get("/extension/login-roster", extensionRosterLimiter, async (req, res, n
             tokenHash: hashStudentSessionRecoveryToken(recoveryToken),
           })
           : undefined;
-      const activeStudentIds = new Set(
-        (await getStudentIdsHiddenFromClasspilotLoginRoster(school.id))
-          .filter((studentId) => studentId !== reclaimableSession?.studentId)
-      );
+      const transferSources = new Map<string, "gate_presence" | "stale_heartbeat">();
+      let activeStudentIds: Set<string>;
+      if (isClasspilotCapabilityActive("studentAuthGatePresenceV1", {
+        schoolId: school.id,
+      })) {
+        const authorities = await getClasspilotLoginSessionAuthorities(school.id);
+        const manualBindings = authorities
+          .filter((authority) => authority.authKind === "manual_shared")
+          .map((authority) => ({
+            schoolId: school.id,
+            studentId: authority.studentId,
+            studentSessionId: authority.id,
+            deviceId: authority.deviceId,
+          }));
+        const gatePresenceBySession = await readClasspilotStudentAuthGatePresenceBatch(
+          manualBindings
+        );
+        activeStudentIds = new Set<string>();
+        const authoritiesByStudent = new Map<string, typeof authorities>();
+        for (const authority of authorities) {
+          const rows = authoritiesByStudent.get(authority.studentId) ?? [];
+          rows.push(authority);
+          authoritiesByStudent.set(authority.studentId, rows);
+        }
+        for (const [studentId, studentAuthorities] of authoritiesByStudent) {
+          // A visible row must map to exactly one transferable authority. This
+          // avoids a false offer if legacy/corrupt data contains an additional
+          // current session that the issuance transaction will correctly
+          // reject. The same rule protects exact-device resume.
+          if (studentAuthorities.length !== 1) {
+            activeStudentIds.add(studentId);
+            continue;
+          }
+          const decision = classpilotStudentRosterTransferDecision({
+            authorities: studentAuthorities,
+            reclaimableSessionId: reclaimableSession?.studentId === studentId
+              ? reclaimableSession.id
+              : undefined,
+            gatePresenceBySession,
+          });
+          if (decision.status === "allowed") {
+            transferSources.set(studentId, decision.source);
+          } else if (decision.status === "hidden") {
+            activeStudentIds.add(studentId);
+          }
+        }
+      } else {
+        activeStudentIds = new Set(
+          (await getStudentIdsHiddenFromClasspilotLoginRoster(school.id))
+            .filter((studentId) => studentId !== reclaimableSession?.studentId)
+        );
+      }
 
       if (!gradeLevel) {
         return res.json({
@@ -2068,6 +2258,18 @@ router.get("/extension/login-roster", extensionRosterLimiter, async (req, res, n
         if (managedDeviceContinuity) {
           recordHeartbeatHotPathCounter("managedDeviceContinuityReclaimOffered");
         }
+      }
+      const gateOffers = roster.filter(
+        (student) => transferSources.get(student.id) === "gate_presence"
+      ).length;
+      const staleOffers = roster.filter(
+        (student) => transferSources.get(student.id) === "stale_heartbeat"
+      ).length;
+      if (gateOffers > 0) {
+        recordHeartbeatHotPathCounter("studentAuthGateRosterOfferedGate", gateOffers);
+      }
+      if (staleOffers > 0) {
+        recordHeartbeatHotPathCounter("studentAuthGateRosterOfferedStale", staleOffers);
       }
 
       return res.json({
@@ -2358,6 +2560,129 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
     next(err);
   }
 });
+
+// POST /api/classpilot/extension/session-gate-presence - A short exact-bound
+// signal emitted only while the ClassPilot student authentication gate is
+// visibly ready. It makes the represented manual session transferable without
+// exposing any binding identifier and never ends the session by itself.
+router.post(
+  "/extension/session-gate-presence",
+  captureClasspilotStudentAuthGateIngress,
+  extensionSessionGatePresenceIpLimiter,
+  extensionSessionGatePresenceCapabilityLimiter,
+  async (req, res) => {
+    setClassPilotNoStore(res);
+    const parsed = classpilotStudentAuthGatePresenceRequestSchema.safeParse(req.body);
+    const recoveryToken = studentSessionRecoveryTokenFromAuthorization(
+      req.headers.authorization
+    );
+    const managedAuthorizationPresented =
+      classpilotManagedDeviceAuthorizationPresented(req.headers.authorization);
+    if (!parsed.success || (!recoveryToken && !managedAuthorizationPresented)) {
+      return res.status(400).json({
+        error: "Student sign-in presence request is invalid",
+        code: "SESSION_GATE_PRESENCE_INVALID",
+      });
+    }
+    const requestObservedAt = Number(
+      res.locals[STUDENT_AUTH_GATE_INGRESS_AT]
+    );
+    if (!Number.isSafeInteger(requestObservedAt) || requestObservedAt <= 0) {
+      return res.status(503).json({
+        error: "Student sign-in presence service is unavailable",
+        code: "SESSION_GATE_PRESENCE_UNAVAILABLE",
+      });
+    }
+    const { schoolId, clientProtocolVersion, capabilities } = parsed.data;
+    try {
+      const school = await getSchoolById(schoolId);
+      if (!school || school.status !== "active") {
+        recordHeartbeatHotPathCounter("studentAuthGatePresenceNoop");
+        return res.status(204).end();
+      }
+      return await runWithTenantContext({ schoolId }, async () => {
+        const settings = await getSettingsForSchool(schoolId);
+        const enrollmentKey = enrollmentKeyFromRequest(req);
+        const keyCheck = validateEnrollmentKeyForSettings(settings, enrollmentKey, {
+          requireConfiguredKey: true,
+        });
+        if (!keyCheck.ok || !settings?.sharedChromebookSignInEnabled) {
+          return res.status(400).json({
+            error: "Student sign-in presence request is invalid",
+            code: "SESSION_GATE_PRESENCE_INVALID",
+          });
+        }
+        // Negotiate only after the caller proves the school's enrollment
+        // authority. Otherwise a public request could probe school-scoped
+        // rollout state through the 426 response.
+        const protocol = negotiateClasspilotProtocol({
+          clientProtocolVersion,
+          advertisedCapabilities: capabilities,
+          scope: { schoolId },
+        });
+        if (!protocol.acceptedCapabilities.includes("studentAuthGatePresenceV1")) {
+          return res.status(426).json({
+            error: "Student sign-in presence requires a compatible ClassPilot protocol",
+            code: "CLASSPILOT_PROTOCOL_UPGRADE_REQUIRED",
+            serverProtocolVersion: protocol.serverProtocolVersion,
+            acceptedCapabilities: protocol.acceptedCapabilities,
+          });
+        }
+        if (!(await hasCurrentClassPilotLicense(schoolId))) {
+          recordHeartbeatHotPathCounter("studentAuthGatePresenceNoop");
+          return res.status(204).end();
+        }
+
+        const managedProofToken = classpilotManagedDeviceProofFromAuthorization(
+          req.headers.authorization
+        );
+        const managedContinuity = managedProofToken
+          ? verifyClasspilotManagedDeviceContinuityProof({
+              token: managedProofToken,
+              schoolId,
+            })
+          : null;
+        const session = managedContinuity
+          ? await getReclaimableStudentSessionByManagedDevice({
+              schoolId,
+              deviceId: managedContinuity.deviceId,
+              recoveryTokenHash: managedContinuity.recoveryTokenHash,
+            })
+          : recoveryToken
+            ? await getReclaimableStudentSessionByRecoveryTokenHash({
+                schoolId,
+                tokenHash: hashStudentSessionRecoveryToken(recoveryToken),
+              })
+            : undefined;
+        if (!session || session.authKind !== "manual_shared") {
+          recordHeartbeatHotPathCounter("studentAuthGatePresenceNoop");
+          return res.status(204).end();
+        }
+        const renewed = await renewClasspilotStudentAuthGatePresence({
+          schoolId,
+          studentId: session.studentId,
+          studentSessionId: session.id,
+          deviceId: session.deviceId,
+        }, requestObservedAt);
+        if (renewed.status !== "present") {
+          recordHeartbeatHotPathCounter("studentAuthGatePresenceFailure");
+          return res.status(503).json({
+            error: "Student sign-in presence service is unavailable",
+            code: "SESSION_GATE_PRESENCE_UNAVAILABLE",
+          });
+        }
+        recordHeartbeatHotPathCounter("studentAuthGatePresenceRenewed");
+        return res.status(204).end();
+      });
+    } catch {
+      recordHeartbeatHotPathCounter("studentAuthGatePresenceFailure");
+      return res.status(503).json({
+        error: "Student sign-in presence service is unavailable",
+        code: "SESSION_GATE_PRESENCE_UNAVAILABLE",
+      });
+    }
+  }
+);
 
 // POST /api/classpilot/extension/session-release - Idempotently release the
 // exact manual session represented by an opaque recovery capability. Cleanup
