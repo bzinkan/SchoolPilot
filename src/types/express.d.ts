@@ -33,6 +33,9 @@ declare global {
       // Per-request correlation id (set by requestId middleware, echoed in the
       // X-Request-Id response header and recorded on any error for this request)
       requestId?: string;
+      // Immutable app-ingress clock captured alongside requestId before any
+      // asynchronous middleware or rate limiter.
+      requestReceivedAtMs?: number;
     }
 
     interface Locals {

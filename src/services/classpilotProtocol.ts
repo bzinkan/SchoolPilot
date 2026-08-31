@@ -14,6 +14,7 @@ export const CLASSPILOT_PROTOCOL_V3_CAPABILITIES = [
   "liveViewIceServersV1",
   "kioskLaunchTicketV1",
   "kioskLaunchTicketV2",
+  "studentAuthGatePresenceV1",
 ] as const;
 
 export type ClasspilotProtocolCapability =
@@ -31,6 +32,7 @@ const CAPABILITY_FLAGS: Record<ClasspilotProtocolCapability, string> = {
   liveViewIceServersV1: "CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1",
   kioskLaunchTicketV1: "CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V1",
   kioskLaunchTicketV2: "CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V2",
+  studentAuthGatePresenceV1: "CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1",
 };
 
 const SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES = new Set<ClasspilotProtocolCapability>([
@@ -43,6 +45,7 @@ const SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES = new Set<ClasspilotProtocolCapabi
   "safetyEvidenceCaptureV1",
   "liveViewIceServersV1",
   "kioskLaunchTicketV2",
+  "studentAuthGatePresenceV1",
 ]);
 
 function enabled(value: string | undefined): boolean {

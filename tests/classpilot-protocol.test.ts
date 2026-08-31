@@ -23,6 +23,7 @@ const REPAIRED_CLIENT_DEPENDENT_CAPABILITIES = [
   "safetyEvidenceCaptureV1",
   "liveViewIceServersV1",
   "kioskLaunchTicketV2",
+  "studentAuthGatePresenceV1",
 ] as const;
 
 test("protocol v3 activates only the advertised and server-enabled intersection", () => {
@@ -61,6 +62,7 @@ test("all scoped-authority-dependent capabilities require the repaired scoping m
     CLASSPILOT_CAP_SAFETY_EVIDENCE_CAPTURE_V1: "true",
     CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1: "true",
     CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V2: "true",
+    CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1: "true",
   };
   assert.deepEqual(negotiateClasspilotProtocol({
     clientProtocolVersion: 3,

@@ -75,6 +75,7 @@ function allV3CapabilitiesEnabled(): NodeJS.ProcessEnv {
     CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1: "true",
     CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V1: "true",
     CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V2: "true",
+    CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1: "true",
   };
 }
 
@@ -240,6 +241,7 @@ test("protocol v3 accepts only the client-advertised and server-enabled capabili
     CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1: "true",
     CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V1: "false",
     CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V2: "true",
+    CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1: "true",
   };
 
   assert.deepEqual(negotiateClasspilotProtocol({

@@ -11,6 +11,9 @@ import crypto from "crypto";
  * Must be mounted FIRST, before any route or error handler.
  */
 export const requestId: RequestHandler = (req, res, next) => {
+  // Immutable ingress time for the rare contracts that must preserve causal
+  // ordering across every downstream async middleware (including limiters).
+  req.requestReceivedAtMs = Date.now();
   const inbound = req.headers["x-request-id"];
   const candidate = Array.isArray(inbound) ? inbound[0] : inbound;
   // Only trust short, safe inbound ids; otherwise generate our own.
