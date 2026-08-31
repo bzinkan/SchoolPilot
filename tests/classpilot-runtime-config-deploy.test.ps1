@@ -615,12 +615,21 @@ try {
             -TargetRuntimeConfiguration $skippedStudentGateGlobal
     } "Student-gate global activation must not skip its school-scoped pilot."
 
-    $staleLateSignInReleaseTag = [string]$script:ClassPilotReleaseTag
-    $staleLateSignInMergeSha = [string]$script:ClassPilotMergeSha
-    $staleLateSignInZipSha256 = [string]$script:ClassPilotZipSha256
+    $finalLateSignInReleaseTag = [string]$script:ClassPilotReleaseTag
+    $finalLateSignInMergeSha = [string]$script:ClassPilotMergeSha
+    $finalLateSignInZipSha256 = [string]$script:ClassPilotZipSha256
     $productionClassPilotExtensionId = [string]$script:ClassPilotExtensionId
-    Assert-Condition ($staleLateSignInReleaseTag -ceq "v2.7.1") `
-        "The rollout helper must retain the last reviewed release identity until the final 2.7.9 package exists."
+    Assert-Condition ($finalLateSignInReleaseTag -ceq "v2.7.9") `
+        "Late-sign-in release evidence must bind the exact final v2.7.9 tag."
+    Assert-Condition ($finalLateSignInMergeSha -ceq "ce4b45d0da67dab8f28e71600528b50ab52bff01") `
+        "Late-sign-in release evidence must bind the exact final v2.7.9 merge."
+    Assert-Condition ($finalLateSignInZipSha256 -ceq "0a60e83b4e968e0fa5ae36c077ee7715ff19af3f2902c8ea39ce2e4d651b08ac") `
+        "Late-sign-in release evidence must bind the exact final v2.7.9 clean-tag ZIP."
+    Assert-Condition ($productionClassPilotExtensionId -ceq "iggbfegfcjkfieoemeolfmfnapepalca") `
+        "Late-sign-in release evidence must bind the production ClassPilot extension ID."
+    $script:ClassPilotReleaseTag = "v2.7.1"
+    $script:ClassPilotMergeSha = "a3b096d6a74ab6979f4e4c656d75e2397eb8648f"
+    $script:ClassPilotZipSha256 = "40fed2c455d5c50fe3a947d23e3798a0c81832a67e717a2767b62970c024307c"
     Assert-Throws {
         ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
             schemaVersion = 4; mode = "late-signin-pilot"; pilotSchoolId = $testSchoolId
@@ -644,26 +653,29 @@ try {
         })
     } "Changing only the release tag must not unlock late-sign-in with stale merge and ZIP evidence."
     $script:ClassPilotMergeSha = "7e3c129315d9e7c94ee4f6084e769e759a7e2b6a"
-    $script:ClassPilotZipSha256 = "c" * 64
+    $script:ClassPilotZipSha256 = $finalLateSignInZipSha256
     Assert-Throws {
         ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
             schemaVersion = 4; mode = "late-signin-pilot"; pilotSchoolId = $testSchoolId
         })
     } "The incomplete auth-only v2.7.9 merge must never unlock late-sign-in."
-    $script:ClassPilotMergeSha = "b" * 40
+    $script:ClassPilotMergeSha = $finalLateSignInMergeSha
     $script:ClassPilotZipSha256 = "cd2d9c26f989a64203c52f460a1366d642ea371d7cadbb68aec9ef9a16c1884e"
     Assert-Throws {
         ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
             schemaVersion = 4; mode = "late-signin-pilot"; pilotSchoolId = $testSchoolId
         })
     } "The obsolete auth-only v2.7.9 ZIP must never unlock late-sign-in."
-    $script:ClassPilotZipSha256 = "c" * 64
+    $script:ClassPilotZipSha256 = $finalLateSignInZipSha256
     $script:ClassPilotExtensionId = "iggbfegfcjkfieoemeolfmfnapepalcb"
     Assert-Throws {
         ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
             schemaVersion = 4; mode = "late-signin-pilot"; pilotSchoolId = $testSchoolId
         })
     } "Late-sign-in release evidence must bind the exact production extension ID."
+    $script:ClassPilotReleaseTag = $finalLateSignInReleaseTag
+    $script:ClassPilotMergeSha = $finalLateSignInMergeSha
+    $script:ClassPilotZipSha256 = $finalLateSignInZipSha256
     $script:ClassPilotExtensionId = $productionClassPilotExtensionId
     $lateSignInPilotIntent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
         schemaVersion = 4; mode = "late-signin-pilot"; pilotSchoolId = $testSchoolId
@@ -724,9 +736,9 @@ try {
         $unsafeGlobalLateRolloutEntry.value = $unsafeGlobalLateRollouts | ConvertTo-Json -Depth 10 -Compress
         Get-RuntimeActivationState -Environment $unsafeGlobalLateEnvironment -AllowBaseline
     } "Late-sign-in activation must reject a global rollout."
-    $script:ClassPilotReleaseTag = $staleLateSignInReleaseTag
-    $script:ClassPilotMergeSha = $staleLateSignInMergeSha
-    $script:ClassPilotZipSha256 = $staleLateSignInZipSha256
+    $script:ClassPilotReleaseTag = $finalLateSignInReleaseTag
+    $script:ClassPilotMergeSha = $finalLateSignInMergeSha
+    $script:ClassPilotZipSha256 = $finalLateSignInZipSha256
     $script:ClassPilotExtensionId = $productionClassPilotExtensionId
 
     $legacyGlobalSource = New-TransitionSourceTask -RuntimeConfiguration $globalRuntime
@@ -1566,10 +1578,10 @@ try {
         validatedAt = [DateTimeOffset]::Parse("2026-08-23T12:05:00Z").ToString("o")
         schoolPilotAppSha = $appSha
         schoolPilotImageDigest = $digest
-        classPilotTag = "v2.7.1"
-        classPilotMergeSha = "a3b096d6a74ab6979f4e4c656d75e2397eb8648f"
+        classPilotTag = "v2.7.9"
+        classPilotMergeSha = "ce4b45d0da67dab8f28e71600528b50ab52bff01"
         classPilotExtensionId = "iggbfegfcjkfieoemeolfmfnapepalca"
-        classPilotZipSha256 = "40fed2c455d5c50fe3a947d23e3798a0c81832a67e717a2767b62970c024307c"
+        classPilotZipSha256 = "0a60e83b4e968e0fa5ae36c077ee7715ff19af3f2902c8ea39ce2e4d651b08ac"
         turnEvidenceSha256 = [string]$waiverTurnSnapshot.Sha256
         checks = [ordered]@{
             crossRepositoryContractPassed = $true
