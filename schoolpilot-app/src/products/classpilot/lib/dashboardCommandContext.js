@@ -25,7 +25,9 @@ export const DEFAULT_COVERAGE_COMMANDS = Object.freeze([
   'unlock-screen',
   'teacher-message',
   'apply-flight-path',
+  'remove-flight-path',
   'apply-block-list',
+  'remove-block-list',
 ]);
 
 function normalizedIds(values) {

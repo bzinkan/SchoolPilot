@@ -2,6 +2,7 @@ import type {
   ClasspilotClassroomState,
   ClasspilotStudentControlState,
 } from "../schema/classpilot.js";
+import { recordHeartbeatHotPathCounter } from "./heartbeatHotPathMetrics.js";
 
 export const CLASSPILOT_CLASSROOM_STATE_SCHEMA_VERSION = 1 as const;
 
@@ -13,6 +14,12 @@ export type ClasspilotClassroomStateSnapshot = {
   receivedAt: string;
   scheduledEndAt: string | null;
   hardExpiresAt: string;
+  /**
+   * Server-derived delivery metadata. This marker is intentionally absent
+   * from ordinary live classroom state. It is emitted only when durable
+   * deferred-origin state is released to an exact capable binding.
+   */
+  deliveryContext?: { lateSignInRestrictionSso: true };
   restrictions: {
     screenLock: { active: boolean; url?: string | null; domain?: string | null };
     flightPath: { active: boolean; allowedDomains: string[]; name?: string | null };
@@ -22,6 +29,31 @@ export type ClasspilotClassroomStateSnapshot = {
     temporaryAllows: Array<{ domain: string; expiresAt: string }>;
   };
 };
+
+export type ClasspilotLateSignInAppliedBinding = {
+  schoolId: string;
+  studentId: string;
+  studentSessionId: string;
+  deviceId: string;
+  revision: number;
+  appliedAt: string;
+};
+
+export type ClasspilotLateSignInDeliveryProvenance = {
+  origin: "deferred";
+  originCommandId: string;
+  originCreatedAt: string;
+  appliedBindings: ClasspilotLateSignInAppliedBinding[];
+};
+
+export type ClasspilotExactStudentBinding = {
+  schoolId: string;
+  studentId: string;
+  studentSessionId: string;
+  deviceId: string;
+};
+
+const MAX_APPLIED_BINDINGS = 32;
 
 export type ClasspilotControlEnforcementHealth =
   | "synced"
@@ -71,6 +103,99 @@ function iso(value: unknown): string | null {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(String(value));
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
+export function readClasspilotLateSignInDeliveryProvenance(
+  desiredState: unknown
+): ClasspilotLateSignInDeliveryProvenance | null {
+  const source = objectValue(objectValue(desiredState).lateSignInDelivery);
+  if (source.origin !== "deferred") return null;
+  const originCommandId = String(source.originCommandId || "").trim();
+  const originCreatedAt = iso(source.originCreatedAt);
+  if (!originCommandId || !originCreatedAt) return null;
+  const appliedBindings = Array.isArray(source.appliedBindings)
+    ? source.appliedBindings.slice(-MAX_APPLIED_BINDINGS).flatMap((entry) => {
+        const binding = objectValue(entry);
+        const schoolId = String(binding.schoolId || "").trim();
+        const studentId = String(binding.studentId || "").trim();
+        const studentSessionId = String(binding.studentSessionId || "").trim();
+        const deviceId = String(binding.deviceId || "").trim();
+        const revision = Number(binding.revision);
+        const appliedAt = iso(binding.appliedAt);
+        return schoolId && studentId && studentSessionId && deviceId
+          && Number.isSafeInteger(revision) && revision > 0 && appliedAt
+          ? [{ schoolId, studentId, studentSessionId, deviceId, revision, appliedAt }]
+          : [];
+      })
+    : [];
+  return { origin: "deferred", originCommandId, originCreatedAt, appliedBindings };
+}
+
+export function classpilotControlStateHasLateSignInOrigin(desiredState: unknown): boolean {
+  return readClasspilotLateSignInDeliveryProvenance(desiredState) !== null;
+}
+
+export function withClasspilotLateSignInOrigin(options: {
+  desiredState: unknown;
+  commandId: string;
+  createdAt?: Date;
+}): Record<string, unknown> {
+  const desired = objectValue(options.desiredState);
+  const existing = readClasspilotLateSignInDeliveryProvenance(desired);
+  return {
+    ...desired,
+    lateSignInDelivery: existing ?? {
+      origin: "deferred",
+      originCommandId: options.commandId,
+      originCreatedAt: (options.createdAt ?? new Date()).toISOString(),
+      appliedBindings: [],
+    },
+  };
+}
+
+export function recordClasspilotLateSignInAppliedBinding(options: {
+  desiredState: unknown;
+  binding: ClasspilotExactStudentBinding;
+  revision: number;
+  appliedAt?: Date;
+}): Record<string, unknown> {
+  const desired = objectValue(options.desiredState);
+  const provenance = readClasspilotLateSignInDeliveryProvenance(desired);
+  if (!provenance) return desired;
+  const withoutExactBinding = provenance.appliedBindings.filter((entry) => !(
+    entry.schoolId === options.binding.schoolId
+    && entry.studentId === options.binding.studentId
+    && entry.studentSessionId === options.binding.studentSessionId
+    && entry.deviceId === options.binding.deviceId
+  ));
+  return {
+    ...desired,
+    lateSignInDelivery: {
+      ...provenance,
+      appliedBindings: [...withoutExactBinding, {
+        ...options.binding,
+        revision: options.revision,
+        appliedAt: (options.appliedAt ?? new Date()).toISOString(),
+      }].slice(-MAX_APPLIED_BINDINGS),
+    },
+  };
+}
+
+export function classpilotLateSignInRevisionAppliedToBinding(options: {
+  desiredState: unknown;
+  binding: ClasspilotExactStudentBinding | null;
+  revision: number;
+}): boolean {
+  const provenance = readClasspilotLateSignInDeliveryProvenance(options.desiredState);
+  const binding = options.binding;
+  if (!provenance || !binding?.studentSessionId || !binding.deviceId) return false;
+  return provenance.appliedBindings.some((entry) =>
+    entry.schoolId === binding.schoolId
+    && entry.studentId === binding.studentId
+    && entry.studentSessionId === binding.studentSessionId
+    && entry.deviceId === binding.deviceId
+    && entry.revision === options.revision
+  );
 }
 
 export function emptyClasspilotRestrictions(): ClasspilotClassroomStateSnapshot["restrictions"] {
@@ -248,15 +373,94 @@ export function serializeClasspilotStudentControlState(
   };
 }
 
+/**
+ * Fail-closed serializer for an extension delivery surface. Deferred-origin
+ * state is never exposed (including its revision) unless all three pieces of
+ * authority agree: the exact-school operator gate, the negotiated client
+ * capability, and the current exact student/session/device binding.
+ */
+export function serializeClasspilotStudentControlStateForDelivery(options: {
+  state: ClasspilotStudentControlState;
+  gateActive: boolean;
+  acceptedCapabilities: readonly string[];
+  exactBinding: ClasspilotExactStudentBinding | null;
+  now?: Date;
+}): { classroomState: ClasspilotClassroomStateSnapshot | null; withheld: boolean } {
+  const provenance = readClasspilotLateSignInDeliveryProvenance(options.state.desiredState);
+  if (!provenance) {
+    return {
+      classroomState: serializeClasspilotStudentControlState(options.state, options.now),
+      withheld: false,
+    };
+  }
+  // Aggregate counters only: no URL, school, student, device, session, or
+  // command identity is attached. Sampling every actual delivery inspection
+  // makes rollback/off observations and the still-stamped backlog visible.
+  recordHeartbeatHotPathCounter("lateSignInStampedInspection");
+  if (!options.gateActive) recordHeartbeatHotPathCounter("lateSignInRollback");
+  const exact = options.exactBinding;
+  const authorized = options.gateActive
+    && options.acceptedCapabilities.includes("lateSignInRestrictionSsoV1")
+    && !!exact
+    && !!exact.studentSessionId
+    && !!exact.deviceId
+    && exact.schoolId === options.state.schoolId
+    && exact.studentId === options.state.studentId;
+  if (!authorized) return { classroomState: null, withheld: true };
+  const classroomState = serializeClasspilotStudentControlState(options.state, options.now);
+  const restrictions = classroomState.restrictions;
+  const stillRestricted = restrictions.screenLock.active
+    || restrictions.flightPath.active
+    || restrictions.blockList.active
+    || restrictions.attentionMode.active
+    || restrictions.tabLimit !== null
+    || restrictions.temporaryAllows.length > 0;
+  return {
+    // An expired stamped row still reconciles an exact capable client to the
+    // empty revision, but it must not trigger the cold Clever/SSO landing flow.
+    // Provenance remains durable for rollback evidence until normal cleanup.
+    classroomState: stillRestricted
+      ? { ...classroomState, deliveryContext: { lateSignInRestrictionSso: true } }
+      : classroomState,
+    withheld: false,
+  };
+}
+
 export function effectiveClasspilotControlEnforcementHealth(
   state: ClasspilotStudentControlState,
   extensionVersion: unknown,
-  now = new Date()
+  now = new Date(),
+  delivery?: {
+    gateActive: boolean;
+    acceptedCapabilities: readonly string[];
+    exactBinding: ClasspilotExactStudentBinding | null;
+  }
 ): ClasspilotControlEnforcementHealth {
   const effectiveExpiry = [state.scheduledEndAt, state.hardExpiresAt]
     .filter((value): value is Date => !!value)
     .sort((left, right) => left.getTime() - right.getTime())[0];
   if (effectiveExpiry && effectiveExpiry.getTime() <= now.getTime()) return "expired";
+
+  const deferred = readClasspilotLateSignInDeliveryProvenance(state.desiredState);
+  if (deferred) {
+    // A row-global ACK is not evidence for a replacement or older binding.
+    // Deferred truth is exact-binding truth: clients that did not negotiate
+    // the feature are unsupported, capable bindings remain pending until this
+    // precise revision is recorded for them, and only then may the stored ACK
+    // outcome be projected.
+    if (!delivery?.gateActive
+      || !delivery.acceptedCapabilities.includes("lateSignInRestrictionSsoV1")) {
+      return "unsupported";
+    }
+    if (!classpilotLateSignInRevisionAppliedToBinding({
+      desiredState: state.desiredState,
+      binding: delivery.exactBinding,
+      revision: state.revision,
+    })) {
+      return "pending";
+    }
+    return state.enforcementHealth as ClasspilotControlEnforcementHealth;
+  }
 
   // Full-state reconciliation ships in 2.6.0. During the mixed-version
   // rollout, an older extension must be described as unsupported rather than

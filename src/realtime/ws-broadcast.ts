@@ -11,6 +11,7 @@ export type WSClient = {
   studentSessionId?: string;
   userId?: string;
   authVersion?: number;
+  acceptedCapabilities?: string[];
   schoolId?: string;
   subscribedSessionIds: Set<string>;
   sessionSubscriptionEpochs: Map<string, number>;
@@ -96,6 +97,7 @@ export function authenticateWsClient(
     studentSessionId?: string;
     userId?: string;
     authVersion?: number;
+    acceptedCapabilities?: string[];
   }
 ): WSClient | undefined {
   const client = wsClients.get(ws);
@@ -113,6 +115,7 @@ export function authenticateWsClient(
   client.studentSessionId = auth.studentSessionId;
   client.userId = auth.userId;
   client.authVersion = auth.authVersion;
+  client.acceptedCapabilities = auth.acceptedCapabilities ? [...auth.acceptedCapabilities] : [];
   client.authenticated = true;
   client.passiveAuthorizationExpiresAt = undefined;
   client.passiveAuthorizationGeneration = undefined;

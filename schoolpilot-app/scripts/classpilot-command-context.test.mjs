@@ -6,6 +6,7 @@ import {
   buildStudentSignOutCommandRequest,
   combineCommandSettlements,
   CONSERVATIVE_DOMAIN_RESTRICTION_MESSAGE,
+  DEFAULT_COVERAGE_COMMANDS,
   DOMAIN_PRESERVING_RESTRICTION_MESSAGE,
   DOMAIN_RESTRICTION_URL_HELP,
   deriveDashboardCapabilities,
@@ -439,6 +440,31 @@ test('mixed delivery feedback never hides adverse outcomes behind an acknowledge
   assert.match(feedback.description, /1 failed/);
   assert.match(feedback.description, /1 unavailable/);
   assert.match(feedback.description, /1 expired/);
+});
+
+test('late-sign-in feedback sums pending and unavailable and reports current-page skips', () => {
+  const feedback = commandDeliveryFeedback({
+    command: { commandType: 'lock-screen', deliveryPolicy: 'persistent_control' },
+    summary: {
+      requested: 5,
+      attempted: 1,
+      acknowledged: 0,
+      completed: 0,
+      pending: 2,
+      failed: 0,
+      unavailable: 2,
+      expired: 0,
+    },
+    skippedCurrentPageCount: 1,
+  }, 'lock-screen');
+  assert.equal(feedback.title, 'Restriction saved');
+  assert.match(feedback.description, /4 restrictions are pending/);
+  assert.match(feedback.description, /1 signed-out student was skipped/);
+});
+
+test('Coverage command contract includes persistent restriction removal', () => {
+  assert.equal(DEFAULT_COVERAGE_COMMANDS.includes('remove-flight-path'), true);
+  assert.equal(DEFAULT_COVERAGE_COMMANDS.includes('remove-block-list'), true);
 });
 
 test('student tile unlock and Flight Path actions retain distinct semantics', () => {

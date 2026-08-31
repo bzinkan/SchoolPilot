@@ -11,11 +11,13 @@ import {
   getActiveTeachingSessionsForStudent,
   getClasspilotSessionStudentRoster,
   getClasspilotFabAuthoritySnapshot,
+  getClasspilotStudentControlStates,
   getSessionSettings,
   getSettingsForSchool,
   getStudentById,
   upsertSessionSettings,
 } from "./storage.js";
+import { classpilotControlStateHasLateSignInOrigin } from "./classpilotClassroomState.js";
 import { sendToDeviceLocal } from "../realtime/ws-broadcast.js";
 import { publishWSBatch } from "../realtime/ws-redis.js";
 import { assertClasspilotEntitled } from "./classpilotEntitlement.js";
@@ -264,31 +266,42 @@ export async function updateAndFanoutSessionFabSettings(options: {
   }
   const toggles = await getEffectiveFabToggles(options.schoolId, options.teachingSessionId);
   const bindings = await getSessionStudentBindings(options.schoolId, options.teachingSessionId);
+  const controlStates = await getClasspilotStudentControlStates(
+    options.schoolId,
+    bindings.map((binding) => binding.studentId)
+  );
+  const controlStateByStudent = new Map(controlStates.map((state) => [state.studentId, state]));
   const publications = [];
   for (const binding of bindings) {
     // Ownership revision is student-specific and monotonic across class,
     // coverage, replacement, and empty-state transitions. Always rebuild the
     // authoritative full state instead of synthesizing a per-session snapshot.
-    const fullState = await buildStudentFabState(options.schoolId, binding.studentId, {
-      studentSessionId: binding.studentSessionId,
-    });
-    const payload = classpilotFabStatePushFrame({
-      messageId: crypto.randomUUID(),
-      sessionId: options.teachingSessionId,
-      binding: {
-        schoolId: options.schoolId,
-        deviceId: binding.deviceId,
-        studentId: binding.studentId,
+    const controlState = controlStateByStudent.get(binding.studentId);
+    // Session-toggle fanout has no per-socket negotiated capability evidence.
+    // Keep the legacy toggle messages below, but defer the revision-bound FAB
+    // snapshot when it would reveal a hidden late-sign-in control revision.
+    if (!controlState || !classpilotControlStateHasLateSignInOrigin(controlState.desiredState)) {
+      const fullState = await buildStudentFabState(options.schoolId, binding.studentId, {
         studentSessionId: binding.studentSessionId,
-        controlRevision: fullState.ownershipRevision,
-      },
-      data: fullState,
-    });
-    sendToDeviceLocal(options.schoolId, binding.deviceId, payload);
-    publications.push({
-      target: { kind: "device" as const, schoolId: options.schoolId, deviceId: binding.deviceId },
-      message: payload,
-    });
+      });
+      const payload = classpilotFabStatePushFrame({
+        messageId: crypto.randomUUID(),
+        sessionId: options.teachingSessionId,
+        binding: {
+          schoolId: options.schoolId,
+          deviceId: binding.deviceId,
+          studentId: binding.studentId,
+          studentSessionId: binding.studentSessionId,
+          controlRevision: fullState.ownershipRevision,
+        },
+        data: fullState,
+      });
+      sendToDeviceLocal(options.schoolId, binding.deviceId, payload);
+      publications.push({
+        target: { kind: "device" as const, schoolId: options.schoolId, deviceId: binding.deviceId },
+        message: payload,
+      });
+    }
     const legacyCommands = [
       ...(options.chatEnabled !== undefined ? [{
         type: "messaging-toggle",

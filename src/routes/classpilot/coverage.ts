@@ -71,6 +71,12 @@ import {
   publishClasspilotCoverageSummaryUpdated,
 } from "../../services/classpilotCoverageSummary.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
+import {
+  classpilotRealtimeFresh,
+  readClasspilotRealtimeStatusBatch,
+} from "../../services/classpilotRealtimeStatus.js";
+import { isClasspilotCapabilityActive } from "../../services/classpilotProtocol.js";
+import { classpilotCurrentPageSignedOutSkipReason } from "../../services/classpilotCurrentPage.js";
 
 const router = Router();
 
@@ -101,6 +107,14 @@ const COVERAGE_TYPES = new Set([
   "office",
   "assembly",
   "other",
+]);
+const COVERAGE_LATE_SIGN_IN_COMMANDS = new Set([
+  "lock-screen",
+  "unlock-screen",
+  "apply-flight-path",
+  "remove-flight-path",
+  "apply-block-list",
+  "remove-block-list",
 ]);
 const COVERAGE_SCOPE_TYPES = new Set(["school", "grade", "group", "students", "coverage_group", "setup"]);
 
@@ -1094,8 +1108,13 @@ async function resolveCoverageCommandTargets(
     selectedRows.map((row) => row.studentId)
   );
 
-  const now = Date.now();
-  const activeWindowMs = 5 * 60 * 1000;
+  const commandType = String(body.commandType || "").trim();
+  const currentPageWaypoint = commandType === "lock-screen"
+    && String(body.commandPayload?.url || "").trim() === "CURRENT_URL";
+  const lateSignInAuthoring = isClasspilotCapabilityActive(
+    "lateSignInRestrictionSsoV1",
+    { schoolId }
+  ) && COVERAGE_LATE_SIGN_IN_COMMANDS.has(commandType) && !currentPageWaypoint;
   const sessions = await getActiveSessionsForStudents(
     schoolId,
     selectedRows.map((row) => row.studentId)
@@ -1107,18 +1126,42 @@ async function resolveCoverageCommandTargets(
       sessionsByStudent.set(session.studentId, session);
     }
   }
+  const realtime = await readClasspilotRealtimeStatusBatch(
+    schoolId,
+    [...sessionsByStudent.values()].map((session) => ({
+      studentId: session.studentId,
+      studentSessionId: session.id,
+      deviceId: session.deviceId,
+    }))
+  );
   const targets: ResolvedClasspilotCommandTarget[] = [];
   for (const row of selectedRows) {
     const session = sessionsByStudent.get(row.studentId);
-    const lastSeenAt = session?.lastSeenAt?.getTime?.() ?? 0;
-    const active = !!session && lastSeenAt > 0 && now - lastSeenAt <= activeWindowMs;
+    const read = realtime.get(row.studentId);
+    const snapshot = read?.status === "hit" ? read.snapshot : null;
+    const active = !!session && !!snapshot && classpilotRealtimeFresh(snapshot);
+    const explicitlySignedOut = !session;
+    const deferredAuthorized = explicitlySignedOut && lateSignInAuthoring;
     targets.push({
       studentId: row.studentId,
       studentName: studentName(row.student),
       studentSessionId: active ? session!.id : null,
       deviceId: active ? session!.deviceId : null,
       available: active,
-      unavailableReason: active ? undefined : "Student is not signed in to the extension",
+      stateAuthorized: active || deferredAuthorized,
+      lateSignInEligible: deferredAuthorized,
+      unavailableReason: active
+        ? undefined
+        : explicitlySignedOut
+          ? currentPageWaypoint
+            ? classpilotCurrentPageSignedOutSkipReason({
+                currentPageRequested: currentPageWaypoint,
+                explicitlySignedOut,
+              })
+            : deferredAuthorized
+              ? "Restriction will apply after sign-in"
+              : "Student is not signed in to the extension"
+          : "Student signal is unavailable; restriction was not changed",
     });
   }
   return targets;

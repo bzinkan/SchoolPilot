@@ -756,6 +756,170 @@ describe("ClassPilot manual-session recovery authority", () => {
     }));
   });
 
+  it("serializes a cross-student handoff behind the source student's control ACK", async () => {
+    const handoffDeviceId = `${tag}-cross-student-ack-race`;
+    await inSchool(() => createDevice({
+      deviceId: handoffDeviceId,
+      deviceName: "Cross-student ACK race device",
+      schoolId,
+      classId: schoolId,
+    } as Parameters<typeof createDevice>[0]));
+    const sourceStudent = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Source",
+      lastName: "Acknowledgement",
+      email: `source-ack@${tag}.example.edu`,
+      emailLc: `source-ack@${tag}.example.edu`,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const destinationStudent = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Destination",
+      lastName: "Handoff",
+      email: `destination-handoff@${tag}.example.edu`,
+      emailLc: `destination-handoff@${tag}.example.edu`,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    const sourceRecovery = createStudentSessionRecovery();
+    const sourceSession = await inSchool(() => startStudentSessionWithReplacements(
+      schoolId,
+      sourceStudent.id,
+      handoffDeviceId,
+      {
+        authKind: "manual_shared",
+        sessionRecoveryTokenHash: sourceRecovery.tokenHash,
+      }
+    ));
+    await inSchool(() => db.insert(classpilotStudentControlStates).values({
+      schoolId,
+      studentId: sourceStudent.id,
+      revision: 7,
+      desiredState: { restrictions: { locked: true } },
+      enforcementHealth: "pending",
+    }));
+
+    let releaseAck!: () => void;
+    const ackMayProceed = new Promise<void>((resolve) => {
+      releaseAck = resolve;
+    });
+    let ackAuthorityLocked!: () => void;
+    const ackHasAuthority = new Promise<void>((resolve) => {
+      ackAuthorityLocked = resolve;
+    });
+    const acknowledgement = inSchool(() => db.transaction(async (tx) => {
+      const transactionDb = tx as unknown as typeof db;
+      await storage.lockClasspilotStudentControlAuthorities(
+        schoolId,
+        [sourceStudent.id],
+        transactionDb
+      );
+      ackAuthorityLocked();
+      await ackMayProceed;
+      return storage.acknowledgeClasspilotStudentControlState({
+        schoolId,
+        studentId: sourceStudent.id,
+        studentSessionId: sourceSession.session.id,
+        deviceId: handoffDeviceId,
+        appliedRevision: 7,
+        outcome: "applied",
+      }, transactionDb);
+    }));
+    await ackHasAuthority;
+
+    const lockProbe = new Client({ connectionString: process.env.DATABASE_URL });
+    await lockProbe.connect();
+    let handoff: ReturnType<typeof startStudentSessionWithReplacements> | undefined;
+    let completedHandoff: Awaited<ReturnType<typeof startStudentSessionWithReplacements>>
+      | undefined;
+    try {
+      handoff = inSchool(() => startStudentSessionWithReplacements(
+        schoolId,
+        destinationStudent.id,
+        handoffDeviceId,
+        {
+          authKind: "manual_shared",
+          sessionRecoveryTokenHash: createStudentSessionRecovery().tokenHash,
+          reclaimRecoveryTokenHash: sourceRecovery.tokenHash,
+        }
+      ));
+
+      const authorityLockKey =
+        `classpilot:student-control:${schoolId}:${sourceStudent.id}`;
+      let waitingHandoffCount = 0;
+      const waitDeadline = Date.now() + 5_000;
+      while (waitingHandoffCount === 0 && Date.now() < waitDeadline) {
+        const lockSnapshot = await lockProbe.query(`
+          WITH requested_lock AS (
+            SELECT hashtextextended($1, 0::bigint) AS value
+          )
+          SELECT count(*) FILTER (WHERE lock_row.granted = false)::integer AS "waitingCount"
+          FROM pg_locks AS lock_row
+          CROSS JOIN requested_lock
+          WHERE lock_row.locktype = 'advisory'
+            AND lock_row.objsubid = 1
+            AND lock_row.classid::bigint =
+              ((requested_lock.value >> 32) & 4294967295::bigint)
+            AND lock_row.objid::bigint =
+              (requested_lock.value & 4294967295::bigint)
+        `, [authorityLockKey]);
+        waitingHandoffCount = Number(lockSnapshot.rows[0]?.waitingCount ?? 0);
+        if (waitingHandoffCount === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      }
+      assert.equal(
+        waitingHandoffCount,
+        1,
+        "the handoff must wait on the source ACK authority before retiring its session"
+      );
+
+      releaseAck();
+      const [acknowledged, resolvedHandoff] = await Promise.all([
+        acknowledgement,
+        handoff,
+      ]);
+      completedHandoff = resolvedHandoff;
+      assert.equal(acknowledged?.appliedRevision, 7);
+      assert.equal(completedHandoff.crossStudentHandoff, true);
+      assert.deepEqual(
+        completedHandoff.replacedSessions.map((row) => row.id),
+        [sourceSession.session.id]
+      );
+      assert.equal(
+        (await inSchool(() => storage.getActiveSessionById(completedHandoff!.session.id)))
+          ?.studentId,
+        destinationStudent.id
+      );
+    } finally {
+      releaseAck();
+      await Promise.allSettled([
+        acknowledgement,
+        ...(handoff ? [handoff] : []),
+      ]);
+      await lockProbe.end();
+      const activeSessions = await inSchool(() => storage.getActiveSessionsForStudents(
+        schoolId,
+        [sourceStudent.id, destinationStudent.id]
+      ));
+      for (const active of activeSessions) {
+        await inSchool(() => storage.endStudentSessionExact({
+          schoolId,
+          studentId: active.studentId,
+          deviceId: active.deviceId,
+          studentSessionId: active.id,
+        }));
+      }
+      await inSchool(() => db.delete(classpilotStudentControlStates).where(and(
+        eq(classpilotStudentControlStates.schoolId, schoolId),
+        eq(classpilotStudentControlStates.studentId, sourceStudent.id)
+      )));
+      await inSchool(() => storage.deleteDeviceWithEndedSessions(
+        schoolId,
+        handoffDeviceId
+      ));
+    }
+  });
+
   it("keeps class-bound pixels private across an atomic same-device handoff", async () => {
     type ScreenshotAuthority =
       | { kind: "student_session"; controlRevision: number }
@@ -3253,6 +3417,112 @@ describe("ClassPilot manual-session recovery authority", () => {
         [raceSession.session.id]
       );
     }
+  });
+
+  it("serializes concurrent heartbeat resume and stale transfer to one authority winner", async () => {
+    const sourceDeviceId = `${tag}-heartbeat-transfer-source`;
+    const destinationDeviceId = `${tag}-heartbeat-transfer-destination`;
+    const raceStudent = await inSchool(() => createStudent({
+      schoolId,
+      firstName: "Heartbeat",
+      lastName: "Transfer",
+      email: `heartbeat-transfer@${tag}.example.edu`,
+      emailLc: `heartbeat-transfer@${tag}.example.edu`,
+      status: "active",
+    } as Parameters<typeof createStudent>[0]));
+    await inSchool(async () => {
+      await createDevice({
+        deviceId: sourceDeviceId,
+        deviceName: "Heartbeat transfer source",
+        schoolId,
+        classId: schoolId,
+      } as Parameters<typeof createDevice>[0]);
+      await createDevice({
+        deviceId: destinationDeviceId,
+        deviceName: "Heartbeat transfer destination",
+        schoolId,
+        classId: schoolId,
+      } as Parameters<typeof createDevice>[0]);
+    });
+    const source = await inSchool(() => startStudentSessionWithReplacements(
+      schoolId,
+      raceStudent.id,
+      sourceDeviceId,
+      {
+        authKind: "manual_shared",
+        sessionRecoveryTokenHash: createStudentSessionRecovery().tokenHash,
+      }
+    ));
+    // With no heartbeat row, stale-transfer authority falls back to the
+    // represented session start. Make that source stale before releasing the
+    // two contenders together.
+    await inSchool(() => db.update(studentSessions).set({
+      startedAt: sql`now() - interval '61 seconds'`,
+      lastSeenAt: sql`now() - interval '61 seconds'`,
+    }).where(eq(studentSessions.id, source.session.id)));
+
+    const [heartbeatResult, transferResult] = await Promise.race([
+      Promise.allSettled([
+        inSchool(() => storage.createHeartbeatAndRefreshPresence({
+          deviceId: sourceDeviceId,
+          schoolId,
+          studentId: raceStudent.id,
+          activeTabTitle: "Concurrent resume",
+        }, source.session.id)),
+        inSchool(() => startStudentSessionWithReplacements(
+          schoolId,
+          raceStudent.id,
+          destinationDeviceId,
+          {
+            authKind: "manual_shared",
+            sessionRecoveryTokenHash: createStudentSessionRecovery().tokenHash,
+            studentTransferAuthority: {
+              studentSessionId: source.session.id,
+              source: "stale_heartbeat",
+            },
+          }
+        )),
+      ]),
+      new Promise<never>((_resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error("heartbeat/transfer authority timeout")),
+          5_000
+        );
+        timer.unref();
+      }),
+    ]);
+
+    assert.equal(heartbeatResult.status, "fulfilled");
+    const heartbeatRecorded = heartbeatResult.status === "fulfilled"
+      && heartbeatResult.value.outcome === "recorded";
+    const transferSucceeded = transferResult.status === "fulfilled";
+    assert.notEqual(
+      heartbeatRecorded,
+      transferSucceeded,
+      "exactly one contender may retain or transfer student authority"
+    );
+    if (transferResult.status === "rejected") {
+      assert.equal((transferResult.reason as any)?.code, "STUDENT_SESSION_ACTIVE");
+      assert.equal(heartbeatResult.value.outcome, "recorded");
+    } else {
+      assert.ok(
+        ["replaced_session", "inactive_session"].includes(heartbeatResult.value.outcome),
+        "a transfer winner must make the retired heartbeat non-authoritative"
+      );
+    }
+
+    const active = await inSchool(() => storage.getActiveSessionsForStudents(
+      schoolId,
+      [raceStudent.id]
+    ));
+    assert.equal(active.length, 1);
+    assert.equal(
+      active[0]?.deviceId,
+      transferSucceeded ? destinationDeviceId : sourceDeviceId
+    );
+
+    await inSchool(() => storage.deleteDeviceWithEndedSessions(schoolId, sourceDeviceId));
+    await inSchool(() => storage.deleteDeviceWithEndedSessions(schoolId, destinationDeviceId));
   });
 
   it("fails closed without mutating a corrupt cross-school device conflict", async () => {

@@ -615,6 +615,66 @@ try {
             -TargetRuntimeConfiguration $skippedStudentGateGlobal
     } "Student-gate global activation must not skip its school-scoped pilot."
 
+    $lateSignInPilotIntent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+        schemaVersion = 4; mode = "late-signin-pilot"; pilotSchoolId = $testSchoolId
+    })
+    Assert-Condition ($lateSignInPilotIntent.RequiresSourceRuntime -and
+        $lateSignInPilotIntent.Environment.Count -eq 0 -and
+        $null -eq $lateSignInPilotIntent.Turn) `
+        "Late-sign-in profiles must be source-preserving intents."
+    $lateSignInPilotSource = New-TransitionSourceTask -RuntimeConfiguration $studentGatePilotRuntime
+    $lateSignInPilotRuntime = Resolve-SourcePreservingRuntimeConfiguration `
+        -RuntimeIntent $lateSignInPilotIntent -SourceTaskDefinition $lateSignInPilotSource -ContainerName "api"
+    $lateSignInPilotRollouts = [string]$lateSignInPilotRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON |
+        ConvertFrom-Json -Depth 10
+    Assert-Condition ($lateSignInPilotRuntime.Environment.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1 -ceq "true" -and
+        [string]$lateSignInPilotRollouts.lateSignInRestrictionSsoV1.mode -ceq "on" -and
+        @($lateSignInPilotRollouts.lateSignInRestrictionSsoV1.schoolIds).Count -eq 1 -and
+        [string]$lateSignInPilotRollouts.lateSignInRestrictionSsoV1.schoolIds[0] -ceq $testSchoolId) `
+        "Late-sign-in pilot must require both controls and exactly one canonical school."
+    Assert-Condition ([string]$lateSignInPilotRuntime.Environment.CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1 -ceq "true" -and
+        [string]$lateSignInPilotRollouts.studentAuthGatePresenceV1.mode -ceq "on" -and
+        [string]$lateSignInPilotRollouts.studentAuthGatePresenceV1.schoolIds[0] -ceq $testSchoolId) `
+        "Late-sign-in pilot must preserve the exact existing student-gate pilot."
+    foreach ($capability in @($script:AllCapabilities | Where-Object {
+        $_ -cne $script:LateSignInRestrictionSsoCapability
+    })) {
+        $sourceEntry = $studentGatePilotRollouts.$capability | ConvertTo-Json -Depth 10 -Compress
+        $targetEntry = $lateSignInPilotRollouts.$capability | ConvertTo-Json -Depth 10 -Compress
+        Assert-Condition ($sourceEntry -ceq $targetEntry) `
+            "Late-sign-in pilot must preserve the existing $capability rollout entry."
+        Assert-Condition ([string]$lateSignInPilotRuntime.Environment[[string]$script:CapabilityFlags[$capability]] -ceq
+            [string]$studentGatePilotRuntime.Environment[[string]$script:CapabilityFlags[$capability]]) `
+            "Late-sign-in pilot must preserve the existing $capability kill switch."
+    }
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $lateSignInPilotSource -ContainerName "api" `
+        -TargetRuntimeConfiguration $lateSignInPilotRuntime
+
+    $lateSignInOffIntent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+        schemaVersion = 4; mode = "late-signin-off"
+    })
+    $lateSignInOffSource = New-TransitionSourceTask -RuntimeConfiguration $lateSignInPilotRuntime
+    $lateSignInOffRuntime = Resolve-SourcePreservingRuntimeConfiguration `
+        -RuntimeIntent $lateSignInOffIntent -SourceTaskDefinition $lateSignInOffSource -ContainerName "api"
+    $lateSignInOffRollouts = [string]$lateSignInOffRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON |
+        ConvertFrom-Json -Depth 10
+    Assert-Condition ($lateSignInOffRuntime.Environment.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1 -ceq "false" -and
+        [string]$lateSignInOffRollouts.lateSignInRestrictionSsoV1.mode -ceq "off" -and
+        $lateSignInOffRuntime.Environment.CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1 -ceq "true" -and
+        [string]$lateSignInOffRollouts.studentAuthGatePresenceV1.mode -ceq "on") `
+        "Late-sign-in rollback must disable only late delivery and preserve student-gate state."
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $lateSignInOffSource -ContainerName "api" `
+        -TargetRuntimeConfiguration $lateSignInOffRuntime
+    Assert-Throws {
+        $unsafeGlobalLateSource = New-TransitionSourceTask -RuntimeConfiguration $lateSignInPilotRuntime
+        $unsafeGlobalLateEnvironment = @($unsafeGlobalLateSource.containerDefinitions[0].environment)
+        $unsafeGlobalLateRolloutEntry = @($unsafeGlobalLateEnvironment | Where-Object name -CEQ "CLASSPILOT_CAPABILITY_ROLLOUTS_JSON")[0]
+        $unsafeGlobalLateRollouts = [string]$unsafeGlobalLateRolloutEntry.value | ConvertFrom-Json -Depth 10
+        $unsafeGlobalLateRollouts.lateSignInRestrictionSsoV1.PSObject.Properties.Remove("schoolIds")
+        $unsafeGlobalLateRolloutEntry.value = $unsafeGlobalLateRollouts | ConvertTo-Json -Depth 10 -Compress
+        Get-RuntimeActivationState -Environment $unsafeGlobalLateEnvironment -AllowBaseline
+    } "Late-sign-in activation must reject a global rollout."
+
     $legacyGlobalSource = New-TransitionSourceTask -RuntimeConfiguration $globalRuntime
     $legacyGlobalEnvironment = @($legacyGlobalSource.containerDefinitions[0].environment)
     $legacyGlobalRolloutEntry = @($legacyGlobalEnvironment | Where-Object name -CEQ "CLASSPILOT_CAPABILITY_ROLLOUTS_JSON")[0]
@@ -784,6 +844,21 @@ try {
     } "Student-gate rollback must preserve existing TURN wiring."
     Assert-Throws {
         ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 3; mode = "late-signin-pilot"; pilotSchoolId = $testSchoolId
+        })
+    } "Late-sign-in profiles must require their independent schema version."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 4; mode = "late-signin-pilot"; pilotSchoolId = "NOT-A-UUID"
+        })
+    } "Late-sign-in pilot must reject malformed school scope."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 4; mode = "late-signin-off"; turn = $turn
+        })
+    } "Late-sign-in rollback must preserve existing TURN wiring."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
             schemaVersion = 1; mode = "test-school"; testSchoolId = $testSchoolId
             enabledCapabilities = @($script:ActivationOrder[0..6])
         })
@@ -797,10 +872,14 @@ try {
         "TRACKING-WINDOW-GLOBAL-ON", "Tracking-Window-Global-On",
         "STUDENT-GATE-PILOT", "Student-Gate-Pilot",
         "STUDENT-GATE-GLOBAL-ON", "Student-Gate-Global-On",
-        "STUDENT-GATE-OFF", "Student-Gate-Off"
+        "STUDENT-GATE-OFF", "Student-Gate-Off",
+        "LATE-SIGNIN-PILOT", "Late-Signin-Pilot",
+        "LATE-SIGNIN-OFF", "Late-Signin-Off"
     )) {
         Assert-Throws {
-            $misCasedSchema = if ($misCasedMode -clike "*STUDENT*" -or $misCasedMode -clike "Student*") {
+            $misCasedSchema = if ($misCasedMode -clike "*LATE*" -or $misCasedMode -clike "Late*") {
+                4
+            } elseif ($misCasedMode -clike "*STUDENT*" -or $misCasedMode -clike "Student*") {
                 3
             } elseif ($misCasedMode -clike "*TRACKING*" -or $misCasedMode -clike "Tracking*") { 2 } else { 1 }
             ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{ schemaVersion = $misCasedSchema; mode = $misCasedMode })

@@ -73,6 +73,26 @@ test("manual student sessions use database-time leases and exact recovery capabi
     /takePasspilotClassLock\(tx, schoolId\)[\s\S]*assertClasspilotEntitled\(schoolId, transactionDb, \{ lock: true \}\)/
   );
   assert.ok(
+    sessionStart.indexOf("const conflictStudentCandidates")
+      < sessionStart.indexOf("lockClasspilotStudentControlAuthorities("),
+    "session transfer must discover every affected source/destination before authority locking"
+  );
+  assert.match(
+    sessionStart,
+    /lockClasspilotStudentControlAuthorities\([\s\S]{0,180}\[studentId, \.\.\.conflictStudentCandidates\.map\(\(row\) => row\.studentId\)\]/,
+    "cross-student recovery must lock the source and destination authority keys together"
+  );
+  assert.ok(
+    sessionStart.indexOf("lockClasspilotStudentControlAuthorities(")
+      < sessionStart.indexOf(".from(devices)"),
+    "session transfer must serialize against deferred state before locking its source device"
+  );
+  assert.ok(
+    sessionStart.indexOf("const [device] =")
+      < sessionStart.indexOf("const conflicting ="),
+    "session transfer must keep the heartbeat-compatible device-before-session lock order"
+  );
+  assert.ok(
     sessionStart.indexOf("assertClasspilotEntitled(schoolId, transactionDb, { lock: true })")
       < sessionStart.indexOf(".insert(studentSessions)"),
     "locked entitlement must be checked before credential-bearing session issuance"
@@ -100,6 +120,26 @@ test("manual student sessions use database-time leases and exact recovery capabi
     "post-lock transfer expiry must use a wall clock that advances during lock waits"
   );
   assert.doesNotMatch(storage, /export async function startStudentSession\(/);
+
+  const latePersistence = storage.slice(
+    storage.indexOf("export async function persistClasspilotControlCommandState"),
+    storage.indexOf("export async function upsertClasspilotClassroomStates", storage.indexOf("export async function persistClasspilotControlCommandState"))
+  );
+  assert.ok(
+    latePersistence.indexOf("lockClasspilotStudentControlAuthorities")
+      < latePersistence.indexOf("expectedDeviceIds"),
+    "late-sign-in persistence must take shared authority before exact binding locks"
+  );
+  assert.ok(
+    latePersistence.indexOf(".from(devices)")
+      < latePersistence.indexOf(".from(studentSessions)"),
+    "late-sign-in exact persistence must lock devices before represented sessions"
+  );
+  assert.match(
+    latePersistence,
+    /manualLeaseExpiresAt} > now\(\)/,
+    "late-sign-in persistence must revalidate the manual-session lease against database time under lock"
+  );
 });
 
 test("heartbeat authority expires atomically and renews only an accepted manual session", () => {
@@ -109,15 +149,31 @@ test("heartbeat authority expires atomically and renews only an accepted manual 
     storage.indexOf("export async function createHeartbeatAndRefreshPresence"),
     storage.indexOf("export async function updateHeartbeatClassification")
   );
+  const refresh = storage.slice(
+    storage.indexOf("export async function refreshStudentSessionAuthorityWithoutTelemetry"),
+    storage.indexOf("export async function createHeartbeat(")
+  );
   assert.ok(
-    heartbeat.indexOf("WITH locked_device AS MATERIALIZED")
+    heartbeat.indexOf("locked_student_authority AS MATERIALIZED")
+      < heartbeat.indexOf("locked_device AS MATERIALIZED"),
+    "heartbeat authority must serialize with transfer before device/session locks"
+  );
+  assert.ok(
+    heartbeat.indexOf("locked_device AS MATERIALIZED")
       < heartbeat.indexOf("represented_session AS MATERIALIZED"),
     "heartbeat authority must lock the device before the represented session"
   );
+  assert.match(heartbeat, /classpilot:student-control:\$\{data\.schoolId\}:\$\{data\.studentId\}/);
   assert.match(heartbeat, /locked_device[\s\S]*FOR UPDATE/);
   assert.match(heartbeat, /auth_kind <> 'manual_shared'[\s\S]*manual_lease_expires_at > now\(\)/);
   assert.match(heartbeat, /WHEN auth_kind = 'manual_shared' THEN now\(\) \+ interval '300 seconds'/);
   assert.match(heartbeat, /FOR UPDATE OF represented/);
+  assert.ok(
+    refresh.indexOf("locked_student_authority AS MATERIALIZED")
+      < refresh.indexOf("locked_device AS MATERIALIZED"),
+    "short-circuit resume must serialize with transfer before device/session locks"
+  );
+  assert.match(refresh, /classpilot:student-control:\$\{options\.schoolId\}:\$\{options\.studentId\}/);
   const route = routes.slice(
     routes.indexOf('router.post("/device/heartbeat"'),
     routes.indexOf('router.get("/device/screenshot/:deviceId"')

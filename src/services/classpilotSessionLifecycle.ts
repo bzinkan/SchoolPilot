@@ -31,7 +31,10 @@ import {
   type TeachingSessionFinalizationReason,
   type FinalizeTeachingSessionResult,
 } from "./storage.js";
-import { serializeClasspilotStudentControlState } from "./classpilotClassroomState.js";
+import {
+  classpilotControlStateHasLateSignInOrigin,
+  serializeClasspilotStudentControlState,
+} from "./classpilotClassroomState.js";
 import { getSessionStudentBindings } from "./classpilotFab.js";
 import { syncClasspilotControlStatesToActiveDevices } from "./classpilotControlStateDelivery.js";
 import { stopActiveClasspilotLiveViewNegotiations } from "./classpilotLiveViewStop.js";
@@ -72,6 +75,9 @@ async function publishControlStateRows(
   );
   const sessionByStudent = new Map(sessions.map((session) => [session.studentId, session]));
   await Promise.all(states.map(async (state) => {
+    // Lifecycle broadcasts do not carry negotiated per-binding capabilities.
+    // Deferred-origin state is recovered only on gated authenticated surfaces.
+    if (classpilotControlStateHasLateSignInOrigin(state.desiredState)) return;
     const studentSession = sessionByStudent.get(state.studentId);
     if (!studentSession) return;
     const classroomState = {

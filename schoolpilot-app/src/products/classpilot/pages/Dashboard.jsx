@@ -1944,7 +1944,9 @@ export default function Dashboard() {
     const display = studentView === 'class'
       ? monitoringDisplayFor(student)
       : deriveStudentMonitoringDisplay(student, freshnessNowMs);
-    return display.telemetryCurrent || (
+    const lateSignInCommandable = display.kind === 'signed_out'
+      && student?.lateSignInRestrictionSsoV1Enabled === true;
+    return display.telemetryCurrent || lateSignInCommandable || (
       allowSafetyUnlock
       && student?.screenLocked === true
       && studentSupportsCapability(student, 'screenOnlyUnlockV1')
@@ -2919,7 +2921,13 @@ export default function Dashboard() {
     && explicitlySelectedStudentIds.length > 0
     && explicitlySelectedUnlockStudents.length === explicitlySelectedStudentIds.length;
   const selectedTargetsSupportScreenOnlyUnlock = exactSelectedUnlockTargetsResolved
-    && explicitlySelectedUnlockStudents.every((student) => studentSupportsCapability(student, 'screenOnlyUnlockV1'));
+    && explicitlySelectedUnlockStudents.every((student) => (
+      studentSupportsCapability(student, 'screenOnlyUnlockV1')
+      || (
+        student?.lateSignInRestrictionSsoV1Enabled === true
+        && student?.isLoggedIn !== true
+      )
+    ));
   const restrictionMessageForStudents = (targetStudentRows) => domainRestrictionMessageForStudents(
     targetStudentRows,
     (student) => (

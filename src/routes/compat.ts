@@ -96,10 +96,12 @@ import {
   type ClasspilotRealtimeStatus,
 } from "../services/classpilotRealtimeStatus.js";
 import {
+  classpilotControlStateHasLateSignInOrigin,
   effectiveClasspilotControlEnforcementHealth,
   serializeClasspilotStudentControlState,
 } from "../services/classpilotClassroomState.js";
 import { requestHasAnySchoolRole } from "../services/schoolAuthorization.js";
+import { isClasspilotCapabilityActive } from "../services/classpilotProtocol.js";
 
 const router = Router();
 
@@ -190,6 +192,8 @@ function publicClasspilotExtensionContract(
       classroomOverlayRestoreV1: extensionCapabilities.has("classroomOverlayRestoreV1"),
       liveViewNegotiationV1: extensionCapabilities.has("liveViewNegotiationV1"),
       domainPreservingRestrictionsV1: extensionCapabilities.has("domainPreservingRestrictionsV1"),
+      studentAuthGatePresenceV1: extensionCapabilities.has("studentAuthGatePresenceV1"),
+      lateSignInRestrictionSsoV1: extensionCapabilities.has("lateSignInRestrictionSsoV1"),
       minExtensionVersion: "2.6.0",
     },
   };
@@ -1124,6 +1128,16 @@ router.get("/students-aggregated", ...classPilotStaffAuth, async (req, res, next
       authorizedRealtimeBindings
     );
 
+    const operatorCapabilities = {
+      studentAuthGatePresenceV1: isClasspilotCapabilityActive(
+        "studentAuthGatePresenceV1",
+        { schoolId }
+      ),
+      lateSignInRestrictionSsoV1: isClasspilotCapabilityActive(
+        "lateSignInRestrictionSsoV1",
+        { schoolId }
+      ),
+    };
     const aggregated = dbStudents.map((student) => {
       const snapshot = snapshotByStudent.get(student.id);
       const rt = realtimeByStudent.get(student.id) || null;
@@ -1141,6 +1155,11 @@ router.get("/students-aggregated", ...classPilotStaffAuth, async (req, res, next
       );
       const visibleRealtime = delegatedAway ? null : activeRealtime;
       const signedOut = rt?.state === "signed_out";
+      // Signed-out presence intentionally carries raw capability saturation
+      // evidence but never browser telemetry. Keep that narrow contract
+      // available for offline authoring/health while all activity fields still
+      // read only from visibleRealtime above.
+      const capabilityRealtime = delegatedAway ? null : rt;
       const attendanceStatus = snapshot?.attendanceStatus || "present";
       const activePass = snapshot?.activePass || null;
       const dismissal = snapshot?.dismissal || null;
@@ -1184,31 +1203,56 @@ router.get("/students-aggregated", ...classPilotStaffAuth, async (req, res, next
         activeSession?.id
         && desiredControlState?.teachingSessionId === activeSession.id
       ) ? desiredControlState : undefined;
-      const desiredClassroomState = ownedDesiredControlState
-        ? serializeClasspilotStudentControlState(ownedDesiredControlState)
+      // Rollback/off mode retains durable deferred provenance for a safe later
+      // re-enable, but it must not make that hidden revision look applied in
+      // the teacher DTO. Suppress both the desired row and a cached realtime
+      // echo while the exact-school operator gate is off.
+      const deferredDesiredStateHidden = !!ownedDesiredControlState
+        && classpilotControlStateHasLateSignInOrigin(ownedDesiredControlState.desiredState)
+        && !operatorCapabilities.lateSignInRestrictionSsoV1;
+      const visibleOwnedDesiredControlState = deferredDesiredStateHidden
+        ? undefined
+        : ownedDesiredControlState;
+      const desiredClassroomState = visibleOwnedDesiredControlState
+        ? serializeClasspilotStudentControlState(visibleOwnedDesiredControlState)
         : undefined;
       const realtimeClassroomState = visibleRealtime?.classroomState;
-      const scopedRealtimeClassroomState = activeSession?.id
-        ? realtimeClassroomState?.teachingSessionId === activeSession.id
-          ? realtimeClassroomState
-          : undefined
-        : realtimeClassroomState;
+      const scopedRealtimeClassroomState = deferredDesiredStateHidden
+        ? undefined
+        : activeSession?.id
+          ? realtimeClassroomState?.teachingSessionId === activeSession.id
+            ? realtimeClassroomState
+            : undefined
+          : realtimeClassroomState;
       const realtimeClassroomRevision = scopedRealtimeClassroomState?.revision ?? -1;
       const authoritativeClassroomState = desiredClassroomState
         && desiredClassroomState.revision >= realtimeClassroomRevision
         ? desiredClassroomState
         : scopedRealtimeClassroomState;
-      const enforcementHealth = ownedDesiredControlState
-        ? (!isLoggedIn
-            ? ownedDesiredControlState.enforcementHealth
-            : effectiveClasspilotControlEnforcementHealth(
-                ownedDesiredControlState,
-                visibleRealtime?.extensionVersion
-              ))
+      const enforcementHealth = visibleOwnedDesiredControlState
+        ? effectiveClasspilotControlEnforcementHealth(
+            visibleOwnedDesiredControlState,
+            visibleRealtime?.extensionVersion,
+            new Date(),
+            {
+              gateActive: operatorCapabilities.lateSignInRestrictionSsoV1,
+              acceptedCapabilities: normalizeClasspilotPublicCapabilities(
+                capabilityRealtime?.acceptedCapabilities
+              ),
+              exactBinding: isLoggedIn && snapshot?.studentSessionId && deviceId
+                ? {
+                    schoolId,
+                    studentId: student.id,
+                    studentSessionId: snapshot.studentSessionId,
+                    deviceId,
+                  }
+                : null,
+            }
+          )
         : scopedRealtimeClassroomState
           ? visibleRealtime?.enforcementHealth || "unsupported"
           : "unsupported";
-      const publicExtensionContract = publicClasspilotExtensionContract(visibleRealtime);
+      const publicExtensionContract = publicClasspilotExtensionContract(capabilityRealtime);
       const publicClassroomControls = normalizeClasspilotPublicClassroomControls(
         visibleRealtime?.classroomControls
       );
@@ -1234,6 +1278,9 @@ router.get("/students-aggregated", ...classPilotStaffAuth, async (req, res, next
         favicon: visibleRealtime?.favicon,
         allOpenTabs: visibleRealtime?.allOpenTabs,
         ...publicExtensionContract,
+        operatorCapabilities,
+        studentAuthGatePresenceV1Enabled: operatorCapabilities.studentAuthGatePresenceV1,
+        lateSignInRestrictionSsoV1Enabled: operatorCapabilities.lateSignInRestrictionSsoV1,
         isSharing: publicClassroomControls.isSharing,
         screenLocked: publicClassroomControls.screenLocked,
         flightPathActive: publicClassroomControls.flightPathActive,

@@ -89,7 +89,11 @@ describe("ClassPilot coverage bulk hydration", () => {
       heartbeatId: "coverage-hydration-domain-preservation-heartbeat",
       observedAt: now,
       trackingStatus: "ACTIVE",
-      extensionCapabilities: ["domainPreservingRestrictionsV1"],
+      extensionCapabilities: [
+        "domainPreservingRestrictionsV1",
+        "studentAuthGatePresenceV1",
+        "lateSignInRestrictionSsoV1",
+      ],
       acceptedCapabilities: [],
     });
     assert.ok(write.snapshot);
@@ -110,5 +114,9 @@ describe("ClassPilot coverage bulk hydration", () => {
       result.get(studentId)?.capabilities.domainPreservingRestrictionsV1,
       true
     );
+    assert.equal(result.get(studentId)?.capabilities.studentAuthGatePresenceV1, true);
+    assert.equal(result.get(studentId)?.capabilities.lateSignInRestrictionSsoV1, true);
+    assert.equal(result.get(studentId)?.studentAuthGatePresenceV1Enabled, false);
+    assert.equal(result.get(studentId)?.lateSignInRestrictionSsoV1Enabled, false);
   });
 });

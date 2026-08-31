@@ -8,11 +8,13 @@ import db, { pool } from "../dist/db.js";
 import { runWithTenantContext } from "../dist/middleware/tenantContext.js";
 import { signUserToken } from "../dist/services/jwt.js";
 import { createStudentToken } from "../dist/services/deviceJwt.js";
+import { readClasspilotLateSignInDeliveryProvenance } from "../dist/services/classpilotClassroomState.js";
 import { redisCommand } from "../dist/middleware/rateLimiter.js";
 import {
   addGroupStudentsDetailed,
   acknowledgeClasspilotStudentControlState,
   createCoverageAssignment,
+  countClasspilotLateSignInStampedStates,
   createCoverageScopeGroup,
   createFlightPath,
   deleteFlightPath,
@@ -4382,7 +4384,87 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     await inSchool(school.id, () => deleteDevice(recoveryDeviceId));
   });
 
+  it("does not author an offline persistent-control state while the operator gate is off", async () => {
+    const previousProtocol = process.env.CLASSPILOT_PROTOCOL_V3_ENABLED;
+    const previousLateSignIn = process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1;
+    const previousRollouts = process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON;
+    process.env.CLASSPILOT_PROTOCOL_V3_ENABLED = "true";
+    process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1 = "false";
+    process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = JSON.stringify({
+      lateSignInRestrictionSsoV1: { mode: "off", schoolIds: [school.id] },
+    });
+    try {
+      const offlineStudent = await inSchool(school.id, () => createStudent({
+        schoolId: school.id,
+        firstName: "Gate Off",
+        lastName: "Control",
+        email: `gate-off-control@${TAG}.example.edu`,
+        emailLc: `gate-off-control@${TAG}.example.edu`,
+        gradeLevel: "8",
+        status: "active",
+      } as any));
+      const group = await inSchool(school.id, () => createGroup({
+        schoolId: school.id,
+        teacherId: teacher.id,
+        name: `${TAG}_Gate_Off_Control`,
+        groupType: "admin_class",
+        status: "active",
+      } as any));
+      await inSchool(school.id, () => addGroupStudentsDetailed(group.id, [offlineStudent.id]));
+      const teachingSession = await inSchool(school.id, () => createTeachingSession({
+        groupId: group.id,
+        teacherId: teacher.id,
+      }));
+      const result = await inSchool(school.id, () => executeClasspilotCommand({
+        schoolId: school.id,
+        actorId: teacher.id,
+        teachingSessionId: teachingSession.id,
+        targetScope: "students",
+        commandType: "lock-screen",
+        rawCommandPayload: { url: "https://example.edu/must-not-persist" },
+        targets: [{
+          studentId: offlineStudent.id,
+          studentName: "Gate Off Control",
+          studentSessionId: null,
+          deviceId: null,
+          available: false,
+          stateAuthorized: true,
+          lateSignInEligible: true,
+          unavailableReason: "Student is not signed in to the extension",
+        }],
+      }));
+      assert.equal(result.command.targets[0]?.status, "unavailable");
+      const control = await inSchool(school.id, () =>
+        getClasspilotStudentControlState(school.id, offlineStudent.id)
+      );
+      assert.notEqual(control?.sourceCommandId, result.command.id);
+      await inSchool(school.id, () => endTeachingSession(teachingSession.id));
+    } finally {
+      if (previousProtocol === undefined) delete process.env.CLASSPILOT_PROTOCOL_V3_ENABLED;
+      else process.env.CLASSPILOT_PROTOCOL_V3_ENABLED = previousProtocol;
+      if (previousLateSignIn === undefined) {
+        delete process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1;
+      } else {
+        process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1 = previousLateSignIn;
+      }
+      if (previousRollouts === undefined) delete process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON;
+      else process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = previousRollouts;
+    }
+  });
+
   it("completes an offline persistent-control command from authoritative state reconciliation", async () => {
+    const previousProtocol = process.env.CLASSPILOT_PROTOCOL_V3_ENABLED;
+    const previousLateSignIn = process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1;
+    const previousRollouts = process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON;
+    process.env.CLASSPILOT_PROTOCOL_V3_ENABLED = "true";
+    process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1 = "true";
+    process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = JSON.stringify({
+      lateSignInRestrictionSsoV1: { mode: "on", schoolIds: [school.id] },
+    });
+    try {
+    const stampedBefore = await inSchool(school.id, () =>
+      countClasspilotLateSignInStampedStates(school.id)
+    );
     const offlineStudent = await inSchool(school.id, () => createStudent({
       schoolId: school.id,
       firstName: "Offline",
@@ -4418,6 +4500,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
         deviceId: null,
         available: false,
         stateAuthorized: true,
+        lateSignInEligible: true,
         unavailableReason: "Student is not signed in to the extension",
       }],
     }));
@@ -4426,6 +4509,9 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       getClasspilotStudentControlState(school.id, offlineStudent.id)
     );
     assert.equal(control?.sourceCommandId, result.command.id);
+    assert.equal(await inSchool(school.id, () =>
+      countClasspilotLateSignInStampedStates(school.id)
+    ), stampedBefore + 1);
 
     const recoveryDeviceId = `${TAG}-offline-control-recovery`;
     await inSchool(school.id, () => createDevice({
@@ -4449,6 +4535,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
         deviceId: recoveryDeviceId,
         appliedRevision: control!.revision,
         outcome: "applied",
+        acceptedCapabilities: ["lateSignInRestrictionSsoV1"],
       })
     );
     assert.equal(acknowledged?.sourceCommandId, result.command.id);
@@ -4463,8 +4550,77 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       outcome: "applied",
       reconciliation: true,
     });
+    const replacementDeviceId = `${TAG}-offline-control-replacement`;
+    await inSchool(school.id, () => createDevice({
+      deviceId: replacementDeviceId,
+      schoolId: school.id,
+      classId: "default",
+      deviceName: "Offline Control Replacement",
+    } as any));
+    await inSchool(school.id, () => linkStudentDevice({
+      studentId: offlineStudent.id,
+      deviceId: replacementDeviceId,
+    }));
+    const replacementSession = await inSchool(school.id, () =>
+      setActiveStudentForDevice(replacementDeviceId, offlineStudent.id)
+    );
+    const replacementAck = await inSchool(school.id, () =>
+      acknowledgeClasspilotStudentControlState({
+        schoolId: school.id,
+        studentId: offlineStudent.id,
+        studentSessionId: replacementSession.id,
+        deviceId: replacementDeviceId,
+        appliedRevision: control!.revision,
+        outcome: "applied",
+        acceptedCapabilities: ["lateSignInRestrictionSsoV1"],
+      })
+    );
+    assert.equal(replacementAck?.revision, control!.revision);
+    const bindingHistory = readClasspilotLateSignInDeliveryProvenance(
+      replacementAck?.desiredState
+    )?.appliedBindings ?? [];
+    assert.equal(bindingHistory.some((entry) =>
+      entry.studentSessionId === recoverySession.id
+      && entry.deviceId === recoveryDeviceId
+      && entry.revision === control!.revision
+    ), true);
+    assert.equal(bindingHistory.some((entry) =>
+      entry.studentSessionId === replacementSession.id
+      && entry.deviceId === replacementDeviceId
+      && entry.revision === control!.revision
+    ), true);
+    // Coverage owns desired state temporarily by nesting the former class
+    // snapshot. The rollback gauge must continue to count that durable stamp.
+    const nestedCoverageDesiredState = {
+      restrictions: {},
+      restorableClassState: {
+        desiredState: replacementAck!.desiredState,
+        sourceCommandId: replacementAck!.sourceCommandId,
+      },
+    };
+    await inSchool(school.id, () => db.execute(sql`
+      UPDATE classpilot_student_control_states
+      SET desired_state = ${JSON.stringify(nestedCoverageDesiredState)}::jsonb
+      WHERE school_id = ${school.id}
+        AND student_id = ${offlineStudent.id}
+    `));
+    assert.equal(await inSchool(school.id, () =>
+      countClasspilotLateSignInStampedStates(school.id)
+    ), stampedBefore + 1);
     await inSchool(school.id, () => endTeachingSession(teachingSession.id));
     await inSchool(school.id, () => deleteDevice(recoveryDeviceId));
+    await inSchool(school.id, () => deleteDevice(replacementDeviceId));
+    } finally {
+      if (previousProtocol === undefined) delete process.env.CLASSPILOT_PROTOCOL_V3_ENABLED;
+      else process.env.CLASSPILOT_PROTOCOL_V3_ENABLED = previousProtocol;
+      if (previousLateSignIn === undefined) {
+        delete process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1;
+      } else {
+        process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1 = previousLateSignIn;
+      }
+      if (previousRollouts === undefined) delete process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON;
+      else process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = previousRollouts;
+    }
   });
 
   it("never represents transient timer or poll dispatch as active classroom state", async () => {

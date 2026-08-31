@@ -6,7 +6,10 @@ import {
   getActiveSessionsForStudents,
   getClasspilotStudentControlStates,
 } from "./storage.js";
-import { serializeClasspilotStudentControlState } from "./classpilotClassroomState.js";
+import {
+  classpilotControlStateHasLateSignInOrigin,
+  serializeClasspilotStudentControlState,
+} from "./classpilotClassroomState.js";
 import { buildStudentFabState } from "./classpilotFab.js";
 import {
   classpilotClassroomStatePushFrame,
@@ -44,6 +47,12 @@ export async function syncClasspilotControlStatesToActiveDevices(
       const session = latestSessionByStudent.get(studentId);
       if (!session?.deviceId) continue;
       targetedDevices += 1;
+      // Ownership-transition pushes have no handshake capability evidence.
+      // Never leak a hidden revision through this fallback; a capable exact
+      // binding reconciles it via login/heartbeat/WebSocket request instead.
+      if (state && classpilotControlStateHasLateSignInOrigin(state.desiredState)) {
+        continue;
+      }
       if (state) {
         const classroomMessage = classpilotClassroomStatePushFrame({
           type: "classroom-state-sync",

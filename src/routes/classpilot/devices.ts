@@ -45,6 +45,7 @@ import {
   getStudentIdsHiddenFromClasspilotLoginRoster,
   getClasspilotLoginSessionAuthorities,
   getActiveSessionByDevice,
+  getActiveSessionsForStudents,
   getAdminEmailsBySchool,
   addCentralEmailRecipientForSchool,
   upsertSettings,
@@ -181,8 +182,11 @@ import {
   type ClasspilotRealtimeStatus,
 } from "../../services/classpilotRealtimeStatus.js";
 import {
+  classpilotLateSignInRevisionAppliedToBinding,
+  classpilotControlStateHasLateSignInOrigin,
   effectiveClasspilotControlEnforcementHealth,
   serializeClasspilotStudentControlState,
+  serializeClasspilotStudentControlStateForDelivery,
 } from "../../services/classpilotClassroomState.js";
 import { recordClasspilotStudentSessionMonitoringEvent } from "../../services/classpilotMonitoringEvents.js";
 import {
@@ -228,6 +232,7 @@ import {
   type ClasspilotManagedDeviceContinuityProof,
 } from "../../services/classpilotManagedDeviceContinuity.js";
 import {
+  classpilotScreenshotAuthorityForDeliveredControl,
   parseClasspilotScreenshotAuthority,
   resolveClasspilotScreenshotPolicy,
   validateClasspilotScreenshotCapturedAt,
@@ -981,6 +986,8 @@ function publicRealtimeFields(snapshot: ClasspilotRealtimeStatus) {
       classroomOverlayRestoreV1: extensionCapabilities.has("classroomOverlayRestoreV1"),
       liveViewNegotiationV1: extensionCapabilities.has("liveViewNegotiationV1"),
       domainPreservingRestrictionsV1: extensionCapabilities.has("domainPreservingRestrictionsV1"),
+      studentAuthGatePresenceV1: extensionCapabilities.has("studentAuthGatePresenceV1"),
+      lateSignInRestrictionSsoV1: extensionCapabilities.has("lateSignInRestrictionSsoV1"),
       minExtensionVersion: "2.6.0",
     },
     activityFresh,
@@ -1262,6 +1269,11 @@ async function completeStudentDeviceLogin(options: {
   authKind: "managed_profile" | "manual_shared";
   reclaimRecoveryToken?: string | null;
   managedDeviceContinuity?: ClasspilotManagedDeviceContinuityProof | null;
+  protocolPayload?: {
+    clientProtocolVersion?: unknown;
+    capabilities?: unknown;
+    extensionCapabilities?: unknown;
+  };
 }) {
   if (!options.student) {
     throw new Error("Student required");
@@ -1400,12 +1412,42 @@ async function completeStudentDeviceLogin(options: {
       code: "STUDENT_SESSION_REPLACED",
     });
   }
-  const classroomState = controlState
-    ? serializeClasspilotStudentControlState(controlState)
-    : null;
+  const loginProtocol = negotiateClasspilotSurfaceProtocol({
+    surface: "registration",
+    payload: options.protocolPayload ?? {},
+    scope: {
+      serverOrigin: process.env.PUBLIC_BASE_URL,
+      schoolId: options.schoolId,
+      deviceId: effectiveDeviceId,
+      studentId: student.id,
+      studentSessionId: session.id,
+    },
+  });
+  const loginDelivery = controlState
+    ? serializeClasspilotStudentControlStateForDelivery({
+        state: controlState,
+        gateActive: isClasspilotCapabilityActive(
+          "lateSignInRestrictionSsoV1",
+          { schoolId: options.schoolId }
+        ),
+        acceptedCapabilities: loginProtocol.acceptedCapabilities,
+        exactBinding: {
+          schoolId: options.schoolId,
+          studentId: student.id,
+          studentSessionId: session.id,
+          deviceId: effectiveDeviceId,
+        },
+      })
+    : { classroomState: null, withheld: false };
+  const classroomState = loginDelivery.classroomState;
+  if (loginDelivery.withheld) recordHeartbeatHotPathCounter("lateSignInDeliveryWithheld");
+  else if (classroomState?.deliveryContext?.lateSignInRestrictionSso) {
+    recordHeartbeatHotPathCounter("lateSignInCapableDelivery");
+  }
 
   return {
     success: true,
+    ...loginProtocol,
     schoolId: options.schoolId,
     studentId: student.id,
     studentSessionId: session.id,
@@ -2308,6 +2350,18 @@ router.get("/extension/settings", requireDeviceAuth, requireClasspilotEntitlemen
       studentSessionId,
     });
     const controlState = await getClasspilotStudentControlState(schoolId, studentId);
+    // Settings carries no capability negotiation evidence. Ordinary control
+    // state may continue to bind FAB/settings authority, but a deferred-origin
+    // revision must remain completely hidden until an authenticated negotiated
+    // login/heartbeat/WebSocket delivery surface authorizes it.
+    const settingsControlRevision = controlState
+      && !classpilotControlStateHasLateSignInOrigin(controlState.desiredState)
+      ? controlState.revision
+      : 0;
+    const settingsFab = {
+      ...fab,
+      ownershipRevision: settingsControlRevision,
+    };
 
     return res.json({
       schoolId,
@@ -2318,7 +2372,7 @@ router.get("/extension/settings", requireDeviceAuth, requireClasspilotEntitlemen
         deviceId,
         studentId,
         studentSessionId,
-        controlRevision: controlState?.revision ?? 0,
+        controlRevision: settingsControlRevision,
       }),
       enableTrackingHours: schoolSettings?.enableTrackingHours ?? false,
       trackingStartTime: schoolSettings?.trackingStartTime ?? null,
@@ -2332,10 +2386,10 @@ router.get("/extension/settings", requireDeviceAuth, requireClasspilotEntitlemen
       maxTabsPerStudent: schoolSettings?.maxTabsPerStudent
         ? parseInt(schoolSettings.maxTabsPerStudent, 10)
         : null,
-      fab,
-      messagingEnabled: fab.messagingEnabled,
-      handRaisingEnabled: fab.handRaisingEnabled,
-      handRaised: fab.handRaised,
+      fab: settingsFab,
+      messagingEnabled: settingsFab.messagingEnabled,
+      handRaisingEnabled: settingsFab.handRaisingEnabled,
+      handRaised: settingsFab.handRaised,
     });
   } catch (err) {
     next(err);
@@ -2462,6 +2516,7 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
           authKind: "manual_shared",
           reclaimRecoveryToken: recoveryToken,
           managedDeviceContinuity,
+          protocolPayload: req.body,
         });
         return res.json(login);
       });
@@ -2553,6 +2608,7 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
         authKind: "manual_shared",
         reclaimRecoveryToken: recoveryToken,
         managedDeviceContinuity,
+        protocolPayload: req.body,
       });
       return res.json(login);
     });
@@ -2953,6 +3009,7 @@ router.post("/extension/register", extensionRegisterLimiter, async (req, res, ne
         classId,
         student,
         authKind: "managed_profile",
+        protocolPayload: req.body,
       });
       const protocol = negotiateClasspilotSurfaceProtocol({
         surface: "registration",
@@ -3066,6 +3123,7 @@ router.post("/register-student", extensionRegisterLimiter, async (req, res, next
         deviceId,
         student,
         authKind: "managed_profile",
+        protocolPayload: req.body,
       });
 
       return res.json({
@@ -3077,6 +3135,8 @@ router.post("/register-student", extensionRegisterLimiter, async (req, res, next
         student: login.student,
         manualExpiresInSeconds: login.manualExpiresInSeconds,
         classroomState: login.classroomState,
+        serverProtocolVersion: login.serverProtocolVersion,
+        acceptedCapabilities: login.acceptedCapabilities,
       });
     });
   } catch (err) {
@@ -3398,7 +3458,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
         studentSessionId,
       })
     );
-    if (canShortCircuitAcceptedHeartbeat({
+    if (!protocol.acceptedCapabilities.includes("lateSignInRestrictionSsoV1") && canShortCircuitAcceptedHeartbeat({
       previous: lastHb,
       studentId,
       studentSessionId,
@@ -3514,9 +3574,16 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
                 ? "expired"
                 : null;
         const expectedHealth = ackOutcome === "applied" ? "synced" : ackOutcome;
+        const deferredBindingAlreadyApplied = classpilotLateSignInRevisionAppliedToBinding({
+          desiredState: controlState.desiredState,
+          binding: { schoolId, studentId, studentSessionId, deviceId },
+          revision: Number(appliedClassroomStateRevision),
+        });
         if (
           ackOutcome
-          && (controlState.appliedRevision !== Number(appliedClassroomStateRevision)
+          && ((!deferredBindingAlreadyApplied
+              && classpilotControlStateHasLateSignInOrigin(controlState.desiredState))
+            || controlState.appliedRevision !== Number(appliedClassroomStateRevision)
             || controlState.enforcementHealth !== expectedHealth)
         ) {
           const acknowledgedState = await acknowledgeClasspilotStudentControlState({
@@ -3526,9 +3593,16 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
             deviceId,
             appliedRevision: Number(appliedClassroomStateRevision),
             outcome: ackOutcome,
+            acceptedCapabilities: protocol.acceptedCapabilities,
           });
           if (acknowledgedState?.sourceCommandId) {
             scheduleClasspilotCommandUpdate(schoolId, acknowledgedState.sourceCommandId);
+          }
+          if (
+            acknowledgedState
+            && classpilotControlStateHasLateSignInOrigin(acknowledgedState.desiredState)
+          ) {
+            recordHeartbeatHotPathCounter("lateSignInDeferredAck");
           }
         }
       }
@@ -3608,11 +3682,31 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       studentSessionId,
       authorityExpiresAtMs: heartbeat.authorityExpiresAt?.getTime() ?? null,
     }, MAX_DEVICE_HEARTBEAT_ENTRIES);
-    const classroomState = controlState
-      ? serializeClasspilotStudentControlState(controlState)
-      : null;
+    const heartbeatDelivery = controlState
+      ? serializeClasspilotStudentControlStateForDelivery({
+          state: controlState,
+          gateActive: isClasspilotCapabilityActive(
+            "lateSignInRestrictionSsoV1",
+            { schoolId }
+          ),
+          acceptedCapabilities: protocol.acceptedCapabilities,
+          exactBinding: { schoolId, studentId, studentSessionId, deviceId },
+        })
+      : { classroomState: null, withheld: false };
+    const classroomState = heartbeatDelivery.classroomState;
+    if (heartbeatDelivery.withheld) recordHeartbeatHotPathCounter("lateSignInDeliveryWithheld");
+    else if (classroomState?.deliveryContext?.lateSignInRestrictionSso) {
+      recordHeartbeatHotPathCounter("lateSignInCapableDelivery");
+    }
     const enforcementHealth = controlState
-      ? effectiveClasspilotControlEnforcementHealth(controlState, extensionVersion)
+      ? effectiveClasspilotControlEnforcementHealth(controlState, extensionVersion, new Date(), {
+          gateActive: isClasspilotCapabilityActive(
+            "lateSignInRestrictionSsoV1",
+            { schoolId }
+          ),
+          acceptedCapabilities: protocol.acceptedCapabilities,
+          exactBinding: { schoolId, studentId, studentSessionId, deviceId },
+        })
       : undefined;
     const screenshotPolicyPromise = resolveClasspilotScreenshotPolicy({
       schoolId,
@@ -3620,7 +3714,10 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       studentId,
       acceptedCapabilities: protocol.acceptedCapabilities,
       trackingSettings,
-      trackingAuthority: screenshotTrackingAuthority,
+      trackingAuthority: classpilotScreenshotAuthorityForDeliveredControl({
+        projection: screenshotTrackingAuthority,
+        deliveredControlRevision: classroomState?.revision ?? 0,
+      }),
     });
     const studentEmail = heartbeat.studentEmail;
     recordHeartbeatHotPathCounter("heartbeatRecorded");
@@ -3710,9 +3807,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
         return res.json({
           ok: true,
           planStatus: school.planStatus || "active",
-          classroomState,
           ...protocol,
-          screenshotPolicy,
         });
       }
       throw new Error("Realtime heartbeat snapshot was not created");
@@ -3866,6 +3961,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
                     studentSessionId,
                     deviceId,
                     expectedControlRevision: controlState?.revision ?? 0,
+                    deliveredControlRevision: classroomState?.revision ?? 0,
                   })
                 ).then((binding) => binding ? ({
                   exactBinding: classpilotControlStateExactBinding({
@@ -4226,6 +4322,29 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
           () => buildStudentFabState(schoolId, studentId, { studentSessionId })
         )
       : undefined;
+    const deliveredFab = fab
+      ? { ...fab, ownershipRevision: classroomState?.revision ?? 0 }
+      : undefined;
+
+    // All work after the initial heartbeat transaction can race a correct-PIN
+    // transfer. Revalidate database-time exact authority (including a manual
+    // lease) immediately before returning any negotiated classroom snapshot.
+    const finalActiveSessions = await runWithTenantContext(
+      { schoolId },
+      () => getActiveSessionsForStudents(schoolId, [studentId])
+    );
+    const finalExactBindingActive = finalActiveSessions.some((session) =>
+      session.id === studentSessionId
+      && session.studentId === studentId
+      && session.deviceId === deviceId
+    );
+    if (!finalExactBindingActive) {
+      return res.status(409).json({
+        error: "Student session is no longer active",
+        code: "STUDENT_SESSION_REPLACED",
+        ...protocol,
+      });
+    }
 
     // --- Return planStatus (item #3) ---
     return res.json({
@@ -4244,7 +4363,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       classroomState,
       ...protocol,
       screenshotPolicy,
-      ...(fab ? { fab } : {}),
+      ...(deliveredFab ? { fab: deliveredFab } : {}),
       ...(pendingMessages.length > 0 ? { pendingMessages } : {}),
     });
   } catch (err) {
