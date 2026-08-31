@@ -16,6 +16,7 @@ import Login from './pages/Login';
 import Landing from './pages/Landing';
 import LandingV2 from './pages/LandingV2';
 import AuthCallback from './pages/AuthCallback';
+import GateKioskExitBoundary from './products/passpilot/components/GateKioskExitBoundary';
 
 // ClassPilot pages (lazy-loaded)
 const CPDashboard = lazy(() => import('./products/classpilot/pages/Dashboard'));
@@ -226,8 +227,14 @@ function AppRoutes() {
             <Route path="/products/classpilot" element={<ClassPilotLanding />} />
             <Route path="/products/passpilot" element={<PassPilotLanding />} />
             <Route path="/products/gopilot" element={<GoPilotLanding />} />
-            <Route path="/passpilot/kiosk" element={<PPKiosk />} />
-            <Route path="/passpilot/kiosk/simple" element={<PPKioskSimple />} />
+            <Route
+              path="/passpilot/kiosk"
+              element={<GateKioskExitBoundary><PPKiosk /></GateKioskExitBoundary>}
+            />
+            <Route
+              path="/passpilot/kiosk/simple"
+              element={<GateKioskExitBoundary><PPKioskSimple /></GateKioskExitBoundary>}
+            />
             <Route path="/terms" element={<TermsOfService />} />
             <Route path="/privacy" element={<PrivacyPolicy />} />
             <Route path="/delete-account" element={<DeleteAccount />} />
