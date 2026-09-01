@@ -373,7 +373,7 @@ test("deferred command frames and WebSocket auth revalidate exact binding author
   assert.doesNotMatch(teacherReplyRecovery, /claimDueTeacherChatDeliveriesForBinding/);
   assert.match(
     websocketRedis,
-    /kind: "student-binding";[\s\S]*studentId: string;[\s\S]*studentSessionId: string;[\s\S]*deviceId: string;[\s\S]*requiredCapability\?: "lateSignInRestrictionSsoV1";/,
+    /kind: "student-binding";[\s\S]*studentId: string;[\s\S]*studentSessionId: string;[\s\S]*deviceId: string;[\s\S]*requiredCapability\?:\s*\| "lateSignInRestrictionSsoV1"\s*\| "screenshotActiveObservationCadenceV1";/,
   );
   const redisDeviceCase = section(websocket, 'case "device":', 'case "student-binding":');
   assert.match(

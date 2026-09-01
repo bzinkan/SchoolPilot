@@ -857,10 +857,17 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
       VIEWER_SCREENSHOT_DATA_URL,
     );
     assert.equal(await persistencePage.getByTestId("expanded-screenshot-dialog").count(), 1);
+    const decodedViewerStatus = await persistencePage.getByTestId("expanded-screenshot-status").innerText();
+    const decodedViewerCaptureLabel = decodedViewerStatus.match(/Captured (.+)$/)?.[1];
+    assert.ok(
+      decodedViewerCaptureLabel,
+      "the decoded viewer frame must expose its committed capture metadata",
+    );
 
     await persistencePage.waitForTimeout(5_200);
     persistenceScreenshotSource = "data:image/jpeg;base64,not-a-valid-jpeg";
     persistenceScreenshotCapturedAt = new Date().toISOString();
+    const corruptReplacementRequestStart = persistenceHarness.tileRequests.length;
     await persistenceHarness.sendWebSocketMessage({
       type: "screenshot-available",
       schoolId: SCHOOL_ID,
@@ -868,16 +875,24 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
       teachingSessionId: OWN_SESSION_ID,
       capturedAt: persistenceScreenshotCapturedAt,
     });
-    await persistencePage.waitForTimeout(1_000);
+    await waitUntil(
+      () => persistenceHarness.tileRequests.length > corruptReplacementRequestStart,
+      "the corrupt replacement must reach the exact screenshot endpoint",
+    );
+    await persistencePage.waitForFunction(
+      (previousStatus) => document.querySelector('[data-testid="expanded-screenshot-status"]')?.innerText !== previousStatus,
+      decodedViewerStatus,
+    );
     assert.equal(
       await persistencePage.getByTestId("expanded-screenshot-image").getAttribute("src"),
       VIEWER_SCREENSHOT_DATA_URL,
       "a corrupt same-context replacement must retain the last decoded frame",
     );
-    assert.doesNotMatch(
-      await persistencePage.getByTestId("expanded-screenshot-status").innerText(),
-      /just now/,
-      "a corrupt replacement must not make the prior decoded frame look newly captured",
+    const corruptReplacementStatus = await persistencePage.getByTestId("expanded-screenshot-status").innerText();
+    assert.equal(
+      corruptReplacementStatus.match(/Captured (.+)$/)?.[1],
+      decodedViewerCaptureLabel,
+      "a corrupt replacement must retain the prior decoded frame's exact capture metadata",
     );
     persistenceScreenshotSource = VIEWER_SCREENSHOT_DATA_URL;
     persistenceScreenshotCapturedAt = new Date().toISOString();
