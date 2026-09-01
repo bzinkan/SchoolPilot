@@ -473,10 +473,37 @@ export default function Dashboard() {
   const targetedScreenshotFenceGenerationRef = useRef({ key: null, generation: 0 });
   const targetedScreenshotAbortControllersRef = useRef(new Set());
   const targetedScreenshotFlushInFlightRef = useRef(false);
+  const studentDetailsOpenerRef = useRef(null);
+  const studentDetailsFocusGenerationRef = useRef(0);
   const expandedScreenshotOpenerRef = useRef(null);
   const restoreExpandedScreenshotFocusRef = useRef(false);
   const expandedScreenshotContextGenerationRef = useRef({ key: null, generation: 0 });
   const expandedScreenshotContextKeyRef = useRef('');
+  const openStudentDetails = useCallback((student, opener) => {
+    studentDetailsFocusGenerationRef.current += 1;
+    studentDetailsOpenerRef.current = opener || null;
+    setSelectedStudent(student);
+  }, []);
+  const closeStudentDetails = useCallback(() => {
+    const opener = studentDetailsOpenerRef.current;
+    const focusGeneration = studentDetailsFocusGenerationRef.current + 1;
+    studentDetailsFocusGenerationRef.current = focusGeneration;
+    studentDetailsOpenerRef.current = null;
+    setSelectedStudent(null);
+    requestAnimationFrame(() => {
+      if (
+        studentDetailsFocusGenerationRef.current === focusGeneration
+        && opener?.isConnected
+      ) {
+        opener.focus();
+      }
+    });
+  }, []);
+  const clearStudentDetails = useCallback(() => {
+    studentDetailsFocusGenerationRef.current += 1;
+    studentDetailsOpenerRef.current = null;
+    setSelectedStudent(null);
+  }, []);
   const freshnessTimeoutRef = useRef(null);
   const graceReconciliationLatchRef = useRef({ scopeKey: null, cohortActive: false });
   const commandExpiryTimeoutRef = useRef(null);
@@ -505,6 +532,7 @@ export default function Dashboard() {
   });
   const [tileGlobalAuthorizationDenied, setTileGlobalAuthorizationDenied] = useState(false);
   const [targetedScreenshotFailureByStudent, setTargetedScreenshotFailureByStudent] = useState(() => new Map());
+  const [detailHistoryDeniedStudentIds, setDetailHistoryDeniedStudentIds] = useState(() => new Set());
   sessionSubscriptionStateRef.current = sessionSubscriptionState;
   const [freshnessVersion, setFreshnessVersion] = useState(0);
   const freshnessNowMs = Date.now();
@@ -897,6 +925,10 @@ export default function Dashboard() {
   const selectedStudentRow = selectedStudent
     ? selectedStudentRoster.find((student) => student.studentId === selectedStudent.studentId) || null
     : null;
+  const selectedStudentMissingFromRoster = Boolean(selectedStudent && !selectedStudentRow);
+  useLayoutEffect(() => {
+    if (selectedStudentMissingFromRoster) clearStudentDetails();
+  }, [clearStudentDetails, selectedStudentMissingFromRoster]);
   const selectedStudentMonitoringSuppressed = isStudentMonitoringSuppressed(selectedStudentRow);
   const activeLiveViewStudent = liveViewState.studentId
     ? students.find((student) => student.studentId === liveViewState.studentId) || null
@@ -1046,9 +1078,10 @@ export default function Dashboard() {
     // A detail drawer is an authority-bound view. Never let a selected row or
     // its history survive a class, school, viewer mode, view, or subgroup
     // transition and later bind to a coincidentally matching student ID.
-    setSelectedStudent(null);
+    clearStudentDetails();
   }, [
     activeSchoolId,
+    clearStudentDetails,
     currentUser?.id,
     dashboardCapabilities.mode,
     effectiveSessionId,
@@ -1063,12 +1096,6 @@ export default function Dashboard() {
     enabled: !!effectiveSession?.id,
     refetchInterval: wsAuthenticated ? false : 30000,
   });
-
-  useEffect(() => {
-    if (!selectedStudentMonitoringSuppressed) return undefined;
-    const frame = requestAnimationFrame(() => setSelectedStudent(null));
-    return () => cancelAnimationFrame(frame);
-  }, [selectedStudentMonitoringSuppressed]);
 
   useEffect(() => {
     if (!activeLiveViewMonitoringSuppressed) return;
@@ -2161,7 +2188,7 @@ export default function Dashboard() {
     setSelectedStudentBindingSnapshots(new Map());
     setSearchQuery("");
     setSelectedSubgroupId("");
-    setSelectedStudent(null);
+    clearStudentDetails();
     if (sessionId) {
       setStudentView('class');
       setShowOpenTabDialog(false);
@@ -2443,84 +2470,6 @@ export default function Dashboard() {
     ) return;
     cleanupLiveViews();
   }, [cleanupLiveViews, tileScreenshotObservationStatus]);
-  const detailHistoryTeachingSessionId = studentView === 'class'
-    ? effectiveSessionId
-    : null;
-  const selectedStudentDisplay = selectedStudentRow
-    ? monitoringDisplayFor(selectedStudentRow)
-    : null;
-  const selectedStudentHardPrivacyRevoked = Boolean(
-    selectedStudentMonitoringSuppressed
-    || tileGlobalAuthorizationDenied
-    || ['signed_out', 'delegated'].includes(selectedStudentDisplay?.kind),
-  );
-  const selectedStudentHistoryRevoked = Boolean(
-    selectedStudentHardPrivacyRevoked
-    || observationLeaseStatus === 'denied'
-    || observationLeaseStatus === 'paused_unobserved'
-  );
-  const detailHistoryQueryKey = [
-    TILE_BATCH_QUERY_ROOTS.history,
-    'detail',
-    activeSchoolId || 'no-school',
-    currentUser?.id || 'no-viewer',
-    dashboardCapabilities.mode,
-    studentView,
-    detailHistoryTeachingSessionId || 'no-session',
-    selectedStudentRow?.studentId || 'no-student',
-    selectedStudentRow?.realtimeBinding || 'no-binding',
-  ];
-  const {
-    data: urlHistorySnapshot = EMPTY_LIST,
-    isError: detailHistoryError,
-    error: detailHistoryErrorValue,
-  } = useQuery({
-    queryKey: detailHistoryQueryKey,
-    queryFn: () => apiRequest('POST', '/classpilot/tiles/history', {
-      studentIds: [selectedStudentRow.studentId],
-      limit: 10,
-      ...(detailHistoryTeachingSessionId
-        ? { teachingSessionId: detailHistoryTeachingSessionId }
-        : {}),
-    }),
-    select: (data) => data?.tiles?.[0]?.heartbeats || [],
-    enabled: Boolean(
-      selectedStudentRow?.studentId
-      && !selectedStudentHistoryRevoked
-      && !tileGlobalAuthorizationDenied
-      && studentView !== 'available'
-      && (studentView !== 'class' || detailHistoryTeachingSessionId || adminSchoolMode)
-    ),
-    retry: false,
-    gcTime: 0,
-    refetchOnWindowFocus: 'always',
-    refetchOnReconnect: 'always',
-  });
-  const detailHistoryFailureScope = detailHistoryError
-    ? tileBatchFailureScope(detailHistoryErrorValue)
-    : 'transient';
-  const detailHistoryHardDenied = detailHistoryFailureScope !== 'transient';
-  const urlHistory = selectedStudentHistoryRevoked || detailHistoryHardDenied
-    ? EMPTY_LIST
-    : urlHistorySnapshot;
-  useEffect(() => {
-    if (!selectedStudentRow?.studentId) return;
-    if (!selectedStudentHistoryRevoked && !detailHistoryHardDenied) return;
-    if (detailHistoryFailureScope === 'global') {
-      setTileGlobalAuthorizationDenied(true);
-      void purgeAllStudentTileCaches(queryClient);
-    } else if (selectedStudentHardPrivacyRevoked) {
-      void purgeStudentTileCaches(queryClient, [selectedStudentRow.studentId]);
-    } else {
-      void purgeStudentHistoryTileCaches(queryClient, [selectedStudentRow.studentId]);
-    }
-  }, [
-    detailHistoryFailureScope,
-    detailHistoryHardDenied,
-    selectedStudentHardPrivacyRevoked,
-    selectedStudentHistoryRevoked,
-    selectedStudentRow?.studentId,
-  ]);
   useEffect(() => {
     if (studentView === 'class') return;
     // Class-bound V2 pixels may bridge a temporary dashboard-view change.
@@ -2652,6 +2601,11 @@ export default function Dashboard() {
   });
   const pendingHistoryTileBindingChangeRef = useRef(null);
   const historyTileBindingTransitionKey = `${historyTileBatchContextKey}\n${historyTileStudentBindingsKey}`;
+  useEffect(() => {
+    setDetailHistoryDeniedStudentIds((current) => (
+      current.size === 0 ? current : new Set()
+    ));
+  }, [historyTileBindingTransitionKey]);
   useLayoutEffect(() => {
     const nextStudents = JSON.parse(historyTileStudentBindingsKey);
     const previous = previousHistoryTileBindingsRef.current;
@@ -2983,6 +2937,107 @@ export default function Dashboard() {
     setTileGlobalAuthorizationDenied(true);
     void purgeAllStudentTileCaches(queryClient);
   }, [tileGlobalAuthorizationFailure]);
+  const detailHistoryTeachingSessionId = studentView === 'class'
+    ? effectiveSessionId
+    : null;
+  const selectedStudentDisplay = selectedStudentRow
+    ? monitoringDisplayFor(selectedStudentRow)
+    : null;
+  const selectedStudentHardPrivacyRevoked = Boolean(
+    selectedStudentMonitoringSuppressed
+    || tileGlobalAuthorizationDenied
+    || ['signed_out', 'delegated'].includes(selectedStudentDisplay?.kind),
+  );
+  const selectedStudentHistoryRevoked = Boolean(
+    selectedStudentHardPrivacyRevoked
+    || hardDeniedHistoryStudentIds.has(selectedStudentRow?.studentId)
+    || detailHistoryDeniedStudentIds.has(selectedStudentRow?.studentId)
+    || observationLeaseStatus === 'denied'
+    || observationLeaseStatus === 'paused_unobserved'
+  );
+  const detailHistoryQueryKey = [
+    TILE_BATCH_QUERY_ROOTS.history,
+    'detail',
+    activeSchoolId || 'no-school',
+    currentUser?.id || 'no-viewer',
+    dashboardCapabilities.mode,
+    studentView,
+    detailHistoryTeachingSessionId || 'no-session',
+    selectedStudentRow?.studentId || 'no-student',
+    selectedStudentRow?.realtimeBinding || 'no-binding',
+  ];
+  const {
+    data: urlHistorySnapshot = EMPTY_LIST,
+    isError: detailHistoryError,
+    error: detailHistoryErrorValue,
+  } = useQuery({
+    queryKey: detailHistoryQueryKey,
+    queryFn: () => apiRequest('POST', '/classpilot/tiles/history', {
+      studentIds: [selectedStudentRow.studentId],
+      limit: 10,
+      ...(detailHistoryTeachingSessionId
+        ? { teachingSessionId: detailHistoryTeachingSessionId }
+        : {}),
+    }),
+    select: (data) => data?.tiles?.[0]?.heartbeats || [],
+    enabled: Boolean(
+      selectedStudentRow?.studentId
+      && !selectedStudentHistoryRevoked
+      && studentView !== 'available'
+      && (studentView !== 'class' || detailHistoryTeachingSessionId || adminSchoolMode)
+    ),
+    retry: false,
+    gcTime: 0,
+    refetchOnWindowFocus: 'always',
+    refetchOnReconnect: 'always',
+  });
+  const detailHistoryFailureScope = detailHistoryError
+    ? tileBatchFailureScope(detailHistoryErrorValue)
+    : 'transient';
+  const detailHistoryHardDenied = detailHistoryFailureScope !== 'transient';
+  const selectedStudentDetailsRevoked = Boolean(
+    selectedStudentMonitoringSuppressed
+    || tileGlobalAuthorizationDenied
+    || tileGlobalAuthorizationFailure
+    || hardDeniedHistoryStudentIds.has(selectedStudentRow?.studentId)
+    || detailHistoryDeniedStudentIds.has(selectedStudentRow?.studentId)
+    || detailHistoryHardDenied
+    || selectedStudentDisplay?.kind === 'delegated'
+  );
+  const urlHistory = selectedStudentHistoryRevoked || detailHistoryHardDenied
+    ? EMPTY_LIST
+    : urlHistorySnapshot;
+  useLayoutEffect(() => {
+    const deniedStudentId = selectedStudentRow?.studentId;
+    if (detailHistoryFailureScope !== 'cohort' || !deniedStudentId) return;
+    setDetailHistoryDeniedStudentIds((current) => {
+      if (current.has(deniedStudentId)) return current;
+      const next = new Set(current);
+      next.add(deniedStudentId);
+      return next;
+    });
+  }, [detailHistoryFailureScope, selectedStudentRow?.studentId]);
+  useLayoutEffect(() => {
+    if (selectedStudentDetailsRevoked) clearStudentDetails();
+  }, [clearStudentDetails, selectedStudentDetailsRevoked]);
+  useEffect(() => {
+    if (!selectedStudentRow?.studentId) return;
+    if (!selectedStudentHistoryRevoked && !detailHistoryHardDenied) return;
+    if (detailHistoryFailureScope === 'global') {
+      setTileGlobalAuthorizationDenied(true);
+      void purgeAllStudentTileCaches(queryClient);
+    } else if (selectedStudentHardPrivacyRevoked) {
+      void purgeStudentTileCaches(queryClient, [selectedStudentRow.studentId]);
+    } else {
+      void purgeStudentHistoryTileCaches(queryClient, [selectedStudentRow.studentId]);
+    }
+  }, [
+    detailHistoryFailureScope,
+    detailHistoryHardDenied,
+    selectedStudentHardPrivacyRevoked,
+    selectedStudentHistoryRevoked,
+    selectedStudentRow?.studentId,
+  ]);
   const expandedScreenshotContextBaseKey = `${screenshotTileBindingTransitionKey}\n${studentView}`;
   if (expandedScreenshotContextGenerationRef.current.key !== expandedScreenshotContextBaseKey) {
     expandedScreenshotContextGenerationRef.current = {
@@ -5336,6 +5391,12 @@ export default function Dashboard() {
                 || tileGlobalAuthorizationDenied
                 || tileGlobalAuthorizationFailure
                 || ['signed_out', 'delegated'].includes(monitoringDisplay?.kind);
+              const tileDetailsRevoked = supervisedElsewhere
+                || tileGlobalAuthorizationDenied
+                || tileGlobalAuthorizationFailure
+                || hardDeniedHistoryStudentIds.has(student.studentId)
+                || detailHistoryDeniedStudentIds.has(student.studentId)
+                || monitoringDisplay?.kind === 'delegated';
               const tileHistoryRevoked = tileSharedPrivacyRevoked
                 || hardDeniedHistoryStudentIds.has(student.studentId)
                 || observationLeaseStatus === 'pending'
@@ -5358,7 +5419,9 @@ export default function Dashboard() {
                   )}
                   {(!viewportTrackingSupported || nearViewportStudentIds.has(student.studentId)) ? <StudentTile
                     student={tileStudent}
-                    onClick={supervisedElsewhere ? undefined : () => setSelectedStudent(student)}
+                    onOpenDetails={tileDetailsRevoked
+                      ? undefined
+                      : (opener) => openStudentDetails(student, opener)}
                     blockedDomains={supervisedElsewhere ? EMPTY_LIST : settings?.blockedDomains || []}
                     isOffTask={!supervisedElsewhere && isStudentOffTask(student)}
                     isAbsent={!supervisedElsewhere && absentIds.has(student.studentId)}
@@ -5456,13 +5519,13 @@ export default function Dashboard() {
       ) : null}
 
       {/* Student Detail Drawer */}
-      {selectedStudentRow && !selectedStudentMonitoringSuppressed && (
+      {selectedStudentRow && !selectedStudentDetailsRevoked && (
         <StudentDetailDrawer
           student={selectedStudentRow}
           urlHistory={urlHistory}
           allowedDomains={settings?.allowedDomains || []}
           flightPaths={flightPaths}
-          onClose={() => setSelectedStudent(null)}
+          onClose={closeStudentDetails}
           activeClassName={effectiveSession ? groups.find(g => g.id === effectiveSession.groupId)?.name : null}
           teachingSessionId={effectiveSession?.id}
           canViewHistoricalUsage={isAdmin}

@@ -252,6 +252,92 @@ try {
     'available Online status must remain in the tile header',
   );
 
+  const interactiveTile = page.getByTestId('card-student-interactive-student');
+  await page.getByTestId('screenshot-current-interactive-student').waitFor();
+  const interactiveDetailsButton = interactiveTile.getByRole('button', {
+    name: 'Open details and activity for Interactive Student',
+    exact: true,
+  });
+  assert.equal(await interactiveDetailsButton.count(), 1, 'the explicit Details action must be accessible by name');
+  assert.equal(
+    await interactiveDetailsButton.getAttribute('title'),
+    'Open details and activity for Interactive Student',
+  );
+
+  const memoDetailsTile = page.getByTestId('card-student-memo-details-student');
+  const memoDetailsButton = memoDetailsTile.getByRole('button', {
+    name: 'Open details and activity for Memo Details Student',
+    exact: true,
+  });
+  assert.equal(
+    await memoDetailsButton.count(),
+    1,
+    'the memoized tile must initially render the authorized Details action',
+  );
+  await page.getByTestId('revoke-memo-details').click();
+  await memoDetailsButton.waitFor({ state: 'detached' });
+  assert.equal(
+    await page.getByTestId('card-student-memo-details-student').count(),
+    1,
+    'revoking only the Details callback must rerender the memoized tile without removing the tile',
+  );
+  assert.equal(
+    await page.getByTestId('button-student-details-memo-details-student').count(),
+    0,
+    'function-to-undefined callback availability must remove Details immediately',
+  );
+
+  await page.getByTestId('text-student-name-interactive-student').click();
+  await page.getByTestId('screenshot-clicks').filter({ hasText: 'Screenshot clicks: 1' }).waitFor();
+  assert.equal(
+    await page.getByTestId('details-clicks').textContent(),
+    'Details clicks: 0',
+    'a non-control tile-body click must open only the enlarged screenshot',
+  );
+
+  await page.getByTestId('screenshot-current-interactive-student').click();
+  await page.getByTestId('screenshot-clicks').filter({ hasText: 'Screenshot clicks: 2' }).waitFor();
+  assert.equal(
+    await page.getByTestId('details-clicks').textContent(),
+    'Details clicks: 0',
+    'the screenshot button must not also open student details',
+  );
+
+  await interactiveDetailsButton.click();
+  await page.getByTestId('details-clicks').filter({ hasText: 'Details clicks: 1' }).waitFor();
+  assert.equal(
+    await page.getByTestId('screenshot-clicks').textContent(),
+    'Screenshot clicks: 2',
+    'the Details button must not bubble into the screenshot action',
+  );
+  await interactiveDetailsButton.focus();
+  await page.keyboard.press('Enter');
+  await page.getByTestId('details-clicks').filter({ hasText: 'Details clicks: 2' }).waitFor();
+  assert.equal(
+    await page.getByTestId('screenshot-clicks').textContent(),
+    'Screenshot clicks: 2',
+    'keyboard activation of Details must remain isolated from the card action',
+  );
+
+  await page.getByTestId('checkbox-select-student-interactive-student').click();
+  await page.getByTestId('selection-clicks').filter({ hasText: 'Selection clicks: 1' }).waitFor();
+  await page.getByTestId('button-manage-tabs-interactive-student').click();
+  await page.getByTestId('tab-clicks').filter({ hasText: 'Tab clicks: 1' }).waitFor();
+  await page.getByTestId('button-lock-toggle-interactive-student').click();
+  await page.getByTestId('command-clicks').filter({ hasText: 'Command clicks: 1' }).waitFor();
+  await page.getByTestId('button-allow-domain-interactive-student').click();
+  await page.getByTestId('allow-clicks').filter({ hasText: 'Allow clicks: 1' }).waitFor();
+  assert.equal(
+    await page.getByTestId('screenshot-clicks').textContent(),
+    'Screenshot clicks: 2',
+    'checkbox, View Tabs, lock, and allow-domain controls must not bubble into screenshot enlargement',
+  );
+  assert.equal(
+    await page.getByTestId('details-clicks').textContent(),
+    'Details clicks: 2',
+    'other student controls must not open the details drawer',
+  );
+
   const readOnlyTile = page.getByTestId('card-student-read-only-student');
   await page.getByTestId('screenshot-read-only-student').waitFor();
   await readOnlyTile.getByTitle('Research notes').waitFor();
@@ -309,12 +395,23 @@ try {
     false,
     'read-only actions must retain normal monitoring status styling',
   );
-  await page.getByTestId('screenshot-read-only-student').click();
-  await page.getByTestId('screenshot-clicks').filter({ hasText: 'Screenshot clicks: 1' }).waitFor();
+  const readOnlyDetailsButton = readOnlyTile.getByRole('button', {
+    name: 'Open details and activity for Observed Student',
+    exact: true,
+  });
   assert.equal(
-    await page.getByTestId('card-clicks').textContent(),
-    'Card clicks: 0',
-    'opening an enlarged screenshot must not also open the student detail drawer',
+    await readOnlyDetailsButton.count(),
+    1,
+    'Admin Observe must retain the read-only Details action',
+  );
+  await page.getByTestId('screenshot-read-only-student').click();
+  await page.getByTestId('screenshot-clicks').filter({ hasText: 'Screenshot clicks: 3' }).waitFor();
+  await readOnlyDetailsButton.click();
+  await page.getByTestId('details-clicks').filter({ hasText: 'Details clicks: 3' }).waitFor();
+  assert.equal(
+    await page.getByTestId('screenshot-clicks').textContent(),
+    'Screenshot clicks: 3',
+    'read-only Details must not bubble into screenshot enlargement',
   );
 
   const supervisedTile = page.getByTestId('card-student-supervised-student');
@@ -331,12 +428,22 @@ try {
     true,
     'true temporary supervision must retain suppressed styling',
   );
+  assert.equal(
+    await page.getByTestId('button-student-details-supervised-student').count(),
+    0,
+    'supervised/suppressed tiles must not expose student details',
+  );
   await page.getByTestId('button-return-to-class-supervised-student').click();
   await page.getByTestId('return-clicks').filter({ hasText: 'Return clicks: 1' }).waitFor();
   assert.equal(
-    await page.getByTestId('card-clicks').textContent(),
-    'Card clicks: 0',
-    'the Return to Class action must not open the student drawer',
+    await page.getByTestId('details-clicks').textContent(),
+    'Details clicks: 3',
+    'the Return to Class action must not open student details',
+  );
+  assert.equal(
+    await page.getByTestId('screenshot-clicks').textContent(),
+    'Screenshot clicks: 3',
+    'the Return to Class action must not bubble into screenshot enlargement',
   );
 
   const pausedTile = page.getByTestId('card-student-paused-student');

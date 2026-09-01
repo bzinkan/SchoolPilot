@@ -981,9 +981,30 @@ assert.match(
 );
 assert.match(
   dashboardSource,
-  /detailHistoryTeachingSessionId = studentView === 'class'[\s\S]{0,120}\? effectiveSessionId[\s\S]{0,900}selectedStudentRow\?\.realtimeBinding/,
-  'detail history must share the full school/viewer/authority/session/binding cache boundary',
+  /detailHistoryTeachingSessionId = studentView === 'class'[\s\S]{0,120}\? effectiveSessionId/,
+  'class detail history must derive its session from the exact active teaching session',
 );
+const detailHistoryQueryKeyStart = dashboardSource.indexOf('const detailHistoryQueryKey = [');
+const detailHistoryQueryKeyEnd = dashboardSource.indexOf('];', detailHistoryQueryKeyStart);
+const detailHistoryQueryKeySource = dashboardSource.slice(
+  detailHistoryQueryKeyStart,
+  detailHistoryQueryKeyEnd + 2,
+);
+assert.ok(detailHistoryQueryKeyStart >= 0 && detailHistoryQueryKeyEnd > detailHistoryQueryKeyStart);
+for (const requiredBoundary of [
+  'activeSchoolId',
+  'currentUser?.id',
+  'dashboardCapabilities.mode',
+  'studentView',
+  'detailHistoryTeachingSessionId',
+  'selectedStudentRow?.studentId',
+  'selectedStudentRow?.realtimeBinding',
+]) {
+  assert.ok(
+    detailHistoryQueryKeySource.includes(requiredBoundary),
+    `detail history cache identity must include ${requiredBoundary}`,
+  );
+}
 assert.match(
   dashboardSource,
   /\.\.\.\(detailHistoryTeachingSessionId[\s\S]{0,140}\{ teachingSessionId: detailHistoryTeachingSessionId \}/,

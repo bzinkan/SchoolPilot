@@ -2,7 +2,7 @@ import { memo, useEffect, useRef } from "react";
 import { Card } from "../../../components/ui/card";
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
-import { Monitor, ExternalLink, AlertTriangle, Lock, Unlock, Layers, Maximize2, X, List, RotateCcw, EyeOff } from "lucide-react";
+import { Monitor, ExternalLink, AlertTriangle, Lock, Unlock, Layers, Maximize2, X, List, RotateCcw, EyeOff, UserRound } from "lucide-react";
 import { Checkbox } from "../../../components/ui/checkbox";
 import {
   deriveScreenshotDisplay,
@@ -60,7 +60,7 @@ function isBlockedDomain(url, blockedDomains) {
 
 function StudentTile({
   student,
-  onClick,
+  onOpenDetails,
   blockedDomains = [],
   isOffTask = false,
   isAbsent = false,
@@ -100,6 +100,7 @@ function StudentTile({
   screenshotRefreshUnavailable = false,
 }) {
   const videoElementRef = useRef(null);
+  const screenshotButtonRef = useRef(null);
   const effectiveMonitoringDisplay = monitoringSuppressed
     ? SUPPRESSED_MONITORING_DISPLAY
     : monitoringDisplay || deriveStudentMonitoringDisplay(student, freshnessNowMs);
@@ -151,6 +152,11 @@ function StudentTile({
     nowMs: freshnessNowMs,
     authorizationRevoked: screenshotAuthorizationRevoked,
   });
+  const screenshotInteractionAvailable = Boolean(
+    !monitoringSuppressed
+    && screenshotPreviewMode
+    && onOpenScreenshot,
+  );
   const screenshotCapturedLabel = screenshotDisplay.observedAtMs === null
     ? null
     : SCREENSHOT_TIME_FORMATTER.format(new Date(screenshotDisplay.observedAtMs));
@@ -313,8 +319,19 @@ function StudentTile({
   return (
     <Card
       data-testid={`card-student-${student.studentId}`}
-      className={`${getBorderStyle(displayStatus)} ${getShadowStyle(displayStatus)} ${getOpacity(displayStatus)} ${monitoringSuppressed ? 'bg-slate-50/80 dark:bg-slate-950/40' : 'hover-elevate cursor-pointer'} transition-all duration-200 overflow-hidden`}
-      onClick={monitoringSuppressed ? undefined : onClick}
+      className={`${getBorderStyle(displayStatus)} ${getShadowStyle(displayStatus)} ${getOpacity(displayStatus)} ${monitoringSuppressed ? 'bg-slate-50/80 dark:bg-slate-950/40' : screenshotInteractionAvailable ? 'hover-elevate cursor-pointer' : ''} transition-all duration-200 overflow-hidden`}
+      onClick={screenshotInteractionAvailable
+        ? (event) => {
+            const target = event.target;
+            if (
+              target instanceof Element
+              && target.closest('button, a, input, select, textarea, [role="button"], [role="checkbox"]')
+            ) {
+              return;
+            }
+            onOpenScreenshot(screenshotButtonRef.current);
+          }
+        : undefined}
     >
       <div className="p-4 space-y-3">
         {/* Header Zone - Avatar + Student Name + Available Status */}
@@ -531,6 +548,7 @@ function StudentTile({
           // A same-context preview between 75 and 120 seconds old is visibly
           // dimmed and timestamped so it is never presented as live.
           <button
+            ref={screenshotButtonRef}
             type="button"
             className={`block aspect-video w-full rounded-lg bg-muted/40 relative overflow-hidden text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${screenshotPreviewMode === 'retained' ? 'ring-1 ring-inset ring-amber-400/50' : ''}`}
             data-testid={screenshotPreviewMode === 'retained'
@@ -713,6 +731,23 @@ function StudentTile({
 
         {/* Footer Zone - Actions Only */}
         <div className="flex items-center justify-end gap-2 pt-2 border-t border-border/20">
+          {onOpenDetails && !monitoringSuppressed && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 px-2.5 text-xs"
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenDetails(event.currentTarget);
+              }}
+              title={`Open details and activity for ${student.studentName || 'student'}`}
+              aria-label={`Open details and activity for ${student.studentName || 'student'}`}
+              data-testid={`button-student-details-${student.studentId}`}
+            >
+              <UserRound className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+              Details
+            </Button>
+          )}
           {monitoringSuppressed && onReturnToClass && (
             <Button
               variant="outline"
@@ -791,7 +826,7 @@ function StudentTile({
 }
 
 const CALLBACK_PROPS = new Set([
-  'onClick',
+  'onOpenDetails',
   'onToggleSelect',
   'onStartLiveView',
   'onStopLiveView',
@@ -813,7 +848,14 @@ function freshnessProjection(props) {
 function studentTilePropsEqual(previous, next) {
   const keys = new Set([...Object.keys(previous), ...Object.keys(next)]);
   for (const key of keys) {
-    if (CALLBACK_PROPS.has(key) || key === 'freshnessNowMs' || key === 'monitoringDisplay') continue;
+    if (CALLBACK_PROPS.has(key)) {
+      // Callback identities change as dashboard state is projected into each
+      // tile, but callback availability is authorization/UI state. A function
+      // becoming undefined must remove its action immediately.
+      if (Boolean(previous[key]) !== Boolean(next[key])) return false;
+      continue;
+    }
+    if (key === 'freshnessNowMs' || key === 'monitoringDisplay') continue;
     if (!Object.is(previous[key], next[key])) return false;
   }
   return freshnessProjection(previous) === freshnessProjection(next);
