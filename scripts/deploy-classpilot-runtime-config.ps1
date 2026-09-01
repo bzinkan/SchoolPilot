@@ -10,6 +10,8 @@ param(
     [string]$ManagedTestWaiverPath,
     [string]$TrackingPilotEvidencePath,
     [string]$StudentGatePilotEvidencePath,
+    [string]$FastPreviewCandidateReceiptPath,
+    [string]$FastPreviewPilotEvidencePath,
     [string]$ExternalEvidenceRoot,
     [string]$PlanPath,
     [string]$ExpectedPlanSha256,
@@ -62,10 +64,12 @@ $script:ActivationOrder = @(
 )
 $script:RepairedCapabilities = @("scopedAuthorityChecksV1") + $script:ActivationOrder
 $script:TrackingWindowCapability = "screenshotTrackingWindowLeaseV1"
+$script:FastPreviewCapability = "screenshotActiveObservationCadenceV1"
 $script:StudentGatePresenceCapability = "studentAuthGatePresenceV1"
 $script:LateSignInRestrictionSsoCapability = "lateSignInRestrictionSsoV1"
 $script:AdditiveCapabilities = @(
     $script:TrackingWindowCapability,
+    $script:FastPreviewCapability,
     $script:StudentGatePresenceCapability,
     $script:LateSignInRestrictionSsoCapability
 )
@@ -80,6 +84,7 @@ $script:CapabilityFlags = [ordered]@{
     studentChatIdempotencyV1      = "CLASSPILOT_CAP_STUDENT_CHAT_IDEMPOTENCY_V1"
     screenshotObservationLeaseV1 = "CLASSPILOT_CAP_SCREENSHOT_OBSERVATION_LEASE_V1"
     screenshotTrackingWindowLeaseV1 = "CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1"
+    screenshotActiveObservationCadenceV1 = "CLASSPILOT_CAP_SCREENSHOT_ACTIVE_OBSERVATION_CADENCE_V1"
     studentAuthGatePresenceV1    = "CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1"
     lateSignInRestrictionSsoV1   = "CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1"
     safetyEvidenceCaptureV1       = "CLASSPILOT_CAP_SAFETY_EVIDENCE_CAPTURE_V1"
@@ -113,6 +118,8 @@ $script:LateSignInBlockedZipSha256s = @(
     "40fed2c455d5c50fe3a947d23e3798a0c81832a67e717a2767b62970c024307c",
     "cd2d9c26f989a64203c52f460a1366d642ea371d7cadbb68aec9ef9a16c1884e"
 )
+$script:FastPreviewRequiredReleaseTag = "v2.8.0"
+$script:FastPreviewRequiredExtensionId = "iggbfegfcjkfieoemeolfmfnapepalca"
 
 function Assert-LateSignInPilotReleaseEvidenceBound {
     if ([string]$script:ClassPilotReleaseTag -cne $script:LateSignInRequiredReleaseTag) {
@@ -128,6 +135,123 @@ function Assert-LateSignInPilotReleaseEvidenceBound {
     if ([string]$script:ClassPilotZipSha256 -cnotmatch '^[0-9a-f]{64}$' -or
         [string]$script:ClassPilotZipSha256 -cin $script:LateSignInBlockedZipSha256s) {
         throw "late-signin-pilot requires the exact final v2.7.9 clean-tag ZIP SHA-256."
+    }
+}
+
+function Assert-FastPreviewCandidateReceipt {
+    param(
+        [Parameter(Mandatory = $true)]$EvidenceSnapshot,
+        [Parameter(Mandatory = $true)][string]$PilotSchoolId,
+        [Parameter(Mandatory = $true)][string]$ToolSha,
+        [Parameter(Mandatory = $true)][string]$AppSha,
+        [Parameter(Mandatory = $true)][string]$ImageDigest,
+        [Parameter(Mandatory = $true)][string]$ApiTaskDefinitionArn,
+        [Parameter(Mandatory = $true)][string]$WorkerTaskDefinitionArn,
+        [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow,
+        [switch]$SkipSourceTaskPairMatch,
+        [switch]$AllowHistoricalAdmissionReceipt
+    )
+    $receipt = $EvidenceSnapshot.Value
+    $allowed = @(
+        "schemaVersion", "validatedAt", "pilotSchoolId", "schoolPilotToolSha",
+        "schoolPilotAppSha", "schoolPilotImageDigest", "sourceApiTaskDefinitionArn",
+        "sourceWorkerTaskDefinitionArn", "classPilotTag", "classPilotMergeSha",
+        "classPilotZipSha256", "classPilotExtensionId", "managedDeviceCount", "checks"
+    )
+    Assert-ExactProperties -Value $receipt -Allowed $allowed -Trail "fast-preview candidate receipt"
+    $present = @($receipt.PSObject.Properties.Name)
+    if (@($allowed | Where-Object { $present -cnotcontains $_ }).Count -ne 0 -or
+        -not (Test-IsJsonInteger -Value $receipt.schemaVersion) -or
+        [long]$receipt.schemaVersion -ne 1) {
+        throw "Fast-preview candidate receipt is incomplete."
+    }
+    foreach ($name in @(
+        "validatedAt", "pilotSchoolId", "schoolPilotToolSha", "schoolPilotAppSha",
+        "schoolPilotImageDigest", "sourceApiTaskDefinitionArn", "sourceWorkerTaskDefinitionArn",
+        "classPilotTag", "classPilotMergeSha", "classPilotZipSha256", "classPilotExtensionId"
+    )) {
+        if ($receipt.$name -isnot [string]) { throw "Fast-preview candidate receipt is incomplete." }
+    }
+    if ($AllowHistoricalAdmissionReceipt) {
+        try {
+            $validatedAtValue = [DateTimeOffset]::ParseExact(
+                [string]$receipt.validatedAt, "o", [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::RoundtripKind
+            )
+        }
+        catch { throw "Fast-preview candidate receipt must use an exact ISO-8601 timestamp." }
+        $receiptAge = $Now - $validatedAtValue
+        if ($receiptAge.TotalMinutes -lt -5 -or $receiptAge.TotalHours -gt 26) {
+            throw "Fast-preview candidate receipt is outside the bounded pilot evidence window."
+        }
+        $validatedAt = $validatedAtValue.ToUniversalTime().ToString("o")
+    }
+    else {
+        $validatedAt = Get-FreshEvidenceTimestamp -Value ([string]$receipt.validatedAt) `
+            -Label "Fast-preview candidate receipt" -Now $Now
+    }
+    if ([string]$receipt.classPilotTag -cne $script:FastPreviewRequiredReleaseTag -or
+        [string]$receipt.classPilotMergeSha -cnotmatch '^[0-9a-f]{40}$' -or
+        [string]$receipt.classPilotZipSha256 -cnotmatch '^[0-9a-f]{64}$' -or
+        [string]$receipt.classPilotExtensionId -cne $script:FastPreviewRequiredExtensionId) {
+        throw "Fast-preview candidate receipt does not identify the exact reviewed ClassPilot v2.8.0 artifact."
+    }
+    if (-not (Test-IsJsonInteger -Value $receipt.managedDeviceCount) -or
+        [long]$receipt.managedDeviceCount -lt 5 -or [long]$receipt.managedDeviceCount -gt 10) {
+        throw "Fast-preview candidate receipt requires five through ten managed devices."
+    }
+    if ([string]$receipt.sourceApiTaskDefinitionArn -cnotmatch `
+            '^arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api(?:-emergency)?:[1-9][0-9]*$' -or
+        [string]$receipt.sourceWorkerTaskDefinitionArn -cnotmatch `
+            '^arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:[1-9][0-9]*$') {
+        throw "Fast-preview candidate receipt task identities are malformed."
+    }
+    if ([string]$receipt.pilotSchoolId -cne $PilotSchoolId -or
+        [string]$receipt.schoolPilotToolSha -cne $ToolSha -or
+        [string]$receipt.schoolPilotAppSha -cne $AppSha -or
+        [string]$receipt.schoolPilotImageDigest -cne $ImageDigest -or
+        (-not $SkipSourceTaskPairMatch -and
+            ([string]$receipt.sourceApiTaskDefinitionArn -cne $ApiTaskDefinitionArn -or
+                [string]$receipt.sourceWorkerTaskDefinitionArn -cne $WorkerTaskDefinitionArn))) {
+        throw "Fast-preview candidate receipt does not bind the exact pilot admission authority."
+    }
+    $requiredChecks = @(
+        "managedDeviceAdoptionPassed", "exactAuthorityReadinessPassed",
+        "fiveSecondCadenceReadinessPassed", "thirtySecondFallbackReadinessPassed",
+        "noAuthorizationOrPrivacyDefects"
+    )
+    Assert-ExactProperties -Value $receipt.checks -Allowed $requiredChecks `
+        -Trail "fast-preview candidate receipt.checks"
+    $presentChecks = @($receipt.checks.PSObject.Properties.Name)
+    if (@($requiredChecks | Where-Object { $presentChecks -cnotcontains $_ }).Count -ne 0) {
+        throw "Fast-preview candidate receipt checks are incomplete."
+    }
+    foreach ($name in $requiredChecks) {
+        if ($receipt.checks.$name -isnot [bool] -or -not $receipt.checks.$name) {
+            throw "Fast-preview candidate receipt checks are incomplete."
+        }
+    }
+    return [pscustomobject]@{
+        ValidatedAt = $validatedAt
+        EvidenceSha256 = [string]$EvidenceSnapshot.Sha256
+        ClassPilotTag = [string]$receipt.classPilotTag
+        ClassPilotMergeSha = [string]$receipt.classPilotMergeSha
+        ClassPilotZipSha256 = [string]$receipt.classPilotZipSha256
+        ClassPilotExtensionId = [string]$receipt.classPilotExtensionId
+    }
+}
+
+function Assert-FastPreviewPlanArtifactIdentity {
+    param(
+        [Parameter(Mandatory = $true)]$Plan,
+        [Parameter(Mandatory = $true)]$CandidateReceipt
+    )
+    if ($Plan.PSObject.Properties.Name -cnotcontains "fastPreviewClassPilotTag" -or
+        [string]$Plan.fastPreviewClassPilotTag -cne [string]$CandidateReceipt.ClassPilotTag -or
+        [string]$Plan.fastPreviewClassPilotMergeSha -cne [string]$CandidateReceipt.ClassPilotMergeSha -or
+        [string]$Plan.fastPreviewClassPilotZipSha256 -cne [string]$CandidateReceipt.ClassPilotZipSha256 -or
+        [string]$Plan.fastPreviewClassPilotExtensionId -cne [string]$CandidateReceipt.ClassPilotExtensionId) {
+        throw "Fast-preview candidate artifact identity changed after planning."
     }
 }
 
@@ -282,11 +406,13 @@ function ConvertTo-RuntimeConfiguration {
     $schemaTwoModes = @("tracking-window-pilot", "tracking-window-global-on")
     $schemaThreeModes = @("student-gate-pilot", "student-gate-global-on", "student-gate-off")
     $schemaFourModes = @("late-signin-pilot", "late-signin-off")
+    $schemaFiveModes = @("fast-preview-pilot", "fast-preview-global-on", "fast-preview-off")
     if (($schemaVersion -eq 1 -and $mode -cnotin $schemaOneModes) -or
         ($schemaVersion -eq 2 -and $mode -cnotin $schemaTwoModes) -or
         ($schemaVersion -eq 3 -and $mode -cnotin $schemaThreeModes) -or
         ($schemaVersion -eq 4 -and $mode -cnotin $schemaFourModes) -or
-        $schemaVersion -notin @(1, 2, 3, 4)) {
+        ($schemaVersion -eq 5 -and $mode -cnotin $schemaFiveModes) -or
+        $schemaVersion -notin @(1, 2, 3, 4, 5)) {
         throw "Runtime profile schemaVersion and mode do not match a reviewed profile contract."
     }
 
@@ -317,7 +443,7 @@ function ConvertTo-RuntimeConfiguration {
             throw "$mode profiles must not contain test-school fields."
         }
     }
-    if ($mode -cin @("tracking-window-pilot", "student-gate-pilot", "late-signin-pilot")) {
+    if ($mode -cin @("tracking-window-pilot", "student-gate-pilot", "late-signin-pilot", "fast-preview-pilot")) {
         $pilotSchoolId = [string]$Profile.pilotSchoolId
         if ($pilotSchoolId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
             throw "The selected pilot profile requires one canonical UUID school ID."
@@ -341,6 +467,9 @@ function ConvertTo-RuntimeConfiguration {
     }
     if ($mode -cin $schemaFourModes -and $Profile.PSObject.Properties.Name -contains "turn") {
         throw "Late-sign-in profiles must preserve existing TURN runtime wiring."
+    }
+    if ($mode -cin $schemaFiveModes -and $Profile.PSObject.Properties.Name -contains "turn") {
+        throw "Fast-preview profiles must preserve existing TURN runtime wiring."
     }
     if ($mode -ceq "tracking-window-pilot" -and $Profile.PSObject.Properties.Name -contains "turn") {
         throw "The tracking-window-pilot profile must preserve existing TURN runtime wiring."
@@ -374,12 +503,14 @@ function ConvertTo-RuntimeConfiguration {
         throw "The selected profile requires verified TURN inputs."
     }
 
-    if ($mode -cin @($schemaThreeModes + $schemaFourModes)) {
-        $selectedCapability = if ($mode -cin $schemaFourModes) {
+    if ($mode -cin @($schemaThreeModes + $schemaFourModes + $schemaFiveModes)) {
+        $selectedCapability = if ($mode -cin $schemaFiveModes) {
+            $script:FastPreviewCapability
+        } elseif ($mode -cin $schemaFourModes) {
             $script:LateSignInRestrictionSsoCapability
         } else { $script:StudentGatePresenceCapability }
-        $isPilot = $mode -cin @("student-gate-pilot", "late-signin-pilot")
-        $isOff = $mode -cin @("student-gate-off", "late-signin-off")
+        $isPilot = $mode -cin @("student-gate-pilot", "late-signin-pilot", "fast-preview-pilot")
+        $isOff = $mode -cin @("student-gate-off", "late-signin-off", "fast-preview-off")
         return [pscustomobject]@{
             Mode = $mode
             SchoolScopeCount = if ($isPilot) { 1 } else { 0 }
@@ -459,7 +590,8 @@ function Resolve-SourcePreservingRuntimeConfiguration {
     if (-not [bool]$RuntimeIntent.RequiresSourceRuntime) { return $RuntimeIntent }
     if ([string]$RuntimeIntent.Mode -cnotin @(
         "student-gate-pilot", "student-gate-global-on", "student-gate-off",
-        "late-signin-pilot", "late-signin-off"
+        "late-signin-pilot", "late-signin-off",
+        "fast-preview-pilot", "fast-preview-global-on", "fast-preview-off"
     )) {
         throw "The source-preserving runtime intent is unsupported."
     }
@@ -471,7 +603,7 @@ function Resolve-SourcePreservingRuntimeConfiguration {
     if ([string]$sourceState.Mode -cnotin @(
         "global-on", "tracking-window-pilot", "tracking-window-global-on"
     )) {
-        throw "Student-gate rollout requires the completed global repaired-capability runtime."
+        throw "Source-preserving additive rollout requires the completed global repaired-capability runtime."
     }
 
     $values = [ordered]@{}
@@ -503,15 +635,22 @@ function Resolve-SourcePreservingRuntimeConfiguration {
         $rollouts[$capability] = $copy
     }
 
+    $isFastPreviewIntent = [string]$RuntimeIntent.Mode -cin @(
+        "fast-preview-pilot", "fast-preview-global-on", "fast-preview-off"
+    )
     $isLateSignInIntent = [string]$RuntimeIntent.Mode -cin @(
         "late-signin-pilot", "late-signin-off"
     )
-    $selectedCapability = if ($isLateSignInIntent) {
+    $selectedCapability = if ($isFastPreviewIntent) {
+        $script:FastPreviewCapability
+    } elseif ($isLateSignInIntent) {
         $script:LateSignInRestrictionSsoCapability
     } else { $script:StudentGatePresenceCapability }
-    $gateOn = [string]$RuntimeIntent.Mode -cnotin @("student-gate-off", "late-signin-off")
+    $gateOn = [string]$RuntimeIntent.Mode -cnotin @(
+        "student-gate-off", "late-signin-off", "fast-preview-off"
+    )
     $gateEntry = [ordered]@{ mode = if ($gateOn) { "on" } else { "off" } }
-    if ([string]$RuntimeIntent.Mode -cin @("student-gate-pilot", "late-signin-pilot")) {
+    if ([string]$RuntimeIntent.Mode -cin @("student-gate-pilot", "late-signin-pilot", "fast-preview-pilot")) {
         $profileSchoolId = [string]$RuntimeIntent.PilotSchoolId
         if ($profileSchoolId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
             throw "School-scoped capability pilot intent has an invalid school scope."
@@ -521,7 +660,7 @@ function Resolve-SourcePreservingRuntimeConfiguration {
     $sourceSelectedMode = if ($sourceRollouts.PSObject.Properties.Name -ccontains $selectedCapability) {
         [string]$sourceRollouts.$selectedCapability.mode
     } else { "off" }
-    if ([string]$RuntimeIntent.Mode -cin @("student-gate-pilot", "late-signin-pilot") -and
+    if ([string]$RuntimeIntent.Mode -cin @("student-gate-pilot", "late-signin-pilot", "fast-preview-pilot") -and
         $sourceSelectedMode -cne "off") {
         throw "A school-scoped capability pilot must begin from its off profile."
     }
@@ -548,7 +687,7 @@ function Resolve-SourcePreservingRuntimeConfiguration {
         Turn = $null
         RequiresSourceRuntime = $false
         SourceMode = [string]$sourceState.Mode
-        PilotSchoolId = if ([string]$RuntimeIntent.Mode -cin @("student-gate-pilot", "late-signin-pilot")) {
+        PilotSchoolId = if ([string]$RuntimeIntent.Mode -cin @("student-gate-pilot", "late-signin-pilot", "fast-preview-pilot")) {
             [string]$RuntimeIntent.PilotSchoolId
         } else { $null }
     }
@@ -835,6 +974,114 @@ function Assert-TrackingWindowPilotEvidence {
         $value = $evidence.checks.$name
         if ($value -isnot [bool] -or -not $value) {
             throw "Tracking-window pilot evidence checks are incomplete."
+        }
+    }
+    return [pscustomobject]@{
+        ValidatedAt = $validatedAt.ToUniversalTime().ToString("o")
+        ObservedFrom = $observedFrom.ToUniversalTime().ToString("o")
+        ObservedThrough = $observedThrough.ToUniversalTime().ToString("o")
+        EvidenceSha256 = [string]$EvidenceSnapshot.Sha256
+    }
+}
+
+function Assert-FastPreviewPilotEvidence {
+    param(
+        [Parameter(Mandatory = $true)]$EvidenceSnapshot,
+        [Parameter(Mandatory = $true)]$CandidateReceipt,
+        [Parameter(Mandatory = $true)][string]$PilotSchoolId,
+        [Parameter(Mandatory = $true)][string]$ToolSha,
+        [Parameter(Mandatory = $true)][string]$AppSha,
+        [Parameter(Mandatory = $true)][string]$ImageDigest,
+        [Parameter(Mandatory = $true)][string]$ApiTaskDefinitionArn,
+        [Parameter(Mandatory = $true)][string]$WorkerTaskDefinitionArn,
+        [Parameter(Mandatory = $true)][string]$RuntimeConfigurationSha256,
+        [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow
+    )
+    $evidence = $EvidenceSnapshot.Value
+    $allowed = @(
+        "schemaVersion", "validatedAt", "observedFrom", "observedThrough", "pilotSchoolId",
+        "schoolPilotToolSha", "schoolPilotAppSha", "schoolPilotImageDigest",
+        "pilotApiTaskDefinitionArn", "pilotWorkerTaskDefinitionArn",
+        "pilotRuntimeConfigurationSha256", "fastPreviewCandidateReceiptSha256",
+        "classPilotTag", "classPilotMergeSha", "classPilotZipSha256",
+        "classPilotExtensionId", "checks"
+    )
+    Assert-ExactProperties -Value $evidence -Allowed $allowed -Trail "fast-preview pilot evidence"
+    $present = @($evidence.PSObject.Properties.Name)
+    if (@($allowed | Where-Object { $present -cnotcontains $_ }).Count -ne 0 -or
+        -not (Test-IsJsonInteger -Value $evidence.schemaVersion) -or
+        [long]$evidence.schemaVersion -ne 2) {
+        throw "Fast-preview pilot evidence is incomplete."
+    }
+    foreach ($name in @(
+        "validatedAt", "observedFrom", "observedThrough", "pilotSchoolId", "schoolPilotToolSha",
+        "schoolPilotAppSha", "schoolPilotImageDigest", "pilotApiTaskDefinitionArn",
+        "pilotWorkerTaskDefinitionArn", "pilotRuntimeConfigurationSha256",
+        "fastPreviewCandidateReceiptSha256", "classPilotTag", "classPilotMergeSha",
+        "classPilotZipSha256", "classPilotExtensionId"
+    )) {
+        if ($evidence.$name -isnot [string]) { throw "Fast-preview pilot evidence is incomplete." }
+    }
+    $validatedAtText = Get-FreshEvidenceTimestamp -Value ([string]$evidence.validatedAt) `
+        -Label "Fast-preview pilot evidence" -Now $Now
+    try {
+        $validatedAt = [DateTimeOffset]::ParseExact(
+            $validatedAtText, "o", [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::RoundtripKind
+        )
+        $observedFrom = [DateTimeOffset]::ParseExact(
+            [string]$evidence.observedFrom, "o", [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::RoundtripKind
+        )
+        $observedThrough = [DateTimeOffset]::ParseExact(
+            [string]$evidence.observedThrough, "o", [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::RoundtripKind
+        )
+        $candidateValidatedAt = [DateTimeOffset]::ParseExact(
+            [string]$CandidateReceipt.ValidatedAt, "o", [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::RoundtripKind
+        )
+    }
+    catch { throw "Fast-preview pilot observation timestamps must use exact ISO-8601 values." }
+    $observationDuration = $observedThrough - $observedFrom
+    $evidenceLag = $validatedAt - $observedThrough
+    $candidateLead = $observedFrom - $candidateValidatedAt
+    if ($observationDuration.TotalMinutes -lt 30 -or $observationDuration.TotalHours -gt 24 -or
+        $evidenceLag.TotalMinutes -lt 0 -or $evidenceLag.TotalMinutes -gt 30 -or
+        $candidateLead.TotalMinutes -lt 0 -or $candidateLead.TotalHours -gt 2) {
+        throw "Fast-preview pilot evidence does not cover the reviewed recent observation window."
+    }
+    if ([string]$evidence.pilotSchoolId -cne $PilotSchoolId -or
+        [string]$evidence.schoolPilotToolSha -cne $ToolSha -or
+        [string]$evidence.schoolPilotAppSha -cne $AppSha -or
+        [string]$evidence.schoolPilotImageDigest -cne $ImageDigest -or
+        [string]$evidence.pilotApiTaskDefinitionArn -cne $ApiTaskDefinitionArn -or
+        [string]$evidence.pilotWorkerTaskDefinitionArn -cne $WorkerTaskDefinitionArn -or
+        [string]$evidence.pilotRuntimeConfigurationSha256 -cne $RuntimeConfigurationSha256 -or
+        [string]$evidence.fastPreviewCandidateReceiptSha256 -cne [string]$CandidateReceipt.EvidenceSha256 -or
+        [string]$evidence.classPilotTag -cne [string]$CandidateReceipt.ClassPilotTag -or
+        [string]$evidence.classPilotMergeSha -cne [string]$CandidateReceipt.ClassPilotMergeSha -or
+        [string]$evidence.classPilotZipSha256 -cne [string]$CandidateReceipt.ClassPilotZipSha256 -or
+        [string]$evidence.classPilotExtensionId -cne [string]$CandidateReceipt.ClassPilotExtensionId) {
+        throw "Fast-preview pilot evidence does not bind the exact pilot deployment authority."
+    }
+    $requiredChecks = @(
+        "fullSchoolActivityWindowObserved", "managedCapabilityNegotiated",
+        "exactObservationFiveSecondCadencePassed", "backgroundThirtySecondCadencePassed",
+        "observationExpiryFallbackPassed", "screenshotTtlOneHundredTwentySecondsPassed",
+        "fortyStudentLoadPassed", "fiveHundredStudentLoadPassed", "eightHundredStudentLoadPassed",
+        "wafHeadroomWithinBudget", "screenshotIngressWithinBudget", "apiWorkerStable",
+        "screenshotStoreLatencyWithinBudget", "noAuthorizationOrPrivacyDefects"
+    )
+    Assert-ExactProperties -Value $evidence.checks -Allowed $requiredChecks `
+        -Trail "fast-preview pilot evidence.checks"
+    $presentChecks = @($evidence.checks.PSObject.Properties.Name)
+    if (@($requiredChecks | Where-Object { $presentChecks -cnotcontains $_ }).Count -ne 0) {
+        throw "Fast-preview pilot evidence checks are incomplete."
+    }
+    foreach ($name in $requiredChecks) {
+        if ($evidence.checks.$name -isnot [bool] -or -not $evidence.checks.$name) {
+            throw "Fast-preview pilot evidence checks are incomplete."
         }
     }
     return [pscustomobject]@{
@@ -1961,6 +2208,7 @@ function Get-RuntimeActivationState {
             Mode = "baseline"; SchoolId = $null; PrefixCount = -1
             StudentGateMode = "off"; StudentGateSchoolId = $null
             LateSignInMode = "off"; LateSignInSchoolId = $null
+            FastPreviewMode = "off"; FastPreviewSchoolId = $null
         }
     }
     $absentAdditiveCapabilities = @($script:AdditiveCapabilities | Where-Object {
@@ -2018,6 +2266,7 @@ function Get-RuntimeActivationState {
             Mode = "off"; SchoolId = $null; PrefixCount = -1
             StudentGateMode = "off"; StudentGateSchoolId = $null
             LateSignInMode = "off"; LateSignInSchoolId = $null
+            FastPreviewMode = "off"; FastPreviewSchoolId = $null
         }
     }
 
@@ -2113,6 +2362,52 @@ function Get-RuntimeActivationState {
         $lateSignInSchoolId = [string]$lateSignInSchoolIds[0]
     }
 
+    $fastPreviewFlag = [string]$script:CapabilityFlags[$script:FastPreviewCapability]
+    $fastPreviewFlagValue = [string]$values[$fastPreviewFlag]
+    $fastPreviewRollout = $rollouts.$($script:FastPreviewCapability)
+    if ($fastPreviewFlagValue -cnotin @("true", "false")) {
+        throw "Fast-preview screenshot cadence kill switch is invalid."
+    }
+    $fastPreviewMode = "off"
+    $fastPreviewSchoolId = $null
+    if ($fastPreviewFlagValue -ceq "false") {
+        if ([string]$fastPreviewRollout.mode -cne "off" -or
+            $fastPreviewRollout.PSObject.Properties.Name -contains "schoolIds") {
+            throw "Fast-preview screenshot cadence requires both matching activation controls."
+        }
+    }
+    elseif ([string]$fastPreviewRollout.mode -cne "on") {
+        throw "Fast-preview screenshot cadence requires both matching activation controls."
+    }
+    elseif (-not ($fastPreviewRollout.PSObject.Properties.Name -contains "schoolIds")) {
+        $fastPreviewMode = "global-on"
+    }
+    else {
+        if ($fastPreviewRollout.schoolIds -isnot [Array]) {
+            throw "Fast-preview pilot school scope must be an array."
+        }
+        $fastPreviewSchoolIds = @($fastPreviewRollout.schoolIds)
+        if ($fastPreviewSchoolIds.Count -ne 1 -or
+            [string]$fastPreviewSchoolIds[0] -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
+            throw "Fast-preview pilot runtime configuration has invalid school scope."
+        }
+        $fastPreviewMode = "pilot"
+        $fastPreviewSchoolId = [string]$fastPreviewSchoolIds[0]
+    }
+    if ($fastPreviewMode -cne "off") {
+        if ($trackingWindowFlagValue -cne "true") {
+            throw "Fast-preview cadence requires tracking-window screenshots."
+        }
+        $trackingIsGlobal = -not ($trackingWindowRollout.PSObject.Properties.Name -contains "schoolIds")
+        if ($fastPreviewMode -ceq "global-on" -and -not $trackingIsGlobal) {
+            throw "Global fast-preview cadence requires global tracking-window screenshots."
+        }
+        if ($fastPreviewMode -ceq "pilot" -and -not $trackingIsGlobal -and
+            ([string](@($trackingWindowRollout.schoolIds)[0]) -cne $fastPreviewSchoolId)) {
+            throw "Fast-preview pilot scope must match the tracking-window pilot scope."
+        }
+    }
+
     $markerSchoolIds = @()
     if ($rollouts.scopedAuthorityChecksV1.PSObject.Properties.Name -contains "schoolIds") {
         if ($rollouts.scopedAuthorityChecksV1.schoolIds -isnot [Array]) {
@@ -2132,6 +2427,7 @@ function Get-RuntimeActivationState {
                 Mode = "global-on"; SchoolId = $null; PrefixCount = $script:ActivationOrder.Count
                 StudentGateMode = $studentGateMode; StudentGateSchoolId = $studentGateSchoolId
                 LateSignInMode = $lateSignInMode; LateSignInSchoolId = $lateSignInSchoolId
+                FastPreviewMode = $fastPreviewMode; FastPreviewSchoolId = $fastPreviewSchoolId
             }
         }
         if (-not ($trackingWindowRollout.PSObject.Properties.Name -contains "schoolIds")) {
@@ -2139,6 +2435,7 @@ function Get-RuntimeActivationState {
                 Mode = "tracking-window-global-on"; SchoolId = $null; PrefixCount = $script:ActivationOrder.Count
                 StudentGateMode = $studentGateMode; StudentGateSchoolId = $studentGateSchoolId
                 LateSignInMode = $lateSignInMode; LateSignInSchoolId = $lateSignInSchoolId
+                FastPreviewMode = $fastPreviewMode; FastPreviewSchoolId = $fastPreviewSchoolId
             }
         }
         if ($trackingWindowRollout.schoolIds -isnot [Array]) {
@@ -2157,11 +2454,13 @@ function Get-RuntimeActivationState {
             StudentGateSchoolId = $studentGateSchoolId
             LateSignInMode = $lateSignInMode
             LateSignInSchoolId = $lateSignInSchoolId
+            FastPreviewMode = $fastPreviewMode
+            FastPreviewSchoolId = $fastPreviewSchoolId
         }
     }
 
     if ($trackingWindowFlagValue -cne "false" -or $studentGateMode -cne "off" -or
-        $lateSignInMode -cne "off") {
+        $lateSignInMode -cne "off" -or $fastPreviewMode -cne "off") {
         throw "Test-school activation must keep additive capabilities disabled."
     }
 
@@ -2191,6 +2490,7 @@ function Get-RuntimeActivationState {
         Mode = "test-school"; SchoolId = $schoolId; PrefixCount = $prefixCount
         StudentGateMode = "off"; StudentGateSchoolId = $null
         LateSignInMode = "off"; LateSignInSchoolId = $null
+        FastPreviewMode = "off"; FastPreviewSchoolId = $null
     }
 }
 
@@ -2215,7 +2515,9 @@ function Assert-AllowedRuntimeTransition {
             [string]$source.SchoolId -cne [string]$target.SchoolId -or
             [int]$source.PrefixCount -ne [int]$target.PrefixCount -or
             [string]$source.LateSignInMode -cne [string]$target.LateSignInMode -or
-            [string]$source.LateSignInSchoolId -cne [string]$target.LateSignInSchoolId) {
+            [string]$source.LateSignInSchoolId -cne [string]$target.LateSignInSchoolId -or
+            [string]$source.FastPreviewMode -cne [string]$target.FastPreviewMode -or
+            [string]$source.FastPreviewSchoolId -cne [string]$target.FastPreviewSchoolId) {
             throw "Student-gate rollout must preserve the existing repaired and screenshot runtime state."
         }
         if ($TargetRuntimeConfiguration.PSObject.Properties.Name -contains "SourceMode" -and
@@ -2250,7 +2552,9 @@ function Assert-AllowedRuntimeTransition {
             [string]$source.SchoolId -cne [string]$target.SchoolId -or
             [int]$source.PrefixCount -ne [int]$target.PrefixCount -or
             [string]$source.StudentGateMode -cne [string]$target.StudentGateMode -or
-            [string]$source.StudentGateSchoolId -cne [string]$target.StudentGateSchoolId) {
+            [string]$source.StudentGateSchoolId -cne [string]$target.StudentGateSchoolId -or
+            [string]$source.FastPreviewMode -cne [string]$target.FastPreviewMode -or
+            [string]$source.FastPreviewSchoolId -cne [string]$target.FastPreviewSchoolId) {
             throw "Late-sign-in rollout must preserve the existing repaired, screenshot, and student-gate runtime state."
         }
         if ([string]$TargetRuntimeConfiguration.Mode -ceq "late-signin-pilot") {
@@ -2270,10 +2574,53 @@ function Assert-AllowedRuntimeTransition {
         }
         return
     }
+    if ([string]$TargetRuntimeConfiguration.Mode -cin @(
+        "fast-preview-pilot", "fast-preview-global-on", "fast-preview-off"
+    )) {
+        if ([string]$source.Mode -cne [string]$target.Mode -or
+            [string]$source.SchoolId -cne [string]$target.SchoolId -or
+            [int]$source.PrefixCount -ne [int]$target.PrefixCount -or
+            [string]$source.StudentGateMode -cne [string]$target.StudentGateMode -or
+            [string]$source.StudentGateSchoolId -cne [string]$target.StudentGateSchoolId -or
+            [string]$source.LateSignInMode -cne [string]$target.LateSignInMode -or
+            [string]$source.LateSignInSchoolId -cne [string]$target.LateSignInSchoolId) {
+            throw "Fast-preview rollout must preserve every existing runtime capability."
+        }
+        if ($TargetRuntimeConfiguration.PSObject.Properties.Name -contains "SourceMode" -and
+            [string]$TargetRuntimeConfiguration.SourceMode -cne [string]$source.Mode) {
+            throw "Fast-preview rollout source identity changed after resolution."
+        }
+        if ([string]$TargetRuntimeConfiguration.Mode -ceq "fast-preview-pilot") {
+            $trackingScopeMatches = [string]$source.Mode -ceq "tracking-window-global-on" -or
+                ([string]$source.Mode -ceq "tracking-window-pilot" -and
+                 [string]$source.SchoolId -ceq [string]$TargetRuntimeConfiguration.PilotSchoolId)
+            if (-not $trackingScopeMatches -or
+                [string]$source.FastPreviewMode -cne "off" -or
+                [string]$target.FastPreviewMode -cne "pilot" -or
+                [string]$target.FastPreviewSchoolId -cne [string]$TargetRuntimeConfiguration.PilotSchoolId) {
+                throw "Fast-preview activation requires one exact school inside the tracking-window scope."
+            }
+            return
+        }
+        if ([string]$TargetRuntimeConfiguration.Mode -ceq "fast-preview-global-on") {
+            if ([string]$source.Mode -cne "tracking-window-global-on" -or
+                [string]$source.FastPreviewMode -cne "pilot" -or
+                [string]$target.FastPreviewMode -cne "global-on") {
+                throw "Fast-preview global activation requires a completed pilot and global tracking-window coverage."
+            }
+            return
+        }
+        if ([string]$source.FastPreviewMode -cnotin @("pilot", "global-on") -or
+            [string]$target.FastPreviewMode -cne "off") {
+            throw "Fast-preview rollback requires an active fast-preview rollout."
+        }
+        return
+    }
     if ([string]$target.Mode -cin @("tracking-window-pilot", "tracking-window-global-on") -and
         ([string]$source.StudentGateMode -cne "off" -or
-         [string]$source.LateSignInMode -cne "off")) {
-        throw "Tracking-window transitions require student auth-gate and late-sign-in capabilities to be disabled independently first."
+         [string]$source.LateSignInMode -cne "off" -or
+         [string]$source.FastPreviewMode -cne "off")) {
+        throw "Tracking-window transitions require dependent additive capabilities to be disabled independently first."
     }
     if ($target.Mode -ceq "off") { return }
     if ($target.Mode -ceq "test-school") {
@@ -2935,6 +3282,8 @@ function New-RuntimeConfigPlan {
         [string]$PrivateManagedTestWaiverPath,
         [string]$PrivateTrackingPilotEvidencePath,
         [string]$PrivateStudentGatePilotEvidencePath,
+        [string]$PrivateFastPreviewCandidateReceiptPath,
+        [string]$PrivateFastPreviewPilotEvidencePath,
         [Parameter(Mandatory = $true)][string]$EvidenceRoot,
         [Parameter(Mandatory = $true)][string]$AppSha,
         [Parameter(Mandatory = $true)][string]$ImageDigest,
@@ -3007,6 +3356,40 @@ function New-RuntimeConfigPlan {
             -Path $PrivateStudentGatePilotEvidencePath -RepositoryRoot $RepositoryRoot
         $studentGatePilotEvidenceSnapshot = Read-StrictJsonSnapshot -Path $PrivateStudentGatePilotEvidencePath
     }
+    $fastPreviewPilotEvidenceRequired = $runtime.Mode -ceq "fast-preview-global-on"
+    $fastPreviewCandidateReceiptRequired = $runtime.Mode -cin @(
+        "fast-preview-pilot", "fast-preview-global-on"
+    )
+    if ($fastPreviewCandidateReceiptRequired -and
+        [string]::IsNullOrWhiteSpace($PrivateFastPreviewCandidateReceiptPath)) {
+        throw "Fast-preview pilot admission requires a private v2.8.0 candidate receipt."
+    }
+    if (-not $fastPreviewCandidateReceiptRequired -and
+        -not [string]::IsNullOrWhiteSpace($PrivateFastPreviewCandidateReceiptPath)) {
+        throw "Fast-preview candidate receipts are valid only for pilot or global activation."
+    }
+    $fastPreviewCandidateReceiptSnapshot = $null
+    if ($fastPreviewCandidateReceiptRequired) {
+        $PrivateFastPreviewCandidateReceiptPath = Assert-PrivateInputPath `
+            -Path $PrivateFastPreviewCandidateReceiptPath -RepositoryRoot $RepositoryRoot
+        $fastPreviewCandidateReceiptSnapshot = Read-StrictJsonSnapshot `
+            -Path $PrivateFastPreviewCandidateReceiptPath
+    }
+    if ($fastPreviewPilotEvidenceRequired -and
+        [string]::IsNullOrWhiteSpace($PrivateFastPreviewPilotEvidencePath)) {
+        throw "Fast-preview global activation requires fresh pilot load, smoke, and soak evidence."
+    }
+    if (-not $fastPreviewPilotEvidenceRequired -and
+        -not [string]::IsNullOrWhiteSpace($PrivateFastPreviewPilotEvidencePath)) {
+        throw "Fast-preview pilot evidence is valid only for fast-preview-global-on activation."
+    }
+    $fastPreviewPilotEvidenceSnapshot = $null
+    if ($fastPreviewPilotEvidenceRequired) {
+        $PrivateFastPreviewPilotEvidencePath = Assert-PrivateInputPath `
+            -Path $PrivateFastPreviewPilotEvidencePath -RepositoryRoot $RepositoryRoot
+        $fastPreviewPilotEvidenceSnapshot = Read-StrictJsonSnapshot `
+            -Path $PrivateFastPreviewPilotEvidencePath
+    }
     if ($syntheticOnlyWaiver -and $runtime.Mode -cne "global-on") {
         throw "Synthetic-only waiver evidence is valid only for global-on activation."
     }
@@ -3043,6 +3426,14 @@ function New-RuntimeConfigPlan {
         -SourceTaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api"
     Assert-AllowedRuntimeTransition -SourceTaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api" `
         -TargetRuntimeConfiguration $runtime -AllowSyntheticOnlyGlobalActivation:$syntheticOnlyWaiver
+    $fastPreviewCandidateReceipt = $null
+    if ($runtime.Mode -ceq "fast-preview-pilot") {
+        $fastPreviewCandidateReceipt = Assert-FastPreviewCandidateReceipt `
+            -EvidenceSnapshot $fastPreviewCandidateReceiptSnapshot `
+            -PilotSchoolId ([string]$runtime.PilotSchoolId) -ToolSha $toolSha -AppSha $AppSha `
+            -ImageDigest $ImageDigest -ApiTaskDefinitionArn $ApiTaskDefinitionArn `
+            -WorkerTaskDefinitionArn $WorkerTaskDefinitionArn -Now $Now
+    }
     $trackingPilotEvidence = $null
     if ($trackingPilotEvidenceRequired) {
         $sourceContainer = @($snapshot.ApiTask.taskDefinition.containerDefinitions | Where-Object name -CEQ "api")
@@ -3074,6 +3465,32 @@ function New-RuntimeConfigPlan {
             -WorkerTaskDefinitionArn $WorkerTaskDefinitionArn `
             -RuntimeConfigurationSha256 $sourceRuntimeConfigurationSha256 -Now $Now
     }
+    $fastPreviewPilotEvidence = $null
+    if ($fastPreviewPilotEvidenceRequired) {
+        $sourceContainer = @($snapshot.ApiTask.taskDefinition.containerDefinitions | Where-Object name -CEQ "api")
+        if ($sourceContainer.Count -ne 1) { throw "Fast-preview pilot source runtime container is ambiguous." }
+        $sourceState = Get-RuntimeActivationState -Environment @($sourceContainer[0].environment) -AllowBaseline
+        if ([string]$sourceState.FastPreviewMode -cne "pilot") {
+            throw "Fast-preview global activation requires the exact active school-scoped pilot."
+        }
+        $fastPreviewCandidateReceipt = Assert-FastPreviewCandidateReceipt `
+            -EvidenceSnapshot $fastPreviewCandidateReceiptSnapshot `
+            -PilotSchoolId ([string]$sourceState.FastPreviewSchoolId) `
+            -ToolSha $toolSha -AppSha $AppSha -ImageDigest $ImageDigest `
+            -ApiTaskDefinitionArn $ApiTaskDefinitionArn `
+            -WorkerTaskDefinitionArn $WorkerTaskDefinitionArn -Now $Now `
+            -SkipSourceTaskPairMatch -AllowHistoricalAdmissionReceipt
+        $sourceRuntimeConfigurationSha256 = Get-ManagedRuntimeFingerprint `
+            -TaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api"
+        $fastPreviewPilotEvidence = Assert-FastPreviewPilotEvidence `
+            -EvidenceSnapshot $fastPreviewPilotEvidenceSnapshot `
+            -CandidateReceipt $fastPreviewCandidateReceipt `
+            -PilotSchoolId ([string]$sourceState.FastPreviewSchoolId) `
+            -ToolSha $toolSha -AppSha $AppSha -ImageDigest $ImageDigest `
+            -ApiTaskDefinitionArn $ApiTaskDefinitionArn `
+            -WorkerTaskDefinitionArn $WorkerTaskDefinitionArn `
+            -RuntimeConfigurationSha256 $sourceRuntimeConfigurationSha256 -Now $Now
+    }
     $root = Assert-PrivateExternalRoot -Root $EvidenceRoot -RepositoryRoot $RepositoryRoot
     $runId = $Now.ToUniversalTime().ToString("yyyyMMddTHHmmssfffZ") + "-" + [Guid]::NewGuid().ToString("N").Substring(0, 12)
     $runDirectory = Join-Path $root $runId
@@ -3086,6 +3503,12 @@ function New-RuntimeConfigPlan {
     $trackingPilotEvidenceFile = if ($null -ne $trackingPilotEvidenceSnapshot) { "tracking-pilot-evidence.json" } else { $null }
     $studentGatePilotEvidenceFile = if ($null -ne $studentGatePilotEvidenceSnapshot) {
         "student-gate-pilot-evidence.json"
+    } else { $null }
+    $fastPreviewCandidateReceiptFile = if ($null -ne $fastPreviewCandidateReceiptSnapshot) {
+        "fast-preview-candidate-receipt.json"
+    } else { $null }
+    $fastPreviewPilotEvidenceFile = if ($null -ne $fastPreviewPilotEvidenceSnapshot) {
+        "fast-preview-pilot-evidence.json"
     } else { $null }
     Write-PrivateBytes -Path (Join-Path $runDirectory $profileFile) -Bytes $profileSnapshot.Bytes
     if ($null -ne $turnEvidenceSnapshot) {
@@ -3102,6 +3525,14 @@ function New-RuntimeConfigPlan {
     if ($null -ne $studentGatePilotEvidenceSnapshot) {
         Write-PrivateBytes -Path (Join-Path $runDirectory $studentGatePilotEvidenceFile) `
             -Bytes $studentGatePilotEvidenceSnapshot.Bytes
+    }
+    if ($null -ne $fastPreviewCandidateReceiptSnapshot) {
+        Write-PrivateBytes -Path (Join-Path $runDirectory $fastPreviewCandidateReceiptFile) `
+            -Bytes $fastPreviewCandidateReceiptSnapshot.Bytes
+    }
+    if ($null -ne $fastPreviewPilotEvidenceSnapshot) {
+        Write-PrivateBytes -Path (Join-Path $runDirectory $fastPreviewPilotEvidenceFile) `
+            -Bytes $fastPreviewPilotEvidenceSnapshot.Bytes
     }
     $manifest = [ordered]@{
         schemaVersion = 2
@@ -3125,8 +3556,28 @@ function New-RuntimeConfigPlan {
         studentGatePilotEvidenceSha256 = if ($null -ne $studentGatePilotEvidence) {
             $studentGatePilotEvidence.EvidenceSha256
         } else { $null }
-        validationLevel = if ($syntheticOnlyWaiver) { "synthetic_only" } elseif ($runtime.Mode -cin @("global-on", "tracking-window-global-on", "student-gate-global-on")) { "managed" } else { "not_applicable" }
-        managedValidation = if ($syntheticOnlyWaiver) { "waived_not_passed" } elseif ($runtime.Mode -cin @("global-on", "tracking-window-global-on", "student-gate-global-on")) { "passed" } else { "not_applicable" }
+        fastPreviewCandidateReceiptFile = $fastPreviewCandidateReceiptFile
+        fastPreviewCandidateReceiptSha256 = if ($null -ne $fastPreviewCandidateReceipt) {
+            $fastPreviewCandidateReceipt.EvidenceSha256
+        } else { $null }
+        fastPreviewClassPilotTag = if ($null -ne $fastPreviewCandidateReceipt) {
+            $fastPreviewCandidateReceipt.ClassPilotTag
+        } else { $null }
+        fastPreviewClassPilotMergeSha = if ($null -ne $fastPreviewCandidateReceipt) {
+            $fastPreviewCandidateReceipt.ClassPilotMergeSha
+        } else { $null }
+        fastPreviewClassPilotZipSha256 = if ($null -ne $fastPreviewCandidateReceipt) {
+            $fastPreviewCandidateReceipt.ClassPilotZipSha256
+        } else { $null }
+        fastPreviewClassPilotExtensionId = if ($null -ne $fastPreviewCandidateReceipt) {
+            $fastPreviewCandidateReceipt.ClassPilotExtensionId
+        } else { $null }
+        fastPreviewPilotEvidenceFile = $fastPreviewPilotEvidenceFile
+        fastPreviewPilotEvidenceSha256 = if ($null -ne $fastPreviewPilotEvidence) {
+            $fastPreviewPilotEvidence.EvidenceSha256
+        } else { $null }
+        validationLevel = if ($syntheticOnlyWaiver) { "synthetic_only" } elseif ($runtime.Mode -cin @("global-on", "tracking-window-global-on", "student-gate-global-on", "fast-preview-global-on")) { "managed" } else { "not_applicable" }
+        managedValidation = if ($syntheticOnlyWaiver) { "waived_not_passed" } elseif ($runtime.Mode -cin @("global-on", "tracking-window-global-on", "student-gate-global-on", "fast-preview-global-on")) { "passed" } else { "not_applicable" }
         protectedWindowProductionMutation = [bool]$ConfirmProtectedWindowProductionMutation
         repositoryRoot = [IO.Path]::GetFullPath($RepositoryRoot)
         toolSha = $toolSha
@@ -3171,6 +3622,10 @@ function Read-RuntimePlan {
         "managedTestWaiverFile", "managedTestWaiverSha256", "validationLevel", "managedValidation",
         "trackingPilotEvidenceFile", "trackingPilotEvidenceSha256",
         "studentGatePilotEvidenceFile", "studentGatePilotEvidenceSha256",
+        "fastPreviewCandidateReceiptFile", "fastPreviewCandidateReceiptSha256",
+        "fastPreviewClassPilotTag", "fastPreviewClassPilotMergeSha",
+        "fastPreviewClassPilotZipSha256", "fastPreviewClassPilotExtensionId",
+        "fastPreviewPilotEvidenceFile", "fastPreviewPilotEvidenceSha256",
         "protectedWindowProductionMutation",
         "repositoryRoot", "toolSha", "appSha", "imageDigest", "priorApiTaskDefinitionArn",
         "priorWorkerTaskDefinitionArn", "scaling", "deploymentBounds", "deploymentConfigurationSha256",
@@ -3238,6 +3693,45 @@ function Read-RuntimePlan {
                 [string]$plan.profileMode -ceq "student-gate-global-on"))) {
         throw "Runtime plan student-gate pilot evidence identity is invalid."
     }
+    $fastPreviewReceiptPropertyNames = @(
+        "fastPreviewCandidateReceiptFile", "fastPreviewCandidateReceiptSha256",
+        "fastPreviewClassPilotTag", "fastPreviewClassPilotMergeSha",
+        "fastPreviewClassPilotZipSha256", "fastPreviewClassPilotExtensionId"
+    )
+    $presentFastPreviewReceiptProperties = @($fastPreviewReceiptPropertyNames | Where-Object {
+        $plan.PSObject.Properties.Name -ccontains $_
+    })
+    if ($presentFastPreviewReceiptProperties.Count -notin @(0, $fastPreviewReceiptPropertyNames.Count)) {
+        throw "Runtime plan fast-preview candidate receipt identity is partial."
+    }
+    $hasFastPreviewCandidateReceipt = $presentFastPreviewReceiptProperties.Count -eq
+        $fastPreviewReceiptPropertyNames.Count -and
+        [string]$plan.fastPreviewCandidateReceiptSha256 -match '^[0-9a-f]{64}$'
+    if ($hasFastPreviewCandidateReceipt) {
+        if ([string]$plan.profileMode -cnotin @("fast-preview-pilot", "fast-preview-global-on") -or
+            [string]$plan.fastPreviewCandidateReceiptFile -cne "fast-preview-candidate-receipt.json" -or
+            [string]$plan.fastPreviewClassPilotTag -cne $script:FastPreviewRequiredReleaseTag -or
+            [string]$plan.fastPreviewClassPilotMergeSha -cnotmatch '^[0-9a-f]{40}$' -or
+            [string]$plan.fastPreviewClassPilotZipSha256 -cnotmatch '^[0-9a-f]{64}$' -or
+            [string]$plan.fastPreviewClassPilotExtensionId -cne $script:FastPreviewRequiredExtensionId) {
+            throw "Runtime plan fast-preview candidate receipt identity is invalid."
+        }
+    }
+    elseif ($presentFastPreviewReceiptProperties.Count -ne 0 -and @(
+        $fastPreviewReceiptPropertyNames | Where-Object { $null -ne $plan.$_ }
+    ).Count -ne 0) {
+        throw "Runtime plan fast-preview candidate receipt identity is invalid."
+    }
+    $hasFastPreviewPilotEvidence = [string]$plan.fastPreviewPilotEvidenceSha256 -match '^[0-9a-f]{64}$'
+    if (($hasFastPreviewPilotEvidence -and
+            ([string]$plan.profileMode -cne "fast-preview-global-on" -or
+                [string]$plan.fastPreviewPilotEvidenceFile -cne "fast-preview-pilot-evidence.json")) -or
+        (-not $hasFastPreviewPilotEvidence -and
+            ($null -ne $plan.fastPreviewPilotEvidenceFile -or
+                $null -ne $plan.fastPreviewPilotEvidenceSha256 -or
+                [string]$plan.profileMode -ceq "fast-preview-global-on"))) {
+        throw "Runtime plan fast-preview pilot evidence identity is invalid."
+    }
     if ($plan.protectedWindowProductionMutation -isnot [bool]) {
         throw "Runtime plan protected-window authority is invalid."
     }
@@ -3249,7 +3743,7 @@ function Read-RuntimePlan {
             throw "Runtime plan synthetic-only activation authority is invalid."
         }
     }
-    elseif ([string]$plan.profileMode -cin @("global-on", "tracking-window-global-on", "student-gate-global-on")) {
+    elseif ([string]$plan.profileMode -cin @("global-on", "tracking-window-global-on", "student-gate-global-on", "fast-preview-global-on")) {
         if ([string]$plan.validationLevel -cne "managed" -or [string]$plan.managedValidation -cne "passed") {
             throw "Runtime plan strict managed activation authority is invalid."
         }
@@ -3274,6 +3768,12 @@ function Read-RuntimePlan {
     )
     $plan | Add-Member -NotePropertyName studentGatePilotEvidencePath -NotePropertyValue $(
         if ($hasStudentGatePilotEvidence) { Join-Path $runDirectory "student-gate-pilot-evidence.json" } else { $null }
+    )
+    $plan | Add-Member -NotePropertyName fastPreviewCandidateReceiptPath -NotePropertyValue $(
+        if ($hasFastPreviewCandidateReceipt) { Join-Path $runDirectory "fast-preview-candidate-receipt.json" } else { $null }
+    )
+    $plan | Add-Member -NotePropertyName fastPreviewPilotEvidencePath -NotePropertyValue $(
+        if ($hasFastPreviewPilotEvidence) { Join-Path $runDirectory "fast-preview-pilot-evidence.json" } else { $null }
     )
     $plan | Add-Member -NotePropertyName checkpointPath -NotePropertyValue (Join-Path $runDirectory "checkpoint.json")
     $plan | Add-Member -NotePropertyName resultPath -NotePropertyValue (Join-Path $runDirectory "result.json")
@@ -3307,6 +3807,9 @@ function Write-ResultEvidence {
         trackingPilotEvidenceSha256 = if ($null -ne $Plan.trackingPilotEvidenceSha256) { [string]$Plan.trackingPilotEvidenceSha256 } else { $null }
         studentGatePilotEvidenceSha256 = if ($null -ne $Plan.studentGatePilotEvidenceSha256) {
             [string]$Plan.studentGatePilotEvidenceSha256
+        } else { $null }
+        fastPreviewPilotEvidenceSha256 = if ($null -ne $Plan.fastPreviewPilotEvidenceSha256) {
+            [string]$Plan.fastPreviewPilotEvidenceSha256
         } else { $null }
         validationLevel = [string]$Plan.validationLevel
         managedValidation = [string]$Plan.managedValidation
@@ -3373,6 +3876,32 @@ function Invoke-RuntimeConfigApply {
     if ($runtime.Mode -cne [string]$Plan.profileMode -or $runtime.SchoolScopeCount -ne [int]$Plan.schoolScopeCount) {
         throw "Runtime profile semantics changed after planning."
     }
+    $fastPreviewCandidateReceiptSnapshot = $null
+    $fastPreviewCandidateReceipt = $null
+    if ($runtime.Mode -cin @("fast-preview-pilot", "fast-preview-global-on")) {
+        if ($Plan.PSObject.Properties.Name -cnotcontains "fastPreviewCandidateReceiptPath" -or
+            [string]$Plan.fastPreviewCandidateReceiptSha256 -cnotmatch '^[0-9a-f]{64}$' -or
+            [string]::IsNullOrWhiteSpace([string]$Plan.fastPreviewCandidateReceiptPath)) {
+            throw "Fast-preview activation requires the exact planned candidate receipt."
+        }
+        $fastPreviewCandidateReceiptSnapshot = Read-StrictJsonSnapshot `
+            -Path ([string]$Plan.fastPreviewCandidateReceiptPath)
+        if ([string]$fastPreviewCandidateReceiptSnapshot.Sha256 -cne
+            [string]$Plan.fastPreviewCandidateReceiptSha256) {
+            throw "Fast-preview candidate receipt changed after planning."
+        }
+        if ($runtime.Mode -ceq "fast-preview-pilot") {
+            $fastPreviewCandidateReceipt = Assert-FastPreviewCandidateReceipt `
+                -EvidenceSnapshot $fastPreviewCandidateReceiptSnapshot `
+                -PilotSchoolId ([string]$runtime.PilotSchoolId) `
+                -ToolSha ([string]$Plan.toolSha) -AppSha ([string]$Plan.appSha) `
+                -ImageDigest ([string]$Plan.imageDigest) `
+                -ApiTaskDefinitionArn ([string]$Plan.priorApiTaskDefinitionArn) `
+                -WorkerTaskDefinitionArn ([string]$Plan.priorWorkerTaskDefinitionArn) -Now $Now
+            Assert-FastPreviewPlanArtifactIdentity -Plan $Plan `
+                -CandidateReceipt $fastPreviewCandidateReceipt
+        }
+    }
     $runtimeMutationEasternTime = $null
     if ($runtime.Mode -cne "off") {
         $runtimeMutationEasternTime = Get-CurrentDeploymentEasternTime
@@ -3417,6 +3946,15 @@ function Invoke-RuntimeConfigApply {
         if ([string]$studentGatePilotEvidenceSnapshot.Sha256 -cne
             [string]$Plan.studentGatePilotEvidenceSha256) {
             throw "Student-gate pilot evidence changed after planning."
+        }
+    }
+    $fastPreviewPilotEvidenceSnapshot = $null
+    if ($runtime.Mode -ceq "fast-preview-global-on") {
+        $fastPreviewPilotEvidenceSnapshot = Read-StrictJsonSnapshot `
+            -Path ([string]$Plan.fastPreviewPilotEvidencePath)
+        if ([string]$fastPreviewPilotEvidenceSnapshot.Sha256 -cne
+            [string]$Plan.fastPreviewPilotEvidenceSha256) {
+            throw "Fast-preview pilot evidence changed after planning."
         }
     }
     $snapshot = Get-ValidatedProductionSnapshot -RepositoryRoot ([string]$Plan.repositoryRoot) `
@@ -3465,6 +4003,33 @@ function Invoke-RuntimeConfigApply {
         }
         [void](Assert-StudentGatePilotEvidence -EvidenceSnapshot $studentGatePilotEvidenceSnapshot `
             -PilotSchoolId ([string]$sourceState.StudentGateSchoolId) `
+            -ToolSha ([string]$Plan.toolSha) -AppSha ([string]$Plan.appSha) `
+            -ImageDigest ([string]$Plan.imageDigest) `
+            -ApiTaskDefinitionArn ([string]$Plan.priorApiTaskDefinitionArn) `
+            -WorkerTaskDefinitionArn ([string]$Plan.priorWorkerTaskDefinitionArn) `
+            -RuntimeConfigurationSha256 (Get-ManagedRuntimeFingerprint `
+                -TaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api") -Now $Now)
+    }
+    if ($runtime.Mode -ceq "fast-preview-global-on") {
+        $sourceContainer = @($snapshot.ApiTask.taskDefinition.containerDefinitions | Where-Object name -CEQ "api")
+        if ($sourceContainer.Count -ne 1) { throw "Fast-preview pilot source runtime container is ambiguous." }
+        $sourceState = Get-RuntimeActivationState -Environment @($sourceContainer[0].environment) -AllowBaseline
+        if ([string]$sourceState.FastPreviewMode -cne "pilot") {
+            throw "Fast-preview global activation requires the exact active school-scoped pilot."
+        }
+        $fastPreviewCandidateReceipt = Assert-FastPreviewCandidateReceipt `
+            -EvidenceSnapshot $fastPreviewCandidateReceiptSnapshot `
+            -PilotSchoolId ([string]$sourceState.FastPreviewSchoolId) `
+            -ToolSha ([string]$Plan.toolSha) -AppSha ([string]$Plan.appSha) `
+            -ImageDigest ([string]$Plan.imageDigest) `
+            -ApiTaskDefinitionArn ([string]$Plan.priorApiTaskDefinitionArn) `
+            -WorkerTaskDefinitionArn ([string]$Plan.priorWorkerTaskDefinitionArn) -Now $Now `
+            -SkipSourceTaskPairMatch -AllowHistoricalAdmissionReceipt
+        Assert-FastPreviewPlanArtifactIdentity -Plan $Plan `
+            -CandidateReceipt $fastPreviewCandidateReceipt
+        [void](Assert-FastPreviewPilotEvidence -EvidenceSnapshot $fastPreviewPilotEvidenceSnapshot `
+            -CandidateReceipt $fastPreviewCandidateReceipt `
+            -PilotSchoolId ([string]$sourceState.FastPreviewSchoolId) `
             -ToolSha ([string]$Plan.toolSha) -AppSha ([string]$Plan.appSha) `
             -ImageDigest ([string]$Plan.imageDigest) `
             -ApiTaskDefinitionArn ([string]$Plan.priorApiTaskDefinitionArn) `
@@ -3726,6 +4291,7 @@ function Invoke-RuntimeConfigRollback {
         "profileMode", "schoolScopeCount", "enabledCapabilityCount", "runtimeConfigurationSha256",
         "syntheticValidationSha256", "managedTestWaiverSha256", "validationLevel", "managedValidation",
         "trackingPilotEvidenceSha256", "studentGatePilotEvidenceSha256",
+        "fastPreviewPilotEvidenceSha256",
         "protectedWindowProductionMutation",
         "toolSha", "appSha", "imageDigest",
         "priorApiTaskDefinitionArn", "priorWorkerTaskDefinitionArn", "priorDeploymentBounds",
@@ -3747,6 +4313,7 @@ function Invoke-RuntimeConfigRollback {
         [string]$result.managedTestWaiverSha256 -cne [string]$Plan.managedTestWaiverSha256 -or
         [string]$result.trackingPilotEvidenceSha256 -cne [string]$Plan.trackingPilotEvidenceSha256 -or
         [string]$result.studentGatePilotEvidenceSha256 -cne [string]$Plan.studentGatePilotEvidenceSha256 -or
+        [string]$result.fastPreviewPilotEvidenceSha256 -cne [string]$Plan.fastPreviewPilotEvidenceSha256 -or
         [string]$result.validationLevel -cne [string]$Plan.validationLevel -or
         [string]$result.managedValidation -cne [string]$Plan.managedValidation -or
         $result.protectedWindowProductionMutation -isnot [bool] -or
@@ -3986,6 +4553,8 @@ function Invoke-Main {
                 -PrivateManagedTestWaiverPath $ManagedTestWaiverPath `
                 -PrivateTrackingPilotEvidencePath $TrackingPilotEvidencePath `
                 -PrivateStudentGatePilotEvidencePath $StudentGatePilotEvidencePath `
+                -PrivateFastPreviewCandidateReceiptPath $FastPreviewCandidateReceiptPath `
+                -PrivateFastPreviewPilotEvidencePath $FastPreviewPilotEvidencePath `
                 -EvidenceRoot $ExternalEvidenceRoot `
                 -AppSha $ExpectedAppSha -ImageDigest $ExpectedImageDigest `
                 -ApiTaskDefinitionArn $ExpectedApiTaskDefinitionArn -WorkerTaskDefinitionArn $ExpectedWorkerTaskDefinitionArn `

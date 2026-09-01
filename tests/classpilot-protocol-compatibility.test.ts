@@ -71,6 +71,7 @@ function allV3CapabilitiesEnabled(): NodeJS.ProcessEnv {
     CLASSPILOT_CAP_STUDENT_CHAT_IDEMPOTENCY_V1: "true",
     CLASSPILOT_CAP_SCREENSHOT_OBSERVATION_LEASE_V1: "true",
     CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1: "true",
+    CLASSPILOT_CAP_SCREENSHOT_ACTIVE_OBSERVATION_CADENCE_V1: "true",
     CLASSPILOT_CAP_SAFETY_EVIDENCE_CAPTURE_V1: "true",
     CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1: "true",
     CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V1: "true",
@@ -203,6 +204,7 @@ test("a markerless 2.7.0-shaped client receives no 2.7.1 capability under global
 test("a 2.7.2-shaped client keeps the observation lease when the additive tracking lease is enabled", () => {
   const advertisedCapabilities = CLASSPILOT_PROTOCOL_V3_CAPABILITIES.filter(
     (capability) => capability !== "screenshotTrackingWindowLeaseV1"
+      && capability !== "screenshotActiveObservationCadenceV1"
       && capability !== "kioskLaunchTicketV1"
   );
   const negotiated = negotiateClasspilotProtocol({
@@ -237,6 +239,7 @@ test("protocol v3 accepts only the client-advertised and server-enabled capabili
     CLASSPILOT_CAP_STUDENT_CHAT_IDEMPOTENCY_V1: "true",
     CLASSPILOT_CAP_SCREENSHOT_OBSERVATION_LEASE_V1: "false",
     CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1: "false",
+    CLASSPILOT_CAP_SCREENSHOT_ACTIVE_OBSERVATION_CADENCE_V1: "false",
     CLASSPILOT_CAP_SAFETY_EVIDENCE_CAPTURE_V1: "true",
     CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1: "true",
     CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V1: "false",

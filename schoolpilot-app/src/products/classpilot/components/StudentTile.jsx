@@ -91,6 +91,7 @@ function StudentTile({
   returnToClassPending = false,
   recentHeartbeats = EMPTY_LIST,
   screenshotData = null,
+  onOpenScreenshot,
   flightPaths = EMPTY_LIST,
   monitoringDisplay,
   freshnessNowMs,
@@ -529,15 +530,23 @@ function StudentTile({
         ) : screenshotPreviewMode ? (
           // A same-context preview between 75 and 120 seconds old is visibly
           // dimmed and timestamped so it is never presented as live.
-          <div
-            className={`aspect-video rounded-lg bg-muted/40 relative overflow-hidden ${screenshotPreviewMode === 'retained' ? 'ring-1 ring-inset ring-amber-400/50' : ''}`}
+          <button
+            type="button"
+            className={`block aspect-video w-full rounded-lg bg-muted/40 relative overflow-hidden text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${screenshotPreviewMode === 'retained' ? 'ring-1 ring-inset ring-amber-400/50' : ''}`}
             data-testid={screenshotPreviewMode === 'retained'
               ? `screenshot-retained-${student.studentId}`
               : `screenshot-current-${student.studentId}`}
+            aria-label={`Open large screen preview for ${student.studentName || 'student'}`}
+            title="Open large automatically refreshed screenshot"
+            disabled={!onOpenScreenshot}
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenScreenshot?.(event.currentTarget);
+            }}
           >
             <img
               src={screenshotData.screenshot}
-              alt={`${student.studentName || 'Student'}'s screen`}
+              alt={`Latest screen preview for ${student.studentName || 'student'}`}
               className={`w-full h-full object-cover ${screenshotPreviewMode === 'retained' ? 'opacity-55' : ''}`}
               loading="lazy"
               decoding="async"
@@ -575,7 +584,7 @@ function StudentTile({
                 </span>
               </div>
             </div>
-          </div>
+          </button>
         ) : !currentTelemetry ? (
           <div
             className={`flex aspect-video items-center justify-center rounded-lg border text-center ${unavailablePreview.warning ? 'border-amber-200 bg-amber-50/70 dark:border-amber-900 dark:bg-amber-950/20' : 'border-border bg-muted/30'}`}
@@ -789,6 +798,7 @@ const CALLBACK_PROPS = new Set([
   'onExpandLiveView',
   'onAllowDomain',
   'onManageTabs',
+  'onOpenScreenshot',
   'onCommand',
   'onReturnToClass',
 ]);

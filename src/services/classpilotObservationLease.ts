@@ -27,6 +27,7 @@ export function classpilotObservationSessionIsLive(session: {
 type StoredObservationLease = {
   scope: ClasspilotObservationScope;
   expiresAt: number;
+  scopeKey?: string;
 };
 
 const localLeases = new Map<string, StoredObservationLease>();
@@ -84,6 +85,10 @@ function normalizeScope(scope: ClasspilotObservationScope): ClasspilotObservatio
   return { kind: "students", studentIds };
 }
 
+function observationScopeKey(scope: ClasspilotObservationScope): string {
+  return JSON.stringify(scope);
+}
+
 function pruneLocal(now: number): void {
   for (const [key, lease] of localLeases) {
     if (lease.expiresAt <= now) localLeases.delete(key);
@@ -112,7 +117,13 @@ export async function renewClasspilotObservationLease(options: {
   viewerInstanceId: string;
   scope: ClasspilotObservationScope;
   now?: number;
-}): Promise<{ expiresAt: number; scope: ClasspilotObservationScope }> {
+}): Promise<{
+  expiresAt: number;
+  scope: ClasspilotObservationScope;
+  created: boolean;
+  changed: boolean;
+  activated: boolean;
+}> {
   const now = options.now ?? Date.now();
   const scope = normalizeScope(options.scope);
   const expiresAt = now + CLASSPILOT_OBSERVATION_LEASE_SECONDS * 1000;
@@ -122,11 +133,12 @@ export async function renewClasspilotObservationLease(options: {
   const indexKey = sessionIndexKey(options.schoolId, options.teachingSessionId);
   const viewer = viewerDigest(options);
   const dataKey = viewerDataKey(indexKey, viewer);
-  const payload = JSON.stringify({ scope, expiresAt } satisfies StoredObservationLease);
+  const scopeKey = observationScopeKey(scope);
+  const payload = JSON.stringify({ scope, expiresAt, scopeKey } satisfies StoredObservationLease);
   try {
     const result = await redisCommand([
       "EVAL",
-      "local expired = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1]); for _, member in ipairs(expired) do redis.call('DEL', ARGV[8] .. member); end; redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1]); redis.call('ZREM', KEYS[1], ARGV[3]); local count = redis.call('ZCARD', KEYS[1]); local max_viewers = tonumber(ARGV[7]); if count >= max_viewers then local victims = redis.call('ZPOPMIN', KEYS[1], count - max_viewers + 1); for index = 1, #victims, 2 do redis.call('DEL', ARGV[8] .. victims[index]); end; end; redis.call('ZADD', KEYS[1], ARGV[2], ARGV[3]); redis.call('EXPIRE', KEYS[1], ARGV[4]); redis.call('SET', KEYS[2], ARGV[5], 'EX', ARGV[6]); return redis.call('ZCARD', KEYS[1])",
+      "local old = redis.call('GET', KEYS[2]); local existed = 0; local changed = 1; if old then local ok, decoded = pcall(cjson.decode, old); local old_expiry = ok and tonumber(decoded.expiresAt) or nil; if ok and old_expiry and old_expiry > tonumber(ARGV[1]) then existed = 1; if decoded.scopeKey == ARGV[9] then changed = 0; end; end; end; local expired = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1]); for _, member in ipairs(expired) do redis.call('DEL', ARGV[8] .. member); end; redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1]); redis.call('ZREM', KEYS[1], ARGV[3]); local count = redis.call('ZCARD', KEYS[1]); local max_viewers = tonumber(ARGV[7]); if count >= max_viewers then local victims = redis.call('ZPOPMIN', KEYS[1], count - max_viewers + 1); for index = 1, #victims, 2 do redis.call('DEL', ARGV[8] .. victims[index]); end; end; redis.call('ZADD', KEYS[1], ARGV[2], ARGV[3]); redis.call('EXPIRE', KEYS[1], ARGV[4]); redis.call('SET', KEYS[2], ARGV[5], 'EX', ARGV[6]); return { redis.call('ZCARD', KEYS[1]), existed, changed }",
       "2",
       indexKey,
       dataKey,
@@ -138,12 +150,22 @@ export async function renewClasspilotObservationLease(options: {
       String(CLASSPILOT_OBSERVATION_LEASE_SECONDS),
       String(CLASSPILOT_OBSERVATION_MAX_VIEWERS_PER_SESSION),
       `${indexKey}:viewer:`,
+      scopeKey,
     ], { readyTimeoutMs: 250 });
     if (
-      typeof result === "number"
-      && result >= 1
-      && result <= CLASSPILOT_OBSERVATION_MAX_VIEWERS_PER_SESSION
-    ) return { expiresAt, scope };
+      Array.isArray(result)
+      && typeof result[0] === "number"
+      && result[0] >= 1
+      && result[0] <= CLASSPILOT_OBSERVATION_MAX_VIEWERS_PER_SESSION
+      && (result[1] === 0 || result[1] === 1)
+      && (result[2] === 0 || result[2] === 1)
+    ) return {
+      expiresAt,
+      scope,
+      created: result[1] === 0,
+      changed: result[2] === 1,
+      activated: result[0] === 1 && result[1] === 0,
+    };
     if (result !== undefined) throw new Error("Observation lease storage unavailable");
   } catch {
     if (observationLeaseStoreRequired()) throw new Error("Observation lease storage unavailable");
@@ -151,9 +173,66 @@ export async function renewClasspilotObservationLease(options: {
   if (observationLeaseStoreRequired()) throw new Error("Observation lease storage unavailable");
   pruneLocal(now);
   const localViewerKey = `${indexKey}:${viewer}`;
+  const previous = localLeases.get(localViewerKey);
+  const created = !previous;
+  const changed = !previous
+    || previous.expiresAt <= now
+    || observationScopeKey(previous.scope) !== scopeKey;
   makeRoomForLocalViewer(indexKey, localViewerKey);
-  localLeases.set(localViewerKey, { scope, expiresAt });
-  return { expiresAt, scope };
+  localLeases.set(localViewerKey, { scope, expiresAt, scopeKey });
+  const activeViewerCount = [...localLeases.keys()].filter((key) => (
+    key.startsWith(`${indexKey}:`)
+  )).length;
+  return { expiresAt, scope, created, changed, activated: created && activeViewerCount === 1 };
+}
+
+export async function releaseClasspilotObservationLeaseWithState(options: {
+  schoolId: string;
+  teachingSessionId: string;
+  viewerUserId: string;
+  viewerInstanceId: string;
+  now?: number;
+}): Promise<{ released: boolean; deactivated: boolean }> {
+  if (observationLeaseStoreRequired() && !process.env.REDIS_URL) {
+    return { released: false, deactivated: false };
+  }
+  const now = options.now ?? Date.now();
+  const indexKey = sessionIndexKey(options.schoolId, options.teachingSessionId);
+  const viewer = viewerDigest(options);
+  const dataKey = viewerDataKey(indexKey, viewer);
+  try {
+    const result = await redisCommand([
+      "EVAL",
+      "redis.call('ZREM', KEYS[1], ARGV[1]); local removed = redis.call('DEL', KEYS[2]); local expired = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[2]); for _, member in ipairs(expired) do redis.call('DEL', ARGV[3] .. member); end; redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[2]); return {removed, redis.call('ZCARD', KEYS[1])}",
+      "2",
+      indexKey,
+      dataKey,
+      viewer,
+      String(now),
+      `${indexKey}:viewer:`,
+    ], { readyTimeoutMs: 250 });
+    if (
+      Array.isArray(result)
+      && (result[0] === 0 || result[0] === 1)
+      && typeof result[1] === "number"
+      && result[1] >= 0
+      && result[1] <= CLASSPILOT_OBSERVATION_MAX_VIEWERS_PER_SESSION
+    ) {
+      return {
+        released: result[0] === 1,
+        deactivated: result[0] === 1 && result[1] === 0,
+      };
+    }
+    if (result !== undefined || observationLeaseStoreRequired()) {
+      return { released: false, deactivated: false };
+    }
+  } catch {
+    if (observationLeaseStoreRequired()) return { released: false, deactivated: false };
+  }
+  pruneLocal(now);
+  const released = localLeases.delete(`${indexKey}:${viewer}`);
+  const hasActiveViewer = [...localLeases.keys()].some((key) => key.startsWith(`${indexKey}:`));
+  return { released, deactivated: released && !hasActiveViewer };
 }
 
 export async function releaseClasspilotObservationLease(options: {
@@ -161,25 +240,9 @@ export async function releaseClasspilotObservationLease(options: {
   teachingSessionId: string;
   viewerUserId: string;
   viewerInstanceId: string;
-}): Promise<void> {
-  if (observationLeaseStoreRequired() && !process.env.REDIS_URL) return;
-  const indexKey = sessionIndexKey(options.schoolId, options.teachingSessionId);
-  const viewer = viewerDigest(options);
-  const dataKey = viewerDataKey(indexKey, viewer);
-  try {
-    const result = await redisCommand([
-      "EVAL",
-      "redis.call('ZREM', KEYS[1], ARGV[1]); return redis.call('DEL', KEYS[2])",
-      "2",
-      indexKey,
-      dataKey,
-      viewer,
-    ], { readyTimeoutMs: 250 });
-    if (result !== undefined || observationLeaseStoreRequired()) return;
-  } catch {
-    if (observationLeaseStoreRequired()) return;
-  }
-  localLeases.delete(`${indexKey}:${viewer}`);
+  now?: number;
+}): Promise<boolean> {
+  return (await releaseClasspilotObservationLeaseWithState(options)).released;
 }
 
 export type ClasspilotObservationStatus =

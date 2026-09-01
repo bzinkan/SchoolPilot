@@ -310,7 +310,12 @@ try {
     'read-only actions must retain normal monitoring status styling',
   );
   await page.getByTestId('screenshot-read-only-student').click();
-  await page.getByTestId('card-clicks').filter({ hasText: 'Card clicks: 1' }).waitFor();
+  await page.getByTestId('screenshot-clicks').filter({ hasText: 'Screenshot clicks: 1' }).waitFor();
+  assert.equal(
+    await page.getByTestId('card-clicks').textContent(),
+    'Card clicks: 0',
+    'opening an enlarged screenshot must not also open the student detail drawer',
+  );
 
   const supervisedTile = page.getByTestId('card-student-supervised-student');
   await supervisedTile.getByText('In supervision: Ms. Rivera', { exact: true }).waitFor();
@@ -330,7 +335,7 @@ try {
   await page.getByTestId('return-clicks').filter({ hasText: 'Return clicks: 1' }).waitFor();
   assert.equal(
     await page.getByTestId('card-clicks').textContent(),
-    'Card clicks: 1',
+    'Card clicks: 0',
     'the Return to Class action must not open the student drawer',
   );
 

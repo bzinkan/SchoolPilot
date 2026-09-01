@@ -242,6 +242,10 @@ import {
   validateClasspilotScreenshotCapturedAt,
 } from "../../services/classpilotScreenshotPolicy.js";
 import {
+  classpilotObservationStatus,
+  type ClasspilotObservationStatus,
+} from "../../services/classpilotObservationLease.js";
+import {
   CLASSPILOT_SCREENSHOT_AVAILABLE_ORDERING_NAMESPACE,
   classpilotScreenshotAvailableEvent,
 } from "../../services/classpilotScreenshotAvailability.js";
@@ -3768,6 +3772,40 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
           exactBinding: { schoolId, studentId, studentSessionId, deviceId },
         })
       : undefined;
+    const heartbeatCadenceTeachingSessionId = protocol.acceptedCapabilities.includes(
+      "screenshotActiveObservationCadenceV1"
+    ) && !controlState?.supervisionContextId
+      ? controlState?.teachingSessionId ?? null
+      : null;
+    const heartbeatCadenceObservationCheckedAt = Date.now();
+    const heartbeatCadenceObservationPromise: Promise<ClasspilotObservationStatus> =
+      heartbeatCadenceTeachingSessionId
+        ? classpilotObservationStatus({
+            schoolId,
+            teachingSessionId: heartbeatCadenceTeachingSessionId,
+            studentId,
+          })
+        : Promise.resolve({ status: "unavailable", expiresInSeconds: 0 });
+    const heartbeatObservationStatus = async ({ teachingSessionId, now }: {
+      teachingSessionId: string | null | undefined;
+      now?: number;
+    }): Promise<ClasspilotObservationStatus> => {
+      if (teachingSessionId !== heartbeatCadenceTeachingSessionId) {
+        return { status: "unavailable", expiresInSeconds: 0 };
+      }
+      const status = await heartbeatCadenceObservationPromise;
+      if (status.status !== "observed") return status;
+      return {
+        status: "observed",
+        expiresInSeconds: Math.max(
+          0,
+          status.expiresInSeconds - Math.ceil(
+            (Math.max(heartbeatCadenceObservationCheckedAt, now ?? Date.now())
+              - heartbeatCadenceObservationCheckedAt) / 1000
+          )
+        ),
+      };
+    };
     const screenshotPolicyPromise = resolveClasspilotScreenshotPolicy({
       schoolId,
       teachingSessionId: controlState?.teachingSessionId,
@@ -3778,6 +3816,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
         projection: screenshotTrackingAuthority,
         deliveredControlRevision: classroomState?.revision ?? 0,
       }),
+      observationStatus: heartbeatObservationStatus,
     });
     const studentEmail = heartbeat.studentEmail;
     recordHeartbeatHotPathCounter("heartbeatRecorded");
@@ -4425,6 +4464,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
                   }, transactionDb),
                   deliveredControlRevision: finalClassroomState?.revision ?? 0,
                 }),
+                observationStatus: heartbeatObservationStatus,
               })
             : screenshotPolicy;
           const finalFab = req.body?.requestFabState === true
@@ -4526,6 +4566,10 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
       "screenshotTrackingWindowLeaseV1",
       binding
     );
+    const activeCadenceRolloutActive = isClasspilotCapabilityActive(
+      "screenshotActiveObservationCadenceV1",
+      binding
+    );
     const safetyCaptureRolloutActive = isClasspilotCapabilityActive(
       "safetyEvidenceCaptureV1",
       binding
@@ -4554,6 +4598,12 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
       && acceptedHeartbeatCapabilities.has("screenshotObservationLeaseV1");
     const trackingLeaseNegotiated = trackingLeaseRolloutActive
       && acceptedHeartbeatCapabilities.has("screenshotTrackingWindowLeaseV1");
+    const activeCadenceNegotiated = activeCadenceRolloutActive
+      && acceptedHeartbeatCapabilities.has("screenshotActiveObservationCadenceV1");
+    const acceptedScreenshotCapabilities = [...acceptedHeartbeatCapabilities].filter(
+      (capability) => capability !== "screenshotActiveObservationCadenceV1"
+        || activeCadenceNegotiated
+    );
     const safetyCaptureNegotiated = safetyCaptureRolloutActive
       && acceptedHeartbeatCapabilities.has("safetyEvidenceCaptureV1");
 
@@ -4630,6 +4680,18 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
         });
       }
 
+      const cadenceTeachingSessionId = activeCadenceNegotiated
+        ? screenshotRealtimeSnapshot?.classroomState?.teachingSessionId ?? null
+        : null;
+      const cadenceObservationCheckedAt = Date.now();
+      const cadenceObservation: ClasspilotObservationStatus = cadenceTeachingSessionId
+        ? await classpilotObservationStatus({
+            schoolId,
+            teachingSessionId: cadenceTeachingSessionId,
+            studentId,
+          })
+        : { status: "unavailable", expiresInSeconds: 0 };
+
       const strictResult = await runWithTenantContext(
         { schoolId },
         () => withClasspilotScreenshotUploadAuthority({
@@ -4646,10 +4708,26 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
               ? current.authority.teachingSessionId
               : null,
             studentId,
-            acceptedCapabilities: ["screenshotTrackingWindowLeaseV1"],
+            acceptedCapabilities: acceptedScreenshotCapabilities,
             trackingSettings,
             trackingAuthority: current,
             now: checkedAt,
+            observationStatus: async ({ teachingSessionId, now }) => {
+              if (teachingSessionId !== cadenceTeachingSessionId) {
+                return { status: "unavailable", expiresInSeconds: 0 };
+              }
+              if (cadenceObservation.status !== "observed") return cadenceObservation;
+              return {
+                status: "observed",
+                expiresInSeconds: Math.max(
+                  0,
+                  cadenceObservation.expiresInSeconds - Math.ceil(
+                    (Math.max(cadenceObservationCheckedAt, now ?? Date.now())
+                      - cadenceObservationCheckedAt) / 1000
+                  )
+                ),
+              };
+            },
           });
           if (
             screenshotPolicy.mode !== "tracking_window_lease"
@@ -4716,7 +4794,7 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
             ? strictResult.current.authority.teachingSessionId
             : null,
           studentId,
-          acceptedCapabilities: ["screenshotTrackingWindowLeaseV1"],
+          acceptedCapabilities: acceptedScreenshotCapabilities,
           trackingSettings: strictResult.trackingSettings,
           trackingAuthority: strictResult.current,
         });

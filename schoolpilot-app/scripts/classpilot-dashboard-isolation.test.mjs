@@ -212,7 +212,7 @@ test('subgroup membership queries are fenced by group and subgroup identity', as
   assert.equal(calls[0][3].signal, signal);
 });
 
-test('dashboard owns one Live View portal without global video selectors', async () => {
+test('dashboard retains dormant Live View code without exposing its portal or tile entrypoint', async () => {
   const [dashboard, tile, portal, sidebar] = await Promise.all([
     readFile(new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/products/classpilot/components/StudentTile.jsx', import.meta.url), 'utf8'),
@@ -221,10 +221,40 @@ test('dashboard owns one Live View portal without global video selectors', async
   ]);
 
   assert.equal(dashboard.match(/<VideoPortal/g)?.length, 1, 'dashboard must render exactly one Live View portal');
+  assert.match(dashboard, /const LIVE_VIEW_UI_ENABLED = false;/);
+  assert.match(dashboard, /LIVE_VIEW_UI_ENABLED && dashboardCapabilities\.canUseLiveView && liveViewState\.expanded/);
+  assert.match(dashboard, /onStartLiveView=\{LIVE_VIEW_UI_ENABLED &&/);
   assert.doesNotMatch(tile, /<VideoPortal|querySelector|portal-video-slot/);
   assert.doesNotMatch(portal, /querySelector|portal-video-slot/);
   assert.match(portal, /stream=|srcObject = stream/);
   assert.match(sidebar, /isOpen \? \(/, 'closed sidebar must not mount polling mini views');
+});
+
+test('screenshot events coalesce one-second targeted refreshes without replacing cohort identity', async () => {
+  const dashboard = await readFile(
+    new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
+    'utf8',
+  );
+  const handlerStart = dashboard.indexOf("if (message.type === 'screenshot-available')");
+  const handlerEnd = dashboard.indexOf('if (message.type ===', handlerStart + 1);
+  const handler = dashboard.slice(handlerStart, handlerEnd);
+  assert.ok(handlerStart >= 0);
+  assert.match(handler, /queueTargetedScreenshotRefresh\(message\.studentId\)/);
+  assert.doesNotMatch(handler, /refetchQueries/);
+  assert.match(dashboard, /const SCREENSHOT_EVENT_COALESCE_MS = 1_000;/);
+  assert.match(dashboard, /const SCREENSHOT_EVENT_RATE_LIMIT_MS = 1_000;/);
+  assert.match(dashboard, /mergeTargetedTileScreenshotResponse/);
+  assert.match(dashboard, /teachingSessionId: snapshot\.teachingSessionId/);
+  assert.match(
+    dashboard,
+    /targetedScreenshotFlushInFlightRef\.current = true[\s\S]{0,500}targetedScreenshotFlushInFlightRef\.current = false/,
+    'a second one-second flush must wait and coalesce while the prior bounded flush is active',
+  );
+  assert.match(
+    dashboard,
+    /fenceGeneration:\s*targetedScreenshotFenceGenerationRef\.current\.generation/,
+    'A to B to A must not let an old targeted screenshot response match by string key alone',
+  );
 });
 
 test('dashboard renews observation only for a visible exact scope and virtualizes tile work', async () => {
@@ -236,8 +266,11 @@ test('dashboard renews observation only for a visible exact scope and virtualize
   ]);
 
   assert.match(dashboard, /useObservationLease\(/);
-  assert.match(dashboard, /kind: 'class'/);
-  assert.match(dashboard, /kind: 'students', studentIds/);
+  assert.match(
+    dashboard,
+    /return studentView === 'class' \? \{ kind: 'class' \} : null/,
+    'Class view must keep one exact full-class observation lease even when presentation filters change',
+  );
   assert.match(lease, /observation-lease/);
   assert.match(lease, /document\.visibilityState !== 'visible'/);
   assert.match(lease, /setTimeout\(renew/);
@@ -250,9 +283,10 @@ test('dashboard renews observation only for a visible exact scope and virtualize
 });
 
 test('authorization loss purges active tile caches without retaining denied pixels', async () => {
-  const [dashboard, tile, privacy] = await Promise.all([
+  const [dashboard, tile, dialog, privacy] = await Promise.all([
     readFile(new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/products/classpilot/components/StudentTile.jsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/products/classpilot/components/ScreenshotPreviewDialog.jsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/products/classpilot/lib/tileCachePrivacy.js', import.meta.url), 'utf8'),
   ]);
 
@@ -283,8 +317,33 @@ test('authorization loss purges active tile caches without retaining denied pixe
   );
   assert.match(
     dashboard,
-    /\['denied', 'paused_unobserved'\]\.includes\(observationLeaseStatus\)[\s\S]{0,240}purgeLegacyScreenshotTileCaches/,
-    'legacy observation revocation must selectively scrub V1 caches while preserving V2',
+    /observationLeaseStatus === 'denied'[\s\S]{0,260}purgeAllStudentTileCaches\(queryClient\)[\s\S]{0,300}paused_unobserved[\s\S]{0,260}purgeLegacyScreenshotTileCaches/,
+    'terminal denial must purge every generation while a normal view pause retains only exact V2 pixels',
+  );
+  assert.match(
+    dashboard,
+    /screenshotTileReadsEnabled = studentView === 'class'[\s\S]{0,180}!\['denied', 'paused_unobserved'\]\.includes\(observationLeaseStatus\)/,
+    'terminal denial and a paused observation must disable full and targeted screenshot reads',
+  );
+  assert.match(
+    dashboard,
+    /expandedScreenshotDisplay\.fresh \|\| expandedScreenshotDisplay\.retained/,
+    'the enlarged viewer must remove expired pixels while leaving its unavailable shell open',
+  );
+  assert.match(
+    dialog,
+    /decodedScreenshotData[\s\S]{0,600}const pixelsAvailable = candidatePixelsAvailable[\s\S]{0,100}Boolean\(decodedScreenshotData\)[\s\S]{0,100}\(display\.fresh \|\| display\.retained\)/,
+    'the enlarged viewer must derive pixel status from the frame that actually decoded',
+  );
+  assert.doesNotMatch(
+    dialog,
+    /catch\([^)]*setDecodedFrame\(null\)/,
+    'a same-context decode failure must not blank the last valid frame',
+  );
+  assert.match(
+    dialog,
+    /decodedScreenshotData\?\.tabTitle[\s\S]{0,180}decodedScreenshotData\.tabTitle/,
+    'the large viewer must swap pixels, freshness, and tab metadata as one decoded frame',
   );
   assert.match(
     tile,
