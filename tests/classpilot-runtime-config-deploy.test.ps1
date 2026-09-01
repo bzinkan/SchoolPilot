@@ -2249,7 +2249,7 @@ try {
         schoolPilotImageDigest = $digest
         sourceApiTaskDefinitionArn = [string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn
         sourceWorkerTaskDefinitionArn = [string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn
-        classPilotTag = "v2.8.0"
+        classPilotTag = "v2.8.1"
         classPilotMergeSha = "c" * 40
         classPilotZipSha256 = "d" * 64
         classPilotExtensionId = "iggbfegfcjkfieoemeolfmfnapepalca"
@@ -2504,7 +2504,7 @@ try {
             -ApiTaskDefinitionArn ([string]$trackingGlobalApplyResult.candidateApiTaskDefinitionArn) `
             -WorkerTaskDefinitionArn ([string]$trackingGlobalApplyResult.candidateWorkerTaskDefinitionArn) `
             -Now $now -SkipRepositoryCheck
-    } "Fast-preview pilot planning must fail without a private v2.8.0 candidate receipt."
+    } "Fast-preview pilot planning must fail without a private v2.8.1 candidate receipt."
     $fastPreviewPilotPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
         -PrivateProfilePath $fastPreviewPilotProfilePath `
         -PrivateFastPreviewCandidateReceiptPath $fastPreviewCandidateReceiptPath `
@@ -2520,7 +2520,7 @@ try {
         [int]$fastPreviewPilotPlan.enabledCapabilityCount -eq 11 -and
         [string]$fastPreviewPilotPlan.fastPreviewCandidateReceiptSha256 -ceq
             (Get-FileSha256 -Path $fastPreviewCandidateReceiptPath) -and
-        [string]$fastPreviewPilotPlan.fastPreviewClassPilotTag -ceq "v2.8.0" -and
+        [string]$fastPreviewPilotPlan.fastPreviewClassPilotTag -ceq "v2.8.1" -and
         [string]$fastPreviewPilotPlan.fastPreviewClassPilotMergeSha -ceq ("c" * 40) -and
         [string]$fastPreviewPilotPlan.fastPreviewClassPilotZipSha256 -ceq ("d" * 64) -and
         [string]$fastPreviewPilotPlan.fastPreviewClassPilotExtensionId -ceq
