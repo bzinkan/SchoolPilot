@@ -4,6 +4,12 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { readFileSync } from "node:fs";
 import { sql } from "drizzle-orm";
+import type {
+  InsertProductLicense,
+  InsertSchool,
+  InsertSchoolMembership,
+  InsertUser,
+} from "../src/schema/core.js";
 
 const TAG = `cp_sso_policy_${Date.now()}`;
 const ORIGINAL_REDIS_URL = process.env.REDIS_URL;
@@ -88,6 +94,49 @@ function enabledPolicy(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function schoolFixture(suffix: "A" | "B"): InsertSchool {
+  return {
+    name: `${TAG}_${suffix}`,
+    domain: `${TAG}.example.edu`,
+    slug: `${TAG}-${suffix.toLowerCase()}`,
+  };
+}
+
+function userFixture(
+  localPart: string,
+  firstName: string,
+  lastName: string,
+  isSuperAdmin = false
+): InsertUser {
+  return {
+    email: `${localPart}@${TAG}.example.edu`,
+    firstName,
+    lastName,
+    ...(isSuperAdmin ? { isSuperAdmin: true } : {}),
+  };
+}
+
+function membershipFixture(
+  userId: string,
+  schoolId: string,
+  role: "school_admin" | "admin" | "teacher" | "office_staff"
+): InsertSchoolMembership {
+  return {
+    userId,
+    schoolId,
+    role,
+    status: "active",
+  };
+}
+
+function classpilotLicenseFixture(schoolId: string): InsertProductLicense {
+  return {
+    schoolId,
+    product: "CLASSPILOT",
+    status: "active",
+  };
+}
+
 async function cleanup(): Promise<void> {
   if (!schoolA?.id || !schoolB?.id) return;
   await asSystem(async () => {
@@ -128,72 +177,19 @@ before(async () => {
     client.release();
   }
 
-  schoolA = await storage.createSchool({
-    name: `${TAG}_A`,
-    domain: `${TAG}.example.edu`,
-    slug: `${TAG}-a`,
-  } as any);
-  schoolB = await storage.createSchool({
-    name: `${TAG}_B`,
-    domain: `${TAG}.example.edu`,
-    slug: `${TAG}-b`,
-  } as any);
-  adminA = await storage.createUser({
-    email: `admin-a@${TAG}.example.edu`,
-    firstName: "Admin",
-    lastName: "Alpha",
-  } as any);
-  adminB = await storage.createUser({
-    email: `admin-b@${TAG}.example.edu`,
-    firstName: "Admin",
-    lastName: "Beta",
-  } as any);
-  teacherA = await storage.createUser({
-    email: `teacher-a@${TAG}.example.edu`,
-    firstName: "Teacher",
-    lastName: "Alpha",
-  } as any);
-  officeA = await storage.createUser({
-    email: `office-a@${TAG}.example.edu`,
-    firstName: "Office",
-    lastName: "Alpha",
-  } as any);
-  superAdmin = await storage.createUser({
-    email: `super@${TAG}.example.edu`,
-    firstName: "Super",
-    lastName: "Admin",
-    isSuperAdmin: true,
-  } as any);
-  await storage.createMembership({
-    userId: adminA.id,
-    schoolId: schoolA.id,
-    role: "school_admin",
-    status: "active",
-  } as any);
-  await storage.createMembership({
-    userId: adminB.id,
-    schoolId: schoolB.id,
-    role: "admin",
-    status: "active",
-  } as any);
-  await storage.createMembership({
-    userId: teacherA.id,
-    schoolId: schoolA.id,
-    role: "teacher",
-    status: "active",
-  } as any);
-  await storage.createMembership({
-    userId: officeA.id,
-    schoolId: schoolA.id,
-    role: "office_staff",
-    status: "active",
-  } as any);
+  schoolA = await storage.createSchool(schoolFixture("A"));
+  schoolB = await storage.createSchool(schoolFixture("B"));
+  adminA = await storage.createUser(userFixture("admin-a", "Admin", "Alpha"));
+  adminB = await storage.createUser(userFixture("admin-b", "Admin", "Beta"));
+  teacherA = await storage.createUser(userFixture("teacher-a", "Teacher", "Alpha"));
+  officeA = await storage.createUser(userFixture("office-a", "Office", "Alpha"));
+  superAdmin = await storage.createUser(userFixture("super", "Super", "Admin", true));
+  await storage.createMembership(membershipFixture(adminA.id, schoolA.id, "school_admin"));
+  await storage.createMembership(membershipFixture(adminB.id, schoolB.id, "admin"));
+  await storage.createMembership(membershipFixture(teacherA.id, schoolA.id, "teacher"));
+  await storage.createMembership(membershipFixture(officeA.id, schoolA.id, "office_staff"));
   for (const school of [schoolA, schoolB]) {
-    await storage.createProductLicense({
-      schoolId: school.id,
-      product: "CLASSPILOT",
-      status: "active",
-    } as any);
+    await storage.createProductLicense(classpilotLicenseFixture(school.id));
     await inSchool(school.id, () => storage.upsertSettings(school.id, {
       schoolName: school.name,
       wsSharedKey: `${TAG}-private-key`,
