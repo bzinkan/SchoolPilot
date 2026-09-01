@@ -820,9 +820,13 @@ function coverageStatusPayload(status: ClasspilotCoverageStatus) {
     tabSnapshotRevision: status.tabSnapshotRevision,
     extensionVersion: status.extensionVersion,
     capabilities: status.capabilities,
+    acceptedCapabilities: status.acceptedCapabilities,
     operatorCapabilities: status.operatorCapabilities,
     studentAuthGatePresenceV1Enabled: status.studentAuthGatePresenceV1Enabled,
     lateSignInRestrictionSsoV1Enabled: status.lateSignInRestrictionSsoV1Enabled,
+    restrictionAuthPassThroughV1Enabled:
+      status.restrictionAuthPassThroughV1Enabled,
+    restrictionAuthState: status.restrictionAuthState,
   };
 }
 

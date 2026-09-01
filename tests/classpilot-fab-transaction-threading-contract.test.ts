@@ -22,7 +22,7 @@ test("WebSocket FAB bootstrap reuses its transaction fence for every authority r
   const websocketFab = section(
     websocket,
     "const fab = await buildStudentFabState",
-    "const classroomStateRow = await getClasspilotStudentControlState",
+    "const [classroomStateRow, ssoPolicy] = await Promise.all",
   );
   assert.match(websocketFab, /dbInstance: transactionDb/);
 

@@ -59,6 +59,8 @@ import {
   getReclaimableStudentSessionByRecoveryTokenHash,
   getBatchTileAccessForStaff,
   getClasspilotStudentControlState,
+  getClasspilotSsoPolicyForSchool,
+  lockClasspilotSsoPolicyDeliveryAuthority,
   getClasspilotScreenshotAuthorityProjection,
   withClasspilotStudentControlDeliveryAuthority,
   withClasspilotStudentWebSocketBootstrapAuthority,
@@ -144,6 +146,7 @@ import {
   trackExtensionRuntimeTelemetry,
 } from "../../services/runtimeTelemetry.js";
 import {
+  classpilotAckAppliedAuthPolicyRevision,
   classpilotAckControlRevision,
   classpilotAckEnvelopeMatchesBinding,
 } from "../../services/classpilotAckBinding.js";
@@ -188,11 +191,17 @@ import {
 import {
   classpilotLateSignInRevisionAppliedToBinding,
   classpilotControlStateHasLateSignInOrigin,
+  classpilotControlStateHasAuthRelevantRestriction,
+  classpilotRestrictionAuthCapabilityRequired,
+  classpilotRestrictionAuthProjectionRevision,
   effectiveClasspilotControlEnforcementHealth,
   serializeClasspilotStudentControlState,
   serializeClasspilotStudentControlStateForDelivery,
 } from "../../services/classpilotClassroomState.js";
 import { recordClasspilotStudentSessionMonitoringEvent } from "../../services/classpilotMonitoringEvents.js";
+import { classpilotRestrictionAuthTransitionMetric } from "../../services/classpilotRestrictionAuthMetrics.js";
+import { sanitizeClasspilotHeartbeatNavigationForSso } from
+  "../../services/classpilotHeartbeatSsoSanitizer.js";
 import {
   publishClasspilotStudentSessionEnded,
   removeClasspilotDeviceAndPublishSessionEnds,
@@ -996,7 +1005,13 @@ function publicRealtimeFields(snapshot: ClasspilotRealtimeStatus) {
       domainPreservingRestrictionsV1: extensionCapabilities.has("domainPreservingRestrictionsV1"),
       studentAuthGatePresenceV1: extensionCapabilities.has("studentAuthGatePresenceV1"),
       lateSignInRestrictionSsoV1: extensionCapabilities.has("lateSignInRestrictionSsoV1"),
+      restrictionAuthPassThroughV1: extensionCapabilities.has("restrictionAuthPassThroughV1"),
       minExtensionVersion: "2.6.0",
+    },
+    acceptedCapabilities: {
+      restrictionAuthPassThroughV1: acceptedCapabilities.has(
+        "restrictionAuthPassThroughV1"
+      ),
     },
     activityFresh,
     activityState: snapshot.activityState,
@@ -1467,11 +1482,18 @@ async function completeStudentDeviceLogin<
       deviceId: effectiveDeviceId,
     },
     async (transactionDb) => {
-      const controlState = await getClasspilotStudentControlState(
+      await lockClasspilotSsoPolicyDeliveryAuthority(
         options.schoolId,
-        student.id,
         transactionDb
       );
+      const [controlState, ssoPolicy] = await Promise.all([
+        getClasspilotStudentControlState(
+          options.schoolId,
+          student.id,
+          transactionDb
+        ),
+        getClasspilotSsoPolicyForSchool(options.schoolId, transactionDb),
+      ]);
       const loginProtocol = negotiateClasspilotSurfaceProtocol({
         surface: "registration",
         payload: options.protocolPayload ?? {},
@@ -1496,6 +1518,14 @@ async function completeStudentDeviceLogin<
               studentId: student.id,
               studentSessionId: session.id,
               deviceId: effectiveDeviceId,
+            },
+            authPassThrough: {
+              gateActive: isClasspilotCapabilityActive(
+                "restrictionAuthPassThroughV1",
+                { schoolId: options.schoolId }
+              ),
+              policyRevision: ssoPolicy.revision,
+              policy: ssoPolicy.policy,
             },
           })
         : { classroomState: null, withheld: false };
@@ -1528,15 +1558,20 @@ async function completeStudentDeviceLogin<
           : {}),
         classroomState,
         withheld: loginDelivery.withheld,
+        withheldReason: loginDelivery.withheldReason,
       };
     },
     (prepared) => {
-      if (prepared.withheld) {
+      if (prepared.withheldReason === "late_sign_in_capability_required") {
         recordHeartbeatHotPathCounter("lateSignInDeliveryWithheld");
       } else if (prepared.classroomState?.deliveryContext?.lateSignInRestrictionSso) {
         recordHeartbeatHotPathCounter("lateSignInCapableDelivery");
       }
-      const { withheld: _withheld, ...login } = prepared;
+      const {
+        withheld: _withheld,
+        withheldReason: _withheldReason,
+        ...login
+      } = prepared;
       return sendResponse(login);
     }
   );
@@ -1577,6 +1612,15 @@ async function recordRemoteActionTimeline(options: {
 // Per-device heartbeat rate limiting (item #9)
 // ============================================================================
 const deviceLastHeartbeat = new Map<string, ClasspilotAcceptedHeartbeatThrottle>();
+const restrictionAuthStateByDevice = new Map<string, {
+  studentSessionId: string;
+  state: "idle" | "in_progress" | "returning" | "complete" | "timed_out";
+  observedAt: number;
+}>();
+const previewRefreshRevisionByBinding = new Map<string, {
+  revision: number;
+  observedAt: number;
+}>();
 const HEARTBEAT_MIN_INTERVAL_MS = 5_000; // 5 seconds minimum between heartbeats
 const RATE_LIMIT_CLEANUP_INTERVAL_MS = 60_000; // clean stale entries every 60s
 const MAX_DEVICE_HEARTBEAT_ENTRIES = 20_000;
@@ -1595,12 +1639,71 @@ function setBoundedMap<K, V>(map: Map<K, V>, key: K, value: V, maximum: number):
   map.set(key, value);
 }
 
+function recordAcceptedHeartbeatGap(options: {
+  previous: ClasspilotAcceptedHeartbeatThrottle | undefined;
+  studentId: string;
+  studentSessionId: string;
+  acceptedAt: number;
+}): void {
+  const previous = options.previous;
+  if (
+    !previous
+    || previous.studentId !== options.studentId
+    || previous.studentSessionId !== options.studentSessionId
+    || options.acceptedAt < previous.acceptedAt
+  ) return;
+  const gapMs = options.acceptedAt - previous.acceptedAt;
+  recordHeartbeatHotPathTiming("heartbeatGapMs", gapMs);
+  if (gapMs >= 30_000) recordHeartbeatHotPathCounter("heartbeatGapOver30Seconds");
+  if (gapMs >= 60_000) recordHeartbeatHotPathCounter("heartbeatGapOver60Seconds");
+}
+
+function recordPreviewRefreshLatencyOnce(options: {
+  binding: ScreenshotBinding;
+  controlRevision: number;
+  authorityStartedAt: Date;
+  capturedAt: Date;
+}): void {
+  if (!Number.isSafeInteger(options.controlRevision) || options.controlRevision < 0) return;
+  const latencyMs = options.capturedAt.getTime() - options.authorityStartedAt.getTime();
+  // Only a capture causally near a new authority revision measures refresh.
+  // A process restart during an old, steady revision must not inject hours of
+  // unrelated classroom time into the preview-refresh distribution.
+  if (latencyMs < 0 || latencyMs > 5 * 60_000) return;
+  const digest = crypto.createHash("sha256")
+    .update(options.binding.schoolId)
+    .update("\u001f")
+    .update(options.binding.studentId)
+    .update("\u001f")
+    .update(options.binding.studentSessionId)
+    .update("\u001f")
+    .update(options.binding.deviceId)
+    .digest("base64url");
+  const previous = previewRefreshRevisionByBinding.get(digest);
+  if (previous?.revision === options.controlRevision) return;
+  setBoundedMap(
+    previewRefreshRevisionByBinding,
+    digest,
+    { revision: options.controlRevision, observedAt: options.capturedAt.getTime() },
+    MAX_DEVICE_HEARTBEAT_ENTRIES
+  );
+  recordHeartbeatHotPathCounter("previewRefreshObserved");
+  recordHeartbeatHotPathTiming("previewRefreshLatencyMs", latencyMs);
+}
+
 // Periodic cleanup of stale rate-limit entries. The API listener owns process
 // lifetime; this maintenance timer should not strand migration/test workers.
 const heartbeatRateLimitCleanupTimer = setInterval(() => {
   const cutoff = Date.now() - 120_000; // remove entries older than 2 min
   for (const [key, state] of deviceLastHeartbeat) {
     if (state.acceptedAt < cutoff) deviceLastHeartbeat.delete(key);
+  }
+  for (const [key, state] of restrictionAuthStateByDevice) {
+    if (state.observedAt < cutoff) restrictionAuthStateByDevice.delete(key);
+  }
+  const previewCutoff = Date.now() - 12 * 60 * 60 * 1_000;
+  for (const [key, state] of previewRefreshRevisionByBinding) {
+    if (state.observedAt < previewCutoff) previewRefreshRevisionByBinding.delete(key);
   }
   const deliveredCutoff = Date.now() - DELIVERED_MESSAGE_CACHE_TTL_MS;
   for (const [key, state] of deliveredMessages) {
@@ -3358,6 +3461,7 @@ router.post("/device/command-acks", requireDeviceAuth, requireClasspilotEntitlem
         deviceId,
         ackState,
         controlRevision: classpilotAckControlRevision(raw),
+        appliedAuthPolicyRevision: classpilotAckAppliedAuthPolicyRevision(raw),
         result,
         errorMessage: typeof (raw?.errorMessage ?? raw?.error) === "string"
           ? String(raw.errorMessage ?? raw.error).slice(0, 500)
@@ -3483,16 +3587,32 @@ router.post(
 router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspilotEntitlement, deviceHeartbeatLimiter, async (req, res, next) => {
   try {
     const {
-      activeTabUrl, activeTabTitle, visibilityState, screenLocked,
-      allOpenTabs, favicon, isScreenRecording, isScreenSharing,
+      activeTabUrl: reportedActiveTabUrl,
+      activeTabTitle: reportedActiveTabTitle,
+      visibilityState, screenLocked,
+      allOpenTabs: reportedAllOpenTabs,
+      favicon: reportedFavicon, isScreenRecording, isScreenSharing,
       cameraActive, status: trackingStatus, activeStudentId,
       flightPathActive, activeFlightPathName, screenshotHealth,
       extensionVersion, chromeVersion, appliedClassroomStateRevision,
+      appliedAuthPolicyRevision: reportedAppliedAuthPolicyRevision,
       capabilities, extensionCapabilities, tabSnapshotRevision,
       activeTabRef,
       classroomStateOutcome,
+      restrictionAuthState,
       clientProtocolVersion,
     } = req.body;
+    const appliedAuthPolicyRevision = (
+      typeof reportedAppliedAuthPolicyRevision === "number"
+      && Number.isSafeInteger(reportedAppliedAuthPolicyRevision)
+      && reportedAppliedAuthPolicyRevision >= 0
+    ) ? reportedAppliedAuthPolicyRevision : null;
+    // These variables are replaced with a school-policy-derived, origin-only
+    // projection before any database/cache/realtime/classification use.
+    let activeTabUrl = reportedActiveTabUrl;
+    let activeTabTitle = reportedActiveTabTitle;
+    let favicon = reportedFavicon;
+    let allOpenTabs = reportedAllOpenTabs;
     const schoolId = res.locals.schoolId as string;
     const studentId = res.locals.studentId as string;
     const deviceId = res.locals.deviceId as string;
@@ -3526,14 +3646,18 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
         studentSessionId,
       })
     );
-    if (!protocol.acceptedCapabilities.includes("lateSignInRestrictionSsoV1") && canShortCircuitAcceptedHeartbeat({
+    if (
+      !protocol.acceptedCapabilities.includes("lateSignInRestrictionSsoV1")
+      && !protocol.acceptedCapabilities.includes("restrictionAuthPassThroughV1")
+      && canShortCircuitAcceptedHeartbeat({
       previous: lastHb,
       studentId,
       studentSessionId,
       nowMs: now,
       minimumIntervalMs: HEARTBEAT_MIN_INTERVAL_MS,
       acceptedCapabilities: protocol.acceptedCapabilities,
-    })) {
+      })
+    ) {
       const authority = await refreshExactSessionAuthority();
       if (authority.outcome === "replaced_session") {
         recordHeartbeatHotPathCounter("heartbeatReplacedSession");
@@ -3556,6 +3680,12 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       if (authority.leaseRenewed) {
         recordHeartbeatHotPathCounter("manualSessionLeaseRenewed");
       }
+      recordAcceptedHeartbeatGap({
+        previous: lastHb,
+        studentId,
+        studentSessionId,
+        acceptedAt: now,
+      });
       setBoundedMap(deviceLastHeartbeat, deviceId, {
         acceptedAt: Date.now(),
         studentId,
@@ -3595,10 +3725,32 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       // lifecycle/license check. Load the school projection directly for the
       // classification domain and response without using it as cached
       // authorization state.
-      const school = await getSchoolById(schoolId);
+      const [school, ssoPolicy, privacyControlState] = await Promise.all([
+        getSchoolById(schoolId),
+        getClasspilotSsoPolicyForSchool(schoolId),
+        getClasspilotStudentControlState(schoolId, studentId),
+      ]);
       if (!school || school.status !== "active") {
         return { outcome: "inactive_school" } as const;
       }
+
+      const safeNavigation = sanitizeClasspilotHeartbeatNavigationForSso({
+        activeTabUrl,
+        activeTabTitle,
+        favicon,
+        allOpenTabs,
+        policy: ssoPolicy.policy,
+        restrictionAuthState,
+        authRelevantRestrictionActive: ssoPolicy.policy.enabled
+          && !!privacyControlState
+          && classpilotControlStateHasAuthRelevantRestriction(
+            privacyControlState.desiredState
+          ),
+      });
+      activeTabUrl = safeNavigation.activeTabUrl;
+      activeTabTitle = safeNavigation.activeTabTitle;
+      favicon = safeNavigation.favicon;
+      allOpenTabs = safeNavigation.allOpenTabs;
 
       // --- Save heartbeat and throttled presence in one DB round trip ---
       const [heartbeat, controlState] = await Promise.all([
@@ -3618,7 +3770,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
         chromeVersion,
         screenshotHealth,
         }, res.locals.studentSessionId as string),
-        getClasspilotStudentControlState(schoolId, studentId),
+        Promise.resolve(privacyControlState),
       ]);
       if (heartbeat.outcome === "replaced_session") {
         return { outcome: "replaced_session" } as const;
@@ -3647,12 +3799,27 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
           binding: { schoolId, studentId, studentSessionId, deviceId },
           revision: Number(appliedClassroomStateRevision),
         });
+        const restrictionAuthGateActiveForAck = isClasspilotCapabilityActive(
+          "restrictionAuthPassThroughV1",
+          { schoolId }
+        );
+        const restrictionAuthRevisionMismatch = (
+          classpilotControlStateHasAuthRelevantRestriction(controlState.desiredState)
+          && protocol.acceptedCapabilities.includes("restrictionAuthPassThroughV1")
+          && appliedAuthPolicyRevision !== classpilotRestrictionAuthProjectionRevision({
+            policyRevision: ssoPolicy.revision,
+            gateActive: restrictionAuthGateActiveForAck,
+          })
+        );
         if (
           ackOutcome
-          && ((!deferredBindingAlreadyApplied
+          && (
+            (!deferredBindingAlreadyApplied
               && classpilotControlStateHasLateSignInOrigin(controlState.desiredState))
             || controlState.appliedRevision !== Number(appliedClassroomStateRevision)
-            || controlState.enforcementHealth !== expectedHealth)
+            || controlState.enforcementHealth !== expectedHealth
+            || restrictionAuthRevisionMismatch
+          )
         ) {
           const acknowledgedState = await acknowledgeClasspilotStudentControlState({
             schoolId,
@@ -3660,6 +3827,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
             studentSessionId,
             deviceId,
             appliedRevision: Number(appliedClassroomStateRevision),
+            appliedAuthPolicyRevision,
             outcome: ackOutcome,
             acceptedCapabilities: protocol.acceptedCapabilities,
           });
@@ -3689,6 +3857,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
         heartbeat,
         school,
         controlState,
+        ssoPolicy,
         trackingSettings,
         screenshotTrackingAuthority,
       } as const;
@@ -3702,6 +3871,12 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       if (heartbeatDbResult.authority.leaseRenewed) {
         recordHeartbeatHotPathCounter("manualSessionLeaseRenewed");
       }
+      recordAcceptedHeartbeatGap({
+        previous: lastHb,
+        studentId,
+        studentSessionId,
+        acceptedAt: now,
+      });
       setBoundedMap(deviceLastHeartbeat, deviceId, {
         acceptedAt: Date.now(),
         studentId,
@@ -3738,18 +3913,37 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       heartbeat,
       school,
       controlState,
+      ssoPolicy,
       trackingSettings,
       screenshotTrackingAuthority,
     } = heartbeatDbResult;
     if (heartbeat.leaseRenewed) {
       recordHeartbeatHotPathCounter("manualSessionLeaseRenewed");
     }
+    recordAcceptedHeartbeatGap({
+      previous: lastHb,
+      studentId,
+      studentSessionId,
+      acceptedAt: now,
+    });
     setBoundedMap(deviceLastHeartbeat, deviceId, {
       acceptedAt: Date.now(),
       studentId,
       studentSessionId,
       authorityExpiresAtMs: heartbeat.authorityExpiresAt?.getTime() ?? null,
     }, MAX_DEVICE_HEARTBEAT_ENTRIES);
+    const restrictionAuthGateActive = isClasspilotCapabilityActive(
+      "restrictionAuthPassThroughV1",
+      { schoolId }
+    );
+    const restrictionAuthCapabilityRequired = !!controlState
+      && classpilotRestrictionAuthCapabilityRequired({
+        desiredState: controlState.desiredState,
+        gateActive: restrictionAuthGateActive,
+        policy: ssoPolicy.policy,
+      });
+    const restrictionAuthRelevant = !!controlState
+      && classpilotControlStateHasAuthRelevantRestriction(controlState.desiredState);
     const heartbeatDelivery = controlState
       ? serializeClasspilotStudentControlStateForDelivery({
           state: controlState,
@@ -3759,6 +3953,12 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
           ),
           acceptedCapabilities: protocol.acceptedCapabilities,
           exactBinding: { schoolId, studentId, studentSessionId, deviceId },
+          // This snapshot is written only to the teacher-facing realtime
+          // status cache. The exact student response is re-materialized below
+          // under both the binding authority transaction and the shared SSO
+          // policy lock. Never place an unlocked authentication authority in
+          // this preliminary cache projection.
+          authPassThrough: undefined,
         })
       : { classroomState: null, withheld: false };
     const classroomState = heartbeatDelivery.classroomState;
@@ -3769,6 +3969,15 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
             { schoolId }
           ),
           acceptedCapabilities: protocol.acceptedCapabilities,
+          restrictionAuthCapabilityRequired,
+          restrictionAuthPolicyRevision:
+            restrictionAuthRelevant
+              ? classpilotRestrictionAuthProjectionRevision({
+                  policyRevision: ssoPolicy.revision,
+                  gateActive: restrictionAuthGateActive,
+                })
+              : null,
+          appliedAuthPolicyRevision,
           exactBinding: { schoolId, studentId, studentSessionId, deviceId },
         })
       : undefined;
@@ -3878,6 +4087,8 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       chromeVersion,
       classroomState: classroomState || undefined,
       enforcementHealth,
+      restrictionAuthState,
+      appliedAuthPolicyRevision,
     });
     // A write-through cache must never keep serving an older complete list when
     // this heartbeat could not be inserted into Redis. Finish the single Redis
@@ -3911,6 +4122,25 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       }
       throw new Error("Realtime heartbeat snapshot was not created");
     }
+    const nextRestrictionAuthState = realtimeSnapshot.restrictionAuthState || "idle";
+    const previousRestrictionAuthState = restrictionAuthStateByDevice.get(deviceId);
+    const transitionMetric = classpilotRestrictionAuthTransitionMetric(
+      previousRestrictionAuthState?.studentSessionId === studentSessionId
+        ? previousRestrictionAuthState.state
+        : null,
+      nextRestrictionAuthState
+    );
+    if (transitionMetric) recordHeartbeatHotPathCounter(transitionMetric);
+    setBoundedMap(
+      restrictionAuthStateByDevice,
+      deviceId,
+      {
+        studentSessionId,
+        state: nextRestrictionAuthState,
+        observedAt: realtimeSnapshot.observedAt,
+      },
+      MAX_DEVICE_HEARTBEAT_ENTRIES
+    );
 
     // --- Update in-memory real-time status ---
     updateDeviceStatus({
@@ -4431,11 +4661,15 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       () => withClasspilotStudentControlDeliveryAuthority(
         { schoolId, studentId, studentSessionId, deviceId },
         async (transactionDb) => {
-          const finalControlState = await getClasspilotStudentControlState(
-            schoolId,
-            studentId,
-            transactionDb
-          );
+          await lockClasspilotSsoPolicyDeliveryAuthority(schoolId, transactionDb);
+          const [finalControlState, finalSsoPolicy] = await Promise.all([
+            getClasspilotStudentControlState(
+              schoolId,
+              studentId,
+              transactionDb
+            ),
+            getClasspilotSsoPolicyForSchool(schoolId, transactionDb),
+          ]);
           const serialized = finalControlState
             ? serializeClasspilotStudentControlStateForDelivery({
                 state: finalControlState,
@@ -4445,6 +4679,14 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
                 ),
                 acceptedCapabilities: protocol.acceptedCapabilities,
                 exactBinding: { schoolId, studentId, studentSessionId, deviceId },
+                authPassThrough: {
+                  gateActive: isClasspilotCapabilityActive(
+                    "restrictionAuthPassThroughV1",
+                    { schoolId }
+                  ),
+                  policyRevision: finalSsoPolicy.revision,
+                  policy: finalSsoPolicy.policy,
+                },
               })
             : { classroomState: null, withheld: false };
           const finalClassroomState = serialized.classroomState;
@@ -4483,10 +4725,11 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
                 }
               : undefined,
             withheld: serialized.withheld,
+            withheldReason: serialized.withheldReason,
           };
         },
         (_claimed, prepared) => {
-          if (prepared.withheld) {
+          if (prepared.withheldReason === "late_sign_in_capability_required") {
             recordHeartbeatHotPathCounter("lateSignInDeliveryWithheld");
           } else if (
             prepared.classroomState?.deliveryContext?.lateSignInRestrictionSso
@@ -4774,12 +5017,21 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
           if (!stored && !screenshotStoreRequired) {
             classpilotScreenshotFallback.setClassBound(classBinding, data);
           }
-          return {
-            outcome: stored
+          const outcome = stored
               ? "redis" as const
               : screenshotStoreRequired
                 ? "unavailable" as const
-                : "local_fallback" as const,
+                : "local_fallback" as const;
+          if (outcome !== "unavailable") {
+            recordPreviewRefreshLatencyOnce({
+              binding,
+              controlRevision: classBinding.controlRevision,
+              authorityStartedAt: current.authorityStartedAt,
+              capturedAt: capturedAtDate,
+            });
+          }
+          return {
+            outcome,
             screenshotPolicy,
             classBinding,
             data,

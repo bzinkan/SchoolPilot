@@ -8,7 +8,7 @@ import { NativeProvider, useNative } from './contexts/NativeContext';
 import { SocketProvider } from './contexts/SocketContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import Spinner from './shared/components/Spinner';
-import { hasGoPilotRole } from './shared/utils/schoolRoles';
+import { hasGoPilotRole, hasMembershipRole } from './shared/utils/schoolRoles';
 import { Toaster } from './components/ui/toaster';
 import './products/classpilot/calendarHistoryGuard';
 // import { AIChatButton } from './components/chat/AIChatButton'; // AI Chat FAB — disabled, using backend-only monitoring
@@ -34,6 +34,8 @@ const CPSettings = lazy(() => import('./products/classpilot/pages/Settings'));
 const CPMySettings = lazy(() => import('./products/classpilot/pages/MySettings'));
 const CPScheduleChanges = lazy(() => import('./products/classpilot/pages/ScheduleChanges'));
 const CPAdminScheduleChanges = lazy(() => import('./products/classpilot/pages/AdminScheduleChanges'));
+const CPTeacherGuide = lazy(() => import('./products/classpilot/pages/TeacherGuide'));
+const CPAdminGuide = lazy(() => import('./products/classpilot/pages/AdminGuide'));
 
 // PassPilot pages (lazy-loaded)
 const PPDashboard = lazy(() => import('./products/passpilot/pages/Dashboard'));
@@ -184,6 +186,8 @@ function AppRoutes() {
   const canManageGoPilot = hasGoPilotRole(activeMembership, 'admin', 'school_admin', 'office_staff');
   const canTeachGoPilot = hasGoPilotRole(activeMembership, 'teacher');
   const hasGoPilotStaffAccess = canManageGoPilot || canTeachGoPilot;
+  const canReadClassPilotTeacherGuide = isSuperAdmin || hasMembershipRole(activeMembership, 'teacher', 'admin', 'school_admin');
+  const canManageClassPilotSchool = isSuperAdmin || hasMembershipRole(activeMembership, 'admin', 'school_admin');
 
   // On native, override default destination based on product
   let defaultDest;
@@ -273,9 +277,11 @@ function AppRoutes() {
             <Route path="/classpilot/admin/email-monitoring" element={<CPEmailMonitoring />} />
             <Route path="/classpilot/admin/email-monitoring/setup" element={<CPEmailMonitoringSetup />} />
             <Route path="/classpilot/students" element={<CPStudents />} />
-            <Route path="/classpilot/settings" element={<CPSettings />} />
+            {canManageClassPilotSchool && <Route path="/classpilot/settings" element={<CPSettings />} />}
+            {canManageClassPilotSchool && <Route path="/classpilot/settings/guide" element={<CPAdminGuide />} />}
             <Route path="/classpilot/my-settings" element={<CPMySettings />} />
             <Route path="/classpilot/my-settings/schedule-changes" element={<CPScheduleChanges />} />
+            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-settings/guide" element={<CPTeacherGuide />} />}
           </>
         )}
 

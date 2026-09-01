@@ -62,6 +62,12 @@ type RedisCommand = (args: string[]) => Promise<unknown | undefined>;
 let commandForTests: RedisCommand | undefined;
 
 export type ClasspilotActivityState = "active" | "idle" | "off" | "unknown";
+export type ClasspilotRestrictionAuthState =
+  | "idle"
+  | "in_progress"
+  | "returning"
+  | "complete"
+  | "timed_out";
 
 export type ClasspilotRealtimeTab = {
   tabRef?: string;
@@ -117,6 +123,9 @@ export type ClasspilotRealtimeStatus = {
   };
   classroomState?: ClasspilotClassroomStateSnapshot;
   enforcementHealth?: "synced" | "pending" | "failed" | "unsupported" | "expired";
+  restrictionAuthState?: ClasspilotRestrictionAuthState;
+  /** Exact school SSO policy revision the extension reports as applied. */
+  appliedAuthPolicyRevision?: number;
   screenshotHealth?: ClasspilotScreenshotHealth;
   aiClassification?: ClasspilotRealtimeClassification;
   classificationPending: boolean;
@@ -169,6 +178,8 @@ export type ClasspilotRealtimeWriteInput = {
   chromeVersion?: unknown;
   classroomState?: ClasspilotClassroomStateSnapshot;
   enforcementHealth?: "synced" | "pending" | "failed" | "unsupported" | "expired";
+  restrictionAuthState?: unknown;
+  appliedAuthPolicyRevision?: unknown;
 };
 
 export type ClasspilotRealtimeClassificationPatch = {
@@ -758,6 +769,18 @@ function decodeSnapshot(raw: unknown): ClasspilotRealtimeStatus | undefined {
   if (["synced", "pending", "failed", "unsupported", "expired"].includes(String(row.enforcementHealth))) {
     snapshot.enforcementHealth = row.enforcementHealth as ClasspilotRealtimeStatus["enforcementHealth"];
   }
+  if (["idle", "in_progress", "returning", "complete", "timed_out"].includes(
+    String(row.restrictionAuthState)
+  )) {
+    snapshot.restrictionAuthState = row.restrictionAuthState as ClasspilotRestrictionAuthState;
+  }
+  if (
+    typeof row.appliedAuthPolicyRevision === "number"
+    && Number.isSafeInteger(row.appliedAuthPolicyRevision)
+    && row.appliedAuthPolicyRevision >= 0
+  ) {
+    snapshot.appliedAuthPolicyRevision = row.appliedAuthPolicyRevision;
+  }
   return snapshot;
 }
 
@@ -847,6 +870,18 @@ function activeSnapshot(input: ClasspilotRealtimeWriteInput, now: number): Class
   if (chromeVersion) snapshot.chromeVersion = chromeVersion;
   if (input.classroomState) snapshot.classroomState = input.classroomState;
   if (input.enforcementHealth) snapshot.enforcementHealth = input.enforcementHealth;
+  if (["idle", "in_progress", "returning", "complete", "timed_out"].includes(
+    String(input.restrictionAuthState)
+  )) {
+    snapshot.restrictionAuthState = input.restrictionAuthState as ClasspilotRestrictionAuthState;
+  }
+  if (
+    typeof input.appliedAuthPolicyRevision === "number"
+    && Number.isSafeInteger(input.appliedAuthPolicyRevision)
+    && input.appliedAuthPolicyRevision >= 0
+  ) {
+    snapshot.appliedAuthPolicyRevision = input.appliedAuthPolicyRevision;
+  }
   return enforceSnapshotByteLimit(snapshot);
 }
 

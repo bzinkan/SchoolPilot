@@ -54,6 +54,8 @@ import {
   withClasspilotTeachingTelemetryAuthority,
   getAuthorizedClasspilotSessionStaffIds,
   getClasspilotStudentControlState,
+  getClasspilotSsoPolicyForSchool,
+  lockClasspilotSsoPolicyDeliveryAuthority,
   getClasspilotScreenshotAuthorityProjection,
   getActiveSessionsForStudents,
   acknowledgeClasspilotStudentControlState,
@@ -103,6 +105,7 @@ import {
 } from "../services/classpilotEntitlement.js";
 import { registerClasspilotCommandUpdateScheduler } from "../services/classpilotCommandUpdateScheduler.js";
 import {
+  classpilotAckAppliedAuthPolicyRevision,
   classpilotAckControlRevision,
   classpilotAckEnvelopeMatchesBinding,
 } from "../services/classpilotAckBinding.js";
@@ -163,6 +166,7 @@ export async function deliverClasspilotStudentBindingRedisMessage(
         () => undefined,
         () => sendToStudentBindingLocal(target, message, {
           requiredCapability: target.requiredCapability,
+          requiredCapabilities: target.requiredCapabilities,
         })
       );
       return delivery.authorized && delivery.value;
@@ -1150,6 +1154,7 @@ export function setupWebSocket(
                       deviceId,
                     },
                     async (transactionDb) => {
+                      await lockClasspilotSsoPolicyDeliveryAuthority(schoolId, transactionDb);
                       // Read state only after taking the same student-control
                       // lock used by command persistence and session transfer.
                       // A push committed before this socket was registered can
@@ -1159,11 +1164,14 @@ export function setupWebSocket(
                         studentSessionId: activeSession.id,
                         dbInstance: transactionDb,
                       });
-                      const classroomStateRow = await getClasspilotStudentControlState(
-                        schoolId,
-                        payload.studentId,
-                        transactionDb
-                      );
+                      const [classroomStateRow, ssoPolicy] = await Promise.all([
+                        getClasspilotStudentControlState(
+                          schoolId,
+                          payload.studentId,
+                          transactionDb
+                        ),
+                        getClasspilotSsoPolicyForSchool(schoolId, transactionDb),
+                      ]);
                       const screenshotTrackingAuthority = await getClasspilotScreenshotAuthorityProjection({
                         schoolId,
                         studentId: payload.studentId,
@@ -1183,6 +1191,14 @@ export function setupWebSocket(
                               deviceId,
                               studentId: payload.studentId,
                               studentSessionId: activeSession.id,
+                            },
+                            authPassThrough: {
+                              gateActive: isClasspilotCapabilityActive(
+                                "restrictionAuthPassThroughV1",
+                                { schoolId }
+                              ),
+                              policyRevision: ssoPolicy.revision,
+                              policy: ssoPolicy.policy,
                             },
                           })
                         : { classroomState: null, withheld: false };
@@ -1713,6 +1729,11 @@ export function setupWebSocket(
           && message.type === "classroom-state-ack"
         ) {
           const appliedRevision = Number(message.appliedRevision);
+          const appliedAuthPolicyRevision = (
+            typeof message.appliedAuthPolicyRevision === "number"
+            && Number.isSafeInteger(message.appliedAuthPolicyRevision)
+            && message.appliedAuthPolicyRevision >= 0
+          ) ? message.appliedAuthPolicyRevision : null;
           const rawOutcome = String(message.outcome || "").toLowerCase();
           const outcome = rawOutcome === "applied"
             ? "applied"
@@ -1731,6 +1752,7 @@ export function setupWebSocket(
                 studentSessionId: client.studentSessionId!,
                 deviceId: client.deviceId!,
                 appliedRevision,
+                appliedAuthPolicyRevision,
                 outcome,
                 error: message.error ? String(message.error) : null,
                 acceptedCapabilities: client.acceptedCapabilities,
@@ -1767,12 +1789,19 @@ export function setupWebSocket(
                 deviceId: client.deviceId!,
               },
               async (transactionDb) => {
-                const state = await getClasspilotStudentControlState(
+                await lockClasspilotSsoPolicyDeliveryAuthority(
                   client.schoolId!,
-                  client.studentId!,
                   transactionDb
                 );
-                const delivered = state
+                const [state, ssoPolicy] = await Promise.all([
+                  getClasspilotStudentControlState(
+                    client.schoolId!,
+                    client.studentId!,
+                    transactionDb
+                  ),
+                  getClasspilotSsoPolicyForSchool(client.schoolId!, transactionDb),
+                ]);
+                const delivery = state
                   ? serializeClasspilotStudentControlStateForDelivery({
                       state,
                       gateActive: isClasspilotCapabilityActive(
@@ -1786,14 +1815,24 @@ export function setupWebSocket(
                         studentSessionId: client.studentSessionId!,
                         deviceId: client.deviceId!,
                       },
-                    }).classroomState
-                  : null;
-                return delivered;
+                      authPassThrough: {
+                        gateActive: isClasspilotCapabilityActive(
+                          "restrictionAuthPassThroughV1",
+                          { schoolId: client.schoolId! }
+                        ),
+                        policyRevision: ssoPolicy.revision,
+                        policy: ssoPolicy.policy,
+                      },
+                    })
+                  : { classroomState: null, withheld: false };
+                return delivery;
               },
-              (_claimed, delivered) => {
+              (_claimed, delivery) => {
                 if (ws.readyState !== WebSocket.OPEN) {
                   throw new Error("Student WebSocket closed during classroom-state recovery");
                 }
+                if (delivery.withheld) return;
+                const delivered = delivery.classroomState;
                 // Queue the authoritative frame synchronously while the same
                 // student-control lock used by correct-PIN transfer remains
                 // held. Transfer cannot retire this binding after the final
@@ -1919,6 +1958,8 @@ export function setupWebSocket(
                 studentSessionId: client.studentSessionId!,
                 ackState,
                 controlRevision: classpilotAckControlRevision(message),
+                appliedAuthPolicyRevision:
+                  classpilotAckAppliedAuthPolicyRevision(message),
                 result: rawResult,
                 errorMessage: boundedError,
               })

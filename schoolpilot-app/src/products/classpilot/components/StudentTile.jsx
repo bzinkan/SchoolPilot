@@ -98,6 +98,7 @@ function StudentTile({
   screenshotObservationStatus = 'legacy',
   screenshotAuthorizationDenied = false,
   screenshotRefreshUnavailable = false,
+  screenshotUpdating = false,
 }) {
   const videoElementRef = useRef(null);
   const screenshotButtonRef = useRef(null);
@@ -603,6 +604,14 @@ function StudentTile({
               </div>
             </div>
           </button>
+        ) : screenshotUpdating ? (
+          <div className="flex aspect-video items-center justify-center rounded-lg border border-sky-200 bg-sky-50/70 text-center dark:border-sky-900 dark:bg-sky-950/20" data-testid={`screenshot-updating-authority-${student.studentId}`}>
+            <div className="px-4">
+              <Monitor className="mx-auto mb-2 h-6 w-6 text-sky-600 dark:text-sky-400" />
+              <p className="text-sm font-semibold text-foreground">Updating preview</p>
+              <p className="mt-1 text-xs text-muted-foreground">The student remains connected while a preview for the new classroom state arrives.</p>
+            </div>
+          </div>
         ) : !currentTelemetry ? (
           <div
             className={`flex aspect-video items-center justify-center rounded-lg border text-center ${unavailablePreview.warning ? 'border-amber-200 bg-amber-50/70 dark:border-amber-900 dark:bg-amber-950/20' : 'border-border bg-muted/30'}`}

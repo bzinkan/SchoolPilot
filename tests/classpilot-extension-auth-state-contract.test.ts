@@ -46,6 +46,12 @@ test("student login returns classroom state only for the exact active token sess
   assert.match(login, /const classroomState = loginDelivery\.classroomState/);
   assert.match(login, /classroomState,/);
   assert.match(login, /exactBinding: classpilotControlStateExactBinding\(\{/);
+  assert.match(login, /withheldReason: loginDelivery\.withheldReason/);
+  assert.match(
+    login,
+    /prepared\.withheldReason === "late_sign_in_capability_required"[\s\S]*recordHeartbeatHotPathCounter\("lateSignInDeliveryWithheld"\)/
+  );
+  assert.match(login, /withheldReason: _withheldReason/);
 
   const studentLoginRoute = devices.slice(
     devices.indexOf('router.post("/extension/student-login"'),
@@ -85,6 +91,11 @@ test("heartbeat and WebSocket reconciliation carry authoritative explicit-null s
     /const heartbeatDelivery = controlState[\s\S]*?: \{ classroomState: null, withheld: false \};/
   );
   assert.match(heartbeat, /const classroomState = heartbeatDelivery\.classroomState/);
+  assert.match(
+    heartbeat,
+    /classpilotRestrictionAuthCapabilityRequired\([\s\S]*gateActive: restrictionAuthGateActive[\s\S]*effectiveClasspilotControlEnforcementHealth\([\s\S]*restrictionAuthCapabilityRequired/,
+    "heartbeat enforcement truth must follow current auth policy capability withholding"
+  );
   assert.match(
     heartbeat,
     /planStatus: school\.planStatus \|\| "active",\s*classroomState: prepared\.classroomState,/

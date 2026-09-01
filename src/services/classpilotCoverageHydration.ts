@@ -38,15 +38,22 @@ export type ClasspilotCoverageStatus = {
     domainPreservingRestrictionsV1: boolean;
     studentAuthGatePresenceV1: boolean;
     lateSignInRestrictionSsoV1: boolean;
+    restrictionAuthPassThroughV1: boolean;
     minExtensionVersion: "2.6.0";
+  };
+  acceptedCapabilities: {
+    restrictionAuthPassThroughV1: boolean;
   };
   screenshotHealth: ClasspilotRealtimeStatus["screenshotHealth"];
   operatorCapabilities: {
     studentAuthGatePresenceV1: boolean;
     lateSignInRestrictionSsoV1: boolean;
+    restrictionAuthPassThroughV1: boolean;
   };
   studentAuthGatePresenceV1Enabled: boolean;
   lateSignInRestrictionSsoV1Enabled: boolean;
+  restrictionAuthPassThroughV1Enabled: boolean;
+  restrictionAuthState: "idle" | "in_progress" | "returning" | "complete" | "timed_out";
 };
 
 type CoverageHydrationMetrics = {
@@ -98,7 +105,17 @@ function coverageRealtimeCapabilities(status: ClasspilotRealtimeStatus | null) {
     domainPreservingRestrictionsV1: capabilities.has("domainPreservingRestrictionsV1"),
     studentAuthGatePresenceV1: capabilities.has("studentAuthGatePresenceV1"),
     lateSignInRestrictionSsoV1: capabilities.has("lateSignInRestrictionSsoV1"),
+    restrictionAuthPassThroughV1: capabilities.has("restrictionAuthPassThroughV1"),
     minExtensionVersion: "2.6.0" as const,
+  };
+}
+
+function coverageAcceptedCapabilities(status: ClasspilotRealtimeStatus | null) {
+  const acceptedCapabilities = new Set(status?.acceptedCapabilities || []);
+  return {
+    restrictionAuthPassThroughV1: acceptedCapabilities.has(
+      "restrictionAuthPassThroughV1"
+    ),
   };
 }
 
@@ -146,10 +163,14 @@ function publicStatus(
     extensionVersion: realtime?.extensionVersion ?? null,
     clientProtocolVersion: realtime?.clientProtocolVersion ?? null,
     capabilities: coverageRealtimeCapabilities(realtime),
+    acceptedCapabilities: coverageAcceptedCapabilities(realtime),
     screenshotHealth: realtime?.screenshotHealth,
     operatorCapabilities,
     studentAuthGatePresenceV1Enabled: operatorCapabilities.studentAuthGatePresenceV1,
     lateSignInRestrictionSsoV1Enabled: operatorCapabilities.lateSignInRestrictionSsoV1,
+    restrictionAuthPassThroughV1Enabled:
+      operatorCapabilities.restrictionAuthPassThroughV1,
+    restrictionAuthState: realtime?.restrictionAuthState || "idle",
   };
 }
 
@@ -215,6 +236,10 @@ export async function hydrateClasspilotCoverageStatuses(options: {
     ),
     lateSignInRestrictionSsoV1: isClasspilotCapabilityActive(
       "lateSignInRestrictionSsoV1",
+      { schoolId: options.schoolId }
+    ),
+    restrictionAuthPassThroughV1: isClasspilotCapabilityActive(
+      "restrictionAuthPassThroughV1",
       { schoolId: options.schoolId }
     ),
   };

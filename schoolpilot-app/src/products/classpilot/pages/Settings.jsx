@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { Navigate, useNavigate } from "react-router-dom";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -23,6 +23,8 @@ import { ArrowLeft, Download, Shield, Clock, AlertCircle, Layers, Plus, Pencil, 
 import { ThemeToggle } from "../../../components/ThemeToggle";
 import { useClassPilotAuth } from "../../../hooks/useClassPilotAuth";
 import { ScheduleChangePolicyCard } from "../components/ScheduleChangePolicyCard";
+import { StudentSsoPolicyCard } from "../components/StudentSsoPolicyCard";
+import { AdminSettingsTabs } from "../components/ScheduleRouteTabs";
 
 // Helper function to normalize domain names
 function normalizeDomain(domain) {
@@ -119,7 +121,7 @@ const settingsSchema = z.object({
 export default function Settings() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { currentUser, isAdmin } = useClassPilotAuth();
+  const { currentUser, isAdmin, isLoading: authLoading } = useClassPilotAuth();
   const canManageSchoolSettings = isAdmin || currentUser?.isSuperAdmin === true;
 
   // Flight Paths management state
@@ -138,17 +140,20 @@ export default function Settings() {
   const { data: settings, isLoading } = useQuery({
     queryKey: ['/api/settings'],
     queryFn: () => apiRequest('GET', '/settings'),
+    enabled: canManageSchoolSettings,
   });
 
   const { data: scenes = [], isLoading: scenesLoading } = useQuery({
     queryKey: ['/api/flight-paths'],
     queryFn: () => apiRequest('GET', '/flight-paths'),
     select: (data) => Array.isArray(data) ? data : (data?.flightPaths ?? data?.scenes ?? []),
+    enabled: canManageSchoolSettings,
   });
 
   const { data: enrollmentKeySettings, isLoading: enrollmentKeyLoading } = useQuery({
     queryKey: ["/api/classpilot/enrollment-key"],
     queryFn: () => apiRequest("GET", "/classpilot/enrollment-key"),
+    enabled: canManageSchoolSettings,
   });
 
   const { data: staffOptions = [], isLoading: staffOptionsLoading } = useQuery({
@@ -164,14 +169,14 @@ export default function Settings() {
     queryKey: ["/api/classroom/courses", "classroom_resources"],
     queryFn: () => apiRequest("GET", "/classroom/courses?purpose=classroom_resources"),
     select: (data) => data?.courses ?? [],
-    enabled: showClassroomDialog,
+    enabled: canManageSchoolSettings && showClassroomDialog,
   });
 
   const { data: classroomResources = [], isLoading: classroomResourcesLoading } = useQuery({
     queryKey: ["/api/classroom/resources", selectedCourseId],
     queryFn: () => apiRequest("GET", `/classroom/courses/${selectedCourseId}/resources`),
     select: (data) => data?.resources ?? [],
-    enabled: showClassroomDialog && !!selectedCourseId,
+    enabled: canManageSchoolSettings && showClassroomDialog && !!selectedCourseId,
   });
 
   const form = useForm({
@@ -441,6 +446,18 @@ export default function Settings() {
     }
   };
 
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center" aria-label="Checking administrator access">
+        <div className="h-8 w-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!canManageSchoolSettings) {
+    return <Navigate to="/classpilot" replace />;
+  }
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -468,14 +485,20 @@ export default function Settings() {
                 <ArrowLeft className="h-5 w-5" />
               </Button>
               <div>
-                <h1 className="text-xl font-semibold">Settings</h1>
-                <p className="text-xs text-muted-foreground">Manage your classroom monitoring settings</p>
+                <h1 className="text-xl font-semibold">Admin Settings</h1>
+                <p className="text-xs text-muted-foreground">Manage school-wide ClassPilot policy and deployment settings</p>
               </div>
             </div>
             <ThemeToggle />
           </div>
         </div>
       </header>
+
+      <div className="border-b bg-card">
+        <div className="max-w-4xl mx-auto px-6 pt-3">
+          <AdminSettingsTabs />
+        </div>
+      </div>
 
       {/* Main Content */}
       <main className="max-w-4xl mx-auto px-6 py-8 space-y-8">
@@ -886,6 +909,8 @@ export default function Settings() {
             )}
           </CardContent>
         </Card>
+
+        <StudentSsoPolicyCard canManage={canManageSchoolSettings} />
 
         <ScheduleChangePolicyCard
           schoolId={currentUser?.schoolId}

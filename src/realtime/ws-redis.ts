@@ -22,7 +22,13 @@ export type WsRedisTarget =
       deviceId: string;
       requiredCapability?:
         | "lateSignInRestrictionSsoV1"
+        | "restrictionAuthPassThroughV1"
         | "screenshotActiveObservationCadenceV1";
+      requiredCapabilities?: Array<
+        | "lateSignInRestrictionSsoV1"
+        | "restrictionAuthPassThroughV1"
+        | "screenshotActiveObservationCadenceV1"
+      >;
     }
   | { kind: "student-disconnect"; schoolId: string; studentIds: string[] }
   | { kind: "role"; schoolId: string; role: "teacher" | "office_staff" | "school_admin" | "super_admin" | "student" }

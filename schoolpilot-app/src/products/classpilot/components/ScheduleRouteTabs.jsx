@@ -1,6 +1,6 @@
 import { createElement } from "react";
 import { NavLink } from "react-router-dom";
-import { CalendarClock, GraduationCap, SlidersHorizontal } from "lucide-react";
+import { BookOpenCheck, CalendarClock, GraduationCap, Settings2, SlidersHorizontal } from "lucide-react";
 
 const baseClass = "inline-flex min-h-10 items-center gap-2 border-b-2 px-1 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2";
 
@@ -35,6 +35,19 @@ export function TeacherSettingsTabs() {
       items={[
         { label: "Teaching Tools", path: "/classpilot/my-settings", icon: SlidersHorizontal, end: true },
         { label: "Schedule Changes", path: "/classpilot/my-settings/schedule-changes", icon: CalendarClock },
+        { label: "Teacher Guide", path: "/classpilot/my-settings/guide", icon: BookOpenCheck },
+      ]}
+    />
+  );
+}
+
+export function AdminSettingsTabs() {
+  return (
+    <RouteTabs
+      ariaLabel="Admin Settings sections"
+      items={[
+        { label: "School Settings", path: "/classpilot/settings", icon: Settings2, end: true },
+        { label: "Admin Guide", path: "/classpilot/settings/guide", icon: BookOpenCheck },
       ]}
     />
   );

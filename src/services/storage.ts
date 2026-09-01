@@ -21,6 +21,9 @@ import {
 } from "../config/classpilotSessionReportRollout.js";
 import {
   emptyClasspilotRestrictions,
+  classpilotControlStateHasAuthRelevantRestriction,
+  classpilotRestrictionAuthCapabilityRequired,
+  classpilotRestrictionAuthProjectionRevision,
   readClasspilotLateSignInDeliveryProvenance,
   recordClasspilotLateSignInAppliedBinding,
   restrictionsFromClassroomStates,
@@ -43,6 +46,11 @@ import {
 } from "./classpilotStudentChat.js";
 import { assertClasspilotScreenshotEvidenceAuthority } from "./classpilotEvidenceAuthority.js";
 import type { ClasspilotTopActivity } from "./classpilotActivityAttribution.js";
+import {
+  canonicalizeClasspilotSsoPolicy,
+  classpilotSsoPolicyFromSettings,
+  type ClasspilotSsoPolicyRecord,
+} from "./classpilotSsoPolicy.js";
 import {
   ACTIVE_INSTRUCTIONAL_GROUP_TYPES,
   assertStaffLifecycleMutationAllowed,
@@ -19047,7 +19055,13 @@ function frozenClasspilotCommandTargetResult(
   const freezesExactTabAuthority = commandData.commandType === "close-tabs"
     && Array.isArray(commandPayload.tabsToClose);
   const freezesDurableMessageAuthority = commandData.commandType === "teacher-message";
-  if (!freezesExactTabAuthority && !freezesDurableMessageAuthority) return target.result;
+  const freezesCurrentPageAuthority = commandData.commandType === "lock-screen"
+    && commandPayload.currentPage === true;
+  if (
+    !freezesExactTabAuthority
+    && !freezesDurableMessageAuthority
+    && !freezesCurrentPageAuthority
+  ) return target.result;
   return {
     ...(target.result && typeof target.result === "object" && !Array.isArray(target.result)
       ? target.result as Record<string, unknown>
@@ -19055,7 +19069,7 @@ function frozenClasspilotCommandTargetResult(
     ...(freezesDurableMessageAuthority
       ? { durableAuthorityRevision: controlRevision }
       : {}),
-    ...(freezesExactTabAuthority
+    ...(freezesExactTabAuthority || freezesCurrentPageAuthority
       ? { frozenControlRevision: controlRevision }
       : {}),
   };
@@ -19873,6 +19887,7 @@ export type ClasspilotCommandAckOptions = {
   result?: unknown;
   errorMessage?: string | null;
   controlRevision?: number;
+  appliedAuthPolicyRevision?: number;
   now?: Date;
 };
 
@@ -19893,6 +19908,7 @@ export async function persistClasspilotCommandTargetAck(
         target: getTableColumns(classpilotCommandTargets),
         commandExpiresAt: classpilotCommands.expiresAt,
         commandType: classpilotCommands.commandType,
+        commandPayload: classpilotCommands.commandPayload,
         commandTeachingSessionId: classpilotCommands.teachingSessionId,
         commandSupervisionContextId: classpilotCommands.supervisionContextId,
       })
@@ -19937,6 +19953,13 @@ export async function persistClasspilotCommandTargetAck(
       ? target.result as Record<string, unknown>
       : {};
     const exactTabCloseV2 = frozenResult.exactTabCloseVersion === 2;
+    const commandPayload = binding.commandPayload
+      && typeof binding.commandPayload === "object"
+      && !Array.isArray(binding.commandPayload)
+      ? binding.commandPayload as Record<string, unknown>
+      : {};
+    const transientCurrentPage = binding.commandType === "lock-screen"
+      && commandPayload.currentPage === true;
     const frozenControlRevision = Number.isSafeInteger(frozenResult.frozenControlRevision)
       ? Number(frozenResult.frozenControlRevision)
       : undefined;
@@ -19966,6 +19989,57 @@ export async function persistClasspilotCommandTargetAck(
         code: "COMMAND_ACK_BINDING_MISMATCH" as const,
         target: unavailable ?? target,
       };
+    }
+    if (transientCurrentPage) {
+      const authorityCurrent = frozenControlRevision !== undefined
+        && Number.isSafeInteger(options.controlRevision)
+        && options.controlRevision === frozenControlRevision
+        && await hasCurrentClasspilotStudentControlAuthority({
+          schoolId: options.schoolId,
+          studentId: options.studentId,
+          teachingSessionId: binding.commandTeachingSessionId,
+          supervisionContextId: binding.commandSupervisionContextId,
+          ownershipRevision: frozenControlRevision,
+        }, transactionDb);
+      if (!authorityCurrent) {
+        return {
+          disposition: "terminal_rejected" as const,
+          retryable: false as const,
+          code: "COMMAND_ACK_BINDING_MISMATCH" as const,
+          target,
+        };
+      }
+      await lockClasspilotSsoPolicyDeliveryAuthority(
+        options.schoolId,
+        transactionDb
+      );
+      const currentPolicy = await getClasspilotSsoPolicyForSchool(
+        options.schoolId,
+        transactionDb
+      );
+      const gateActive = isClasspilotCapabilityActive(
+        "restrictionAuthPassThroughV1",
+        { schoolId: options.schoolId }
+      );
+      const expectedProjectionRevision = classpilotRestrictionAuthProjectionRevision({
+        policyRevision: currentPolicy.revision,
+        gateActive,
+      });
+      const authRequired = gateActive && currentPolicy.policy.enabled;
+      if (
+        (authRequired && options.appliedAuthPolicyRevision === undefined)
+        || (
+          options.appliedAuthPolicyRevision !== undefined
+          && options.appliedAuthPolicyRevision !== expectedProjectionRevision
+        )
+      ) {
+        return {
+          disposition: "terminal_rejected" as const,
+          retryable: false as const,
+          code: "COMMAND_ACK_BINDING_MISMATCH" as const,
+          target,
+        };
+      }
     }
     if (target.status === "unavailable") {
       return {
@@ -20839,65 +20913,37 @@ export async function replaceClasspilotSupervisionControlSnapshots(
       requestedStudentIds,
       transactionDb
     );
-    const [context] = await tx
-      .select()
-      .from(classpilotSupervisionContexts)
-      .where(and(
-        eq(classpilotSupervisionContexts.schoolId, options.schoolId),
-        eq(classpilotSupervisionContexts.id, options.supervisionContextId)
-      ))
-      .limit(1)
-      .for("update");
-    if (!context || context.status !== "active" || context.endsAt <= now) {
-      throw Object.assign(new Error("Active supervision context not found"), {
-        status: 404,
-        code: "SUPERVISION_CONTEXT_NOT_FOUND",
-      });
-    }
-    if (
-      options.authorizedActorId
-      && options.actorIsAdmin !== true
-      && context.assignedStaffId !== options.authorizedActorId
-    ) {
-      throw Object.assign(new Error("Active supervision context not found"), {
-        status: 404,
-        code: "SUPERVISION_CONTEXT_NOT_FOUND",
-      });
-    }
-
-    const assignments = await tx
-      .select({ studentId: classpilotSupervisionStudents.studentId })
-      .from(classpilotSupervisionStudents)
-      .where(and(
-        eq(classpilotSupervisionStudents.schoolId, options.schoolId),
-        eq(classpilotSupervisionStudents.contextId, options.supervisionContextId),
-        inArray(classpilotSupervisionStudents.studentId, requestedStudentIds),
-        isNull(classpilotSupervisionStudents.releasedAt)
-      ));
-    if (assignments.length !== requestedStudentIds.length) {
-      throw Object.assign(new Error("One or more control targets are outside the supervision context"), {
-        status: 404,
-        code: "CONTROL_TARGET_NOT_FOUND",
-      });
-    }
-
     let studentIds = requestedStudentIds;
     const expectations = options.bindingExpectationByStudent;
     if (expectations && expectations.size > 0) {
       // Match heartbeat/transfer lock ordering before exact binding
       // revalidation. The shared student-control lock already serializes a
       // signed-out expectation against a new transfer.
-      const expectedDeviceIds = [...new Set(requestedStudentIds.flatMap((studentId) => {
+      const expectedDeviceIds = requestedStudentIds.flatMap((studentId) => {
         const expectation = expectations.get(studentId);
         return expectation?.kind === "exact" ? [expectation.deviceId] : [];
-      }))].sort();
-      if (expectedDeviceIds.length > 0) {
+      });
+      const discoveredBindings = await transactionDb
+        .select({ deviceId: studentSessions.deviceId })
+        .from(devices)
+        .innerJoin(studentSessions, eq(studentSessions.deviceId, devices.deviceId))
+        .where(and(
+          inArray(studentSessions.studentId, requestedStudentIds),
+          eq(devices.schoolId, options.schoolId),
+          eq(studentSessions.isActive, true),
+          isNull(studentSessions.endedAt)
+        ));
+      const bindingDeviceIds = [...new Set([
+        ...expectedDeviceIds,
+        ...discoveredBindings.map((binding) => binding.deviceId),
+      ])].sort();
+      if (bindingDeviceIds.length > 0) {
         await tx
           .select({ deviceId: devices.deviceId })
           .from(devices)
           .where(and(
             eq(devices.schoolId, options.schoolId),
-            inArray(devices.deviceId, expectedDeviceIds)
+            inArray(devices.deviceId, bindingDeviceIds)
           ))
           .orderBy(devices.deviceId)
           .for("update");
@@ -20936,6 +20982,51 @@ export async function replaceClasspilotSupervisionControlSnapshots(
             && active.deviceId === expectation.deviceId;
       });
       if (studentIds.length === 0) return [];
+    }
+
+    // The supervision row participates after any exact binding rows, matching
+    // heartbeat and class-command authority order. Revalidate ownership only
+    // once that row lock is held.
+    const [context] = await tx
+      .select()
+      .from(classpilotSupervisionContexts)
+      .where(and(
+        eq(classpilotSupervisionContexts.schoolId, options.schoolId),
+        eq(classpilotSupervisionContexts.id, options.supervisionContextId)
+      ))
+      .limit(1)
+      .for("update");
+    if (!context || context.status !== "active" || context.endsAt <= now) {
+      throw Object.assign(new Error("Active supervision context not found"), {
+        status: 404,
+        code: "SUPERVISION_CONTEXT_NOT_FOUND",
+      });
+    }
+    if (
+      options.authorizedActorId
+      && options.actorIsAdmin !== true
+      && context.assignedStaffId !== options.authorizedActorId
+    ) {
+      throw Object.assign(new Error("Active supervision context not found"), {
+        status: 404,
+        code: "SUPERVISION_CONTEXT_NOT_FOUND",
+      });
+    }
+
+    const assignments = await tx
+      .select({ studentId: classpilotSupervisionStudents.studentId })
+      .from(classpilotSupervisionStudents)
+      .where(and(
+        eq(classpilotSupervisionStudents.schoolId, options.schoolId),
+        eq(classpilotSupervisionStudents.contextId, options.supervisionContextId),
+        inArray(classpilotSupervisionStudents.studentId, studentIds),
+        isNull(classpilotSupervisionStudents.releasedAt)
+      ));
+    if (assignments.length !== studentIds.length) {
+      throw Object.assign(new Error("One or more control targets are outside the supervision context"), {
+        status: 404,
+        code: "CONTROL_TARGET_NOT_FOUND",
+      });
     }
 
     if (
@@ -21334,6 +21425,7 @@ export async function acknowledgeClasspilotStudentControlState(
     studentSessionId: string;
     deviceId: string;
     appliedRevision: number;
+    appliedAuthPolicyRevision?: number | null;
     outcome: "applied" | "failed" | "unsupported" | "expired";
     error?: string | null;
     acknowledgedAt?: Date;
@@ -21378,6 +21470,57 @@ export async function acknowledgeClasspilotStudentControlState(
       // A delayed ACK from an older binding must not erase or advance hidden
       // deferred state after the operator gate changes.
       return undefined;
+    }
+    const restrictionAuthGateActive = isClasspilotCapabilityActive(
+      "restrictionAuthPassThroughV1",
+      { schoolId: options.schoolId }
+    );
+    const restrictionAuthRelevant = classpilotControlStateHasAuthRelevantRestriction(
+      current.desiredState
+    );
+    if (restrictionAuthRelevant) {
+      // ACK validation only needs a stable policy snapshot. Take the shared
+      // delivery fence so a cohort of device ACKs can validate concurrently;
+      // administrator PATCH remains the sole exclusive-lock holder.
+      await lockClasspilotSsoPolicyDeliveryAuthority(
+        options.schoolId,
+        transactionDb
+      );
+      const restrictionAuthPolicy = await getClasspilotSsoPolicyForSchool(
+        options.schoolId,
+        transactionDb
+      );
+      const restrictionAuthCapable = options.acceptedCapabilities?.includes(
+        "restrictionAuthPassThroughV1"
+      ) === true;
+      if (
+        classpilotRestrictionAuthCapabilityRequired({
+          desiredState: current.desiredState,
+          gateActive: restrictionAuthGateActive,
+          policy: restrictionAuthPolicy.policy,
+        })
+        && !restrictionAuthCapable
+      ) {
+        // A strict pre-rollout client may ACK this revision after the school
+        // enables sign-in-safe projection. Do not let that delayed ACK mark a
+        // revision synced when current delivery is withheld from that client.
+        return undefined;
+      }
+      if (
+        restrictionAuthCapable
+        && (
+          !Number.isSafeInteger(options.appliedAuthPolicyRevision)
+          || options.appliedAuthPolicyRevision !== classpilotRestrictionAuthProjectionRevision({
+            policyRevision: restrictionAuthPolicy.revision,
+            gateActive: restrictionAuthGateActive,
+          })
+        )
+      ) {
+        // The control revision does not advance when an administrator edits
+        // sign-in policy. Never let an ACK for an older policy fence mark the
+        // same control revision synced after that edit commits.
+        return undefined;
+      }
     }
     const desiredState = deferred && options.outcome === "applied"
       ? recordClasspilotLateSignInAppliedBinding({
@@ -21533,31 +21676,17 @@ export async function persistClasspilotControlCommandState(
 }> {
   return dbInstance.transaction(async (tx) => {
     const transactionDb = tx as unknown as typeof db;
+    // Compatibility invariant: heartbeat, transfer, exact-bound delivery,
+    // resync, and finalization all acquire sorted student-control authority
+    // before device/session and teaching-session rows. Inverting only this
+    // writer to session-first would deadlock a mixed deployment. See
+    // docs/classpilot-control-authority-lock-order.md for the coordinated
+    // migration boundary and executable contract.
     await lockClasspilotStudentControlAuthorities(
       options.studentSnapshots.schoolId,
       options.studentSnapshots.studentIds,
       transactionDb
     );
-    // Serialize the entire read/modify/write operation before changing the
-    // legacy active-state rows. Building a full snapshot outside this lock can
-    // otherwise drop a concurrent teacher command even when revisions remain
-    // monotonic.
-    const [lockedSession] = await tx
-      .select({ id: teachingSessions.id })
-      .from(teachingSessions)
-      .where(and(
-        eq(teachingSessions.id, options.studentSnapshots.teachingSessionId),
-        eq(teachingSessions.schoolId, options.studentSnapshots.schoolId),
-        isNull(teachingSessions.endTime)
-      ))
-      .limit(1)
-      .for("update");
-    if (!lockedSession) {
-      throw Object.assign(new Error("Active teaching session not found"), {
-        status: 404,
-        code: "TEACHING_SESSION_NOT_FOUND",
-      });
-    }
     const expectations = options.studentSnapshots.bindingExpectationByStudent;
     let acceptedStudentIds = [...new Set(options.studentSnapshots.studentIds)];
     const rejectedStudentIds: string[] = [];
@@ -21567,17 +21696,34 @@ export async function persistClasspilotControlCommandState(
       // persistence so a heartbeat/resume racing a teacher command cannot
       // create a device<->session lock inversion. Signed-out expectations are
       // already serialized against transfer by the student-control lock above.
-      const expectedDeviceIds = [...new Set(acceptedStudentIds.flatMap((studentId) => {
+      const expectedDeviceIds = acceptedStudentIds.flatMap((studentId) => {
         const expectation = expectations.get(studentId);
         return expectation?.kind === "exact" ? [expectation.deviceId] : [];
-      }))].sort();
-      if (expectedDeviceIds.length > 0) {
+      });
+      // The student-control advisory lock makes this discovery stable against
+      // transfer. Include active devices for signed-out expectations so every
+      // binding row is locked in the shared device-before-session order.
+      const discoveredBindings = await transactionDb
+        .select({ deviceId: studentSessions.deviceId })
+        .from(devices)
+        .innerJoin(studentSessions, eq(studentSessions.deviceId, devices.deviceId))
+        .where(and(
+          inArray(studentSessions.studentId, acceptedStudentIds),
+          eq(devices.schoolId, options.studentSnapshots.schoolId),
+          eq(studentSessions.isActive, true),
+          isNull(studentSessions.endedAt)
+        ));
+      const bindingDeviceIds = [...new Set([
+        ...expectedDeviceIds,
+        ...discoveredBindings.map((binding) => binding.deviceId),
+      ])].sort();
+      if (bindingDeviceIds.length > 0) {
         await tx
           .select({ deviceId: devices.deviceId })
           .from(devices)
           .where(and(
             eq(devices.schoolId, options.studentSnapshots.schoolId),
-            inArray(devices.deviceId, expectedDeviceIds)
+            inArray(devices.deviceId, bindingDeviceIds)
           ))
           .orderBy(devices.deviceId)
           .for("update");
@@ -21616,6 +21762,28 @@ export async function persistClasspilotControlCommandState(
             && active.deviceId === expectation.deviceId;
         if (!accepted) rejectedStudentIds.push(studentId);
         return accepted;
+      });
+    }
+
+    // Serialize the state mutation after exact binding rows so this writer
+    // matches heartbeat/transfer/delivery: sorted student control, sorted
+    // device, exact student session, then teaching session. Building a full
+    // snapshot outside this final lock can otherwise drop a concurrent teacher
+    // command even when revisions remain monotonic.
+    const [lockedSession] = await tx
+      .select({ id: teachingSessions.id })
+      .from(teachingSessions)
+      .where(and(
+        eq(teachingSessions.id, options.studentSnapshots.teachingSessionId),
+        eq(teachingSessions.schoolId, options.studentSnapshots.schoolId),
+        isNull(teachingSessions.endTime)
+      ))
+      .limit(1)
+      .for("update");
+    if (!lockedSession) {
+      throw Object.assign(new Error("Active teaching session not found"), {
+        status: 404,
+        code: "TEACHING_SESSION_NOT_FOUND",
       });
     }
 
@@ -24473,6 +24641,162 @@ export async function getSettingsForSchool(
     .where(eq(settings.schoolId, schoolId))
     .limit(1);
   return row;
+}
+
+export class ClasspilotSsoPolicyRevisionConflictError extends Error {
+  readonly code = "CLASSPILOT_SSO_POLICY_REVISION_CONFLICT";
+  readonly status = 409;
+
+  constructor(readonly current: ClasspilotSsoPolicyRecord) {
+    super("Student sign-in policy changed. Load the latest policy before saving again.");
+    this.name = "ClasspilotSsoPolicyRevisionConflictError";
+  }
+}
+
+async function lockClasspilotSsoPolicyAuthority(
+  schoolId: string,
+  dbInstance: typeof db
+): Promise<void> {
+  await dbInstance.execute(sql`
+    SELECT pg_advisory_xact_lock(
+      hashtext('classpilot-sso-policy'),
+      hashtext(${schoolId})
+    )
+  `);
+}
+
+/**
+ * Freeze the school SSO policy revision while an exact-bound delivery is
+ * prepared. Shared advisory locks allow cohort fan-out to remain concurrent;
+ * the administrator update path takes the matching exclusive lock.
+ */
+export async function lockClasspilotSsoPolicyDeliveryAuthority(
+  schoolId: string,
+  dbInstance: typeof db
+): Promise<void> {
+  await dbInstance.execute(sql`
+    SELECT pg_advisory_xact_lock_shared(
+      hashtext('classpilot-sso-policy'),
+      hashtext(${schoolId})
+    )
+  `);
+}
+
+export async function getClasspilotSsoPolicyForSchool(
+  schoolId: string,
+  dbInstance: typeof db = db
+): Promise<ClasspilotSsoPolicyRecord> {
+  const [row] = await dbInstance
+    .select({
+      classpilotSsoPolicy: settings.classpilotSsoPolicy,
+      classpilotSsoPolicyRevision: settings.classpilotSsoPolicyRevision,
+    })
+    .from(settings)
+    .where(eq(settings.schoolId, schoolId))
+    .limit(1);
+  return classpilotSsoPolicyFromSettings(row);
+}
+
+export async function updateClasspilotSsoPolicy(options: {
+  schoolId: string;
+  expectedRevision: number;
+  policy: unknown;
+  actorUserId: string;
+  actorRole: string;
+}): Promise<ClasspilotSsoPolicyRecord> {
+  const policy = canonicalizeClasspilotSsoPolicy(options.policy);
+  return db.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    await lockClasspilotSsoPolicyAuthority(options.schoolId, transactionDb);
+    const [locked] = await tx
+      .select({
+        classpilotSsoPolicy: settings.classpilotSsoPolicy,
+        classpilotSsoPolicyRevision: settings.classpilotSsoPolicyRevision,
+      })
+      .from(settings)
+      .where(eq(settings.schoolId, options.schoolId))
+      .limit(1)
+      .for("update");
+    const current = classpilotSsoPolicyFromSettings(locked);
+    if (current.revision !== options.expectedRevision) {
+      throw new ClasspilotSsoPolicyRevisionConflictError(current);
+    }
+
+    const nextRevision = current.revision + 1;
+    let persisted: {
+      classpilotSsoPolicy: unknown;
+      classpilotSsoPolicyRevision: number;
+    } | undefined;
+    if (locked) {
+      [persisted] = await tx
+        .update(settings)
+        .set({
+          classpilotSsoPolicy: policy,
+          classpilotSsoPolicyRevision: nextRevision,
+        })
+        .where(
+          and(
+            eq(settings.schoolId, options.schoolId),
+            eq(settings.classpilotSsoPolicyRevision, current.revision)
+          )
+        )
+        .returning({
+          classpilotSsoPolicy: settings.classpilotSsoPolicy,
+          classpilotSsoPolicyRevision: settings.classpilotSsoPolicyRevision,
+        });
+    } else {
+      const [school] = await transactionDb
+        .select({ name: schools.name })
+        .from(schools)
+        .where(eq(schools.id, options.schoolId))
+        .limit(1);
+      if (!school) throw new Error("School not found");
+      [persisted] = await tx
+        .insert(settings)
+        .values({
+          schoolId: options.schoolId,
+          schoolName: school.name,
+          wsSharedKey: "",
+          classpilotSsoPolicy: policy,
+          classpilotSsoPolicyRevision: nextRevision,
+        })
+        .returning({
+          classpilotSsoPolicy: settings.classpilotSsoPolicy,
+          classpilotSsoPolicyRevision: settings.classpilotSsoPolicyRevision,
+        });
+    }
+    if (!persisted) {
+      const latest = await getClasspilotSsoPolicyForSchool(
+        options.schoolId,
+        transactionDb
+      );
+      throw new ClasspilotSsoPolicyRevisionConflictError(latest);
+    }
+
+    await tx.insert(auditLogs).values({
+      schoolId: options.schoolId,
+      userId: options.actorUserId,
+      userEmail: null,
+      userRole: options.actorRole,
+      action: "classpilot.sso_policy.updated",
+      entityType: "settings",
+      entityId: options.schoolId,
+      changes: {
+        fields: ["classpilotSsoPolicy"],
+        previousEnabled: current.policy.enabled,
+        enabled: policy.enabled,
+        previousProfileCount: current.policy.profiles.length,
+        profileCount: policy.profiles.length,
+      },
+      metadata: {
+        source: "classpilot.admin.sso_policy",
+        previousRevision: current.revision,
+        revision: nextRevision,
+        previousPolicyValid: current.valid,
+      },
+    });
+    return classpilotSsoPolicyFromSettings(persisted);
+  });
 }
 
 export async function createCanonicalPass(

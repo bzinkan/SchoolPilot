@@ -7,6 +7,7 @@ import {
   classpilotCommandExpiresAt,
   summarizeClasspilotCommandTargets,
 } from "../src/services/classpilotCommandDelivery.js";
+import { classpilotTransientCurrentPageCommandEnvelope } from "../src/services/classpilotTransientCurrentPage.js";
 
 test("staff command DTO recursively removes internal routing identifiers", () => {
   const command = {
@@ -84,4 +85,44 @@ test("public command DTO adds policy and reports truthful cumulative and outcome
     received: 2,
     awaitingAck: 0,
   });
+});
+
+test("a current-page Waypoint is reported as transient and stores no observed URL", () => {
+  const safe = publicClasspilotCommand({
+    commandType: "lock-screen",
+    commandPayload: { currentPage: true },
+    targets: [],
+  });
+  assert.equal(safe.deliveryPolicy, "transient_action");
+  assert.deepEqual(safe.commandPayload, { currentPage: true });
+  assert.equal(JSON.stringify(safe).includes("CURRENT_URL"), false);
+});
+
+test("a transient current-page envelope carries only ephemeral auth authority", () => {
+  const restrictionExpiresAt = new Date("2026-09-01T13:00:00.000Z");
+  const authPassThrough = {
+    schemaVersion: 1 as const,
+    policyRevision: 7,
+    defaultProfileId: "clever",
+    attemptTtlSeconds: 300,
+    profiles: [{
+      id: "clever",
+      name: "Clever",
+      startUrl: "https://clever.com/in/district?source=schoolpilot",
+      hostRules: [
+        { hostname: "clever.com", includeSubdomains: true },
+        { hostname: "accounts.google.com", includeSubdomains: false },
+      ],
+    }],
+  };
+  assert.deepEqual(classpilotTransientCurrentPageCommandEnvelope({
+    currentPage: true,
+    restrictionExpiresAt,
+    authPassThrough,
+  }), {
+    currentPage: true,
+    restrictionExpiresAt: restrictionExpiresAt.toISOString(),
+    authPassThrough,
+  });
+  assert.deepEqual(classpilotTransientCurrentPageCommandEnvelope({}), {});
 });

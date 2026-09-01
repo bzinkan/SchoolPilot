@@ -6,7 +6,7 @@ import {
   broadcastToTeachersLocal,
   sendToStudentBindingLocal,
 } from "../realtime/ws-broadcast.js";
-import { publishWS } from "../realtime/ws-redis.js";
+import { publishWS, type WsRedisTarget } from "../realtime/ws-redis.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
 import { sendSessionSummaryEmailWithResult } from "./email.js";
 import errorMonitor from "./errorMonitor.js";
@@ -22,11 +22,13 @@ import {
   getActiveSessionsForStudents,
   getClasspilotSessionStudents,
   getClasspilotStudentControlState,
+  getClasspilotSsoPolicyForSchool,
   getClasspilotStudentControlStates,
   getTeachingSessionByIdAndSchool,
   getActiveTeachingSessionForSchool,
   getUserById,
   markSessionSummarySubmissionStarted,
+  lockClasspilotSsoPolicyDeliveryAuthority,
   recoverExpiredSessionSummaryLeases,
   withClasspilotStudentControlDeliveryAuthority,
   withTeachingSessionStartLock,
@@ -38,10 +40,15 @@ import {
   serializeClasspilotStudentControlStateForDelivery,
 } from "./classpilotClassroomState.js";
 import { isClasspilotCapabilityActive } from "./classpilotProtocol.js";
+import {
+  classpilotRealtimeFresh,
+  readClasspilotRealtimeStatusBatch,
+} from "./classpilotRealtimeStatus.js";
 import { getSessionStudentBindings } from "./classpilotFab.js";
 import { syncClasspilotControlStatesToActiveDevices } from "./classpilotControlStateDelivery.js";
 import { stopActiveClasspilotLiveViewNegotiations } from "./classpilotLiveViewStop.js";
 import { classpilotClassroomStatePushFrame } from "./classpilotControlStateFrame.js";
+import { nudgeClasspilotScreenshotPolicyRefresh } from "./classpilotScreenshotPolicyRefresh.js";
 
 export async function publishClasspilotSessionFabStates(options: {
   schoolId: string;
@@ -77,9 +84,22 @@ async function publishControlStateRows(
     states.map((state) => state.studentId)
   );
   const sessionByStudent = new Map(sessions.map((session) => [session.studentId, session]));
+  const realtimeByStudent = await readClasspilotRealtimeStatusBatch(
+    schoolId,
+    sessions.map((session) => ({
+      studentId: session.studentId,
+      studentSessionId: session.id,
+      deviceId: session.deviceId,
+    }))
+  );
   await Promise.all(states.map(async (state) => {
     const studentSession = sessionByStudent.get(state.studentId);
     if (!studentSession) return;
+    const realtimeRead = realtimeByStudent.get(state.studentId);
+    const realtime = realtimeRead?.status === "hit"
+      && classpilotRealtimeFresh(realtimeRead.snapshot)
+      ? realtimeRead.snapshot
+      : null;
     const exactTarget = {
       kind: "student-binding" as const,
       schoolId,
@@ -90,11 +110,15 @@ async function publishControlStateRows(
     const delivery = await withClasspilotStudentControlDeliveryAuthority(
       exactTarget,
       async (transactionDb) => {
-        const current = await getClasspilotStudentControlState(
-          schoolId,
-          state.studentId,
-          transactionDb
-        );
+        await lockClasspilotSsoPolicyDeliveryAuthority(schoolId, transactionDb);
+        const [current, ssoPolicy] = await Promise.all([
+          getClasspilotStudentControlState(
+            schoolId,
+            state.studentId,
+            transactionDb
+          ),
+          getClasspilotSsoPolicyForSchool(schoolId, transactionDb),
+        ]);
         // A newer lifecycle or teacher command supersedes this post-commit
         // side effect. Provenance is immutable, so stamped clears and expired
         // rows still require the exact-school gate and per-socket capability.
@@ -106,7 +130,7 @@ async function publishControlStateRows(
           "lateSignInRestrictionSsoV1",
           { schoolId }
         )) return null;
-        return { current, lateSignInRequired };
+        return { current, lateSignInRequired, ssoPolicy };
       },
       (_claimed, prepared) => {
         if (!prepared) return null;
@@ -118,14 +142,19 @@ async function publishControlStateRows(
         const requiredCapability = prepared.lateSignInRequired
           ? "lateSignInRestrictionSsoV1" as const
           : undefined;
-        const deliveryTarget = requiredCapability
-          ? { ...exactTarget, requiredCapability }
-          : exactTarget;
         const delivered = serializeClasspilotStudentControlStateForDelivery({
           state: prepared.current,
           gateActive,
-          acceptedCapabilities: requiredCapability ? [requiredCapability] : [],
+          acceptedCapabilities: realtime?.acceptedCapabilities ?? [],
           exactBinding: exactTarget,
+          authPassThrough: {
+            gateActive: isClasspilotCapabilityActive(
+              "restrictionAuthPassThroughV1",
+              { schoolId }
+            ),
+            policyRevision: prepared.ssoPolicy.revision,
+            policy: prepared.ssoPolicy.policy,
+          },
         });
         if (!delivered.classroomState || delivered.withheld) return null;
         const classroomState = {
@@ -143,14 +172,46 @@ async function publishControlStateRows(
           },
           classroomState,
         });
-        sendToStudentBindingLocal(deliveryTarget, message, { requiredCapability });
-        return { target: deliveryTarget, message };
+        const classroomRequiredCapabilities = [
+          ...(requiredCapability ? [requiredCapability] : []),
+          ...(delivered.classroomState.authPassThrough
+            ? ["restrictionAuthPassThroughV1" as const]
+            : []),
+        ];
+        const classroomRequiredCapability = classroomRequiredCapabilities.at(-1);
+        const classroomTarget: Extract<WsRedisTarget, { kind: "student-binding" }> =
+          classroomRequiredCapability
+          ? {
+              ...exactTarget,
+              requiredCapability: classroomRequiredCapability,
+              requiredCapabilities: classroomRequiredCapabilities,
+            }
+          : exactTarget;
+        return { target: classroomTarget, message };
       }
     );
     if (delivery.authorized && delivery.value) {
+      sendToStudentBindingLocal(delivery.value.target, delivery.value.message, {
+        requiredCapability: delivery.value.target.requiredCapability,
+        requiredCapabilities: delivery.value.target.requiredCapabilities,
+      });
       await publishWS(delivery.value.target, delivery.value.message);
     }
   }));
+  const teachingSessionIds = [...new Set(states.flatMap((state) => {
+    const teachingSessionId = teachingSessionIdOverride || state.teachingSessionId;
+    return teachingSessionId ? [teachingSessionId] : [];
+  }))];
+  await Promise.all(teachingSessionIds.map((teachingSessionId) =>
+    nudgeClasspilotScreenshotPolicyRefresh({
+      schoolId,
+      teachingSessionId,
+      studentIds: states
+        .filter((state) => (teachingSessionIdOverride || state.teachingSessionId) === teachingSessionId)
+        .map((state) => state.studentId),
+      reason: "scope_changed",
+    }).catch(() => 0)
+  ));
 }
 
 export async function pushClasspilotSessionControlStates(

@@ -24,7 +24,7 @@ describe("ClassPilot teacher command payload validation", () => {
     }));
   });
 
-  it("locks to the CURRENT_URL sentinel or a normalized HTTP URL only", () => {
+  it("locks to CURRENT_URL or a canonical query-free HTTPS Waypoint", () => {
     assert.deepEqual(validateClasspilotCommandPayload("lock-screen", { url: "CURRENT_URL" }), {
       url: "CURRENT_URL",
     });
@@ -34,6 +34,21 @@ describe("ClassPilot teacher command payload validation", () => {
     assert.deepEqual(validateClasspilotCommandPayload("lock-screen", { url: "ixl.com" }), {
       url: "https://ixl.com/",
     });
+    assert.deepEqual(validateClasspilotCommandPayload("lock-screen", {
+      url: "HTTPS://EXAMPLE.EDU:443/course/../classroom",
+    }), { url: "https://example.edu/classroom" });
+    invalid(() => validateClasspilotCommandPayload("lock-screen", {
+      url: "http://example.edu/classroom",
+    }), "url");
+    invalid(() => validateClasspilotCommandPayload("lock-screen", {
+      url: "https://example.edu/classroom?token=secret",
+    }), "url");
+    invalid(() => validateClasspilotCommandPayload("lock-screen", {
+      url: "https://example.edu/classroom#student-token",
+    }), "url");
+    invalid(() => validateClasspilotCommandPayload("lock-screen", {
+      url: "https://student:secret@example.edu/classroom",
+    }), "url");
     invalid(() => validateClasspilotCommandPayload("lock-screen", { url: "javascript:alert(1)" }), "url");
     invalid(() => validateClasspilotCommandPayload("lock-screen", { url: "https://" }), "url");
     invalid(() => validateClasspilotCommandPayload("lock-screen", { url: "" }));

@@ -3436,9 +3436,11 @@ describe("ClassPilot supervision coverage storage contracts", () => {
           assert.deepEqual(row.operatorCapabilities, {
             studentAuthGatePresenceV1: true,
             lateSignInRestrictionSsoV1: true,
+            restrictionAuthPassThroughV1: false,
           });
           assert.equal(row.studentAuthGatePresenceV1Enabled, true);
           assert.equal(row.lateSignInRestrictionSsoV1Enabled, true);
+          assert.equal(row.restrictionAuthPassThroughV1Enabled, false);
         }
         assert.equal(signedOutRow.isLoggedIn, false);
         assert.equal(signedOutRow.loginState, "not_logged_in");

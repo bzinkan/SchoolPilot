@@ -360,6 +360,24 @@ describe("ClassPilot cluster-safe realtime status", () => {
     ]);
   });
 
+  it("retains explicit complete authentication state and drops unknown states", async () => {
+    const store = createClasspilotRealtimeStatusStore(async () => undefined, () => 1_000_000);
+    const completed = await store.write(heartbeat({
+      restrictionAuthState: "complete",
+      appliedAuthPolicyRevision: 14,
+    }));
+    assert.equal(completed.snapshot?.restrictionAuthState, "complete");
+    assert.equal(completed.snapshot?.appliedAuthPolicyRevision, 14);
+
+    const invalid = await store.write(heartbeat({
+      heartbeatId: "heartbeat-b",
+      restrictionAuthState: "provider-secret-state",
+      appliedAuthPolicyRevision: null,
+    }));
+    assert.equal(invalid.snapshot?.restrictionAuthState, undefined);
+    assert.equal(invalid.snapshot?.appliedAuthPolicyRevision, undefined);
+  });
+
   it("guards local classification patches by exact heartbeat and session", async () => {
     let clock = 1_000_000;
     const store = createClasspilotRealtimeStatusStore(async () => undefined, () => clock++);
@@ -640,10 +658,15 @@ describe("ClassPilot cluster-safe realtime status", () => {
       "domainPreservingRestrictionsV1",
       "studentAuthGatePresenceV1",
       "lateSignInRestrictionSsoV1",
+      "restrictionAuthPassThroughV1",
     ]) {
       assert.match(contract, new RegExp(`${capability}: extensionCapabilities\\.has\\("${capability}"\\)`));
     }
     assert.match(contract, /minExtensionVersion: "2\.6\.0"/);
+    assert.match(
+      contract,
+      /acceptedCapabilities:[\s\S]*restrictionAuthPassThroughV1: acceptedCapabilities\.has/
+    );
     assert.doesNotMatch(contract, /deviceId|studentSessionId|schoolId/);
     assert.match(aggregate, /publicClasspilotExtensionContract\(capabilityRealtime\)/);
     assert.match(aggregate, /normalizeClasspilotPublicClassroomControls\([\s\S]*?visibleRealtime\?\.classroomControls/);
@@ -667,6 +690,14 @@ describe("ClassPilot cluster-safe realtime status", () => {
     assert.match(
       deviceProjection,
       /lateSignInRestrictionSsoV1: extensionCapabilities\.has\("lateSignInRestrictionSsoV1"\)/
+    );
+    assert.match(
+      deviceProjection,
+      /restrictionAuthPassThroughV1: extensionCapabilities\.has\("restrictionAuthPassThroughV1"\)/
+    );
+    assert.match(
+      deviceProjection,
+      /acceptedCapabilities:[\s\S]*restrictionAuthPassThroughV1: acceptedCapabilities\.has/
     );
     assert.doesNotMatch(deviceProjection, /snapshot\.classroomControls\.(?:screenLocked|flightPathActive|activeFlightPathName|isSharing|cameraActive)/);
   });

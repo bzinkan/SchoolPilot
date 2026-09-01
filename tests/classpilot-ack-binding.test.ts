@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  classpilotAckAppliedAuthPolicyRevision,
   classpilotAckControlRevision,
   classpilotAckEnvelopeMatchesBinding,
 } from "../src/services/classpilotAckBinding.js";
@@ -72,6 +73,22 @@ describe("ClassPilot command ACK envelope binding", () => {
     ]) {
       assert.equal(classpilotAckEnvelopeMatchesBinding(ack, authenticated), false);
       assert.equal(classpilotAckControlRevision(ack), undefined);
+    }
+  });
+
+  it("accepts only a non-negative integer auth-policy fence", () => {
+    assert.equal(
+      classpilotAckAppliedAuthPolicyRevision({ appliedAuthPolicyRevision: 14 }),
+      14,
+    );
+    for (const ack of [
+      {},
+      { appliedAuthPolicyRevision: null },
+      { appliedAuthPolicyRevision: "14" },
+      { appliedAuthPolicyRevision: -1 },
+      { appliedAuthPolicyRevision: 1.5 },
+    ]) {
+      assert.equal(classpilotAckAppliedAuthPolicyRevision(ack), undefined);
     }
   });
 });

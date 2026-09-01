@@ -532,6 +532,7 @@ export default function Dashboard() {
   });
   const [tileGlobalAuthorizationDenied, setTileGlobalAuthorizationDenied] = useState(false);
   const [targetedScreenshotFailureByStudent, setTargetedScreenshotFailureByStudent] = useState(() => new Map());
+  const [updatingPreviewStudentIds, setUpdatingPreviewStudentIds] = useState(() => new Set());
   const [detailHistoryDeniedStudentIds, setDetailHistoryDeniedStudentIds] = useState(() => new Set());
   sessionSubscriptionStateRef.current = sessionSubscriptionState;
   const [freshnessVersion, setFreshnessVersion] = useState(0);
@@ -2565,6 +2566,9 @@ export default function Dashboard() {
   const historyTileBatchContextKey = JSON.stringify(historyTileBatchContext);
   useLayoutEffect(() => {
     setTileGlobalAuthorizationDenied(false);
+    setUpdatingPreviewStudentIds((current) => (
+      current.size === 0 ? current : new Set()
+    ));
   }, [screenshotTileBatchContextKey]);
   const previousScreenshotTileBindingsRef = useRef({
     contextKey: null,
@@ -2583,6 +2587,11 @@ export default function Dashboard() {
     if (previous.contextKey !== screenshotTileBatchContextKey) return;
     const changedStudentIds = changedTileBindingStudentIds(previous.students, nextStudents);
     if (changedStudentIds.length === 0) return;
+    setUpdatingPreviewStudentIds((current) => {
+      const next = new Set(current);
+      for (const studentId of changedStudentIds) next.add(studentId);
+      return next;
+    });
     pendingScreenshotTileBindingChangeRef.current = {
       key: screenshotTileBindingTransitionKey,
       studentIds: changedStudentIds,
@@ -2875,6 +2884,16 @@ export default function Dashboard() {
     if (screenshotTileQueries.length === 0) return EMPTY_TILE_MAP;
     return new Map(screenshotTileQueries.flatMap((query) => [...(query.data || EMPTY_TILE_MAP)]));
   }, [screenshotTileQueries]);
+  useEffect(() => {
+    setUpdatingPreviewStudentIds((current) => {
+      if (current.size === 0) return current;
+      const next = new Set(current);
+      for (const studentId of current) {
+        if (screenshotsByStudent.get(studentId)?.screenshot) next.delete(studentId);
+      }
+      return next.size === current.size ? current : next;
+    });
+  }, [screenshotsByStudent]);
   const screenshotRefreshStateByStudent = useMemo(() => {
     const refreshState = new Map();
     for (const [studentId, failure] of targetedScreenshotFailureByStudent) {
@@ -3395,6 +3414,7 @@ export default function Dashboard() {
       : targetStudents;
   const bannerCounts = {
     connected: 0,
+    signingIn: 0,
     updating: 0,
     signalLost: 0,
     updatesUnavailable: 0,
@@ -3417,6 +3437,9 @@ export default function Dashboard() {
       case 'online':
       case 'idle':
         bannerCounts.connected += 1;
+        break;
+      case 'signing_in':
+        bannerCounts.signingIn += 1;
         break;
       case 'signal_lost':
         bannerCounts.signalLost += 1;
@@ -3457,6 +3480,7 @@ export default function Dashboard() {
       : `All ${observedViewStudents.length} student${observedViewStudents.length === 1 ? "" : "s"}`;
   const targetConnectionLabel = [
     `${bannerCounts.connected} connected`,
+    `${bannerCounts.signingIn} signing in`,
     `${bannerCounts.updating} updating`,
     `${bannerCounts.signalLost} signal lost`,
     `${bannerCounts.updatesUnavailable} updates unavailable`,
@@ -4025,16 +4049,12 @@ export default function Dashboard() {
   });
 
   const refreshScreenshotsForDevices = () => {
-    // Keep action feedback responsive without restoring per-device fan-out.
-    // Each refresh is a single cohort request regardless of class size.
-    for (const delay of [1000, 2000, 3000, 5000, 8000]) {
-      setTimeout(() => {
-        queryClient.invalidateQueries({
-          queryKey: [TILE_BATCH_QUERY_ROOTS.screenshots],
-          refetchType: 'all',
-        });
-      }, delay);
-    }
+    // Screenshot-available events drive exact-student refreshes. Queue one
+    // bounded targeted fallback for a missed event; never burst-refetch the
+    // whole cohort after a classroom command.
+    queueTargetedScreenshotRefresh(
+      targetStudents.map((student) => student.studentId).filter(Boolean),
+    );
   };
 
   const decorateCommandResponse = (data, commandType) => {
@@ -5467,6 +5487,7 @@ export default function Dashboard() {
                       ? undefined
                       : (opener) => openExpandedScreenshot(student.studentId, opener)}
                     screenshotRefreshUnavailable={screenshotRefreshState?.transientUnavailable === true}
+                    screenshotUpdating={updatingPreviewStudentIds.has(student.studentId) && !screenshotRefreshState}
                     flightPaths={supervisedElsewhere ? EMPTY_LIST : flightPaths}
                     monitoringDisplay={monitoringDisplay || undefined}
                     freshnessNowMs={freshnessNowMs}

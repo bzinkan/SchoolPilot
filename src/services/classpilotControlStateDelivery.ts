@@ -4,7 +4,9 @@ import { publishWSBatch, type PublishWSBatchItem } from "../realtime/ws-redis.js
 import { runWithTenantContext } from "../middleware/tenantContext.js";
 import {
   getActiveSessionsForStudents,
+  getClasspilotSsoPolicyForSchool,
   getClasspilotStudentControlState,
+  lockClasspilotSsoPolicyDeliveryAuthority,
   withClasspilotStudentControlDeliveryAuthority,
 } from "./storage.js";
 import {
@@ -12,11 +14,16 @@ import {
   serializeClasspilotStudentControlStateForDelivery,
 } from "./classpilotClassroomState.js";
 import { isClasspilotCapabilityActive } from "./classpilotProtocol.js";
+import {
+  classpilotRealtimeFresh,
+  readClasspilotRealtimeStatusBatch,
+} from "./classpilotRealtimeStatus.js";
 import { buildStudentFabState } from "./classpilotFab.js";
 import {
   classpilotClassroomStatePushFrame,
   classpilotFabStatePushFrame,
 } from "./classpilotControlStateFrame.js";
+import { nudgeClasspilotScreenshotPolicyRefresh } from "./classpilotScreenshotPolicyRefresh.js";
 
 /** Push the authoritative classroom + FAB snapshots after any class/coverage
  * ownership transition.
@@ -37,6 +44,14 @@ export async function syncClasspilotControlStatesToActiveDevices(
         latestSessionByStudent.set(session.studentId, session);
       }
     }
+    const realtimeByStudent = await readClasspilotRealtimeStatusBatch(
+      schoolId,
+      [...latestSessionByStudent.values()].map((session) => ({
+        studentId: session.studentId,
+        studentSessionId: session.id,
+        deviceId: session.deviceId,
+      }))
+    );
 
     const publications: PublishWSBatchItem[] = [];
     let authorizedTargets = 0;
@@ -50,14 +65,23 @@ export async function syncClasspilotControlStatesToActiveDevices(
         studentSessionId: session.id,
         deviceId: session.deviceId,
       };
+      const realtimeRead = realtimeByStudent.get(studentId);
+      const realtime = realtimeRead?.status === "hit"
+        && classpilotRealtimeFresh(realtimeRead.snapshot)
+        ? realtimeRead.snapshot
+        : null;
       const delivery = await withClasspilotStudentControlDeliveryAuthority(
         exactTarget,
         async (transactionDb) => {
-          const state = await getClasspilotStudentControlState(
-            schoolId,
-            studentId,
-            transactionDb
-          );
+          await lockClasspilotSsoPolicyDeliveryAuthority(schoolId, transactionDb);
+          const [state, ssoPolicy] = await Promise.all([
+            getClasspilotStudentControlState(
+              schoolId,
+              studentId,
+              transactionDb
+            ),
+            getClasspilotSsoPolicyForSchool(schoolId, transactionDb),
+          ]);
           const lateSignInRequired = !!state
             && classpilotControlStateHasLateSignInOrigin(state.desiredState);
           // Provenance is immutable, including after expiry or a clear. Gate-off
@@ -69,6 +93,7 @@ export async function syncClasspilotControlStatesToActiveDevices(
           )) {
             return {
               state,
+              ssoPolicy,
               fabState: null,
               lateSignInRequired,
               deferredOriginWithheld: true as const,
@@ -100,6 +125,7 @@ export async function syncClasspilotControlStatesToActiveDevices(
           }
           return {
             state,
+            ssoPolicy,
             fabState,
             lateSignInRequired,
             deferredOriginWithheld: false as const,
@@ -119,34 +145,56 @@ export async function syncClasspilotControlStatesToActiveDevices(
           const requiredCapability = prepared.lateSignInRequired
             ? "lateSignInRestrictionSsoV1" as const
             : undefined;
-          const deliveryTarget = requiredCapability
-            ? { ...exactTarget, requiredCapability }
-            : exactTarget;
 
           if (prepared.state) {
             const deliveredState = serializeClasspilotStudentControlStateForDelivery({
               state: prepared.state,
               gateActive,
-              acceptedCapabilities: requiredCapability ? [requiredCapability] : [],
+              acceptedCapabilities: realtime?.acceptedCapabilities ?? [],
               exactBinding: exactTarget,
-            });
-            if (!deliveredState.classroomState || deliveredState.withheld) {
-              return { publications: authorizedPublications };
-            }
-            const classroomMessage = classpilotClassroomStatePushFrame({
-              type: "classroom-state-sync",
-              messageId: randomUUID(),
-              binding: {
-                schoolId,
-                deviceId: session.deviceId,
-                studentId,
-                studentSessionId: session.id,
-                controlRevision: prepared.state.revision,
+              authPassThrough: {
+                gateActive: isClasspilotCapabilityActive(
+                  "restrictionAuthPassThroughV1",
+                  { schoolId }
+                ),
+                policyRevision: prepared.ssoPolicy.revision,
+                policy: prepared.ssoPolicy.policy,
               },
-              classroomState: deliveredState.classroomState,
             });
-            sendToStudentBindingLocal(deliveryTarget, classroomMessage, { requiredCapability });
-            authorizedPublications.push({ target: deliveryTarget, message: classroomMessage });
+            // Withhold only the restriction snapshot when this binding lacks
+            // sign-in-safe restriction support. FAB ownership is a separate
+            // exact-bound authority surface and must still converge/clear on a
+            // class or Coverage transition. Immutable deferred-origin state is
+            // handled by the whole-transition guard above.
+            if (deliveredState.classroomState && !deliveredState.withheld) {
+              const classroomMessage = classpilotClassroomStatePushFrame({
+                type: "classroom-state-sync",
+                messageId: randomUUID(),
+                binding: {
+                  schoolId,
+                  deviceId: session.deviceId,
+                  studentId,
+                  studentSessionId: session.id,
+                  controlRevision: prepared.state.revision,
+                },
+                classroomState: deliveredState.classroomState,
+              });
+              const classroomRequiredCapabilities = [
+                ...(requiredCapability ? [requiredCapability] : []),
+                ...(deliveredState.classroomState.authPassThrough
+                  ? ["restrictionAuthPassThroughV1" as const]
+                  : []),
+              ];
+              const classroomRequiredCapability = classroomRequiredCapabilities.at(-1);
+              const classroomTarget = classroomRequiredCapability
+                ? {
+                    ...exactTarget,
+                    requiredCapability: classroomRequiredCapability,
+                    requiredCapabilities: classroomRequiredCapabilities,
+                  }
+                : exactTarget;
+              authorizedPublications.push({ target: classroomTarget, message: classroomMessage });
+            }
           }
 
           const fabMessage = classpilotFabStatePushFrame({
@@ -165,16 +213,42 @@ export async function syncClasspilotControlStatesToActiveDevices(
               reason: "control_ownership_transition",
             },
           });
-          sendToStudentBindingLocal(deliveryTarget, fabMessage, { requiredCapability });
-          authorizedPublications.push({ target: deliveryTarget, message: fabMessage });
+          const fabTarget = requiredCapability
+            ? { ...exactTarget, requiredCapability }
+            : exactTarget;
+          authorizedPublications.push({ target: fabTarget, message: fabMessage });
           return { publications: authorizedPublications };
         }
       );
       if (!delivery.authorized) continue;
       authorizedTargets += 1;
+      for (const publication of delivery.value.publications) {
+        if (publication.target.kind !== "student-binding") continue;
+        sendToStudentBindingLocal(publication.target, publication.message, {
+          requiredCapability: publication.target.requiredCapability,
+          requiredCapabilities: publication.target.requiredCapabilities,
+        });
+      }
       publications.push(...delivery.value.publications);
     }
     if (publications.length > 0) await publishWSBatch(publications);
+    const teachingSessionIds = [...new Set(publications.flatMap((publication) => {
+      const classroomState = (publication.message as {
+        classroomState?: { teachingSessionId?: unknown };
+      }).classroomState;
+      return typeof classroomState?.teachingSessionId === "string"
+        && classroomState.teachingSessionId
+        ? [classroomState.teachingSessionId]
+        : [];
+    }))];
+    await Promise.all(teachingSessionIds.map((teachingSessionId) =>
+      nudgeClasspilotScreenshotPolicyRefresh({
+        schoolId,
+        teachingSessionId,
+        studentIds: uniqueStudentIds,
+        reason: "scope_changed",
+      }).catch(() => 0)
+    ));
     return authorizedTargets;
   });
 }

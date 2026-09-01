@@ -126,6 +126,13 @@ export const settings = pgTable("settings", {
   classpilotScheduleChangesRevision: integer(
     "classpilot_schedule_changes_revision"
   ).notNull().default(0),
+  classpilotSsoPolicy: jsonb("classpilot_sso_policy")
+    .notNull()
+    .default(sql`'{"schemaVersion":1,"enabled":false,"defaultProfileId":"clever","attemptTtlSeconds":300,"profiles":[{"id":"clever","name":"Clever","startUrl":"https://clever.com/","hostRules":[{"hostname":"accounts.google.com","includeSubdomains":false},{"hostname":"clever.com","includeSubdomains":true}]},{"id":"google","name":"Google","startUrl":"https://accounts.google.com/","hostRules":[{"hostname":"accounts.google.com","includeSubdomains":false}]}]}'::jsonb`)
+    .$type<unknown>(),
+  classpilotSsoPolicyRevision: integer("classpilot_sso_policy_revision")
+    .notNull()
+    .default(0),
 }, (table) => [
   check(
     "settings_passpilot_class_source_check",
@@ -142,6 +149,14 @@ export const settings = pgTable("settings", {
   check(
     "settings_cp_schedule_change_revision_check",
     sql`${table.classpilotScheduleChangesRevision} >= 0`
+  ),
+  check(
+    "settings_cp_sso_policy_object_check",
+    sql`jsonb_typeof(${table.classpilotSsoPolicy}) = 'object'`
+  ),
+  check(
+    "settings_cp_sso_policy_revision_check",
+    sql`${table.classpilotSsoPolicyRevision} >= 0`
   ),
 ]);
 

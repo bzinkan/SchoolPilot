@@ -20,6 +20,34 @@ function httpUrl(value: unknown, field = "url"): string {
   return parsed.toString();
 }
 
+function persistentWaypointUrl(value: unknown): string {
+  const parsed = new URL(httpUrl(value));
+  if (parsed.protocol !== "https:") {
+    throw new z.ZodError([{
+      code: "custom",
+      path: ["url"],
+      message: "Waypoint URL must use HTTPS",
+    }]);
+  }
+  if (parsed.search || parsed.hash) {
+    throw new z.ZodError([{
+      code: "custom",
+      path: ["url"],
+      message: "Waypoint URL cannot include query parameters or fragments",
+    }]);
+  }
+  if (parsed.username || parsed.password) {
+    throw new z.ZodError([{
+      code: "custom",
+      path: ["url"],
+      message: "Waypoint URL cannot include credentials",
+    }]);
+  }
+  // Persist the canonical origin and pathname only. Query strings and
+  // fragments are rejected above rather than silently changing teacher intent.
+  return `${parsed.origin}${parsed.pathname}`;
+}
+
 function domain(value: unknown): string {
   const raw = z.string().trim().min(1).max(253).parse(value).replace(/^https?:\/\//i, "");
   let parsed: URL;
@@ -68,7 +96,11 @@ export function validateClasspilotCommandPayload(
       }
       case "lock-screen": {
         const value = strictObject({ url: z.unknown() }).parse(raw);
-        return { url: value.url === "CURRENT_URL" ? "CURRENT_URL" : httpUrl(value.url) };
+        return {
+          url: value.url === "CURRENT_URL"
+            ? "CURRENT_URL"
+            : persistentWaypointUrl(value.url),
+        };
       }
       case "unlock-screen": {
         // Canonical Unlock is intentionally narrower than Flight Path removal.

@@ -67,11 +67,13 @@ $script:TrackingWindowCapability = "screenshotTrackingWindowLeaseV1"
 $script:FastPreviewCapability = "screenshotActiveObservationCadenceV1"
 $script:StudentGatePresenceCapability = "studentAuthGatePresenceV1"
 $script:LateSignInRestrictionSsoCapability = "lateSignInRestrictionSsoV1"
+$script:RestrictionAuthPassThroughCapability = "restrictionAuthPassThroughV1"
 $script:AdditiveCapabilities = @(
     $script:TrackingWindowCapability,
     $script:FastPreviewCapability,
     $script:StudentGatePresenceCapability,
-    $script:LateSignInRestrictionSsoCapability
+    $script:LateSignInRestrictionSsoCapability,
+    $script:RestrictionAuthPassThroughCapability
 )
 $script:AllCapabilities = @($script:RepairedCapabilities) + @($script:AdditiveCapabilities) + @(
     "kioskLaunchTicketV1"
@@ -87,6 +89,7 @@ $script:CapabilityFlags = [ordered]@{
     screenshotActiveObservationCadenceV1 = "CLASSPILOT_CAP_SCREENSHOT_ACTIVE_OBSERVATION_CADENCE_V1"
     studentAuthGatePresenceV1    = "CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1"
     lateSignInRestrictionSsoV1   = "CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1"
+    restrictionAuthPassThroughV1 = "CLASSPILOT_CAP_RESTRICTION_AUTH_PASS_THROUGH_V1"
     safetyEvidenceCaptureV1       = "CLASSPILOT_CAP_SAFETY_EVIDENCE_CAPTURE_V1"
     liveViewIceServersV1          = "CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1"
     kioskLaunchTicketV1           = "CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V1"
@@ -407,12 +410,14 @@ function ConvertTo-RuntimeConfiguration {
     $schemaThreeModes = @("student-gate-pilot", "student-gate-global-on", "student-gate-off")
     $schemaFourModes = @("late-signin-pilot", "late-signin-off")
     $schemaFiveModes = @("fast-preview-pilot", "fast-preview-global-on", "fast-preview-off")
+    $schemaSixModes = @("restriction-auth-pilot", "restriction-auth-off")
     if (($schemaVersion -eq 1 -and $mode -cnotin $schemaOneModes) -or
         ($schemaVersion -eq 2 -and $mode -cnotin $schemaTwoModes) -or
         ($schemaVersion -eq 3 -and $mode -cnotin $schemaThreeModes) -or
         ($schemaVersion -eq 4 -and $mode -cnotin $schemaFourModes) -or
         ($schemaVersion -eq 5 -and $mode -cnotin $schemaFiveModes) -or
-        $schemaVersion -notin @(1, 2, 3, 4, 5)) {
+        ($schemaVersion -eq 6 -and $mode -cnotin $schemaSixModes) -or
+        $schemaVersion -notin @(1, 2, 3, 4, 5, 6)) {
         throw "Runtime profile schemaVersion and mode do not match a reviewed profile contract."
     }
 
@@ -443,7 +448,10 @@ function ConvertTo-RuntimeConfiguration {
             throw "$mode profiles must not contain test-school fields."
         }
     }
-    if ($mode -cin @("tracking-window-pilot", "student-gate-pilot", "late-signin-pilot", "fast-preview-pilot")) {
+    if ($mode -cin @(
+        "tracking-window-pilot", "student-gate-pilot", "late-signin-pilot",
+        "fast-preview-pilot", "restriction-auth-pilot"
+    )) {
         $pilotSchoolId = [string]$Profile.pilotSchoolId
         if ($pilotSchoolId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
             throw "The selected pilot profile requires one canonical UUID school ID."
@@ -470,6 +478,9 @@ function ConvertTo-RuntimeConfiguration {
     }
     if ($mode -cin $schemaFiveModes -and $Profile.PSObject.Properties.Name -contains "turn") {
         throw "Fast-preview profiles must preserve existing TURN runtime wiring."
+    }
+    if ($mode -cin $schemaSixModes -and $Profile.PSObject.Properties.Name -contains "turn") {
+        throw "Restriction-auth profiles must preserve existing TURN runtime wiring."
     }
     if ($mode -ceq "tracking-window-pilot" -and $Profile.PSObject.Properties.Name -contains "turn") {
         throw "The tracking-window-pilot profile must preserve existing TURN runtime wiring."
@@ -503,14 +514,22 @@ function ConvertTo-RuntimeConfiguration {
         throw "The selected profile requires verified TURN inputs."
     }
 
-    if ($mode -cin @($schemaThreeModes + $schemaFourModes + $schemaFiveModes)) {
-        $selectedCapability = if ($mode -cin $schemaFiveModes) {
+    if ($mode -cin @($schemaThreeModes + $schemaFourModes + $schemaFiveModes + $schemaSixModes)) {
+        $selectedCapability = if ($mode -cin $schemaSixModes) {
+            $script:RestrictionAuthPassThroughCapability
+        } elseif ($mode -cin $schemaFiveModes) {
             $script:FastPreviewCapability
         } elseif ($mode -cin $schemaFourModes) {
             $script:LateSignInRestrictionSsoCapability
         } else { $script:StudentGatePresenceCapability }
-        $isPilot = $mode -cin @("student-gate-pilot", "late-signin-pilot", "fast-preview-pilot")
-        $isOff = $mode -cin @("student-gate-off", "late-signin-off", "fast-preview-off")
+        $isPilot = $mode -cin @(
+            "student-gate-pilot", "late-signin-pilot", "fast-preview-pilot",
+            "restriction-auth-pilot"
+        )
+        $isOff = $mode -cin @(
+            "student-gate-off", "late-signin-off", "fast-preview-off",
+            "restriction-auth-off"
+        )
         return [pscustomobject]@{
             Mode = $mode
             SchoolScopeCount = if ($isPilot) { 1 } else { 0 }
@@ -591,7 +610,8 @@ function Resolve-SourcePreservingRuntimeConfiguration {
     if ([string]$RuntimeIntent.Mode -cnotin @(
         "student-gate-pilot", "student-gate-global-on", "student-gate-off",
         "late-signin-pilot", "late-signin-off",
-        "fast-preview-pilot", "fast-preview-global-on", "fast-preview-off"
+        "fast-preview-pilot", "fast-preview-global-on", "fast-preview-off",
+        "restriction-auth-pilot", "restriction-auth-off"
     )) {
         throw "The source-preserving runtime intent is unsupported."
     }
@@ -641,16 +661,24 @@ function Resolve-SourcePreservingRuntimeConfiguration {
     $isLateSignInIntent = [string]$RuntimeIntent.Mode -cin @(
         "late-signin-pilot", "late-signin-off"
     )
-    $selectedCapability = if ($isFastPreviewIntent) {
+    $isRestrictionAuthIntent = [string]$RuntimeIntent.Mode -cin @(
+        "restriction-auth-pilot", "restriction-auth-off"
+    )
+    $selectedCapability = if ($isRestrictionAuthIntent) {
+        $script:RestrictionAuthPassThroughCapability
+    } elseif ($isFastPreviewIntent) {
         $script:FastPreviewCapability
     } elseif ($isLateSignInIntent) {
         $script:LateSignInRestrictionSsoCapability
     } else { $script:StudentGatePresenceCapability }
     $gateOn = [string]$RuntimeIntent.Mode -cnotin @(
-        "student-gate-off", "late-signin-off", "fast-preview-off"
+        "student-gate-off", "late-signin-off", "fast-preview-off", "restriction-auth-off"
     )
     $gateEntry = [ordered]@{ mode = if ($gateOn) { "on" } else { "off" } }
-    if ([string]$RuntimeIntent.Mode -cin @("student-gate-pilot", "late-signin-pilot", "fast-preview-pilot")) {
+    if ([string]$RuntimeIntent.Mode -cin @(
+        "student-gate-pilot", "late-signin-pilot", "fast-preview-pilot",
+        "restriction-auth-pilot"
+    )) {
         $profileSchoolId = [string]$RuntimeIntent.PilotSchoolId
         if ($profileSchoolId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
             throw "School-scoped capability pilot intent has an invalid school scope."
@@ -660,7 +688,10 @@ function Resolve-SourcePreservingRuntimeConfiguration {
     $sourceSelectedMode = if ($sourceRollouts.PSObject.Properties.Name -ccontains $selectedCapability) {
         [string]$sourceRollouts.$selectedCapability.mode
     } else { "off" }
-    if ([string]$RuntimeIntent.Mode -cin @("student-gate-pilot", "late-signin-pilot", "fast-preview-pilot") -and
+    if ([string]$RuntimeIntent.Mode -cin @(
+        "student-gate-pilot", "late-signin-pilot", "fast-preview-pilot",
+        "restriction-auth-pilot"
+    ) -and
         $sourceSelectedMode -cne "off") {
         throw "A school-scoped capability pilot must begin from its off profile."
     }
@@ -687,7 +718,10 @@ function Resolve-SourcePreservingRuntimeConfiguration {
         Turn = $null
         RequiresSourceRuntime = $false
         SourceMode = [string]$sourceState.Mode
-        PilotSchoolId = if ([string]$RuntimeIntent.Mode -cin @("student-gate-pilot", "late-signin-pilot", "fast-preview-pilot")) {
+        PilotSchoolId = if ([string]$RuntimeIntent.Mode -cin @(
+            "student-gate-pilot", "late-signin-pilot", "fast-preview-pilot",
+            "restriction-auth-pilot"
+        )) {
             [string]$RuntimeIntent.PilotSchoolId
         } else { $null }
     }
@@ -2209,6 +2243,7 @@ function Get-RuntimeActivationState {
             StudentGateMode = "off"; StudentGateSchoolId = $null
             LateSignInMode = "off"; LateSignInSchoolId = $null
             FastPreviewMode = "off"; FastPreviewSchoolId = $null
+            RestrictionAuthMode = "off"; RestrictionAuthSchoolId = $null
         }
     }
     $absentAdditiveCapabilities = @($script:AdditiveCapabilities | Where-Object {
@@ -2267,6 +2302,7 @@ function Get-RuntimeActivationState {
             StudentGateMode = "off"; StudentGateSchoolId = $null
             LateSignInMode = "off"; LateSignInSchoolId = $null
             FastPreviewMode = "off"; FastPreviewSchoolId = $null
+            RestrictionAuthMode = "off"; RestrictionAuthSchoolId = $null
         }
     }
 
@@ -2362,6 +2398,37 @@ function Get-RuntimeActivationState {
         $lateSignInSchoolId = [string]$lateSignInSchoolIds[0]
     }
 
+    $restrictionAuthFlag = [string]$script:CapabilityFlags[$script:RestrictionAuthPassThroughCapability]
+    $restrictionAuthFlagValue = [string]$values[$restrictionAuthFlag]
+    $restrictionAuthRollout = $rollouts.$($script:RestrictionAuthPassThroughCapability)
+    if ($restrictionAuthFlagValue -cnotin @("true", "false")) {
+        throw "Restriction auth pass-through kill switch is invalid."
+    }
+    $restrictionAuthMode = "off"
+    $restrictionAuthSchoolId = $null
+    if ($restrictionAuthFlagValue -ceq "false") {
+        if ([string]$restrictionAuthRollout.mode -cne "off" -or
+            $restrictionAuthRollout.PSObject.Properties.Name -contains "schoolIds") {
+            throw "Restriction auth pass-through requires both matching activation controls."
+        }
+    }
+    elseif ([string]$restrictionAuthRollout.mode -cne "on" -or
+        -not ($restrictionAuthRollout.PSObject.Properties.Name -contains "schoolIds")) {
+        throw "Restriction auth pass-through may be enabled only for one exact school."
+    }
+    else {
+        if ($restrictionAuthRollout.schoolIds -isnot [Array]) {
+            throw "Restriction auth pilot school scope must be an array."
+        }
+        $restrictionAuthSchoolIds = @($restrictionAuthRollout.schoolIds)
+        if ($restrictionAuthSchoolIds.Count -ne 1 -or
+            [string]$restrictionAuthSchoolIds[0] -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
+            throw "Restriction auth pilot runtime configuration has invalid school scope."
+        }
+        $restrictionAuthMode = "pilot"
+        $restrictionAuthSchoolId = [string]$restrictionAuthSchoolIds[0]
+    }
+
     $fastPreviewFlag = [string]$script:CapabilityFlags[$script:FastPreviewCapability]
     $fastPreviewFlagValue = [string]$values[$fastPreviewFlag]
     $fastPreviewRollout = $rollouts.$($script:FastPreviewCapability)
@@ -2428,6 +2495,7 @@ function Get-RuntimeActivationState {
                 StudentGateMode = $studentGateMode; StudentGateSchoolId = $studentGateSchoolId
                 LateSignInMode = $lateSignInMode; LateSignInSchoolId = $lateSignInSchoolId
                 FastPreviewMode = $fastPreviewMode; FastPreviewSchoolId = $fastPreviewSchoolId
+                RestrictionAuthMode = $restrictionAuthMode; RestrictionAuthSchoolId = $restrictionAuthSchoolId
             }
         }
         if (-not ($trackingWindowRollout.PSObject.Properties.Name -contains "schoolIds")) {
@@ -2436,6 +2504,7 @@ function Get-RuntimeActivationState {
                 StudentGateMode = $studentGateMode; StudentGateSchoolId = $studentGateSchoolId
                 LateSignInMode = $lateSignInMode; LateSignInSchoolId = $lateSignInSchoolId
                 FastPreviewMode = $fastPreviewMode; FastPreviewSchoolId = $fastPreviewSchoolId
+                RestrictionAuthMode = $restrictionAuthMode; RestrictionAuthSchoolId = $restrictionAuthSchoolId
             }
         }
         if ($trackingWindowRollout.schoolIds -isnot [Array]) {
@@ -2456,11 +2525,14 @@ function Get-RuntimeActivationState {
             LateSignInSchoolId = $lateSignInSchoolId
             FastPreviewMode = $fastPreviewMode
             FastPreviewSchoolId = $fastPreviewSchoolId
+            RestrictionAuthMode = $restrictionAuthMode
+            RestrictionAuthSchoolId = $restrictionAuthSchoolId
         }
     }
 
     if ($trackingWindowFlagValue -cne "false" -or $studentGateMode -cne "off" -or
-        $lateSignInMode -cne "off" -or $fastPreviewMode -cne "off") {
+        $lateSignInMode -cne "off" -or $fastPreviewMode -cne "off" -or
+        $restrictionAuthMode -cne "off") {
         throw "Test-school activation must keep additive capabilities disabled."
     }
 
@@ -2491,6 +2563,7 @@ function Get-RuntimeActivationState {
         StudentGateMode = "off"; StudentGateSchoolId = $null
         LateSignInMode = "off"; LateSignInSchoolId = $null
         FastPreviewMode = "off"; FastPreviewSchoolId = $null
+        RestrictionAuthMode = "off"; RestrictionAuthSchoolId = $null
     }
 }
 
@@ -2517,7 +2590,9 @@ function Assert-AllowedRuntimeTransition {
             [string]$source.LateSignInMode -cne [string]$target.LateSignInMode -or
             [string]$source.LateSignInSchoolId -cne [string]$target.LateSignInSchoolId -or
             [string]$source.FastPreviewMode -cne [string]$target.FastPreviewMode -or
-            [string]$source.FastPreviewSchoolId -cne [string]$target.FastPreviewSchoolId) {
+            [string]$source.FastPreviewSchoolId -cne [string]$target.FastPreviewSchoolId -or
+            [string]$source.RestrictionAuthMode -cne [string]$target.RestrictionAuthMode -or
+            [string]$source.RestrictionAuthSchoolId -cne [string]$target.RestrictionAuthSchoolId) {
             throw "Student-gate rollout must preserve the existing repaired and screenshot runtime state."
         }
         if ($TargetRuntimeConfiguration.PSObject.Properties.Name -contains "SourceMode" -and
@@ -2554,7 +2629,9 @@ function Assert-AllowedRuntimeTransition {
             [string]$source.StudentGateMode -cne [string]$target.StudentGateMode -or
             [string]$source.StudentGateSchoolId -cne [string]$target.StudentGateSchoolId -or
             [string]$source.FastPreviewMode -cne [string]$target.FastPreviewMode -or
-            [string]$source.FastPreviewSchoolId -cne [string]$target.FastPreviewSchoolId) {
+            [string]$source.FastPreviewSchoolId -cne [string]$target.FastPreviewSchoolId -or
+            [string]$source.RestrictionAuthMode -cne [string]$target.RestrictionAuthMode -or
+            [string]$source.RestrictionAuthSchoolId -cne [string]$target.RestrictionAuthSchoolId) {
             throw "Late-sign-in rollout must preserve the existing repaired, screenshot, and student-gate runtime state."
         }
         if ([string]$TargetRuntimeConfiguration.Mode -ceq "late-signin-pilot") {
@@ -2583,7 +2660,9 @@ function Assert-AllowedRuntimeTransition {
             [string]$source.StudentGateMode -cne [string]$target.StudentGateMode -or
             [string]$source.StudentGateSchoolId -cne [string]$target.StudentGateSchoolId -or
             [string]$source.LateSignInMode -cne [string]$target.LateSignInMode -or
-            [string]$source.LateSignInSchoolId -cne [string]$target.LateSignInSchoolId) {
+            [string]$source.LateSignInSchoolId -cne [string]$target.LateSignInSchoolId -or
+            [string]$source.RestrictionAuthMode -cne [string]$target.RestrictionAuthMode -or
+            [string]$source.RestrictionAuthSchoolId -cne [string]$target.RestrictionAuthSchoolId) {
             throw "Fast-preview rollout must preserve every existing runtime capability."
         }
         if ($TargetRuntimeConfiguration.PSObject.Properties.Name -contains "SourceMode" -and
@@ -2616,10 +2695,42 @@ function Assert-AllowedRuntimeTransition {
         }
         return
     }
+    if ([string]$TargetRuntimeConfiguration.Mode -cin @(
+        "restriction-auth-pilot", "restriction-auth-off"
+    )) {
+        if ([string]$source.Mode -cne [string]$target.Mode -or
+            [string]$source.SchoolId -cne [string]$target.SchoolId -or
+            [int]$source.PrefixCount -ne [int]$target.PrefixCount -or
+            [string]$source.StudentGateMode -cne [string]$target.StudentGateMode -or
+            [string]$source.StudentGateSchoolId -cne [string]$target.StudentGateSchoolId -or
+            [string]$source.LateSignInMode -cne [string]$target.LateSignInMode -or
+            [string]$source.LateSignInSchoolId -cne [string]$target.LateSignInSchoolId -or
+            [string]$source.FastPreviewMode -cne [string]$target.FastPreviewMode -or
+            [string]$source.FastPreviewSchoolId -cne [string]$target.FastPreviewSchoolId) {
+            throw "Restriction-auth rollout must preserve every existing runtime capability."
+        }
+        if ($TargetRuntimeConfiguration.PSObject.Properties.Name -contains "SourceMode" -and
+            [string]$TargetRuntimeConfiguration.SourceMode -cne [string]$source.Mode) {
+            throw "Restriction-auth rollout source identity changed after resolution."
+        }
+        if ([string]$TargetRuntimeConfiguration.Mode -ceq "restriction-auth-pilot") {
+            if ([string]$source.RestrictionAuthMode -cne "off" -or
+                [string]$target.RestrictionAuthMode -cne "pilot" -or
+                [string]$target.RestrictionAuthSchoolId -cne [string]$TargetRuntimeConfiguration.PilotSchoolId) {
+                throw "Restriction-auth activation requires a single exact-school pilot from off."
+            }
+        }
+        elseif ([string]$source.RestrictionAuthMode -cnotin @("off", "pilot") -or
+            [string]$target.RestrictionAuthMode -cne "off") {
+            throw "Restriction-auth rollback must disable only the restriction-auth capability."
+        }
+        return
+    }
     if ([string]$target.Mode -cin @("tracking-window-pilot", "tracking-window-global-on") -and
         ([string]$source.StudentGateMode -cne "off" -or
          [string]$source.LateSignInMode -cne "off" -or
-         [string]$source.FastPreviewMode -cne "off")) {
+         [string]$source.FastPreviewMode -cne "off" -or
+         [string]$source.RestrictionAuthMode -cne "off")) {
         throw "Tracking-window transitions require dependent additive capabilities to be disabled independently first."
     }
     if ($target.Mode -ceq "off") { return }
@@ -2641,13 +2752,15 @@ function Assert-AllowedRuntimeTransition {
     if ($target.Mode -ceq "global-on" -and $source.Mode -ceq "global-on" -and
         [string]$source.StudentGateMode -cin @("pilot", "global-on") -and
         [string]$source.LateSignInMode -ceq "off" -and
+        [string]$source.RestrictionAuthMode -ceq "off" -and
         [string]$target.StudentGateMode -ceq "off") {
         return
     }
     if ($target.Mode -ceq "global-on" -and
         $source.Mode -cin @("tracking-window-pilot", "tracking-window-global-on") -and
         [string]$source.StudentGateMode -ceq "off" -and
-        [string]$source.LateSignInMode -ceq "off") {
+        [string]$source.LateSignInMode -ceq "off" -and
+        [string]$source.RestrictionAuthMode -ceq "off") {
         return
     }
     if ($target.Mode -ceq "global-on" -and $AllowSyntheticOnlyGlobalActivation -and

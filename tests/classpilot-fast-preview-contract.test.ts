@@ -1,8 +1,30 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { classpilotScreenshotPolicyRefreshClaimDigest } from
+  "../src/services/classpilotScreenshotPolicyRefreshClaim.js";
 
 const source = (path: string) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
+
+test("screenshot refresh coalescing is scoped to the exact sorted target set", () => {
+  const base = {
+    schoolId: "school-1",
+    teachingSessionId: "session-1",
+    reason: "scope_changed" as const,
+  };
+  const first = classpilotScreenshotPolicyRefreshClaimDigest({
+    ...base,
+    studentIds: ["student-b", "student-a", "student-a"],
+  });
+  assert.equal(classpilotScreenshotPolicyRefreshClaimDigest({
+    ...base,
+    studentIds: ["student-a", "student-b"],
+  }), first, "the same target set may coalesce regardless of input order");
+  assert.notEqual(classpilotScreenshotPolicyRefreshClaimDigest({
+    ...base,
+    studentIds: ["student-c"],
+  }), first, "a disjoint target set must receive an independent refresh claim");
+});
 
 test("observation changes publish one coalesced, authority-free session nudge", async () => {
   const [refresh, routes, redis, leases] = await Promise.all([

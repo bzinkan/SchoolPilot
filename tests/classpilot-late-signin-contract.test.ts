@@ -52,6 +52,7 @@ test("gate-off and signal-loss paths cannot author deferred restrictions", () =>
 test("CURRENT_URL remains an exact live lookup and never durable command metadata", () => {
   const dispatcher = source("../src/services/classpilotCommandDispatcher.ts");
   const coverage = source("../src/routes/classpilot/coverage.ts");
+  const storage = source("../src/services/storage.ts");
   const resolver = section(
     dispatcher,
     "async function resolveCurrentUrlLockTargets",
@@ -60,6 +61,16 @@ test("CURRENT_URL remains an exact live lookup and never durable command metadat
   const dispatchStart = dispatcher.indexOf("export async function executeClasspilotCommand");
   assert.notEqual(dispatchStart, -1);
   const dispatch = dispatcher.slice(dispatchStart);
+  const persistentClassState = section(
+    dispatcher,
+    "async function persistActiveState",
+    "async function persistActiveSupervisionState",
+  );
+  const persistentCoverageState = section(
+    dispatcher,
+    "async function persistActiveSupervisionState",
+    "export async function executeClasspilotCommand",
+  );
 
   assert.match(resolver, /readClasspilotRealtimeStatusBatch\(options\.schoolId, bindings\)/);
   assert.match(resolver, /snapshot && classpilotRealtimeFresh\(snapshot\)/);
@@ -86,12 +97,66 @@ test("CURRENT_URL remains an exact live lookup and never durable command metadat
     /storedCommandPayload = currentPageRequested[\s\S]*Object\.fromEntries\(Object\.entries\(commandPayload\)\.filter\(\(\[key\]\) => key !== "url"\)\)/,
   );
   assert.match(dispatch, /storedCommandPayload\.currentPage = true/);
-  assert.match(dispatch, /payloadByStudent,[\s\S]*bindingExpectationByStudent/);
+  assert.match(
+    dispatch,
+    /shouldPersistBeforeDelivery = deliveryPolicy === "persistent_control"[\s\S]*&& !currentPageRequested/,
+  );
+  assert.match(
+    dispatch,
+    /!shouldPersistBeforeDelivery[\s\S]*&& !currentPageRequested[\s\S]*persistActiveState\(/,
+  );
   assert.match(
     dispatch,
     /payloadByStudent\?\.get\(target\.studentId\)\?\.url[\s\S]*url: payloadByStudent\.get\(target\.studentId\)!\.url/,
   );
+  assert.match(
+    dispatch,
+    /withClasspilotStudentControlDeliveryAuthority\([\s\S]*if \(!deliveryAuthority\.authorized\) return null;[\s\S]*sendToStudentBindingLocal\(exactTarget, message/,
+    "the process-local observed URL may leave only after exact binding revalidation",
+  );
+  assert.match(
+    dispatch,
+    /lockClasspilotSsoPolicyDeliveryAuthority\([\s\S]*getClasspilotSsoPolicyForSchool\(options\.schoolId, transactionDb\)[\s\S]*currentControlState\.revision !== target\.controlRevision[\s\S]*classpilotSsoPolicyApprovesObservedUrl\([\s\S]*currentPageUrl,[\s\S]*currentSsoPolicy\.policy/,
+    "transient auth policy and control revision must be frozen inside exact delivery authority",
+  );
+  assert.match(
+    dispatch,
+    /currentPage: true,[\s\S]*exactBindingControlRevision:[\s\S]*restrictionExpiresAt:[\s\S]*authPassThrough:/,
+  );
+  assert.match(
+    dispatch,
+    /authPassThrough[\s\S]*acceptedCapabilities\.includes\([\s\S]*restrictionAuthPassThroughV1[\s\S]*authCapabilityMissing/,
+    "an active sign-in policy withholds the whole transient restriction from an unsupported binding",
+  );
+  assert.doesNotMatch(persistentClassState, /payloadByStudent|CURRENT_URL/);
+  assert.doesNotMatch(persistentCoverageState, /payloadByStudent|CURRENT_URL/);
   assert.doesNotMatch(dispatch, /commandPayload:\s*\{[^}]*url:\s*"CURRENT_URL"/);
+  assert.match(
+    storage,
+    /freezesCurrentPageAuthority[\s\S]*commandPayload\.currentPage === true[\s\S]*frozenControlRevision/,
+  );
+  const commandAck = section(
+    storage,
+    "export async function persistClasspilotCommandTargetAck",
+    "/** Compatibility adapter for existing internal callers",
+  );
+  assert.match(
+    commandAck,
+    /transientCurrentPage[\s\S]*hasCurrentClasspilotStudentControlAuthority[\s\S]*lockClasspilotSsoPolicyDeliveryAuthority[\s\S]*classpilotRestrictionAuthProjectionRevision[\s\S]*appliedAuthPolicyRevision/,
+    "a transient Waypoint ACK must prove current control and SSO policy authority",
+  );
+});
+
+test("persistent teacher Waypoints reject query and fragment persistence", () => {
+  const validation = source("../src/services/classpilotCommandValidation.ts");
+  assert.match(
+    validation,
+    /persistentWaypointUrl[\s\S]*parsed\.protocol !== "https:"[\s\S]*parsed\.search \|\| parsed\.hash[\s\S]*return `\$\{parsed\.origin\}\$\{parsed\.pathname\}`/,
+  );
+  assert.match(
+    validation,
+    /case "lock-screen":[\s\S]*value\.url === "CURRENT_URL"[\s\S]*persistentWaypointUrl\(value\.url\)/,
+  );
 });
 
 test("persistence serializes transfer races and rejects changed or expired bindings", () => {
@@ -119,7 +184,8 @@ test("persistence serializes transfer races and rejects changed or expired bindi
       "shared student authority must precede exact device/session locks",
     );
     assert.ok(
-      writer.indexOf(".from(devices)") < writer.indexOf(".from(studentSessions)"),
+      writer.indexOf(".orderBy(devices.deviceId)")
+        < writer.indexOf(".orderBy(studentSessions.studentId, studentSessions.id)"),
       "writers must keep device-before-session lock ordering",
     );
     assert.match(writer, /manualLeaseExpiresAt} > clock_timestamp\(\)/);
@@ -135,6 +201,16 @@ test("persistence serializes transfer races and rejects changed or expired bindi
     );
     assert.match(writer, /lateSignInGateRequiredStudentIds/);
   }
+  const ack = section(
+    storage,
+    "export async function acknowledgeClasspilotStudentControlState",
+    "export async function persistClasspilotControlCommandState",
+  );
+  assert.match(
+    ack,
+    /lockClasspilotStudentControlAuthorities[\s\S]*getClasspilotSsoPolicyForSchool\([\s\S]*transactionDb[\s\S]*acceptedCapabilities\?\.includes\([\s\S]*"restrictionAuthPassThroughV1"[\s\S]*classpilotRestrictionAuthCapabilityRequired/,
+    "a delayed pre-rollout ACK must be re-evaluated against current sign-in-safe projection",
+  );
   assert.equal(
     dispatcher.match(/lateSignInGateRequiredStudentIds: \[\.\.\.\(options\.deferredStudentIds \?\? \[\]\)\]/g)?.length,
     2,
@@ -205,10 +281,11 @@ test("mixed-version delivery and every unauthenticated fallback hide deferred re
   assert.match(wsRequest, /acceptedCapabilities: client\.acceptedCapabilities \?\? \[\]/);
   assert.match(
     wsRequest,
-    /withClasspilotStudentControlDeliveryAuthority\([\s\S]*getClasspilotStudentControlState\([\s\S]*transactionDb[\s\S]*\(_claimed, delivered\) => \{[\s\S]*ws\.send\(JSON\.stringify\(classpilotClassroomStatePushFrame/,
+    /withClasspilotStudentControlDeliveryAuthority\([\s\S]*getClasspilotStudentControlState\([\s\S]*transactionDb[\s\S]*\(_claimed, delivery\) => \{[\s\S]*ws\.send\(JSON\.stringify\(classpilotClassroomStatePushFrame/,
   );
   assert.match(wsRequest, /controlRevision: delivered\?\.revision \?\? 0/);
   assert.match(wsRequest, /classroomState: delivered/);
+  assert.match(wsRequest, /authPassThrough:[\s\S]*restrictionAuthPassThroughV1/);
   assert.doesNotMatch(wsRequest, /getActiveSessionsForStudents/);
 
   assert.match(
@@ -253,7 +330,7 @@ test("mixed-version delivery and every unauthenticated fallback hide deferred re
   );
   assert.match(
     dispatcher,
-    /deferredIds\.has\(target\.studentId\) && !classroomStateByStudent\.has\(target\.studentId\)[\s\S]*return null/,
+    /controlStateIds\.has\(target\.studentId\)[\s\S]*!classroomStateByStudent\.has\(target\.studentId\)[\s\S]*return null/,
   );
   assert.match(dispatcher, /delivered\.withheld[\s\S]*lateSignInDeliveryWithheld/);
 });
@@ -294,17 +371,17 @@ test("deferred command frames and WebSocket auth revalidate exact binding author
 
   assert.match(
     frame,
-    /delivery\.requiredCapability === "lateSignInRestrictionSsoV1"[\s\S]*exactBinding: classpilotControlStateExactBinding\([\s\S]*controlRevision: classroomState\.revision/,
+    /delivery\.requiredCapability[\s\S]*delivery\.requiredCapabilities\?\.length[\s\S]*exactBinding: classpilotControlStateExactBinding\([\s\S]*controlRevision: exactBindingControlRevision/,
   );
   assert.match(
     frame,
     /type: "remote-control"[\s\S]*\.\.\.bindingEnvelope,[\s\S]*\.\.\.deferredExactBindingEnvelope,[\s\S]*classroomState/,
   );
   const normalFrame = frame.slice(frame.lastIndexOf('\n  return {'));
-  assert.doesNotMatch(
+  assert.match(
     normalFrame,
     /command:\s*\{[\s\S]*\.\.\.deferredExactBindingEnvelope/,
-    "the exact binding has one canonical outer envelope",
+    "the extension validates the same frozen exact binding inside the command payload",
   );
   assert.equal(
     studentAuth.match(/runWithTenantContext\(\{ schoolId \}/g)?.length,
@@ -373,7 +450,7 @@ test("deferred command frames and WebSocket auth revalidate exact binding author
   assert.doesNotMatch(teacherReplyRecovery, /claimDueTeacherChatDeliveriesForBinding/);
   assert.match(
     websocketRedis,
-    /kind: "student-binding";[\s\S]*studentId: string;[\s\S]*studentSessionId: string;[\s\S]*deviceId: string;[\s\S]*requiredCapability\?:\s*\| "lateSignInRestrictionSsoV1"\s*\| "screenshotActiveObservationCadenceV1";/,
+    /kind: "student-binding";[\s\S]*studentId: string;[\s\S]*studentSessionId: string;[\s\S]*deviceId: string;[\s\S]*requiredCapability\?:[\s\S]*"lateSignInRestrictionSsoV1"[\s\S]*"restrictionAuthPassThroughV1"[\s\S]*"screenshotActiveObservationCadenceV1";[\s\S]*requiredCapabilities\?: Array</,
   );
   const redisDeviceCase = section(websocket, 'case "device":', 'case "student-binding":');
   assert.match(
@@ -425,9 +502,9 @@ test("deferred command frames and WebSocket auth revalidate exact binding author
   assert.match(commandDelivery, /kind: "student-binding" as const/);
   assert.match(
     commandDelivery,
-    /deferredIds\.has\(target\.studentId\)[\s\S]*requiredCapability: "lateSignInRestrictionSsoV1"/,
+    /deferredIds\.has\(target\.studentId\)[\s\S]*\["lateSignInRestrictionSsoV1" as const\][\s\S]*requiredCapabilities/,
   );
-  assert.match(commandDelivery, /delivery\.authorized[\s\S]*remotePublications\.push/);
+  assert.match(commandDelivery, /deliveryAuthority\.authorized[\s\S]*remotePublications\.push/);
   assert.doesNotMatch(commandDelivery, /sendToDeviceLocal|kind: "device"/);
 });
 
@@ -447,9 +524,18 @@ test("Dashboard rollback projection cannot masquerade a deferred revision as app
   assert.match(aggregate, /scopedRealtimeClassroomState = deferredDesiredStateHidden[\s\S]*undefined/);
   assert.match(aggregate, /effectiveClasspilotControlEnforcementHealth\([\s\S]*visibleOwnedDesiredControlState/);
   assert.match(
-    aggregate,
-    /acceptedCapabilities: normalizeClasspilotPublicCapabilities\([\s\S]*capabilityRealtime\?\.acceptedCapabilities[\s\S]*studentSessionId: snapshot\.studentSessionId/,
+    compat,
+    /acceptedCapabilities = normalizeClasspilotPublicCapabilities\([\s\S]*capabilityRealtime\?\.acceptedCapabilities[\s\S]*studentSessionId: snapshot\.studentSessionId/,
   );
+  assert.match(
+    aggregate,
+    /classpilotRestrictionAuthCapabilityRequired\([\s\S]*operatorCapabilities\.restrictionAuthPassThroughV1[\s\S]*acceptedCapabilities\.includes\("restrictionAuthPassThroughV1"\)[\s\S]*restrictionAuthCapabilityRequired/,
+  );
+  assert.match(
+    compat,
+    /enforcementUnavailableReason:\s*restrictionAuthUpdateRequired[\s\S]*Extension update required for sign-in-safe Waypoint or Flight Path/,
+  );
+  assert.match(compat, /getClasspilotSsoPolicyForSchool\(schoolId\)/);
   assert.match(
     compat,
     /const capabilityRealtime = delegatedAway \? null : rt[\s\S]*publicClasspilotExtensionContract\(capabilityRealtime\)/,
