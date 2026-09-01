@@ -707,7 +707,7 @@ describe("multi-school readiness route hardening", () => {
         ) VALUES
           (
             ${taughtSessionId}, ${schoolA.id}, ${reassignedGroupId}, ${teacherA.id}, 'live',
-            now() - interval '3 hours', now() - interval '2 hours',
+            now() - interval '3 hours', now(),
             'Frozen Teacher A Class', ${timeZone}, now() - interval '3 hours', now() - interval '3 hours'
           ),
           (
