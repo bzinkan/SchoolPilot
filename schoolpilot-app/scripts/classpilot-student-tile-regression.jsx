@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import '../src/index.css';
 import { Button } from '../src/components/ui/button';
@@ -24,6 +24,27 @@ const ONLINE_STUDENT = Object.freeze({
   isLoggedIn: true,
   activeTabUrl: 'https://example.test/lesson',
   activeTabTitle: 'Lesson',
+});
+
+const INTERACTIVE_STUDENT = Object.freeze({
+  ...ONLINE_STUDENT,
+  studentId: 'interactive-student',
+  studentName: 'Interactive Student',
+});
+
+const MEMO_DETAILS_STUDENT = Object.freeze({
+  ...ONLINE_STUDENT,
+  studentId: 'memo-details-student',
+  studentName: 'Memo Details Student',
+});
+
+const MEMO_DETAILS_DISPLAY = Object.freeze({
+  kind: 'online',
+  status: 'online',
+  label: 'Online',
+  telemetryCurrent: true,
+  observedAtMs: Date.parse('2026-08-24T12:00:00.000Z'),
+  nextBoundaryAtMs: Date.parse('2026-08-24T12:01:00.000Z'),
 });
 
 const NEVER_OBSERVED_STUDENT = Object.freeze({
@@ -109,10 +130,18 @@ const RECENT_HEARTBEATS = Object.freeze([
 function TileRegressionHarness() {
   const [observedAtMs, setObservedAtMs] = useState(() => Date.now());
   const [tabClicks, setTabClicks] = useState(0);
-  const [cardClicks, setCardClicks] = useState(0);
+  const [detailsClicks, setDetailsClicks] = useState(0);
   const [screenshotClicks, setScreenshotClicks] = useState(0);
+  const [selectionClicks, setSelectionClicks] = useState(0);
+  const [commandClicks, setCommandClicks] = useState(0);
+  const [allowClicks, setAllowClicks] = useState(0);
   const [returnClicks, setReturnClicks] = useState(0);
   const [tilesVisible, setTilesVisible] = useState(false);
+  const [memoDetailsEnabled, setMemoDetailsEnabled] = useState(true);
+  const memoDetailsHandler = useCallback(
+    () => setDetailsClicks((count) => count + 1),
+    [],
+  );
   const staleLiveStreamRef = useRef(null);
   if (staleLiveStreamRef.current === null && typeof MediaStream !== 'undefined') {
     staleLiveStreamRef.current = new MediaStream();
@@ -137,9 +166,19 @@ function TileRegressionHarness() {
       >
         {tilesVisible ? 'Hide tiles' : 'Show tiles'}
       </Button>
+      <Button
+        type="button"
+        data-testid="revoke-memo-details"
+        onClick={() => setMemoDetailsEnabled(false)}
+      >
+        Revoke memoized details
+      </Button>
       <p data-testid="tab-clicks">Tab clicks: {tabClicks}</p>
-      <p data-testid="card-clicks">Card clicks: {cardClicks}</p>
+      <p data-testid="details-clicks">Details clicks: {detailsClicks}</p>
       <p data-testid="screenshot-clicks">Screenshot clicks: {screenshotClicks}</p>
+      <p data-testid="selection-clicks">Selection clicks: {selectionClicks}</p>
+      <p data-testid="command-clicks">Command clicks: {commandClicks}</p>
+      <p data-testid="allow-clicks">Allow clicks: {allowClicks}</p>
       <p data-testid="return-clicks">Return clicks: {returnClicks}</p>
       <p data-testid="parent-renders">Parent renders: {renderCount.current}</p>
 
@@ -162,7 +201,7 @@ function TileRegressionHarness() {
               bindingVersion: 'v2:signed-out-binding',
               tabTitle: 'Signed-out private screen',
             }}
-            onClick={() => setCardClicks((count) => count + 1)}
+            onOpenDetails={() => setDetailsClicks((count) => count + 1)}
             onManageTabs={() => setTabClicks((count) => count + 1)}
             onToggleSelect={() => {}}
             persistentRestrictionSelectionAvailable
@@ -183,6 +222,43 @@ function TileRegressionHarness() {
             onManageTabs={() => setTabClicks((count) => count + 1)}
             onToggleSelect={() => {}}
             restrictionSelectionActive
+          />
+        </div>
+
+        <div data-testid="interactive-tile-host">
+          <StudentTile
+            student={INTERACTIVE_STUDENT}
+            monitoringDisplay={{
+              kind: 'online',
+              status: 'online',
+              label: 'Online',
+              telemetryCurrent: true,
+              observedAtMs: freshnessNowMs,
+              nextBoundaryAtMs: freshnessNowMs + 60_000,
+            }}
+            freshnessNowMs={freshnessNowMs}
+            isOffTask
+            screenshotData={{
+              screenshot: SCREENSHOT_DATA_URL,
+              timestamp: freshnessNowMs,
+              bindingVersion: 'v2:interactive-binding',
+              tabTitle: 'Interactive lesson',
+            }}
+            onOpenDetails={() => setDetailsClicks((count) => count + 1)}
+            onOpenScreenshot={() => setScreenshotClicks((count) => count + 1)}
+            onToggleSelect={() => setSelectionClicks((count) => count + 1)}
+            onManageTabs={() => setTabClicks((count) => count + 1)}
+            onCommand={() => setCommandClicks((count) => count + 1)}
+            onAllowDomain={() => setAllowClicks((count) => count + 1)}
+            recentHeartbeats={RECENT_HEARTBEATS}
+          />
+        </div>
+
+        <div data-testid="memo-details-tile-host">
+          <StudentTile
+            student={MEMO_DETAILS_STUDENT}
+            monitoringDisplay={MEMO_DETAILS_DISPLAY}
+            onOpenDetails={memoDetailsEnabled ? memoDetailsHandler : undefined}
           />
         </div>
 
@@ -301,7 +377,7 @@ function TileRegressionHarness() {
             actionsDisabled
             actionsDisabledReason="Observe mode is read-only."
             signOutOnlySelectionAvailable
-            onClick={() => setCardClicks((count) => count + 1)}
+            onOpenDetails={() => setDetailsClicks((count) => count + 1)}
             onOpenScreenshot={() => setScreenshotClicks((count) => count + 1)}
             onToggleSelect={() => {}}
             onManageTabs={() => {}}
@@ -344,6 +420,8 @@ function TileRegressionHarness() {
               bindingVersion: 'v2:supervised-binding',
               tabTitle: 'Suppressed lesson',
             }}
+            onOpenDetails={() => setDetailsClicks((count) => count + 1)}
+            onOpenScreenshot={() => setScreenshotClicks((count) => count + 1)}
             onReturnToClass={() => setReturnClicks((count) => count + 1)}
           />
         </div>

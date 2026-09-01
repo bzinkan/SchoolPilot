@@ -334,6 +334,13 @@ async function configureDashboard(page, {
       const response = typeof suppliedResponse === "function"
         ? suppliedResponse(body)
         : suppliedResponse;
+      if (Number.isInteger(response?.status) && response.status >= 400) {
+        await route.fulfill({
+          status: response.status,
+          json: response.body || { error: "Tile data unavailable" },
+        });
+        return;
+      }
       const requestedStudentIds = new Set(body?.studentIds || []);
       await route.fulfill({
         json: {
@@ -791,6 +798,11 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
       1,
       "hiding WebRTC View must retain the teacher's View Tabs action",
     );
+    assert.equal(
+      await persistencePage.getByTestId(`button-student-details-${STUDENT_ID}`).count(),
+      1,
+      "teacher tiles must expose an explicit Details action",
+    );
     await persistenceHarness.authenticateWebSocket();
     const targetedRequestStart = persistenceHarness.tileRequests.length;
     persistenceScreenshotSource = UPDATED_SCREENSHOT_DATA_URL;
@@ -955,6 +967,32 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
       true,
       "closing the large viewer must restore keyboard focus to its screenshot tile",
     );
+
+    await persistencePage.getByTestId(`text-student-name-${STUDENT_ID}`).click();
+    await persistencePage.getByTestId("expanded-screenshot-dialog").waitFor();
+    assert.equal(
+      await persistencePage.getByTestId("student-tabs").count(),
+      0,
+      "clicking the teacher tile body must enlarge the screenshot without opening Details",
+    );
+    await persistencePage.getByTestId("expanded-screenshot-dialog").getByRole("button", { name: "Close" }).click();
+    await persistencePage.getByTestId("expanded-screenshot-dialog").waitFor({ state: "hidden" });
+
+    const teacherDetailsButton = persistencePage.getByTestId(`button-student-details-${STUDENT_ID}`);
+    await teacherDetailsButton.click();
+    await persistencePage.getByTestId("student-tabs").waitFor();
+    assert.equal(
+      await persistencePage.getByTestId("expanded-screenshot-dialog").count(),
+      0,
+      "Details must open only the existing student sidebar",
+    );
+    await persistencePage.getByRole("button", { name: "Close" }).click();
+    await persistencePage.getByTestId("student-tabs").waitFor({ state: "hidden" });
+    assert.equal(
+      await teacherDetailsButton.evaluate((element) => document.activeElement === element),
+      true,
+      "closing the teacher Details sidebar must restore focus to Details",
+    );
     persistenceScreenshotAvailable = false;
 
     for (let cycle = 0; cycle < 20; cycle += 1) {
@@ -990,6 +1028,301 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
       await persistenceScreenshot.waitFor();
     }
     assert.deepEqual(persistenceHarness.pageErrors, []);
+
+    const detailsRevocationPage = await browser.newPage();
+    pages.push(detailsRevocationPage);
+    const detailsObservedAt = new Date(Date.now() - 500).toISOString();
+    const detailsClassmate = student({
+      studentId: SIGNAL_LOST_STUDENT_ID,
+      studentName: "Grace Classmate",
+      studentEmail: "grace@example.edu",
+      lastSeenAt: detailsObservedAt,
+      realtimeObservedAt: detailsObservedAt,
+      realtimeBinding: "binding-details-classmate",
+    });
+    const authorizedDetailsStudent = (overrides = {}) => student({
+      lastSeenAt: detailsObservedAt,
+      realtimeObservedAt: detailsObservedAt,
+      realtimeBinding: "binding-details-student",
+      ...overrides,
+    });
+    const detailsRevocationAggregate = aggregateController({
+      school: success([]),
+      scoped: success({
+        students: [authorizedDetailsStudent(), detailsClassmate],
+      }),
+    });
+    let globallyDenyDetailHistory = false;
+    const detailsRevocationHarness = await configureDashboard(detailsRevocationPage, {
+      aggregate: detailsRevocationAggregate,
+      userRole: "teacher",
+      activeSession: ownSession,
+      allSessions: [ownSession],
+      groupStudentIds: [STUDENT_ID, SIGNAL_LOST_STUDENT_ID],
+      historyTiles: (body) => (
+        globallyDenyDetailHistory && body?.studentIds?.length === 1
+          ? { status: 403, body: { error: "History authorization revoked" } }
+          : { tiles: [] }
+      ),
+    });
+    const detailHistoryRequestCount = () => detailsRevocationHarness.tileRequests.filter((request) => (
+      request.pathname === "/api/classpilot/tiles/history"
+      && request.body?.studentIds?.length === 1
+      && request.body.studentIds[0] === STUDENT_ID
+    )).length;
+
+    await detailsRevocationPage.goto(`${baseURL}/classpilot`);
+    let revocationDetailsButton = detailsRevocationPage.getByTestId(`button-student-details-${STUDENT_ID}`);
+    await revocationDetailsButton.waitFor();
+    await revocationDetailsButton.click();
+    await detailsRevocationPage.getByTestId("student-tabs").waitFor();
+    await waitUntil(
+      () => detailHistoryRequestCount() >= 1,
+      "opening Details must issue one authorized student-scoped history request",
+    );
+
+    const delegatedAggregateRequestStart = detailsRevocationAggregate.requests.length;
+    detailsRevocationAggregate.setScopedResponse(success({
+      students: [
+        authorizedDetailsStudent({
+          activityState: "delegated",
+          realtimeRevision: 2,
+        }),
+        detailsClassmate,
+      ],
+    }));
+    await detailsRevocationPage.evaluate(() => window.dispatchEvent(new Event("online")));
+    await waitUntil(
+      () => detailsRevocationAggregate.requests.length > delegatedAggregateRequestStart,
+      "delegation must reconcile the selected student's current authority",
+    );
+    await detailsRevocationPage.getByTestId("student-tabs").waitFor({ state: "hidden" });
+    assert.equal(
+      await detailsRevocationPage.getByTestId(`button-student-details-${STUDENT_ID}`).count(),
+      0,
+      "delegated monitoring must hide Details immediately",
+    );
+    const detailRequestsAfterDelegation = detailHistoryRequestCount();
+    const delegatedRecheckStart = detailsRevocationAggregate.requests.length;
+    await detailsRevocationPage.evaluate(() => window.dispatchEvent(new Event("online")));
+    await waitUntil(
+      () => detailsRevocationAggregate.requests.length > delegatedRecheckStart,
+      "delegated authority must remain closed across reconciliation",
+    );
+    await detailsRevocationPage.waitForTimeout(150);
+    assert.equal(
+      detailHistoryRequestCount(),
+      detailRequestsAfterDelegation,
+      "delegated monitoring must not issue another detail-history query",
+    );
+
+    const restoredAuthorityRequestStart = detailsRevocationAggregate.requests.length;
+    detailsRevocationAggregate.setScopedResponse(success({
+      students: [authorizedDetailsStudent({ realtimeRevision: 3 }), detailsClassmate],
+    }));
+    await detailsRevocationPage.evaluate(() => window.dispatchEvent(new Event("online")));
+    await waitUntil(
+      () => detailsRevocationAggregate.requests.length > restoredAuthorityRequestStart,
+      "the authorized student must reconcile after delegation ends",
+    );
+    revocationDetailsButton = detailsRevocationPage.getByTestId(`button-student-details-${STUDENT_ID}`);
+    await revocationDetailsButton.waitFor();
+    assert.equal(
+      await detailsRevocationPage.getByTestId("student-tabs").count(),
+      0,
+      "restored authority must not reopen a previously revoked drawer",
+    );
+
+    await revocationDetailsButton.click();
+    await detailsRevocationPage.getByTestId("student-tabs").waitFor();
+    await waitUntil(
+      () => detailHistoryRequestCount() > detailRequestsAfterDelegation,
+      "restored authority must permit a new explicit Details request",
+    );
+    const removedDetailsOpener = await revocationDetailsButton.elementHandle();
+    assert.ok(removedDetailsOpener);
+    const removalRequestStart = detailsRevocationAggregate.requests.length;
+    detailsRevocationAggregate.setScopedResponse(success({ students: [detailsClassmate] }));
+    await detailsRevocationPage.evaluate(() => window.dispatchEvent(new Event("online")));
+    await waitUntil(
+      () => detailsRevocationAggregate.requests.length > removalRequestStart,
+      "roster removal must reconcile before selection can be reused",
+    );
+    await detailsRevocationPage.getByTestId(`card-student-${STUDENT_ID}`).waitFor({ state: "hidden" });
+    await detailsRevocationPage.getByTestId("student-tabs").waitFor({ state: "hidden" });
+    assert.equal(
+      await removedDetailsOpener.evaluate((element) => element.isConnected),
+      false,
+      "roster removal must detach the old Details opener",
+    );
+    assert.equal(
+      await removedDetailsOpener.evaluate((element) => document.activeElement === element),
+      false,
+      "roster removal must not restore focus to a stale Details opener",
+    );
+    const detailRequestsAfterRemoval = detailHistoryRequestCount();
+
+    const readdRequestStart = detailsRevocationAggregate.requests.length;
+    detailsRevocationAggregate.setScopedResponse(success({
+      students: [authorizedDetailsStudent({ realtimeRevision: 4 }), detailsClassmate],
+    }));
+    await detailsRevocationPage.evaluate(() => window.dispatchEvent(new Event("online")));
+    await waitUntil(
+      () => detailsRevocationAggregate.requests.length > readdRequestStart,
+      "re-added roster authority must reconcile explicitly",
+    );
+    const readdedDetailsButton = detailsRevocationPage.getByTestId(`button-student-details-${STUDENT_ID}`);
+    await readdedDetailsButton.waitFor();
+    await detailsRevocationPage.waitForTimeout(150);
+    assert.equal(
+      await detailsRevocationPage.getByTestId("student-tabs").count(),
+      0,
+      "remove then re-add must not reopen the old drawer",
+    );
+    assert.equal(
+      await readdedDetailsButton.evaluate((element) => document.activeElement === element),
+      false,
+      "remove then re-add must not focus the replacement Details button",
+    );
+    assert.equal(
+      detailHistoryRequestCount(),
+      detailRequestsAfterRemoval,
+      "remove then re-add must not reuse selection to issue another detail-history query",
+    );
+
+    globallyDenyDetailHistory = true;
+    await readdedDetailsButton.click();
+    await waitUntil(
+      () => detailHistoryRequestCount() > detailRequestsAfterRemoval,
+      "the explicit Details action must reach the globally denied history boundary",
+    );
+    await detailsRevocationPage.getByTestId("student-tabs").waitFor({ state: "hidden" });
+    assert.equal(
+      await detailsRevocationPage.getByTestId(`button-student-details-${STUDENT_ID}`).count(),
+      0,
+      "a global tile authorization failure must hide Details for the selected student",
+    );
+    assert.equal(
+      await detailsRevocationPage.getByTestId(`button-student-details-${SIGNAL_LOST_STUDENT_ID}`).count(),
+      0,
+      "a global tile authorization failure must hide Details across the cohort",
+    );
+    const detailRequestsAfterGlobalDenial = detailHistoryRequestCount();
+    const globalDenialRecheckStart = detailsRevocationAggregate.requests.length;
+    await detailsRevocationPage.evaluate(() => window.dispatchEvent(new Event("online")));
+    await waitUntil(
+      () => detailsRevocationAggregate.requests.length > globalDenialRecheckStart,
+      "global denial must remain closed across aggregate reconciliation",
+    );
+    await detailsRevocationPage.waitForTimeout(150);
+    assert.equal(
+      detailHistoryRequestCount(),
+      detailRequestsAfterGlobalDenial,
+      "global authorization revocation must disable future detail-history queries",
+    );
+    assert.deepEqual(detailsRevocationHarness.pageErrors, []);
+
+    const noAccessDetailsPage = await browser.newPage();
+    pages.push(noAccessDetailsPage);
+    const noAccessObservedAt = new Date(Date.now() - 500).toISOString();
+    const noAccessClassmate = student({
+      studentId: SIGNAL_LOST_STUDENT_ID,
+      studentName: "Grace Classmate",
+      studentEmail: "grace@example.edu",
+      lastSeenAt: noAccessObservedAt,
+      realtimeObservedAt: noAccessObservedAt,
+      realtimeBinding: "binding-no-access-classmate",
+    });
+    const noAccessStudent = (overrides = {}) => student({
+      lastSeenAt: noAccessObservedAt,
+      realtimeObservedAt: noAccessObservedAt,
+      realtimeBinding: "binding-no-access-student",
+      ...overrides,
+    });
+    const noAccessAggregate = aggregateController({
+      school: success([]),
+      scoped: success({ students: [noAccessStudent(), noAccessClassmate] }),
+    });
+    let historyNoLongerAuthorized = false;
+    const noAccessHarness = await configureDashboard(noAccessDetailsPage, {
+      aggregate: noAccessAggregate,
+      userRole: "teacher",
+      activeSession: ownSession,
+      allSessions: [ownSession],
+      groupStudentIds: [STUDENT_ID, SIGNAL_LOST_STUDENT_ID],
+      historyTiles: (body) => (
+        historyNoLongerAuthorized && body?.studentIds?.length === 1
+          ? { status: 404, body: { error: "History is not available in this roster" } }
+          : { tiles: [] }
+      ),
+    });
+    const noAccessDetailHistoryCount = () => noAccessHarness.tileRequests.filter((request) => (
+      request.pathname === "/api/classpilot/tiles/history"
+      && request.body?.studentIds?.length === 1
+      && request.body.studentIds[0] === STUDENT_ID
+    )).length;
+
+    await noAccessDetailsPage.goto(`${baseURL}/classpilot`);
+    const noAccessDetailsButton = noAccessDetailsPage.getByTestId(`button-student-details-${STUDENT_ID}`);
+    await noAccessDetailsButton.waitFor();
+    await noAccessDetailsButton.click();
+    await noAccessDetailsPage.getByTestId("student-tabs").waitFor();
+    await waitUntil(
+      () => noAccessDetailHistoryCount() >= 1,
+      "the initially authorized Details request must finish before access is removed",
+    );
+
+    const detailHistoryCountBeforeNoAccess = noAccessDetailHistoryCount();
+    historyNoLongerAuthorized = true;
+    const noAccessTileRequestStart = noAccessHarness.tileRequests.length;
+    const noAccessRequestStart = noAccessAggregate.requests.length;
+    noAccessAggregate.setScopedResponse(success({
+      students: [
+        noAccessStudent({
+          realtimeBinding: "binding-no-access-replaced",
+          realtimeRevision: 2,
+        }),
+        noAccessClassmate,
+      ],
+    }));
+    await noAccessDetailsPage.evaluate(() => window.dispatchEvent(new Event("online")));
+    await waitUntil(
+      () => noAccessAggregate.requests.length > noAccessRequestStart,
+      "the replacement binding must reconcile before its history denial is enforced",
+    );
+    await waitUntil(
+      () => noAccessHarness.tileRequests.slice(noAccessTileRequestStart).some((request) => (
+        request.pathname === "/api/classpilot/tiles/history"
+        && request.body?.studentIds?.length === 1
+        && request.body.studentIds[0] === STUDENT_ID
+      )),
+      "the selected student's exact detail request must reach the 404 history boundary",
+    );
+    await noAccessDetailsPage.getByTestId("student-tabs").waitFor({ state: "hidden" });
+    await noAccessDetailsPage.getByTestId(`button-student-details-${STUDENT_ID}`).waitFor({ state: "hidden" });
+    assert.equal(
+      await noAccessDetailsPage.getByTestId(`button-student-details-${STUDENT_ID}`).count(),
+      0,
+      "a memoized tile must remove Details when a single-detail 404 revokes history access",
+    );
+    const detailHistoryCountAfterNoAccess = noAccessDetailHistoryCount();
+    assert.ok(
+      detailHistoryCountAfterNoAccess > detailHistoryCountBeforeNoAccess,
+      "the denied replacement must record its one already-started detail request",
+    );
+    const noAccessRecheckStart = noAccessAggregate.requests.length;
+    await noAccessDetailsPage.evaluate(() => window.dispatchEvent(new Event("online")));
+    await waitUntil(
+      () => noAccessAggregate.requests.length > noAccessRecheckStart,
+      "the 404 state must remain closed across aggregate reconciliation",
+    );
+    await noAccessDetailsPage.waitForTimeout(150);
+    assert.equal(
+      noAccessDetailHistoryCount(),
+      detailHistoryCountAfterNoAccess,
+      "a 404 history denial must prevent follow-on detail queries",
+    );
+    assert.deepEqual(noAccessHarness.pageErrors, []);
 
     const observedSession = teachingSession({
       id: OBSERVED_SESSION_ID,
@@ -1138,10 +1471,31 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     assert.equal(await observedCard.getByText(/In supervision/i).count(), 0);
     assert.equal(await observedCard.getByText("Controls locked", { exact: true }).count(), 0);
     await observedCard.getByText("Ada Student", { exact: true }).click();
+    await observePreviewPage.getByTestId("expanded-screenshot-dialog").waitFor();
+    assert.equal(
+      await observePreviewPage.getByTestId("student-tabs").count(),
+      0,
+      "clicking an Observe tile body must enlarge the screenshot without opening Details",
+    );
+    await observePreviewPage.getByTestId("expanded-screenshot-dialog").getByRole("button", { name: "Close" }).click();
+    await observePreviewPage.getByTestId("expanded-screenshot-dialog").waitFor({ state: "hidden" });
+
+    const observeDetailsButton = observedCard.getByTestId(`button-student-details-${STUDENT_ID}`);
+    await observeDetailsButton.click();
     await observePreviewPage.getByTestId("student-tabs").waitFor();
     assert.equal(await observePreviewPage.getByTestId("tab-screens").count(), 1, "ordinary Observe must open the read-only detail drawer");
+    assert.equal(
+      await observePreviewPage.getByTestId("expanded-screenshot-dialog").count(),
+      0,
+      "Observe Details must not reopen the screenshot viewer",
+    );
     await observePreviewPage.getByRole("button", { name: "Close" }).click();
     await observePreviewPage.getByTestId("student-tabs").waitFor({ state: "hidden" });
+    assert.equal(
+      await observeDetailsButton.evaluate((element) => document.activeElement === element),
+      true,
+      "closing the Observe Details sidebar must restore focus to Details",
+    );
     assert.equal(
       (await observePreviewPage.getByTestId("badge-selection-count").innerText()).trim(),
       "Viewing: Biology - All 2 students\n2 connected · 0 updating · 0 signal lost · 0 updates unavailable · 0 signed out",
@@ -1163,7 +1517,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     );
 
     const movableObservedCard = observePreviewPage.getByTestId(`card-student-${MOVED_CLASS_STUDENT_ID}`);
-    await movableObservedCard.click();
+    await movableObservedCard.getByTestId(`button-student-details-${MOVED_CLASS_STUDENT_ID}`).click();
     await observePreviewPage.getByTestId("student-tabs").waitFor();
 
     await waitUntil(
@@ -1282,6 +1636,21 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     assert.equal(await supervisedCard.getByTestId(`badge-offtask-${STUDENT_ID}`).count(), 0);
     assert.equal(await supervisedCard.getByTestId(`button-lock-toggle-${STUDENT_ID}`).count(), 0, "supervision must hide the tile command button");
     assert.equal(
+      await supervisedCard.getByTestId(`button-student-details-${STUDENT_ID}`).count(),
+      0,
+      "supervision must hide Details with the rest of the student's private monitoring context",
+    );
+    assert.equal(
+      await signedOutCard.getByTestId(`button-student-details-${SIGNED_OUT_STUDENT_ID}`).count(),
+      1,
+      "signed-out students must retain the authorized Details action",
+    );
+    assert.equal(
+      await signalLostCard.getByTestId(`button-student-details-${SIGNAL_LOST_STUDENT_ID}`).count(),
+      1,
+      "signal-lost students must retain the authorized Details action",
+    );
+    assert.equal(
       await movedClassCard.count(),
       0,
       "a frozen-roster student now owned by another active class must not render",
@@ -1331,6 +1700,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     await supervisedCard.click();
     await observePreviewPage.waitForTimeout(200);
     assert.equal(await observePreviewPage.getByTestId("student-tabs").count(), 0, "a supervised tile must not open the detail drawer");
+    assert.equal(await observePreviewPage.getByTestId("expanded-screenshot-dialog").count(), 0, "a supervised tile must not open a screenshot viewer");
     assert.equal(
       observePreviewHarness.tileRequests.slice(tileRequestCountBeforeSupervisedClick).some((request) => (
         request.body?.studentIds?.length === 1

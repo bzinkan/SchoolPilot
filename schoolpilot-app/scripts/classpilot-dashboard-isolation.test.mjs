@@ -230,6 +230,115 @@ test('dashboard retains dormant Live View code without exposing its portal or ti
   assert.match(sidebar, /isOpen \? \(/, 'closed sidebar must not mount polling mini views');
 });
 
+test('student tiles split screenshot enlargement from the explicit Details action', async () => {
+  const [dashboard, tile] = await Promise.all([
+    readFile(new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/products/classpilot/components/StudentTile.jsx', import.meta.url), 'utf8'),
+  ]);
+
+  assert.match(
+    tile,
+    /const screenshotInteractionAvailable = Boolean\([\s\S]{0,180}onOpenScreenshot/,
+    'the tile body must become interactive only when an authorized preview can be enlarged',
+  );
+  const cardSurface = tile.match(
+    /data-testid=\{`card-student-\$\{student\.studentId\}`\}[\s\S]*?(?=>\r?\n\s*<div className="p-4 space-y-3">)/,
+  )?.[0] || '';
+  assert.ok(cardSurface.length > 0);
+  assert.match(cardSurface, /onClick=\{screenshotInteractionAvailable/);
+  assert.match(
+    cardSurface,
+    /target\.closest\('button, a, input, select, textarea, \[role="button"\], \[role="checkbox"\]'\)/,
+    'nested controls must not bubble into screenshot enlargement',
+  );
+  assert.match(
+    cardSurface,
+    /onOpenScreenshot\(screenshotButtonRef\.current\)/,
+    'the non-control tile body must route to the existing screenshot viewer',
+  );
+  assert.match(
+    tile,
+    /onClick=\{\(event\) => \{\s*event\.stopPropagation\(\);\s*onOpenDetails\(event\.currentTarget\);\s*\}\}[\s\S]{0,360}aria-label=\{`Open details and activity for \$\{student\.studentName \|\| 'student'\}`\}[\s\S]{0,180}data-testid=\{`button-student-details-\$\{student\.studentId\}`\}/,
+    'Details must be a separate labelled action that cannot bubble into screenshot enlargement',
+  );
+  assert.doesNotMatch(
+    tile,
+    /function StudentTile\(\{\s*student,\s*onClick,/,
+    'the old ambiguous card-to-details callback must not remain',
+  );
+
+  const callbackPropsStart = tile.indexOf('const CALLBACK_PROPS');
+  const callbackPropsEnd = tile.indexOf(']);', callbackPropsStart);
+  const callbackProps = tile.slice(callbackPropsStart, callbackPropsEnd + 3);
+  assert.ok(callbackPropsStart >= 0 && callbackPropsEnd > callbackPropsStart);
+  assert.match(callbackProps, /'onOpenDetails'/);
+  assert.doesNotMatch(callbackProps, /'onClick'/);
+  assert.match(
+    tile,
+    /if \(CALLBACK_PROPS\.has\(key\)\) \{[\s\S]{0,280}Boolean\(previous\[key\]\) !== Boolean\(next\[key\]\)[\s\S]{0,80}return false;[\s\S]{0,80}continue;/,
+    'memoized tiles must ignore callback identity but rerender when an authorized action appears or disappears',
+  );
+
+  assert.match(
+    dashboard,
+    /const tileDetailsRevoked = supervisedElsewhere[\s\S]{0,220}tileGlobalAuthorizationDenied[\s\S]{0,220}tileGlobalAuthorizationFailure[\s\S]{0,220}hardDeniedHistoryStudentIds\.has\(student\.studentId\)[\s\S]{0,180}detailHistoryDeniedStudentIds\.has\(student\.studentId\)[\s\S]{0,220}monitoringDisplay\?\.kind === 'delegated'/,
+    'delegation and global authorization failure must revoke Details before rendering the tile',
+  );
+  assert.match(
+    dashboard,
+    /onOpenDetails=\{tileDetailsRevoked\s*\? undefined\s*:\s*\(opener\) => openStudentDetails\(student, opener\)\}/,
+    'teacher and Observe tiles must share the explicit, authorization-gated drawer callback',
+  );
+  assert.match(dashboard, /onClose=\{closeStudentDetails\}/);
+  assert.match(
+    dashboard,
+    /studentDetailsOpenerRef\.current = opener \|\| null;[\s\S]{0,80}setSelectedStudent\(student\)/,
+  );
+  assert.match(
+    dashboard,
+    /opener\?\.isConnected[\s\S]{0,80}opener\.focus\(\)/,
+    'closing Details must restore focus only to an opener that still belongs to the active context',
+  );
+  assert.match(
+    dashboard,
+    /const clearStudentDetails = useCallback\(\(\) => \{[\s\S]{0,180}studentDetailsOpenerRef\.current = null;[\s\S]{0,80}setSelectedStudent\(null\)/,
+    'authority transitions must clear the drawer without focusing a stale tile',
+  );
+  const selectedDetailsRevocationStart = dashboard.indexOf('const selectedStudentDetailsRevoked');
+  const selectedDetailsRevocationEnd = dashboard.indexOf(');', selectedDetailsRevocationStart);
+  const selectedDetailsRevocation = dashboard.slice(
+    selectedDetailsRevocationStart,
+    selectedDetailsRevocationEnd + 2,
+  );
+  assert.ok(selectedDetailsRevocationStart >= 0 && selectedDetailsRevocationEnd > selectedDetailsRevocationStart);
+  assert.match(selectedDetailsRevocation, /tileGlobalAuthorizationDenied/);
+  assert.match(selectedDetailsRevocation, /tileGlobalAuthorizationFailure/);
+  assert.match(selectedDetailsRevocation, /hardDeniedHistoryStudentIds\.has\(selectedStudentRow\?\.studentId\)/);
+  assert.match(selectedDetailsRevocation, /detailHistoryDeniedStudentIds\.has\(selectedStudentRow\?\.studentId\)/);
+  assert.match(selectedDetailsRevocation, /detailHistoryHardDenied/);
+  assert.match(selectedDetailsRevocation, /selectedStudentDisplay\?\.kind === 'delegated'/);
+  assert.match(
+    dashboard,
+    /useLayoutEffect\(\(\) => \{\s*if \(selectedStudentDetailsRevoked\) clearStudentDetails\(\)/,
+    'an open drawer must close synchronously when its exact authority is revoked',
+  );
+  assert.match(
+    dashboard,
+    /detailHistoryFailureScope !== 'cohort'[\s\S]{0,180}setDetailHistoryDeniedStudentIds\([\s\S]{0,260}next\.add\(deniedStudentId\)/,
+    'a single-detail 404 must persist as a per-student Details denial',
+  );
+  assert.match(
+    dashboard,
+    /setDetailHistoryDeniedStudentIds\([\s\S]{0,120}current\.size === 0 \? current : new Set\(\)[\s\S]{0,120}\[historyTileBindingTransitionKey\]/,
+    'the per-student denial may clear only when the authorized history binding/context changes',
+  );
+  assert.match(
+    dashboard,
+    /\{selectedStudentRow && !selectedStudentDetailsRevoked && \([\s\S]{0,100}<StudentDetailDrawer/,
+    'revoked details must not remain mounted while state cleanup settles',
+  );
+});
+
 test('screenshot events coalesce one-second targeted refreshes without replacing cohort identity', async () => {
   const dashboard = await readFile(
     new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
@@ -455,8 +564,13 @@ test('detail history is fenced to the current authority and cannot reuse a stale
   );
   assert.match(
     dashboard,
-    /setSelectedStudent\(null\);[\s\S]{0,240}\[\s*activeSchoolId,[\s\S]{0,220}effectiveSessionId,[\s\S]{0,160}studentView,/,
+    /clearStudentDetails\(\);[\s\S]{0,240}\[\s*activeSchoolId,[\s\S]{0,220}effectiveSessionId,[\s\S]{0,160}studentView,/,
     'the drawer selection must be cleared when session or authority changes',
+  );
+  assert.match(
+    dashboard,
+    /const selectedStudentMissingFromRoster = Boolean\(selectedStudent && !selectedStudentRow\);[\s\S]{0,180}useLayoutEffect\(\(\) => \{\s*if \(selectedStudentMissingFromRoster\) clearStudentDetails\(\)/,
+    'roster removal must clear selection before the same student ID can be authorized again',
   );
   assert.match(dashboard, /studentView !== 'available'/);
 });
