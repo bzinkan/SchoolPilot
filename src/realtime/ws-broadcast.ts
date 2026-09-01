@@ -46,20 +46,33 @@ function extractMsgId(message: unknown): string | null {
   return msg?._msgId ?? null;
 }
 
-function requiredStudentCapability(message: unknown): string | null {
-  if (!message || typeof message !== "object" || Array.isArray(message)) return null;
+function requiredStudentCapabilities(message: unknown): string[] {
+  if (!message || typeof message !== "object" || Array.isArray(message)) return [];
   const classroomState = (message as { classroomState?: unknown }).classroomState;
   if (!classroomState || typeof classroomState !== "object" || Array.isArray(classroomState)) {
-    return null;
+    return [];
+  }
+  const required: string[] = [];
+  const authPassThrough = (classroomState as { authPassThrough?: unknown }).authPassThrough;
+  if (
+    authPassThrough
+    && typeof authPassThrough === "object"
+    && !Array.isArray(authPassThrough)
+    && (authPassThrough as { schemaVersion?: unknown }).schemaVersion === 1
+  ) {
+    required.push("restrictionAuthPassThroughV1");
   }
   const deliveryContext = (classroomState as { deliveryContext?: unknown }).deliveryContext;
   if (!deliveryContext || typeof deliveryContext !== "object" || Array.isArray(deliveryContext)) {
-    return null;
+    return required;
   }
-  return (deliveryContext as { lateSignInRestrictionSso?: unknown })
-    .lateSignInRestrictionSso === true
-    ? "lateSignInRestrictionSsoV1"
-    : null;
+  if (
+    (deliveryContext as { lateSignInRestrictionSso?: unknown })
+      .lateSignInRestrictionSso === true
+  ) {
+    required.push("lateSignInRestrictionSsoV1");
+  }
+  return required;
 }
 
 function addSocket(map: Map<string, Set<WebSocket>>, schoolId: string, ws: WebSocket) {
@@ -379,7 +392,10 @@ function validExactStudentSocketBinding(binding: ExactStudentSocketBinding): boo
 export function sendToStudentBindingLocal(
   binding: ExactStudentSocketBinding,
   message: unknown,
-  options: { requiredCapability?: string } = {}
+  options: {
+    requiredCapability?: string;
+    requiredCapabilities?: readonly string[];
+  } = {}
 ): boolean {
   const msgType = (message as { type?: string })?.type ?? "unknown";
   if (!validExactStudentSocketBinding(binding)) {
@@ -391,8 +407,12 @@ export function sendToStudentBindingLocal(
     console.log(`[WS-Local] No exact student-binding socket available for ${msgType}`);
     return false;
   }
-  const requiredCapability = options.requiredCapability
-    ?? requiredStudentCapability(message);
+  const requiredCapabilities = [...new Set(
+    options.requiredCapabilities
+      ?? (options.requiredCapability
+        ? [options.requiredCapability]
+        : requiredStudentCapabilities(message))
+  )];
   const matchingSockets = [...sockets].filter((ws) => {
     const client = wsClients.get(ws);
     return client?.authenticated === true
@@ -401,8 +421,10 @@ export function sendToStudentBindingLocal(
       && client.studentId === binding.studentId
       && client.studentSessionId === binding.studentSessionId
       && (
-        !requiredCapability
-        || client.acceptedCapabilities?.includes(requiredCapability) === true
+        requiredCapabilities.length === 0
+        || requiredCapabilities.every((capability) =>
+          client.acceptedCapabilities?.includes(capability) === true
+        )
       )
       && ws.readyState === WebSocket.OPEN;
   });

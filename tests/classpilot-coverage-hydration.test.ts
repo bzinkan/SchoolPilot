@@ -95,6 +95,7 @@ describe("ClassPilot coverage bulk hydration", () => {
         "domainPreservingRestrictionsV1",
         "studentAuthGatePresenceV1",
         "lateSignInRestrictionSsoV1",
+        "restrictionAuthPassThroughV1",
       ],
       acceptedCapabilities: [],
     });
@@ -118,6 +119,12 @@ describe("ClassPilot coverage bulk hydration", () => {
     );
     assert.equal(result.get(studentId)?.capabilities.studentAuthGatePresenceV1, true);
     assert.equal(result.get(studentId)?.capabilities.lateSignInRestrictionSsoV1, true);
+    assert.equal(result.get(studentId)?.capabilities.restrictionAuthPassThroughV1, true);
+    assert.equal(
+      result.get(studentId)?.acceptedCapabilities.restrictionAuthPassThroughV1,
+      false,
+      "raw advertisement must remain visible without implying server acceptance"
+    );
     assert.equal(result.get(studentId)?.studentAuthGatePresenceV1Enabled, false);
     assert.equal(result.get(studentId)?.lateSignInRestrictionSsoV1Enabled, false);
   });

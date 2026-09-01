@@ -49,6 +49,19 @@ export function classpilotAckControlRevision(value: unknown): number | undefined
     : undefined;
 }
 
+/** Strictly parse the SSO projection fence actually applied by the client. */
+export function classpilotAckAppliedAuthPolicyRevision(
+  value: unknown
+): number | undefined {
+  const ack = ackObject(value);
+  const revision = ack?.appliedAuthPolicyRevision;
+  return typeof revision === "number"
+    && Number.isSafeInteger(revision)
+    && revision >= 0
+    ? revision
+    : undefined;
+}
+
 /**
  * Protocol v2 acknowledgements do not carry an authority envelope, so absence
  * remains compatible. Once any explicit binding field is present, every

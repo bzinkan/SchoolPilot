@@ -192,6 +192,18 @@ export function deriveStudentMonitoringDisplay(student, nowMs = Date.now(), opti
     };
   }
 
+  const restrictionAuthState = student?.restrictionAuthState;
+  if (restrictionAuthState === 'in_progress' || restrictionAuthState === 'returning') {
+    return {
+      kind: 'signing_in',
+      status: 'online',
+      label: 'Signing in',
+      telemetryCurrent: true,
+      observedAtMs,
+      nextBoundaryAtMs: graceStartedAtMs,
+    };
+  }
+
   const idle = student?.activityState === 'idle' || student?.status === 'idle';
   return {
     kind: idle ? 'idle' : 'online',
@@ -313,6 +325,12 @@ export function deriveUnavailablePreview(monitoringDisplay) {
         reason: 'Updating monitoring…',
         showLastObservation: true,
         warning: true,
+      };
+    case 'signing_in':
+      return {
+        reason: 'Updating preview',
+        showLastObservation: true,
+        warning: false,
       };
     case 'updates_unavailable':
     default:

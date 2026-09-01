@@ -34,6 +34,7 @@ import {
   isAuthorizedClasspilotSessionStaff,
   getClasspilotSessionStudentRoster,
   getClasspilotStudentControlStates,
+  getClasspilotSsoPolicyForSchool,
   getGroupStudents,
   getGroupByIdAndSchool,
   getUserById,
@@ -97,6 +98,9 @@ import {
 } from "../services/classpilotRealtimeStatus.js";
 import {
   classpilotControlStateHasLateSignInOrigin,
+  classpilotControlStateHasAuthRelevantRestriction,
+  classpilotRestrictionAuthCapabilityRequired,
+  classpilotRestrictionAuthProjectionRevision,
   effectiveClasspilotControlEnforcementHealth,
   serializeClasspilotStudentControlState,
 } from "../services/classpilotClassroomState.js";
@@ -194,7 +198,13 @@ function publicClasspilotExtensionContract(
       domainPreservingRestrictionsV1: extensionCapabilities.has("domainPreservingRestrictionsV1"),
       studentAuthGatePresenceV1: extensionCapabilities.has("studentAuthGatePresenceV1"),
       lateSignInRestrictionSsoV1: extensionCapabilities.has("lateSignInRestrictionSsoV1"),
+      restrictionAuthPassThroughV1: extensionCapabilities.has("restrictionAuthPassThroughV1"),
       minExtensionVersion: "2.6.0",
+    },
+    acceptedCapabilities: {
+      restrictionAuthPassThroughV1: acceptedCapabilities.has(
+        "restrictionAuthPassThroughV1"
+      ),
     },
   };
 }
@@ -1109,9 +1119,10 @@ router.get("/students-aggregated", ...classPilotStaffAuth, async (req, res, next
     const today = todayInTimeZone(schoolTimezone);
 
     const studentIds = dbStudents.map((s) => s.id);
-    const [snapshotRows, controlStateRows] = await Promise.all([
+    const [snapshotRows, controlStateRows, ssoPolicy] = await Promise.all([
       getClasspilotDashboardSnapshot(schoolId, studentIds, today),
       getClasspilotStudentControlStates(schoolId, studentIds),
+      getClasspilotSsoPolicyForSchool(schoolId),
     ]);
     const snapshotByStudent = new Map(snapshotRows.map((row) => [row.studentId, row]));
     const controlStateByStudent = new Map(controlStateRows.map((row) => [row.studentId, row]));
@@ -1137,6 +1148,10 @@ router.get("/students-aggregated", ...classPilotStaffAuth, async (req, res, next
         "lateSignInRestrictionSsoV1",
         { schoolId }
       ),
+      restrictionAuthPassThroughV1: isClasspilotCapabilityActive(
+        "restrictionAuthPassThroughV1",
+        { schoolId }
+      ),
     };
     const aggregated = dbStudents.map((student) => {
       const snapshot = snapshotByStudent.get(student.id);
@@ -1160,6 +1175,9 @@ router.get("/students-aggregated", ...classPilotStaffAuth, async (req, res, next
       // available for offline authoring/health while all activity fields still
       // read only from visibleRealtime above.
       const capabilityRealtime = delegatedAway ? null : rt;
+      const acceptedCapabilities = normalizeClasspilotPublicCapabilities(
+        capabilityRealtime?.acceptedCapabilities
+      );
       const attendanceStatus = snapshot?.attendanceStatus || "present";
       const activePass = snapshot?.activePass || null;
       const dismissal = snapshot?.dismissal || null;
@@ -1213,6 +1231,18 @@ router.get("/students-aggregated", ...classPilotStaffAuth, async (req, res, next
       const visibleOwnedDesiredControlState = deferredDesiredStateHidden
         ? undefined
         : ownedDesiredControlState;
+      const restrictionAuthCapabilityRequired = !!visibleOwnedDesiredControlState
+        && classpilotRestrictionAuthCapabilityRequired({
+          desiredState: visibleOwnedDesiredControlState.desiredState,
+          gateActive: operatorCapabilities.restrictionAuthPassThroughV1,
+          policy: ssoPolicy.policy,
+        });
+      const restrictionAuthRelevant = !!visibleOwnedDesiredControlState
+        && classpilotControlStateHasAuthRelevantRestriction(
+          visibleOwnedDesiredControlState.desiredState
+        );
+      const restrictionAuthUpdateRequired = restrictionAuthCapabilityRequired
+        && !acceptedCapabilities.includes("restrictionAuthPassThroughV1");
       const desiredClassroomState = visibleOwnedDesiredControlState
         ? serializeClasspilotStudentControlState(visibleOwnedDesiredControlState)
         : undefined;
@@ -1236,9 +1266,16 @@ router.get("/students-aggregated", ...classPilotStaffAuth, async (req, res, next
             new Date(),
             {
               gateActive: operatorCapabilities.lateSignInRestrictionSsoV1,
-              acceptedCapabilities: normalizeClasspilotPublicCapabilities(
-                capabilityRealtime?.acceptedCapabilities
-              ),
+              acceptedCapabilities,
+              restrictionAuthCapabilityRequired,
+              restrictionAuthPolicyRevision: restrictionAuthRelevant
+                ? classpilotRestrictionAuthProjectionRevision({
+                    policyRevision: ssoPolicy.revision,
+                    gateActive: operatorCapabilities.restrictionAuthPassThroughV1,
+                  })
+                : null,
+              appliedAuthPolicyRevision:
+                visibleRealtime?.appliedAuthPolicyRevision ?? null,
               exactBinding: isLoggedIn && snapshot?.studentSessionId && deviceId
                 ? {
                     schoolId,
@@ -1281,6 +1318,8 @@ router.get("/students-aggregated", ...classPilotStaffAuth, async (req, res, next
         operatorCapabilities,
         studentAuthGatePresenceV1Enabled: operatorCapabilities.studentAuthGatePresenceV1,
         lateSignInRestrictionSsoV1Enabled: operatorCapabilities.lateSignInRestrictionSsoV1,
+        restrictionAuthPassThroughV1Enabled:
+          operatorCapabilities.restrictionAuthPassThroughV1,
         isSharing: publicClassroomControls.isSharing,
         screenLocked: publicClassroomControls.screenLocked,
         flightPathActive: publicClassroomControls.flightPathActive,
@@ -1290,6 +1329,10 @@ router.get("/students-aggregated", ...classPilotStaffAuth, async (req, res, next
         screenshotHealth: visibleRealtime?.screenshotHealth || undefined,
         classroomState: authoritativeClassroomState,
         enforcementHealth,
+        enforcementUnavailableReason: restrictionAuthUpdateRequired
+          ? "Extension update required for sign-in-safe Waypoint or Flight Path"
+          : null,
+        restrictionAuthState: visibleRealtime?.restrictionAuthState || "idle",
         realtimeBinding: !delegatedAway
           ? classpilotPublicRealtimeBinding(snapshot?.studentSessionId)
           : null,

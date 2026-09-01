@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
 import { broadcastToStudentsLocal } from "../realtime/ws-broadcast.js";
 import {
@@ -6,8 +6,15 @@ import {
   publishWS,
 } from "../realtime/ws-redis.js";
 import { isClasspilotCapabilityActive } from "./classpilotProtocol.js";
-import { recordHeartbeatHotPathCounter } from "./heartbeatHotPathMetrics.js";
+import {
+  recordHeartbeatHotPathCounter,
+  recordHeartbeatHotPathTiming,
+} from "./heartbeatHotPathMetrics.js";
 import { getActiveSessionsForStudents } from "./storage.js";
+import {
+  classpilotScreenshotPolicyRefreshClaimDigest,
+  type ClasspilotScreenshotPolicyRefreshReason,
+} from "./classpilotScreenshotPolicyRefreshClaim.js";
 
 const SCREENSHOT_POLICY_REFRESH_CAPABILITY =
   "screenshotActiveObservationCadenceV1" as const;
@@ -15,18 +22,7 @@ const SCREENSHOT_POLICY_REFRESH_COALESCE_MS = 1_000;
 const MAX_LOCAL_REFRESH_CLAIMS = 4_096;
 const localRefreshClaims = new Map<string, number>();
 
-type RefreshReason = "activated" | "scope_changed" | "released";
 type RefreshClaim = "claimed" | "coalesced" | "unavailable";
-
-function refreshClaimDigest(options: {
-  schoolId: string;
-  teachingSessionId: string;
-  reason: RefreshReason;
-}): string {
-  return createHash("sha256")
-    .update(`${options.schoolId}\u001f${options.teachingSessionId}\u001f${options.reason}`)
-    .digest("base64url");
-}
 
 function claimLocalRefreshWindow(digest: string, now = Date.now()): RefreshClaim {
   for (const [key, expiresAt] of localRefreshClaims) {
@@ -46,9 +42,10 @@ function claimLocalRefreshWindow(digest: string, now = Date.now()): RefreshClaim
 async function claimRefreshWindow(options: {
   schoolId: string;
   teachingSessionId: string;
-  reason: RefreshReason;
+  reason: ClasspilotScreenshotPolicyRefreshReason;
+  studentIds: readonly string[];
 }): Promise<RefreshClaim> {
-  const digest = refreshClaimDigest(options);
+  const digest = classpilotScreenshotPolicyRefreshClaimDigest(options);
   if (!process.env.REDIS_URL) return claimLocalRefreshWindow(digest);
   const prefix = process.env.REDIS_PREFIX ?? "schoolpilot";
   const result = await executeRealtimeRedisCommand<string | null>([
@@ -79,79 +76,90 @@ export async function nudgeClasspilotScreenshotPolicyRefresh(options: {
   schoolId: string;
   teachingSessionId: string;
   studentIds: string[];
-  reason?: RefreshReason;
+  reason?: ClasspilotScreenshotPolicyRefreshReason;
 }): Promise<number> {
   if (!isClasspilotCapabilityActive(SCREENSHOT_POLICY_REFRESH_CAPABILITY, {
     schoolId: options.schoolId,
   })) return 0;
 
-  const studentIds = [...new Set(options.studentIds.map(String).filter(Boolean))];
-  if (studentIds.length === 0) return 0;
-  const reason = options.reason ?? "scope_changed";
-  const claim = await claimRefreshWindow({
-    schoolId: options.schoolId,
-    teachingSessionId: options.teachingSessionId,
-    reason,
-  });
-  if (claim === "coalesced") {
-    recordHeartbeatHotPathCounter("screenshotPolicyRefreshCoalesced");
-    return 0;
-  }
-  if (claim === "unavailable") {
-    // Regular ten-second heartbeats remain the bounded, fail-private fallback.
-    recordHeartbeatHotPathCounter("screenshotPolicyRefreshFailures");
-    return 0;
-  }
-
-  let targetDeviceIds: string[];
+  const refreshStartedAt = performance.now();
   try {
-    const sessions = await runWithTenantContext(
-      { schoolId: options.schoolId },
-      () => getActiveSessionsForStudents(options.schoolId, studentIds),
-    );
-    targetDeviceIds = [...new Set(
-      sessions.map((session) => session.deviceId).filter((value): value is string => Boolean(value)),
-    )];
-  } catch {
-    recordHeartbeatHotPathCounter("screenshotPolicyRefreshFailures");
-    return 0;
-  }
-  if (targetDeviceIds.length === 0) return 0;
-
-  const message = {
-    type: "screenshot-policy-refresh",
-    _msgId: randomUUID(),
-    reason: "observation_changed",
-    teachingSessionId: options.teachingSessionId,
-  } as const;
-  const localDelivered = broadcastToStudentsLocal(
-    options.schoolId,
-    message,
-    undefined,
-    targetDeviceIds,
-  );
-  let remotePublished = false;
-  try {
-    remotePublished = await publishWS({
-      kind: "students",
+    const studentIds = [...new Set(options.studentIds.map(String).filter(Boolean))].sort();
+    if (studentIds.length === 0) return 0;
+    const reason = options.reason ?? "scope_changed";
+    const claim = await claimRefreshWindow({
       schoolId: options.schoolId,
-      targetDeviceIds,
-    }, message);
-  } catch {
-    // The next ordinary heartbeat is the durable fallback.
-  }
+      teachingSessionId: options.teachingSessionId,
+      reason,
+      studentIds,
+    });
+    if (claim === "coalesced") {
+      recordHeartbeatHotPathCounter("screenshotPolicyRefreshCoalesced");
+      return 0;
+    }
+    if (claim === "unavailable") {
+      // Regular ten-second heartbeats remain the bounded, fail-private fallback.
+      recordHeartbeatHotPathCounter("screenshotPolicyRefreshFailures");
+      return 0;
+    }
 
-  recordHeartbeatHotPathCounter("screenshotPolicyRefreshSignals");
-  recordHeartbeatHotPathCounter("screenshotPolicyRefreshTargets", targetDeviceIds.length);
-  recordHeartbeatHotPathCounter("screenshotPolicyRefreshLocalDeliveries", localDelivered);
-  if (remotePublished) {
-    // Redis acceptance is transport evidence only, never device adoption.
-    recordHeartbeatHotPathCounter("screenshotPolicyRefreshPublicationsAccepted");
+    let targetDeviceIds: string[];
+    try {
+      const sessions = await runWithTenantContext(
+        { schoolId: options.schoolId },
+        () => getActiveSessionsForStudents(options.schoolId, studentIds),
+      );
+      targetDeviceIds = [...new Set(
+        sessions.map((session) => session.deviceId).filter(
+          (value): value is string => Boolean(value),
+        ),
+      )];
+    } catch {
+      recordHeartbeatHotPathCounter("screenshotPolicyRefreshFailures");
+      return 0;
+    }
+    if (targetDeviceIds.length === 0) return 0;
+
+    const message = {
+      type: "screenshot-policy-refresh",
+      _msgId: randomUUID(),
+      reason: "observation_changed",
+      teachingSessionId: options.teachingSessionId,
+    } as const;
+    const localDelivered = broadcastToStudentsLocal(
+      options.schoolId,
+      message,
+      undefined,
+      targetDeviceIds,
+    );
+    let remotePublished = false;
+    try {
+      remotePublished = await publishWS({
+        kind: "students",
+        schoolId: options.schoolId,
+        targetDeviceIds,
+      }, message);
+    } catch {
+      // The next ordinary heartbeat is the durable fallback.
+    }
+
+    recordHeartbeatHotPathCounter("screenshotPolicyRefreshSignals");
+    recordHeartbeatHotPathCounter("screenshotPolicyRefreshTargets", targetDeviceIds.length);
+    recordHeartbeatHotPathCounter("screenshotPolicyRefreshLocalDeliveries", localDelivered);
+    if (remotePublished) {
+      // Redis acceptance is transport evidence only, never device adoption.
+      recordHeartbeatHotPathCounter("screenshotPolicyRefreshPublicationsAccepted");
+    }
+    if (!remotePublished && localDelivered === 0) {
+      recordHeartbeatHotPathCounter("screenshotPolicyRefreshFailures");
+    }
+    return targetDeviceIds.length;
+  } finally {
+    recordHeartbeatHotPathTiming(
+      "screenshotPolicyRefreshMs",
+      performance.now() - refreshStartedAt
+    );
   }
-  if (!remotePublished && localDelivered === 0) {
-    recordHeartbeatHotPathCounter("screenshotPolicyRefreshFailures");
-  }
-  return targetDeviceIds.length;
 }
 
 export function resetClasspilotScreenshotPolicyRefreshForTests(): void {

@@ -3,8 +3,62 @@ import type {
   ClasspilotStudentControlState,
 } from "../schema/classpilot.js";
 import { recordHeartbeatHotPathCounter } from "./heartbeatHotPathMetrics.js";
+import type { ClasspilotSsoPolicy } from "./classpilotSsoPolicy.js";
 
 export const CLASSPILOT_CLASSROOM_STATE_SCHEMA_VERSION = 1 as const;
+
+export type ClasspilotRestrictionAuthPassThroughEnvelope = {
+  schemaVersion: 1;
+  policyRevision: number;
+  /** Canonical enabled policies always identify one configured provider. */
+  defaultProfileId: string;
+  attemptTtlSeconds: number;
+  profiles: Array<{
+    id: string;
+    name: string;
+    startUrl: string;
+    hostRules: Array<{ hostname: string; includeSubdomains: boolean }>;
+  }>;
+};
+
+/**
+ * Wire-order fence for SSO authority. The low bit is a rollback tombstone:
+ * an enabled operator gate emits 2N and gate-off emits 2N+1. Re-enabling
+ * after rollback therefore requires a settings PATCH that advances N; a
+ * same-database-revision re-enable is intentionally rejected by clients as
+ * older than the tombstone rather than reopening stale IdP authority.
+ */
+export function classpilotRestrictionAuthProjectionRevision(options: {
+  policyRevision: number;
+  gateActive: boolean;
+}): number {
+  const policyRevision = Math.max(0, Math.trunc(options.policyRevision));
+  return (policyRevision * 2) + (options.gateActive ? 0 : 1);
+}
+
+export function classpilotRestrictionAuthPassThroughEnvelope(options: {
+  gateActive: boolean;
+  policyRevision: number;
+  policy: ClasspilotSsoPolicy;
+}): ClasspilotRestrictionAuthPassThroughEnvelope | null {
+  const defaultProfileId = options.policy.defaultProfileId;
+  if (!options.gateActive || !options.policy.enabled || !defaultProfileId) return null;
+  return {
+    schemaVersion: 1,
+    policyRevision: classpilotRestrictionAuthProjectionRevision(options),
+    defaultProfileId,
+    attemptTtlSeconds: options.policy.attemptTtlSeconds,
+    profiles: options.policy.profiles.map((profile) => ({
+      id: profile.id,
+      name: profile.name,
+      startUrl: profile.startUrl,
+      hostRules: profile.hostRules.map((rule) => ({
+        hostname: rule.hostname,
+        includeSubdomains: rule.includeSubdomains,
+      })),
+    })),
+  };
+}
 
 export type ClasspilotClassroomStateSnapshot = {
   schemaVersion: 1;
@@ -20,6 +74,18 @@ export type ClasspilotClassroomStateSnapshot = {
    * deferred-origin state is released to an exact capable binding.
    */
   deliveryContext?: { lateSignInRestrictionSso: true };
+  /**
+   * School-authoritative, exact-binding authentication exception for a
+   * Waypoint or Flight Path. This is intentionally separate from the legacy
+   * deferred-origin marker: live restrictions receive the same policy.
+   */
+  authPassThrough?: ClasspilotRestrictionAuthPassThroughEnvelope;
+  /**
+   * Monotonic school-policy fence for same-control-revision reconciliation.
+   * Present on exact-bound Waypoint/Flight Path snapshots, including policy-
+   * disabled and operator-gate rollback tombstones with no envelope.
+   */
+  authPassThroughPolicyRevision?: number;
   restrictions: {
     screenLock: { active: boolean; url?: string | null; domain?: string | null };
     flightPath: { active: boolean; allowedDomains: string[]; name?: string | null };
@@ -384,29 +450,41 @@ export function serializeClasspilotStudentControlStateForDelivery(options: {
   gateActive: boolean;
   acceptedCapabilities: readonly string[];
   exactBinding: ClasspilotExactStudentBinding | null;
+  authPassThrough?: {
+    gateActive: boolean;
+    policyRevision: number;
+    policy: ClasspilotSsoPolicy;
+  };
   now?: Date;
-}): { classroomState: ClasspilotClassroomStateSnapshot | null; withheld: boolean } {
+}): {
+  classroomState: ClasspilotClassroomStateSnapshot | null;
+  withheld: boolean;
+  withheldReason?: "late_sign_in_capability_required" | "restriction_auth_update_required";
+} {
   const provenance = readClasspilotLateSignInDeliveryProvenance(options.state.desiredState);
-  if (!provenance) {
-    return {
-      classroomState: serializeClasspilotStudentControlState(options.state, options.now),
-      withheld: false,
-    };
-  }
-  // Aggregate counters only: no URL, school, student, device, session, or
-  // command identity is attached. Sampling every actual delivery inspection
-  // makes rollback/off observations and the still-stamped backlog visible.
-  recordHeartbeatHotPathCounter("lateSignInStampedInspection");
-  if (!options.gateActive) recordHeartbeatHotPathCounter("lateSignInRollback");
   const exact = options.exactBinding;
-  const authorized = options.gateActive
-    && options.acceptedCapabilities.includes("lateSignInRestrictionSsoV1")
-    && !!exact
+  const exactBindingAuthorized = !!exact
     && !!exact.studentSessionId
     && !!exact.deviceId
     && exact.schoolId === options.state.schoolId
     && exact.studentId === options.state.studentId;
-  if (!authorized) return { classroomState: null, withheld: true };
+  if (provenance) {
+    // Aggregate counters only: no URL, school, student, device, session, or
+    // command identity is attached. Sampling every actual delivery inspection
+    // makes rollback/off observations and the still-stamped backlog visible.
+    recordHeartbeatHotPathCounter("lateSignInStampedInspection");
+    if (!options.gateActive) recordHeartbeatHotPathCounter("lateSignInRollback");
+    const authorized = options.gateActive
+      && options.acceptedCapabilities.includes("lateSignInRestrictionSsoV1")
+      && exactBindingAuthorized;
+    if (!authorized) {
+      return {
+        classroomState: null,
+        withheld: true,
+        withheldReason: "late_sign_in_capability_required",
+      };
+    }
+  }
   const classroomState = serializeClasspilotStudentControlState(options.state, options.now);
   const restrictions = classroomState.restrictions;
   const stillRestricted = restrictions.screenLock.active
@@ -415,17 +493,81 @@ export function serializeClasspilotStudentControlStateForDelivery(options: {
     || restrictions.attentionMode.active
     || restrictions.tabLimit !== null
     || restrictions.temporaryAllows.length > 0;
+  let deliveredState = stillRestricted && provenance
+    ? { ...classroomState, deliveryContext: { lateSignInRestrictionSso: true } as const }
+    : classroomState;
+
+  const auth = options.authPassThrough;
+  const authRelevantRestriction = restrictions.flightPath.active
+    || (restrictions.screenLock.active && !!restrictions.screenLock.url);
+  if (
+    auth
+    && authRelevantRestriction
+    && exactBindingAuthorized
+  ) {
+    deliveredState = {
+      ...deliveredState,
+      authPassThroughPolicyRevision: classpilotRestrictionAuthProjectionRevision(auth),
+    };
+  }
+  const restrictionAuthCapabilityRequired = !!auth
+    && classpilotRestrictionAuthCapabilityRequired({
+      desiredState: options.state.desiredState,
+      gateActive: auth.gateActive,
+      policy: auth.policy,
+    });
+  if (auth && restrictionAuthCapabilityRequired) {
+    const authEnvelope = classpilotRestrictionAuthPassThroughEnvelope(auth);
+    const authAuthorized = exactBindingAuthorized
+      && options.acceptedCapabilities.includes("restrictionAuthPassThroughV1")
+      && !!authEnvelope;
+    if (!authAuthorized) {
+      recordHeartbeatHotPathCounter("restrictionAuthDeliveryWithheld");
+      return {
+        classroomState: null,
+        withheld: true,
+        withheldReason: "restriction_auth_update_required",
+      };
+    }
+    deliveredState = {
+      ...deliveredState,
+      authPassThrough: authEnvelope!,
+    };
+    recordHeartbeatHotPathCounter("restrictionAuthCapableDelivery");
+  }
+
   return {
     // An expired stamped row still reconciles an exact capable client to the
     // empty revision, but it must not trigger the cold Clever/SSO landing flow.
     // Provenance remains durable audit history. The database-backed rollback
     // gauge excludes this row after its effective expiry because only this
     // empty revision can be serialized from then on.
-    classroomState: stillRestricted
-      ? { ...classroomState, deliveryContext: { lateSignInRestrictionSso: true } }
-      : classroomState,
+    classroomState: deliveredState,
     withheld: false,
   };
+}
+
+export function classpilotRestrictionAuthCapabilityRequired(options: {
+  desiredState: unknown;
+  gateActive: boolean;
+  policy: ClasspilotSsoPolicy;
+}): boolean {
+  if (!options.gateActive || !options.policy.enabled) return false;
+  return classpilotControlStateHasAuthRelevantRestriction(options.desiredState);
+}
+
+export function classpilotControlStateHasAuthRelevantRestriction(
+  desiredState: unknown
+): boolean {
+  const desired = desiredState && typeof desiredState === "object"
+    && !Array.isArray(desiredState)
+    ? desiredState as Record<string, unknown>
+    : {};
+  const restrictions = normalizeClasspilotRestrictions(
+    desired.restrictions ?? desired
+  );
+  return restrictions.flightPath.active
+    || (restrictions.screenLock.active && !!restrictions.screenLock.url);
 }
 
 export function effectiveClasspilotControlEnforcementHealth(
@@ -436,12 +578,34 @@ export function effectiveClasspilotControlEnforcementHealth(
     gateActive: boolean;
     acceptedCapabilities: readonly string[];
     exactBinding: ClasspilotExactStudentBinding | null;
+    restrictionAuthCapabilityRequired?: boolean;
+    restrictionAuthPolicyRevision?: number | null;
+    appliedAuthPolicyRevision?: number | null;
   }
 ): ClasspilotControlEnforcementHealth {
   const effectiveExpiry = [state.scheduledEndAt, state.hardExpiresAt]
     .filter((value): value is Date => !!value)
     .sort((left, right) => left.getTime() - right.getTime())[0];
   if (effectiveExpiry && effectiveExpiry.getTime() <= now.getTime()) return "expired";
+
+  // A previously delivered strict restriction can outlive a school policy
+  // activation. Once sign-in-safe projection is required, a client without the
+  // currently accepted capability is unsupported even if it ACKed this same
+  // revision before the policy changed.
+  if (
+    delivery?.restrictionAuthCapabilityRequired
+    && !delivery.acceptedCapabilities.includes("restrictionAuthPassThroughV1")
+  ) {
+    return "unsupported";
+  }
+  if (
+    delivery?.acceptedCapabilities.includes("restrictionAuthPassThroughV1")
+    && typeof delivery.restrictionAuthPolicyRevision === "number"
+    && Number.isSafeInteger(delivery.restrictionAuthPolicyRevision)
+    && delivery.appliedAuthPolicyRevision !== delivery.restrictionAuthPolicyRevision
+  ) {
+    return "pending";
+  }
 
   const deferred = readClasspilotLateSignInDeliveryProvenance(state.desiredState);
   if (deferred) {

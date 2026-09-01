@@ -22,7 +22,11 @@ describe("ClassPilot command and ACK hot path", () => {
     assert.match(dispatchSection, /kind: "student-binding" as const/);
     assert.match(
       dispatchSection,
-      /deferredIds\.has\(target\.studentId\)[\s\S]*requiredCapability: "lateSignInRestrictionSsoV1"/,
+      /const requiredCapabilities = \[[\s\S]*deferredIds\.has\(target\.studentId\)[\s\S]*"lateSignInRestrictionSsoV1"[\s\S]*authoritativeClassroomState\?\.authPassThrough[\s\S]*"restrictionAuthPassThroughV1"/,
+    );
+    assert.match(
+      dispatchSection,
+      /sendToStudentBindingLocal\(exactTarget, message,[\s\S]*requiredCapabilities: exactTarget\.requiredCapabilities/,
     );
     assert.match(
       dispatchSection,

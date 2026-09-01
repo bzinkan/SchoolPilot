@@ -402,6 +402,9 @@ try {
     Assert-Condition ($globalRuntime.Environment.CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1 -ceq "false" -and
         $globalRollouts.studentAuthGatePresenceV1.mode -ceq "off") `
         "Existing global-on must explicitly keep student auth-gate presence disabled."
+    Assert-Condition ($globalRuntime.Environment.CLASSPILOT_CAP_RESTRICTION_AUTH_PASS_THROUGH_V1 -ceq "false" -and
+        $globalRollouts.restrictionAuthPassThroughV1.mode -ceq "off") `
+        "Existing global-on must explicitly keep restriction auth pass-through disabled."
     Assert-Condition ($globalRollouts.kioskLaunchTicketV1.mode -ceq "off") "Global profile must leave superseded V1 off."
     Assert-Condition ($globalRuntime.Turn.Hosts.Count -eq 2 -and $globalRuntime.Turn.Hosts[0] -ceq "turn-a.school-pilot.net") "TURN hosts must normalize to the reviewed pair."
 
@@ -753,6 +756,9 @@ try {
         [string]$lateSignInPilotRollouts.studentAuthGatePresenceV1.mode -ceq "on" -and
         [string]$lateSignInPilotRollouts.studentAuthGatePresenceV1.schoolIds[0] -ceq $testSchoolId) `
         "Late-sign-in pilot must preserve the exact existing student-gate pilot."
+    Assert-Condition ([string]$lateSignInPilotRuntime.Environment.CLASSPILOT_CAP_RESTRICTION_AUTH_PASS_THROUGH_V1 -ceq "false" -and
+        [string]$lateSignInPilotRollouts.restrictionAuthPassThroughV1.mode -ceq "off") `
+        "Legacy late-sign-in pilot must preserve restriction auth pass-through fail-closed."
     foreach ($capability in @($script:AllCapabilities | Where-Object {
         $_ -cne $script:LateSignInRestrictionSsoCapability
     })) {
@@ -791,6 +797,80 @@ try {
         $unsafeGlobalLateRolloutEntry.value = $unsafeGlobalLateRollouts | ConvertTo-Json -Depth 10 -Compress
         Get-RuntimeActivationState -Environment $unsafeGlobalLateEnvironment -AllowBaseline
     } "Late-sign-in activation must reject a global rollout."
+
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 6; mode = "restriction-auth-global-on"
+        })
+    } "Restriction-auth profiles must not expose a global activation mode."
+    $restrictionAuthPilotIntent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+        schemaVersion = 6; mode = "restriction-auth-pilot"; pilotSchoolId = $testSchoolId
+    })
+    Assert-Condition ($restrictionAuthPilotIntent.RequiresSourceRuntime -and
+        $restrictionAuthPilotIntent.Environment.Count -eq 0 -and
+        $null -eq $restrictionAuthPilotIntent.Turn) `
+        "Restriction-auth profiles must be source-preserving intents."
+    $restrictionAuthPilotSource = New-TransitionSourceTask -RuntimeConfiguration $lateSignInPilotRuntime
+    $restrictionAuthPilotRuntime = Resolve-SourcePreservingRuntimeConfiguration `
+        -RuntimeIntent $restrictionAuthPilotIntent -SourceTaskDefinition $restrictionAuthPilotSource `
+        -ContainerName "api"
+    $restrictionAuthPilotRollouts = [string]$restrictionAuthPilotRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON |
+        ConvertFrom-Json -Depth 10
+    Assert-Condition (
+        [string]$restrictionAuthPilotRuntime.Environment.CLASSPILOT_CAP_RESTRICTION_AUTH_PASS_THROUGH_V1 -ceq "true" -and
+        [string]$restrictionAuthPilotRollouts.restrictionAuthPassThroughV1.mode -ceq "on" -and
+        @($restrictionAuthPilotRollouts.restrictionAuthPassThroughV1.schoolIds).Count -eq 1 -and
+        [string]$restrictionAuthPilotRollouts.restrictionAuthPassThroughV1.schoolIds[0] -ceq $testSchoolId
+    ) "Restriction-auth pilot must require both controls for one exact school."
+    foreach ($capability in @($script:AllCapabilities | Where-Object {
+        $_ -cne $script:RestrictionAuthPassThroughCapability
+    })) {
+        $sourceEntry = $lateSignInPilotRollouts.$capability | ConvertTo-Json -Depth 10 -Compress
+        $targetEntry = $restrictionAuthPilotRollouts.$capability | ConvertTo-Json -Depth 10 -Compress
+        Assert-Condition ($sourceEntry -ceq $targetEntry) `
+            "Restriction-auth pilot must preserve the existing $capability rollout entry."
+        Assert-Condition (
+            [string]$restrictionAuthPilotRuntime.Environment[[string]$script:CapabilityFlags[$capability]] -ceq
+            [string]$lateSignInPilotRuntime.Environment[[string]$script:CapabilityFlags[$capability]]
+        ) "Restriction-auth pilot must preserve the existing $capability kill switch."
+    }
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $restrictionAuthPilotSource `
+        -ContainerName "api" -TargetRuntimeConfiguration $restrictionAuthPilotRuntime
+
+    $restrictionAuthOffIntent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+        schemaVersion = 6; mode = "restriction-auth-off"
+    })
+    $restrictionAuthOffSource = New-TransitionSourceTask -RuntimeConfiguration $restrictionAuthPilotRuntime
+    $restrictionAuthOffRuntime = Resolve-SourcePreservingRuntimeConfiguration `
+        -RuntimeIntent $restrictionAuthOffIntent -SourceTaskDefinition $restrictionAuthOffSource `
+        -ContainerName "api"
+    $restrictionAuthOffRollouts = [string]$restrictionAuthOffRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON |
+        ConvertFrom-Json -Depth 10
+    Assert-Condition (
+        [string]$restrictionAuthOffRuntime.Environment.CLASSPILOT_CAP_RESTRICTION_AUTH_PASS_THROUGH_V1 -ceq "false" -and
+        [string]$restrictionAuthOffRollouts.restrictionAuthPassThroughV1.mode -ceq "off" -and
+        [string]$restrictionAuthOffRuntime.Environment.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1 -ceq
+            [string]$lateSignInPilotRuntime.Environment.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1
+    ) "Restriction-auth rollback must disable only auth pass-through and preserve prior runtime state."
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $restrictionAuthOffSource `
+        -ContainerName "api" -TargetRuntimeConfiguration $restrictionAuthOffRuntime
+    Assert-Throws {
+        $unsafeGlobalRestrictionAuthSource = New-TransitionSourceTask `
+            -RuntimeConfiguration $restrictionAuthPilotRuntime
+        $unsafeGlobalRestrictionAuthEnvironment = @(
+            $unsafeGlobalRestrictionAuthSource.containerDefinitions[0].environment
+        )
+        $unsafeGlobalRestrictionAuthRolloutEntry = @(
+            $unsafeGlobalRestrictionAuthEnvironment |
+                Where-Object name -CEQ "CLASSPILOT_CAPABILITY_ROLLOUTS_JSON"
+        )[0]
+        $unsafeGlobalRestrictionAuthRollouts = [string]$unsafeGlobalRestrictionAuthRolloutEntry.value |
+            ConvertFrom-Json -Depth 10
+        $unsafeGlobalRestrictionAuthRollouts.restrictionAuthPassThroughV1.PSObject.Properties.Remove("schoolIds")
+        $unsafeGlobalRestrictionAuthRolloutEntry.value = $unsafeGlobalRestrictionAuthRollouts |
+            ConvertTo-Json -Depth 10 -Compress
+        Get-RuntimeActivationState -Environment $unsafeGlobalRestrictionAuthEnvironment -AllowBaseline
+    } "Restriction-auth activation must reject a global rollout."
     $script:ClassPilotReleaseTag = $finalLateSignInReleaseTag
     $script:ClassPilotMergeSha = $finalLateSignInMergeSha
     $script:ClassPilotZipSha256 = $finalLateSignInZipSha256

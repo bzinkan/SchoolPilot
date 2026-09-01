@@ -283,6 +283,64 @@ ALTER TABLE classpilot_session_usage
   ADD COLUMN IF NOT EXISTS top_activities JSONB;
 `;
 
+// School-owned authentication policy for temporary Waypoint / Flight Path
+// sign-in pass-through. The default is intentionally inert. Semantic policy
+// validation remains in application code; PostgreSQL enforces only the durable
+// non-null/object/revision shape needed for fail-closed reads.
+export const CLASSPILOT_SSO_POLICY_EXPAND_SQL = `
+SET LOCAL lock_timeout = '15s';
+SET LOCAL statement_timeout = '5min';
+
+ALTER TABLE settings
+  ADD COLUMN IF NOT EXISTS classpilot_sso_policy JSONB,
+  ADD COLUMN IF NOT EXISTS classpilot_sso_policy_revision INTEGER;
+
+UPDATE settings
+SET
+  classpilot_sso_policy = COALESCE(
+    classpilot_sso_policy,
+    '{"schemaVersion":1,"enabled":false,"defaultProfileId":"clever","attemptTtlSeconds":300,"profiles":[{"id":"clever","name":"Clever","startUrl":"https://clever.com/","hostRules":[{"hostname":"accounts.google.com","includeSubdomains":false},{"hostname":"clever.com","includeSubdomains":true}]},{"id":"google","name":"Google","startUrl":"https://accounts.google.com/","hostRules":[{"hostname":"accounts.google.com","includeSubdomains":false}]}]}'::jsonb
+  ),
+  classpilot_sso_policy_revision = COALESCE(classpilot_sso_policy_revision, 0)
+WHERE classpilot_sso_policy IS NULL
+   OR classpilot_sso_policy_revision IS NULL;
+
+ALTER TABLE settings
+  ALTER COLUMN classpilot_sso_policy SET DEFAULT '{"schemaVersion":1,"enabled":false,"defaultProfileId":"clever","attemptTtlSeconds":300,"profiles":[{"id":"clever","name":"Clever","startUrl":"https://clever.com/","hostRules":[{"hostname":"accounts.google.com","includeSubdomains":false},{"hostname":"clever.com","includeSubdomains":true}]},{"id":"google","name":"Google","startUrl":"https://accounts.google.com/","hostRules":[{"hostname":"accounts.google.com","includeSubdomains":false}]}]}'::jsonb,
+  ALTER COLUMN classpilot_sso_policy SET NOT NULL,
+  ALTER COLUMN classpilot_sso_policy_revision SET DEFAULT 0,
+  ALTER COLUMN classpilot_sso_policy_revision SET NOT NULL;
+
+DO $classpilot_sso_policy_constraints$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'settings_cp_sso_policy_object_check'
+      AND conrelid = 'settings'::regclass
+  ) THEN
+    ALTER TABLE settings
+      ADD CONSTRAINT settings_cp_sso_policy_object_check
+      CHECK (jsonb_typeof(classpilot_sso_policy) = 'object') NOT VALID;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'settings_cp_sso_policy_revision_check'
+      AND conrelid = 'settings'::regclass
+  ) THEN
+    ALTER TABLE settings
+      ADD CONSTRAINT settings_cp_sso_policy_revision_check
+      CHECK (classpilot_sso_policy_revision >= 0) NOT VALID;
+  END IF;
+END;
+$classpilot_sso_policy_constraints$;
+
+ALTER TABLE settings
+  VALIDATE CONSTRAINT settings_cp_sso_policy_object_check;
+ALTER TABLE settings
+  VALIDATE CONSTRAINT settings_cp_sso_policy_revision_check;
+`;
+
 export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
   {
     id: "20260822_classpilot_2_7_expand",
@@ -364,6 +422,16 @@ export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
     mode: "transactional",
     apply: async (connection) => {
       await connection.query(CLASSPILOT_STUDENT_DATA_TOP_ACTIVITIES_SQL);
+    },
+  },
+  {
+    id: "20260901_classpilot_sso_policy_expand",
+    checksum: createHash("sha256")
+      .update(CLASSPILOT_SSO_POLICY_EXPAND_SQL)
+      .digest("hex"),
+    mode: "transactional",
+    apply: async (connection) => {
+      await connection.query(CLASSPILOT_SSO_POLICY_EXPAND_SQL);
     },
   },
   staffIdentityIntegrityMigration,

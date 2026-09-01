@@ -127,6 +127,47 @@ test('signed-out and delegated rows never enter a freshness timer', () => {
   assert.equal(findNextStudentFreshnessBoundary([signedOut, delegated], new Map(), observedAt), null);
 });
 
+test('authentication progress stays connected while preview authority refreshes independently', () => {
+  const signingIn = deriveStudentMonitoringDisplay(monitoredStudent({
+    restrictionAuthState: 'in_progress',
+  }), observedAt + 1_000);
+  assert.equal(signingIn.kind, 'signing_in');
+  assert.equal(signingIn.label, 'Signing in');
+  assert.equal(signingIn.telemetryCurrent, true);
+  assert.equal(deriveUnavailablePreview(signingIn).reason, 'Updating preview');
+
+  const returning = deriveStudentMonitoringDisplay(monitoredStudent({
+    restrictionAuthState: 'returning',
+  }), observedAt + 1_000);
+  assert.equal(returning.kind, 'signing_in');
+
+  const staleAuth = deriveStudentMonitoringDisplay(monitoredStudent({
+    restrictionAuthState: 'in_progress',
+  }), observedAt + MONITORING_SIGNAL_LOSS_MS);
+  assert.equal(staleAuth.kind, 'reconnecting', 'freshness still derives only from heartbeat time');
+});
+
+test('classroom commands queue one targeted preview fallback instead of cohort refetch bursts', () => {
+  const dashboardSource = readFileSync(
+    new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
+    'utf8',
+  );
+  const start = dashboardSource.indexOf('const refreshScreenshotsForDevices = () =>');
+  const end = dashboardSource.indexOf('const decorateCommandResponse', start);
+  const refresh = dashboardSource.slice(start, end);
+  assert.ok(start >= 0 && end > start);
+  assert.match(refresh, /queueTargetedScreenshotRefresh/);
+  assert.match(refresh, /targetStudents\.map\(\(student\) => student\.studentId\)/);
+  assert.doesNotMatch(refresh, /invalidateQueries|\[1000, 2000, 3000, 5000, 8000\]/);
+
+  const tileSource = readFileSync(
+    new URL('../src/products/classpilot/components/StudentTile.jsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(tileSource, />Updating preview</);
+  assert.match(tileSource, /screenshot-updating-authority/);
+});
+
 test('last-seen display rejects sentinel timestamps and formats valid observations relatively', () => {
   for (const invalid of [
     null,

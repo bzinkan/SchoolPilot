@@ -27,6 +27,7 @@ const REPAIRED_CLIENT_DEPENDENT_CAPABILITIES = [
   "kioskLaunchTicketV2",
   "studentAuthGatePresenceV1",
   "lateSignInRestrictionSsoV1",
+  "restrictionAuthPassThroughV1",
 ] as const;
 
 test("protocol v3 activates only the advertised and server-enabled intersection", () => {
@@ -68,6 +69,7 @@ test("all scoped-authority-dependent capabilities require the repaired scoping m
     CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V2: "true",
     CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1: "true",
     CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1: "true",
+    CLASSPILOT_CAP_RESTRICTION_AUTH_PASS_THROUGH_V1: "true",
   };
   assert.deepEqual(negotiateClasspilotProtocol({
     clientProtocolVersion: 3,
@@ -237,6 +239,44 @@ test("late-sign-in delivery requires the repaired marker and one exact enabled s
       }),
     },
   }).acceptedCapabilities, []);
+});
+
+test("restriction auth pass-through requires raw advertisement plus exact-school acceptance", () => {
+  const negotiate = (schoolId: string, advertised: string[]) =>
+    negotiateClasspilotProtocol({
+      clientProtocolVersion: 3,
+      advertisedCapabilities: advertised,
+      scope: {
+        schoolId,
+        studentId: "student",
+        studentSessionId: "session",
+        deviceId: "device",
+      },
+      env: {
+        CLASSPILOT_PROTOCOL_V3_ENABLED: "true",
+        CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1: "true",
+        CLASSPILOT_CAP_RESTRICTION_AUTH_PASS_THROUGH_V1: "true",
+        CLASSPILOT_CAPABILITY_ROLLOUTS_JSON: JSON.stringify({
+          scopedAuthorityChecksV1: { mode: "on", schoolIds: ["school-a"] },
+          restrictionAuthPassThroughV1: { mode: "on", schoolIds: ["school-a"] },
+        }),
+      },
+    }).acceptedCapabilities;
+
+  assert.deepEqual(negotiate("school-a", [
+    "scopedAuthorityChecksV1",
+    "restrictionAuthPassThroughV1",
+  ]), [
+    "scopedAuthorityChecksV1",
+    "restrictionAuthPassThroughV1",
+  ]);
+  assert.deepEqual(negotiate("school-a", ["scopedAuthorityChecksV1"]), [
+    "scopedAuthorityChecksV1",
+  ], "server enablement never fabricates a raw client capability");
+  assert.deepEqual(negotiate("school-b", [
+    "scopedAuthorityChecksV1",
+    "restrictionAuthPassThroughV1",
+  ]), [], "a raw capability outside the exact rollout remains unaccepted");
 });
 
 test("canary activation is deterministic for the whole school", () => {

@@ -7,6 +7,8 @@ import {
   bindHeartbeatHotPathApiRuntimeTaskDefinitionSha256,
   bindHeartbeatHotPathHistoryFallbackSqlIdentity,
   buildHeartbeatHotPathSummaryEvent,
+  recordHeartbeatHotPathCounter,
+  recordHeartbeatHotPathTiming,
   recordHeartbeatTileHistoryFallbackDatabaseRead,
   snapshotHeartbeatHotPathMetrics,
 } from "../src/services/heartbeatHotPathMetrics.ts";
@@ -116,5 +118,57 @@ describe("heartbeat hot-path fallback SQL identity", () => {
       totalMs: 2.75,
       maxMs: 2.75,
     });
+  });
+
+  it("records aggregate restriction and monitoring timings without identity dimensions", () => {
+    snapshotHeartbeatHotPathMetrics({ reset: true });
+    for (const counter of [
+      "restrictionTargetsResolved",
+      "restrictionAuthorityChecks",
+      "restrictionPersistedTargets",
+      "restrictionEnforcedTargets",
+      "restrictionFanoutTargets",
+      "heartbeatGapOver30Seconds",
+      "heartbeatGapOver60Seconds",
+      "previewRefreshObserved",
+    ] as const) {
+      recordHeartbeatHotPathCounter(counter, 2);
+    }
+    for (const timing of [
+      "restrictionTargetResolutionMs",
+      "restrictionAuthorityLockMs",
+      "restrictionPersistenceMs",
+      "restrictionEnforcementMs",
+      "restrictionFanoutMs",
+      "heartbeatGapMs",
+      "previewRefreshLatencyMs",
+      "screenshotPolicyRefreshMs",
+    ] as const) {
+      recordHeartbeatHotPathTiming(timing, 12.5);
+    }
+
+    const snapshot = snapshotHeartbeatHotPathMetrics({ reset: true });
+    assert.equal(snapshot.counters.restrictionTargetsResolved, 2);
+    assert.equal(snapshot.counters.previewRefreshObserved, 2);
+    assert.deepEqual(snapshot.timings.restrictionAuthorityLockMs, {
+      count: 1,
+      totalMs: 12.5,
+      maxMs: 12.5,
+    });
+    assert.deepEqual(snapshot.timings.previewRefreshLatencyMs, {
+      count: 1,
+      totalMs: 12.5,
+      maxMs: 12.5,
+    });
+    const serialized = JSON.stringify(snapshot);
+    for (const forbidden of [
+      "school-1",
+      "student-1",
+      "device-1",
+      "provider-1",
+      "https://accounts.google.com/o/oauth2?token=secret",
+    ]) {
+      assert.equal(serialized.includes(forbidden), false);
+    }
   });
 });

@@ -34,7 +34,10 @@ export function publicClasspilotCommand(command: any): Record<string, any> {
   if (!safe || typeof safe !== "object" || Array.isArray(safe)) return {};
   const result = safe as Record<string, any>;
   if (typeof result.commandType === "string") {
-    result.deliveryPolicy = classpilotCommandDeliveryPolicy(result.commandType);
+    result.deliveryPolicy = result.commandType === "lock-screen"
+      && result.commandPayload?.currentPage === true
+      ? "transient_action"
+      : classpilotCommandDeliveryPolicy(result.commandType);
   }
   return result;
 }

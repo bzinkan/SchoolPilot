@@ -3,6 +3,8 @@ import { describe, it } from "node:test";
 import {
   applyClasspilotControlCommand,
   classpilotLateSignInRevisionAppliedToBinding,
+  classpilotRestrictionAuthCapabilityRequired,
+  classpilotRestrictionAuthProjectionRevision,
   emptyClasspilotRestrictions,
   effectiveClasspilotControlEnforcementHealth,
   normalizeClasspilotRestrictions,
@@ -43,6 +45,22 @@ function controlState(overrides: Partial<ClasspilotStudentControlState> = {}): C
     ...overrides,
   };
 }
+
+const enabledSsoPolicy = {
+  schemaVersion: 1 as const,
+  enabled: true,
+  defaultProfileId: "clever",
+  attemptTtlSeconds: 300 as const,
+  profiles: [{
+    id: "clever",
+    name: "Clever",
+    startUrl: "https://clever.com/in/example-district",
+    hostRules: [
+      { hostname: "clever.com", includeSubdomains: true },
+      { hostname: "accounts.google.com", includeSubdomains: false },
+    ],
+  }],
+};
 
 describe("ClassPilot full classroom state", () => {
   it("counts only signed-out current-page skips with a stable machine reason", () => {
@@ -237,21 +255,33 @@ describe("ClassPilot full classroom state", () => {
       acceptedCapabilities: ["lateSignInRestrictionSsoV1"],
       exactBinding,
       now,
-    }), { classroomState: null, withheld: true });
+    }), {
+      classroomState: null,
+      withheld: true,
+      withheldReason: "late_sign_in_capability_required",
+    });
     assert.deepEqual(serializeClasspilotStudentControlStateForDelivery({
       state,
       gateActive: true,
       acceptedCapabilities: [],
       exactBinding,
       now,
-    }), { classroomState: null, withheld: true });
+    }), {
+      classroomState: null,
+      withheld: true,
+      withheldReason: "late_sign_in_capability_required",
+    });
     assert.deepEqual(serializeClasspilotStudentControlStateForDelivery({
       state,
       gateActive: true,
       acceptedCapabilities: ["lateSignInRestrictionSsoV1"],
       exactBinding: { ...exactBinding, studentId: "student-other" },
       now,
-    }), { classroomState: null, withheld: true });
+    }), {
+      classroomState: null,
+      withheld: true,
+      withheldReason: "late_sign_in_capability_required",
+    });
 
     const delivered = serializeClasspilotStudentControlStateForDelivery({
       state,
@@ -395,7 +425,11 @@ describe("ClassPilot full classroom state", () => {
         studentSessionId: "session-old",
         deviceId: "device-old",
       },
-    }), { classroomState: null, withheld: true });
+    }), {
+      classroomState: null,
+      withheld: true,
+      withheldReason: "late_sign_in_capability_required",
+    });
     assert.deepEqual(serializeClasspilotStudentControlStateForDelivery({
       state: stateAfterAck,
       gateActive: true,
@@ -406,7 +440,11 @@ describe("ClassPilot full classroom state", () => {
         studentSessionId: "session-old",
         deviceId: "device-old",
       },
-    }), { classroomState: null, withheld: true });
+    }), {
+      classroomState: null,
+      withheld: true,
+      withheldReason: "late_sign_in_capability_required",
+    });
   });
 
   it("expires a deferred restriction before a later sign-in without losing provenance", () => {
@@ -460,6 +498,233 @@ describe("ClassPilot full classroom state", () => {
     });
     assert.equal(delivered.withheld, false);
     assert.equal(delivered.classroomState?.deliveryContext, undefined);
+  });
+
+  it("projects a school-authored SSO envelope only to an exact accepted live binding", () => {
+    const now = new Date("2026-08-13T12:00:00.000Z");
+    const state = controlState({
+      desiredState: {
+        restrictions: normalizeClasspilotRestrictions({
+          screenLock: { active: true, url: "https://classroom.google.com/u/0/h" },
+        }),
+      },
+    });
+    const exactBinding = {
+      schoolId: "school-1",
+      studentId: "student-1",
+      studentSessionId: "session-1",
+      deviceId: "device-1",
+    };
+    const authPassThrough = {
+      gateActive: true,
+      policyRevision: 7,
+      policy: enabledSsoPolicy,
+    };
+
+    assert.deepEqual(serializeClasspilotStudentControlStateForDelivery({
+      state,
+      gateActive: true,
+      acceptedCapabilities: [],
+      exactBinding,
+      authPassThrough,
+      now,
+    }), {
+      classroomState: null,
+      withheld: true,
+      withheldReason: "restriction_auth_update_required",
+    });
+
+    const delivered = serializeClasspilotStudentControlStateForDelivery({
+      state,
+      gateActive: true,
+      acceptedCapabilities: ["restrictionAuthPassThroughV1"],
+      exactBinding,
+      authPassThrough,
+      now,
+    });
+    assert.equal(delivered.withheld, false);
+    assert.deepEqual(delivered.classroomState?.authPassThrough, {
+      schemaVersion: 1,
+      policyRevision: 14,
+      defaultProfileId: "clever",
+      attemptTtlSeconds: 300,
+      profiles: enabledSsoPolicy.profiles,
+    });
+    assert.equal(delivered.classroomState?.authPassThroughPolicyRevision, 14);
+    assert.equal(delivered.classroomState?.deliveryContext, undefined);
+    assert.doesNotMatch(JSON.stringify(delivered), /student-1|session-1|device-1/);
+
+    const rolloutOff = serializeClasspilotStudentControlStateForDelivery({
+      state,
+      gateActive: true,
+      acceptedCapabilities: [],
+      exactBinding,
+      authPassThrough: { ...authPassThrough, gateActive: false },
+      now,
+    });
+    assert.equal(rolloutOff.withheld, false);
+    assert.equal(rolloutOff.classroomState?.authPassThrough, undefined);
+    assert.equal(
+      rolloutOff.classroomState?.authPassThroughPolicyRevision,
+      15,
+      "operator rollback carries a strictly newer tombstone"
+    );
+  });
+
+  it("requires both legacy and auth pass-through capabilities for a deferred destination", () => {
+    const now = new Date("2026-08-13T12:00:00.000Z");
+    const state = controlState({
+      desiredState: withClasspilotLateSignInOrigin({
+        desiredState: {
+          restrictions: normalizeClasspilotRestrictions({
+            screenLock: { active: true, url: "https://classroom.google.com/u/0/h" },
+          }),
+        },
+        commandId: "deferred-waypoint",
+      }),
+    });
+    const exactBinding = {
+      schoolId: "school-1",
+      studentId: "student-1",
+      studentSessionId: "session-1",
+      deviceId: "device-1",
+    };
+    const authPassThrough = {
+      gateActive: true,
+      policyRevision: 2,
+      policy: enabledSsoPolicy,
+    };
+
+    assert.equal(serializeClasspilotStudentControlStateForDelivery({
+      state,
+      gateActive: true,
+      acceptedCapabilities: ["lateSignInRestrictionSsoV1"],
+      exactBinding,
+      authPassThrough,
+      now,
+    }).withheldReason, "restriction_auth_update_required");
+    assert.equal(serializeClasspilotStudentControlStateForDelivery({
+      state,
+      gateActive: true,
+      acceptedCapabilities: ["restrictionAuthPassThroughV1"],
+      exactBinding,
+      authPassThrough,
+      now,
+    }).withheldReason, "late_sign_in_capability_required");
+
+    const delivered = serializeClasspilotStudentControlStateForDelivery({
+      state,
+      gateActive: true,
+      acceptedCapabilities: [
+        "lateSignInRestrictionSsoV1",
+        "restrictionAuthPassThroughV1",
+      ],
+      exactBinding,
+      authPassThrough,
+      now,
+    });
+    assert.equal(delivered.withheld, false);
+    assert.deepEqual(delivered.classroomState?.deliveryContext, {
+      lateSignInRestrictionSso: true,
+    });
+    assert.equal(delivered.classroomState?.authPassThrough?.policyRevision, 4);
+    assert.equal(delivered.classroomState?.authPassThroughPolicyRevision, 4);
+  });
+
+  it("makes delayed ACK capability requirements follow current rollout and policy", () => {
+    const desiredState = {
+      restrictions: normalizeClasspilotRestrictions({
+        flightPath: {
+          active: true,
+          allowedDomains: ["classroom.google.com"],
+        },
+      }),
+    };
+    assert.equal(classpilotRestrictionAuthCapabilityRequired({
+      desiredState,
+      gateActive: false,
+      policy: enabledSsoPolicy,
+    }), false, "the same revision may have been delivered before rollout");
+    assert.equal(classpilotRestrictionAuthCapabilityRequired({
+      desiredState,
+      gateActive: true,
+      policy: enabledSsoPolicy,
+    }), true, "a delayed old-client ACK must be rejected after activation");
+    assert.equal(classpilotRestrictionAuthCapabilityRequired({
+      desiredState,
+      gateActive: true,
+      policy: { ...enabledSsoPolicy, enabled: false, defaultProfileId: null },
+    }), false);
+  });
+
+  it("orders policy edits and operator rollback with a monotonic wire fence", () => {
+    const enabledAtSeven = classpilotRestrictionAuthProjectionRevision({
+      policyRevision: 7,
+      gateActive: true,
+    });
+    const rollbackAtSeven = classpilotRestrictionAuthProjectionRevision({
+      policyRevision: 7,
+      gateActive: false,
+    });
+    const reenabledAfterReviewedPatch = classpilotRestrictionAuthProjectionRevision({
+      policyRevision: 8,
+      gateActive: true,
+    });
+    assert.equal(enabledAtSeven, 14);
+    assert.equal(rollbackAtSeven, 15);
+    assert.equal(reenabledAfterReviewedPatch, 16);
+    assert.ok(enabledAtSeven < rollbackAtSeven);
+    assert.ok(rollbackAtSeven < reenabledAfterReviewedPatch);
+  });
+
+  it("reports a pre-policy restriction unsupported until the current binding accepts auth pass-through", () => {
+    const desiredState = {
+      restrictions: normalizeClasspilotRestrictions({
+        screenLock: {
+          active: true,
+          url: "https://classroom.google.com/c/example",
+        },
+      }),
+    };
+    const state = controlState({ desiredState, enforcementHealth: "synced" });
+    const baseDelivery = {
+      gateActive: true,
+      exactBinding: {
+        schoolId: "school-1",
+        studentId: "student-1",
+        studentSessionId: "session-1",
+        deviceId: "device-1",
+      },
+      restrictionAuthCapabilityRequired: true,
+    };
+    assert.equal(effectiveClasspilotControlEnforcementHealth(
+      state,
+      "2.8.0",
+      new Date("2026-08-13T12:00:30.000Z"),
+      { ...baseDelivery, acceptedCapabilities: [] },
+    ), "unsupported");
+    assert.equal(effectiveClasspilotControlEnforcementHealth(
+      state,
+      "2.8.1",
+      new Date("2026-08-13T12:00:30.000Z"),
+      {
+        ...baseDelivery,
+        acceptedCapabilities: ["restrictionAuthPassThroughV1"],
+        restrictionAuthPolicyRevision: 14,
+        appliedAuthPolicyRevision: 12,
+      },
+    ), "pending");
+    assert.equal(effectiveClasspilotControlEnforcementHealth(
+      state,
+      "2.8.1",
+      new Date("2026-08-13T12:00:30.000Z"),
+      {
+        ...baseDelivery,
+        acceptedCapabilities: ["restrictionAuthPassThroughV1"],
+        restrictionAuthPolicyRevision: 14,
+        appliedAuthPolicyRevision: 14,
+      },
+    ), "synced");
   });
 
   it("reports snapshot enforcement unsupported until version 2.6.0", () => {
