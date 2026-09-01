@@ -506,7 +506,7 @@ describe("ClassPilot administrator SSO policy", { concurrency: false }, () => {
     assert.equal(stale.body.current.policy.enabled, true);
 
     const schoolBPolicy: any = await inSchool(schoolB.id, () =>
-      storage.getClasspilotSsoPolicyForSchool(schoolA.id)
+      storage.getClasspilotSsoPolicyForSchool(schoolB.id)
     );
     assert.equal(schoolBPolicy.revision, 0);
     assert.equal(schoolBPolicy.policy.enabled, false);
