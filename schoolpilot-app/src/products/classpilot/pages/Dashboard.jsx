@@ -45,6 +45,7 @@ import {
   removeLegacyScreenshotsFromTileBatchData,
   removeStudentsFromTileBatchData,
   retainFreshTileScreenshotsOnNull,
+  runBoundedTileScreenshotJobs,
   tileBatchRequestShouldPoll,
 } from '../lib/tileBatchPolling';
 import {
@@ -144,6 +145,7 @@ const SESSION_SUBSCRIPTION_ACK_TIMEOUT_MS = 5_000;
 const SESSION_SUBSCRIPTION_RETRY_MS = Object.freeze([1_000, 2_000, 5_000, 10_000, 30_000]);
 const SCREENSHOT_EVENT_COALESCE_MS = 1_000;
 const SCREENSHOT_EVENT_RATE_LIMIT_MS = 1_000;
+const SCREENSHOT_EVENT_MAX_CONCURRENCY = 3;
 // The WebRTC implementation remains dormant for a future managed-Chromebook
 // validation, but screenshots are the only student-tile viewing surface.
 const LIVE_VIEW_UI_ENABLED = false;
@@ -470,9 +472,11 @@ export default function Dashboard() {
   const targetedScreenshotContextRef = useRef(null);
   const targetedScreenshotFenceGenerationRef = useRef({ key: null, generation: 0 });
   const targetedScreenshotAbortControllersRef = useRef(new Set());
+  const targetedScreenshotFlushInFlightRef = useRef(false);
   const expandedScreenshotOpenerRef = useRef(null);
   const restoreExpandedScreenshotFocusRef = useRef(false);
   const expandedScreenshotContextGenerationRef = useRef({ key: null, generation: 0 });
+  const expandedScreenshotContextKeyRef = useRef('');
   const freshnessTimeoutRef = useRef(null);
   const graceReconciliationLatchRef = useRef({ scopeKey: null, cohortActive: false });
   const commandExpiryTimeoutRef = useRef(null);
@@ -521,7 +525,10 @@ export default function Dashboard() {
   const liveViewTimerRef = useRef(null);
   const liveViewConnectTimerRef = useRef(null);
 
-  const queueTargetedScreenshotRefresh = useCallback((studentIds, { immediate = false } = {}) => {
+  const queueTargetedScreenshotRefresh = useCallback(function queueTargetedScreenshotRefresh(
+    studentIds,
+    { immediate = false } = {},
+  ) {
     const ids = Array.isArray(studentIds) ? studentIds : [studentIds];
     for (const studentId of ids) {
       if (typeof studentId === 'string' && studentId) {
@@ -529,6 +536,7 @@ export default function Dashboard() {
       }
     }
     if (pendingScreenshotStudentIdsRef.current.size === 0) return;
+    if (targetedScreenshotFlushInFlightRef.current) return;
     if (immediate && screenshotRefetchTimeoutRef.current) {
       clearTimeout(screenshotRefetchTimeoutRef.current);
       screenshotRefetchTimeoutRef.current = null;
@@ -549,7 +557,13 @@ export default function Dashboard() {
       pendingScreenshotStudentIdsRef.current.clear();
       if (pendingIds.length === 0) return;
       lastScreenshotRefetchAtRef.current = Date.now();
-      void targetedScreenshotFlushRef.current(pendingIds);
+      targetedScreenshotFlushInFlightRef.current = true;
+      void Promise.resolve(targetedScreenshotFlushRef.current(pendingIds)).finally(() => {
+        targetedScreenshotFlushInFlightRef.current = false;
+        if (pendingScreenshotStudentIdsRef.current.size > 0) {
+          queueTargetedScreenshotRefresh(EMPTY_LIST);
+        }
+      });
     }, delayMs);
   }, []);
 
@@ -2404,20 +2418,12 @@ export default function Dashboard() {
     signOutEligibleBindingsByStudent,
     studentView,
   ]);
-  const observationStudentIdsKey = JSON.stringify([...new Set(
-    studentView === 'claimed'
-      ? claimedPickupStudents.map((student) => student.studentId)
-      : selectedSubgroupId
-        ? sessionFilteredStudents
-          .filter((student) => subgroupMembers.has(student.studentId))
-          .map((student) => student.studentId)
-        : EMPTY_LIST
-  )].sort());
   const observationScope = useMemo(() => {
-    if (studentView === 'class' && !selectedSubgroupId) return { kind: 'class' };
-    const studentIds = JSON.parse(observationStudentIdsKey);
-    return studentIds.length > 0 ? { kind: 'students', studentIds } : null;
-  }, [observationStudentIdsKey, selectedSubgroupId, studentView]);
+    // Rapid previews cover the exact frozen class while Class view is open.
+    // Grade/subgroup filters are presentation-only and must not silently slow
+    // the rest of the authorized class back to the background cadence.
+    return studentView === 'class' ? { kind: 'class' } : null;
+  }, [studentView]);
   const observationLeaseStatus = useObservationLease({
     // The only deployed observation lease is frozen-teaching-session scoped.
     // Claimed coverage may be authorized by a separate supervision context,
@@ -2523,9 +2529,15 @@ export default function Dashboard() {
     void purgeLegacyScreenshotTileCaches(queryClient);
   }, [studentView]);
   useEffect(() => {
-    if (!['denied', 'paused_unobserved'].includes(observationLeaseStatus)) return;
-    // Lease revocation invalidates only legacy V1 pixels. V2 rows carry their
-    // own class-bound authority and remain available through focus churn.
+    if (observationLeaseStatus === 'denied') {
+      // A terminal lease denial is an authorization loss for every cached
+      // screenshot generation, including exact class-bound V2 pixels.
+      void purgeAllStudentTileCaches(queryClient);
+      return;
+    }
+    if (observationLeaseStatus !== 'paused_unobserved') return;
+    // A normal view pause may bridge exact class-bound V2 pixels for 120s, but
+    // legacy pixels cannot survive without an active observation lease.
     void purgeLegacyScreenshotTileCaches(queryClient);
   }, [observationLeaseStatus]);
   const {
@@ -2669,7 +2681,7 @@ export default function Dashboard() {
     [screenshotTileBatchContext, screenshotTileStudentBindingsKey],
   );
   const screenshotTileRequests = studentView === 'class'
-    && observationLeaseStatus !== 'paused_unobserved'
+    && !['denied', 'paused_unobserved'].includes(observationLeaseStatus)
     ? classScreenshotTileRequests
     : EMPTY_LIST;
   const historyTileRequests = useMemo(
@@ -2684,6 +2696,7 @@ export default function Dashboard() {
     || observationLeaseStatus === 'error';
   const screenshotTileReadsEnabled = studentView === 'class'
     && Boolean(effectiveSessionId)
+    && !['denied', 'paused_unobserved'].includes(observationLeaseStatus)
     && !tileGlobalAuthorizationDenied;
   const legacyScreenshotReadsRevoked = ['denied', 'paused_unobserved'].includes(
     observationLeaseStatus,
@@ -2702,7 +2715,7 @@ export default function Dashboard() {
     fenceKey: targetedScreenshotFenceKey,
     fenceGeneration: targetedScreenshotFenceGenerationRef.current.generation,
     enabled: screenshotTileReadsEnabled
-      && observationLeaseStatus !== 'paused_unobserved',
+      && !['denied', 'paused_unobserved'].includes(observationLeaseStatus),
     teachingSessionId: effectiveSessionId,
     requests: classScreenshotTileRequests,
     locallyRevokedStudentIds: locallyRevokedTileStudentIds,
@@ -2724,7 +2737,14 @@ export default function Dashboard() {
       return [{ request, requestedIds }];
     });
 
-    await Promise.allSettled(jobs.map(async ({ request, requestedIds }) => {
+    await runBoundedTileScreenshotJobs(
+      jobs,
+      SCREENSHOT_EVENT_MAX_CONCURRENCY,
+      async ({ request, requestedIds }) => {
+      if (
+        targetedScreenshotContextRef.current?.fenceKey !== snapshot.fenceKey
+        || targetedScreenshotContextRef.current?.fenceGeneration !== snapshot.fenceGeneration
+      ) return;
       const controller = new AbortController();
       targetedScreenshotAbortControllersRef.current.add(controller);
       try {
@@ -2790,7 +2810,8 @@ export default function Dashboard() {
       } finally {
         targetedScreenshotAbortControllersRef.current.delete(controller);
       }
-    }));
+      },
+    );
   };
   useEffect(() => {
     if (screenshotRefetchTimeoutRef.current) {
@@ -2829,13 +2850,9 @@ export default function Dashboard() {
       retry: false,
       staleTime: 15000,
       gcTime: TILE_SCREENSHOT_CACHE_GC_MS,
-      enabled: screenshotTileReadsEnabled && tileBatchRequestShouldPoll(request, {
-        viewportTrackingSupported,
-        nearViewportStudentIds,
-        // Keep an enlarged screenshot's cohort active even when its tile is
-        // outside the virtualized viewport.
-        priorityStudentId: expandedScreenshot?.studentId || null,
-      }),
+      // This 30-second request is full-class reconciliation. Viewport filtering
+      // here would let an offscreen preview stay stale after a missed event.
+      enabled: screenshotTileReadsEnabled,
       structuralSharing: (previous, incoming) => retainFreshTileScreenshotsOnNull(
         previous,
         incoming,
@@ -2974,6 +2991,7 @@ export default function Dashboard() {
     };
   }
   const expandedScreenshotContextKey = `${expandedScreenshotContextBaseKey}\n${expandedScreenshotContextGenerationRef.current.generation}`;
+  expandedScreenshotContextKeyRef.current = expandedScreenshotContextKey;
   const expandedScreenshotStudent = expandedScreenshot?.studentId
     ? screenshotTileQueryStudents.find((student) => student.studentId === expandedScreenshot.studentId) || null
     : null;
@@ -3001,7 +3019,9 @@ export default function Dashboard() {
     expandedScreenshotHardRevoked ? null : expandedScreenshotData,
     freshnessNowMs,
   );
-  const expandedScreenshotPixelsAvailable = expandedScreenshotDisplay.available
+  const expandedScreenshotPixelsAvailable = (
+    expandedScreenshotDisplay.fresh || expandedScreenshotDisplay.retained
+  )
     && expandedScreenshotMonitoringDisplay?.kind !== 'signal_lost';
   const expandedScreenshotSelection = expandedScreenshot && !expandedScreenshotHardRevoked
     ? {
@@ -3023,15 +3043,15 @@ export default function Dashboard() {
     const frame = requestAnimationFrame(() => setExpandedScreenshot(null));
     return () => cancelAnimationFrame(frame);
   }, [expandedScreenshot, expandedScreenshotHardRevoked]);
-  const openExpandedScreenshot = (studentId, opener) => {
+  const openExpandedScreenshot = useCallback((studentId, opener) => {
     expandedScreenshotOpenerRef.current = opener || null;
     restoreExpandedScreenshotFocusRef.current = false;
     setExpandedScreenshot({
       studentId,
-      contextKey: expandedScreenshotContextKey,
+      contextKey: expandedScreenshotContextKeyRef.current,
     });
     queueTargetedScreenshotRefresh(studentId, { immediate: true });
-  };
+  }, [queueTargetedScreenshotRefresh]);
   const tilePrivacyStudents = (() => {
     const studentsById = new Map();
     for (const student of [
@@ -5323,6 +5343,7 @@ export default function Dashboard() {
                 || observationLeaseStatus === 'paused_unobserved';
               const tileScreenshotRevoked = tileSharedPrivacyRevoked
                 || hardDeniedScreenshotStudentIds.has(student.studentId)
+                || observationLeaseStatus === 'denied'
                 || studentView !== 'class';
               return (
                 <div

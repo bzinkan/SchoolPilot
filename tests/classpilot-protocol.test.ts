@@ -9,6 +9,7 @@ import {
 import {
   classpilotObservationStatus,
   releaseClasspilotObservationLease,
+  releaseClasspilotObservationLeaseWithState,
   renewClasspilotObservationLease,
   resetClasspilotObservationLeasesForTests,
 } from "../src/services/classpilotObservationLease.js";
@@ -275,6 +276,7 @@ test("observation leases keep class and explicit student scopes fail closed", as
     });
     assert.equal(firstLease.created, true);
     assert.equal(firstLease.changed, true);
+    assert.equal(firstLease.activated, true);
     const renewedLease = await renewClasspilotObservationLease({
       schoolId: "school",
       teachingSessionId: "session",
@@ -285,6 +287,7 @@ test("observation leases keep class and explicit student scopes fail closed", as
     });
     assert.equal(renewedLease.created, false);
     assert.equal(renewedLease.changed, false);
+    assert.equal(renewedLease.activated, false);
     assert.deepEqual(await classpilotObservationStatus({
       schoolId: "school",
       teachingSessionId: "session",
@@ -307,18 +310,21 @@ test("observation leases keep class and explicit student scopes fail closed", as
     });
     assert.equal(changedLease.created, false);
     assert.equal(changedLease.changed, true);
+    assert.equal(changedLease.activated, false);
 
     assert.equal(await releaseClasspilotObservationLease({
       schoolId: "school",
       teachingSessionId: "session",
       viewerUserId: "teacher",
       viewerInstanceId: "viewer-a",
+      now: 3_000,
     }), true);
     assert.equal(await releaseClasspilotObservationLease({
       schoolId: "school",
       teachingSessionId: "session",
       viewerUserId: "teacher",
       viewerInstanceId: "viewer-a",
+      now: 3_000,
     }), false);
     assert.equal((await classpilotObservationStatus({
       schoolId: "school",
@@ -345,6 +351,39 @@ test("observation leases keep class and explicit student scopes fail closed", as
     });
     assert.equal(replacedExpiredLease.created, true);
     assert.equal(replacedExpiredLease.changed, true);
+    assert.equal(replacedExpiredLease.activated, true);
+
+    await renewClasspilotObservationLease({
+      schoolId: "school",
+      teachingSessionId: "session-multi",
+      viewerUserId: "teacher-a",
+      viewerInstanceId: "viewer-multi-a",
+      scope: { kind: "class" },
+      now: 200_000,
+    });
+    const secondViewer = await renewClasspilotObservationLease({
+      schoolId: "school",
+      teachingSessionId: "session-multi",
+      viewerUserId: "teacher-b",
+      viewerInstanceId: "viewer-multi-b",
+      scope: { kind: "class" },
+      now: 200_000,
+    });
+    assert.equal(secondViewer.activated, false);
+    assert.deepEqual(await releaseClasspilotObservationLeaseWithState({
+      schoolId: "school",
+      teachingSessionId: "session-multi",
+      viewerUserId: "teacher-a",
+      viewerInstanceId: "viewer-multi-a",
+      now: 200_001,
+    }), { released: true, deactivated: false });
+    assert.deepEqual(await releaseClasspilotObservationLeaseWithState({
+      schoolId: "school",
+      teachingSessionId: "session-multi",
+      viewerUserId: "teacher-b",
+      viewerInstanceId: "viewer-multi-b",
+      now: 200_001,
+    }), { released: true, deactivated: true });
   } finally {
     if (previousRedis === undefined) delete process.env.REDIS_URL;
     else process.env.REDIS_URL = previousRedis;

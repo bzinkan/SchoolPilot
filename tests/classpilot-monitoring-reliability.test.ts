@@ -196,6 +196,37 @@ test("active observation cadence is exact-class bound and fails back to 30 secon
     expiresInSeconds: 40,
   });
 
+  for (const [observationSeconds, expectedSeconds] of [
+    [90, 84],
+    [85, 84],
+    [84, 84],
+    [83, 83],
+  ] as const) {
+    const boundedActive = await resolveClasspilotScreenshotPolicy({
+      schoolId: "school",
+      studentId: "student",
+      teachingSessionId: "teaching-session",
+      acceptedCapabilities,
+      trackingSettings,
+      trackingAuthority: {
+        ...trackingAuthority,
+        authorityExpiresAt: new Date(now + 90_000),
+      },
+      now,
+      observationStatus: async () => ({
+        status: "observed",
+        expiresInSeconds: observationSeconds,
+      }),
+    });
+    assert.equal(
+      boundedActive.mode === "tracking_window_lease"
+        ? boundedActive.captureCadence?.expiresInSeconds
+        : null,
+      expectedSeconds,
+      `active cadence must retain the six-second safety margin at ${observationSeconds}s`,
+    );
+  }
+
   for (const observationStatus of [
     { status: "unobserved", expiresInSeconds: 0 } as const,
     { status: "unavailable", expiresInSeconds: 0 } as const,

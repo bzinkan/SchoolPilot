@@ -10,6 +10,7 @@ param(
     [string]$ManagedTestWaiverPath,
     [string]$TrackingPilotEvidencePath,
     [string]$StudentGatePilotEvidencePath,
+    [string]$FastPreviewCandidateReceiptPath,
     [string]$FastPreviewPilotEvidencePath,
     [string]$ExternalEvidenceRoot,
     [string]$PlanPath,
@@ -117,6 +118,8 @@ $script:LateSignInBlockedZipSha256s = @(
     "40fed2c455d5c50fe3a947d23e3798a0c81832a67e717a2767b62970c024307c",
     "cd2d9c26f989a64203c52f460a1366d642ea371d7cadbb68aec9ef9a16c1884e"
 )
+$script:FastPreviewRequiredReleaseTag = "v2.8.0"
+$script:FastPreviewRequiredExtensionId = "iggbfegfcjkfieoemeolfmfnapepalca"
 
 function Assert-LateSignInPilotReleaseEvidenceBound {
     if ([string]$script:ClassPilotReleaseTag -cne $script:LateSignInRequiredReleaseTag) {
@@ -132,6 +135,123 @@ function Assert-LateSignInPilotReleaseEvidenceBound {
     if ([string]$script:ClassPilotZipSha256 -cnotmatch '^[0-9a-f]{64}$' -or
         [string]$script:ClassPilotZipSha256 -cin $script:LateSignInBlockedZipSha256s) {
         throw "late-signin-pilot requires the exact final v2.7.9 clean-tag ZIP SHA-256."
+    }
+}
+
+function Assert-FastPreviewCandidateReceipt {
+    param(
+        [Parameter(Mandatory = $true)]$EvidenceSnapshot,
+        [Parameter(Mandatory = $true)][string]$PilotSchoolId,
+        [Parameter(Mandatory = $true)][string]$ToolSha,
+        [Parameter(Mandatory = $true)][string]$AppSha,
+        [Parameter(Mandatory = $true)][string]$ImageDigest,
+        [Parameter(Mandatory = $true)][string]$ApiTaskDefinitionArn,
+        [Parameter(Mandatory = $true)][string]$WorkerTaskDefinitionArn,
+        [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow,
+        [switch]$SkipSourceTaskPairMatch,
+        [switch]$AllowHistoricalAdmissionReceipt
+    )
+    $receipt = $EvidenceSnapshot.Value
+    $allowed = @(
+        "schemaVersion", "validatedAt", "pilotSchoolId", "schoolPilotToolSha",
+        "schoolPilotAppSha", "schoolPilotImageDigest", "sourceApiTaskDefinitionArn",
+        "sourceWorkerTaskDefinitionArn", "classPilotTag", "classPilotMergeSha",
+        "classPilotZipSha256", "classPilotExtensionId", "managedDeviceCount", "checks"
+    )
+    Assert-ExactProperties -Value $receipt -Allowed $allowed -Trail "fast-preview candidate receipt"
+    $present = @($receipt.PSObject.Properties.Name)
+    if (@($allowed | Where-Object { $present -cnotcontains $_ }).Count -ne 0 -or
+        -not (Test-IsJsonInteger -Value $receipt.schemaVersion) -or
+        [long]$receipt.schemaVersion -ne 1) {
+        throw "Fast-preview candidate receipt is incomplete."
+    }
+    foreach ($name in @(
+        "validatedAt", "pilotSchoolId", "schoolPilotToolSha", "schoolPilotAppSha",
+        "schoolPilotImageDigest", "sourceApiTaskDefinitionArn", "sourceWorkerTaskDefinitionArn",
+        "classPilotTag", "classPilotMergeSha", "classPilotZipSha256", "classPilotExtensionId"
+    )) {
+        if ($receipt.$name -isnot [string]) { throw "Fast-preview candidate receipt is incomplete." }
+    }
+    if ($AllowHistoricalAdmissionReceipt) {
+        try {
+            $validatedAtValue = [DateTimeOffset]::ParseExact(
+                [string]$receipt.validatedAt, "o", [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::RoundtripKind
+            )
+        }
+        catch { throw "Fast-preview candidate receipt must use an exact ISO-8601 timestamp." }
+        $receiptAge = $Now - $validatedAtValue
+        if ($receiptAge.TotalMinutes -lt -5 -or $receiptAge.TotalHours -gt 26) {
+            throw "Fast-preview candidate receipt is outside the bounded pilot evidence window."
+        }
+        $validatedAt = $validatedAtValue.ToUniversalTime().ToString("o")
+    }
+    else {
+        $validatedAt = Get-FreshEvidenceTimestamp -Value ([string]$receipt.validatedAt) `
+            -Label "Fast-preview candidate receipt" -Now $Now
+    }
+    if ([string]$receipt.classPilotTag -cne $script:FastPreviewRequiredReleaseTag -or
+        [string]$receipt.classPilotMergeSha -cnotmatch '^[0-9a-f]{40}$' -or
+        [string]$receipt.classPilotZipSha256 -cnotmatch '^[0-9a-f]{64}$' -or
+        [string]$receipt.classPilotExtensionId -cne $script:FastPreviewRequiredExtensionId) {
+        throw "Fast-preview candidate receipt does not identify the exact reviewed ClassPilot v2.8.0 artifact."
+    }
+    if (-not (Test-IsJsonInteger -Value $receipt.managedDeviceCount) -or
+        [long]$receipt.managedDeviceCount -lt 5 -or [long]$receipt.managedDeviceCount -gt 10) {
+        throw "Fast-preview candidate receipt requires five through ten managed devices."
+    }
+    if ([string]$receipt.sourceApiTaskDefinitionArn -cnotmatch `
+            '^arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api(?:-emergency)?:[1-9][0-9]*$' -or
+        [string]$receipt.sourceWorkerTaskDefinitionArn -cnotmatch `
+            '^arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:[1-9][0-9]*$') {
+        throw "Fast-preview candidate receipt task identities are malformed."
+    }
+    if ([string]$receipt.pilotSchoolId -cne $PilotSchoolId -or
+        [string]$receipt.schoolPilotToolSha -cne $ToolSha -or
+        [string]$receipt.schoolPilotAppSha -cne $AppSha -or
+        [string]$receipt.schoolPilotImageDigest -cne $ImageDigest -or
+        (-not $SkipSourceTaskPairMatch -and
+            ([string]$receipt.sourceApiTaskDefinitionArn -cne $ApiTaskDefinitionArn -or
+                [string]$receipt.sourceWorkerTaskDefinitionArn -cne $WorkerTaskDefinitionArn))) {
+        throw "Fast-preview candidate receipt does not bind the exact pilot admission authority."
+    }
+    $requiredChecks = @(
+        "managedDeviceAdoptionPassed", "exactAuthorityReadinessPassed",
+        "fiveSecondCadenceReadinessPassed", "thirtySecondFallbackReadinessPassed",
+        "noAuthorizationOrPrivacyDefects"
+    )
+    Assert-ExactProperties -Value $receipt.checks -Allowed $requiredChecks `
+        -Trail "fast-preview candidate receipt.checks"
+    $presentChecks = @($receipt.checks.PSObject.Properties.Name)
+    if (@($requiredChecks | Where-Object { $presentChecks -cnotcontains $_ }).Count -ne 0) {
+        throw "Fast-preview candidate receipt checks are incomplete."
+    }
+    foreach ($name in $requiredChecks) {
+        if ($receipt.checks.$name -isnot [bool] -or -not $receipt.checks.$name) {
+            throw "Fast-preview candidate receipt checks are incomplete."
+        }
+    }
+    return [pscustomobject]@{
+        ValidatedAt = $validatedAt
+        EvidenceSha256 = [string]$EvidenceSnapshot.Sha256
+        ClassPilotTag = [string]$receipt.classPilotTag
+        ClassPilotMergeSha = [string]$receipt.classPilotMergeSha
+        ClassPilotZipSha256 = [string]$receipt.classPilotZipSha256
+        ClassPilotExtensionId = [string]$receipt.classPilotExtensionId
+    }
+}
+
+function Assert-FastPreviewPlanArtifactIdentity {
+    param(
+        [Parameter(Mandatory = $true)]$Plan,
+        [Parameter(Mandatory = $true)]$CandidateReceipt
+    )
+    if ($Plan.PSObject.Properties.Name -cnotcontains "fastPreviewClassPilotTag" -or
+        [string]$Plan.fastPreviewClassPilotTag -cne [string]$CandidateReceipt.ClassPilotTag -or
+        [string]$Plan.fastPreviewClassPilotMergeSha -cne [string]$CandidateReceipt.ClassPilotMergeSha -or
+        [string]$Plan.fastPreviewClassPilotZipSha256 -cne [string]$CandidateReceipt.ClassPilotZipSha256 -or
+        [string]$Plan.fastPreviewClassPilotExtensionId -cne [string]$CandidateReceipt.ClassPilotExtensionId) {
+        throw "Fast-preview candidate artifact identity changed after planning."
     }
 }
 
@@ -867,6 +987,7 @@ function Assert-TrackingWindowPilotEvidence {
 function Assert-FastPreviewPilotEvidence {
     param(
         [Parameter(Mandatory = $true)]$EvidenceSnapshot,
+        [Parameter(Mandatory = $true)]$CandidateReceipt,
         [Parameter(Mandatory = $true)][string]$PilotSchoolId,
         [Parameter(Mandatory = $true)][string]$ToolSha,
         [Parameter(Mandatory = $true)][string]$AppSha,
@@ -881,19 +1002,23 @@ function Assert-FastPreviewPilotEvidence {
         "schemaVersion", "validatedAt", "observedFrom", "observedThrough", "pilotSchoolId",
         "schoolPilotToolSha", "schoolPilotAppSha", "schoolPilotImageDigest",
         "pilotApiTaskDefinitionArn", "pilotWorkerTaskDefinitionArn",
-        "pilotRuntimeConfigurationSha256", "checks"
+        "pilotRuntimeConfigurationSha256", "fastPreviewCandidateReceiptSha256",
+        "classPilotTag", "classPilotMergeSha", "classPilotZipSha256",
+        "classPilotExtensionId", "checks"
     )
     Assert-ExactProperties -Value $evidence -Allowed $allowed -Trail "fast-preview pilot evidence"
     $present = @($evidence.PSObject.Properties.Name)
     if (@($allowed | Where-Object { $present -cnotcontains $_ }).Count -ne 0 -or
         -not (Test-IsJsonInteger -Value $evidence.schemaVersion) -or
-        [long]$evidence.schemaVersion -ne 1) {
+        [long]$evidence.schemaVersion -ne 2) {
         throw "Fast-preview pilot evidence is incomplete."
     }
     foreach ($name in @(
         "validatedAt", "observedFrom", "observedThrough", "pilotSchoolId", "schoolPilotToolSha",
         "schoolPilotAppSha", "schoolPilotImageDigest", "pilotApiTaskDefinitionArn",
-        "pilotWorkerTaskDefinitionArn", "pilotRuntimeConfigurationSha256"
+        "pilotWorkerTaskDefinitionArn", "pilotRuntimeConfigurationSha256",
+        "fastPreviewCandidateReceiptSha256", "classPilotTag", "classPilotMergeSha",
+        "classPilotZipSha256", "classPilotExtensionId"
     )) {
         if ($evidence.$name -isnot [string]) { throw "Fast-preview pilot evidence is incomplete." }
     }
@@ -912,12 +1037,18 @@ function Assert-FastPreviewPilotEvidence {
             [string]$evidence.observedThrough, "o", [Globalization.CultureInfo]::InvariantCulture,
             [Globalization.DateTimeStyles]::RoundtripKind
         )
+        $candidateValidatedAt = [DateTimeOffset]::ParseExact(
+            [string]$CandidateReceipt.ValidatedAt, "o", [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::RoundtripKind
+        )
     }
     catch { throw "Fast-preview pilot observation timestamps must use exact ISO-8601 values." }
     $observationDuration = $observedThrough - $observedFrom
     $evidenceLag = $validatedAt - $observedThrough
+    $candidateLead = $observedFrom - $candidateValidatedAt
     if ($observationDuration.TotalMinutes -lt 30 -or $observationDuration.TotalHours -gt 24 -or
-        $evidenceLag.TotalMinutes -lt 0 -or $evidenceLag.TotalMinutes -gt 30) {
+        $evidenceLag.TotalMinutes -lt 0 -or $evidenceLag.TotalMinutes -gt 30 -or
+        $candidateLead.TotalMinutes -lt 0 -or $candidateLead.TotalHours -gt 2) {
         throw "Fast-preview pilot evidence does not cover the reviewed recent observation window."
     }
     if ([string]$evidence.pilotSchoolId -cne $PilotSchoolId -or
@@ -926,7 +1057,12 @@ function Assert-FastPreviewPilotEvidence {
         [string]$evidence.schoolPilotImageDigest -cne $ImageDigest -or
         [string]$evidence.pilotApiTaskDefinitionArn -cne $ApiTaskDefinitionArn -or
         [string]$evidence.pilotWorkerTaskDefinitionArn -cne $WorkerTaskDefinitionArn -or
-        [string]$evidence.pilotRuntimeConfigurationSha256 -cne $RuntimeConfigurationSha256) {
+        [string]$evidence.pilotRuntimeConfigurationSha256 -cne $RuntimeConfigurationSha256 -or
+        [string]$evidence.fastPreviewCandidateReceiptSha256 -cne [string]$CandidateReceipt.EvidenceSha256 -or
+        [string]$evidence.classPilotTag -cne [string]$CandidateReceipt.ClassPilotTag -or
+        [string]$evidence.classPilotMergeSha -cne [string]$CandidateReceipt.ClassPilotMergeSha -or
+        [string]$evidence.classPilotZipSha256 -cne [string]$CandidateReceipt.ClassPilotZipSha256 -or
+        [string]$evidence.classPilotExtensionId -cne [string]$CandidateReceipt.ClassPilotExtensionId) {
         throw "Fast-preview pilot evidence does not bind the exact pilot deployment authority."
     }
     $requiredChecks = @(
@@ -3146,6 +3282,7 @@ function New-RuntimeConfigPlan {
         [string]$PrivateManagedTestWaiverPath,
         [string]$PrivateTrackingPilotEvidencePath,
         [string]$PrivateStudentGatePilotEvidencePath,
+        [string]$PrivateFastPreviewCandidateReceiptPath,
         [string]$PrivateFastPreviewPilotEvidencePath,
         [Parameter(Mandatory = $true)][string]$EvidenceRoot,
         [Parameter(Mandatory = $true)][string]$AppSha,
@@ -3220,6 +3357,24 @@ function New-RuntimeConfigPlan {
         $studentGatePilotEvidenceSnapshot = Read-StrictJsonSnapshot -Path $PrivateStudentGatePilotEvidencePath
     }
     $fastPreviewPilotEvidenceRequired = $runtime.Mode -ceq "fast-preview-global-on"
+    $fastPreviewCandidateReceiptRequired = $runtime.Mode -cin @(
+        "fast-preview-pilot", "fast-preview-global-on"
+    )
+    if ($fastPreviewCandidateReceiptRequired -and
+        [string]::IsNullOrWhiteSpace($PrivateFastPreviewCandidateReceiptPath)) {
+        throw "Fast-preview pilot admission requires a private v2.8.0 candidate receipt."
+    }
+    if (-not $fastPreviewCandidateReceiptRequired -and
+        -not [string]::IsNullOrWhiteSpace($PrivateFastPreviewCandidateReceiptPath)) {
+        throw "Fast-preview candidate receipts are valid only for pilot or global activation."
+    }
+    $fastPreviewCandidateReceiptSnapshot = $null
+    if ($fastPreviewCandidateReceiptRequired) {
+        $PrivateFastPreviewCandidateReceiptPath = Assert-PrivateInputPath `
+            -Path $PrivateFastPreviewCandidateReceiptPath -RepositoryRoot $RepositoryRoot
+        $fastPreviewCandidateReceiptSnapshot = Read-StrictJsonSnapshot `
+            -Path $PrivateFastPreviewCandidateReceiptPath
+    }
     if ($fastPreviewPilotEvidenceRequired -and
         [string]::IsNullOrWhiteSpace($PrivateFastPreviewPilotEvidencePath)) {
         throw "Fast-preview global activation requires fresh pilot load, smoke, and soak evidence."
@@ -3271,6 +3426,14 @@ function New-RuntimeConfigPlan {
         -SourceTaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api"
     Assert-AllowedRuntimeTransition -SourceTaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api" `
         -TargetRuntimeConfiguration $runtime -AllowSyntheticOnlyGlobalActivation:$syntheticOnlyWaiver
+    $fastPreviewCandidateReceipt = $null
+    if ($runtime.Mode -ceq "fast-preview-pilot") {
+        $fastPreviewCandidateReceipt = Assert-FastPreviewCandidateReceipt `
+            -EvidenceSnapshot $fastPreviewCandidateReceiptSnapshot `
+            -PilotSchoolId ([string]$runtime.PilotSchoolId) -ToolSha $toolSha -AppSha $AppSha `
+            -ImageDigest $ImageDigest -ApiTaskDefinitionArn $ApiTaskDefinitionArn `
+            -WorkerTaskDefinitionArn $WorkerTaskDefinitionArn -Now $Now
+    }
     $trackingPilotEvidence = $null
     if ($trackingPilotEvidenceRequired) {
         $sourceContainer = @($snapshot.ApiTask.taskDefinition.containerDefinitions | Where-Object name -CEQ "api")
@@ -3310,10 +3473,18 @@ function New-RuntimeConfigPlan {
         if ([string]$sourceState.FastPreviewMode -cne "pilot") {
             throw "Fast-preview global activation requires the exact active school-scoped pilot."
         }
+        $fastPreviewCandidateReceipt = Assert-FastPreviewCandidateReceipt `
+            -EvidenceSnapshot $fastPreviewCandidateReceiptSnapshot `
+            -PilotSchoolId ([string]$sourceState.FastPreviewSchoolId) `
+            -ToolSha $toolSha -AppSha $AppSha -ImageDigest $ImageDigest `
+            -ApiTaskDefinitionArn $ApiTaskDefinitionArn `
+            -WorkerTaskDefinitionArn $WorkerTaskDefinitionArn -Now $Now `
+            -SkipSourceTaskPairMatch -AllowHistoricalAdmissionReceipt
         $sourceRuntimeConfigurationSha256 = Get-ManagedRuntimeFingerprint `
             -TaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api"
         $fastPreviewPilotEvidence = Assert-FastPreviewPilotEvidence `
             -EvidenceSnapshot $fastPreviewPilotEvidenceSnapshot `
+            -CandidateReceipt $fastPreviewCandidateReceipt `
             -PilotSchoolId ([string]$sourceState.FastPreviewSchoolId) `
             -ToolSha $toolSha -AppSha $AppSha -ImageDigest $ImageDigest `
             -ApiTaskDefinitionArn $ApiTaskDefinitionArn `
@@ -3333,6 +3504,9 @@ function New-RuntimeConfigPlan {
     $studentGatePilotEvidenceFile = if ($null -ne $studentGatePilotEvidenceSnapshot) {
         "student-gate-pilot-evidence.json"
     } else { $null }
+    $fastPreviewCandidateReceiptFile = if ($null -ne $fastPreviewCandidateReceiptSnapshot) {
+        "fast-preview-candidate-receipt.json"
+    } else { $null }
     $fastPreviewPilotEvidenceFile = if ($null -ne $fastPreviewPilotEvidenceSnapshot) {
         "fast-preview-pilot-evidence.json"
     } else { $null }
@@ -3351,6 +3525,10 @@ function New-RuntimeConfigPlan {
     if ($null -ne $studentGatePilotEvidenceSnapshot) {
         Write-PrivateBytes -Path (Join-Path $runDirectory $studentGatePilotEvidenceFile) `
             -Bytes $studentGatePilotEvidenceSnapshot.Bytes
+    }
+    if ($null -ne $fastPreviewCandidateReceiptSnapshot) {
+        Write-PrivateBytes -Path (Join-Path $runDirectory $fastPreviewCandidateReceiptFile) `
+            -Bytes $fastPreviewCandidateReceiptSnapshot.Bytes
     }
     if ($null -ne $fastPreviewPilotEvidenceSnapshot) {
         Write-PrivateBytes -Path (Join-Path $runDirectory $fastPreviewPilotEvidenceFile) `
@@ -3377,6 +3555,22 @@ function New-RuntimeConfigPlan {
         studentGatePilotEvidenceFile = $studentGatePilotEvidenceFile
         studentGatePilotEvidenceSha256 = if ($null -ne $studentGatePilotEvidence) {
             $studentGatePilotEvidence.EvidenceSha256
+        } else { $null }
+        fastPreviewCandidateReceiptFile = $fastPreviewCandidateReceiptFile
+        fastPreviewCandidateReceiptSha256 = if ($null -ne $fastPreviewCandidateReceipt) {
+            $fastPreviewCandidateReceipt.EvidenceSha256
+        } else { $null }
+        fastPreviewClassPilotTag = if ($null -ne $fastPreviewCandidateReceipt) {
+            $fastPreviewCandidateReceipt.ClassPilotTag
+        } else { $null }
+        fastPreviewClassPilotMergeSha = if ($null -ne $fastPreviewCandidateReceipt) {
+            $fastPreviewCandidateReceipt.ClassPilotMergeSha
+        } else { $null }
+        fastPreviewClassPilotZipSha256 = if ($null -ne $fastPreviewCandidateReceipt) {
+            $fastPreviewCandidateReceipt.ClassPilotZipSha256
+        } else { $null }
+        fastPreviewClassPilotExtensionId = if ($null -ne $fastPreviewCandidateReceipt) {
+            $fastPreviewCandidateReceipt.ClassPilotExtensionId
         } else { $null }
         fastPreviewPilotEvidenceFile = $fastPreviewPilotEvidenceFile
         fastPreviewPilotEvidenceSha256 = if ($null -ne $fastPreviewPilotEvidence) {
@@ -3428,6 +3622,9 @@ function Read-RuntimePlan {
         "managedTestWaiverFile", "managedTestWaiverSha256", "validationLevel", "managedValidation",
         "trackingPilotEvidenceFile", "trackingPilotEvidenceSha256",
         "studentGatePilotEvidenceFile", "studentGatePilotEvidenceSha256",
+        "fastPreviewCandidateReceiptFile", "fastPreviewCandidateReceiptSha256",
+        "fastPreviewClassPilotTag", "fastPreviewClassPilotMergeSha",
+        "fastPreviewClassPilotZipSha256", "fastPreviewClassPilotExtensionId",
         "fastPreviewPilotEvidenceFile", "fastPreviewPilotEvidenceSha256",
         "protectedWindowProductionMutation",
         "repositoryRoot", "toolSha", "appSha", "imageDigest", "priorApiTaskDefinitionArn",
@@ -3496,6 +3693,35 @@ function Read-RuntimePlan {
                 [string]$plan.profileMode -ceq "student-gate-global-on"))) {
         throw "Runtime plan student-gate pilot evidence identity is invalid."
     }
+    $fastPreviewReceiptPropertyNames = @(
+        "fastPreviewCandidateReceiptFile", "fastPreviewCandidateReceiptSha256",
+        "fastPreviewClassPilotTag", "fastPreviewClassPilotMergeSha",
+        "fastPreviewClassPilotZipSha256", "fastPreviewClassPilotExtensionId"
+    )
+    $presentFastPreviewReceiptProperties = @($fastPreviewReceiptPropertyNames | Where-Object {
+        $plan.PSObject.Properties.Name -ccontains $_
+    })
+    if ($presentFastPreviewReceiptProperties.Count -notin @(0, $fastPreviewReceiptPropertyNames.Count)) {
+        throw "Runtime plan fast-preview candidate receipt identity is partial."
+    }
+    $hasFastPreviewCandidateReceipt = $presentFastPreviewReceiptProperties.Count -eq
+        $fastPreviewReceiptPropertyNames.Count -and
+        [string]$plan.fastPreviewCandidateReceiptSha256 -match '^[0-9a-f]{64}$'
+    if ($hasFastPreviewCandidateReceipt) {
+        if ([string]$plan.profileMode -cnotin @("fast-preview-pilot", "fast-preview-global-on") -or
+            [string]$plan.fastPreviewCandidateReceiptFile -cne "fast-preview-candidate-receipt.json" -or
+            [string]$plan.fastPreviewClassPilotTag -cne $script:FastPreviewRequiredReleaseTag -or
+            [string]$plan.fastPreviewClassPilotMergeSha -cnotmatch '^[0-9a-f]{40}$' -or
+            [string]$plan.fastPreviewClassPilotZipSha256 -cnotmatch '^[0-9a-f]{64}$' -or
+            [string]$plan.fastPreviewClassPilotExtensionId -cne $script:FastPreviewRequiredExtensionId) {
+            throw "Runtime plan fast-preview candidate receipt identity is invalid."
+        }
+    }
+    elseif ($presentFastPreviewReceiptProperties.Count -ne 0 -and @(
+        $fastPreviewReceiptPropertyNames | Where-Object { $null -ne $plan.$_ }
+    ).Count -ne 0) {
+        throw "Runtime plan fast-preview candidate receipt identity is invalid."
+    }
     $hasFastPreviewPilotEvidence = [string]$plan.fastPreviewPilotEvidenceSha256 -match '^[0-9a-f]{64}$'
     if (($hasFastPreviewPilotEvidence -and
             ([string]$plan.profileMode -cne "fast-preview-global-on" -or
@@ -3542,6 +3768,9 @@ function Read-RuntimePlan {
     )
     $plan | Add-Member -NotePropertyName studentGatePilotEvidencePath -NotePropertyValue $(
         if ($hasStudentGatePilotEvidence) { Join-Path $runDirectory "student-gate-pilot-evidence.json" } else { $null }
+    )
+    $plan | Add-Member -NotePropertyName fastPreviewCandidateReceiptPath -NotePropertyValue $(
+        if ($hasFastPreviewCandidateReceipt) { Join-Path $runDirectory "fast-preview-candidate-receipt.json" } else { $null }
     )
     $plan | Add-Member -NotePropertyName fastPreviewPilotEvidencePath -NotePropertyValue $(
         if ($hasFastPreviewPilotEvidence) { Join-Path $runDirectory "fast-preview-pilot-evidence.json" } else { $null }
@@ -3646,6 +3875,32 @@ function Invoke-RuntimeConfigApply {
     $runtime = $runtimeIntent
     if ($runtime.Mode -cne [string]$Plan.profileMode -or $runtime.SchoolScopeCount -ne [int]$Plan.schoolScopeCount) {
         throw "Runtime profile semantics changed after planning."
+    }
+    $fastPreviewCandidateReceiptSnapshot = $null
+    $fastPreviewCandidateReceipt = $null
+    if ($runtime.Mode -cin @("fast-preview-pilot", "fast-preview-global-on")) {
+        if ($Plan.PSObject.Properties.Name -cnotcontains "fastPreviewCandidateReceiptPath" -or
+            [string]$Plan.fastPreviewCandidateReceiptSha256 -cnotmatch '^[0-9a-f]{64}$' -or
+            [string]::IsNullOrWhiteSpace([string]$Plan.fastPreviewCandidateReceiptPath)) {
+            throw "Fast-preview activation requires the exact planned candidate receipt."
+        }
+        $fastPreviewCandidateReceiptSnapshot = Read-StrictJsonSnapshot `
+            -Path ([string]$Plan.fastPreviewCandidateReceiptPath)
+        if ([string]$fastPreviewCandidateReceiptSnapshot.Sha256 -cne
+            [string]$Plan.fastPreviewCandidateReceiptSha256) {
+            throw "Fast-preview candidate receipt changed after planning."
+        }
+        if ($runtime.Mode -ceq "fast-preview-pilot") {
+            $fastPreviewCandidateReceipt = Assert-FastPreviewCandidateReceipt `
+                -EvidenceSnapshot $fastPreviewCandidateReceiptSnapshot `
+                -PilotSchoolId ([string]$runtime.PilotSchoolId) `
+                -ToolSha ([string]$Plan.toolSha) -AppSha ([string]$Plan.appSha) `
+                -ImageDigest ([string]$Plan.imageDigest) `
+                -ApiTaskDefinitionArn ([string]$Plan.priorApiTaskDefinitionArn) `
+                -WorkerTaskDefinitionArn ([string]$Plan.priorWorkerTaskDefinitionArn) -Now $Now
+            Assert-FastPreviewPlanArtifactIdentity -Plan $Plan `
+                -CandidateReceipt $fastPreviewCandidateReceipt
+        }
     }
     $runtimeMutationEasternTime = $null
     if ($runtime.Mode -cne "off") {
@@ -3762,7 +4017,18 @@ function Invoke-RuntimeConfigApply {
         if ([string]$sourceState.FastPreviewMode -cne "pilot") {
             throw "Fast-preview global activation requires the exact active school-scoped pilot."
         }
+        $fastPreviewCandidateReceipt = Assert-FastPreviewCandidateReceipt `
+            -EvidenceSnapshot $fastPreviewCandidateReceiptSnapshot `
+            -PilotSchoolId ([string]$sourceState.FastPreviewSchoolId) `
+            -ToolSha ([string]$Plan.toolSha) -AppSha ([string]$Plan.appSha) `
+            -ImageDigest ([string]$Plan.imageDigest) `
+            -ApiTaskDefinitionArn ([string]$Plan.priorApiTaskDefinitionArn) `
+            -WorkerTaskDefinitionArn ([string]$Plan.priorWorkerTaskDefinitionArn) -Now $Now `
+            -SkipSourceTaskPairMatch -AllowHistoricalAdmissionReceipt
+        Assert-FastPreviewPlanArtifactIdentity -Plan $Plan `
+            -CandidateReceipt $fastPreviewCandidateReceipt
         [void](Assert-FastPreviewPilotEvidence -EvidenceSnapshot $fastPreviewPilotEvidenceSnapshot `
+            -CandidateReceipt $fastPreviewCandidateReceipt `
             -PilotSchoolId ([string]$sourceState.FastPreviewSchoolId) `
             -ToolSha ([string]$Plan.toolSha) -AppSha ([string]$Plan.appSha) `
             -ImageDigest ([string]$Plan.imageDigest) `
@@ -4287,6 +4553,7 @@ function Invoke-Main {
                 -PrivateManagedTestWaiverPath $ManagedTestWaiverPath `
                 -PrivateTrackingPilotEvidencePath $TrackingPilotEvidencePath `
                 -PrivateStudentGatePilotEvidencePath $StudentGatePilotEvidencePath `
+                -PrivateFastPreviewCandidateReceiptPath $FastPreviewCandidateReceiptPath `
                 -PrivateFastPreviewPilotEvidencePath $FastPreviewPilotEvidencePath `
                 -EvidenceRoot $ExternalEvidenceRoot `
                 -AppSha $ExpectedAppSha -ImageDigest $ExpectedImageDigest `

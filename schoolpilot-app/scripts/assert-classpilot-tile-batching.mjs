@@ -13,6 +13,7 @@ import {
   fetchTileBatch,
   indexTileScreenshots,
   mergeTargetedTileScreenshotResponse,
+  runBoundedTileScreenshotJobs,
   removeLegacyScreenshotsFromTileBatchData,
   removeStudentsFromTileBatchData,
   retainFreshTileScreenshotsOnNull,
@@ -259,6 +260,57 @@ const retainedAtSixtySeconds = retainFreshTileScreenshotsOnNull(
   successfulNullResponse,
   screenshotCapturedAtMs + 60_000,
 );
+const exactBinding = 'v2:full-cohort-binding';
+const newerFullCohortTile = {
+  studentId: studentIds[0],
+  bindingVersion: exactBinding,
+  screenshot: {
+    screenshot: 'data:image/jpeg;base64,newer-full-cohort',
+    timestamp: screenshotCapturedAtMs + 10_000,
+    bindingVersion: exactBinding,
+  },
+};
+const olderFullCohortTile = {
+  studentId: studentIds[0],
+  bindingVersion: exactBinding,
+  screenshot: {
+    screenshot: 'data:image/jpeg;base64,older-full-cohort',
+    timestamp: screenshotCapturedAtMs + 5_000,
+    bindingVersion: exactBinding,
+  },
+};
+assert.equal(
+  retainFreshTileScreenshotsOnNull(
+    { tiles: [newerFullCohortTile] },
+    { tiles: [olderFullCohortTile] },
+    screenshotCapturedAtMs + 11_000,
+  ).tiles[0],
+  newerFullCohortTile,
+  'a slow full-cohort reconciliation must not overwrite a newer targeted frame',
+);
+const mismatchedFullCohort = await fetchTileBatch(
+  requests[0],
+  async () => ({
+    tiles: [{
+      studentId: studentIds[0],
+      bindingVersion: exactBinding,
+      screenshot: {
+        screenshot: 'data:image/jpeg;base64,wrong-binding',
+        timestamp: screenshotCapturedAtMs + 11_000,
+        bindingVersion: 'v2:wrong-binding',
+      },
+    }],
+  }),
+);
+assert.equal(
+  retainFreshTileScreenshotsOnNull(
+    { tiles: [newerFullCohortTile] },
+    mismatchedFullCohort,
+    screenshotCapturedAtMs + 12_000,
+  ).tiles[0].screenshot,
+  null,
+  'a full-cohort binding mismatch must purge pixels instead of using the successful-null bridge',
+);
 
 const unchangedTargetedScreenshot = {
   screenshot: 'data:image/jpeg;base64,unchanged',
@@ -285,6 +337,33 @@ const targetedMerged = mergeTargetedTileScreenshotResponse(
   { tiles: [{ studentId: studentIds[0], bindingVersion: 'v2:changed-binding', screenshot: changedTargetedScreenshot }] },
   [studentIds[0]],
   screenshotCapturedAtMs + 10_000,
+);
+let activeTargetedJobs = 0;
+let maximumActiveTargetedJobs = 0;
+const completedTargetedJobs = [];
+await runBoundedTileScreenshotJobs(
+  Array.from({ length: 16 }, (_, index) => index),
+  3,
+  async (index) => {
+    activeTargetedJobs += 1;
+    maximumActiveTargetedJobs = Math.max(maximumActiveTargetedJobs, activeTargetedJobs);
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    completedTargetedJobs.push(index);
+    activeTargetedJobs -= 1;
+  },
+);
+assert.equal(maximumActiveTargetedJobs, 3, '800-student event bursts must cap targeted request concurrency');
+assert.equal(completedTargetedJobs.length, 16, 'bounded workers must eventually flush every 50-student cohort');
+const targetedSeededWithoutPriorCohort = mergeTargetedTileScreenshotResponse(
+  undefined,
+  { tiles: [{ studentId: studentIds[0], bindingVersion: 'v2:changed-binding', screenshot: changedTargetedScreenshot }] },
+  [studentIds[0]],
+  screenshotCapturedAtMs + 10_000,
+);
+assert.equal(
+  targetedSeededWithoutPriorCohort.tiles[0].screenshot,
+  changedTargetedScreenshot,
+  'an offscreen event must seed a validated cohort before its first full reconciliation',
 );
 assert.equal(targetedMerged.tiles[0].screenshot, changedTargetedScreenshot);
 assert.equal(
@@ -842,8 +921,18 @@ assert.doesNotMatch(
 );
 assert.match(
   dashboardSource,
-  /enabled: screenshotTileReadsEnabled && tileBatchRequestShouldPoll\(/,
-  'viewport state may enable a fixed screenshot cohort without changing its identity',
+  /enabled: screenshotTileReadsEnabled,/,
+  'the 30-second screenshot reconciliation must cover every fixed class cohort',
+);
+assert.match(
+  dashboardSource,
+  /return studentView === 'class' \? \{ kind: 'class' \} : null/,
+  'subgroup presentation filters must not narrow the active-view screenshot cadence',
+);
+assert.match(
+  dashboardSource,
+  /runBoundedTileScreenshotJobs\([\s\S]{0,160}SCREENSHOT_EVENT_MAX_CONCURRENCY,/,
+  'event-driven screenshot batches must use bounded concurrency',
 );
 assert.match(
   dashboardSource,

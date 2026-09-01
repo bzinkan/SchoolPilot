@@ -30,7 +30,7 @@ import {
 import {
   CLASSPILOT_OBSERVATION_RENEW_SECONDS,
   classpilotObservationSessionIsLive,
-  releaseClasspilotObservationLease,
+  releaseClasspilotObservationLeaseWithState,
   renewClasspilotObservationLease,
 } from "../../services/classpilotObservationLease.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
@@ -334,7 +334,7 @@ router.put(
       viewerInstanceId,
       scope,
     });
-    if (lease.changed) {
+    if (lease.activated || (!lease.created && lease.changed)) {
       void nudgeClasspilotScreenshotPolicyRefresh({
         schoolId,
         teachingSessionId,
@@ -342,6 +342,7 @@ router.put(
         // frozen roster lets newly covered bindings accelerate and students
         // removed from the scope immediately fall back to background cadence.
         studentIds: rosterStudentIds,
+        reason: lease.activated ? "activated" : "scope_changed",
       }).catch(() => {
         recordHeartbeatHotPathCounter("screenshotPolicyRefreshFailures");
       });
@@ -376,18 +377,19 @@ router.delete("/teaching-sessions/:id/observation-lease", ...staffAuth, async (r
     if (!/^[a-zA-Z0-9_-]{8,128}$/.test(viewerInstanceId)) {
       return res.status(400).json({ error: "Invalid viewerInstanceId", code: "OBSERVATION_SCOPE_INVALID" });
     }
-    const released = await releaseClasspilotObservationLease({
+    const release = await releaseClasspilotObservationLeaseWithState({
       schoolId,
       teachingSessionId,
       viewerUserId: req.authUser!.id,
       viewerInstanceId,
     });
-    if (released) {
+    if (release.deactivated) {
       void getClasspilotSessionStudentRoster(schoolId, teachingSessionId)
         .then((roster) => nudgeClasspilotScreenshotPolicyRefresh({
           schoolId,
           teachingSessionId,
           studentIds: roster.map((student) => student.studentId),
+          reason: "released",
         }))
         .catch(() => {
           recordHeartbeatHotPathCounter("screenshotPolicyRefreshFailures");

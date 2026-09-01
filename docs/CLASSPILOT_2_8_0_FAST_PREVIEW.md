@@ -16,7 +16,7 @@ receive the additive shape:
   "captureCadence": {
     "mode": "active_view",
     "intervalSeconds": 5,
-    "expiresInSeconds": 90
+    "expiresInSeconds": 84
   }
 }
 ```
@@ -27,19 +27,21 @@ negotiated, tracking capture is currently allowed, screenshot authority is a
 teaching session, the claimed and authoritative teaching sessions match, and
 the shared observation store has an unexpired lease covering the exact
 student. `expiresInSeconds` is bounded by both the observation and tracking
-leases. Observation-store errors, malformed state, mismatches, and expired
+leases and capped at 84 seconds, preserving a six-second margin below the
+90-second observation lease. Observation-store errors, malformed state, mismatches, and expired
 leases fail back to background cadence rather than granting five-second
 capture.
 
 ## Reconciliation and privacy
 
-An observation start, scope change, or release sends a best-effort
-`screenshot-policy-refresh` frame through the exact current student binding.
-It is delivered only to clients that negotiated the new capability. The frame
-contains the already-authenticated student/session/teaching-session aliases,
-but no device ID, pixel data, policy value, or authorization grant. The
-extension revalidates the exact binding and requests an immediate heartbeat;
-the normal ten-second heartbeat remains the durable fallback.
+An observation start, scope change, or release sends one cross-instance,
+coalesced `screenshot-policy-refresh` frame to the current devices in the
+frozen session roster. The non-authoritative frame contains only the teaching
+session alias—no student, student-session, device, pixel, policy, or control
+identifier. The extension accepts it only for its current exact session and
+requests an immediate heartbeat; the normal ten-second heartbeat remains the
+durable fallback. Routing uses one tenant-scoped active-session read and one
+private Redis publication rather than per-student authority transactions.
 
 Uploads still pass the existing exact school, student, student session,
 device, teaching session, frozen roster, control revision, entitlement,
@@ -73,12 +75,37 @@ identical runtime configuration to API and scheduler-worker. Activation
 requires both
 `CLASSPILOT_CAP_SCREENSHOT_ACTIVE_OBSERVATION_CADENCE_V1=true` and a matching
 `screenshotActiveObservationCadenceV1` rollout. A pilot is admitted only inside
-the existing tracking-window scope. Global activation additionally requires
-global tracking-window coverage and fresh pilot evidence bound to the exact
-tool SHA, app SHA, image digest, task definitions, runtime fingerprint, and
-pilot school.
+the existing tracking-window scope and only with a private
+`-FastPreviewCandidateReceiptPath`. That version-1 receipt must be no more than
+two hours old and must bind all of the following:
 
-The evidence contract requires a recent observation window and affirmative
+- the exact `v2.8.0` tag, 40-character ClassPilot merge SHA, 64-character ZIP
+  SHA-256, and production extension ID
+  `iggbfegfcjkfieoemeolfmfnapepalca`;
+- the pilot school, current SchoolPilot runtime-tool SHA, deployed app SHA and
+  immutable image digest, plus the exact source API/worker task-definition
+  pair;
+- 5–10 managed pilot devices and affirmative managed-adoption, exact-authority,
+  five-second-cadence, 30-second-fallback, and privacy readiness checks.
+
+The tool snapshots this private receipt into the protected run directory,
+hashes it into the plan, and carries only its hash and non-sensitive extension
+artifact identity in the plan. Apply re-reads the snapshot, checks its hash,
+freshness, authority, and artifact identity before registering or mutating any
+task. The merge and ZIP hashes are supplied by the private receipt after the
+actual extension build; they are deliberately not hard-coded in the tool.
+
+Global activation additionally requires global tracking-window coverage, the
+same hash-bound candidate receipt, and separate fresh pilot soak/load evidence
+bound to the exact tool SHA, app SHA, image digest, active pilot task
+definitions, runtime fingerprint, pilot school, receipt hash, and ClassPilot
+tag/merge/ZIP/extension identity. The admission receipt may age only through
+the bounded pilot window (at most 26 hours); the global soak evidence itself
+must still be fresh and must show that observation began within two hours of
+the admission check.
+
+The global evidence contract requires a recent observation window of at least
+30 minutes and affirmative
 checks for managed negotiation; exact five-second active and 30-second
 background cadence; expiry fallback; the 120-second TTL; 40-, 500-, and
 800-device profiles; WAF and ingress headroom; API/worker stability;
@@ -92,14 +119,18 @@ not claims that capacity has already been demonstrated.
 2. Deploy the backend/API and worker from one reviewed SHA with the new flag
    off. Verify old clients remain unchanged.
 3. Release the capable extension separately from the ClassPilot repository.
-4. Plan, hash, and apply `fast-preview-pilot` for one school through the
-   guarded runtime tool.
+4. Validate 5–10 managed devices, create the private artifact-bound candidate
+   receipt, then plan, hash, and apply `fast-preview-pilot` for one school
+   through the guarded runtime tool.
 5. Verify teacher and Admin Observe parity, exact class changes, lease expiry,
    5/30-second cadence, 120-second TTL, and identifier-free metrics.
 6. Complete the 40/500/800 load gates and pilot activity-window soak.
-7. Apply `fast-preview-global-on` only with exact fresh evidence.
+7. Apply `fast-preview-global-on` only with the same candidate receipt and
+   exact fresh pilot soak/load evidence for that artifact.
 
 At the first latency, error-rate, WAF, Redis, authorization, or privacy stop
 condition, apply `fast-preview-off`. This disables only five-second active
 cadence and restores the established 30-second tracking-window behavior; no
-data rollback or extension rollback is required.
+data rollback or extension rollback is required. Planning or executing
+`fast-preview-off`, and rolling back an already applied plan, do not require a
+new activation receipt or pilot evidence.

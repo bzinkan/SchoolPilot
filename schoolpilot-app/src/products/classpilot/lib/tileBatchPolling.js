@@ -10,11 +10,28 @@ export const TILE_BATCH_MAX_STUDENTS = 50;
 export const TILE_BATCH_HISTORY_LIMIT = 10;
 export const TILE_BATCH_REFETCH_INTERVAL_MS = 30_000;
 export const TILE_SCREENSHOT_CACHE_GC_MS = SCREENSHOT_RECONNECT_RETAIN_MS;
+const SCREENSHOT_BINDING_REJECTED = Symbol('classpilotScreenshotBindingRejected');
 
 export const TILE_BATCH_QUERY_ROOTS = Object.freeze({
   screenshots: '/api/classpilot/tiles/screenshots',
   history: '/api/classpilot/tiles/history',
 });
+
+export async function runBoundedTileScreenshotJobs(items, maxConcurrency, worker) {
+  if (!Array.isArray(items) || items.length === 0) return;
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(Math.max(1, maxConcurrency), items.length) },
+    async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        await worker(items[index]);
+      }
+    },
+  );
+  await Promise.all(workers);
+}
 
 const TILE_BATCH_ENDPOINTS = Object.freeze({
   screenshots: '/classpilot/tiles/screenshots',
@@ -192,7 +209,14 @@ export function normalizeTileScreenshotBindings(response) {
     const screenshot = validatedTileScreenshot(tile);
     if (screenshot === (tile?.screenshot ?? null)) return tile;
     changed = true;
-    return { ...tile, screenshot };
+    return {
+      ...tile,
+      screenshot,
+      // Preserve the distinction between a genuine server null and a pixel
+      // rejected by the client-side exact-binding fence. The latter must
+      // purge prior pixels and can never use the successful-null bridge.
+      [SCREENSHOT_BINDING_REJECTED]: tile?.screenshot != null && screenshot == null,
+    };
   });
   return changed ? { ...response, tiles } : response;
 }
@@ -217,9 +241,37 @@ export function retainFreshTileScreenshotsOnNull(previous, incoming, nowMs = Dat
   );
   let changed = false;
   const tiles = incoming.tiles.map((tile) => {
-    if (typeof tile?.studentId !== 'string' || tile.screenshot != null) return tile;
+    if (typeof tile?.studentId !== 'string') return tile;
     const priorTile = previousByStudent.get(tile.studentId);
     const priorScreenshot = priorTile?.screenshot;
+    const incomingScreenshot = tile.screenshot;
+    if (tile[SCREENSHOT_BINDING_REJECTED] === true) return tile;
+    if (incomingScreenshot != null) {
+      const priorBindingVersion = priorScreenshot?.bindingVersion ?? priorTile?.bindingVersion;
+      const incomingBindingVersion = incomingScreenshot?.bindingVersion ?? tile.bindingVersion;
+      const priorObservedAt = screenshotObservedAtMs(priorScreenshot);
+      const incomingObservedAt = screenshotObservedAtMs(incomingScreenshot);
+      if (
+        priorScreenshot
+        && priorBindingVersion === incomingBindingVersion
+        && priorObservedAt !== null
+        && incomingObservedAt !== null
+        && (
+          incomingObservedAt < priorObservedAt
+          || (
+            incomingObservedAt === priorObservedAt
+            && incomingScreenshot.screenshot === priorScreenshot.screenshot
+          )
+        )
+      ) {
+        // A slow 30-second reconciliation may resolve after a targeted
+        // screenshot event. Never move an exact binding backwards or replace
+        // an unchanged frame object.
+        changed = true;
+        return priorTile;
+      }
+      return tile;
+    }
     const priorBindingVersion = typeof priorTile?.bindingVersion === 'string'
       ? priorTile.bindingVersion
       : priorScreenshot?.bindingVersion;
@@ -277,11 +329,23 @@ export function mergeTargetedTileScreenshotResponse(
   requestedStudentIds,
   nowMs = Date.now(),
 ) {
-  if (!Array.isArray(previous?.tiles) || !Array.isArray(incoming?.tiles)) return previous;
+  if (!Array.isArray(incoming?.tiles)) return previous;
   const requestedIds = requestedStudentIds instanceof Set
     ? requestedStudentIds
     : new Set(requestedStudentIds || []);
   if (requestedIds.size === 0) return previous;
+
+  // A screenshot-available event may arrive before an offscreen cohort has
+  // completed its first 30-second reconciliation. Seed that cohort only with
+  // validated requested rows so the event is useful without manufacturing
+  // null rows or weakening the exact-binding checks below.
+  if (!Array.isArray(previous?.tiles)) {
+    const normalizedIncoming = normalizeTileScreenshotBindings(incoming);
+    return {
+      ...normalizedIncoming,
+      tiles: normalizedIncoming.tiles.filter((tile) => requestedIds.has(tile?.studentId)),
+    };
+  }
 
   const rawIncomingByStudent = new Map(
     incoming.tiles

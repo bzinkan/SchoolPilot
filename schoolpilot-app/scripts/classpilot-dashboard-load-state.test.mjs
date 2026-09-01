@@ -858,6 +858,37 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     );
     assert.equal(await persistencePage.getByTestId("expanded-screenshot-dialog").count(), 1);
 
+    await persistencePage.waitForTimeout(5_200);
+    persistenceScreenshotSource = "data:image/jpeg;base64,not-a-valid-jpeg";
+    persistenceScreenshotCapturedAt = new Date().toISOString();
+    await persistenceHarness.sendWebSocketMessage({
+      type: "screenshot-available",
+      schoolId: SCHOOL_ID,
+      studentId: STUDENT_ID,
+      teachingSessionId: OWN_SESSION_ID,
+      capturedAt: persistenceScreenshotCapturedAt,
+    });
+    await persistencePage.waitForTimeout(1_000);
+    assert.equal(
+      await persistencePage.getByTestId("expanded-screenshot-image").getAttribute("src"),
+      VIEWER_SCREENSHOT_DATA_URL,
+      "a corrupt same-context replacement must retain the last decoded frame",
+    );
+    assert.doesNotMatch(
+      await persistencePage.getByTestId("expanded-screenshot-status").innerText(),
+      /just now/,
+      "a corrupt replacement must not make the prior decoded frame look newly captured",
+    );
+    persistenceScreenshotSource = VIEWER_SCREENSHOT_DATA_URL;
+    persistenceScreenshotCapturedAt = new Date().toISOString();
+    await persistenceHarness.sendWebSocketMessage({
+      type: "screenshot-available",
+      schoolId: SCHOOL_ID,
+      studentId: STUDENT_ID,
+      teachingSessionId: OWN_SESSION_ID,
+      capturedAt: persistenceScreenshotCapturedAt,
+    });
+
     const confirmedLossAt = new Date(Date.now() - 95_000).toISOString();
     persistenceAggregate.setScopedResponse(success({
       students: [

@@ -14,6 +14,7 @@ export const CLASSPILOT_SCREENSHOT_TRACKING_LEASE_SECONDS = 90;
 export const CLASSPILOT_SCREENSHOT_CAPTURE_FUTURE_SKEW_MS = 30_000;
 export const CLASSPILOT_SCREENSHOT_ACTIVE_CAPTURE_SECONDS = 5;
 export const CLASSPILOT_SCREENSHOT_BACKGROUND_CAPTURE_SECONDS = 30;
+export const CLASSPILOT_SCREENSHOT_ACTIVE_CADENCE_LEASE_SECONDS = 84;
 
 export type ClasspilotScreenshotCaptureCadence = {
   mode: "active_view" | "background";
@@ -128,7 +129,14 @@ export async function resolveClasspilotScreenshotPolicy(options: {
           captureCadence = {
             mode: "active_view",
             intervalSeconds: CLASSPILOT_SCREENSHOT_ACTIVE_CAPTURE_SECONDS,
-            expiresInSeconds: Math.min(policy.expiresInSeconds, status.expiresInSeconds),
+            // Observation leases renew every 30s and live for 90s. Keep a
+            // six-second safety margin so Redis second-rounding or a missed
+            // release nudge can never extend rapid capture to that boundary.
+            expiresInSeconds: Math.min(
+              CLASSPILOT_SCREENSHOT_ACTIVE_CADENCE_LEASE_SECONDS,
+              policy.expiresInSeconds,
+              status.expiresInSeconds,
+            ),
           };
         } else if (status.status === "unavailable") {
           recordHeartbeatHotPathCounter("screenshotCadenceObservationUnavailable");

@@ -2159,9 +2159,80 @@ try {
         -ApiTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn) `
         -WorkerTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn) `
         -RuntimeConfigurationSha256 $trackingPilotRuntimeConfigurationSha256 -Now $now)
+    $fastPreviewCandidateReceiptPath = Join-Path $testRoot "fast-preview-candidate-receipt.json"
+    $fastPreviewCandidateReceiptValue = [ordered]@{
+        schemaVersion = 1
+        validatedAt = $now.AddMinutes(-61).ToString("o")
+        pilotSchoolId = $testSchoolId
+        schoolPilotToolSha = $toolSha
+        schoolPilotAppSha = $appSha
+        schoolPilotImageDigest = $digest
+        sourceApiTaskDefinitionArn = [string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn
+        sourceWorkerTaskDefinitionArn = [string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn
+        classPilotTag = "v2.8.0"
+        classPilotMergeSha = "c" * 40
+        classPilotZipSha256 = "d" * 64
+        classPilotExtensionId = "iggbfegfcjkfieoemeolfmfnapepalca"
+        managedDeviceCount = 5
+        checks = [ordered]@{
+            managedDeviceAdoptionPassed = $true
+            exactAuthorityReadinessPassed = $true
+            fiveSecondCadenceReadinessPassed = $true
+            thirtySecondFallbackReadinessPassed = $true
+            noAuthorizationOrPrivacyDefects = $true
+        }
+    }
+    Write-TestJson -Path $fastPreviewCandidateReceiptPath -Value $fastPreviewCandidateReceiptValue
+    $fastPreviewCandidateReceipt = Assert-FastPreviewCandidateReceipt `
+        -EvidenceSnapshot (Read-StrictJsonSnapshot -Path $fastPreviewCandidateReceiptPath) `
+        -PilotSchoolId $testSchoolId -ToolSha $toolSha -AppSha $appSha -ImageDigest $digest `
+        -ApiTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn) `
+        -WorkerTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn) `
+        -Now $now
+    $invalidCandidateReceiptCases = @(
+        [pscustomobject]@{ Label = "stale"; Property = "validatedAt"; Value = $now.AddHours(-2).AddSeconds(-1).ToString("o") },
+        [pscustomobject]@{ Label = "wrong release tag"; Property = "classPilotTag"; Value = "v2.7.9" },
+        [pscustomobject]@{ Label = "malformed merge SHA"; Property = "classPilotMergeSha"; Value = "e" * 39 },
+        [pscustomobject]@{ Label = "malformed ZIP SHA-256"; Property = "classPilotZipSha256"; Value = "f" * 63 },
+        [pscustomobject]@{ Label = "wrong extension ID"; Property = "classPilotExtensionId"; Value = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+        [pscustomobject]@{ Label = "too few managed devices"; Property = "managedDeviceCount"; Value = 4 },
+        [pscustomobject]@{ Label = "too many managed devices"; Property = "managedDeviceCount"; Value = 11 },
+        [pscustomobject]@{ Label = "wrong tool SHA"; Property = "schoolPilotToolSha"; Value = "e" * 40 },
+        [pscustomobject]@{ Label = "wrong app SHA"; Property = "schoolPilotAppSha"; Value = "e" * 40 },
+        [pscustomobject]@{ Label = "wrong image digest"; Property = "schoolPilotImageDigest"; Value = "sha256:" + ("e" * 64) },
+        [pscustomobject]@{ Label = "wrong source API task"; Property = "sourceApiTaskDefinitionArn"; Value = $apiSourceArn },
+        [pscustomobject]@{ Label = "wrong source worker task"; Property = "sourceWorkerTaskDefinitionArn"; Value = $workerSourceArn }
+    )
+    foreach ($invalidCandidateReceiptCase in $invalidCandidateReceiptCases) {
+        $invalidCandidateReceipt = $fastPreviewCandidateReceiptValue | ConvertTo-Json -Depth 30 |
+            ConvertFrom-Json -Depth 30 -DateKind String
+        $invalidCandidateReceipt.($invalidCandidateReceiptCase.Property) = $invalidCandidateReceiptCase.Value
+        Write-TestJson -Path $fastPreviewCandidateReceiptPath -Value $invalidCandidateReceipt
+        Assert-Throws {
+            Assert-FastPreviewCandidateReceipt `
+                -EvidenceSnapshot (Read-StrictJsonSnapshot -Path $fastPreviewCandidateReceiptPath) `
+                -PilotSchoolId $testSchoolId -ToolSha $toolSha -AppSha $appSha -ImageDigest $digest `
+                -ApiTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn) `
+                -WorkerTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn) `
+                -Now $now
+        } "A $($invalidCandidateReceiptCase.Label) fast-preview candidate receipt must fail closed."
+    }
+    $failedCandidateReceipt = $fastPreviewCandidateReceiptValue | ConvertTo-Json -Depth 30 |
+        ConvertFrom-Json -Depth 30 -DateKind String
+    $failedCandidateReceipt.checks.thirtySecondFallbackReadinessPassed = $false
+    Write-TestJson -Path $fastPreviewCandidateReceiptPath -Value $failedCandidateReceipt
+    Assert-Throws {
+        Assert-FastPreviewCandidateReceipt `
+            -EvidenceSnapshot (Read-StrictJsonSnapshot -Path $fastPreviewCandidateReceiptPath) `
+            -PilotSchoolId $testSchoolId -ToolSha $toolSha -AppSha $appSha -ImageDigest $digest `
+            -ApiTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn) `
+            -WorkerTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn) `
+            -Now $now
+    } "A failed cadence fallback readiness check must block fast-preview pilot admission."
+    Write-TestJson -Path $fastPreviewCandidateReceiptPath -Value $fastPreviewCandidateReceiptValue
     $fastPreviewPilotEvidencePath = Join-Path $testRoot "fast-preview-pilot-evidence.json"
     $fastPreviewPilotEvidence = [ordered]@{
-        schemaVersion = 1
+        schemaVersion = 2
         validatedAt = $now.ToString("o")
         observedFrom = $now.AddMinutes(-60).ToString("o")
         observedThrough = $now.ToString("o")
@@ -2172,6 +2243,11 @@ try {
         pilotApiTaskDefinitionArn = [string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn
         pilotWorkerTaskDefinitionArn = [string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn
         pilotRuntimeConfigurationSha256 = $trackingPilotRuntimeConfigurationSha256
+        fastPreviewCandidateReceiptSha256 = $fastPreviewCandidateReceipt.EvidenceSha256
+        classPilotTag = $fastPreviewCandidateReceipt.ClassPilotTag
+        classPilotMergeSha = $fastPreviewCandidateReceipt.ClassPilotMergeSha
+        classPilotZipSha256 = $fastPreviewCandidateReceipt.ClassPilotZipSha256
+        classPilotExtensionId = $fastPreviewCandidateReceipt.ClassPilotExtensionId
         checks = [ordered]@{
             fullSchoolActivityWindowObserved = $true
             managedCapabilityNegotiated = $true
@@ -2192,6 +2268,7 @@ try {
     Write-TestJson -Path $fastPreviewPilotEvidencePath -Value $fastPreviewPilotEvidence
     [void](Assert-FastPreviewPilotEvidence `
         -EvidenceSnapshot (Read-StrictJsonSnapshot -Path $fastPreviewPilotEvidencePath) `
+        -CandidateReceipt $fastPreviewCandidateReceipt `
         -PilotSchoolId $testSchoolId -ToolSha $toolSha -AppSha $appSha -ImageDigest $digest `
         -ApiTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn) `
         -WorkerTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn) `
@@ -2203,6 +2280,7 @@ try {
     Assert-Throws {
         Assert-FastPreviewPilotEvidence `
             -EvidenceSnapshot (Read-StrictJsonSnapshot -Path $fastPreviewPilotEvidencePath) `
+            -CandidateReceipt $fastPreviewCandidateReceipt `
             -PilotSchoolId $testSchoolId -ToolSha $toolSha -AppSha $appSha -ImageDigest $digest `
             -ApiTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn) `
             -WorkerTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn) `
@@ -2334,8 +2412,23 @@ try {
     Write-TestJson -Path $fastPreviewPilotProfilePath -Value ([ordered]@{
         schemaVersion = 5; mode = "fast-preview-pilot"; pilotSchoolId = $testSchoolId
     })
+    $fastPreviewCandidateReceiptValue.sourceApiTaskDefinitionArn = `
+        [string]$trackingGlobalApplyResult.candidateApiTaskDefinitionArn
+    $fastPreviewCandidateReceiptValue.sourceWorkerTaskDefinitionArn = `
+        [string]$trackingGlobalApplyResult.candidateWorkerTaskDefinitionArn
+    Write-TestJson -Path $fastPreviewCandidateReceiptPath -Value $fastPreviewCandidateReceiptValue
+    Assert-Throws {
+        New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
+            -PrivateProfilePath $fastPreviewPilotProfilePath -EvidenceRoot $evidenceRoot `
+            -AppSha $appSha -ImageDigest $digest `
+            -ApiTaskDefinitionArn ([string]$trackingGlobalApplyResult.candidateApiTaskDefinitionArn) `
+            -WorkerTaskDefinitionArn ([string]$trackingGlobalApplyResult.candidateWorkerTaskDefinitionArn) `
+            -Now $now -SkipRepositoryCheck
+    } "Fast-preview pilot planning must fail without a private v2.8.0 candidate receipt."
     $fastPreviewPilotPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
-        -PrivateProfilePath $fastPreviewPilotProfilePath -EvidenceRoot $evidenceRoot `
+        -PrivateProfilePath $fastPreviewPilotProfilePath `
+        -PrivateFastPreviewCandidateReceiptPath $fastPreviewCandidateReceiptPath `
+        -EvidenceRoot $evidenceRoot `
         -AppSha $appSha -ImageDigest $digest `
         -ApiTaskDefinitionArn ([string]$trackingGlobalApplyResult.candidateApiTaskDefinitionArn) `
         -WorkerTaskDefinitionArn ([string]$trackingGlobalApplyResult.candidateWorkerTaskDefinitionArn) `
@@ -2345,10 +2438,35 @@ try {
     Assert-Condition ($fastPreviewPilotPlan.profileMode -ceq "fast-preview-pilot" -and
         [int]$fastPreviewPilotPlan.schoolScopeCount -eq 1 -and
         [int]$fastPreviewPilotPlan.enabledCapabilityCount -eq 11 -and
+        [string]$fastPreviewPilotPlan.fastPreviewCandidateReceiptSha256 -ceq
+            (Get-FileSha256 -Path $fastPreviewCandidateReceiptPath) -and
+        [string]$fastPreviewPilotPlan.fastPreviewClassPilotTag -ceq "v2.8.0" -and
+        [string]$fastPreviewPilotPlan.fastPreviewClassPilotMergeSha -ceq ("c" * 40) -and
+        [string]$fastPreviewPilotPlan.fastPreviewClassPilotZipSha256 -ceq ("d" * 64) -and
+        [string]$fastPreviewPilotPlan.fastPreviewClassPilotExtensionId -ceq
+            "iggbfegfcjkfieoemeolfmfnapepalca" -and
         $null -eq $fastPreviewPilotPlan.fastPreviewPilotEvidenceSha256) `
         "Fast-preview pilot planning must preserve the active runtime while adding one school-scoped capability."
     Assert-Condition (-not ([IO.File]::ReadAllText($fastPreviewPilotPlanResult.PlanPath)).Contains($testSchoolId)) `
         "Fast-preview pilot plan evidence must not expose the private school scope."
+    $capturedFastPreviewCandidateReceiptBytes = [IO.File]::ReadAllBytes(
+        [string]$fastPreviewPilotPlan.fastPreviewCandidateReceiptPath
+    )
+    $tamperedFastPreviewCandidateReceipt = Read-StrictJson `
+        -Path ([string]$fastPreviewPilotPlan.fastPreviewCandidateReceiptPath)
+    $tamperedFastPreviewCandidateReceipt.classPilotMergeSha = "e" * 40
+    Write-TestJson -Path ([string]$fastPreviewPilotPlan.fastPreviewCandidateReceiptPath) `
+        -Value $tamperedFastPreviewCandidateReceipt
+    Assert-Throws {
+        Invoke-RuntimeConfigApply -Plan $fastPreviewPilotPlan `
+            -PlanSha256 $fastPreviewPilotPlanResult.PlanSha256 -Now $now `
+            -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck
+    } "Fast-preview pilot apply must reject a candidate receipt changed after planning."
+    [IO.File]::WriteAllBytes(
+        [string]$fastPreviewPilotPlan.fastPreviewCandidateReceiptPath,
+        $capturedFastPreviewCandidateReceiptBytes
+    )
+    Set-PrivatePathPermissions -Path ([string]$fastPreviewPilotPlan.fastPreviewCandidateReceiptPath)
     $fastPreviewPilotApplyResult = Invoke-RuntimeConfigApply -Plan $fastPreviewPilotPlan `
         -PlanSha256 $fastPreviewPilotPlanResult.PlanSha256 -Now $now `
         -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck
@@ -2382,8 +2500,15 @@ try {
         (Get-ManagedRuntimeFingerprint -TaskDefinition $fastPreviewPilotWorkerTask -ContainerName "scheduler-worker")) `
         "Fast-preview pilot API and worker runtime configuration must be identical."
 
+    $fastPreviewCandidateReceiptForGlobal = Assert-FastPreviewCandidateReceipt `
+        -EvidenceSnapshot (Read-StrictJsonSnapshot `
+            -Path ([string]$fastPreviewPilotPlan.fastPreviewCandidateReceiptPath)) `
+        -PilotSchoolId $testSchoolId -ToolSha $toolSha -AppSha $appSha -ImageDigest $digest `
+        -ApiTaskDefinitionArn ([string]$fastPreviewPilotApplyResult.candidateApiTaskDefinitionArn) `
+        -WorkerTaskDefinitionArn ([string]$fastPreviewPilotApplyResult.candidateWorkerTaskDefinitionArn) `
+        -Now $now -SkipSourceTaskPairMatch
     $fastPreviewPilotEvidence = [ordered]@{
-        schemaVersion = 1
+        schemaVersion = 2
         validatedAt = $now.ToString("o")
         observedFrom = $now.AddMinutes(-60).ToString("o")
         observedThrough = $now.ToString("o")
@@ -2394,6 +2519,11 @@ try {
         pilotApiTaskDefinitionArn = [string]$fastPreviewPilotApplyResult.candidateApiTaskDefinitionArn
         pilotWorkerTaskDefinitionArn = [string]$fastPreviewPilotApplyResult.candidateWorkerTaskDefinitionArn
         pilotRuntimeConfigurationSha256 = $fastPreviewPilotRuntimeConfigurationSha256
+        fastPreviewCandidateReceiptSha256 = $fastPreviewCandidateReceiptForGlobal.EvidenceSha256
+        classPilotTag = $fastPreviewCandidateReceiptForGlobal.ClassPilotTag
+        classPilotMergeSha = $fastPreviewCandidateReceiptForGlobal.ClassPilotMergeSha
+        classPilotZipSha256 = $fastPreviewCandidateReceiptForGlobal.ClassPilotZipSha256
+        classPilotExtensionId = $fastPreviewCandidateReceiptForGlobal.ClassPilotExtensionId
         checks = [ordered]@{
             fullSchoolActivityWindowObserved = $true
             managedCapabilityNegotiated = $true
@@ -2418,14 +2548,44 @@ try {
     })
     Assert-Throws {
         New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
-            -PrivateProfilePath $fastPreviewGlobalProfilePath -EvidenceRoot $evidenceRoot `
+            -PrivateProfilePath $fastPreviewGlobalProfilePath `
+            -PrivateFastPreviewCandidateReceiptPath `
+                ([string]$fastPreviewPilotPlan.fastPreviewCandidateReceiptPath) `
+            -EvidenceRoot $evidenceRoot `
             -AppSha $appSha -ImageDigest $digest `
             -ApiTaskDefinitionArn ([string]$fastPreviewPilotApplyResult.candidateApiTaskDefinitionArn) `
             -WorkerTaskDefinitionArn ([string]$fastPreviewPilotApplyResult.candidateWorkerTaskDefinitionArn) `
             -Now $now -SkipRepositoryCheck
     } "Fast-preview global planning must fail without exact pilot evidence."
+    Assert-Throws {
+        New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
+            -PrivateProfilePath $fastPreviewGlobalProfilePath `
+            -PrivateFastPreviewPilotEvidencePath $fastPreviewPilotEvidencePath `
+            -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+            -ApiTaskDefinitionArn ([string]$fastPreviewPilotApplyResult.candidateApiTaskDefinitionArn) `
+            -WorkerTaskDefinitionArn ([string]$fastPreviewPilotApplyResult.candidateWorkerTaskDefinitionArn) `
+            -Now $now -SkipRepositoryCheck
+    } "Fast-preview global planning must retain the exact pilot candidate receipt."
+    $mismatchedFastPreviewPilotEvidence = $fastPreviewPilotEvidence | ConvertTo-Json -Depth 30 |
+        ConvertFrom-Json -Depth 30 -DateKind String
+    $mismatchedFastPreviewPilotEvidence.classPilotZipSha256 = "e" * 64
+    Write-TestJson -Path $fastPreviewPilotEvidencePath -Value $mismatchedFastPreviewPilotEvidence
+    Assert-Throws {
+        New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
+            -PrivateProfilePath $fastPreviewGlobalProfilePath `
+            -PrivateFastPreviewCandidateReceiptPath `
+                ([string]$fastPreviewPilotPlan.fastPreviewCandidateReceiptPath) `
+            -PrivateFastPreviewPilotEvidencePath $fastPreviewPilotEvidencePath `
+            -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+            -ApiTaskDefinitionArn ([string]$fastPreviewPilotApplyResult.candidateApiTaskDefinitionArn) `
+            -WorkerTaskDefinitionArn ([string]$fastPreviewPilotApplyResult.candidateWorkerTaskDefinitionArn) `
+            -Now $now -SkipRepositoryCheck
+    } "Fast-preview global planning must reject soak evidence from another extension artifact."
+    Write-TestJson -Path $fastPreviewPilotEvidencePath -Value $fastPreviewPilotEvidence
     $fastPreviewGlobalPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
         -PrivateProfilePath $fastPreviewGlobalProfilePath `
+        -PrivateFastPreviewCandidateReceiptPath `
+            ([string]$fastPreviewPilotPlan.fastPreviewCandidateReceiptPath) `
         -PrivateFastPreviewPilotEvidencePath $fastPreviewPilotEvidencePath `
         -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
         -ApiTaskDefinitionArn ([string]$fastPreviewPilotApplyResult.candidateApiTaskDefinitionArn) `
@@ -2436,6 +2596,8 @@ try {
     Assert-Condition ($fastPreviewGlobalPlan.profileMode -ceq "fast-preview-global-on" -and
         [string]$fastPreviewGlobalPlan.validationLevel -ceq "managed" -and
         [string]$fastPreviewGlobalPlan.managedValidation -ceq "passed" -and
+        [string]$fastPreviewGlobalPlan.fastPreviewCandidateReceiptSha256 -ceq
+            [string]$fastPreviewCandidateReceiptForGlobal.EvidenceSha256 -and
         [string]$fastPreviewGlobalPlan.fastPreviewPilotEvidenceSha256 -ceq
             (Get-FileSha256 -Path $fastPreviewPilotEvidencePath)) `
         "Fast-preview global planning must retain only exact managed pilot evidence authority."
@@ -2485,6 +2647,9 @@ try {
             $fastPreviewOffState.FastPreviewMode -ceq "off") `
             "Fast-preview rollback profile must preserve global tracking-window screenshots on API and worker."
     }
+    [IO.File]::Delete([string]$fastPreviewPilotPlan.fastPreviewCandidateReceiptPath)
+    [IO.File]::Delete([string]$fastPreviewGlobalPlan.fastPreviewCandidateReceiptPath)
+    [IO.File]::Delete([string]$fastPreviewGlobalPlan.fastPreviewPilotEvidencePath)
     [void](Invoke-RuntimeConfigRollback -Plan $fastPreviewOffPlan `
         -PlanSha256 $fastPreviewOffPlanResult.PlanSha256 -Now $now `
         -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0)

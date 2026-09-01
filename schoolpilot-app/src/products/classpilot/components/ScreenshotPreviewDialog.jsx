@@ -31,38 +31,42 @@ function captureAgeLabel(observedAtMs, nowMs) {
   return `${Math.floor(ageSeconds / 60)}m ago`;
 }
 
-function AtomicDecodedScreenshot({ src, privacyKey, alt, className, style }) {
-  const imageRef = useRef(null);
-  const privacyKeyRef = useRef(null);
-  const requestedSrcRef = useRef(null);
+function useAtomicDecodedScreenshot(screenshotData, privacyKey) {
+  const [decodedFrame, setDecodedFrame] = useState(null);
+  const generationRef = useRef(0);
+  const src = typeof screenshotData?.screenshot === 'string'
+    ? screenshotData.screenshot
+    : '';
 
   useLayoutEffect(() => {
-    const image = imageRef.current;
-    if (!image) return undefined;
-
-    if (privacyKeyRef.current !== privacyKey) {
-      image.removeAttribute('src');
-      privacyKeyRef.current = privacyKey;
-    }
-    requestedSrcRef.current = src;
-    if (!src) {
-      image.removeAttribute('src');
-      return undefined;
-    }
-
+    const generation = generationRef.current + 1;
+    generationRef.current = generation;
     let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled && generationRef.current === generation) {
+        setDecodedFrame((current) => (
+          current?.privacyKey === privacyKey ? current : null
+        ));
+      }
+    });
+    if (!src) {
+      // Render gates the prior frame immediately; clear its in-memory payload
+      // in a microtask so this effect does not synchronously cascade renders.
+      queueMicrotask(() => {
+        if (!cancelled && generationRef.current === generation) {
+          setDecodedFrame(null);
+        }
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+
     const candidate = new Image();
-    const isCurrent = () => (
-      !cancelled
-      && privacyKeyRef.current === privacyKey
-      && requestedSrcRef.current === src
-    );
+    const isCurrent = () => !cancelled && generationRef.current === generation;
     const commit = () => {
       if (!isCurrent()) return;
-      image.src = src;
-    };
-    const clearFailedCandidate = () => {
-      if (isCurrent()) image.removeAttribute('src');
+      setDecodedFrame({ privacyKey, src, screenshotData });
     };
     const loaded = new Promise((resolve, reject) => {
       candidate.onload = resolve;
@@ -72,25 +76,19 @@ function AtomicDecodedScreenshot({ src, privacyKey, alt, className, style }) {
     const decoded = typeof candidate.decode === 'function'
       ? candidate.decode().catch(() => loaded)
       : loaded;
-    void decoded.then(commit).catch(clearFailedCandidate);
+    // A same-context failure leaves the prior decoded frame intact. Its own
+    // capture timestamp still drives freshness below, so a corrupt replacement
+    // can neither make old pixels look new nor extend their retention window.
+    void decoded.then(commit).catch(() => {});
 
     return () => {
       cancelled = true;
       candidate.onload = null;
       candidate.onerror = null;
     };
-  }, [privacyKey, src]);
+  }, [privacyKey, screenshotData, src]);
 
-  return (
-    <img
-      ref={imageRef}
-      alt={alt}
-      className={className}
-      style={style}
-      decoding="async"
-      data-testid="expanded-screenshot-image"
-    />
-  );
+  return decodedFrame?.privacyKey === privacyKey ? decodedFrame.screenshotData : null;
 }
 
 export default function ScreenshotPreviewDialog({
@@ -104,12 +102,25 @@ export default function ScreenshotPreviewDialog({
   onOpenChange,
 }) {
   const [zoom, setZoom] = useState('fit');
-  const display = deriveScreenshotDisplay(screenshotData, freshnessNowMs);
+  const candidateDisplay = deriveScreenshotDisplay(screenshotData, freshnessNowMs);
+  const candidatePixelsAvailable = candidateDisplay.fresh || candidateDisplay.retained;
+  const decodedScreenshotData = useAtomicDecodedScreenshot(screenshotData, privacyKey);
+  // A replacement response is also a safe lower bound for the current clock.
+  // Use it to age the last decoded frame even when the shared boundary clock
+  // has not advanced yet; its pixels/title still come only from decoded data.
+  const displayNowMs = Math.max(
+    freshnessNowMs,
+    candidateDisplay.observedAtMs ?? freshnessNowMs,
+  );
+  const display = deriveScreenshotDisplay(decodedScreenshotData, displayNowMs);
   const captureTime = display.observedAtMs === null
     ? null
     : CAPTURE_TIME_FORMATTER.format(new Date(display.observedAtMs));
-  const captureAge = captureAgeLabel(display.observedAtMs, freshnessNowMs);
+  const captureAge = captureAgeLabel(display.observedAtMs, displayNowMs);
   const retained = !display.fresh && display.retained;
+  const pixelsAvailable = candidatePixelsAvailable
+    && Boolean(decodedScreenshotData)
+    && (display.fresh || display.retained);
   const imageStyle = zoom === 'fit'
     ? { maxHeight: '100%', maxWidth: '100%', height: 'auto', width: 'auto' }
     : { height: 'auto', maxWidth: 'none', width: `${zoom}%` };
@@ -138,8 +149,8 @@ export default function ScreenshotPreviewDialog({
               className={retained || refreshUnavailable ? 'font-medium text-amber-700 dark:text-amber-300' : 'text-muted-foreground'}
               data-testid="expanded-screenshot-status"
             >
-              {!display.available
-                ? 'Preview unavailable'
+              {!pixelsAvailable
+                ? candidatePixelsAvailable ? 'Loading preview…' : 'Preview unavailable'
                 : retained
                 ? `Updating…${captureAge ? ` Last captured ${captureAge}` : ''}${captureTime ? ` at ${captureTime}` : ''}`
                 : refreshUnavailable
@@ -148,9 +159,9 @@ export default function ScreenshotPreviewDialog({
                     ? `Updated ${captureAge}${captureTime ? ` · Captured ${captureTime}` : ''}`
                     : 'Current screenshot'}
             </span>
-            {screenshotData?.tabTitle ? (
+            {decodedScreenshotData?.tabTitle ? (
               <span className="hidden max-w-[32rem] truncate text-muted-foreground lg:inline">
-                · {screenshotData.tabTitle}
+                · {decodedScreenshotData.tabTitle}
               </span>
             ) : null}
           </div>
@@ -177,13 +188,14 @@ export default function ScreenshotPreviewDialog({
           className={`flex min-h-0 flex-1 overflow-auto rounded-lg border bg-slate-950 p-2 ${zoom === 'fit' ? 'items-center justify-center' : 'items-start justify-start'}`}
           data-testid="expanded-screenshot-viewport"
         >
-          {display.available ? (
-            <AtomicDecodedScreenshot
-              src={screenshotData?.screenshot || ''}
-              privacyKey={privacyKey}
+          {pixelsAvailable ? (
+            <img
+              src={decodedScreenshotData.screenshot}
               alt={`Latest screen preview for ${studentName}`}
               className="block rounded shadow-2xl"
               style={imageStyle}
+              decoding="async"
+              data-testid="expanded-screenshot-image"
             />
           ) : (
             <div className="max-w-md px-6 text-center text-slate-200" data-testid="expanded-screenshot-unavailable">

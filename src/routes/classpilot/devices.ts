@@ -4566,6 +4566,10 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
       "screenshotTrackingWindowLeaseV1",
       binding
     );
+    const activeCadenceRolloutActive = isClasspilotCapabilityActive(
+      "screenshotActiveObservationCadenceV1",
+      binding
+    );
     const safetyCaptureRolloutActive = isClasspilotCapabilityActive(
       "safetyEvidenceCaptureV1",
       binding
@@ -4594,6 +4598,12 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
       && acceptedHeartbeatCapabilities.has("screenshotObservationLeaseV1");
     const trackingLeaseNegotiated = trackingLeaseRolloutActive
       && acceptedHeartbeatCapabilities.has("screenshotTrackingWindowLeaseV1");
+    const activeCadenceNegotiated = activeCadenceRolloutActive
+      && acceptedHeartbeatCapabilities.has("screenshotActiveObservationCadenceV1");
+    const acceptedScreenshotCapabilities = [...acceptedHeartbeatCapabilities].filter(
+      (capability) => capability !== "screenshotActiveObservationCadenceV1"
+        || activeCadenceNegotiated
+    );
     const safetyCaptureNegotiated = safetyCaptureRolloutActive
       && acceptedHeartbeatCapabilities.has("safetyEvidenceCaptureV1");
 
@@ -4670,9 +4680,7 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
         });
       }
 
-      const cadenceTeachingSessionId = acceptedHeartbeatCapabilities.has(
-        "screenshotActiveObservationCadenceV1"
-      )
+      const cadenceTeachingSessionId = activeCadenceNegotiated
         ? screenshotRealtimeSnapshot?.classroomState?.teachingSessionId ?? null
         : null;
       const cadenceObservationCheckedAt = Date.now();
@@ -4700,7 +4708,7 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
               ? current.authority.teachingSessionId
               : null,
             studentId,
-            acceptedCapabilities: [...acceptedHeartbeatCapabilities],
+            acceptedCapabilities: acceptedScreenshotCapabilities,
             trackingSettings,
             trackingAuthority: current,
             now: checkedAt,
@@ -4786,7 +4794,7 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
             ? strictResult.current.authority.teachingSessionId
             : null,
           studentId,
-          acceptedCapabilities: [...acceptedHeartbeatCapabilities],
+          acceptedCapabilities: acceptedScreenshotCapabilities,
           trackingSettings: strictResult.trackingSettings,
           trackingAuthority: strictResult.current,
         });

@@ -76,6 +76,10 @@ export type HeartbeatHotPathCounter =
   | "screenshotBackgroundCadencePolicyIssued"
   | "screenshotCadenceObservationUnavailable"
   | "screenshotPolicyRefreshTargets"
+  | "screenshotPolicyRefreshSignals"
+  | "screenshotPolicyRefreshCoalesced"
+  | "screenshotPolicyRefreshLocalDeliveries"
+  | "screenshotPolicyRefreshPublicationsAccepted"
   | "screenshotPolicyRefreshFailures"
   | "tileBatchHistoryFallbackItems";
 
