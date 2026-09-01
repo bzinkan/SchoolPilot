@@ -2947,7 +2947,7 @@ describe("ClassPilot manual-session recovery authority", () => {
     }
   });
 
-  it("atomically transitions an exact recovered random binding to stable managed-device authority", async () => {
+  it("atomically transitions an exact recovered random binding to stable managed-device authority", async (t) => {
     const enrollmentKey = `${tag}-managed-continuity-key`;
     const rawDirectoryDeviceId = `${tag}-directory-device`;
     const untrustedBodyDeviceId = `${tag}-untrusted-body-device`;
@@ -2998,6 +2998,35 @@ describe("ClassPilot manual-session recovery authority", () => {
     }));
 
     heartbeatMetrics.snapshotHeartbeatHotPathMetrics({ reset: true });
+    const expectedMetricNames = [
+      "managedDeviceContinuityPreflightAccepted",
+      "managedDeviceContinuityProofIssued",
+      "managedDeviceContinuityReclaimOffered",
+      "managedDeviceContinuityLoginIssued",
+      "managedDeviceContinuityRecoveryTransitioned",
+      "manualSessionCrossStudentHandoff",
+    ] as const;
+    const emittedMetricCounters: Partial<Record<(typeof expectedMetricNames)[number], number>> = {};
+    const originalConsoleLog = console.log;
+    t.mock.method(console, "log", (...args: unknown[]) => {
+      originalConsoleLog(...args);
+      if (typeof args[0] !== "string") return;
+      try {
+        const event = JSON.parse(args[0]) as {
+          event?: unknown;
+          counters?: Record<string, unknown>;
+        };
+        if (event.event !== "classpilot_heartbeat_hot_path_summary") return;
+        for (const name of expectedMetricNames) {
+          const value = event.counters?.[name];
+          if (typeof value === "number") {
+            emittedMetricCounters[name] = (emittedMetricCounters[name] ?? 0) + value;
+          }
+        }
+      } catch {
+        // Non-JSON application logging is unrelated to this aggregate metric.
+      }
+    });
     const { createApp } = await import("../dist/app.js");
     const server = createServer(createApp());
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -3249,12 +3278,13 @@ describe("ClassPilot manual-session recovery authority", () => {
       assert.equal(emailConflictBody.managedDeviceContinuityAccepted, true);
 
       const metrics = heartbeatMetrics.snapshotHeartbeatHotPathMetrics({ reset: true });
-      assert.equal(metrics.counters.managedDeviceContinuityPreflightAccepted, 1);
-      assert.equal(metrics.counters.managedDeviceContinuityProofIssued, 1);
-      assert.equal(metrics.counters.managedDeviceContinuityReclaimOffered, 1);
-      assert.equal(metrics.counters.managedDeviceContinuityLoginIssued, 1);
-      assert.equal(metrics.counters.managedDeviceContinuityRecoveryTransitioned, 1);
-      assert.equal(metrics.counters.manualSessionCrossStudentHandoff, 1);
+      for (const name of expectedMetricNames) {
+        assert.equal(
+          (emittedMetricCounters[name] ?? 0) + (metrics.counters[name] ?? 0),
+          1,
+          `${name} must be emitted exactly once across rotated and live aggregate metrics`
+        );
+      }
 
       await inSchool(() => storage.endStudentSessionExact({
         schoolId,
