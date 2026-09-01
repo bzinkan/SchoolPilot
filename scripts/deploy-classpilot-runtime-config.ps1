@@ -121,7 +121,7 @@ $script:LateSignInBlockedZipSha256s = @(
     "40fed2c455d5c50fe3a947d23e3798a0c81832a67e717a2767b62970c024307c",
     "cd2d9c26f989a64203c52f460a1366d642ea371d7cadbb68aec9ef9a16c1884e"
 )
-$script:FastPreviewRequiredReleaseTag = "v2.8.0"
+$script:FastPreviewRequiredReleaseTag = "v2.8.1"
 $script:FastPreviewRequiredExtensionId = "iggbfegfcjkfieoemeolfmfnapepalca"
 
 function Assert-LateSignInPilotReleaseEvidenceBound {
@@ -197,7 +197,7 @@ function Assert-FastPreviewCandidateReceipt {
         [string]$receipt.classPilotMergeSha -cnotmatch '^[0-9a-f]{40}$' -or
         [string]$receipt.classPilotZipSha256 -cnotmatch '^[0-9a-f]{64}$' -or
         [string]$receipt.classPilotExtensionId -cne $script:FastPreviewRequiredExtensionId) {
-        throw "Fast-preview candidate receipt does not identify the exact reviewed ClassPilot v2.8.0 artifact."
+        throw "Fast-preview candidate receipt does not identify the exact reviewed ClassPilot v2.8.1 artifact."
     }
     if (-not (Test-IsJsonInteger -Value $receipt.managedDeviceCount) -or
         [long]$receipt.managedDeviceCount -lt 5 -or [long]$receipt.managedDeviceCount -gt 10) {
@@ -3475,7 +3475,7 @@ function New-RuntimeConfigPlan {
     )
     if ($fastPreviewCandidateReceiptRequired -and
         [string]::IsNullOrWhiteSpace($PrivateFastPreviewCandidateReceiptPath)) {
-        throw "Fast-preview pilot admission requires a private v2.8.0 candidate receipt."
+        throw "Fast-preview pilot admission requires a private v2.8.1 candidate receipt."
     }
     if (-not $fastPreviewCandidateReceiptRequired -and
         -not [string]::IsNullOrWhiteSpace($PrivateFastPreviewCandidateReceiptPath)) {
