@@ -15,9 +15,10 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Badge } from "../../../components/ui/badge";
 import { useToast } from "../../../hooks/use-toast";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
-import { ArrowLeft, User, Settings as SettingsIcon, Save, Plus, Edit, Trash2, Plane, AlertCircle, ShieldBan, UsersRound, UserPlus, UserMinus } from "lucide-react";
+import { ArrowLeft, User, Users, Settings as SettingsIcon, Save, Plus, Edit, Trash2, Plane, AlertCircle, ShieldBan, UsersRound, UserPlus, UserMinus } from "lucide-react";
 import { ThemeToggle } from "../../../components/ThemeToggle";
 import { TeacherSettingsTabs } from "../components/ScheduleRouteTabs";
+import { useClassPilotAuth } from "../../../hooks/useClassPilotAuth";
 
 const teacherSettingsSchema = z.object({
   maxTabsPerStudent: z.string().optional(),
@@ -28,6 +29,7 @@ const teacherSettingsSchema = z.object({
 export default function MySettings() {
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { currentUser } = useClassPilotAuth();
 
   const [showFlightPathDialog, setShowFlightPathDialog] = useState(false);
   const [editingFlightPath, setEditingFlightPath] = useState(null);
@@ -54,6 +56,10 @@ export default function MySettings() {
   const [showManageMembersDialog, setShowManageMembersDialog] = useState(false);
   const [managingSubgroup, setManagingSubgroup] = useState(null);
   const [subgroupMembers, setSubgroupMembers] = useState([]);
+
+  // Co-teachers state
+  const [coTeacherGroupId, setCoTeacherGroupId] = useState("");
+  const [coTeacherToAdd, setCoTeacherToAdd] = useState("");
 
   const { data: teacherSettings, isLoading } = useQuery({
     queryKey: ['/api/teacher/settings'],
@@ -97,6 +103,47 @@ export default function MySettings() {
     },
     enabled: !!selectedGroupId,
   });
+
+  // Only classes this teacher owns can have their co-teachers managed here.
+  // Official classes (admin_class) are managed by administrators.
+  const ownedGroups = groups.filter(
+    (group) => group.groupType !== "admin_class" && group.teacherId === currentUser?.id
+  );
+
+  const { data: groupTeachers = [] } = useQuery({
+    queryKey: ['/api/groups', coTeacherGroupId, 'teachers'],
+    queryFn: async () => {
+      if (!coTeacherGroupId) return [];
+      const data = await apiRequest('GET', `/groups/${coTeacherGroupId}/teachers`);
+      return Array.isArray(data?.teachers) ? data.teachers : [];
+    },
+    enabled: !!coTeacherGroupId,
+  });
+
+  // ?teachable=true also returns admins / school admins who may teach a class
+  // (the school owner is often an admin who also teaches).
+  const { data: schoolTeachers = [] } = useQuery({
+    queryKey: ['/api/users/teachers', 'teachable'],
+    queryFn: async () => {
+      const data = await apiRequest('GET', '/users/teachers?teachable=true');
+      return Array.isArray(data?.teachers) ? data.teachers : [];
+    },
+    enabled: !!coTeacherGroupId,
+  });
+
+  const assignedTeacherIds = new Set(groupTeachers.map((entry) => entry.teacherId));
+  const availableCoTeachers = schoolTeachers.filter(
+    (teacher) => teacher.userId !== currentUser?.id && !assignedTeacherIds.has(teacher.userId)
+  );
+
+  const teacherDisplayName = (teacher) => {
+    const name =
+      [teacher.user?.firstName, teacher.user?.lastName].filter(Boolean).join(" ") ||
+      teacher.user?.email ||
+      teacher.userId;
+    const isAdmin = teacher.role === "admin" || teacher.role === "school_admin";
+    return isAdmin ? `${name} (admin)` : name;
+  };
 
   const form = useForm({
     resolver: zodResolver(teacherSettingsSchema),
@@ -376,6 +423,51 @@ export default function MySettings() {
       setSubgroupMembers([]);
     }
   };
+
+  // Co-teacher mutations
+  const handleSelectCoTeacherGroup = (groupId) => {
+    setCoTeacherGroupId(groupId);
+    setCoTeacherToAdd("");
+  };
+
+  const invalidateGroupTeachers = () => {
+    queryClient.invalidateQueries({ queryKey: ['/api/groups', coTeacherGroupId, 'teachers'] });
+  };
+
+  const addCoTeacherMutation = useMutation({
+    mutationFn: async (teacherId) => {
+      return await apiRequest("POST", `/groups/${coTeacherGroupId}/teachers`, { teacherId });
+    },
+    onSuccess: () => {
+      invalidateGroupTeachers();
+      setCoTeacherToAdd("");
+      toast({ title: "Co-teacher added", description: "They can now start and manage this class." });
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: "Failed to add co-teacher",
+        description: error.response?.data?.error || error.message,
+      });
+    },
+  });
+
+  const removeCoTeacherMutation = useMutation({
+    mutationFn: async (teacherId) => {
+      return await apiRequest("DELETE", `/groups/${coTeacherGroupId}/teachers/${teacherId}`, {});
+    },
+    onSuccess: () => {
+      invalidateGroupTeachers();
+      toast({ title: "Co-teacher removed", description: "They can no longer start or manage this class." });
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: "Failed to remove co-teacher",
+        description: error.response?.data?.error || error.message,
+      });
+    },
+  });
 
   const updateSettingsMutation = useMutation({
     mutationFn: async (data) => {
@@ -758,6 +850,117 @@ export default function MySettings() {
                         ))}
                       </div>
                     )}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Co-teachers Section */}
+            <Card data-testid="card-co-teachers">
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <Users className="h-5 w-5 text-sky-500" />
+                  <CardTitle>Co-teachers</CardTitle>
+                </div>
+                <CardDescription>
+                  Co-teachers can start and manage this class, including at its scheduled bell time. Official classes are managed by administrators.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Class Selector (classes this teacher owns) */}
+                <div className="space-y-2">
+                  <Label>Select Class</Label>
+                  <Select value={coTeacherGroupId} onValueChange={handleSelectCoTeacherGroup}>
+                    <SelectTrigger data-testid="select-co-teacher-class">
+                      <SelectValue placeholder="Select a class you own to manage co-teachers" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ownedGroups.map((group) => (
+                        <SelectItem key={group.id} value={group.id}>
+                          {group.name}
+                        </SelectItem>
+                      ))}
+                      {ownedGroups.length === 0 && (
+                        <div className="p-2 text-sm text-muted-foreground">
+                          No classes you own yet. Official classes are managed by administrators.
+                        </div>
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {coTeacherGroupId && (
+                  <>
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium">Teachers</p>
+                      {groupTeachers.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No teachers assigned to this class</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {groupTeachers.map((entry) => (
+                            <div
+                              key={entry.teacherId}
+                              className="flex items-center justify-between p-3 rounded-lg border bg-card"
+                              data-testid={`co-teacher-row-${entry.teacherId}`}
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium">{entry.teacher?.name || "Unknown teacher"}</span>
+                                <Badge variant={entry.role === "primary" ? "secondary" : "outline"} className="text-xs">
+                                  {entry.role === "primary" ? "Primary" : "Co-teacher"}
+                                </Badge>
+                              </div>
+                              {entry.role !== "primary" && (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => removeCoTeacherMutation.mutate(entry.teacherId)}
+                                  disabled={removeCoTeacherMutation.isPending}
+                                  data-testid={`button-remove-co-teacher-${entry.teacherId}`}
+                                >
+                                  <UserMinus className="h-4 w-4 mr-1" />
+                                  Remove
+                                </Button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                      <div className="flex-1 space-y-2">
+                        <Label>Add a co-teacher</Label>
+                        <Select value={coTeacherToAdd} onValueChange={setCoTeacherToAdd}>
+                          <SelectTrigger data-testid="select-co-teacher-to-add">
+                            <SelectValue placeholder="Select a teacher" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {availableCoTeachers.map((teacher) => (
+                              <SelectItem key={teacher.userId} value={teacher.userId}>
+                                {teacherDisplayName(teacher)}
+                              </SelectItem>
+                            ))}
+                            {availableCoTeachers.length === 0 && (
+                              <div className="p-2 text-sm text-muted-foreground">
+                                No other teachers available to add.
+                              </div>
+                            )}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => coTeacherToAdd && addCoTeacherMutation.mutate(coTeacherToAdd)}
+                        disabled={!coTeacherToAdd || addCoTeacherMutation.isPending}
+                        data-testid="button-add-co-teacher"
+                      >
+                        <UserPlus className="h-4 w-4 mr-2" />
+                        Add Co-teacher
+                      </Button>
+                    </div>
                   </>
                 )}
               </CardContent>

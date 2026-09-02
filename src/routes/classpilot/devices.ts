@@ -1017,6 +1017,9 @@ function publicRealtimeFields(snapshot: ClasspilotRealtimeStatus) {
       restrictionAuthPassThroughV1: acceptedCapabilities.has(
         "restrictionAuthPassThroughV1"
       ),
+      screenshotActiveObservationCadenceV1: acceptedCapabilities.has(
+        "screenshotActiveObservationCadenceV1"
+      ),
     },
     activityFresh,
     activityState: snapshot.activityState,

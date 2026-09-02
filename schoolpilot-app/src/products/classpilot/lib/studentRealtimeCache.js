@@ -9,6 +9,7 @@ const REALTIME_FIELDS = Object.freeze([
   'tabSnapshotRevision',
   'extensionVersion',
   'capabilities',
+  'acceptedCapabilities',
   'screenLocked',
   'isSharing',
   'cameraActive',
@@ -93,6 +94,7 @@ function resetForRealtimeBinding(row, binding) {
     tabSnapshotRevision: null,
     extensionVersion: null,
     capabilities: {},
+    acceptedCapabilities: {},
     screenLocked: false,
     isSharing: false,
     cameraActive: false,
@@ -267,6 +269,7 @@ function mapStudentUpdate(row, event) {
   copy('tabSnapshotRevision');
   copy('extensionVersion');
   copy('capabilities');
+  copy('acceptedCapabilities');
   copy('isSharing');
   copy('cameraActive');
   copy('screenshotHealth');
@@ -352,6 +355,7 @@ function mapSignedOut(row, event) {
     tabSnapshotRevision: null,
     extensionVersion: null,
     capabilities: {},
+    acceptedCapabilities: {},
     isSharing: false,
     cameraActive: false,
     activityFresh: false,

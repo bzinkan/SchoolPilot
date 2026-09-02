@@ -205,6 +205,9 @@ function publicClasspilotExtensionContract(
       restrictionAuthPassThroughV1: acceptedCapabilities.has(
         "restrictionAuthPassThroughV1"
       ),
+      screenshotActiveObservationCadenceV1: acceptedCapabilities.has(
+        "screenshotActiveObservationCadenceV1"
+      ),
     },
   };
 }

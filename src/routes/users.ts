@@ -256,10 +256,21 @@ router.get(
   }
 );
 
+// Membership roles that may be assigned as a class teacher (mirrors
+// TEACHABLE_ROLES in routes/classpilot/adminClasses.ts).
+const TEACHABLE_ROLES = new Set(["teacher", "admin", "school_admin"]);
+
 // GET /api/users/teachers
+// Default: active memberships with role "teacher" (unchanged). With
+// ?teachable=true every active membership whose role may teach a class
+// (teacher, admin, school_admin) is returned, so admins who also teach can be
+// picked as co-teachers. The response shape is identical in both modes.
 router.get("/teachers", ...schoolContext, requireSharedStaffDirectoryRole, async (req, res, next) => {
   try {
-    const teachers = await getUsersBySchool(res.locals.schoolId!, "teacher");
+    const teachable = String(req.query.teachable ?? "") === "true";
+    const teachers = teachable
+      ? (await getUsersBySchool(res.locals.schoolId!)).filter((t) => TEACHABLE_ROLES.has(t.role))
+      : await getUsersBySchool(res.locals.schoolId!, "teacher");
     return res.json({
       teachers: teachers.map((t) => {
         const { password: _, ...safeUser } = t.user;

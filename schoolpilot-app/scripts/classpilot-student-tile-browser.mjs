@@ -54,6 +54,9 @@ try {
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
 
+  // Student favicon URLs are rendered as <img>; keep the harness hermetic.
+  await page.route(/^https:\/\//, (route) => route.abort());
+
   await page.goto(`${baseURL}/classpilot-student-tile-regression.html`, { waitUntil: 'networkidle' });
   await page.evaluate(() => {
     const nativeSetTimeout = globalThis.setTimeout.bind(globalThis);
@@ -444,6 +447,109 @@ try {
     await page.getByTestId('screenshot-clicks').textContent(),
     'Screenshot clicks: 3',
     'the Return to Class action must not bubble into screenshot enlargement',
+  );
+
+  const faviconStripTile = page.getByTestId('card-student-favicon-strip-student');
+  await page.getByTestId('screenshot-current-favicon-strip-student').waitFor();
+  const faviconStrip = page.getByTestId('tab-favicons-favicon-strip-student');
+  await faviconStrip.waitFor();
+  assert.equal(
+    await faviconStrip.locator('[data-testid^="tab-favicon-favicon-strip-student-"]').count(),
+    5,
+    'the strip must show one chip per unique http(s) hostname and drop chrome:// tabs',
+  );
+  assert.equal(
+    await page.getByTestId('tab-favicon-favicon-strip-student-0').getAttribute('title'),
+    'Assignment · docs.example.test',
+    'the active tab must be the first chip',
+  );
+  const faviconImages = faviconStrip.locator('img');
+  assert.equal(
+    await faviconImages.count(),
+    3,
+    'only https favicons may render as images; http and data favicons fall back to the placeholder dot',
+  );
+  assert.deepEqual(
+    await faviconImages.evaluateAll((images) => images.map((image) => image.getAttribute('referrerpolicy'))),
+    ['no-referrer', 'no-referrer', 'no-referrer'],
+    'every favicon image must send no referrer',
+  );
+  assert.equal(
+    await faviconImages.evaluateAll((images) => images.every((image) => /^https:\/\//.test(image.getAttribute('src') || ''))),
+    true,
+    'no favicon image may load an http: or data: source',
+  );
+  assert.equal(
+    await faviconStripTile.getByText('Open', { exact: true }).count(),
+    1,
+  );
+  const faviconMoreButton = page.getByTestId('button-tab-favicons-more-favicon-strip-student');
+  assert.equal(
+    (await faviconMoreButton.textContent())?.trim(),
+    '+7…',
+    'the overflow chip must count from the server openTabCount and mark a truncated snapshot',
+  );
+  await faviconMoreButton.click();
+  await page.getByTestId('tab-clicks').filter({ hasText: 'Tab clicks: 2' }).waitFor();
+  assert.equal(
+    await page.getByTestId('screenshot-clicks').textContent(),
+    'Screenshot clicks: 3',
+    'the favicon overflow chip must open Manage Tabs without bubbling into screenshot enlargement',
+  );
+
+  const tempAllowTile = page.getByTestId('card-student-temp-allow-student');
+  await tempAllowTile.getByTestId('badge-blocked-temp-allow-student').waitFor();
+  const tempAllowChip = page.getByTestId('badge-temp-allow-temp-allow-student');
+  await tempAllowChip.waitFor();
+  assert.match(
+    (await tempAllowChip.textContent()) || '',
+    /^reading\.example\.test allowed· 9 min left$/,
+    'the temporary allow chip must name the domain and count down on the shared minute clock',
+  );
+  const allowTemporarilyButton = page.getByTestId('button-allow-temporarily-temp-allow-student');
+  assert.equal(await allowTemporarilyButton.getAttribute('title'), 'Allow this site for 10 minutes');
+  assert.equal(await allowTemporarilyButton.isDisabled(), false);
+  await allowTemporarilyButton.click();
+  await page.getByTestId('command-clicks').filter({ hasText: 'Command clicks: 2' }).waitFor();
+  assert.equal(
+    await page.getByTestId('last-command').textContent(),
+    JSON.stringify({
+      commandType: 'temp-unblock',
+      commandPayload: { domain: 'blocked.example.test', durationMinutes: 10 },
+      studentIds: ['temp-allow-student'],
+    }),
+    'Allow 10 min must dispatch one exact temp-unblock command for the current hostname',
+  );
+  assert.equal(
+    await page.getByTestId('allow-clicks').textContent(),
+    'Allow clicks: 1',
+    'the temporary allow must not also add a session-wide allow',
+  );
+  assert.equal(await page.getByTestId('screenshot-clicks').textContent(), 'Screenshot clicks: 3');
+  assert.equal(await page.getByTestId('details-clicks').textContent(), 'Details clicks: 3');
+  assert.equal(await page.getByTestId('tab-clicks').textContent(), 'Tab clicks: 2');
+  assert.deepEqual(
+    await page.evaluate(() => globalThis.__studentTileMinuteTimers()),
+    { timeouts: 0, intervals: 1 },
+    'the countdown leaf must reuse the shared minute interval',
+  );
+
+  const tabLimitBadge = page.getByTestId('badge-tab-limit-tab-limit-student');
+  await tabLimitBadge.waitFor();
+  assert.equal(
+    (await tabLimitBadge.textContent())?.trim(),
+    '7 / 5 tabs',
+    'the tab-limit chip must show the realtime count against the authoritative limit',
+  );
+  assert.equal(
+    (await tabLimitBadge.getAttribute('class') || '').includes('amber'),
+    true,
+    'an over-limit student must render the chip in the amber warning tone',
+  );
+  assert.equal(
+    await page.getByTestId('badge-tab-limit-online-student').count(),
+    0,
+    'students without a classroom tab limit must not render the chip',
   );
 
   const pausedTile = page.getByTestId('card-student-paused-student');

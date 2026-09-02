@@ -6,6 +6,10 @@ export const MONITORING_SIGNAL_LOSS_CONFIRMED_MS =
 // allowance. An old success cannot permanently certify a signal-loss state.
 export const MONITORING_CONFIRMATION_FRESH_MS = 45_000;
 export const SCREENSHOT_STALE_MS = 75_000;
+// Active-view (observed, capability-negotiated) captures arrive about every
+// 5 seconds; three missed captures make a preview visibly stale.
+export const SCREENSHOT_ACTIVE_VIEW_CAPTURE_MS = 5_000;
+export const SCREENSHOT_ACTIVE_VIEW_STALE_MS = 15_000;
 export const SCREENSHOT_RECONNECT_RETAIN_MS = 120_000;
 export const SCREENSHOT_SUCCESSFUL_NULL_RETAIN_UNTIL_FIELD = '__classpilotSuccessfulNullRetainUntilMs';
 export const OBSERVED_AT_DISPLAY_FUTURE_SKEW_MS = 60_000;
@@ -70,6 +74,16 @@ export function formatRelativeLastSeen(value, nowMs = Date.now()) {
   }
   const days = Math.floor(elapsedMs / DAY_MS);
   return `Last seen ${days} day${days === 1 ? '' : 's'} ago`;
+}
+
+// Whole-minute countdown for self-expiring allows; null once expired.
+export function formatRemainingMinutes(expiresAtMs, nowMs = Date.now()) {
+  const expiresAt = Number(expiresAtMs);
+  const now = Number(nowMs);
+  if (!Number.isFinite(expiresAt) || !Number.isFinite(now) || expiresAt <= now) return null;
+  const remainingMs = expiresAt - now;
+  if (remainingMs < MINUTE_MS) return '<1 min left';
+  return `${Math.floor(remainingMs / MINUTE_MS)} min left`;
 }
 
 function isSignedOut(student) {
@@ -245,7 +259,31 @@ export function projectStudentMonitoringDisplays(
   return projectionUnchanged ? previous : next;
 }
 
-export function deriveScreenshotDisplay(screenshotData, nowMs = Date.now()) {
+export function screenshotStaleThresholdMs(cadence) {
+  return cadence === 'active_view' ? SCREENSHOT_ACTIVE_VIEW_STALE_MS : SCREENSHOT_STALE_MS;
+}
+
+// A cadence-aware threshold may only tighten the fresh window; the 75-second
+// default and the 120-second retention boundary are never extended.
+function boundedStaleThresholdMs(staleThresholdMs) {
+  const threshold = Number(staleThresholdMs);
+  return Number.isFinite(threshold) && threshold > 0
+    ? Math.min(threshold, SCREENSHOT_STALE_MS)
+    : SCREENSHOT_STALE_MS;
+}
+
+export function deriveScreenshotCaptureCadence({ student, observationLeaseStatus } = {}) {
+  return observationLeaseStatus === 'observed'
+    && student?.acceptedCapabilities?.screenshotActiveObservationCadenceV1 === true
+    ? 'active_view'
+    : 'background';
+}
+
+export function deriveScreenshotDisplay(
+  screenshotData,
+  nowMs = Date.now(),
+  { staleThresholdMs = SCREENSHOT_STALE_MS } = {},
+) {
   const observedAtMs = normalizeObservedAtForDisplay(
     screenshotData?.timestamp ?? screenshotData?.capturedAt ?? screenshotData?.observedAt,
     nowMs,
@@ -253,7 +291,7 @@ export function deriveScreenshotDisplay(screenshotData, nowMs = Date.now()) {
   const available = Boolean(screenshotData?.screenshot);
   const normalFreshUntilMs = observedAtMs === null
     ? null
-    : observedAtMs + SCREENSHOT_STALE_MS;
+    : observedAtMs + boundedStaleThresholdMs(staleThresholdMs);
   const successfulNullRetainUntilValue = Number(
     screenshotData?.[SCREENSHOT_SUCCESSFUL_NULL_RETAIN_UNTIL_FIELD],
   );
@@ -287,12 +325,44 @@ export function deriveScreenshotPreviewMode({
   screenshotData,
   nowMs = Date.now(),
   authorizationRevoked = false,
+  staleThresholdMs,
 } = {}) {
   if (authorizationRevoked) return null;
-  const screenshot = deriveScreenshotDisplay(screenshotData, nowMs);
+  const screenshot = deriveScreenshotDisplay(screenshotData, nowMs, { staleThresholdMs });
   if (screenshot.fresh) return 'current';
   if (screenshot.retained) return 'retained';
   return null;
+}
+
+// Teacher-facing capture health. Never surfaces the raw extension error text.
+export function deriveScreenshotHealthDisplay(student, {
+  nowMs = Date.now(),
+  cadence = 'background',
+  screenshotDisplay = null,
+  monitoringDisplay = null,
+} = {}) {
+  const health = student?.screenshotHealth;
+  if (!health || typeof health !== 'object') return null;
+  if (monitoringDisplay && !monitoringDisplay.telemetryCurrent) return null;
+  if (monitoringDisplay && ['signed_out', 'delegated'].includes(monitoringDisplay.kind)) return null;
+
+  const now = Number(nowMs);
+  const lastErrorAt = Number(health.lastErrorAt);
+  const lastSuccessAtValue = Number(health.lastSuccessAt);
+  const lastSuccessAt = Number.isFinite(lastSuccessAtValue) ? lastSuccessAtValue : 0;
+  const errorAfterSuccess = Number.isFinite(lastErrorAt) && lastErrorAt > 0 && lastErrorAt > lastSuccessAt;
+  const errorRecent = errorAfterSuccess
+    && Number.isFinite(now)
+    && now - lastErrorAt <= 2 * screenshotStaleThresholdMs(cadence);
+  if (health.alarmActive === true || errorRecent) {
+    return { kind: 'failing', label: 'Preview capture failing', tone: 'warn' };
+  }
+  if (cadence === 'active_view') {
+    return screenshotDisplay?.fresh
+      ? { kind: 'live', label: 'Live preview · 5s', tone: 'ok' }
+      : { kind: 'delayed', label: 'Preview delayed', tone: 'warn' };
+  }
+  return { kind: 'background', label: 'Preview every 30s', tone: 'muted' };
 }
 
 export function isClassBoundScreenshot(screenshotData) {
@@ -347,6 +417,7 @@ export function findNextStudentFreshnessBoundary(
   screenshotsByStudent,
   nowMs = Date.now(),
   monitoringDisplaysByStudent = null,
+  screenshotStaleThresholdMsFor = null,
 ) {
   let earliest = null;
 
@@ -362,7 +433,11 @@ export function findNextStudentFreshnessBoundary(
     }
 
     const screenshot = screenshotsByStudent?.get?.(student?.studentId);
-    const screenshotDisplay = deriveScreenshotDisplay(screenshot, nowMs);
+    const screenshotDisplay = deriveScreenshotDisplay(screenshot, nowMs, {
+      staleThresholdMs: typeof screenshotStaleThresholdMsFor === 'function'
+        ? screenshotStaleThresholdMsFor(student)
+        : undefined,
+    });
     if (
       (
         monitoring.telemetryCurrent

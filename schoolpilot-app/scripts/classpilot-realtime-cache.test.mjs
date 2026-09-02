@@ -170,6 +170,10 @@ test('applies an allowed higher-revision update without appending students', () 
       exactTabCloseV1: true,
       screenOnlyUnlockV1: true,
     },
+    acceptedCapabilities: {
+      restrictionAuthPassThroughV1: true,
+      screenshotActiveObservationCadenceV1: true,
+    },
     status: 'tracking-disabled',
   }, {
     type: 'student-update',
@@ -190,6 +194,10 @@ test('applies an allowed higher-revision update without appending students', () 
     exactTabCloseV1: true,
     screenOnlyUnlockV1: true,
   });
+  assert.deepEqual(result[0].acceptedCapabilities, {
+    restrictionAuthPassThroughV1: true,
+    screenshotActiveObservationCadenceV1: true,
+  }, 'server-accepted capabilities must follow the realtime row');
 });
 
 test('updates an existing claimed-coverage row without granting new roster visibility', () => {
@@ -476,6 +484,7 @@ test('a new public binding resets prior telemetry and accepts a lower revision',
     tabSnapshotRevision: 99,
     extensionVersion: '2.6.0',
     capabilities: { exactTabCloseV1: true, screenOnlyUnlockV1: true },
+    acceptedCapabilities: { screenshotActiveObservationCadenceV1: true },
   }];
   const switched = applyStudentRealtimeEvents(original, [{
     type: 'student-update',
@@ -498,6 +507,11 @@ test('a new public binding resets prior telemetry and accepts a lower revision',
   assert.equal(switched[0].tabSnapshotRevision, null);
   assert.equal(switched[0].extensionVersion, null);
   assert.deepEqual(switched[0].capabilities, {});
+  assert.deepEqual(
+    switched[0].acceptedCapabilities,
+    {},
+    'a new binding must not inherit the prior session\'s accepted screenshot cadence',
+  );
 
   const delayedOldBinding = applyStudentRealtimeEvents(switched, [{
     type: 'student-update',

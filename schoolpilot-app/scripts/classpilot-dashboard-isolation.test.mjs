@@ -640,6 +640,84 @@ test('late-sign-in restriction authoring is row-gated and command-specific', asy
   );
 });
 
+test('Manage Tabs exposes a capability-gated tab limit that routes through the active command path', async () => {
+  const dashboard = await readFile(
+    new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
+    'utf8',
+  );
+
+  const limitMutationStart = dashboard.indexOf('const limitTabsMutation = useMutation');
+  const limitMutationEnd = dashboard.indexOf('const lockScreenMutation = useMutation', limitMutationStart);
+  assert.ok(limitMutationStart >= 0 && limitMutationEnd > limitMutationStart, 'missing limitTabsMutation');
+  const limitMutation = dashboard.slice(limitMutationStart, limitMutationEnd);
+  assert.match(
+    limitMutation,
+    /postActiveCommand\('limit-tabs', \{ maxTabs \}, \{ studentIds \}\)/,
+    'the tab limit must go through the capability-checked active command path',
+  );
+  assert.match(
+    limitMutation,
+    /invalidateQueries\(\{ queryKey: \['\/api\/commands\/active-state', effectiveSession\?\.id\] \}\)/,
+  );
+  assert.doesNotMatch(limitMutation, /\bonMutate\b|setQueryData/, 'the tab limit must not be applied optimistically');
+
+  const dialogStart = dashboard.indexOf('data-testid="dialog-tabs"');
+  const dialogEnd = dashboard.indexOf('{/* Apply Flight Path Dialog */}', dialogStart);
+  assert.ok(dialogStart >= 0 && dialogEnd > dialogStart, 'missing Manage Tabs dialog');
+  const dialog = dashboard.slice(dialogStart, dialogEnd);
+  assert.match(
+    dialog,
+    /dashboardCapabilities\.allows\('limit-tabs'\) && \([\s\S]{0,900}data-testid="input-tab-limit"[\s\S]{0,700}data-testid="button-apply-tab-limit"[\s\S]{0,500}data-testid="button-clear-tab-limit"/,
+    'the tab-limit input and both actions must render only for an owned class inside the Manage Tabs dialog',
+  );
+  assert.match(dialog, /type="number"[\s\S]{0,80}min=\{1\}[\s\S]{0,40}max=\{100\}/);
+  assert.match(
+    dashboard,
+    /queryKey: \['\/api\/teacher\/settings'\][\s\S]{0,260}enabled: showCloseTabsDialog && dashboardCapabilities\.allows\('limit-tabs'\)[\s\S]{0,80}staleTime: 60_000/,
+    'teacher settings must load lazily only while Manage Tabs is open for an owned class',
+  );
+  assert.match(
+    dashboard,
+    /teacherSettings\?\.maxTabsPerStudent \|\| settings\?\.maxTabsPerStudent \|\| ""/,
+    'the draft must seed from the teacher default before the school default',
+  );
+});
+
+test('past sessions load lazily and reuse the single mounted Session Summary dialog', async () => {
+  const dashboard = await readFile(
+    new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(
+    dashboard,
+    /queryKey: \['\/api\/classpilot\/teaching-sessions\/recent', activeSchoolId\][\s\S]{0,320}enabled: showPastSessions && Boolean\(activeSchoolId\)[\s\S]{0,80}staleTime: 30_000/,
+    'the recent-sessions query must stay disabled until the popover opens',
+  );
+  assert.match(dashboard, /apiRequest\('GET', '\/classpilot\/teaching-sessions\/recent\?limit=20'\)/);
+  assert.match(dashboard, /data-testid="dialog-past-sessions"/);
+  assert.match(dashboard, /data-testid=\{`past-session-\$\{session\.id\}`\}/);
+  assert.match(
+    dashboard,
+    /setShowPastSessions\(false\);\s*setSessionReportTarget\(\{ id: session\.id, name: session\.className \|\| 'Class' \}\);[\s\S]{0,120}data-testid=\{`button-open-session-report-\$\{session\.id\}`\}/,
+    'opening a past summary must target the already-mounted report dialog',
+  );
+  assert.equal(
+    dashboard.match(/<SessionMonitoringReportDialog/g)?.length,
+    1,
+    'past sessions must not mount a second Session Summary dialog',
+  );
+  assert.match(
+    dashboard,
+    /case "expired":\s*return \{ label: "Summary expired", action: "Summary expired", openable: false \};/,
+  );
+  assert.match(
+    dashboard,
+    /invalidateQueries\(\{ queryKey: \['\/api\/classpilot\/teaching-sessions\/recent'\], exact: false \}\)/,
+    'ending a class must refresh the past-sessions list',
+  );
+});
+
 test('sign-out-only selection closes command dialogs and cannot fall back to class-wide commands', async () => {
   const dashboard = await readFile(
     new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
