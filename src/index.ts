@@ -20,6 +20,7 @@ import {
 import { ensureHeartbeatHistoryIndexOnline } from "./db/heartbeatHistoryIndex.js";
 import { resolveEcsApiRuntimeIdentity } from "./services/ecsRuntimeIdentity.js";
 import { bindHeartbeatHotPathApiRuntimeTaskDefinitionSha256 } from "./services/heartbeatHotPathMetrics.js";
+import { assertClasspilotCapabilityRolloutsEnv } from "./services/classpilotProtocol.js";
 import {
   hasCompletedSchoolPilotMigration,
   runSchoolPilotMigrationLedger,
@@ -267,6 +268,10 @@ function validateEnv(): void {
         "The Pub/Sub push endpoint fails closed without it."
     );
   }
+
+  // A set-but-malformed rollout map fails every ClassPilot capability closed for
+  // every school (a silent extension regression). Refuse to boot in any environment.
+  assertClasspilotCapabilityRolloutsEnv();
 }
 
 validateEnv();

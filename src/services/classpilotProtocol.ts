@@ -159,6 +159,36 @@ function parseCapabilityRollouts(source: string | undefined): ParsedRollouts {
   }
 }
 
+/**
+ * Boot-time backstop. A malformed CLASSPILOT_CAPABILITY_ROLLOUTS_JSON makes
+ * parseCapabilityRollouts fail closed for every school, which presents as a
+ * silent extension regression. Refuse to start instead.
+ */
+export function assertClasspilotCapabilityRolloutsEnv(env: NodeJS.ProcessEnv = process.env): void {
+  const parsed = parseCapabilityRollouts(env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON);
+  if (parsed.configured && !parsed.valid) {
+    throw new Error(
+      "FATAL: CLASSPILOT_CAPABILITY_ROLLOUTS_JSON is set but is not a valid rollout map " +
+        "(object keyed by a supported capability; mode off|observe|canary|on; " +
+        "optional schoolIds[] and canaryPercent 0-100). Every capability would fail closed."
+    );
+  }
+  if (!parsed.configured) return;
+
+  // A configured map is authoritative: an enabled capability flag with no map
+  // entry is off for every school. Surface that so it is not mistaken for a
+  // flag that quietly stopped working.
+  const omitted = CLASSPILOT_PROTOCOL_V3_CAPABILITIES.filter(
+    (capability) => enabled(env[CAPABILITY_FLAGS[capability]]) && !parsed.rollouts[capability]
+  );
+  if (omitted.length > 0) {
+    console.warn(
+      "[env] WARNING: CLASSPILOT_CAPABILITY_ROLLOUTS_JSON omits enabled capabilities " +
+        `(${omitted.join(", ")}); each stays off for every school until it is added to the map.`
+    );
+  }
+}
+
 function schoolCanaryBucket(capability: ClasspilotProtocolCapability, schoolId: string): number {
   const digest = createHash("sha256")
     .update("classpilot:capability-rollout:v1")
