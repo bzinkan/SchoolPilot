@@ -1407,6 +1407,8 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
           });
           if (result.status === "started") {
             console.log("[ClassPilot] Auto-started one scheduled session");
+          } else if (result.status === "already_live") {
+            // Steady state for every live occurrence on every tick: nothing to log.
           } else if (result.status === "coverage_needed") {
             console.log("[ClassPilot] Scheduled coverage is needed for one occurrence");
           } else if (result.status === "claimed") {

@@ -86,9 +86,13 @@ import {
   type ClasspilotStaffPresenceStore,
 } from "./classpilotStaffPresence.js";
 import {
+  classpilotControlStateHasAuthRelevantRestriction,
   classpilotControlStateHasLateSignInOrigin,
+  classpilotLateSignInRevisionAppliedToBinding,
+  classpilotRestrictionAuthProjectionRevision,
   serializeClasspilotStudentControlStateForDelivery,
 } from "../services/classpilotClassroomState.js";
+import { classpilotControlStateAckRequired } from "../services/classpilotControlStateAckGate.js";
 import { recordHeartbeatHotPathCounter } from "../services/heartbeatHotPathMetrics.js";
 import {
   classpilotClassroomStatePushFrame,
@@ -1745,19 +1749,55 @@ export function setupWebSocket(
                   ? "unsupported"
                   : null;
           if (Number.isSafeInteger(appliedRevision) && appliedRevision >= 0 && outcome) {
-            const acknowledgedState = await runWithTenantContext({ schoolId: client.schoolId }, () =>
-              acknowledgeClasspilotStudentControlState({
-                schoolId: client.schoolId!,
-                studentId: client.studentId!,
-                studentSessionId: client.studentSessionId!,
-                deviceId: client.deviceId!,
+            const acknowledgedState = await runWithTenantContext({ schoolId: client.schoolId }, async () => {
+              const schoolId = client.schoolId!;
+              const studentId = client.studentId!;
+              const studentSessionId = client.studentSessionId!;
+              const deviceId = client.deviceId!;
+              // Unchanged classroom-state re-pushes make the extension re-ACK
+              // the revision it already applied. Gate exactly like the
+              // heartbeat ACK so an unchanged ACK performs no write; the
+              // storage ACK still revalidates everything under its own locks.
+              const controlState = await getClasspilotStudentControlState(schoolId, studentId);
+              if (controlState) {
+                const deferredBindingAlreadyApplied = classpilotLateSignInRevisionAppliedToBinding({
+                  desiredState: controlState.desiredState,
+                  binding: { schoolId, studentId, studentSessionId, deviceId },
+                  revision: appliedRevision,
+                });
+                const restrictionAuthRevisionMismatch = (
+                  classpilotControlStateHasAuthRelevantRestriction(controlState.desiredState)
+                  && client.acceptedCapabilities?.includes("restrictionAuthPassThroughV1") === true
+                  && appliedAuthPolicyRevision !== classpilotRestrictionAuthProjectionRevision({
+                    policyRevision: (await getClasspilotSsoPolicyForSchool(schoolId)).revision,
+                    gateActive: isClasspilotCapabilityActive(
+                      "restrictionAuthPassThroughV1",
+                      { schoolId }
+                    ),
+                  })
+                );
+                const ackRequired = classpilotControlStateAckRequired({
+                  controlState,
+                  appliedRevision,
+                  outcome,
+                  lateSignInOriginPending: !deferredBindingAlreadyApplied
+                    && classpilotControlStateHasLateSignInOrigin(controlState.desiredState),
+                  restrictionAuthRevisionMismatch,
+                });
+                if (!ackRequired) return undefined;
+              }
+              return acknowledgeClasspilotStudentControlState({
+                schoolId,
+                studentId,
+                studentSessionId,
+                deviceId,
                 appliedRevision,
                 appliedAuthPolicyRevision,
                 outcome,
                 error: message.error ? String(message.error) : null,
                 acceptedCapabilities: client.acceptedCapabilities,
-              })
-            );
+              });
+            });
             if (acknowledgedState?.sourceCommandId) {
               scheduleCommandUpdate(client.schoolId, acknowledgedState.sourceCommandId);
             }

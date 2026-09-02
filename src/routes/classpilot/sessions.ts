@@ -307,7 +307,7 @@ async function startTeachingSessionWithOverlapGuard(req: any, res: any) {
       scheduledTeacherConnectedOverride: true,
       now,
     });
-    if (result.status !== "started") {
+    if (result.status !== "started" && result.status !== "already_live") {
       throw Object.assign(new Error("Today's scheduled class occurrence cannot be restarted."), { status: 409 });
     }
     return res.status(200).json({ session: serializeClasspilotSession(result.session) });
@@ -330,7 +330,7 @@ async function startTeachingSessionWithOverlapGuard(req: any, res: any) {
       scheduledTeacherConnectedOverride: true,
       now,
     });
-    if (result.status !== "started") {
+    if (result.status !== "started" && result.status !== "already_live") {
       throw Object.assign(new Error("Today's scheduled class occurrence cannot be restarted."), { status: 409 });
     }
     return res.status(201).json({ session: serializeClasspilotSession(result.session) });

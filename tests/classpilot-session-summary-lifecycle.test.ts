@@ -1294,8 +1294,10 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
         now: new Date("2031-01-09T15:30:00.000Z"),
       })),
     ]);
-    assert.equal(firstAttempt.status, "started");
-    assert.equal(secondAttempt.status, "started");
+    // Both callers serialize on the teacher start lock; whichever observes the
+    // promoted occurrence reports already_live instead of re-starting it.
+    assert.ok(["started", "already_live"].includes(firstAttempt.status), firstAttempt.status);
+    assert.ok(["started", "already_live"].includes(secondAttempt.status), secondAttempt.status);
     assert.equal(firstAttempt.session.id, secondAttempt.session.id);
     assert.equal(await occurrenceCount(firstGroup.id, scheduledDate), 1);
     assert.equal(firstAttempt.session.scheduledStartAt.toISOString(), "2031-01-09T15:00:00.000Z");
@@ -2730,6 +2732,102 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
     assert.equal(atBell.summaryDisposition, "already_queued");
     assert.equal((await deliveryRows(started.session.id)).length, 2);
     assert.equal(await occurrenceCount(group.id, "2031-01-13"), 1);
+  });
+
+  it("reports already_live for a live occurrence without re-starting it or finalizing a manual class", async () => {
+    await setCentralRecipient(null);
+    const group = await createClass({ name: "scheduled_already_live", scheduled: true });
+    const started = await inSchool(school.id, () => scheduled.processScheduledClassAutoStart({
+      group,
+      scheduledDate: "2031-01-17",
+      scheduledTeacherConnectedOverride: true,
+      now: new Date("2031-01-17T14:05:00.000Z"),
+    }));
+    assert.equal(started.status, "started");
+    const liveBefore = await inSchool(school.id, () => storage.getTeachingSessionById(started.session.id));
+    assert.equal(liveBefore.sessionMode, "live");
+    assert.equal(liveBefore.endTime, null);
+
+    // A class the teacher starts manually mid-block must survive the next tick;
+    // before the short-circuit every tick finalized it as replacement_start.
+    const manualGroup = await createClass({ name: "manual_during_live_occurrence" });
+    const manualSession = await inSchool(school.id, () => storage.createTeachingSession({
+      groupId: manualGroup.id,
+      teacherId: teacher.id,
+    } as any));
+
+    const tick = await inSchool(school.id, () => scheduled.processScheduledClassAutoStart({
+      group,
+      scheduledDate: "2031-01-17",
+      scheduledTeacherConnectedOverride: true,
+      now: new Date("2031-01-17T14:06:00.000Z"),
+    }));
+    assert.equal(tick.status, "already_live");
+    assert.equal(tick.session.id, started.session.id);
+    assert.equal(await occurrenceCount(group.id, "2031-01-17"), 1);
+
+    const liveAfter = await inSchool(school.id, () => storage.getTeachingSessionById(started.session.id));
+    assert.deepEqual(liveAfter, liveBefore, "the live occurrence row must be untouched by the steady-state tick");
+    const manualAfter = await inSchool(school.id, () => storage.getTeachingSessionById(manualSession.id));
+    assert.equal(manualAfter.endTime, null, "a manual class started mid-block must not be finalized by the tick");
+    assert.equal(manualAfter.scheduledFinalizationReason, null);
+
+    await inSchool(school.id, () => lifecycle.finalizeClasspilotSession({
+      schoolId: school.id,
+      sessionId: manualSession.id,
+      reason: "manual_end",
+      finalizedAt: new Date("2031-01-17T14:08:00.000Z"),
+    }));
+    await inSchool(school.id, () => lifecycle.finalizeClasspilotSession({
+      schoolId: school.id,
+      sessionId: started.session.id,
+      reason: "teacher_end",
+      finalizedAt: new Date("2031-01-17T14:10:00.000Z"),
+    }));
+  });
+
+  it("re-opens a live scheduled occurrence from the start route without restarting it", async () => {
+    await setCentralRecipient(null);
+    const group = await createClass({ name: "scheduled_reopen_live", scheduled: true });
+    const now = new Date();
+    const scheduledDate = schoolTime.localDateInTimeZone(now, "America/New_York");
+    const occurrence = await inSchool(school.id, () => storage.createOrReuseScheduledReportSession({
+      schoolId: school.id,
+      groupId: group.id,
+      teacherId: teacher.id,
+      scheduledDate,
+      scheduledTimezone: "America/New_York",
+      scheduledStartAt: new Date(now.getTime() - 30 * 60_000),
+      scheduledEndAt: new Date(now.getTime() + 30 * 60_000),
+      scheduledTeacherEmail: teacher.email,
+      scheduledTeacherName: "Terry Teacher",
+    }));
+    const started = await inSchool(school.id, () => scheduled.processScheduledClassAutoStart({
+      group,
+      scheduledDate,
+      scheduledTeacherConnectedOverride: true,
+      now,
+    }));
+    assert.equal(started.status, "started");
+    assert.equal(started.session.id, occurrence.id);
+
+    const reopened = await requestJson(
+      "POST",
+      "/classpilot/teaching-sessions/start",
+      { groupId: group.id },
+      authFor(teacher)
+    );
+    assert.equal(reopened.status, 200, JSON.stringify(reopened.body));
+    assert.equal(reopened.body.session.id, occurrence.id);
+    assert.equal(reopened.body.session.sessionMode, "live");
+    assert.deepEqual(reopened.body.session.lifecycle, { kind: "scheduled", state: "active" });
+    assert.equal(await occurrenceCount(group.id, scheduledDate), 1);
+
+    await inSchool(school.id, () => lifecycle.finalizeClasspilotSession({
+      schoolId: school.id,
+      sessionId: occurrence.id,
+      reason: "teacher_end",
+    }));
   });
 
   it("marks only material scheduled-conflict reconciliations for dashboard refresh", async () => {

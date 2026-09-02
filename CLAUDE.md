@@ -235,8 +235,8 @@ Teacher Dashboard actions are student-scoped, exact-binding, and outcome-driven:
 
 ### Auto-Schedule Window (ClassPilot Groups)
 Admin Class Management lets schools set `blockStartTime`/`blockEndTime` per group. When `scheduleEnabled = true`:
-- `autoStartClassBlocks()` creates a `teaching_session` at start time (primary teacher only)
-- `autoEndClassBlocks()` ends it at end time
+- `reconcileClasspilotScheduledSessions()` (`src/services/scheduler.ts`, every 60s) finalizes occurrences at their frozen end, then calls `processScheduledClassAutoStart()` for each group whose window is open; the scheduled teacher or a connected co-teacher carries the bell start
+- A live occurrence is never re-started: the tick reports `already_live` and performs no write, no roster control-state re-push, and no replacement finalization
 - **Manual start is BLOCKED outside the scheduled window** for all teachers (primary + co-teachers) — returns 403 with times shown
 - Manual end **during** the window does NOT set `scheduleSkippedDate` (teacher might restart accidentally)
 - Manual end **after** the window sets `scheduleSkippedDate = today` to prevent scheduler from restarting
@@ -651,7 +651,7 @@ Student Data dialog (accessible from dashboard toolbar) shows:
 ### Class Block Scheduling
 Optional time-based auto-start/end for ClassPilot classes. Schema columns on `groups`: `schedule_enabled`, `block_start_time` (HH:MM), `block_end_time` (HH:MM), `schedule_skipped_date` (YYYY-MM-DD).
 
-- **Scheduler** (`src/services/scheduler.ts`): `autoStartClassBlocks()` and `autoEndClassBlocks()` run every 60s. Skips weekends. Uses school timezone.
+- **Scheduler** (`src/services/scheduler.ts`): `reconcileClasspilotScheduledSessions()` runs every 60s. Auto-end runs first (`listScheduledSessionsReadyToFinalize` → `finalizeClasspilotSession(reason: "scheduled_end")`), then `processScheduledClassAutoStart()` (`src/services/classpilotScheduledStart.ts`) runs for each group at its effective window. Idempotency contract: a live occurrence is never re-started — the tick returns `already_live` with no control-state re-push and no replacement finalization; only `started` / `coverage_needed` / `claimed` / `skipped` are logged. Skips non-instructional calendar dates. Uses school timezone.
 - **Skip-date pattern**: When a teacher manually ends a scheduled class, `schedule_skipped_date` is set to today to prevent the scheduler from restarting it. Resets naturally the next day.
 - **Recurring schedule boundary**: Class Management creates and edits the recurring `groups.schedule_*` / `groups.block_*` configuration. These writes are audited as `class.recurring_schedule_updated`; they do not create a dated schedule-change/swap record. No-op class edits and Google Classroom imports preserve `schedule_skipped_date`.
 - **Session summary email**: `buildAndSendSessionSummary()` in `src/routes/classpilot/sessions.ts` is exported and called by both manual end and auto-end. Uses school timezone (not hardcoded ET).
