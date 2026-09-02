@@ -11699,6 +11699,9 @@ export async function resyncActiveClasspilotSessionStudents(
         hardExpiresAt,
         now: resyncedAt,
         authorityMode: "filter",
+        // A resync carries no command provenance of its own. Keeping the stored
+        // sourceCommandId is what makes an unchanged resync a true no-op.
+        preserveSourceCommandId: true,
       }, transactionDb);
     }
 
@@ -12244,7 +12247,10 @@ export async function createOrReuseScheduledReportSession(
       transactionDb
     );
     if (existing) {
-      if (!existing.endTime) {
+      // A live occurrence already owns its roster's control states; the
+      // scheduled tick reaches this path every minute, so re-initializing would
+      // be a roster-wide read for no change.
+      if (!existing.endTime && existing.sessionMode !== LIVE_TEACHING_SESSION_MODE) {
         await initializeClasspilotStudentControlStatesForSession(existing, transactionDb);
       }
       if (data.scheduledConflictId && !existing.scheduledConflictId && !existing.endTime) {
@@ -20834,6 +20840,24 @@ function assertDesiredControlState(value: unknown): Record<string, unknown> {
 }
 
 /**
+ * True only when an upsert would change the material identity of a desired
+ * snapshot. Used as the conflict `setWhere` so an unchanged re-push skips the
+ * whole row instead of restarting the screenshot-authority window. The row is
+ * skipped entirely rather than only its revision/updatedAt: resetting
+ * `enforcementHealth` to "pending" at an unchanged revision would strand
+ * already-synced students, because acknowledgement requires an exact revision
+ * match.
+ */
+const classpilotControlSnapshotMaterialChange = sql`(
+  ${classpilotStudentControlStates.desiredState} IS DISTINCT FROM excluded.desired_state
+  OR ${classpilotStudentControlStates.teachingSessionId} IS DISTINCT FROM excluded.teaching_session_id
+  OR ${classpilotStudentControlStates.supervisionContextId} IS DISTINCT FROM excluded.supervision_context_id
+  OR ${classpilotStudentControlStates.sourceCommandId} IS DISTINCT FROM excluded.source_command_id
+  OR ${classpilotStudentControlStates.scheduledEndAt} IS DISTINCT FROM excluded.scheduled_end_at
+  OR ${classpilotStudentControlStates.hardExpiresAt} IS DISTINCT FROM excluded.hard_expires_at
+)`;
+
+/**
  * Atomically replaces the complete desired snapshot for every selected roster
  * student. Revisions are allocated in PostgreSQL so concurrent command paths
  * can never publish the same or a decreasing revision.
@@ -20853,6 +20877,19 @@ export async function replaceClasspilotStudentControlSnapshots(
     hardExpiresAt?: Date;
     now?: Date;
     authorityMode?: "require" | "filter";
+    /**
+     * Advance the revision even when nothing material changed. Command issue
+     * requires it: a re-issued command with an identical desired state must
+     * still publish a revision so sourceCommandId reconciliation and client
+     * re-acknowledgement run.
+     */
+    forceRevision?: boolean;
+    /**
+     * Keep the stored sourceCommandId when this writer carries no provenance of
+     * its own (roster resync). Without it an unchanged resync would erase the
+     * issuing command id and count as a material change on every pass.
+     */
+    preserveSourceCommandId?: boolean;
   },
   dbInstance: typeof db = db
 ): Promise<ClasspilotStudentControlState[]> {
@@ -20989,6 +21026,14 @@ export async function replaceClasspilotStudentControlSnapshots(
             )
           : options.desiredState
       );
+      // A writer carrying no provenance of its own (roster resync) keeps the
+      // stored command id, but only while the row already belongs to this
+      // class, so an ownership change never inherits another session's origin.
+      const currentSnapshot = currentByStudent.get(studentId);
+      const sourceCommandId = options.preserveSourceCommandId
+        && currentSnapshot?.teachingSessionId === options.teachingSessionId
+        ? currentSnapshot.sourceCommandId
+        : options.sourceCommandId || null;
       const [row] = await tx
         .insert(classpilotStudentControlStates)
         .values({
@@ -20998,7 +21043,7 @@ export async function replaceClasspilotStudentControlSnapshots(
           supervisionContextId: null,
           revision: 1,
           desiredState,
-          sourceCommandId: options.sourceCommandId || null,
+          sourceCommandId,
           scheduledEndAt,
           hardExpiresAt,
           enforcementHealth: "pending",
@@ -21018,7 +21063,7 @@ export async function replaceClasspilotStudentControlSnapshots(
             supervisionContextId: null,
             revision: sql`${classpilotStudentControlStates.revision} + 1`,
             desiredState,
-            sourceCommandId: options.sourceCommandId || null,
+            sourceCommandId,
             scheduledEndAt,
             hardExpiresAt,
             enforcementHealth: "pending",
@@ -21028,9 +21073,13 @@ export async function replaceClasspilotStudentControlSnapshots(
             lastAcknowledgedAt: null,
             updatedAt: now,
           },
+          setWhere: options.forceRevision ? undefined : classpilotControlSnapshotMaterialChange,
         })
         .returning();
-      if (row) rows.push(row);
+      // A skipped no-op update returns no row. Callers still expect one row per
+      // authorized student, so fall back to the locked pre-read snapshot.
+      const resolved = row || currentByStudent.get(studentId) || null;
+      if (resolved) rows.push(resolved);
     }
     return rows;
   });
@@ -21061,6 +21110,13 @@ export async function replaceClasspilotSupervisionControlSnapshots(
      */
     lateSignInGateRequiredStudentIds?: readonly string[];
     now?: Date;
+    /**
+     * Advance the revision even when nothing material changed. Command issue
+     * requires it: a re-issued command with an identical desired state must
+     * still publish a revision so sourceCommandId reconciliation and client
+     * re-acknowledgement run.
+     */
+    forceRevision?: boolean;
   },
   dbInstance: typeof db = db
 ): Promise<ClasspilotStudentControlState[]> {
@@ -21278,9 +21334,13 @@ export async function replaceClasspilotSupervisionControlSnapshots(
             lastAcknowledgedAt: null,
             updatedAt: now,
           },
+          setWhere: options.forceRevision ? undefined : classpilotControlSnapshotMaterialChange,
         })
         .returning();
-      if (row) rows.push(row);
+      // A skipped no-op update returns no row. Callers still expect one row per
+      // authorized student, so fall back to the locked pre-read snapshot.
+      const resolved = row || currentByStudent.get(studentId) || null;
+      if (resolved) rows.push(resolved);
     }
     return rows;
   });
@@ -21706,7 +21766,6 @@ export async function acknowledgeClasspilotStudentControlState(
         lastOutcome: options.outcome,
         lastError: options.error?.slice(0, 500) || null,
         lastAcknowledgedAt: acknowledgedAt,
-        updatedAt: acknowledgedAt,
       })
       .where(and(
         eq(classpilotStudentControlStates.schoolId, options.schoolId),
@@ -21981,7 +22040,10 @@ export async function persistClasspilotControlCommandState(
       transactionDb
     );
     const studentControlStates = await replaceClasspilotStudentControlSnapshots(
-      { ...options.studentSnapshots, studentIds: acceptedStudentIds },
+      // A re-issued command must publish a revision even when the resulting
+      // desired state is identical, so target reconciliation and client
+      // re-acknowledgement still run.
+      { ...options.studentSnapshots, studentIds: acceptedStudentIds, forceRevision: true },
       transactionDb
     );
     return { classroomStates, studentControlStates, rejectedStudentIds };
@@ -22746,13 +22808,22 @@ export type ClasspilotScreenshotAuthorityClaim =
 
 export type ClasspilotScreenshotAuthorityProjection = {
   authority: ClasspilotScreenshotAuthorityClaim;
-  /** Earliest server-authoritative instant at which this exact authority existed. */
+  /**
+   * Earliest instant this exact authority identity (student session, live
+   * class, frozen roster) could exist. Revision changes are fenced by
+   * exact-claim match, not by this timestamp.
+   */
   authorityStartedAt: Date;
   /**
    * Which input produced `authorityStartedAt`. Diagnostic only, so the upload
    * fence can count what restarted the capture window; never an authority check.
    */
   authorityStartedAtSource?: ClasspilotScreenshotAuthorityStartSource;
+  /**
+   * When the current control revision was last written. Diagnostic only (it
+   * anchors the preview-refresh latency metric); never part of the capture fence.
+   */
+  controlRevisionIssuedAt?: Date | null;
   /** Manual-session/class deadline, if one is earlier than the rolling screenshot lease. */
   authorityExpiresAt: Date | null;
 };
@@ -22827,13 +22898,13 @@ export async function getClasspilotScreenshotAuthorityProjection(options: {
 
   const controlRevision = controlState?.revision ?? 0;
   const studentAuthorityStart = latestLabeledClasspilotAuthorityStart(
-    ["student_session_started", session.startedAt],
-    ["control_updated", controlState?.updatedAt]
+    ["student_session_started", session.startedAt]
   );
   const studentAuthority: ClasspilotScreenshotAuthorityProjection = {
     authority: { kind: "student_session", controlRevision },
     authorityStartedAt: studentAuthorityStart.value,
     authorityStartedAtSource: studentAuthorityStart.source,
+    controlRevisionIssuedAt: controlState?.updatedAt ?? null,
     authorityExpiresAt: session.authKind === "manual_shared"
       ? session.manualLeaseExpiresAt
       : null,
@@ -22913,8 +22984,7 @@ export async function getClasspilotScreenshotAuthorityProjection(options: {
   const teachingAuthorityStart = latestLabeledClasspilotAuthorityStart(
     ["student_session_started", session.startedAt],
     ["teaching_start_time", candidate.startTime],
-    ["roster_snapshot_completed", candidate.rosterSnapshotCompletedAt],
-    ["control_updated", candidate.controlUpdatedAt]
+    ["roster_snapshot_completed", candidate.rosterSnapshotCompletedAt]
   );
   return {
     authority: {
@@ -22924,6 +22994,7 @@ export async function getClasspilotScreenshotAuthorityProjection(options: {
     },
     authorityStartedAt: teachingAuthorityStart.value,
     authorityStartedAtSource: teachingAuthorityStart.source,
+    controlRevisionIssuedAt: candidate.controlUpdatedAt ?? null,
     authorityExpiresAt: earliestClasspilotAuthorityExpiry(
       session.authKind === "manual_shared" ? session.manualLeaseExpiresAt : null,
       candidate.teachingScheduledEndAt,

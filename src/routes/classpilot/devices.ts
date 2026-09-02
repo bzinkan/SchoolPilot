@@ -1678,14 +1678,15 @@ function recordAcceptedHeartbeatGap(options: {
 function recordPreviewRefreshLatencyOnce(options: {
   binding: ScreenshotBinding;
   controlRevision: number;
-  authorityStartedAt: Date;
+  revisionIssuedAt: Date;
   capturedAt: Date;
 }): void {
   if (!Number.isSafeInteger(options.controlRevision) || options.controlRevision < 0) return;
-  const latencyMs = options.capturedAt.getTime() - options.authorityStartedAt.getTime();
-  // Only a capture causally near a new authority revision measures refresh.
-  // A process restart during an old, steady revision must not inject hours of
-  // unrelated classroom time into the preview-refresh distribution.
+  const latencyMs = options.capturedAt.getTime() - options.revisionIssuedAt.getTime();
+  // Only the first capture causally near the last control write measures
+  // refresh ("first frame after the revision was issued"). A process restart
+  // during an old, steady revision must not inject hours of unrelated
+  // classroom time into the preview-refresh distribution.
   if (latencyMs < 0 || latencyMs > 5 * 60_000) return;
   const digest = crypto.createHash("sha256")
     .update(options.binding.schoolId)
@@ -5078,7 +5079,7 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
             recordPreviewRefreshLatencyOnce({
               binding,
               controlRevision: classBinding.controlRevision,
-              authorityStartedAt: current.authorityStartedAt,
+              revisionIssuedAt: current.controlRevisionIssuedAt ?? current.authorityStartedAt,
               capturedAt: capturedAtDate,
             });
           }

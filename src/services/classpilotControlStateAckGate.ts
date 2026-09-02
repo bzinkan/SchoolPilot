@@ -17,9 +17,12 @@ export function classpilotControlStateAckExpectedHealth(
 /**
  * Shared skip predicate for classroom-state ACKs arriving over the heartbeat
  * and the student WebSocket. Unchanged re-pushes (scheduler ticks, resyncs)
- * make the extension re-ACK a revision it already applied; such an ACK must
- * perform no write, because `acknowledgeClasspilotStudentControlState` stamps
- * control-state timestamps that feed screenshot authority.
+ * make the extension re-ACK a revision it already applied; skipping that write
+ * avoids a pointless locked transaction per student per re-push.
+ *
+ * The ACK no longer stamps `updatedAt`, and control-state timestamps no longer
+ * feed `authorityStartedAt`, so a skipped ACK is a cost optimisation and not a
+ * screenshot-authority correctness fence. Do not reintroduce either coupling.
  *
  * Inputs are read from an unlocked projection. A stale "needs ACK" answer is
  * harmless (the storage ACK revalidates under its own locks); a stale "skip"

@@ -12,6 +12,7 @@ import { recordHeartbeatHotPathCounter } from "./heartbeatHotPathMetrics.js";
 
 export const CLASSPILOT_SCREENSHOT_TRACKING_LEASE_SECONDS = 90;
 export const CLASSPILOT_SCREENSHOT_CAPTURE_FUTURE_SKEW_MS = 30_000;
+export const CLASSPILOT_SCREENSHOT_CAPTURE_PAST_SKEW_MS = 30_000;
 export const CLASSPILOT_SCREENSHOT_ACTIVE_CAPTURE_SECONDS = 5;
 export const CLASSPILOT_SCREENSHOT_BACKGROUND_CAPTURE_SECONDS = 30;
 export const CLASSPILOT_SCREENSHOT_ACTIVE_CADENCE_LEASE_SECONDS = 84;
@@ -328,7 +329,14 @@ export function validateClasspilotScreenshotCapturedAt(options: {
   if (capturedAt < now - CLASSPILOT_SCREENSHOT_TRACKING_LEASE_SECONDS * 1_000) {
     return "expired";
   }
-  if (capturedAt < options.trackingAuthority.authorityStartedAt.getTime()) {
+  // Identity is fenced by the exact-claim match upstream; this only rejects
+  // frames captured before the authority identity could exist, with the same
+  // clock tolerance the future check grants, so a slow client clock does not
+  // supersede an honest in-flight frame.
+  if (
+    capturedAt + CLASSPILOT_SCREENSHOT_CAPTURE_PAST_SKEW_MS
+      < options.trackingAuthority.authorityStartedAt.getTime()
+  ) {
     return "before_authority";
   }
   const authorityEnd = options.trackingAuthority.authorityExpiresAt?.getTime();

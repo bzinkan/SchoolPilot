@@ -77,6 +77,7 @@ import {
   resyncActiveClasspilotSessionStudents,
   persistClasspilotCommandTargetAck,
   persistClasspilotControlCommandState,
+  replaceClasspilotStudentControlSnapshots,
   replaceClasspilotSupervisionControlSnapshots,
   setActiveStudentForDevice,
   updateCoverageAssignment,
@@ -5973,5 +5974,277 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.equal(staleAck, undefined);
     const loaded = await inSchool(school.id, () => getClasspilotCommandByIdAndSchool(created.id, school.id));
     assert.equal(loaded?.targets[0]?.status, "requested");
+  });
+
+  it("skips an unchanged control-state upsert and still returns every requested student", async () => {
+    const alpha = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Control",
+      lastName: "NoopAlpha",
+      email: `control-noop-alpha@${TAG}.example.edu`,
+      emailLc: `control-noop-alpha@${TAG}.example.edu`,
+      gradeLevel: "9",
+      status: "active",
+    }));
+    const beta = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Control",
+      lastName: "NoopBeta",
+      email: `control-noop-beta@${TAG}.example.edu`,
+      emailLc: `control-noop-beta@${TAG}.example.edu`,
+      gradeLevel: "9",
+      status: "active",
+    }));
+    const group = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: teacher.id,
+      name: `${TAG}_Control_Noop`,
+      groupType: "admin_class",
+      status: "active",
+    }));
+    await inSchool(school.id, () => addGroupStudentsDetailed(group.id, [alpha.id, beta.id]));
+    const session = await inSchool(school.id, () => createTeachingSession({
+      groupId: group.id,
+      teacherId: teacher.id,
+    }));
+    try {
+      const [beforeAlpha, beforeBeta] = await inSchool(school.id, () => Promise.all([
+        getClasspilotStudentControlState(school.id, alpha.id),
+        getClasspilotStudentControlState(school.id, beta.id),
+      ]));
+      assert.ok(beforeAlpha);
+      assert.ok(beforeBeta);
+
+      const rows = await inSchool(school.id, () => replaceClasspilotStudentControlSnapshots({
+        schoolId: school.id,
+        teachingSessionId: session.id,
+        studentIds: [alpha.id, beta.id],
+        desiredState: { restrictions: {} },
+        scheduledEndAt: beforeAlpha.scheduledEndAt,
+        hardExpiresAt: beforeAlpha.hardExpiresAt ?? undefined,
+        authorityMode: "filter",
+      }));
+
+      // A skipped conflict returns no row at all, so the caller must still be
+      // handed the current snapshot for every requested student.
+      for (const state of [beforeAlpha, beforeBeta]) {
+        const returned = rows.find((row) => row.studentId === state.studentId);
+        assert.ok(returned, "a skipped upsert must still return the current row");
+        assert.equal(returned.revision, state.revision);
+        assert.equal(returned.updatedAt.getTime(), state.updatedAt.getTime());
+      }
+
+      const [afterAlpha, afterBeta] = await inSchool(school.id, () => Promise.all([
+        getClasspilotStudentControlState(school.id, alpha.id),
+        getClasspilotStudentControlState(school.id, beta.id),
+      ]));
+      for (const [before, after] of [[beforeAlpha, afterAlpha], [beforeBeta, afterBeta]] as const) {
+        assert.ok(after);
+        assert.equal(after.revision, before.revision);
+        assert.equal(after.updatedAt.getTime(), before.updatedAt.getTime());
+        assert.equal(after.enforcementHealth, before.enforcementHealth);
+        assert.equal(after.appliedRevision, before.appliedRevision);
+      }
+    } finally {
+      await inSchool(school.id, () => endTeachingSession(session.id)).catch(() => {});
+    }
+  });
+
+  it("keeps an unchanged roster resync a no-op that preserves command provenance", async () => {
+    const student = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Resync",
+      lastName: "Noop",
+      email: `resync-noop@${TAG}.example.edu`,
+      emailLc: `resync-noop@${TAG}.example.edu`,
+      gradeLevel: "9",
+      status: "active",
+    }));
+    const group = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: teacher.id,
+      name: `${TAG}_Resync_Noop`,
+      groupType: "admin_class",
+      status: "active",
+    }));
+    await inSchool(school.id, () => addGroupStudentsDetailed(group.id, [student.id]));
+    const session = await inSchool(school.id, () => createTeachingSession({
+      groupId: group.id,
+      teacherId: teacher.id,
+    }));
+    try {
+      const commandId = `${TAG}-resync-noop-command`;
+      const persisted = await inSchool(school.id, () => persistClasspilotControlCommandState({
+        studentSnapshots: {
+          schoolId: school.id,
+          teachingSessionId: session.id,
+          studentIds: [student.id],
+          sourceCommandId: commandId,
+          desiredState: {
+            restrictions: { locked: true, url: "https://example.edu/resync-noop" },
+          },
+        },
+      }));
+      assert.equal(persisted.studentControlStates.length, 1);
+      const before = await inSchool(school.id, () =>
+        getClasspilotStudentControlState(school.id, student.id)
+      );
+      assert.ok(before);
+      assert.equal(before.sourceCommandId, commandId);
+
+      const resynced = await inSchool(school.id, () => resyncActiveClasspilotSessionStudents({
+        schoolId: school.id,
+        teachingSessionId: session.id,
+      }));
+      assert.ok(resynced);
+      assert.equal(resynced.summary.addedToSession, 0);
+
+      const after = await inSchool(school.id, () =>
+        getClasspilotStudentControlState(school.id, student.id)
+      );
+      assert.ok(after);
+      assert.equal(after.revision, before.revision);
+      assert.equal(after.updatedAt.getTime(), before.updatedAt.getTime());
+      // Provenance survives, so the next resync is a no-op as well.
+      assert.equal(after.sourceCommandId, commandId);
+      assert.deepEqual(after.desiredState, before.desiredState);
+    } finally {
+      await inSchool(school.id, () => endTeachingSession(session.id)).catch(() => {});
+    }
+  });
+
+  it("bumps the revision when an identical command is re-issued", async () => {
+    const student = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Forced",
+      lastName: "Reissue",
+      email: `forced-reissue@${TAG}.example.edu`,
+      emailLc: `forced-reissue@${TAG}.example.edu`,
+      gradeLevel: "9",
+      status: "active",
+    }));
+    const group = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: teacher.id,
+      name: `${TAG}_Forced_Reissue`,
+      groupType: "admin_class",
+      status: "active",
+    }));
+    await inSchool(school.id, () => addGroupStudentsDetailed(group.id, [student.id]));
+    const session = await inSchool(school.id, () => createTeachingSession({
+      groupId: group.id,
+      teacherId: teacher.id,
+    }));
+    try {
+      const commandId = `${TAG}-forced-reissue-command`;
+      const desiredState = {
+        restrictions: { locked: true, url: "https://example.edu/forced-reissue" },
+      };
+      const issue = () => inSchool(school.id, () => persistClasspilotControlCommandState({
+        studentSnapshots: {
+          schoolId: school.id,
+          teachingSessionId: session.id,
+          studentIds: [student.id],
+          sourceCommandId: commandId,
+          desiredState,
+        },
+      }));
+
+      await issue();
+      const before = await inSchool(school.id, () =>
+        getClasspilotStudentControlState(school.id, student.id)
+      );
+      assert.ok(before);
+
+      // Identical desired state and identical provenance: the re-issue must
+      // still publish a revision so target reconciliation and the client
+      // re-acknowledgement run.
+      const reissued = await issue();
+      assert.equal(reissued.studentControlStates[0]?.revision, before.revision + 1);
+      const after = await inSchool(school.id, () =>
+        getClasspilotStudentControlState(school.id, student.id)
+      );
+      assert.ok(after);
+      assert.equal(after.revision, before.revision + 1);
+      assert.equal(after.sourceCommandId, commandId);
+      assert.deepEqual(after.desiredState, before.desiredState);
+    } finally {
+      await inSchool(school.id, () => endTeachingSession(session.id)).catch(() => {});
+    }
+  });
+
+  it("bumps the revision through supervision delegation and restore", async () => {
+    const student = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Restore",
+      lastName: "Authority",
+      email: `restore-authority@${TAG}.example.edu`,
+      emailLc: `restore-authority@${TAG}.example.edu`,
+      gradeLevel: "9",
+      status: "active",
+    }));
+    const group = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: teacher.id,
+      name: `${TAG}_Restore_Authority`,
+      groupType: "admin_class",
+      status: "active",
+    }));
+    await inSchool(school.id, () => addGroupStudentsDetailed(group.id, [student.id]));
+    const session = await inSchool(school.id, () => createTeachingSession({
+      groupId: group.id,
+      teacherId: teacher.id,
+    }));
+    let context: { id: string } | undefined;
+    try {
+      const inClass = await inSchool(school.id, () =>
+        getClasspilotStudentControlState(school.id, student.id)
+      );
+      assert.ok(inClass);
+
+      const claimed = await inSchool(school.id, () => createSupervisionContextWithStudents({
+        context: {
+          schoolId: school.id,
+          contextType: "office",
+          name: "Restore Authority Coverage",
+          status: "active",
+          assignedStaffId: coverageStaff.id,
+          createdBy: admin.id,
+          endsAt: new Date(Date.now() + 60 * 60 * 1000),
+        },
+        studentIds: [student.id],
+        assignedBy: admin.id,
+        source: "admin_reroute",
+      }));
+      context = claimed;
+      const delegated = await inSchool(school.id, () =>
+        getClasspilotStudentControlState(school.id, student.id)
+      );
+      assert.ok(delegated);
+      assert.equal(delegated.supervisionContextId, claimed.id);
+      assert.equal(delegated.revision, inClass.revision + 1);
+
+      await inSchool(school.id, () => releaseSupervisionStudents({
+        schoolId: school.id,
+        contextId: claimed.id,
+        releaseReason: "test_release",
+      }));
+      const restored = await inSchool(school.id, () =>
+        getClasspilotStudentControlState(school.id, student.id)
+      );
+      assert.ok(restored);
+      assert.equal(restored.supervisionContextId, null);
+      assert.equal(restored.teachingSessionId, session.id);
+      assert.equal(restored.revision, delegated.revision + 1);
+    } finally {
+      if (context) {
+        await inSchool(school.id, () => releaseSupervisionStudents({
+          schoolId: school.id,
+          contextId: context!.id,
+          releaseReason: "test_cleanup",
+        })).catch(() => {});
+      }
+      await inSchool(school.id, () => endTeachingSession(session.id)).catch(() => {});
+    }
   });
 });
