@@ -36,9 +36,16 @@ const AUDIENCE_B = {
   PUBLIC_BASE_URL: "https://api-b.school-pilot.test",
 };
 
-function tamperLastCharacter(value: string): string {
-  const last = value.at(-1);
-  return `${value.slice(0, -1)}${last === "A" ? "B" : "A"}`;
+function tamperSignature(value: string): string {
+  // Flip the first character of the signature segment. Every bit of that
+  // character is significant, unlike the final base64url character of a
+  // 32-byte signature, which carries only four bits: a same-bits substitute
+  // there decodes to the identical signature and the token still verifies.
+  const separator = value.lastIndexOf(".");
+  assert.ok(separator >= 0 && separator < value.length - 1, "signed token must end in a signature segment");
+  const index = separator + 1;
+  const current = value[index];
+  return `${value.slice(0, index)}${current === "A" ? "B" : "A"}${value.slice(index + 1)}`;
 }
 
 describe("ClassPilot managed-device continuity proofs", () => {
@@ -232,7 +239,7 @@ describe("ClassPilot managed-device continuity proofs", () => {
     );
     assert.equal(
       verifyClasspilotManagedDevicePreflight({
-        token: tamperLastCharacter(issued.preflightToken),
+        token: tamperSignature(issued.preflightToken),
         schoolId: SCHOOL_A,
         now: NOW,
         env: AUDIENCE_A,
