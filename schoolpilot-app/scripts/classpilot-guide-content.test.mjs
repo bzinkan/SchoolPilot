@@ -66,6 +66,13 @@ test("administrator guide covers entitlement and restricted sign-in policy witho
   const signInTopic = adminGuideTopics.find((topic) => topic.id === "student-sign-in-policy");
   assert.match(contentText([signInTopic]), /restrictionAuthPassThroughV1/);
   assert.match(contentText([signInTopic]), /five-minute attempt/);
+  const workspaceTopic = adminGuideTopics.find((topic) => topic.id === "google-workspace-policies");
+  assert.equal(workspaceTopic?.phase, "Policies");
+  assert.equal(workspaceTopic?.steps?.length, 8, "Google Workspace policy topic must keep the eight checklist steps");
+  assert.match(contentText([workspaceTopic]), /Force install/);
+  assert.match(contentText([workspaceTopic]), /cannot read Google Admin policy state/);
+  const adminIds = adminGuideTopics.map((topic) => topic.id);
+  assert.equal(adminIds[adminIds.indexOf("school-settings") + 1], "google-workspace-policies", "Workspace policy topic must follow school settings");
   assert.doesNotMatch(contentText(adminGuideTopics), forbiddenGuideTerms);
 });
 

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
-import { ArrowLeft, CheckCircle2, Download, ExternalLink, MonitorCheck, RefreshCw, ShieldAlert, TriangleAlert, XCircle } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { ArrowLeft, BookOpenCheck, CheckCircle2, Download, ExternalLink, MonitorCheck, RefreshCw, ShieldAlert, ShieldCheck, TriangleAlert, XCircle } from "lucide-react";
 import { apiRequest } from "../../../lib/queryClient";
 import { Button } from "../../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card";
@@ -325,6 +325,45 @@ export default function ITReadiness() {
                 </table>
               </div>
             )}
+          </CardContent>
+        </Card>
+
+        <Card data-testid="google-workspace-policy-checklist">
+          <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <ShieldCheck className="h-4 w-4" />
+                Google Workspace policy checklist
+              </CardTitle>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Apply these in Google Admin Console. ClassPilot cannot read policy state, so the checks above do not confirm them.
+              </p>
+            </div>
+            <Button asChild variant="outline" size="sm">
+              <Link to="/classpilot/settings/guide?topic=google-workspace-policies">
+                <BookOpenCheck className="mr-2 h-3.5 w-3.5" />
+                Open step-by-step guide
+              </Link>
+            </Button>
+          </CardHeader>
+          <CardContent className="grid gap-4 md:grid-cols-2">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Required</p>
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
+                <li>Force-install the ClassPilot extension on the student organizational unit.</li>
+                <li>Restrict sign-in to the school domain.</li>
+                <li>Disable Guest mode.</li>
+                <li>Turn off adding new users at sign-in.</li>
+              </ul>
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Recommended</p>
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
+                <li>Disallow Incognito mode for students.</li>
+                <li>Never allow built-in developer tools for students.</li>
+                <li>Force users to sign in to use the browser.</li>
+              </ul>
+            </div>
           </CardContent>
         </Card>
 

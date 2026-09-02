@@ -118,6 +118,27 @@ Set school-wide defaults without confusing them with an individual administrator
 
 [Open School Settings](/classpilot/settings)
 
+### Configure required Google Workspace policies
+
+**Who can use this:** Google Workspace administrator, with an Administrator or school administrator ClassPilot account
+
+Apply the standard Chrome and sign-in policies that force-install ClassPilot and close the common student bypasses.
+
+1. **Force-install the extension.** In Google Admin Console open Devices → Chrome → Apps & extensions → Users & browsers, select the student organizational unit, add the ClassPilot extension by ID, and set Installation policy to Force install. Without this step no monitoring happens.
+2. **Restrict sign-in to the school domain.** Open Devices → Chrome → Settings → Device → Sign-in settings and set Sign-in restriction to *@yourschool.org using the school’s actual domain. Personal Gmail sign-in is the most common way to bypass monitoring.
+3. **Disable Guest mode.** On the same Sign-in settings page set Guest mode to Disable guest mode. Browse as Guest on the login screen is a one-click bypass of every monitoring policy.
+4. **Disable adding new users at sign-in.** On the same page turn Allow adding new users off so students cannot add a personal Google account at the login screen and sidestep the sign-in restriction.
+5. **Block Incognito and developer tools for students.** Open Devices → Chrome → Settings → Users & browsers → Security on the student organizational unit. Set Incognito mode to Disallow incognito mode and Developer tools to Never allow use of built-in developer tools. Incognito tabs are invisible to the extension, and developer tools can disable it.
+6. **Force browser sign-in.** Under Users & browsers → Sign-in settings set Browser sign-in settings to Force users to sign-in to use the browser so user-level policies always apply.
+7. **Trust the ClassPilot web app when API access is restricted.** If the district restricts third-party API access, open Security → Access and data control → API controls → Manage Third-Party App Access, add ClassPilot by its OAuth client ID, and set Access to Trusted. This lets administrators connect Workspace for roster import and directory reads.
+8. **Verify on a student Chromebook.** Confirm the Force-installed badge on a student device under Apps & extensions, that a personal Gmail sign-in is rejected, that no Browse as Guest button appears at the login screen, and that a test student appears on the teacher dashboard within about 30 seconds.
+
+> **Flight note:** Expect 10–15 minutes for the required and recommended settings plus 2–3 minutes for API controls. Identifying the right organizational unit is the slow part.
+
+> **Check before continuing:** ClassPilot cannot read Google Admin policy state. IT Readiness reports extension check-ins and Google connectivity, not whether these policies are applied; verify them in Admin Console.
+
+[Open IT Readiness](/classpilot/admin/it-readiness)
+
 ### Allow student sign-in during restrictions
 
 **Who can use this:** Administrator or school administrator
