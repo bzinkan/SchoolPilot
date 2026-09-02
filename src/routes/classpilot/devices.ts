@@ -577,6 +577,10 @@ const deviceHeartbeatLimiter = rateLimit({
   store: redisStore("rl:device:heartbeat:"),
   passOnStoreError: true,
   keyGenerator: authenticatedDeviceKey,
+  handler: (_req, res, _next, options) => {
+    recordHeartbeatHotPathCounter("deviceHeartbeatRateLimited");
+    res.status(options.statusCode).send(options.message);
+  },
 });
 
 const deviceScreenshotLimiter = rateLimit({
@@ -588,6 +592,10 @@ const deviceScreenshotLimiter = rateLimit({
   store: redisStore("rl:device:screenshot:"),
   passOnStoreError: true,
   keyGenerator: authenticatedDeviceKey,
+  handler: (_req, res, _next, options) => {
+    recordHeartbeatHotPathCounter("deviceScreenshotRateLimited");
+    res.status(options.statusCode).send(options.message);
+  },
 });
 
 const extensionTelemetryLimiter = rateLimit({
@@ -5379,28 +5387,32 @@ router.post("/tiles/screenshots", ...tileReadAuth, async (req, res, next) => {
       "tileBatchScreenshotRedisMs",
       Date.now() - redisStartedAt
     );
-    if (
+    // A screenshot-store outage degrades per tile instead of failing the whole
+    // cohort: unavailable reads contribute no entries, so the affected tiles
+    // carry a null screenshot and the response is flagged for the dashboard.
+    const screenshotStoreUnavailable = (
       classScreenshotRead.status === "unavailable"
       || legacyScreenshotRead.status === "unavailable"
-    ) {
+    );
+    if (screenshotStoreUnavailable) {
       recordHeartbeatHotPathCounter("tileBatchScreenshotStoreUnavailable");
-      return res.status(503).json({
-        error: "Screenshot service unavailable",
-        code: "SCREENSHOT_STORE_UNAVAILABLE",
-      });
     }
     const localFallbackAllowed = !classpilotScreenshotStoreRequired();
     const classScreenshotByStudent = new Map(
-      classBindings.map((binding, index) => [
-        binding.studentId,
-        classScreenshotRead.screenshots[index] ?? null,
-      ])
+      classScreenshotRead.status === "ok"
+        ? classBindings.map((binding, index) => [
+            binding.studentId,
+            classScreenshotRead.screenshots[index] ?? null,
+          ])
+        : []
     );
     const legacyScreenshotByStudent = new Map(
-      legacyBindings.map((binding, index) => [
-        binding.studentId,
-        legacyScreenshotRead.screenshots[index] ?? null,
-      ])
+      legacyScreenshotRead.status === "ok"
+        ? legacyBindings.map((binding, index) => [
+            binding.studentId,
+            legacyScreenshotRead.screenshots[index] ?? null,
+          ])
+        : []
     );
     const tiles = accesses.map((access) => {
       const classBinding = classBindingByStudent.get(access.studentId);
@@ -5438,18 +5450,25 @@ router.post("/tiles/screenshots", ...tileReadAuth, async (req, res, next) => {
           }
         : { studentId: access.studentId, screenshot: null };
     });
-    const screenshotFallbackItems = tiles.filter((tile) => tile.screenshot === null).length;
-    if (screenshotFallbackItems > 0) {
-      recordHeartbeatHotPathCounter(
-        "tileBatchScreenshotMissItems",
-        screenshotFallbackItems
-      );
-      recordHeartbeatHotPathCounter(
-        "tileBatchScreenshotFallbackItems",
-        screenshotFallbackItems
-      );
+    // A store outage is counted once above; keep it out of the per-item miss
+    // and fallback counters that size ordinary cache misses.
+    if (!screenshotStoreUnavailable) {
+      const screenshotFallbackItems = tiles.filter((tile) => tile.screenshot === null).length;
+      if (screenshotFallbackItems > 0) {
+        recordHeartbeatHotPathCounter(
+          "tileBatchScreenshotMissItems",
+          screenshotFallbackItems
+        );
+        recordHeartbeatHotPathCounter(
+          "tileBatchScreenshotFallbackItems",
+          screenshotFallbackItems
+        );
+      }
     }
-    return res.json({ tiles });
+    return res.json({
+      tiles,
+      ...(screenshotStoreUnavailable ? { screenshotStore: "unavailable" } : {}),
+    });
   } catch (err) {
     next(err);
   }

@@ -212,6 +212,28 @@ await assert.rejects(
 );
 assert.equal(failedBatchRequests, 1, 'a failed cohort request must never fan out per student');
 
+let storeUnavailableRequests = 0;
+await assert.rejects(
+  fetchTileBatch(
+    requests[0],
+    async () => {
+      storeUnavailableRequests += 1;
+      return {
+        tiles: [{ studentId: studentIds[0], screenshot: null }],
+        screenshotStore: 'unavailable',
+      };
+    },
+  ),
+  (error) => error?.code === 'SCREENSHOT_STORE_UNAVAILABLE' && error?.response?.status === 503,
+  'a screenshot-store-unavailable batch must take the transient error path, never enter React Query as an authoritative null',
+);
+assert.equal(storeUnavailableRequests, 1, 'a degraded cohort response must not be retried per student');
+assert.deepEqual(
+  await fetchTileBatch(requests[0], async () => ({ tiles: [], screenshotStore: 'ok' })),
+  { tiles: [], screenshotStore: 'ok' },
+  'only the unavailable marker is treated as a failure',
+);
+
 const authorizedTile = { studentId: studentIds[1], screenshot: { imageData: 'authorized' } };
 const cachedBatch = {
   tiles: [

@@ -33,6 +33,7 @@ import { ThemeToggle } from '../../../components/ThemeToggle';
 import ClassPilotSidebar from '../components/ClassPilotSidebar';
 import { useAbsentStudents } from '../../../hooks/useAbsentStudents';
 import {
+  assertTileScreenshotStoreAvailable,
   TILE_BATCH_QUERY_ROOTS,
   TILE_SCREENSHOT_CACHE_GC_MS,
   changedTileBindingStudentIds,
@@ -2785,6 +2786,7 @@ export default function Dashboard() {
           studentIds: requestedIds,
           teachingSessionId: snapshot.teachingSessionId,
         }, { signal: controller.signal });
+        assertTileScreenshotStoreAvailable(response);
         if (
           targetedScreenshotContextRef.current?.fenceKey !== snapshot.fenceKey
           || targetedScreenshotContextRef.current?.fenceGeneration !== snapshot.fenceGeneration

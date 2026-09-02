@@ -676,6 +676,157 @@ resource "aws_cloudwatch_metric_alarm" "websocket_disconnects" {
   }
 }
 
+# ClassPilot heartbeat hot-path EMF metrics. The API emits these once per
+# UTC minute from src/services/heartbeatHotPathMetrics.ts
+# (HOT_PATH_EMF_COUNTERS); the metric names below must match that allowlist.
+resource "aws_cloudwatch_metric_alarm" "classpilot_screenshot_store_unavailable" {
+  alarm_name          = "${local.alarm_prefix}-classpilot-screenshot-store-unavailable"
+  alarm_description   = "ClassPilot tile screenshot batch reads found the screenshot store unavailable; tiles are degrading to null screenshots."
+  namespace           = "SchoolPilot/ClassPilot"
+  metric_name         = "TileBatchScreenshotStoreUnavailable"
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 0
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  period              = 60
+  statistic           = "Sum"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_ok_actions
+
+  dimensions = {
+    Environment = var.environment
+    Service     = "api"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "classpilot_screenshot_broadcast_failures" {
+  alarm_name          = "${local.alarm_prefix}-classpilot-screenshot-broadcast-failures"
+  alarm_description   = "ClassPilot screenshot-available broadcasts are failing; dashboards will fall back to polling for fresh tiles."
+  namespace           = "SchoolPilot/ClassPilot"
+  metric_name         = "ScreenshotAvailableBroadcastFailures"
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 10
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  period              = 60
+  statistic           = "Sum"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_ok_actions
+
+  dimensions = {
+    Environment = var.environment
+    Service     = "api"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "classpilot_device_rate_limited" {
+  alarm_name          = "${local.alarm_prefix}-classpilot-device-rate-limited"
+  alarm_description   = "ClassPilot devices are hitting the heartbeat or screenshot rate limiters; check extension cadence and limiter budgets."
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 50
+  evaluation_periods  = 5
+  datapoints_to_alarm = 3
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_ok_actions
+
+  metric_query {
+    id          = "limited"
+    expression  = "heartbeat + screenshot"
+    label       = "Device heartbeat plus screenshot rate-limited responses"
+    return_data = true
+  }
+
+  metric_query {
+    id          = "heartbeat"
+    return_data = false
+
+    metric {
+      namespace   = "SchoolPilot/ClassPilot"
+      metric_name = "DeviceHeartbeatRateLimited"
+      period      = 60
+      stat        = "Sum"
+
+      dimensions = {
+        Environment = var.environment
+        Service     = "api"
+      }
+    }
+  }
+
+  metric_query {
+    id          = "screenshot"
+    return_data = false
+
+    metric {
+      namespace   = "SchoolPilot/ClassPilot"
+      metric_name = "DeviceScreenshotRateLimited"
+      period      = 60
+      stat        = "Sum"
+
+      dimensions = {
+        Environment = var.environment
+        Service     = "api"
+      }
+    }
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "classpilot_heartbeat_gap_ratio" {
+  alarm_name          = "${local.alarm_prefix}-classpilot-heartbeat-gap-ratio"
+  alarm_description   = "More than a quarter of recorded ClassPilot heartbeats arrived after a gap over 60 seconds; devices are struggling to reach the API."
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 0.25
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_ok_actions
+
+  metric_query {
+    id          = "ratio"
+    expression  = "IF(recorded >= 100, gap60 / recorded, 0)"
+    label       = "Heartbeats with a gap over 60 seconds divided by recorded heartbeats"
+    return_data = true
+  }
+
+  metric_query {
+    id          = "gap60"
+    return_data = false
+
+    metric {
+      namespace   = "SchoolPilot/ClassPilot"
+      metric_name = "HeartbeatGapOver60Seconds"
+      period      = 300
+      stat        = "Sum"
+
+      dimensions = {
+        Environment = var.environment
+        Service     = "api"
+      }
+    }
+  }
+
+  metric_query {
+    id          = "recorded"
+    return_data = false
+
+    metric {
+      namespace   = "SchoolPilot/ClassPilot"
+      metric_name = "HeartbeatRecorded"
+      period      = 300
+      stat        = "Sum"
+
+      dimensions = {
+        Environment = var.environment
+        Service     = "api"
+      }
+    }
+  }
+}
+
 resource "aws_route53_health_check" "schoolpilot_public_health" {
   count             = local.has_domain ? 1 : 0
   fqdn              = var.domain

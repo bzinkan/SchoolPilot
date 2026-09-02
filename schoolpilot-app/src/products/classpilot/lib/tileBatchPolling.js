@@ -465,9 +465,21 @@ export function removeLegacyScreenshotsFromTileBatchData(data) {
   return tiles.length === data.tiles.length ? data : { ...data, tiles };
 }
 
+export function assertTileScreenshotStoreAvailable(response) {
+  if (response?.screenshotStore !== 'unavailable') return response;
+  // The API degrades per tile when the screenshot store cannot be read.
+  // The dashboard keeps the previous 503 semantics: React Query takes the
+  // error path, cached previews retain through the reconnect window, and
+  // the tile shows its unavailable state instead of an authoritative blank.
+  throw Object.assign(new Error('SCREENSHOT_STORE_UNAVAILABLE'), {
+    code: 'SCREENSHOT_STORE_UNAVAILABLE',
+    response: { status: 503, data: response },
+  });
+}
+
 export async function fetchTileBatch(request, requestApi, signal) {
   const response = await requestApi('POST', request.endpoint, request.body, { signal });
   return request.kind === 'screenshots'
-    ? normalizeTileScreenshotBindings(response)
+    ? normalizeTileScreenshotBindings(assertTileScreenshotStoreAvailable(response))
     : response;
 }

@@ -96,6 +96,8 @@ export type HeartbeatHotPathCounter =
   | "screenshotPolicyRefreshLocalDeliveries"
   | "screenshotPolicyRefreshPublicationsAccepted"
   | "screenshotPolicyRefreshFailures"
+  | "deviceHeartbeatRateLimited"
+  | "deviceScreenshotRateLimited"
   | "tileBatchHistoryFallbackItems";
 
 export type HeartbeatHotPathTiming =
@@ -248,12 +250,10 @@ export function snapshotHeartbeatHotPathMetrics(options: {
   return { counters: counterSnapshot, timings: timingSnapshot };
 }
 
-export function buildHeartbeatHotPathSummaryEvent(snapshot: ReturnType<
-  typeof snapshotHeartbeatHotPathMetrics
->, interval: {
+function resolveHeartbeatHotPathInterval(interval: {
   startedAt: Date;
   endedAt: Date;
-}): Record<string, unknown> {
+}): { startedAtMs: number; endedAtMs: number } {
   const startedAtMs = interval.startedAt.getTime();
   const endedAtMs = interval.endedAt.getTime();
   if (
@@ -264,6 +264,16 @@ export function buildHeartbeatHotPathSummaryEvent(snapshot: ReturnType<
   ) {
     throw new Error("heartbeat_hot_path_interval_invalid");
   }
+  return { startedAtMs, endedAtMs };
+}
+
+export function buildHeartbeatHotPathSummaryEvent(snapshot: ReturnType<
+  typeof snapshotHeartbeatHotPathMetrics
+>, interval: {
+  startedAt: Date;
+  endedAt: Date;
+}): Record<string, unknown> {
+  resolveHeartbeatHotPathInterval(interval);
   return {
     event: "classpilot_heartbeat_hot_path_summary",
     intervalSeconds: HOT_PATH_METRICS_INTERVAL_MS / 1_000,
@@ -281,6 +291,63 @@ export function buildHeartbeatHotPathSummaryEvent(snapshot: ReturnType<
       ? { apiRuntimeTaskDefinitionSha256 }
       : {}),
     ...snapshot,
+  };
+}
+
+export const HOT_PATH_EMF_NAMESPACE = "SchoolPilot/ClassPilot";
+export const HOT_PATH_EMF_EVENT = "classpilot_heartbeat_hot_path_emf";
+
+// Fixed allowlist of counters mirrored into CloudWatch as alarmable metrics
+// (`[counterName, MetricName]`). Keep it short: every entry is one metric
+// stream per Environment/Service, and alarms in infra/alarms.tf reference the
+// metric names verbatim.
+export const HOT_PATH_EMF_COUNTERS: ReadonlyArray<
+  readonly [HeartbeatHotPathCounter, string]
+> = [
+  ["heartbeatRecorded", "HeartbeatRecorded"],
+  ["heartbeatGapOver60Seconds", "HeartbeatGapOver60Seconds"],
+  ["tileBatchScreenshotItems", "TileBatchScreenshotItems"],
+  ["tileBatchScreenshotMissItems", "TileBatchScreenshotMissItems"],
+  ["tileBatchScreenshotStoreUnavailable", "TileBatchScreenshotStoreUnavailable"],
+  ["screenshotAvailableBroadcastFailures", "ScreenshotAvailableBroadcastFailures"],
+  ["screenshotCadenceObservationUnavailable", "ScreenshotCadenceObservationUnavailable"],
+  ["deviceHeartbeatRateLimited", "DeviceHeartbeatRateLimited"],
+  ["deviceScreenshotRateLimited", "DeviceScreenshotRateLimited"],
+];
+
+export function buildHeartbeatHotPathEmfEvent(
+  snapshot: ReturnType<typeof snapshotHeartbeatHotPathMetrics>,
+  interval: { startedAt: Date; endedAt: Date },
+  env: NodeJS.ProcessEnv = process.env
+): Record<string, unknown> {
+  const { endedAtMs } = resolveHeartbeatHotPathInterval(interval);
+  const metrics: Record<string, number> = {};
+  for (const [counter, metric] of HOT_PATH_EMF_COUNTERS) {
+    const value = snapshot.counters[counter];
+    metrics[metric] = typeof value === "number" && Number.isFinite(value)
+      ? value
+      : 0;
+  }
+  // Deliberately process-wide and label-free: Environment and Service are the
+  // only dimensions. Never add school, user, student, device, URL, Redis key,
+  // or request identifiers here; each distinct value would mint a metric stream.
+  return {
+    _aws: {
+      Timestamp: endedAtMs,
+      CloudWatchMetrics: [{
+        Namespace: HOT_PATH_EMF_NAMESPACE,
+        Dimensions: [["Environment", "Service"]],
+        Metrics: HOT_PATH_EMF_COUNTERS.map(([, metric]) => ({
+          Name: metric,
+          Unit: "Count",
+        })),
+      }],
+    },
+    Environment: env.APP_ENV || env.NODE_ENV || "development",
+    Service: "api",
+    event: HOT_PATH_EMF_EVENT,
+    intervalStartedAtUtc: interval.startedAt.toISOString(),
+    ...metrics,
   };
 }
 
@@ -303,6 +370,14 @@ function flushExpiredHeartbeatHotPathMetricIntervals(nowMs: number): void {
     // The bounds use the UTC-minute lattice rather than callback wall times,
     // so event-loop jitter cannot make a nominal PI bucket ambiguous.
     console.log(JSON.stringify(buildHeartbeatHotPathSummaryEvent(snapshot, {
+      startedAt: new Date(intervalStartedAtMs),
+      endedAt: new Date(intervalEndedAtMs),
+    })));
+    // Alarmable EMF twin of the summary line above: same interval, a fixed
+    // metric allowlist, Environment/Service dimensions only. Its event name
+    // must never contain the summary event name, which the PI finalizer uses
+    // as a CloudWatch Logs filter pattern.
+    console.log(JSON.stringify(buildHeartbeatHotPathEmfEvent(snapshot, {
       startedAt: new Date(intervalStartedAtMs),
       endedAt: new Date(intervalEndedAtMs),
     })));
