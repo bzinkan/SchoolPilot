@@ -2936,6 +2936,19 @@ exit 0
                 $caseConfig.phase = "Waf"
                 $caseConfig.minimumWallClockSeconds = 0
                 $caseConfig.maxIterations = 10
+                # $limitConfig freezes a deadlineUtc one minute after that config
+                # was built, and every other consumer restamps it before use
+                # (Invoke-ChildMonitorCase and the explicit callers below). These
+                # cases run well past that minute on a loaded runner, and an
+                # expired deadline makes the monitor exit 2 carrying only
+                # "monitor_deadline_reached_before_acceptance" -- silently
+                # replacing the load findings each case asserts on. Stamp a
+                # per-case deadline covering the monitor startup bound, the
+                # completion watchdog and one supervised sweep.
+                $caseConfig.deadlineUtc = [DateTimeOffset]::UtcNow.AddSeconds(
+                    $script:MonitorStartupDeadlineSeconds +
+                    ($script:MonitorCompletionWatchdogMilliseconds / 1000) +
+                    $script:SupervisedSampleBudgetSeconds).ToString("o")
                 $caseConfig | Add-Member -NotePropertyName loadProgressPath -NotePropertyValue $caseProgress -Force
                 $caseConfig | Add-Member -NotePropertyName loadSummaryPath -NotePropertyValue $caseSummary -Force
                 $caseConfig | Add-Member -NotePropertyName artifactsNotBeforeUtc -NotePropertyValue $caseStartedAt.AddSeconds(-1).ToString("o") -Force
