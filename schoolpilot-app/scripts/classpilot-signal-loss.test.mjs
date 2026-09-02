@@ -743,6 +743,16 @@ test('screenshot health chips explain capture state without leaking the raw exte
     'utf8',
   );
   assert.match(tileSource, /screenshot-health-/);
+  assert.match(
+    tileSource,
+    /const screenshotHealthOverlay = screenshotHealth\?\.tone === 'warn' \? screenshotHealth : null/,
+    'a healthy capture state must never badge a visible preview',
+  );
+  assert.match(
+    tileSource,
+    /\{screenshotHealthOverlay \? \(/,
+    'the preview overlay must render from the problem-only projection',
+  );
   assert.match(tileSource, /const staleThresholdMs = screenshotStaleThresholdMs\(screenshotCaptureCadence\)/);
   assert.match(
     tileSource,
