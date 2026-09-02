@@ -6,6 +6,7 @@ import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Badge } from '../../../components/ui/badge';
 import StudentTile from '../components/StudentTile';
+import StudentTileSkeleton from '../components/StudentTileSkeleton';
 import VideoPortal from '../components/VideoPortal';
 import ScreenshotPreviewDialog from '../components/ScreenshotPreviewDialog';
 import StudentDetailDrawer from '../components/StudentDetailDrawer';
@@ -47,6 +48,7 @@ import {
   removeStudentsFromTileBatchData,
   retainFreshTileScreenshotsOnNull,
   runBoundedTileScreenshotJobs,
+  screenshotCohortPlaceholderData,
   tileBatchRequestShouldPoll,
 } from '../lib/tileBatchPolling';
 import {
@@ -2562,7 +2564,9 @@ export default function Dashboard() {
     void purgeLegacyScreenshotTileCaches(queryClient);
   }, [observationLeaseStatus]);
   const {
-    supported: viewportTrackingSupported,
+    // `tracking` stays false until the observer has reported once, so the
+    // first paint polls every cohort instead of gating on an empty set.
+    tracking: viewportTrackingActive,
     nearViewportStudentIds,
     getTileRef,
   } = useTileViewport();
@@ -2823,7 +2827,11 @@ export default function Dashboard() {
           setTileGlobalAuthorizationDenied(true);
           await purgeAllStudentTileCaches(queryClient);
         } else if (failureScope === 'cohort') {
-          await purgeStudentScreenshotTileCaches(queryClient, requestedIds);
+          // Same denial rule as the hard-denied purge effect below: scrub the
+          // rejected rows, never replay the request that was just denied.
+          await purgeStudentScreenshotTileCaches(queryClient, requestedIds, {
+            refetch: false,
+          });
           const failedAt = Date.now();
           setTargetedScreenshotFailureByStudent((current) => {
             const next = new Map(current);
@@ -2878,6 +2886,23 @@ export default function Dashboard() {
           : response;
       },
       select: indexTileScreenshots,
+      // One student's login or any teacher command re-keys the whole cohort.
+      // Carry the replaced cohort's rows forward so classmates keep their
+      // frames instead of the wall flashing "unavailable" until the POST
+      // returns. Invariant: only a student whose exact [studentId, binding,
+      // controlRevision] tuple is identical in both keys is carried, so a
+      // changed binding can never show a frame from its previous authority.
+      // The placeholder is observer-local and never enters the cache, so the
+      // targeted merge and the privacy scrub/purges still act on real rows.
+      placeholderData: (previousData, previousQuery) => screenshotCohortPlaceholderData(
+        previousData,
+        previousQuery,
+        request,
+        {
+          deniedStudentIds: locallyRevokedTileStudentIds,
+          removeLegacy: legacyScreenshotReadsRevoked,
+        },
+      ),
       refetchInterval: request.refetchInterval,
       refetchIntervalInBackground: false,
       refetchOnWindowFocus: 'always',
@@ -2910,8 +2935,9 @@ export default function Dashboard() {
       retry: false,
       staleTime: 15000,
       gcTime: 60000,
+      // Tiles stay mounted; the viewport remains the polling gate alone.
       enabled: historyTileReadsEnabled && tileBatchRequestShouldPoll(request, {
-        viewportTrackingSupported,
+        viewportTrackingSupported: viewportTrackingActive,
         nearViewportStudentIds,
         liveViewStudentId: liveViewState.studentId,
       }),
@@ -2995,6 +3021,18 @@ export default function Dashboard() {
     });
     return refreshState;
   }, [screenshotTileQueries, screenshotTileRequests, targetedScreenshotFailureByStudent]);
+  const firstPaintPendingStudentIds = useMemo(() => {
+    const pendingIds = new Set();
+    screenshotTileRequests.forEach((request, index) => {
+      // `isLoading` is the first fetch of a cohort that has neither cached nor
+      // carried-forward rows. Those tiles render a tile-shaped skeleton so the
+      // wall never paints featureless gray boxes, and every later state
+      // (success, error, disabled) keeps the real tile mounted.
+      if (screenshotTileQueries[index]?.isLoading !== true) return;
+      for (const studentId of request.body.studentIds) pendingIds.add(studentId);
+    });
+    return pendingIds;
+  }, [screenshotTileQueries, screenshotTileRequests]);
   const historyByStudent = useMemo(() => {
     if (historyTileQueries.length === 0) return EMPTY_TILE_MAP;
     return new Map(historyTileQueries.flatMap((query) => [...(query.data || EMPTY_TILE_MAP)]));
@@ -3240,16 +3278,30 @@ export default function Dashboard() {
   }, [tileCachePurgeStudentIdsKey]);
   const hardDeniedScreenshotStudentIdsKey = JSON.stringify([...hardDeniedScreenshotStudentIds].sort());
   const hardDeniedHistoryStudentIdsKey = JSON.stringify([...hardDeniedHistoryStudentIds].sort());
+  // A denial purge must scrub without re-requesting. The denied cohort would
+  // only be denied again, while the scrub's success dispatch clears the query
+  // error and flips these keys back, so `refetch: true` here turns one
+  // zero-result cohort 404 into an unthrottled request loop. The latches make
+  // an unchanged denial set idempotent; a set that changes (including back to
+  // empty and then denied again) still purges, so no denied pixel survives.
+  const purgedHardDeniedScreenshotKeyRef = useRef(null);
+  const purgedHardDeniedHistoryKeyRef = useRef(null);
   useEffect(() => {
+    if (purgedHardDeniedScreenshotKeyRef.current === hardDeniedScreenshotStudentIdsKey) return;
+    purgedHardDeniedScreenshotKeyRef.current = hardDeniedScreenshotStudentIdsKey;
     void purgeStudentScreenshotTileCaches(
       queryClient,
       JSON.parse(hardDeniedScreenshotStudentIdsKey),
+      { refetch: false },
     );
   }, [hardDeniedScreenshotStudentIdsKey]);
   useEffect(() => {
+    if (purgedHardDeniedHistoryKeyRef.current === hardDeniedHistoryStudentIdsKey) return;
+    purgedHardDeniedHistoryKeyRef.current = hardDeniedHistoryStudentIdsKey;
     void purgeStudentHistoryTileCaches(
       queryClient,
       JSON.parse(hardDeniedHistoryStudentIdsKey),
+      { refetch: false },
     );
   }, [hardDeniedHistoryStudentIdsKey]);
   useEffect(() => {
@@ -5573,6 +5625,13 @@ export default function Dashboard() {
                 || hardDeniedScreenshotStudentIds.has(student.studentId)
                 || observationLeaseStatus === 'denied'
                 || studentView !== 'class';
+              // This is the tile's 15-second active-view stale cue, and it mirrors the
+              // server capture policy exactly: an observed lease AND the student's
+              // accepted screenshotActiveObservationCadenceV1. StudentTile's
+              // `observationActive` escape hatch is deliberately NOT passed alongside it
+              // — a student without that capability still captures on the 30-second
+              // background interval, so forcing the 15-second threshold would strand the
+              // tile in a permanent amber "Updating…".
               const screenshotCaptureCadence = deriveScreenshotCaptureCadence({
                 student,
                 observationLeaseStatus: tileScreenshotObservationStatus,
@@ -5588,7 +5647,12 @@ export default function Dashboard() {
                       {coverageLabel}
                     </div>
                   )}
-                  {(!viewportTrackingSupported || nearViewportStudentIds.has(student.studentId)) ? <StudentTile
+                  {firstPaintPendingStudentIds.has(student.studentId) && !tileScreenshotRevoked ? (
+                    <StudentTileSkeleton
+                      studentId={student.studentId}
+                      studentName={student.studentName}
+                    />
+                  ) : <StudentTile
                     student={tileStudent}
                     onOpenDetails={tileDetailsRevoked
                       ? undefined
@@ -5647,9 +5711,7 @@ export default function Dashboard() {
                     screenshotCaptureCadence={screenshotCaptureCadence}
                     screenshotAuthorizationDenied={tileScreenshotRevoked}
                     actionContextKey={`${activeSchoolId || ''}:${effectiveSession?.id || ''}:${studentView}:${selectedSubgroupId}:${canUseRemoteControls}:${dashboardCapabilities.canUseLiveView}`}
-                  /> : (
-                    <div className="h-[420px] rounded-lg border border-border/30 bg-muted/10" aria-hidden="true" />
-                  )}
+                  />}
                 </div>
               );
             })}

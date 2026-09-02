@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { Monitor, Search } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
 import {
@@ -9,6 +9,7 @@ import {
   DialogTitle,
 } from '../../../components/ui/dialog';
 import { deriveScreenshotDisplay } from '../lib/studentMonitoringDisplay';
+import { useDecodedScreenshot } from '../hooks/useDecodedScreenshot';
 
 const ZOOM_OPTIONS = Object.freeze([
   { value: 'fit', label: 'Fit' },
@@ -31,66 +32,6 @@ function captureAgeLabel(observedAtMs, nowMs) {
   return `${Math.floor(ageSeconds / 60)}m ago`;
 }
 
-function useAtomicDecodedScreenshot(screenshotData, privacyKey) {
-  const [decodedFrame, setDecodedFrame] = useState(null);
-  const generationRef = useRef(0);
-  const src = typeof screenshotData?.screenshot === 'string'
-    ? screenshotData.screenshot
-    : '';
-
-  useLayoutEffect(() => {
-    const generation = generationRef.current + 1;
-    generationRef.current = generation;
-    let cancelled = false;
-    queueMicrotask(() => {
-      if (!cancelled && generationRef.current === generation) {
-        setDecodedFrame((current) => (
-          current?.privacyKey === privacyKey ? current : null
-        ));
-      }
-    });
-    if (!src) {
-      // Render gates the prior frame immediately; clear its in-memory payload
-      // in a microtask so this effect does not synchronously cascade renders.
-      queueMicrotask(() => {
-        if (!cancelled && generationRef.current === generation) {
-          setDecodedFrame(null);
-        }
-      });
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    const candidate = new Image();
-    const isCurrent = () => !cancelled && generationRef.current === generation;
-    const commit = () => {
-      if (!isCurrent()) return;
-      setDecodedFrame({ privacyKey, src, screenshotData });
-    };
-    const loaded = new Promise((resolve, reject) => {
-      candidate.onload = resolve;
-      candidate.onerror = reject;
-    });
-    candidate.src = src;
-    const decoded = typeof candidate.decode === 'function'
-      ? candidate.decode().catch(() => loaded)
-      : loaded;
-    // A same-context failure leaves the prior decoded frame intact. Its own
-    // capture timestamp still drives freshness below, so a corrupt replacement
-    // can neither make old pixels look new nor extend their retention window.
-    void decoded.then(commit).catch(() => {});
-
-    return () => {
-      cancelled = true;
-      candidate.onload = null;
-      candidate.onerror = null;
-    };
-  }, [privacyKey, screenshotData, src]);
-
-  return decodedFrame?.privacyKey === privacyKey ? decodedFrame.screenshotData : null;
-}
-
 export default function ScreenshotPreviewDialog({
   studentName,
   screenshotData,
@@ -104,7 +45,10 @@ export default function ScreenshotPreviewDialog({
   const [zoom, setZoom] = useState('fit');
   const candidateDisplay = deriveScreenshotDisplay(screenshotData, freshnessNowMs);
   const candidatePixelsAvailable = candidateDisplay.fresh || candidateDisplay.retained;
-  const decodedScreenshotData = useAtomicDecodedScreenshot(screenshotData, privacyKey);
+  // Shared atomic double-buffer: pixels are exposed only once Image.decode()
+  // has resolved, so the viewer never paints a partially loaded replacement.
+  const { frame: decodedFrame } = useDecodedScreenshot(screenshotData, privacyKey);
+  const decodedScreenshotData = decodedFrame?.screenshotData ?? null;
   // A replacement response is also a safe lower bound for the current clock.
   // Use it to age the last decoded frame even when the shared boundary clock
   // has not advanced yet; its pixels/title still come only from decoded data.

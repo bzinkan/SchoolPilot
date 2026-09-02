@@ -331,8 +331,10 @@ async function configureDashboard(page, {
         body,
       });
       const suppliedResponse = pathname.endsWith("/screenshots") ? screenshotTiles : historyTiles;
+      // Awaiting lets a test hold a tile response open and observe the
+      // dashboard's first-paint state while the POST is still in flight.
       const response = typeof suppliedResponse === "function"
-        ? suppliedResponse(body)
+        ? await suppliedResponse(body)
         : suppliedResponse;
       if (Number.isInteger(response?.status) && response.status >= 400) {
         await route.fulfill({
@@ -487,7 +489,15 @@ async function assertObserveEntryPointsUnavailable(page, commandPosts, studentId
   assert.deepEqual(coverageMutationRequests, [], "Observe must not issue coverage mutations");
 }
 
-test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed aggregate states", { timeout: 120_000 }, async () => {
+// One test drives every load state because the Vite server and the browser are
+// expensive to start; each scenario opens its own page inside that shared
+// setup, so the budget tracks the scenario COUNT. Measured locally: ~52s before
+// the first-paint/hysteresis scenario was added, ~71s after. CI hardware is
+// slower and hit the previous 120s ceiling, so the ceiling is raised rather
+// than the coverage dropped. If it times out again, budget for the scenario
+// being added or split the file — and measure before concluding the dashboard
+// itself got slower.
+test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed aggregate states", { timeout: 240_000 }, async () => {
   const dashboardSource = readFileSync(
     path.join(APP_ROOT, "src/products/classpilot/pages/Dashboard.jsx"),
     "utf8",
@@ -1840,6 +1850,117 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     await assertUnknownCounts(malformedPage);
     await assertCommandEntryPointsUnavailable(malformedPage, malformedHarness.commandPosts);
     assert.deepEqual(malformedHarness.pageErrors, []);
+
+    const firstPaintPage = await browser.newPage();
+    pages.push(firstPaintPage);
+    // A stubbed IntersectionObserver reports nothing until the test drives it,
+    // which is exactly the window in which the wall used to paint featureless
+    // gray boxes and gate every viewport-scoped read on an empty near set.
+    await firstPaintPage.addInitScript(() => {
+      const callbacks = new Set();
+      window.__emitTileIntersections = (isIntersecting) => {
+        const targets = [...document.querySelectorAll("[data-student-viewport-id]")];
+        for (const callback of callbacks) {
+          callback(targets.map((target) => ({ target, isIntersecting })));
+        }
+      };
+      window.IntersectionObserver = class {
+        constructor(callback) {
+          this.callback = callback;
+          callbacks.add(callback);
+        }
+        observe() {}
+        unobserve() {}
+        disconnect() {
+          callbacks.delete(this.callback);
+        }
+        takeRecords() {
+          return [];
+        }
+      };
+    });
+    const firstPaintStudent = student({ realtimeBinding: "first-paint-binding" });
+    const firstPaintAggregate = aggregateController({
+      school: success([]),
+      scoped: success({ students: [firstPaintStudent] }),
+    });
+    let releaseFirstPaintScreenshots;
+    const firstPaintScreenshotGate = new Promise((resolve) => {
+      releaseFirstPaintScreenshots = resolve;
+    });
+    const firstPaintHarness = await configureDashboard(firstPaintPage, {
+      aggregate: firstPaintAggregate,
+      activeSession: ownSession,
+      allSessions: [ownSession],
+      screenshotTiles: async () => {
+        await firstPaintScreenshotGate;
+        return {
+          tiles: [{
+            studentId: STUDENT_ID,
+            screenshot: {
+              screenshot: TINY_SCREENSHOT_DATA_URL,
+              timestamp: new Date().toISOString(),
+              tabTitle: "First paint screen",
+              tabUrl: "https://lesson.example.edu/first-paint",
+            },
+          }],
+        };
+      },
+    });
+    await firstPaintPage.goto(`${baseURL}/classpilot`);
+
+    const firstPaintSkeleton = firstPaintPage.getByTestId(`student-tile-skeleton-${STUDENT_ID}`);
+    await firstPaintSkeleton.waitFor();
+    assert.equal(
+      await firstPaintPage.getByTestId(`student-tile-skeleton-name-${STUDENT_ID}`).innerText(),
+      "Ada Student",
+      "the first-paint stand-in must keep the roster identity visible",
+    );
+    assert.equal(
+      await firstPaintPage.locator('div[aria-hidden="true"][class*="bg-muted/10"]').count(),
+      0,
+      "an unresolved tile must never render a featureless gray box",
+    );
+    assert.ok(
+      (await firstPaintSkeleton.boundingBox())?.height >= 400,
+      "the stand-in must hold the real tile height so the wall does not reflow",
+    );
+    await waitUntil(
+      () => firstPaintHarness.tileRequests.some((request) => (
+        request.pathname === "/api/classpilot/tiles/history"
+        && (request.body?.studentIds || []).includes(STUDENT_ID)
+      )),
+      "an IntersectionObserver that has not reported yet must poll every cohort, not an empty near set",
+    );
+
+    releaseFirstPaintScreenshots();
+    const firstPaintCard = firstPaintPage.getByTestId(`card-student-${STUDENT_ID}`);
+    await firstPaintCard.waitFor();
+    await firstPaintCard.getByTestId(`screenshot-${STUDENT_ID}`).waitFor();
+    assert.equal(
+      await firstPaintPage.getByTestId(`student-tile-skeleton-${STUDENT_ID}`).count(),
+      0,
+      "the stand-in must be replaced by the real tile once its cohort resolves",
+    );
+
+    // Scrolling a tile out of the enter margin and straight back must not
+    // unmount it: the viewport is a polling gate, never a mount gate.
+    await firstPaintPage.evaluate(() => window.__emitTileIntersections(false));
+    await firstPaintCard.getByTestId(`screenshot-${STUDENT_ID}`).waitFor();
+    await firstPaintPage.evaluate(() => window.__emitTileIntersections(true));
+    await firstPaintPage.evaluate(() => window.__emitTileIntersections(false));
+    await firstPaintPage.evaluate(() => window.__emitTileIntersections(true));
+    assert.equal(
+      await firstPaintCard.getByTestId(`screenshot-${STUDENT_ID}`).count(),
+      1,
+      "a scroll-direction reversal must not blank an already painted tile",
+    );
+    assert.equal(
+      await firstPaintPage.locator('div[aria-hidden="true"][class*="bg-muted/10"]').count(),
+      0,
+      "offscreen tiles must stay mounted instead of collapsing to a gray box",
+    );
+    assert.deepEqual(firstPaintHarness.pageErrors, []);
   } finally {
     for (const page of pages) await page.close().catch(() => {});
     await browser?.close().catch(() => {});

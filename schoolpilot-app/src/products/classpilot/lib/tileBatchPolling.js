@@ -11,6 +11,7 @@ export const TILE_BATCH_HISTORY_LIMIT = 10;
 export const TILE_BATCH_REFETCH_INTERVAL_MS = 30_000;
 export const TILE_SCREENSHOT_CACHE_GC_MS = SCREENSHOT_RECONNECT_RETAIN_MS;
 const SCREENSHOT_BINDING_REJECTED = Symbol('classpilotScreenshotBindingRejected');
+const EMPTY_STUDENT_IDS = new Set();
 
 export const TILE_BATCH_QUERY_ROOTS = Object.freeze({
   screenshots: '/api/classpilot/tiles/screenshots',
@@ -86,11 +87,15 @@ export function buildTileStudentBindings(students) {
     .sort(([left], [right]) => left.localeCompare(right));
 }
 
+function tileBindingAuthorityKey(binding, controlRevision) {
+  return JSON.stringify([binding, controlRevision]);
+}
+
 export function changedTileBindingStudentIds(previousStudents, nextStudents) {
   const authorityByStudent = (students) => new Map(
     buildTileStudentBindings(students).map(([studentId, binding, controlRevision]) => [
       studentId,
-      JSON.stringify([binding, controlRevision]),
+      tileBindingAuthorityKey(binding, controlRevision),
     ]),
   );
   const previousBindings = authorityByStudent(previousStudents);
@@ -151,6 +156,126 @@ export function createTileBatchRequests(students, context = {}) {
   }
 
   return requests;
+}
+
+/**
+ * Recover the exact-binding cohort identity embedded in a screenshot query
+ * key: `[root, contextKey, JSON([[studentId, binding, controlRevision], …])]`.
+ * Returns null for any key that is not a well-formed screenshot cohort key.
+ */
+export function parseScreenshotCohortQueryKey(queryKey) {
+  if (!Array.isArray(queryKey) || queryKey.length !== 3) return null;
+  const [root, contextKey, cohortKey] = queryKey;
+  if (root !== TILE_BATCH_QUERY_ROOTS.screenshots) return null;
+  if (typeof contextKey !== 'string' || typeof cohortKey !== 'string') return null;
+  let bindings;
+  try {
+    bindings = JSON.parse(cohortKey);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(bindings)) return null;
+  const authorityByStudent = new Map();
+  for (const entry of bindings) {
+    if (!Array.isArray(entry) || typeof entry[0] !== 'string') return null;
+    authorityByStudent.set(entry[0], tileBindingAuthorityKey(entry[1], entry[2]));
+  }
+  return { contextKey, authorityByStudent };
+}
+
+/**
+ * Carry-forward placeholder for a re-keyed screenshot cohort.
+ *
+ * A single student's login or any teacher command changes that student's
+ * [binding, controlRevision] tuple, which re-keys the whole cohort. React
+ * Query starts the replacement key with no data, so without a placeholder
+ * every classmate drops to the unavailable card until the POST returns. This
+ * seeds the replacement observer from the cached same-context cohorts.
+ *
+ * Privacy invariant (fail closed): a tile is carried forward ONLY when a
+ * previous cohort key vouched for exactly the same [studentId, binding,
+ * controlRevision] tuple the new key contains. Students whose tuple changed,
+ * students absent from the previous key, and `deniedStudentIds` are removed,
+ * so a changed binding can never show a stale frame. The result never enters
+ * the query cache (placeholder data is observer-local), which keeps the
+ * pre-paint scrub and the targeted merge operating on the real cohort rows.
+ *
+ * `cachedQueries` are QueryCache entries (`{ queryKey, state }`); passing the
+ * whole screenshot root is fine because context and key mismatches are
+ * filtered here. Newer cache entries win when two vouch for the same tuple.
+ */
+export function buildScreenshotCohortPlaceholderData(
+  cachedQueries,
+  request,
+  { deniedStudentIds = EMPTY_STUDENT_IDS, removeLegacy = false } = {},
+) {
+  const current = parseScreenshotCohortQueryKey(request?.queryKey);
+  if (!current || current.authorityByStudent.size === 0) return undefined;
+  const currentKeyHash = JSON.stringify(request.queryKey);
+  const candidates = [];
+  for (const query of cachedQueries || []) {
+    if (!Array.isArray(query?.state?.data?.tiles)) continue;
+    if (JSON.stringify(query.queryKey) === currentKeyHash) continue;
+    const parsed = parseScreenshotCohortQueryKey(query.queryKey);
+    if (!parsed || parsed.contextKey !== current.contextKey) continue;
+    candidates.push({ parsed, query });
+  }
+  if (candidates.length === 0) return undefined;
+  candidates.sort((left, right) => (
+    (Number(right.query.state.dataUpdatedAt) || 0) - (Number(left.query.state.dataUpdatedAt) || 0)
+  ));
+
+  const carriedByStudent = new Map();
+  for (const { parsed, query } of candidates) {
+    for (const tile of query.state.data.tiles) {
+      const studentId = tile?.studentId;
+      if (typeof studentId !== 'string' || carriedByStudent.has(studentId)) continue;
+      const currentAuthority = current.authorityByStudent.get(studentId);
+      if (currentAuthority === undefined) continue;
+      if (parsed.authorityByStudent.get(studentId) !== currentAuthority) continue;
+      carriedByStudent.set(studentId, tile);
+    }
+  }
+  if (carriedByStudent.size === 0) return undefined;
+
+  const tiles = [];
+  for (const studentId of current.authorityByStudent.keys()) {
+    const tile = carriedByStudent.get(studentId);
+    if (tile) tiles.push(tile);
+  }
+  let placeholder = removeStudentsFromTileBatchData({ tiles }, deniedStudentIds);
+  if (removeLegacy) placeholder = removeLegacyScreenshotsFromTileBatchData(placeholder);
+  return placeholder.tiles.length > 0 ? placeholder : undefined;
+}
+
+/**
+ * TanStack Query v5 `placeholderData` adapter for a screenshot cohort whose
+ * key just changed: `(previousData, previousQuery) => …`. The replaced
+ * observer query is the only carry-forward source, and every tuple it offers
+ * is still re-checked against the new key by the builder above, so the
+ * fail-closed rule holds even though the pre-paint scrub for the changed
+ * student has not committed yet. Placeholder data is observer-local: it never
+ * enters the query cache, so the targeted merge, the binding scrub, and the
+ * privacy purges keep operating on the real cohort rows.
+ */
+export function screenshotCohortPlaceholderData(
+  previousData,
+  previousQuery,
+  request,
+  options,
+) {
+  if (!Array.isArray(previousData?.tiles)) return undefined;
+  return buildScreenshotCohortPlaceholderData(
+    [{
+      queryKey: previousQuery?.queryKey,
+      state: {
+        data: previousData,
+        dataUpdatedAt: previousQuery?.state?.dataUpdatedAt,
+      },
+    }],
+    request,
+    options,
+  );
 }
 
 export function tileBatchRequestShouldPoll(

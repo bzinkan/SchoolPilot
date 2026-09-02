@@ -906,6 +906,98 @@ try {
   onlineManager.setOnline(true);
 }
 
+// A zero-result cohort is the server's "No accessible tiles" 404: it is a
+// cohort-wide privacy denial, and the purge that answers it must not replay
+// the request that was just denied. Before this fence a single dashboard sent
+// 13,077 such requests in 13 minutes (16-17/s for 13 minutes), each taking a
+// global tile admission permit, the full auth chain, and a tenant-scoped
+// query before the 404.
+const deniedCohortClient = new QueryClient({
+  defaultOptions: { queries: { retry: false } },
+});
+deniedCohortClient.mount();
+const deniedCohortRequest = sixtyScreenshotRequests[0];
+const deniedCohortStudentIds = deniedCohortRequest.body.studentIds;
+deniedCohortClient.setQueryData(deniedCohortRequest.queryKey, {
+  tiles: deniedCohortStudentIds.map((studentId) => ({
+    studentId,
+    screenshot: { screenshot: `${studentId}-pixel` },
+  })),
+});
+let deniedCohortFetches = 0;
+const deniedCohortObserver = new QueryObserver(deniedCohortClient, {
+  queryKey: deniedCohortRequest.queryKey,
+  queryFn: async () => {
+    deniedCohortFetches += 1;
+    throw Object.assign(new Error('No accessible tiles'), {
+      response: { status: 404, data: { error: 'No accessible tiles' } },
+    });
+  },
+  retry: false,
+  staleTime: 0,
+});
+const unsubscribeDeniedCohort = deniedCohortObserver.subscribe(() => {});
+try {
+  await waitUntil(() => deniedCohortFetches === 1, 'the seeded cohort must issue its first read');
+  await waitUntil(
+    () => deniedCohortObserver.getCurrentResult().isError,
+    'the zero-result cohort read must settle as an error',
+  );
+  assert.equal(
+    tileBatchFailureScope(deniedCohortObserver.getCurrentResult().error),
+    'cohort',
+    'a zero-result 404 must still be treated as a cohort-wide privacy denial',
+  );
+  // Drive the dashboard hard-denied purge the way its dependency key used to
+  // oscillate: once per settled round trip, with no timer, backoff or dedupe.
+  for (let round = 0; round < 5; round += 1) {
+    await purgeStudentTileCaches(deniedCohortClient, deniedCohortStudentIds, { refetch: false });
+  }
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  assert.ok(
+    deniedCohortFetches <= 2,
+    `a zero-result cohort 404 must not re-request (issued ${deniedCohortFetches} reads)`,
+  );
+  assert.deepEqual(
+    deniedCohortClient.getQueryData(deniedCohortRequest.queryKey).tiles,
+    [],
+    'the denial purge must still remove every denied row from the cache',
+  );
+} finally {
+  unsubscribeDeniedCohort();
+  deniedCohortClient.unmount();
+  deniedCohortClient.clear();
+}
+
+const reconcilePurgeClient = new QueryClient({
+  defaultOptions: { queries: { retry: false } },
+});
+reconcilePurgeClient.mount();
+const reconcilePurgeRequest = sixtyScreenshotRequests[1];
+let reconcilePurgeFetches = 0;
+const reconcilePurgeObserver = new QueryObserver(reconcilePurgeClient, {
+  queryKey: reconcilePurgeRequest.queryKey,
+  queryFn: async () => {
+    reconcilePurgeFetches += 1;
+    return { tiles: [] };
+  },
+  retry: false,
+  staleTime: Number.POSITIVE_INFINITY,
+});
+const unsubscribeReconcilePurge = reconcilePurgeObserver.subscribe(() => {});
+try {
+  await waitUntil(() => reconcilePurgeFetches === 1, 'the reconcile cohort must issue its first read');
+  await purgeStudentTileCaches(reconcilePurgeClient, reconcilePurgeRequest.body.studentIds);
+  await waitUntil(
+    () => reconcilePurgeFetches === 2,
+    'the default purge must keep repopulating the active cohort for binding reconciles',
+  );
+} finally {
+  unsubscribeReconcilePurge();
+  reconcilePurgeClient.unmount();
+  reconcilePurgeClient.clear();
+}
+
 const studentTileSource = await readFile(
   new URL('../src/products/classpilot/components/StudentTile.jsx', import.meta.url),
   'utf8'

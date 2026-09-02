@@ -369,6 +369,77 @@ test('screenshots become stale at 75 seconds independently of healthy URL teleme
   assert.equal(deriveStudentMonitoringDisplay(student, observedAt + SCREENSHOT_STALE_MS).telemetryCurrent, true);
 });
 
+test('a decoded frame carries its own display bounds and expires itself on the real clock', () => {
+  const screenshot = { screenshot: 'data:image/jpeg;base64,test', timestamp: observedAt };
+  const display = deriveScreenshotDisplay(screenshot, observedAt + 1_000);
+  // The bounds are absolute, so a caller holding one already-painted frame can
+  // re-evaluate it at another instant without re-deriving from data it can no
+  // longer see — that is what keeps a memo comparator honest about the pixels
+  // actually on screen.
+  assert.equal(display.freshUntilMs, observedAt + SCREENSHOT_STALE_MS);
+  assert.equal(display.retainedUntilMs, observedAt + SCREENSHOT_RECONNECT_RETAIN_MS);
+  assert.equal(
+    deriveScreenshotDisplay(screenshot, observedAt + 1_000, {
+      staleThresholdMs: SCREENSHOT_ACTIVE_VIEW_STALE_MS,
+    }).freshUntilMs,
+    observedAt + SCREENSHOT_ACTIVE_VIEW_STALE_MS,
+    'a cadence-aware threshold moves the fresh bound but never the retention bound',
+  );
+  assert.equal(
+    deriveScreenshotDisplay(screenshot, observedAt + 1_000, {
+      staleThresholdMs: SCREENSHOT_ACTIVE_VIEW_STALE_MS,
+    }).retainedUntilMs,
+    observedAt + SCREENSHOT_RECONNECT_RETAIN_MS,
+  );
+  assert.equal(deriveScreenshotDisplay({ screenshot: 'data:image/jpeg;base64,test' }, observedAt).freshUntilMs, null);
+  assert.equal(deriveScreenshotDisplay({ screenshot: 'data:image/jpeg;base64,test' }, observedAt).retainedUntilMs, null);
+
+  // The decoder enforces that retention itself, against Date.now() rather than
+  // a caller's nowMs prop: a dashboard clock that stops ticking (hidden tab,
+  // throttled timer, disabled query) must still lose the frame on time.
+  const decoderSource = readFileSync(
+    new URL('../src/products/classpilot/hooks/useDecodedScreenshot.js', import.meta.url),
+    'utf8',
+  );
+  assert.match(decoderSource, /observedAtMs \+ SCREENSHOT_RECONNECT_RETAIN_MS/);
+  assert.match(
+    decoderSource,
+    /return observedAtMs === null \? null : observedAtMs \+ SCREENSHOT_RECONNECT_RETAIN_MS/,
+    'a frame whose capture time cannot be read carries no bound, so it is never displayed',
+  );
+  assert.match(
+    decoderSource,
+    /if \(expiresAtMs === null \|\| expiresAtMs <= arrivedAtMs\)/,
+    'a frame already past its bound on arrival is never decoded or displayed',
+  );
+  assert.match(
+    decoderSource,
+    /setTimeout\([\s\S]{0,400}Math\.max\(0, committedExpiresAtMs - Date\.now\(\)\)/,
+    'the committed frame schedules its own expiry and never a negative delay',
+  );
+  assert.match(decoderSource, /return \(\) => clearTimeout\(timer\);/, 'the expiry timer is cleared on unmount and on every newer commit');
+
+  const tileSource = readFileSync(
+    new URL('../src/products/classpilot/components/StudentTile.jsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    tileSource,
+    /const displayableScreenshotPreviewMode = screenshotFrameExpired\s*\?\s*null\s*:\s*screenshotPreviewMode;/,
+    'an expired frame must retire the preview surface, not leave an empty letterbox',
+  );
+  assert.match(
+    tileSource,
+    /\) : displayableScreenshotPreviewMode \? \(/,
+    'the preview branch must follow the frame the tile can actually paint',
+  );
+  assert.match(
+    tileSource,
+    /paintedFrameProjection\(props, nowMs\)/,
+    'memo equality must project the decoded frame, which can diverge from the props frame',
+  );
+});
+
 test('authorized screenshot pixels use exact 75-second and 120-second display boundaries', () => {
   const screenshotData = { screenshot: 'data:image/jpeg;base64,test', timestamp: observedAt };
   assert.equal(deriveScreenshotPreviewMode({
