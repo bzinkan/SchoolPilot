@@ -951,9 +951,12 @@ export async function recordBrowserSafetyTimeline(options: {
   url: string;
   title?: string;
   classification: any;
+  /** "alert-only" when the school has turned off automatic tab closing. */
+  actionTaken?: "close-tab" | "alert-only";
 }) {
   const safetyAlert = options.classification?.safetyAlert;
   if (!safetyAlert) return null;
+  const actionTaken = options.actionTaken ?? "close-tab";
   const safetyCase = await getOrCreateSafetyCaseForStudent({
     schoolId: options.schoolId,
     studentId: options.studentId,
@@ -975,7 +978,7 @@ export async function recordBrowserSafetyTimeline(options: {
     confidence: options.classification?.confidence || null,
     reasoning: options.classification?.reasoning || null,
     matchedRule: options.classification?.source || null,
-    actionTaken: "close-tab",
+    actionTaken,
     teacherIntentSource: options.classification?.teacherIntentSource || null,
     reviewStatus: null,
     metadata: options.classification,

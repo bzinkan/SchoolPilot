@@ -206,7 +206,12 @@ import {
   publishClasspilotStudentSessionEnded,
   removeClasspilotDeviceAndPublishSessionEnds,
 } from "../../services/classpilotStudentSessionLifecycle.js";
-import { resolveCurrentClasspilotSafetyAction } from "../../services/classpilotSafetyAction.js";
+import {
+  describeClasspilotSafetyReason,
+  isClasspilotSafetyExempt,
+  resolveCurrentClasspilotSafetyAction,
+} from "../../services/classpilotSafetyAction.js";
+import { loadClasspilotSafetyContext } from "../../services/classpilotSafetyContext.js";
 import { resolveClasspilotEntitlement } from "../../services/classpilotEntitlement.js";
 import { scheduleClasspilotCommandUpdate } from "../../services/classpilotCommandUpdateScheduler.js";
 import { classpilotSchoolPolicyAuthorityEnvelope } from "../../services/classpilotCommandAuthority.js";
@@ -4275,12 +4280,39 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
         // stale result, but no live close, evidence, staff alert, or email may
         // escape unless this exact heartbeat still owns the active binding.
         if (safetyAction) {
+          // Loaded once per safety hit (never per heartbeat): the school
+          // allow-list decides whether any side effect may run, the auto-close
+          // setting decides whether the tab is closed, and the student's name
+          // lets staff surfaces say who needs attention.
+          const safetyContext = await loadClasspilotSafetyContext({ schoolId, studentId });
+          const activeFlightPath = classroomState?.restrictions?.flightPath;
+          const safetyAllowedDomains = [
+            ...safetyContext.allowedDomains,
+            ...(activeFlightPath?.active ? activeFlightPath.allowedDomains ?? [] : []),
+          ];
+          if (isClasspilotSafetyExempt({
+            url: safetyAction.classifiedUrl,
+            classification,
+            allowedDomains: safetyAllowedDomains,
+          })) {
+            console.info("[Safety] Allow-listed domain; no close, alert, case, or email", {
+              schoolId,
+              source: classification.source ?? null,
+            });
+            return;
+          }
+          const { autoBlockUnsafeUrls, studentName } = safetyContext;
+          const safetyReason = describeClasspilotSafetyReason(classification);
+
           const sendSafetyClose = async (safetyEvidenceRequest?: {
             requestId: string;
             tabRef: string;
             snapshotRevision: number;
             expiresAt: string;
           }) => {
+            // Alert-only mode: staff are still notified and the case is
+            // recorded, but the student's tab is left open.
+            if (!autoBlockUnsafeUrls) return;
             if (!safetyAction.closeTabData) return;
             const exactBindingEnvelope = safetyAction.exactTabCloseVersion === 2
               ? await runWithTenantContext({ schoolId }, () =>
@@ -4358,6 +4390,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
               url: safetyAction.classifiedUrl,
               title: safetyAction.classifiedTitle,
               classification,
+              actionTaken: autoBlockUnsafeUrls ? "close-tab" : "alert-only",
             }).catch(() => null);
             let captureRequest: {
               requestId: string;
@@ -4457,9 +4490,14 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
             type: "safety-alert",
             studentId,
             studentEmail,
+            studentName,
             alert: classification.safetyAlert,
             title: safetyAction.classifiedTitle,
             domain: classification.domain,
+            matchedTerm: classification.matchedTerm ?? null,
+            source: classification.source ?? null,
+            reason: safetyReason,
+            actionTaken: autoBlockUnsafeUrls ? "close-tab" : "alert-only",
             timestamp: new Date().toISOString(),
           };
           const alertSessionId = safetyAction.teachingSessionId;
@@ -4481,10 +4519,12 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
                 void sendSafetyAlertEmail({
                   recipients,
                   studentEmail,
+                  studentName,
                   alertType: classification.safetyAlert!,
                   url: safetyAction.classifiedUrl,
                   title: safetyAction.classifiedTitle || "Unknown",
                   schoolName: school?.name || "Your School",
+                  matchedTerm: classification.matchedTerm ?? null,
                 });
               }
           }).catch((err) => {

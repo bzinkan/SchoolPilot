@@ -172,14 +172,18 @@ export async function sendSchoolInquiryConfirmation(request: {
 export async function sendSafetyAlertEmail(options: {
   recipients: string[];
   studentEmail: string;
+  studentName?: string | null;
   alertType: string;
   url: string;
   title: string;
   schoolName: string;
+  /** URL-derived lexicon label or list entry that triggered the alert. */
+  matchedTerm?: string | null;
 }): Promise<number> {
-  const { recipients, studentEmail, alertType, url, title, schoolName } = options;
+  const { recipients, studentEmail, studentName, alertType, url, title, schoolName, matchedTerm } = options;
   const alertLabel = alertType.charAt(0).toUpperCase() + alertType.slice(1).replace("-", " ");
   const displayDomain = safetyAlertDisplayDomain(url);
+  const studentDisplay = studentName ? `${studentName} (${studentEmail})` : studentEmail;
   const escapeHtml = (value: string) => value.replace(/[&<>'"]/g, (character) => ({
     "&": "&amp;",
     "<": "&lt;",
@@ -194,7 +198,8 @@ export async function sendSafetyAlertEmail(options: {
       <p>ClassPilot detected potentially dangerous content on a student device.</p>
       <table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
         <tr><td style="padding: 8px; font-weight: bold; border-bottom: 1px solid #e5e7eb;">Alert Type</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb; color: #dc2626;">${escapeHtml(alertLabel)}</td></tr>
-        <tr><td style="padding: 8px; font-weight: bold; border-bottom: 1px solid #e5e7eb;">Student</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${escapeHtml(studentEmail)}</td></tr>
+        <tr><td style="padding: 8px; font-weight: bold; border-bottom: 1px solid #e5e7eb;">Student</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${escapeHtml(studentDisplay)}</td></tr>
+        ${matchedTerm ? `<tr><td style="padding: 8px; font-weight: bold; border-bottom: 1px solid #e5e7eb;">Matched</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${escapeHtml(matchedTerm)}</td></tr>` : ""}
         <tr><td style="padding: 8px; font-weight: bold; border-bottom: 1px solid #e5e7eb;">Page Title</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${escapeHtml(title || "Unknown")}</td></tr>
         <tr><td style="padding: 8px; font-weight: bold; border-bottom: 1px solid #e5e7eb;">Domain</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb; word-break: break-all;">${escapeHtml(displayDomain)}</td></tr>
         <tr><td style="padding: 8px; font-weight: bold;">Time</td><td style="padding: 8px;">${new Date().toLocaleString("en-US", { timeZone: "America/New_York" })}</td></tr>

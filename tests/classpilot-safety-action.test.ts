@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { resolveCurrentClasspilotSafetyAction } from "../src/services/classpilotSafetyAction.js";
+import {
+  describeClasspilotSafetyReason,
+  isClasspilotSafetyExempt,
+  resolveCurrentClasspilotSafetyAction,
+} from "../src/services/classpilotSafetyAction.js";
 import type { AiClassification } from "../src/services/aiClassification.js";
 import type { ClasspilotRealtimeStatus } from "../src/services/classpilotRealtimeStatus.js";
 
@@ -234,4 +238,49 @@ describe("ClassPilot current-heartbeat safety action boundary", () => {
     }), null);
   });
 
+});
+
+describe("ClassPilot safety allow-list exemption", () => {
+  const listHit = classification({
+    safetyAlert: "sexual",
+    domain: "pornhub.com",
+    matchedTerm: "pornhub.com",
+    source: "known-list",
+  });
+
+  it("exempts an allow-listed domain and its subdomains", () => {
+    assert.equal(isClasspilotSafetyExempt({ url: "https://www.pornhub.com/view", classification: listHit, allowedDomains: ["pornhub.com"] }), true);
+    assert.equal(isClasspilotSafetyExempt({ url: "https://video.pornhub.com/view", classification: listHit, allowedDomains: ["PornHub.com"] }), true);
+  });
+
+  it("never exempts a search-query hit, even on an allow-listed engine", () => {
+    assert.equal(isClasspilotSafetyExempt({ url: unsafeSearchUrl, classification: classification({ source: "search" }), allowedDomains: ["google.com"] }), false);
+    assert.equal(isClasspilotSafetyExempt({ url: unsafeSearchUrl, classification: classification(), allowedDomains: ["google.com"] }), false);
+  });
+
+  it("does not exempt unrelated lists, empty lists, lookalike hosts, or non-web URLs", () => {
+    assert.equal(isClasspilotSafetyExempt({ url: "https://pornhub.com/", classification: listHit, allowedDomains: [] }), false);
+    assert.equal(isClasspilotSafetyExempt({ url: "https://pornhub.com/", classification: listHit, allowedDomains: ["example.org"] }), false);
+    assert.equal(isClasspilotSafetyExempt({ url: "https://notpornhub.com/", classification: listHit, allowedDomains: ["pornhub.com"] }), false);
+    assert.equal(isClasspilotSafetyExempt({ url: "chrome://extensions", classification: listHit, allowedDomains: ["extensions"] }), false);
+  });
+});
+
+describe("ClassPilot safety reason text", () => {
+  it("describes search hits with the lexicon label and list hits with the site", () => {
+    assert.equal(
+      describeClasspilotSafetyReason(classification({ source: "search", matchedTerm: "commit suicide", domain: "search:commit suicide" })),
+      'Self-harm search: "commit suicide"'
+    );
+    assert.equal(describeClasspilotSafetyReason(classification()), 'Self-harm search: "suicide method"');
+    assert.equal(
+      describeClasspilotSafetyReason({ safetyAlert: "sexual", domain: "pornhub.com", matchedTerm: "pornhub.com", source: "known-list" }),
+      "Sexual content: pornhub.com"
+    );
+    assert.equal(
+      describeClasspilotSafetyReason({ safetyAlert: "drugs", domain: "example.net", matchedTerm: null, source: "ai" }),
+      "Drugs: example.net"
+    );
+    assert.equal(describeClasspilotSafetyReason({ safetyAlert: null, domain: "x.com", matchedTerm: null, source: "known-list" }), null);
+  });
 });

@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { parse as parseDomain } from "tldts";
 import {
   recordRuntimePerformanceCounter,
   recordRuntimePerformanceTiming,
@@ -11,12 +12,28 @@ if (ANTHROPIC_API_KEY) {
   anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 }
 
+export type AiClassificationSource =
+  | "search"
+  | "known-list"
+  | "school-domain"
+  | "ai-tool"
+  | "ai"
+  | "unknown";
+
 export interface AiClassification {
   category: "educational" | "non-educational" | "unknown";
   safetyAlert: "self-harm" | "violence" | "sexual" | "drugs" | null;
   domain: string;
   classifiedAt: number;
+  /**
+   * The lexicon label, list entry, or school domain that decided the result.
+   * Always URL-derived (never page content); null for AI/unknown results.
+   */
+  matchedTerm?: string | null;
+  source?: AiClassificationSource;
 }
+
+type UnsafeSearchType = NonNullable<AiClassification["safetyAlert"]>;
 
 export interface AiClassificationOptions {
   schoolDomain?: string | null;
@@ -99,6 +116,8 @@ function unknownUrlClassification(domain: string): AiClassification {
     safetyAlert: null,
     domain,
     classifiedAt: Date.now(),
+    matchedTerm: null,
+    source: "unknown",
   };
 }
 
@@ -138,6 +157,15 @@ const KNOWN_NON_EDUCATIONAL = new Set([
   "espn.com", "yahoo.com",
 ]);
 
+// Generative-AI assistants. Checked before KNOWN_EDUCATIONAL so a Google-hosted
+// assistant is not swallowed by the google.com entry. Every entry stays
+// lowercase; no vendor brand names appear in this file.
+const KNOWN_AI_TOOLS = new Set([
+  "chatgpt.com", "openai.com", "gemini.google.com", "bard.google.com",
+  "claude.ai", "perplexity.ai", "character.ai", "poe.com",
+  "copilot.microsoft.com", "quillbot.com", "deepseek.com", "you.com",
+]);
+
 // Known unsafe domains — instant safety alert + auto-block
 const KNOWN_UNSAFE: Map<string, "sexual" | "violence" | "drugs" | "self-harm"> = new Map([
   ["pornhub.com", "sexual"], ["xvideos.com", "sexual"], ["xnxx.com", "sexual"],
@@ -171,22 +199,27 @@ function normalizeDomainValue(value?: string | null): string | null {
   }
 }
 
-function domainMatches(domain: string, candidate?: string | null): boolean {
+export function domainMatches(domain: string, candidate?: string | null): boolean {
   const normalized = normalizeDomainValue(candidate);
   if (!normalized) return false;
   return domain === normalized || domain.endsWith(`.${normalized}`);
 }
 
-function matchesAnyDomain(domain: string, candidates: Iterable<string>): boolean {
+/** Exact entry wins over a parent-domain entry so docs.google.com reports itself. */
+function findMatchingDomain(domain: string, candidates: Iterable<string>): string | null {
+  let suffixMatch: string | null = null;
   for (const candidate of candidates) {
-    if (domainMatches(domain, candidate)) return true;
+    const normalized = normalizeDomainValue(candidate);
+    if (!normalized) continue;
+    if (domain === normalized) return normalized;
+    if (!suffixMatch && domain.endsWith(`.${normalized}`)) suffixMatch = normalized;
   }
-  return false;
+  return suffixMatch;
 }
 
-function getUnsafeDomainType(domain: string): "sexual" | "violence" | "drugs" | "self-harm" | null {
+function getUnsafeDomainMatch(domain: string): { type: UnsafeSearchType; domain: string } | null {
   for (const [unsafeDomain, unsafeType] of KNOWN_UNSAFE.entries()) {
-    if (domainMatches(domain, unsafeDomain)) return unsafeType;
+    if (domainMatches(domain, unsafeDomain)) return { type: unsafeType, domain: unsafeDomain };
   }
   return null;
 }
@@ -200,32 +233,192 @@ function cacheClassification(cacheKey: string, result: AiClassification): AiClas
   return result;
 }
 
-function classifyUnsafeSearch(url: string, domain: string): AiClassification | null {
-  if (domain !== "google.com" && domain !== "bing.com" && domain !== "search.yahoo.com") {
-    return null;
+// ---------------------------------------------------------------------------
+// Unsafe search detection (URL query only — never page content)
+// ---------------------------------------------------------------------------
+
+// Registrable-domain labels (via tldts) so google.co.uk, m.youtube.com and
+// search.brave.com are all recognised without enumerating ccTLDs.
+const SEARCH_ENGINE_LABELS = new Set([
+  "google", "bing", "yahoo", "duckduckgo", "brave", "ecosia",
+  "startpage", "yandex", "ask", "youtube", "qwant",
+]);
+const SEARCH_QUERY_PARAMS = ["q", "p", "query", "search_query", "text", "search"] as const;
+const MAX_SEARCH_QUERY_CHARS = 512;
+
+interface SearchRule {
+  label: string;
+  pattern: RegExp;
+  unless?: RegExp;
+}
+
+interface UnsafeSearchTier {
+  safetyAlert: UnsafeSearchType;
+  rules: SearchRule[];
+}
+
+// Weapon/bomb/kill-someone rules are skipped when the query is clearly about a
+// game or craft. Never applied to self-harm rules.
+const GAME_CONTEXT =
+  /\b(minecraft|roblox|fortnite|terraria|gmod|garrys\s+mod|lego|valorant|call\s+of\s+duty|gta|zelda|skyrim|papercraft|origami|cardboard)\b/;
+
+// Blanked (replaced by a space) before any tier runs. Global flag is required
+// because these are used with String.prototype.replace.
+const NEGATIVE_SEARCH_PHRASES: RegExp[] = [
+  /\b(to\s+)?kill\s+a\s+mockingbird\b/g,
+  /\bnaked\s+(eye|eyes|mole\s+rats?|and\s+afraid|juice|truth|singularity|economics|statistics|lunch|city|brand|wines?)\b/g,
+  /\bnude\s+(color|colour|colors|colours|shade|shades|palette|palettes|lipstick|lipsticks|heels|pumps|pink|beige|tone|tones|nail|nails|makeup|dress|dresses|tights|bra|bras|mice|mouse)\b/g,
+  /\bsuicide\s+(squad|bomber|bombers|bombing|bombings|doors?|mission|missions)\b/g,
+  /\bxxx\s*tentacion\b/g,
+  /\b(dumb|1000|100|stupid)\s+ways\s+to\s+die\b/g,
+  /\bbath\s+bombs?\b/g,
+  /\bbomb\s+(calorimeter|calorimetry|shelter|shelters|pop|pops|cyclone|squad|disposal|drill|drills|emoji)\b/g,
+  /\bweed\s+(killer|killers|eater|eaters|whacker|wacker|control|barrier|puller|pullers)\b/g,
+  /\bhigh\s+(score|scores|grade|grades|marks|quality|res|resolution|school|schools|schooler|schoolers|paying|five|heels|jump|tide|blood\s+pressure|protein|fiber|point|points|road|noon|speed|energy|level|levels|end|tech|cholesterol|temperature|pitch|voltage|frequency|altitude|pressure)\b/g,
+  /\b(nicotine|weed|thc|drugs?|alcohol|caffeine)\s+out\s+of\s+(your|my|the)\s+(system|body|blood)\b/g,
+  /\bpussy\s+(cat|cats|willows?|riot)\b/g,
+  /\b(nerf|water|toy|lego|paper|rubber\s+band|glue|hot\s+glue|paintball|airsoft|bb|spray|grease|caulk|staple|nail|heat|dart|foam|laser|tattoo|massage|pellet|cap|tranquilizer|radar|speed|potato|t\s*shirt|top)\s+guns?\b/g,
+  /\bguns?\s+(license|licence|permit|safety|control|laws?|violence|rights|show|shows|range|club|debate|statistics|policy|reform|history)\b/g,
+  /\bsex\s+(education|ed|cells?|chromosomes?|linked|determination|ratio|differences|discrimination|pistols|and\s+the\s+city)\b/g,
+];
+
+const SELF_HARM_SEARCH_RULES: SearchRule[] = [
+  { label: "commit suicide", pattern: /\b(commit|committing|attempt|attempting)\s+suicide\b/ },
+  { label: "kill myself", pattern: /\b(kill|killing|hurt|hurting|cut|cutting|harm|harming|hang|hanging|stab|stabbing|shoot|shooting|drown|drowning|poison|poisoning)\s*(myself|yourself)\b/ },
+  { label: "end my life", pattern: /\b(end|ending|take|taking)\s+(my|your)\s+(own\s+)?life\b|\bend\s+it\s+all\b/ },
+  { label: "want to die", pattern: /\b(want|wanting|wanna|ready|planning)\s+to\s+(die|be\s+dead|disappear\s+forever)\b|\bwanna\s+die\b|\bwish\s+i\s+(was|were)\s+dead\b/ },
+  { label: "how to die", pattern: /\b(how|ways?|(easiest|best|fastest|quickest|painless)\s+way)\s+to\s+(die|overdose|od)\b/ },
+  { label: "painless death", pattern: /\bpainless(ly)?\s+(death|suicide|way\s+to\s+(die|go))\b/ },
+  { label: "overdose amount", pattern: /\bhow\s+(many|much)\s+\S+(\s+\S+){0,3}\s+(to|until|before\s+you)\s+(overdose|od|die|kill\s+(you|me|myself|yourself))\b/ },
+  { label: "lethal dose", pattern: /\b(lethal|fatal|deadly)\s+(dose|dosage|amount)\b/ },
+  { label: "overdose on pills", pattern: /\b(overdose|overdosing|od)\s+on\s+(tylenol|acetaminophen|ibuprofen|advil|aspirin|benadryl|melatonin|nyquil|sleeping\s+pills|pills|xanax|antidepressants|zoloft|prozac|adderall|insulin)\b/ },
+  { label: "self harm", pattern: /\bself\s*(harm|harming|harmed|injury|injuries|injuring|injure|mutilate|mutilation|mutilating)\b/ },
+  { label: "cutting", pattern: /\b(cut|cutting|slit|slitting)\s+(my\s+|your\s+)?wrists?\b|\bwrist\s+cutting\b|\b(hide|hiding)\s+(my\s+)?(cuts|cut\s+marks|self\s*harm\s+scars)\b/ },
+  { label: "noose", pattern: /\bhow\s+to\s+(tie|make)\s+a\s+noose\b/ },
+  { label: "pro-ana", pattern: /\b(pro\s*ana|pro\s*mia|thinspo|thinspiration|starv(e|ing)\s+myself)\b/ },
+  { label: "suicide", pattern: /\bsuicid(e|es|al|ality)\b/ },
+];
+
+const VIOLENCE_SEARCH_RULES: SearchRule[] = [
+  { label: "school shooting plan", pattern: /\b(plan|planning|planned|commit|committing|do|doing|start|starting|pull\s+off)\s+(a\s+|the\s+)?(school|mass)\s+shooting\b|\b(school|mass)\s+shoot(ing|er)\s+(plan|plans|planning|manifesto|kit|checklist|tips|how\s+to)\b|\bshoot\s+up\s+(the|my|a|our)\s+school\b|\bbe(come|coming)?\s+a\s+school\s+shooter\b/ },
+  { label: "make a bomb", pattern: /\b(make|making|build|building|create|creating)\s+(a\s+|an\s+)?(homemade\s+)?(pipe\s+)?(bomb|bombs|explosive|explosives|ied|molotov(\s+cocktail)?|napalm|thermite)\b|\bbomb\s+(making|recipe|instructions|tutorial|schematics?)\b/, unless: GAME_CONTEXT },
+  { label: "bomb threat", pattern: /\b(make|making|call\s+in|calling\s+in|write|writing|send|sending|fake)\s+(a\s+)?bomb\s+threat\b/ },
+  { label: "kill someone", pattern: /\b(how\s+to|ways?\s+to|(best|easiest)\s+way\s+to|i\s+want\s+to|wanna|going\s+to|gonna)\s+(kill|murder|strangle|poison|stab|shoot|beat\s+up)\s+(someone|somebody|people|everyone|a\s+person|a\s+man|a\s+woman|a\s+girl|a\s+boy|a\s+kid|a\s+teacher|him|her|them|my\s+(mom|dad|mother|father|parents|brother|sister|teacher|family|friend|friends|classmate|bully|ex|girlfriend|boyfriend|stepdad|stepmom))\b/, unless: GAME_CONTEXT },
+  { label: "kill family member", pattern: /\b(kill|murder|stab|shoot|strangle|poison)\s+my\s+(mom|dad|mother|father|parents|brother|sister|teacher|family|classmate|bully|ex|girlfriend|boyfriend|stepdad|stepmom)\b/, unless: GAME_CONTEXT },
+  { label: "get a gun", pattern: /\b(buy|buying|get|getting|make|making|build|building|print|printing|3d\s+print(ing)?|order|ordering|steal|stealing)\s+(a\s+|an\s+)?(gun|guns|handgun|pistol|rifle|shotgun|ar\s*15|ak\s*47|ghost\s+gun|firearm|silencer|suppressor|switchblade)\b/, unless: GAME_CONTEXT },
+  { label: "weapon at school", pattern: /\b(bring|bringing|sneak|sneaking|take|taking|hide|hiding|carry|carrying)\s+(a\s+|my\s+)?(gun|knife|weapon|pistol|taser|brass\s+knuckles)\s+(to|into|at|in|through)\s+school\b/ },
+  { label: "kill list", pattern: /\b(make|making|made|write|writing|my)\s+(a\s+)?(kill|hit)\s+list\b/ },
+  { label: "gore video", pattern: /\b(gore|beheading|beheadings|decapitation|execution|executions|torture|snuff)\s+(video|videos|footage|clips?|pics?|site|sites|compilation)\b|\b(real|live|actual|uncensored)\s+(murder|death|killing|beheading|shooting)\s+(video|videos|footage|clips?)\b/ },
+  { label: "hurt an animal", pattern: /\bhow\s+to\s+(kill|torture|hurt|poison)\s+(a\s+|the\s+|my\s+)?(cat|dog|kitten|puppy|hamster|neighbors?\s+(cat|dog)|animals?)\b/ },
+];
+
+const DRUG_SEARCH_RULES: SearchRule[] = [
+  { label: "buy drugs", pattern: /\b(buy|buying|purchase|purchasing|order|ordering|get|getting|find|finding|score|scoring|where\s+to\s+(buy|get|find))\s+(some\s+|cheap\s+)?(weed|marijuana|cannabis|edibles|thc\s+(gummies|carts?|cartridges?|vapes?|pens?)|dab\s+pens?|xanax|xannies|xans|adderall|addys|percocet|percs|oxy|oxycontin|oxycodone|fentanyl|fent|molly|mdma|ecstasy|lsd|acid\s+tabs|shrooms|magic\s+mushrooms|cocaine|meth|heroin|lean|codeine|promethazine|ketamine|drugs|vape|vapes|vape\s+pens?|nicotine|zyn|zyns|juul|juuls|elf\s+bars?|geek\s+bars?)\b/ },
+  { label: "buy alcohol underage", pattern: /\b(buy|buying|get|getting|order|ordering)\s+(alcohol|beer|vodka|liquor|booze|wine)\s+(underage|under\s+21|without\s+(an\s+)?id|with\s+(a\s+)?fake\s+id|as\s+a\s+minor)\b|\bfake\s+id\s+(for|to\s+buy)\s+(alcohol|beer|liquor|vapes?)\b/ },
+  { label: "hide drugs", pattern: /\b(hide|hiding|sneak|sneaking)\s+(a\s+|my\s+)?(vape|vapes|weed|juul|dab\s+pen|edibles|alcohol|drugs|pills|nicotine|zyn|zyns)\s+(from|at|in|into|past|through)\s+(school|parents|my\s+parents|mom|dad|teachers|metal\s+detectors?|a\s+drug\s+test)\b/ },
+  { label: "use drugs", pattern: /\bhow\s+to\s+(smoke|roll|use|snort|inject|shoot\s+up|take|do|make|cook|grow|hit|pack)\s+(a\s+)?(weed|blunt|joint|bong|dab\s+pen|dabs|carts?|meth|crack|cocaine|heroin|fentanyl|xanax|percocet|adderall|molly|lsd|shrooms|lean|dxm|edibles|nicotine|vape|juul|zyns?)\b/ },
+  { label: "get high", pattern: /\b(get|getting)\s+(high|drunk|stoned|faded|crossfaded)\s+(at|in|before|during|after)\s+school\b|\bways\s+to\s+get\s+high\b|\bhousehold\s+(items|things|products)\s+(to|that)\s+get\s+(you\s+)?high\b|\bhow\s+to\s+get\s+(high|drunk|stoned|faded|crossfaded)\b/ },
+  { label: "household high", pattern: /\b(nutmeg|benadryl|cough\s+syrup|dxm|robitussin|whippets|whip\s*its|nitrous|dust\s*off|air\s+duster|sharpie|glue|gasoline|hand\s+sanitizer)\s+(high|trip|tripping|to\s+get\s+high|drunk|get\s+you\s+high)\b/ },
+  { label: "drug dosage", pattern: /\b(fentanyl|fent|xanax|xannies|percocet|percs|oxycontin|oxy|adderall|addys|lean|molly|mdma|dxm|shrooms|lsd|ketamine|meth)\s+(dose|dosage|dosing|how\s+much|high|trip|plug|dealer|near\s+me|for\s+sale|recipe|how\s+to\s+make)\b/ },
+  { label: "drug dealer", pattern: /\b(weed|drug|drugs|xanax|fent|fentanyl|percocet|molly|coke|vape|zyn)\s+(dealer|dealers|plug|plugs)\b|\bplug\s+(near\s+me|in\s+my\s+area|for\s+weed)\b/ },
+  { label: "buy vape", pattern: /\b(cheap|disposable|best|buy|order|free)\s+(vapes?|vape\s+pens?|elf\s+bars?|geek\s+bars?|zyns?|nicotine\s+pouches)\b|\b(vapes?|elf\s+bars?|geek\s+bars?|zyns?)\s+(near\s+me|for\s+sale|delivery|online|without\s+id|under\s+21|no\s+id)\b/ },
+  { label: "darkweb drugs", pattern: /\b(dark\s*web|darknet|silk\s+road|tor)\s+(drugs?|drug\s+market|markets?|weed|vendors?)\b/ },
+];
+
+const SEXUAL_SEARCH_RULES: SearchRule[] = [
+  { label: "porn", pattern: /\bporn[a-z]*\b/ },
+  { label: "xxx", pattern: /\bxxx\b/ },
+  { label: "hentai", pattern: /\b(hentai|rule\s*34|ahegao|doujinshi|ecchi|futanari)\b/ },
+  { label: "nude", pattern: /\bnudes?\b/ },
+  { label: "naked", pattern: /\bnaked\s+(girls?|boys?|women|woman|men|man|teens?|teenagers?|kids?|children|guys?|ladies|lady|people|celebs?|celebrities|bodies|body|pics?|pictures?|photos?|videos?|selfies?|anime|cartoons?)\b|\b(girls?|boys?|women|men|teens?|people)\s+naked\b/ },
+  { label: "sex video", pattern: /\bsex\s+(video|videos|vid|vids|tape|tapes|clip|clips|pics?|pictures?|movies?|cam|cams|chat|gifs?|sites?|stories|positions?|toys?|dolls?)\b|\bsexy\s+(girls?|boys?|women|men|teens?|babes?|pics|videos|nudes?)\b/ },
+  { label: "onlyfans", pattern: /\b(onlyfans|only\s+fans\s+leaks?|chaturbate|livejasmin|stripchat|bongacams|cam\s*girls?|webcam\s+(girls?|sex|porn))\b/ },
+  { label: "explicit", pattern: /\b(boobs|boobies|titties|(big|huge)\s+tits|blowjob|blow\s+job|handjob|hand\s+job|cumshot|cum\s+shot|gangbang|gang\s+bang|threesome|deepthroat|deep\s+throat|anal\s+sex|dildo|fleshlight|jerk(ing)?\s+off|jack(ing)?\s+off|dick\s+pics?|pussy|milfs?)\b/ },
+  { label: "nsfw", pattern: /\b(nsfw|x\s*rated|sexting|send\s+nudes|leaked\s+nudes|nude\s+leaks?|escorts?\s+near\s+me|strip\s+clubs?)\b/ },
+];
+
+// Evaluated in this order so an ambiguous query resolves to the most urgent tier.
+const UNSAFE_SEARCH_TIERS: UnsafeSearchTier[] = [
+  { safetyAlert: "self-harm", rules: SELF_HARM_SEARCH_RULES },
+  { safetyAlert: "violence", rules: VIOLENCE_SEARCH_RULES },
+  { safetyAlert: "drugs", rules: DRUG_SEARCH_RULES },
+  { safetyAlert: "sexual", rules: SEXUAL_SEARCH_RULES },
+];
+
+function normalizeSearchQuery(raw: string): string {
+  return raw
+    .slice(0, MAX_SEARCH_QUERY_CHARS)
+    .normalize("NFKC")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}+/gu, "")
+    .replace(/[\u200b-\u200d\u2060\ufeff]/g, "")
+    .replace(/[^\p{L}\p{N}\s]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isSearchEngineDomain(domain: string): boolean {
+  const label = parseDomain(domain).domainWithoutSuffix;
+  return typeof label === "string" && SEARCH_ENGINE_LABELS.has(label);
+}
+
+function extractSearchQuery(parsed: URL): string | null {
+  for (const key of SEARCH_QUERY_PARAMS) {
+    const value = parsed.searchParams.get(key);
+    if (value && value.trim()) return value;
   }
+  // Hash-routed search UIs: "#q=..." or "#/search?q=...".
+  const hash = parsed.hash.slice(1);
+  if (hash.includes("=")) {
+    const hashParams = new URLSearchParams(hash.slice(hash.indexOf("?") + 1));
+    for (const key of SEARCH_QUERY_PARAMS) {
+      const value = hashParams.get(key);
+      if (value && value.trim()) return value;
+    }
+  }
+  return null;
+}
 
+/**
+ * Pure lexicon match over a raw search query. Exported so the rules can be
+ * unit-tested directly. Returns the tier and a stable label (never the raw
+ * student text) so downstream cooldown keys and alerts stay deterministic.
+ */
+export function matchUnsafeSearchQuery(
+  rawQuery: string
+): { safetyAlert: UnsafeSearchType; label: string } | null {
+  let query = normalizeSearchQuery(String(rawQuery ?? ""));
+  if (!query) return null;
+  for (const negative of NEGATIVE_SEARCH_PHRASES) {
+    query = query.replace(negative, " ");
+  }
+  for (const tier of UNSAFE_SEARCH_TIERS) {
+    for (const rule of tier.rules) {
+      if (rule.unless?.test(query)) continue;
+      if (rule.pattern.test(query)) {
+        return { safetyAlert: tier.safetyAlert, label: rule.label };
+      }
+    }
+  }
+  return null;
+}
+
+function classifyUnsafeSearch(url: string, domain: string): AiClassification | null {
   try {
-    const searchUrl = new URL(url);
-    const query = (searchUrl.searchParams.get("q") || searchUrl.searchParams.get("p") || "").toLowerCase();
-    const unsafeSearchTerms = [
-      "porn", "xxx", "hentai", "nude", "naked", "sex video", "onlyfans",
-      "how to kill", "how to make a bomb", "buy drugs", "buy weed",
-      "self harm", "suicide method",
-    ];
-    const matchedTerm = unsafeSearchTerms.find(term => query.includes(term));
-    if (!matchedTerm) return null;
-
-    const alertType: "sexual" | "violence" | "drugs" | "self-harm" =
-      ["porn", "xxx", "hentai", "nude", "naked", "sex video", "onlyfans"].includes(matchedTerm) ? "sexual" :
-      ["how to kill", "how to make a bomb"].includes(matchedTerm) ? "violence" :
-      ["buy drugs", "buy weed"].includes(matchedTerm) ? "drugs" : "self-harm";
-
+    if (!url.includes("?") && !url.includes("#")) return null;
+    if (!isSearchEngineDomain(domain)) return null;
+    const rawQuery = extractSearchQuery(new URL(url));
+    if (!rawQuery) return null;
+    const match = matchUnsafeSearchQuery(rawQuery);
+    if (!match) return null;
     return {
       category: "non-educational",
-      safetyAlert: alertType,
-      domain: `search:${matchedTerm}`,
+      safetyAlert: match.safetyAlert,
+      domain: `search:${match.label}`,
       classifiedAt: Date.now(),
+      matchedTerm: match.label,
+      source: "search",
     };
   } catch {
     return null;
@@ -257,37 +450,61 @@ export async function classifyUrl(
       safetyAlert: null,
       domain,
       classifiedAt: Date.now(),
+      matchedTerm: schoolDomain,
+      source: "school-domain",
+    });
+  }
+
+  // Generative-AI assistants — checked before the educational list so a
+  // Google-hosted assistant is not treated as educational via google.com.
+  const aiTool = findMatchingDomain(domain, KNOWN_AI_TOOLS);
+  if (aiTool) {
+    return cacheClassification(cacheKey, {
+      category: "non-educational",
+      safetyAlert: null,
+      domain,
+      classifiedAt: Date.now(),
+      matchedTerm: aiTool,
+      source: "ai-tool",
     });
   }
 
   // Known domains — instant classification
-  if (matchesAnyDomain(domain, KNOWN_EDUCATIONAL)) {
+  const educational = findMatchingDomain(domain, KNOWN_EDUCATIONAL);
+  if (educational) {
     const result: AiClassification = {
       category: "educational",
       safetyAlert: null,
       domain,
       classifiedAt: Date.now(),
+      matchedTerm: educational,
+      source: "known-list",
     };
     return cacheClassification(cacheKey, result);
   }
-  if (matchesAnyDomain(domain, KNOWN_NON_EDUCATIONAL)) {
+  const nonEducational = findMatchingDomain(domain, KNOWN_NON_EDUCATIONAL);
+  if (nonEducational) {
     const result: AiClassification = {
       category: "non-educational",
       safetyAlert: null,
       domain,
       classifiedAt: Date.now(),
+      matchedTerm: nonEducational,
+      source: "known-list",
     };
     return cacheClassification(cacheKey, result);
   }
 
   // Known unsafe domains — instant safety alert
-  const unsafeType = getUnsafeDomainType(domain);
-  if (unsafeType) {
+  const unsafe = getUnsafeDomainMatch(domain);
+  if (unsafe) {
     const result: AiClassification = {
       category: "non-educational",
-      safetyAlert: unsafeType,
+      safetyAlert: unsafe.type,
       domain,
       classifiedAt: Date.now(),
+      matchedTerm: unsafe.domain,
+      source: "known-list",
     };
     return cacheClassification(cacheKey, result);
   }
@@ -303,6 +520,8 @@ export async function classifyUrl(
       safetyAlert: null,
       domain,
       classifiedAt: Date.now(),
+      matchedTerm: null,
+      source: "unknown",
     });
   }
 
@@ -358,6 +577,8 @@ Title: ${title || "Unknown"}`,
       safetyAlert,
       domain,
       classifiedAt: Date.now(),
+      matchedTerm: null,
+      source: "ai",
     };
 
     return cacheClassification(cacheKey, result);
