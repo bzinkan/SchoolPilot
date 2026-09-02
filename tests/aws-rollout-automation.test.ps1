@@ -16,6 +16,10 @@ $script:AssertionCount = 0
 # test-only startup bounds that match the existing slow-sample allowance.
 $script:MonitorStartupDeadlineSeconds = 60
 $script:MonitorCompletionWatchdogMilliseconds = 90000
+# One supervised mock-AWS sweep can approach the startup bound above, and the
+# start-gate barrier holds a second sweep behind the first. Every watchdog or
+# staleness budget that spans supervised sweeps must cover both.
+$script:SupervisedSampleBudgetSeconds = 2 * $script:MonitorStartupDeadlineSeconds
 $previousRolloutTestSentinel = $env:SCHOOLPILOT_ROLLOUT_TEST_MODE
 $env:SCHOOLPILOT_ROLLOUT_TEST_MODE = "I_UNDERSTAND_TEST_ONLY"
 
@@ -1845,11 +1849,12 @@ param(
   [string]$ReadyPath,
   [string]$ReleasePath,
   [string]$TerminalProgressPath,
-  [string]$CompletedPath
+  [string]$CompletedPath,
+  [int]$TimeoutSeconds = 30
 )
 $ErrorActionPreference="Stop"
 function Wait-ForPath([string]$Path,[string]$Label){
-  $deadline=[DateTimeOffset]::UtcNow.AddSeconds(30)
+  $deadline=[DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
   while(-not (Test-Path -LiteralPath $Path)){
     if([DateTimeOffset]::UtcNow -ge $deadline){throw "Timed out waiting for $Label."}
     Start-Sleep -Milliseconds 10
@@ -2140,7 +2145,7 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
                 $caseConfig.loadSummaryPath = $caseSummary
                 $caseConfig.rollbackConfigPath = $caseRollbackPath
                 $caseConfig.maxIterations = 10
-                $caseConfig.deadlineUtc = [DateTimeOffset]::UtcNow.AddMinutes(1).ToString("o")
+                $caseConfig.deadlineUtc = [DateTimeOffset]::UtcNow.AddMinutes(3).ToString("o")
                 $caseConfig | Add-Member -NotePropertyName expectedGeneratorPublicIp -NotePropertyValue "203.0.113.10" -Force
                 $caseConfig | Add-Member -NotePropertyName testGeneratorPublicIpSequence -NotePropertyValue @("203.0.113.10") -Force
                 $caseConfig | Add-Member -NotePropertyName testRuntimeHarnessScriptPath -NotePropertyValue $immediateFatalHarness -Force
@@ -2148,10 +2153,18 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
                     # Release traffic while the next monitor sample is inside its
                     # mocked AWS calls. The final progress refresh must still retain
                     # the immediate tenant-isolation reason and rollback priority.
-                    $caseConfig | Add-Member -NotePropertyName testPreReleaseGeneratorPublicIpDelayMilliseconds -NotePropertyValue 1500 -Force
+                    # The next sample starts right after the arming heartbeat, so this
+                    # delay only has to outlast one mock-AWS child launch; use the
+                    # supervisor's maximum so a slow runner cannot commit terminal
+                    # progress before the barrier engages.
+                    $caseConfig | Add-Member -NotePropertyName testPreReleaseGeneratorPublicIpDelayMilliseconds -NotePropertyValue 5000 -Force
                 }
+                # The monitor heartbeat is written once per completed sweep, and the
+                # cross-school barrier holds the post-release sweep inside mocked AWS,
+                # so the stale bound must cover two slow sweeps. The same bound sets
+                # the supervisor's harness-ready and monitor-arming deadlines.
                 $caseConfig | Add-Member -NotePropertyName supervisorWatchdog -NotePropertyValue ([pscustomobject]@{
-                    monitorHeartbeatStaleSeconds=30;rollbackHeartbeatStaleSeconds=10;pollSeconds=1;generatorIpCheckSeconds=1
+                    monitorHeartbeatStaleSeconds=$script:SupervisedSampleBudgetSeconds;rollbackHeartbeatStaleSeconds=10;pollSeconds=1;generatorIpCheckSeconds=1
                 }) -Force
                 $caseConfigPath = Join-Path $childRoot "$caseRunId-supervisor.json"
                 [IO.File]::WriteAllText($caseConfigPath, ($caseConfig|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
@@ -2189,7 +2202,7 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
                         -FilePath (Get-Process -Id $PID).Path `
                         -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$sampleBarrierCoordinator,
                             "-MonitorHeartbeatPath",$caseMonitorHeartbeat,"-ArmPath",$barrierArm,"-ReadyPath",$barrierReady,
-                            "-ReleasePath",$barrierRelease,"-TerminalProgressPath",$terminalProgressWritten,"-CompletedPath",$barrierCompleted) `
+                            "-ReleasePath",$barrierRelease,"-TerminalProgressPath",$terminalProgressWritten,"-CompletedPath",$barrierCompleted,"-TimeoutSeconds",$script:SupervisedSampleBudgetSeconds) `
                         -StandardOutputPath (Join-Path $childRoot "$caseRunId-barrier.out") `
                         -StandardErrorPath (Join-Path $childRoot "$caseRunId-barrier.err")
                 }
@@ -3714,7 +3727,10 @@ exit 0
         }
         $completedWaitConfig.resources.expectedRedisNodeType = "cache.t4g.micro"
         $completedWaitConfig | Add-Member -NotePropertyName redisResizeCompletedAtUtc -NotePropertyValue ([DateTimeOffset]::UtcNow.AddHours(-1).ToString("o")) -Force
-        $completedWaitConfig | Add-Member -NotePropertyName thresholds -NotePropertyValue @{progressStaleSeconds=5} -Force
+        # The first sample reads progress before its mocked AWS calls, so the
+        # stale bound must cover slow monitor startup. It stays far below the
+        # ten-minute mtime skew applied below, which still exercises the gate.
+        $completedWaitConfig | Add-Member -NotePropertyName thresholds -NotePropertyValue @{progressStaleSeconds=$script:SupervisedSampleBudgetSeconds} -Force
         $completedWaitConfigPath = Join-Path $childRoot "$completedWaitRunId-monitor.json"
         [IO.File]::WriteAllText($completedWaitConfigPath, ($completedWaitConfig|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
         $completedWaitBarrierArm = Join-Path $childRoot "$completedWaitRunId-sample-barrier-arm.flag"
