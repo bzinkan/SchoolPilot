@@ -1,9 +1,68 @@
-import type { AiClassification } from "./aiClassification.js";
+import { domainMatches, type AiClassification } from "./aiClassification.js";
 import type {
   ClasspilotRealtimeMutationResult,
   ClasspilotRealtimeStatus,
 } from "./classpilotRealtimeStatus.js";
 import { classpilotExactTabCloseVersion } from "./classpilotExactTabCapability.js";
+
+const SAFETY_ALERT_LABELS: Record<NonNullable<AiClassification["safetyAlert"]>, string> = {
+  "self-harm": "Self-harm",
+  violence: "Violence",
+  sexual: "Sexual content",
+  drugs: "Drugs",
+};
+
+function isSearchClassification(
+  classification: Pick<AiClassification, "domain" | "source">
+): boolean {
+  return classification.source === "search"
+    || String(classification.domain || "").startsWith("search:");
+}
+
+/**
+ * School Allowed Domains (plus an active Flight Path's allowed domains) exempt
+ * a page from every AI safety side effect. Search-query hits are never exempt:
+ * an allow-list entry describes a site, not what a student types into it.
+ */
+export function isClasspilotSafetyExempt(options: {
+  url: string;
+  classification: Pick<AiClassification, "domain" | "source">;
+  allowedDomains: readonly string[];
+}): boolean {
+  if (isSearchClassification(options.classification)) return false;
+  if (!options.allowedDomains.length) return false;
+  let hostname: string;
+  try {
+    const parsed = new URL(options.url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    hostname = parsed.hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return false;
+  }
+  if (!hostname) return false;
+  for (const entry of options.allowedDomains) {
+    if (domainMatches(hostname, entry)) return true;
+  }
+  return false;
+}
+
+/**
+ * One-line, teacher-facing reason built only from URL-derived labels
+ * (never page content), e.g. `Self-harm search: "commit suicide"`.
+ */
+export function describeClasspilotSafetyReason(
+  classification: Pick<AiClassification, "safetyAlert" | "domain" | "matchedTerm" | "source">
+): string | null {
+  if (!classification.safetyAlert) return null;
+  const label = SAFETY_ALERT_LABELS[classification.safetyAlert];
+  if (isSearchClassification(classification)) {
+    const term = classification.matchedTerm
+      || String(classification.domain || "").replace(/^search:/, "");
+    return term ? `${label} search: "${term}"` : `${label} search`;
+  }
+  const site = classification.matchedTerm || classification.domain;
+  return site ? `${label}: ${site}` : label;
+}
 
 export type ClasspilotSafetyAction = {
   snapshot: ClasspilotRealtimeStatus;

@@ -580,7 +580,7 @@ export default function Settings() {
                   <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">Self-Harm Content</span>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  AI automatically blocks unsafe content. If AI is blocking a domain you want to allow, add it to the Allowed Domains field below.
+                  AI content checks can close unsafe tabs and alert staff. If a site you trust is being flagged, add it to Allowed Domains below.
                 </p>
               </div>
 
@@ -593,7 +593,7 @@ export default function Settings() {
                   placeholder="youtube.com, wikipedia.org"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Domains listed here will never be blocked by AI. Use this to allow sites that AI may flag as unsafe.
+                  Domains listed here are never auto-closed or alerted by AI content checks. Unsafe search queries typed into search engines are still flagged.
                 </p>
               </div>
 
@@ -603,7 +603,7 @@ export default function Settings() {
                   id="blockedDomains"
                   data-testid="input-blocked-domains"
                   {...form.register("blockedDomains")}
-                  placeholder="lens.google.com, chat.openai.com, quillbot.com"
+                  placeholder="lens.google.com, chatgpt.com, quillbot.com"
                 />
                 <div className="space-y-1 text-xs text-muted-foreground">
                   <p>
@@ -628,6 +628,22 @@ export default function Settings() {
               </div>
               <p className="text-xs text-muted-foreground -mt-4 ml-7">
                 Send email notifications to school admins when dangerous content (self-harm, violence, sexual) is detected.
+              </p>
+
+              <div className="flex items-center space-x-3">
+                <input
+                  type="checkbox"
+                  id="autoBlockUnsafeUrls"
+                  data-testid="input-auto-block-unsafe-urls"
+                  className="h-4 w-4 rounded border-gray-300"
+                  {...form.register("autoBlockUnsafeUrls")}
+                />
+                <Label htmlFor="autoBlockUnsafeUrls">
+                  Automatically close unsafe tabs
+                </Label>
+              </div>
+              <p className="text-xs text-muted-foreground -mt-4 ml-7">
+                When off, ClassPilot still alerts teachers and admins about unsafe content but leaves the student's tab open.
               </p>
 
               {canManageSchoolSettings && (

@@ -1682,9 +1682,23 @@ export default function Dashboard() {
             }
             if (message.type === 'safety-alert') {
               if (!classRealtimeMessageEligibility(message)) return;
+              const safetyAlertQueryKey = aggregatedStudentsQueryKeyRef.current;
+              const safetyAlertRoster = safetyAlertQueryKey
+                ? queryClient.getQueryData(safetyAlertQueryKey)
+                : undefined;
+              const safetyAlertStudent = Array.isArray(safetyAlertRoster) && message.studentId
+                ? safetyAlertRoster.find((student) => String(student?.studentId ?? '') === String(message.studentId))
+                : undefined;
+              const safetyAlertRosterName = safetyAlertStudent
+                ? (safetyAlertStudent.studentName
+                  || safetyAlertStudent.name
+                  || [safetyAlertStudent.firstName, safetyAlertStudent.lastName].filter(Boolean).join(' ').trim()
+                  || safetyAlertStudent.email)
+                : '';
+              const who = message.studentName || safetyAlertRosterName || message.studentEmail || 'A student';
               toast({
                 title: "Safety Alert",
-                description: `${message.studentName || 'A student'} may need attention — ${message.classification?.reason || 'flagged content detected'}`,
+                description: `${who} may need attention — ${message.reason || message.classification?.reason || 'flagged content detected'}`,
                 variant: "destructive",
               });
               queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
