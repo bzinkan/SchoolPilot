@@ -565,10 +565,25 @@ test('screenshot health chips explain capture state without leaking the raw exte
       expected: { kind: 'background', label: 'Preview every 30s', tone: 'muted' },
     },
     {
-      name: 'an active alarm is failing regardless of cadence',
-      student: monitoredStudent({ screenshotHealth: { ...healthy, alarmActive: true, lastError: 'captureVisibleTab: permission denied' } }),
+      // Regression guard: `alarmActive` means the extension's periodic capture
+      // alarm is scheduled, which is the healthy state on every monitored
+      // device. Reading it as a failure badged the whole wall.
+      name: 'a scheduled capture alarm is healthy, never a failure',
+      student: monitoredStudent({ screenshotHealth: { ...healthy, alarmActive: true } }),
+      options: { cadence: 'active_view', screenshotDisplay: freshDisplay },
+      expected: { kind: 'live', label: 'Live preview · 5s', tone: 'ok' },
+    },
+    {
+      name: 'a scheduled alarm does not mask a genuine recent capture error',
+      student: monitoredStudent({ screenshotHealth: { ...healthy, alarmActive: true, lastErrorAt: observedAt - 1_000, lastError: 'captureVisibleTab: permission denied' } }),
       options: { cadence: 'active_view', screenshotDisplay: freshDisplay },
       expected: { kind: 'failing', label: 'Preview capture failing', tone: 'warn' },
+    },
+    {
+      name: 'a stale capture error with the alarm scheduled reports the background cadence',
+      student: monitoredStudent({ screenshotHealth: { ...healthy, alarmActive: true, lastSuccessAt: observedAt - 200_000, lastErrorAt: observedAt - 150_001, lastError: 'boom' } }),
+      options: { cadence: 'background', screenshotDisplay: freshDisplay },
+      expected: { kind: 'background', label: 'Preview every 30s', tone: 'muted' },
     },
     {
       name: 'a recent error after the last success is failing on the active cadence',
