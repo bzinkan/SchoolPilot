@@ -47,6 +47,8 @@ export function useClassPilotAuth() {
         timezone: activeMembership.schoolTimezone || 'America/New_York',
         mailpilotEntitled: activeMembership.mailpilotEntitled === true,
         classpilotEmailMonitoring: activeMembership.classpilotEmailMonitoring === true,
+        // Staff sign-in policy; defaults on when the server has not sent it.
+        staffPasswordLoginEnabled: activeMembership.staffPasswordLoginEnabled !== false,
       }
     : null;
 

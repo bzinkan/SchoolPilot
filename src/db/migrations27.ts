@@ -341,6 +341,17 @@ ALTER TABLE settings
   VALIDATE CONSTRAINT settings_cp_sso_policy_revision_check;
 `;
 
+// School-owned staff sign-in policy. Additive with a true default so every
+// existing school keeps email/password sign-in until an administrator turns it
+// off in ClassPilot Settings. `schools` is a global table (no RLS registry).
+export const SCHOOLS_STAFF_PASSWORD_LOGIN_EXPAND_SQL = `
+SET LOCAL lock_timeout = '15s';
+SET LOCAL statement_timeout = '5min';
+
+ALTER TABLE schools
+  ADD COLUMN IF NOT EXISTS staff_password_login_enabled BOOLEAN NOT NULL DEFAULT true;
+`;
+
 export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
   {
     id: "20260822_classpilot_2_7_expand",
@@ -432,6 +443,16 @@ export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
     mode: "transactional",
     apply: async (connection) => {
       await connection.query(CLASSPILOT_SSO_POLICY_EXPAND_SQL);
+    },
+  },
+  {
+    id: "20260902_schools_staff_password_login_expand",
+    checksum: createHash("sha256")
+      .update(SCHOOLS_STAFF_PASSWORD_LOGIN_EXPAND_SQL)
+      .digest("hex"),
+    mode: "transactional",
+    apply: async (connection) => {
+      await connection.query(SCHOOLS_STAFF_PASSWORD_LOGIN_EXPAND_SQL);
     },
   },
   staffIdentityIntegrityMigration,

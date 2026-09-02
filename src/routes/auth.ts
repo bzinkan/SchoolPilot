@@ -79,6 +79,7 @@ function serializeSchoolIdentity(identity: VerifiedSchoolIdentity) {
     activeGradeLevels: identity.school.activeGradeLevels,
     mailpilotEntitled: identity.school.mailpilotEntitled,
     classpilotEmailMonitoring: identity.school.classpilotEmailMonitoring,
+    staffPasswordLoginEnabled: identity.school.staffPasswordLoginEnabled !== false,
     ...(effectiveGoPilotRole !== "parent"
       ? {
           dismissalTime: identity.school.dismissalTime,
@@ -93,9 +94,31 @@ function serializeSchoolIdentity(identity: VerifiedSchoolIdentity) {
   };
 }
 
+/**
+ * The GoPilot staff app cannot use Google sign-in, so a school that turned
+ * off staff password sign-in for the web app keeps password access for the
+ * native client while it holds an active GoPilot license.
+ */
+async function anySchoolHasActiveGoPilotLicense(
+  schoolIds: readonly string[]
+): Promise<boolean> {
+  const now = Date.now();
+  for (const schoolId of schoolIds) {
+    const productLicenses = await getProductLicenses(schoolId);
+    const licensed = productLicenses.some((pl) => {
+      const unexpired = !pl.expiresAt || pl.expiresAt.getTime() > now;
+      return pl.product === "GOPILOT" && pl.status === "active" && unexpired;
+    });
+    if (licensed) return true;
+  }
+  return false;
+}
+
 const router = Router();
 const NO_ACTIVE_SCHOOL_ERROR =
   "Your account does not have access to an active school. Contact your school administrator.";
+const STAFF_PASSWORD_LOGIN_DISABLED_ERROR =
+  "Password sign-in is turned off for your school. Use Continue with Google.";
 
 // POST /api/auth/login
 // Returns both session cookie AND JWT for dual-auth compatibility
@@ -165,6 +188,51 @@ router.post("/login", authLimiter, async (req, res, next) => {
         metadata: { reason: "no_active_school", method: "password" },
       });
       return res.status(403).json({ error: NO_ACTIVE_SCHOOL_ERROR });
+    }
+
+    // School policy: staff password sign-in can be turned off per school.
+    // Evaluated only after the credential verified, so a disabled school never
+    // becomes a password oracle (a wrong password still answers 401). Super
+    // admins are exempt, and a staff member keeps password access while any
+    // verified school still allows it. The `client` hint is spoofable: this is
+    // a policy control for the web app, not a security boundary.
+    const passwordAllowed = user.isSuperAdmin
+      || schoolIdentities.some(
+        (identity) => identity.school.staffPasswordLoginEnabled !== false
+      );
+    if (!passwordAllowed) {
+      const nativeExempt = parsed.data.client === "gopilot-native"
+        && await anySchoolHasActiveGoPilotLicense(
+          schoolIdentities.map((identity) => identity.schoolId)
+        );
+      if (!nativeExempt) {
+        await logAudit({
+          schoolId: selectedIdentity?.schoolId ?? null,
+          userId: user.id,
+          userEmail: user.email,
+          action: "auth.rejected",
+          metadata: {
+            reason: "password_login_disabled",
+            method: "password",
+            ip: clientIp(req),
+          },
+        });
+        return res.status(403).json({
+          error: STAFF_PASSWORD_LOGIN_DISABLED_ERROR,
+          code: "STAFF_PASSWORD_LOGIN_DISABLED",
+        });
+      }
+      await logAudit({
+        schoolId: selectedIdentity?.schoolId ?? null,
+        userId: user.id,
+        userEmail: user.email,
+        action: "auth.login.password_policy_exempt",
+        metadata: {
+          reason: "gopilot_native_client",
+          method: "password",
+          ip: clientIp(req),
+        },
+      });
     }
 
     // Start a fresh session so an expired/stale browser cookie cannot carry

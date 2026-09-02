@@ -64,8 +64,15 @@ export default function Login() {
     setLoading(true);
     try {
       queryClient.clear();
-      await login(email, password);
+      await login(email, password, { client: isGoPilotApp ? 'gopilot-native' : 'web' });
     } catch (err) {
+      if (err.response?.data?.code === 'STAFF_PASSWORD_LOGIN_DISABLED') {
+        // School policy: the web app is Google-only for this staff member.
+        // Collapse the password form so "Continue with Google" stays primary.
+        // The GoPilot native branch is never gated client-side.
+        setPassword('');
+        if (!isGoPilotApp) setShowEmailLogin(false);
+      }
       setError(err.response?.data?.error || err.message || 'Login failed');
     } finally {
       setLoading(false);

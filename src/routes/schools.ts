@@ -9,6 +9,7 @@ import {
   createSchoolSchema,
   updateSchoolSchema,
   createGradeSchema,
+  staffPasswordLoginSchema,
 } from "../schema/validation.js";
 import {
   getSchoolById,
@@ -82,6 +83,21 @@ function rejectGoPilotSettingsBypass(req: any, res: any): boolean {
     error: "Dismissal settings are managed in GoPilot Setup.",
     code: "GOPILOT_SETTINGS_MANAGED_IN_SETUP",
     managementUrl: "/gopilot/setup?tab=settings",
+  });
+  return true;
+}
+
+// Staff password sign-in policy has its own audited route so the generic
+// school update (admin-only) can never flip it silently.
+function rejectStaffPasswordLoginBypass(req: any, res: any): boolean {
+  const body = req.body ?? {};
+  if (!Object.prototype.hasOwnProperty.call(body, "staffPasswordLoginEnabled")) {
+    return false;
+  }
+  res.status(409).json({
+    error: "Staff sign-in policy is managed in ClassPilot Settings.",
+    code: "STAFF_PASSWORD_LOGIN_MANAGED_IN_SETTINGS",
+    managementUrl: "/classpilot/settings",
   });
   return true;
 }
@@ -219,6 +235,7 @@ router.put(
     try {
       if (rejectPasspilotKioskSettingsBypass(req, res)) return;
       if (rejectGoPilotSettingsBypass(req, res)) return;
+      if (rejectStaffPasswordLoginBypass(req, res)) return;
       const parsed = updateSchoolSchema.safeParse(req.body);
       if (!parsed.success) {
         return res
@@ -247,6 +264,7 @@ router.patch(
     try {
       if (rejectPasspilotKioskSettingsBypass(req, res)) return;
       if (rejectGoPilotSettingsBypass(req, res)) return;
+      if (rejectStaffPasswordLoginBypass(req, res)) return;
       const parsed = updateSchoolSchema.safeParse(req.body);
       if (!parsed.success) {
         return res
@@ -258,6 +276,59 @@ router.patch(
       if (!school) {
         return res.status(404).json({ error: "School not found" });
       }
+
+      return res.json({ school: sanitizeSchool(school) });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// PUT /api/schools/:schoolId/staff-password-login - Staff sign-in policy
+// When disabled, staff at this school sign in to the web app with Google only
+// (POST /auth/login answers 403 STAFF_PASSWORD_LOGIN_DISABLED). The GoPilot
+// staff app keeps password access while the school holds a GoPilot license.
+router.put(
+  "/:schoolId/staff-password-login",
+  requireSchoolContext,
+  requireRole("admin", "school_admin"),
+  async (req, res, next) => {
+    try {
+      const parsed = staffPasswordLoginSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      }
+
+      const schoolId = scopedSchoolId(req, res);
+      const existing = await getSchoolById(schoolId);
+      if (!existing || existing.deletedAt) {
+        return res.status(404).json({ error: "School not found" });
+      }
+
+      const school = await updateSchool(schoolId, {
+        staffPasswordLoginEnabled: parsed.data.enabled,
+      });
+      if (!school) {
+        return res.status(404).json({ error: "School not found" });
+      }
+
+      await logAudit({
+        schoolId,
+        userId: req.authUser!.id,
+        userEmail: req.authUser!.email,
+        action: "school.staff_password_login.updated",
+        entityType: "school",
+        entityId: schoolId,
+        entityName: school.name,
+        changes: {
+          staffPasswordLoginEnabled: {
+            from: existing.staffPasswordLoginEnabled,
+            to: school.staffPasswordLoginEnabled,
+          },
+        },
+      });
 
       return res.json({ school: sanitizeSchool(school) });
     } catch (err) {
