@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef } from "react";
+import { memo, useEffect, useLayoutEffect, useRef } from "react";
 import { Card } from "../../../components/ui/card";
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
@@ -195,15 +195,39 @@ function StudentTile({
     frame: screenshotFrame,
     previousFrame: previousScreenshotFrame,
     releasePreviousFrame,
+    expired: screenshotFrameExpired,
   } = useDecodedScreenshot(
     screenshotPreviewMode ? screenshotData : null,
     screenshotPrivacyKey,
     { crossfade: true },
   );
+  // Retention is enforced by the frame itself, on the real clock. Once the hook
+  // has expired it there is nothing left to paint, so the preview surface gives
+  // way to the unavailable card instead of holding a frozen frame behind an
+  // amber "Updating…" badge for as long as `freshnessNowMs` stays behind.
+  const displayableScreenshotPreviewMode = screenshotFrameExpired
+    ? null
+    : screenshotPreviewMode;
   const decodedScreenshotData = screenshotFrame?.screenshotData ?? null;
   const decodedScreenshotDisplay = deriveScreenshotDisplay(decodedScreenshotData, freshnessNowMs, {
     staleThresholdMs,
   });
+  const paintedFreshUntilMs = decodedScreenshotDisplay.available
+    ? decodedScreenshotDisplay.freshUntilMs
+    : null;
+  const paintedRetainedUntilMs = decodedScreenshotDisplay.available
+    ? decodedScreenshotDisplay.retainedUntilMs
+    : null;
+  useLayoutEffect(() => {
+    const studentId = student.studentId;
+    PAINTED_FRAME_BOUNDS.set(studentId, {
+      freshUntilMs: paintedFreshUntilMs,
+      retainedUntilMs: paintedRetainedUntilMs,
+    });
+    return () => {
+      PAINTED_FRAME_BOUNDS.delete(studentId);
+    };
+  }, [student.studentId, paintedFreshUntilMs, paintedRetainedUntilMs]);
   // Age cues describe the pixels actually on screen. A replacement that is
   // still decoding — or that failed to decode — can never make older pixels
   // look current.
@@ -228,7 +252,7 @@ function StudentTile({
       : 'bg-white/15 text-white/80';
   const screenshotInteractionAvailable = Boolean(
     !monitoringSuppressed
-    && screenshotPreviewMode
+    && displayableScreenshotPreviewMode
     && onOpenScreenshot,
   );
   const screenshotCapturedLabel = decodedScreenshotDisplay.observedAtMs === null
@@ -686,14 +710,14 @@ function StudentTile({
               data-testid={`video-live-${student.studentId}`}
             />
           </div>
-        ) : screenshotPreviewMode ? (
+        ) : displayableScreenshotPreviewMode ? (
           // A same-context preview between 75 and 120 seconds old is visibly
           // dimmed and timestamped so it is never presented as live.
           <button
             ref={screenshotButtonRef}
             type="button"
             className={`classpilot-frame-letterbox block aspect-video w-full rounded-lg relative overflow-hidden text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${decodedPreviewMode === 'retained' ? 'ring-1 ring-inset ring-amber-400/50' : ''}`}
-            data-testid={screenshotPreviewMode === 'retained'
+            data-testid={displayableScreenshotPreviewMode === 'retained'
               ? `screenshot-retained-${student.studentId}`
               : `screenshot-current-${student.studentId}`}
             aria-label={`Open large screen preview for ${student.studentName || 'student'}`}
@@ -1081,7 +1105,25 @@ const CALLBACK_PROPS = new Set([
   'onReturnToClass',
 ]);
 
+// A tile paints the DECODED frame, which can lag or diverge from the props
+// frame (a decode still in flight, or a decode that failed). The comparator
+// sees only props, so each mounted tile publishes the display bounds — instants
+// only, never pixels — of the frame it actually painted. Projecting those
+// forward is what turns a tile over when ITS frame ages, instead of holding the
+// last painted DOM, amber "Updating…" badge included, for as long as the props
+// frame's own projection happens to sit still.
+const PAINTED_FRAME_BOUNDS = new Map();
+
+function paintedFrameProjection(props, nowMs) {
+  const bounds = PAINTED_FRAME_BOUNDS.get(props.student?.studentId);
+  if (!bounds) return 'none';
+  const fresh = bounds.freshUntilMs !== null && nowMs < bounds.freshUntilMs;
+  const retained = bounds.retainedUntilMs !== null && nowMs < bounds.retainedUntilMs;
+  return `${fresh}:${retained}`;
+}
+
 function freshnessProjection(props) {
+  const nowMs = Number.isFinite(props.freshnessNowMs) ? props.freshnessNowMs : Date.now();
   const monitoring = props.monitoringDisplay
     || deriveStudentMonitoringDisplay(props.student, props.freshnessNowMs);
   // An observed wall ages previews at the active-view boundary. Project that
@@ -1093,7 +1135,7 @@ function freshnessProjection(props) {
     : deriveScreenshotDisplay(props.screenshotData, props.freshnessNowMs, {
       staleThresholdMs: screenshotStaleThresholdMs(props.screenshotCaptureCadence),
     });
-  return `${monitoring.kind}:${monitoring.status}:${monitoring.telemetryCurrent}:${screenshot.fresh}:${screenshot.retained}`;
+  return `${monitoring.kind}:${monitoring.status}:${monitoring.telemetryCurrent}:${screenshot.fresh}:${screenshot.retained}:${paintedFrameProjection(props, nowMs)}`;
 }
 
 function studentTilePropsEqual(previous, next) {

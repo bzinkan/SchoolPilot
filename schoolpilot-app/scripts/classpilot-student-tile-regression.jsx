@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import '../src/index.css';
 import { Button } from '../src/components/ui/button';
 import StudentTile from '../src/products/classpilot/components/StudentTile';
+import ScreenshotPreviewDialog from '../src/products/classpilot/components/ScreenshotPreviewDialog';
 
 const TWO_HOURS_PLUS_CLOCK_BOUNDARY_MS = 122 * 60 * 1000;
 
@@ -82,6 +83,23 @@ const SIGNAL_LOST_EXPIRED_STUDENT = Object.freeze({
   studentName: 'Signal Lost Expired Student',
 });
 
+// A frame that starts inside the reconnect window and must drop itself when the
+// window closes, with no prop change of any kind to carry the news.
+const RETENTION_EXPIRY_STUDENT = Object.freeze({
+  ...SIGNAL_LOST_STUDENT,
+  studentId: 'retention-expiry-student',
+  studentName: 'Retention Expiry Student',
+});
+
+// A tile whose caller-supplied clock is 100 seconds behind the real one: its
+// props still call a 130-second-old capture current, so only the frame's own
+// bound can keep those pixels off the screen.
+const STALE_CLOCK_STUDENT = Object.freeze({
+  ...SIGNAL_LOST_STUDENT,
+  studentId: 'stale-clock-student',
+  studentName: 'Stale Clock Student',
+});
+
 const READ_ONLY_STUDENT = Object.freeze({
   ...ONLINE_STUDENT,
   studentId: 'read-only-student',
@@ -123,6 +141,10 @@ const SCREENSHOT_DATA_URL = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/
 // Image.decode() open, so the tile must keep painting the previous frame until
 // the decode resolves, then letterbox this one instead of cropping it.
 const GATED_SCREENSHOT_DATA_URL = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="640" height="200" data-frame="gatedframe"%3E%3Crect width="640" height="200" fill="%23b91c1c"/%3E%3C/svg%3E';
+// A second held-decode frame, on its own gate: it lets a tile sit with a fresh
+// props frame in flight while the frame it is actually painting ages behind it.
+const DIVERGED_SCREENSHOT_DATA_URL = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="320" height="180" data-frame="divergeframe"%3E%3Crect width="320" height="180" fill="%23047857"/%3E%3C/svg%3E';
+
 const RECENT_HEARTBEATS = Object.freeze([
   Object.freeze({
     activeTabUrl: 'https://research.example.test/notes',
@@ -174,6 +196,15 @@ const TAB_LIMIT_STUDENT = Object.freeze({
   studentName: 'Tab Limit Student',
   openTabCount: 7,
   classroomState: Object.freeze({ revision: 3, restrictions: Object.freeze({ tabLimit: 5 }) }),
+});
+
+// Every prop of this tile except `freshnessNowMs` keeps a stable identity, so
+// the memo comparator — not a prop change — is the only thing that can rerender
+// it as time passes.
+const DIVERGED_FRAME_STUDENT = Object.freeze({
+  ...ONLINE_STUDENT,
+  studentId: 'diverged-frame-student',
+  studentName: 'Diverged Frame Student',
 });
 
 const FRAME_SWAP_STUDENT = Object.freeze({
@@ -245,6 +276,16 @@ function TileRegressionHarness() {
   const [tilesVisible, setTilesVisible] = useState(false);
   const [frameSwapped, setFrameSwapped] = useState(false);
   const [memoDetailsEnabled, setMemoDetailsEnabled] = useState(true);
+  const [dialogVisible, setDialogVisible] = useState(false);
+  const [ticks, setTicks] = useState(0);
+  // Frozen at creation so the diverged tile's only changing prop is the clock.
+  const [divergedPaintedFrame] = useState(() => Object.freeze({
+    screenshot: SCREENSHOT_DATA_URL,
+    timestamp: Date.now(),
+    bindingVersion: 'v2:diverged-binding',
+    tabTitle: 'Painted frame',
+  }));
+  const [divergedReplacementFrame, setDivergedReplacementFrame] = useState(null);
   const memoDetailsHandler = useCallback(
     () => setDetailsClicks((count) => count + 1),
     [],
@@ -287,6 +328,32 @@ function TileRegressionHarness() {
       >
         Swap frame
       </Button>
+      <Button
+        type="button"
+        data-testid="toggle-dialog"
+        onClick={() => setDialogVisible(true)}
+      >
+        Open enlarged preview
+      </Button>
+      <Button
+        type="button"
+        data-testid="swap-diverged-frame"
+        onClick={() => setDivergedReplacementFrame(Object.freeze({
+          screenshot: DIVERGED_SCREENSHOT_DATA_URL,
+          timestamp: Date.now(),
+          bindingVersion: 'v2:diverged-binding',
+          tabTitle: 'Replacement frame',
+        }))}
+      >
+        Swap diverged frame
+      </Button>
+      <Button
+        type="button"
+        data-testid="tick"
+        onClick={() => setTicks((count) => count + 1)}
+      >
+        Tick
+      </Button>
       <p data-testid="tab-clicks">Tab clicks: {tabClicks}</p>
       <p data-testid="details-clicks">Details clicks: {detailsClicks}</p>
       <p data-testid="screenshot-clicks">Screenshot clicks: {screenshotClicks}</p>
@@ -295,6 +362,7 @@ function TileRegressionHarness() {
       <p data-testid="last-command">{lastCommand}</p>
       <p data-testid="allow-clicks">Allow clicks: {allowClicks}</p>
       <p data-testid="return-clicks">Return clicks: {returnClicks}</p>
+      <p data-testid="ticks">Ticks: {ticks}</p>
       <p data-testid="parent-renders">Parent renders: {renderCount.current}</p>
 
       {tilesVisible && <div className="mt-6 grid max-w-7xl grid-cols-3 gap-4">
@@ -773,6 +841,59 @@ function TileRegressionHarness() {
           />
         </div>
 
+        <div data-testid="diverged-frame-tile-host">
+          <StudentTile
+            student={DIVERGED_FRAME_STUDENT}
+            monitoringDisplay={onlineDisplay(freshnessNowMs)}
+            freshnessNowMs={freshnessNowMs}
+            screenshotData={divergedReplacementFrame ?? divergedPaintedFrame}
+          />
+        </div>
+
+        <div data-testid="retention-expiry-tile-host">
+          <StudentTile
+            student={{ ...RETENTION_EXPIRY_STUDENT, lastSeenAt: observedAtMs }}
+            monitoringDisplay={{
+              kind: 'signal_lost',
+              status: 'signal_lost',
+              label: 'Monitoring signal lost',
+              telemetryCurrent: false,
+              observedAtMs,
+              nextBoundaryAtMs: null,
+            }}
+            freshnessNowMs={freshnessNowMs}
+            screenshotObservationStatus="observed"
+            screenshotData={{
+              screenshot: SCREENSHOT_DATA_URL,
+              timestamp: freshnessNowMs - 90_000,
+              bindingVersion: 'v2:retention-expiry-binding',
+              tabTitle: 'Capture 30 seconds from the end of its retention window',
+            }}
+          />
+        </div>
+
+        <div data-testid="stale-clock-tile-host">
+          <StudentTile
+            student={{ ...STALE_CLOCK_STUDENT, lastSeenAt: observedAtMs }}
+            monitoringDisplay={{
+              kind: 'signal_lost',
+              status: 'signal_lost',
+              label: 'Monitoring signal lost',
+              telemetryCurrent: false,
+              observedAtMs,
+              nextBoundaryAtMs: null,
+            }}
+            freshnessNowMs={freshnessNowMs - 100_000}
+            screenshotObservationStatus="observed"
+            screenshotData={{
+              screenshot: SCREENSHOT_DATA_URL,
+              timestamp: freshnessNowMs - 130_000,
+              bindingVersion: 'v2:stale-clock-binding',
+              tabTitle: 'Capture a stopped clock still calls current',
+            }}
+          />
+        </div>
+
         <div data-testid="background-stale-tile-host">
           <StudentTile
             student={BACKGROUND_STALE_STUDENT}
@@ -787,6 +908,21 @@ function TileRegressionHarness() {
           />
         </div>
       </div>}
+
+      {dialogVisible && (
+        <ScreenshotPreviewDialog
+          studentName="Dialog Student"
+          privacyKey={'dialog-student\nv2:dialog-binding'}
+          freshnessNowMs={freshnessNowMs}
+          screenshotData={{
+            screenshot: SCREENSHOT_DATA_URL,
+            timestamp: freshnessNowMs - 10_000,
+            bindingVersion: 'v2:dialog-binding',
+            tabTitle: 'Enlarged capture',
+          }}
+          onOpenChange={() => setDialogVisible(false)}
+        />
+      )}
     </main>
   );
 }

@@ -489,7 +489,15 @@ async function assertObserveEntryPointsUnavailable(page, commandPosts, studentId
   assert.deepEqual(coverageMutationRequests, [], "Observe must not issue coverage mutations");
 }
 
-test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed aggregate states", { timeout: 120_000 }, async () => {
+// One test drives every load state because the Vite server and the browser are
+// expensive to start; each scenario opens its own page inside that shared
+// setup, so the budget tracks the scenario COUNT. Measured locally: ~52s before
+// the first-paint/hysteresis scenario was added, ~71s after. CI hardware is
+// slower and hit the previous 120s ceiling, so the ceiling is raised rather
+// than the coverage dropped. If it times out again, budget for the scenario
+// being added or split the file — and measure before concluding the dashboard
+// itself got slower.
+test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed aggregate states", { timeout: 240_000 }, async () => {
   const dashboardSource = readFileSync(
     path.join(APP_ROOT, "src/products/classpilot/pages/Dashboard.jsx"),
     "utf8",

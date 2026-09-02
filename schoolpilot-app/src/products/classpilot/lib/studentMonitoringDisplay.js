@@ -319,6 +319,12 @@ export function deriveScreenshotDisplay(
     fresh,
     retained,
     observedAtMs,
+    // The two absolute bounds behind `fresh`/`retained`. A caller that has to
+    // re-evaluate this same frame at another instant (a memo comparator holding
+    // one already-painted frame across two clock readings) projects them
+    // forward instead of re-deriving from data it can no longer see.
+    freshUntilMs: normalFreshUntilMs,
+    retainedUntilMs,
     nextBoundaryAtMs: fresh
       ? normalFreshUntilMs
       : retained

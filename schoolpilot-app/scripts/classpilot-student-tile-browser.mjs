@@ -99,16 +99,19 @@ try {
   // survive until its successor's pixels are ready.
   await page.addInitScript(() => {
     const nativeDecode = HTMLImageElement.prototype.decode;
-    const held = [];
+    const held = { gatedframe: [], divergeframe: [] };
     HTMLImageElement.prototype.decode = function decode() {
-      if ((this.src || '').includes('gatedframe')) {
+      const marker = Object.keys(held).find((name) => (this.src || '').includes(name));
+      if (marker) {
         return new Promise((resolve, reject) => {
-          held.push(() => nativeDecode.call(this).then(resolve, reject));
+          held[marker].push(() => nativeDecode.call(this).then(resolve, reject));
         });
       }
       return nativeDecode.call(this);
     };
-    globalThis.__releaseGatedDecodes = () => held.splice(0).map((release) => release()).length;
+    const release = (marker) => held[marker].splice(0).map((resume) => resume()).length;
+    globalThis.__releaseGatedDecodes = () => release('gatedframe');
+    globalThis.__releaseDivergedDecodes = () => release('divergeframe');
   });
 
   await page.goto(`${baseURL}/classpilot-student-tile-regression.html`, { waitUntil: 'networkidle' });
@@ -788,6 +791,123 @@ try {
     0,
     'without an observing wall the 75-second default still applies at 16 seconds',
   );
+
+  // ── The age cue follows the frame on screen, not the frame in props. With a
+  //    replacement decode held open, only the painted frame ages — and the memo
+  //    comparator, whose props are otherwise identical, must still turn the tile
+  //    over when it does.
+  const divergedImage = page.getByTestId('screenshot-diverged-frame-student');
+  await divergedImage.waitFor();
+  const paintedFrameSrc = await divergedImage.evaluate((image) => image.src);
+  await page.getByTestId('swap-diverged-frame').click();
+  assert.equal(
+    await page.getByTestId('screenshot-updating-diverged-frame-student').count(),
+    0,
+    'a 61-second-old painted frame is still inside its own fresh window',
+  );
+  await page.clock.runFor(20_000);
+  await page.getByTestId('tick').click();
+  await page.getByTestId('screenshot-updating-diverged-frame-student').waitFor();
+  assert.equal(
+    await divergedImage.evaluate((image) => image.src),
+    paintedFrameSrc,
+    'the replacement decode must still be in flight, so the aged frame is the one on screen',
+  );
+  assert.equal(
+    await page.getByTestId('screenshot-current-diverged-frame-student').count(),
+    1,
+    'the props frame stays current: only the decoded frame crossed its stale bound',
+  );
+  assert.equal(
+    await page.evaluate(() => globalThis.__releaseDivergedDecodes()),
+    1,
+    'exactly one diverged replacement decode must have been in flight',
+  );
+  await page.waitForFunction(() => {
+    const image = document.querySelector('[data-testid="screenshot-diverged-frame-student"]');
+    return Boolean(image && image.src.includes('divergeframe'));
+  });
+  assert.equal(
+    await page.getByTestId('screenshot-updating-diverged-frame-student').count(),
+    0,
+    'the cue must clear as soon as the fresh replacement is the frame on screen',
+  );
+
+  // ── A frame already past its retention bound when it arrives is never
+  //    painted, even while the caller's own clock still calls it current.
+  await page.getByTestId('preview-unavailable-stale-clock-student').waitFor();
+  assert.equal(
+    await page.getByTestId('screenshot-stale-clock-student').count(),
+    0,
+    'a 130-second-old capture must not be decoded onto a tile whose clock stopped 100 seconds ago',
+  );
+  assert.equal(
+    await page.getByTestId('screenshot-current-stale-clock-student').count()
+      + await page.getByTestId('screenshot-retained-stale-clock-student').count(),
+    0,
+    'a stale caller clock must not even open the preview surface for an expired frame',
+  );
+  assert.equal(
+    await page.getByTestId('screenshot-updating-stale-clock-student').count(),
+    0,
+    'no amber Updating… badge may describe pixels the tile is not allowed to show',
+  );
+
+  // ── Retention is self-enforcing: the frame drops itself at its own bound with
+  //    no prop change at all, which is the one thing the memo cannot suppress.
+  await page.getByTestId('screenshot-retention-expiry-student').waitFor();
+  await page.getByTestId('screenshot-retained-retention-expiry-student').waitFor();
+  assert.match(
+    await page.getByTestId('screenshot-updating-retention-expiry-student').textContent(),
+    /^Updating… · Captured /,
+    'a 90-second-old capture starts inside its reconnect window',
+  );
+  const rendersBeforeRetentionExpiry = await page.getByTestId('parent-renders').textContent();
+  await page.clock.runFor(30_500);
+  await page.getByTestId('preview-unavailable-retention-expiry-student').waitFor();
+  assert.equal(
+    await page.getByTestId('screenshot-retention-expiry-student').count(),
+    0,
+    'the committed frame must expire itself at observedAt + 120s',
+  );
+  assert.equal(
+    await page.getByTestId('screenshot-updating-retention-expiry-student').count(),
+    0,
+    'the amber Updating… badge must never outlive the pixels it timestamps',
+  );
+  assert.equal(
+    await page.getByTestId('screenshot-retained-retention-expiry-student').count(),
+    0,
+    'the retained preview surface must give way to the unavailable card',
+  );
+  assert.equal(
+    await page.getByTestId('parent-renders').textContent(),
+    rendersBeforeRetentionExpiry,
+    'expiry must come from the tile itself: no parent render, no changed prop, nothing for memo to compare',
+  );
+
+  // ── The enlarged viewer shares the decoder (crossfade: false) and must keep
+  //    painting a frame that is still inside its own window.
+  await page.getByTestId('toggle-dialog').click();
+  const dialogImage = page.getByTestId('expanded-screenshot-image');
+  await dialogImage.waitFor();
+  assert.equal(
+    await dialogImage.evaluate((image) => image.src.startsWith('data:image/svg+xml')),
+    true,
+    'the enlarged viewer must still paint its decoded frame',
+  );
+  assert.match(
+    await page.getByTestId('expanded-screenshot-status').textContent(),
+    /^Updated /,
+    'a capture inside its retention window must not be aged out of the viewer',
+  );
+  assert.equal(
+    await page.getByTestId('expanded-screenshot-unavailable').count(),
+    0,
+    'frame retention must not fail the enlarged viewer closed while its frame is in bounds',
+  );
+  await page.keyboard.press('Escape');
+  await page.getByTestId('expanded-screenshot-dialog').waitFor({ state: 'detached' });
 
   await page.getByTestId('toggle-tiles').click();
   assert.deepEqual(
