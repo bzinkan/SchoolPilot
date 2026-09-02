@@ -2055,19 +2055,19 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       email: `coteacher-primary@${TAG}.example.edu`,
       firstName: "Pat",
       lastName: "Primary",
-    } as any);
+    });
     const coTeacher = await createUser({
       email: `coteacher-co@${TAG}.example.edu`,
       firstName: "Cody",
       lastName: "CoTeach",
-    } as any);
+    });
     const outsider = await createUser({
       email: `coteacher-outsider@${TAG}.example.edu`,
       firstName: "Olive",
       lastName: "Outsider",
-    } as any);
+    });
     for (const user of [primaryTeacher, coTeacher, outsider]) {
-      await createMembership({ userId: user.id, schoolId: school.id, role: "teacher", status: "active" } as any);
+      await createMembership({ userId: user.id, schoolId: school.id, role: "teacher", status: "active" });
     }
     const coTaughtStudent = await inSchool(school.id, () => createStudent({
       schoolId: school.id,
@@ -2077,10 +2077,10 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       emailLc: `coteacher-student@${TAG}.example.edu`,
       gradeLevel: "7",
       status: "active",
-    } as any));
+    }));
     const coTaughtDevice = `${TAG}-coteacher-device`;
     await inSchool(school.id, async () => {
-      await createDevice({ deviceId: coTaughtDevice, schoolId: school.id, classId: "default", deviceName: "Co-taught" } as any);
+      await createDevice({ deviceId: coTaughtDevice, schoolId: school.id, classId: "default", deviceName: "Co-taught" });
       await linkStudentDevice({ studentId: coTaughtStudent.id, deviceId: coTaughtDevice });
       await setActiveStudentForDevice(coTaughtDevice, coTaughtStudent.id);
     });
@@ -2097,7 +2097,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       scheduleEnabled: true,
       blockStartTime: "08:00",
       blockEndTime: "08:45",
-    } as any));
+    }));
     await inSchool(school.id, () => addGroupStudentsDetailed(bellGroup.id, [coTaughtStudent.id]));
     await inSchool(school.id, () => addGroupTeacher(bellGroup.id, coTeacher.id, "co-teacher"));
     const outsiderOnly = await inSchool(school.id, () => processScheduledClassAutoStart({
@@ -2123,7 +2123,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.ok(bellSession);
     assert.equal(bellSession.teacherId, primaryTeacher.id);
     assert.equal(bellSession.groupId, bellGroup.id);
-    assert.equal((bellSession as any).sessionMode, "live");
+    assert.equal(bellSession.sessionMode, "live");
     assert.equal(
       await inSchool(school.id, () => isAuthorizedClasspilotSessionStaff(school.id, bellSession.id, coTeacher.id)),
       true
@@ -2139,7 +2139,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     await inSchool(school.id, () => endTeachingSession(bellSession.id));
     await inSchool(school.id, () => updateGroup(bellGroup.id, {
       scheduleEnabled: false,
-    } as any));
+    }));
 
     // Login pickup: the conflict stays routed to the scheduled teacher, but a
     // co-teacher signing in picks it up; an unrelated teacher does not.
@@ -2152,7 +2152,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       scheduleEnabled: true,
       blockStartTime: "00:00",
       blockEndTime: "23:59",
-    } as any));
+    }));
     await inSchool(school.id, () => addGroupStudentsDetailed(pickupGroup.id, [coTaughtStudent.id]));
     await inSchool(school.id, () => addGroupTeacher(pickupGroup.id, coTeacher.id, "co-teacher"));
     const pickupNeeded = await inSchool(school.id, () => processScheduledClassAutoStart({
@@ -2177,17 +2177,19 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       now: new Date("2026-01-16T15:00:00.000Z"),
     }));
     assert.equal(coTeacherPickup.length, 1);
-    assert.equal(coTeacherPickup[0].teacherId, primaryTeacher.id);
-    assert.equal(coTeacherPickup[0].groupId, pickupGroup.id);
-    assert.equal((coTeacherPickup[0] as any).sessionMode, "live");
+    const [coTeacherPickupSession] = coTeacherPickup;
+    assert.ok(coTeacherPickupSession);
+    assert.equal(coTeacherPickupSession.teacherId, primaryTeacher.id);
+    assert.equal(coTeacherPickupSession.groupId, pickupGroup.id);
+    assert.equal(coTeacherPickupSession.sessionMode, "live");
     const pickupConflict = await inSchool(school.id, () => getScheduledClassConflictByIdAndSchool(pickupConflictId, school.id));
     assert.equal(pickupConflict?.status, "started");
     assert.equal(pickupConflict?.teacherId, primaryTeacher.id);
     assert.equal(pickupConflict?.resolvedBy, coTeacher.id);
-    await inSchool(school.id, () => endTeachingSession(coTeacherPickup[0].id));
+    await inSchool(school.id, () => endTeachingSession(coTeacherPickupSession.id));
     await inSchool(school.id, () => updateGroup(pickupGroup.id, {
       scheduleEnabled: false,
-    } as any));
+    }));
 
     // Scheduled coverage: a co-teacher sees the conflict as actionable and can
     // start the class from it; an unrelated teacher cannot.
@@ -2200,7 +2202,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       scheduleEnabled: true,
       blockStartTime: "00:00",
       blockEndTime: "23:59",
-    } as any));
+    }));
     await inSchool(school.id, () => addGroupStudentsDetailed(coTaughtStartAnywayGroup.id, [coTaughtStudent.id]));
     await inSchool(school.id, () => addGroupTeacher(coTaughtStartAnywayGroup.id, coTeacher.id, "co-teacher"));
     const coTaughtNow = new Date();
@@ -2272,7 +2274,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     await inSchool(school.id, () => endTeachingSession(coTeacherStarted.body.session.id));
     await inSchool(school.id, () => updateGroup(coTaughtStartAnywayGroup.id, {
       scheduleEnabled: false,
-    } as any));
+    }));
   });
 
   it("keeps complete unscoped and Observe rosters when one local realtime snapshot is circular", async () => {

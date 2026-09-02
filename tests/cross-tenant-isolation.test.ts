@@ -308,7 +308,7 @@ describe("cross-school isolation", () => {
       email: `${TAG}-coteacher@${TAG}-a.example.edu`,
       firstName: "Co",
       lastName: "Teacher",
-    } as any);
+    });
     await createMembership({ userId: coTeacher.id, schoolId: schoolB.id, role: "teacher", status: "active" });
     const groupB = await inSchool(schoolB.id, () =>
       createGroup({
@@ -317,7 +317,7 @@ describe("cross-school isolation", () => {
         name: `${TAG}_eligibleB`,
         groupType: "admin_class",
         status: "active",
-      } as any)
+      })
     );
     await inSchool(schoolB.id, () => addGroupTeacher(groupB.id, coTeacher.id, "co-teacher"));
     await inSchool(schoolB.id, () => db.execute(sql`
@@ -330,8 +330,10 @@ describe("cross-school isolation", () => {
       listActiveScheduledClassConflictsForEligibleTeacher(schoolB.id, coTeacher.id, "2026-01-15")
     );
     assert.equal(inB.length, 1);
-    assert.equal(inB[0].groupId, groupB.id);
-    assert.equal(inB[0].teacherId, teacher.id);
+    const [conflictInB] = inB;
+    assert.ok(conflictInB);
+    assert.equal(conflictInB.groupId, groupB.id);
+    assert.equal(conflictInB.teacherId, teacher.id);
     // The scheduled-teacher-only routing query still ignores co-teachers.
     const routed = await inSchool(schoolB.id, () =>
       listActiveScheduledClassConflictsForTeacher(schoolB.id, coTeacher.id, "2026-01-15")
