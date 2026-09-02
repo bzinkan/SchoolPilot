@@ -121,8 +121,11 @@ const settingsSchema = z.object({
 export default function Settings() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { currentUser, isAdmin, isLoading: authLoading } = useClassPilotAuth();
+  const { currentUser, isAdmin, isLoading: authLoading, school, refetchUser } = useClassPilotAuth();
   const canManageSchoolSettings = isAdmin || currentUser?.isSuperAdmin === true;
+  // Staff sign-in policy lives on the school row and arrives with /auth/me,
+  // so it is read from the auth context rather than a settings query.
+  const staffPasswordLoginEnabled = school?.staffPasswordLoginEnabled !== false;
 
   // Flight Paths management state
   const [showSceneDialog, setShowSceneDialog] = useState(false);
@@ -277,6 +280,29 @@ export default function Settings() {
         variant: "destructive",
         title: "Failed to generate setup key",
         description: error.message,
+      });
+    },
+  });
+
+  const staffPasswordLoginMutation = useMutation({
+    mutationFn: (enabled) =>
+      apiRequest("PUT", `/schools/${currentUser?.schoolId}/staff-password-login`, { enabled }),
+    onSuccess: async (_response, enabled) => {
+      // The flag is served by /auth/me; refresh the auth context so the
+      // checkbox reflects the stored policy.
+      await refetchUser();
+      toast({
+        title: enabled ? "Password sign-in allowed" : "Password sign-in turned off",
+        description: enabled
+          ? "Staff can sign in to the web app with email and password or Google."
+          : "Staff now sign in to the web app with Google only.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: "Failed to update staff sign-in",
+        description: error.response?.data?.error || error.message,
       });
     },
   });
@@ -692,6 +718,37 @@ export default function Settings() {
                       Applies to ClassPilot session summaries and browser safety alerts. Password, billing, parent, and student emails are not copied.
                     </p>
                   </div>
+                </div>
+              )}
+
+              {canManageSchoolSettings && (
+                <div className="rounded-md border p-4 space-y-3" data-testid="staff-password-login-block">
+                  <div>
+                    <p className="text-sm font-medium flex items-center gap-2">
+                      <Shield className="h-4 w-4" />
+                      Staff Sign-In
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Controls how staff sign in to the SchoolPilot web app. Saved immediately.
+                    </p>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <input
+                      type="checkbox"
+                      id="staffPasswordLoginEnabled"
+                      data-testid="checkbox-staff-password-login"
+                      className="h-4 w-4 rounded border-gray-300"
+                      checked={staffPasswordLoginEnabled}
+                      disabled={staffPasswordLoginMutation.isPending || !currentUser?.schoolId}
+                      onChange={(event) => staffPasswordLoginMutation.mutate(event.target.checked)}
+                    />
+                    <Label htmlFor="staffPasswordLoginEnabled">
+                      Allow email and password sign-in for staff
+                    </Label>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    When off, staff sign in to the web app with Google only. The GoPilot staff app is not affected.
+                  </p>
                 </div>
               )}
 

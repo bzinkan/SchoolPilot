@@ -37,6 +37,7 @@ const DB_SERIAL = new Set([
   "classpilot-instructional-calendar.test.ts",
   "classpilot-monitoring-reports.test.ts",
   "classpilot-runtime-security-contract.test.ts",
+  "classpilot-safety-spine-retention.test.ts",
   "classpilot-schedule-changes.test.ts",
   "classpilot-school-status-auth.test.ts",
   "classpilot-sso-policy.test.ts",
@@ -83,6 +84,7 @@ const DB_SERIAL = new Set([
   "staff-identity-integrity.integration.test.ts",
   "staff-identity-lifecycle.test.ts",
   "staff-identity-monitoring.test.ts",
+  "staff-password-login-policy.test.ts",
 ]);
 
 const INFRASTRUCTURE = /^(?:aws-|capacity-|credential-rotation-infra|database-insights|deploy-|ecs-|frontend-dependency|classpilot-(?:arrival-capacity|load-|tile-auth-plan-|tile-authorization-plan-check)|gopilot-containment-inventory|heartbeat-history-index-contract|hot-path-logging|migration-ledger|predeploy-safety|private-load|production-terraform|redis-ready|rls-allowlist-drift|soc2-|terraform-|runtime-config)/;

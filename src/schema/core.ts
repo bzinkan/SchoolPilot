@@ -88,6 +88,11 @@ export const schools = pgTable("schools", {
   trackingStartHour: integer("tracking_start_hour").notNull().default(7),
   trackingEndHour: integer("tracking_end_hour").notNull().default(17),
   is24HourEnabled: boolean("is_24_hour_enabled").notNull().default(false),
+  // Staff sign-in policy: when false, staff at this school must use Google
+  // sign-in for the web app (POST /auth/login answers 403). Defaults on so
+  // every existing school keeps password sign-in. Managed only through
+  // PUT /api/schools/:schoolId/staff-password-login (ClassPilot Settings).
+  staffPasswordLoginEnabled: boolean("staff_password_login_enabled").notNull().default(true),
   // ClassPilot MailPilot add-on (student Gmail safety monitoring via DWD)
   mailpilotEntitled: boolean("mailpilot_entitled").notNull().default(false),
   classpilotEmailMonitoring: boolean("classpilot_email_monitoring").notNull().default(false),

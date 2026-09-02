@@ -1218,7 +1218,8 @@ export async function runStartupMigrations(): Promise<void> {
     ALTER TABLE schools
       ADD COLUMN IF NOT EXISTS kiosk_classpilot_group_id VARCHAR,
       ADD COLUMN IF NOT EXISTS passpilot_settings_revision INTEGER NOT NULL DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS kiosk_style TEXT NOT NULL DEFAULT 'simple'
+      ADD COLUMN IF NOT EXISTS kiosk_style TEXT NOT NULL DEFAULT 'simple',
+      ADD COLUMN IF NOT EXISTS staff_password_login_enabled BOOLEAN NOT NULL DEFAULT true
   `);
   await pool.query(`
     ALTER TABLE grades

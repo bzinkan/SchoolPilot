@@ -17,6 +17,11 @@ const STRONG_PASSWORD = z
 export const loginSchema = z.object({
   email: z.string().email("Invalid email address"),
   password: z.string().min(1, "Password is required"),
+  // Client hint for the per-school staff password policy. The GoPilot staff
+  // app has no Google sign-in, so it keeps password access while the school
+  // holds an active GoPilot license. Spoofable: a policy control, not a
+  // security boundary.
+  client: z.enum(["web", "gopilot-native"]).optional(),
 });
 export type LoginData = z.infer<typeof loginSchema>;
 
@@ -193,6 +198,13 @@ export const updateSchoolSchema = z.object({
   is24HourEnabled: z.boolean().optional(),
 });
 export type UpdateSchoolData = z.infer<typeof updateSchoolSchema>;
+
+// Staff sign-in policy is managed only through its dedicated route; the
+// generic school update rejects the field (see routes/schools.ts).
+export const staffPasswordLoginSchema = z.object({
+  enabled: z.boolean(),
+}).strict();
+export type StaffPasswordLoginData = z.infer<typeof staffPasswordLoginSchema>;
 
 export const updateStudentSchema = z.object({
   firstName: z.string().min(1).optional(),

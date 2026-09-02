@@ -176,8 +176,15 @@ export function AuthProvider({ children }) {
     fetchUser();
   }, [fetchUser]);
 
-  const login = async (email, password) => {
-    const res = await api.post('/auth/login', { email, password });
+  const login = async (email, password, options = {}) => {
+    // `client` lets the server apply the per-school staff password policy:
+    // the GoPilot native app keeps password sign-in (no Google there), the
+    // web app may be told to use Google only.
+    const res = await api.post('/auth/login', {
+      email,
+      password,
+      ...(options.client ? { client: options.client } : {}),
+    });
 
     // Axios uses a module-level in-memory token. Publish it before any state
     // update can mount protected routes or before /auth/me is requested.

@@ -199,6 +199,7 @@ async function runHeavyJobsSerially() {
     if (currentMinute >= 30 && currentHour !== lastPurgeHour) {
       lastPurgeHour = currentHour;
       await purgeExpiredHeartbeats();
+      await purgeClasspilotSafetySpineRetention();
       await purgeExpiredEvidenceArtifactContent();
       await purgeMailpilotRetention();
       await purgeOldErrorLogs();
@@ -1513,6 +1514,247 @@ async function purgeMailpilotRetention() {
     console.error("[MailPilot] Retention purge failed");
     errorMonitor.trackError("scheduler_failure", err as Error, { job: "purgeMailpilotRetention" });
   }
+}
+
+// ============================================================================
+// ClassPilot - Safety spine / messaging retention
+// ============================================================================
+//
+// The safety spine (AI decisions, student timeline, safety cases) and the
+// teacher-student messaging tables follow the same per-school retention
+// setting as heartbeats. Closed safety cases keep a 90-day floor so a case
+// record never disappears sooner than a quarter after it closed; open cases
+// are never purged. The job ships in count mode: it evaluates the exact
+// delete predicates as SELECT count(*) and logs identifier-free totals so a
+// full day of numbers can be reviewed before the task definition flips the
+// mode to delete.
+
+const CLOSED_SAFETY_CASE_RETENTION_FLOOR_DAYS = 90;
+const RETENTION_BATCH_SIZE = 5000;
+const RETENTION_DAY_MS = 24 * 60 * 60 * 1000;
+
+export type ClasspilotRetentionPurgeSpineMode = "count" | "delete";
+
+// Read at call time so a task-definition revision takes effect on the next
+// hourly run. Anything other than the exact string "delete" stays in count mode.
+export function retentionPurgeSpineMode(): ClasspilotRetentionPurgeSpineMode {
+  return process.env.CLASSPILOT_RETENTION_PURGE_SPINE_MODE === "delete" ? "delete" : "count";
+}
+
+export type ClasspilotSafetySpineRetentionTotals = {
+  aiDecisions: number;
+  timelineEvents: number;
+  closedCases: number;
+  messages: number;
+  chatDeliveries: number;
+};
+
+type SafetySpineRetentionStatement = {
+  // Table the delete targets by primary key.
+  table: string;
+  // FROM clause (target table first, joins after) and predicate shared by the
+  // count query and the batched delete so both modes evaluate identical rows.
+  from: string;
+  targetId: string;
+  where: string;
+};
+
+function safetySpineCountSql(statement: SafetySpineRetentionStatement): string {
+  return `SELECT count(*)::int AS total FROM ${statement.from} WHERE ${statement.where}`;
+}
+
+function safetySpineDeleteSql(statement: SafetySpineRetentionStatement): string {
+  return `DELETE FROM ${statement.table} WHERE id IN (
+    SELECT ${statement.targetId} FROM ${statement.from} WHERE ${statement.where} LIMIT ${RETENTION_BATCH_SIZE}
+  )`;
+}
+
+// Batch delete in chunks to avoid long table locks and memory bloat. Uses raw
+// SQL with row count instead of .returning() so no IDs are loaded into memory.
+async function deleteInBatches(statement: string, params: unknown[]): Promise<number> {
+  let total = 0;
+  let batchDeleted = 0;
+  do {
+    const result = await schedulerPool.query(statement, params);
+    batchDeleted = result.rowCount || 0;
+    total += batchDeleted;
+    if (batchDeleted > 0) {
+      // Yield between batches so other queries can run
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  } while (batchDeleted >= RETENTION_BATCH_SIZE);
+  return total;
+}
+
+async function applySafetySpineRetentionStatement(
+  mode: ClasspilotRetentionPurgeSpineMode,
+  statement: SafetySpineRetentionStatement,
+  params: unknown[]
+): Promise<number> {
+  if (mode === "delete") {
+    return deleteInBatches(safetySpineDeleteSql(statement), params);
+  }
+  const result = await schedulerPool.query<{ total: number }>(safetySpineCountSql(statement), params);
+  return result.rows[0]?.total ?? 0;
+}
+
+// Every statement is explicitly tenant-scoped ($1 = school id). Timestamp
+// parameters are bound per statement because Postgres rejects unreferenced
+// positional parameters, so the closed-case cutoff is $3 where the row cutoff
+// is also used and $2 where it is the only timestamp.
+export async function purgeClasspilotSafetySpineRetentionForSchool(input: {
+  schoolId: string;
+  cutoff: Date;
+  closedCaseCutoff: Date;
+  mode: ClasspilotRetentionPurgeSpineMode;
+}): Promise<ClasspilotSafetySpineRetentionTotals> {
+  const { schoolId, cutoff, closedCaseCutoff, mode } = input;
+
+  const aiDecisions = await applySafetySpineRetentionStatement(
+    mode,
+    {
+      table: "classpilot_ai_decisions",
+      from: "classpilot_ai_decisions",
+      targetId: "id",
+      where: "school_id = $1 AND created_at < $2",
+    },
+    [schoolId, cutoff]
+  );
+
+  // Timeline rows follow their case: rows of a closed case purge with the
+  // case's floor, case-less rows and rows whose case no longer resolves within
+  // this tenant purge on the ordinary cutoff, and rows of an open case stay.
+  // Runs before the case delete so the join can still see the closing date.
+  const timelineEvents = await applySafetySpineRetentionStatement(
+    mode,
+    {
+      table: "student_timeline_events",
+      from: `student_timeline_events AS event
+        LEFT JOIN student_safety_cases AS safety_case
+          ON safety_case.id = event.case_id AND safety_case.school_id = $1`,
+      targetId: "event.id",
+      where: `event.school_id = $1
+        AND (
+          (event.case_id IS NULL AND event.occurred_at < $2)
+          OR (
+            safety_case.id IS NOT NULL
+            AND safety_case.status <> 'open'
+            AND COALESCE(safety_case.closed_at, safety_case.opened_at) < $3
+          )
+          OR (event.case_id IS NOT NULL AND safety_case.id IS NULL AND event.occurred_at < $2)
+        )`,
+    },
+    [schoolId, cutoff, closedCaseCutoff]
+  );
+
+  // A closed case cited by a retained evidence artifact stays so the artifact
+  // keeps its context; open cases never purge.
+  const closedCases = await applySafetySpineRetentionStatement(
+    mode,
+    {
+      table: "student_safety_cases",
+      from: "student_safety_cases AS safety_case",
+      targetId: "safety_case.id",
+      where: `safety_case.school_id = $1
+        AND safety_case.status <> 'open'
+        AND COALESCE(safety_case.closed_at, safety_case.opened_at) < $2
+        AND NOT EXISTS (SELECT 1 FROM evidence_artifacts AS artifact
+          WHERE artifact.school_id = $1 AND artifact.case_id = safety_case.id)`,
+    },
+    [schoolId, closedCaseCutoff]
+  );
+
+  // Legacy messages with a NULL school_id are deliberately left alone here;
+  // an orphan sweep is a separate policy decision.
+  const messages = await applySafetySpineRetentionStatement(
+    mode,
+    {
+      table: "messages",
+      from: "messages",
+      targetId: "id",
+      where: `school_id = $1 AND "timestamp" < $2`,
+    },
+    [schoolId, cutoff]
+  );
+
+  // A delivery under a live lease belongs to a worker until the lease lapses.
+  const chatDeliveries = await applySafetySpineRetentionStatement(
+    mode,
+    {
+      table: "classpilot_chat_deliveries",
+      from: "classpilot_chat_deliveries",
+      targetId: "id",
+      where: `school_id = $1
+        AND expires_at < $2
+        AND (state <> 'leased' OR lease_expires_at IS NULL OR lease_expires_at < $2)`,
+    },
+    [schoolId, cutoff]
+  );
+
+  return { aiDecisions, timelineEvents, closedCases, messages, chatDeliveries };
+}
+
+async function purgeClasspilotSafetySpineRetention() {
+  const mode = retentionPurgeSpineMode();
+  const totals: ClasspilotSafetySpineRetentionTotals = {
+    aiDecisions: 0,
+    timelineEvents: 0,
+    closedCases: 0,
+    messages: 0,
+    chatDeliveries: 0,
+  };
+  let tenants = 0;
+  let failedTenants = 0;
+  try {
+    // Retention applies to every school, including inactive, suspended, and
+    // unlicensed tenants. Licensing must never become a data-retention bypass.
+    const allSchools = await schedulerDb.select({ id: schools.id }).from(schools);
+
+    for (const school of allSchools) {
+      tenants += 1;
+      try {
+        const schoolSettings = await getSettingsForSchool(school.id, schedulerDb);
+        const retentionDays = parseClasspilotRetentionDays(schoolSettings?.retentionHours);
+        const now = Date.now();
+        const cutoff = new Date(now - retentionDays * RETENTION_DAY_MS);
+        const closedCaseCutoff = new Date(
+          now - Math.max(retentionDays, CLOSED_SAFETY_CASE_RETENTION_FLOOR_DAYS) * RETENTION_DAY_MS
+        );
+        const schoolTotals = await purgeClasspilotSafetySpineRetentionForSchool({
+          schoolId: school.id,
+          cutoff,
+          closedCaseCutoff,
+          mode,
+        });
+        totals.aiDecisions += schoolTotals.aiDecisions;
+        totals.timelineEvents += schoolTotals.timelineEvents;
+        totals.closedCases += schoolTotals.closedCases;
+        totals.messages += schoolTotals.messages;
+        totals.chatDeliveries += schoolTotals.chatDeliveries;
+        // Yield between schools
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      } catch (schoolError) {
+        // Isolate tenant failures so one damaged or transiently locked school
+        // cannot prevent retention from running for every later tenant.
+        failedTenants += 1;
+        console.error("[ClassPilot] Safety spine retention failed for one tenant");
+        errorMonitor.trackError("scheduler_failure", schoolError as Error, {
+          job: "purgeClasspilotSafetySpineRetention",
+        });
+      }
+    }
+  } catch (err) {
+    console.error("[ClassPilot] Safety spine retention failed");
+    errorMonitor.trackError("scheduler_failure", err as Error, {
+      job: "purgeClasspilotSafetySpineRetention",
+    });
+  }
+  // One identifier-free summary per run: mode, tenant counts, and totals only.
+  console.log(
+    `[ClassPilot] Safety spine retention mode=${mode} tenants=${tenants} failed=${failedTenants} ` +
+      `aiDecisions=${totals.aiDecisions} timelineEvents=${totals.timelineEvents} ` +
+      `closedCases=${totals.closedCases} messages=${totals.messages} chatDeliveries=${totals.chatDeliveries}`
+  );
 }
 
 // Error logs retention — keep 30 days, then purge in batches. Uses the
