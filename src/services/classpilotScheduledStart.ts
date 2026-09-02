@@ -42,7 +42,7 @@ import {
   getSchoolById,
   getUserById,
   listActiveScheduledClassConflictsReadyToExpire,
-  listActiveScheduledClassConflictsForTeacher,
+  listActiveScheduledClassConflictsForEligibleTeacher,
   listActiveSupervisionContextsForScheduledConflict,
   listOtherActiveTeachingSessionsForSchool,
   promoteScheduledReportSessionToLive,
@@ -55,6 +55,7 @@ import {
   withTeachingSessionStartLock,
   type FinalizeTeachingSessionResult,
 } from "./storage.js";
+import { scheduledClassStaffIds } from "./classpilotScheduledStaff.js";
 
 export type ScheduledClassAutoStartResult =
   | { status: "started"; session: TeachingSession }
@@ -441,6 +442,42 @@ async function teacherConnected(
     presenceStore: options.presenceStore,
     now: options.now,
   });
+}
+
+/**
+ * Pick the eligible staff member (scheduled teacher first, then every
+ * group_teachers relationship) who is connected and can carry the bell start.
+ * `scheduledTeacherConnectedOverride: true` is the manual-start contract and
+ * always resolves to the scheduled teacher. An explicit `false` applies only
+ * to the scheduled teacher; co-teachers consult `connectedTeacherIdsOverride`
+ * or live presence, so an offline primary with a connected co-teacher still
+ * starts. Returns null when nobody eligible is connected.
+ */
+async function firstConnectedScheduledStaff(
+  schoolId: string,
+  scheduledTeacherId: string,
+  eligibleTeacherIds: Iterable<string>,
+  options: {
+    connectedTeacherIdsOverride?: Set<string>;
+    scheduledTeacherConnectedOverride?: boolean;
+    presenceStore?: Pick<ClasspilotStaffPresenceStore, "isFresh">;
+    now?: Date;
+  } = {}
+): Promise<string | null> {
+  if (options.scheduledTeacherConnectedOverride === true) return scheduledTeacherId;
+  const ordered = new Set<string>([scheduledTeacherId, ...eligibleTeacherIds]);
+  for (const teacherId of ordered) {
+    const connected = await teacherConnected(schoolId, teacherId, {
+      connectedTeacherIdsOverride: options.connectedTeacherIdsOverride,
+      scheduledTeacherConnectedOverride: teacherId === scheduledTeacherId
+        ? options.scheduledTeacherConnectedOverride
+        : undefined,
+      presenceStore: options.presenceStore,
+      now: options.now,
+    });
+    if (connected) return teacherId;
+  }
+  return null;
 }
 
 export async function buildScheduledCoveragePayload(options: {
@@ -930,18 +967,31 @@ export async function processScheduledClassAutoStart(options: {
     return { status: "skipped", reason: existingConflict!.status };
   }
 
-  const scheduledTeacherConnected = await teacherConnected(group.schoolId, occurrence.teacherId, {
-    scheduledTeacherConnectedOverride: options.scheduledTeacherConnectedOverride,
-    connectedTeacherIdsOverride: options.connectedTeacherIdsOverride,
-    presenceStore: options.presenceStore,
-    now,
-  });
+  // Any eligible staff member (scheduled teacher or a group co-teacher) who is
+  // connected carries the bell start. The session and the conflict row stay
+  // keyed on the scheduled teacher; the starter is recorded as the resolver.
+  const eligibleTeacherIds = await scheduledClassStaffIds(
+    { groupId: group.id, scheduledTeacherId: occurrence.teacherId },
+    dbInstance
+  );
+  const connectedStaffId = await firstConnectedScheduledStaff(
+    group.schoolId,
+    occurrence.teacherId,
+    eligibleTeacherIds,
+    {
+      scheduledTeacherConnectedOverride: options.scheduledTeacherConnectedOverride,
+      connectedTeacherIdsOverride: options.connectedTeacherIdsOverride,
+      presenceStore: options.presenceStore,
+      now,
+    }
+  );
 
-  if (scheduledTeacherConnected) {
+  if (connectedStaffId) {
     const session = await startScheduledClass({
       group: occurrenceGroup,
       scheduledSession: occurrence,
       scheduledConflict: existingConflict,
+      actorId: connectedStaffId,
       dbInstance,
       afterReplacement: options.afterReplacement,
     });
@@ -1016,7 +1066,9 @@ export async function startActiveScheduledClassesForTeacher(options: {
   const school = await getSchoolById(options.schoolId);
   const timeZone = school?.schoolTimezone || "America/New_York";
   const scheduledDate = localDateInTimeZone(now, timeZone);
-  const conflicts = await listActiveScheduledClassConflictsForTeacher(
+  // Co-teachers pick up conflicts routed to the scheduled teacher; the start
+  // lock and the session stay keyed on the scheduled teacher.
+  const conflicts = await listActiveScheduledClassConflictsForEligibleTeacher(
     options.schoolId,
     options.teacherId,
     scheduledDate

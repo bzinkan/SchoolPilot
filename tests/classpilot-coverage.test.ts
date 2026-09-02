@@ -66,7 +66,9 @@ import {
   addCentralEmailRecipientForSchool,
   addGroupTeacher,
   getActiveScheduledReportSessionForConflict,
+  getScheduledClassConflictByIdAndSchool,
   getScheduledGroupsReadyToEnd,
+  isAuthorizedClasspilotSessionStaff,
   listCoverageScopeGroups,
   linkStudentDevice,
   markClasspilotCommandTargetsSent,
@@ -1764,8 +1766,9 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     const scheduledCoTeacherList = await requestJson("GET", "/classpilot/scheduled-conflicts", undefined, authFor(scheduledCoTeacher, school.id));
     assert.equal(scheduledCoTeacherList.status, 200);
     assert.equal(scheduledCoTeacherList.body.conflicts.length, 1);
-    assert.equal(scheduledCoTeacherList.body.conflicts[0].canStartAnyway, false);
-    assert.match(scheduledCoTeacherList.body.conflicts[0].message, /needs supervision/);
+    assert.equal(scheduledCoTeacherList.body.conflicts[0].audience, "scheduled_coteacher");
+    assert.equal(scheduledCoTeacherList.body.conflicts[0].canStartAnyway, true);
+    assert.match(scheduledCoTeacherList.body.conflicts[0].message, /can start it now/);
 
     const affectedTeacherList = await requestJson("GET", "/classpilot/scheduled-conflicts", undefined, authFor(sourceTeacher, school.id));
     assert.equal(affectedTeacherList.status, 200);
@@ -1783,7 +1786,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     const coTeacherQueue = await requestJson("GET", "/coverage/available-students", undefined, authFor(scheduledCoTeacher, school.id));
     assert.equal(coTeacherQueue.status, 200);
     assert.equal(coTeacherQueue.body.scheduledCoverageGroups.length, 1);
-    assert.equal(coTeacherQueue.body.scheduledCoverageGroups[0].canStartClass, false);
+    assert.equal(coTeacherQueue.body.scheduledCoverageGroups[0].canStartClass, true);
     assert.equal(
       coTeacherQueue.body.scheduledCoverageGroups[0].students.some(
         (student: any) => student.studentId === scheduledOnlyStudent.id
@@ -2045,6 +2048,231 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.equal(postExpiredScheduledActive, undefined);
 
     await inSchool(school.id, () => endTeachingSession(sourceSession.id));
+  });
+
+  it("lets a connected co-teacher start a scheduled class at the bell, at login, and from scheduled coverage", async () => {
+    const primaryTeacher = await createUser({
+      email: `coteacher-primary@${TAG}.example.edu`,
+      firstName: "Pat",
+      lastName: "Primary",
+    } as any);
+    const coTeacher = await createUser({
+      email: `coteacher-co@${TAG}.example.edu`,
+      firstName: "Cody",
+      lastName: "CoTeach",
+    } as any);
+    const outsider = await createUser({
+      email: `coteacher-outsider@${TAG}.example.edu`,
+      firstName: "Olive",
+      lastName: "Outsider",
+    } as any);
+    for (const user of [primaryTeacher, coTeacher, outsider]) {
+      await createMembership({ userId: user.id, schoolId: school.id, role: "teacher", status: "active" } as any);
+    }
+    const coTaughtStudent = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Cotaught",
+      lastName: "Student",
+      email: `coteacher-student@${TAG}.example.edu`,
+      emailLc: `coteacher-student@${TAG}.example.edu`,
+      gradeLevel: "7",
+      status: "active",
+    } as any));
+    const coTaughtDevice = `${TAG}-coteacher-device`;
+    await inSchool(school.id, async () => {
+      await createDevice({ deviceId: coTaughtDevice, schoolId: school.id, classId: "default", deviceName: "Co-taught" } as any);
+      await linkStudentDevice({ studentId: coTaughtStudent.id, deviceId: coTaughtDevice });
+      await setActiveStudentForDevice(coTaughtDevice, coTaughtStudent.id);
+    });
+
+    // Bell start: the scheduled teacher is offline and only the co-teacher is
+    // connected. The class starts for the scheduled teacher, the co-teacher is
+    // recorded as the resolver, and the co-teacher is authorized session staff.
+    const bellGroup = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: primaryTeacher.id,
+      name: `${TAG}_CoTeacher_Bell`,
+      groupType: "admin_class",
+      status: "active",
+      scheduleEnabled: true,
+      blockStartTime: "08:00",
+      blockEndTime: "08:45",
+    } as any));
+    await inSchool(school.id, () => addGroupStudentsDetailed(bellGroup.id, [coTaughtStudent.id]));
+    await inSchool(school.id, () => addGroupTeacher(bellGroup.id, coTeacher.id, "co-teacher"));
+    const outsiderOnly = await inSchool(school.id, () => processScheduledClassAutoStart({
+      group: bellGroup,
+      scheduledDate: "2026-01-16",
+      scheduledTeacherConnectedOverride: false,
+      connectedTeacherIdsOverride: new Set([outsider.id]),
+      now: new Date("2026-01-16T13:15:00.000Z"),
+    }));
+    assert.equal(outsiderOnly.status, "coverage_needed");
+    const bellConflictId = outsiderOnly.status === "coverage_needed" ? outsiderOnly.conflictId : "";
+    assert.ok(bellConflictId);
+    assert.equal(await inSchool(school.id, () => getActiveTeachingSessionForSchool(primaryTeacher.id, school.id)), undefined);
+    const bellStart = await inSchool(school.id, () => processScheduledClassAutoStart({
+      group: bellGroup,
+      scheduledDate: "2026-01-16",
+      scheduledTeacherConnectedOverride: false,
+      connectedTeacherIdsOverride: new Set([coTeacher.id]),
+      now: new Date("2026-01-16T13:16:00.000Z"),
+    }));
+    assert.equal(bellStart.status, "started");
+    const bellSession = bellStart.status === "started" ? bellStart.session : undefined;
+    assert.ok(bellSession);
+    assert.equal(bellSession.teacherId, primaryTeacher.id);
+    assert.equal(bellSession.groupId, bellGroup.id);
+    assert.equal((bellSession as any).sessionMode, "live");
+    assert.equal(
+      await inSchool(school.id, () => isAuthorizedClasspilotSessionStaff(school.id, bellSession.id, coTeacher.id)),
+      true
+    );
+    assert.equal(
+      await inSchool(school.id, () => isAuthorizedClasspilotSessionStaff(school.id, bellSession.id, outsider.id)),
+      false
+    );
+    const bellConflict = await inSchool(school.id, () => getScheduledClassConflictByIdAndSchool(bellConflictId, school.id));
+    assert.equal(bellConflict?.status, "started");
+    assert.equal(bellConflict?.teacherId, primaryTeacher.id);
+    assert.equal(bellConflict?.resolvedBy, coTeacher.id);
+    await inSchool(school.id, () => endTeachingSession(bellSession.id));
+    await inSchool(school.id, () => updateGroup(bellGroup.id, {
+      scheduleEnabled: false,
+    } as any));
+
+    // Login pickup: the conflict stays routed to the scheduled teacher, but a
+    // co-teacher signing in picks it up; an unrelated teacher does not.
+    const pickupGroup = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: primaryTeacher.id,
+      name: `${TAG}_CoTeacher_Pickup`,
+      groupType: "admin_class",
+      status: "active",
+      scheduleEnabled: true,
+      blockStartTime: "00:00",
+      blockEndTime: "23:59",
+    } as any));
+    await inSchool(school.id, () => addGroupStudentsDetailed(pickupGroup.id, [coTaughtStudent.id]));
+    await inSchool(school.id, () => addGroupTeacher(pickupGroup.id, coTeacher.id, "co-teacher"));
+    const pickupNeeded = await inSchool(school.id, () => processScheduledClassAutoStart({
+      group: pickupGroup,
+      scheduledDate: "2026-01-16",
+      scheduledTeacherConnectedOverride: false,
+      connectedTeacherIdsOverride: new Set<string>(),
+      now: new Date("2026-01-16T15:00:00.000Z"),
+    }));
+    assert.equal(pickupNeeded.status, "coverage_needed");
+    const pickupConflictId = pickupNeeded.status === "coverage_needed" ? pickupNeeded.conflictId : "";
+    assert.ok(pickupConflictId);
+    const outsiderPickup = await inSchool(school.id, () => startActiveScheduledClassesForTeacher({
+      schoolId: school.id,
+      teacherId: outsider.id,
+      now: new Date("2026-01-16T15:00:00.000Z"),
+    }));
+    assert.equal(outsiderPickup.length, 0);
+    const coTeacherPickup = await inSchool(school.id, () => startActiveScheduledClassesForTeacher({
+      schoolId: school.id,
+      teacherId: coTeacher.id,
+      now: new Date("2026-01-16T15:00:00.000Z"),
+    }));
+    assert.equal(coTeacherPickup.length, 1);
+    assert.equal(coTeacherPickup[0].teacherId, primaryTeacher.id);
+    assert.equal(coTeacherPickup[0].groupId, pickupGroup.id);
+    assert.equal((coTeacherPickup[0] as any).sessionMode, "live");
+    const pickupConflict = await inSchool(school.id, () => getScheduledClassConflictByIdAndSchool(pickupConflictId, school.id));
+    assert.equal(pickupConflict?.status, "started");
+    assert.equal(pickupConflict?.teacherId, primaryTeacher.id);
+    assert.equal(pickupConflict?.resolvedBy, coTeacher.id);
+    await inSchool(school.id, () => endTeachingSession(coTeacherPickup[0].id));
+    await inSchool(school.id, () => updateGroup(pickupGroup.id, {
+      scheduleEnabled: false,
+    } as any));
+
+    // Scheduled coverage: a co-teacher sees the conflict as actionable and can
+    // start the class from it; an unrelated teacher cannot.
+    const coTaughtStartAnywayGroup = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: primaryTeacher.id,
+      name: `${TAG}_CoTeacher_Start_Anyway`,
+      groupType: "admin_class",
+      status: "active",
+      scheduleEnabled: true,
+      blockStartTime: "00:00",
+      blockEndTime: "23:59",
+    } as any));
+    await inSchool(school.id, () => addGroupStudentsDetailed(coTaughtStartAnywayGroup.id, [coTaughtStudent.id]));
+    await inSchool(school.id, () => addGroupTeacher(coTaughtStartAnywayGroup.id, coTeacher.id, "co-teacher"));
+    const coTaughtNow = new Date();
+    const coTaughtDate = localDateInTimeZone(coTaughtNow, "America/New_York");
+    // Seed the occurrence around the real clock so weekend CI does not re-test
+    // the separate instructional-calendar creation gate.
+    await inSchool(school.id, () => createOrReuseScheduledReportSession({
+      schoolId: school.id,
+      groupId: coTaughtStartAnywayGroup.id,
+      teacherId: primaryTeacher.id,
+      scheduledDate: coTaughtDate,
+      scheduledTimezone: "America/New_York",
+      scheduledStartAt: new Date(coTaughtNow.getTime() - 60_000),
+      scheduledEndAt: new Date(coTaughtNow.getTime() + 60 * 60_000),
+      scheduledTeacherEmail: primaryTeacher.email,
+      scheduledTeacherName: `${primaryTeacher.firstName} ${primaryTeacher.lastName}`,
+    }));
+    const coTaughtCoverage = await inSchool(school.id, () => processScheduledClassAutoStart({
+      group: coTaughtStartAnywayGroup,
+      scheduledDate: coTaughtDate,
+      scheduledTeacherConnectedOverride: false,
+      connectedTeacherIdsOverride: new Set<string>(),
+      now: coTaughtNow,
+    }));
+    assert.equal(coTaughtCoverage.status, "coverage_needed");
+    const coTaughtConflictId = coTaughtCoverage.status === "coverage_needed" ? coTaughtCoverage.conflictId : "";
+    assert.ok(coTaughtConflictId);
+
+    const outsiderStart = await requestJson(
+      "POST",
+      `/classpilot/scheduled-conflicts/${coTaughtConflictId}/start-anyway`,
+      {},
+      authFor(outsider, school.id)
+    );
+    assert.equal(outsiderStart.status, 403);
+    assert.equal(outsiderStart.body.error, "Only an admin or an assigned teacher can start this class");
+
+    const coTeacherList = await requestJson("GET", "/classpilot/scheduled-conflicts", undefined, authFor(coTeacher, school.id));
+    assert.equal(coTeacherList.status, 200);
+    const coTeacherConflict = coTeacherList.body.conflicts.find((entry: any) => entry.id === coTaughtConflictId);
+    assert.ok(coTeacherConflict);
+    assert.equal(coTeacherConflict.audience, "scheduled_coteacher");
+    assert.equal(coTeacherConflict.canStartAnyway, true);
+    assert.equal(coTeacherConflict.teacherId, primaryTeacher.id);
+    assert.match(coTeacherConflict.message, /You are a co-teacher for this class and can start it now/);
+    const coTeacherStartQueue = await requestJson("GET", "/coverage/available-students", undefined, authFor(coTeacher, school.id));
+    assert.equal(coTeacherStartQueue.status, 200);
+    const coTeacherQueueGroup = coTeacherStartQueue.body.scheduledCoverageGroups.find((entry: any) => entry.id === coTaughtConflictId);
+    assert.ok(coTeacherQueueGroup);
+    assert.equal(coTeacherQueueGroup.canStartClass, true);
+
+    const coTeacherStarted = await requestJson(
+      "POST",
+      `/classpilot/scheduled-conflicts/${coTaughtConflictId}/start-anyway`,
+      {},
+      authFor(coTeacher, school.id)
+    );
+    assert.equal(coTeacherStarted.status, 201);
+    assert.equal(coTeacherStarted.body.session.teacherId, primaryTeacher.id);
+    assert.equal(coTeacherStarted.body.session.groupId, coTaughtStartAnywayGroup.id);
+    const coTaughtStartedConflict = await inSchool(school.id, () => getScheduledClassConflictByIdAndSchool(coTaughtConflictId, school.id));
+    assert.equal(coTaughtStartedConflict?.status, "started");
+    assert.equal(coTaughtStartedConflict?.teacherId, primaryTeacher.id);
+    assert.equal(coTaughtStartedConflict?.resolvedBy, coTeacher.id);
+    assert.equal(
+      await inSchool(school.id, () => isAuthorizedClasspilotSessionStaff(school.id, coTeacherStarted.body.session.id, coTeacher.id)),
+      true
+    );
+    await inSchool(school.id, () => endTeachingSession(coTeacherStarted.body.session.id));
+    await inSchool(school.id, () => updateGroup(coTaughtStartAnywayGroup.id, {
+      scheduleEnabled: false,
+    } as any));
   });
 
   it("keeps complete unscoped and Observe rosters when one local realtime snapshot is circular", async () => {

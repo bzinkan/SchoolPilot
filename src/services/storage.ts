@@ -1,4 +1,4 @@
-import { eq, and, desc, asc, gt, lt, ilike, or, isNull, isNotNull, inArray, notInArray, getTableColumns, sql, ne, type SQL, type SQLWrapper } from "drizzle-orm";
+import { eq, and, desc, asc, gt, lt, ilike, or, isNull, isNotNull, inArray, notInArray, getTableColumns, sql, ne, exists, type SQL, type SQLWrapper } from "drizzle-orm";
 import { randomInt } from "node:crypto";
 import { safeErrorMetadata } from "../util/safeLogging.js";
 import { isDeepStrictEqual } from "node:util";
@@ -14847,6 +14847,48 @@ export async function listActiveScheduledClassConflictsForTeacher(
     .orderBy(desc(classpilotScheduledConflicts.lastCheckedAt), desc(classpilotScheduledConflicts.createdAt));
 }
 
+/**
+ * Active scheduled-class conflicts a staff member may start: the ones routed
+ * to them as the scheduled teacher plus every class where they hold a
+ * `group_teachers` relationship (co-teacher pickup at login). The group join
+ * is pinned to the same school so a relationship in another tenant can never
+ * surface this school's conflicts. listActiveScheduledClassConflictsForTeacher
+ * remains the scheduled-teacher-only routing query.
+ */
+export async function listActiveScheduledClassConflictsForEligibleTeacher(
+  schoolId: string,
+  teacherId: string,
+  scheduledDate?: string,
+  dbInstance: typeof db = db
+): Promise<ClasspilotScheduledConflict[]> {
+  const conditions: Array<SQL | undefined> = [
+    eq(classpilotScheduledConflicts.schoolId, schoolId),
+    inArray(classpilotScheduledConflicts.status, ACTIVE_SCHEDULED_COVERAGE_STATUSES),
+    or(
+      eq(classpilotScheduledConflicts.teacherId, teacherId),
+      exists(
+        dbInstance
+          .select({ one: sql`1` })
+          .from(groupTeachers)
+          .innerJoin(groups, and(
+            eq(groups.id, groupTeachers.groupId),
+            eq(groups.schoolId, schoolId)
+          ))
+          .where(and(
+            eq(groupTeachers.groupId, classpilotScheduledConflicts.groupId),
+            eq(groupTeachers.teacherId, teacherId)
+          ))
+      )
+    ),
+  ];
+  if (scheduledDate) conditions.push(eq(classpilotScheduledConflicts.scheduledDate, scheduledDate));
+  return dbInstance
+    .select()
+    .from(classpilotScheduledConflicts)
+    .where(and(...conditions))
+    .orderBy(desc(classpilotScheduledConflicts.lastCheckedAt), desc(classpilotScheduledConflicts.createdAt));
+}
+
 export async function listActiveScheduledClassConflictsReadyToExpire(
   schoolId: string,
   scheduledDate: string,
@@ -15777,9 +15819,10 @@ async function withPasspilotGroupMutationLock<T>(
 }
 
 export async function getGroupTeachers(
-  groupId: string
+  groupId: string,
+  dbInstance: typeof db = db
 ): Promise<GroupTeacher[]> {
-  return db
+  return dbInstance
     .select()
     .from(groupTeachers)
     .where(eq(groupTeachers.groupId, groupId))

@@ -23,6 +23,10 @@ import {
 } from "../../services/classpilotScheduledStart.js";
 import { serializeClasspilotSession } from "../../services/classpilotSessionLifecycle.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
+import {
+  isScheduledClassStaff,
+  scheduledClassStaffIds,
+} from "../../services/classpilotScheduledStaff.js";
 
 const router = Router();
 
@@ -64,19 +68,15 @@ async function affectedTeacherIds(conflict: any): Promise<Set<string>> {
   return ids;
 }
 
-async function scheduledClassStaffIds(conflict: any): Promise<Set<string>> {
-  const ids = new Set<string>([conflict.teacherId].filter(Boolean));
-  const teachers = await getGroupTeachers(conflict.groupId);
-  teachers.forEach((teacher) => ids.add(teacher.teacherId));
-  return ids;
-}
-
 async function viewContext(conflict: any, userId: string, admin: boolean) {
   const affected = await affectedTeacherIds(conflict);
-  const scheduledStaff = await scheduledClassStaffIds(conflict);
+  const scheduledStaff = await scheduledClassStaffIds({
+    groupId: conflict.groupId,
+    scheduledTeacherId: conflict.teacherId,
+  });
   if (admin) return { visible: true, audience: "admin", canAct: true };
   if (conflict.teacherId === userId) return { visible: true, audience: "scheduled_teacher", canAct: true };
-  if (scheduledStaff.has(userId)) return { visible: true, audience: "scheduled_coteacher", canAct: false };
+  if (scheduledStaff.has(userId)) return { visible: true, audience: "scheduled_coteacher", canAct: true };
   if (affected.has(userId)) return { visible: true, audience: "affected_teacher", canAct: false };
   return { visible: false, audience: "none", canAct: false };
 }
@@ -89,7 +89,7 @@ function conflictMessage(conflict: any, teacherName: string, audience: string, c
     return `${className} started while you were not logged in. Reporting is active, and ${count} student${count === 1 ? "" : "s"} may be waiting under Available until you open ClassPilot.`;
   }
   if (audience === "scheduled_coteacher") {
-    return `${className} has started for ${teacherName}, but ${teacherName} is not currently logged in. Reporting is active; this block needs supervision.`;
+    return `${className} has started for ${teacherName}, who is not currently logged in. You are a co-teacher for this class and can start it now.`;
   }
   if (!connected) {
     if (audience === "affected_teacher") {
@@ -212,8 +212,15 @@ router.post("/scheduled-conflicts/:id/start-anyway", ...auth, async (req, res, n
     if (!conflict) return res.status(404).json({ error: "Scheduled coverage request not found" });
     if (conflict.status === "expired") return expiredScheduledConflictResponse(res);
     if (!["coverage_needed", "claimed", "pending"].includes(conflict.status)) return res.status(404).json({ error: "Scheduled coverage request not found" });
-    if (!isAdmin(req, res) && conflict.teacherId !== req.authUser!.id) {
-      return res.status(403).json({ error: "Only an admin or the scheduled teacher can start this class" });
+    // Admins, the scheduled teacher, and the class's co-teachers may start.
+    // Skip stays admin + scheduled teacher only.
+    const eligibleStaff = isAdmin(req, res) || await isScheduledClassStaff({
+      groupId: conflict.groupId,
+      scheduledTeacherId: conflict.teacherId,
+      userId: req.authUser!.id,
+    });
+    if (!eligibleStaff) {
+      return res.status(403).json({ error: "Only an admin or an assigned teacher can start this class" });
     }
     const session = await startScheduledClassFromConflict({ conflict, actorId: req.authUser!.id });
     return res.status(201).json({ session: serializeClasspilotSession(session) });

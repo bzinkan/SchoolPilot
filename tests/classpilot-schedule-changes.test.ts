@@ -100,6 +100,10 @@ async function cleanupSchool(schoolId: string): Promise<void> {
     await tx.execute(sql`DELETE FROM classpilot_schedule_changes WHERE school_id = ${schoolId}`);
     await tx.execute(sql`DELETE FROM classpilot_schedule_change_pairs WHERE school_id = ${schoolId}`);
     await tx.execute(sql`DELETE FROM audit_logs WHERE school_id = ${schoolId}`);
+    await tx.execute(sql`DELETE FROM classpilot_session_summary_deliveries WHERE school_id = ${schoolId}`);
+    await tx.execute(sql`DELETE FROM classpilot_session_students WHERE school_id = ${schoolId}`);
+    await tx.execute(sql`DELETE FROM classpilot_session_staff WHERE school_id = ${schoolId}`);
+    await tx.execute(sql`DELETE FROM teaching_sessions WHERE school_id = ${schoolId}`);
     await tx.execute(sql`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id = ${schoolId})`);
     await tx.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id = ${schoolId})`);
     await tx.execute(sql`DELETE FROM groups WHERE school_id = ${schoolId}`);
@@ -1077,5 +1081,51 @@ describe("ClassPilot schedule-change API and storage workflow", { concurrency: f
       WHERE school_id = ${schoolA.id} AND name = ${attemptedName}
     `));
     assert.equal(Number(residue.rows[0]?.count || 0), 0);
+  });
+
+  it("lets a co-teacher start a scheduled class inside its window and rejects an unrelated teacher", async () => {
+    const [primary, coTeacher, outsider] = await Promise.all([
+      storage.createUser({ email: `coteach-primary@${TAG}.example.edu`, firstName: "Pat", lastName: "Primary" }),
+      storage.createUser({ email: `coteach-co@${TAG}.example.edu`, firstName: "Cody", lastName: "CoTeach" }),
+      storage.createUser({ email: `coteach-outsider@${TAG}.example.edu`, firstName: "Olive", lastName: "Outsider" }),
+    ]);
+    for (const user of [primary, coTeacher, outsider]) {
+      await storage.createMembership({ userId: user.id, schoolId: schoolA.id, role: "teacher", status: "active" });
+    }
+    const group = await createScheduledClass({
+      name: "CoTeacher Window",
+      teacherId: primary.id,
+      start: "00:00",
+      end: "23:59",
+    });
+    await inSchool(schoolA.id, () => storage.addGroupTeacher(group.id, coTeacher.id, "co-teacher"));
+    const now = new Date();
+    const scheduledDate = now.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+    // Seed today's occurrence around the real clock so weekend runs do not
+    // re-test the separate instructional-calendar creation gate.
+    await inSchool(schoolA.id, () => storage.createOrReuseScheduledReportSession({
+      schoolId: schoolA.id,
+      groupId: group.id,
+      teacherId: primary.id,
+      scheduledDate,
+      scheduledTimezone: "America/New_York",
+      scheduledStartAt: new Date(now.getTime() - 60_000),
+      scheduledEndAt: new Date(now.getTime() + 60 * 60_000),
+      scheduledTeacherEmail: primary.email,
+      scheduledTeacherName: "Pat Primary",
+    }));
+
+    const denied = await requestJson("POST", "/classpilot/teaching-sessions/start", outsider, { groupId: group.id });
+    assert.equal(denied.status, 403);
+    assert.equal(denied.body.error, "This class is not assigned to you");
+
+    const started = await requestJson("POST", "/classpilot/teaching-sessions/start", coTeacher, { groupId: group.id });
+    assert.ok(
+      started.status >= 200 && started.status < 300,
+      `co-teacher start returned ${started.status}: ${JSON.stringify(started.body)}`
+    );
+    assert.equal(started.body.session.groupId, group.id);
+    assert.equal(started.body.session.teacherId, primary.id);
+    await inSchool(schoolA.id, () => storage.endTeachingSession(started.body.session.id));
   });
 });
