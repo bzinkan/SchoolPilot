@@ -215,6 +215,7 @@ import { loadClasspilotSafetyContext } from "../../services/classpilotSafetyCont
 import { resolveClasspilotEntitlement } from "../../services/classpilotEntitlement.js";
 import { scheduleClasspilotCommandUpdate } from "../../services/classpilotCommandUpdateScheduler.js";
 import { classpilotSchoolPolicyAuthorityEnvelope } from "../../services/classpilotCommandAuthority.js";
+import { classpilotControlStateAckRequired } from "../../services/classpilotControlStateAckGate.js";
 import {
   isClasspilotCapabilityActive,
   negotiateClasspilotProtocol,
@@ -3809,7 +3810,6 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
               : outcome === "expired"
                 ? "expired"
                 : null;
-        const expectedHealth = ackOutcome === "applied" ? "synced" : ackOutcome;
         const deferredBindingAlreadyApplied = classpilotLateSignInRevisionAppliedToBinding({
           desiredState: controlState.desiredState,
           binding: { schoolId, studentId, studentSessionId, deviceId },
@@ -3829,13 +3829,14 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
         );
         if (
           ackOutcome
-          && (
-            (!deferredBindingAlreadyApplied
-              && classpilotControlStateHasLateSignInOrigin(controlState.desiredState))
-            || controlState.appliedRevision !== Number(appliedClassroomStateRevision)
-            || controlState.enforcementHealth !== expectedHealth
-            || restrictionAuthRevisionMismatch
-          )
+          && classpilotControlStateAckRequired({
+            controlState,
+            appliedRevision: Number(appliedClassroomStateRevision),
+            outcome: ackOutcome,
+            lateSignInOriginPending: !deferredBindingAlreadyApplied
+              && classpilotControlStateHasLateSignInOrigin(controlState.desiredState),
+            restrictionAuthRevisionMismatch,
+          })
         ) {
           const acknowledgedState = await acknowledgeClasspilotStudentControlState({
             schoolId,
@@ -5091,6 +5092,11 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
       );
 
       if (strictResult.status !== "accepted") {
+        recordHeartbeatHotPathCounter(
+          strictResult.status === "superseded"
+            ? "screenshotUploadSuperseded"
+            : "screenshotUploadAuthorityUnavailable"
+        );
         const screenshotPolicy = await resolveClasspilotScreenshotPolicy({
           schoolId,
           teachingSessionId: strictResult.current?.authority.kind === "teaching_session"
@@ -5112,6 +5118,7 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
 
       const strictValue = strictResult.value;
       if (strictValue.outcome === "tracking_window_closed") {
+        recordHeartbeatHotPathCounter("screenshotUploadTrackingWindowClosed");
         return res.status(409).json({
           ok: false,
           code: "SCREENSHOT_CAPTURE_PAUSED",
@@ -5119,8 +5126,51 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
         });
       }
       if (strictValue.outcome === "capture_rejected") {
-        const superseded = strictValue.capturedAtValidation === "before_authority"
-          || strictValue.capturedAtValidation === "after_authority";
+        const capturedAtValidation = strictValue.capturedAtValidation;
+        switch (capturedAtValidation) {
+          case "before_authority":
+            recordHeartbeatHotPathCounter("screenshotCapturedAtBeforeAuthority");
+            break;
+          case "after_authority":
+            recordHeartbeatHotPathCounter("screenshotCapturedAtAfterAuthority");
+            break;
+          case "outside_tracking_window":
+            recordHeartbeatHotPathCounter("screenshotCapturedAtOutsideTrackingWindow");
+            break;
+          case "expired":
+            recordHeartbeatHotPathCounter("screenshotCapturedAtExpired");
+            break;
+          case "future":
+            recordHeartbeatHotPathCounter("screenshotCapturedAtFuture");
+            break;
+        }
+        if (capturedAtValidation === "before_authority") {
+          // Which authority-start input restarted the capture window, and by
+          // how much the frame missed it. Diagnostic only; the fence is above.
+          switch (strictResult.current.authorityStartedAtSource) {
+            case "student_session_started":
+              recordHeartbeatHotPathCounter("screenshotAuthorityStartFromStudentSession");
+              break;
+            case "teaching_start_time":
+              recordHeartbeatHotPathCounter("screenshotAuthorityStartFromTeachingStart");
+              break;
+            case "roster_snapshot_completed":
+              recordHeartbeatHotPathCounter("screenshotAuthorityStartFromRosterSnapshot");
+              break;
+            case "control_updated":
+              recordHeartbeatHotPathCounter("screenshotAuthorityStartFromControlUpdated");
+              break;
+          }
+          recordHeartbeatHotPathTiming(
+            "screenshotCapturedAtBeforeAuthorityLagMs",
+            Math.max(
+              0,
+              strictResult.current.authorityStartedAt.getTime() - capturedAtDate.getTime()
+            )
+          );
+        }
+        const superseded = capturedAtValidation === "before_authority"
+          || capturedAtValidation === "after_authority";
         return res.status(409).json({
           ok: false,
           code: superseded
@@ -5150,6 +5200,7 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
           code: "SCREENSHOT_STORE_UNAVAILABLE",
         });
       }
+      recordHeartbeatHotPathCounter("screenshotUploadAccepted");
 
       screenshotControlAuthority = {
         teachingSessionId: strictValue.classBinding.teachingSessionId,

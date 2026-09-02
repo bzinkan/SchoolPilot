@@ -45,6 +45,10 @@ import {
   isExactIdempotentStudentMessage,
 } from "./classpilotStudentChat.js";
 import { assertClasspilotScreenshotEvidenceAuthority } from "./classpilotEvidenceAuthority.js";
+import {
+  latestLabeledClasspilotAuthorityStart,
+  type ClasspilotScreenshotAuthorityStartSource,
+} from "./classpilotScreenshotAuthorityStart.js";
 import type { ClasspilotTopActivity } from "./classpilotActivityAttribution.js";
 import {
   canonicalizeClasspilotSsoPolicy,
@@ -22744,16 +22748,14 @@ export type ClasspilotScreenshotAuthorityProjection = {
   authority: ClasspilotScreenshotAuthorityClaim;
   /** Earliest server-authoritative instant at which this exact authority existed. */
   authorityStartedAt: Date;
+  /**
+   * Which input produced `authorityStartedAt`. Diagnostic only, so the upload
+   * fence can count what restarted the capture window; never an authority check.
+   */
+  authorityStartedAtSource?: ClasspilotScreenshotAuthorityStartSource;
   /** Manual-session/class deadline, if one is earlier than the rolling screenshot lease. */
   authorityExpiresAt: Date | null;
 };
-
-function latestClasspilotAuthorityStart(...values: Array<Date | null | undefined>): Date {
-  return values.reduce<Date>(
-    (latest, value) => value && value > latest ? value : latest,
-    new Date(0)
-  );
-}
 
 function earliestClasspilotAuthorityExpiry(
   ...values: Array<Date | null | undefined>
@@ -22824,12 +22826,14 @@ export async function getClasspilotScreenshotAuthorityProjection(options: {
     .for("share");
 
   const controlRevision = controlState?.revision ?? 0;
+  const studentAuthorityStart = latestLabeledClasspilotAuthorityStart(
+    ["student_session_started", session.startedAt],
+    ["control_updated", controlState?.updatedAt]
+  );
   const studentAuthority: ClasspilotScreenshotAuthorityProjection = {
     authority: { kind: "student_session", controlRevision },
-    authorityStartedAt: latestClasspilotAuthorityStart(
-      session.startedAt,
-      controlState?.updatedAt
-    ),
+    authorityStartedAt: studentAuthorityStart.value,
+    authorityStartedAtSource: studentAuthorityStart.source,
     authorityExpiresAt: session.authKind === "manual_shared"
       ? session.manualLeaseExpiresAt
       : null,
@@ -22906,18 +22910,20 @@ export async function getClasspilotScreenshotAuthorityProjection(options: {
     return studentAuthority;
   }
 
+  const teachingAuthorityStart = latestLabeledClasspilotAuthorityStart(
+    ["student_session_started", session.startedAt],
+    ["teaching_start_time", candidate.startTime],
+    ["roster_snapshot_completed", candidate.rosterSnapshotCompletedAt],
+    ["control_updated", candidate.controlUpdatedAt]
+  );
   return {
     authority: {
       kind: "teaching_session",
       teachingSessionId: candidate.teachingSessionId,
       controlRevision: candidate.controlRevision,
     },
-    authorityStartedAt: latestClasspilotAuthorityStart(
-      session.startedAt,
-      candidate.startTime,
-      candidate.rosterSnapshotCompletedAt,
-      candidate.controlUpdatedAt
-    ),
+    authorityStartedAt: teachingAuthorityStart.value,
+    authorityStartedAtSource: teachingAuthorityStart.source,
     authorityExpiresAt: earliestClasspilotAuthorityExpiry(
       session.authKind === "manual_shared" ? session.manualLeaseExpiresAt : null,
       candidate.teachingScheduledEndAt,

@@ -6,6 +6,7 @@ import {
   resolveClasspilotScreenshotTrackingWindowPolicy,
   validateClasspilotScreenshotCapturedAt,
 } from "../src/services/classpilotScreenshotPolicy.js";
+import { latestLabeledClasspilotAuthorityStart } from "../src/services/classpilotScreenshotAuthorityStart.js";
 import {
   beginClasspilotSessionSubscriptionMutation,
   correlateClasspilotSessionMessage,
@@ -311,6 +312,7 @@ test("tracking screenshot authority and capturedAt validation are strict", () =>
   const trackingAuthority = {
     authority: { kind: "student_session" as const, controlRevision: 4 },
     authorityStartedAt: new Date(now - 10_000),
+    authorityStartedAtSource: "control_updated" as const,
     authorityExpiresAt: null,
   };
   assert.equal(validateClasspilotScreenshotCapturedAt({
@@ -331,6 +333,81 @@ test("tracking screenshot authority and capturedAt validation are strict", () =>
     trackingAuthority,
     now,
   }), "expired");
+});
+
+test("screenshot authority start labels the winning input without moving the fence instant", () => {
+  const base = Date.parse("2026-08-27T15:00:00.000Z");
+  const at = (offsetMs: number) => new Date(base + offsetMs);
+
+  assert.deepEqual(latestLabeledClasspilotAuthorityStart(
+    ["student_session_started", at(40_000)],
+    ["teaching_start_time", at(10_000)],
+    ["roster_snapshot_completed", at(20_000)],
+    ["control_updated", at(30_000)]
+  ), { value: at(40_000), source: "student_session_started" });
+  assert.deepEqual(latestLabeledClasspilotAuthorityStart(
+    ["student_session_started", at(10_000)],
+    ["teaching_start_time", at(40_000)],
+    ["roster_snapshot_completed", at(20_000)],
+    ["control_updated", at(30_000)]
+  ), { value: at(40_000), source: "teaching_start_time" });
+  assert.deepEqual(latestLabeledClasspilotAuthorityStart(
+    ["student_session_started", at(10_000)],
+    ["teaching_start_time", at(20_000)],
+    ["roster_snapshot_completed", at(40_000)],
+    ["control_updated", at(30_000)]
+  ), { value: at(40_000), source: "roster_snapshot_completed" });
+  assert.deepEqual(latestLabeledClasspilotAuthorityStart(
+    ["student_session_started", at(10_000)],
+    ["teaching_start_time", at(20_000)],
+    ["roster_snapshot_completed", at(30_000)],
+    ["control_updated", at(40_000)]
+  ), { value: at(40_000), source: "control_updated" });
+
+  // Ties resolve to the earlier-listed input; missing inputs never win.
+  assert.deepEqual(latestLabeledClasspilotAuthorityStart(
+    ["student_session_started", at(40_000)],
+    ["teaching_start_time", null],
+    ["roster_snapshot_completed", undefined],
+    ["control_updated", at(40_000)]
+  ), { value: at(40_000), source: "student_session_started" });
+  assert.deepEqual(latestLabeledClasspilotAuthorityStart(
+    ["student_session_started", null],
+    ["control_updated", undefined]
+  ), { value: new Date(0), source: undefined });
+
+  // The label is diagnostic only: the fence reads the same instant it always did.
+  const start = latestLabeledClasspilotAuthorityStart(
+    ["student_session_started", at(-20_000)],
+    ["control_updated", at(-10_000)]
+  );
+  assert.equal(start.source, "control_updated");
+  const trackingSettings = {
+    enableTrackingHours: false,
+    trackingStartTime: null,
+    trackingEndTime: null,
+    trackingDays: null,
+    schoolTimezone: "UTC",
+    afterHoursMode: "off" as const,
+  };
+  const trackingAuthority = {
+    authority: { kind: "student_session" as const, controlRevision: 4 },
+    authorityStartedAt: start.value,
+    authorityStartedAtSource: start.source,
+    authorityExpiresAt: null,
+  };
+  assert.equal(validateClasspilotScreenshotCapturedAt({
+    capturedAt: at(-11_000),
+    trackingSettings,
+    trackingAuthority,
+    now: base,
+  }), "before_authority");
+  assert.equal(validateClasspilotScreenshotCapturedAt({
+    capturedAt: at(-9_000),
+    trackingSettings,
+    trackingAuthority,
+    now: base,
+  }), "ok");
 });
 
 test("screenshot availability uses an independent ordered stream without identifiers", () => {

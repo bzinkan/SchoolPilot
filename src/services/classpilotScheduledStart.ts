@@ -59,6 +59,7 @@ import { scheduledClassStaffIds } from "./classpilotScheduledStaff.js";
 
 export type ScheduledClassAutoStartResult =
   | { status: "started"; session: TeachingSession }
+  | { status: "already_live"; session: TeachingSession }
   | { status: "coverage_needed"; conflictId: string }
   | { status: "claimed"; conflictId: string }
   | { status: "skipped"; reason: string };
@@ -954,6 +955,15 @@ export async function processScheduledClassAutoStart(options: {
       blockStartTime,
     }, dbInstance);
   if (occurrence.sessionMode === "live" && !occurrence.endTime) {
+    // A live occurrence is the steady state for every scheduler tick until its
+    // frozen end. Re-running the start path here would re-push classroom state
+    // to the whole roster and finalize any class the teacher started manually
+    // mid-block, so report already_live instead. An active conflict on a live
+    // occurrence is only reachable on the first start; keep that fall-through
+    // so it still resolves through the locked start.
+    if (!["coverage_needed", "claimed", "pending"].includes(existingConflict?.status || "")) {
+      return { status: "already_live", session: occurrence };
+    }
     const session = await startScheduledClass({
       group: occurrenceGroup,
       scheduledSession: occurrence,

@@ -161,7 +161,7 @@ Express API (src/app.ts, src/index.ts)   |
   - Auto-complete stale dismissal sessions.
 - ClassPilot:
   - Auto-end stale teaching sessions.
-  - Auto-start/end scheduled class blocks.
+  - `reconcileClasspilotScheduledSessions`: finalize scheduled occurrences at their frozen end, then start due occurrences; a live occurrence is never re-started (the tick reports `already_live`).
   - Roll up daily usage from heartbeats.
   - Purge expired heartbeats.
 - Security:
