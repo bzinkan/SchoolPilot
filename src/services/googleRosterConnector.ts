@@ -228,6 +228,25 @@ export async function getRosterClassroomClientForSchool(schoolId: string) {
   };
 }
 
+// Course listing / staff matching helpers for the delegated-admin classroom
+// client above. They are pure (no DB access) and live in their own module so
+// they can be unit-tested against a fake Classroom client.
+export {
+  CLASSROOM_COURSE_PREVIEW_LIMIT,
+  CLASSROOM_FANOUT_CONCURRENCY,
+  classroomCourseStaffFromTeachers,
+  listClassroomCourseTeachers,
+  listClassroomCourses,
+} from "./googleClassroomCourses.js";
+export type {
+  ClassroomCourse,
+  ClassroomCourseListClient,
+  ClassroomCourseStaff,
+  ClassroomTeacher,
+  ListClassroomCoursesOptions,
+  ListClassroomCoursesResult,
+} from "./googleClassroomCourses.js";
+
 export async function recordRosterConnectorSync(schoolId: string) {
   await markGoogleRosterConnectorSynced(schoolId);
 }
