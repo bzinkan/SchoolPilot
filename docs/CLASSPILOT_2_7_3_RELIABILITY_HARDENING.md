@@ -65,7 +65,9 @@ carry the same authority and the actual pixel acquisition time in `capturedAt`.
 The server revalidates authority immediately before accepting the upload and
 returns `409 SCREENSHOT_AUTHORITY_SUPERSEDED` when the session, class, or
 revision changed, or `409 SCREENSHOT_CAPTURE_PAUSED` when capture is no longer
-permitted.
+permitted, or when `capturedAt` precedes the student session start, class
+start, or frozen-roster completion (30 s slow-clock tolerance). Control-state
+acknowledgements and unchanged re-pushes do not move this fence.
 
 ## Privacy and authority invariants
 
@@ -80,7 +82,9 @@ permitted.
   class read to an older student/session or device-only image.
 - A capture started under authority A cannot be uploaded under authority B.
   Authority changes trigger a new capture, including gap-to-class and
-  class-A-to-class-B transitions.
+  class-A-to-class-B transitions. Authority identity is the exact claim (kind,
+  teachingSessionId, controlRevision) plus the authenticated session/device
+  binding; the capture-time fence is a race guard, not the identity check.
 - Authorized previews are normal before 75 seconds, dim and age-labeled from 75
   seconds until 120 seconds, and unavailable at 120 seconds. Authorization loss
   removes pixels immediately regardless of age.

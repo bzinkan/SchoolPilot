@@ -2040,6 +2040,7 @@ describe("ClassPilot manual-session recovery authority", () => {
         studentSessionId: string;
         authority: ScreenshotAuthority;
         screenshot: string;
+        capturedAt?: Date;
       }) => inSchool(() => storage.withClasspilotScreenshotUploadAuthority({
         schoolId,
         studentId: options.studentId,
@@ -2050,7 +2051,7 @@ describe("ClassPilot manual-session recovery authority", () => {
         if (current.authority.kind !== "teaching_session") {
           throw new Error("Screenshot authority was not class-bound at retention time");
         }
-        const capturedAt = new Date();
+        const capturedAt = options.capturedAt ?? new Date();
         assert.equal(validateClasspilotScreenshotCapturedAt({
           capturedAt,
           trackingSettings,
@@ -2109,6 +2110,50 @@ describe("ClassPilot manual-session recovery authority", () => {
       const alexBeforeHandoff = await readTiles([alex.id]);
       assert.equal(alexBeforeHandoff.status, 200);
       assert.equal(alexBeforeHandoff.body.tiles[0]?.screenshot?.screenshot, alexPixels);
+
+      // A control-state ACK changes no authority identity, so it must not
+      // restart the capture window: a frame captured before the ACK under the
+      // same exact claim is still this authority's frame.
+      const alexAcknowledgedAt = new Date();
+      const alexAck = await inSchool(() => storage.acknowledgeClasspilotStudentControlState({
+        schoolId,
+        studentId: alex.id,
+        studentSessionId: alexSession.session.id,
+        deviceId: handoffDeviceId,
+        appliedRevision: alexAuthority.controlRevision,
+        outcome: "applied",
+        acknowledgedAt: alexAcknowledgedAt,
+      }));
+      assert.equal(alexAck?.revision, alexAuthority.controlRevision);
+      const alexProjectionAfterAck = await inSchool(() =>
+        storage.getClasspilotScreenshotAuthorityProjection({
+          schoolId,
+          studentId: alex.id,
+          studentSessionId: alexSession.session.id,
+          deviceId: handoffDeviceId,
+        })
+      );
+      assert.ok(alexProjectionAfterAck);
+      assert.deepEqual(alexProjectionAfterAck.authority, alexAuthority);
+      assert.equal(alexProjectionAfterAck.authorityStartedAtSource, "student_session_started");
+      assert.equal(
+        alexProjectionAfterAck.authorityStartedAt.getTime(),
+        alexProjection.authorityStartedAt.getTime(),
+        "an ACK must not move the capture-time fence"
+      );
+      assert.equal(
+        alexProjectionAfterAck.controlRevisionIssuedAt?.getTime(),
+        alexProjection.controlRevisionIssuedAt?.getTime(),
+        "an ACK records lastAcknowledgedAt only; it must not re-stamp the revision"
+      );
+      const alexPreAckCapture = await retainExactClassScreenshot({
+        studentId: alex.id,
+        studentSessionId: alexSession.session.id,
+        authority: alexAuthority,
+        screenshot: alexPixels,
+        capturedAt: new Date(alexAcknowledgedAt.getTime() - 5_000),
+      });
+      assert.equal(alexPreAckCapture.status, "accepted");
 
       const bobRecovery = createStudentSessionRecovery();
       const handoff = await inSchool(() => startStudentSessionWithReplacements(
@@ -2240,6 +2285,58 @@ describe("ClassPilot manual-session recovery authority", () => {
       assert.equal(finalAlex, undefined);
       assert.equal(finalBob?.screenshot?.screenshot, bobPixels);
       assert.equal(JSON.stringify(finalTiles.body).includes(alexPixels), false);
+
+      // Same student, same device, new session, no control write: the claim is
+      // identical, so only the student-session start fences a frame that was
+      // captured before the new session existed.
+      const bobRelogin = await inSchool(() => startStudentSessionWithReplacements(
+        schoolId,
+        bob.id,
+        handoffDeviceId,
+        {
+          authKind: "manual_shared",
+          sessionRecoveryTokenHash: createStudentSessionRecovery().tokenHash,
+          reclaimRecoveryTokenHash: bobRecovery.tokenHash,
+        }
+      ));
+      assert.equal(bobRelogin.crossStudentHandoff, false);
+      assert.deepEqual(
+        bobRelogin.replacedSessions.map((row) => row.id),
+        [handoff.session.id]
+      );
+      const bobReloginProjection = await inSchool(() =>
+        storage.getClasspilotScreenshotAuthorityProjection({
+          schoolId,
+          studentId: bob.id,
+          studentSessionId: bobRelogin.session.id,
+          deviceId: handoffDeviceId,
+        })
+      );
+      assert.ok(bobReloginProjection);
+      assert.deepEqual(bobReloginProjection.authority, bobAuthority);
+      assert.equal(bobReloginProjection.authorityStartedAtSource, "student_session_started");
+      assert.equal(
+        bobReloginProjection.authorityStartedAt.getTime(),
+        bobRelogin.session.startedAt.getTime()
+      );
+      let staleFrameValidation: string | undefined;
+      const bobStaleFrame = await inSchool(() =>
+        storage.withClasspilotScreenshotUploadAuthority({
+          schoolId,
+          studentId: bob.id,
+          studentSessionId: bobRelogin.session.id,
+          deviceId: handoffDeviceId,
+          expectedAuthority: bobAuthority,
+        }, ({ current, trackingSettings }) => {
+          staleFrameValidation = validateClasspilotScreenshotCapturedAt({
+            capturedAt: new Date(bobRelogin.session.startedAt.getTime() - 60_000),
+            trackingSettings,
+            trackingAuthority: current,
+          });
+        })
+      );
+      assert.equal(bobStaleFrame.status, "accepted", "the identical claim still matches");
+      assert.equal(staleFrameValidation, "before_authority");
     } finally {
       if (server) {
         await new Promise<void>((resolve) => {

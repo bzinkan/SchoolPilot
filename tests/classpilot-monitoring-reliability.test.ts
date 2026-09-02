@@ -321,8 +321,16 @@ test("tracking screenshot authority and capturedAt validation are strict", () =>
     trackingAuthority,
     now,
   }), "ok");
+  // A slow client clock inside the symmetric skew tolerance is still this
+  // authority's frame; past the tolerance it predates the authority identity.
   assert.equal(validateClasspilotScreenshotCapturedAt({
-    capturedAt: new Date(now - 11_000),
+    capturedAt: new Date(now - 10_000 - 29_000),
+    trackingSettings,
+    trackingAuthority,
+    now,
+  }), "ok");
+  assert.equal(validateClasspilotScreenshotCapturedAt({
+    capturedAt: new Date(now - 10_000 - 31_000),
     trackingSettings,
     trackingAuthority,
     now,
@@ -397,7 +405,7 @@ test("screenshot authority start labels the winning input without moving the fen
     authorityExpiresAt: null,
   };
   assert.equal(validateClasspilotScreenshotCapturedAt({
-    capturedAt: at(-11_000),
+    capturedAt: at(-41_000),
     trackingSettings,
     trackingAuthority,
     now: base,
