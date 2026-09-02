@@ -5,17 +5,23 @@ import {
   MONITORING_SIGNAL_LOSS_MS,
   MONITORING_SIGNAL_LOSS_CONFIRMED_MS,
   MONITORING_CONFIRMATION_FRESH_MS,
+  SCREENSHOT_ACTIVE_VIEW_CAPTURE_MS,
+  SCREENSHOT_ACTIVE_VIEW_STALE_MS,
   SCREENSHOT_RECONNECT_RETAIN_MS,
   SCREENSHOT_STALE_MS,
+  deriveScreenshotCaptureCadence,
   deriveScreenshotDisplay,
+  deriveScreenshotHealthDisplay,
   deriveScreenshotPreviewMode,
   deriveStudentMonitoringDisplay,
   deriveUnavailablePreview,
   findNextStudentFreshnessBoundary,
   formatRelativeLastSeen,
+  formatRemainingMinutes,
   normalizeObservedAtForDisplay,
   projectStudentMonitoringDisplays,
   removeStoppedLiveStream,
+  screenshotStaleThresholdMs,
 } from '../src/products/classpilot/lib/studentMonitoringDisplay.js';
 import {
   MAX_TRACKED_TRANSIENT_COMMANDS,
@@ -233,6 +239,67 @@ test('unavailable previews preserve signed-out, delegated, and signal-loss truth
   assert.equal(signalLossPreview.warning, true);
 });
 
+test('temporary allow countdowns use whole minutes, expire closed, and share the minute clock', () => {
+  assert.equal(formatRemainingMinutes(observedAt + 10 * 60_000, observedAt), '10 min left');
+  assert.equal(formatRemainingMinutes(observedAt + 9 * 60_000 + 30_000, observedAt), '9 min left');
+  assert.equal(formatRemainingMinutes(observedAt + 60_000, observedAt), '1 min left');
+  assert.equal(formatRemainingMinutes(observedAt + 59_999, observedAt), '<1 min left');
+  assert.equal(formatRemainingMinutes(observedAt + 1, observedAt), '<1 min left');
+  assert.equal(formatRemainingMinutes(observedAt, observedAt), null);
+  assert.equal(formatRemainingMinutes(observedAt - 1, observedAt), null);
+  assert.equal(formatRemainingMinutes(Number.NaN, observedAt), null);
+  assert.equal(formatRemainingMinutes(null, observedAt), null);
+  assert.equal(formatRemainingMinutes(observedAt + 60_000, Number.NaN), null);
+
+  const tileSource = readFileSync(
+    new URL('../src/products/classpilot/components/StudentTile.jsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    tileSource,
+    /data-testid=\{`badge-blocked-by-scene-\$\{student\.studentId\}`\}[\s\S]{0,1200}data-testid=\{`button-allow-temporarily-\$\{student\.studentId\}`\}/,
+    'the Flight Path block badge must carry the temporary allow action',
+  );
+  assert.match(
+    tileSource,
+    /data-testid=\{`badge-blocked-\$\{student\.studentId\}`\}[\s\S]{0,1200}data-testid=\{`button-allow-temporarily-\$\{student\.studentId\}`\}/,
+    'the blocked-domain badge must carry the temporary allow action',
+  );
+  assert.match(
+    tileSource,
+    /disabled=\{interactionsDisabled \|\| !canTempUnblock \|\| !onCommand \|\| commandPending\}/,
+    'the temporary allow must fail closed on capability, callback, and pending state',
+  );
+  assert.match(tileSource, /studentTileTempUnblockCommand\(student, domain\)/);
+  assert.match(
+    tileSource,
+    /data-testid=\{`badge-temp-allow-\$\{student\.studentId\}`\}[\s\S]{0,400}<ExpiryCountdown expiresAtMs=\{allow\.expiresAtMs\}/,
+    'the temporary allow chip must count down through the shared minute leaf',
+  );
+  assert.doesNotMatch(tileSource, /button-temp-unblock|button-tab-limit/);
+
+  const dashboardSource = readFileSync(
+    new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(dashboardSource, /canTempUnblock=\{dashboardCapabilities\.allows\('temp-unblock'\)\}/);
+  assert.match(
+    dashboardSource,
+    /activeTemporaryAllows\(student, freshnessNowMs\)\.map\(\(allow\) => allow\.domain\)[\s\S]{0,400}teacherAllowedDomains:/,
+    'an active temporary allow must clear the off-task flag like a session allow',
+  );
+  assert.doesNotMatch(dashboardSource, /tempUnblockMutation/);
+
+  const lastSeenSource = readFileSync(
+    new URL('../src/products/classpilot/components/LastSeenTime.jsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(lastSeenSource, /export function useMinuteClock\(\)/);
+  assert.match(lastSeenSource, /export const ExpiryCountdown = memo\(/);
+  assert.equal((lastSeenSource.match(/setInterval\(/g) || []).length, 1, 'countdowns must not add a second timer');
+  assert.equal((lastSeenSource.match(/subscribeToMinuteClock,/g) || []).length, 1, 'both leaves must subscribe through one hook');
+});
+
 test('the dashboard omits the aggregate signal-loss card while student tiles retain the warning', () => {
   const dashboardSource = readFileSync(
     new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
@@ -374,6 +441,290 @@ test('signal-loss tiles schedule both screenshot-aging transitions', () => {
       signalLostDisplays,
     ),
     null,
+  );
+});
+
+test('observed active-view tiles age at 15 seconds while every default boundary stays byte-identical', () => {
+  assert.equal(SCREENSHOT_ACTIVE_VIEW_CAPTURE_MS, 5_000);
+  assert.equal(SCREENSHOT_ACTIVE_VIEW_STALE_MS, 15_000);
+  assert.equal(screenshotStaleThresholdMs('active_view'), 15_000);
+  assert.equal(screenshotStaleThresholdMs('background'), SCREENSHOT_STALE_MS);
+  assert.equal(screenshotStaleThresholdMs(undefined), SCREENSHOT_STALE_MS);
+
+  const screenshot = { screenshot: 'data:image/jpeg;base64,test', timestamp: observedAt };
+  const activeView = { staleThresholdMs: 15_000 };
+  assert.equal(deriveScreenshotDisplay(screenshot, observedAt + 14_999, activeView).fresh, true);
+  assert.equal(deriveScreenshotDisplay(screenshot, observedAt + 15_000, activeView).fresh, false);
+  assert.equal(deriveScreenshotDisplay(screenshot, observedAt + 15_000, activeView).retained, true);
+  assert.equal(
+    deriveScreenshotDisplay(screenshot, observedAt + 14_999, activeView).nextBoundaryAtMs,
+    observedAt + 15_000,
+    'the active-view boundary must be scheduled at exactly 15 seconds',
+  );
+  assert.equal(
+    deriveScreenshotDisplay(screenshot, observedAt + 15_000, activeView).nextBoundaryAtMs,
+    observedAt + SCREENSHOT_RECONNECT_RETAIN_MS,
+    'retention stays at the shared 120-second boundary',
+  );
+  assert.equal(deriveScreenshotDisplay(screenshot, observedAt + SCREENSHOT_RECONNECT_RETAIN_MS, activeView).retained, false);
+  assert.equal(
+    deriveScreenshotDisplay(screenshot, observedAt + SCREENSHOT_STALE_MS, { staleThresholdMs: 600_000 }).fresh,
+    false,
+    'a cadence threshold may only tighten, never extend, the 75-second default',
+  );
+  assert.equal(deriveScreenshotDisplay(screenshot, observedAt + 20_000, { staleThresholdMs: Number.NaN }).fresh, true);
+  assert.equal(deriveScreenshotDisplay(screenshot, observedAt + 20_000, { staleThresholdMs: 0 }).fresh, true);
+
+  assert.deepEqual(
+    deriveScreenshotDisplay(screenshot, observedAt + 20_000),
+    deriveScreenshotDisplay(screenshot, observedAt + 20_000, {}),
+    'the default display must be identical with or without the option bag',
+  );
+  assert.deepEqual(
+    deriveScreenshotDisplay(screenshot, observedAt + 20_000),
+    deriveScreenshotDisplay(screenshot, observedAt + 20_000, { staleThresholdMs: SCREENSHOT_STALE_MS }),
+  );
+  assert.equal(deriveScreenshotDisplay(screenshot, observedAt + 20_000).fresh, true);
+  assert.equal(deriveScreenshotDisplay(screenshot, observedAt + SCREENSHOT_STALE_MS - 1).fresh, true);
+  assert.equal(deriveScreenshotDisplay(screenshot, observedAt + SCREENSHOT_STALE_MS).fresh, false);
+
+  assert.equal(deriveScreenshotPreviewMode({ screenshotData: screenshot, nowMs: observedAt + 20_000 }), 'current');
+  assert.equal(
+    deriveScreenshotPreviewMode({ screenshotData: screenshot, nowMs: observedAt + 20_000, staleThresholdMs: 15_000 }),
+    'retained',
+    'an observed active-view tile must dim once its 5-second cadence has stalled for 15 seconds',
+  );
+  assert.equal(
+    deriveScreenshotPreviewMode({ screenshotData: screenshot, nowMs: observedAt + 14_999, staleThresholdMs: 15_000 }),
+    'current',
+  );
+  assert.equal(
+    deriveScreenshotPreviewMode({ screenshotData: screenshot, nowMs: observedAt + 1, staleThresholdMs: 15_000, authorizationRevoked: true }),
+    null,
+  );
+});
+
+test('the capture cadence is active-view only for an observed, capability-accepted student', () => {
+  const accepted = monitoredStudent({ acceptedCapabilities: { screenshotActiveObservationCadenceV1: true } });
+  assert.equal(deriveScreenshotCaptureCadence({ student: accepted, observationLeaseStatus: 'observed' }), 'active_view');
+  for (const status of ['pending', 'denied', 'paused_unobserved', 'legacy', undefined]) {
+    assert.equal(
+      deriveScreenshotCaptureCadence({ student: accepted, observationLeaseStatus: status }),
+      'background',
+      `${status} observation must stay on the background cadence`,
+    );
+  }
+  assert.equal(
+    deriveScreenshotCaptureCadence({
+      student: monitoredStudent({ capabilities: { screenshotActiveObservationCadenceV1: true } }),
+      observationLeaseStatus: 'observed',
+    }),
+    'background',
+    'an extension advertisement without server acceptance must not claim the fast cadence',
+  );
+  assert.equal(
+    deriveScreenshotCaptureCadence({
+      student: monitoredStudent({ acceptedCapabilities: { screenshotActiveObservationCadenceV1: 'true' } }),
+      observationLeaseStatus: 'observed',
+    }),
+    'background',
+  );
+  assert.equal(deriveScreenshotCaptureCadence({ student: monitoredStudent(), observationLeaseStatus: 'observed' }), 'background');
+  assert.equal(deriveScreenshotCaptureCadence({}), 'background');
+  assert.equal(deriveScreenshotCaptureCadence(), 'background');
+});
+
+test('screenshot health chips explain capture state without leaking the raw extension error', () => {
+  const healthy = { lastSuccessAt: observedAt - 2_000, lastErrorAt: 0, lastError: '', attempts: 10, successes: 10, alarmActive: false };
+  const online = deriveStudentMonitoringDisplay(monitoredStudent(), observedAt + 1_000);
+  const freshDisplay = { available: true, fresh: true, retained: true };
+  const staleDisplay = { available: true, fresh: false, retained: true };
+  const cases = [
+    {
+      name: 'active view with a fresh frame is live',
+      student: monitoredStudent({ screenshotHealth: healthy }),
+      options: { cadence: 'active_view', screenshotDisplay: freshDisplay },
+      expected: { kind: 'live', label: 'Live preview · 5s', tone: 'ok' },
+    },
+    {
+      name: 'active view with a stale frame is delayed',
+      student: monitoredStudent({ screenshotHealth: healthy }),
+      options: { cadence: 'active_view', screenshotDisplay: staleDisplay },
+      expected: { kind: 'delayed', label: 'Preview delayed', tone: 'warn' },
+    },
+    {
+      name: 'active view without any frame is delayed',
+      student: monitoredStudent({ screenshotHealth: healthy }),
+      options: { cadence: 'active_view', screenshotDisplay: null },
+      expected: { kind: 'delayed', label: 'Preview delayed', tone: 'warn' },
+    },
+    {
+      name: 'background cadence explains the slow refresh',
+      student: monitoredStudent({ screenshotHealth: healthy }),
+      options: { cadence: 'background', screenshotDisplay: freshDisplay },
+      expected: { kind: 'background', label: 'Preview every 30s', tone: 'muted' },
+    },
+    {
+      name: 'an active alarm is failing regardless of cadence',
+      student: monitoredStudent({ screenshotHealth: { ...healthy, alarmActive: true, lastError: 'captureVisibleTab: permission denied' } }),
+      options: { cadence: 'active_view', screenshotDisplay: freshDisplay },
+      expected: { kind: 'failing', label: 'Preview capture failing', tone: 'warn' },
+    },
+    {
+      name: 'a recent error after the last success is failing on the active cadence',
+      student: monitoredStudent({ screenshotHealth: { ...healthy, lastErrorAt: observedAt - 1_000, lastError: 'boom' } }),
+      options: { cadence: 'active_view', screenshotDisplay: freshDisplay },
+      expected: { kind: 'failing', label: 'Preview capture failing', tone: 'warn' },
+    },
+    {
+      name: 'an error older than twice the active threshold no longer fails',
+      student: monitoredStudent({ screenshotHealth: { ...healthy, lastSuccessAt: observedAt - 60_000, lastErrorAt: observedAt - 30_001, lastError: 'boom' } }),
+      options: { cadence: 'active_view', screenshotDisplay: freshDisplay },
+      expected: { kind: 'live', label: 'Live preview · 5s', tone: 'ok' },
+    },
+    {
+      name: 'an error inside twice the active threshold is failing',
+      student: monitoredStudent({ screenshotHealth: { ...healthy, lastSuccessAt: observedAt - 60_000, lastErrorAt: observedAt - 30_000, lastError: 'boom' } }),
+      options: { cadence: 'active_view', screenshotDisplay: freshDisplay },
+      expected: { kind: 'failing', label: 'Preview capture failing', tone: 'warn' },
+    },
+    {
+      name: 'the background cadence keeps the wider 150-second failure window',
+      student: monitoredStudent({ screenshotHealth: { ...healthy, lastSuccessAt: observedAt - 60_000, lastErrorAt: observedAt - 30_001, lastError: 'boom' } }),
+      options: { cadence: 'background', screenshotDisplay: freshDisplay },
+      expected: { kind: 'failing', label: 'Preview capture failing', tone: 'warn' },
+    },
+    {
+      name: 'the background failure window also closes at 150 seconds',
+      student: monitoredStudent({ screenshotHealth: { ...healthy, lastSuccessAt: observedAt - 200_000, lastErrorAt: observedAt - 150_001, lastError: 'boom' } }),
+      options: { cadence: 'background', screenshotDisplay: freshDisplay },
+      expected: { kind: 'background', label: 'Preview every 30s', tone: 'muted' },
+    },
+    {
+      name: 'an error before a later success is not failing',
+      student: monitoredStudent({ screenshotHealth: { ...healthy, lastErrorAt: observedAt - 5_000, lastSuccessAt: observedAt - 1_000 } }),
+      options: { cadence: 'active_view', screenshotDisplay: freshDisplay },
+      expected: { kind: 'live', label: 'Live preview · 5s', tone: 'ok' },
+    },
+    {
+      name: 'an error with no success ever is failing',
+      student: monitoredStudent({ screenshotHealth: { ...healthy, lastSuccessAt: 0, lastErrorAt: observedAt - 1_000 } }),
+      options: { cadence: 'background', screenshotDisplay: null },
+      expected: { kind: 'failing', label: 'Preview capture failing', tone: 'warn' },
+    },
+  ];
+  for (const { name, student, options, expected } of cases) {
+    const display = deriveScreenshotHealthDisplay(student, { nowMs: observedAt, monitoringDisplay: online, ...options });
+    assert.deepEqual(display, expected, name);
+    assert.equal(JSON.stringify(display).includes('boom'), false, `${name}: raw lastError must never render`);
+    assert.equal(JSON.stringify(display).includes('captureVisibleTab'), false, `${name}: raw lastError must never render`);
+  }
+
+  assert.equal(deriveScreenshotHealthDisplay(monitoredStudent(), { nowMs: observedAt, cadence: 'active_view' }), null, 'no health means no chip');
+  assert.equal(deriveScreenshotHealthDisplay(monitoredStudent({ screenshotHealth: 'bad' }), { nowMs: observedAt }), null);
+  assert.equal(
+    deriveScreenshotHealthDisplay(monitoredStudent({ screenshotHealth: healthy }), {
+      nowMs: observedAt,
+      cadence: 'active_view',
+      screenshotDisplay: freshDisplay,
+      monitoringDisplay: deriveStudentMonitoringDisplay(monitoredStudent(), observedAt + MONITORING_SIGNAL_LOSS_MS),
+    }),
+    null,
+    'stale telemetry must hide capture health',
+  );
+  assert.equal(
+    deriveScreenshotHealthDisplay(monitoredStudent({ screenshotHealth: healthy }), {
+      nowMs: observedAt,
+      monitoringDisplay: { kind: 'signed_out', telemetryCurrent: true },
+    }),
+    null,
+  );
+  assert.equal(
+    deriveScreenshotHealthDisplay(monitoredStudent({ screenshotHealth: healthy }), {
+      nowMs: observedAt,
+      monitoringDisplay: { kind: 'delegated', telemetryCurrent: true },
+    }),
+    null,
+  );
+  assert.equal(
+    deriveScreenshotHealthDisplay(monitoredStudent({ screenshotHealth: healthy }), { nowMs: observedAt })?.kind,
+    'background',
+    'without a monitoring display the chip is derived from cadence alone',
+  );
+
+  const tileSource = readFileSync(
+    new URL('../src/products/classpilot/components/StudentTile.jsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(tileSource, /screenshot-health-/);
+  assert.match(tileSource, /const staleThresholdMs = screenshotStaleThresholdMs\(screenshotCaptureCadence\)/);
+  assert.match(
+    tileSource,
+    /deriveScreenshotPreviewMode\(\{[\s\S]{0,180}authorizationRevoked: screenshotAuthorizationRevoked,\s*staleThresholdMs,/,
+    'the preview mode must honor the cadence threshold after every hard authorization gate',
+  );
+  assert.match(tileSource, /staleThresholdMs: screenshotStaleThresholdMs\(props\.screenshotCaptureCadence\)/, 'memo equality must project the cadence-aware freshness');
+  assert.doesNotMatch(tileSource, /screenshotHealth\.lastError|lastError\}/, 'the raw extension error must never render in a tile');
+  assert.match(tileSource, /screenshot-updating-authority/);
+  assert.match(tileSource, /\{unavailablePreview\.reason\}/);
+
+  const dashboardSource = readFileSync(
+    new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    dashboardSource,
+    /const screenshotCaptureCadence = deriveScreenshotCaptureCadence\(\{\s*student,\s*observationLeaseStatus: tileScreenshotObservationStatus,\s*\}\);/,
+  );
+  assert.match(dashboardSource, /screenshotCaptureCadence=\{screenshotCaptureCadence\}/);
+  assert.match(
+    dashboardSource,
+    /findNextStudentFreshnessBoundary\([\s\S]{0,400}\(student\) => screenshotStaleThresholdMs\(deriveScreenshotCaptureCadence\(\{[\s\S]{0,120}observationLeaseStatus: tileScreenshotObservationStatus/,
+    'the freshness timer must schedule the 15-second active-view boundary',
+  );
+  assert.match(
+    dashboardSource,
+    /const expandedScreenshotDisplay = deriveScreenshotDisplay\(\s*expandedScreenshotHardRevoked \? null : expandedScreenshotData,\s*freshnessNowMs,\s*\);/,
+    'the enlarged viewer keeps the default 75-second threshold',
+  );
+});
+
+test('the freshness planner schedules the active-view boundary only for tiles whose resolver tightens it', () => {
+  const activeStudent = monitoredStudent({
+    studentId: 'active-view-student',
+    acceptedCapabilities: { screenshotActiveObservationCadenceV1: true },
+  });
+  const backgroundStudent = monitoredStudent({ studentId: 'background-student' });
+  const screenshots = new Map([
+    [activeStudent.studentId, { screenshot: 'a', timestamp: observedAt }],
+    [backgroundStudent.studentId, { screenshot: 'b', timestamp: observedAt }],
+  ]);
+  const displays = new Map([
+    [activeStudent.studentId, deriveStudentMonitoringDisplay(activeStudent, observedAt + 1_000)],
+    [backgroundStudent.studentId, deriveStudentMonitoringDisplay(backgroundStudent, observedAt + 1_000)],
+  ]);
+  const resolver = (student) => screenshotStaleThresholdMs(
+    deriveScreenshotCaptureCadence({ student, observationLeaseStatus: 'observed' }),
+  );
+  assert.equal(
+    findNextStudentFreshnessBoundary([activeStudent, backgroundStudent], screenshots, observedAt + 1_000, displays, resolver),
+    observedAt + 15_000,
+    'the earliest boundary must be the observed tile aging at 15 seconds',
+  );
+  assert.equal(
+    findNextStudentFreshnessBoundary([backgroundStudent], screenshots, observedAt + 1_000, displays, resolver),
+    observedAt + MONITORING_SIGNAL_LOSS_MS,
+    'a background tile keeps the heartbeat grace boundary ahead of its 75-second screenshot boundary',
+  );
+  assert.equal(
+    findNextStudentFreshnessBoundary([activeStudent, backgroundStudent], screenshots, observedAt + 1_000, displays),
+    observedAt + MONITORING_SIGNAL_LOSS_MS,
+    'without a resolver the planner is unchanged',
+  );
+  assert.equal(
+    findNextStudentFreshnessBoundary([activeStudent], screenshots, observedAt + 15_000, displays, resolver),
+    observedAt + MONITORING_SIGNAL_LOSS_MS,
+    'after the 15-second boundary the next transition is the 60-second grace start',
   );
 });
 

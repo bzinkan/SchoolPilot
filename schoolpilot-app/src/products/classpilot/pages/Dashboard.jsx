@@ -68,12 +68,14 @@ import {
   mergeAggregatedStudents,
 } from '../lib/studentRealtimeCache';
 import {
+  deriveScreenshotCaptureCadence,
   deriveScreenshotDisplay,
   deriveStudentMonitoringDisplay,
   findNextStudentFreshnessBoundary,
   formatAbsoluteObservedAt,
   lastObservedDomain,
   projectStudentMonitoringDisplays,
+  screenshotStaleThresholdMs,
 } from '../lib/studentMonitoringDisplay';
 import {
   applyTransientCommandUpdate,
@@ -87,6 +89,7 @@ import {
   transientEntryFeedback,
 } from '../lib/commandDeliveryTruth';
 import {
+  activeTemporaryAllows,
   assertClassroomCommandSelectionIsolation,
   buildStudentSignOutCommandRequest,
   combineCommandSettlements,
@@ -109,6 +112,7 @@ import {
   studentSupportsCapability,
   studentSignOutCommandPayload,
   sessionFabSettingsPayload,
+  tabLimitCommandPayload,
   tabSelectionKey,
   toolbarScreenCommand,
   uniqueStudentsById,
@@ -270,6 +274,37 @@ function isScheduledTeachingSession(session) {
     );
 }
 
+const PAST_SESSION_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" });
+const PAST_SESSION_TIME_FORMATTER = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" });
+
+function formatPastSessionWindow(session) {
+  const start = new Date(session?.startTime);
+  if (Number.isNaN(start.getTime())) return "Time unavailable";
+  const end = session?.endTime ? new Date(session.endTime) : null;
+  const endLabel = end && !Number.isNaN(end.getTime())
+    ? PAST_SESSION_TIME_FORMATTER.format(end)
+    : "in progress";
+  return `${PAST_SESSION_DATE_FORMATTER.format(start)} · ${PAST_SESSION_TIME_FORMATTER.format(start)} – ${endLabel}`;
+}
+
+// Report availability is server-derived; the client only decides whether the
+// already-mounted Session Summary dialog may be opened for the row.
+function pastSessionReportPresentation(session) {
+  switch (session?.reportState) {
+    case "ready":
+      return { label: "Summary ready", action: "Open summary", openable: true };
+    case "pending":
+      return { label: "Generating…", action: "Open summary", openable: true };
+    case "failed":
+      return { label: "Summary failed", action: "View details", openable: true };
+    case "expired":
+      return { label: "Summary expired", action: "Summary expired", openable: false };
+    case "none":
+    default:
+      return { label: "No summary", action: "No summary", openable: false };
+  }
+}
+
 function formatScheduledSessionEnd(session, fallbackTimezone) {
   const scheduledEndAt = session?.scheduledEndAt || session?.lifecycle?.scheduledEndAt;
   if (!scheduledEndAt) return null;
@@ -393,6 +428,8 @@ export default function Dashboard() {
   const [selectedTabsToClose, setSelectedTabsToClose] = useState(new Set());
   const [manageTabsStudentIds, setManageTabsStudentIds] = useState(null);
   const [manageTabsTargetSnapshot, setManageTabsTargetSnapshot] = useState("");
+  const [tabLimitDraft, setTabLimitDraft] = useState("");
+  const tabLimitDraftSeedRef = useRef({ seeded: true, initial: "" });
   const [showApplyFlightPathDialog, setShowApplyFlightPathDialog] = useState(false);
   const [selectedFlightPathId, setSelectedFlightPathId] = useState("");
   const [showFlightPathViewerDialog, setShowFlightPathViewerDialog] = useState(false);
@@ -433,6 +470,7 @@ export default function Dashboard() {
   const [classResyncOverlap, setClassResyncOverlap] = useState(null);
   const [endClassTarget, setEndClassTarget] = useState(null);
   const [sessionReportTarget, setSessionReportTarget] = useState(null);
+  const [showPastSessions, setShowPastSessions] = useState(false);
   const [showLogoutDialog, setShowLogoutDialog] = useState(false);
   const [skipTodayGroup, setSkipTodayGroup] = useState(null);
   const [logoutPending, setLogoutPending] = useState(false);
@@ -829,6 +867,19 @@ export default function Dashboard() {
     settings?.studentMessagingEnabled,
   ]);
   const activeSchoolId = school?.id || currentUser?.schoolId || null;
+  // Past sessions are fetched only after the teacher opens the popover so the
+  // dashboard mount stays request-for-request identical.
+  const {
+    data: recentTeachingSessions = EMPTY_LIST,
+    isLoading: recentTeachingSessionsLoading,
+    error: recentTeachingSessionsError,
+  } = useQuery({
+    queryKey: ['/api/classpilot/teaching-sessions/recent', activeSchoolId],
+    queryFn: () => apiRequest('GET', '/classpilot/teaching-sessions/recent?limit=20'),
+    select: (data) => (Array.isArray(data?.sessions) ? data.sessions : Array.isArray(data) ? data : EMPTY_LIST),
+    enabled: showPastSessions && Boolean(activeSchoolId),
+    staleTime: 30_000,
+  });
   const { data: todayScheduleChanges = EMPTY_LIST } = useQuery({
     queryKey: scheduleChangeKeys.today(activeSchoolId),
     queryFn: scheduleChangeApi.getToday,
@@ -2019,9 +2070,14 @@ export default function Dashboard() {
     if (!student.activeTabUrl) return false;
     if (student.status !== 'online') return false;
 
+    // A tile-level "Allow 10 min" is an authoritative, self-expiring teacher
+    // allow: it must clear the off-task flag exactly like a session allow.
+    const temporaryAllowDomains = activeTemporaryAllows(student, freshnessNowMs).map((allow) => allow.domain);
     return isStudentUrlOffTask({
       student,
-      teacherAllowedDomains: teacherAllowedDomainPatterns,
+      teacherAllowedDomains: temporaryAllowDomains.length > 0
+        ? [...teacherAllowedDomainPatterns, ...temporaryAllowDomains]
+        : teacherAllowedDomainPatterns,
       schoolAllowedDomains: settings?.allowedDomains || EMPTY_LIST,
       flightPaths,
     });
@@ -3213,6 +3269,12 @@ export default function Dashboard() {
       screenshotsByStudent,
       now,
       studentView === 'class' ? monitoringDisplaysByStudent : null,
+      // Observed active-view tiles age out at 15 seconds; schedule that
+      // boundary so the tile dims exactly when its 5-second cadence stalls.
+      (student) => screenshotStaleThresholdMs(deriveScreenshotCaptureCadence({
+        student,
+        observationLeaseStatus: tileScreenshotObservationStatus,
+      })),
     );
     if (boundary === null) return undefined;
 
@@ -3236,6 +3298,7 @@ export default function Dashboard() {
     screenshotsByStudent,
     studentView,
     students,
+    tileScreenshotObservationStatus,
   ]);
 
   const controllableStudents = filteredStudents.filter(isStudentCommandable);
@@ -3618,6 +3681,24 @@ export default function Dashboard() {
     return { request, target };
   };
 
+  // Teacher-level default tab limit. Fetched lazily only while Manage Tabs is
+  // open for an owned class so the dashboard mount issues no extra request.
+  const { data: teacherSettings } = useQuery({
+    queryKey: ['/api/teacher/settings'],
+    queryFn: () => apiRequest('GET', '/teacher/settings'),
+    select: (data) => (data && typeof data === 'object' && !Array.isArray(data) ? data : null),
+    enabled: showCloseTabsDialog && dashboardCapabilities.allows('limit-tabs'),
+    staleTime: 60_000,
+  });
+  useEffect(() => {
+    if (!showCloseTabsDialog || tabLimitDraftSeedRef.current.seeded || teacherSettings === undefined) return;
+    tabLimitDraftSeedRef.current.seeded = true;
+    const teacherLimit = teacherSettings?.maxTabsPerStudent;
+    if (teacherLimit === undefined || teacherLimit === null || teacherLimit === '') return;
+    const seededDraft = tabLimitDraftSeedRef.current.initial;
+    setTabLimitDraft((current) => (current === seededDraft ? String(teacherLimit) : current));
+  }, [showCloseTabsDialog, teacherSettings]);
+
   const manageTabsStudents = getActiveCommandStudents(manageTabsStudentIds);
   const openTabs = manageTabsStudents
     .flatMap(s => {
@@ -3777,6 +3858,7 @@ export default function Dashboard() {
       queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
       queryClient.invalidateQueries({ queryKey: ['/api/groups'], exact: false });
       queryClient.invalidateQueries({ queryKey: ['/api/teacher/groups'], exact: false });
+      queryClient.invalidateQueries({ queryKey: ['/api/classpilot/teaching-sessions/recent'], exact: false });
       setEndClassTarget(null);
       if (variables?.session?.id) {
         setSessionReportTarget({
@@ -4174,6 +4256,15 @@ export default function Dashboard() {
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
+  const limitTabsMutation = useMutation({
+    mutationFn: async ({ maxTabs, studentIds }) => postActiveCommand('limit-tabs', { maxTabs }, { studentIds }),
+    onSuccess: (data) => {
+      toast(data.deliveryFeedback);
+      queryClient.invalidateQueries({ queryKey: ['/api/commands/active-state', effectiveSession?.id] });
+    },
+    onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
+  });
+
   const lockScreenMutation = useMutation({
     mutationFn: async ({ url, studentIds }) => postActiveCommand('lock-screen', { url }, { studentIds }),
     onSuccess: (data, variables) => {
@@ -4247,6 +4338,20 @@ export default function Dashboard() {
     });
   };
 
+  const handleApplyTabLimit = () => {
+    const payload = tabLimitCommandPayload(tabLimitDraft);
+    if (!payload || payload.maxTabs === null) {
+      toast({ variant: "destructive", title: "Invalid tab limit", description: `Enter a whole number between 1 and 100.` });
+      return;
+    }
+    limitTabsMutation.mutate({ maxTabs: payload.maxTabs, studentIds: manageTabsStudentIds });
+  };
+
+  const handleClearTabLimit = () => {
+    setTabLimitDraft("");
+    limitTabsMutation.mutate({ maxTabs: null, studentIds: manageTabsStudentIds });
+  };
+
   const handleLockScreen = () => {
     const command = toolbarScreenCommand('lock-screen', selectedStudentIds);
     if (!command || !exactSelectedTargetsResolved) {
@@ -4309,6 +4414,10 @@ export default function Dashboard() {
     setManageTabsTargetSnapshot(namedStudent?.studentName || targetBannerLabel);
     setManageTabsStudentIds(studentIds);
     setSelectedTabsToClose(new Set());
+    const configuredTabLimit = teacherSettings?.maxTabsPerStudent || settings?.maxTabsPerStudent || "";
+    const tabLimitSeed = configuredTabLimit === "" ? "" : String(configuredTabLimit);
+    tabLimitDraftSeedRef.current = { seeded: teacherSettings !== undefined, initial: tabLimitSeed };
+    setTabLimitDraft(tabLimitSeed);
     setShowCloseTabsDialog(true);
   };
 
@@ -4736,6 +4845,15 @@ export default function Dashboard() {
                       <button onClick={() => setEndClassTarget(activeSession)} disabled={endSessionMutation.isPending} className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50" data-testid="button-end-session">
                         <X className="h-3.5 w-3.5" /> End Class
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowPastSessions(true)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-slate-600 bg-slate-900 text-slate-100 hover:bg-slate-800 transition-colors"
+                        title="Open recent class sessions and their Session Summaries"
+                        data-testid="button-past-sessions"
+                      >
+                        <Clock className="h-3.5 w-3.5" /> Past sessions
+                      </button>
                     </div>
                   ) : (
                     <div className="flex items-center gap-2">
@@ -4765,6 +4883,15 @@ export default function Dashboard() {
                         className="inline-flex h-8 items-center justify-center gap-2 whitespace-nowrap rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0"
                       >
                         <Plus className="h-4 w-4 mr-2" />Start Class
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowPastSessions(true)}
+                        className="inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-slate-600 bg-slate-900 px-3 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-800"
+                        title="Open recent class sessions and their Session Summaries"
+                        data-testid="button-past-sessions"
+                      >
+                        <Clock className="h-3.5 w-3.5" /> Past sessions
                       </button>
                       {selectedTeacherStartGroup?.scheduleEnabled
                         && selectedTeacherStartGroup.teacherId === currentUser?.id && (
@@ -5345,6 +5472,10 @@ export default function Dashboard() {
               <ClipboardCheck className="h-4 w-4 mr-2" />
               View Available
             </Button>
+            <Button variant="ghost" className="mb-4 ml-2" onClick={() => setShowPastSessions(true)} data-testid="button-past-sessions-empty">
+              <Clock className="h-4 w-4 mr-2" />
+              Past sessions
+            </Button>
             {groups.length === 0 && <p className="text-xs text-muted-foreground max-w-md mx-auto">You don't have any class groups yet. Contact your administrator to have students assigned to your classes.</p>}
           </div>
         ) : classStudentDataUnavailable ? (
@@ -5440,6 +5571,10 @@ export default function Dashboard() {
                 || hardDeniedScreenshotStudentIds.has(student.studentId)
                 || observationLeaseStatus === 'denied'
                 || studentView !== 'class';
+              const screenshotCaptureCadence = deriveScreenshotCaptureCadence({
+                student,
+                observationLeaseStatus: tileScreenshotObservationStatus,
+              });
               return (
                 <div
                   key={student.studentId}
@@ -5482,6 +5617,7 @@ export default function Dashboard() {
                     commandError={supervisedElsewhere ? '' : tileCommandState[student.studentId]?.error || ''}
                     canLockScreen={dashboardCapabilities.allows('lock-screen') && dashboardCapabilities.allows('unlock-screen')}
                     canRemoveFlightPath={dashboardCapabilities.allows('remove-flight-path')}
+                    canTempUnblock={dashboardCapabilities.allows('temp-unblock')}
                     actionsDisabled={tileActionsDisabled}
                     actionsDisabledReason={tileActionsDisabledReason}
                     nonSignOutCommandsBlocked={signOutOnlySelectionActive}
@@ -5506,6 +5642,7 @@ export default function Dashboard() {
                     monitoringDisplay={monitoringDisplay || undefined}
                     freshnessNowMs={freshnessNowMs}
                     screenshotObservationStatus={tileScreenshotObservationStatus}
+                    screenshotCaptureCadence={screenshotCaptureCadence}
                     screenshotAuthorizationDenied={tileScreenshotRevoked}
                     actionContextKey={`${activeSchoolId || ''}:${effectiveSession?.id || ''}:${studentView}:${selectedSubgroupId}:${canUseRemoteControls}:${dashboardCapabilities.canUseLiveView}`}
                   /> : (
@@ -5602,6 +5739,64 @@ export default function Dashboard() {
             >
               {endSessionMutation.isPending ? "Ending Class..." : isScheduledTeachingSession(endClassTarget) ? "End Early & Email Summary" : "End Class & Email Summary"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showPastSessions} onOpenChange={setShowPastSessions}>
+        <DialogContent className="max-w-2xl" data-testid="dialog-past-sessions">
+          <DialogHeader>
+            <DialogTitle>Past sessions</DialogTitle>
+            <DialogDescription>Your recent class sessions and their Session Summaries.</DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[60vh] overflow-y-auto">
+            {recentTeachingSessionsLoading ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">Loading past sessions…</p>
+            ) : recentTeachingSessionsError ? (
+              <p className="py-8 text-center text-sm text-destructive" role="alert" data-testid="past-sessions-error">
+                Past sessions could not be loaded.
+              </p>
+            ) : recentTeachingSessions.length === 0 ? (
+              <p className="py-8 text-center text-sm text-muted-foreground" data-testid="past-sessions-empty">No past sessions yet.</p>
+            ) : (
+              <ul className="divide-y">
+                {recentTeachingSessions.map((session) => {
+                  const report = pastSessionReportPresentation(session);
+                  const sessionName = session.className || 'Class';
+                  return (
+                    <li key={session.id} className="flex items-center gap-3 py-3" data-testid={`past-session-${session.id}`}>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="truncate text-sm font-medium">{sessionName}</span>
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                            {isScheduledTeachingSession(session) ? 'Automatic' : 'Manual'}
+                          </Badge>
+                        </div>
+                        <div className="text-xs text-muted-foreground">{formatPastSessionWindow(session)}</div>
+                        <div className="text-xs text-muted-foreground" data-testid={`past-session-report-state-${session.id}`}>{report.label}</div>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-8 shrink-0 text-xs"
+                        disabled={!report.openable}
+                        onClick={() => {
+                          setShowPastSessions(false);
+                          setSessionReportTarget({ id: session.id, name: session.className || 'Class' });
+                        }}
+                        data-testid={`button-open-session-report-${session.id}`}
+                      >
+                        {report.action}
+                      </Button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowPastSessions(false)} data-testid="button-close-past-sessions">Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -5936,6 +6131,7 @@ export default function Dashboard() {
           setManageTabsStudentIds(null);
           setManageTabsTargetSnapshot("");
           setSelectedTabsToClose(new Set());
+          setTabLimitDraft("");
         }
       }}>
         <DialogContent className="max-w-2xl" data-testid="dialog-tabs">
@@ -5983,6 +6179,27 @@ export default function Dashboard() {
               </>
             )}
           </div>
+          {dashboardCapabilities.allows('limit-tabs') && (
+            <div className="flex flex-wrap items-end gap-2 rounded-md border border-border/40 bg-muted/20 p-3" data-testid="tab-limit-controls">
+              <div className="min-w-[160px] flex-1">
+                <Label htmlFor="input-tab-limit" className="text-xs">Tab limit for {manageTabsTargetLabel}</Label>
+                <Input
+                  id="input-tab-limit"
+                  type="number"
+                  min={1}
+                  max={100}
+                  inputMode="numeric"
+                  placeholder="No limit"
+                  value={tabLimitDraft}
+                  onChange={(event) => setTabLimitDraft(event.target.value)}
+                  className="mt-1 h-8"
+                  data-testid="input-tab-limit"
+                />
+              </div>
+              <Button type="button" size="sm" onClick={handleApplyTabLimit} disabled={limitTabsMutation.isPending || !tabLimitCommandPayload(tabLimitDraft)?.maxTabs} title="Cap how many tabs these students can keep open" data-testid="button-apply-tab-limit">Limit tabs</Button>
+              <Button type="button" size="sm" variant="ghost" onClick={handleClearTabLimit} disabled={limitTabsMutation.isPending} title="Remove the tab limit for these students" data-testid="button-clear-tab-limit">Clear limit</Button>
+            </div>
+          )}
           <DialogFooter className="flex-col sm:flex-row gap-2">
             <Button variant="outline" onClick={() => setShowCloseTabsDialog(false)} data-testid="button-close-tabs-dialog">Done</Button>
             {selectedTabsToClose.size > 0 && <Button variant="destructive" onClick={handleCloseTabs} disabled={closeTabsMutation.isPending} data-testid="button-close-selected-tabs"><X className="h-4 w-4 mr-2" />Close Selected ({selectedTabsToClose.size})</Button>}

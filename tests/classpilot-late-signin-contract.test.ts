@@ -587,6 +587,34 @@ test("clear-before-sign-in, expiry, and identifier-free rollback metrics have ac
   );
 });
 
+test("public realtime projections expose the accepted active-view cadence capability without leaking identifiers", () => {
+  const devices = source("../src/routes/classpilot/devices.ts");
+  const compat = source("../src/routes/compat.ts");
+  const deviceProjection = section(
+    devices,
+    "function publicRealtimeFields",
+    "type ClasspilotRealtimeControlAuthority",
+  );
+  const compatContract = section(
+    compat,
+    "function publicClasspilotExtensionContract",
+    "async function loadAuthorizedRealtimeStatuses",
+  );
+  for (const projection of [deviceProjection, compatContract]) {
+    assert.match(
+      projection,
+      /acceptedCapabilities: \{[\s\S]*?restrictionAuthPassThroughV1: acceptedCapabilities\.has\([\s\S]*?screenshotActiveObservationCadenceV1: acceptedCapabilities\.has\(\s*"screenshotActiveObservationCadenceV1"\s*\)/,
+    );
+    assert.doesNotMatch(
+      projection,
+      /screenshotActiveObservationCadenceV1: extensionCapabilities\.has/,
+      "the cadence flag must reflect the server-accepted negotiation, not the extension's advertisement",
+    );
+    const acceptedBlock = section(projection, "acceptedCapabilities: {", "},");
+    assert.doesNotMatch(acceptedBlock, /deviceId|studentSessionId|schoolId/);
+  }
+});
+
 test("Coverage clear preserves the nested restorable class provenance", () => {
   const dispatcher = source("../src/services/classpilotCommandDispatcher.ts");
   const storage = source("../src/services/storage.ts");

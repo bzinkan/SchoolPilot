@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  activeTemporaryAllows,
   assertClassroomCommandSelectionIsolation,
   buildStudentSignOutCommandRequest,
   commandSupportsLateSignInRestriction,
@@ -12,6 +13,7 @@ import {
   DOMAIN_PRESERVING_RESTRICTION_MESSAGE,
   DOMAIN_RESTRICTION_URL_HELP,
   deriveDashboardCapabilities,
+  deriveTabLimitChip,
   domainRestrictionMessageForStudents,
   effectiveStudentRestrictions,
   exactTabCloseCapability,
@@ -30,8 +32,11 @@ import {
   studentSupportsCapability,
   studentTileFlightPathReleaseCommand,
   studentTileScreenToggleCommand,
+  studentTileTempUnblockCommand,
   studentSignOutCommandPayload,
   sessionFabSettingsPayload,
+  tabLimitCommandPayload,
+  TEMP_UNBLOCK_DEFAULT_MINUTES,
   tabSelectionKey,
   toolbarScreenCommand,
   uniqueStudentsById,
@@ -671,6 +676,103 @@ test('student tile unlock and Flight Path actions retain distinct semantics', ()
     commandPayload: {},
     studentIds: ['a'],
   });
+});
+
+test('the tile temporary allow targets one student, one normalized domain, and a bounded duration', () => {
+  assert.equal(TEMP_UNBLOCK_DEFAULT_MINUTES, 10);
+  assert.deepEqual(studentTileTempUnblockCommand({ studentId: 'a' }, 'Blocked.Example.test'), {
+    commandType: 'temp-unblock',
+    commandPayload: { domain: 'blocked.example.test', durationMinutes: 10 },
+    studentIds: ['a'],
+  });
+  assert.deepEqual(
+    studentTileTempUnblockCommand({ studentId: 'a' }, ' www.blocked.example.test ', 5).commandPayload,
+    { domain: 'blocked.example.test', durationMinutes: 5 },
+  );
+  assert.equal(studentTileTempUnblockCommand({ studentId: 'a' }, ''), null);
+  assert.equal(studentTileTempUnblockCommand({ studentId: 'a' }, null), null);
+  assert.equal(studentTileTempUnblockCommand({}, 'blocked.example.test'), null);
+  assert.equal(studentTileTempUnblockCommand(null, 'blocked.example.test'), null);
+  assert.equal(studentTileTempUnblockCommand({ studentId: 'a' }, 'blocked.example.test', 0), null);
+  assert.equal(studentTileTempUnblockCommand({ studentId: 'a' }, 'blocked.example.test', 2.5), null);
+  assert.equal(studentTileTempUnblockCommand({ studentId: 'a' }, 'blocked.example.test', 'ten'), null);
+});
+
+test('active temporary allows come only from unexpired authoritative classroom state, soonest first', () => {
+  const now = Date.parse('2026-08-13T12:00:00.000Z');
+  const student = {
+    classroomState: {
+      restrictions: {
+        temporaryAllows: [
+          { domain: 'later.example.test', expiresAt: '2026-08-13T12:20:00.000Z' },
+          { domain: 'Soon.Example.test', expiresAt: '2026-08-13T12:05:00.000Z' },
+          { domain: 'expired.example.test', expiresAt: '2026-08-13T11:59:59.000Z' },
+          { domain: 'exact.example.test', expiresAt: '2026-08-13T12:00:00.000Z' },
+          { domain: '', expiresAt: '2026-08-13T12:30:00.000Z' },
+          { domain: 'broken.example.test', expiresAt: 'not a date' },
+          { domain: 'missing.example.test' },
+          { domain: 'numeric.example.test', expiresAt: now + 60_000 },
+          null,
+        ],
+      },
+    },
+  };
+  assert.deepEqual(activeTemporaryAllows(student, now), [
+    { domain: 'numeric.example.test', expiresAtMs: now + 60_000 },
+    { domain: 'soon.example.test', expiresAtMs: Date.parse('2026-08-13T12:05:00.000Z') },
+    { domain: 'later.example.test', expiresAtMs: Date.parse('2026-08-13T12:20:00.000Z') },
+  ]);
+  assert.deepEqual(
+    activeTemporaryAllows(student, Date.parse('2026-08-13T12:20:00.000Z')),
+    [],
+    'every allow expires at its exact boundary',
+  );
+  assert.deepEqual(activeTemporaryAllows({ classroomState: { restrictions: {} } }, now), []);
+  assert.deepEqual(activeTemporaryAllows({ classroomState: { restrictions: { temporaryAllows: 'x' } } }, now), []);
+  assert.deepEqual(activeTemporaryAllows(null, now), []);
+  assert.deepEqual(activeTemporaryAllows(student, Number.NaN), []);
+});
+
+test('the tab-limit chip derives from authoritative classroom state and the realtime tab count', () => {
+  assert.deepEqual(
+    deriveTabLimitChip({ classroomState: { restrictions: { tabLimit: 5 } }, openTabCount: 7 }),
+    { tabLimit: 5, openTabCount: 7, over: true },
+  );
+  assert.deepEqual(
+    deriveTabLimitChip({ classroomState: { restrictions: { tabLimit: 5 } }, openTabCount: 5 }),
+    { tabLimit: 5, openTabCount: 5, over: false },
+  );
+  assert.deepEqual(
+    deriveTabLimitChip({ classroomState: { restrictions: { tabLimit: 3 } }, allOpenTabs: [{}, {}] }),
+    { tabLimit: 3, openTabCount: 2, over: false },
+    'a legacy snapshot without openTabCount falls back to the tab list length',
+  );
+  assert.deepEqual(
+    deriveTabLimitChip({ classroomState: { restrictions: { tabLimit: 3 } } }),
+    { tabLimit: 3, openTabCount: 0, over: false },
+  );
+  assert.equal(deriveTabLimitChip({ classroomState: { restrictions: { tabLimit: null } }, openTabCount: 7 }), null);
+  assert.equal(deriveTabLimitChip({ classroomState: { restrictions: { tabLimit: 0 } }, openTabCount: 7 }), null);
+  assert.equal(deriveTabLimitChip({ classroomState: { restrictions: { tabLimit: '5' } }, openTabCount: 7 }), null);
+  assert.equal(deriveTabLimitChip({ openTabCount: 7 }), null);
+  assert.equal(deriveTabLimitChip(null), null);
+});
+
+test('tab-limit payloads accept only whole numbers from 1 to 100 and clear on an empty draft', () => {
+  assert.deepEqual(tabLimitCommandPayload('5'), { maxTabs: 5 });
+  assert.deepEqual(tabLimitCommandPayload(' 100 '), { maxTabs: 100 });
+  assert.deepEqual(tabLimitCommandPayload(1), { maxTabs: 1 });
+  assert.deepEqual(tabLimitCommandPayload(''), { maxTabs: null });
+  assert.deepEqual(tabLimitCommandPayload('   '), { maxTabs: null });
+  assert.deepEqual(tabLimitCommandPayload(null), { maxTabs: null });
+  assert.deepEqual(tabLimitCommandPayload(undefined), { maxTabs: null });
+  assert.equal(tabLimitCommandPayload('0'), null);
+  assert.equal(tabLimitCommandPayload('101'), null);
+  assert.equal(tabLimitCommandPayload('2.5'), null);
+  assert.equal(tabLimitCommandPayload('-3'), null);
+  assert.equal(tabLimitCommandPayload('1e2'), null);
+  assert.equal(tabLimitCommandPayload('abc'), null);
+  assert.equal(tabLimitCommandPayload(Number.NaN), null);
 });
 
 test('toolbar Lock and Unlock require explicit students and keep exact payload semantics', () => {

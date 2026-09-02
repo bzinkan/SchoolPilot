@@ -6,16 +6,22 @@ import { Monitor, ExternalLink, AlertTriangle, Lock, Unlock, Layers, Maximize2, 
 import { Checkbox } from "../../../components/ui/checkbox";
 import {
   deriveScreenshotDisplay,
+  deriveScreenshotHealthDisplay,
   deriveScreenshotPreviewMode,
   deriveStudentMonitoringDisplay,
   deriveUnavailablePreview,
   isClassBoundScreenshot,
+  screenshotStaleThresholdMs,
 } from "../lib/studentMonitoringDisplay";
-import LastSeenTime from "./LastSeenTime";
+import LastSeenTime, { ExpiryCountdown } from "./LastSeenTime";
+import { deriveTileTabFavicons } from "../lib/tileTabFavicons";
 import {
+  activeTemporaryAllows,
+  deriveTabLimitChip,
   studentSupportsCapability,
   studentTileFlightPathReleaseCommand,
   studentTileScreenToggleCommand,
+  studentTileTempUnblockCommand,
 } from "../lib/dashboardCommandContext";
 
 const EMPTY_LIST = Object.freeze([]);
@@ -32,6 +38,14 @@ const SUPPRESSED_MONITORING_DISPLAY = Object.freeze({
   observedAtMs: null,
   nextBoundaryAtMs: null,
 });
+
+function hostnameOf(url) {
+  try {
+    return new URL(url).hostname.toLowerCase().replace(/^www\./, '') || null;
+  } catch {
+    return null;
+  }
+}
 
 function isBlockedDomain(url, blockedDomains) {
   if (!url || blockedDomains.length === 0) return false;
@@ -80,6 +94,7 @@ function StudentTile({
   commandError = "",
   canLockScreen = true,
   canRemoveFlightPath = true,
+  canTempUnblock = false,
   actionsDisabled = false,
   actionsDisabledReason = "",
   nonSignOutCommandsBlocked = false,
@@ -99,6 +114,7 @@ function StudentTile({
   screenshotAuthorizationDenied = false,
   screenshotRefreshUnavailable = false,
   screenshotUpdating = false,
+  screenshotCaptureCadence = 'background',
 }) {
   const videoElementRef = useRef(null);
   const screenshotButtonRef = useRef(null);
@@ -119,9 +135,11 @@ function StudentTile({
       && !signOutOnlySelectionAvailable
       && !persistentRestrictionSelectionAvailable
     );
+  const staleThresholdMs = screenshotStaleThresholdMs(screenshotCaptureCadence);
   const screenshotDisplay = deriveScreenshotDisplay(
     monitoringSuppressed ? null : screenshotData,
     freshnessNowMs,
+    { staleThresholdMs },
   );
   const displayStatus = effectiveMonitoringDisplay.status;
   const screenshotIsClassBound = isClassBoundScreenshot(screenshotData);
@@ -152,7 +170,21 @@ function StudentTile({
     screenshotData,
     nowMs: freshnessNowMs,
     authorizationRevoked: screenshotAuthorizationRevoked,
+    staleThresholdMs,
   });
+  const screenshotHealth = monitoringSuppressed
+    ? null
+    : deriveScreenshotHealthDisplay(student, {
+        nowMs: freshnessNowMs,
+        cadence: screenshotCaptureCadence,
+        screenshotDisplay,
+        monitoringDisplay: effectiveMonitoringDisplay,
+      });
+  const screenshotHealthToneClass = screenshotHealth?.tone === 'warn'
+    ? 'bg-amber-400/90 text-slate-950'
+    : screenshotHealth?.tone === 'ok'
+      ? 'bg-emerald-500/85 text-white'
+      : 'bg-white/15 text-white/80';
   const screenshotInteractionAvailable = Boolean(
     !monitoringSuppressed
     && screenshotPreviewMode
@@ -222,6 +254,10 @@ function StudentTile({
     }, [])
     .slice(0, 5);
 
+  // Open-tab favicon strip. Hidden whenever telemetry is not current so a
+  // stale snapshot can never be mistaken for what the student has open now.
+  const tabFavicons = monitoringSuppressed || !currentTelemetry ? null : deriveTileTabFavicons(student);
+
   // Check if current URL is blocked by active flight path
   const activeFlightPath = flightPaths.find((fp) => fp.flightPathName === student.activeFlightPathName);
   const isBlockedByFlightPath = currentTelemetry && student.flightPathActive && activeFlightPath && student.activeTabUrl &&
@@ -232,6 +268,8 @@ function StudentTile({
   const classroomNoiseSuppressed = !monitoringSuppressed
     && Boolean(student.classroomNoiseSuppressed || effectiveIsAbsent || student.suppressionReason);
   const effectiveIsOffTask = currentTelemetry && isOffTask && !classroomNoiseSuppressed;
+  const tabLimitChip = currentTelemetry ? deriveTabLimitChip(student) : null;
+  const temporaryAllows = currentTelemetry ? activeTemporaryAllows(student, freshnessNowMs) : EMPTY_LIST;
 
   const getStatusLabel = (status) => {
     if (effectiveIsAbsent) return 'Absent';
@@ -442,7 +480,7 @@ function StudentTile({
         ) : null}
 
         {/* Alert Badges */}
-        {!monitoringSuppressed && (effectiveIsOffTask || isBlocked || isBlockedByFlightPath || student.flightPathActive || (currentTelemetry && student.aiClassification?.safetyAlert) || classroomNoiseSuppressed) && (
+        {!monitoringSuppressed && (effectiveIsOffTask || isBlocked || isBlockedByFlightPath || student.flightPathActive || (currentTelemetry && student.aiClassification?.safetyAlert) || classroomNoiseSuppressed || tabLimitChip || temporaryAllows.length > 0) && (
           <div className="flex flex-col gap-2">
             <div className="flex flex-wrap gap-1.5">
               {currentTelemetry && student.aiClassification?.safetyAlert && (
@@ -466,6 +504,22 @@ function StudentTile({
                 <Badge variant="outline" className="text-xs px-2 py-0.5 bg-red-50 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-400 dark:border-red-800" data-testid={`badge-blocked-by-scene-${student.studentId}`}>
                   <AlertTriangle className="h-3 w-3 mr-1" />
                   Blocked by {student.activeFlightPathName}
+                  <button
+                    type="button"
+                    className="ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold enabled:hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-50 dark:enabled:hover:bg-red-800"
+                    disabled={interactionsDisabled || !canTempUnblock || !onCommand || commandPending}
+                    title={interactionsDisabled ? unavailableActionReason : "Allow this site for 10 minutes"}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (interactionsDisabled) return;
+                      const domain = hostnameOf(student.activeTabUrl);
+                      const command = studentTileTempUnblockCommand(student, domain);
+                      if (command) onCommand?.(command);
+                    }}
+                    data-testid={`button-allow-temporarily-${student.studentId}`}
+                  >
+                    Allow 10 min
+                  </button>
                 </Badge>
               )}
               {effectiveIsOffTask && !isBlockedByFlightPath && (
@@ -496,8 +550,52 @@ function StudentTile({
                 <Badge variant="outline" className="text-xs px-2 py-0.5 bg-red-50 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-400 dark:border-red-800" data-testid={`badge-blocked-${student.studentId}`}>
                   <AlertTriangle className="h-3 w-3 mr-1" />
                   Blocked Domain
+                  <button
+                    type="button"
+                    className="ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold enabled:hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-50 dark:enabled:hover:bg-red-800"
+                    disabled={interactionsDisabled || !canTempUnblock || !onCommand || commandPending}
+                    title={interactionsDisabled ? unavailableActionReason : "Allow this site for 10 minutes"}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (interactionsDisabled) return;
+                      const domain = hostnameOf(student.activeTabUrl);
+                      const command = studentTileTempUnblockCommand(student, domain);
+                      if (command) onCommand?.(command);
+                    }}
+                    data-testid={`button-allow-temporarily-${student.studentId}`}
+                  >
+                    Allow 10 min
+                  </button>
                 </Badge>
               )}
+              {tabLimitChip && (
+                <Badge
+                  variant="outline"
+                  className={`text-xs px-2 py-0.5 ${tabLimitChip.over
+                    ? 'bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800'
+                    : 'bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-700'}`}
+                  title={tabLimitChip.over
+                    ? `Over the ${tabLimitChip.tabLimit}-tab limit`
+                    : `Tab limit: ${tabLimitChip.tabLimit}`}
+                  data-testid={`badge-tab-limit-${student.studentId}`}
+                >
+                  <List className="h-3 w-3 mr-1" />
+                  {tabLimitChip.openTabCount} / {tabLimitChip.tabLimit} tabs
+                </Badge>
+              )}
+              {temporaryAllows.map((allow) => (
+                <Badge
+                  key={allow.domain}
+                  variant="outline"
+                  className="text-xs px-2 py-0.5 bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800"
+                  title={`${allow.domain} is temporarily allowed for this student`}
+                  data-testid={`badge-temp-allow-${student.studentId}`}
+                >
+                  <Unlock className="h-3 w-3 mr-1" />
+                  {allow.domain} allowed
+                  <ExpiryCountdown expiresAtMs={allow.expiresAtMs} className="ml-1 font-normal opacity-80" />
+                </Badge>
+              ))}
             </div>
             {isBlockedByFlightPath && canRemoveFlightPath && (
               <div className="flex gap-2">
@@ -601,6 +699,14 @@ function StudentTile({
                 <span className="text-xs text-white/90 truncate font-medium">
                   {screenshotData.tabTitle || 'No active tab'}
                 </span>
+                {screenshotHealth ? (
+                  <span
+                    className={`ml-auto flex-shrink-0 rounded px-1 py-px text-[10px] font-medium ${screenshotHealthToneClass}`}
+                    data-testid={`screenshot-health-${student.studentId}`}
+                  >
+                    {screenshotHealth.label}
+                  </span>
+                ) : null}
               </div>
             </div>
           </button>
@@ -668,6 +774,11 @@ function StudentTile({
               <AlertTriangle className="mx-auto mb-2 h-6 w-6 text-amber-600 dark:text-amber-400" />
               <p className="text-sm font-semibold text-foreground">Screenshot observation unavailable</p>
               <p className="mt-1 text-xs text-muted-foreground">Activity reporting continues from heartbeat telemetry.</p>
+              {screenshotHealth ? (
+                <p className="mt-2 text-[11px] font-medium text-amber-700 dark:text-amber-300" data-testid={`screenshot-health-${student.studentId}`}>
+                  {screenshotHealth.label}
+                </p>
+              ) : null}
             </div>
           </div>
         ) : (
@@ -677,6 +788,14 @@ function StudentTile({
                 <Monitor className="mx-auto mb-2 h-6 w-6 text-muted-foreground/60" />
                 <p className="text-sm font-semibold text-foreground">Screenshot unavailable or stale</p>
                 <p className="mt-1 text-xs text-muted-foreground">Current website telemetry remains available below.</p>
+                {screenshotHealth ? (
+                  <p
+                    className={`mt-2 text-[11px] font-medium ${screenshotHealth.tone === 'warn' ? 'text-amber-700 dark:text-amber-300' : 'text-muted-foreground'}`}
+                    data-testid={`screenshot-health-${student.studentId}`}
+                  >
+                    {screenshotHealth.label}
+                  </p>
+                ) : null}
               </div>
             </div>
             <div className="flex items-center gap-2 px-3 py-2 bg-muted/60 border-t border-border/30">
@@ -703,6 +822,56 @@ function StudentTile({
               <p className="font-medium text-sm leading-snug line-clamp-2" data-testid={`text-tab-title-${student.studentId}`}>
                 {student.activeTabTitle || <span className="text-muted-foreground italic">No active tab</span>}
               </p>
+            </div>
+          </div>
+        )}
+
+        {/* Open Tab Favicons */}
+        {tabFavicons && tabFavicons.tabs.length > 0 && (
+          <div className="flex items-center gap-1.5 px-1 py-1.5 border-t border-border/20" data-testid={`tab-favicons-${student.studentId}`}>
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">Open</span>
+            <div className="flex items-center gap-1 flex-1 overflow-x-auto">
+              {tabFavicons.tabs.map((tab, index) => (
+                <span
+                  key={tab.key}
+                  className={`flex-shrink-0 w-5 h-5 rounded bg-muted/50 flex items-center justify-center border ${tab.active ? 'border-primary/70 ring-1 ring-primary/60' : 'border-border/20'}`}
+                  title={`${tab.title} · ${tab.hostname}`}
+                  data-testid={`tab-favicon-${student.studentId}-${index}`}
+                >
+                  {tab.favicon ? (
+                    <img
+                      src={tab.favicon}
+                      alt=""
+                      className="w-3.5 h-3.5 rounded"
+                      referrerPolicy="no-referrer"
+                      loading="lazy"
+                      decoding="async"
+                      onError={(e) => {
+                        e.target.style.display = 'none';
+                      }}
+                    />
+                  ) : (
+                    <div className="w-2 h-2 rounded-full bg-muted-foreground/30" />
+                  )}
+                </span>
+              ))}
+              {tabFavicons.overflow > 0 && (
+                <button
+                  type="button"
+                  className="flex-shrink-0 h-5 rounded border border-border/20 bg-muted/50 px-1.5 text-[10px] font-medium text-muted-foreground enabled:hover:bg-muted disabled:cursor-default"
+                  title={onManageTabs && !interactionsDisabled
+                    ? `${tabFavicons.totalCount} open tabs · View this student's open tabs`
+                    : `${tabFavicons.totalCount} open tabs`}
+                  disabled={!onManageTabs || interactionsDisabled}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onManageTabs?.();
+                  }}
+                  data-testid={`button-tab-favicons-more-${student.studentId}`}
+                >
+                  +{tabFavicons.overflow}{tabFavicons.truncated ? '…' : ''}
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -850,7 +1019,9 @@ const CALLBACK_PROPS = new Set([
 function freshnessProjection(props) {
   const monitoring = props.monitoringDisplay
     || deriveStudentMonitoringDisplay(props.student, props.freshnessNowMs);
-  const screenshot = deriveScreenshotDisplay(props.screenshotData, props.freshnessNowMs);
+  const screenshot = deriveScreenshotDisplay(props.screenshotData, props.freshnessNowMs, {
+    staleThresholdMs: screenshotStaleThresholdMs(props.screenshotCaptureCadence),
+  });
   return `${monitoring.kind}:${monitoring.status}:${monitoring.telemetryCurrent}:${screenshot.fresh}:${screenshot.retained}`;
 }
 

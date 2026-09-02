@@ -328,6 +328,79 @@ export function studentTileFlightPathReleaseCommand(student) {
   } : null;
 }
 
+export const TEMP_UNBLOCK_DEFAULT_MINUTES = 10;
+
+function normalizedAllowDomain(value) {
+  return String(value || '').trim().toLowerCase().replace(/^www\./, '');
+}
+
+// Tile-level "Allow 10 min": a persistent, self-expiring allow for exactly one
+// student and one domain, dispatched through the same command path as every
+// other tile action.
+export function studentTileTempUnblockCommand(
+  student,
+  domain,
+  durationMinutes = TEMP_UNBLOCK_DEFAULT_MINUTES,
+) {
+  const targetStudentId = studentId(student);
+  const normalizedDomain = normalizedAllowDomain(domain);
+  const minutes = Number(durationMinutes);
+  if (!targetStudentId || !normalizedDomain || !Number.isInteger(minutes) || minutes < 1) return null;
+  return {
+    commandType: 'temp-unblock',
+    commandPayload: { domain: normalizedDomain, durationMinutes: minutes },
+    studentIds: [targetStudentId],
+  };
+}
+
+function parsedExpiry(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+// Unexpired temporary allows from the authoritative classroom snapshot,
+// soonest expiry first.
+export function activeTemporaryAllows(student, nowMs = Date.now()) {
+  const entries = student?.classroomState?.restrictions?.temporaryAllows;
+  if (!Array.isArray(entries)) return [];
+  const now = Number(nowMs);
+  if (!Number.isFinite(now)) return [];
+  const active = [];
+  for (const entry of entries) {
+    const domain = String(entry?.domain || '').trim().toLowerCase();
+    const expiresAtMs = parsedExpiry(entry?.expiresAt);
+    if (!domain || expiresAtMs === null || expiresAtMs <= now) continue;
+    active.push({ domain, expiresAtMs });
+  }
+  active.sort((left, right) => left.expiresAtMs - right.expiresAtMs || left.domain.localeCompare(right.domain));
+  return active;
+}
+
+export const TAB_LIMIT_MIN = 1;
+export const TAB_LIMIT_MAX = 100;
+
+// The authoritative tab limit lives in the public classroom-state snapshot;
+// the open-tab count comes from the latest realtime heartbeat.
+export function deriveTabLimitChip(student) {
+  const tabLimit = student?.classroomState?.restrictions?.tabLimit;
+  if (!Number.isInteger(tabLimit) || tabLimit < 1) return null;
+  const reportedCount = student?.openTabCount ?? student?.allOpenTabs?.length ?? 0;
+  const openTabCount = Number.isFinite(reportedCount) ? Math.max(0, Math.floor(reportedCount)) : 0;
+  return { tabLimit, openTabCount, over: openTabCount > tabLimit };
+}
+
+// "" clears the limit; a whole number 1..100 sets it; anything else is invalid.
+export function tabLimitCommandPayload(raw) {
+  const text = typeof raw === 'number' ? String(raw) : String(raw ?? '').trim();
+  if (text === '') return { maxTabs: null };
+  if (!/^\d+$/.test(text)) return null;
+  const maxTabs = Number(text);
+  if (!Number.isInteger(maxTabs) || maxTabs < TAB_LIMIT_MIN || maxTabs > TAB_LIMIT_MAX) return null;
+  return { maxTabs };
+}
+
 function studentRowsByIds(rows, ids) {
   const wanted = new Set(normalizedIds(ids));
   return (rows || []).filter((row) => wanted.has(studentId(row)));

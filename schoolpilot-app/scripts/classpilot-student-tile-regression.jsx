@@ -127,6 +127,51 @@ const RECENT_HEARTBEATS = Object.freeze([
   }),
 ]);
 
+const FAVICON_STRIP_STUDENT = Object.freeze({
+  ...ONLINE_STUDENT,
+  studentId: 'favicon-strip-student',
+  studentName: 'Favicon Strip Student',
+  activeTabUrl: 'https://docs.example.test/assignment',
+  activeTabTitle: 'Assignment',
+  activeTabRef: 'tab-active',
+  openTabCount: 12,
+  tabsTruncated: true,
+  allOpenTabs: Object.freeze([
+    Object.freeze({ tabRef: 'tab-1', url: 'https://reading.example.test/chapter-1', title: 'Chapter 1', favicon: 'https://reading.example.test/favicon.ico' }),
+    Object.freeze({ tabRef: 'tab-2', url: 'https://reading.example.test/chapter-2', title: 'Chapter 2', favicon: 'https://reading.example.test/favicon.ico' }),
+    Object.freeze({ tabRef: 'tab-active', url: 'https://docs.example.test/assignment', title: 'Assignment', favicon: 'https://docs.example.test/favicon.ico' }),
+    Object.freeze({ tabRef: 'tab-3', url: 'chrome://extensions', title: 'Extensions', favicon: 'https://chrome.example.test/favicon.ico' }),
+    Object.freeze({ tabRef: 'tab-4', url: 'https://video.example.test/watch', title: 'Video', favicon: 'http://video.example.test/favicon.ico' }),
+    Object.freeze({ tabRef: 'tab-5', url: 'https://quiz.example.test/q1', title: 'Quiz', favicon: 'data:image/png;base64,AAAA' }),
+    Object.freeze({ tabRef: 'tab-6', url: 'https://notes.example.test/', title: 'Notes', favicon: 'https://notes.example.test/favicon.ico' }),
+  ]),
+});
+
+const TEMP_ALLOW_BLOCKED_DOMAINS = Object.freeze(['blocked.example.test']);
+const TEMP_ALLOW_STUDENT = Object.freeze({
+  ...ONLINE_STUDENT,
+  studentId: 'temp-allow-student',
+  studentName: 'Temp Allow Student',
+  activeTabUrl: 'https://www.blocked.example.test/game',
+  activeTabTitle: 'Blocked game',
+  classroomState: Object.freeze({
+    revision: 4,
+    restrictions: Object.freeze({
+      temporaryAllows: Object.freeze([
+        Object.freeze({ domain: 'reading.example.test', expiresAt: '2026-08-24T12:10:30.000Z' }),
+      ]),
+    }),
+  }),
+});
+
+const TAB_LIMIT_STUDENT = Object.freeze({
+  ...ONLINE_STUDENT,
+  studentId: 'tab-limit-student',
+  studentName: 'Tab Limit Student',
+  openTabCount: 7,
+  classroomState: Object.freeze({ revision: 3, restrictions: Object.freeze({ tabLimit: 5 }) }),
+});
+
 function TileRegressionHarness() {
   const [observedAtMs, setObservedAtMs] = useState(() => Date.now());
   const [tabClicks, setTabClicks] = useState(0);
@@ -134,6 +179,7 @@ function TileRegressionHarness() {
   const [screenshotClicks, setScreenshotClicks] = useState(0);
   const [selectionClicks, setSelectionClicks] = useState(0);
   const [commandClicks, setCommandClicks] = useState(0);
+  const [lastCommand, setLastCommand] = useState('');
   const [allowClicks, setAllowClicks] = useState(0);
   const [returnClicks, setReturnClicks] = useState(0);
   const [tilesVisible, setTilesVisible] = useState(false);
@@ -178,6 +224,7 @@ function TileRegressionHarness() {
       <p data-testid="screenshot-clicks">Screenshot clicks: {screenshotClicks}</p>
       <p data-testid="selection-clicks">Selection clicks: {selectionClicks}</p>
       <p data-testid="command-clicks">Command clicks: {commandClicks}</p>
+      <p data-testid="last-command">{lastCommand}</p>
       <p data-testid="allow-clicks">Allow clicks: {allowClicks}</p>
       <p data-testid="return-clicks">Return clicks: {returnClicks}</p>
       <p data-testid="parent-renders">Parent renders: {renderCount.current}</p>
@@ -423,6 +470,68 @@ function TileRegressionHarness() {
             onOpenDetails={() => setDetailsClicks((count) => count + 1)}
             onOpenScreenshot={() => setScreenshotClicks((count) => count + 1)}
             onReturnToClass={() => setReturnClicks((count) => count + 1)}
+          />
+        </div>
+
+        <div data-testid="favicon-strip-tile-host">
+          <StudentTile
+            student={FAVICON_STRIP_STUDENT}
+            monitoringDisplay={{
+              kind: 'online',
+              status: 'online',
+              label: 'Online',
+              telemetryCurrent: true,
+              observedAtMs: freshnessNowMs,
+              nextBoundaryAtMs: freshnessNowMs + 60_000,
+            }}
+            freshnessNowMs={freshnessNowMs}
+            screenshotData={{
+              screenshot: SCREENSHOT_DATA_URL,
+              timestamp: freshnessNowMs,
+              bindingVersion: 'v2:favicon-strip-binding',
+              tabTitle: 'Assignment',
+            }}
+            onOpenScreenshot={() => setScreenshotClicks((count) => count + 1)}
+            onManageTabs={() => setTabClicks((count) => count + 1)}
+            onCommand={() => setCommandClicks((count) => count + 1)}
+          />
+        </div>
+
+        <div data-testid="temp-allow-tile-host">
+          <StudentTile
+            student={TEMP_ALLOW_STUDENT}
+            monitoringDisplay={{
+              kind: 'online',
+              status: 'online',
+              label: 'Online',
+              telemetryCurrent: true,
+              observedAtMs: freshnessNowMs,
+              nextBoundaryAtMs: freshnessNowMs + 60_000,
+            }}
+            freshnessNowMs={freshnessNowMs}
+            blockedDomains={TEMP_ALLOW_BLOCKED_DOMAINS}
+            canTempUnblock
+            onCommand={(command) => {
+              setCommandClicks((count) => count + 1);
+              setLastCommand(JSON.stringify(command));
+            }}
+            onAllowDomain={() => setAllowClicks((count) => count + 1)}
+          />
+        </div>
+
+        <div data-testid="tab-limit-tile-host">
+          <StudentTile
+            student={TAB_LIMIT_STUDENT}
+            monitoringDisplay={{
+              kind: 'online',
+              status: 'online',
+              label: 'Online',
+              telemetryCurrent: true,
+              observedAtMs: freshnessNowMs,
+              nextBoundaryAtMs: freshnessNowMs + 60_000,
+            }}
+            freshnessNowMs={freshnessNowMs}
+            onManageTabs={() => setTabClicks((count) => count + 1)}
           />
         </div>
 

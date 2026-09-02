@@ -119,6 +119,7 @@ async function configurePage(page, kind, options = {}) {
   const genericEndRequests = [];
   const logoutRequests = [];
   const skipTodayRequests = [];
+  const recentRequests = [];
   const finalizedSessionIds = new Set();
 
   await page.addInitScript((schoolId) => {
@@ -155,6 +156,11 @@ async function configurePage(page, kind, options = {}) {
     }
     if (pathname === "/api/sessions/active" && request.method() === "GET") {
       await route.fulfill({ json: { session: currentSession } });
+      return;
+    }
+    if (pathname === "/api/classpilot/teaching-sessions/recent" && request.method() === "GET") {
+      recentRequests.push(new URL(request.url()).search);
+      await route.fulfill({ json: { sessions: options.recentSessions || [] } });
       return;
     }
     const reportMatch = pathname.match(/^\/api\/classpilot\/teaching-sessions\/([^/]+)\/report$/);
@@ -222,6 +228,7 @@ async function configurePage(page, kind, options = {}) {
     genericEndRequests,
     logoutRequests,
     skipTodayRequests,
+    recentRequests,
     async replaceActiveSession(session, endedSessionId) {
       currentSession = session;
       finalizedSessionIds.add(endedSessionId);
@@ -257,6 +264,7 @@ test("ClassPilot dashboard explains scheduled and manual summary lifecycle", { t
   let backToBackPage;
   let manualLogoutPage;
   let manualPage;
+  let pastSessionsPage;
   let scheduledPrestartPage;
 
   try {
@@ -406,6 +414,85 @@ test("ClassPilot dashboard explains scheduled and manual summary lifecycle", { t
     assert.equal(manualEnd.genericEndRequests.length, 0, "manual End Class must use the ID-specific endpoint");
     assert.equal(manualEnd.logoutRequests.length, 0, "manual End Class must not log the teacher out");
 
+    pastSessionsPage = await browser.newPage();
+    const pastSessionRow = (overrides) => ({
+      groupId: GROUP_ID,
+      teacherId: TEACHER_ID,
+      className: "Biology",
+      lifecycle: { kind: "manual", state: "ended" },
+      summaryTrigger: "manual_end",
+      ...overrides,
+    });
+    const pastSessions = await configurePage(pastSessionsPage, "manual", {
+      reportResponse: readyReportV2(),
+      recentSessions: [
+        pastSessionRow({
+          id: "ready-session",
+          startTime: "2026-08-10T17:30:00.000Z",
+          endTime: "2026-08-10T18:20:00.000Z",
+          reportState: "ready",
+        }),
+        pastSessionRow({
+          id: "pending-session",
+          startTime: "2026-08-09T17:30:00.000Z",
+          endTime: "2026-08-09T18:20:00.000Z",
+          reportState: "pending",
+        }),
+        pastSessionRow({
+          id: "expired-session",
+          startTime: "2026-07-01T17:30:00.000Z",
+          endTime: "2026-07-01T18:45:00.000Z",
+          lifecycle: { kind: "scheduled", state: "ended" },
+          summaryTrigger: "scheduled_end",
+          reportState: "expired",
+        }),
+        pastSessionRow({
+          id: "none-session",
+          startTime: "2026-06-30T17:30:00.000Z",
+          endTime: "2026-06-30T18:00:00.000Z",
+          reportState: "none",
+        }),
+      ],
+    });
+    await pastSessionsPage.goto(`http://127.0.0.1:${address.port}/classpilot`);
+    await pastSessionsPage.getByTestId("badge-active-session").waitFor();
+    assert.equal(
+      pastSessions.recentRequests.length,
+      0,
+      "the recent-sessions endpoint must not be requested before the teacher opens Past sessions",
+    );
+    await pastSessionsPage.getByTestId("button-past-sessions").click();
+    await pastSessionsPage.getByTestId("dialog-past-sessions").waitFor();
+    const readyRow = pastSessionsPage.getByTestId("past-session-ready-session");
+    await readyRow.waitFor();
+    assert.deepEqual(pastSessions.recentRequests, ["?limit=20"], "opening the popover must request exactly one bounded page");
+    await readyRow.getByText("Biology", { exact: true }).waitFor();
+    await readyRow.getByText("Manual", { exact: true }).waitFor();
+    await readyRow.getByText("Summary ready", { exact: true }).waitFor();
+    const expiredRow = pastSessionsPage.getByTestId("past-session-expired-session");
+    await expiredRow.getByText("Automatic", { exact: true }).waitFor();
+    const expiredButton = pastSessionsPage.getByTestId("button-open-session-report-expired-session");
+    assert.equal(await expiredButton.isDisabled(), true, "an expired Session Summary must not be openable");
+    assert.equal((await expiredButton.textContent())?.trim(), "Summary expired");
+    assert.equal(
+      await pastSessionsPage.getByTestId("button-open-session-report-none-session").isDisabled(),
+      true,
+      "a session without a summary must not be openable",
+    );
+    await pastSessionsPage.getByTestId("past-session-report-state-pending-session").getByText("Generating…", { exact: true }).waitFor();
+    assert.equal(
+      await pastSessionsPage.getByTestId("button-open-session-report-pending-session").isDisabled(),
+      false,
+      "a pending summary stays openable so the report dialog can poll it",
+    );
+    await pastSessionsPage.getByTestId("button-open-session-report-ready-session").click();
+    const pastReportDialog = pastSessionsPage.getByTestId("dialog-session-monitoring-report");
+    await pastReportDialog.getByText("Report v2", { exact: true }).waitFor();
+    await pastReportDialog.getByText("docs.example.edu", { exact: true }).waitFor();
+    assert.equal(await pastSessionsPage.getByTestId("dialog-past-sessions").count(), 0, "the popover closes when a summary opens");
+    assert.equal(pastSessions.endRequests.length, 0, "opening a past summary must not end the active class");
+    assert.equal(pastSessions.recentRequests.length, 1, "opening a summary must not refetch the recent list");
+
     scheduledPrestartPage = await browser.newPage();
     const scheduledPrestart = await configurePage(scheduledPrestartPage, "scheduled", { active: false });
     await scheduledPrestartPage.goto(`http://127.0.0.1:${address.port}/classpilot`);
@@ -428,6 +515,7 @@ test("ClassPilot dashboard explains scheduled and manual summary lifecycle", { t
     await backToBackPage?.close().catch(() => {});
     await manualLogoutPage?.close().catch(() => {});
     await manualPage?.close().catch(() => {});
+    await pastSessionsPage?.close().catch(() => {});
     await scheduledPrestartPage?.close().catch(() => {});
     await browser?.close().catch(() => {});
     await vite.close().catch(() => {});

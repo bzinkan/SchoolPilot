@@ -1,5 +1,5 @@
 import { memo, useSyncExternalStore } from "react";
-import { formatRelativeLastSeen } from "../lib/studentMonitoringDisplay";
+import { formatRelativeLastSeen, formatRemainingMinutes } from "../lib/studentMonitoringDisplay";
 
 const MINUTE_MS = 60_000;
 const minuteListeners = new Set();
@@ -48,12 +48,19 @@ function getMinuteSnapshot() {
   return minuteSnapshot;
 }
 
-function LastSeenTime({ observedAt, className = "" }) {
-  const nowMs = useSyncExternalStore(
+// Every relative timestamp and countdown on the tile wall shares this one
+// minute-boundary clock, so 800 tiles cost one timer.
+// eslint-disable-next-line react-refresh/only-export-components
+export function useMinuteClock() {
+  return useSyncExternalStore(
     subscribeToMinuteClock,
     getMinuteSnapshot,
     getMinuteSnapshot,
   );
+}
+
+function LastSeenTime({ observedAt, className = "" }) {
+  const nowMs = useMinuteClock();
 
   return (
     <span className={className}>
@@ -61,5 +68,14 @@ function LastSeenTime({ observedAt, className = "" }) {
     </span>
   );
 }
+
+function ExpiryCountdownLeaf({ expiresAtMs, className = "" }) {
+  const nowMs = useMinuteClock();
+  const label = formatRemainingMinutes(expiresAtMs, nowMs);
+  if (label === null) return null;
+  return <span className={className}>{`· ${label}`}</span>;
+}
+
+export const ExpiryCountdown = memo(ExpiryCountdownLeaf);
 
 export default memo(LastSeenTime);
