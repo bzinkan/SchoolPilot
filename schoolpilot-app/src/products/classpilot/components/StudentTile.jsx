@@ -185,6 +185,10 @@ function StudentTile({
     : screenshotHealth?.tone === 'ok'
       ? 'bg-emerald-500/85 text-white'
       : 'bg-white/15 text-white/80';
+  // A visible preview already proves capture is working, so nothing is badged
+  // over the picture unless something needs attention. The placeholder cards
+  // below keep the full label because they have no picture to speak for them.
+  const screenshotHealthOverlay = screenshotHealth?.tone === 'warn' ? screenshotHealth : null;
   const screenshotInteractionAvailable = Boolean(
     !monitoringSuppressed
     && screenshotPreviewMode
@@ -699,12 +703,12 @@ function StudentTile({
                 <span className="text-xs text-white/90 truncate font-medium">
                   {screenshotData.tabTitle || 'No active tab'}
                 </span>
-                {screenshotHealth ? (
+                {screenshotHealthOverlay ? (
                   <span
                     className={`ml-auto flex-shrink-0 rounded px-1 py-px text-[10px] font-medium ${screenshotHealthToneClass}`}
                     data-testid={`screenshot-health-${student.studentId}`}
                   >
-                    {screenshotHealth.label}
+                    {screenshotHealthOverlay.label}
                   </span>
                 ) : null}
               </div>
