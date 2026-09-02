@@ -45,6 +45,7 @@ import {
 import { groupStudents } from "../schema/classpilot.js";
 import { students as studentsTable } from "../schema/students.js";
 import { sharedSchoolRosterStudentDto } from "../util/safeStudent.js";
+import { mapWithConcurrency } from "../util/concurrency.js";
 import { logAudit } from "../services/audit.js";
 import { stopMailpilotMonitoringForStudent } from "../services/mailpilotProvisioning.js";
 import { revokeClasspilotStudentSocketsAfterRosterRemoval } from "../realtime/studentSocketRevocation.js";
@@ -261,24 +262,6 @@ async function applyBulkStudentUpdates(
     }
   }
   return rows;
-}
-
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  concurrency: number,
-  mapper: (item: T, index: number) => Promise<R>
-): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let nextIndex = 0;
-  const workerCount = Math.min(Math.max(concurrency, 1), items.length);
-  const workers = Array.from({ length: workerCount }, async () => {
-    while (nextIndex < items.length) {
-      const index = nextIndex++;
-      results[index] = await mapper(items[index]!, index);
-    }
-  });
-  await Promise.all(workers);
-  return results;
 }
 
 function prepareStudentUpdateData(data: Record<string, unknown>): Partial<InsertStudent> {

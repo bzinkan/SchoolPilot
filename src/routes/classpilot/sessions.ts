@@ -14,7 +14,6 @@ import {
   getSessionSettings,
   getGroupByIdAndSchool,
   getScheduledTeachingSessionOccurrence,
-  getGroupTeachers,
   getGroupStudents,
   resyncActiveClasspilotSessionStudents,
   getSchoolById,
@@ -38,6 +37,7 @@ import { getEffectiveClasspilotScheduleWindow } from "../../services/classpilotS
 import { localDateTimeUtc } from "../../util/schoolTime.js";
 import { updateAndFanoutSessionFabSettings } from "../../services/classpilotFab.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
+import { isScheduledClassStaff } from "../../services/classpilotScheduledStaff.js";
 
 const router = Router();
 
@@ -288,10 +288,13 @@ async function startTeachingSessionWithOverlapGuard(req: any, res: any) {
 
   const admin = requestHasAnySchoolRole(req, res, ["admin", "school_admin"]);
   const scheduledTeacherId = occurrence?.teacherId || group.teacherId;
-  const coTeachers = await getGroupTeachers(group.id);
-  const assignedToActor = scheduledPath
-    ? scheduledTeacherId === teacherId
-    : scheduledTeacherId === teacherId || coTeachers.some((teacher) => teacher.teacherId === teacherId);
+  // Scheduled and manual paths share one eligibility rule: the scheduled
+  // teacher or any group_teachers relationship may start the class.
+  const assignedToActor = await isScheduledClassStaff({
+    groupId: group.id,
+    scheduledTeacherId,
+    userId: teacherId,
+  });
   if (!admin && !assignedToActor) {
     return res.status(403).json({ error: "This class is not assigned to you" });
   }

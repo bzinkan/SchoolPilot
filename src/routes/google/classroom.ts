@@ -30,8 +30,11 @@ import {
   type GeneratedClassPilotPin,
 } from "../../services/classpilotPins.js";
 import {
+  CLASSROOM_COURSE_PREVIEW_LIMIT,
   getRosterClassroomClientForSchool,
+  listClassroomCourses,
   recordRosterConnectorSync,
+  type ListClassroomCoursesResult,
 } from "../../services/googleRosterConnector.js";
 import { getPasspilotClassSourceForSchool } from "../../services/passpilotAccess.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
@@ -110,22 +113,6 @@ function handleGoogleError(err: any, res: any, next: any) {
     return res.status(err.status).json({ error: err.message });
   }
   next(err);
-}
-
-async function listActiveCourses(classroom: any) {
-  const courses: any[] = [];
-  let pageToken: string | undefined;
-  do {
-    const response = await classroom.courses.list({
-      teacherId: "me",
-      courseStates: ["ACTIVE"],
-      pageSize: 100,
-      pageToken,
-    });
-    courses.push(...(response.data.courses || []));
-    pageToken = response.data.nextPageToken || undefined;
-  } while (pageToken);
-  return courses;
 }
 
 async function listCourseStudents(classroom: any, courseId: string) {
@@ -325,7 +312,7 @@ router.get("/courses", ...staffAuth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
     const useResourceOAuth = req.query.purpose === "classroom_resources";
-    let classroom: any;
+    let listing: ListClassroomCoursesResult;
     if (useResourceOAuth) {
       const { oauth2Client, google } = await getAuthedClient(
         req.authUser!.id,
@@ -333,7 +320,10 @@ router.get("/courses", ...staffAuth, async (req, res, next) => {
         [CLASSROOM_COURSES_SCOPE],
         "course"
       );
-      classroom = google.classroom({ version: "v1", auth: oauth2Client });
+      const classroom = google.classroom({ version: "v1", auth: oauth2Client });
+      // The caller's own OAuth grant: "me" scopes the listing to the courses
+      // this staff member teaches, which is exactly what resource pickers want.
+      listing = await listClassroomCourses(classroom, { teacherId: "me" });
     } else {
       if (!requestHasAnySchoolRole(req, res, ["admin", "school_admin"])) {
         return res.status(403).json({
@@ -341,17 +331,20 @@ router.get("/courses", ...staffAuth, async (req, res, next) => {
           code: "INSUFFICIENT_GOOGLE_ROLE",
         });
       }
-      classroom = (await getRosterClassroomClientForSchool(schoolId)).classroom;
+      // Delegated-admin connector: no teacherId, so the listing covers every
+      // active course in the Workspace domain (capped for the preview).
+      const { classroom } = await getRosterClassroomClientForSchool(schoolId);
+      listing = await listClassroomCourses(classroom, { maxCourses: CLASSROOM_COURSE_PREVIEW_LIMIT });
     }
-    const courses = await listActiveCourses(classroom);
     const savedCourses = await getClassroomCoursesBySchool(schoolId);
     const savedByGoogleId = new Map(savedCourses.map((course) => [course.googleCourseId, course]));
 
     return res.json({
-      courses: courses.map((course) => ({
+      courses: listing.courses.map((course) => ({
         ...course,
         lastSyncedAt: savedByGoogleId.get(course.id || "")?.lastSyncedAt || null,
       })),
+      truncated: listing.truncated,
     });
   } catch (err: any) {
     return handleGoogleError(err, res, next);

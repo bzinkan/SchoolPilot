@@ -58,6 +58,7 @@ import {
   broadcastScheduledConflictUpdate,
   buildScheduledCoveragePayload,
 } from "../../services/classpilotScheduledStart.js";
+import { scheduledClassStaffIds } from "../../services/classpilotScheduledStaff.js";
 import { getAuditLogs, logAudit } from "../../services/audit.js";
 import {
   COVERAGE_COMMAND_TYPES,
@@ -902,6 +903,7 @@ async function scheduledCoverageGroupsForRequest(
     scheduledCoverage: { id: string; className: string; teacherName: string };
     visibleStudentRows: any[];
     teacherName: string;
+    eligibleStaffIds: Set<string>;
   }> = [];
   for (const conflict of conflicts) {
     const group = groupById.get(conflict.groupId);
@@ -940,12 +942,18 @@ async function scheduledCoverageGroupsForRequest(
       return allowed ? [student] : [];
     });
     if (visibleStudentRows.length === 0) continue;
+    // Scheduled teacher + group co-teachers may start the class from here.
+    const eligibleStaffIds = await scheduledClassStaffIds({
+      groupId: conflict.groupId,
+      scheduledTeacherId: conflict.teacherId,
+    });
     drafts.push({
       conflict,
       scheduledPayload,
       scheduledCoverage,
       visibleStudentRows,
       teacherName,
+      eligibleStaffIds,
     });
   }
   const scheduledStudentIds = drafts.flatMap((draft) =>
@@ -972,7 +980,7 @@ async function scheduledCoverageGroupsForRequest(
       scheduledDate: draft.conflict.scheduledDate,
       blockStartTime: draft.conflict.blockStartTime,
       blockEndTime: draft.conflict.blockEndTime,
-      canStartClass: isAdmin(req, res) || draft.conflict.teacherId === req.authUser!.id,
+      canStartClass: isAdmin(req, res) || draft.eligibleStaffIds.has(req.authUser!.id),
       claimableCount: visibleStudents.length,
       totalClaimableCount: draft.scheduledPayload.claimableCount,
       monitoredCount: draft.scheduledPayload.monitoredCount,

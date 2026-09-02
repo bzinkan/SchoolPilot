@@ -80,7 +80,8 @@ const GRADE_VALUES = ["PK", "K", "1", "2", "3", "4", "5", "6", "7", "8", "9", "1
 const NONE = "__none__";
 const ALL = "__all__";
 const UNGRADED = "__ungraded__";
-const CLASSROOM_IMPORT_ENABLED = import.meta.env.VITE_CLASSPILOT_CLASSROOM_IMPORT_ENABLED === "true";
+// Default ON; set VITE_CLASSPILOT_CLASSROOM_IMPORT_ENABLED to exactly "false" at build time to hide.
+const CLASSROOM_IMPORT_ENABLED = import.meta.env.VITE_CLASSPILOT_CLASSROOM_IMPORT_ENABLED !== "false";
 const RETURN_TARGETS = new Map([
   ["/classpilot/students", { label: "Back to Student Roster", testId: "button-back-student-roster" }],
   ["/passpilot/classes", { label: "Back to PassPilot", testId: "button-back-passpilot" }],
@@ -655,6 +656,8 @@ function ClassroomImportDialog({ open, onOpenChange, teachers }) {
   });
 
   const courses = previewQuery.data?.courses || [];
+  const previewTruncated = Boolean(previewQuery.data?.truncated);
+  const previewLimit = previewQuery.data?.limit || courses.length;
   const sortedTeachers = useMemo(
     () => [...teachers].sort((a, b) => {
       const byLast = lastNameKey(a).localeCompare(lastNameKey(b));
@@ -675,6 +678,11 @@ function ClassroomImportDialog({ open, onOpenChange, teachers }) {
   };
 
   const courseTeacherId = (course) => teacherAssignments[course.googleCourseId] || course.matchedTeacher?.id || "";
+  // True until the admin picks a different primary teacher than the preview matched.
+  const teacherUnchanged = (course) => {
+    const override = teacherAssignments[course.googleCourseId];
+    return !override || override === course.matchedTeacher?.id;
+  };
   const selectedCourses = courses.filter((course) => selectedCourseIds.has(course.googleCourseId));
   const selectedMissingTeacher = selectedCourses.some((course) => !courseTeacherId(course));
 
@@ -707,11 +715,22 @@ function ClassroomImportDialog({ open, onOpenChange, teachers }) {
 
   const importSelectedCourses = () => {
     classroomImportMutation.mutate({
-      courses: selectedCourses.map((course) => ({
-        googleCourseId: course.googleCourseId,
-        primaryTeacherId: courseTeacherId(course),
-        gradeLevel: gradeAssignments[course.googleCourseId],
-      })),
+      courses: selectedCourses.map((course) => {
+        const primaryTeacherId = courseTeacherId(course);
+        // Carry the Classroom co-teachers only for new classes whose matched
+        // teacher the admin kept; existing classes keep their SchoolPilot
+        // co-teachers and an overridden teacher lets the server decide.
+        const keepSuggestedCoTeachers = !course.existingClassId && teacherUnchanged(course);
+        const coTeacherIds = (course.suggestedCoTeachers || [])
+          .map((teacher) => teacher?.id)
+          .filter((id) => id && id !== primaryTeacherId);
+        return {
+          googleCourseId: course.googleCourseId,
+          primaryTeacherId,
+          gradeLevel: gradeAssignments[course.googleCourseId],
+          ...(keepSuggestedCoTeachers ? { coTeacherIds } : {}),
+        };
+      }),
     });
   };
 
@@ -742,6 +761,15 @@ function ClassroomImportDialog({ open, onOpenChange, teachers }) {
             </Button>
           </div>
 
+          {previewTruncated ? (
+            <div
+              className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
+              data-testid="classroom-import-truncated"
+            >
+              Showing the first {previewLimit} active courses. Archive finished courses in Google Classroom, then refresh to see the rest.
+            </div>
+          ) : null}
+
           {previewQuery.isLoading ? (
             <div className="flex items-center justify-center gap-2 rounded-md border py-10 text-muted-foreground">
               <Loader2 className="h-5 w-5 animate-spin" />
@@ -757,7 +785,10 @@ function ClassroomImportDialog({ open, onOpenChange, teachers }) {
             </div>
           ) : courses.length === 0 ? (
             <div className="rounded-md border p-8 text-center text-sm text-muted-foreground">
-              No active Google Classroom courses were found for this connected account.
+              <p>No active Google Classroom courses were found for this school.</p>
+              <p className="mt-1">
+                The Roster Connector admin sees no active courses. Confirm it is a Google Workspace super admin.
+              </p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -786,12 +817,27 @@ function ClassroomImportDialog({ open, onOpenChange, teachers }) {
                           {course.section ? `${course.section} - ` : ""}
                           {course.studentCount || 0} {(course.studentCount || 0) === 1 ? "student" : "students"}
                         </p>
+                        {!course.matchedTeacher && course.ownerEmail ? (
+                          <p className="text-xs text-amber-900">
+                            Google owner: {course.ownerEmail} (no teachable SchoolPilot account)
+                          </p>
+                        ) : null}
+                        {!course.existingClassId && course.suggestedCoTeachers?.length ? (
+                          <p className="text-xs text-muted-foreground">
+                            Co-teachers from Classroom: {course.suggestedCoTeachers.map((teacher) => displayName(teacher)).join(", ")}
+                          </p>
+                        ) : null}
                       </div>
                     </div>
 
                     <div className="mt-3 grid gap-3 md:grid-cols-2">
                       <div className="grid gap-2">
-                        <Label>Primary teacher</Label>
+                        <Label>
+                          Primary teacher
+                          {course.matchSource === "classroom_owner" && teacherUnchanged(course) ? (
+                            <span className="ml-2 text-xs font-normal text-muted-foreground">from Classroom owner</span>
+                          ) : null}
+                        </Label>
                         <Select
                           value={teacherId || NONE}
                           onValueChange={(value) => {

@@ -718,23 +718,20 @@ router.post("/admin/cleanup-students", ...schoolAuth, requireRole("admin"), asyn
 // GET /admin/classroom/courses-preview - List Google Classroom courses for import
 router.get("/admin/classroom/courses-preview", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
   try {
-    const { getRosterClassroomClientForSchool } = await import("../services/googleRosterConnector.js");
+    const {
+      CLASSROOM_COURSE_PREVIEW_LIMIT,
+      getRosterClassroomClientForSchool,
+      listClassroomCourses,
+    } = await import("../services/googleRosterConnector.js");
     const { classroom } = await getRosterClassroomClientForSchool(res.locals.schoolId!);
-    const courses: any[] = [];
-    let pageToken: string | undefined;
-    do {
-      const response = await classroom.courses.list({
-        teacherId: "me",
-        courseStates: ["ACTIVE"],
-        pageSize: 100,
-        pageToken,
-      });
-      courses.push(...(response.data.courses || []));
-      pageToken = response.data.nextPageToken || undefined;
-    } while (pageToken);
-    return res.json({ courses });
+    // Delegated-admin listing: no teacherId, so every active course in the
+    // domain is visible (not just the courses the delegated admin teaches).
+    const { courses, truncated } = await listClassroomCourses(classroom, {
+      maxCourses: CLASSROOM_COURSE_PREVIEW_LIMIT,
+    });
+    return res.json({ courses, truncated });
   } catch (err) {
-    return res.json({ courses: [] });
+    return res.json({ courses: [], truncated: false });
   }
 });
 

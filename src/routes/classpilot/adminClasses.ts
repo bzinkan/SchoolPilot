@@ -7,6 +7,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
 import { logAudit } from "../../services/audit.js";
 import {
+  IdentityEmailConflictError,
   addGroupStudentsDetailed,
   archiveGroup,
   autoAssignFamilyGroups,
@@ -20,6 +21,7 @@ import {
   getProductLicenses,
   getStudentByEmail,
   getStudentsByIds,
+  getUserByEmail,
   getUserById,
   groupHasTeachingHistory,
   hardDeleteGroupWithCleanup,
@@ -47,9 +49,15 @@ import {
   type GeneratedClassPilotPin,
 } from "../../services/classpilotPins.js";
 import {
+  CLASSROOM_COURSE_PREVIEW_LIMIT,
+  CLASSROOM_FANOUT_CONCURRENCY,
+  classroomCourseStaffFromTeachers,
   getRosterClassroomClientForSchool,
+  listClassroomCourseTeachers,
+  listClassroomCourses,
   recordRosterConnectorSync,
 } from "../../services/googleRosterConnector.js";
+import { mapWithConcurrency } from "../../util/concurrency.js";
 
 const router = Router();
 
@@ -64,7 +72,8 @@ const auth = [
 
 const TEACHABLE_ROLES = new Set(["teacher", "admin", "school_admin"]);
 const GRADE_VALUES = new Set(["PK", "K", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"]);
-const CLASSROOM_IMPORT_ENABLED = process.env.CLASSPILOT_CLASSROOM_IMPORT_ENABLED === "true";
+// Default ON; set exactly "false" to hide Google Classroom class import (see .env.example).
+const CLASSROOM_IMPORT_ENABLED = process.env.CLASSPILOT_CLASSROOM_IMPORT_ENABLED !== "false";
 function param(req: any, key: string): string {
   return String(req.params[key] ?? "");
 }
@@ -207,22 +216,6 @@ function normalizeGoogleClassroomError(err: any) {
   return err;
 }
 
-async function listActiveCourses(classroom: any) {
-  const courses: any[] = [];
-  let pageToken: string | undefined;
-  do {
-    const response = await classroom.courses.list({
-      teacherId: "me",
-      courseStates: ["ACTIVE"],
-      pageSize: 100,
-      pageToken,
-    });
-    courses.push(...(response.data.courses || []));
-    pageToken = response.data.nextPageToken || undefined;
-  } while (pageToken);
-  return courses;
-}
-
 async function listCourseStudents(classroom: any, courseId: string) {
   const students: any[] = [];
   let pageToken: string | undefined;
@@ -273,6 +266,73 @@ function teacherPreview(entry: { user: any; membership?: any }) {
     lastName: user.lastName,
     role: entry.membership?.role || null,
   };
+}
+
+type TeacherPreviewSummary = ReturnType<typeof teacherPreview>;
+
+/**
+ * Request-scoped Google-email -> teachable SchoolPilot staff resolver.
+ * Results are cached per lowercased email. Resolution never throws: an
+ * unknown email, an ambiguous identity (IdentityEmailConflictError), a
+ * non-teachable role, or a domain mismatch all resolve to null so the
+ * course is surfaced as "needs_teacher" instead of failing the preview.
+ */
+function teacherResolver(schoolId: string) {
+  const cache = new Map<string, Promise<TeacherPreviewSummary | null>>();
+  return (email: string | null | undefined): Promise<TeacherPreviewSummary | null> => {
+    const emailLc = String(email || "").trim().toLowerCase();
+    if (!emailLc) return Promise.resolve(null);
+    let pending = cache.get(emailLc);
+    if (!pending) {
+      pending = (async () => {
+        try {
+          const user = await getUserByEmail(emailLc);
+          if (!user) return null;
+          return teacherPreview(await validateTeachableUser(user.id, schoolId));
+        } catch (error: any) {
+          if (!(error instanceof IdentityEmailConflictError) && error?.expose !== true) {
+            console.warn("[classpilot] Classroom teacher resolution failed", {
+              schoolId,
+              code: error?.code || null,
+              message: error?.message || String(error),
+            });
+          }
+          return null;
+        }
+      })();
+      cache.set(emailLc, pending);
+    }
+    return pending;
+  };
+}
+
+type TeacherResolver = ReturnType<typeof teacherResolver>;
+
+/**
+ * Resolves a Classroom course's owner and co-teachers to teachable SchoolPilot
+ * staff. Ownership is matched on the Google `ownerId`, so an admin who owns a
+ * course in Classroom resolves to themselves exactly like any teacher. The
+ * co-teacher list never contains the owner.
+ */
+async function resolveCourseStaff(
+  classroom: any,
+  course: { id?: string | null; ownerId?: string | null },
+  resolve: TeacherResolver
+): Promise<{ ownerEmail: string | null; owner: TeacherPreviewSummary | null; coTeachers: TeacherPreviewSummary[] }> {
+  const courseId = String(course?.id || "").trim();
+  if (!courseId) return { ownerEmail: null, owner: null, coTeachers: [] };
+  const teachers = await listClassroomCourseTeachers(classroom, courseId);
+  const staff = classroomCourseStaffFromTeachers(course, teachers);
+  const owner = await resolve(staff.ownerEmail);
+  const candidates = await Promise.all(staff.coTeacherEmails.map((email) => resolve(email)));
+  const seen = new Set<string>(owner ? [String(owner.id)] : []);
+  const coTeachers: TeacherPreviewSummary[] = [];
+  for (const candidate of candidates) {
+    if (!candidate || seen.has(String(candidate.id))) continue;
+    seen.add(String(candidate.id));
+    coTeachers.push(candidate);
+  }
+  return { ownerEmail: staff.ownerEmail, owner, coTeachers };
 }
 
 type ClassroomStudentUpsertResult = {
@@ -403,38 +463,47 @@ router.get("/", ...auth, async (req, res, next) => {
 router.get("/classroom/import-preview", ...auth, async (req, res, next) => {
   try {
     if (!CLASSROOM_IMPORT_ENABLED) {
-      return res.json({ enabled: false, courses: [] });
+      return res.json({ enabled: false, courses: [], truncated: false, limit: CLASSROOM_COURSE_PREVIEW_LIMIT });
     }
     const schoolId = res.locals.schoolId!;
     const classroom = await getAuthedClassroom(req.authUser!.id, schoolId);
     const existing = await getAdminClassSummariesBySchool(schoolId, { status: "all" });
     const existingByGoogleId = new Map(existing.filter((row) => row.googleClassroomCourseId).map((row) => [row.googleClassroomCourseId, row]));
-    let defaultTeacher: ReturnType<typeof teacherPreview> | null = null;
-    try {
-      defaultTeacher = teacherPreview(await validateTeachableUser(req.authUser!.id, schoolId));
-    } catch {
-      defaultTeacher = null;
-    }
-    const courses = await listActiveCourses(classroom);
-    const normalized = await Promise.all(courses.map(async (course: any) => {
-      const students = await listCourseStudents(classroom, course.id);
+    const resolveTeacher = teacherResolver(schoolId);
+    // Domain-wide listing through the delegated admin (no teacherId filter),
+    // capped so a large district preview stays bounded.
+    const { courses, truncated } = await listClassroomCourses(classroom, {
+      maxCourses: CLASSROOM_COURSE_PREVIEW_LIMIT,
+    });
+    const normalized = await mapWithConcurrency(courses, CLASSROOM_FANOUT_CONCURRENCY, async (course: any) => {
+      const [students, staff] = await Promise.all([
+        listCourseStudents(classroom, course.id),
+        resolveCourseStaff(classroom, course, resolveTeacher),
+      ]);
       const existingClass = existingByGoogleId.get(course.id);
-      let matchedTeacher = defaultTeacher;
+      let existingPrimary: TeacherPreviewSummary | null = null;
       if (existingClass) {
         const teachers = await getGroupTeacherSummaries(existingClass.id, schoolId);
-        matchedTeacher = teachers.find((entry) => entry.relationshipRole === "primary")?.teacher || matchedTeacher;
+        existingPrimary = teachers.find((entry) => entry.relationshipRole === "primary")?.teacher || null;
       }
+      // Match on the existing SchoolPilot class first, then on the Classroom
+      // owner. The importing admin is never used as a fallback.
+      const matchedTeacher = existingPrimary ?? staff.owner;
+      const matchSource = existingPrimary ? "existing_class" : staff.owner ? "classroom_owner" : null;
       return {
         googleCourseId: course.id,
         name: course.name || `Class ${course.id}`,
         section: course.section || null,
+        ownerEmail: staff.ownerEmail,
         matchedTeacher,
+        matchSource,
+        suggestedCoTeachers: staff.coTeachers,
         studentCount: students.length,
         existingClassId: existingClass?.id || null,
         importability: existingClass ? "update" : matchedTeacher ? "ready" : "needs_teacher",
       };
-    }));
-    return res.json({ enabled: true, courses: normalized });
+    });
+    return res.json({ enabled: true, courses: normalized, truncated, limit: CLASSROOM_COURSE_PREVIEW_LIMIT });
   } catch (err) {
     next(normalizeGoogleClassroomError(err));
   }
@@ -457,12 +526,7 @@ router.post("/classroom/import", ...auth, async (req, res, next) => {
     const classroom = await getAuthedClassroom(req.authUser!.id, schoolId);
     const existing = await getAdminClassSummariesBySchool(schoolId, { status: "all" });
     const existingByGoogleId = new Map(existing.filter((row) => row.googleClassroomCourseId).map((row) => [row.googleClassroomCourseId, row]));
-    let defaultTeacherId = "";
-    try {
-      defaultTeacherId = (await validateTeachableUser(req.authUser!.id, schoolId)).user.id;
-    } catch {
-      defaultTeacherId = "";
-    }
+    const resolveTeacher = teacherResolver(schoolId);
 
     const rules = await studentEmailRules(schoolId);
     const autoGenerateClassPilotPins = await hasActiveClassPilotLicense(schoolId);
@@ -487,7 +551,24 @@ router.post("/classroom/import", ...auth, async (req, res, next) => {
     for (const selected of selectedCourses) {
       const courseId = selected.googleCourseId;
       const existingClass = existingByGoogleId.get(courseId);
-      const primaryTeacherId = selected.primaryTeacherId || existingClass?.teacherId || defaultTeacherId;
+      let courseMeta: any = null;
+      let primaryTeacherId = selected.primaryTeacherId || existingClass?.teacherId || "";
+      let requestedCoTeacherIds: string[] | undefined = selected.coTeacherIds;
+      if (!primaryTeacherId || (!existingClass && requestedCoTeacherIds === undefined)) {
+        // Fall back to the Classroom owner (admins who teach resolve to
+        // themselves through this same path). The importing admin is never
+        // stamped onto a course owned by someone else.
+        courseMeta = await getCourseMetadata(classroom, courseId, selected);
+        const staff = await resolveCourseStaff(
+          classroom,
+          { id: courseId, ownerId: courseMeta.ownerId ?? null },
+          resolveTeacher
+        );
+        if (!primaryTeacherId) primaryTeacherId = staff.owner?.id ? String(staff.owner.id) : "";
+        if (!existingClass && requestedCoTeacherIds === undefined) {
+          requestedCoTeacherIds = staff.coTeachers.map((teacher) => String(teacher.id));
+        }
+      }
       if (!primaryTeacherId) {
         throw routeError(`Primary teacher is required for ${courseId}`, 400, "TEACHER_REQUIRED");
       }
@@ -500,12 +581,12 @@ router.post("/classroom/import", ...auth, async (req, res, next) => {
         .map((entry) => entry.teacherId);
       const coTeacherIds = await validateTeachers(
         primaryTeacherId,
-        selected.coTeacherIds === undefined ? preservedCoTeachers : selected.coTeacherIds,
+        requestedCoTeacherIds === undefined ? preservedCoTeachers : requestedCoTeacherIds,
         schoolId
       );
 
       try {
-        const courseMeta = await getCourseMetadata(classroom, courseId, selected);
+        courseMeta = courseMeta ?? await getCourseMetadata(classroom, courseId, selected);
         const name = String(courseMeta.name || selected.googleCourseId || "").trim();
         if (!name) throw routeError("Google Classroom course name is required", 400, "CLASS_NAME_REQUIRED");
         const googleStudents = await listCourseStudents(classroom, courseId);

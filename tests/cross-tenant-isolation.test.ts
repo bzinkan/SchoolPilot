@@ -45,6 +45,9 @@ import {
   getMessageByIdAndSchool,
   deleteMessage,
   createProductLicense,
+  addGroupTeacher,
+  listActiveScheduledClassConflictsForTeacher,
+  listActiveScheduledClassConflictsForEligibleTeacher,
 } from "../dist/services/storage.js";
 import {
   scopedDeviceTargets,
@@ -130,6 +133,7 @@ after(async () => {
       await db.execute(sql`DELETE FROM block_lists WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
       await db.execute(sql`DELETE FROM classpilot_session_summary_deliveries WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
       await db.execute(sql`DELETE FROM classpilot_session_students WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
+      await db.execute(sql`DELETE FROM classpilot_scheduled_conflicts WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
       await db.execute(sql`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`}))`);
       await db.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`}))`);
       await db.execute(sql`DELETE FROM subgroups WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
@@ -297,6 +301,53 @@ describe("cross-school isolation", () => {
     assert.ok(inA.every((x: any) => x.schoolId === schoolA.id));
     assert.ok(inB.every((x: any) => x.schoolId === schoolB.id));
     assert.ok(!inA.some((x: any) => x.schoolId === schoolB.id));
+  });
+
+  it("eligible-teacher scheduled conflict pickup never crosses tenants", async () => {
+    const coTeacher = await createUser({
+      email: `${TAG}-coteacher@${TAG}-a.example.edu`,
+      firstName: "Co",
+      lastName: "Teacher",
+    });
+    await createMembership({ userId: coTeacher.id, schoolId: schoolB.id, role: "teacher", status: "active" });
+    const groupB = await inSchool(schoolB.id, () =>
+      createGroup({
+        schoolId: schoolB.id,
+        teacherId: teacher.id,
+        name: `${TAG}_eligibleB`,
+        groupType: "admin_class",
+        status: "active",
+      })
+    );
+    await inSchool(schoolB.id, () => addGroupTeacher(groupB.id, coTeacher.id, "co-teacher"));
+    await inSchool(schoolB.id, () => db.execute(sql`
+      INSERT INTO classpilot_scheduled_conflicts
+        (school_id, group_id, teacher_id, scheduled_date, block_start_time, block_end_time, status, conflict_payload)
+      VALUES (${schoolB.id}, ${groupB.id}, ${teacher.id}, '2026-01-15', '09:00', '09:45', 'coverage_needed', '{}'::jsonb)
+    `));
+
+    const inB = await inSchool(schoolB.id, () =>
+      listActiveScheduledClassConflictsForEligibleTeacher(schoolB.id, coTeacher.id, "2026-01-15")
+    );
+    assert.equal(inB.length, 1);
+    const [conflictInB] = inB;
+    assert.ok(conflictInB);
+    assert.equal(conflictInB.groupId, groupB.id);
+    assert.equal(conflictInB.teacherId, teacher.id);
+    // The scheduled-teacher-only routing query still ignores co-teachers.
+    const routed = await inSchool(schoolB.id, () =>
+      listActiveScheduledClassConflictsForTeacher(schoolB.id, coTeacher.id, "2026-01-15")
+    );
+    assert.equal(routed.length, 0);
+    // A school-B co-teacher relationship never surfaces anything under school A.
+    const crossTenant = await inSchool(schoolA.id, () =>
+      listActiveScheduledClassConflictsForEligibleTeacher(schoolA.id, coTeacher.id, "2026-01-15")
+    );
+    assert.equal(crossTenant.length, 0);
+    const crossTenantAnyDate = await inSchool(schoolA.id, () =>
+      listActiveScheduledClassConflictsForEligibleTeacher(schoolA.id, coTeacher.id)
+    );
+    assert.equal(crossTenantAnyDate.length, 0);
   });
 
   it("getFlightPathById is school-scoped", async () => {
