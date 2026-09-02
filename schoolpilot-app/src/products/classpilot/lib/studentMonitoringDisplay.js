@@ -366,7 +366,13 @@ export function deriveScreenshotHealthDisplay(student, {
   const errorRecent = errorAfterSuccess
     && Number.isFinite(now)
     && now - lastErrorAt <= 2 * screenshotStaleThresholdMs(cadence);
-  if (health.alarmActive === true || errorRecent) {
+  // `alarmActive` reports that the extension's periodic capture alarm is
+  // SCHEDULED, which is the healthy state for every actively monitored device
+  // (service-worker.js sets it from `screenshotScheduled` and re-arms the alarm
+  // whenever tracking is active). It is never a failure signal. Only a capture
+  // error newer than the last success, and recent enough to still describe the
+  // current frame, means capture is failing.
+  if (errorRecent) {
     return { kind: 'failing', label: 'Preview capture failing', tone: 'warn' };
   }
   if (cadence === 'active_view') {
