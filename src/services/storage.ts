@@ -13155,6 +13155,121 @@ export async function readAuthorizedClasspilotSessionReport(options: {
   });
 }
 
+export type RecentClasspilotTeachingSessionReportState =
+  | "none"
+  | "pending"
+  | "ready"
+  | "failed"
+  | "expired";
+
+export type RecentClasspilotTeachingSessionRow = {
+  session: TeachingSession;
+  groupName: string;
+  reportState: RecentClasspilotTeachingSessionReportState;
+};
+
+function recentClasspilotTeachingSessionReportState(
+  report: { state: string | null; expiresAt: Date | null; detailExpiredAt: Date | null },
+  now: Date
+): RecentClasspilotTeachingSessionReportState {
+  if (!report.state) return "none";
+  // Mirror readAuthorizedClasspilotSessionReport: an expired marker, purged
+  // detail, or a lapsed retention window all block the report read.
+  if (
+    report.state === "expired"
+    || !!report.detailExpiredAt
+    || (!!report.expiresAt && report.expiresAt <= now)
+  ) {
+    return "expired";
+  }
+  if (report.state === "pending" || report.state === "materializing") return "pending";
+  if (report.state === "ready") return "ready";
+  return "failed";
+}
+
+/**
+ * Ended live class sessions the caller may reopen, newest first. Admins see
+ * the whole school; every other staff member only sees sessions where the
+ * immutable classpilot_session_staff snapshot names them (the same rule the
+ * report and student-data reads apply). Only the report's lifecycle state is
+ * projected, so the list never carries report detail past retention.
+ */
+export async function listRecentClasspilotTeachingSessions(options: {
+  schoolId: string;
+  staffId: string;
+  isAdmin: boolean;
+  limit: number;
+  now?: Date;
+}, dbInstance: typeof db = db): Promise<RecentClasspilotTeachingSessionRow[]> {
+  const now = options.now || new Date();
+  const limit = Math.min(20, Math.max(1, Math.floor(Number(options.limit)) || 1));
+  const fields = {
+    session: teachingSessions,
+    groupName: groups.name,
+    reportState: classpilotSessionReports.state,
+    reportExpiresAt: classpilotSessionReports.expiresAt,
+    reportDetailExpiredAt: classpilotSessionReports.detailExpiredAt,
+  };
+  const conditions = and(
+    eq(teachingSessions.schoolId, options.schoolId),
+    eq(teachingSessions.sessionMode, LIVE_TEACHING_SESSION_MODE),
+    isNotNull(teachingSessions.endTime),
+    eq(groups.schoolId, options.schoolId),
+    or(
+      isNull(teachingSessions.scheduledState),
+      ne(teachingSessions.scheduledState, "skipped")
+    )
+  );
+  const ordering = [
+    desc(teachingSessions.endTime),
+    desc(teachingSessions.startTime),
+    teachingSessions.id,
+  ];
+  const rows = options.isAdmin
+    ? await dbInstance
+        .select(fields)
+        .from(teachingSessions)
+        .innerJoin(groups, and(
+          eq(groups.id, teachingSessions.groupId),
+          eq(groups.schoolId, teachingSessions.schoolId)
+        ))
+        .leftJoin(classpilotSessionReports, and(
+          eq(classpilotSessionReports.schoolId, options.schoolId),
+          eq(classpilotSessionReports.teachingSessionId, teachingSessions.id)
+        ))
+        .where(conditions)
+        .orderBy(...ordering)
+        .limit(limit)
+    : await dbInstance
+        .select(fields)
+        .from(teachingSessions)
+        .innerJoin(groups, and(
+          eq(groups.id, teachingSessions.groupId),
+          eq(groups.schoolId, teachingSessions.schoolId)
+        ))
+        .leftJoin(classpilotSessionReports, and(
+          eq(classpilotSessionReports.schoolId, options.schoolId),
+          eq(classpilotSessionReports.teachingSessionId, teachingSessions.id)
+        ))
+        .innerJoin(classpilotSessionStaff, and(
+          eq(classpilotSessionStaff.schoolId, options.schoolId),
+          eq(classpilotSessionStaff.teachingSessionId, teachingSessions.id),
+          eq(classpilotSessionStaff.staffId, options.staffId)
+        ))
+        .where(conditions)
+        .orderBy(...ordering)
+        .limit(limit);
+  return rows.map((row) => ({
+    session: row.session,
+    groupName: row.groupName,
+    reportState: recentClasspilotTeachingSessionReportState({
+      state: row.reportState,
+      expiresAt: row.reportExpiresAt,
+      detailExpiredAt: row.reportDetailExpiredAt,
+    }, now),
+  }));
+}
+
 export async function isAuthorizedClasspilotSessionStaff(
   schoolId: string,
   teachingSessionId: string,

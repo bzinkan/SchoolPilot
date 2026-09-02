@@ -19,6 +19,7 @@ import {
   getSchoolById,
   getUserById,
   isAuthorizedClasspilotSessionStaff,
+  listRecentClasspilotTeachingSessions,
 } from "../../services/storage.js";
 import { logAudit } from "../../services/audit.js";
 import { runWithTenantContext } from "../../middleware/tenantContext.js";
@@ -428,6 +429,43 @@ router.get("/active", ...auth, async (req, res, next) => {
 
     const settings = await getSessionSettings(res.locals.schoolId!, session.id);
     return res.json({ session: serializeClasspilotSession(session), settings });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/classpilot/teaching-sessions/recent - Ended sessions the caller may reopen
+// Registered before "/:id" so the literal path is never parsed as a session id.
+router.get("/recent", ...auth, async (req, res, next) => {
+  try {
+    res.set("Cache-Control", "no-store, private");
+    const requestedLimit = Number.parseInt(String(req.query.limit ?? ""), 10);
+    const limit = Number.isFinite(requestedLimit) ? Math.min(20, Math.max(1, requestedLimit)) : 20;
+    const rows = await listRecentClasspilotTeachingSessions({
+      schoolId: res.locals.schoolId!,
+      staffId: req.authUser!.id,
+      isAdmin: requestHasAnySchoolRole(req, res, ["admin", "school_admin"]),
+      limit,
+      now: new Date(),
+    });
+    // Pick fields explicitly: the raw row carries scheduledTeacherEmail and
+    // other frozen occurrence metadata that must not leave the server.
+    return res.json({
+      sessions: rows.map((row) => {
+        const serialized = serializeClasspilotSession(row.session);
+        return {
+          id: row.session.id,
+          groupId: row.session.groupId,
+          teacherId: row.session.teacherId,
+          startTime: row.session.startTime,
+          endTime: row.session.endTime,
+          className: row.session.classNameSnapshot || row.groupName,
+          lifecycle: serialized.lifecycle,
+          summaryTrigger: serialized.summaryTrigger,
+          reportState: row.reportState,
+        };
+      }),
+    });
   } catch (err) {
     next(err);
   }

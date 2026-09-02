@@ -221,7 +221,9 @@ export default function SessionMonitoringReportDialog({ target, onClose }) {
           )}
           {(error || sessionReport?.state === 'failed') && (
             <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
-              The Session Summary could not be generated. No “No activity” conclusion or summary email will be sent.
+              {error?.response?.data?.code === 'SUMMARY_EXPIRED'
+                ? 'This Session Summary has expired under the school’s retention policy.'
+                : 'The Session Summary could not be generated. No “No activity” conclusion or summary email will be sent.'}
             </div>
           )}
           {report ? (
