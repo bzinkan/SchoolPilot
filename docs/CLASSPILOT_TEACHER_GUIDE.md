@@ -107,9 +107,9 @@ Send learning resources and close the exact tabs shown for a student.
 
 **Who can use this:** Assigned or coverage teacher
 
-A Waypoint directs students to one page; a Flight Path confines browsing to a prepared set of destinations.
+A Waypoint holds students on one destination site; a Flight Path confines browsing to a prepared set of destinations.
 
-1. **Choose the restriction.** Use a Waypoint for one exact destination or apply a Flight Path for a bounded set of learning destinations.
+1. **Choose the restriction.** Use a Waypoint to hold students on one destination site (the whole site is allowed) or apply a Flight Path for a bounded set of learning destinations.
 2. **Account for signed-out students.** A saved destination can wait for eligible signed-out students. A Current Page Waypoint cannot resolve a signed-out student’s page, so those students are skipped and counted.
 3. **Allow school-approved sign-in.** If the destination redirects to an approved provider such as Clever or Google Accounts, the student can complete sign-in without escaping the restriction. ClassPilot shows Signing in and returns to the assigned destination afterward.
 4. **Remove the right control.** Unlock removes a Waypoint screen lock without silently deleting an active Flight Path. Remove Flight Path is a separate action.
@@ -171,7 +171,7 @@ Claim only assigned students, use the coverage tool set, and release them when s
 
 End the session, review outcomes, and know when an administrator must help.
 
-1. **Remove temporary controls.** Clear controls that should not persist, then end class and wait for the session to close.
+1. **Check temporary controls.** Ending class clears Waypoints, Flight Paths, and other session controls automatically. Lift anything sooner only if students need it before the bell, then end class and wait for the session to close.
 2. **Review the summary.** Check the session summary and any pending or unavailable outcomes that need later follow-up.
 3. **Retry connection issues once.** Resync the class after a student reconnects. Do not repeatedly broadcast a command while the student remains unavailable.
 4. **Escalate policy issues.** Ask an administrator for help with extension versions, school blocks, managed configuration, provider policy, setup keys, or official roster and schedule changes.

@@ -204,6 +204,6 @@ The following items are not yet met and are documented in our security roadmap:
 3. **In-app MFA for school admins and super_admins** — deferred and tracked in the SOC 2 remediation register
 4. **SAML 2.0 SSO** — on roadmap (Google OAuth currently supported)
 5. **Cyber liability insurance** — in procurement
-6. **AWS WAF** — planned; currently relying on CloudFront + security-group filtering
+6. **AWS WAF** — deployed on the CloudFront distribution (managed rule groups plus per-IP rate limiting on device ingest and the API, with CloudWatch alarms on blocks); remaining hardening (custom rate keys per device) is tracked in the roadmap
 
 We believe transparency about roadmap gaps is more valuable to assessors than marketing claims. Updated versions of this document will be maintained as items are addressed.
