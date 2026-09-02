@@ -31,6 +31,7 @@ import {
   groupHasTeachingHistory,
 } from "../../services/storage.js";
 import { userBelongsToSchool } from "../../services/passpilotAccess.js";
+import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
 import { classPilotStudentDto } from "../../util/safeStudent.js";
 import { freezeScheduledOccurrenceIfDue } from "../../services/classpilotScheduledStart.js";
 
@@ -258,6 +259,16 @@ router.delete("/:id", ...auth, async (req, res, next) => {
     next(err);
   }
 });
+
+// Co-teacher management is open to school administrators and to the class's
+// primary teacher. Official classes (admin_class) are rejected earlier by
+// rejectOfficialClassMutation, so this only governs teacher-owned groups.
+function canManageGroupCoTeachers(req: any, res: any, group: { teacherId: string }): boolean {
+  return (
+    requestHasAnySchoolRole(req, res, ["admin", "school_admin"]) ||
+    group.teacherId === req.authUser!.id
+  );
+}
 
 // GET /api/classpilot/groups/:id/students - List students in group
 router.get("/:id/students", ...auth, async (req, res, next) => {
@@ -521,7 +532,7 @@ router.get("/:id/teachers", ...auth, async (req, res, next) => {
 });
 
 // POST /api/classpilot/groups/:id/teachers - Add co-teacher
-router.post("/:id/teachers", ...auth, requireRole("admin"), async (req, res, next) => {
+router.post("/:id/teachers", ...auth, async (req, res, next) => {
   try {
     const { teacherId, role } = req.body;
     if (!teacherId) {
@@ -539,6 +550,9 @@ router.post("/:id/teachers", ...auth, requireRole("admin"), async (req, res, nex
       return res.status(404).json({ error: "Group not found" });
     }
     if (rejectOfficialClassMutation(req, res, group.groupType)) return;
+    if (!canManageGroupCoTeachers(req, res, group)) {
+      return res.status(403).json({ error: "Only an admin or the class's primary teacher can manage co-teachers" });
+    }
 
     // The co-teacher being added must belong to this school.
     if (!(await userBelongsToSchool(teacherId, res.locals.schoolId!))) {
@@ -571,13 +585,16 @@ router.post("/:id/teachers", ...auth, requireRole("admin"), async (req, res, nex
 });
 
 // DELETE /api/classpilot/groups/:id/teachers/:teacherId - Remove co-teacher
-router.delete("/:id/teachers/:teacherId", ...auth, requireRole("admin"), async (req, res, next) => {
+router.delete("/:id/teachers/:teacherId", ...auth, async (req, res, next) => {
   try {
     const group = await getGroupByIdAndSchool(param(req, "id"), res.locals.schoolId!);
     if (!group) {
       return res.status(404).json({ error: "Group not found" });
     }
     if (rejectOfficialClassMutation(req, res, group.groupType)) return;
+    if (!canManageGroupCoTeachers(req, res, group)) {
+      return res.status(403).json({ error: "Only an admin or the class's primary teacher can manage co-teachers" });
+    }
 
     const removed = await removeGroupTeacher(group.id, param(req, "teacherId"));
     if (!removed) {
