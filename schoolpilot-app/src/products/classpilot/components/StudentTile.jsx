@@ -14,7 +14,10 @@ import {
   screenshotStaleThresholdMs,
 } from "../lib/studentMonitoringDisplay";
 import LastSeenTime, { ExpiryCountdown } from "./LastSeenTime";
+import { useDecodedScreenshot } from "../hooks/useDecodedScreenshot";
 import { deriveTileTabFavicons } from "../lib/tileTabFavicons";
+import { normalizedTileControlRevision } from "../lib/tileBatchPolling";
+import "./studentTileFrame.css";
 import {
   activeTemporaryAllows,
   deriveTabLimitChip,
@@ -114,10 +117,15 @@ function StudentTile({
   screenshotAuthorizationDenied = false,
   screenshotRefreshUnavailable = false,
   screenshotUpdating = false,
-  screenshotCaptureCadence = 'background',
+  screenshotCaptureCadence: negotiatedCaptureCadence = 'background',
+  observationActive = false,
 }) {
   const videoElementRef = useRef(null);
   const screenshotButtonRef = useRef(null);
+  // A wall that actively observes repaints about every 5 seconds, so a preview
+  // reads as behind long before the 75-second background threshold. The caller
+  // opts in per tile; an unknown observation state keeps the default window.
+  const screenshotCaptureCadence = observationActive ? 'active_view' : negotiatedCaptureCadence;
   const effectiveMonitoringDisplay = monitoringSuppressed
     ? SUPPRESSED_MONITORING_DISPLAY
     : monitoringDisplay || deriveStudentMonitoringDisplay(student, freshnessNowMs);
@@ -172,6 +180,39 @@ function StudentTile({
     authorizationRevoked: screenshotAuthorizationRevoked,
     staleThresholdMs,
   });
+  // Pixel identity: student, exact realtime binding, classroom revision and the
+  // frame's own binding stamp. Any change fails closed — a frame decoded under
+  // a prior binding is dropped, never carried across the swap.
+  const screenshotPrivacyKey = [
+    student.studentId,
+    student.realtimeBinding || '',
+    normalizedTileControlRevision(student),
+    screenshotData?.bindingVersion || '',
+  ].join('\n');
+  // Double buffer: the frame on screen is replaced only once its successor has
+  // fully decoded, so a 5-second wall never blanks or tears between captures.
+  const {
+    frame: screenshotFrame,
+    previousFrame: previousScreenshotFrame,
+    releasePreviousFrame,
+  } = useDecodedScreenshot(
+    screenshotPreviewMode ? screenshotData : null,
+    screenshotPrivacyKey,
+    { crossfade: true },
+  );
+  const decodedScreenshotData = screenshotFrame?.screenshotData ?? null;
+  const decodedScreenshotDisplay = deriveScreenshotDisplay(decodedScreenshotData, freshnessNowMs, {
+    staleThresholdMs,
+  });
+  // Age cues describe the pixels actually on screen. A replacement that is
+  // still decoding — or that failed to decode — can never make older pixels
+  // look current.
+  const decodedPreviewMode = deriveScreenshotPreviewMode({
+    screenshotData: decodedScreenshotData,
+    nowMs: freshnessNowMs,
+    authorizationRevoked: screenshotAuthorizationRevoked,
+    staleThresholdMs,
+  });
   const screenshotHealth = monitoringSuppressed
     ? null
     : deriveScreenshotHealthDisplay(student, {
@@ -190,9 +231,9 @@ function StudentTile({
     && screenshotPreviewMode
     && onOpenScreenshot,
   );
-  const screenshotCapturedLabel = screenshotDisplay.observedAtMs === null
+  const screenshotCapturedLabel = decodedScreenshotDisplay.observedAtMs === null
     ? null
-    : SCREENSHOT_TIME_FORMATTER.format(new Date(screenshotDisplay.observedAtMs));
+    : SCREENSHOT_TIME_FORMATTER.format(new Date(decodedScreenshotDisplay.observedAtMs));
   const unavailablePreview = deriveUnavailablePreview(effectiveMonitoringDisplay);
   const hasLastObservation = Number.isFinite(effectiveMonitoringDisplay.observedAtMs)
     && effectiveMonitoringDisplay.observedAtMs > 0;
@@ -479,10 +520,12 @@ function StudentTile({
           </div>
         ) : null}
 
-        {/* Alert Badges */}
-        {!monitoringSuppressed && (effectiveIsOffTask || isBlocked || isBlockedByFlightPath || student.flightPathActive || (currentTelemetry && student.aiClassification?.safetyAlert) || classroomNoiseSuppressed || tabLimitChip || temporaryAllows.length > 0) && (
-          <div className="flex flex-col gap-2">
-            <div className="flex flex-wrap gap-1.5">
+        {/* Alert Badges. The row keeps a reserved height whether or not it has
+            badges, so a badge appearing or clearing never reflows the tile —
+            or, through the grid row, every tile beside it. */}
+        {!monitoringSuppressed && (
+          <div className="flex flex-col gap-2" data-testid={`badge-row-${student.studentId}`}>
+            <div className="flex min-h-[22px] flex-wrap gap-1.5">
               {currentTelemetry && student.aiClassification?.safetyAlert && (
                 <Badge variant="outline" className="text-xs px-2 py-0.5 bg-red-100 text-red-900 border-red-400 animate-pulse dark:bg-red-950 dark:text-red-400 dark:border-red-800" data-testid={`badge-safety-${student.studentId}`}>
                   <AlertTriangle className="h-3 w-3 mr-1" />
@@ -649,7 +692,7 @@ function StudentTile({
           <button
             ref={screenshotButtonRef}
             type="button"
-            className={`block aspect-video w-full rounded-lg bg-muted/40 relative overflow-hidden text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${screenshotPreviewMode === 'retained' ? 'ring-1 ring-inset ring-amber-400/50' : ''}`}
+            className={`classpilot-frame-letterbox block aspect-video w-full rounded-lg relative overflow-hidden text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${decodedPreviewMode === 'retained' ? 'ring-1 ring-inset ring-amber-400/50' : ''}`}
             data-testid={screenshotPreviewMode === 'retained'
               ? `screenshot-retained-${student.studentId}`
               : `screenshot-current-${student.studentId}`}
@@ -661,54 +704,73 @@ function StudentTile({
               onOpenScreenshot?.(event.currentTarget);
             }}
           >
-            <img
-              src={screenshotData.screenshot}
-              alt={`Latest screen preview for ${student.studentName || 'student'}`}
-              className={`w-full h-full object-cover ${screenshotPreviewMode === 'retained' ? 'opacity-55' : ''}`}
-              loading="lazy"
-              decoding="async"
-              data-testid={`screenshot-${student.studentId}`}
-            />
-            {screenshotPreviewMode === 'retained' ? (
+            {decodedPreviewMode ? (
+              <div className={`absolute inset-0 ${decodedPreviewMode === 'retained' ? 'opacity-55' : ''}`}>
+                {/* The outgoing frame stays beneath the incoming one for the
+                    length of the fade, so a swap never exposes the letterbox. */}
+                {previousScreenshotFrame ? (
+                  <img
+                    key={previousScreenshotFrame.sequence}
+                    src={previousScreenshotFrame.src}
+                    alt=""
+                    aria-hidden="true"
+                    className="absolute inset-0 h-full w-full object-contain"
+                    data-testid={`screenshot-previous-${student.studentId}`}
+                  />
+                ) : null}
+                <img
+                  key={screenshotFrame.sequence}
+                  src={screenshotFrame.src}
+                  alt={`Latest screen preview for ${student.studentName || 'student'}`}
+                  className="classpilot-frame-in absolute inset-0 h-full w-full object-contain"
+                  decoding="async"
+                  onAnimationEnd={releasePreviousFrame}
+                  data-testid={`screenshot-${student.studentId}`}
+                />
+              </div>
+            ) : null}
+            {decodedPreviewMode === 'retained' ? (
               <div className="absolute left-2 top-2 rounded-md bg-amber-400 px-2 py-1 text-[11px] font-semibold text-slate-950 shadow" data-testid={`screenshot-updating-${student.studentId}`}>
                 Updating…{screenshotCapturedLabel ? ` · Captured ${screenshotCapturedLabel}` : ''}
               </div>
             ) : null}
             {!currentTelemetry ? (
               <div
-                className={`absolute right-2 rounded-md bg-amber-400 px-2 py-1 text-[11px] font-semibold text-slate-950 shadow ${screenshotPreviewMode === 'retained' ? 'top-10' : 'top-2'}`}
+                className={`absolute right-2 rounded-md bg-amber-400 px-2 py-1 text-[11px] font-semibold text-slate-950 shadow ${decodedPreviewMode === 'retained' ? 'top-10' : 'top-2'}`}
                 data-testid={`screenshot-monitoring-warning-${student.studentId}`}
               >
                 {unavailablePreview.reason}
               </div>
             ) : null}
-            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-2">
-              <div className="flex items-center gap-1.5">
-                {screenshotData.tabFavicon && (
-                  <img
-                    src={screenshotData.tabFavicon}
-                    alt=""
-                    className="w-3 h-3 flex-shrink-0 rounded"
-                    loading="lazy"
-                    decoding="async"
-                    onError={(e) => {
-                      e.target.style.display = 'none';
-                    }}
-                  />
-                )}
-                <span className="text-xs text-white/90 truncate font-medium">
-                  {screenshotData.tabTitle || 'No active tab'}
-                </span>
-                {screenshotHealth ? (
-                  <span
-                    className={`ml-auto flex-shrink-0 rounded px-1 py-px text-[10px] font-medium ${screenshotHealthToneClass}`}
-                    data-testid={`screenshot-health-${student.studentId}`}
-                  >
-                    {screenshotHealth.label}
+            {decodedScreenshotData ? (
+              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-2">
+                <div className="flex items-center gap-1.5">
+                  {decodedScreenshotData.tabFavicon && (
+                    <img
+                      src={decodedScreenshotData.tabFavicon}
+                      alt=""
+                      className="w-3 h-3 flex-shrink-0 rounded"
+                      loading="lazy"
+                      decoding="async"
+                      onError={(e) => {
+                        e.target.style.display = 'none';
+                      }}
+                    />
+                  )}
+                  <span className="text-xs text-white/90 truncate font-medium">
+                    {decodedScreenshotData.tabTitle || 'No active tab'}
                   </span>
-                ) : null}
+                  {screenshotHealth ? (
+                    <span
+                      className={`ml-auto flex-shrink-0 rounded px-1 py-px text-[10px] font-medium ${screenshotHealthToneClass}`}
+                      data-testid={`screenshot-health-${student.studentId}`}
+                    >
+                      {screenshotHealth.label}
+                    </span>
+                  ) : null}
+                </div>
               </div>
-            </div>
+            ) : null}
           </button>
         ) : screenshotUpdating ? (
           <div className="flex aspect-video items-center justify-center rounded-lg border border-sky-200 bg-sky-50/70 text-center dark:border-sky-900 dark:bg-sky-950/20" data-testid={`screenshot-updating-authority-${student.studentId}`}>
@@ -782,8 +844,11 @@ function StudentTile({
             </div>
           </div>
         ) : (
-          <div className="rounded-lg border border-border/40 bg-muted/30 overflow-hidden" data-testid={`screenshot-stale-${student.studentId}`}>
-            <div className="flex aspect-video items-center justify-center bg-muted/20 text-center">
+          // Every preview branch occupies the same aspect-video box, so a tile
+          // never changes height as it moves between live, stale and error
+          // states — the site read-out is stacked inside the box, not below it.
+          <div className="flex aspect-video flex-col overflow-hidden rounded-lg border border-border/40 bg-muted/30" data-testid={`screenshot-stale-${student.studentId}`}>
+            <div className="flex min-h-0 flex-1 items-center justify-center bg-muted/20 text-center">
               <div className="px-4">
                 <Monitor className="mx-auto mb-2 h-6 w-6 text-muted-foreground/60" />
                 <p className="text-sm font-semibold text-foreground">Screenshot unavailable or stale</p>
@@ -798,7 +863,7 @@ function StudentTile({
                 ) : null}
               </div>
             </div>
-            <div className="flex items-center gap-2 px-3 py-2 bg-muted/60 border-t border-border/30">
+            <div className="flex flex-shrink-0 items-center gap-2 px-3 py-1.5 bg-muted/60 border-t border-border/30">
               {student.favicon ? (
                 <img
                   src={student.favicon}
@@ -817,8 +882,8 @@ function StudentTile({
                 {student.activeTabUrl ? (() => { try { return new URL(student.activeTabUrl).hostname; } catch { return student.activeTabUrl; } })() : 'No tab'}
               </span>
             </div>
-            <div className="p-3 min-h-[60px]">
-              <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Current site</p>
+            <div className="flex-shrink-0 border-t border-border/20 bg-muted/40 px-3 py-1.5">
+              <p className="mb-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Current site</p>
               <p className="font-medium text-sm leading-snug line-clamp-2" data-testid={`text-tab-title-${student.studentId}`}>
                 {student.activeTabTitle || <span className="text-muted-foreground italic">No active tab</span>}
               </p>
@@ -1019,9 +1084,15 @@ const CALLBACK_PROPS = new Set([
 function freshnessProjection(props) {
   const monitoring = props.monitoringDisplay
     || deriveStudentMonitoringDisplay(props.student, props.freshnessNowMs);
-  const screenshot = deriveScreenshotDisplay(props.screenshotData, props.freshnessNowMs, {
-    staleThresholdMs: screenshotStaleThresholdMs(props.screenshotCaptureCadence),
-  });
+  // An observed wall ages previews at the active-view boundary. Project that
+  // boundary too, or memo would hold a tile past the point its amber cue is due.
+  const screenshot = props.observationActive
+    ? deriveScreenshotDisplay(props.screenshotData, props.freshnessNowMs, {
+      staleThresholdMs: screenshotStaleThresholdMs('active_view'),
+    })
+    : deriveScreenshotDisplay(props.screenshotData, props.freshnessNowMs, {
+      staleThresholdMs: screenshotStaleThresholdMs(props.screenshotCaptureCadence),
+    });
   return `${monitoring.kind}:${monitoring.status}:${monitoring.telemetryCurrent}:${screenshot.fresh}:${screenshot.retained}`;
 }
 

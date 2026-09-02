@@ -119,6 +119,10 @@ const DENIED_STUDENT = Object.freeze({
 });
 
 const SCREENSHOT_DATA_URL = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="320" height="180"%3E%3Crect width="320" height="180" fill="%231d4ed8"/%3E%3C/svg%3E';
+// A deliberately non-16:9 replacement frame. The browser runner holds its
+// Image.decode() open, so the tile must keep painting the previous frame until
+// the decode resolves, then letterbox this one instead of cropping it.
+const GATED_SCREENSHOT_DATA_URL = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="640" height="200" data-frame="gatedframe"%3E%3Crect width="640" height="200" fill="%23b91c1c"/%3E%3C/svg%3E';
 const RECENT_HEARTBEATS = Object.freeze([
   Object.freeze({
     activeTabUrl: 'https://research.example.test/notes',
@@ -172,6 +176,62 @@ const TAB_LIMIT_STUDENT = Object.freeze({
   classroomState: Object.freeze({ revision: 3, restrictions: Object.freeze({ tabLimit: 5 }) }),
 });
 
+const FRAME_SWAP_STUDENT = Object.freeze({
+  ...ONLINE_STUDENT,
+  studentId: 'frame-swap-student',
+  studentName: 'Frame Swap Student',
+});
+
+// Three tiles that differ only in preview state and badges. Their rendered
+// heights must stay identical so a wall never reflows as students move between
+// live, badged and stale states.
+const HEIGHT_CURRENT_STUDENT = Object.freeze({
+  ...ONLINE_STUDENT,
+  studentId: 'height-current-student',
+  studentName: 'Height A',
+});
+
+const HEIGHT_BADGED_STUDENT = Object.freeze({
+  ...ONLINE_STUDENT,
+  studentId: 'height-badged-student',
+  studentName: 'Height B',
+});
+
+const HEIGHT_STALE_STUDENT = Object.freeze({
+  ...ONLINE_STUDENT,
+  studentId: 'height-stale-student',
+  studentName: 'Height C',
+});
+
+const ACTIVE_STALE_STUDENT = Object.freeze({
+  ...ONLINE_STUDENT,
+  studentId: 'active-stale-student',
+  studentName: 'Active Stale Student',
+});
+
+const ACTIVE_FRESH_STUDENT = Object.freeze({
+  ...ONLINE_STUDENT,
+  studentId: 'active-fresh-student',
+  studentName: 'Active Fresh Student',
+});
+
+const BACKGROUND_STALE_STUDENT = Object.freeze({
+  ...ONLINE_STUDENT,
+  studentId: 'background-stale-student',
+  studentName: 'Background Stale Student',
+});
+
+function onlineDisplay(observedAtMs) {
+  return {
+    kind: 'online',
+    status: 'online',
+    label: 'Online',
+    telemetryCurrent: true,
+    observedAtMs,
+    nextBoundaryAtMs: observedAtMs + 60_000,
+  };
+}
+
 function TileRegressionHarness() {
   const [observedAtMs, setObservedAtMs] = useState(() => Date.now());
   const [tabClicks, setTabClicks] = useState(0);
@@ -183,6 +243,7 @@ function TileRegressionHarness() {
   const [allowClicks, setAllowClicks] = useState(0);
   const [returnClicks, setReturnClicks] = useState(0);
   const [tilesVisible, setTilesVisible] = useState(false);
+  const [frameSwapped, setFrameSwapped] = useState(false);
   const [memoDetailsEnabled, setMemoDetailsEnabled] = useState(true);
   const memoDetailsHandler = useCallback(
     () => setDetailsClicks((count) => count + 1),
@@ -218,6 +279,13 @@ function TileRegressionHarness() {
         onClick={() => setMemoDetailsEnabled(false)}
       >
         Revoke memoized details
+      </Button>
+      <Button
+        type="button"
+        data-testid="swap-frame"
+        onClick={() => setFrameSwapped(true)}
+      >
+        Swap frame
       </Button>
       <p data-testid="tab-clicks">Tab clicks: {tabClicks}</p>
       <p data-testid="details-clicks">Details clicks: {detailsClicks}</p>
@@ -619,6 +687,102 @@ function TileRegressionHarness() {
               timestamp: freshnessNowMs - 1,
               bindingVersion: 'v2:claimed-prior-binding',
               tabTitle: 'Claimed or denied prior context',
+            }}
+          />
+        </div>
+
+        <div data-testid="frame-swap-tile-host">
+          <StudentTile
+            student={FRAME_SWAP_STUDENT}
+            monitoringDisplay={onlineDisplay(freshnessNowMs)}
+            freshnessNowMs={freshnessNowMs}
+            screenshotData={{
+              screenshot: frameSwapped ? GATED_SCREENSHOT_DATA_URL : SCREENSHOT_DATA_URL,
+              timestamp: freshnessNowMs,
+              bindingVersion: 'v2:frame-swap-binding',
+              tabTitle: frameSwapped ? 'Replacement frame' : 'Initial frame',
+            }}
+            onOpenScreenshot={() => setScreenshotClicks((count) => count + 1)}
+          />
+        </div>
+
+        <div data-testid="height-current-tile-host">
+          <StudentTile
+            student={HEIGHT_CURRENT_STUDENT}
+            monitoringDisplay={onlineDisplay(freshnessNowMs)}
+            freshnessNowMs={freshnessNowMs}
+            screenshotData={{
+              screenshot: SCREENSHOT_DATA_URL,
+              timestamp: freshnessNowMs,
+              bindingVersion: 'v2:height-current-binding',
+              tabTitle: 'Lesson',
+            }}
+          />
+        </div>
+
+        <div data-testid="height-badged-tile-host">
+          <StudentTile
+            student={HEIGHT_BADGED_STUDENT}
+            monitoringDisplay={onlineDisplay(freshnessNowMs)}
+            freshnessNowMs={freshnessNowMs}
+            isOffTask
+            screenshotData={{
+              screenshot: SCREENSHOT_DATA_URL,
+              timestamp: freshnessNowMs,
+              bindingVersion: 'v2:height-badged-binding',
+              tabTitle: 'Lesson',
+            }}
+          />
+        </div>
+
+        <div data-testid="height-stale-tile-host">
+          <StudentTile
+            student={HEIGHT_STALE_STUDENT}
+            monitoringDisplay={onlineDisplay(freshnessNowMs)}
+            freshnessNowMs={freshnessNowMs}
+          />
+        </div>
+
+        <div data-testid="active-stale-tile-host">
+          <StudentTile
+            student={ACTIVE_STALE_STUDENT}
+            monitoringDisplay={onlineDisplay(freshnessNowMs)}
+            freshnessNowMs={freshnessNowMs}
+            observationActive
+            screenshotData={{
+              screenshot: SCREENSHOT_DATA_URL,
+              timestamp: freshnessNowMs - 16_000,
+              bindingVersion: 'v2:active-stale-binding',
+              tabTitle: 'Capture the observing wall has outrun',
+            }}
+          />
+        </div>
+
+        <div data-testid="active-fresh-tile-host">
+          <StudentTile
+            student={ACTIVE_FRESH_STUDENT}
+            monitoringDisplay={onlineDisplay(freshnessNowMs)}
+            freshnessNowMs={freshnessNowMs}
+            observationActive
+            screenshotData={{
+              screenshot: SCREENSHOT_DATA_URL,
+              timestamp: freshnessNowMs - 14_000,
+              bindingVersion: 'v2:active-fresh-binding',
+              tabTitle: 'Capture inside the active window',
+            }}
+          />
+        </div>
+
+        <div data-testid="background-stale-tile-host">
+          <StudentTile
+            student={BACKGROUND_STALE_STUDENT}
+            monitoringDisplay={onlineDisplay(freshnessNowMs)}
+            freshnessNowMs={freshnessNowMs}
+            screenshotData={{
+              screenshot: SCREENSHOT_DATA_URL,
+              timestamp: freshnessNowMs - 16_000,
+              bindingVersion: 'v2:background-stale-binding',
+              tabTitle: 'Capture inside the background window',
             }}
           />
         </div>

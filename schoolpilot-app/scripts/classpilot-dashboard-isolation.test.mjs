@@ -12,6 +12,12 @@ import {
   observationLeaseResponseDisposition,
 } from '../src/products/classpilot/lib/observationLeaseStatus.js';
 import { classpilotReconciliationIntervalMs } from '../src/products/classpilot/lib/monitoringReconciliation.js';
+import { QueryClient, QueryObserver } from '@tanstack/react-query';
+import {
+  createTileBatchRequests,
+  indexTileScreenshots,
+  screenshotCohortPlaceholderData,
+} from '../src/products/classpilot/lib/tileBatchPolling.js';
 
 function responseError(status, code) {
   return {
@@ -387,7 +393,32 @@ test('dashboard renews observation only for a visible exact scope and virtualize
   assert.match(dashboard, /paused_unobserved/);
   assert.match(viewport, /IntersectionObserver/);
   assert.match(viewport, /rootMargin: '100% 0px'/);
-  assert.match(dashboard, /nearViewportStudentIds\.has/);
+  assert.match(
+    dashboard,
+    /tileBatchRequestShouldPoll\(request, \{[\s\S]{0,200}nearViewportStudentIds,/,
+    'the viewport must remain the polling gate for viewport-scoped tile reads',
+  );
+  assert.match(
+    dashboard,
+    /\[content-visibility:auto\] \[contain-intrinsic-size:420px\]/,
+    'offscreen tiles must be skipped by the renderer, not unmounted',
+  );
+  assert.doesNotMatch(
+    dashboard,
+    /nearViewportStudentIds\.has\(student\.studentId\)\) \? <StudentTile/,
+    'a tile must never be unmounted, and blanked, because it scrolled offscreen',
+  );
+  assert.match(
+    viewport,
+    /tracking: supported && settled/,
+    'an observer that has not reported yet must poll every cohort instead of gating on an empty near set',
+  );
+  assert.match(
+    viewport,
+    /exitTimers\.set\(studentId, setTimeout\(/,
+    'leaving the enter margin must be debounced so a scroll reversal cannot thrash polling',
+  );
+  assert.match(viewport, /TILE_VIEWPORT_EXIT_GRACE_MS/);
   assert.match(tile, /export default memo\(StudentTile, studentTilePropsEqual\)/);
 });
 
@@ -460,6 +491,175 @@ test('authorization loss purges active tile caches without retaining denied pixe
     'screenshot aging must run only after all hard authorization gates are combined',
   );
   assert.match(tile, /screenshot-monitoring-warning-/);
+  assert.match(
+    privacy,
+    /refetch = true/,
+    'the purge must expose a refetch switch instead of always replaying the request',
+  );
+  assert.match(
+    dashboard,
+    /purgeStudentScreenshotTileCaches\([\s\S]{0,200}refetch: false/,
+    'a hard-denied screenshot cohort must be scrubbed without replaying the denied request',
+  );
+  assert.match(
+    dashboard,
+    /purgeStudentHistoryTileCaches\([\s\S]{0,200}refetch: false/,
+    'the history denial path carries the identical zero-backoff defect and the identical fence',
+  );
+  assert.match(
+    dashboard,
+    /purgedHardDeniedScreenshotKeyRef\.current === hardDeniedScreenshotStudentIdsKey\) return;/,
+    'an unchanged denial set must not re-purge',
+  );
+});
+
+test('a re-keyed screenshot cohort carries classmates forward but never a changed binding', async () => {
+  const context = {
+    schoolId: 'school-1',
+    viewerId: 'teacher-1',
+    authority: 'teacher:full:class',
+    teachingSessionId: 'session-1',
+  };
+  const screenshotRequestFor = (students, requestContext = context) => (
+    createTileBatchRequests(students, requestContext).find((request) => request.kind === 'screenshots')
+  );
+  const [signingIn, commanded, untouched] = ['student-a', 'student-b', 'student-c'];
+  const previousStudents = [
+    { studentId: signingIn, realtimeBinding: 'binding-a', classroomState: { revision: 3 } },
+    { studentId: commanded, realtimeBinding: 'binding-b', classroomState: { revision: 1 } },
+    { studentId: untouched, realtimeBinding: 'binding-c', classroomState: { revision: 1 } },
+  ];
+  const previousRequest = screenshotRequestFor(previousStudents);
+  const previousData = {
+    tiles: previousStudents.map((student) => ({
+      studentId: student.studentId,
+      screenshot: { screenshot: `${student.studentId}-pixel` },
+    })),
+  };
+  const previousQuery = { queryKey: previousRequest.queryKey, state: { dataUpdatedAt: 1 } };
+
+  const loginStudents = previousStudents.map((student) => (
+    student.studentId === signingIn
+      ? { ...student, realtimeBinding: 'binding-a-replacement' }
+      : student
+  ));
+  const loginRequest = screenshotRequestFor(loginStudents);
+  assert.notDeepEqual(
+    loginRequest.queryKey,
+    previousRequest.queryKey,
+    'one student signing in must still re-key the whole exact-binding cohort',
+  );
+  const loginPlaceholder = screenshotCohortPlaceholderData(previousData, previousQuery, loginRequest);
+  assert.deepEqual(
+    loginPlaceholder.tiles.map((tile) => tile.studentId),
+    [commanded, untouched],
+    'classmates keep their painted frames while only the changed binding falls to loading',
+  );
+
+  const commandStudents = previousStudents.map((student) => (
+    student.studentId === commanded
+      ? { ...student, classroomState: { revision: 2 } }
+      : student
+  ));
+  const commandPlaceholder = screenshotCohortPlaceholderData(
+    previousData,
+    previousQuery,
+    screenshotRequestFor(commandStudents),
+  );
+  assert.deepEqual(
+    commandPlaceholder.tiles.map((tile) => tile.studentId),
+    [signingIn, untouched],
+    'a teacher command must drop only the commanded student from the carry-forward',
+  );
+
+  assert.deepEqual(
+    screenshotCohortPlaceholderData(previousData, previousQuery, loginRequest, {
+      deniedStudentIds: new Set([commanded]),
+    }).tiles.map((tile) => tile.studentId),
+    [untouched],
+    'a locally revoked student can never be carried forward',
+  );
+  assert.equal(
+    screenshotCohortPlaceholderData(previousData, previousQuery, screenshotRequestFor(loginStudents, {
+      ...context,
+      viewerId: 'other-teacher',
+    })),
+    undefined,
+    'another authority context can never seed a cohort from cached pixels',
+  );
+  assert.equal(
+    screenshotCohortPlaceholderData(undefined, previousQuery, loginRequest),
+    undefined,
+    'a cohort with nothing to carry forward stays in its own loading state',
+  );
+  assert.equal(
+    screenshotCohortPlaceholderData(previousData, previousQuery, previousRequest),
+    undefined,
+    'a key is never its own placeholder',
+  );
+
+  // The same carry-forward, driven through a real observer re-key: the
+  // classmate keeps painting, the re-bound student does not, and the cache
+  // entry for the replacement key stays empty until the POST answers.
+  const placeholderClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  placeholderClient.mount();
+  placeholderClient.setQueryData(previousRequest.queryKey, previousData);
+  let releaseReplacementFetch;
+  const replacementFetchGate = new Promise((resolve) => { releaseReplacementFetch = resolve; });
+  const placeholderOptions = (request) => ({
+    queryKey: request.queryKey,
+    queryFn: async () => {
+      await replacementFetchGate;
+      return { tiles: [] };
+    },
+    select: indexTileScreenshots,
+    retry: false,
+    staleTime: 15_000,
+    placeholderData: (carriedData, carriedQuery) => screenshotCohortPlaceholderData(
+      carriedData,
+      carriedQuery,
+      request,
+    ),
+  });
+  const placeholderObserver = new QueryObserver(placeholderClient, placeholderOptions(previousRequest));
+  const unsubscribePlaceholder = placeholderObserver.subscribe(() => {});
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    placeholderObserver.setOptions(placeholderOptions(loginRequest));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const rekeyedResult = placeholderObserver.getCurrentResult();
+    assert.equal(rekeyedResult.isPlaceholderData, true, 'the re-keyed cohort must paint before its POST returns');
+    assert.deepEqual(
+      [...rekeyedResult.data.keys()],
+      [commanded, untouched],
+      'the re-bound student must be absent while classmates keep their frames',
+    );
+    assert.equal(
+      placeholderClient.getQueryData(loginRequest.queryKey),
+      undefined,
+      'a carried-forward frame must stay observer-local and never enter the query cache',
+    );
+  } finally {
+    releaseReplacementFetch();
+    unsubscribePlaceholder();
+    placeholderClient.unmount();
+    placeholderClient.clear();
+  }
+
+  const dashboard = await readFile(
+    new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    dashboard,
+    /placeholderData: \(previousData, previousQuery\) => screenshotCohortPlaceholderData\([\s\S]{0,220}deniedStudentIds: locallyRevokedTileStudentIds/,
+    'the cohort carry-forward must run the same revocation fence as its query function',
+  );
+  assert.match(
+    dashboard,
+    /queryClient\.setQueryData\(request\.queryKey, \(previous\) => \(/,
+    'targeted merges must keep writing the real cohort entry, never the observer-local placeholder',
+  );
 });
 
 test('enabled observation scopes remain pending across A to B to A until their exact PUT succeeds', async () => {

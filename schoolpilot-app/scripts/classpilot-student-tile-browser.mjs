@@ -5,6 +5,36 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import {
+  SCREENSHOT_ACTIVE_VIEW_STALE_MS,
+  SCREENSHOT_STALE_MS,
+  screenshotStaleThresholdMs,
+} from '../src/products/classpilot/lib/studentMonitoringDisplay.js';
+
+// The stale threshold is context-aware: an observing wall repaints about every
+// five seconds, so its cue is due long before the background default.
+assert.ok(
+  SCREENSHOT_ACTIVE_VIEW_STALE_MS >= 15_000 && SCREENSHOT_ACTIVE_VIEW_STALE_MS <= 20_000,
+  'the active-observation cue must land between 15 and 20 seconds',
+);
+assert.equal(screenshotStaleThresholdMs('background'), SCREENSHOT_STALE_MS);
+assert.equal(screenshotStaleThresholdMs(undefined), SCREENSHOT_STALE_MS);
+assert.equal(screenshotStaleThresholdMs('active_view'), SCREENSHOT_ACTIVE_VIEW_STALE_MS);
+assert.equal(
+  screenshotStaleThresholdMs('background', {}),
+  SCREENSHOT_STALE_MS,
+  'an unknown observation state keeps the 75-second default',
+);
+assert.equal(
+  screenshotStaleThresholdMs('background', { observationActive: true }),
+  SCREENSHOT_ACTIVE_VIEW_STALE_MS,
+  'an observing wall tightens the cue to the active-view window',
+);
+assert.equal(
+  screenshotStaleThresholdMs('active_view', { observationActive: false }),
+  SCREENSHOT_ACTIVE_VIEW_STALE_MS,
+  'the hint may only tighten: it can never loosen an already-active cadence',
+);
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const vite = path.join(root, 'node_modules', 'vite', 'bin', 'vite.js');
@@ -53,9 +83,33 @@ try {
   await page.clock.pauseAt(new Date('2026-08-24T12:00:00.000Z'));
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
+  // A dev-server full reload mid-run hides every tile again and then surfaces as
+  // an unrelated element timeout. Count main-frame navigations so that failure
+  // names itself instead.
+  let mainFrameNavigations = 0;
+  page.on('framenavigated', (frame) => {
+    if (frame === page.mainFrame()) mainFrameNavigations += 1;
+  });
 
   // Student favicon URLs are rendered as <img>; keep the harness hermetic.
   await page.route(/^https:\/\//, (route) => route.abort());
+
+  // Hold the decode of the marked replacement frame open so the tile's double
+  // buffer can be observed deterministically: the frame already on screen must
+  // survive until its successor's pixels are ready.
+  await page.addInitScript(() => {
+    const nativeDecode = HTMLImageElement.prototype.decode;
+    const held = [];
+    HTMLImageElement.prototype.decode = function decode() {
+      if ((this.src || '').includes('gatedframe')) {
+        return new Promise((resolve, reject) => {
+          held.push(() => nativeDecode.call(this).then(resolve, reject));
+        });
+      }
+      return nativeDecode.call(this);
+    };
+    globalThis.__releaseGatedDecodes = () => held.splice(0).map((release) => release()).length;
+  });
 
   await page.goto(`${baseURL}/classpilot-student-tile-regression.html`, { waitUntil: 'networkidle' });
   await page.evaluate(() => {
@@ -605,6 +659,136 @@ try {
     'claimed/denied observation context must hard-hide a fresh prior-context screenshot',
   );
 
+  // ── Frame geometry: the whole student screen, letterboxed, never cropped.
+  const frameSwapTile = page.getByTestId('card-student-frame-swap-student');
+  const frameSwapImage = page.getByTestId('screenshot-frame-swap-student');
+  await frameSwapImage.waitFor();
+  assert.equal(
+    await frameSwapImage.evaluate((image) => getComputedStyle(image).objectFit),
+    'contain',
+    'a tile frame must show the whole student screen instead of cropping it',
+  );
+  assert.equal(
+    await frameSwapImage.evaluate((image) => image.getAttribute('loading')),
+    null,
+    'an already-delivered data: frame must never be deferred by lazy loading',
+  );
+  const frameSwapButton = page.getByTestId('screenshot-current-frame-swap-student');
+  assert.equal(
+    await frameSwapButton.evaluate((button) => {
+      const background = getComputedStyle(button).backgroundColor;
+      return background !== 'rgba(0, 0, 0, 0)' && background !== 'transparent';
+    }),
+    true,
+    'the letterbox must paint its own background token behind the frame',
+  );
+  assert.equal(
+    await frameSwapButton.evaluate((button) => {
+      const box = button.getBoundingClientRect();
+      return Math.abs(box.width / box.height - 16 / 9) < 0.02;
+    }),
+    true,
+    'the frame box must hold a fixed 16:9 ratio so no state can resize it',
+  );
+
+  // ── A replacement frame replaces the visible one only after it decodes.
+  const initialFrameSrc = await frameSwapImage.evaluate((image) => image.src);
+  await page.evaluate(() => {
+    globalThis.__sawPreviousDuringSwap = false;
+    const host = document.querySelector('[data-testid="frame-swap-tile-host"]');
+    const observer = new MutationObserver(() => {
+      const current = host.querySelector('[data-testid="screenshot-frame-swap-student"]');
+      const previous = host.querySelector('[data-testid="screenshot-previous-frame-swap-student"]');
+      if (current && current.src.includes('gatedframe') && previous) {
+        globalThis.__sawPreviousDuringSwap = true;
+      }
+    });
+    observer.observe(host, { subtree: true, childList: true, attributes: true });
+  });
+  await page.getByTestId('swap-frame').click();
+  assert.equal(
+    await frameSwapImage.evaluate((image) => image.src),
+    initialFrameSrc,
+    'the displayed frame must not change until its replacement has decoded',
+  );
+  assert.equal(
+    await page.getByTestId('screenshot-frame-swap-student').count(),
+    1,
+    'the tile must never blank between frames',
+  );
+  assert.equal(
+    await frameSwapTile.getByText('Screenshot unavailable or stale', { exact: true }).count(),
+    0,
+    'an in-flight replacement must not drop the tile to the unavailable state',
+  );
+  assert.equal(
+    await page.evaluate(() => globalThis.__releaseGatedDecodes()),
+    1,
+    'exactly one replacement decode must have been in flight',
+  );
+  await page.waitForFunction(() => {
+    const image = document.querySelector('[data-testid="screenshot-frame-swap-student"]');
+    return Boolean(image && image.src.includes('gatedframe'));
+  });
+  assert.equal(
+    await page.evaluate(() => globalThis.__sawPreviousDuringSwap),
+    true,
+    'the outgoing frame must stay mounted beneath the incoming one across the swap',
+  );
+  assert.equal(
+    await page.getByTestId('screenshot-frame-swap-student').evaluate(
+      (image) => image.className.includes('classpilot-frame-in'),
+    ),
+    true,
+    'the incoming frame must fade in rather than hard-swap',
+  );
+  // The fade releases the outgoing frame on animationend, so the buffer never
+  // grows past the two layers a single crossfade needs.
+  await page.waitForFunction(
+    () => document.querySelectorAll('[data-testid="screenshot-previous-frame-swap-student"]').length === 0,
+    null,
+    { timeout: 5_000 },
+  );
+
+  // ── Preview state must never resize a tile.
+  await page.getByTestId('screenshot-height-current-student').waitFor();
+  await page.getByTestId('badge-offtask-height-badged-student').waitFor();
+  await page.getByTestId('screenshot-stale-height-stale-student').waitFor();
+  const tileHeights = await page.evaluate(() => [
+    'height-current-student',
+    'height-badged-student',
+    'height-stale-student',
+  ].map((studentId) => document
+    .querySelector(`[data-testid="card-student-${studentId}"]`)
+    .getBoundingClientRect().height));
+  assert.equal(
+    Math.max(...tileHeights) - Math.min(...tileHeights) < 1,
+    true,
+    `badge and stale states must not change tile height: ${tileHeights.join(', ')}`,
+  );
+
+  // ── The stale cue follows the cadence the wall is actually running.
+  assert.match(
+    await page.getByTestId('screenshot-updating-active-stale-student').textContent(),
+    /^Updating… · Captured /,
+    'an observing wall must flag a 16-second-old capture as updating',
+  );
+  await page.getByTestId('screenshot-retained-active-stale-student').waitFor();
+  await page.getByTestId('screenshot-active-fresh-student').waitFor();
+  await page.getByTestId('screenshot-current-active-fresh-student').waitFor();
+  assert.equal(
+    await page.getByTestId('screenshot-updating-active-fresh-student').count(),
+    0,
+    'a capture inside the active-observation window stays current',
+  );
+  await page.getByTestId('screenshot-background-stale-student').waitFor();
+  await page.getByTestId('screenshot-current-background-stale-student').waitFor();
+  assert.equal(
+    await page.getByTestId('screenshot-updating-background-stale-student').count(),
+    0,
+    'without an observing wall the 75-second default still applies at 16 seconds',
+  );
+
   await page.getByTestId('toggle-tiles').click();
   assert.deepEqual(
     await page.evaluate(() => globalThis.__studentTileMinuteTimers()),
@@ -612,6 +796,11 @@ try {
     'the final relative-label unsubscribe must stop the shared minute clock',
   );
   assert.deepEqual(pageErrors, [], `student-tile runtime errors: ${pageErrors.join('\n')}`);
+  assert.equal(
+    mainFrameNavigations,
+    1,
+    'the harness must not reload mid-run; a dev-server reload invalidates every tile assertion',
+  );
 
   console.log('ClassPilot rendered student-tile copy and action regression passed.');
 } finally {

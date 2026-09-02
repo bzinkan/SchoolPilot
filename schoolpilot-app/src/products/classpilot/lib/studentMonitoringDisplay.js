@@ -259,8 +259,14 @@ export function projectStudentMonitoringDisplays(
   return projectionUnchanged ? previous : next;
 }
 
-export function screenshotStaleThresholdMs(cadence) {
-  return cadence === 'active_view' ? SCREENSHOT_ACTIVE_VIEW_STALE_MS : SCREENSHOT_STALE_MS;
+// `observationActive` is the caller's hint that the wall itself is observing
+// (a held {kind:'class'} observation lease), where frames land about every 5
+// seconds. It may only tighten the window: an unknown observation state keeps
+// the 75-second default, and no hint can loosen an already-active cadence.
+export function screenshotStaleThresholdMs(cadence, { observationActive = false } = {}) {
+  return cadence === 'active_view' || observationActive === true
+    ? SCREENSHOT_ACTIVE_VIEW_STALE_MS
+    : SCREENSHOT_STALE_MS;
 }
 
 // A cadence-aware threshold may only tighten the fresh window; the 75-second
