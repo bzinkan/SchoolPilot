@@ -78,9 +78,11 @@ async function requestJson(
   return { status: response.status, body: text ? JSON.parse(text) : null };
 }
 
+type GroupTeacherRow = { role: string; teacherId: string };
+
 async function groupTeacherRows(groupId: string): Promise<string[]> {
-  const rows = await inSchool(school.id, () => storage.getGroupTeachers(groupId));
-  return rows.map((row: any) => `${row.role}:${row.teacherId}`).sort();
+  const rows = await inSchool<GroupTeacherRow[]>(school.id, () => storage.getGroupTeachers(groupId));
+  return rows.map((row) => `${row.role}:${row.teacherId}`).sort();
 }
 
 function teachersPath(group: any): string {

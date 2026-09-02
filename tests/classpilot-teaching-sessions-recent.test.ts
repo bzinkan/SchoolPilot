@@ -14,6 +14,22 @@ delete process.env.REDIS_URL;
 
 const RECENT_PATH = "/classpilot/teaching-sessions/recent";
 
+interface RecentSessionDto {
+  id: string;
+  groupId: string;
+  teacherId: string;
+  startTime: string;
+  endTime: string;
+  className: string;
+  lifecycle: { kind: string; state: string };
+  summaryTrigger: string;
+  reportState: string;
+}
+
+interface RecentSessionsBody {
+  sessions: RecentSessionDto[];
+}
+
 // The exact response contract the Past Sessions client relies on. Anything
 // else on the raw teaching_sessions row (scheduledTeacherEmail, frozen
 // occurrence metadata, snapshots) must stay server-side.
@@ -70,18 +86,22 @@ function authFor(user: any): Record<string, string> {
 async function getJson(
   path: string,
   headers: Record<string, string>
-): Promise<{ status: number; body: any; headers: Headers }> {
+): Promise<{ status: number; body: RecentSessionsBody; headers: Headers }> {
   const response = await fetch(`${baseUrl}${path}`, { headers });
   const text = await response.text();
-  return { status: response.status, body: text ? JSON.parse(text) : null, headers: response.headers };
+  return {
+    status: response.status,
+    body: (text ? JSON.parse(text) : null) as RecentSessionsBody,
+    headers: response.headers,
+  };
 }
 
-function ids(body: any): string[] {
-  return body.sessions.map((session: any) => session.id);
+function ids(body: RecentSessionsBody): string[] {
+  return body.sessions.map((session) => session.id);
 }
 
-function reportStates(body: any): string[] {
-  return body.sessions.map((session: any) => session.reportState);
+function reportStates(body: RecentSessionsBody): string[] {
+  return body.sessions.map((session) => session.reportState);
 }
 
 async function createClass(name: string, teacherId: string): Promise<any> {
@@ -94,14 +114,14 @@ async function createClass(name: string, teacherId: string): Promise<any> {
     scheduleEnabled: false,
     blockStartTime: null,
     blockEndTime: null,
-  } as any));
+  }));
   await inSchool(school.id, () => storage.addGroupStudentsDetailed(group.id, [student.id]));
   return group;
 }
 
 async function startSession(group: any, teacherId: string, startTime: Date): Promise<any> {
   return inSchool(school.id, () =>
-    storage.createTeachingSession({ groupId: group.id, teacherId, startTime } as any)
+    storage.createTeachingSession({ groupId: group.id, teacherId, startTime })
   );
 }
 
@@ -185,31 +205,31 @@ before(async () => {
     domain: `${TAG}.example.edu`,
     slug: TAG,
     schoolTimezone: "America/New_York",
-  } as any);
+  });
   teacherA = await storage.createUser({
     email: `teacher-a@${TAG}.example.edu`,
     firstName: "Avery",
     lastName: "Alpha",
-  } as any);
+  });
   teacherB = await storage.createUser({
     email: `teacher-b@${TAG}.example.edu`,
     firstName: "Blake",
     lastName: "Bravo",
-  } as any);
+  });
   admin = await storage.createUser({
     email: `admin@${TAG}.example.edu`,
     firstName: "Adrian",
     lastName: "Admin",
-  } as any);
+  });
   for (const [user, role] of [[teacherA, "teacher"], [teacherB, "teacher"], [admin, "admin"]] as const) {
     await storage.createMembership({
       userId: user.id,
       schoolId: school.id,
       role,
       status: "active",
-    } as any);
+    });
   }
-  await storage.createProductLicense({ schoolId: school.id, product: "CLASSPILOT", status: "active" } as any);
+  await storage.createProductLicense({ schoolId: school.id, product: "CLASSPILOT", status: "active" });
   student = await inSchool(school.id, () => storage.createStudent({
     schoolId: school.id,
     firstName: "Student",
@@ -218,7 +238,7 @@ before(async () => {
     emailLc: `student-one@${TAG}.example.edu`,
     gradeLevel: "7",
     status: "active",
-  } as any));
+  }));
 
   const { createApp } = await import("../dist/app.js");
   server = createServer(createApp());
@@ -248,7 +268,9 @@ before(async () => {
     )
     RETURNING id
   `));
-  fixture.skipped = { id: String(skipped.rows[0].id) };
+  const [skippedRow] = skipped.rows;
+  assert.ok(skippedRow, "skipped occurrence fixture must insert");
+  fixture.skipped = { id: String(skippedRow.id) };
   fixture.active = await startSession(groupA, teacherA.id, new Date("2031-03-08T13:00:00.000Z"));
 
   // Immutable staff snapshot: A co-taught B's first class.
@@ -313,9 +335,12 @@ describe("GET /api/classpilot/teaching-sessions/recent", { concurrency: false },
     assert.equal(response.status, 200);
     assert.deepEqual(ids(response.body), [fixture.coTaught.id, fixture.ready.id, fixture.expired.id]);
     assert.deepEqual(reportStates(response.body), ["none", "ready", "expired"]);
-    const endTimes = response.body.sessions.map((session: any) => Date.parse(session.endTime));
+    const endTimes = response.body.sessions.map((session) => Date.parse(session.endTime));
     for (let index = 1; index < endTimes.length; index += 1) {
-      assert.ok(endTimes[index - 1] > endTimes[index], "sessions must be ordered by endTime desc");
+      const previous = endTimes[index - 1];
+      const current = endTimes[index];
+      assert.ok(previous !== undefined && current !== undefined);
+      assert.ok(previous > current, "sessions must be ordered by endTime desc");
     }
     for (const excluded of [fixture.active, fixture.pending, fixture.failed, fixture.skipped]) {
       assert.ok(!ids(response.body).includes(excluded.id), `session ${excluded.id} must not be listed`);
@@ -373,7 +398,8 @@ describe("GET /api/classpilot/teaching-sessions/recent", { concurrency: false },
     assert.ok(!raw.includes("scheduledTeacherEmail"));
     assert.ok(!raw.includes("@"), "no email address may appear in the listing");
 
-    const ready = response.body.sessions.find((session: any) => session.id === fixture.ready.id);
+    const ready = response.body.sessions.find((session) => session.id === fixture.ready.id);
+    assert.ok(ready, "materialized session must be listed");
     assert.equal(ready.groupId, groupA.id);
     assert.equal(ready.teacherId, teacherA.id);
     assert.equal(ready.className, groupA.name);
