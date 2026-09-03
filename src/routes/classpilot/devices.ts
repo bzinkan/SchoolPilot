@@ -586,8 +586,21 @@ const deviceHeartbeatLimiter = rateLimit({
 
 const deviceScreenshotLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 20,
-  message: { error: "Too many screenshot uploads, please wait" },
+  // Three client lanes share this route. The active-observation cadence ticks
+  // every 5s behind a 4500ms gap, so a steady minute is 12-13 frames. From
+  // 2.8.2 a navigation capture has its own 1200ms minimum gap rather than the
+  // cadence gap, putting one device's ceiling at 60000/1200 = 50 uploads a
+  // minute when a student navigates at roughly that spacing - navigating
+  // faster re-arms the 750ms debounce and yields none at all. Safety-evidence
+  // captures are the third lane and consult no client gap. The ceiling has to
+  // clear all of that with room for the zero-gap lease-start and
+  // authority-change frames, because an app 429 here is a scale-readiness gate
+  // failure, not a soft signal.
+  max: 60,
+  message: {
+    error: "Too many screenshot uploads, please wait",
+    code: "SCREENSHOT_UPLOAD_RATE_LIMITED",
+  },
   standardHeaders: true,
   legacyHeaders: false,
   store: redisStore("rl:device:screenshot:"),
@@ -4988,6 +5001,17 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
           })
         : { status: "unavailable", expiresInSeconds: 0 };
 
+      // The prefetch above answers for one teaching session. Anything else - a
+      // snapshot that still holds the session a takeover replaced - is a read
+      // we did not make, not a read that found no viewers.
+      const cadenceObservationFor = (
+        teachingSessionId: string | null | undefined
+      ): ClasspilotObservationStatus => (
+        teachingSessionId === cadenceTeachingSessionId
+          ? cadenceObservation
+          : { status: "unavailable", expiresInSeconds: 0 }
+      );
+
       const strictResult = await runWithTenantContext(
         { schoolId },
         () => withClasspilotScreenshotUploadAuthority({
@@ -5009,15 +5033,13 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
             trackingAuthority: current,
             now: checkedAt,
             observationStatus: async ({ teachingSessionId, now }) => {
-              if (teachingSessionId !== cadenceTeachingSessionId) {
-                return { status: "unavailable", expiresInSeconds: 0 };
-              }
-              if (cadenceObservation.status !== "observed") return cadenceObservation;
+              const status = cadenceObservationFor(teachingSessionId);
+              if (status.status !== "observed") return status;
               return {
                 status: "observed",
                 expiresInSeconds: Math.max(
                   0,
-                  cadenceObservation.expiresInSeconds - Math.ceil(
+                  status.expiresInSeconds - Math.ceil(
                     (Math.max(cadenceObservationCheckedAt, now ?? Date.now())
                       - cadenceObservationCheckedAt) / 1000
                   )
@@ -5208,23 +5230,49 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
         supervisionContextId: null,
         revision: strictValue.classBinding.controlRevision,
       };
+      const strictCaptureCadence = strictValue.screenshotPolicy.mode === "tracking_window_lease"
+        ? strictValue.screenshotPolicy.captureCadence
+        : undefined;
+      // The background cadence is issued for two different facts: nobody is
+      // watching, and we could not find out. Only the first may suppress the
+      // announcement - an indeterminate read has to publish, or a teacher who
+      // just took the class over waits out the aggregate poll for a frame that
+      // is already stored.
+      const strictObservation = cadenceObservationFor(
+        strictValue.classBinding.teachingSessionId
+      );
       if (screenshotRealtimeSnapshot && screenshotControlAuthority) {
-        const screenshotAvailable = classpilotScreenshotAvailableEvent({
-          studentId,
-          capturedAt: strictValue.data.capturedAt,
-          timestamp: strictValue.data.timestamp,
-        });
-        void publishRevisionedRealtimeUpdate(
-          screenshotRealtimeSnapshot,
-          screenshotAvailable,
-          screenshotControlAuthority,
-          {
-            orderingNamespace: CLASSPILOT_SCREENSHOT_AVAILABLE_ORDERING_NAMESPACE,
-            orderingRevision: String(strictValue.data.timestamp),
-          }
-        ).catch(() => {
-          recordHeartbeatHotPathCounter("screenshotAvailableBroadcastFailures");
-        });
+        if (
+          strictCaptureCadence?.mode === "background"
+          && strictObservation.status === "unobserved"
+        ) {
+          // Nobody holds an observation lease on this student, so the only
+          // consumer of the event is a wall that is not watching. The publish
+          // is a second full transaction on the hottest route we have (an
+          // exclusive per-student advisory lock plus FOR SHARE reads), and the
+          // aggregate poll below is already authoritative for the unobserved
+          // tail. Skipping it cannot regress ordered delivery: revisions are
+          // monotonic capture timestamps, so no unpublished frame can raise a
+          // high-water mark above a later observed publish.
+          recordHeartbeatHotPathCounter("screenshotAvailableBroadcastSkipped");
+        } else {
+          const screenshotAvailable = classpilotScreenshotAvailableEvent({
+            studentId,
+            capturedAt: strictValue.data.capturedAt,
+            timestamp: strictValue.data.timestamp,
+          });
+          void publishRevisionedRealtimeUpdate(
+            screenshotRealtimeSnapshot,
+            screenshotAvailable,
+            screenshotControlAuthority,
+            {
+              orderingNamespace: CLASSPILOT_SCREENSHOT_AVAILABLE_ORDERING_NAMESPACE,
+              orderingRevision: String(strictValue.data.timestamp),
+            }
+          ).catch(() => {
+            recordHeartbeatHotPathCounter("screenshotAvailableBroadcastFailures");
+          });
+        }
       }
       return res.json({
         ok: true,

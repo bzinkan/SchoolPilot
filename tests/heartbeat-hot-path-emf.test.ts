@@ -22,6 +22,7 @@ const EXPECTED_METRICS = [
   "TileBatchScreenshotMissItems",
   "TileBatchScreenshotStoreUnavailable",
   "ScreenshotAvailableBroadcastFailures",
+  "ScreenshotAvailableBroadcastSkipped",
   "ScreenshotCadenceObservationUnavailable",
   "DeviceHeartbeatRateLimited",
   "DeviceScreenshotRateLimited",
@@ -34,6 +35,7 @@ const EXPECTED_COUNTERS = [
   "tileBatchScreenshotMissItems",
   "tileBatchScreenshotStoreUnavailable",
   "screenshotAvailableBroadcastFailures",
+  "screenshotAvailableBroadcastSkipped",
   "screenshotCadenceObservationUnavailable",
   "deviceHeartbeatRateLimited",
   "deviceScreenshotRateLimited",
@@ -107,6 +109,7 @@ describe("heartbeat hot-path EMF event", () => {
         tileBatchScreenshotMissItems: 12,
         tileBatchScreenshotStoreUnavailable: 1,
         screenshotAvailableBroadcastFailures: 3,
+        screenshotAvailableBroadcastSkipped: 6,
         screenshotCadenceObservationUnavailable: 2,
         deviceHeartbeatRateLimited: 5,
         deviceScreenshotRateLimited: 4,
@@ -121,6 +124,7 @@ describe("heartbeat hot-path EMF event", () => {
     assert.equal(event.TileBatchScreenshotMissItems, 12);
     assert.equal(event.TileBatchScreenshotStoreUnavailable, 1);
     assert.equal(event.ScreenshotAvailableBroadcastFailures, 3);
+    assert.equal(event.ScreenshotAvailableBroadcastSkipped, 6);
     assert.equal(event.ScreenshotCadenceObservationUnavailable, 2);
     assert.equal(event.DeviceHeartbeatRateLimited, 5);
     assert.equal(event.DeviceScreenshotRateLimited, 4);
