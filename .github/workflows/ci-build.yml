@@ -353,6 +353,15 @@ jobs:
         with:
           node-version: 22
 
+      # Node 22 bundles npm 10.9.x, whose `npm audit` still calls the registry's
+      # legacy quick-audit endpoint. npm is retiring it ("This endpoint is being
+      # retired. Use the bulk advisory endpoint instead"), and it now
+      # intermittently answers with a notice body instead of a v2 report, which
+      # fails audit:dependencies with npm_audit_schema_invalid. npm 11 uses the
+      # bulk advisory endpoint. Pin it for this job only, where npm audit runs.
+      - name: Use npm 11 for the dependency audit
+        run: npm install -g npm@11 && npm --version
+
       - name: Install backend deps
         run: npm ci
 
