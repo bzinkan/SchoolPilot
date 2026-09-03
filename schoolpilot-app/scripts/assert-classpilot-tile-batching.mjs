@@ -18,6 +18,7 @@ import {
   removeStudentsFromTileBatchData,
   retainFreshTileScreenshotsOnNull,
   tileBatchRequestShouldPoll,
+  isExactBindingVersion,
 } from '../src/products/classpilot/lib/tileBatchPolling.js';
 import {
   purgeAllScreenshotTileCaches,
@@ -30,6 +31,9 @@ import {
 } from '../src/products/classpilot/lib/tileCachePrivacy.js';
 import {
   deriveScreenshotDisplay,
+  isExactBoundScreenshot,
+  isSupervisionBoundScreenshot,
+  screenshotBindingGeneration,
 } from '../src/products/classpilot/lib/studentMonitoringDisplay.js';
 
 async function waitUntil(predicate, message) {
@@ -164,6 +168,68 @@ assert.equal(indexedBindingCases.get('mismatched-v2'), null);
 assert.equal(indexedBindingCases.get('missing-row-v2'), null);
 assert.equal(indexedBindingCases.get('missing-screenshot-v2'), null);
 assert.deepEqual(indexedBindingCases.get('legacy-v1'), { screenshot: 'legacy-pixel' });
+
+// The binding fence must cover every retained pixel generation, not only the
+// first one that existed. A `v3:` supervision-bound pixel is fenced exactly
+// like a `v2:` class-bound one; an unstamped legacy frame stays unfenced.
+assert.equal(isExactBindingVersion('v2:abc'), true);
+assert.equal(isExactBindingVersion('v3:abc'), true);
+assert.equal(isExactBindingVersion('v10:abc'), true);
+assert.equal(isExactBindingVersion('legacy'), false);
+assert.equal(isExactBindingVersion(undefined), false);
+assert.equal(screenshotBindingGeneration({ bindingVersion: 'v2:a' }), 'class');
+assert.equal(screenshotBindingGeneration({ bindingVersion: 'v3:a' }), 'supervision');
+assert.equal(screenshotBindingGeneration({ screenshot: 'legacy-pixel' }), null);
+assert.equal(isSupervisionBoundScreenshot({ bindingVersion: 'v3:a' }), true);
+assert.equal(isSupervisionBoundScreenshot({ bindingVersion: 'v2:a' }), false);
+assert.equal(isExactBoundScreenshot({ bindingVersion: 'v3:a' }), true);
+assert.equal(isExactBoundScreenshot({ screenshot: 'legacy-pixel' }), false);
+
+const supervisionBindingCases = indexTileScreenshots({
+  tiles: [
+    {
+      studentId: 'valid-v3',
+      bindingVersion: 'v3:supervision-binding',
+      screenshot: { screenshot: 'supervision-pixel', bindingVersion: 'v3:supervision-binding' },
+    },
+    {
+      studentId: 'mismatched-v3',
+      bindingVersion: 'v3:supervision-binding',
+      screenshot: { screenshot: 'wrong-pixel', bindingVersion: 'v3:other-binding' },
+    },
+    {
+      studentId: 'cross-generation',
+      bindingVersion: 'v3:supervision-binding',
+      screenshot: { screenshot: 'class-pixel', bindingVersion: 'v2:class-binding' },
+    },
+  ],
+});
+assert.deepEqual(
+  supervisionBindingCases.get('valid-v3'),
+  { screenshot: 'supervision-pixel', bindingVersion: 'v3:supervision-binding' },
+);
+assert.equal(
+  supervisionBindingCases.get('mismatched-v3'),
+  null,
+  'a v3 pixel whose binding disagrees with its row must be rejected exactly like a v2 pixel',
+);
+assert.equal(
+  supervisionBindingCases.get('cross-generation'),
+  null,
+  'a class-bound pixel must never satisfy a supervision-bound row',
+);
+
+assert.deepEqual(
+  removeLegacyScreenshotsFromTileBatchData({
+    tiles: [
+      { studentId: 'legacy', screenshot: { screenshot: 'legacy-pixel' } },
+      { studentId: 'class', bindingVersion: 'v2:a', screenshot: { bindingVersion: 'v2:a' } },
+      { studentId: 'supervision', bindingVersion: 'v3:a', screenshot: { bindingVersion: 'v3:a' } },
+    ],
+  }).tiles.map((tile) => tile.studentId),
+  ['class', 'supervision'],
+  'a legacy scrub must drop only unstamped pixels and keep every exact generation',
+);
 
 let healthyRequests = 0;
 const requestSignal = new AbortController().signal;

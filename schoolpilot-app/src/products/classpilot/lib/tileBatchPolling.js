@@ -1,6 +1,7 @@
 import {
   deriveScreenshotDisplay,
   isClassBoundScreenshot,
+  isExactBoundScreenshot,
   SCREENSHOT_RECONNECT_RETAIN_MS,
   SCREENSHOT_STALE_MS,
   SCREENSHOT_SUCCESSFUL_NULL_RETAIN_UNTIL_FIELD,
@@ -10,6 +11,16 @@ export const TILE_BATCH_MAX_STUDENTS = 50;
 export const TILE_BATCH_HISTORY_LIMIT = 10;
 export const TILE_BATCH_REFETCH_INTERVAL_MS = 30_000;
 export const TILE_SCREENSHOT_CACHE_GC_MS = SCREENSHOT_RECONNECT_RETAIN_MS;
+// A retained pixel carries a generation-stamped binding version: `v2:` for a
+// class-bound frame, `v3:` for a supervision-bound one. The fence below must
+// apply to every generation, not just the first one that existed — an unfenced
+// generation would let a pixel render against a binding it does not match.
+const EXACT_BINDING_VERSION_PATTERN = /^v\d+:/;
+
+export function isExactBindingVersion(value) {
+  return typeof value === 'string' && EXACT_BINDING_VERSION_PATTERN.test(value);
+}
+
 const SCREENSHOT_BINDING_REJECTED = Symbol('classpilotScreenshotBindingRejected');
 const EMPTY_STUDENT_IDS = new Set();
 
@@ -315,11 +326,11 @@ function validatedTileScreenshot(tile) {
   const screenshotBindingVersion = typeof screenshot?.bindingVersion === 'string'
     ? screenshot.bindingVersion
     : null;
-  const expectsV2 = expectedBindingVersion?.startsWith('v2:') === true;
-  const screenshotClaimsV2 = screenshotBindingVersion?.startsWith('v2:') === true;
-  if (expectsV2 || screenshotClaimsV2) {
-    return expectsV2
-      && screenshotClaimsV2
+  const expectsExact = isExactBindingVersion(expectedBindingVersion);
+  const screenshotClaimsExact = isExactBindingVersion(screenshotBindingVersion);
+  if (expectsExact || screenshotClaimsExact) {
+    return expectsExact
+      && screenshotClaimsExact
       && expectedBindingVersion === screenshotBindingVersion
       ? screenshot
       : null;
@@ -403,15 +414,13 @@ export function retainFreshTileScreenshotsOnNull(previous, incoming, nowMs = Dat
     const incomingBindingVersion = typeof tile.bindingVersion === 'string'
       ? tile.bindingVersion
       : null;
-    const priorWasClassBound = typeof priorBindingVersion === 'string'
-      && priorBindingVersion.startsWith('v2:');
-    const incomingIsClassBound = typeof incomingBindingVersion === 'string'
-      && incomingBindingVersion.startsWith('v2:');
+    const priorWasExactlyBound = isExactBindingVersion(priorBindingVersion);
+    const incomingIsExactlyBound = isExactBindingVersion(incomingBindingVersion);
     if (
-      (priorWasClassBound || incomingIsClassBound)
+      (priorWasExactlyBound || incomingIsExactlyBound)
       && !(
-        priorWasClassBound
-        && incomingIsClassBound
+        priorWasExactlyBound
+        && incomingIsExactlyBound
         && incomingBindingVersion === priorBindingVersion
       )
     ) return tile;
@@ -584,8 +593,8 @@ export function removeLegacyScreenshotsFromTileBatchData(data) {
 
   if (!Array.isArray(data?.tiles)) return data;
   const tiles = data.tiles.filter((tile) => (
-    isClassBoundScreenshot(tile?.screenshot)
-    || (typeof tile?.bindingVersion === 'string' && tile.bindingVersion.startsWith('v2:'))
+    isExactBoundScreenshot(tile?.screenshot)
+    || isExactBindingVersion(tile?.bindingVersion)
   ));
   return tiles.length === data.tiles.length ? data : { ...data, tiles };
 }
