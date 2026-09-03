@@ -237,6 +237,43 @@ describe("supervision retention target stays server-side", () => {
     assert.match(resolver, /claim\.context\.status !== "active"/);
   });
 
+  it("costs nothing at all when the rollout is off", () => {
+    // The retention resolver does real database work. With the feature off it
+    // must not run, so "off is byte-identical to today" is true of load as
+    // well as of behaviour.
+    const storage = read("src/services/storage.ts");
+    assert.match(
+      storage,
+      /controlState\?\.supervisionContextId\s*&&\s*controlState\.hardExpiresAt\s*&&\s*classpilotSupervisionPreviewObserved\(options\.schoolId\)/,
+      "the resolver must be gated on the rollout, not merely its retention decision"
+    );
+  });
+
+  it("leaves the device-visible capture window untouched", () => {
+    // authorityExpiresAt feeds expiresInSeconds in the policy the extension
+    // acts on. A claimed student must keep today's value, so the mixed
+    // 2.8.1/2.8.2 fleet sees an identical policy.
+    const storage = read("src/services/storage.ts");
+    const literal = storage.slice(
+      storage.indexOf("const studentAuthority: ClasspilotScreenshotAuthorityProjection = {"),
+      storage.indexOf("// A supervision claim writes teachingSessionId = null")
+    );
+    assert.ok(literal.length > 0);
+    assert.match(
+      literal,
+      /authorityExpiresAt: session\.authKind === "manual_shared"\s*\?\s*session\.manualLeaseExpiresAt\s*:\s*null/
+    );
+    assert.doesNotMatch(literal, /supervision/i);
+  });
+
+  it("builds the device-facing policy by naming fields, never by spreading the projection", () => {
+    // This is what structurally prevents the server-only retention target from
+    // reaching a device: the wire object is an explicit literal.
+    const policy = read("src/services/classpilotScreenshotPolicy.ts");
+    assert.match(policy, /authority: trackingAuthority\.authority/);
+    assert.doesNotMatch(policy, /\.\.\.trackingAuthority/);
+  });
+
   it("keeps the teaching gate and both supervision re-assertions intact", () => {
     const storage = read("src/services/storage.ts");
     assert.match(

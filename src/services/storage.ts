@@ -19,6 +19,7 @@ import {
   classpilotSessionReportV2Mode,
   classpilotSessionReportVersionForNewRow,
 } from "../config/classpilotSessionReportRollout.js";
+import { classpilotSupervisionPreviewObserved } from "../config/classpilotSupervisionPreviewRollout.js";
 import {
   emptyClasspilotRestrictions,
   classpilotControlStateHasAuthRelevantRestriction,
@@ -22985,7 +22986,15 @@ export async function getClasspilotScreenshotAuthorityProjection(options: {
   // Resolve its retention target first: the returned authority is still the
   // non-pixel student-session claim the device echoes, carrying a server-only
   // note that the upload handler may keep this frame for the claiming staff.
-  if (controlState?.supervisionContextId && controlState.hardExpiresAt) {
+  // Gated on the rollout so that with the feature off this costs exactly
+  // nothing: no extra query on the upload path, no behavioural difference of
+  // any kind. In observe mode the resolution runs so its counters are real
+  // before any frame is ever retained.
+  if (
+    controlState?.supervisionContextId
+    && controlState.hardExpiresAt
+    && classpilotSupervisionPreviewObserved(options.schoolId)
+  ) {
     const supervisionRetention = await resolveClasspilotSupervisionRetentionTarget(
       {
         schoolId: options.schoolId,
