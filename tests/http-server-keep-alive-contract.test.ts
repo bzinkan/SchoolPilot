@@ -26,9 +26,14 @@ function configuredTimeouts(): { keepAliveTimeout: number; headersTimeout: numbe
     match,
     "src/index.ts must set server.keepAliveTimeout then server.headersTimeout immediately after http.createServer(app)"
   );
+  const [, keepAliveRaw, headersRaw] = match;
+  assert.ok(
+    keepAliveRaw !== undefined && headersRaw !== undefined,
+    "both timeout captures must be present"
+  );
   return {
-    keepAliveTimeout: Number(match[1].replaceAll("_", "")),
-    headersTimeout: Number(match[2].replaceAll("_", "")),
+    keepAliveTimeout: Number(keepAliveRaw.replaceAll("_", "")),
+    headersTimeout: Number(headersRaw.replaceAll("_", "")),
   };
 }
 
