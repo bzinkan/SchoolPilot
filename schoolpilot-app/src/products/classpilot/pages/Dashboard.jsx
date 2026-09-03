@@ -1,8 +1,9 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, useDeferredValue } from "react";
 import { useQuery, useQueries, useMutation } from "@tanstack/react-query";
 import { useNavigate } from 'react-router-dom';
-import { Monitor, Users, Activity, Settings as SettingsIcon, LogOut, Calendar, Shield, AlertTriangle, UserCog, Plus, X, GraduationCap, WifiOff, Video, MonitorPlay, TabletSmartphone, Lock, Unlock, Layers, CheckSquare, XSquare, User, UserCheck, List, ShieldBan, Eye, EyeOff, Timer, Clock, BarChart3, Trash2, UsersRound, Filter, Hand, MessageSquareOff, MessageSquare, Send, ClipboardCheck, RefreshCw } from "lucide-react";
+import { Monitor, Users, Activity, Settings as SettingsIcon, LogOut, Calendar, Shield, AlertTriangle, UserCog, Plus, X, GraduationCap, WifiOff, Video, MonitorPlay, TabletSmartphone, Lock, Unlock, Layers, CheckSquare, XSquare, User, UserCheck, List, ShieldBan, Eye, EyeOff, Timer, Clock, BarChart3, Trash2, UsersRound, Filter, Hand, MessageSquareOff, MessageSquare, Send, ClipboardCheck, RefreshCw, ChevronDown } from "lucide-react";
 import { Button } from '../../../components/ui/button';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../../../components/ui/dropdown-menu';
 import { Input } from '../../../components/ui/input';
 import { Badge } from '../../../components/ui/badge';
 import StudentTile from '../components/StudentTile';
@@ -3651,6 +3652,11 @@ export default function Dashboard() {
       sessionSubscriptionState.status === 'terminal_error'
       && sessionSubscriptionState.errorCode === 'SESSION_UNAVAILABLE'
     );
+  // The Flight Path / Block List chevron menus hold Remove and Status. Their
+  // visibility is derived from the same gates as the items they contain rather
+  // than assumed from Apply: claimed-coverage mode can allow Apply but not Remove.
+  const flightPathMenuAvailable = dashboardCapabilities.allows('remove-flight-path') || studentView === "class";
+  const blockListMenuAvailable = dashboardCapabilities.allows('remove-block-list') || studentView === "class";
   const selectedAvailableStudents = filteredStudents.filter((student) => selectedStudentIds.has(student.studentId));
   const availableGroupSections = (() => {
     const sections = new Map();
@@ -5219,12 +5225,56 @@ export default function Dashboard() {
             {dashboardCapabilities.allows('close-tabs') && <Button size="sm" variant="outline" onClick={() => openManageTabs(null)} disabled={subgroupCommandsDisabled || nonRestrictionSelectionActive} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Manage Tabs</Button>}
             {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !exactSelectedTargetsResolved || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={exactSelectedTargetsResolved ? 'Set a waypoint: hold selected students at their current page or a specific domain' : 'Select one or more students first'} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Set Waypoint</Button>}
             {dashboardCapabilities.allows('unlock-screen') && <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !selectedTargetsSupportScreenOnlyUnlock || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={!exactSelectedUnlockTargetsResolved ? 'Select one or more students first' : selectedTargetsSupportScreenOnlyUnlock ? 'Clear the waypoint while preserving Flight Paths and other restrictions' : 'ClassPilot extension update required for every selected student'} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />Clear Waypoint</Button>}
-            {dashboardCapabilities.allows('apply-flight-path') && <Button size="sm" variant="outline" onClick={() => setShowApplyFlightPathDialog(true)} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive} data-testid="button-apply-flight-path" className="text-purple-600 dark:text-purple-400"><Layers className="h-4 w-4 mr-2" />Apply Flight Path</Button>}
-            {dashboardCapabilities.allows('remove-flight-path') && <Button size="sm" variant="outline" onClick={() => removeFlightPathMutation.mutate({})} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || removeFlightPathMutation.isPending} data-testid="button-remove-flight-path" className="text-purple-600 dark:text-purple-400"><X className="h-4 w-4 mr-2" />Remove Flight Path</Button>}
-            {studentView === "class" && <Button size="sm" variant="outline" onClick={() => setShowFlightPathViewerDialog(true)} disabled={signOutOnlySelectionActive} data-testid="button-flight-path-status" className="text-purple-600 dark:text-purple-400"><Eye className="h-4 w-4 mr-2" />Flight Path Status</Button>}
-            {dashboardCapabilities.allows('apply-block-list') && <Button size="sm" variant="outline" onClick={() => setShowApplyBlockListDialog(true)} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive} data-testid="button-apply-block-list" className="text-red-600 dark:text-red-400"><ShieldBan className="h-4 w-4 mr-2" />Apply Block List</Button>}
-            {dashboardCapabilities.allows('remove-block-list') && <Button size="sm" variant="outline" onClick={() => removeBlockListMutation.mutate({})} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || removeBlockListMutation.isPending} data-testid="button-remove-block-list" className="text-red-600 dark:text-red-400"><X className="h-4 w-4 mr-2" />Remove Block List</Button>}
-            {studentView === "class" && <Button size="sm" variant="outline" onClick={() => setShowBlockListViewerDialog(true)} disabled={signOutOnlySelectionActive} data-testid="button-block-list-status" className="text-red-600 dark:text-red-400"><Shield className="h-4 w-4 mr-2" />Block List Status</Button>}
+            {(dashboardCapabilities.allows('apply-flight-path') || flightPathMenuAvailable) && (
+              <div className="inline-flex items-center" role="group" aria-label="Flight Path">
+                {dashboardCapabilities.allows('apply-flight-path') && <Button size="sm" variant="outline" onClick={() => setShowApplyFlightPathDialog(true)} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive} data-testid="button-apply-flight-path" className={`relative focus-visible:z-10 text-purple-600 dark:text-purple-400${flightPathMenuAvailable ? ' rounded-r-none' : ''}`}><Layers className="h-4 w-4 mr-2" />Apply Flight Path</Button>}
+                {flightPathMenuAvailable && (
+                  <DropdownMenu modal={false}>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        aria-label="More Flight Path actions"
+                        title="More Flight Path actions"
+                        data-testid="button-flight-path-menu"
+                        className={`px-2 text-purple-600 dark:text-purple-400${dashboardCapabilities.allows('apply-flight-path') ? ' -ml-px rounded-l-none' : ''}`}
+                      >
+                        <ChevronDown className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      {dashboardCapabilities.allows('remove-flight-path') && <DropdownMenuItem onSelect={() => removeFlightPathMutation.mutate({})} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || removeFlightPathMutation.isPending} data-testid="button-remove-flight-path" className="text-purple-600 dark:text-purple-400"><X />Remove Flight Path</DropdownMenuItem>}
+                      {studentView === "class" && <DropdownMenuItem onSelect={() => setShowFlightPathViewerDialog(true)} disabled={signOutOnlySelectionActive} data-testid="button-flight-path-status" className="text-purple-600 dark:text-purple-400"><Eye />Flight Path Status</DropdownMenuItem>}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
+              </div>
+            )}
+            {(dashboardCapabilities.allows('apply-block-list') || blockListMenuAvailable) && (
+              <div className="inline-flex items-center" role="group" aria-label="Block List">
+                {dashboardCapabilities.allows('apply-block-list') && <Button size="sm" variant="outline" onClick={() => setShowApplyBlockListDialog(true)} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive} data-testid="button-apply-block-list" className={`relative focus-visible:z-10 text-red-600 dark:text-red-400${blockListMenuAvailable ? ' rounded-r-none' : ''}`}><ShieldBan className="h-4 w-4 mr-2" />Apply Block List</Button>}
+                {blockListMenuAvailable && (
+                  <DropdownMenu modal={false}>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        aria-label="More Block List actions"
+                        title="More Block List actions"
+                        data-testid="button-block-list-menu"
+                        className={`px-2 text-red-600 dark:text-red-400${dashboardCapabilities.allows('apply-block-list') ? ' -ml-px rounded-l-none' : ''}`}
+                      >
+                        <ChevronDown className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      {dashboardCapabilities.allows('remove-block-list') && <DropdownMenuItem onSelect={() => removeBlockListMutation.mutate({})} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || removeBlockListMutation.isPending} data-testid="button-remove-block-list" className="text-red-600 dark:text-red-400"><X />Remove Block List</DropdownMenuItem>}
+                      {studentView === "class" && <DropdownMenuItem onSelect={() => setShowBlockListViewerDialog(true)} disabled={signOutOnlySelectionActive} data-testid="button-block-list-status" className="text-red-600 dark:text-red-400"><Shield />Block List Status</DropdownMenuItem>}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
+              </div>
+            )}
             {studentView === "class" && (
               <Button
                 size="sm"
@@ -5399,7 +5449,7 @@ export default function Dashboard() {
                         </Button>
                       </div>
                     </div>
-                    <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-2 xl:grid-cols-3">
+                    <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4 p-4">
                       {section.students.map((student) => (
                         <div key={`${section.id}-${student.studentId}`} className="rounded-lg border bg-background p-4 shadow-sm" data-testid={`card-scheduled-coverage-student-${student.studentId}`}>
                           <div className="flex items-start gap-3">
@@ -5466,7 +5516,7 @@ export default function Dashboard() {
                         {section.kind === "group" ? "Claim Group" : "Claim Scope"}
                       </Button>
                     </div>
-                    <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-2 xl:grid-cols-3">
+                    <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4 p-4">
                       {section.students.map((student) => (
                         <div key={`${section.id}-${student.studentId}`} className="rounded-lg border bg-background p-4 shadow-sm" data-testid={`card-available-student-${student.studentId}`}>
                           <div className="flex items-start gap-3">
@@ -5558,7 +5608,7 @@ export default function Dashboard() {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 2xl:grid-cols-6 gap-6">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(224px,1fr))] gap-6">
             {filteredStudents.map((student) => {
               const studentRealtimeKey = student.studentId;
               const supervisedElsewhere = isStudentMonitoringSuppressed(student);

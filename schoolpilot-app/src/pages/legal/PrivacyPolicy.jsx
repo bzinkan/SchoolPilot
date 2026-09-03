@@ -61,7 +61,7 @@ export default function PrivacyPolicy() {
             </p>
             <ul className="list-disc pl-6 text-slate-700 space-y-2 mb-4">
               <li>Google Classroom roster information (class names, student enrollments)</li>
-              <li>Active-tab activity, including current tab URLs, titles, favicons, and timestamps during authorized monitoring</li>
+              <li>Active-tab and open-tab activity, including tab URLs, titles, favicons, and timestamps during authorized monitoring</li>
               <li>Authorized, class-bound screen capture thumbnails and exact-bound safety evidence captures, which may contain visible website content</li>
               <li>Temporary authorized Live View media. The extension and Schoolpilot servers do not record the stream, but an authorized teacher can explicitly save a local recording or still image governed by school policy</li>
               <li>Student and teacher communications sent through ClassPilot</li>

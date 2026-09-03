@@ -403,6 +403,24 @@ test('dashboard renews observation only for a visible exact scope and virtualize
     /\[content-visibility:auto\] \[contain-intrinsic-size:420px\]/,
     'offscreen tiles must be skipped by the renderer, not unmounted',
   );
+  // The PassPilot sidebar is position:fixed and compensated by a static
+  // lg:ml-80 on <main>, so viewport breakpoints cannot see the 320px it takes.
+  // The tile wall and the coverage panels size on their own width instead.
+  assert.match(
+    dashboard,
+    /grid grid-cols-\[repeat\(auto-fill,minmax\(224px,1fr\)\)\] gap-6/,
+    'the tile wall must reflow on its own width so a fixed sidebar cannot squeeze tiles below 224px',
+  );
+  assert.equal(
+    (dashboard.match(/grid grid-cols-\[repeat\(auto-fill,minmax\(300px,1fr\)\)\] gap-4 p-4/g) || []).length,
+    2,
+    'both coverage panels must reflow on their own width',
+  );
+  assert.doesNotMatch(
+    dashboard,
+    /xl:grid-cols-/,
+    'no dashboard card grid may size on a viewport breakpoint the fixed sidebar cannot influence',
+  );
   assert.doesNotMatch(
     dashboard,
     /nearViewportStudentIds\.has\(student\.studentId\)\) \? <StudentTile/,
