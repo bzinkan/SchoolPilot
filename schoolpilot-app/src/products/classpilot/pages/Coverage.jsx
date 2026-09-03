@@ -232,6 +232,17 @@ export default function Coverage() {
     refetchInterval: 10000,
   });
 
+  // The card below is a count of STUDENTS, so it must not be derived from the
+  // number of supervision contexts: two students claimed into one group are one
+  // context. The server already publishes the distinct-student figure under the
+  // same visibility rule as /coverage/contexts, and the dashboard reads the same
+  // cache entry, so the two surfaces cannot disagree.
+  const summaryQuery = useQuery({
+    queryKey: ["/api/coverage/summary"],
+    queryFn: () => apiRequest("GET", "/coverage/summary"),
+    refetchInterval: 10000,
+  });
+
   const capabilitiesQuery = useQuery({
     queryKey: ["/api/coverage/capabilities"],
     queryFn: () => apiRequest("GET", "/coverage/capabilities"),
@@ -984,7 +995,7 @@ export default function Coverage() {
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2"><ClipboardCheck className="h-4 w-4" />Claimed Students</CardTitle>
             </CardHeader>
-            <CardContent><p className="text-3xl font-semibold">{contexts.filter((c) => c.status === "active").length}</p></CardContent>
+            <CardContent><p className="text-3xl font-semibold">{summaryQuery.data?.claimedStudentCount ?? 0}</p></CardContent>
           </Card>
           <Card>
             <CardHeader className="pb-2">
