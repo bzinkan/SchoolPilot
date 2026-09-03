@@ -140,7 +140,10 @@ breaker and alarm fields, while changing only those percentages. It suspends
 dynamic and scheduled scaling during mutation, restores the exact deployment
 configuration, and reconciles the current weekday 05:45–16:00 Eastern scheduled
 minimum (`3` in-window, `1` otherwise) with a two-phase, boundary-checked release
-before removing the hold. If desired capacity drifts after hold acquisition,
+before removing the hold. That release waits for the API at the greater of the
+staged minimum and the desired count the hold froze, so a fleet that target
+tracking had already scaled above the floor is never asked to shrink to it.
+If desired capacity drifts after hold acquisition,
 service mutation stops immediately; recovery re-derives the bounds from the
 current frozen count rather than a stale pre-hold count. The bounded convergence
 budget is one hour because a six-task rollout can require sequential 300-second
@@ -344,9 +347,11 @@ For a profile that does not yet activate Live View, omit
 `-TurnEvidencePath`. For feature-enabling profiles, the helper rejects the
 weekday 04:45–05:59 Eastern school-day floor scale-up window unless the exact
 protected-window confirmation is bound into the plan. Without that confirmation
-it also rejects an API desired count outside 1–3. Every path rejects a
-non-singleton worker, an autoscaling target outside the scheduled minimum
-`1`/`6` and maximum `6`, scheduled-action drift,
+it also rejects an API desired count outside 1–3, and at three tasks it
+converges the API before the worker mutates so the rollout peak stays at the
+reviewed 124-connection ceiling. Every path rejects a non-singleton worker, an
+autoscaling target outside the scheduled minimum `1`/`3` and maximum `6`,
+scheduled-action drift,
 mutable/mismatched images, missing emergency memory, incomplete TURN state, and
 an ECS deployment strategy other than exact reviewed ROLLING, or any mutation
 outside the allowlist. Protected-window and emergency `off` plans accept only

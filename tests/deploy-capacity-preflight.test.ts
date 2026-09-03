@@ -437,12 +437,33 @@ launch_safe_active_api_preflight
     assert.match(ordinaryFour.stderr, /ordinary backend deploys require desiredCount 1, 2, or 3/);
   });
 
-  it("routes an ordinary three-task rollout through the sequential API-then-worker path", () => {
+  it("routes an ordinary three-task rollout through the sequential API-then-worker path with explicit protected-window bounds", () => {
     const execution = deploySource.slice(libraryBoundary);
+    // No ECS waiter precedes this poll, so the call must carry the 360 x 10s
+    // bounds itself: the unadmitted ordinary default is 30 x 2s, far below a
+    // 100/200 replacement's task start, two ALB health checks, and 300s drain.
     assert.match(
       execution,
-      /if \[\[ "\$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" == true \|\| "\$PRODUCTION_PREFLIGHT_API_DESIRED" == "3" \]\]; then\n\s+wait_for_production_backend_strict_stability \\\n\s+"\$API_ROLLOUT_TASK_DEF" \\\n\s+"\$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION"/
+      /if \[\[ "\$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" == true \|\| "\$PRODUCTION_PREFLIGHT_API_DESIRED" == "3" \]\]; then\n\s+wait_for_production_backend_strict_stability \\\n\s+"\$API_ROLLOUT_TASK_DEF" \\\n\s+"\$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION" \\\n\s+360 10\n/
     );
+
+    const explicit = runLibrary(`
+PRODUCTION_PREFLIGHT_API_DESIRED=3
+wait_for_production_backend_strict_stability schoolpilot-production-api:101 schoolpilot-production-scheduler-worker:21 360 10
+`, {
+      serviceSnapshots: [stableServices({ apiDesired: "3" })],
+    });
+    assert.equal(explicit.status, 0, explicit.stderr);
+    assert.match(explicit.stdout, /at most 360 bounded observations \(10s interval/);
+
+    const ordinaryDefault = runLibrary(`
+PRODUCTION_PREFLIGHT_API_DESIRED=3
+wait_for_production_backend_strict_stability schoolpilot-production-api:101 schoolpilot-production-scheduler-worker:21
+`, {
+      serviceSnapshots: [stableServices({ apiDesired: "3" })],
+    });
+    assert.equal(ordinaryDefault.status, 0, ordinaryDefault.stderr);
+    assert.match(ordinaryDefault.stdout, /at most 30 bounded observations \(2s interval/);
   });
 
   it("accepts API counts one through six only under the explicit protected-window confirmation", () => {
@@ -722,6 +743,7 @@ restore_production_scaling_hold
 revalidate_protected_window_scheduled_actions() { :; }
 wait_for_protected_window_api_capacity() { :; }
 PRODUCTION_SCALING_HOLD_ACTIVE=true
+PROTECTED_WINDOW_CAPTURED_API_DESIRED=1
 PRODUCTION_SCALING_PRIOR_MAX=6
 PRODUCTION_SCALING_PRIOR_IN=false
 PRODUCTION_SCALING_PRIOR_OUT=false
@@ -745,6 +767,76 @@ restore_production_scaling_hold
       assert.match(holdRegistration, /ScheduledScalingSuspended=true/);
       assert.match(restoreRegistration, /ScheduledScalingSuspended=false/);
     }
+  });
+
+  it("waits for the frozen desired count when it exceeds the staged school-day floor", () => {
+    // The protected hold suspends all scaling without changing desiredCount, so
+    // a fleet admitted at 4-6 tasks stays there once the floor of 3 is staged.
+    for (const [captured, expected] of [["5", "5"], ["4", "4"], ["3", "3"], ["2", "3"], ["1", "3"]] as const) {
+      const result = runLibrary(`
+revalidate_protected_window_scheduled_actions() { :; }
+wait_for_protected_window_api_capacity() { printf 'WAIT_CAPACITY expected=%s\\n' "$1"; }
+PRODUCTION_SCALING_HOLD_ACTIVE=true
+PROTECTED_WINDOW_CAPTURED_API_DESIRED=${captured}
+PRODUCTION_SCALING_PRIOR_MAX=6
+PRODUCTION_SCALING_PRIOR_IN=false
+PRODUCTION_SCALING_PRIOR_OUT=false
+PRODUCTION_SCALING_PRIOR_SCHEDULED=false
+restore_production_scaling_hold
+`, {
+        confirmProtectedWindow: true,
+        easternClock: "1 1030",
+        scalingSnapshots: ["3\t6\tTrue\tTrue\tTrue", "3\t6\tFalse\tFalse\tFalse"],
+      });
+      assert.equal(result.status, 0, `${captured}: ${result.stderr}`);
+      assert.match(result.stdout, new RegExp(`^WAIT_CAPACITY expected=${expected}$`, "m"));
+      assert.equal(result.stdout.match(/WAIT_CAPACITY/g)?.length, 1, `${captured}: ${result.stdout}`);
+      const registrations = registerCommands(result.commands);
+      assert.equal(registrations.length, 2);
+      assert.ok(registrations.every(command => command.includes("--min-capacity 3 --max-capacity 6")));
+    }
+  });
+
+  it("skips the floor-capacity wait outside the school-day window even with a frozen count above one", () => {
+    const result = runLibrary(`
+revalidate_protected_window_scheduled_actions() { :; }
+wait_for_protected_window_api_capacity() { printf 'WAIT_CAPACITY expected=%s\\n' "$1"; }
+PRODUCTION_SCALING_HOLD_ACTIVE=true
+PROTECTED_WINDOW_CAPTURED_API_DESIRED=5
+PRODUCTION_SCALING_PRIOR_MAX=6
+PRODUCTION_SCALING_PRIOR_IN=false
+PRODUCTION_SCALING_PRIOR_OUT=false
+PRODUCTION_SCALING_PRIOR_SCHEDULED=false
+restore_production_scaling_hold
+`, {
+      confirmProtectedWindow: true,
+      easternClock: "1 1700",
+      scalingSnapshots: ["1\t6\tTrue\tTrue\tTrue", "1\t6\tFalse\tFalse\tFalse"],
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stdout, /WAIT_CAPACITY/);
+    assert.equal(registerCommands(result.commands).length, 2);
+  });
+
+  it("refuses protected scaling restoration without the captured API desired count", () => {
+    const result = runLibrary(`
+revalidate_protected_window_scheduled_actions() { :; }
+wait_for_protected_window_api_capacity() { printf 'WAIT_CAPACITY expected=%s\\n' "$1"; }
+PRODUCTION_SCALING_HOLD_ACTIVE=true
+PRODUCTION_SCALING_PRIOR_MAX=6
+PRODUCTION_SCALING_PRIOR_IN=false
+PRODUCTION_SCALING_PRIOR_OUT=false
+PRODUCTION_SCALING_PRIOR_SCHEDULED=false
+restore_production_scaling_hold
+`, {
+      confirmProtectedWindow: true,
+      easternClock: "1 1030",
+      scalingSnapshots: ["3\t6\tTrue\tTrue\tTrue", "3\t6\tFalse\tFalse\tFalse"],
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /captured protected-window API desired count is missing/);
+    assert.doesNotMatch(result.stdout, /WAIT_CAPACITY/);
+    assert.equal(registerCommands(result.commands).length, 0);
   });
 
   it("installs no-growth bounds before API mutation and restores them before scaling release", () => {

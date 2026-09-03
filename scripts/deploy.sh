@@ -1286,7 +1286,7 @@ restore_production_scaling_hold() {
   fi
 
   if [[ "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" == true ]]; then
-    local attempt stage_minimum release_minimum after_minimum
+    local attempt stage_minimum converge_target release_minimum after_minimum
     info "Restoring the scheduled production API target and exact prior scaling suspension state..."
     if ! revalidate_protected_window_scheduled_actions; then
       error "The production API scheduled-scaling contract changed while the protected hold was active."
@@ -1311,6 +1311,15 @@ restore_production_scaling_hold() {
       success "Exact previously suspended scheduled-scaling target restored"
       return 0
     fi
+    # The hold freezes desiredCount at the admitted value (dynamic and
+    # scheduled scaling suspended; nothing lowers it), so a fleet that target
+    # tracking had already scaled past the staged floor converges at that
+    # frozen count, never down to the floor. Waiting for exactly the floor
+    # would never return and would leave the hold in place.
+    if [[ ! "$PROTECTED_WINDOW_CAPTURED_API_DESIRED" =~ ^[1-6]$ ]]; then
+      error "The captured protected-window API desired count is missing; refusing to restore scaling without the frozen fleet size."
+      return 1
+    fi
     for attempt in 1 2 3 4; do
       if ! stage_minimum=$(protected_window_scheduled_minimum) ||
          ! set_production_scaling_target "$stage_minimum" "$PRODUCTION_SCALING_PRIOR_MAX" true true true ||
@@ -1318,9 +1327,13 @@ restore_production_scaling_hold() {
         error "Could not stage the current scheduled production scaling target."
         return 1
       fi
+      converge_target="$stage_minimum"
+      if (( PROTECTED_WINDOW_CAPTURED_API_DESIRED > converge_target )); then
+        converge_target="$PROTECTED_WINDOW_CAPTURED_API_DESIRED"
+      fi
       if (( stage_minimum > 1 )) &&
-         ! wait_for_protected_window_api_capacity "$stage_minimum"; then
-        error "The 05:45 school-day floor capacity did not converge before protected-window scaling restoration."
+         ! wait_for_protected_window_api_capacity "$converge_target"; then
+        error "The 05:45 school-day floor capacity did not converge at the frozen desired count (${converge_target}) before protected-window scaling restoration."
         return 1
       fi
       if ! release_minimum=$(protected_window_scheduled_minimum); then
@@ -6520,11 +6533,16 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   # A three-task ordinary rollout reuses the protected-window sequencing: the
   # API must converge before the worker mutates so the two 200% overlaps never
   # coincide (6x18 + 2x16 = 140 pool-max connections concurrently versus the
-  # reviewed 124 sequentially).
+  # reviewed 124 sequentially). No ECS waiter precedes this poll, so it carries
+  # the protected-window bounds (360 x 10s) explicitly: a 100/200 replacement
+  # needs task start, two 30s ALB health checks, and the 300s deregistration
+  # delay before ECS reports one COMPLETED deployment, far beyond the 30 x 2s
+  # post-waiter default an unadmitted ordinary run would otherwise receive.
   if [[ "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" == true || "$PRODUCTION_PREFLIGHT_API_DESIRED" == "3" ]]; then
     wait_for_production_backend_strict_stability \
       "$API_ROLLOUT_TASK_DEF" \
-      "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION"
+      "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION" \
+      360 10
     success "API replacement converged before worker mutation (protected window or three-task sequential rollout)"
   fi
 

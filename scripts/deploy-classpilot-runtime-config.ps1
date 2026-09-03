@@ -2113,6 +2113,10 @@ function Get-CurrentDeploymentEasternTime {
 }
 
 function Restore-ScalingHold {
+    param(
+        [ValidateRange(1, 720)][int]$MaxAttempts = 720,
+        [ValidateRange(0, 30)][int]$IntervalSeconds = 5
+    )
     if (-not $script:ScalingHoldAcquired) {
         throw "This process cannot restore an autoscaling hold it does not own."
     }
@@ -2133,7 +2137,13 @@ function Restore-ScalingHold {
             }
         }
         if ($stageMinimum -gt 1) {
-            [void](Wait-ApiCapacityExact -ExpectedDesiredCount $stageMinimum)
+            # The hold froze desiredCount (dynamic and scheduled scaling
+            # suspended; nothing lowers it), so a fleet already above the
+            # staged floor converges at that frozen count, never down to the
+            # floor. Waiting for exactly the floor would never return.
+            $frozenDesiredCount = [int](Get-ServiceSnapshot).Api.desiredCount
+            [void](Wait-ApiCapacityExact -ExpectedDesiredCount ([Math]::Max($stageMinimum, $frozenDesiredCount)) `
+                -MaxAttempts $MaxAttempts -IntervalSeconds $IntervalSeconds)
         }
         $releaseMinimum = Get-ScheduledApiMinimum -NowEastern (Get-CurrentDeploymentEasternTime)
         if ($releaseMinimum -ne $stageMinimum) { continue }
@@ -2999,6 +3009,27 @@ function Wait-ExactServicePairConvergence {
         }
     }
     throw "Runtime-config service convergence timed out."
+}
+
+function Wait-ApiConvergenceBeforeWorkerMutation {
+    param(
+        [Parameter(Mandatory = $true)][string]$ExpectedApiTaskDefinitionArn,
+        [Parameter(Mandatory = $true)][string]$CurrentWorkerTaskDefinitionArn,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 6)][int]$ExpectedApiDesiredCount,
+        [Parameter(Mandatory = $true)][bool]$NoGrowthDeploymentBounds,
+        [ValidateRange(1, 720)][int]$MaxAttempts = 720,
+        [ValidateRange(0, 30)][int]$IntervalSeconds = 5
+    )
+    # A three-task rollout under the ordinary 100/200 bounds converges the API
+    # before the worker mutates so the two 200% overlaps never coincide
+    # (6x18 + 2x16 = 140 pool-max connections concurrently versus the reviewed
+    # 124 sequentially). No-growth containment bounds already cap the overlap,
+    # and one or two API tasks stay under the ceiling concurrently.
+    if ($NoGrowthDeploymentBounds -or $ExpectedApiDesiredCount -lt 3) { return }
+    [void](Wait-ExactServicePairConvergence -ExpectedApiTaskDefinitionArn $ExpectedApiTaskDefinitionArn `
+        -ExpectedWorkerTaskDefinitionArn $CurrentWorkerTaskDefinitionArn `
+        -ExpectedApiDesiredCount $ExpectedApiDesiredCount `
+        -MaxAttempts $MaxAttempts -IntervalSeconds $IntervalSeconds)
 }
 
 function Wait-ApiCapacityExact {
@@ -4228,6 +4259,11 @@ function Invoke-RuntimeConfigApply {
         Write-OperationCheckpoint -Plan $Plan -PlanSha256 $PlanSha256 -Stage "apply_api_update_pending" `
             -CandidateApiArn $candidateApiArn -CandidateWorkerArn $candidateWorkerArn
         Invoke-RuntimeServiceUpdate -Role api -TaskDefinitionArn $candidateApiArn
+        Wait-ApiConvergenceBeforeWorkerMutation -ExpectedApiTaskDefinitionArn $candidateApiArn `
+            -CurrentWorkerTaskDefinitionArn ([string]$Plan.priorWorkerTaskDefinitionArn) `
+            -ExpectedApiDesiredCount $expectedApiDesiredCount `
+            -NoGrowthDeploymentBounds $useNoGrowthDeploymentBounds `
+            -MaxAttempts $ConvergenceAttempts -IntervalSeconds $ConvergenceIntervalSeconds
         Write-OperationCheckpoint -Plan $Plan -PlanSha256 $PlanSha256 -Stage "apply_worker_update_pending" `
             -CandidateApiArn $candidateApiArn -CandidateWorkerArn $candidateWorkerArn
         Invoke-RuntimeServiceUpdate -Role worker -TaskDefinitionArn $candidateWorkerArn
@@ -4242,7 +4278,7 @@ function Invoke-RuntimeConfigApply {
             Write-OperationCheckpoint -Plan $Plan -PlanSha256 $PlanSha256 -Stage "apply_off_bounds_restored" `
                 -CandidateApiArn $candidateApiArn -CandidateWorkerArn $candidateWorkerArn
         }
-        [void](Restore-ScalingHold)
+        [void](Restore-ScalingHold -MaxAttempts $ConvergenceAttempts -IntervalSeconds $ConvergenceIntervalSeconds)
         $scalingRestored = $true
         $terminalCandidateSafe = $true
         Complete-OperationMutationWindow
@@ -4276,7 +4312,7 @@ function Invoke-RuntimeConfigApply {
                 }
                 Write-OperationCheckpoint -Plan $Plan -PlanSha256 $PlanSha256 -Stage "apply_off_bounds_restored" `
                     -CandidateApiArn $candidateApiArn -CandidateWorkerArn $candidateWorkerArn
-                [void](Restore-ScalingHold)
+                [void](Restore-ScalingHold -MaxAttempts $ConvergenceAttempts -IntervalSeconds $ConvergenceIntervalSeconds)
                 $scalingRestored = $true
                 $terminalCandidateSafe = $true
                 Complete-OperationMutationWindow
@@ -4343,7 +4379,7 @@ function Invoke-RuntimeConfigApply {
             try { Restore-OffContainmentDeploymentBounds; $boundsRestored = $true } catch { $boundsRestored = $false }
         }
         if ($coherentServicePair -and $boundsRestored) {
-            try { [void](Restore-ScalingHold); $scalingRestored = $true } catch { $scalingRestored = $false }
+            try { [void](Restore-ScalingHold -MaxAttempts $ConvergenceAttempts -IntervalSeconds $ConvergenceIntervalSeconds); $scalingRestored = $true } catch { $scalingRestored = $false }
         }
         $failureStatus = if (-not $boundsRestored -or -not $scalingRestored) {
             "apply_failed_manual_intervention"
@@ -4533,6 +4569,11 @@ function Invoke-RuntimeConfigRollback {
             -CandidateApiArn ([string]$result.candidateApiTaskDefinitionArn) `
             -CandidateWorkerArn ([string]$result.candidateWorkerTaskDefinitionArn)
         Invoke-RuntimeServiceUpdate -Role api -TaskDefinitionArn ([string]$Plan.priorApiTaskDefinitionArn)
+        Wait-ApiConvergenceBeforeWorkerMutation -ExpectedApiTaskDefinitionArn ([string]$Plan.priorApiTaskDefinitionArn) `
+            -CurrentWorkerTaskDefinitionArn ([string]$result.candidateWorkerTaskDefinitionArn) `
+            -ExpectedApiDesiredCount $expectedApiDesiredCount `
+            -NoGrowthDeploymentBounds $protectedWindowMutation `
+            -MaxAttempts $ConvergenceAttempts -IntervalSeconds $ConvergenceIntervalSeconds
         Write-OperationCheckpoint -Plan $Plan -PlanSha256 $PlanSha256 -Stage "rollback_worker_update_pending" `
             -CandidateApiArn ([string]$result.candidateApiTaskDefinitionArn) `
             -CandidateWorkerArn ([string]$result.candidateWorkerTaskDefinitionArn)
@@ -4550,7 +4591,7 @@ function Invoke-RuntimeConfigRollback {
                 -CandidateApiArn ([string]$result.candidateApiTaskDefinitionArn) `
                 -CandidateWorkerArn ([string]$result.candidateWorkerTaskDefinitionArn)
         }
-        [void](Restore-ScalingHold)
+        [void](Restore-ScalingHold -MaxAttempts $ConvergenceAttempts -IntervalSeconds $ConvergenceIntervalSeconds)
         $terminalRollbackSafe = $true
         Complete-OperationMutationWindow
         $rollbackResult = Write-ResultEvidence -Plan $Plan -PlanSha256 $PlanSha256 -Status "rolled_back" `
@@ -4613,7 +4654,7 @@ function Invoke-RuntimeConfigRollback {
         }
         if ($coherentServicePair -and $boundsRestored) {
             try {
-                if ($script:ScalingHoldAcquired) { [void](Restore-ScalingHold) }
+                if ($script:ScalingHoldAcquired) { [void](Restore-ScalingHold -MaxAttempts $ConvergenceAttempts -IntervalSeconds $ConvergenceIntervalSeconds) }
                 else { [void](Assert-CanonicalScalingReleased) }
                 $scalingRestored = $true
             }

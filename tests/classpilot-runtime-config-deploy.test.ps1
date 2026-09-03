@@ -206,6 +206,8 @@ function Reset-MockDeploymentState {
         FailApiBoundsRestoreOnce = $false
         ApiBoundsRestoreFailureConsumed = $false
         TransitionApiDescribeReadsRemaining = 0
+        ConvergingApiDescribeReadsRemaining = 0
+        ApiPreviousArn = $ApiArn
         FailScalingReadbackOnce = $false
         ScalingReadbackFailureConsumed = $false
         RejectEcrLookup = $false
@@ -1437,6 +1439,25 @@ try {
                         }
                     )
                 }
+                $lastApiUpdate = [Math]::Max($state.Events.LastIndexOf("update:api:candidate"), $state.Events.LastIndexOf("update:api:source"))
+                $lastWorkerUpdate = [Math]::Max($state.Events.LastIndexOf("update:worker:candidate"), $state.Events.LastIndexOf("update:worker:source"))
+                if ($state.ConvergingApiDescribeReadsRemaining -gt 0 -and $lastApiUpdate -ge 0 -and $lastApiUpdate -gt $lastWorkerUpdate) {
+                    # Model an API replacement still rolling while the worker is untouched:
+                    # only a caller that sequences the worker behind API convergence sees these reads.
+                    $state.ConvergingApiDescribeReadsRemaining--
+                    $state.Events.Add("transition:api-converging")
+                    $apiService.deployments = @(
+                        [pscustomobject]@{
+                            status = "PRIMARY"; rolloutState = "IN_PROGRESS"; taskDefinition = $apiArn
+                            desiredCount = $state.ApiDesiredCount; runningCount = [Math]::Max(0, $state.ApiDesiredCount - 1)
+                            pendingCount = 0; failedTasks = 0
+                        },
+                        [pscustomobject]@{
+                            status = "ACTIVE"; rolloutState = "IN_PROGRESS"; taskDefinition = $state.ApiPreviousArn
+                            desiredCount = 0; runningCount = 1; pendingCount = 0; failedTasks = 0
+                        }
+                    )
+                }
                 return [pscustomobject]@{
                     failures = @()
                     services = @(
@@ -1520,7 +1541,7 @@ try {
                     throw "Mocked worker candidate update failure."
                 }
                 if ($isSource -and $state.FailRollbackReassertion) { throw "Mocked source reassertion failure." }
-                if ($isApi) { $state.ApiCurrentArn = $arn } else { $state.WorkerCurrentArn = $arn }
+                if ($isApi) { $state.ApiPreviousArn = $state.ApiCurrentArn; $state.ApiCurrentArn = $arn } else { $state.WorkerCurrentArn = $arn }
                 return [pscustomobject]@{ service = [pscustomobject]@{ taskDefinition = $arn } }
             }
             "ecs list-tasks" {
@@ -2784,6 +2805,59 @@ try {
     }
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
 
+    Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $globalRuntime
+    $global:RuntimeConfigTestState.ApiDesiredCount = 3
+    $global:RuntimeConfigTestState.ConvergingApiDescribeReadsRemaining = 1
+    $sequencedFloorPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
+        -PrivateProfilePath $trackingPilotProfilePath `
+        -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+        -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn `
+        -Now $now -SkipRepositoryCheck
+    $sequencedFloorPlan = Read-RuntimePlan -Path $sequencedFloorPlanResult.PlanPath `
+        -ExpectedSha256 $sequencedFloorPlanResult.PlanSha256
+    Assert-Condition ($sequencedFloorPlan.protectedWindowProductionMutation -eq $false) `
+        "Ordinary planning must admit a stable three-task API without protected-window confirmation."
+    $sequencedFloorApplyResult = Invoke-RuntimeConfigApply -Plan $sequencedFloorPlan `
+        -PlanSha256 $sequencedFloorPlanResult.PlanSha256 -Now $now `
+        -ConvergenceAttempts 3 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck
+    $sequencedFloorApplyEvents = @($global:RuntimeConfigTestState.Events)
+    Assert-Condition ($sequencedFloorApplyResult.status -ceq "applied" -and
+        $global:RuntimeConfigTestState.ConvergingApiDescribeReadsRemaining -eq 0 -and
+        [Array]::LastIndexOf($sequencedFloorApplyEvents, "transition:api-converging") -ge 0 -and
+        [Array]::LastIndexOf($sequencedFloorApplyEvents, "transition:api-converging") -lt
+        [Array]::IndexOf($sequencedFloorApplyEvents, "update:worker:candidate")) `
+        "A three-task ordinary apply must converge the API before mutating the worker so the two 200% overlaps never coincide."
+    $global:RuntimeConfigTestState.ConvergingApiDescribeReadsRemaining = 1
+    $sequencedFloorRollbackResult = Invoke-RuntimeConfigRollback -Plan $sequencedFloorPlan `
+        -PlanSha256 $sequencedFloorPlanResult.PlanSha256 -Now $now `
+        -ConvergenceAttempts 3 -ConvergenceIntervalSeconds 0
+    $sequencedFloorRollbackEvents = @($global:RuntimeConfigTestState.Events)
+    Assert-Condition ($sequencedFloorRollbackResult.status -ceq "rolled_back" -and
+        $global:RuntimeConfigTestState.ApiCurrentArn -ceq $apiSourceArn -and
+        $global:RuntimeConfigTestState.ConvergingApiDescribeReadsRemaining -eq 0 -and
+        [Array]::LastIndexOf($sequencedFloorRollbackEvents, "transition:api-converging") -lt
+        [Array]::IndexOf($sequencedFloorRollbackEvents, "update:worker:source")) `
+        "A three-task ordinary rollback must converge the API before mutating the worker."
+    Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
+    Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $globalRuntime
+    $global:RuntimeConfigTestState.ApiDesiredCount = 2
+    $global:RuntimeConfigTestState.ConvergingApiDescribeReadsRemaining = 1
+    $concurrentPairPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
+        -PrivateProfilePath $trackingPilotProfilePath `
+        -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+        -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn `
+        -Now $now -SkipRepositoryCheck
+    $concurrentPairPlan = Read-RuntimePlan -Path $concurrentPairPlanResult.PlanPath `
+        -ExpectedSha256 $concurrentPairPlanResult.PlanSha256
+    $concurrentPairApplyResult = Invoke-RuntimeConfigApply -Plan $concurrentPairPlan `
+        -PlanSha256 $concurrentPairPlanResult.PlanSha256 -Now $now `
+        -ConvergenceAttempts 3 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck
+    Assert-Condition ($concurrentPairApplyResult.status -ceq "applied" -and
+        $global:RuntimeConfigTestState.ConvergingApiDescribeReadsRemaining -eq 1 -and
+        -not (@($global:RuntimeConfigTestState.Events) -contains "transition:api-converging")) `
+        "A one- or two-task ordinary apply must keep the concurrent API/worker rollout."
+    Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
+
     $offProfilePath = Join-Path $testRoot "off-profile.json"
     Write-TestJson -Path $offProfilePath -Value ([pscustomobject]@{ schemaVersion = 1; mode = "off" })
     $global:RuntimeConfigTestState.TaskResponses[$apiSourceArn].tags = @()
@@ -2816,6 +2890,26 @@ try {
     Assert-Condition ([string]@($offCandidateContainer.environment | Where-Object name -CEQ "CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V1")[0].value -ceq "false") "Emergency off must keep ticket V1 disabled."
     $global:RuntimeConfigClockQueue.Clear()
     $global:RuntimeConfigGitState.Branch = "main"
+    Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
+    $global:RuntimeConfigTestState.ApiDesiredCount = 5
+    $global:RuntimeConfigTestState.ScalingMin = 3
+    $global:RuntimeConfigTestState.RejectEcrLookup = $true
+    1..3 | ForEach-Object {
+        $global:RuntimeConfigClockQueue.Enqueue([DateTimeOffset]::Parse("2026-08-24T10:30:00-04:00"))
+    }
+    $frozenAboveFloorPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $offProfilePath `
+        -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+        -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now
+    $frozenAboveFloorPlan = Read-RuntimePlan -Path $frozenAboveFloorPlanResult.PlanPath -ExpectedSha256 $frozenAboveFloorPlanResult.PlanSha256
+    $frozenAboveFloorResult = Invoke-RuntimeConfigApply -Plan $frozenAboveFloorPlan -PlanSha256 $frozenAboveFloorPlanResult.PlanSha256 -Now $now `
+        -ConvergenceAttempts 3 -ConvergenceIntervalSeconds 0
+    Assert-Condition ($frozenAboveFloorResult.status -ceq "applied" -and $frozenAboveFloorResult.scalingRestored -and
+        $global:RuntimeConfigTestState.ApiDesiredCount -eq 5 -and
+        $global:RuntimeConfigTestState.ScalingMin -eq 3 -and
+        -not $global:RuntimeConfigTestState.DynamicIn -and -not $global:RuntimeConfigTestState.DynamicOut -and
+        -not $global:RuntimeConfigTestState.Scheduled) `
+        "Emergency off inside the school-day floor window must release the hold at the frozen five-task count instead of waiting for exactly three."
+    Assert-Condition ($global:RuntimeConfigClockQueue.Count -eq 0) "Emergency off above the floor must use the live clock for staging, release, and post-release checks."
     foreach ($containmentCase in @(
         [pscustomobject]@{ Desired = 1; Minimum = 100; Maximum = 200; MinimumTasks = 1; MaximumTasks = 2 },
         [pscustomobject]@{ Desired = 2; Minimum = 50; Maximum = 100; MinimumTasks = 1; MaximumTasks = 2 },
