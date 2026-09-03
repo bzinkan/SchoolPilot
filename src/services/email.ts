@@ -1,4 +1,8 @@
 import sgMail from "@sendgrid/mail";
+import {
+  classpilotActivityLabel,
+  type ClasspilotActivityKind,
+} from "./classpilotActivityAttribution.js";
 
 // Lazy import to avoid circular dep (errorMonitor imports email.ts)
 let _errorMonitor: any = null;
@@ -399,6 +403,7 @@ export type SessionSummaryEmailOptions = {
     name: string;
     totalMinutes: number;
     topDomains: Array<{ domain: string; minutes: number }>;
+    topActivities?: Array<{ kind: string; domain: string; minutes: number }>;
     offTaskCount?: number;
     offTaskMinutes?: number;
     unclassifiedMinutes?: number;
@@ -412,6 +417,49 @@ export type SessionSummaryEmailOptions = {
   copyNotice?: string;
   deliveryId?: string;
 };
+
+/**
+ * "20m" for a whole minute count, "<1m" for anything that rounded down to zero.
+ *
+ * A site visited for twenty seconds used to render as "google.com (0m)", which
+ * reads as a bug rather than as a brief visit.
+ */
+function formatSiteMinutes(minutes: number): string {
+  const value = Number(minutes) || 0;
+  return value > 0 ? `${value}m` : "<1m";
+}
+
+/**
+ * The "Top Sites" cell.
+ *
+ * Prefers app-level activity ("Google Docs", "Google Search") over the bare
+ * hostname, matching what Student Data shows in-app. Falls back to hostnames
+ * for sessions predating the top_activities migration, where only domains were
+ * recorded. Brief visits are kept and shown as "<1m" rather than dropped, so
+ * the cell still accounts for where the time went.
+ */
+function renderTopSitesCell(student: SessionSummaryEmailOptions["students"][number]): string {
+  const activities = Array.isArray(student.topActivities) ? student.topActivities : [];
+  const entries = activities.length > 0
+    ? activities.map((activity) => ({
+      label: classpilotActivityLabel({
+        kind: activity.kind as ClasspilotActivityKind,
+        domain: String(activity.domain || ""),
+      }),
+      minutes: Number(activity.minutes) || 0,
+    }))
+    : student.topDomains.map((domain) => ({
+      label: String(domain.domain || ""),
+      minutes: Number(domain.minutes) || 0,
+    }));
+  return entries
+    .filter((entry) => entry.label)
+    .slice(0, 5)
+    // formatSiteMinutes yields plain text and can start with "<", so it is
+    // escaped here like any other untrusted-shaped content.
+    .map((entry) => `${escapeEmailHtml(entry.label)} (${escapeEmailHtml(formatSiteMinutes(entry.minutes))})`)
+    .join(", ");
+}
 
 function buildSessionSummaryEmailV1(options: SessionSummaryEmailOptions): { subject: string; html: string } {
   const { teacherName, className, date, startTime, endTime, duration, studentCount, students, copyNotice } = options;
@@ -441,10 +489,7 @@ function buildSessionSummaryEmailV1(options: SessionSummaryEmailOptions): { subj
   const studentRows = students
     .sort((a, b) => b.totalMinutes - a.totalMinutes)
     .map((s) => {
-      const domains = s.topDomains
-        .slice(0, 5)
-        .map((d) => `${escapeEmailHtml(d.domain)} (${Number(d.minutes) || 0}m)`)
-        .join(", ");
+      const domains = renderTopSitesCell(s);
       const coverageLabel = s.coverageStatus === "not_expected"
         ? "Not expected"
         : s.coverageStatus === "unavailable"
@@ -523,10 +568,7 @@ function buildSessionSummaryEmailV2(options: SessionSummaryEmailOptions): { subj
   const studentRows = students
     .sort((a, b) => b.totalMinutes - a.totalMinutes)
     .map((s) => {
-      const domains = s.topDomains
-        .slice(0, 5)
-        .map((d) => `${escapeEmailHtml(d.domain)} (${Number(d.minutes) || 0}m)`)
-        .join(", ");
+      const domains = renderTopSitesCell(s);
       const coverageLabel = s.coverageStatus === "not_expected"
         ? "Not expected"
         : s.coverageStatus === "unavailable"

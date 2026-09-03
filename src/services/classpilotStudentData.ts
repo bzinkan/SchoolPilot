@@ -73,6 +73,20 @@ export type ClasspilotStudentDataScopeOption = ClasspilotStudentDataScope & {
 
 export type ClasspilotStudentDataState = "final" | "live" | "finalizing";
 
+/**
+ * Why the numbers look the way they do.
+ *
+ * `monitored`   - a live session covered the window.
+ * `unattended`  - a scheduled block ran and was reported, but no teacher was
+ *                 connected. Heartbeats are still collected and attributed;
+ *                 only the live console was absent.
+ * `no_session`  - no session covered the window at all, so nothing was expected.
+ */
+export type ClasspilotStudentDataMonitoringCoverage =
+  | "monitored"
+  | "unattended"
+  | "no_session";
+
 export type ClasspilotStudentDataActivityKind = ClasspilotActivityKind;
 
 export type ClasspilotStudentDataActivity = {
@@ -86,6 +100,37 @@ const STUDENT_DATA_ACTIVITY_KINDS = new Set<ClasspilotStudentDataActivityKind>(
 );
 
 const CLASSPILOT_SESSION_MAX_MS = 12 * 60 * 60 * 1_000;
+
+/**
+ * Session modes whose usage is reportable in Student Data.
+ *
+ * A scheduled occurrence is promoted to 'live' only when a teacher is connected
+ * at the bell; with nobody connected it stays 'scheduled_report'. It is still
+ * finalized, still gets a classpilot_session_reports row, and still gets
+ * classpilot_session_usage rows -- every write path is mode-blind. Filtering
+ * reads on 'live' therefore wrote real monitoring data and then made it
+ * unreachable, which is what produced an empty Student Data screen for a class
+ * whose students were demonstrably on their devices.
+ *
+ * Reporting surfaces key on lifecycle, not on whether a teacher happened to
+ * have the console open. This matches getActiveTeachingSessions in storage.ts
+ * and classpilotAdminAnalytics, which already count unattended occurrences.
+ *
+ * Control surfaces -- tile/screenshot authorization, WebSocket subscribe,
+ * command dispatch, teacher chat, FAB actions, roster resync -- deliberately
+ * stay 'live'-only and must NOT use this.
+ */
+const REPORTABLE_SESSION_MODES = ["live", "scheduled_report"];
+
+/** Reportable-mode predicate for Drizzle queries over `teachingSessions`. */
+function reportableSessionMode(): SQL {
+  return inArray(teachingSessions.sessionMode, REPORTABLE_SESSION_MODES);
+}
+
+/** Reportable-mode predicate for raw SQL that aliases the table as `session`. */
+function reportableSessionModeSql(): SQL {
+  return sql`session.session_mode IN ('live', 'scheduled_report')`;
+}
 
 type StudentIdentity = {
   studentId: string;
@@ -248,6 +293,17 @@ function storedDomains(value: unknown, monitoredSeconds: number): Array<{ domain
   return domains;
 }
 
+/**
+ * Best-effort kind for legacy rows that stored hostnames only. Keep in step
+ * with the equivalent SQL CASE below, with legacyActivityKind in
+ * schoolpilot-app/src/products/classpilot/lib/studentData.js, and with
+ * classifyClasspilotActivity.
+ *
+ * google.com deliberately stays `domain` here. The live classifier reads the
+ * path to tell Search from Maps; a legacy row has no path, so labelling it
+ * "Google Search" would be a guess. Rendering the bare hostname is honest and
+ * matches what these rows show today.
+ */
 function fallbackActivityKind(domain: string): ClasspilotStudentDataActivityKind {
   if (domain === "docs.google.com") return "google_workspace_unspecified";
   if (domain === "slides.google.com") return "google_slides";
@@ -257,6 +313,8 @@ function fallbackActivityKind(domain: string): ClasspilotStudentDataActivityKind
   }
   if (domain === "classroom.google.com") return "google_classroom";
   if (domain === "drive.google.com") return "google_drive";
+  if (domain === "mail.google.com") return "google_mail";
+  if (domain === "meet.google.com") return "google_meet";
   return "domain";
 }
 
@@ -337,6 +395,7 @@ export function buildClasspilotStudentDataResponse(options: {
   selectedStudentId?: string;
   scope?: ClasspilotStudentDataScope;
   dataState?: ClasspilotStudentDataState;
+  monitoringCoverage?: ClasspilotStudentDataMonitoringCoverage;
   provisionalAsOf?: Date | null;
   timeZone: string;
   startLocalDate: string;
@@ -429,6 +488,7 @@ export function buildClasspilotStudentDataResponse(options: {
     selectedStudentId: options.selectedStudentId ?? null,
     scope: options.scope ?? null,
     dataState: options.dataState ?? "final",
+    monitoringCoverage: options.monitoringCoverage ?? "no_session",
     timeZone: options.timeZone,
     startLocalDate: options.startLocalDate,
     endLocalDate: options.endLocalDate,
@@ -455,6 +515,7 @@ export function buildClasspilotStudentDataResponse(options: {
       groupId: null,
     },
     dataState: options.dataState ?? "final",
+    monitoringCoverage: options.monitoringCoverage ?? "no_session",
     asOf: options.generatedAt.toISOString(),
     provisionalAsOf: options.provisionalAsOf?.toISOString() ?? null,
     range: {
@@ -624,7 +685,7 @@ async function loadActiveScopeSessions(options: {
   };
   const conditions = and(
     eq(teachingSessions.schoolId, options.schoolId),
-    eq(teachingSessions.sessionMode, "live"),
+    reportableSessionMode(),
     isNull(teachingSessions.endTime),
     sql`${teachingSessions.startTime} AT TIME ZONE 'UTC' <= ${options.authority.now.toISOString()}`,
     sql`(${teachingSessions.scheduledEndAt} IS NULL OR ${teachingSessions.scheduledEndAt} > ${options.authority.now.toISOString()})`,
@@ -736,7 +797,7 @@ async function loadStudentDataScopeSet(options: {
       INNER JOIN ${teachingSessions} AS session
         ON session.id = session_staff.teaching_session_id
        AND session.school_id = ${options.schoolId}
-       AND session.session_mode = 'live'
+       AND ${reportableSessionModeSql()}
       INNER JOIN ${groups} AS class_group
         ON class_group.id = session.group_id
        AND class_group.school_id = ${options.schoolId}
@@ -832,7 +893,7 @@ async function loadAuthorizedSession(options: {
   const conditions = and(
     eq(teachingSessions.id, options.sessionId),
     eq(teachingSessions.schoolId, options.schoolId),
-    eq(teachingSessions.sessionMode, "live"),
+    reportableSessionMode(),
     isNotNull(teachingSessions.rosterSnapshotCompletedAt),
     eq(groups.id, teachingSessions.groupId),
     eq(groups.schoolId, options.schoolId),
@@ -940,7 +1001,7 @@ function usageScopeConditions(options: {
   const conditions: SQL[] = [
     sql`usage.school_id = ${options.schoolId}`,
     sql`session.school_id = ${options.schoolId}`,
-    sql`session.session_mode = 'live'`,
+    reportableSessionModeSql(),
     sql`session.roster_snapshot_completed_at IS NOT NULL`,
     sql`class_group.school_id = ${options.schoolId}`,
     retainedSessionAuthoritySql(options.authority),
@@ -967,6 +1028,76 @@ function usageScopeConditions(options: {
     )})`);
   }
   return conditions;
+}
+
+/**
+ * Distinct session modes behind the usage rows in scope.
+ *
+ * Drives `monitoringCoverage` on the response. Without it "this class was never
+ * monitored" and "this class was monitored and the students were idle" are
+ * indistinguishable in the payload -- they render byte-identically -- so the UI
+ * had no way to stop presenting the first as though it were the second.
+ *
+ * Deliberately reuses usageScopeConditions verbatim so coverage can never
+ * disagree with the aggregate it describes.
+ */
+async function loadScopeSessionModes(options: {
+  schoolId: string;
+  role: ClasspilotStudentDataRole;
+  actorId: string;
+  selection: ResolvedStudentDataSelection;
+  startLocalDate: string;
+  endLocalDate: string;
+  studentIds?: string[];
+  authority: StudentDataAuthorityWindow;
+  dbInstance: typeof db;
+}): Promise<Set<string>> {
+  if (options.studentIds?.length === 0) return new Set();
+  const conditions = usageScopeConditions(options);
+  const staffJoin = options.role === "teacher"
+    ? sql`
+        INNER JOIN ${classpilotSessionStaff} AS session_staff
+          ON session_staff.school_id = ${options.schoolId}
+         AND session_staff.teaching_session_id = session.id
+         AND session_staff.staff_id = ${options.actorId}
+      `
+    : sql``;
+  const result = await options.dbInstance.execute(sql`
+    SELECT DISTINCT session.session_mode AS session_mode
+    FROM ${classpilotSessionUsage} AS usage
+    INNER JOIN ${teachingSessions} AS session
+      ON session.id = usage.teaching_session_id
+     AND session.school_id = ${options.schoolId}
+    INNER JOIN ${groups} AS class_group
+      ON class_group.id = session.group_id
+     AND class_group.school_id = ${options.schoolId}
+    LEFT JOIN ${classpilotSessionReports} AS report
+      ON report.school_id = ${options.schoolId}
+     AND report.teaching_session_id = session.id
+    ${staffJoin}
+    WHERE ${sql.join(conditions, sql` AND `)}
+  `);
+  const modes = new Set<string>();
+  for (const row of result.rows as Array<{ session_mode: unknown }>) {
+    if (typeof row.session_mode === "string" && row.session_mode) modes.add(row.session_mode);
+  }
+  return modes;
+}
+
+/**
+ * Whether the numbers on screen came from a monitored session, an unattended
+ * scheduled block, or no session at all.
+ */
+function resolveMonitoringCoverage(
+  storedModes: Set<string>,
+  candidates: ProvisionalSession[]
+): ClasspilotStudentDataMonitoringCoverage {
+  const modes = new Set(storedModes);
+  for (const candidate of candidates) {
+    if (candidate.session.sessionMode) modes.add(candidate.session.sessionMode);
+  }
+  if (modes.size === 0) return "no_session";
+  return modes.has("live") ? "monitored" : "unattended";
 }
 
 async function loadAggregatedStoredUsage(options: {
@@ -1086,6 +1217,10 @@ async function loadAggregatedStoredUsage(options: {
             WHEN 'spreadsheets.google.com' THEN 'google_sheets'
             WHEN 'classroom.google.com' THEN 'google_classroom'
             WHEN 'drive.google.com' THEN 'google_drive'
+            WHEN 'mail.google.com' THEN 'google_mail'
+            WHEN 'meet.google.com' THEN 'google_meet'
+            -- google.com stays 'domain': legacy rows carry no path, so Search
+            -- cannot be distinguished from Maps. See fallbackActivityKind.
             ELSE 'domain'
           END,
           'domain', NULLIF(BTRIM(domain_item.value->>'domain'), ''),
@@ -1261,7 +1396,7 @@ async function loadScopedIdentities(options: {
   const conditions: SQL[] = [
     sql`roster.school_id = ${options.schoolId}`,
     sql`session.school_id = ${options.schoolId}`,
-    sql`session.session_mode = 'live'`,
+    reportableSessionModeSql(),
     sql`session.roster_snapshot_completed_at IS NOT NULL`,
     sql`class_group.school_id = ${options.schoolId}`,
     retainedSessionAuthoritySql(options.authority),
@@ -1379,7 +1514,7 @@ async function loadProvisionalSessions(options: {
   const groupId = options.selection.session?.groupId || options.selection.scope.groupId!;
   const sessionConditions = [
     eq(teachingSessions.schoolId, options.schoolId),
-    eq(teachingSessions.sessionMode, "live"),
+    reportableSessionMode(),
     eq(teachingSessions.groupId, groupId),
     isNotNull(teachingSessions.rosterSnapshotCompletedAt),
     eq(groups.schoolId, options.schoolId),
@@ -1615,7 +1750,7 @@ async function loadStoredKeysForSessions(options: {
     .innerJoin(teachingSessions, and(
       eq(teachingSessions.id, classpilotSessionUsage.teachingSessionId),
       eq(teachingSessions.schoolId, options.schoolId),
-      eq(teachingSessions.sessionMode, "live")
+      reportableSessionMode()
     ))
     .leftJoin(classpilotSessionReports, and(
       eq(classpilotSessionReports.schoolId, options.schoolId),
@@ -1908,8 +2043,19 @@ export async function getClasspilotStudentData(options: {
       identities = [selected];
     }
     const studentIds = identities.map((identity) => identity.studentId);
-    const [storedUsage, candidates] = await Promise.all([
+    const [storedUsage, storedSessionModes, candidates] = await Promise.all([
       loadAggregatedStoredUsage({
+        schoolId: options.schoolId,
+        actorId: options.actorId,
+        role: options.role,
+        selection,
+        startLocalDate: window.startLocalDate,
+        endLocalDate: window.endLocalDate,
+        studentIds,
+        authority,
+        dbInstance: transactionDb,
+      }),
+      loadScopeSessionModes({
         schoolId: options.schoolId,
         actorId: options.actorId,
         role: options.role,
@@ -1955,6 +2101,7 @@ export async function getClasspilotStudentData(options: {
       selectedStudentId: options.studentId,
       scope: selection.scope,
       dataState,
+      monitoringCoverage: resolveMonitoringCoverage(storedSessionModes, candidates),
       provisionalAsOf: dataState === "final" ? null : provisionalUsage.asOf,
       timeZone: window.timeZone,
       startLocalDate: window.startLocalDate,

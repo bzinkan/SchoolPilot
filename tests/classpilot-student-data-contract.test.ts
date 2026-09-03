@@ -205,6 +205,72 @@ test("Student Data scope and live-state metadata are revision-bound without retr
   assert.equal(first.provisionalAsOf, "2026-08-28T14:00:00.000Z");
 });
 
+test("Student Data distinguishes an unattended class from one with no session", () => {
+  // The gap this closes: a class whose teacher never opened the console was
+  // finalized, had usage rows written, and then rendered identically to a class
+  // that was never scheduled at all -- same empty table, same "Final" badge.
+  // Nothing in the payload told the two apart.
+  const base = {
+    period: "today" as const,
+    scope: {
+      key: "class:religion",
+      kind: "class" as const,
+      label: "Grade 5 Religion",
+      groupId: "religion",
+    },
+    dataState: "final" as const,
+    provisionalAsOf: null,
+    timeZone: "America/New_York",
+    startLocalDate: "2026-09-02",
+    endLocalDate: "2026-09-02",
+    rangeStart: new Date("2026-09-02T04:00:00.000Z"),
+    rangeEnd: new Date("2026-09-03T04:00:00.000Z"),
+    generatedAt: new Date("2026-09-03T02:27:00.000Z"),
+    identities: [{ studentId: "student-a", name: "Ada Student" }],
+  };
+
+  // An unattended block still reports the time it measured.
+  const unattended = buildClasspilotStudentDataResponse({
+    ...base,
+    monitoringCoverage: "unattended" as const,
+    usageRows: [{
+      studentId: "student-a",
+      totalSeconds: 1260,
+      heartbeatCount: 126,
+      topDomains: [{ domain: "ixl.com", seconds: 1200 }],
+      computedAt: new Date("2026-09-02T15:40:00.000Z"),
+    }],
+  });
+  assert.equal(unattended.monitoringCoverage, "unattended");
+  assert.equal(unattended.monitoredSeconds, 1260);
+  assert.equal(unattended.students[0]!.monitoredSeconds, 1260);
+
+  // No session at all is a different fact and must not be dressed up as one.
+  const noSession = buildClasspilotStudentDataResponse({
+    ...base,
+    monitoringCoverage: "no_session" as const,
+    usageRows: [],
+  });
+  assert.equal(noSession.monitoringCoverage, "no_session");
+  assert.equal(noSession.monitoredSeconds, 0);
+
+  const monitored = buildClasspilotStudentDataResponse({
+    ...base,
+    monitoringCoverage: "monitored" as const,
+    usageRows: [],
+  });
+  assert.equal(monitored.monitoringCoverage, "monitored");
+
+  // Coverage is part of the answer, so it must move the revision hash --
+  // otherwise a cached body could describe the wrong situation.
+  assert.notEqual(noSession.revision, monitored.revision);
+  assert.notEqual(unattended.revision, monitored.revision);
+
+  // Absent input is reported honestly rather than defaulting to "monitored".
+  const unspecified = buildClasspilotStudentDataResponse({ ...base, usageRows: [] });
+  assert.equal(unspecified.monitoringCoverage, "no_session");
+});
+
 test("roster cursors are stable and page inputs are strictly bounded", () => {
   const cursor = encodeClasspilotRosterCursor({
     id: "student-1",

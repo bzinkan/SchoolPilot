@@ -13089,6 +13089,79 @@ export async function getClasspilotSessionStudentReports(
     .orderBy(classpilotSessionStudentReports.studentNameSnapshot, classpilotSessionStudentReports.studentId);
 }
 
+/**
+ * Per-student activity totals for one finalized session, keyed by student id.
+ *
+ * The immutable per-student report stores `top_domains` only -- deliberately,
+ * and enforced by tests/classpilot-monitoring-migration-contract.test.ts -- so
+ * the session summary email reads app-level activity from
+ * classpilot_session_usage instead. Both are written inside the same
+ * completeClasspilotSessionReport transaction, so a ready report always has its
+ * matching usage rows.
+ *
+ * Rows predating the top_activities migration have it NULL; callers fall back
+ * to domains for those.
+ */
+export type ClasspilotSessionUsageActivity = {
+  kind: string;
+  domain: string;
+  seconds: number;
+};
+
+export async function getClasspilotSessionUsageActivitiesBySession(
+  schoolId: string,
+  teachingSessionId: string,
+  dbInstance: typeof db = db
+): Promise<Map<string, ClasspilotSessionUsageActivity[]>> {
+  const rows = await dbInstance
+    .select({
+      studentId: classpilotSessionUsage.studentId,
+      topActivities: classpilotSessionUsage.topActivities,
+    })
+    .from(classpilotSessionUsage)
+    .where(and(
+      eq(classpilotSessionUsage.schoolId, schoolId),
+      eq(classpilotSessionUsage.teachingSessionId, teachingSessionId)
+    ));
+
+  // Usage is keyed (teaching_session_id, student_id, local_date), so a session
+  // crossing local midnight has more than one row per student. Sum them rather
+  // than letting the last row read win and silently drop the rest.
+  // `|` is a safe join: kinds are lowercase identifiers and domains are
+  // hostnames, so neither can contain it.
+  const totalsByStudent = new Map<string, Map<string, ClasspilotSessionUsageActivity>>();
+  for (const row of rows) {
+    if (!Array.isArray(row.topActivities)) continue;
+    let totals = totalsByStudent.get(row.studentId);
+    if (!totals) {
+      totals = new Map<string, ClasspilotSessionUsageActivity>();
+      totalsByStudent.set(row.studentId, totals);
+    }
+    for (const raw of row.topActivities as unknown[]) {
+      if (!raw || typeof raw !== "object") continue;
+      const item = raw as Record<string, unknown>;
+      const domain = typeof item.domain === "string" ? item.domain.trim() : "";
+      if (!domain) continue;
+      const kind = typeof item.kind === "string" && item.kind ? item.kind : "domain";
+      const seconds = Number(item.seconds);
+      const key = `${kind}|${domain}`;
+      const entry = totals.get(key) || { kind, domain, seconds: 0 };
+      if (Number.isFinite(seconds) && seconds > 0) entry.seconds += seconds;
+      totals.set(key, entry);
+    }
+  }
+
+  const byStudent = new Map<string, ClasspilotSessionUsageActivity[]>();
+  for (const [studentId, totals] of totalsByStudent) {
+    byStudent.set(studentId, [...totals.values()].sort((left, right) => (
+      right.seconds - left.seconds
+        || left.kind.localeCompare(right.kind)
+        || left.domain.localeCompare(right.domain)
+    )));
+  }
+  return byStudent;
+}
+
 export type AuthorizedClasspilotSessionReportRead =
   | { status: "not_found" | "unauthorized" | "expired" }
   | {
@@ -13222,7 +13295,13 @@ export async function listRecentClasspilotTeachingSessions(options: {
   };
   const conditions = and(
     eq(teachingSessions.schoolId, options.schoolId),
-    eq(teachingSessions.sessionMode, LIVE_TEACHING_SESSION_MODE),
+    // Report history is a reporting surface, so it lists unattended scheduled
+    // occurrences too: they are finalized and carry a session report exactly
+    // like live ones. Skipped occurrences stay excluded below.
+    inArray(teachingSessions.sessionMode, [
+      LIVE_TEACHING_SESSION_MODE,
+      SCHEDULED_REPORT_SESSION_MODE,
+    ]),
     isNotNull(teachingSessions.endTime),
     eq(groups.schoolId, options.schoolId),
     or(

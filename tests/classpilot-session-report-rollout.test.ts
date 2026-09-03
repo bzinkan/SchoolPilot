@@ -256,3 +256,77 @@ test("v1 JSON and email presentation remain the legacy contract", () => {
   assert.match(legacy.html, />Site<\/th>/);
   assert.match(v2.html, /Screenshots are not used|Unclassified|Off-task \/ events|Review status/);
 });
+
+test("session summary emails name the Google app instead of the bare hostname", () => {
+  const baseEmail = {
+    to: "teacher@example.edu",
+    teacherName: "Teacher",
+    className: "Grade 5 Religion",
+    date: "September 2, 2026",
+    startTime: "11:10 AM",
+    endTime: "11:40 AM",
+    duration: "30 min",
+    studentCount: 1,
+    students: [{
+      name: "Student",
+      totalMinutes: 21,
+      // What the immutable report carries: hostnames only.
+      topDomains: [
+        { domain: "ixl.com", minutes: 20 },
+        { domain: "google.com", minutes: 0 },
+        { domain: "docs.google.com", minutes: 1 },
+      ],
+      // What classpilot_session_usage carries: resolved apps.
+      topActivities: [
+        { kind: "domain", domain: "ixl.com", minutes: 20 },
+        { kind: "google_search", domain: "google.com", minutes: 0 },
+        { kind: "google_docs", domain: "docs.google.com", minutes: 1 },
+      ],
+      coverageStatus: "complete" as const,
+      coveragePercent: 86,
+      gapMinutes: 3,
+    }],
+  };
+
+  for (const reportVersion of [1, 2]) {
+    const { html } = buildSessionSummaryEmail({ ...baseEmail, reportVersion });
+    const label = `reportVersion ${reportVersion}`;
+
+    assert.match(html, /Google Search/, `${label}: Search should be named`);
+    assert.match(html, /Google Docs/, `${label}: Docs should be named`);
+    // A plain site keeps its hostname -- only Google properties gain a label.
+    assert.match(html, /ixl\.com \(20m\)/, `${label}: plain hostname preserved`);
+    // The bare domain must not survive alongside its own label.
+    assert.doesNotMatch(html, /google\.com \(/, `${label}: bare google.com should be gone`);
+    // Sub-minute visits read as "<1m", not the nonsense "0m" -- and the "<" is
+    // HTML-escaped so email sanitizers cannot eat it as a stray tag.
+    assert.match(html, /Google Search \(&lt;1m\)/, `${label}: sub-minute is escaped`);
+    assert.doesNotMatch(html, /\(<1m\)/, `${label}: raw < must not reach the markup`);
+    assert.doesNotMatch(html, /\(0m\)/, `${label}: no 0m entries`);
+  }
+});
+
+test("session summary emails fall back to hostnames when activities are absent", () => {
+  // Sessions finalized before the top_activities migration have no activity
+  // rows. They must keep rendering exactly as they did.
+  const { html } = buildSessionSummaryEmail({
+    to: "teacher@example.edu",
+    teacherName: "Teacher",
+    className: "Class",
+    date: "September 2, 2026",
+    startTime: "11:10 AM",
+    endTime: "11:40 AM",
+    duration: "30 min",
+    studentCount: 1,
+    reportVersion: 1,
+    students: [{
+      name: "Student",
+      totalMinutes: 20,
+      topDomains: [{ domain: "ixl.com", minutes: 20 }],
+      coverageStatus: "complete" as const,
+      coveragePercent: 100,
+      gapMinutes: 0,
+    }],
+  });
+  assert.match(html, /ixl\.com \(20m\)/);
+});
