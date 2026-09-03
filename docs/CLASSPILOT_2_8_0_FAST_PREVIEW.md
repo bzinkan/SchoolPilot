@@ -79,7 +79,7 @@ the existing tracking-window scope and only with a private
 `-FastPreviewCandidateReceiptPath`. That version-1 receipt must be no more than
 two hours old and must bind all of the following:
 
-- the exact `v2.8.1` tag, 40-character ClassPilot merge SHA, 64-character ZIP
+- the exact `v2.8.2` tag, 40-character ClassPilot merge SHA, 64-character ZIP
   SHA-256, and production extension ID
   `iggbfegfcjkfieoemeolfmfnapepalca`;
 - the pilot school, current SchoolPilot runtime-tool SHA, deployed app SHA and
