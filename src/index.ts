@@ -21,6 +21,7 @@ import { ensureHeartbeatHistoryIndexOnline } from "./db/heartbeatHistoryIndex.js
 import { resolveEcsApiRuntimeIdentity } from "./services/ecsRuntimeIdentity.js";
 import { bindHeartbeatHotPathApiRuntimeTaskDefinitionSha256 } from "./services/heartbeatHotPathMetrics.js";
 import { assertClasspilotCapabilityRolloutsEnv } from "./services/classpilotProtocol.js";
+import { assertClasspilotSupervisionPreviewEnv } from "./config/classpilotSupervisionPreviewRollout.js";
 import {
   hasCompletedSchoolPilotMigration,
   runSchoolPilotMigrationLedger,
@@ -272,6 +273,9 @@ function validateEnv(): void {
   // A set-but-malformed rollout map fails every ClassPilot capability closed for
   // every school (a silent extension regression). Refuse to boot in any environment.
   assertClasspilotCapabilityRolloutsEnv();
+  // A supervision-preview value an operator meant as an enablement but that
+  // would silently read as off is worse than no value at all.
+  assertClasspilotSupervisionPreviewEnv();
 }
 
 validateEnv();

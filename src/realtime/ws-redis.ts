@@ -705,6 +705,7 @@ export type ScreenshotData = {
   studentId?: string;
   studentSessionId?: string;
   teachingSessionId?: string;
+  supervisionContextId?: string;
   controlRevision?: number;
   bindingVersion?: string;
 };
@@ -727,6 +728,20 @@ export type ClassBoundScreenshotBinding = ScreenshotBinding & {
 };
 
 export type ClassBoundScreenshotData = BoundScreenshotData & ClassBoundScreenshotBinding;
+
+/**
+ * A supervision-claimed student has no teaching session by construction: the
+ * control-state CHECK constraint makes class scope and supervision scope
+ * mutually exclusive. Its pixels bind to the supervision context and control
+ * revision instead, and live in their own key namespace.
+ */
+export type SupervisionBoundScreenshotBinding = ScreenshotBinding & {
+  supervisionContextId: string;
+  controlRevision: number;
+};
+
+export type SupervisionBoundScreenshotData =
+  BoundScreenshotData & SupervisionBoundScreenshotBinding;
 
 export type ScreenshotBatchReadResult =
   | { status: "ok"; screenshots: (ScreenshotData | null)[] }
@@ -780,6 +795,42 @@ export function classBoundScreenshotBindingCacheKey(
   return `${SCREENSHOT_KEY_PREFIX}class-bound:${classBoundScreenshotBindingDigest(binding)}`;
 }
 
+// Domain-separated from the class digest so identical binding material cannot
+// produce a colliding key across the two namespaces.
+const SUPERVISION_BOUND_SCREENSHOT_DOMAIN = "classpilot:screenshot:supervision-bound:v1";
+
+function supervisionBoundScreenshotBindingDigest(
+  binding: SupervisionBoundScreenshotBinding
+): string {
+  return createHash("sha256")
+    .update(SUPERVISION_BOUND_SCREENSHOT_DOMAIN)
+    .update("\0")
+    .update(binding.schoolId)
+    .update("\0")
+    .update(binding.deviceId)
+    .update("\0")
+    .update(binding.studentId)
+    .update("\0")
+    .update(binding.studentSessionId)
+    .update("\0")
+    .update(binding.supervisionContextId)
+    .update("\0")
+    .update(String(binding.controlRevision))
+    .digest("hex");
+}
+
+export function supervisionBoundScreenshotBindingVersion(
+  binding: SupervisionBoundScreenshotBinding
+): string {
+  return `v3:${supervisionBoundScreenshotBindingDigest(binding)}`;
+}
+
+export function supervisionBoundScreenshotBindingCacheKey(
+  binding: SupervisionBoundScreenshotBinding
+): string {
+  return `${SCREENSHOT_KEY_PREFIX}supervision-bound:${supervisionBoundScreenshotBindingDigest(binding)}`;
+}
+
 const SCREENSHOT_MAX_CLOCK_SKEW_MS = 30_000;
 
 export function decodeScreenshotData(value: unknown): ScreenshotData | null {
@@ -822,6 +873,9 @@ export function decodeScreenshotData(value: unknown): ScreenshotData | null {
       : {}),
     ...(typeof candidate.teachingSessionId === "string"
       ? { teachingSessionId: candidate.teachingSessionId }
+      : {}),
+    ...(typeof candidate.supervisionContextId === "string"
+      ? { supervisionContextId: candidate.supervisionContextId }
       : {}),
     ...(Number.isSafeInteger(candidate.controlRevision)
       ? { controlRevision: candidate.controlRevision }
@@ -871,8 +925,34 @@ export function classBoundScreenshotMatchesBinding(
     && data.studentId === binding.studentId
     && data.studentSessionId === binding.studentSessionId
     && data.teachingSessionId === binding.teachingSessionId
+    && data.supervisionContextId === undefined
     && data.controlRevision === binding.controlRevision
     && data.bindingVersion === classBoundScreenshotBindingVersion(binding)
+    && Number.isFinite(capturedAtMs)
+    && Math.abs(capturedAtMs - data.timestamp) <= 1_000;
+}
+
+/**
+ * The mirror of the class matcher. The two are mutually exclusive by field
+ * presence as well as by key namespace and binding-version prefix, so a pixel
+ * captured under one authority can never satisfy a read under the other.
+ */
+export function supervisionBoundScreenshotMatchesBinding(
+  data: ScreenshotData | null,
+  binding: SupervisionBoundScreenshotBinding
+): boolean {
+  if (!data) return false;
+  const capturedAtMs = typeof data.capturedAt === "string"
+    ? Date.parse(data.capturedAt)
+    : Number.NaN;
+  return data.schoolId === binding.schoolId
+    && data.deviceId === binding.deviceId
+    && data.studentId === binding.studentId
+    && data.studentSessionId === binding.studentSessionId
+    && data.supervisionContextId === binding.supervisionContextId
+    && data.teachingSessionId === undefined
+    && data.controlRevision === binding.controlRevision
+    && data.bindingVersion === supervisionBoundScreenshotBindingVersion(binding)
     && Number.isFinite(capturedAtMs)
     && Math.abs(capturedAtMs - data.timestamp) <= 1_000;
 }
@@ -925,6 +1005,30 @@ export async function setClassBoundScreenshot(
     return true;
   } catch (error) {
     console.warn("[Screenshot] Redis class-bound setEx failed:", safeErrorMetadata(error));
+    return false;
+  }
+}
+
+export async function setSupervisionBoundScreenshot(
+  binding: SupervisionBoundScreenshotBinding,
+  data: SupervisionBoundScreenshotData
+): Promise<boolean> {
+  if (!supervisionBoundScreenshotMatchesBinding(data, binding)) return false;
+  if (!redisUrl) return false;
+  await ensureRedisReady();
+  if (!redisEnabled || !redisPublisher) return false;
+  try {
+    await redisPublisher.setEx(
+      supervisionBoundScreenshotBindingCacheKey(binding),
+      SCREENSHOT_TTL_SECONDS,
+      JSON.stringify(data)
+    );
+    return true;
+  } catch (error) {
+    console.warn(
+      "[Screenshot] Redis supervision-bound setEx failed:",
+      safeErrorMetadata(error)
+    );
     return false;
   }
 }
@@ -990,6 +1094,22 @@ export function decodeClassBoundScreenshotBatchRead(
   };
 }
 
+export function decodeSupervisionBoundScreenshotBatchRead(
+  bindings: readonly SupervisionBoundScreenshotBinding[],
+  result: unknown
+): ScreenshotBatchReadResult {
+  if (!Array.isArray(result) || result.length !== bindings.length) {
+    return { status: "unavailable" };
+  }
+  return {
+    status: "ok",
+    screenshots: bindings.map((binding, index) => {
+      const screenshot = decodeScreenshotData(result[index]);
+      return supervisionBoundScreenshotMatchesBinding(screenshot, binding) ? screenshot : null;
+    }),
+  };
+}
+
 /**
  * Fetch a dashboard cohort with one Redis MGET. A successful read keeps
  * missing, expired, mismatched, or corrupt rows isolated as null. Transport
@@ -1051,6 +1171,37 @@ export async function getClassBoundScreenshots(
     return decodeClassBoundScreenshotBatchRead(bindings, result);
   } catch (error) {
     console.warn("[Screenshot] Redis class-bound mGet failed:", safeErrorMetadata(error));
+    return { status: "unavailable" };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/** Supervision reads never consult class, V1, or device-only keys. */
+export async function getSupervisionBoundScreenshots(
+  bindings: readonly SupervisionBoundScreenshotBinding[]
+): Promise<ScreenshotBatchReadResult> {
+  if (bindings.length === 0) return { status: "ok", screenshots: [] };
+  if (!redisUrl) {
+    return process.env.NODE_ENV === "production" || process.env.APP_ENV === "production"
+      ? { status: "unavailable" }
+      : { status: "ok", screenshots: bindings.map(() => null) };
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 250);
+  timeout.unref?.();
+  try {
+    const { redisCommand } = await import("../middleware/rateLimiter.js");
+    const result = await redisCommand(
+      ["MGET", ...bindings.map(supervisionBoundScreenshotBindingCacheKey)],
+      { readyTimeoutMs: 100, signal: controller.signal }
+    );
+    return decodeSupervisionBoundScreenshotBatchRead(bindings, result);
+  } catch (error) {
+    console.warn(
+      "[Screenshot] Redis supervision-bound mGet failed:",
+      safeErrorMetadata(error)
+    );
     return { status: "unavailable" };
   } finally {
     clearTimeout(timeout);

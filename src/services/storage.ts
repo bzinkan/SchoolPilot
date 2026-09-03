@@ -19,6 +19,7 @@ import {
   classpilotSessionReportV2Mode,
   classpilotSessionReportVersionForNewRow,
 } from "../config/classpilotSessionReportRollout.js";
+import { classpilotSupervisionPreviewObserved } from "../config/classpilotSupervisionPreviewRollout.js";
 import {
   emptyClasspilotRestrictions,
   classpilotControlStateHasAuthRelevantRestriction,
@@ -22826,6 +22827,23 @@ export type ClasspilotScreenshotAuthorityProjection = {
   controlRevisionIssuedAt?: Date | null;
   /** Manual-session/class deadline, if one is earlier than the rolling screenshot lease. */
   authorityExpiresAt: Date | null;
+  /**
+   * Server-only retention target for a supervision-claimed student. It is never
+   * serialized to a device, never part of the wire authority union, and never an
+   * authorization source on the read path: the device continues to hold and echo
+   * a plain `student_session` claim. Its only job is to tell the upload handler
+   * that this discarded-by-default frame may instead be retained under the
+   * claim's own key, and until which instant.
+   */
+  supervisionRetention?: ClasspilotSupervisionRetentionTarget;
+};
+
+export type ClasspilotSupervisionRetentionTarget = {
+  supervisionContextId: string;
+  assignedStaffId: string;
+  controlRevision: number;
+  /** Earliest of the claim deadline and the control-state deadlines. */
+  expiresAt: Date;
 };
 
 function earliestClasspilotAuthorityExpiry(
@@ -22846,6 +22864,60 @@ function earliestClasspilotAuthorityExpiry(
  * and no delegated supervision. Every other current binding resolves to the
  * non-pixel student-session authority.
  */
+/**
+ * Resolve the retention target for a student whose control state is bound to a
+ * supervision claim. Mirrors the defense-in-depth shape of the teaching path:
+ * the control row is re-read under the caller's transaction, then the live claim
+ * is re-asserted through the same predicate every other supervision check uses,
+ * so a released or expired claim can never yield a target. Returns undefined
+ * whenever anything is out of alignment.
+ */
+async function resolveClasspilotSupervisionRetentionTarget(
+  options: {
+    schoolId: string;
+    studentId: string;
+    supervisionContextId: string;
+    controlRevision: number;
+    hardExpiresAt: Date;
+    scheduledEndAt: Date | null;
+  },
+  dbInstance: typeof db = db
+): Promise<ClasspilotSupervisionRetentionTarget | undefined> {
+  const now = new Date();
+  if (options.hardExpiresAt.getTime() <= now.getTime()) return undefined;
+  if (options.scheduledEndAt && options.scheduledEndAt.getTime() <= now.getTime()) {
+    return undefined;
+  }
+
+  // Sequential, not parallel: Drizzle transactions share one pg client and the
+  // authority projection must stay compatible with pg@9's single-query rule.
+  const supervision = await getActiveSupervisionForStudents(
+    options.schoolId,
+    [options.studentId],
+    dbInstance
+  );
+  const claim = supervision.find(
+    (row) => row.context.id === options.supervisionContextId
+  );
+  if (!claim || supervision.length !== 1) return undefined;
+  if (claim.context.status !== "active") return undefined;
+  if (!claim.context.assignedStaffId) return undefined;
+
+  const expiresAt = earliestClasspilotAuthorityExpiry(
+    claim.context.endsAt,
+    options.hardExpiresAt,
+    options.scheduledEndAt
+  );
+  if (!expiresAt || expiresAt.getTime() <= now.getTime()) return undefined;
+
+  return {
+    supervisionContextId: options.supervisionContextId,
+    assignedStaffId: claim.context.assignedStaffId,
+    controlRevision: options.controlRevision,
+    expiresAt,
+  };
+}
+
 export async function getClasspilotScreenshotAuthorityProjection(options: {
   schoolId: string;
   studentId: string;
@@ -22909,6 +22981,34 @@ export async function getClasspilotScreenshotAuthorityProjection(options: {
       ? session.manualLeaseExpiresAt
       : null,
   };
+  // A supervision claim writes teachingSessionId = null and a non-null
+  // supervisionContextId, so it fails the teaching gate below on both counts.
+  // Resolve its retention target first: the returned authority is still the
+  // non-pixel student-session claim the device echoes, carrying a server-only
+  // note that the upload handler may keep this frame for the claiming staff.
+  // Gated on the rollout so that with the feature off this costs exactly
+  // nothing: no extra query on the upload path, no behavioural difference of
+  // any kind. In observe mode the resolution runs so its counters are real
+  // before any frame is ever retained.
+  if (
+    controlState?.supervisionContextId
+    && controlState.hardExpiresAt
+    && classpilotSupervisionPreviewObserved(options.schoolId)
+  ) {
+    const supervisionRetention = await resolveClasspilotSupervisionRetentionTarget(
+      {
+        schoolId: options.schoolId,
+        studentId: options.studentId,
+        supervisionContextId: controlState.supervisionContextId,
+        controlRevision,
+        hardExpiresAt: controlState.hardExpiresAt,
+        scheduledEndAt: controlState.scheduledEndAt ?? null,
+      },
+      dbInstance
+    );
+    if (supervisionRetention) return { ...studentAuthority, supervisionRetention };
+    return studentAuthority;
+  }
   if (
     !controlState?.teachingSessionId
     || controlState.supervisionContextId !== null
