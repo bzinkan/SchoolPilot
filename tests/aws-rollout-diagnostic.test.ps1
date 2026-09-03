@@ -2127,6 +2127,8 @@ Assert-Throws { Assert-RedisReplicationIdentity $redisGroup $wrongRedisCluster $
 
 Assert-Throws { Assert-NoScheduledBoundaryOverlap -NowUtc ([DateTimeOffset]'2026-07-20T08:00:00Z') -WorstCaseLifecycleSeconds 7200 } 'would cross' 'The full lifecycle guard must reject a weekday scaling-boundary overlap.'
 Assert-NoScheduledBoundaryOverlap -NowUtc ([DateTimeOffset]'2026-07-20T06:00:00Z') -WorstCaseLifecycleSeconds 7200
+Assert-Throws { Assert-NoScheduledBoundaryOverlap -NowUtc ([DateTimeOffset]'2026-07-20T18:30:00Z') -WorstCaseLifecycleSeconds 7200 } 'would cross' 'The full lifecycle guard must reject crossing the 16:00 ET school-day floor scale-down boundary.'
+Assert-NoScheduledBoundaryOverlap -NowUtc ([DateTimeOffset]'2026-07-20T13:30:00Z') -WorstCaseLifecycleSeconds 7200
 Assert-Throws { Assert-NoScheduledBoundaryOverlap -NowUtc ([DateTimeOffset]'2026-07-20T06:00:00Z') -WorstCaseLifecycleSeconds 5399 } 'at least 90 minutes' 'A shortened lifecycle guard must be rejected.'
 
 $lockConfig = [pscustomobject]@{EvidenceDirectory=[IO.Path]::GetTempPath();RunId="diagnostic-lock-$([Guid]::NewGuid().ToString('N'))"}

@@ -68,13 +68,13 @@ window, the only authorized deploy-script shape is:
 ```
 
 The flag is admitted only when the process starts during the weekday
-04:45–10:14 Eastern window. It rejects frontend, RLS, skip-wait, immutable-image, same-image,
+04:45–05:59 Eastern window. It rejects frontend, RLS, skip-wait, immutable-image, same-image,
 capacity, observation, rehearsal, and receipt modes. It accepts only a stable
 API desired count from one through six, installs the same 1–6 bounds documented
 below before API mutation, converges the API before the singleton worker, and
-validates and hash-binds the exact 05:45/10:00 scheduled actions, and restores
+validates and hash-binds the exact 05:45/16:00 scheduled actions, and restores
 the exact prior deployment and scheduled-scaling configuration. If restoration
-must raise the arrival minimum to six, completion waits for six desired,
+must raise the school-day floor to three, completion waits for three desired,
 running, and healthy API targets. If a candidate may already have served and a
 safe terminal cannot be proven, the controller preserves its recovery files and
 retains no-growth/scaling containment for explicit roll-forward recovery rather
@@ -112,15 +112,15 @@ checks could delay containment after code advances or during the school day.
 It can only turn every capability off; it cannot enable or partially activate
 features.
 
-Feature-enabling mutation inside the weekday 04:45–10:14 Eastern protected
+Feature-enabling mutation inside the weekday 04:45–05:59 Eastern protected
 window is a separate explicit exception; only that admitted protected run may
-also use an API desired count above two.
+also use an API desired count above three.
 Both Plan and Apply must include `-ConfirmProductionMutation` and
 `-ConfirmProtectedWindowProductionMutation`. The approved synthetic-only
 global activation additionally requires
 `-ConfirmSyntheticOnlyGlobalActivation`; omitting any one of the three fails
 before mutation. Ordinary feature-enabling plans remain outside the protected
-window and accept only one or two stable API tasks.
+window and accept only one, two, or three stable API tasks.
 
 Both `off` and an explicitly protected feature-enabling plan use these exact
 temporary API `minimumHealthyPercent/maximumPercent` bounds:
@@ -138,8 +138,8 @@ The singleton worker uses `0/100`. The helper preserves the complete reviewed
 ROLLING deployment configuration, including the enabled rollback circuit
 breaker and alarm fields, while changing only those percentages. It suspends
 dynamic and scheduled scaling during mutation, restores the exact deployment
-configuration, and reconciles the current weekday 05:45–10:00 Eastern scheduled
-minimum (`6` in-window, `1` otherwise) with a two-phase, boundary-checked release
+configuration, and reconciles the current weekday 05:45–16:00 Eastern scheduled
+minimum (`3` in-window, `1` otherwise) with a two-phase, boundary-checked release
 before removing the hold. If desired capacity drifts after hold acquisition,
 service mutation stops immediately; recovery re-derives the bounds from the
 current frozen count rather than a stale pre-hold count. The bounded convergence
@@ -342,9 +342,9 @@ production mutation lease. Never rewrite those fields as `managed` or `passed`.
 
 For a profile that does not yet activate Live View, omit
 `-TurnEvidencePath`. For feature-enabling profiles, the helper rejects the
-weekday 04:45–10:14 Eastern arrival window unless the exact protected-window
-confirmation is bound into the plan. Without that confirmation it also rejects
-an API desired count outside 1–2. Every path rejects a
+weekday 04:45–05:59 Eastern school-day floor scale-up window unless the exact
+protected-window confirmation is bound into the plan. Without that confirmation
+it also rejects an API desired count outside 1–3. Every path rejects a
 non-singleton worker, an autoscaling target outside the scheduled minimum
 `1`/`6` and maximum `6`, scheduled-action drift,
 mutable/mismatched images, missing emergency memory, incomplete TURN state, and

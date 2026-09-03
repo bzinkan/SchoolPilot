@@ -143,7 +143,7 @@ all nine repaired capabilities globally on, including
 `kioskLaunchTicketV1` stays off. Leaving Live View dark is temporary deployment
 or incident containment, not the final target.
 
-When the approved activation runs during the weekday 04:45–10:14 Eastern
+When the approved activation runs during the weekday 04:45–05:59 Eastern
 protected window, both Plan and Apply require
 `-ConfirmProductionMutation -ConfirmProtectedWindowProductionMutation`; the
 synthetic-only global path also requires

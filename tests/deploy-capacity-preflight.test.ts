@@ -246,7 +246,7 @@ PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION="$PRODUCTION_PREFLIGHT_WORKER_TASK_DE
 const reviewedScheduledActions = JSON.stringify([
   {
     name: "schoolpilot-production-api-arrival-scale-down",
-    schedule: "cron(0 10 ? * MON-FRI *)",
+    schedule: "cron(0 16 ? * MON-FRI *)",
     timezone: "America/New_York",
     min: 1,
     max: null,
@@ -257,7 +257,7 @@ const reviewedScheduledActions = JSON.stringify([
     name: "schoolpilot-production-api-arrival-scale-up",
     schedule: "cron(45 5 ? * MON-FRI *)",
     timezone: "America/New_York",
-    min: 6,
+    min: 3,
     max: null,
     start: null,
     end: null,
@@ -420,8 +420,8 @@ launch_safe_active_api_preflight
     assert.ok(finalCapacityCheck < restore);
   });
 
-  it("accepts only stable API counts one or two with exactly one stable worker", () => {
-    for (const apiDesired of ["1", "2"]) {
+  it("accepts only stable API counts one through three with exactly one stable worker", () => {
+    for (const apiDesired of ["1", "2", "3"]) {
       const result = runLibrary("production_backend_capacity_preflight", {
         serviceSnapshots: [stableServices({ apiDesired })],
       });
@@ -429,6 +429,20 @@ launch_safe_active_api_preflight
       assert.match(result.stdout, new RegExp(`API desiredCount=${apiDesired}`));
       assert.match(result.stdout, /worker desiredCount=1, both stable/);
     }
+
+    const ordinaryFour = runLibrary("production_backend_capacity_preflight", {
+      serviceSnapshots: [stableServices({ apiDesired: "4" })],
+    });
+    assert.notEqual(ordinaryFour.status, 0);
+    assert.match(ordinaryFour.stderr, /ordinary backend deploys require desiredCount 1, 2, or 3/);
+  });
+
+  it("routes an ordinary three-task rollout through the sequential API-then-worker path", () => {
+    const execution = deploySource.slice(libraryBoundary);
+    assert.match(
+      execution,
+      /if \[\[ "\$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" == true \|\| "\$PRODUCTION_PREFLIGHT_API_DESIRED" == "3" \]\]; then\n\s+wait_for_production_backend_strict_stability \\\n\s+"\$API_ROLLOUT_TASK_DEF" \\\n\s+"\$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION"/
+    );
   });
 
   it("accepts API counts one through six only under the explicit protected-window confirmation", () => {
@@ -453,7 +467,7 @@ launch_safe_active_api_preflight
       serviceSnapshots: [stableServices({ apiDesired: "6" })],
     });
     assert.notEqual(ordinarySix.status, 0);
-    assert.match(ordinarySix.stderr, /ordinary backend deploys require desiredCount 1 or 2/);
+    assert.match(ordinarySix.stderr, /ordinary backend deploys require desiredCount 1, 2, or 3/);
   });
 
   it("requires the narrow protected-window command shape and exact full-SHA tag", () => {
@@ -463,7 +477,7 @@ validate_protected_window_production_mutation_mode
 `, {
       activateEmergency: true,
       confirmProtectedWindow: true,
-      easternClock: "1 0600",
+      easternClock: "1 0500",
     });
     assert.equal(accepted.status, 0, accepted.stderr);
 
@@ -477,7 +491,7 @@ validate_protected_window_production_mutation_mode
       easternClock: "1 1200",
     });
     assert.notEqual(outsideWindow.status, 0);
-    assert.match(outsideWindow.stderr, /valid only for an initial weekday 04:45-10:14/);
+    assert.match(outsideWindow.stderr, /valid only for an initial weekday 04:45-05:59/);
 
     for (const body of [
       'IMAGE_TAG="short"',
@@ -537,17 +551,17 @@ assert_protected_window_target_health exact
   });
 
   it("blocks the measured arrival window plus its rollout safety buffer", () => {
-    for (const easternClock of ["1 0445", "1 0544", "1 0545", "3 1000", "5 1014"]) {
+    for (const easternClock of ["1 0445", "1 0544", "1 0545", "3 0559"]) {
       const result = runLibrary('production_backend_deploy_window_preflight "test phase"', { easternClock });
       assert.notEqual(result.status, 0, `unexpectedly accepted ${easternClock}`);
-      assert.match(result.stderr, /blocked weekdays 04:45-10:15 America\/New_York/);
+      assert.match(result.stderr, /blocked weekdays 04:45-06:00 America\/New_York/);
       assert.match(result.stderr, /test phase/);
       assert.deepEqual(result.commands, []);
     }
   });
 
   it("bypasses the arrival-window rejection only with the explicit protected confirmation", () => {
-    for (const easternClock of ["1 0445", "1 0545", "3 1000", "5 1014"]) {
+    for (const easternClock of ["1 0445", "1 0545", "3 0559"]) {
       const result = runLibrary('production_backend_deploy_window_preflight "protected test"', {
         confirmProtectedWindow: true,
         easternClock,
@@ -557,20 +571,20 @@ assert_protected_window_target_health exact
     }
   });
 
-  it("rejects delayed mutation start after 10:14 but permits an already-started held mutation to finish", () => {
+  it("rejects delayed mutation start after 05:59 but permits an already-started held mutation to finish", () => {
     const delayed = runLibrary('production_backend_deploy_window_preflight "delayed hold"', {
       confirmProtectedWindow: true,
-      easternClock: "1 1015",
+      easternClock: "1 0600",
     });
     assert.notEqual(delayed.status, 0);
-    assert.match(delayed.stderr, /may start production mutation only weekdays 04:45-10:14/);
+    assert.match(delayed.stderr, /may start production mutation only weekdays 04:45-05:59/);
 
     const continuation = runLibrary(`
 PROTECTED_WINDOW_MUTATION_WINDOW_STARTED=true
 production_backend_deploy_window_preflight "continuation"
 `, {
       confirmProtectedWindow: true,
-      easternClock: "1 1015",
+      easternClock: "1 0600",
     });
     assert.equal(continuation.status, 0, continuation.stderr);
     assert.match(continuation.stdout, /may continue across the schedule boundary/);
@@ -583,7 +597,7 @@ production_backend_deploy_window_preflight "continuation"
       serviceSnapshots: [stableServices({ apiDesired: "6" })],
     });
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /ordinary backend deploys require desiredCount 1 or 2/);
+    assert.match(result.stderr, /ordinary backend deploys require desiredCount 1, 2, or 3/);
   });
 
   it("rejects protected desired-count drift against the immutable captured count", () => {
@@ -598,7 +612,7 @@ schoolpilot-production-scheduler-worker\tACTIVE\t1\t1\t0\t1\tarn:aws:ecs:us-east
     assert.match(direct.stderr, /desiredCount drifted/);
   });
 
-  it("validates the exact 05:45 and 10:00 scheduled-action contract", () => {
+  it("validates the exact 05:45 and 16:00 scheduled-action contract", () => {
     const accepted = runLibrary(`
 cd "$TEST_FIXTURE_DIR"
 capture_protected_window_scheduled_actions
@@ -630,13 +644,53 @@ PRODUCTION_PREFLIGHT_API_DESIRED=6
 acquire_production_scaling_hold
 `, {
       confirmProtectedWindow: true,
-      easternClock: "1 0800",
+      easternClock: "1 0550",
       scheduledActionSnapshots: [reviewedScheduledActions],
       scalingSnapshots: ["1\t6\tFalse\tFalse\tFalse"],
     });
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /MinCapacity does not match/);
     assert.equal(registerCommands(result.commands).length, 0);
+  });
+
+  it("rejects the superseded six-task minimum inside the school-day floor window", () => {
+    const result = runLibrary(`
+cd "$TEST_FIXTURE_DIR"
+PRODUCTION_PREFLIGHT_API_DESIRED=6
+PROTECTED_WINDOW_MUTATION_WINDOW_STARTED=true
+acquire_production_scaling_hold
+`, {
+      confirmProtectedWindow: true,
+      easternClock: "1 1200",
+      scheduledActionSnapshots: [reviewedScheduledActions],
+      scalingSnapshots: ["6\t6\tFalse\tFalse\tFalse"],
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /MinCapacity does not match/);
+    assert.equal(registerCommands(result.commands).length, 0);
+  });
+
+  it("freezes the live three-task school-day floor as the reviewed midday minimum", () => {
+    const result = runLibrary(`
+cd "$TEST_FIXTURE_DIR"
+PRODUCTION_PREFLIGHT_API_DESIRED=3
+PROTECTED_WINDOW_MUTATION_WINDOW_STARTED=true
+PROTECTED_WINDOW_TARGET_GROUP_ARN="arn:aws:elasticloadbalancing:us-east-1:135775632425:targetgroup/test/abcdef0123456789"
+${captureDefaultRollbackRevisions}
+acquire_production_scaling_hold
+`, {
+      confirmProtectedWindow: true,
+      easternClock: "1 1200",
+      scheduledActionSnapshots: [reviewedScheduledActions],
+      scalingSnapshots: ["3\t6\tFalse\tFalse\tFalse", "3\t6\tTrue\tTrue\tTrue"],
+      serviceSnapshots: [stableServices({ apiDesired: "3" })],
+      targetHealthSnapshots: ["3"],
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stderr, /MinCapacity does not match/);
+    const registrations = registerCommands(result.commands);
+    assert.equal(registrations.length, 1);
+    assert.match(registrations[0]!, /--min-capacity 3 --max-capacity 6/);
   });
 
   it("restores an already-suspended scheduled target to its exact captured minimum", () => {
@@ -663,7 +717,7 @@ restore_production_scaling_hold
   });
 
   it("reconciles the reviewed scheduled minimum before releasing protected scaling", () => {
-    for (const [easternClock, minimum] of [["1 0544", "1"], ["1 0545", "6"], ["1 0959", "6"], ["1 1000", "1"]] as const) {
+    for (const [easternClock, minimum] of [["1 0544", "1"], ["1 0545", "3"], ["1 1559", "3"], ["1 1600", "1"]] as const) {
       const result = runLibrary(`
 revalidate_protected_window_scheduled_actions() { :; }
 wait_for_protected_window_api_capacity() { :; }
@@ -742,7 +796,7 @@ assert_no_preserved_protected_window_recovery_artifacts
   });
 
   it("allows safe weekday boundaries and weekends", () => {
-    for (const easternClock of ["1 0444", "1 1015", "5 2359", "6 0600", "7 0600"]) {
+    for (const easternClock of ["1 0444", "1 0600", "5 2359", "6 0600", "7 0600"]) {
       const result = runLibrary("production_backend_deploy_window_preflight", { easternClock });
       assert.equal(result.status, 0, `${easternClock}: ${result.stderr}`);
       assert.match(result.stdout, /deployment window preflight OK/);
@@ -1028,7 +1082,7 @@ production_backend_capacity_preflight
 ${captureObservedRollbackRevisions}
 acquire_production_scaling_hold
 `, {
-      serviceSnapshots: [stableServices({ apiDesired: "2" }), stableServices({ apiDesired: "3" })],
+      serviceSnapshots: [stableServices({ apiDesired: "2" }), stableServices({ apiDesired: "4" })],
       scalingSnapshots: ["False\tFalse\tFalse", "True\tTrue\tFalse", "False\tFalse\tFalse"],
     });
 

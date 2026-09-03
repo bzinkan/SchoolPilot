@@ -12,7 +12,7 @@
 #   ./scripts/deploy.sh production --backend --activate-emergency \
 #     --tag <full-40-character-main-sha> \
 #     --confirm-protected-window-production-mutation
-#                                       # Explicit operator-authorized 04:45-10:14 ET no-growth rollout
+#                                       # Explicit operator-authorized 04:45-05:59 ET no-growth rollout
 #   ./scripts/deploy.sh production --backend --activate-emergency \
 #     --enable-rls-table passpilot_grade_students
 #                                       # One reviewed release only; add one tenant table without changing the master switch or existing entries
@@ -545,8 +545,8 @@ validate_production_service_snapshot() {
             error "Production API desiredCount is ${desired}; protected-window backend deploys require a stable count from 1 through 6."
             return 1
           fi
-        elif [[ "$desired" != "1" && "$desired" != "2" ]]; then
-          error "Production API desiredCount is ${desired}; ordinary backend deploys require desiredCount 1 or 2 so rolling database connections stay below the launch gate."
+        elif [[ ! "$desired" =~ ^[123]$ ]]; then
+          error "Production API desiredCount is ${desired}; ordinary backend deploys require desiredCount 1, 2, or 3 so rolling database connections stay below the launch gate."
           return 1
         fi
         ;;
@@ -683,13 +683,13 @@ production_backend_deploy_window_preflight() {
   fi
 
   numeric_hhmm=$((10#$hour * 100 + 10#$minute))
-  if (( 10#$weekday <= 5 && numeric_hhmm >= 445 && numeric_hhmm < 1015 )) &&
+  if (( 10#$weekday <= 5 && numeric_hhmm >= 445 && numeric_hhmm < 600 )) &&
      [[ "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" != true ]]; then
-    error "Production backend deploys are blocked weekdays 04:45-10:15 America/New_York so the 05:45 six-task arrival action cannot cross migration or a 200% ECS rollout (${phase})."
+    error "Production backend deploys are blocked weekdays 04:45-06:00 America/New_York so the 05:45 three-task school-day floor action cannot cross migration or a 200% ECS rollout (${phase})."
     return 1
   fi
 
-  if (( 10#$weekday <= 5 && numeric_hhmm >= 445 && numeric_hhmm < 1015 )); then
+  if (( 10#$weekday <= 5 && numeric_hhmm >= 445 && numeric_hhmm < 600 )); then
     success "Operator-authorized protected-window production mutation accepted (${phase}; America/New_York weekday=${weekday} time=${hhmm}); no-growth controls are mandatory"
     return 0
   fi
@@ -697,7 +697,7 @@ production_backend_deploy_window_preflight() {
   if [[ "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" == true ]]; then
     if [[ "$PROTECTED_WINDOW_PRODUCTION_MUTATION_ADMITTED" != true ||
           "$PROTECTED_WINDOW_MUTATION_WINDOW_STARTED" != true ]]; then
-      error "--confirm-protected-window-production-mutation may start production mutation only weekdays 04:45-10:14 America/New_York (${phase})."
+      error "--confirm-protected-window-production-mutation may start production mutation only weekdays 04:45-05:59 America/New_York (${phase})."
       return 1
     fi
     success "Previously admitted protected-window mutation may continue across the schedule boundary (${phase}; America/New_York weekday=${weekday} time=${hhmm})"
@@ -769,8 +769,8 @@ protected_window_scheduled_minimum() {
     return 1
   fi
   numeric_hhmm=$((10#$hour * 100 + 10#$minute))
-  if (( 10#$weekday <= 5 && numeric_hhmm >= 545 && numeric_hhmm < 1000 )); then
-    printf '6\n'
+  if (( 10#$weekday <= 5 && numeric_hhmm >= 545 && numeric_hhmm < 1600 )); then
+    printf '3\n'
   else
     printf '1\n'
   fi
@@ -1213,7 +1213,7 @@ acquire_production_scaling_hold() {
       local expected_scheduled_minimum
       if ! expected_scheduled_minimum=$(protected_window_scheduled_minimum) ||
          [[ "$PRODUCTION_SCALING_PRIOR_MIN" != "$expected_scheduled_minimum" ]]; then
-        error "Production API MinCapacity does not match the reviewed current 05:45/10:00 schedule; refusing to freeze a drifted arrival posture."
+        error "Production API MinCapacity does not match the reviewed current 05:45/16:00 schedule; refusing to freeze a drifted school-day floor posture."
         return 1
       fi
     fi
@@ -1261,7 +1261,8 @@ acquire_production_scaling_hold() {
   # The first check happens before Docker. This second snapshot closes the
   # build/push window and is protected from target-tracking drift. The reviewed
   # scheduled actions remain live; the deployment-window preflight prevents the
-  # six-task arrival action from crossing migration or service replacement.
+  # three-task school-day floor action from crossing migration or service
+  # replacement.
   if ! production_backend_capacity_preflight "under the autoscaling hold"; then
     error "Production ECS capacity changed after the initial preflight; refusing the migration and service rollout."
     return 1
@@ -1317,9 +1318,9 @@ restore_production_scaling_hold() {
         error "Could not stage the current scheduled production scaling target."
         return 1
       fi
-      if [[ "$stage_minimum" == "6" ]] &&
-         ! wait_for_protected_window_api_capacity 6; then
-        error "The 05:45 arrival capacity did not converge before protected-window scaling restoration."
+      if (( stage_minimum > 1 )) &&
+         ! wait_for_protected_window_api_capacity "$stage_minimum"; then
+        error "The 05:45 school-day floor capacity did not converge before protected-window scaling restoration."
         return 1
       fi
       if ! release_minimum=$(protected_window_scheduled_minimum); then
@@ -1758,7 +1759,7 @@ try {
 const expected = [
   {
     name: process.env.EXPECTED_DOWN_ACTION,
-    schedule: "cron(0 10 ? * MON-FRI *)",
+    schedule: "cron(0 16 ? * MON-FRI *)",
     timezone: "America/New_York",
     min: 1,
     max: null,
@@ -1769,7 +1770,7 @@ const expected = [
     name: process.env.EXPECTED_UP_ACTION,
     schedule: "cron(45 5 ? * MON-FRI *)",
     timezone: "America/New_York",
-    min: 6,
+    min: 3,
     max: null,
     start: null,
     end: null,
@@ -1902,8 +1903,8 @@ validate_protected_window_production_mutation_mode() {
     return 1
   fi
   numeric_hhmm=$((10#$hour * 100 + 10#$minute))
-  if (( 10#$weekday > 5 || numeric_hhmm < 445 || numeric_hhmm >= 1015 )); then
-    error "--confirm-protected-window-production-mutation is valid only for an initial weekday 04:45-10:14 America/New_York admission."
+  if (( 10#$weekday > 5 || numeric_hhmm < 445 || numeric_hhmm >= 600 )); then
+    error "--confirm-protected-window-production-mutation is valid only for an initial weekday 04:45-05:59 America/New_York admission."
     return 1
   fi
   PROTECTED_WINDOW_PRODUCTION_MUTATION_ADMITTED=true
@@ -4799,7 +4800,7 @@ const suspended = target?.SuspendedState;
 if (targets.length !== 1 || target?.ServiceNamespace !== "ecs" ||
     target?.ResourceId !== process.env.EXPECTED_RESOURCE_ID ||
     target?.ScalableDimension !== process.env.EXPECTED_DIMENSION ||
-    ![1, 2].includes(Number(target?.MinCapacity)) ||
+    ![1, 3].includes(Number(target?.MinCapacity)) ||
     Number(target?.MaxCapacity) !== Number(capacity?.apiMaxTasks) ||
     typeof suspended?.DynamicScalingInSuspended !== "boolean" ||
     typeof suspended?.DynamicScalingOutSuspended !== "boolean" ||
@@ -4808,7 +4809,7 @@ if (targets.length !== 1 || target?.ServiceNamespace !== "ecs" ||
 }
 NODE
   then
-    error "Same-image deployment requires one exact API scalable target at min 1/2, max 6, with an observable suspended state."
+    error "Same-image deployment requires one exact API scalable target at min 1/3, max 6, with an observable suspended state."
     return 1
   fi
 }
@@ -4877,7 +4878,7 @@ function assertService(service, expectedTask, desiredCounts, loadBalancerCount) 
 
 const api = apiMatches[0];
 const worker = workerMatches[0];
-assertService(api, process.env.EXPECTED_API_TASK_DEFINITION, [1, 2], 1);
+assertService(api, process.env.EXPECTED_API_TASK_DEFINITION, [1, 2, 3], 1);
 assertService(worker, process.env.EXPECTED_WORKER_TASK_DEFINITION, [1], 0);
 const apiNetwork = normalizedNetwork(api);
 const workerNetwork = normalizedNetwork(worker);
@@ -5966,10 +5967,13 @@ else
   info "Image tag:   $IMAGE_TAG"
 fi
 
-# A 200% API/worker rollout is safe under the reviewed 150-connection launch
-# gate only while the API is stable at one or two tasks and the singleton
-# worker is stable at one task. This check runs before Docker/ECR/ECS work and
-# fails closed if ECS cannot provide one unambiguous two-service snapshot.
+# A concurrent 200% API/worker rollout is safe under the reviewed 150-connection
+# launch gate only while the API is stable at one or two tasks and the singleton
+# worker is stable at one task; a stable three-task API (the weekday school-day
+# floor) is admitted too, but it takes the sequential API-then-worker path
+# below so the rollout peak stays at the reviewed 124-connection ceiling. This
+# check runs before Docker/ECR/ECS work and fails closed if ECS cannot provide
+# one unambiguous two-service snapshot.
 production_backend_deploy_window_preflight
 production_backend_capacity_preflight
 assert_protected_window_target_health exact
@@ -6513,11 +6517,15 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     --query 'service.{status:status,desired:desiredCount,running:runningCount,taskDef:taskDefinition}' \
     --output table
 
-  if [[ "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" == true ]]; then
+  # A three-task ordinary rollout reuses the protected-window sequencing: the
+  # API must converge before the worker mutates so the two 200% overlaps never
+  # coincide (6x18 + 2x16 = 140 pool-max connections concurrently versus the
+  # reviewed 124 sequentially).
+  if [[ "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" == true || "$PRODUCTION_PREFLIGHT_API_DESIRED" == "3" ]]; then
     wait_for_production_backend_strict_stability \
       "$API_ROLLOUT_TASK_DEF" \
       "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION"
-    success "Protected-window API replacement converged before worker mutation"
+    success "API replacement converged before worker mutation (protected window or three-task sequential rollout)"
   fi
 
   UPDATED_WORKER=false
@@ -6568,7 +6576,7 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   # waiter can return just before rolloutState converges, so a production-only,
   # bounded strict poll closes that control-plane propagation window. Scheduled
   # scaling remains in its captured state, and the guarded deployment window
-  # keeps the 05:45/10:00 actions away from the 200% rollout.
+  # keeps the 05:45/16:00 actions away from the 200% rollout.
   wait_for_production_backend_strict_stability \
     "$API_ROLLOUT_TASK_DEF" \
     "${WORKER_SERVICE}:${WORKER_NEW_REV}"

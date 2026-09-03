@@ -968,8 +968,8 @@ function Assert-ProductionScalingContract {
     if ($actions.Count -ne 2 -or $up.Count -ne 1 -or $down.Count -ne 1 -or
         [string]$up[0].schedule -cne "cron(45 5 ? * MON-FRI *)" -or
         [string]$up[0].timezone -cne "America/New_York" -or
-        [int]$up[0].minCapacity -ne 6 -or $null -ne $up[0].maxCapacity -or
-        [string]$down[0].schedule -cne "cron(0 10 ? * MON-FRI *)" -or
+        [int]$up[0].minCapacity -ne 3 -or $null -ne $up[0].maxCapacity -or
+        [string]$down[0].schedule -cne "cron(0 16 ? * MON-FRI *)" -or
         [string]$down[0].timezone -cne "America/New_York" -or
         [int]$down[0].minCapacity -ne 1 -or $null -ne $down[0].maxCapacity -or
         $policies.Count -ne 1 -or $cpu.Count -ne 1 -or
@@ -979,11 +979,11 @@ function Assert-ProductionScalingContract {
         [int](Get-Value $target "ScaleOutCooldown" -1) -ne 60 -or
         [string](Get-Value $metric "PredefinedMetricType" "") -cne
             "ECSServiceAverageCPUUtilization" -or
-        [int]$Scaling.maxCapacity -ne 6 -or [int]$Scaling.minCapacity -notin @(1, 6) -or
+        [int]$Scaling.maxCapacity -ne 6 -or [int]$Scaling.minCapacity -notin @(1, 3) -or
         $Scaling.suspendedState.DynamicScalingInSuspended -ne $false -or
         $Scaling.suspendedState.DynamicScalingOutSuspended -ne $false -or
         $Scaling.suspendedState.ScheduledScalingSuspended -ne $false) {
-        throw "Production API scaling does not match the committed 05:45/10:00 ET and 70% CPU contract."
+        throw "Production API scaling does not match the committed 05:45/16:00 ET and 70% CPU contract."
     }
 }
 

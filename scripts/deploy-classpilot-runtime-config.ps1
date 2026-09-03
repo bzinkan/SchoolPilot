@@ -1619,8 +1619,8 @@ function Assert-ProductionDeploymentWindow {
     param([DateTimeOffset]$NowEastern = (Get-EasternNow))
     if ($NowEastern.DayOfWeek -in @([DayOfWeek]::Monday, [DayOfWeek]::Tuesday, [DayOfWeek]::Wednesday, [DayOfWeek]::Thursday, [DayOfWeek]::Friday)) {
         $minutes = $NowEastern.Hour * 60 + $NowEastern.Minute
-        if ($minutes -ge (4 * 60 + 45) -and $minutes -le (10 * 60 + 14)) {
-            throw "Production runtime configuration is blocked during the weekday arrival scaling window."
+        if ($minutes -ge (4 * 60 + 45) -and $minutes -le (5 * 60 + 59)) {
+            throw "Production runtime configuration is blocked weekdays 04:45-05:59 America/New_York while the 05:45 school-day floor action can raise capacity."
         }
     }
 }
@@ -1635,13 +1635,13 @@ function Assert-RuntimeConfigMutationWindow {
         [DayOfWeek]::Thursday, [DayOfWeek]::Friday
     )
     $minutes = $NowEastern.Hour * 60 + $NowEastern.Minute
-    $isProtectedWindow = $isWeekday -and $minutes -ge (4 * 60 + 45) -and $minutes -le (10 * 60 + 14)
+    $isProtectedWindow = $isWeekday -and $minutes -ge (4 * 60 + 45) -and $minutes -le (5 * 60 + 59)
     if ($ConfirmProtectedWindowProductionMutation) {
         if (-not $isProtectedWindow) {
-            throw "Protected-window runtime configuration confirmation is valid only weekdays 04:45-10:14 America/New_York."
+            throw "Protected-window runtime configuration confirmation is valid only weekdays 04:45-05:59 America/New_York."
         }
     } elseif ($isProtectedWindow) {
-        throw "Production runtime configuration is blocked during the weekday arrival scaling window."
+        throw "Production runtime configuration is blocked weekdays 04:45-05:59 America/New_York while the 05:45 school-day floor action can raise capacity."
     }
 }
 
@@ -1804,8 +1804,8 @@ function Get-ScalingSnapshot {
         "--output", "json", "--no-cli-pager"
     )
     $targets = @($response.ScalableTargets)
-    if ($targets.Count -ne 1 -or [int]$targets[0].MinCapacity -notin @(1, 6) -or [int]$targets[0].MaxCapacity -ne 6) {
-        throw "API autoscaling must retain the reviewed scheduled 1-or-6 minimum and six-task ceiling."
+    if ($targets.Count -ne 1 -or [int]$targets[0].MinCapacity -notin @(1, 3) -or [int]$targets[0].MaxCapacity -ne 6) {
+        throw "API autoscaling must retain the reviewed scheduled 1-or-3 minimum and six-task ceiling."
     }
     return [pscustomobject]@{
         Min = [int]$targets[0].MinCapacity
@@ -1834,8 +1834,8 @@ function Assert-ScheduledScalingContract {
     } else { $null }
     if ($actions.Count -ne 2 -or $up.Count -ne 1 -or $down.Count -ne 1 -or
         [string]$up[0].Schedule -cne "cron(45 5 ? * MON-FRI *)" -or [string]$up[0].Timezone -cne "America/New_York" -or
-        [int]$up[0].ScalableTargetAction.MinCapacity -ne 6 -or
-        [string]$down[0].Schedule -cne "cron(0 10 ? * MON-FRI *)" -or [string]$down[0].Timezone -cne "America/New_York" -or
+        [int]$up[0].ScalableTargetAction.MinCapacity -ne 3 -or
+        [string]$down[0].Schedule -cne "cron(0 16 ? * MON-FRI *)" -or [string]$down[0].Timezone -cne "America/New_York" -or
         [int]$down[0].ScalableTargetAction.MinCapacity -ne 1 -or
         ($null -ne $upMaximum -and [int]$upMaximum -ne 6) -or
         ($null -ne $downMaximum -and [int]$downMaximum -ne 6) -or
@@ -1843,7 +1843,7 @@ function Assert-ScheduledScalingContract {
         ($up[0].PSObject.Properties.Name -contains "EndTime" -and $null -ne $up[0].EndTime) -or
         ($down[0].PSObject.Properties.Name -contains "StartTime" -and $null -ne $down[0].StartTime) -or
         ($down[0].PSObject.Properties.Name -contains "EndTime" -and $null -ne $down[0].EndTime)) {
-        throw "Arrival scheduled scaling has drifted from the reviewed contract."
+        throw "School-day floor scheduled scaling has drifted from the reviewed 05:45/16:00 contract."
     }
 }
 
@@ -1864,8 +1864,8 @@ function Get-ScheduledApiMinimum {
     param([Parameter(Mandatory = $true)][DateTimeOffset]$NowEastern)
     $weekday = $NowEastern.DayOfWeek -notin @([DayOfWeek]::Saturday, [DayOfWeek]::Sunday)
     $time = $NowEastern.TimeOfDay
-    if ($weekday -and $time -ge [TimeSpan]::FromHours(5.75) -and $time -lt [TimeSpan]::FromHours(10)) {
-        return 6
+    if ($weekday -and $time -ge [TimeSpan]::FromHours(5.75) -and $time -lt [TimeSpan]::FromHours(16)) {
+        return 3
     }
     return 1
 }
@@ -2132,8 +2132,8 @@ function Restore-ScalingHold {
                 throw "Autoscaling restoration could not stage the scheduled production state."
             }
         }
-        if ($stageMinimum -eq 6) {
-            [void](Wait-ApiCapacityExact -ExpectedDesiredCount 6)
+        if ($stageMinimum -gt 1) {
+            [void](Wait-ApiCapacityExact -ExpectedDesiredCount $stageMinimum)
         }
         $releaseMinimum = Get-ScheduledApiMinimum -NowEastern (Get-CurrentDeploymentEasternTime)
         if ($releaseMinimum -ne $stageMinimum) { continue }
@@ -3337,7 +3337,7 @@ function Get-ValidatedProductionSnapshot {
         [Parameter(Mandatory = $true)]$RuntimeConfiguration,
         [switch]$SkipRepositoryCheck,
         [switch]$SkipEcrShaCheck,
-        [ValidateRange(2, 6)][int]$MaximumApiDesiredCount = 2
+        [ValidateRange(2, 6)][int]$MaximumApiDesiredCount = 3
     )
     Assert-ExpectedReleaseIdentity -AppSha $AppSha -ImageDigest $ImageDigest -ApiTaskDefinitionArn $ApiTaskDefinitionArn -WorkerTaskDefinitionArn $WorkerTaskDefinitionArn
     if ($ToolSha -cnotmatch '^[0-9a-f]{40}$') { throw "Reviewed runtime-tool SHA is malformed." }
@@ -3534,7 +3534,7 @@ function New-RuntimeConfigPlan {
         -ApiTaskDefinitionArn $ApiTaskDefinitionArn -WorkerTaskDefinitionArn $WorkerTaskDefinitionArn `
         -RuntimeConfiguration $runtime -SkipRepositoryCheck:($SkipRepositoryCheck -or $runtime.Mode -ceq "off") `
         -SkipEcrShaCheck:($runtime.Mode -ceq "off") `
-        -MaximumApiDesiredCount $(if ($runtime.Mode -ceq "off" -or $ConfirmProtectedWindowProductionMutation) { 6 } else { 2 })
+        -MaximumApiDesiredCount $(if ($runtime.Mode -ceq "off" -or $ConfirmProtectedWindowProductionMutation) { 6 } else { 3 })
     $runtime = Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $runtimeIntent `
         -SourceTaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api"
     Assert-AllowedRuntimeTransition -SourceTaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api" `
@@ -3979,7 +3979,7 @@ function Invoke-RuntimeConfigApply {
         throw "Synthetic-only global activation confirmation does not match the reviewed plan."
     }
     $useNoGrowthDeploymentBounds = $Plan.profileMode -ceq "off" -or $protectedWindowMutation
-    $maximumApiDesiredCount = if ($useNoGrowthDeploymentBounds) { 6 } else { 2 }
+    $maximumApiDesiredCount = if ($useNoGrowthDeploymentBounds) { 6 } else { 3 }
     $profileSnapshot = Read-StrictJsonSnapshot -Path ([string]$Plan.profilePath)
     if ([string]$profileSnapshot.Sha256 -cne [string]$Plan.profileSha256) {
         throw "Private runtime profile changed after planning."
@@ -4086,7 +4086,7 @@ function Invoke-RuntimeConfigApply {
     }
     if ($runtime.Mode -cne "off" -and
         [int]$snapshot.Scaling.Min -ne (Get-ScheduledApiMinimum -NowEastern $runtimeMutationEasternTime)) {
-        throw "Production API MinCapacity does not match the reviewed current 05:45/10:00 schedule."
+        throw "Production API MinCapacity does not match the reviewed current 05:45/16:00 schedule."
     }
     Assert-ServicePairDeploymentBounds -Snapshot $snapshot.Services -Expected $Plan.deploymentBounds
     [void](Assert-ServicePairDeploymentConfigurations -Snapshot $snapshot.Services `
@@ -4394,7 +4394,7 @@ function Invoke-RuntimeConfigRollback {
         -not $ConfirmProtectedWindowProductionMutation)) {
         throw "Protected-window rollback requires both production mutation confirmations."
     }
-    $maximumApiDesiredCount = if ($protectedWindowMutation) { 6 } else { 2 }
+    $maximumApiDesiredCount = if ($protectedWindowMutation) { 6 } else { 3 }
     $rollbackAdmissionEasternTime = Get-CurrentDeploymentEasternTime
     Assert-RuntimeConfigMutationWindow -NowEastern $rollbackAdmissionEasternTime `
         -ConfirmProtectedWindowProductionMutation:$protectedWindowMutation
@@ -4475,7 +4475,7 @@ function Invoke-RuntimeConfigRollback {
     Assert-ScheduledScalingContract
     $rollbackScaling = Get-ScalingSnapshot
     if ([int]$rollbackScaling.Min -ne (Get-ScheduledApiMinimum -NowEastern $rollbackAdmissionEasternTime)) {
-        throw "Production API MinCapacity does not match the reviewed current 05:45/10:00 schedule."
+        throw "Production API MinCapacity does not match the reviewed current 05:45/16:00 schedule."
     }
     Acquire-OperationLock -RunId ([string]$Plan.runId) -PlanSha256 $PlanSha256
     Start-OperationMutationWindow

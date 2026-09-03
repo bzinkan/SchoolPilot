@@ -1239,17 +1239,22 @@ try {
         Assert-ProductionDeploymentWindow -NowEastern ([DateTimeOffset]::Parse("2026-08-24T04:45:00-04:00"))
     } "The protected weekday window must begin at exactly 04:45 Eastern."
     Assert-Throws {
-        Assert-ProductionDeploymentWindow -NowEastern ([DateTimeOffset]::Parse("2026-08-24T10:14:59-04:00"))
-    } "The protected weekday window must include the complete 10:14 minute."
-    Assert-ProductionDeploymentWindow -NowEastern ([DateTimeOffset]::Parse("2026-08-24T10:15:00-04:00"))
+        Assert-ProductionDeploymentWindow -NowEastern ([DateTimeOffset]::Parse("2026-08-24T05:59:59-04:00"))
+    } "The protected weekday window must include the complete 05:59 minute."
+    Assert-ProductionDeploymentWindow -NowEastern ([DateTimeOffset]::Parse("2026-08-24T06:00:00-04:00"))
+    Assert-ProductionDeploymentWindow -NowEastern ([DateTimeOffset]::Parse("2026-08-24T10:14:59-04:00"))
     Assert-RuntimeConfigMutationWindow -NowEastern ([DateTimeOffset]::Parse("2026-08-24T04:45:00-04:00")) `
         -ConfirmProtectedWindowProductionMutation
-    Assert-RuntimeConfigMutationWindow -NowEastern ([DateTimeOffset]::Parse("2026-08-24T10:14:59-04:00")) `
+    Assert-RuntimeConfigMutationWindow -NowEastern ([DateTimeOffset]::Parse("2026-08-24T05:59:59-04:00")) `
         -ConfirmProtectedWindowProductionMutation
     Assert-Throws {
-        Assert-RuntimeConfigMutationWindow -NowEastern ([DateTimeOffset]::Parse("2026-08-24T10:15:00-04:00")) `
+        Assert-RuntimeConfigMutationWindow -NowEastern ([DateTimeOffset]::Parse("2026-08-24T06:00:00-04:00")) `
             -ConfirmProtectedWindowProductionMutation
     } "Protected confirmation must be rejected outside the weekday protected window."
+    Assert-Throws {
+        Assert-RuntimeConfigMutationWindow -NowEastern ([DateTimeOffset]::Parse("2026-08-24T10:14:59-04:00")) `
+            -ConfirmProtectedWindowProductionMutation
+    } "Protected confirmation must be rejected after the shrunken 04:45-05:59 window."
     Assert-Throws {
         Assert-RuntimeConfigMutationWindow -NowEastern ([DateTimeOffset]::Parse("2026-08-23T06:00:00-04:00")) `
             -ConfirmProtectedWindowProductionMutation
@@ -1388,17 +1393,17 @@ try {
                     @($state.Events | Where-Object { $_ -ceq "update:worker:candidate" }).Count -gt 0
                 if (-not $state.DelayedScheduledChangeConsumed -and
                     ($delayedAtSourceRecheck -or $delayedDuringConvergence)) {
-                    $state.ScalingMin = 6
-                    $state.ApiDesiredCount = 6
+                    $state.ScalingMin = 3
+                    $state.ApiDesiredCount = 3
                     $state.DelayedScheduledChangeConsumed = $true
-                    $state.Events.Add("scheduled:delayed:desired:6")
+                    $state.Events.Add("scheduled:delayed:desired:3")
                 }
                 if ($state.SimulateScheduledDesiredChangeDuringConvergence -and
                     -not $state.ScheduledDesiredChangeConsumed -and -not $state.Scheduled -and
                     @($state.Events | Where-Object { $_ -ceq "bounds:worker:0-100" }).Count -gt 0) {
-                    $state.ApiDesiredCount = 6
+                    $state.ApiDesiredCount = 3
                     $state.ScheduledDesiredChangeConsumed = $true
-                    $state.Events.Add("scheduled:desired:6")
+                    $state.Events.Add("scheduled:desired:3")
                 }
                 $apiArn = $state.ApiCurrentArn
                 if ($state.DriftAfterRegistration -and $state.RegisterCount -ge 2) {
@@ -1611,7 +1616,7 @@ try {
                 return [pscustomobject]@{}
             }
             "application-autoscaling describe-scheduled-actions" {
-                $upTarget = [pscustomobject]@{ MinCapacity = 6 }
+                $upTarget = [pscustomobject]@{ MinCapacity = 3 }
                 $downTarget = [pscustomobject]@{ MinCapacity = 1 }
                 if ($null -ne $state.ScheduledActionMaxCapacity) {
                     $upTarget | Add-Member -NotePropertyName MaxCapacity -NotePropertyValue $state.ScheduledActionMaxCapacity
@@ -1626,7 +1631,7 @@ try {
                     },
                     [pscustomobject]@{
                         ScheduledActionName = "schoolpilot-production-api-arrival-scale-down"
-                        Schedule = "cron(0 10 ? * MON-FRI *)"
+                        Schedule = "cron(0 16 ? * MON-FRI *)"
                         Timezone = "America/New_York"
                         ScalableTargetAction = $downTarget
                     }
@@ -2783,8 +2788,8 @@ try {
     Write-TestJson -Path $offProfilePath -Value ([pscustomobject]@{ schemaVersion = 1; mode = "off" })
     $global:RuntimeConfigTestState.TaskResponses[$apiSourceArn].tags = @()
     $global:RuntimeConfigTestState.TaskResponses[$workerSourceArn].tags = @()
-    $global:RuntimeConfigTestState.ApiDesiredCount = 6
-    $global:RuntimeConfigTestState.ScalingMin = 6
+    $global:RuntimeConfigTestState.ApiDesiredCount = 3
+    $global:RuntimeConfigTestState.ScalingMin = 3
     $global:RuntimeConfigTestState.RejectEcrLookup = $true
     $global:RuntimeConfigGitState.Branch = "feature"
     1..3 | ForEach-Object {
@@ -2804,7 +2809,7 @@ try {
     Assert-Condition ($global:RuntimeConfigTestState.ApiMinimumHealthyPercent -eq 100 -and $global:RuntimeConfigTestState.ApiMaximumPercent -eq 200) "Emergency off must restore original API deployment bounds."
     Assert-Condition ($global:RuntimeConfigTestState.WorkerMinimumHealthyPercent -eq 100 -and $global:RuntimeConfigTestState.WorkerMaximumPercent -eq 200) "Emergency off must restore original worker deployment bounds."
     $offEvents = @($global:RuntimeConfigTestState.Events)
-    Assert-Condition ($offEvents -contains "bounds:api:83-100" -and $offEvents -contains "bounds:worker:0-100") "Emergency off must use no-growth one-for-one rolling bounds."
+    Assert-Condition ($offEvents -contains "bounds:api:66-100" -and $offEvents -contains "bounds:worker:0-100") "Emergency off must use no-growth one-for-one rolling bounds."
     $offCandidate = $global:RuntimeConfigTestState.TaskResponses[[string]$offResult.candidateApiTaskDefinitionArn].taskDefinition
     $offCandidateContainer = @($offCandidate.containerDefinitions | Where-Object name -CEQ "api")[0]
     Assert-Condition ([string]@($offCandidateContainer.environment | Where-Object name -CEQ "CLASSPILOT_PROTOCOL_V3_ENABLED")[0].value -ceq "false") "Emergency off candidate must disable protocol-v3 acceptance."
@@ -2876,8 +2881,8 @@ try {
         -ConvergenceAttempts 3 -ConvergenceIntervalSeconds 0
     Assert-Condition ($scheduledCrossingResult.status -ceq "applied" -and
         -not $global:RuntimeConfigTestState.ScheduledDesiredChangeConsumed) "The all-scaling hold must block a scheduled desired-count change during containment."
-    Assert-Condition ($global:RuntimeConfigTestState.ScalingMin -eq 6 -and
-        -not $global:RuntimeConfigTestState.Scheduled) "Scaling release after a 05:45 crossing must reconcile the live six-task arrival minimum."
+    Assert-Condition ($global:RuntimeConfigTestState.ScalingMin -eq 3 -and
+        -not $global:RuntimeConfigTestState.Scheduled) "Scaling release after a 05:45 crossing must reconcile the live three-task school-day floor."
 
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
     $global:RuntimeConfigTestState.DelayedScheduledChangeTrigger = "source-recheck"
@@ -2911,9 +2916,9 @@ try {
     $delayedEvents = @($global:RuntimeConfigTestState.Events)
     Assert-Condition ($delayedConvergenceResult.status -ceq "apply_failed_rolled_back" -and
         $delayedConvergenceResult.scalingRestored) "Delayed convergence drift must recover one coherent source pair."
-    Assert-Condition ([Array]::LastIndexOf($delayedEvents, "bounds:api:83-100") -lt
+    Assert-Condition ([Array]::LastIndexOf($delayedEvents, "bounds:api:66-100") -lt
         [Array]::IndexOf($delayedEvents, "update:api:source") -and
-        [Array]::LastIndexOf($delayedEvents, "bounds:api:83-100") -ge 0) "Recovery must derive no-growth bounds from the current frozen desired count of six."
+        [Array]::LastIndexOf($delayedEvents, "bounds:api:66-100") -ge 0) "Recovery must derive no-growth bounds from the current frozen desired count of three."
 
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
     $global:RuntimeConfigTestState.RejectEcrLookup = $true
@@ -2930,20 +2935,20 @@ try {
     $boundaryResult = Invoke-RuntimeConfigApply -Plan $boundaryPlan -PlanSha256 $boundaryPlanResult.PlanSha256 `
         -Now $now -ConvergenceAttempts 3 -ConvergenceIntervalSeconds 0
     Assert-Condition ($boundaryResult.status -ceq "applied" -and
-        $global:RuntimeConfigTestState.ScalingMin -eq 6 -and -not $global:RuntimeConfigTestState.Scheduled) "Scaling release must retry across 05:45 and finish at the current scheduled minimum."
+        $global:RuntimeConfigTestState.ScalingMin -eq 3 -and -not $global:RuntimeConfigTestState.Scheduled) "Scaling release must retry across 05:45 and finish at the current scheduled minimum."
     Assert-Condition (@($global:RuntimeConfigTestState.Events | Where-Object { $_ -ceq "scaling:hold" }).Count -ge 3) "A restore-time schedule boundary must re-establish the hold before retrying release."
 
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
-    $global:RuntimeConfigTestState.ApiDesiredCount = 6
-    $global:RuntimeConfigTestState.ScalingMin = 6
+    $global:RuntimeConfigTestState.ApiDesiredCount = 3
+    $global:RuntimeConfigTestState.ScalingMin = 3
     $global:RuntimeConfigTestState.RejectEcrLookup = $true
     $scaleDownBoundaryPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $offProfilePath `
         -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
         -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now
     $scaleDownBoundaryPlan = Read-RuntimePlan -Path $scaleDownBoundaryPlanResult.PlanPath -ExpectedSha256 $scaleDownBoundaryPlanResult.PlanSha256
     foreach ($clockValue in @(
-        "2026-08-24T09:59:59-04:00", "2026-08-24T09:59:59-04:00", "2026-08-24T10:00:00-04:00",
-        "2026-08-24T10:00:00-04:00", "2026-08-24T10:00:00-04:00", "2026-08-24T10:00:00-04:00"
+        "2026-08-24T15:59:59-04:00", "2026-08-24T15:59:59-04:00", "2026-08-24T16:00:00-04:00",
+        "2026-08-24T16:00:00-04:00", "2026-08-24T16:00:00-04:00", "2026-08-24T16:00:00-04:00"
     )) {
         $global:RuntimeConfigClockQueue.Enqueue([DateTimeOffset]::Parse($clockValue))
     }
@@ -2951,7 +2956,8 @@ try {
         -PlanSha256 $scaleDownBoundaryPlanResult.PlanSha256 -Now $now `
         -ConvergenceAttempts 3 -ConvergenceIntervalSeconds 0
     Assert-Condition ($scaleDownBoundaryResult.status -ceq "applied" -and
-        $global:RuntimeConfigTestState.ScalingMin -eq 1 -and -not $global:RuntimeConfigTestState.Scheduled) "Scaling release must retry across 10:00 and finish at the current ordinary minimum."
+        $global:RuntimeConfigTestState.ScalingMin -eq 1 -and -not $global:RuntimeConfigTestState.Scheduled) "Scaling release must retry across 16:00 and finish at the current ordinary minimum."
+    Assert-Condition (@($global:RuntimeConfigTestState.Events | Where-Object { $_ -ceq "scaling:hold" }).Count -ge 3) "A restore-time 16:00 boundary must re-establish the hold before retrying release."
 
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
     $global:RuntimeConfigTestState.ApiDesiredCount = 2
@@ -3006,16 +3012,25 @@ try {
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
     Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $fullTestRuntime
     $global:RuntimeConfigTestState.ApiDesiredCount = 3
+    $ordinaryFloorPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $profilePath `
+        -PrivateTurnEvidencePath $evidencePath -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+        -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now -SkipRepositoryCheck
+    $ordinaryFloorPlan = Read-RuntimePlan -Path $ordinaryFloorPlanResult.PlanPath -ExpectedSha256 $ordinaryFloorPlanResult.PlanSha256
+    Assert-Condition ($ordinaryFloorPlan.protectedWindowProductionMutation -eq $false) `
+        "Ordinary strict planning must admit the three-task school-day floor without protected-window confirmation."
+    Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
+    Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $fullTestRuntime
+    $global:RuntimeConfigTestState.ApiDesiredCount = 4
     Assert-Throws {
         New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $profilePath `
             -PrivateTurnEvidencePath $evidencePath -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
             -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now -SkipRepositoryCheck
-    } "Ordinary strict planning must retain the two-task API ceiling."
+    } "Ordinary strict planning must retain the three-task API ceiling."
 
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
     Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $firstCapabilityRuntime
-    $global:RuntimeConfigTestState.ApiDesiredCount = 6
-    $global:RuntimeConfigTestState.ScalingMin = 6
+    $global:RuntimeConfigTestState.ApiDesiredCount = 3
+    $global:RuntimeConfigTestState.ScalingMin = 3
     $waiverPlanArguments = @{
         RepositoryRoot = $repositoryRoot
         PrivateProfilePath = $profilePath
@@ -3111,7 +3126,7 @@ try {
     Set-PrivatePathPermissions -Path ([string]$waiverPlan.managedTestWaiverPath)
 
     1..5 | ForEach-Object {
-        $global:RuntimeConfigClockQueue.Enqueue([DateTimeOffset]::Parse("2026-08-24T06:00:00-04:00"))
+        $global:RuntimeConfigClockQueue.Enqueue([DateTimeOffset]::Parse("2026-08-24T05:50:00-04:00"))
     }
     $waiverApplyResult = Invoke-RuntimeConfigApply -Plan $waiverPlan -PlanSha256 $waiverPlanResult.PlanSha256 -Now $now `
         -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck `
@@ -3122,9 +3137,9 @@ try {
         $waiverApplyResult.managedValidation -ceq "waived_not_passed") `
         "Synthetic-only protected apply must converge and retain its waiver record."
     $waiverEvents = @($global:RuntimeConfigTestState.Events)
-    Assert-Condition ($waiverEvents -contains "bounds:api:83-100" -and
+    Assert-Condition ($waiverEvents -contains "bounds:api:66-100" -and
         $waiverEvents -contains "bounds:worker:0-100") `
-        "Six-task protected activation must use the existing no-growth rolling bounds."
+        "Three-task protected activation must use the existing no-growth rolling bounds."
     Assert-Condition ($global:RuntimeConfigTestState.ApiMinimumHealthyPercent -eq 100 -and
         $global:RuntimeConfigTestState.ApiMaximumPercent -eq 200 -and
         $global:RuntimeConfigTestState.WorkerMinimumHealthyPercent -eq 100 -and
@@ -3139,7 +3154,7 @@ try {
     $global:RuntimeConfigTestState.Events.Add("test:protected-rollback-start")
     $protectedRollbackStart = [Array]::IndexOf(@($global:RuntimeConfigTestState.Events), "test:protected-rollback-start")
     1..5 | ForEach-Object {
-        $global:RuntimeConfigClockQueue.Enqueue([DateTimeOffset]::Parse("2026-08-24T06:00:00-04:00"))
+        $global:RuntimeConfigClockQueue.Enqueue([DateTimeOffset]::Parse("2026-08-24T05:50:00-04:00"))
     }
     $waiverRollbackResult = Invoke-RuntimeConfigRollback -Plan $waiverPlan `
         -PlanSha256 $waiverPlanResult.PlanSha256 -Now $now.AddHours(3) `
@@ -3150,10 +3165,10 @@ try {
     Assert-Condition ($waiverRollbackResult.status -ceq "rolled_back" -and
         $global:RuntimeConfigTestState.ApiCurrentArn -ceq $apiSourceArn -and
         $global:RuntimeConfigTestState.WorkerCurrentArn -ceq $workerSourceArn) `
-        "Protected rollback must restore the exact pre-waiver service pair at six tasks."
-    Assert-Condition ($protectedRollbackTail -contains "bounds:api:83-100" -and
+        "Protected rollback must restore the exact pre-waiver service pair at three tasks."
+    Assert-Condition ($protectedRollbackTail -contains "bounds:api:66-100" -and
         $protectedRollbackTail -contains "bounds:worker:0-100") `
-        "Protected rollback must use the same no-growth six-task bounds."
+        "Protected rollback must use the same no-growth three-task bounds."
 
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
     Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $fullTestRuntime
