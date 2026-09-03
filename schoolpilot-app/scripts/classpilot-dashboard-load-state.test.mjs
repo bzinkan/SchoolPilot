@@ -605,11 +605,14 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     await cachedEmptyPage.goto(`${baseURL}/classpilot`);
     await cachedEmptyPage.getByText("No students are available in this view.", { exact: true }).waitFor();
     await cachedEmptyPage.getByTestId("button-open-tab").waitFor();
-    // The Flight Path / Block List chevron menus are non-modal because their
-    // Status items open a Dialog from inside the menu; a modal menu plus a
-    // dialog leaves body pointer-events disabled after Close. Prove each menu
-    // opens, Status reaches its viewer, Close dismisses it, and the toolbar
-    // still responds afterwards.
+    // The Flight Path / Block List chevron menus must be non-modal: their
+    // Status items open a Dialog from inside the menu, and a modal menu plus a
+    // dialog can leave body pointer-events disabled after Close. A modal Radix
+    // menu sets body pointer-events:none while open, so assert the runtime
+    // property directly while each menu is open, then walk the path: menu ->
+    // Status -> viewer -> Close -> the toolbar still responds. The literal
+    // `<DropdownMenu modal={false}>` count is pinned by
+    // assert-classpilot-tile-batching.mjs.
     for (const menu of [
       {
         trigger: "button-flight-path-menu",
@@ -626,6 +629,12 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     ]) {
       assert.equal(await cachedEmptyPage.getByTestId(menu.status).count(), 0, `${menu.status} must stay unmounted until its menu opens`);
       await cachedEmptyPage.getByTestId(menu.trigger).click();
+      await cachedEmptyPage.getByTestId(menu.status).waitFor();
+      assert.notEqual(
+        await cachedEmptyPage.evaluate(() => getComputedStyle(document.body).pointerEvents),
+        "none",
+        `${menu.trigger} must open a non-modal menu that leaves the page interactive`,
+      );
       await cachedEmptyPage.getByTestId(menu.status).click();
       await cachedEmptyPage.getByTestId(menu.dialog).waitFor();
       await cachedEmptyPage.getByTestId(menu.close).click();
