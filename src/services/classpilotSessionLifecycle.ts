@@ -19,6 +19,7 @@ import {
   getCentralEmailRecipientForSchool,
   getClasspilotSessionReportBySession,
   getClasspilotSessionStudentReports,
+  getClasspilotSessionUsageActivitiesBySession,
   getActiveSessionsForStudents,
   getClasspilotSessionStudents,
   getClasspilotStudentControlState,
@@ -482,6 +483,7 @@ type SessionSummaryData = {
     name: string;
     totalMinutes: number;
     topDomains: Array<{ domain: string; minutes: number }>;
+    topActivities: Array<{ kind: string; domain: string; minutes: number }>;
     offTaskCount: number;
     offTaskMinutes?: number;
     unclassifiedMinutes?: number;
@@ -511,10 +513,20 @@ async function buildSessionSummaryData(
     throw new Error("Immutable ClassPilot session report is not ready");
   }
   const studentReports = await getClasspilotSessionStudentReports(schoolId, report.id, dbInstance);
+  // App-level activity ("Google Docs") rather than bare hostnames
+  // ("docs.google.com"). It lives in classpilot_session_usage because the
+  // immutable per-student report intentionally carries domains only.
+  const activitiesByStudent = await getClasspilotSessionUsageActivitiesBySession(
+    schoolId,
+    session.id,
+    dbInstance
+  );
   const endTime = report.windowEnd;
   const timeZone = report.timezone;
   const students = studentReports.map((student) => {
     const topDomains = Array.isArray(student.topDomains) ? student.topDomains as Array<any> : [];
+    const rawActivities = activitiesByStudent.get(student.studentId);
+    const topActivities = Array.isArray(rawActivities) ? rawActivities as Array<any> : [];
     const safetyAlerts = report.reportVersion >= 2 && Array.isArray(student.safetyAlerts)
       ? student.safetyAlerts as Array<any>
       : [];
@@ -525,6 +537,11 @@ async function buildSessionSummaryData(
         domain: String(domain.domain || ""),
         minutes: Math.round(Number(domain.seconds || 0) / 60),
       })).filter((domain) => domain.domain),
+      topActivities: topActivities.slice(0, 5).map((activity) => ({
+        kind: String(activity.kind || "domain"),
+        domain: String(activity.domain || ""),
+        minutes: Math.round(Number(activity.seconds || 0) / 60),
+      })).filter((activity) => activity.domain),
       offTaskCount: report.reportVersion >= 2 ? student.offTaskEventCount : 0,
       safetyAlerts: safetyAlerts.map((alert) => String(alert.category || "")).filter(Boolean),
       // The immutable report stores normalized domains only. Query strings,

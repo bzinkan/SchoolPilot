@@ -420,6 +420,12 @@ async function loadSnapshotChunk(
        AND classroom.school_id = ${schoolId}
       INNER JOIN teaching_sessions AS teaching_session
         ON teaching_session.group_id = classroom.id
+       -- Deliberately live-only. This is a live-presence surface: it answers
+       -- "which class is this student in right now" for the teacher console.
+       -- An unattended scheduled occurrence has no teacher present, so it is
+       -- not a current class here. Reporting surfaces (Student Data, report
+       -- history) do include scheduled_report -- see REPORTABLE_SESSION_MODES
+       -- in classpilotStudentData.ts.
        AND teaching_session.session_mode = 'live'
        AND teaching_session.end_time IS NULL
       ORDER BY roster.student_id,

@@ -1,6 +1,10 @@
 const STUDENT_DATA_PERIODS = new Set(['today', 'week', 'month', 'year']);
 const STUDENT_DATA_SCOPE_KINDS = new Set(['school', 'mine', 'class']);
 const STUDENT_DATA_STATES = new Set(['final', 'live', 'finalizing']);
+const STUDENT_DATA_MONITORING_COVERAGE = new Set(['monitored', 'unattended', 'no_session']);
+// Mirrors CLASSPILOT_ACTIVITY_KINDS / CLASSPILOT_ACTIVITY_LABELS in
+// src/services/classpilotActivityAttribution.ts. Parity is enforced by
+// tests/classpilot-activity-attribution.test.ts -- update both together.
 const STUDENT_DATA_ACTIVITY_KINDS = new Set([
   'domain',
   'google_docs',
@@ -9,6 +13,9 @@ const STUDENT_DATA_ACTIVITY_KINDS = new Set([
   'google_sheets',
   'google_classroom',
   'google_drive',
+  'google_search',
+  'google_mail',
+  'google_meet',
   'google_workspace_unspecified',
 ]);
 const STUDENT_DATA_ACTIVITY_LABELS = Object.freeze({
@@ -18,6 +25,9 @@ const STUDENT_DATA_ACTIVITY_LABELS = Object.freeze({
   google_sheets: 'Google Sheets',
   google_classroom: 'Google Classroom',
   google_drive: 'Google Drive',
+  google_search: 'Google Search',
+  google_mail: 'Gmail',
+  google_meet: 'Google Meet',
   google_workspace_unspecified: 'Google Workspace (app unavailable)',
 });
 
@@ -75,6 +85,10 @@ function legacyActivityKind(domain) {
   }
   if (domain === 'classroom.google.com') return 'google_classroom';
   if (domain === 'drive.google.com') return 'google_drive';
+  if (domain === 'mail.google.com') return 'google_mail';
+  if (domain === 'meet.google.com') return 'google_meet';
+  // google.com stays 'domain': legacy rows carry no path, so Search cannot be
+  // distinguished from Maps. Matches fallbackActivityKind on the server.
   return 'domain';
 }
 
@@ -432,6 +446,12 @@ export function normalizeStudentDataResponse(payload, {
     generatedAt,
     scope,
     dataState,
+    // Older servers omit this. Treat a missing value as 'monitored' so the UI
+    // degrades to its previous wording rather than claiming a class was never
+    // monitored on the strength of a field that simply is not there.
+    monitoringCoverage: STUDENT_DATA_MONITORING_COVERAGE.has(root.monitoringCoverage)
+      ? root.monitoringCoverage
+      : 'monitored',
     asOf: root.asOf ?? generatedAt,
     provisionalAsOf: root.provisionalAsOf ?? null,
     monitoredSeconds,
@@ -451,6 +471,35 @@ export function studentDataStateLabel(value) {
   if (value === 'finalizing') return 'Finalizing';
   if (value === 'final') return 'Final';
   return 'Unknown';
+}
+
+/**
+ * Badge text when monitoring coverage, not report settlement, is the thing the
+ * reader needs to know. Returns null when the ordinary data-state label should
+ * stand.
+ *
+ * 'Final' on an unattended class asserted that a zero was authoritative when
+ * the code had never measured anything -- that is the wording this replaces.
+ */
+export function studentDataCoverageLabel(value) {
+  if (value === 'unattended') return 'Unattended';
+  if (value === 'no_session') return 'Not monitored';
+  return null;
+}
+
+/**
+ * Why the figures look the way they do, in the same words the session summary
+ * email uses so the two surfaces agree.
+ */
+export function studentDataCoverageMessage(value) {
+  if (value === 'unattended') {
+    return 'No live ClassPilot session was opened for this class. Scheduled reporting '
+      + 'remained active, so the times below are measured from student devices.';
+  }
+  if (value === 'no_session') {
+    return 'This class was not monitored for this period — no session covered it.';
+  }
+  return 'No monitored activity was recorded for this scope and period.';
 }
 
 export function formatStudentDataSeconds(value) {
@@ -475,6 +524,7 @@ export function studentDataCsv(report, { period = 'today', studentId = null } = 
     ['Aggregate revision', normalized.revision ?? 'unversioned'],
     ['Period', period],
     ['Data state', studentDataStateLabel(normalized.dataState)],
+    ['Monitoring coverage', normalized.monitoringCoverage],
     ['As of', normalized.asOf ?? 'unknown'],
     ['Provisional as of', normalized.provisionalAsOf ?? ''],
     [],

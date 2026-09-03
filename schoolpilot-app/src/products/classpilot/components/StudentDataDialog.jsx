@@ -22,6 +22,8 @@ import {
   studentDataQueryUrl,
   studentDataScopesQueryUrl,
   studentDataStateLabel,
+  studentDataCoverageLabel,
+  studentDataCoverageMessage,
 } from '../lib/studentData';
 
 const PERIODS = [
@@ -265,8 +267,12 @@ function VirtualStudentRows({ students, onSelect }) {
 function DataState({ report }) {
   if (!report) return null;
   const provisional = isProvisionalStudentDataState(report.dataState);
-  const stateLabel = studentDataStateLabel(report.dataState);
-  const asOf = report.provisionalAsOf || report.asOf;
+  const coverageLabel = studentDataCoverageLabel(report.monitoringCoverage);
+  const stateLabel = coverageLabel ?? studentDataStateLabel(report.dataState);
+  // Only a provisional timestamp describes the data. On a settled report `asOf`
+  // is just the moment the request ran, which tells the reader nothing, so it
+  // is left out rather than dressed up as freshness.
+  const asOf = report.provisionalAsOf;
 
   return (
     <div
@@ -274,16 +280,21 @@ function DataState({ report }) {
       data-testid="student-data-freshness"
     >
       <span
-        className={provisional
-          ? 'rounded-full border border-blue-300 bg-blue-50 px-2 py-0.5 font-semibold text-blue-800 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-200'
-          : 'rounded-full border border-border bg-muted px-2 py-0.5 font-semibold text-foreground'}
+        className={coverageLabel
+          ? 'rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 font-semibold text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200'
+          : provisional
+            ? 'rounded-full border border-blue-300 bg-blue-50 px-2 py-0.5 font-semibold text-blue-800 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-200'
+            : 'rounded-full border border-border bg-muted px-2 py-0.5 font-semibold text-foreground'}
         data-testid="student-data-state"
       >
         {stateLabel}
       </span>
-      <span>As of {formatAsOf(asOf)}</span>
+      {asOf ? <span>As of {formatAsOf(asOf)}</span> : null}
       {report.dataState === 'live' ? <span>Updates about every 30 seconds</span> : null}
       {report.dataState === 'finalizing' ? <span>Waiting for the completed class report</span> : null}
+      {report.monitoringCoverage === 'unattended'
+        ? <span>No teacher console was open for this class</span>
+        : null}
     </div>
   );
 }
@@ -701,7 +712,7 @@ export default function StudentDataDialog({
                     <>
                       {!hasActivity ? (
                         <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground" role="status" data-testid="student-data-no-activity">
-                          No monitored activity was recorded for this scope and period.
+                          {studentDataCoverageMessage(report.monitoringCoverage)}
                         </div>
                       ) : null}
                       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">

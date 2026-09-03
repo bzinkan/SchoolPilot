@@ -1035,9 +1035,21 @@ describe("multi-school readiness route hardening", () => {
     const schoolTeacherA = schoolAggregate.body.students.find(
       (student: any) => student.studentId === teacherAStudent.id
     );
+    // Admin reporting counts the unattended scheduled block (+444). A
+    // scheduled_report occurrence is finalized and carries a ready report and
+    // real heartbeat-derived usage; only the teacher's console was absent.
+    // Excluding it hid genuine monitoring data from the school's own record --
+    // an empty class screen for students who were demonstrably on their
+    // devices. Teacher-scoped reads stay live-only, which the retained-teacher
+    // authority assertion above pins.
+    //
+    // The incomplete row (888) is still excluded, and that half of the original
+    // contract is unchanged: it has no completed roster snapshot, so it is not
+    // reportable for anyone.
     assert.ok(
-      schoolTeacherA.monitoredSeconds === 40 || schoolTeacherA.monitoredSeconds === 60,
-      "only retained live rows are counted; scheduled-report/incomplete rows must not add 444/888 seconds"
+      schoolTeacherA.monitoredSeconds === 484 || schoolTeacherA.monitoredSeconds === 504,
+      `retained live rows (40/60) plus the unattended scheduled block (444) are counted, `
+        + `and the incomplete row (888) is not; got ${schoolTeacherA.monitoredSeconds}`
     );
 
     const liveClass = await requestJson(
