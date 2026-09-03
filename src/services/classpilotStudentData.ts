@@ -120,16 +120,43 @@ const CLASSPILOT_SESSION_MAX_MS = 12 * 60 * 60 * 1_000;
  * command dispatch, teacher chat, FAB actions, roster resync -- deliberately
  * stay 'live'-only and must NOT use this.
  */
-const REPORTABLE_SESSION_MODES = ["live", "scheduled_report"];
+const LIVE_SESSION_MODE = "live";
+const SCHEDULED_REPORT_SESSION_MODE = "scheduled_report";
+
+/**
+ * Which session modes a given role may read.
+ *
+ * Admins read school-wide, so an unattended block is simply part of the
+ * school's record and is included.
+ *
+ * A teacher is deliberately narrower. Their authority over a past class comes
+ * from the frozen classpilot_session_staff row on a session they actually ran,
+ * and it survives being reassigned off the group. An unattended occurrence ran
+ * without anyone, so counting it would let a former teacher read a block they
+ * were never present for -- the case pinned by
+ * tests/multi-school-readiness-routes.test.ts ("scheduled_report rows never
+ * grant authority"). Teachers still receive the unattended block's numbers in
+ * their session summary email, which is scoped by delivery rather than by
+ * retained read access.
+ */
+function reportableSessionModes(role: ClasspilotStudentDataRole): string[] {
+  return role === "teacher"
+    ? [LIVE_SESSION_MODE]
+    : [LIVE_SESSION_MODE, SCHEDULED_REPORT_SESSION_MODE];
+}
 
 /** Reportable-mode predicate for Drizzle queries over `teachingSessions`. */
-function reportableSessionMode(): SQL {
-  return inArray(teachingSessions.sessionMode, REPORTABLE_SESSION_MODES);
+function reportableSessionMode(role: ClasspilotStudentDataRole): SQL {
+  return inArray(teachingSessions.sessionMode, reportableSessionModes(role));
 }
 
 /** Reportable-mode predicate for raw SQL that aliases the table as `session`. */
-function reportableSessionModeSql(): SQL {
-  return sql`session.session_mode IN ('live', 'scheduled_report')`;
+function reportableSessionModeSql(role: ClasspilotStudentDataRole): SQL {
+  const modes = reportableSessionModes(role);
+  return sql`session.session_mode IN (${sql.join(
+    modes.map((mode) => sql`${mode}`),
+    sql`, `
+  )})`;
 }
 
 type StudentIdentity = {
@@ -685,7 +712,7 @@ async function loadActiveScopeSessions(options: {
   };
   const conditions = and(
     eq(teachingSessions.schoolId, options.schoolId),
-    reportableSessionMode(),
+    reportableSessionMode(options.role),
     isNull(teachingSessions.endTime),
     sql`${teachingSessions.startTime} AT TIME ZONE 'UTC' <= ${options.authority.now.toISOString()}`,
     sql`(${teachingSessions.scheduledEndAt} IS NULL OR ${teachingSessions.scheduledEndAt} > ${options.authority.now.toISOString()})`,
@@ -797,7 +824,7 @@ async function loadStudentDataScopeSet(options: {
       INNER JOIN ${teachingSessions} AS session
         ON session.id = session_staff.teaching_session_id
        AND session.school_id = ${options.schoolId}
-       AND ${reportableSessionModeSql()}
+       AND ${reportableSessionModeSql("teacher")}
       INNER JOIN ${groups} AS class_group
         ON class_group.id = session.group_id
        AND class_group.school_id = ${options.schoolId}
@@ -893,7 +920,7 @@ async function loadAuthorizedSession(options: {
   const conditions = and(
     eq(teachingSessions.id, options.sessionId),
     eq(teachingSessions.schoolId, options.schoolId),
-    reportableSessionMode(),
+    reportableSessionMode(options.role),
     isNotNull(teachingSessions.rosterSnapshotCompletedAt),
     eq(groups.id, teachingSessions.groupId),
     eq(groups.schoolId, options.schoolId),
@@ -1001,7 +1028,7 @@ function usageScopeConditions(options: {
   const conditions: SQL[] = [
     sql`usage.school_id = ${options.schoolId}`,
     sql`session.school_id = ${options.schoolId}`,
-    reportableSessionModeSql(),
+    reportableSessionModeSql(options.role),
     sql`session.roster_snapshot_completed_at IS NOT NULL`,
     sql`class_group.school_id = ${options.schoolId}`,
     retainedSessionAuthoritySql(options.authority),
@@ -1396,7 +1423,7 @@ async function loadScopedIdentities(options: {
   const conditions: SQL[] = [
     sql`roster.school_id = ${options.schoolId}`,
     sql`session.school_id = ${options.schoolId}`,
-    reportableSessionModeSql(),
+    reportableSessionModeSql(options.role),
     sql`session.roster_snapshot_completed_at IS NOT NULL`,
     sql`class_group.school_id = ${options.schoolId}`,
     retainedSessionAuthoritySql(options.authority),
@@ -1514,7 +1541,7 @@ async function loadProvisionalSessions(options: {
   const groupId = options.selection.session?.groupId || options.selection.scope.groupId!;
   const sessionConditions = [
     eq(teachingSessions.schoolId, options.schoolId),
-    reportableSessionMode(),
+    reportableSessionMode(options.role),
     eq(teachingSessions.groupId, groupId),
     isNotNull(teachingSessions.rosterSnapshotCompletedAt),
     eq(groups.schoolId, options.schoolId),
@@ -1750,7 +1777,7 @@ async function loadStoredKeysForSessions(options: {
     .innerJoin(teachingSessions, and(
       eq(teachingSessions.id, classpilotSessionUsage.teachingSessionId),
       eq(teachingSessions.schoolId, options.schoolId),
-      reportableSessionMode()
+      inArray(teachingSessions.sessionMode, [LIVE_SESSION_MODE, SCHEDULED_REPORT_SESSION_MODE])
     ))
     .leftJoin(classpilotSessionReports, and(
       eq(classpilotSessionReports.schoolId, options.schoolId),
