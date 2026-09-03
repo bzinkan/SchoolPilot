@@ -1279,6 +1279,37 @@ assert.match(
   /data-testid="button-unlock-screen"[\s\S]{0,220}>Clear Waypoint<\/Button>/,
   'the screen-only release action must use button-unlock-screen and display Clear Waypoint',
 );
+// Flight Path and Block List are split buttons (2026-09): Apply stays a
+// one-line toolbar Button, the chevron trigger is attached to it, and Remove /
+// Status are DropdownMenuItems in that order. Both menus must stay non-modal
+// because Status opens a Dialog from a menu item (a modal menu plus a dialog is
+// the known body pointer-events race), and toolbar Remove must keep its strict
+// empty payload on the same line as its testid.
+assert.match(
+  dashboardSource,
+  /data-testid="button-apply-flight-path"[\s\S]{0,900}data-testid="button-flight-path-menu"[\s\S]{0,900}data-testid="button-remove-flight-path"[\s\S]{0,500}data-testid="button-flight-path-status"/,
+  'the Flight Path group must order Apply, the chevron trigger, Remove, then Status',
+);
+assert.match(
+  dashboardSource,
+  /data-testid="button-apply-block-list"[\s\S]{0,900}data-testid="button-block-list-menu"[\s\S]{0,900}data-testid="button-remove-block-list"[\s\S]{0,500}data-testid="button-block-list-status"/,
+  'the Block List group must order Apply, the chevron trigger, Remove, then Status',
+);
+assert.equal(
+  (dashboardSource.match(/<DropdownMenu modal=\{false\}>/g) || []).length,
+  2,
+  'exactly the Flight Path and Block List menus must render as non-modal dropdowns',
+);
+assert.match(
+  dashboardSource,
+  /onSelect=\{\(\) => removeFlightPathMutation\.mutate\(\{\}\)\}[^\n]*data-testid="button-remove-flight-path"/,
+  'toolbar Remove Flight Path must keep its strict empty payload beside its testid',
+);
+assert.match(
+  dashboardSource,
+  /onSelect=\{\(\) => removeBlockListMutation\.mutate\(\{\}\)\}[^\n]*data-testid="button-remove-block-list"/,
+  'toolbar Remove Block List must keep its strict empty payload beside its testid',
+);
 assert.match(
   dashboardSource,
   /data-testid="waypoint-domain-preservation-message"[\s\S]{0,120}\{waypointDomainRestrictionMessage\}/,

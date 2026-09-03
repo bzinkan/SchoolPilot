@@ -432,6 +432,8 @@ async function assertCommandEntryPointsUnavailable(page, commandPosts) {
     "button-flight-path-status",
     "button-apply-block-list",
     "button-block-list-status",
+    "button-flight-path-menu",
+    "button-block-list-menu",
     "button-sign-out-students",
     "dialog-open-tab",
     "dialog-lock-screen",
@@ -603,6 +605,37 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     await cachedEmptyPage.goto(`${baseURL}/classpilot`);
     await cachedEmptyPage.getByText("No students are available in this view.", { exact: true }).waitFor();
     await cachedEmptyPage.getByTestId("button-open-tab").waitFor();
+    // The Flight Path / Block List chevron menus are non-modal because their
+    // Status items open a Dialog from inside the menu; a modal menu plus a
+    // dialog leaves body pointer-events disabled after Close. Prove each menu
+    // opens, Status reaches its viewer, Close dismisses it, and the toolbar
+    // still responds afterwards.
+    for (const menu of [
+      {
+        trigger: "button-flight-path-menu",
+        status: "button-flight-path-status",
+        dialog: "dialog-flight-path-viewer",
+        close: "button-close-flight-path-viewer",
+      },
+      {
+        trigger: "button-block-list-menu",
+        status: "button-block-list-status",
+        dialog: "dialog-block-list-viewer",
+        close: "button-close-block-list-viewer",
+      },
+    ]) {
+      assert.equal(await cachedEmptyPage.getByTestId(menu.status).count(), 0, `${menu.status} must stay unmounted until its menu opens`);
+      await cachedEmptyPage.getByTestId(menu.trigger).click();
+      await cachedEmptyPage.getByTestId(menu.status).click();
+      await cachedEmptyPage.getByTestId(menu.dialog).waitFor();
+      await cachedEmptyPage.getByTestId(menu.close).click();
+      await cachedEmptyPage.getByTestId(menu.dialog).waitFor({ state: "hidden" });
+    }
+    await cachedEmptyPage.getByTestId("button-open-tab").click();
+    await cachedEmptyPage.getByTestId("dialog-open-tab").waitFor();
+    await cachedEmptyPage.getByTestId("button-cancel-open-tab").click();
+    await cachedEmptyPage.getByTestId("dialog-open-tab").waitFor({ state: "hidden" });
+    assert.deepEqual(cachedEmptyHarness.commandPosts, [], "opening the menus and viewers must not issue a command");
     cachedEmptyAggregate.setScopedResponse(failure({ requestId: "req-cached-empty" }));
     await cachedEmptyHarness.authenticateWebSocket();
     await cachedEmptyPage.getByTestId("students-refresh-error").waitFor();
@@ -680,9 +713,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
       "button-lock-screen",
       "button-unlock-screen",
       "button-apply-flight-path",
-      "button-flight-path-status",
       "button-apply-block-list",
-      "button-block-list-status",
       "button-select-all-students",
     ]) {
       assert.equal(
@@ -690,6 +721,33 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
         true,
         `${testId} must stay disabled for a sign-out-only selection`,
       );
+    }
+    // Remove and Status live inside the Flight Path / Block List chevron menus,
+    // which Radix unmounts while closed. The chevron itself stays enabled so the
+    // teacher can still see which actions exist; every item must report
+    // disabled once the menu is open.
+    for (const [menuTestId, itemTestIds] of [
+      ["button-flight-path-menu", ["button-remove-flight-path", "button-flight-path-status"]],
+      ["button-block-list-menu", ["button-remove-block-list", "button-block-list-status"]],
+    ]) {
+      const menuTrigger = staleSignOutPage.getByTestId(menuTestId);
+      assert.equal(
+        await menuTrigger.isDisabled(),
+        false,
+        `${menuTestId} must stay openable for a sign-out-only selection`,
+      );
+      await menuTrigger.click();
+      for (const testId of itemTestIds) {
+        const item = staleSignOutPage.getByTestId(testId);
+        await item.waitFor();
+        assert.equal(
+          await item.isDisabled(),
+          true,
+          `${testId} must stay disabled for a sign-out-only selection`,
+        );
+      }
+      await staleSignOutPage.keyboard.press("Escape");
+      await staleSignOutPage.getByTestId(itemTestIds[0]).waitFor({ state: "hidden" });
     }
     assert.equal(
       await staleSignOutPage.getByLabel("Quick Classroom Tools").count(),
