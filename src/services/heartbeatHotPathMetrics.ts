@@ -87,6 +87,7 @@ export type HeartbeatHotPathCounter =
   | "tileBatchScreenshotMissItems"
   | "tileBatchScreenshotStoreUnavailable"
   | "screenshotAvailableBroadcastFailures"
+  | "screenshotAvailableBroadcastSkipped"
   | "screenshotActiveCadencePolicyIssued"
   | "screenshotBackgroundCadencePolicyIssued"
   | "screenshotCadenceObservationUnavailable"
@@ -324,6 +325,7 @@ export const HOT_PATH_EMF_COUNTERS: ReadonlyArray<
   ["tileBatchScreenshotMissItems", "TileBatchScreenshotMissItems"],
   ["tileBatchScreenshotStoreUnavailable", "TileBatchScreenshotStoreUnavailable"],
   ["screenshotAvailableBroadcastFailures", "ScreenshotAvailableBroadcastFailures"],
+  ["screenshotAvailableBroadcastSkipped", "ScreenshotAvailableBroadcastSkipped"],
   ["screenshotCadenceObservationUnavailable", "ScreenshotCadenceObservationUnavailable"],
   ["deviceHeartbeatRateLimited", "DeviceHeartbeatRateLimited"],
   ["deviceScreenshotRateLimited", "DeviceScreenshotRateLimited"],

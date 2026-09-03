@@ -75,5 +75,29 @@ test("heartbeat, websocket auth, and screenshot upload share cadence policy reso
   assert.match(upload, /resolveClasspilotScreenshotPolicy\([\s\S]*acceptedCapabilities: acceptedScreenshotCapabilities/);
   assert.doesNotMatch(upload, /acceptedCapabilities: \[\.\.\.acceptedHeartbeatCapabilities\]/);
   assert.match(upload, /retained: true,[\s\S]*screenshotPolicy: strictValue\.screenshotPolicy/);
+  // "background" is issued both for "nobody is watching" and for "we could not
+  // find out". Only the first may suppress the announcement.
+  assert.match(upload, /strictCaptureCadence\?\.mode === "background"[\s\S]{0,200}status === "unobserved"/);
   assert.match(websocket, /resolveClasspilotScreenshotPolicy\([\s\S]*acceptedCapabilities: protocol\.acceptedCapabilities/);
+});
+
+test("the screenshot upload limiter clears the five-second cadence and names its 429", async () => {
+  const devices = await source("src/routes/classpilot/devices.ts");
+  const limiter = devices.slice(
+    devices.indexOf("const deviceScreenshotLimiter = rateLimit({"),
+    devices.indexOf("const extensionTelemetryLimiter")
+  );
+  assert.match(limiter, /windowMs: 60 \* 1000,/);
+  // Twelve to thirteen uploads a minute at the active cadence, and from 2.8.2 a
+  // navigation capture rides its own 1200ms gap rather than the cadence gap.
+  // An app 429 here is a hard scale-readiness gate failure, so the ceiling must
+  // stay well above both lanes.
+  const max = Number(limiter.match(/max: ([0-9]+),/)?.[1]);
+  assert.ok(max >= 40, `screenshot upload ceiling ${max} leaves no cadence headroom`);
+  // Keep the justifying comment anchored to the client constant it cites.
+  assert.match(limiter, /1200ms/);
+  // The only rejection on this route that the extension used to receive with
+  // no code at all: without one it can only back off blind.
+  assert.match(limiter, /code: "SCREENSHOT_UPLOAD_RATE_LIMITED"/);
+  assert.doesNotMatch(limiter, /screenshotPolicy/);
 });

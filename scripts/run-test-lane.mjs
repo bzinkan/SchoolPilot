@@ -40,6 +40,7 @@ const DB_SERIAL = new Set([
   "classpilot-safety-spine-retention.test.ts",
   "classpilot-schedule-changes.test.ts",
   "classpilot-school-status-auth.test.ts",
+  "classpilot-screenshot-publish-gate.test.ts",
   "classpilot-sso-policy.test.ts",
   "classpilot-session-report-rollout.test.ts",
   "classpilot-session-summary-lifecycle.test.ts",
