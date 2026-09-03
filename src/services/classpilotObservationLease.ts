@@ -54,19 +54,47 @@ function digest(parts: string[]): string {
   return createHmac("sha256", keySecret()).update(parts.join("\u001f")).digest("base64url");
 }
 
-function sessionIndexKey(schoolId: string, teachingSessionId: string): string {
-  return `classpilot:observation:v1:${digest([schoolId, teachingSessionId])}`;
+// A lease is held against a subject. The teaching-session subject is the
+// original one and its derived keys are frozen: changing either the literal
+// prefix or the digest inputs below orphans every in-flight lease across a
+// rolling deploy. Any new subject gets its own literal prefix AND a domain tag
+// as the first digest part, so an identifier reused across subject kinds can
+// never collide into the same namespace.
+type ObservationSubject =
+  | { kind: "teaching_session"; teachingSessionId: string }
+  | { kind: "supervision_context"; supervisionContextId: string };
+
+const SUPERVISION_SUBJECT_DOMAIN = "supervision_context";
+
+function subjectIndexKey(schoolId: string, subject: ObservationSubject): string {
+  if (subject.kind === "teaching_session") {
+    return `classpilot:observation:v1:${digest([schoolId, subject.teachingSessionId])}`;
+  }
+  return `classpilot:observation:supervision:v1:${digest([
+    SUPERVISION_SUBJECT_DOMAIN,
+    schoolId,
+    subject.supervisionContextId,
+  ])}`;
 }
 
-function viewerDigest(options: {
+function subjectViewerDigest(options: {
   schoolId: string;
-  teachingSessionId: string;
+  subject: ObservationSubject;
   viewerUserId: string;
   viewerInstanceId: string;
 }): string {
+  if (options.subject.kind === "teaching_session") {
+    return digest([
+      options.schoolId,
+      options.subject.teachingSessionId,
+      options.viewerUserId,
+      options.viewerInstanceId,
+    ]);
+  }
   return digest([
+    SUPERVISION_SUBJECT_DOMAIN,
     options.schoolId,
-    options.teachingSessionId,
+    options.subject.supervisionContextId,
     options.viewerUserId,
     options.viewerInstanceId,
   ]);
@@ -110,28 +138,30 @@ function makeRoomForLocalViewer(indexKey: string, viewerKey: string): void {
   }
 }
 
-export async function renewClasspilotObservationLease(options: {
-  schoolId: string;
-  teachingSessionId: string;
-  viewerUserId: string;
-  viewerInstanceId: string;
-  scope: ClasspilotObservationScope;
-  now?: number;
-}): Promise<{
+export type ClasspilotObservationLeaseRenewal = {
   expiresAt: number;
   scope: ClasspilotObservationScope;
   created: boolean;
   changed: boolean;
   activated: boolean;
-}> {
+};
+
+async function renewObservationLeaseForSubject(options: {
+  schoolId: string;
+  subject: ObservationSubject;
+  viewerUserId: string;
+  viewerInstanceId: string;
+  scope: ClasspilotObservationScope;
+  now?: number;
+}): Promise<ClasspilotObservationLeaseRenewal> {
   const now = options.now ?? Date.now();
   const scope = normalizeScope(options.scope);
   const expiresAt = now + CLASSPILOT_OBSERVATION_LEASE_SECONDS * 1000;
   if (observationLeaseStoreRequired() && !process.env.REDIS_URL) {
     throw new Error("Observation lease storage unavailable");
   }
-  const indexKey = sessionIndexKey(options.schoolId, options.teachingSessionId);
-  const viewer = viewerDigest(options);
+  const indexKey = subjectIndexKey(options.schoolId, options.subject);
+  const viewer = subjectViewerDigest(options);
   const dataKey = viewerDataKey(indexKey, viewer);
   const scopeKey = observationScopeKey(scope);
   const payload = JSON.stringify({ scope, expiresAt, scopeKey } satisfies StoredObservationLease);
@@ -186,9 +216,45 @@ export async function renewClasspilotObservationLease(options: {
   return { expiresAt, scope, created, changed, activated: created && activeViewerCount === 1 };
 }
 
-export async function releaseClasspilotObservationLeaseWithState(options: {
+export async function renewClasspilotObservationLease(options: {
   schoolId: string;
   teachingSessionId: string;
+  viewerUserId: string;
+  viewerInstanceId: string;
+  scope: ClasspilotObservationScope;
+  now?: number;
+}): Promise<ClasspilotObservationLeaseRenewal> {
+  return renewObservationLeaseForSubject({
+    schoolId: options.schoolId,
+    subject: { kind: "teaching_session", teachingSessionId: options.teachingSessionId },
+    viewerUserId: options.viewerUserId,
+    viewerInstanceId: options.viewerInstanceId,
+    scope: options.scope,
+    now: options.now,
+  });
+}
+
+export async function renewClasspilotSupervisionObservationLease(options: {
+  schoolId: string;
+  supervisionContextId: string;
+  viewerUserId: string;
+  viewerInstanceId: string;
+  scope: ClasspilotObservationScope;
+  now?: number;
+}): Promise<ClasspilotObservationLeaseRenewal> {
+  return renewObservationLeaseForSubject({
+    schoolId: options.schoolId,
+    subject: { kind: "supervision_context", supervisionContextId: options.supervisionContextId },
+    viewerUserId: options.viewerUserId,
+    viewerInstanceId: options.viewerInstanceId,
+    scope: options.scope,
+    now: options.now,
+  });
+}
+
+async function releaseObservationLeaseForSubject(options: {
+  schoolId: string;
+  subject: ObservationSubject;
   viewerUserId: string;
   viewerInstanceId: string;
   now?: number;
@@ -197,8 +263,8 @@ export async function releaseClasspilotObservationLeaseWithState(options: {
     return { released: false, deactivated: false };
   }
   const now = options.now ?? Date.now();
-  const indexKey = sessionIndexKey(options.schoolId, options.teachingSessionId);
-  const viewer = viewerDigest(options);
+  const indexKey = subjectIndexKey(options.schoolId, options.subject);
+  const viewer = subjectViewerDigest(options);
   const dataKey = viewerDataKey(indexKey, viewer);
   try {
     const result = await redisCommand([
@@ -235,6 +301,38 @@ export async function releaseClasspilotObservationLeaseWithState(options: {
   return { released, deactivated: released && !hasActiveViewer };
 }
 
+export async function releaseClasspilotObservationLeaseWithState(options: {
+  schoolId: string;
+  teachingSessionId: string;
+  viewerUserId: string;
+  viewerInstanceId: string;
+  now?: number;
+}): Promise<{ released: boolean; deactivated: boolean }> {
+  return releaseObservationLeaseForSubject({
+    schoolId: options.schoolId,
+    subject: { kind: "teaching_session", teachingSessionId: options.teachingSessionId },
+    viewerUserId: options.viewerUserId,
+    viewerInstanceId: options.viewerInstanceId,
+    now: options.now,
+  });
+}
+
+export async function releaseClasspilotSupervisionObservationLeaseWithState(options: {
+  schoolId: string;
+  supervisionContextId: string;
+  viewerUserId: string;
+  viewerInstanceId: string;
+  now?: number;
+}): Promise<{ released: boolean; deactivated: boolean }> {
+  return releaseObservationLeaseForSubject({
+    schoolId: options.schoolId,
+    subject: { kind: "supervision_context", supervisionContextId: options.supervisionContextId },
+    viewerUserId: options.viewerUserId,
+    viewerInstanceId: options.viewerInstanceId,
+    now: options.now,
+  });
+}
+
 export async function releaseClasspilotObservationLease(options: {
   schoolId: string;
   teachingSessionId: string;
@@ -249,18 +347,17 @@ export type ClasspilotObservationStatus =
   | { status: "observed" | "unobserved"; expiresInSeconds: number }
   | { status: "unavailable"; expiresInSeconds: 0 };
 
-export async function classpilotObservationStatus(options: {
+async function observationStatusForSubject(options: {
   schoolId: string;
-  teachingSessionId: string | null | undefined;
+  subject: ObservationSubject;
   studentId: string;
   now?: number;
 }): Promise<ClasspilotObservationStatus> {
-  if (!options.teachingSessionId) return { status: "unobserved", expiresInSeconds: 0 };
   const now = options.now ?? Date.now();
   if (observationLeaseStoreRequired() && !process.env.REDIS_URL) {
     return { status: "unavailable", expiresInSeconds: 0 };
   }
-  const indexKey = sessionIndexKey(options.schoolId, options.teachingSessionId);
+  const indexKey = subjectIndexKey(options.schoolId, options.subject);
   try {
     const viewers = await redisCommand([
       "ZRANGEBYSCORE",
@@ -320,6 +417,61 @@ export async function classpilotObservationStatus(options: {
   return latestExpiry > now
     ? { status: "observed", expiresInSeconds: Math.ceil((latestExpiry - now) / 1000) }
     : { status: "unobserved", expiresInSeconds: 0 };
+}
+
+export async function classpilotObservationStatus(options: {
+  schoolId: string;
+  teachingSessionId: string | null | undefined;
+  studentId: string;
+  now?: number;
+}): Promise<ClasspilotObservationStatus> {
+  if (!options.teachingSessionId) return { status: "unobserved", expiresInSeconds: 0 };
+  return observationStatusForSubject({
+    schoolId: options.schoolId,
+    subject: { kind: "teaching_session", teachingSessionId: options.teachingSessionId },
+    studentId: options.studentId,
+    now: options.now,
+  });
+}
+
+export async function classpilotSupervisionObservationStatus(options: {
+  schoolId: string;
+  supervisionContextId: string | null | undefined;
+  studentId: string;
+  now?: number;
+}): Promise<ClasspilotObservationStatus> {
+  // Mirrors the teaching-session polarity exactly: a missing subject is a
+  // positive "nobody is watching", never the diagnostic "unavailable" that
+  // devices.ts turns into a 503.
+  if (!options.supervisionContextId) return { status: "unobserved", expiresInSeconds: 0 };
+  return observationStatusForSubject({
+    schoolId: options.schoolId,
+    subject: { kind: "supervision_context", supervisionContextId: options.supervisionContextId },
+    studentId: options.studentId,
+    now: options.now,
+  });
+}
+
+// Test-only accessor: lets the derivation pinning test observe the exact keys
+// without exporting the derivation itself.
+export function classpilotObservationSubjectKeysForTests(options: {
+  schoolId: string;
+  subjectKind: "teaching_session" | "supervision_context";
+  subjectId: string;
+  viewerUserId: string;
+  viewerInstanceId: string;
+}): { indexKey: string; viewerKey: string; viewerDataKey: string } {
+  const subject: ObservationSubject = options.subjectKind === "teaching_session"
+    ? { kind: "teaching_session", teachingSessionId: options.subjectId }
+    : { kind: "supervision_context", supervisionContextId: options.subjectId };
+  const indexKey = subjectIndexKey(options.schoolId, subject);
+  const viewerKey = subjectViewerDigest({
+    schoolId: options.schoolId,
+    subject,
+    viewerUserId: options.viewerUserId,
+    viewerInstanceId: options.viewerInstanceId,
+  });
+  return { indexKey, viewerKey, viewerDataKey: viewerDataKey(indexKey, viewerKey) };
 }
 
 export function resetClasspilotObservationLeasesForTests(): void {

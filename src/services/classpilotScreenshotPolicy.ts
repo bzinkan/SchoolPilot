@@ -41,8 +41,14 @@ export function classpilotScreenshotAuthorityForDeliveredControl(options: {
     throw new TypeError("Invalid delivered ClassPilot control revision");
   }
   if (projection.authority.controlRevision === deliveredControlRevision) return projection;
+  // Drop the supervision retention target rather than spreading it: it is keyed
+  // to the server's current control revision, and this projection is being
+  // rewritten onto the older revision the client actually received. Carrying it
+  // across would let a frame be retained under a revision the claim no longer
+  // matches.
+  const { supervisionRetention: _supersededRetention, ...rest } = projection;
   return {
-    ...projection,
+    ...rest,
     authority: {
       kind: "student_session",
       controlRevision: deliveredControlRevision,
