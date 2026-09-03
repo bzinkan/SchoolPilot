@@ -10,7 +10,7 @@ import {
   deriveScreenshotPreviewMode,
   deriveStudentMonitoringDisplay,
   deriveUnavailablePreview,
-  isClassBoundScreenshot,
+  isExactBoundScreenshot,
   screenshotStaleThresholdMs,
 } from "../lib/studentMonitoringDisplay";
 import LastSeenTime, { ExpiryCountdown } from "./LastSeenTime";
@@ -150,8 +150,11 @@ function StudentTile({
     { staleThresholdMs },
   );
   const displayStatus = effectiveMonitoringDisplay.status;
-  const screenshotIsClassBound = isClassBoundScreenshot(screenshotData);
-  const observationAuthorizationRevoked = !screenshotIsClassBound && (
+  // A pixel stamped with an exact generation is self-authorizing: the server
+  // only retains it under the authority that captured it. An unstamped legacy
+  // frame carries no such proof, so it keeps every observation-lease gate.
+  const screenshotIsExactlyBound = isExactBoundScreenshot(screenshotData);
+  const observationAuthorizationRevoked = !screenshotIsExactlyBound && (
     screenshotObservationStatus === 'pending'
     || screenshotObservationStatus === 'denied'
     || screenshotObservationStatus === 'paused_unobserved'
@@ -171,7 +174,7 @@ function StudentTile({
     effectiveScreenshotObservationStatus = 'denied';
   } else if (!screenshotDisplay.available && screenshotRefreshUnavailable) {
     effectiveScreenshotObservationStatus = 'error';
-  } else if (screenshotIsClassBound) {
+  } else if (screenshotIsExactlyBound) {
     effectiveScreenshotObservationStatus = 'legacy';
   }
   const screenshotPreviewMode = deriveScreenshotPreviewMode({

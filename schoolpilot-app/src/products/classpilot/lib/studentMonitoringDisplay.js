@@ -388,6 +388,25 @@ export function isClassBoundScreenshot(screenshotData) {
     && screenshotData.bindingVersion.startsWith('v2:');
 }
 
+// Every pixel the server retains is stamped with the generation of the
+// authority that captured it: `v2:` is class-bound, `v3:` is supervision-bound.
+// An unstamped pixel is a legacy V1 frame that proves nothing about its
+// authority, which is why it never counts as exactly bound.
+export function isSupervisionBoundScreenshot(screenshotData) {
+  return typeof screenshotData?.bindingVersion === 'string'
+    && screenshotData.bindingVersion.startsWith('v3:');
+}
+
+export function isExactBoundScreenshot(screenshotData) {
+  return isClassBoundScreenshot(screenshotData) || isSupervisionBoundScreenshot(screenshotData);
+}
+
+export function screenshotBindingGeneration(screenshotData) {
+  if (isClassBoundScreenshot(screenshotData)) return 'class';
+  if (isSupervisionBoundScreenshot(screenshotData)) return 'supervision';
+  return null;
+}
+
 export function deriveUnavailablePreview(monitoringDisplay) {
   switch (monitoringDisplay?.kind) {
     case 'signed_out':

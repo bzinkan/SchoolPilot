@@ -441,8 +441,8 @@ test('authorization loss purges active tile caches without retaining denied pixe
   assert.match(dashboard, /\['signed_out', 'delegated'\]\.includes\(monitoringDisplay\?\.kind\)/);
   assert.match(
     tile,
-    /observationAuthorizationRevoked = !screenshotIsClassBound[\s\S]{0,180}screenshotObservationStatus === 'pending'[\s\S]{0,120}screenshotObservationStatus === 'denied'[\s\S]{0,120}screenshotObservationStatus === 'paused_unobserved'/,
-    'legacy V1 pixels must retain every observation-lease privacy gate',
+    /observationAuthorizationRevoked = !screenshotIsExactlyBound[\s\S]{0,180}screenshotObservationStatus === 'pending'[\s\S]{0,120}screenshotObservationStatus === 'denied'[\s\S]{0,120}screenshotObservationStatus === 'paused_unobserved'/,
+    'a pixel with no exact generation stamp must retain every observation-lease privacy gate',
   );
   assert.match(
     tile,
