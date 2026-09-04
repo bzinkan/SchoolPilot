@@ -259,18 +259,57 @@ describe("ALB access-log summary", () => {
     assert.deepEqual(busy.statuses, { 200: 1, 460: 1 });
   });
 
-  it("marks minutes newer than the newest delivered object as unknown, not zero", () => {
+  it("marks minutes the delivered objects do not cover as unknown, not zero", () => {
     const summary = summarizeRecords(records(), {
       ...WINDOW,
       newestObjectMs: Date.UTC(2026, 8, 3, 14, 20, 0),
     });
-    const known = summary.routeSeries.minutes.find((minute: MinuteRow) => minute.utc === "14:19Z");
-    const unknown = summary.routeSeries.minutes.find((minute: MinuteRow) => minute.utc === "14:30Z");
-    assert.ok(known && unknown);
+    const at = (utc: string) => summary.routeSeries.minutes.find((minute: MinuteRow) => minute.utc === utc);
+    const known = at("14:19Z");
+    const boundary = at("14:20Z");
+    const unknown = at("14:30Z");
+    assert.ok(known && boundary && unknown);
+    // The object stamped 14:20Z carries rows in [14:15, 14:20), so 14:19 is
+    // covered and 14:20 is the FIRST uncovered minute. Reporting 14:20 as a
+    // delivered 0 claimed "no traffic" for data that had not arrived: against
+    // the real logs that printed 0 where the truth was 298 requests.
     assert.equal(known.total, 0);
     assert.equal(known.delivered, true);
+    assert.equal(boundary.total, null);
+    assert.equal(boundary.delivered, false);
     assert.equal(unknown.total, null);
     assert.equal(unknown.delivered, false);
+  });
+
+  it("counts 1xx rows so the status totals reconcile with the in-window count", () => {
+    const summary = summarizeRecords(records(), { ...WINDOW });
+    const classes = summary.totals.byStatusClass;
+    const summed = Object.values(classes).reduce((total: number, count) => total + (count as number), 0);
+    // The /ws upgrade is a 101; before this it vanished from TOTALS entirely.
+    assert.equal(classes["1xx"], 1);
+    assert.equal(summed, summary.totals.inWindow);
+  });
+
+  it("counts a decompressed sibling and its own .gz as one object", () => {
+    const dir = mkdtempSync(join(tmpdir(), "schoolpilot-alb-summary-dupe-"));
+    try {
+      const stamped = "135775632425_elasticloadbalancing_us-east-1_app.schoolpilot-production-alb.e2efbc2325423b2e_20260903T1420Z_107.20.247.194_25k1j08j.log";
+      const body = `${ALL_LINES.join("\n")}\n`;
+      writeFileSync(join(dir, stamped), body);
+      writeFileSync(join(dir, `${stamped}.gz`), gzipSync(Buffer.from(body)));
+      const collected = collectLocalFiles([dir]);
+      assert.equal(collected.length, 1, "the same delivered object must not be counted twice");
+      assert.ok(collected[0].endsWith(".gz"), "prefer the object as S3 delivered it");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses an out-of-range clock rather than rolling onto another day", () => {
+    const nowMs = Date.UTC(2026, 8, 4, 2, 0, 0);
+    // Date.UTC would happily turn 25:00 into the next day, moving the S3 prefix too.
+    assert.throws(() => parseWindow({ from: "25:00", date: "2026-09-03", nowMs }), TypeError);
+    assert.throws(() => parseWindow({ from: "14:70", date: "2026-09-03", nowMs }), TypeError);
   });
 
   it("matches a target on the full ip so a prefix cannot select a sibling", () => {
@@ -309,7 +348,8 @@ describe("ALB access-log summary", () => {
 
       assert.deepEqual(readLogFile(join(dir, stamped)), readLogFile(join(dir, `${stamped}.gz`)));
       const collected = collectLocalFiles([dir]);
-      assert.equal(collected.length, 2);
+      // One delivered object, counted once, and the scratch file ignored.
+      assert.equal(collected.length, 1);
       assert.ok(collected.every((path: string) => !path.endsWith("all.log")));
     } finally {
       rmSync(dir, { recursive: true, force: true });

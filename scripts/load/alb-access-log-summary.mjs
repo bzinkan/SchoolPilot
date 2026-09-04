@@ -13,9 +13,9 @@
 //   $3  elb                                            t[2]
 //   $4  client:port   CloudFront edge IP; not useful   t[3]
 //   $5  target:port   "-" when no target was reached   t[4]
-//   $6  request_processing_time   -1 => never reached  t[5]
-//   $7  target_processing_time    -1 => never reached  t[6]
-//   $8  response_processing_time  -1 => never reached  t[7]
+//   $6  request_processing_time   -1 => not recorded    t[5]
+//   $7  target_processing_time    -1 => not recorded    t[6]
+//   $8  response_processing_time  -1 => not recorded    t[7]
 //   $9  elb_status_code                                t[8]
 //   $10 target_status_code        "-" when no target   t[9]
 //   $11 received_bytes  <-- upload size lives HERE     t[10]
@@ -40,7 +40,9 @@
 //        classification                                t[27]
 //        classification_reason                         t[28]
 //        conn_trace_id                                 t[29]
-//        (reserved)                                    t[30..32]
+//        transformed_host                              t[30]
+//        transformed_uri                               t[31]
+//        request_transform_status                      t[32]
 //        alb_node_ip                                   t[33]
 //
 // Quote-aware tokenization yields exactly 34 tokens on 100% of rows. awk's $N
@@ -110,7 +112,9 @@ function objectStampMs(name) {
 }
 
 function seconds(value) {
-  // "-1" means the ALB never reached a target; it is absence, not a duration.
+  // "-1" means no timing was recorded for that phase (the client closed
+  // before a response, or the target never answered). It is absence, not a
+  // duration, and it does NOT by itself prove no target was selected.
   if (value === undefined || value === "-" || value === "-1") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
@@ -234,6 +238,11 @@ export function parseWindow({ from, to, date, nowMs, timeZone = DEFAULT_TIME_ZON
     const text = String(value).trim();
     const clock = /^(\d{1,2}):(\d{2})Z?$/.exec(text);
     if (clock) {
+      // Date.UTC happily rolls 25:70 into the next day, which would also move
+      // the S3 day prefix. Reject it by name instead.
+      if (Number(clock[1]) > 23 || Number(clock[2]) > 59) {
+        throw new TypeError(`"${text}" is not a clock time between 00:00 and 23:59`);
+      }
       const parsed = albTimeToMs(`${day}T${String(clock[1]).padStart(2, "0")}:${clock[2]}:00Z`);
       if (parsed === null) throw new TypeError(`Could not resolve "${text}" on ${day}`);
       return parsed;
@@ -271,7 +280,7 @@ export function summarizeRecords(records, options = {}) {
     return true;
   });
 
-  const byStatusClass = { "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0 };
+  const byStatusClass = { "1xx": 0, "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0 };
   let clientClosed460 = 0;
   let nonCloudFrontRows = 0;
   let wsRows = 0;
@@ -311,7 +320,7 @@ export function summarizeRecords(records, options = {}) {
     if (!targetEntry) {
       targetEntry = {
         target: targetKey, count: 0, durations: [], status5xx: 0, status460: 0,
-        statusClasses: { "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0 },
+        statusClasses: { "1xx": 0, "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0 },
       };
       targets.set(targetKey, targetEntry);
     }
@@ -389,10 +398,19 @@ export function summarizeRecords(records, options = {}) {
   if (hasWindow) {
     for (let minute = Math.floor(fromMs / 60000) * 60000; minute < toMs; minute += 60000) {
       const bucket = series.get(minute);
-      // A minute newer than the newest delivered object is unknown, not zero:
+      // A minute the delivered objects do not cover is unknown, not zero:
       // objects arrive about five minutes late, and a real zero-traffic gap
       // must stay distinguishable from undelivered data.
-      const undelivered = newestObjectMs !== null && minute > newestObjectMs;
+      //
+      // The comparison is `>=`, not `>`, because an object's name stamp is the
+      // END of its interval: the object stamped T carries rows in [T-5min, T),
+      // so minute T is the FIRST minute with no delivered coverage. With `>`
+      // that minute printed a confident 0 -- measured against the real logs,
+      // 0 where the truth was 298 requests. Rows do spill up to about a second
+      // past their stamp (240 of 156,730 on 2026-09-03), so `>=` hides at most
+      // a sliver of a minute; reporting it as unknown beats reporting a near
+      // empty bucket as complete.
+      const undelivered = newestObjectMs !== null && minute >= newestObjectMs;
       minutes.push({
         minuteMs: minute, utc: formatUtc(minute), local: formatLocal(minute, timeZone),
         total: bucket ? bucket.total : (undelivered ? null : 0),
@@ -481,7 +499,7 @@ export function formatSummary(summary) {
   lines.push(`Target filter: ${summary.filters.targetIp ?? "(none)"}   Non-CloudFront rows: ${summary.totals.nonCloudFrontRows}   WebSocket rows: ${summary.totals.wsRows}`);
   lines.push("");
   const c = summary.totals.byStatusClass;
-  lines.push(`TOTALS   2xx ${c["2xx"]}   3xx ${c["3xx"]}   4xx ${c["4xx"]} (460: ${summary.totals.clientClosed460})   5xx ${c["5xx"]}   routes ${summary.totals.routeCount}   targets ${summary.totals.targetCount}`);
+  lines.push(`TOTALS   1xx ${c["1xx"]}   2xx ${c["2xx"]}   3xx ${c["3xx"]}   4xx ${c["4xx"]} (460: ${summary.totals.clientClosed460})   5xx ${c["5xx"]}   routes ${summary.totals.routeCount}   targets ${summary.totals.targetCount}`);
   lines.push("");
 
   lines.push("ROUTES  (top by count; every route with a 4xx or 5xx is always shown)");
@@ -553,10 +571,17 @@ export function collectLocalFiles(paths) {
       // Only real ALB objects, identified by their _yyyymmddTHHMMZ_ stamp. A
       // directory that also holds a concatenated scratch file (all.log) would
       // otherwise be counted twice and silently double every number.
+      // Key on the object, not the path: a decompressed sibling (X.log next to
+      // X.log.gz) is the same delivered object and counting both doubles every
+      // number. Prefer the .gz, which is the object as S3 delivered it.
+      const byObject = new Map();
       for (const name of readdirSync(full)) {
         if (!name.endsWith(".log.gz") && !name.endsWith(".log")) continue;
-        if (OBJECT_STAMP.test(name)) files.push(join(full, name));
+        if (!OBJECT_STAMP.test(name)) continue;
+        const key = name.endsWith(".gz") ? name.slice(0, -3) : name;
+        if (!byObject.has(key) || name.endsWith(".gz")) byObject.set(key, name);
       }
+      for (const name of byObject.values()) files.push(join(full, name));
     } else files.push(full);
   }
   return [...new Set(files)].sort();
@@ -691,6 +716,19 @@ export function main(argv = process.argv.slice(2), { nowMs = Date.now(), runAws 
   const values = parsed.values;
   const localMode = Array.isArray(values.files) && values.files.length > 0;
 
+  // A zero or non-numeric --top would drop every clean route from the table
+  // while still showing the 4xx/5xx ones, which reads like "nothing else ran".
+  const top = values.top === undefined ? DEFAULT_TOP : Number(values.top);
+  if (!Number.isInteger(top) || top < 1) {
+    process.stderr.write(`--top must be a positive integer\n\n${usage()}\n`);
+    return 2;
+  }
+  // In --files mode the window is optional, but half of one is always a typo.
+  if (localMode && !values.from && (values.to || values.date)) {
+    process.stderr.write(`--to and --date need --from\n\n${usage()}\n`);
+    return 2;
+  }
+
   let window = null;
   try {
     if (values.from || !localMode) {
@@ -727,16 +765,34 @@ export function main(argv = process.argv.slice(2), { nowMs = Date.now(), runAws 
   const records = [];
   let newestObjectMs = null;
   let unparsed = 0;
+  let oddWidth = 0;
   for (const path of files) {
     const stampMs = objectStampMs(basename(path));
     if (stampMs !== null) newestObjectMs = newestObjectMs === null ? stampMs : Math.max(newestObjectMs, stampMs);
-    for (const line of readLogFile(path)) {
+    let lines;
+    try {
+      lines = readLogFile(path);
+    } catch (error) {
+      // Name the file. A bare zlib stack trace says nothing about which cached
+      // object is corrupt, and the fix is usually to delete that one file.
+      process.stderr.write(`Unreadable log object ${path}: ${error.message}\n`);
+      return 3;
+    }
+    for (const line of lines) {
       const record = parseAlbLine(line);
       if (record) records.push(record);
       else unparsed += 1;
+      // Every row observed in production tokenizes to exactly 34 fields. A
+      // different width means the format moved or a quote desynced the split,
+      // which would shift fields silently -- say so rather than report numbers
+      // derived from a shape this parser was never checked against.
+      if (record && tokenizeAlbLine(line).length !== 34) oddWidth += 1;
     }
   }
   if (unparsed > 0) process.stderr.write(`skipped ${unparsed} unparseable lines\n`);
+  if (oddWidth > 0) {
+    process.stderr.write(`WARNING: ${oddWidth} rows did not tokenize to the expected 34 fields; treat the numbers below as suspect\n`);
+  }
 
   let summary;
   try {
@@ -745,7 +801,7 @@ export function main(argv = process.argv.slice(2), { nowMs = Date.now(), runAws 
       toMs: window ? window.toMs : undefined,
       routePattern: values.route || DEFAULT_ROUTE_PATTERN,
       targetIp: values.target || null,
-      top: values.top ? Number(values.top) : DEFAULT_TOP,
+      top,
       newestObjectMs,
     });
   } catch (error) {
@@ -754,11 +810,10 @@ export function main(argv = process.argv.slice(2), { nowMs = Date.now(), runAws 
   }
 
   if (values.json) process.stdout.write(`${JSON.stringify({ ...summary, files }, null, 2)}\n`);
-  else {
-    process.stdout.write(`${formatSummary(summary)}\n`);
-    if (!localMode) {
-      process.stderr.write(`cache: ${cacheDir} (delete it after a monitoring day; logged URLs identify tenants)\n`);
-    }
+  else process.stdout.write(`${formatSummary(summary)}\n`);
+  // Operator note goes to stderr in BOTH modes; stdout stays clean for --json.
+  if (!localMode) {
+    process.stderr.write(`cache: ${cacheDir} (delete it after a monitoring day; logged URLs identify tenants)\n`);
   }
   if (summary.totals.inWindow === 0) process.stderr.write("Note: zero rows fell inside the window.\n");
   return 0;
