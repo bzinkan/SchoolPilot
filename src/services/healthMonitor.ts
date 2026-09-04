@@ -6,6 +6,7 @@ import { pool, sessionPool } from "../db.js";
 import { getIO } from "../realtime/socketio.js";
 import { isRedisEnabled } from "../realtime/ws-redis.js";
 import errorMonitor, { type ErrorCategory } from "./errorMonitor.js";
+import { safeErrorMetadata } from "../util/safeLogging.js";
 
 const CHECK_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const STARTUP_DELAY_MS = 15_000; // 15s to let DB pool warm up
@@ -21,6 +22,8 @@ interface CheckResult {
 const subsystemWasFailing = new Map<string, boolean>();
 let startupTimer: NodeJS.Timeout | null = null;
 let intervalTimer: NodeJS.Timeout | null = null;
+let acceptingChecks = false;
+const pendingHealthChecks = new Set<Promise<void>>();
 
 // --- Checks ---
 
@@ -162,8 +165,10 @@ async function runAllChecks(wss: WebSocketServer): Promise<void> {
   let allPassed = true;
 
   for (const check of checks) {
+    if (!acceptingChecks) return;
     try {
       const result = await check.fn();
+      if (!acceptingChecks) return;
       if (result.ok) {
         await maybeSendRecovery(check.name);
       } else {
@@ -175,6 +180,7 @@ async function runAllChecks(wss: WebSocketServer): Promise<void> {
         );
       }
     } catch (err: any) {
+      if (!acceptingChecks) return;
       allPassed = false;
       subsystemWasFailing.set(check.name, true);
       await maybeSendAlert(check.name, err.message ?? String(err));
@@ -184,7 +190,7 @@ async function runAllChecks(wss: WebSocketServer): Promise<void> {
     }
   }
 
-  if (allPassed) {
+  if (allPassed && acceptingChecks) {
     console.log("[HealthMonitor] All checks passed");
   }
 }
@@ -192,12 +198,23 @@ async function runAllChecks(wss: WebSocketServer): Promise<void> {
 // --- Startup ---
 
 export function startHealthMonitor(wss: WebSocketServer): void {
+  stopHealthMonitor();
+  acceptingChecks = true;
   console.log("[HealthMonitor] Starting (interval: 5 minutes)");
-  startupTimer = setTimeout(() => runAllChecks(wss), STARTUP_DELAY_MS);
-  intervalTimer = setInterval(() => runAllChecks(wss), CHECK_INTERVAL_MS);
+  const run = () => {
+    if (!acceptingChecks || pendingHealthChecks.size > 0) return;
+    const work = runAllChecks(wss).catch((error) => {
+      console.warn("[HealthMonitor] Check loop failed", safeErrorMetadata(error));
+    });
+    pendingHealthChecks.add(work);
+    void work.then(() => { pendingHealthChecks.delete(work); });
+  };
+  startupTimer = setTimeout(run, STARTUP_DELAY_MS);
+  intervalTimer = setInterval(run, CHECK_INTERVAL_MS);
 }
 
 export function stopHealthMonitor(): void {
+  acceptingChecks = false;
   if (startupTimer) {
     clearTimeout(startupTimer);
     startupTimer = null;
@@ -206,4 +223,9 @@ export function stopHealthMonitor(): void {
     clearInterval(intervalTimer);
     intervalTimer = null;
   }
+}
+
+/** The shutdown owner bounds this wait after stopHealthMonitor fences new checks. */
+export async function drainHealthMonitor(): Promise<void> {
+  while (pendingHealthChecks.size > 0) await Promise.allSettled([...pendingHealthChecks]);
 }

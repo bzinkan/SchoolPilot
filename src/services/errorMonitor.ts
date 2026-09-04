@@ -2,8 +2,7 @@
 // Every sink receives the same normalized, redacted event: durable error_logs,
 // alert channels, optional Sentry capture, health stats, and CloudWatch EMF.
 
-import { randomUUID, createHash } from "crypto";
-import { readFileSync } from "fs";
+import { createHash } from "crypto";
 import { sendEmail } from "./email.js";
 import { captureError, flushSentry } from "./sentry.js";
 import { safeErrorMetadata } from "../util/safeLogging.js";
@@ -14,6 +13,8 @@ import {
   type MonitorAggregationStatus,
 } from "./monitorAggregation.js";
 import { resolveStaffLifecycleGuardCode } from "./staffLifecycleGuardSignal.js";
+import { getRuntimeMetadata } from "./runtimeMetadata.js";
+import { wasTenantPoolAcquisitionFailureReported } from "../util/operationalErrors.js";
 
 export type { MonitorAggregationAdapter, MonitorAggregationStatus } from "./monitorAggregation.js";
 
@@ -264,35 +265,12 @@ const URL_RE = /\bhttps?:\/\/[^\s"'<>]+/gi;
 const RELATIVE_QUERY_RE = /((?:^|[\s"'(])\/[A-Za-z0-9._~!$&'()*+,;=:@/%-]+)\?[^\s"'<>)]*/g;
 const LINE_COLUMN_RE = /:\d+:\d+/g;
 
-const INSTANCE_ID = process.env.INSTANCE_ID || randomUUID();
-const STARTED_AT = new Date().toISOString();
-
 function getAdminEmail(): string {
   return process.env.ADMIN_EMAIL || "bzinkan@school-pilot.net";
 }
 
-function getNodeEnv(): string {
-  return process.env.NODE_ENV || "development";
-}
-
-function getPackageVersion(): string {
-  try {
-    const raw = readFileSync(new URL("../../package.json", import.meta.url), "utf8");
-    const parsed = JSON.parse(raw) as { version?: string };
-    return parsed.version || "unknown";
-  } catch {
-    return process.env.npm_package_version || "unknown";
-  }
-}
-
 export function getMonitorRuntimeMetadata(): MonitorRuntimeMetadata {
-  return {
-    environment: getNodeEnv(),
-    service: process.env.SERVICE_NAME || "schoolpilot-api",
-    instanceId: INSTANCE_ID,
-    release: process.env.APP_VERSION || process.env.GIT_SHA || getPackageVersion(),
-    startedAt: STARTED_AT,
-  };
+  return getRuntimeMetadata();
 }
 
 function isSendGridConfigured(): boolean {
@@ -707,6 +685,8 @@ export class ErrorMonitor {
   private readonly fingerprints = new Map<string, FingerprintState>();
   private readonly totals = createCounters();
   private readonly byCategory = new Map<ErrorCategory, MonitorCounterSet>();
+  private readonly emittedTotals = createCounters();
+  private readonly emittedCategoryCaptured = new Map<ErrorCategory, number>();
   private readonly cooldownUntil = new Map<string, number>();
   private readonly pending = new Set<Promise<void>>();
   private readonly now: () => number;
@@ -723,6 +703,9 @@ export class ErrorMonitor {
   private metricsTimer?: NodeJS.Timeout;
   private disposed = false;
   private disposePromise?: Promise<void>;
+  private aggregationDisposalComplete = false;
+  private aggregationDisposalFailed = false;
+  private disposalTimedOut = false;
 
   constructor(options: ErrorMonitorOptions = {}) {
     this.now = options.now ?? Date.now;
@@ -751,6 +734,19 @@ export class ErrorMonitor {
     void this.disposeAndWait();
   }
 
+  getDisposalSnapshot() {
+    const pending = this.pending.size;
+    return {
+      started: this.disposed,
+      pending,
+      aggregationComplete: this.aggregationDisposalComplete,
+      timedOut: this.disposalTimedOut,
+      failed: this.aggregationDisposalFailed,
+      complete: this.disposed && pending === 0 && this.aggregationDisposalComplete
+        && !this.disposalTimedOut && !this.aggregationDisposalFailed,
+    };
+  }
+
   disposeAndWait(timeoutMs = DEFAULT_ALERT_TIMEOUT_MS): Promise<void> {
     if (this.disposePromise) return this.disposePromise;
     this.disposed = true;
@@ -773,11 +769,21 @@ export class ErrorMonitor {
         timeoutMs,
         undefined
       );
+      if (this.pending.size > 0) this.disposalTimedOut = true;
+      // Lifetime health counters remain cumulative. Flush only the final
+      // unreported deltas before shutdown loses this process's interval.
+      this.emitMetrics();
       const remainingMs = Math.max(0, timeoutMs - (Date.now() - startedAt));
       const aggregationCleanup = Promise.resolve()
         .then(() => this.aggregation?.dispose?.())
-        .then(() => undefined, () => undefined);
+        .then(
+          () => { this.aggregationDisposalComplete = true; },
+          () => { this.aggregationDisposalFailed = true; },
+        );
       await timeoutAfter(aggregationCleanup, remainingMs, undefined);
+      if (!this.aggregationDisposalComplete && !this.aggregationDisposalFailed) {
+        this.disposalTimedOut = true;
+      }
     })();
     return this.disposePromise;
   }
@@ -789,6 +795,11 @@ export class ErrorMonitor {
     options: MonitorEventOptions = {}
   ): void {
     if (this.disposed) return;
+    // The checkout boundary already captured a sanitized, non-persisted event.
+    // Do not turn that same failure into more alerts or recursive DB writes as
+    // it propagates through scheduler/HTTP/realtime handlers. A process crash
+    // remains a separate critical event even when its cause was reported.
+    if (category !== "fatal_process_error" && wasTenantPoolAcquisitionFailureReported(error)) return;
     if (category === "client_error") {
       const guardCode = resolveStaffLifecycleGuardCode(error);
       if (guardCode) {
@@ -950,6 +961,7 @@ export class ErrorMonitor {
     const runtime = this.getRuntimeMetadata();
     const metricValues: Record<string, number> = {};
     const metricDefinitions: Array<{ Name: string; Unit: "Count" }> = [];
+    const intervalDefinitions: Array<{ Name: string; Unit: "Count" }> = [];
 
     const addMetric = (name: string, value: number) => {
       metricValues[name] = value;
@@ -958,6 +970,9 @@ export class ErrorMonitor {
 
     for (const [name, value] of Object.entries(stats.totals) as Array<[keyof MonitorCounterSet, number]>) {
       addMetric(counterKey(name), value);
+      const intervalName = `${counterKey(name)}Interval`;
+      metricValues[intervalName] = Math.max(0, value - this.emittedTotals[name]);
+      intervalDefinitions.push({ Name: intervalName, Unit: "Count" });
     }
     for (const [category, counters] of Object.entries(stats.byCategory)) {
       const prefix = categoryMetricPrefix(category as ErrorCategory);
@@ -965,16 +980,36 @@ export class ErrorMonitor {
         addMetric(`${prefix}${counterKey(name)}`, value);
       }
     }
+    // Stable zero series for every category, including categories that have
+    // never failed in this process. These fleet sums are interval counts, not
+    // sums of the repeatedly emitted lifetime counters above.
+    for (const category of Object.keys(THRESHOLDS) as ErrorCategory[]) {
+      const name = `${categoryMetricPrefix(category)}${counterKey("captured")}Interval`;
+      const captured = stats.byCategory[category]?.captured ?? 0;
+      metricValues[name] = Math.max(0, captured - (this.emittedCategoryCaptured.get(category) ?? 0));
+      intervalDefinitions.push({ Name: name, Unit: "Count" });
+    }
     addMetric("ActiveFingerprints", stats.activeFingerprints);
+
+    const legacyDirectives = [];
+    // A metric directive is bounded even if every category becomes active.
+    for (let offset = 0; offset < metricDefinitions.length; offset += 100) {
+      legacyDirectives.push({
+        Namespace: "SchoolPilot/Monitoring",
+        Dimensions: [["Environment", "Service", "InstanceId"]],
+        Metrics: metricDefinitions.slice(offset, offset + 100),
+      });
+    }
 
     const payload = {
       _aws: {
         Timestamp: this.now(),
         CloudWatchMetrics: [
+          ...legacyDirectives,
           {
             Namespace: "SchoolPilot/Monitoring",
-            Dimensions: [["Environment", "Service", "InstanceId"]],
-            Metrics: metricDefinitions,
+            Dimensions: [["Environment", "Service"]],
+            Metrics: intervalDefinitions,
           },
         ],
       },
@@ -986,12 +1021,18 @@ export class ErrorMonitor {
     };
 
     this.metricsSink(JSON.stringify(payload));
+    Object.assign(this.emittedTotals, stats.totals);
+    for (const category of Object.keys(THRESHOLDS) as ErrorCategory[]) {
+      this.emittedCategoryCaptured.set(category, stats.byCategory[category]?.captured ?? 0);
+    }
   }
 
   resetStatsForTests(): void {
     this.fingerprints.clear();
     this.byCategory.clear();
     Object.assign(this.totals, createCounters());
+    Object.assign(this.emittedTotals, createCounters());
+    this.emittedCategoryCaptured.clear();
     this.lastPersistFailureAt = undefined;
     this.lastAlertFailureAt = undefined;
     this.cooldownUntil.clear();

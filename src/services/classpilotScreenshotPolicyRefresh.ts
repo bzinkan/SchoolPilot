@@ -77,6 +77,7 @@ export async function nudgeClasspilotScreenshotPolicyRefresh(options: {
   teachingSessionId: string;
   studentIds: string[];
   reason?: ClasspilotScreenshotPolicyRefreshReason;
+  onFailure?: (error: unknown) => void;
 }): Promise<number> {
   if (!isClasspilotCapabilityActive(SCREENSHOT_POLICY_REFRESH_CAPABILITY, {
     schoolId: options.schoolId,
@@ -100,6 +101,7 @@ export async function nudgeClasspilotScreenshotPolicyRefresh(options: {
     if (claim === "unavailable") {
       // Regular ten-second heartbeats remain the bounded, fail-private fallback.
       recordHeartbeatHotPathCounter("screenshotPolicyRefreshFailures");
+      options.onFailure?.(new Error("Screenshot policy refresh claim unavailable"));
       return 0;
     }
 
@@ -114,8 +116,9 @@ export async function nudgeClasspilotScreenshotPolicyRefresh(options: {
           (value): value is string => Boolean(value),
         ),
       )];
-    } catch {
+    } catch (error) {
       recordHeartbeatHotPathCounter("screenshotPolicyRefreshFailures");
+      options.onFailure?.(error);
       return 0;
     }
     if (targetDeviceIds.length === 0) return 0;
@@ -133,14 +136,16 @@ export async function nudgeClasspilotScreenshotPolicyRefresh(options: {
       targetDeviceIds,
     );
     let remotePublished = false;
+    let publicationError: unknown;
     try {
       remotePublished = await publishWS({
         kind: "students",
         schoolId: options.schoolId,
         targetDeviceIds,
       }, message);
-    } catch {
+    } catch (error) {
       // The next ordinary heartbeat is the durable fallback.
+      publicationError = error;
     }
 
     recordHeartbeatHotPathCounter("screenshotPolicyRefreshSignals");
@@ -152,6 +157,9 @@ export async function nudgeClasspilotScreenshotPolicyRefresh(options: {
     }
     if (!remotePublished && localDelivered === 0) {
       recordHeartbeatHotPathCounter("screenshotPolicyRefreshFailures");
+    }
+    if (!remotePublished && process.env.REDIS_URL) {
+      options.onFailure?.(publicationError ?? new Error("Screenshot policy refresh publication unavailable"));
     }
     return targetDeviceIds.length;
   } finally {

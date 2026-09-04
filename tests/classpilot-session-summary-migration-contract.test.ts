@@ -145,7 +145,7 @@ describe("ClassPilot Session Summary startup migration contract", () => {
       presenceRecord
     );
     const deferredPickup = websocketSource.indexOf(
-      "void presenceRecorded.then",
+      "void webSocketWork.track(presenceRecorded.then",
       authSuccess
     );
     assert.ok(presenceRecord >= 0 && authSuccess > presenceRecord && deferredPickup > authSuccess);

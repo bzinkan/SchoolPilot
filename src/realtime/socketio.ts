@@ -16,9 +16,20 @@ import {
   subscribeSocketIoRedis,
 } from "./socketio-redis.js";
 import { registerCacheInvalidationHandler } from "./cacheInvalidation.js";
+import { WebSocketWorkTracker } from "./websocketWork.js";
 
 let io: Server | null = null;
 const SOCKET_CREDENTIAL_REVALIDATION_MS = 30_000;
+const socketIoWork = new WebSocketWorkTracker();
+const credentialTimers = new Set<ReturnType<typeof setInterval>>();
+
+export function stopSocketIoWork(): void {
+  socketIoWork.stop();
+  for (const timer of credentialTimers) clearInterval(timer);
+  credentialTimers.clear();
+}
+
+export function drainSocketIoWork(): Promise<void> { return socketIoWork.drain(); }
 
 registerCacheInvalidationHandler((target) => {
   if (target.cache !== "user-credentials") return;
@@ -61,36 +72,41 @@ export function setupSocketIO(httpServer: HttpServer): Server {
     io?.to(room).emit(event, data);
   });
 
-  io.use(async (socket, next) => {
-    const token = socket.handshake.auth.token;
-    if (!token) return next(new Error("Authentication required"));
-    try {
-      const payload = verifyUserToken(token);
-      const user = await getUserById(payload.userId);
-      if (!user || !credentialVersionMatches(payload.authVersion, user.authVersion)) {
-        return next(new Error("Invalid token"));
+  io.use((socket, next) => {
+    if (!socketIoWork.canStart()) return next(new Error("Authentication service unavailable"));
+    return socketIoWork.track((async () => {
+      const token = socket.handshake.auth.token;
+      if (!token) return next(new Error("Authentication required"));
+      try {
+        const payload = verifyUserToken(token);
+        const user = await getUserById(payload.userId);
+        if (!user || !credentialVersionMatches(payload.authVersion, user.authVersion)) {
+          return next(new Error("Invalid token"));
+        }
+        socket.data.userId = payload.userId;
+        socket.data.email = payload.email;
+        socket.data.isSuperAdmin = user.isSuperAdmin;
+        socket.data.authVersion = payload.authVersion ?? 1;
+        if (!user.isSuperAdmin && !(await hasAnyActiveGoPilotStaffMembership(payload.userId))) {
+          const disabled = new Error("GoPilot parent portal is disabled") as Error & {
+            data?: { code: string; status: number };
+          };
+          disabled.data = {
+            code: "GOPILOT_PARENT_PORTAL_DISABLED",
+            status: 410,
+          };
+          return next(disabled);
+        }
+        if (!socketIoWork.canStart()) return next(new Error("Authentication service unavailable"));
+        next();
+      } catch {
+        next(new Error("Invalid token"));
       }
-      socket.data.userId = payload.userId;
-      socket.data.email = payload.email;
-      socket.data.isSuperAdmin = user.isSuperAdmin;
-      socket.data.authVersion = payload.authVersion ?? 1;
-      if (!user.isSuperAdmin && !(await hasAnyActiveGoPilotStaffMembership(payload.userId))) {
-        const disabled = new Error("GoPilot parent portal is disabled") as Error & {
-          data?: { code: string; status: number };
-        };
-        disabled.data = {
-          code: "GOPILOT_PARENT_PORTAL_DISABLED",
-          status: 410,
-        };
-        return next(disabled);
-      }
-      next();
-    } catch {
-      next(new Error("Invalid token"));
-    }
+    })());
   });
 
   io.on("connection", (socket) => {
+    if (!socketIoWork.canStart()) { socket.disconnect(true); return; }
     const userId = socket.data.userId;
     type InitialCredentialState =
       | { ok: true }
@@ -116,7 +132,7 @@ export function setupSocketIO(httpServer: HttpServer): Server {
     // database read and the socket becoming visible to local/Redis credential
     // invalidation handlers. Once it succeeds, either it observed the bump or
     // any later bump can see and disconnect the registered socket.
-    const initialCredentialRevalidation = (async (): Promise<InitialCredentialState> => {
+    const initialCredentialRevalidation = socketIoWork.track((async (): Promise<InitialCredentialState> => {
       try {
         const current = await getUserById(userId);
         if (
@@ -135,143 +151,155 @@ export function setupSocketIO(httpServer: HttpServer): Server {
         );
         return { ok: false, middlewareError: "Authentication service unavailable" };
       }
-    })();
+    })());
 
-    socket.use(async (_event, next) => {
-      const initialState = await initialCredentialRevalidation;
-      if (!initialState.ok || !socket.connected) {
-        return next(new Error(
-          initialState.ok ? "Credentials invalidated" : initialState.middlewareError
-        ));
-      }
-      try {
-        const current = await getUserById(userId);
-        if (!current || !credentialVersionMatches(socket.data.authVersion, current.authVersion)) {
-          disconnectForCredentialChange();
-          return next(new Error("Credentials invalidated"));
+    socket.use((_event, next) => {
+      if (!socketIoWork.canStart()) return next(new Error("Authentication service unavailable"));
+      return socketIoWork.track((async () => {
+        const initialState = await initialCredentialRevalidation;
+        if (!initialState.ok || !socket.connected) {
+          return next(new Error(
+            initialState.ok ? "Credentials invalidated" : initialState.middlewareError
+          ));
         }
-        return next();
-      } catch {
-        disconnectForCredentialChange(
-          "Authentication service unavailable.",
-          "AUTHENTICATION_SERVICE_UNAVAILABLE"
-        );
-        return next(new Error("Authentication service unavailable"));
-      }
+        try {
+          const current = await getUserById(userId);
+          if (!current || !credentialVersionMatches(socket.data.authVersion, current.authVersion)) {
+            disconnectForCredentialChange();
+            return next(new Error("Credentials invalidated"));
+          }
+          return next();
+        } catch {
+          disconnectForCredentialChange(
+            "Authentication service unavailable.",
+            "AUTHENTICATION_SERVICE_UNAVAILABLE"
+          );
+          return next(new Error("Authentication service unavailable"));
+        }
+      })());
     });
 
-    socket.on("join:school", async ({ schoolId, homeroomId }) => {
-      const initialState = await initialCredentialRevalidation;
-      if (!initialState.ok || !socket.connected) return;
-      try {
-        const requestedSchoolId = typeof schoolId === "string" ? schoolId : "";
-        if (!requestedSchoolId) {
-          socket.emit("join:error", { error: "School context required" });
-          return;
-        }
-
-        const identity = socket.data.isSuperAdmin
-          ? null
-          : await resolveGoPilotIdentity(userId, requestedSchoolId);
-        if (!socket.data.isSuperAdmin && !identity) {
-          socket.emit("join:error", { error: "No access to this school" });
-          return;
-        }
-
-        const manager = socket.data.isSuperAdmin || !!identity && goPilotIdentityHasAnyRole(
-          identity,
-          ["admin", "school_admin", "office_staff"]
-        );
-        const teacher = !!identity && goPilotIdentityHasAnyRole(identity, ["teacher"]);
-
-        if (!manager && !teacher) {
-          socket.emit("join:error", {
-            error: "GoPilot parent portal is disabled",
-            code: "GOPILOT_PARENT_PORTAL_DISABLED",
-            status: 410,
-          });
-          socket.disconnect(true);
-          return;
-        }
-
-        if (!(await hasActiveGoPilotLicense(requestedSchoolId))) {
-          socket.emit("join:error", {
-            error: "School is not entitled to GoPilot",
-            code: "GOPILOT_NOT_ENTITLED",
-          });
-          return;
-        }
-
-        // Socket.IO handlers run outside Express/ALS, so bind this school's tenant
-        // context for the per-school access checks (students/homerooms reads) — RLS
-        // would otherwise hide every row and deny legitimate parents/teachers.
-        await runWithTenantContext({ schoolId: requestedSchoolId }, async () => {
-          if (manager) {
-            joinValidatedSchoolRoom(socket, requestedSchoolId);
-            socket.join(`school:${requestedSchoolId}:office`);
+    socket.on("join:school", ({ schoolId, homeroomId }) => {
+      if (!socketIoWork.canStart()) return;
+      return socketIoWork.track((async () => {
+        const initialState = await initialCredentialRevalidation;
+        if (!initialState.ok || !socket.connected) return;
+        try {
+          const requestedSchoolId = typeof schoolId === "string" ? schoolId : "";
+          if (!requestedSchoolId) {
+            socket.emit("join:error", { error: "School context required" });
             return;
           }
 
-          if (teacher) {
-            const requestedHomeroomId = typeof homeroomId === "string" ? homeroomId : "";
-            if (!requestedHomeroomId) {
-              socket.emit("join:error", { error: "Homeroom context required" });
-              return;
-            }
-            const [homeroom, teacherHomeroomIds] = await Promise.all([
-              getHomeroomForSchool(requestedHomeroomId, requestedSchoolId),
-              getTeacherHomeroomIds(userId, requestedSchoolId),
-            ]);
-            if (!homeroom || !teacherHomeroomIds.has(requestedHomeroomId)) {
-              socket.emit("join:error", { error: "No access to this homeroom" });
-              return;
-            }
-            joinValidatedSchoolRoom(socket, requestedSchoolId);
-            socket.join(`school:${requestedSchoolId}:teacher:${requestedHomeroomId}`);
+          const identity = socket.data.isSuperAdmin
+            ? null
+            : await resolveGoPilotIdentity(userId, requestedSchoolId);
+          if (!socket.data.isSuperAdmin && !identity) {
+            socket.emit("join:error", { error: "No access to this school" });
             return;
           }
 
-        });
-      } catch {
-        socket.emit("join:error", { error: "Failed to join school room" });
-      }
+          const manager = socket.data.isSuperAdmin || !!identity && goPilotIdentityHasAnyRole(
+            identity,
+            ["admin", "school_admin", "office_staff"]
+          );
+          const teacher = !!identity && goPilotIdentityHasAnyRole(identity, ["teacher"]);
+
+          if (!manager && !teacher) {
+            socket.emit("join:error", {
+              error: "GoPilot parent portal is disabled",
+              code: "GOPILOT_PARENT_PORTAL_DISABLED",
+              status: 410,
+            });
+            socket.disconnect(true);
+            return;
+          }
+
+          if (!(await hasActiveGoPilotLicense(requestedSchoolId))) {
+            socket.emit("join:error", {
+              error: "School is not entitled to GoPilot",
+              code: "GOPILOT_NOT_ENTITLED",
+            });
+            return;
+          }
+
+          // Socket.IO handlers run outside Express/ALS, so bind this school's tenant
+          // context for the per-school access checks (students/homerooms reads) — RLS
+          // would otherwise hide every row and deny legitimate parents/teachers.
+          await runWithTenantContext({ schoolId: requestedSchoolId }, async () => {
+            if (manager) {
+              joinValidatedSchoolRoom(socket, requestedSchoolId);
+              socket.join(`school:${requestedSchoolId}:office`);
+              return;
+            }
+
+            if (teacher) {
+              const requestedHomeroomId = typeof homeroomId === "string" ? homeroomId : "";
+              if (!requestedHomeroomId) {
+                socket.emit("join:error", { error: "Homeroom context required" });
+                return;
+              }
+              const [homeroom, teacherHomeroomIds] = await Promise.all([
+                getHomeroomForSchool(requestedHomeroomId, requestedSchoolId),
+                getTeacherHomeroomIds(userId, requestedSchoolId),
+              ]);
+              if (!homeroom || !teacherHomeroomIds.has(requestedHomeroomId)) {
+                socket.emit("join:error", { error: "No access to this homeroom" });
+                return;
+              }
+              joinValidatedSchoolRoom(socket, requestedSchoolId);
+              socket.join(`school:${requestedSchoolId}:teacher:${requestedHomeroomId}`);
+              return;
+            }
+
+          });
+        } catch {
+          socket.emit("join:error", { error: "Failed to join school room" });
+        }
+      })());
     });
 
     socket.on("disconnect", () => {
-      if (credentialTimer) clearInterval(credentialTimer);
+      if (credentialTimer) {
+        clearInterval(credentialTimer);
+        credentialTimers.delete(credentialTimer);
+      }
       if (authenticatedConnectionLogged) {
         console.log("[Socket.io] Authenticated client disconnected");
       }
     });
 
     void initialCredentialRevalidation.then((initialState) => {
-      if (!initialState.ok || !socket.connected) return;
+      if (!socketIoWork.canStart() || !initialState.ok || !socket.connected) return;
       authenticatedConnectionLogged = true;
       console.log("[Socket.io] Authenticated client connected");
 
       // Redis invalidation is the immediate path. This bounded fallback closes
       // sockets even if a publisher/subscriber was temporarily unavailable, and
       // prevents a stale client from passively receiving room broadcasts forever.
-      credentialTimer = setInterval(async () => {
-        if (!socket.connected || credentialCheckRunning) return;
+      credentialTimer = setInterval(() => {
+        if (!socketIoWork.canStart() || !socket.connected || credentialCheckRunning) return;
         credentialCheckRunning = true;
-        try {
-          const current = await getUserById(userId);
-          if (
-            !current ||
-            !credentialVersionMatches(socket.data.authVersion, current.authVersion)
-          ) {
-            disconnectForCredentialChange();
+        void socketIoWork.track((async () => {
+          try {
+            const current = await getUserById(userId);
+            if (
+              !current ||
+              !credentialVersionMatches(socket.data.authVersion, current.authVersion)
+            ) {
+              disconnectForCredentialChange();
+            }
+          } catch {
+            disconnectForCredentialChange(
+              "Authentication service unavailable.",
+              "AUTHENTICATION_SERVICE_UNAVAILABLE"
+            );
+          } finally {
+            credentialCheckRunning = false;
           }
-        } catch {
-          disconnectForCredentialChange(
-            "Authentication service unavailable.",
-            "AUTHENTICATION_SERVICE_UNAVAILABLE"
-          );
-        } finally {
-          credentialCheckRunning = false;
-        }
+        })());
       }, SOCKET_CREDENTIAL_REVALIDATION_MS);
+      credentialTimers.add(credentialTimer);
       credentialTimer.unref();
     });
   });
@@ -295,5 +323,5 @@ export async function broadcastGoPilot(
   io?.to(room).emit(event, data);
   // Local delivery is authoritative for request latency. The relay owns
   // bounded connect/publish timeouts and recovery; callers must never block.
-  void publishSocketIoRedis({ room, event, data }).catch(() => undefined);
+  void socketIoWork.track(publishSocketIoRedis({ room, event, data }).catch(() => undefined));
 }

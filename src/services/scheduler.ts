@@ -82,9 +82,12 @@ import {
   type DailyUsageAggregate,
 } from "./classpilotDailyUsageRollup.js";
 import { reapExpiredManualStudentSessions } from "./classpilotStudentSessionLifecycle.js";
+import { flushClasspilotLifecyclePushes } from "./classpilotLifecyclePushes.js";
 
 let io: SocketServer | null = null;
 let intervalId: NodeJS.Timeout | null = null;
+let schedulerStopping = false;
+const pendingSchedulerJobs = new Set<Promise<void>>();
 let lastRollupHour = -1;
 let lastPurgeHour = -1;
 let heavyJobRunning = false; // Mutex: prevent rollup and purge from running concurrently
@@ -170,10 +173,15 @@ export async function runWithSchedulerLock<T>(
 }
 
 function scheduleLockedJob(jobName: string, fn: () => Promise<void>) {
-  void runWithSchedulerLock(jobName, fn).catch((err) => {
+  if (schedulerStopping) return;
+  const pending = runWithSchedulerLock(jobName, async () => {
+    if (!schedulerStopping) await fn();
+  }).then(() => undefined, (err) => {
     console.error(`[Scheduler] ${jobName} failed outside handler`);
     errorMonitor.trackError("scheduler_failure", err as Error, { job: jobName });
   });
+  pendingSchedulerJobs.add(pending);
+  void pending.then(() => pendingSchedulerJobs.delete(pending));
 }
 
 async function publishGoPilotEvent(room: string, event: string, data: unknown) {
@@ -213,6 +221,7 @@ async function runHeavyJobsSerially() {
 let tickCount = 0;
 
 export function startScheduler(socketIo: SocketServer | null = null) {
+  schedulerStopping = false;
   io = socketIo;
   const staffIdentityScanEveryTicks =
     getStaffIdentityIntegrityScanIntervalMinutes();
@@ -266,10 +275,19 @@ export function startScheduler(socketIo: SocketServer | null = null) {
 }
 
 export function stopScheduler() {
+  schedulerStopping = true;
   if (intervalId) {
     clearInterval(intervalId);
     intervalId = null;
   }
+}
+
+export async function drainSchedulerJobs(): Promise<void> {
+  while (pendingSchedulerJobs.size) await Promise.all([...pendingSchedulerJobs]);
+}
+
+export function snapshotSchedulerJobs() {
+  return { pending: pendingSchedulerJobs.size, stopping: schedulerStopping };
 }
 
 async function checkDismissalTimes() {
@@ -1215,6 +1233,7 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
     const dueSessions = await listScheduledSessionsReadyToFinalize(now, schedulerDb, schoolId);
     const finalizationConcurrency = 10;
     for (let offset = 0; offset < dueSessions.length; offset += finalizationConcurrency) {
+      if (schedulerStopping) break;
       await Promise.all(dueSessions.slice(offset, offset + finalizationConcurrency).map(async (session) => {
         try {
         const result = await finalizeClasspilotSession({
@@ -1233,6 +1252,9 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
           });
         }
       }));
+      // Commit the bounded scheduler DB batch first, then drain its best-effort
+      // tenant delivery work before producing another batch of pushes.
+      await flushClasspilotLifecyclePushes();
     }
 
     // Pending lifecycle cleanup must continue after a license or school

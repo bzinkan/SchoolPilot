@@ -31,11 +31,12 @@ import { nudgeClasspilotScreenshotPolicyRefresh } from "./classpilotScreenshotPo
  * durable fallback for offline students and cross-instance outages. */
 export async function syncClasspilotControlStatesToActiveDevices(
   schoolId: string,
-  studentIds: string[]
+  studentIds: string[],
+  signal?: AbortSignal
 ): Promise<number> {
   const uniqueStudentIds = [...new Set(studentIds.map(String).filter(Boolean))];
-  if (uniqueStudentIds.length === 0) return 0;
-  return runWithTenantContext({ schoolId }, async () => {
+  if (uniqueStudentIds.length === 0 || signal?.aborted) return 0;
+  const { authorizedTargets, teachingSessionIds } = await runWithTenantContext({ schoolId }, async () => {
     const sessions = await getActiveSessionsForStudents(schoolId, uniqueStudentIds);
     const latestSessionByStudent = new Map<string, typeof sessions[number]>();
     for (const session of sessions) {
@@ -56,6 +57,7 @@ export async function syncClasspilotControlStatesToActiveDevices(
     const publications: PublishWSBatchItem[] = [];
     let authorizedTargets = 0;
     for (const studentId of uniqueStudentIds) {
+      if (signal?.aborted) break;
       const session = latestSessionByStudent.get(studentId);
       if (!session?.deviceId) continue;
       const exactTarget = {
@@ -221,6 +223,7 @@ export async function syncClasspilotControlStatesToActiveDevices(
         }
       );
       if (!delivery.authorized) continue;
+      if (signal?.aborted) break;
       authorizedTargets += 1;
       for (const publication of delivery.value.publications) {
         if (publication.target.kind !== "student-binding") continue;
@@ -231,7 +234,12 @@ export async function syncClasspilotControlStatesToActiveDevices(
       }
       publications.push(...delivery.value.publications);
     }
-    if (publications.length > 0) await publishWSBatch(publications);
+    if (publications.length > 0 && !signal?.aborted) {
+      const accepted = await publishWSBatch(publications);
+      if (process.env.REDIS_URL && accepted.some((published) => !published)) {
+        throw new Error("Classroom/FAB publication unavailable");
+      }
+    }
     const teachingSessionIds = [...new Set(publications.flatMap((publication) => {
       const classroomState = (publication.message as {
         classroomState?: { teachingSessionId?: unknown };
@@ -241,14 +249,22 @@ export async function syncClasspilotControlStatesToActiveDevices(
         ? [classroomState.teachingSessionId]
         : [];
     }))];
+    return { authorizedTargets, teachingSessionIds };
+  });
+  // Refresh performs its own scoped active-session read. Never await it while
+  // retaining this delivery's tenant lease (the worker pool has two clients).
+  if (!signal?.aborted) {
+    const refreshFailures: unknown[] = [];
     await Promise.all(teachingSessionIds.map((teachingSessionId) =>
       nudgeClasspilotScreenshotPolicyRefresh({
         schoolId,
         teachingSessionId,
         studentIds: uniqueStudentIds,
         reason: "scope_changed",
-      }).catch(() => 0)
+        onFailure: (error) => refreshFailures.push(error),
+      }).catch((error) => { refreshFailures.push(error); return 0; })
     ));
-    return authorizedTargets;
-  });
+    if (refreshFailures.length) throw new AggregateError(refreshFailures, "Screenshot policy refresh failed");
+  }
+  return authorizedTargets;
 }

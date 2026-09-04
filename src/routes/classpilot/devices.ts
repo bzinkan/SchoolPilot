@@ -5420,7 +5420,10 @@ router.post("/tiles/screenshots", ...tileReadAuth, async (req, res, next) => {
       .map((studentId) => accessByStudent.get(studentId))
       .filter((access): access is NonNullable<typeof access> => Boolean(access));
     if (accesses.length === 0) {
-      return res.status(404).json({ error: "No accessible tiles" });
+      return res.status(404).json({
+        error: "No accessible tiles",
+        code: "CLASSPILOT_NO_ACCESSIBLE_TILES",
+      });
     }
     recordHeartbeatHotPathCounter("tileBatchAuthorizedItems", accesses.length);
 
@@ -5622,7 +5625,10 @@ router.post("/tiles/history", ...tileReadAuth, async (req, res, next) => {
       .filter((access): access is NonNullable<typeof access> => Boolean(access));
     if (accesses.length === 0) {
       releaseClassPilotTileAdmission(res);
-      return res.status(404).json({ error: "No accessible tiles" });
+      return res.status(404).json({
+        error: "No accessible tiles",
+        code: "CLASSPILOT_NO_ACCESSIBLE_TILES",
+      });
     }
     recordHeartbeatHotPathCounter("tileBatchAuthorizedItems", accesses.length);
 

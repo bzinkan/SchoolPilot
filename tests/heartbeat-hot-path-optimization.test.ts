@@ -665,17 +665,15 @@ describe("heartbeat authority and lifecycle wiring", () => {
     const fatalStart = indexSource.indexOf("async function fatalShutdown");
     const fatalEnd = indexSource.indexOf("async function gracefulShutdown", fatalStart);
     const fatal = indexSource.slice(fatalStart, fatalEnd);
-    assert.ok(
-      fatal.indexOf("flushHeartbeatClassificationWrites()") <
-        fatal.indexOf("pool.end()")
-    );
+    assert.match(fatal, /await drainApiService\(\)/);
     const gracefulStart = fatalEnd;
     const gracefulEnd = indexSource.indexOf("// ---------------------------------------------------------------------------", gracefulStart);
     const graceful = indexSource.slice(gracefulStart, gracefulEnd);
-    assert.ok(
-      graceful.indexOf("flushHeartbeatClassificationWrites()") <
-        graceful.indexOf("pool.end()")
-    );
+    assert.match(graceful, /await drainApiService\(\)/);
+    const shared = indexSource.slice(indexSource.indexOf("async function drainApiService"), fatalStart);
+    assert.match(shared, /drainBackground\(\)[\s\S]*flushHeartbeatClassificationWrites\(\)/);
+    const shutdownSource = readFileSync(new URL("../src/services/serviceShutdown.ts", import.meta.url), "utf8");
+    assert.ok(shutdownSource.indexOf('phase("background"') < shutdownSource.indexOf("await pool.end()"));
     assert.equal((indexSource.match(/\}, 15_000\);/g) ?? []).length, 2);
   });
 });

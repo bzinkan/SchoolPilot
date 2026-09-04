@@ -4,10 +4,10 @@ import type { Server as SocketIOServer } from "socket.io";
 import type { WebSocketServer } from "ws";
 import { initSentry } from "./services/sentry.js";
 import { createApp } from "./app.js";
-import { setupSocketIO } from "./realtime/socketio.js";
-import { setupWebSocket } from "./realtime/websocket.js";
-import { startScheduler, stopScheduler } from "./services/scheduler.js";
-import { startHealthMonitor, stopHealthMonitor } from "./services/healthMonitor.js";
+import { setupSocketIO, stopSocketIoWork, drainSocketIoWork } from "./realtime/socketio.js";
+import { setupWebSocket, stopWebSocketWork, drainWebSocketWork } from "./realtime/websocket.js";
+import { startScheduler, stopScheduler, drainSchedulerJobs, snapshotSchedulerJobs } from "./services/scheduler.js";
+import { startHealthMonitor, stopHealthMonitor, drainHealthMonitor } from "./services/healthMonitor.js";
 import errorMonitor from "./services/errorMonitor.js";
 import { pool, prewarmMainPool, sessionPool } from "./db.js";
 import { schedulerLockPool, schedulerPool } from "./services/schedulerDb.js";
@@ -31,6 +31,10 @@ import {
   selectSchoolPilot27MigrationPlan,
 } from "./db/migrations27.js";
 import { safeErrorMetadata } from "./util/safeLogging.js";
+import { drainService, snapshotShutdownPools, type ShutdownPool } from "./services/serviceShutdown.js";
+import { classpilotLifecyclePushes, flushClasspilotLifecyclePushes, snapshotClasspilotLifecyclePushes } from "./services/classpilotLifecyclePushes.js";
+import { drainTenantContextReleases, getTenantContextReleaseSnapshot } from "./middleware/tenantContext.js";
+import { stopRuntimePerformanceMetrics } from "./services/runtimePerformanceMetrics.js";
 
 // Initialize Sentry as early as possible. No-op unless SENTRY_DSN is set
 // (gated off until the DPA is signed + subprocessors list updated).
@@ -40,25 +44,11 @@ let httpServer: http.Server | null = null;
 let socketIoServer: SocketIOServer | null = null;
 let webSocketServer: WebSocketServer | null = null;
 let fatalShutdownStarted = false;
-
-async function bounded(promise: Promise<unknown>, timeoutMs: number, label: string): Promise<void> {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    await Promise.race([
-      promise,
-      new Promise<void>((resolve) => {
-        timer = setTimeout(() => {
-          console.error(`[FATAL] Timed out while waiting for ${label}`);
-          resolve();
-        }, timeoutMs);
-      }),
-    ]);
-  } catch (err) {
-    console.error(`[FATAL] ${label} failed:`, safeErrorMetadata(err));
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
+let shutdownPhase = "idle";
+const shutdownPools: ShutdownPool[] = [
+  { name: "main", pool }, { name: "session", pool: sessionPool },
+  { name: "scheduler", pool: schedulerPool }, { name: "scheduler_lock", pool: schedulerLockPool },
+];
 
 function closeHttpServer(): Promise<void> {
   return new Promise((resolve) => {
@@ -70,7 +60,7 @@ function closeHttpServer(): Promise<void> {
     // Drop idle keep-alive sockets now so the drain is not held by pooled ALB connections.
     server.closeIdleConnections();
     server.close((err) => {
-      if (err) console.error("[FATAL] HTTP server close failed:", safeErrorMetadata(err));
+      if (err) console.error("[shutdown] HTTP server close failed:", safeErrorMetadata(err));
       resolve();
     });
   });
@@ -102,7 +92,7 @@ function closeWebSocketServer(): Promise<void> {
       }
     }
     wss.close((err) => {
-      if (err) console.error("[FATAL] WebSocket server close failed:", safeErrorMetadata(err));
+      if (err) console.error("[shutdown] WebSocket server close failed:", safeErrorMetadata(err));
       resolve();
     });
   });
@@ -113,6 +103,38 @@ async function flushHeartbeatClassificationWrites(): Promise<void> {
     "./services/heartbeatClassificationBatcher.js"
   );
   await flushHeartbeatClassificationBatches();
+}
+
+async function drainApiService(): Promise<boolean> {
+  const result = await drainService({
+    timeoutMs: 14_500, // Leave time to report before the process's 15s hard stop.
+    onPhase(phase) { shutdownPhase = phase; },
+    stopIntake() { stopScheduler(); stopHealthMonitor(); stopWebSocketWork(); stopSocketIoWork(); },
+    async drainProducers() {
+      await Promise.all([
+        closeHttpServer(), closeSocketIo(), closeWebSocketServer(),
+        drainSchedulerJobs(), drainHealthMonitor(),
+      ]);
+      await Promise.all([drainWebSocketWork(), drainSocketIoWork()]);
+    },
+    sealBackground() { classpilotLifecyclePushes.stopAccepting(); },
+    async drainBackground() {
+      await Promise.all([flushHeartbeatClassificationWrites(), flushClasspilotLifecyclePushes()]);
+      await drainTenantContextReleases();
+    },
+    cancelBackground() { classpilotLifecyclePushes.cancelPending(); },
+    async disposeMonitor(timeoutMs) {
+      await errorMonitor.disposeAndWait(timeoutMs);
+      if (!errorMonitor.getDisposalSnapshot().complete) throw new Error("Error monitor disposal incomplete");
+    },
+    stopMetrics: stopRuntimePerformanceMetrics,
+    pools: shutdownPools,
+    snapshot: () => ({
+      scheduler: snapshotSchedulerJobs(), lifecycle: snapshotClasspilotLifecyclePushes(),
+      tenantReleases: getTenantContextReleaseSnapshot(),
+    }),
+  });
+  return result.completed;
 }
 
 async function fatalShutdown(reason: string, err: unknown): Promise<void> {
@@ -128,32 +150,14 @@ async function fatalShutdown(reason: string, err: unknown): Promise<void> {
   process.exitCode = 1;
 
   const forceExit = setTimeout(() => {
-    console.error("[FATAL] Force exiting after shutdown timeout");
+    classpilotLifecyclePushes.cancelPending();
+    console.error(JSON.stringify({ event: "shutdown_deadline_exceeded", fatal: true, phase: shutdownPhase, pools: snapshotShutdownPools(shutdownPools), pending: snapshotClasspilotLifecyclePushes() }));
     process.exit(1);
   }, 15_000);
 
   console.error(`[FATAL] ${reason}:`, safeErrorMetadata(error));
-  stopScheduler();
-  stopHealthMonitor();
-  const closeServers = Promise.allSettled([
-    closeHttpServer(),
-    closeSocketIo(),
-    closeWebSocketServer(),
-  ]);
-
-  await errorMonitor.trackErrorAndFlush(
-    "fatal_process_error",
-    error,
-    { eventType: reason },
-    5_000
-  );
-  await bounded(closeServers.then(() => undefined), 4_000, "server shutdown");
-  await bounded(
-    flushHeartbeatClassificationWrites(),
-    3_000,
-    "heartbeat classification flush"
-  );
-  await bounded(Promise.allSettled([pool.end(), sessionPool.end(), schedulerPool.end(), schedulerLockPool.end()]).then(() => undefined), 4_000, "database pool shutdown");
+  errorMonitor.trackError("fatal_process_error", error, { eventType: reason }, { priority: "high" });
+  await drainApiService();
 
   clearTimeout(forceExit);
   process.exit(1);
@@ -164,40 +168,15 @@ async function gracefulShutdown(signal: "SIGTERM" | "SIGINT"): Promise<void> {
   fatalShutdownStarted = true;
   process.exitCode = 0;
   const forceExit = setTimeout(() => {
-    console.error(`[shutdown] Force exiting after ${signal} timeout`);
+    classpilotLifecyclePushes.cancelPending();
+    console.error(JSON.stringify({ event: "shutdown_deadline_exceeded", signal, phase: shutdownPhase, pools: snapshotShutdownPools(shutdownPools), pending: snapshotClasspilotLifecyclePushes() }));
     process.exit(1);
   }, 15_000);
 
   console.log(`[shutdown] ${signal} received; draining service`);
-  stopScheduler();
-  stopHealthMonitor();
-  await bounded(
-    Promise.allSettled([
-      closeHttpServer(),
-      closeSocketIo(),
-      closeWebSocketServer(),
-    ]).then(() => undefined),
-    4_000,
-    "server shutdown"
-  );
-  await bounded(
-    flushHeartbeatClassificationWrites(),
-    3_000,
-    "heartbeat classification flush"
-  );
-  errorMonitor.dispose();
-  await bounded(
-    Promise.allSettled([
-      pool.end(),
-      sessionPool.end(),
-      schedulerPool.end(),
-      schedulerLockPool.end(),
-    ]).then(() => undefined),
-    4_000,
-    "database pool shutdown"
-  );
+  const completed = await drainApiService();
   clearTimeout(forceExit);
-  process.exit(0);
+  process.exit(completed ? 0 : 1);
 }
 
 // ---------------------------------------------------------------------------

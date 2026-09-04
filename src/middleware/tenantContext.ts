@@ -1,4 +1,5 @@
 import type { RequestHandler } from "express";
+import type { PoolClient } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { pool } from "../db.js";
 import { tenantALS, rlsGucEnabled, type TenantStore } from "../db/tenantContext.js";
@@ -7,6 +8,43 @@ import {
   recordRuntimePerformanceCounter,
   recordRuntimePerformanceTiming,
 } from "../services/runtimePerformanceMetrics.js";
+import errorMonitor from "../services/errorMonitor.js";
+import { getRuntimeMetadata } from "../services/runtimeMetadata.js";
+import { markTenantPoolAcquisitionFailureReported } from "../util/operationalErrors.js";
+
+export { wasTenantPoolAcquisitionFailureReported } from "../util/operationalErrors.js";
+
+const pendingTenantReleases = new Set<Promise<void>>();
+
+export function getTenantContextReleaseSnapshot(): { pending: number } {
+  return { pending: pendingTenantReleases.size };
+}
+
+/** Call after fencing request/background producers; the shutdown owner bounds this drain. */
+export async function drainTenantContextReleases(): Promise<void> {
+  while (pendingTenantReleases.size > 0) {
+    await Promise.allSettled([...pendingTenantReleases]);
+  }
+}
+
+function releaseTenantClient(client: PoolClient): Promise<void> {
+  const release = (async () => {
+    let resetError: Error | undefined;
+    try {
+      await client.query("SELECT set_config('app.school_id', '', false), set_config('app.is_super', 'off', false)");
+    } catch (error) {
+      // A failed RESET must discard the connection rather than return a
+      // possibly still-scoped session to the shared pool.
+      resetError = error instanceof Error ? error : new Error("Tenant context reset failed");
+    } finally {
+      client.release(resetError);
+    }
+  })();
+  pendingTenantReleases.add(release);
+  const remove = () => { pendingTenantReleases.delete(release); };
+  void release.then(remove, remove);
+  return release;
+}
 
 async function acquireTenantClient() {
   const startedAt = performance.now();
@@ -19,6 +57,13 @@ async function acquireTenantClient() {
   } catch (error) {
     recordRuntimePerformanceCounter("poolAcquisitionFailure");
     recordRuntimePerformanceTiming("poolAcquisitionMs", performance.now() - startedAt);
+    markTenantPoolAcquisitionFailureReported(error);
+    errorMonitor.trackError("database_connectivity", new Error("Main database pool acquisition failed"), {
+      job: getRuntimeMetadata().service === "scheduler-worker"
+        ? "schedulerWorkerMainPoolAcquire" : "apiMainPoolAcquire",
+      errorCode: "POOL_ACQUISITION_FAILED",
+      messageType: "pool_acquisition_failure",
+    }, { persist: false, priority: "high" });
     throw error;
   }
 }
@@ -52,12 +97,7 @@ export const bindTenantContext: RequestHandler = async (req, res, next) => {
   let releasePromise: Promise<void> | null = null;
   const release = (): Promise<void> => {
     if (releasePromise) return releasePromise;
-    releasePromise = client!
-      .query("SELECT set_config('app.school_id', '', false), set_config('app.is_super', 'off', false)")
-      .catch(() => {})
-      .then(() => {
-        client!.release();
-      });
+    releasePromise = releaseTenantClient(client!);
     return releasePromise;
   };
   res.locals.releaseTenantContext = release;
@@ -113,9 +153,6 @@ export async function runWithTenantContext<T>(
     };
     return await tenantALS.run(store, fn);
   } finally {
-    await client
-      .query("SELECT set_config('app.school_id', '', false), set_config('app.is_super', 'off', false)")
-      .catch(() => {});
-    client.release();
+    await releaseTenantClient(client);
   }
 }

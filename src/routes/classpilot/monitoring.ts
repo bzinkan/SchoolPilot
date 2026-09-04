@@ -421,7 +421,7 @@ router.post("/roster/student", ...auth, async (req, res, next) => {
       status: "active",
     });
 
-    logAudit({
+    await logAudit({
       schoolId,
       userId: req.authUser!.id,
       userEmail: req.authUser!.email,
