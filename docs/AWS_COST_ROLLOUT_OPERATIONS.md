@@ -95,7 +95,7 @@ support. Those four files must be its only direct children. Never print their
 contents. Capture the exact active and prior API/worker revision ARNs. The
 runner independently re-describes all four ACTIVE revisions and rejects CPU,
 memory, network mode, role, container, environment-name, or secret-name
-incompatibility. It also reads and validates the committed 05:45/10:00 ET
+incompatibility. It also reads and validates the committed 05:45/16:00 ET
 schedule and 70% CPU policy directly; no operator-authored schedule receipt or
 canonical hash is required.
 
@@ -394,13 +394,16 @@ attestation. The worker is updated to the same image digest at its existing
 256/512 size.
 
 Do not use `--skip-wait` in production. The script fails closed unless the API
-is stable at `1/1` or `2/2` and the worker is stable at `1/1`. After the slow
-image work, it rechecks the weekday 04:45-10:15 America/New_York deployment
-guard, then captures the exact API Application Auto Scaling suspended state,
-suspends dynamic scale-in/out while preserving the captured scheduled-scaling
-state, rechecks both services, and keeps that dynamic hold through migration and
-both service deployments. The reviewed one/six-task schedules remain active so
-a rollout cannot skip the 05:45 scale-up or 10:00 scale-down. It verifies both
+is stable at `1/1`, `2/2`, or `3/3` and the worker is stable at `1/1`; a
+three-task API (the weekday school-day floor) converges before the worker
+mutates so the rollout peak stays at the reviewed 124-connection ceiling. After
+the slow image work, it rechecks the weekday 04:45-06:00 America/New_York
+deployment guard, then captures the exact API Application Auto Scaling
+suspended state, suspends dynamic scale-in/out while preserving the captured
+scheduled-scaling state, rechecks both services, and keeps that dynamic hold
+through migration and both service deployments. The reviewed one/three-task
+schedules remain active so a rollout cannot skip the 05:45 scale-up or 16:00
+scale-down. It verifies both
 services again after stabilization and restores/verifies the exact prior scaling
 state; its EXIT trap retries restoration after a failure.
 
@@ -600,26 +603,33 @@ confirmed foreign-resource access failure and stops immediately. A timeout or
 stage's 20/20 isolation acceptance, but it is not mislabeled as tenant leakage.
 
 Production keeps the ordinary API autoscaling minimum at one. From 05:45 to
-10:00 America/New_York on weekdays, Application Auto Scaling raises the minimum
-to six measured launch-safe `512 CPU / 2048 MiB` tasks before the school-arrival
-reconnect wave. CPU target tracking remains 1-8 outside that window and 6-8
-inside it; after 10:00 it may scale in under the existing cooldown. The active
-emergency revision retains `DB_POOL_MAX=20`, so six API pools plus the worker's
-five-client pool have a theoretical ceiling of 125 connections. Eight API
-pools plus the worker can reach 165; actual RDS connections therefore remain a
-hard monitored gate below 150 and max eight must not be represented as
-statically bounded below that gate. Before a joint API/worker deployment,
-require API desired capacity at or below two. The deployment script blocks
-weekday backend deployments from 04:45 through 10:14 America/New_York, including
-a one-hour safety buffer before the arrival action. Do not create a new
-Terraform plan or run an unscoped apply between
-05:45 and 10:00
-America/New_York on weekdays: the scheduled action intentionally owns the
-scalable target's temporary minimum during that window, and a refresh would
-otherwise present the expected `6` floor as drift from the ordinary Terraform
-baseline of `1`. A previously reviewed, digest-verified emergency rollback
-saved plan remains immediately applicable during this window because applying
-that immutable plan does not refresh or reinterpret the scheduled capacity.
+16:00 America/New_York on weekdays, Application Auto Scaling holds the minimum
+at three measured launch-safe `512 CPU / 2048 MiB` tasks. The floor is raised
+before the school-arrival reconnect wave and kept for the whole school day
+because the ALB sticky session pins each device to the task it first reached,
+so a scale-out after a period starts cannot shed load from an already
+saturated task (measured 2026-09-03: after the former 10:00 scale-in a single
+task ran at 99% CPU with p99 latency of 8-14 s for about 25 minutes while the
+tasks that target tracking added received almost no traffic). CPU target
+tracking remains 1-6 outside that window and 3-6 inside it; after 16:00 it may
+scale in under the existing cooldown. Each API task uses a 16-connection main
+pool plus a two-connection session pool, so three API tasks plus the worker's
+16-connection ceiling hold 70 steady connections and six API tasks plus the
+worker reach 124; actual RDS connections therefore remain a hard monitored
+gate below 150. Before a joint API/worker deployment, require API desired
+capacity at or below three; a three-task rollout converges the API before the
+worker mutates so the two 200% overlaps never coincide. The deployment script
+blocks weekday backend deployments from 04:45 through 05:59 America/New_York,
+a one-hour safety buffer before the 05:45 floor action; the 16:00 scale-down
+only lowers `MinCapacity`, never the desired count, so it needs no deploy
+block. Do not create a new Terraform plan or run an unscoped apply between
+**05:45 and 16:00** America/New_York on weekdays: the scheduled action
+intentionally owns the scalable target's minimum during that window, and a
+refresh would otherwise present the expected `3` floor as drift from the
+ordinary Terraform baseline of `1`. A previously reviewed, digest-verified
+emergency rollback saved plan remains immediately applicable during this
+window because applying that immutable plan does not refresh or reinterpret
+the scheduled capacity.
 
 The harness rejects non-loopback HTTP targets and forces both HTTPS requests
 and WebSockets onto IPv4. The supervisor binds its filename-safe `runId` into
@@ -882,7 +892,7 @@ replacing it after mutation is a hard recovery failure that retains the safe
 deployment policy and scaling hold. A recovered availability violation is
 durably terminal and cannot be erased by restarting the controller.
 Application rollback callers must continue enforcing the approved off-hours
-window and must not start a recovery that can span the 05:45 or 10:00 ET
+window and must not start a recovery that can span the 05:45 or 16:00 ET
 scheduled-minimum boundary while scheduled scaling is held. Drift, checkpoint
 resume, scaling hold/restoration, and every policy application are retained in
 recovery evidence. The 300-second ALB drain remains unchanged.
@@ -1212,7 +1222,7 @@ For the completed session-independent remediation, require exact merged-SHA
 CI, CodeQL, Gitleaks, and Trivy success, then save and independently parse a
 fresh production Terraform plan with detailed exit code `0`, zero
 resource/output actions, and no apply. Operate outside both the weekday
-04:45-10:14 America/New_York deploy guard and the 01:15-02:15 plan-gate
+04:45-05:59 America/New_York deploy guard and the 01:15-02:15 plan-gate
 exclusion.
 
 Run the inactive candidate once in gate-only mode:
@@ -1868,7 +1878,7 @@ input only in the ACL-restricted diagnostic or certification config/receipt.
 checking or creating artifacts, preventing two same-run controllers from
 racing. It refuses any start whose conservative two-hour
 mutation/readiness/monitor/terminal-validation/restoration window overlaps the
-weekday 05:45 or 10:00 ET scaling boundaries, durably captures desired
+weekday 05:45 or 16:00 ET scaling boundaries, durably captures desired
 capacity plus the scalable target,
 scheduled-action hash, policy hash, and suspended flags, then pins API 6/6
 healthy with min 6/max 8 while traffic runs. It never edits a schedule, WAF,
@@ -2031,28 +2041,35 @@ the optimized-build chain.
 Do not plan or reapply the historical arrival-capacity remediation. Before the
 fresh Waf chain, verify production remains on private ECS subnets with both NAT
 gateways present, Route 53 latency measurement enabled, Redis small, both WAF
-rate rules in `BLOCK`, and API desired capacity at or below two outside the
+rate rules in `BLOCK`, and API desired capacity at or below three outside the
 night-gate lease. The already-live contract is API scalable-target maximum
-eight, weekday 05:45 America/New_York scale-up to minimum six, weekday 10:00
+six, weekday 05:45 America/New_York scale-up to minimum three, weekday 16:00
 scale-down to minimum one, 70% Average CPU target tracking, and the metric-math
 running-task alarm. Any drift is a separate reviewed correction; starting this
 certification chain does not authorize an infrastructure apply.
 
 After apply, verify both scheduled actions use `America/New_York`, the exact
-weekday 05:45 scale-up has minimum six, the exact weekday 10:00 scale-down has
-minimum one, and the API alarm has fresh desired/running datapoints. If the
+weekday 05:45 scale-up has minimum three, the exact weekday 16:00 scale-down
+has minimum one, and the API alarm has fresh desired/running datapoints. If the
 same-day 05:45 action has already passed, temporarily set the API scalable
 target minimum to six and wait for six healthy/warm API tasks before the load
-gates. Restore the schedule-appropriate runtime minimum only after both WAF
-gates. Do not lower the minimum while a gate is running.
+gates. Restore the schedule-appropriate runtime minimum (three during
+05:45-15:59 weekdays, otherwise one) only after both WAF gates. Do not lower
+the minimum while a gate is running.
 
 If the scheduled-action contract is invalid, hold the live target at minimum
-six/maximum eight, stop progression, and correct it with a separately reviewed
-saved plan. Do not disable the schedules or restore the measured-unsafe
-minimum-two arrival floor. An application regression uses the captured previous
-API/worker task-definition rollback; an API OOM on the already-selected
-512/2048 emergency revision blocks progression. Never roll back this phase by
-changing ECS networking, NAT, Redis, Route 53, or WAF.
+six/maximum six, stop progression, and correct it with a separately reviewed
+saved plan. Do not disable the schedules. The earlier "measured-unsafe
+minimum-two arrival floor" finding came from the 800-device Waf/800 synthetic
+runs and is consciously superseded for the live single-school posture: the
+school-day floor is three, it keeps the 05:45 pre-warm, and it was chosen from
+the 2026-09-03 measurement (one task saturated at the first period after the
+former 10:00 scale-in while six morning tasks idled at 1-2% each). Raising the
+floor again for additional schools requires a new measured decision, not a
+return to the historical six-task arrival minimum. An application regression
+uses the captured previous API/worker task-definition rollback; an API OOM on
+the already-selected 512/2048 emergency revision blocks progression. Never roll
+back this phase by changing ECS networking, NAT, Redis, Route 53, or WAF.
 
 ## Current WAF and alarm baseline (already applied; verification only)
 

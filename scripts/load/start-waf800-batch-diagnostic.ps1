@@ -3574,11 +3574,11 @@ function Assert-NoScheduledBoundaryOverlap {
     foreach ($offset in 0..2) {
         $date = $localNow.Date.AddDays($offset)
         if ($date.DayOfWeek -in @([DayOfWeek]::Saturday,[DayOfWeek]::Sunday)) { continue }
-        foreach ($time in @([TimeSpan]::FromHours(5.75),[TimeSpan]::FromHours(10))) {
+        foreach ($time in @([TimeSpan]::FromHours(5.75),[TimeSpan]::FromHours(16))) {
             $localBoundary = [DateTime]::SpecifyKind($date.Add($time), [DateTimeKind]::Unspecified)
             $boundaryUtc = [TimeZoneInfo]::ConvertTimeToUtc($localBoundary, $zone)
             if ($boundaryUtc -ge $nowUtc.UtcDateTime -and $boundaryUtc -le $endUtc.UtcDateTime) {
-                throw "The conservative diagnostic mutation/readiness/monitor/terminal/restoration window would cross an existing 05:45 or 10:00 ET scaling boundary."
+                throw "The conservative diagnostic mutation/readiness/monitor/terminal/restoration window would cross an existing 05:45 or 16:00 ET scaling boundary."
             }
         }
     }

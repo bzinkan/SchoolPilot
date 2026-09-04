@@ -219,7 +219,7 @@ foreach ($contract in @(
 }
 foreach ($contract in @(
     "schoolpilot-production-api-arrival-scale-up", "cron(45 5 ? * MON-FRI *)",
-    "schoolpilot-production-api-arrival-scale-down", "cron(0 10 ? * MON-FRI *)",
+    "schoolpilot-production-api-arrival-scale-down", "cron(0 16 ? * MON-FRI *)",
     "schoolpilot-production-api-cpu-scaling", "ECSServiceAverageCPUUtilization"
 )) {
     Assert-Condition ($scalingContractSource.Contains($contract)) `
@@ -899,11 +899,11 @@ try {
             [pscustomobject]@{
                 name="schoolpilot-production-api-arrival-scale-up"
                 schedule="cron(45 5 ? * MON-FRI *)";timezone="America/New_York"
-                minCapacity=6;maxCapacity=$null
+                minCapacity=3;maxCapacity=$null
             },
             [pscustomobject]@{
                 name="schoolpilot-production-api-arrival-scale-down"
-                schedule="cron(0 10 ? * MON-FRI *)";timezone="America/New_York"
+                schedule="cron(0 16 ? * MON-FRI *)";timezone="America/New_York"
                 minCapacity=1;maxCapacity=$null
             }
         )
@@ -921,6 +921,10 @@ try {
         )
     }
     Assert-ProductionScalingContract $scalingContract
+    $staleArrivalContract = $scalingContract | ConvertTo-Json -Depth 10 | ConvertFrom-Json -Depth 10
+    @($staleArrivalContract.scheduledActions | Where-Object name -ceq "schoolpilot-production-api-arrival-scale-up")[0].minCapacity = 6
+    Assert-Throws { Assert-ProductionScalingContract $staleArrivalContract } "05:45/16:00" `
+        "The superseded six-task arrival minimum must be rejected as drift from the three-task school-day floor."
     $heldScaling = [pscustomobject]@{
         minCapacity=6;maxCapacity=6
         suspendedState=[pscustomobject]@{

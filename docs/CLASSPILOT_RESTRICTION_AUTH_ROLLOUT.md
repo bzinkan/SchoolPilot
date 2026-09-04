@@ -74,7 +74,8 @@ Prerequisites, enforced when the plan is built and re-checked at Apply:
   the plan if any other capability, school scope, or the TURN wiring would
   change.
 - `scopedAuthorityChecksV1` is `on` in the source rollout registry.
-- Weekdays 04:45–10:14 America/New_York are the protected arrival window.
+- Weekdays 04:45–05:59 America/New_York are the protected school-day floor
+  scale-up window.
   Plan and Apply are both blocked inside it unless
   `-ConfirmProtectedWindowProductionMutation` is passed together with
   `-ConfirmProductionMutation`. The plan records that authority, and Apply
