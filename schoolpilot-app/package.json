@@ -19,7 +19,7 @@
     "test:classpilot-command-context": "node --test scripts/classpilot-command-context.test.mjs",
     "test:classpilot-tile-tabs": "node --test scripts/classpilot-tile-tabs.test.mjs",
     "test:classpilot-coverage-summary": "node --test scripts/classpilot-coverage-summary.test.mjs",
-    "test:classpilot-dashboard-isolation": "node --test scripts/classpilot-dashboard-isolation.test.mjs",
+    "test:classpilot-dashboard-isolation": "node --test scripts/classpilot-dashboard-isolation.test.mjs scripts/classpilot-read-recovery.test.mjs",
     "test:classpilot-student-data": "node --test scripts/classpilot-student-data.test.mjs",
     "test:classpilot-student-data-browser": "node scripts/classpilot-student-data-browser.mjs",
     "test:web-lifecycle": "node --test scripts/web-lifecycle.test.mjs",

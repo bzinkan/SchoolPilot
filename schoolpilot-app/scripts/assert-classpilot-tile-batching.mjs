@@ -1101,7 +1101,7 @@ assert.doesNotMatch(
 );
 assert.match(
   dashboardSource,
-  /enabled: screenshotTileReadsEnabled,/,
+  /enabled: screenshotTileReadsEnabled\s*&& request\.body\.studentIds\.some\(\(id\) => !deniedScreenshotReadIds\.has\(id\)\),/,
   'the 30-second screenshot reconciliation must cover every fixed class cohort',
 );
 assert.match(
@@ -1136,7 +1136,7 @@ assert.match(
 );
 assert.match(
   dashboardSource,
-  /classDashboardCapabilities = deriveDashboardCapabilities\(\{[\s\S]{0,80}studentView: 'class'/,
+  /classDashboardCapabilities = unavailableClassCapabilities\(deriveDashboardCapabilities\(\{[\s\S]{0,80}studentView: 'class'/,
   'screenshot authority must be derived independently from the temporary dashboard view',
 );
 assert.match(
@@ -1156,7 +1156,7 @@ assert.match(
 );
 assert.match(
   dashboardSource,
-  /tileScreenshotRevoked = tileSharedPrivacyRevoked[\s\S]{0,160}studentView !== 'class'/,
+  /tileScreenshotRevoked = tileSharedPrivacyRevoked[\s\S]{0,240}studentView !== 'class'/,
   'cached Class pixels must never render in Available, Claimed, or Coverage views',
 );
 assert.match(

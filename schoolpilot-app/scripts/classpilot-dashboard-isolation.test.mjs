@@ -173,7 +173,7 @@ test('deferred observation PUTs cannot adopt after hide or out of order after a 
   );
   assert.match(
     leaseSource,
-    /if \(!failure\.releaseLease\)[\s\S]{0,180}setStatus\('error'\)[\s\S]{0,140}else \{[\s\S]{0,100}setStatus\(failure\.status\)[\s\S]{0,220}await deleteLease\(requestViewerId\)/,
+    /if \(!failure\.releaseLease\)[\s\S]{0,180}setStatus\('error'\)[\s\S]{0,140}else \{[\s\S]{0,240}setStatus\(failure\.status\)[\s\S]{0,220}await deleteLease\(requestViewerId\)/,
     'a terminal renewal denial must revoke the previously observed exact-viewer lease',
   );
 });
@@ -287,7 +287,7 @@ test('student tiles split screenshot enlargement from the explicit Details actio
 
   assert.match(
     dashboard,
-    /const tileDetailsRevoked = supervisedElsewhere[\s\S]{0,220}tileGlobalAuthorizationDenied[\s\S]{0,220}tileGlobalAuthorizationFailure[\s\S]{0,220}hardDeniedHistoryStudentIds\.has\(student\.studentId\)[\s\S]{0,180}detailHistoryDeniedStudentIds\.has\(student\.studentId\)[\s\S]{0,220}monitoringDisplay\?\.kind === 'delegated'/,
+    /const tileDetailsRevoked = supervisedElsewhere[\s\S]{0,220}tileGlobalAuthorizationDenied[\s\S]{0,220}tileGlobalAuthorizationFailure[\s\S]{0,220}hardDeniedHistoryStudentIds\.has\(student\.studentId\)[\s\S]{0,220}monitoringDisplay\?\.kind === 'delegated'/,
     'delegation and global authorization failure must revoke Details before rendering the tile',
   );
   assert.match(
@@ -320,7 +320,6 @@ test('student tiles split screenshot enlargement from the explicit Details actio
   assert.match(selectedDetailsRevocation, /tileGlobalAuthorizationDenied/);
   assert.match(selectedDetailsRevocation, /tileGlobalAuthorizationFailure/);
   assert.match(selectedDetailsRevocation, /hardDeniedHistoryStudentIds\.has\(selectedStudentRow\?\.studentId\)/);
-  assert.match(selectedDetailsRevocation, /detailHistoryDeniedStudentIds\.has\(selectedStudentRow\?\.studentId\)/);
   assert.match(selectedDetailsRevocation, /detailHistoryHardDenied/);
   assert.match(selectedDetailsRevocation, /selectedStudentDisplay\?\.kind === 'delegated'/);
   assert.match(
@@ -330,13 +329,13 @@ test('student tiles split screenshot enlargement from the explicit Details actio
   );
   assert.match(
     dashboard,
-    /detailHistoryFailureScope !== 'cohort'[\s\S]{0,180}setDetailHistoryDeniedStudentIds\([\s\S]{0,260}next\.add\(deniedStudentId\)/,
-    'a single-detail 404 must persist as a per-student Details denial',
+    /queryKey: detailHistoryQueryKey,[\s\S]{0,140}fetchAuthorizedTileBatch\([\s\S]{0,100}kind: 'history'[\s\S]{0,420}historyReadAuthorities, signal/,
+    'a single-detail 404 must use the same exact-authority denial ledger as cohort history',
   );
   assert.match(
     dashboard,
-    /setDetailHistoryDeniedStudentIds\([\s\S]{0,120}current\.size === 0 \? current : new Set\(\)[\s\S]{0,120}\[historyTileBindingTransitionKey\]/,
-    'the per-student denial may clear only when the authorized history binding/context changes',
+    /const hardDeniedHistoryStudentIds = useMemo\(\(\) => \{\s*const deniedIds = new Set\(deniedHistoryReadIds\)/,
+    'the persistent exact-authority denial remains the source for history privacy gates',
   );
   assert.match(
     dashboard,
@@ -480,7 +479,7 @@ test('authorization loss purges active tile caches without retaining denied pixe
   );
   assert.match(
     dashboard,
-    /screenshotTileReadsEnabled = studentView === 'class'[\s\S]{0,180}!\['denied', 'paused_unobserved'\]\.includes\(observationLeaseStatus\)/,
+    /screenshotTileReadsEnabled = studentView === 'class'[\s\S]{0,180}!\['denied', 'ineligible', 'paused_unobserved'\]\.includes\(observationLeaseStatus\)/,
     'terminal denial and a paused observation must disable full and targeted screenshot reads',
   );
   assert.match(
@@ -670,7 +669,7 @@ test('a re-keyed screenshot cohort carries classmates forward but never a change
   );
   assert.match(
     dashboard,
-    /placeholderData: \(previousData, previousQuery\) => screenshotCohortPlaceholderData\([\s\S]{0,220}deniedStudentIds: locallyRevokedTileStudentIds/,
+    /placeholderData: \(previousData, previousQuery\) => screenshotCohortPlaceholderData\([\s\S]{0,220}deniedStudentIds: screenshotPlaceholderDeniedIds/,
     'the cohort carry-forward must run the same revocation fence as its query function',
   );
   assert.match(
@@ -689,7 +688,7 @@ test('enabled observation scopes remain pending across A to B to A until their e
 
   assert.match(
     lease,
-    /let status = 'pending';[\s\S]{0,180}if \(!enabled\) status = 'legacy';[\s\S]{0,100}else if \(leaseState\.contextKey === leaseContextKey\) status = leaseState\.status/,
+    /let status = 'pending';[\s\S]{0,180}if \(!enabled\) status = 'legacy';[\s\S]{0,280}else if \(leaseState\.contextKey === leaseContextKey\) status = leaseState\.status/,
     'an enabled exact context must stay pending until that context records its own lease response',
   );
   assert.match(lease, /if \(stopped\) return;/);
@@ -713,7 +712,7 @@ test('claimed coverage stays telemetry-only without misusing the class frozen-ro
     dashboard,
     /if \(studentView === 'class'\) return;[\s\S]{0,300}purgeLegacyScreenshotTileCaches\(queryClient\)/,
   );
-  assert.match(dashboard, /tileScreenshotRevoked = tileSharedPrivacyRevoked[\s\S]{0,160}studentView !== 'class'/);
+  assert.match(dashboard, /tileScreenshotRevoked = tileSharedPrivacyRevoked[\s\S]{0,240}studentView !== 'class'/);
 });
 
 test('A to B switches replace the complete realtime routing context before queued events can flush', async () => {

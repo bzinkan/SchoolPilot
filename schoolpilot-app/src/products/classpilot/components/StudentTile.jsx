@@ -157,17 +157,20 @@ function StudentTile({
   const observationAuthorizationRevoked = !screenshotIsExactlyBound && (
     screenshotObservationStatus === 'pending'
     || screenshotObservationStatus === 'denied'
+    || screenshotObservationStatus === 'ineligible'
     || screenshotObservationStatus === 'paused_unobserved'
   );
   const screenshotAuthorizationRevoked = monitoringSuppressed
     || ['signed_out', 'delegated'].includes(effectiveMonitoringDisplay.kind)
     || screenshotAuthorizationDenied
+    || screenshotObservationStatus === 'ineligible'
     || observationAuthorizationRevoked;
   const liveStreamAuthorizationRevoked = monitoringSuppressed
     || ['signed_out', 'delegated'].includes(effectiveMonitoringDisplay.kind)
     || screenshotAuthorizationDenied
     || screenshotObservationStatus === 'pending'
     || screenshotObservationStatus === 'denied'
+    || screenshotObservationStatus === 'ineligible'
     || screenshotObservationStatus === 'paused_unobserved';
   let effectiveScreenshotObservationStatus = screenshotObservationStatus;
   if (screenshotAuthorizationDenied) {
