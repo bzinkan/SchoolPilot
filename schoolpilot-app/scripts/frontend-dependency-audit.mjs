@@ -974,6 +974,47 @@ const FULL_TREE_INCLUDE_FLAGS = [
 // the same question and keeps the gate exactly as strict.
 const AUDIT_FETCH_TIMEOUT_FLAG = "--fetch-timeout=600000";
 
+// A longer timeout does not help when the endpoint answers 503, which it also
+// did on 2026-09-03/04. A transport failure is not an audit verdict, so retry
+// it. Only a document carrying auditReportVersion 2 counts as a verdict: npm
+// can exit 0 while printing {"message":"network timeout ..."} and exits 1 with
+// {"error":"Service Unavailable"}, so neither the exit code nor the presence
+// of output is a reliable signal on its own.
+const AUDIT_TRANSPORT_ATTEMPTS = 4;
+const AUDIT_RETRY_BASE_MS = 45_000;
+
+function auditResultCarriesReport(result) {
+  if (!result || typeof result.stdout !== "string") return false;
+  try {
+    const document = JSON.parse(result.stdout);
+    return isRecord(document) && document.auditReportVersion === 2;
+  } catch {
+    return false;
+  }
+}
+
+function sleepSync(milliseconds) {
+  // The audit pipeline is synchronous end to end; Atomics.wait is the only
+  // way to pause without restructuring every caller.
+  const buffer = new Int32Array(new SharedArrayBuffer(4));
+  Atomics.wait(buffer, 0, 0, milliseconds);
+}
+
+export function runAuditWithTransportRetry(npmRunner, args, projectRoot, waitMs = sleepSync) {
+  let result = npmRunner(args, projectRoot);
+  for (let attempt = 1; attempt < AUDIT_TRANSPORT_ATTEMPTS; attempt += 1) {
+    if (auditResultCarriesReport(result)) return result;
+    process.stderr.write(
+      `npm_audit_transport_retry attempt=${attempt} of ${AUDIT_TRANSPORT_ATTEMPTS}\n`
+    );
+    waitMs(AUDIT_RETRY_BASE_MS * attempt);
+    result = npmRunner(args, projectRoot);
+  }
+  // Hand the last result back either way: a genuine report (including one with
+  // advisories) is a verdict, and anything else is classified downstream.
+  return result;
+}
+
 function validateFullTreeNpmConfiguration(result) {
   if (result.invocationError ||
       result.exitCode !== 0 ||
@@ -998,10 +1039,11 @@ function validateFullTreeNpmConfiguration(result) {
 export function runNpmAudit(
   scope,
   projectRoot,
-  npmRunner = runNpmCommand
+  npmRunner = runNpmCommand,
+  waitMs = sleepSync
 ) {
   if (scope === "production") {
-    return npmRunner(["audit", "--omit=dev", "--json", AUDIT_FETCH_TIMEOUT_FLAG], projectRoot);
+    return runAuditWithTransportRetry(npmRunner, ["audit", "--omit=dev", "--json", AUDIT_FETCH_TIMEOUT_FLAG], projectRoot, waitMs);
   }
   if (scope !== "full") {
     throw new Error("npm_audit_scope_invalid");
@@ -1012,9 +1054,11 @@ export function runNpmAudit(
     projectRoot
   );
   validateFullTreeNpmConfiguration(configuration);
-  return npmRunner(
+  return runAuditWithTransportRetry(
+    npmRunner,
     ["audit", ...FULL_TREE_INCLUDE_FLAGS, "--json", AUDIT_FETCH_TIMEOUT_FLAG],
-    projectRoot
+    projectRoot,
+    waitMs
   );
 }
 
