@@ -255,15 +255,16 @@ export async function syncClasspilotControlStatesToActiveDevices(
   // retaining this delivery's tenant lease (the worker pool has two clients).
   if (!signal?.aborted) {
     const refreshFailures: unknown[] = [];
-    await Promise.all(teachingSessionIds.map((teachingSessionId) =>
-      nudgeClasspilotScreenshotPolicyRefresh({
+    for (const teachingSessionId of teachingSessionIds) {
+      if (signal?.aborted) break;
+      await nudgeClasspilotScreenshotPolicyRefresh({
         schoolId,
         teachingSessionId,
         studentIds: uniqueStudentIds,
         reason: "scope_changed",
         onFailure: (error) => refreshFailures.push(error),
-      }).catch((error) => { refreshFailures.push(error); return 0; })
-    ));
+      }).catch((error) => { refreshFailures.push(error); return 0; });
+    }
     if (refreshFailures.length) throw new AggregateError(refreshFailures, "Screenshot policy refresh failed");
   }
   return authorizedTargets;

@@ -225,8 +225,11 @@ async function publishControlStateRows(
     return teachingSessionId ? [teachingSessionId] : [];
   }))];
   const refreshFailures: unknown[] = [];
-  await Promise.all(teachingSessionIds.map((teachingSessionId) =>
-    nudgeClasspilotScreenshotPolicyRefresh({
+  // Each nudge owns one fresh lease; a replacement spanning many classes must
+  // not fan out more checkouts than the worker's two-client main pool permits.
+  for (const teachingSessionId of teachingSessionIds) {
+    if (signal?.aborted) break;
+    await nudgeClasspilotScreenshotPolicyRefresh({
       schoolId,
       teachingSessionId,
       studentIds: states
@@ -234,8 +237,8 @@ async function publishControlStateRows(
         .map((state) => state.studentId),
       reason: "scope_changed",
       onFailure: (error) => refreshFailures.push(error),
-    }).catch((error) => { refreshFailures.push(error); return 0; })
-  ));
+    }).catch((error) => { refreshFailures.push(error); return 0; });
+  }
   if (refreshFailures.length) throw new AggregateError(refreshFailures, "Screenshot policy refresh failed");
 }
 
