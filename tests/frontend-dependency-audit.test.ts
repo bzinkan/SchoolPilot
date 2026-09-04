@@ -573,6 +573,9 @@ describe("frontend dependency audit engine", () => {
           "--include=optional",
           "--include=peer",
           "--json",
+          // The bulk advisory endpoint can exceed npm's five-minute default on
+          // the full tree; waiting longer asks the same question.
+          "--fetch-timeout=600000",
         ],
       ]);
 
@@ -624,6 +627,19 @@ describe("frontend dependency audit engine", () => {
         stdout: JSON.stringify({ error: { code: "EAI_AGAIN" } }),
       })
     , /npm_audit_schema_invalid/);
+    // npm exits 0 and prints this document when the advisory endpoint stalls.
+    // It must not be reported as a malformed report: that sends the operator
+    // hunting for a code or npm-version fault that does not exist.
+    assert.throws(() =>
+      parseNpmAuditV2Result({
+        scope: "production",
+        exitCode: 0,
+        stdout: JSON.stringify({
+          message: "network timeout at: https://registry.npmjs.org/-/npm/v1/security/advisories/bulk",
+          error: { summary: "", detail: "" },
+        }),
+      })
+    , /npm_audit_network_timeout/);
     assert.throws(() =>
       parseNpmAuditV2Result({
         scope: "production",

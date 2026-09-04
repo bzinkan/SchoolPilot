@@ -241,6 +241,15 @@ export function parseNpmAuditV2Result({
   }
 
   const document = parseJsonDocument(stdout, "npm_audit_json_invalid");
+  // Distinguish an upstream stall from a malformed report. npm exits 0 and
+  // prints {"message":"network timeout at: ..."} when the advisory endpoint
+  // does not answer in time; reporting that as a schema fault sends the
+  // operator looking for a code or npm-version problem that does not exist.
+  if (isRecord(document) &&
+      typeof document.message === "string" &&
+      /network timeout/i.test(document.message)) {
+    throw new Error("npm_audit_network_timeout");
+  }
   if (!isRecord(document) ||
       document.auditReportVersion !== 2 ||
       !isRecord(document.vulnerabilities)) {
@@ -954,6 +963,17 @@ const FULL_TREE_INCLUDE_FLAGS = [
   "--include=peer",
 ];
 
+// npm's default fetch-timeout is five minutes. The bulk advisory endpoint
+// (registry.npmjs.org/-/npm/v1/security/advisories/bulk) answers the full
+// dependency tree slowly and with high variance: on 2026-09-04 the same query
+// took 2m29s on one attempt and exceeded 5m on the next, both from a healthy
+// network. On a timeout npm still exits 0 and prints
+// {"message":"network timeout at: ..."} on stdout, which has no
+// auditReportVersion and used to surface here as npm_audit_schema_invalid --
+// an upstream stall misreported as a malformed document. Waiting longer asks
+// the same question and keeps the gate exactly as strict.
+const AUDIT_FETCH_TIMEOUT_FLAG = "--fetch-timeout=600000";
+
 function validateFullTreeNpmConfiguration(result) {
   if (result.invocationError ||
       result.exitCode !== 0 ||
@@ -981,7 +1001,7 @@ export function runNpmAudit(
   npmRunner = runNpmCommand
 ) {
   if (scope === "production") {
-    return npmRunner(["audit", "--omit=dev", "--json"], projectRoot);
+    return npmRunner(["audit", "--omit=dev", "--json", AUDIT_FETCH_TIMEOUT_FLAG], projectRoot);
   }
   if (scope !== "full") {
     throw new Error("npm_audit_scope_invalid");
@@ -993,7 +1013,7 @@ export function runNpmAudit(
   );
   validateFullTreeNpmConfiguration(configuration);
   return npmRunner(
-    ["audit", ...FULL_TREE_INCLUDE_FLAGS, "--json"],
+    ["audit", ...FULL_TREE_INCLUDE_FLAGS, "--json", AUDIT_FETCH_TIMEOUT_FLAG],
     projectRoot
   );
 }
