@@ -471,12 +471,17 @@ test('current-page Waypoints report and skip every target without fresh telemetr
   });
 });
 
-test('persistent restriction feedback adds pending and unavailable outcomes', () => {
+test('persistent restriction feedback keeps pending and undelivered outcomes distinct', () => {
   const feedback = commandDeliveryFeedback({
     command: { commandType: 'apply-flight-path' },
     summary: { requested: 5, completed: 2, pending: 2, unavailable: 1 },
   }, 'apply-flight-path');
-  assert.match(feedback.description, /3 restrictions are pending/);
+  // 2 pending, not 3. The unavailable student was never delivered to, so
+  // folding them into the pending count overstated what was on its way.
+  assert.match(feedback.description, /2 restrictions are pending/);
+  assert.doesNotMatch(feedback.description, /3 restrictions are pending/);
+  assert.match(feedback.description, /1 student is signed out/);
+  assert.equal(feedback.title, 'Restriction saved');
 });
 
 test('claimed targets always use the full claimed cohort when there is no explicit selection', () => {
@@ -635,7 +640,7 @@ test('mixed delivery feedback never hides adverse outcomes behind an acknowledge
   assert.match(feedback.description, /1 expired/);
 });
 
-test('late-sign-in feedback sums pending and unavailable and reports current-page skips', () => {
+test('late-sign-in feedback separates pending from undelivered and reports current-page skips', () => {
   const feedback = commandDeliveryFeedback({
     command: { commandType: 'lock-screen', deliveryPolicy: 'persistent_control' },
     summary: {
@@ -651,7 +656,15 @@ test('late-sign-in feedback sums pending and unavailable and reports current-pag
     skippedCurrentPageCount: 1,
   }, 'lock-screen');
   assert.equal(feedback.title, 'Restriction saved');
-  assert.match(feedback.description, /4 restrictions are pending/);
+  // Only the 2 genuinely awaiting a device acknowledgement may be called
+  // pending. The 2 unavailable students were never delivered to, and
+  // summing them told teachers a restriction was on its way when it was not.
+  assert.match(feedback.description, /2 restrictions are pending/);
+  assert.doesNotMatch(feedback.description, /4 restrictions are pending/);
+  assert.match(
+    feedback.description,
+    /2 students are signed out, so the restriction was not delivered to them\. Apply it again once they are signed in\./,
+  );
   assert.match(feedback.description, /1 signed-out student was skipped/);
 });
 

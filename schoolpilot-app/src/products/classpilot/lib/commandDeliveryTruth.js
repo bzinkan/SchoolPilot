@@ -110,24 +110,36 @@ export function commandDeliveryFeedback(value, commandType = value?.command?.com
   const expiresAt = value?.expiresAt ?? value?.command?.expiresAt;
 
   if (policy === 'persistent_control') {
-    const pendingRestrictionCount = summary.pending + summary.unavailable;
-    const pendingText = summary.pending > 0 || summary.unavailable > 0
-      ? `${plural(pendingRestrictionCount, 'restriction is', 'restrictions are')} pending — will apply when monitoring resumes.`
+    // An unavailable target is a student the restriction did NOT reach. Only
+    // `pending` targets are genuinely awaiting a device acknowledgement, so
+    // only they may be described as applying later. Counting the two together
+    // told teachers a restriction was 'pending' for a signed-out student when
+    // nothing had been delivered and, with late sign-in delivery off, nothing
+    // had been stored either. That false reassurance cost a class period on
+    // 2026-09-04, when three attempts to clear a Flight Path each reported
+    // success and changed nothing.
+    const nothingDelivered = summary.requested > 0 && summary.unavailable >= summary.requested;
+    const pendingText = summary.pending > 0
+      ? `${plural(summary.pending, 'restriction is', 'restrictions are')} pending — will apply when monitoring resumes.`
       : summary.acknowledged > 0
         ? `${plural(summary.acknowledged, 'target')} device-reported acknowledgement.`
-        : 'The desired restriction was saved for the selected students.';
+        : nothingDelivered
+          ? null
+          : 'The desired restriction was saved for the selected students.';
     return {
-      title: 'Restriction saved',
+      title: nothingDelivered ? 'Restriction not delivered' : 'Restriction saved',
       description: [
         pendingText,
         summary.failed > 0 ? `${plural(summary.failed, 'target')} failed.` : null,
-        summary.unavailable > 0 ? `${plural(summary.unavailable, 'student is', 'students are')} currently unavailable.` : null,
+        summary.unavailable > 0
+          ? `${plural(summary.unavailable, 'student is', 'students are')} signed out, so the restriction was not delivered to them. Apply it again once they are signed in.`
+          : null,
         Number(value?.skippedCurrentPageCount) > 0
           ? `${plural(Number(value.skippedCurrentPageCount), 'signed-out student was', 'signed-out students were')} skipped because a current-page Waypoint needs a fresh online page.`
           : null,
         'Acknowledgements are device-reported and are not tamper proof.',
       ].filter(Boolean).join(' '),
-      variant: summary.failed > 0 ? 'destructive' : undefined,
+      variant: summary.failed > 0 || nothingDelivered ? 'destructive' : undefined,
     };
   }
 

@@ -1257,8 +1257,33 @@ test('offline persistent controls and durable messages keep their truthful polic
     command: { targets: [{ studentId: 'student-1', status: 'unavailable' }] },
     summary: { requested: 1, unavailable: 1, attempted: 0, pending: 0 },
   };
-  assert.equal(commandDeliveryFeedback(unavailable, 'lock-screen').title, 'Restriction saved');
+  // Every requested student was unavailable, so nothing reached a device and,
+  // with late sign-in delivery off, nothing was stored either. Reporting this
+  // as saved and pending is what let a teacher believe three failed attempts
+  // to clear a Flight Path had worked (2026-09-04 incident).
+  const restriction = commandDeliveryFeedback(unavailable, 'lock-screen');
+  assert.equal(restriction.title, 'Restriction not delivered');
+  assert.equal(restriction.variant, 'destructive');
+  assert.doesNotMatch(restriction.description, /pending/);
+  assert.doesNotMatch(restriction.description, /will apply when monitoring resumes/);
+  assert.match(restriction.description, /not delivered to them/);
+  assert.match(restriction.description, /Apply it again once they are signed in/);
   assert.equal(commandDeliveryFeedback(unavailable, 'teacher-message').title, 'Message queued');
+
+  // A partially undelivered restriction is still saved for the students it
+  // reached, and must keep saying so.
+  const partial = commandDeliveryFeedback({
+    command: {
+      targets: [
+        { studentId: 'student-1', status: 'unavailable' },
+        { studentId: 'student-2', status: 'sent' },
+      ],
+    },
+    summary: { requested: 2, unavailable: 1, attempted: 1, pending: 1 },
+  }, 'lock-screen');
+  assert.equal(partial.title, 'Restriction saved');
+  assert.match(partial.description, /1 restriction is pending/);
+  assert.match(partial.description, /1 student is signed out/);
 });
 
 test('server-authoritative sign-out requires completed targets before claiming completion', () => {
