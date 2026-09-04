@@ -15,6 +15,7 @@ import {
   evaluateFrontendDependencyAudit,
   parseNpmAuditV2Result,
   renderFrontendDependencyAuditMarkdown,
+  runAuditWithTransportRetry,
   runNpmAudit,
 } from "../schoolpilot-app/scripts/frontend-dependency-audit.mjs";
 
@@ -573,6 +574,9 @@ describe("frontend dependency audit engine", () => {
           "--include=optional",
           "--include=peer",
           "--json",
+          // The bulk advisory endpoint can exceed npm's five-minute default on
+          // the full tree; waiting longer asks the same question.
+          "--fetch-timeout=600000",
         ],
       ]);
 
@@ -602,6 +606,61 @@ describe("frontend dependency audit engine", () => {
     }
   });
 
+  it("retries a transport failure but takes the first real verdict", () => {
+    const transportFailure = (stdout: string, exitCode: number) => ({
+      exitCode, stdout, stderr: "", invocationError: null,
+    });
+    const report = (advisories: unknown[]) => ({
+      exitCode: advisories.length > 0 ? 1 : 0,
+      stdout: JSON.stringify(auditDocument(advisories as never[])),
+      stderr: "",
+      invocationError: null,
+    });
+
+    // A 503 and a timeout document are transport trouble, not verdicts.
+    const waits: number[] = [];
+    let call = 0;
+    const flaky = () => {
+      call += 1;
+      if (call === 1) return transportFailure(JSON.stringify({ error: "Service Unavailable" }), 1);
+      // npm exits 0 here, so the exit code alone would have looked clean.
+      if (call === 2) return transportFailure(JSON.stringify({ message: "network timeout at: https://x" }), 0);
+      return report([]);
+    };
+    const recovered = runAuditWithTransportRetry(
+      flaky, ["audit"], "fixture-root", (ms: number) => { waits.push(ms); }
+    );
+    assert.equal(call, 3);
+    assert.equal(recovered.exitCode, 0);
+    assert.deepEqual(waits, [45_000, 90_000]);
+
+    // A genuine advisory arrives as a parseable report: no retry, gate intact.
+    let verdictCalls = 0;
+    const withAdvisories = () => {
+      verdictCalls += 1;
+      return report([{ id: BRACE_ADVISORY, name: "brace-expansion", severity: "high" }]);
+    };
+    const verdict = runAuditWithTransportRetry(
+      withAdvisories, ["audit"], "fixture-root", () => { throw new Error("must not wait"); }
+    );
+    assert.equal(verdictCalls, 1);
+    assert.equal(verdict.exitCode, 1);
+
+    // If it never answers, stop after the bounded number of attempts and hand
+    // the last result back so the caller reports the transport fault.
+    let deadCalls = 0;
+    const dead = () => {
+      deadCalls += 1;
+      return transportFailure(JSON.stringify({ error: "Service Unavailable" }), 1);
+    };
+    const exhausted = runAuditWithTransportRetry(dead, ["audit"], "fixture-root", () => {});
+    assert.equal(deadCalls, 4);
+    assert.throws(
+      () => parseNpmAuditV2Result({ scope: "production", exitCode: exhausted.exitCode, stdout: exhausted.stdout }),
+      /npm_audit_schema_invalid/
+    );
+  });
+
   it("rejects malformed reports and invalid npm tool semantics", () => {
     assert.throws(() =>
       parseNpmAuditV2Result({
@@ -624,6 +683,19 @@ describe("frontend dependency audit engine", () => {
         stdout: JSON.stringify({ error: { code: "EAI_AGAIN" } }),
       })
     , /npm_audit_schema_invalid/);
+    // npm exits 0 and prints this document when the advisory endpoint stalls.
+    // It must not be reported as a malformed report: that sends the operator
+    // hunting for a code or npm-version fault that does not exist.
+    assert.throws(() =>
+      parseNpmAuditV2Result({
+        scope: "production",
+        exitCode: 0,
+        stdout: JSON.stringify({
+          message: "network timeout at: https://registry.npmjs.org/-/npm/v1/security/advisories/bulk",
+          error: { summary: "", detail: "" },
+        }),
+      })
+    , /npm_audit_network_timeout/);
     assert.throws(() =>
       parseNpmAuditV2Result({
         scope: "production",

@@ -107,10 +107,11 @@ describe("ClassPilot school-arrival capacity controls", () => {
     assert.match(ecs, /var\.desired_count <= var\.api_arrival_min_capacity/);
     assert.match(ecs, /target_value\s*=\s*70\.0/);
     assert.match(production, /enable_api_arrival_capacity\s*=\s*true/);
-    assert.match(production, /api_arrival_min_capacity\s*=\s*6/);
+    assert.match(production, /api_arrival_min_capacity\s*=\s*3/);
     assert.match(production, /api_max_capacity\s*=\s*6/);
     assert.match(production, /api_arrival_scale_up_schedule\s*=\s*"cron\(45 5 \? \* MON-FRI \*\)"/);
-    assert.match(production, /api_arrival_scale_down_schedule\s*=\s*"cron\(0 10 \? \* MON-FRI \*\)"/);
+    assert.match(production, /api_arrival_scale_down_schedule\s*=\s*"cron\(0 16 \? \* MON-FRI \*\)"/);
+    assert.doesNotMatch(production, /cron\(0 10 /);
     assert.match(production, /api_arrival_schedule_timezone\s*=\s*"America\/New_York"/);
     assert.match(ha, /enable_api_arrival_capacity\s*=\s*false/);
     assert.match(alarms, /expression\s*=\s*"desired - running"/);

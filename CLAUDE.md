@@ -782,7 +782,7 @@ not add a CloudFront `/livez` behavior; public synthetic checks should use
 | **CloudFront** | Distribution `E1TPPJOD7C2CXR` | Two origins: `alb-api` (HTTPS-only ALB origin) and `s3-frontend` (S3); WAF attached |
 | **ALB** | `schoolpilot-production-alb` (`schoolpilot-production-alb-1532292365.us-east-1.elb.amazonaws.com`) | HTTPS listener forwards to ECS target group; target health path `/livez`; inbound HTTPS access is restricted to the AWS CloudFront origin-facing managed prefix list |
 | **ECS Cluster** | `schoolpilot-production-cluster` | Fargate launch type |
-| **ECS API Service** | `schoolpilot-production-api` | ClassPilot 2.7 capacity sizing: ordinary minimum 1 task, weekday 05:45–10:00 America/New_York arrival minimum 6, autoscaling maximum 6; each API task uses main=16 and session=2 connections, so six API tasks plus the 16-connection worker ceiling total 124. The selected launch-safe revision uses 512 CPU / 2048 MiB and the ALB target group. Re-enabling eight tasks requires a separately reviewed RDS Proxy or database-capacity decision. The cost rollout stages tasks from private to public subnets with a public IPv4 only after the baseline gate. |
+| **ECS API Service** | `schoolpilot-production-api` | ClassPilot 2.7 capacity sizing: ordinary minimum 1 task, weekday 05:45–16:00 America/New_York school-day floor 3 (held all school day because the ALB sticky session pins each device to the task it first reached), autoscaling maximum 6; each API task uses main=16 and session=2 connections, so three API tasks plus the 16-connection worker ceiling hold 70 and six total 124. The selected launch-safe revision uses 512 CPU / 2048 MiB and the ALB target group. Re-enabling eight tasks requires a separately reviewed RDS Proxy or database-capacity decision. The cost rollout stages tasks from private to public subnets with a public IPv4 only after the baseline gate. |
 | **ECS Worker Service** | `schoolpilot-production-scheduler-worker` | Launch sizing: 1 desired singleton scheduler worker at 256 CPU / 512 MiB, staged to the same public-task egress posture as the API; no ALB target registration. |
 | **Task Definitions** | `schoolpilot-production-api`, `schoolpilot-production-api-emergency`, `schoolpilot-production-scheduler-worker` | API container named `api`, worker container named `scheduler-worker`, same digest-pinned image. The emergency family is pre-registered at 512 CPU / 2048 MiB and is never selected by the normal deploy path. |
 | **ECR** | `135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api` | Images are pushed with a git-SHA tag and also `:latest`; ECS revisions pin by digest |
@@ -856,8 +856,8 @@ not a new ordinary deploy mode:
   --confirm-protected-window-production-mutation
 ```
 
-That flag is valid only for an initial admission during the weekday 04:45–10:14
-America/New_York window; it is also what permits a stable API desired count above two during that admitted run. It rejects
+That flag is valid only for an initial admission during the weekday 04:45–05:59
+America/New_York window; it is also what permits a stable API desired count above three during that admitted run. It rejects
 frontend, RLS, skip-wait, immutable-image, same-image, capacity, observation,
 rehearsal, and receipt modes. The only admitted API desired counts and temporary
 `minimumHealthyPercent/maximumPercent` mappings are `1=100/200`, `2=50/100`,
@@ -867,15 +867,15 @@ while count 1 permits one availability-preserving replacement slot. The script
 suspends dynamic and scheduled scaling, proves the live target-health floor,
 converges the API before mutating the worker, restores the exact prior ECS
 deployment configurations, and releases scaling only after validating the exact
-05:45/10:00 scheduled-action contract and reconciling the current minimum (`6`
-during 05:45–09:59 weekdays, otherwise `1`). If scheduled scaling was already
-suspended, its captured minimum is restored exactly. A reconciliation to six
-does not complete until desired, running, and healthy API capacity all reach six.
+05:45/16:00 scheduled-action contract and reconciling the current minimum (`3`
+during 05:45–15:59 weekdays, otherwise `1`). If scheduled scaling was already
+suspended, its captured minimum is restored exactly. A reconciliation to three
+does not complete until desired, running, and healthy API capacity all reach three.
 After any candidate may have served traffic, an unresolved protected run retains
 the no-growth/scaling hold for explicit roll-forward recovery instead of forcing
 an unproven application downgrade; the ECS rollback circuit breaker remains enabled.
-Omitting the explicit flag retains the ordinary window and one-or-two-task
-rules.
+Omitting the explicit flag retains the ordinary window and one-to-three-task
+rules; an ordinary three-task rollout converges the API before the worker mutates.
 
 For the single release that first enforces the ClassPilot session-summary
 delivery outbox, use the explicitly reviewed additive RLS flag. Do not retain
@@ -1034,9 +1034,9 @@ standard API family.
 The deploy script requires a clean local `main` equal to `origin/main`, green
 latest GitHub Actions runs per workflow, authenticated AWS + GitHub CLIs, and a
 git-SHA image tag by default. A production backend deploy also fails closed
-unless the API is stable at one or two tasks and the scheduler worker is stable
+unless the API is stable at one, two, or three tasks and the scheduler worker is stable
 at exactly one task. Ordinary mode blocks weekday production backend deployments
-from 04:45 through 10:14 America/New_York so the 05:45 six-task arrival action
+from 04:45 through 05:59 America/New_York so the 05:45 three-task school-day floor action
 cannot cross a migration or 200%-capacity service rollout; only the explicit
 protected-window flag above may use the separately bounded no-growth path.
 Immediately before its
@@ -1044,8 +1044,8 @@ migration it captures the API
 Application Auto Scaling suspended state, suspends dynamic scale-in/out while
 preserving the captured scheduled-scaling state, rechecks both services, keeps
 the dynamic hold through migration and service stabilization, and restores the
-exact prior state. Leaving the reviewed one/six-task schedules active prevents
-a deployment from skipping the 05:45 scale-up or 10:00 scale-down. Production `--skip-wait` is
+exact prior state. Leaving the reviewed one/three-task schedules active prevents
+a deployment from skipping the 05:45 scale-up or 16:00 scale-down. Production `--skip-wait` is
 therefore prohibited. This bounds the 200% rolling database-connection overlap
 below the launch gate. It builds and pushes the image, registers
 digest-pinned API and scheduler-worker task definitions, and also pre-registers

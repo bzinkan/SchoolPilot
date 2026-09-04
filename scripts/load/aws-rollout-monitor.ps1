@@ -827,7 +827,7 @@ function Read-Configuration {
                     "ScheduledScalingSuspended"
             }
         }
-        if ($engineeringScalingRestoration.MinCapacity -notin @(1, 6) -or
+        if ($engineeringScalingRestoration.MinCapacity -notin @(1, 3) -or
             $engineeringScalingRestoration.RollbackApiTaskDefinitionArn -notmatch
                 '^arn:aws:ecs:[a-z0-9-]+:\d{12}:task-definition/[A-Za-z0-9_-]+:\d+$' -or
             $engineeringScalingRestoration.RollbackWorkerTaskDefinitionArn -notmatch

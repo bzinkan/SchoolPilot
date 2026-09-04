@@ -1207,6 +1207,118 @@ try {
     Assert-Condition $engineeringTestModeRejected `
         "Engineering acceptance must never use testMode's relaxed provider and production gates."
 
+    # The engineering scaling-restoration fail-safe binds the live scheduled
+    # minimum it must restore. Only the reviewed 05:45/16:00 minimums (1 ordinary,
+    # 3 school-day floor) are valid; the superseded six-task arrival minimum is
+    # drift. Read-Configuration runs in an isolated scope with only the two
+    # AWS-backed WAF/Redis identity asserts stubbed, so the exact production
+    # parser and its minCapacity gate are exercised.
+    $script:RepositoryRoot = $repositoryRoot
+    $currentProcessPath = [IO.Path]::GetFullPath([string](Get-Process -Id $PID).Path)
+    $invokeMonitorReadConfiguration = {
+        param($Ast, [string]$ConfigPath)
+        $Mode = "Validate"
+        foreach ($definition in $Ast.FindAll({
+                    param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst]
+                }, $false)) {
+            if ($definition.Name -in @("Assert-WafMetricIdentity", "Assert-DiagnosticRedisIdentity")) { continue }
+            Invoke-Expression $definition.Extent.Text
+        }
+        function Assert-WafMetricIdentity { param($Resources, [switch]$RequireDiagnosticContract) }
+        function Assert-DiagnosticRedisIdentity { param($Resources, [string]$ExpectedNodeType) return $null }
+        Assert-Condition ($Mode -ceq "Validate" -and (Test-Path -LiteralPath $ConfigPath)) "Monitor Read-Configuration harness must bind its mode and config path."
+        return Read-Configuration
+    }
+    $engineeringRestorationConfig = [ordered]@{
+        schemaVersion = 1
+        runId = "engineering-scaling-restoration-floor"
+        phase = "Waf"
+        engineeringAcceptance = $true
+        evidenceDirectory = Join-Path $tempRoot "engineering-restoration-evidence"
+        loadProgressPath = Join-Path $tempRoot "engineering-restoration-progress.jsonl"
+        loadSummaryPath = Join-Path $tempRoot "engineering-restoration-summary.json"
+        expectedGeneratorPublicIp = "203.0.113.10"
+        minimumWallClockSeconds = 5400
+        deadlineUtc = [DateTimeOffset]::UtcNow.AddHours(3).ToString("o")
+        artifactsNotBeforeUtc = [DateTimeOffset]::UtcNow.AddMinutes(-1).ToString("o")
+        workload = [ordered]@{
+            stage = "800"; devices = 810; durationSeconds = 5400; screenshotBytes = 40960; canaryDevices = 10
+            workloadSchemaVersion = $script:RequiredWorkloadSchemaVersion
+            endpointShapeSha256 = $script:RequiredWorkloadEndpointShapeSha256
+        }
+        automaticRollback = $false
+        requireLoadAcceptance = $true
+        pollSeconds = 60
+        notificationTopicArn = "arn:aws:sns:us-east-1:135775632425:schoolpilot-alerts"
+        harnessProcessId = $PID
+        harnessProcessStartedAtUtc = [DateTimeOffset]::UtcNow.AddMinutes(-5).ToString("o")
+        harnessProcessPath = $currentProcessPath
+        controllerProcessId = $PID
+        controllerProcessStartedAtUtc = [DateTimeOffset]::UtcNow.AddMinutes(-5).ToString("o")
+        controllerProcessPath = $currentProcessPath
+        engineeringScalingRestoration = [ordered]@{
+            apiDesiredCount = 3
+            minCapacity = 3
+            maxCapacity = 6
+            rollbackApiTaskDefinitionArn = "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api:100"
+            rollbackWorkerTaskDefinitionArn = "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:20"
+            scheduledActionsSha256 = ("a" * 64)
+            scalingPoliciesSha256 = ("b" * 64)
+            suspendedState = [ordered]@{
+                DynamicScalingInSuspended = $false
+                DynamicScalingOutSuspended = $false
+                ScheduledScalingSuspended = $false
+            }
+        }
+        resources = [ordered]@{
+            region = "us-east-1"
+            cluster = "schoolpilot-production-cluster"
+            apiService = "schoolpilot-production-api"
+            workerService = "schoolpilot-production-scheduler-worker"
+            targetGroupArn = "arn:aws:elasticloadbalancing:us-east-1:135775632425:targetgroup/test/123"
+            rdsInstanceId = "schoolpilot-production"
+            redisCacheClusterId = "schoolpilot-production-001"
+            redisReplicationGroupId = "schoolpilot-production"
+            vpcId = "vpc-1"
+            wafWebAclName = "schoolpilot-production-web-acl"
+            wafDeviceRuleMetricName = "device"
+            wafApiRuleMetricName = "api"
+            wafDeviceClassifierMetricName = "device-classifier"
+            cloudFrontDistributionId = "E1TPPJOD7C2CXR"
+            route53HealthCheckId = "health-1"
+            route53AlarmName = "route53-alarm"
+            expectedNatGatewayCount = 2
+            expectedRoute53MeasureLatency = $true
+            expectedEcsAssignPublicIp = $false
+            ecsTaskSubnetIds = @("subnet-private-a", "subnet-private-b")
+            expectedRedisNodeType = "cache.t4g.small"
+            expectedRdsInstanceClass = "db.t4g.medium"
+            expectedActiveApiTaskDefinitionArn = "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api:101"
+            expectedActiveWorkerTaskDefinitionArn = "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:21"
+        }
+    }
+    $engineeringFloorPath = Join-Path $tempRoot "engineering-scaling-restoration-floor.json"
+    [IO.File]::WriteAllText($engineeringFloorPath, ($engineeringRestorationConfig | ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
+    $engineeringFloorConfig = & $invokeMonitorReadConfiguration $monitorAst $engineeringFloorPath
+    Assert-Condition ($engineeringFloorConfig.EngineeringAcceptance -and
+        [int]$engineeringFloorConfig.EngineeringScalingRestoration.MinCapacity -eq 3 -and
+        [int]$engineeringFloorConfig.EngineeringScalingRestoration.ApiDesiredCount -eq 3) `
+        "Engineering scaling restoration must accept the reviewed three-task school-day floor minimum."
+    $engineeringRestorationConfig.engineeringScalingRestoration.minCapacity = 6
+    $engineeringRestorationConfig.engineeringScalingRestoration.apiDesiredCount = 6
+    $engineeringStaleFloorPath = Join-Path $tempRoot "engineering-scaling-restoration-stale-six.json"
+    [IO.File]::WriteAllText($engineeringStaleFloorPath, ($engineeringRestorationConfig | ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
+    $engineeringStaleFloorRejected = $false
+    $engineeringStaleFloorError = ""
+    try { & $invokeMonitorReadConfiguration $monitorAst $engineeringStaleFloorPath | Out-Null }
+    catch {
+        $engineeringStaleFloorError = $_.Exception.Message
+        $engineeringStaleFloorRejected =
+            $engineeringStaleFloorError -match "must bind the ordinary unsuspended production posture"
+    }
+    Assert-Condition $engineeringStaleFloorRejected `
+        "Engineering scaling restoration must reject the superseded six-task arrival minimum as drift (actual: $engineeringStaleFloorError)."
+
     $publicEcsLoadResultPath = Join-Path $tempRoot "public-ecs-800-result.json"
     $publicEcsLoadResult = @{runId="public-800";phase="PublicEcs";status="completed";loadAccepted=$true;postureAccepted=$true;
         minimumWallClockSeconds=5400;workload=@{stage="800"};acceptance=@{passed=$true}}
