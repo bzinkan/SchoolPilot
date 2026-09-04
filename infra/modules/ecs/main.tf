@@ -376,10 +376,12 @@ resource "aws_appautoscaling_policy" "api_cpu" {
   }
 }
 
-# CPU target tracking cannot react before a short morning reconnect wave. Keep
-# the measured arrival floor warm during the weekday arrival window, then
-# restore the ordinary minimum and let target tracking scale in. Target
-# tracking continues to operate up to the configured maximum in both windows.
+# CPU target tracking cannot react before a short morning reconnect wave, and
+# the ALB sticky session pins each device to the task it first reached, so
+# scale-out after the fact cannot shed load. Keep the measured school-day floor
+# warm from before arrival until the school day ends, then restore the ordinary
+# minimum and let target tracking scale in. Target tracking continues to
+# operate up to the configured maximum in both windows.
 resource "aws_appautoscaling_scheduled_action" "api_arrival_scale_up" {
   count = var.enable_api_arrival_capacity ? 1 : 0
 

@@ -115,7 +115,7 @@ variable "ecs_desired_count" {
 }
 
 variable "enable_api_arrival_capacity" {
-  description = "Temporarily raise the API autoscaling minimum during the weekday school-arrival window"
+  description = "Raise the API autoscaling minimum to the school-day floor from before weekday arrival until the school day ends"
   type        = bool
   default     = false
 }
@@ -132,7 +132,7 @@ variable "api_max_capacity" {
 }
 
 variable "api_arrival_min_capacity" {
-  description = "Minimum API task count during the weekday school-arrival window"
+  description = "Minimum API task count held as the floor throughout the weekday school day"
   type        = number
   default     = 2
 
@@ -143,13 +143,13 @@ variable "api_arrival_min_capacity" {
 }
 
 variable "api_arrival_scale_up_schedule" {
-  description = "Application Auto Scaling cron expression for the weekday API arrival-capacity increase"
+  description = "Application Auto Scaling cron expression that raises the weekday API minimum to the school-day floor before arrival"
   type        = string
   default     = "cron(0 6 ? * MON-FRI *)"
 }
 
 variable "api_arrival_scale_down_schedule" {
-  description = "Application Auto Scaling cron expression that restores the ordinary API minimum"
+  description = "Application Auto Scaling cron expression that restores the ordinary API minimum after the school day"
   type        = string
   default     = "cron(0 10 ? * MON-FRI *)"
 }

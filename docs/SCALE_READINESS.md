@@ -120,7 +120,7 @@ without a workload rerun or another remediation release.
 The launch gate is performance-first but cost-conscious. It is intentionally
 different from the deferred 2,000-device HA profile:
 
-- API: ordinary minimum 1, weekday 05:45–10:00 arrival minimum 6, and
+- API: ordinary minimum 1, weekday 05:45–16:00 school-day floor 3, and
   autoscaling maximum 6 at `512 CPU / 2048 MB`, with a 70% CPU target. Each
   API task uses `main=16` and `session=2`; with the worker ceiling of 16, the
   normal database connection ceiling is `6 × 18 + 16 = 124`. Re-enabling
