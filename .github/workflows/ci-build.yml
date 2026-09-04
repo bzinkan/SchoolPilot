@@ -46,6 +46,12 @@ jobs:
       # report is missing.
       - name: Audit dependencies
         run: |
+          # GitHub runs this step as `bash -e`, which exits on the first
+          # non-zero command. npm audit exits non-zero both for a real advisory
+          # and for a transport failure, so errexit would kill the shell at the
+          # assignment below and the retry loop would never run. Turn it off
+          # deliberately and inspect the exit code instead.
+          set +e
           set -uo pipefail
           for attempt in 1 2 3 4; do
             report=$(npm audit --audit-level=high --json \
@@ -75,9 +81,9 @@ jobs:
               printf '%s' "$report" | head -c 20000
               exit 1
             fi
-            echo "attempt ${attempt}: advisory endpoint gave no report, retrying"
+            echo "attempt ${attempt} of 4: advisory endpoint gave no report"
             sed -n '1,5p' audit-stderr.txt || true
-            sleep $(( attempt * 45 ))
+            if [ "$attempt" -lt 4 ]; then sleep $(( attempt * 45 )); fi
           done
           echo "npm advisory endpoint never returned a report after 4 attempts"
           exit 1
