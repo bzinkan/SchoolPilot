@@ -36,8 +36,51 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # The registry's bulk advisory endpoint is intermittently unavailable: on
+      # 2026-09-03/04 it answered some requests normally, returned 503 on
+      # others, and exceeded npm's five-minute default fetch timeout on others
+      # again, blocking every deploy for hours. Retry a transport failure
+      # rather than treating it as an audit verdict. The gate is unchanged: a
+      # real high-severity advisory still fails on the first attempt, because
+      # npm exits 1 with a parseable report and the loop only retries when the
+      # report is missing.
       - name: Audit dependencies
-        run: npm audit --audit-level=high
+        run: |
+          set -uo pipefail
+          for attempt in 1 2 3 4; do
+            report=$(npm audit --audit-level=high --json \
+              --fetch-timeout=600000 --fetch-retries=5 --fetch-retry-maxtimeout=120000 \
+              2>audit-stderr.txt)
+            audit_status=$?
+            # npm can exit 0 while printing {"message":"network timeout ..."},
+            # so the exit code alone is not a verdict. Only a document carrying
+            # auditReportVersion 2 counts as one; everything else is transport
+            # trouble and is retried.
+            printf '%s' "$report" | node -e '
+              let raw = "";
+              process.stdin.on("data", (chunk) => { raw += chunk; });
+              process.stdin.on("end", () => {
+                try {
+                  const parsed = JSON.parse(raw);
+                  process.exit(parsed && parsed.auditReportVersion === 2 ? 0 : 1);
+                } catch { process.exit(1); }
+              });
+            '
+            if [ $? -eq 0 ]; then
+              if [ "$audit_status" -eq 0 ]; then
+                echo "npm audit clean on attempt ${attempt}"
+                exit 0
+              fi
+              echo "npm audit reported high-severity advisories on attempt ${attempt}"
+              printf '%s' "$report" | head -c 20000
+              exit 1
+            fi
+            echo "attempt ${attempt}: advisory endpoint gave no report, retrying"
+            sed -n '1,5p' audit-stderr.txt || true
+            sleep $(( attempt * 45 ))
+          done
+          echo "npm advisory endpoint never returned a report after 4 attempts"
+          exit 1
 
       - name: TypeScript check
         run: npx tsc --noEmit
