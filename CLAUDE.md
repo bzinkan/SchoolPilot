@@ -802,6 +802,34 @@ CloudFront origin-facing IP ranges over HTTPS. Use public `/health` through
 CloudFront plus ECS target health for deploy checks. ALB access logs are
 delivered to the production ALB log bucket under `alb/AWSLogs/<account-id>/`.
 
+### ALB access-log summary (live monitoring)
+
+`scripts/load/alb-access-log-summary.mjs` downloads the five-minute ALB
+access-log objects for a UTC window (read-only `aws s3 ls`/`cp` into a temp
+cache) and prints per-route status counts, per-target share and target latency
+in ten-minute slices, heartbeats per minute, `device/screenshot` upload-size
+buckets (25 KiB or smaller is the thumbnail signal), and every 4xx/5xx by
+route. Rows are selected by their own request timestamp, never by the object
+name: object stamps are the interval end and objects arrive about five minutes
+late. Minutes newer than the newest delivered object print `n/a` rather than
+zero so a real traffic gap stays distinguishable from undelivered data. Logs
+expire after 90 days. Add `--json` for machine output, `--target <ip>` to
+isolate one task, and `--files <dir>` to re-summarize a cached day without S3.
+Delete the cache after a monitoring day: logged URLs identify tenants.
+
+```bash
+# Was the tile-storm back between 14:15 and 14:45 UTC?
+node scripts/load/alb-access-log-summary.mjs --date 2026-09-03 --from 14:15 --to 14:45 --route 'tiles/screenshots'
+# Per-target share since a scale-out
+node scripts/load/alb-access-log-summary.mjs --from 14:45
+# Thumbnail share this hour (upload size buckets plus ten-minute slices)
+node scripts/load/alb-access-log-summary.mjs --from 14:00 --to 15:00 --route 'device/screenshot'
+# Heartbeats per minute at a period start
+node scripts/load/alb-access-log-summary.mjs --from 13:55 --to 14:15
+# Re-summarize an already-downloaded day, machine output
+node scripts/load/alb-access-log-summary.mjs --files "$TEMP/schoolpilot-alb-access-logs/2026-09-03" --from 14:15 --to 14:45 --date 2026-09-03 --json
+```
+
 ### Deploy Sequence — Backend
 
 **CRITICAL: Always build and deploy from this repo's root. Never deploy from any older prototype checkout — their schemas are incompatible with the production database.**

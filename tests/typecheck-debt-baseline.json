@@ -1,7 +1,8 @@
 {
-  "total": 533,
+  "total": 534,
   "byFileAndCode": {
     "tests/api-rate-limiter-identity.test.ts#TS18048": 2,
+    "tests/aws-alb-access-log-summary.test.ts#TS7016": 1,
     "tests/classpilot-admin-analytics.test.ts#TS18048": 4,
     "tests/classpilot-command-public.test.ts#TS2532": 1,
     "tests/classpilot-coverage.test.ts#TS18047": 3,
