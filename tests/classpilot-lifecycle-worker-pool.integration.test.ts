@@ -33,7 +33,6 @@ test("ten bell-time ends drain with two worker clients, scoped frames, and refre
   const monitor = (await import("../dist/services/errorMonitor.js")).default;
   const tag = `lifecycle_pool_${randomUUID().replaceAll("-", "")}`;
   const schoolIds: string[] = [];
-  const teacherIds: string[] = [];
   const sessions: Array<{ schoolId: string; id: string }> = [];
   const connections: Array<{ client: WebSocket; server: WebSocket; frames: Frame[]; binding: NonNullable<Frame["exactBinding"]> }> = [];
   const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
@@ -43,11 +42,23 @@ test("ten bell-time ends drain with two worker clients, scoped frames, and refre
 
   try {
     assert.equal(pool.options.max, 2, "the environment must not bypass the worker role cap");
+    const identity = await pool.query<{ bypass: boolean }>("SELECT rolsuper OR rolbypassrls AS bypass FROM pg_roles WHERE rolname = current_user");
+    if (process.env.RLS_TEST_ROLE) assert.equal(identity.rows[0]!.bypass, false, "the RLS lane must use its restricted application role");
+    if (!identity.rows[0]!.bypass) {
+      const enforced = await pool.query<{ relname: string; enabled: boolean; forced: boolean }>(`
+        SELECT relname, relrowsecurity AS enabled, relforcerowsecurity AS forced
+        FROM pg_class WHERE oid = ANY(ARRAY[
+          'classpilot_session_students'::regclass, 'classpilot_student_control_states'::regclass,
+          'classpilot_classroom_states'::regclass, 'teaching_sessions'::regclass
+        ]) ORDER BY relname
+      `);
+      assert.equal(enforced.rows.length, 4);
+      for (const table of enforced.rows) assert.ok(table.enabled && table.forced, `${table.relname} must enforce forced RLS`);
+    }
     for (let schoolIndex = 0; schoolIndex < 2; schoolIndex++) {
       const school = await storage.createSchool({ name: `${tag}_${schoolIndex}`, slug: `${tag}_${schoolIndex}`, domain: `${tag}.example.edu` });
       schoolIds.push(school.id);
       const teacher = await storage.createUser({ email: `teacher${schoolIndex}@${tag}.example.edu`, firstName: "Pool", lastName: "Teacher" });
-      teacherIds.push(teacher.id);
       await storage.createMembership({ schoolId: school.id, userId: teacher.id, role: "teacher", status: "active" });
       await storage.createProductLicense({ schoolId: school.id, product: "CLASSPILOT", status: "active" });
       for (let classIndex = 0; classIndex < 5; classIndex++) {
@@ -159,7 +170,6 @@ test("ten bell-time ends drain with two worker clients, scoped frames, and refre
     assert.equal(freshFab.exactBinding?.studentSessionId, newSession.id);
     assert.equal(freshFab.exactBinding?.schoolId, oldResult.session.schoolId);
 
-    const identity = await pool.query<{ bypass: boolean }>("SELECT rolsuper OR rolbypassrls AS bypass FROM pg_roles WHERE rolname = current_user");
     if (!identity.rows[0]!.bypass) {
       await runWithTenantContext({ schoolId: schoolIds[0] }, async () => {
         assert.deepEqual(await storage.getClasspilotSessionStudents(sessions[5]!.id), [], "foreign frozen roster is deny-hidden by RLS");
@@ -177,25 +187,27 @@ test("ten bell-time ends drain with two worker clients, scoped frames, and refre
     await new Promise<void>((resolve) => wss.close(() => resolve()));
     try {
       for (const schoolId of schoolIds) {
-        await runWithTenantContext({ isSuper: true }, async () => {
+        // Staff-integrity constraints validate at commit, after both the
+        // relationships and their groups have been removed. Retain school
+        // and user lifecycle roots, as required by the migrated DB guards.
+        await runWithTenantContext({ isSuper: true }, () => db.transaction(async (tx) => {
           for (const table of [
             "classpilot_session_summary_deliveries", "classpilot_monitoring_events", "classpilot_session_student_reports",
             "classpilot_session_reports", "classpilot_session_staff", "classpilot_student_control_states",
             "classpilot_classroom_states", "classpilot_active_hands", "classpilot_session_students",
-          ]) await db.execute(sql`DELETE FROM ${sql.identifier(table)} WHERE school_id = ${schoolId}`);
-          await db.execute(sql`DELETE FROM session_settings WHERE session_id IN (SELECT id FROM teaching_sessions WHERE school_id = ${schoolId})`);
-          await db.execute(sql`DELETE FROM teaching_sessions WHERE school_id = ${schoolId}`);
-          await db.execute(sql`DELETE FROM student_sessions WHERE student_id IN (SELECT id FROM students WHERE school_id = ${schoolId})`);
-          await db.execute(sql`DELETE FROM student_devices WHERE student_id IN (SELECT id FROM students WHERE school_id = ${schoolId})`);
-          await db.execute(sql`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id = ${schoolId})`);
-          await db.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id = ${schoolId})`);
+          ]) await tx.execute(sql`DELETE FROM ${sql.identifier(table)} WHERE school_id = ${schoolId}`);
+          await tx.execute(sql`DELETE FROM session_settings WHERE session_id IN (SELECT id FROM teaching_sessions WHERE school_id = ${schoolId})`);
+          await tx.execute(sql`DELETE FROM teaching_sessions WHERE school_id = ${schoolId}`);
+          await tx.execute(sql`DELETE FROM student_sessions WHERE student_id IN (SELECT id FROM students WHERE school_id = ${schoolId})`);
+          await tx.execute(sql`DELETE FROM student_devices WHERE student_id IN (SELECT id FROM students WHERE school_id = ${schoolId})`);
+          await tx.execute(sql`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id = ${schoolId})`);
+          await tx.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id = ${schoolId})`);
           for (const table of ["devices", "groups", "students", "audit_logs", "settings", "product_licenses", "school_memberships"]) {
-            await db.execute(sql`DELETE FROM ${sql.identifier(table)} WHERE school_id = ${schoolId}`);
+            await tx.execute(sql`DELETE FROM ${sql.identifier(table)} WHERE school_id = ${schoolId}`);
           }
-          await db.execute(sql`DELETE FROM schools WHERE id = ${schoolId}`);
-        });
+          await tx.execute(sql`UPDATE schools SET status = 'suspended', is_active = false, deleted_at = now() WHERE id = ${schoolId}`);
+        }));
       }
-      for (const teacherId of teacherIds) await db.execute(sql`DELETE FROM users WHERE id = ${teacherId}`);
     } finally {
       await monitor.disposeAndWait();
       runtime.stopRuntimePerformanceMetrics();

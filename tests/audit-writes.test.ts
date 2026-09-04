@@ -34,8 +34,11 @@ after(async () => {
   try {
     await runWithTenantContext({ isSuper: true }, async () => {
       await db.delete(auditLogs).where(like(auditLogs.action, `${prefix}%`));
+      // Migrated environments forbid hard deletion of school roots. Retain
+      // disabled fixture identities after deleting only this test's audit rows.
+      await db.update(schools).set({ isActive: false, disabledAt: new Date() })
+        .where(inArray(schools.id, [schoolA, schoolB]));
     });
-    await db.delete(schools).where(inArray(schools.id, [schoolA, schoolB]));
   } finally {
     await errorMonitor.disposeAndWait();
     await pool.end();

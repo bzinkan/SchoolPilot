@@ -12,12 +12,15 @@ process.env.SENDGRID_API_KEY = "SG.classpilot-session-summary.lifecycle-test";
 // This suite validates database lifecycle and durable-delivery semantics. Keep
 // realtime/rate-limit Redis clients in local-only mode so importing the full
 // app cannot leave network handles alive after the test server closes.
-delete process.env.REDIS_URL;
+// An explicit empty value also prevents app.ts's dotenv import from restoring
+// a developer Redis URL after realtime already initialized without a client.
+process.env.REDIS_URL = "";
 
 let db: any;
 let pool: any;
 let storage: any;
 let lifecycle: any;
+let lifecyclePushes: any;
 let monitoringReports: any;
 let scheduled: any;
 let scheduler: any;
@@ -344,6 +347,7 @@ async function cleanup(): Promise<void> {
 
 afterEach(async () => {
   if (!school?.id) return;
+  await lifecyclePushes.flushClasspilotLifecyclePushes();
   const scheduledGroupIds = scheduledGroupIdsCreatedByCurrentTest;
   scheduledGroupIdsCreatedByCurrentTest = [];
   await inSchool(school.id, () => db.transaction(async (tx: any) => {
@@ -367,6 +371,7 @@ before(async () => {
   pool = dbModule.pool;
   storage = await import("../dist/services/storage.js");
   lifecycle = await import("../dist/services/classpilotSessionLifecycle.js");
+  lifecyclePushes = await import("../dist/services/classpilotLifecyclePushes.js");
   monitoringReports = await import("../dist/services/classpilotMonitoringReports.js");
   scheduled = await import("../dist/services/classpilotScheduledStart.js");
   scheduler = await import("../dist/services/scheduler.js");
@@ -446,6 +451,7 @@ after(async () => {
         server.close((error) => error ? reject(error) : resolve())
       );
     }
+    await lifecyclePushes?.flushClasspilotLifecyclePushes();
     await cleanup();
   } finally {
     sendMock?.mock.restore();

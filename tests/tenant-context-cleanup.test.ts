@@ -1,15 +1,20 @@
 import assert from "node:assert/strict";
 import { describe, it, mock } from "node:test";
-import { pool } from "../src/db.js";
 import { WebSocketServer } from "ws";
-import { drainHealthMonitor, startHealthMonitor, stopHealthMonitor } from "../src/services/healthMonitor.js";
-import errorMonitor, { ErrorMonitor } from "../src/services/errorMonitor.js";
 import { wasTenantPoolAcquisitionFailureReported } from "../src/util/operationalErrors.js";
-import {
+
+// Unit CI intentionally has no database configuration. Production modules
+// validate this at import time; all database operations below are mocked.
+// Force an inert fixture URL so this test never inherits a developer database.
+process.env.DATABASE_URL = "postgresql://unit:unit@127.0.0.1:1/schoolpilot_unit";
+const { pool } = await import("../src/db.js");
+const { drainHealthMonitor, startHealthMonitor, stopHealthMonitor } = await import("../src/services/healthMonitor.js");
+const { default: errorMonitor, ErrorMonitor } = await import("../src/services/errorMonitor.js");
+const {
   drainTenantContextReleases,
   getTenantContextReleaseSnapshot,
   runWithTenantContext,
-} from "../src/middleware/tenantContext.js";
+} = await import("../src/middleware/tenantContext.js");
 
 function deferred() {
   let resolve!: () => void;
@@ -38,7 +43,7 @@ describe("tenant context cleanup during drain", () => {
         return [{ channel: "email", attempted: true, delivered: true }];
       },
     });
-    const tracked = t.mock.method(errorMonitor, "trackError", (...args: Parameters<ErrorMonitor["trackError"]>) => monitor.trackError(...args));
+    const tracked = t.mock.method(errorMonitor, "trackError", (...args: Parameters<typeof errorMonitor.trackError>) => monitor.trackError(...args));
     let enteredTenant = false;
     try {
       await assert.rejects(runWithTenantContext({ schoolId: "test-school" }, async () => {
