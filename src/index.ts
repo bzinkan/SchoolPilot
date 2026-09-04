@@ -67,6 +67,8 @@ function closeHttpServer(): Promise<void> {
       resolve();
       return;
     }
+    // Drop idle keep-alive sockets now so the drain is not held by pooled ALB connections.
+    server.closeIdleConnections();
     server.close((err) => {
       if (err) console.error("[FATAL] HTTP server close failed:", safeErrorMetadata(err));
       resolve();
@@ -4978,6 +4980,12 @@ async function startServer(): Promise<void> {
 
   const app = createApp();
   const server = http.createServer(app);
+  // The ALB keeps pooled connections open for its 60 s idle timeout; Node's default
+  // keepAliveTimeout is 5 s, so the task could close a socket the ALB was reusing
+  // (ELB 502, target_status_code "-", 0-30 ms target time). Keep-alive must outlive
+  // the ALB idle timeout and headersTimeout must exceed keepAliveTimeout.
+  server.keepAliveTimeout = 65_000;
+  server.headersTimeout = 66_000;
   httpServer = server;
 
   // Attach Socket.io for real-time events (GoPilot dismissal, etc.)
