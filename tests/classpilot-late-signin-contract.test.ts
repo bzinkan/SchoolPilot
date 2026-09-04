@@ -347,6 +347,118 @@ test("registration responses return the exact accepted-capability negotiation us
   assert.match(login, /return \{[\s\S]*\.\.\.loginProtocol,[\s\S]*classroomState/);
 });
 
+test("student login withholds the SSO pass-through envelope that heartbeat still delivers", () => {
+  const devices = source("../src/routes/classpilot/devices.ts");
+  const login = section(
+    devices,
+    "async function completeStudentDeviceLogin",
+    "async function recordRemoteActionTimeline",
+  );
+  const loginDelivery = section(
+    login,
+    "const loginDelivery = controlState",
+    "const classroomState = loginDelivery.classroomState",
+  );
+
+  // 2026-09-04 sign-in lockout. The extension adopts the classroom restriction
+  // carried by the student-login response inside its own authentication commit
+  // window, where hasStudentAuth() is still false. The full-authority binding
+  // check that guards the pass-through envelope cannot resolve a control
+  // revision there, so it throws and the extension rejects the sign-in it had
+  // just completed and releases the session. Every login body carrying the
+  // envelope was released; every login body without it was not. The envelope
+  // must therefore be withheld at login and delivered moments later by
+  // heartbeat and WebSocket, after the commit window closes.
+  assert.match(
+    loginDelivery,
+    /serializeClasspilotStudentControlStateForDelivery\(\{/,
+    "login still serializes control state for delivery",
+  );
+  assert.doesNotMatch(
+    loginDelivery,
+    /authPassThrough:/,
+    "the login serializer must not be handed a pass-through envelope option",
+  );
+  assert.doesNotMatch(
+    login,
+    /authPassThrough:/,
+    "no login surface may build a pass-through envelope for the login body",
+  );
+  assert.doesNotMatch(
+    login,
+    /authPassThroughPolicyRevision/,
+    "withholding the envelope must also withhold its ordering revision",
+  );
+
+  const withheldRationale = loginDelivery
+    .split("\n")
+    .filter((line) => line.trim().startsWith("//"))
+    .join("\n");
+  assert.match(
+    withheldRationale,
+    /authPassThrough/,
+    "a comment must name the withheld envelope so the omission is not read as an oversight",
+  );
+  assert.match(
+    withheldRationale,
+    /hasStudentAuth\(\)/,
+    "the comment must record that the extension's commit window has no student auth yet",
+  );
+  assert.match(
+    withheldRationale,
+    /[Hh]eartbeat[\s\S]*WebSocket/,
+    "the comment must record which surfaces deliver the envelope instead",
+  );
+
+  // The SSO policy is still read under the shared delivery lock, so a
+  // concurrent policy PATCH stays serialized against this login even though
+  // the login body no longer carries the policy forward.
+  assert.match(
+    login,
+    /await lockClasspilotSsoPolicyDeliveryAuthority\(\s*options\.schoolId,\s*transactionDb\s*\)/,
+  );
+  assert.match(login, /getClasspilotSsoPolicyForSchool\(options\.schoolId, transactionDb\)/);
+  assert.ok(
+    login.indexOf("lockClasspilotSsoPolicyDeliveryAuthority")
+      < login.indexOf("getClasspilotSsoPolicyForSchool(options.schoolId, transactionDb)"),
+    "the policy read must remain inside the shared SSO delivery lock",
+  );
+  assert.ok(
+    login.indexOf("getClasspilotSsoPolicyForSchool(options.schoolId, transactionDb)")
+      < login.indexOf("serializeClasspilotStudentControlStateForDelivery({"),
+    "the locked policy read must still precede login serialization",
+  );
+
+  // Contrast: the heartbeat re-materialization runs after the extension's
+  // commit window, where the identical binding check passes, so it must keep
+  // delivering the envelope. This proves the withholding is scoped to login.
+  const finalHeartbeat = section(
+    devices,
+    "const finalDelivery = await runWithTenantContext",
+    "return finalDelivery.value;",
+  );
+  const heartbeatSerializer = section(
+    finalHeartbeat,
+    "const serialized = finalControlState",
+    "const finalClassroomState = serialized.classroomState",
+  );
+  assert.match(
+    heartbeatSerializer,
+    /authPassThrough: \{[\s\S]*?"restrictionAuthPassThroughV1"[\s\S]*?policyRevision: finalSsoPolicy\.revision,[\s\S]*?policy: finalSsoPolicy\.policy,/,
+    "heartbeat must still deliver the gated pass-through envelope",
+  );
+  assert.match(
+    finalHeartbeat,
+    /await lockClasspilotSsoPolicyDeliveryAuthority\(schoolId, transactionDb\)/,
+  );
+  assert.match(finalHeartbeat, /getClasspilotSsoPolicyForSchool\(schoolId, transactionDb\)/);
+  assert.equal(
+    devices.match(/authPassThrough: \{/g)?.length,
+    1,
+    "only the locked heartbeat re-materialization may build a pass-through envelope in this file",
+  );
+});
+
 test("deferred command frames and WebSocket auth revalidate exact binding authority", () => {
   const dispatcher = source("../src/services/classpilotCommandDispatcher.ts");
   const websocket = source("../src/realtime/websocket.ts");
