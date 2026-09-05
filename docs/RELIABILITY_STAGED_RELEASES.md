@@ -106,7 +106,7 @@ visibility changes, and cleanup releases the exact viewer lease. Authorized null
 screenshots, partial results, transient recovery, response fencing, and global
 authorization revocation remain supported.
 
-## Validation and rollout gate
+## Validation, rollout order, and operational acceptance
 
 Before backend release, run backend type/build checks, the complete serial test
 suite, the restricted-role RLS lane, test type/cast checks, and the required
@@ -121,6 +121,14 @@ Release 2 additionally requires lint/build and dashboard/tile, session lifecycle
 realtime cache, signal-loss, command-context, and browser gates. Fake-clock and
 browser request-count tests must cover terminal denial and legitimate recovery.
 
+On September 5, 2026, the operator authorized the dashboard release to ship after
+its refreshed validation, with one school currently live. This authorization
+supersedes the earlier requirement to hold release 2 until the backend completed
+a full school day of operational acceptance. The rollout order remains backend
+first, then dashboard, with current-head CI and the applicable local gates passing
+before each release. This change in release order does not declare the operational
+acceptance checks passed.
+
 Deploy the backend only through the documented guarded path:
 
 ```bash
@@ -131,8 +139,9 @@ Verify both services complete on the intended digest and stamped SHA, with the
 same RLS settings, sizing, and effective pool limits. Record the rollout's actual
 start/completion times and inspect public health and target health.
 
-The backend acceptance gate remains **pending** until all of the following have
-been observed on that release with real traffic:
+Operational acceptance of both releases remains **pending**, with observation
+planned for Tuesday, September 8, 2026. All of the following must be observed on
+the deployed releases with real traffic:
 
 1. An active class transition.
 2. A scheduled scale-in with successful cleanup of draining tasks.
@@ -141,9 +150,12 @@ been observed on that release with real traffic:
    overflows, and shutdown cleanup timeouts, with existing latency budgets met.
 
 Quiet evening/weekend traffic and synthetic tests do not pass this gate. Review
-new WebSocket stage/cause diagnostics separately. Do not ship release 2 until the
-backend gate passes. Then verify unchanged denied authority stops replaying while
-valid observation and recovery continue.
+new WebSocket stage/cause diagnostics separately. On Tuesday, verify that unchanged
+denied dashboard authority stops replaying while valid observation and recovery
+continue. Record the backend and frontend release identities separately. If the
+day lacks actual classroom traffic, a complete school day, or scheduled scale-in
+cleanup evidence, keep operational acceptance pending rather than treating the
+September 5 deployment authorization as an acceptance result.
 
 If release 2 regresses, roll back the frontend independently. Any backend
 rollback must retain #398 and pass the repository's current data-compatibility
