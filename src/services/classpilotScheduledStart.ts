@@ -10,6 +10,8 @@ import type { ClasspilotScheduledConflict, Group, TeachingSession } from "../sch
 import type { Student } from "../schema/students.js";
 import { localDateInTimeZone } from "../util/schoolTime.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
+import { runWithoutTenantContext } from "../db/tenantContext.js";
+import { trackClasspilotLifecycleTransport } from "./classpilotLifecyclePushes.js";
 import {
   dispatchDueClasspilotSessionSummaries,
   finalizeClasspilotSession,
@@ -689,21 +691,19 @@ async function startScheduledClass(options: {
     runClasspilotFinalizationSideEffects(finalization.result, {
       schoolId: options.group.schoolId,
       reason: finalization.reason,
-      dbInstance: options.dbInstance,
     });
     if (finalization.result.deliveryCount > 0) {
-      void runWithTenantContext({ schoolId: options.group.schoolId }, () =>
-        dispatchDueClasspilotSessionSummaries({
-          schoolId: options.group.schoolId,
-          teachingSessionId: finalization.result.session.id,
-          limit: 2,
-        })
-      ).catch((error) => {
-        console.warn(
-          "[SessionSummary] Replacement delivery deferred:",
-          safeErrorMetadata(error)
-        );
-      });
+      // A committed replacement can outlive its request lease. Retain the
+      // detached delivery in the shutdown barrier with a fresh tenant scope.
+      trackClasspilotLifecycleTransport(runWithoutTenantContext(() =>
+        runWithTenantContext({ schoolId: options.group.schoolId }, () =>
+          dispatchDueClasspilotSessionSummaries({
+            schoolId: options.group.schoolId,
+            teachingSessionId: finalization.result.session.id,
+            limit: 2,
+          })
+        )
+      ));
     }
   }
   for (const conflictId of outcome.resolvedConflictIds) {

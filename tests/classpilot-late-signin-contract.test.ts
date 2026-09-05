@@ -475,7 +475,7 @@ test("deferred command frames and WebSocket auth revalidate exact binding author
   const studentAuth = section(
     websocket,
     '// --- Auth handling ---',
-    '} else {\n              ws.send(JSON.stringify({ type: "auth-error", message: "Student token required"',
+    'ws.send(JSON.stringify({ type: "auth-error", message: "Student token required"',
   );
   const staleHeartbeatStart = devices.indexOf('realtimeStatusMutation.status === "stale"');
   assert.notEqual(staleHeartbeatStart, -1);

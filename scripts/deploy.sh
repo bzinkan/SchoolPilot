@@ -3832,6 +3832,12 @@ register_classpilot_candidate_worker_task_definition() {
     error "The scheduler-worker candidate task definition could not be rendered safely."
     return 1
   fi
+  if ! node "$SCRIPT_DIR/stamp-release-runtime-identity.mjs" \
+      --task-definition .worker-taskdef-new.json --service scheduler-worker \
+      --git-sha "$LOCAL_SHA" --image-ref "${ECR_REPO}@${DIGEST}"; then
+    error "The scheduler-worker runtime identity could not be bound to the release."
+    return 1
+  fi
   if [[ -n "$ENABLE_RLS_TABLE" ]]; then
     if ! node "$SCRIPT_DIR/enforce-deploy-rls-allowlist.mjs" add \
         --task-definition .worker-taskdef-new.json \
@@ -6196,6 +6202,12 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
 
     fs.writeFileSync(".taskdef-new.json", JSON.stringify(td));
   '
+  if ! node "$SCRIPT_DIR/stamp-release-runtime-identity.mjs" \
+    --task-definition .taskdef-new.json --service api \
+    --git-sha "$LOCAL_SHA" --image-ref "${ECR_REPO}@${DIGEST}"; then
+    error "The API runtime identity could not be bound to the release."
+    exit 1
+  fi
 
   if [[ -n "$ENABLE_RLS_TABLE" ]]; then
     if ! node "$SCRIPT_DIR/enforce-deploy-rls-allowlist.mjs" add \

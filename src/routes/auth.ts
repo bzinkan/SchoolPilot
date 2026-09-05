@@ -23,7 +23,7 @@ import { authLimiter } from "../middleware/rateLimiter.js";
 import { sendEmail } from "../services/email.js";
 import { isLocked, recordFailedAttempt, clearAttempts } from "../services/accountLockout.js";
 import { issueAuthCode, consumeAuthCode } from "../services/authCodeExchange.js";
-import { logAudit } from "../services/audit.js";
+import { logAudit as logSchoolAudit, logSystemAudit, type AuditEntry } from "../services/audit.js";
 import {
   exchangeGoogleAuthCode,
 } from "../util/googleOAuthTokenExchange.js";
@@ -45,6 +45,15 @@ const GOPILOT_ROLE_PRIORITY = [
   "teacher",
   "parent",
 ] as const;
+
+// Authentication resolves its school from verified identity/session state.
+// Global login failures are explicitly system audit events, never a fallback
+// from a failed school-scoped audit write.
+function logAudit(entry: AuditEntry): Promise<void> {
+  return entry.schoolId
+    ? logSchoolAudit(entry)
+    : logSystemAudit({ ...entry, schoolId: null });
+}
 
 function clientIp(req: any): string | undefined {
   // Trust proxy is set by the app — this gives us the client IP, not ALB
@@ -754,25 +763,28 @@ router.get("/google/callback", async (req, res, next) => {
 });
 
 // POST /api/auth/logout
-router.post("/logout", (req, res) => {
+router.post("/logout", async (req, res, next) => {
   // Capture before destroy
   const userId = req.session?.userId;
   const userEmail = req.session?.email;
   const schoolId = req.session?.schoolId;
   const role = req.session?.role;
-  req.session.destroy(() => {
+  try {
+    await new Promise<void>((resolve) => req.session.destroy(() => resolve()));
     clearSessionCookie(res);
     if (userId) {
-      logAudit({
+      await logAudit({
         schoolId: schoolId ?? null,
         userId,
         userEmail,
         userRole: role,
         action: "auth.logout",
-      }).catch(() => {});
+      });
     }
     res.json({ ok: true });
-  });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // POST /api/auth/exchange-code

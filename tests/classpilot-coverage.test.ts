@@ -601,6 +601,22 @@ after(async () => {
 });
 
 describe("ClassPilot supervision coverage storage contracts", () => {
+  it("returns an additive unavailable-context code without falling back to an unscoped roster", async () => {
+    for (const viewer of [teacher, admin]) {
+      const response = await requestJson(
+        "GET",
+        "/students-aggregated?teachingSessionId=00000000-0000-4000-8000-000000000404",
+        undefined,
+        authFor(viewer, school.id)
+      );
+      assert.equal(response.status, 404);
+      assert.deepEqual(response.body, {
+        error: "Active class session not found",
+        code: "CLASSPILOT_SESSION_UNAVAILABLE",
+      });
+    }
+  });
+
   it("returns 200 with an exact empty roster for admin school-wide and Observe views", async () => {
     const emptySchool = await createSchool({
       name: `${TAG}_Empty_School`,

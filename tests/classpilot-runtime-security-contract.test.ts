@@ -393,7 +393,7 @@ describe("ClassPilot WebSocket signaling containment", () => {
     const websocket = await source("src/realtime/websocket.ts");
     assert.match(websocket, /let frameQueue: Promise<void> = Promise\.resolve\(\)/);
     assert.match(websocket, /pendingFrames >= CLASSPILOT_WS_MAX_PENDING_FRAMES/);
-    assert.match(websocket, /frameQueue = frameQueue[\s\S]*\.then\(processFrame, processFrame\)/);
+    assert.match(websocket, /frameQueue = webSocketWork\.track\(frameQueue\s*\.then\(processFrame, processFrame\)/);
     assert.match(websocket, /"live-view-busy"/);
     assert.match(websocket, /LIVE_VIEW_BUSY/);
     assert.match(websocket, /verifyClasspilotLiveViewNegotiation/);

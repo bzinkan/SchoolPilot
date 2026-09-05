@@ -25,7 +25,7 @@ import {
 } from "../../services/storage.js";
 import { hashPassword } from "../../util/password.js";
 import { sendWelcomeEmail, sendTaxCertificateRequestEmail } from "../../services/email.js";
-import { logAudit } from "../../services/audit.js";
+import { logAudit, logSystemAudit } from "../../services/audit.js";
 import {
   createStaffIdentityForSchool,
   sendStaffIdentityError,
@@ -697,7 +697,7 @@ router.post("/stop-impersonate", authenticate, async (req, res, next) => {
       req.session!.save((err) => (err ? reject(err) : resolve()));
     });
 
-    await logAudit({
+    await logSystemAudit({
       userId: originalUserId,
       action: "admin.stop_impersonate",
       entityType: "user",

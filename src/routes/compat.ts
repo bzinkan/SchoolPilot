@@ -574,7 +574,7 @@ router.patch("/admin/users/:id", ...schoolAuth, requireRole("admin"), async (req
       });
     }
 
-    logAudit({
+    await logAudit({
       schoolId: res.locals.schoolId!,
       userId: req.authUser!.id,
       userEmail: req.authUser!.email,
@@ -633,7 +633,7 @@ router.delete("/admin/users/:id", ...schoolAuth, requireRole("admin"), async (re
       return res.status(404).json({ error: "Membership not found" });
     }
 
-    logAudit({
+    await logAudit({
       schoolId: res.locals.schoolId!,
       userId: req.authUser!.id,
       userEmail: req.authUser!.email,
@@ -680,7 +680,7 @@ router.delete("/admin/teachers/:id", ...schoolAuth, requireRole("admin"), async 
       req.authUser!.isSuperAdmin
     );
     if (!deleted) return res.status(404).json({ error: "Staff member not found" });
-    logAudit({
+    await logAudit({
       schoolId: res.locals.schoolId!,
       userId: req.authUser!.id,
       userEmail: req.authUser!.email,
@@ -703,7 +703,7 @@ router.post("/admin/cleanup-students", ...schoolAuth, requireRole("admin"), asyn
     await db.delete(heartbeats).where(eq(heartbeats.schoolId, schoolId));
     await db.delete(dailyUsage).where(eq(dailyUsage.schoolId, schoolId));
     await db.delete(deviceTable).where(eq(deviceTable.schoolId, schoolId));
-    logAudit({
+    await logAudit({
       schoolId,
       userId: req.authUser!.id,
       userEmail: req.authUser!.email,
@@ -1076,7 +1076,10 @@ router.get("/students-aggregated", ...classPilotStaffAuth, async (req, res, next
         userId
       );
       if (!activeSession || activeSession.endTime || !authorized) {
-        return res.status(404).json({ error: "Active class session not found" });
+        return res.status(404).json({
+          error: "Active class session not found",
+          code: "CLASSPILOT_SESSION_UNAVAILABLE",
+        });
       }
     }
     const activeGroup = activeSession?.groupId
