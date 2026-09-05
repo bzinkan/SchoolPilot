@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { connect } from "node:net";
@@ -109,7 +110,7 @@ test("a non-acknowledging WebSocket cannot consume the database drain budget", {
   const peer = connect(address.port, "127.0.0.1");
   peer.on("data", () => {}); // Consume Close without sending the protocol ACK.
   await once(peer, "connect");
-  peer.write("GET / HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n");
+  peer.write("GET / HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: " + randomBytes(16).toString("base64") + "\r\nSec-WebSocket-Version: 13\r\n\r\n");
   const [socket] = await accepted as [WebSocket];
   const tracker = new WebSocketWorkTracker();
   let releaseHandler!: () => void;
@@ -208,7 +209,7 @@ test("an unauthenticated Engine.IO WebSocket also has a bounded close handshake"
   const peer = connect(address.port, "127.0.0.1");
   peer.on("data", () => {});
   await once(peer, "connect");
-  peer.write("GET /gopilot-socket/?EIO=4&transport=websocket HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n");
+  peer.write("GET /gopilot-socket/?EIO=4&transport=websocket HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: " + randomBytes(16).toString("base64") + "\r\nSec-WebSocket-Version: 13\r\n\r\n");
   await accepted;
   let forced = 0;
   try {
