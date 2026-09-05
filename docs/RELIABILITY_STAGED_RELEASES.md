@@ -74,6 +74,10 @@ WebSocket receive/acknowledgement traffic uses debug logging and aggregate count
 Both processes stop intake, drain producers, drain lifecycle/classification work,
 await monitor disposal, and close named pools under one 15-second hard deadline.
 Timeouts identify their shutdown phase and aggregate pool state and exit nonzero.
+API WebSocket transport closure allows a two-second handshake grace before
+closing unresponsive upgraded connections, including Socket.IO. Transport closure
+does not replace the admitted-handler and close-callback drain barriers, and it
+does not terminate ordinary active HTTP requests.
 
 Additive response codes preserve existing HTTP statuses and private messages:
 

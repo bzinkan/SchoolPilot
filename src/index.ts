@@ -6,6 +6,7 @@ import { initSentry } from "./services/sentry.js";
 import { createApp } from "./app.js";
 import { setupSocketIO, stopSocketIoWork, drainSocketIoWork } from "./realtime/socketio.js";
 import { setupWebSocket, stopWebSocketWork, drainWebSocketWork } from "./realtime/websocket.js";
+import { createUpgradedTransportShutdown } from "./realtime/websocketShutdown.js";
 import { startScheduler, stopScheduler, drainSchedulerJobs, snapshotSchedulerJobs } from "./services/scheduler.js";
 import { startHealthMonitor, stopHealthMonitor, drainHealthMonitor } from "./services/healthMonitor.js";
 import errorMonitor from "./services/errorMonitor.js";
@@ -43,6 +44,7 @@ initSentry();
 let httpServer: http.Server | null = null;
 let socketIoServer: SocketIOServer | null = null;
 let webSocketServer: WebSocketServer | null = null;
+let closeUpgradedTransports: ReturnType<typeof createUpgradedTransportShutdown> | null = null;
 let fatalShutdownStarted = false;
 let shutdownPhase = "idle";
 const shutdownPools: ShutdownPool[] = [
@@ -78,24 +80,22 @@ function closeSocketIo(): Promise<void> {
 }
 
 function closeWebSocketServer(): Promise<void> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const wss = webSocketServer;
-    if (!wss) {
-      resolve();
-      return;
-    }
+    if (!wss) { resolve(); return; }
     for (const client of wss.clients) {
-      try {
-        client.close(1011, "Server shutting down");
-      } catch {
-        // Best-effort shutdown only.
-      }
+      try { client.close(1011, "Server shutting down"); }
+      catch { client.terminate(); }
     }
-    wss.close((err) => {
-      if (err) console.error("[shutdown] WebSocket server close failed:", safeErrorMetadata(err));
-      resolve();
-    });
+    wss.close((error) => { if (error) reject(error); else resolve(); });
   });
+}
+
+function closeRealtimeServers(): Promise<void> {
+  const close = () => Promise.all([
+    closeHttpServer(), closeSocketIo(), closeWebSocketServer(),
+  ]).then(() => undefined);
+  return closeUpgradedTransports ? closeUpgradedTransports(close) : close();
 }
 
 async function flushHeartbeatClassificationWrites(): Promise<void> {
@@ -112,7 +112,7 @@ async function drainApiService(): Promise<boolean> {
     stopIntake() { stopScheduler(); stopHealthMonitor(); stopWebSocketWork(); stopSocketIoWork(); },
     async drainProducers() {
       await Promise.all([
-        closeHttpServer(), closeSocketIo(), closeWebSocketServer(),
+        closeRealtimeServers(),
         drainSchedulerJobs(), drainHealthMonitor(),
       ]);
       await Promise.all([drainWebSocketWork(), drainSocketIoWork()]);
@@ -4959,6 +4959,7 @@ async function startServer(): Promise<void> {
 
   const app = createApp();
   const server = http.createServer(app);
+  closeUpgradedTransports = createUpgradedTransportShutdown(server);
   // The ALB keeps pooled connections open for its 60 s idle timeout; Node's default
   // keepAliveTimeout is 5 s, so the task could close a socket the ALB was reusing
   // (ELB 502, target_status_code "-", 0-30 ms target time). Keep-alive must outlive
