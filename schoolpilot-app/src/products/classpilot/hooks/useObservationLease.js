@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '../../../lib/queryClient';
 import {
   normalizedObservationScope,
@@ -15,18 +15,27 @@ function viewerInstanceId() {
   return `viewer_${Date.now().toString(36)}_${random}`.slice(0, 128);
 }
 
-export function useObservationLease({ enabled, teachingSessionId, scope }) {
+export function useObservationLease({
+  enabled, eligible = true, teachingSessionId, scope,
+  authorityKey = '', retryEpoch = 0, onDenied,
+}) {
   const normalizedScope = useMemo(() => normalizedObservationScope(scope), [scope]);
   const scopeKey = JSON.stringify(normalizedScope);
   const requestedSessionId = String(teachingSessionId || '');
   const leaseContextKey = enabled && requestedSessionId && normalizedScope
-    ? `${requestedSessionId}:${scopeKey}`
+    ? `${authorityKey}:${requestedSessionId}:${scopeKey}:${retryEpoch}`
     : null;
+  const deniedContexts = useRef(new Set());
+  const [deniedContextKeys, setDeniedContextKeys] = useState(() => new Set());
+  const onDeniedRef = useRef(onDenied);
+  useEffect(() => { onDeniedRef.current = onDenied; }, [onDenied]);
   const [leaseState, setLeaseState] = useState({ contextKey: null, status: 'legacy' });
   const leaseConfigurationInvalid = enabled && (!requestedSessionId || !normalizedScope);
   let status = 'pending';
   if (!enabled) status = 'legacy';
+  else if (!eligible) status = 'ineligible';
   else if (leaseConfigurationInvalid) status = 'denied';
+  else if (deniedContextKeys.has(leaseContextKey)) status = 'denied';
   else if (leaseState.contextKey === leaseContextKey) status = leaseState.status;
 
   useEffect(() => {
@@ -42,6 +51,7 @@ export function useObservationLease({ enabled, teachingSessionId, scope }) {
       ));
       return undefined;
     }
+    if (!eligible || deniedContexts.current.has(leaseContextKey)) return undefined;
     if (!sessionId || !normalizedScope) {
       // Invalid enabled scopes fail private without issuing a lease request.
       setLeaseState({ contextKey: null, status: 'denied' });
@@ -81,7 +91,7 @@ export function useObservationLease({ enabled, teachingSessionId, scope }) {
     };
     const renew = async () => {
       clearTimer();
-      if (stopped) return;
+      if (stopped || deniedContexts.current.has(leaseContextKey)) return;
       if (document.visibilityState !== 'visible') {
         invalidateRequest();
         release(activeViewerId, true);
@@ -129,8 +139,11 @@ export function useObservationLease({ enabled, teachingSessionId, scope }) {
           setStatus('error');
           schedule(RETRY_MS);
         } else {
+          deniedContexts.current.add(leaseContextKey);
+          setDeniedContextKeys(new Set(deniedContexts.current));
           leaseWasActive = false;
           setStatus(failure.status);
+          onDeniedRef.current?.();
           // A terminal renewal denial revokes any lease previously created
           // under this exact viewer id instead of waiting for its TTL.
           await deleteLease(requestViewerId);
@@ -139,6 +152,9 @@ export function useObservationLease({ enabled, teachingSessionId, scope }) {
     };
     const onVisibilityChange = () => {
       invalidateRequest();
+      // A tab becoming visible proves no new authority. A checked retry or a
+      // changed session authority is required after a terminal denial.
+      if (deniedContexts.current.has(leaseContextKey)) return;
       if (document.visibilityState === 'visible') {
         activeViewerId = viewerInstanceId();
         knownViewerIds.add(activeViewerId);
@@ -162,7 +178,7 @@ export function useObservationLease({ enabled, teachingSessionId, scope }) {
       invalidateRequest();
       for (const viewerId of knownViewerIds) release(viewerId, true);
     };
-  }, [enabled, leaseContextKey, normalizedScope, requestedSessionId]);
+  }, [eligible, enabled, leaseContextKey, normalizedScope, requestedSessionId]);
 
   return status;
 }

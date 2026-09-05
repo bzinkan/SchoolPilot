@@ -69,6 +69,9 @@ function teachingSession({
     groupId,
     teacherId,
     startTime: "2026-08-25T13:00:00.000Z",
+    sessionMode: "live",
+    endTime: null,
+    rosterSnapshotCompletedAt: "2026-08-25T13:00:00.000Z",
     lifecycle: { kind: "manual", state: "active" },
     summaryTrigger: "manual_end",
     summaryExpectedAt: null,
@@ -177,6 +180,8 @@ async function configureDashboard(page, {
   subgroupMembers = {},
   screenshotTiles = { tiles: [] },
   historyTiles = { tiles: [] },
+  observationLeaseResponse = { renewAfterSeconds: 30 },
+  claimedStudents = [],
 } = {}) {
   let dashboardSocket;
   let websocketAuthenticated = false;
@@ -184,6 +189,8 @@ async function configureDashboard(page, {
   const coverageMutationRequests = [];
   const tileRequests = [];
   const observationLeaseRequests = [];
+  const sessionRequests = [];
+  const claimedRosterRequests = [];
   const pageErrors = [];
 
   page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -254,6 +261,7 @@ async function configureDashboard(page, {
       return;
     }
     if (pathname === "/api/sessions/active") {
+      sessionRequests.push(pathname);
       await route.fulfill({ json: { session: activeSession } });
       return;
     }
@@ -262,6 +270,7 @@ async function configureDashboard(page, {
       return;
     }
     if (pathname === "/api/sessions/all") {
+      sessionRequests.push(pathname);
       await route.fulfill({ json: { sessions: allSessions } });
       return;
     }
@@ -277,6 +286,11 @@ async function configureDashboard(page, {
     }
     if (pathname === "/api/coverage/capabilities") {
       await route.fulfill({ json: { commandTypes: [] } });
+      return;
+    }
+    if (pathname === '/api/coverage/claimed-students') {
+      claimedRosterRequests.push(pathname);
+      await route.fulfill({ json: { students: claimedStudents } });
       return;
     }
     if (pathname === "/api/students-aggregated") {
@@ -321,7 +335,12 @@ async function configureDashboard(page, {
         pathname,
         body: request.postData() ? request.postDataJSON() : null,
       });
-      await route.fulfill({ json: { renewAfterSeconds: 30 } });
+      const response = typeof observationLeaseResponse === 'function'
+        ? await observationLeaseResponse(request.method(), pathname)
+        : observationLeaseResponse;
+      await route.fulfill(Number(response?.status) >= 400 && request.method() === 'PUT'
+        ? { status: response.status, json: response.body || { code: 'OBSERVATION_SESSION_UNAVAILABLE' } }
+        : { json: response });
       return;
     }
     if (pathname === "/api/classpilot/tiles/screenshots" || pathname === "/api/classpilot/tiles/history") {
@@ -374,6 +393,10 @@ async function configureDashboard(page, {
     observationLeaseRequests,
     pageErrors,
     tileRequests,
+    sessionRequests,
+    claimedRosterRequests,
+    setActiveSession(session) { activeSession = session; },
+    setAllSessions(sessions) { allSessions = sessions; },
     async authenticateWebSocket() {
       await waitUntil(
         () => Boolean(dashboardSocket),
@@ -2032,5 +2055,290 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     for (const page of pages) await page.close().catch(() => {});
     await browser?.close().catch(() => {});
     await vite.close().catch(() => {});
+  }
+});
+
+test('terminal read denials stop clock and lifecycle replay and recover only after authority or checked retry', { timeout: 120_000 }, async () => {
+  const vite = await createServer({ root: APP_ROOT, logLevel: 'error', server: { host: '127.0.0.1', port: 0 } });
+  await vite.listen();
+  const baseURL = `http://127.0.0.1:${vite.httpServer.address().port}`;
+  const browser = await chromium.launch({ headless: true });
+  const fixedTime = new Date('2026-09-04T12:00:00Z');
+  const live = teachingSession();
+  const rows = (binding = 'binding-a') => [student({
+    realtimeBinding: binding, lastSeenAt: fixedTime.toISOString(), realtimeObservedAt: fixedTime.toISOString(),
+  })];
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 150));
+  const lifecycleBurst = (page) => page.evaluate(() => {
+    window.dispatchEvent(new Event('focus'));
+    window.dispatchEvent(new Event('online'));
+    window.dispatchEvent(new Event('pageshow'));
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  const pages = [];
+  try {
+    const tilesPage = await browser.newPage();
+    pages.push(tilesPage);
+    await tilesPage.clock.install({ time: fixedTime });
+    let denyTiles = true;
+    let tileStoreUnavailable = false;
+    const tileAggregate = aggregateController({ scoped: success(rows()) });
+    const tileHarness = await configureDashboard(tilesPage, {
+      aggregate: tileAggregate, activeSession: live, allSessions: [live],
+      screenshotTiles: () => denyTiles
+        ? { status: 404, body: { code: 'CLASSPILOT_NO_ACCESSIBLE_TILES' } }
+        : tileStoreUnavailable
+          ? { status: 503, body: { error: 'Screenshot store temporarily unavailable' } }
+          : { tiles: [{ studentId: STUDENT_ID, screenshot: null }] },
+    });
+    await tilesPage.goto(`${baseURL}/classpilot`);
+    await tilesPage.getByTestId('tile-read-denied').waitFor();
+    await tileHarness.authenticateWebSocket();
+    const screenshots = () => tileHarness.tileRequests.filter((request) => request.pathname.endsWith('/screenshots'));
+    const deniedCount = screenshots().length;
+    await tilesPage.clock.fastForward(65_000);
+    await lifecycleBurst(tilesPage);
+    await tileHarness.sendWebSocketMessage({
+      type: 'screenshot-available', schoolId: SCHOOL_ID, teachingSessionId: OWN_SESSION_ID,
+      studentId: STUDENT_ID, capturedAt: '2026-09-04T12:01:00Z',
+    });
+    await tilesPage.clock.fastForward(65_000);
+    await settle();
+    assert.equal(screenshots().length, deniedCount, 'cohort404 must survive poll ticks, cache scrubs, focus and targeted events');
+    assert.equal(await tilesPage.getByTestId(`screenshot-${STUDENT_ID}`).count(), 0);
+    denyTiles = false;
+    const parentsBeforeRetry = tileHarness.sessionRequests.length;
+    await tilesPage.getByTestId('retry-tile-reads').click();
+    await waitUntil(() => screenshots().length > deniedCount, 'a checked explicit retry must recover the current binding');
+    await tilesPage.getByTestId('tile-read-denied').waitFor({ state: 'hidden' });
+    assert.ok(tileHarness.sessionRequests.length > parentsBeforeRetry, 'explicit retry refreshes parent authority before replay');
+    const nullCount = screenshots().length;
+    await tilesPage.clock.fastForward(31_000);
+    await waitUntil(() => screenshots().length > nullCount, 'successful screenshot:null is a cache miss and keeps reconciliation active');
+
+    tileStoreUnavailable = true;
+    const beforeOutage = screenshots().length;
+    await tilesPage.clock.fastForward(31_000);
+    await waitUntil(() => screenshots().length > beforeOutage, 'transient store failures reach the ordinary poll');
+    const duringOutage = screenshots().length;
+    await tilesPage.clock.fastForward(31_000);
+    await waitUntil(() => screenshots().length > duringOutage, 'a503 must retain later reconciliation without an explicit retry');
+    assert.equal(await tilesPage.getByTestId('tile-read-denied').count(), 0);
+    tileStoreUnavailable = false;
+    const beforeRecovery = screenshots().length;
+    await tilesPage.clock.fastForward(31_000);
+    await waitUntil(() => screenshots().length > beforeRecovery, 'transient store recovery requires no authority reset');
+
+    // A second denial is independent of the first checked retry. The original
+    // student can regain access under a new binding without reloading the app.
+    denyTiles = true;
+    await tilesPage.clock.fastForward(31_000);
+    await tilesPage.getByTestId('tile-read-denied').waitFor();
+    const secondDeniedCount = screenshots().length;
+    denyTiles = false;
+    tileAggregate.setScopedResponse(success(rows('replacement-binding').map((row) => ({
+      ...row, realtimeRevision: 2, realtimeObservedAt: '2026-09-04T12:03:00Z', lastSeenAt: '2026-09-04T12:03:00Z',
+    }))));
+    await tilesPage.clock.fastForward(1000);
+    await lifecycleBurst(tilesPage);
+    await waitUntil(() => screenshots().length > secondDeniedCount, 'an authoritative binding replacement re-arms its own tile');
+    await tilesPage.getByTestId('tile-read-denied').waitFor({ state: 'hidden' });
+    assert.deepEqual(tileHarness.pageErrors, []);
+    await tilesPage.close();
+
+    const leasePage = await browser.newPage();
+    pages.push(leasePage);
+    await leasePage.clock.install({ time: fixedTime });
+    let denyLease = true;
+    const leaseHarness = await configureDashboard(leasePage, {
+      aggregate: aggregateController({ scoped: success(rows()) }), activeSession: live, allSessions: [live],
+      observationLeaseResponse: () => denyLease
+        ? { status: 404, body: { code: 'OBSERVATION_SESSION_UNAVAILABLE' } }
+        : { renewAfterSeconds: 30 },
+    });
+    await leasePage.goto(`${baseURL}/classpilot`);
+    await leasePage.getByTestId('screenshot-observation-denied').waitFor();
+    const leasePuts = () => leaseHarness.observationLeaseRequests.filter((request) => request.method === 'PUT').length;
+    const deniedLeaseCount = leasePuts();
+    await leasePage.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+      document.dispatchEvent(new Event('visibilitychange'));
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await leasePage.clock.fastForward(120_000);
+    await lifecycleBurst(leasePage);
+    await settle();
+    assert.equal(leasePuts(), deniedLeaseCount, 'visibility changes cannot restart a terminally denied lease');
+    denyLease = false;
+    await leasePage.getByTestId('retry-observation-reads').click();
+    await waitUntil(() => leasePuts() === deniedLeaseCount + 1, 'checked retry acquires one new exact-viewer lease');
+    await leasePage.getByTestId('screenshot-observation-denied').waitFor({ state: 'hidden' });
+    await leasePage.clock.fastForward(31_000);
+    await waitUntil(() => leasePuts() === deniedLeaseCount + 2, 'successful leases retain ordinary renewal');
+    assert.deepEqual(leaseHarness.pageErrors, []);
+    await leasePage.close();
+
+    const claimedPage = await browser.newPage();
+    pages.push(claimedPage);
+    await claimedPage.clock.install({ time: fixedTime });
+    let denyClaimedHistory = true;
+    const claimedHarness = await configureDashboard(claimedPage, {
+      aggregate: aggregateController(),
+      claimedStudents: rows().map((row) => ({
+        ...row, contextId: 'coverage-context', supervisionState: 'claimed',
+        supervisionContext: { type: 'coverage', id: 'coverage-context', assignedStaffId: ADMIN_ID },
+      })),
+      historyTiles: () => denyClaimedHistory
+        ? { status: 404, body: { code: 'CLASSPILOT_NO_ACCESSIBLE_TILES' } }
+        : { tiles: [{ studentId: STUDENT_ID, heartbeats: [] }] },
+    });
+    await claimedPage.goto(`${baseURL}/classpilot`);
+    await claimedPage.getByTestId('button-view-claimed-students').click();
+    await claimedPage.getByTestId('tile-read-denied').waitFor();
+    const historyPosts = () => claimedHarness.tileRequests.filter((request) => request.pathname.endsWith('/history')).length;
+    const deniedHistoryCount = historyPosts();
+    await claimedPage.clock.fastForward(65_000);
+    await lifecycleBurst(claimedPage);
+    await claimedPage.getByTestId('button-view-class-students').click();
+    await claimedPage.getByTestId('button-view-claimed-students').click();
+    await settle();
+    assert.equal(historyPosts(), deniedHistoryCount, 'coverage history404 survives lifecycle and view return');
+    denyClaimedHistory = false;
+    const claimedRefreshesBefore = claimedHarness.claimedRosterRequests.length;
+    const classRefreshesBefore = claimedHarness.sessionRequests.length;
+    await claimedPage.getByRole('button', { name: 'Refresh coverage', exact: true }).click();
+    await waitUntil(() => historyPosts() > deniedHistoryCount, 'checked coverage retry must re-arm restored history without an active class');
+    await claimedPage.getByTestId('tile-read-denied').waitFor({ state: 'hidden' });
+    assert.ok(claimedHarness.claimedRosterRequests.length > claimedRefreshesBefore);
+    assert.equal(claimedHarness.sessionRequests.length, classRefreshesBefore, 'coverage retry uses its own roster authority');
+    assert.deepEqual(claimedHarness.pageErrors, []);
+    await claimedPage.close();
+
+    const retainedObservePage = await browser.newPage();
+    pages.push(retainedObservePage);
+    await retainedObservePage.clock.install({ time: fixedTime });
+    const observed = teachingSession({ id: OBSERVED_SESSION_ID, groupId: OBSERVED_GROUP_ID, teacherId: OTHER_TEACHER_ID });
+    let retainedObserveHarness;
+    retainedObserveHarness = await configureDashboard(retainedObservePage, {
+      aggregate: aggregateController({ scoped: success(rows()) }), activeSession: live, allSessions: [live, observed],
+      observationLeaseResponse: (method, pathname) => {
+        if (method === 'PUT' && pathname.includes(OBSERVED_SESSION_ID)) {
+          retainedObserveHarness.setAllSessions([live]);
+          return { status: 404, body: { code: 'OBSERVATION_SESSION_UNAVAILABLE' } };
+        }
+        return { renewAfterSeconds: 30 };
+      },
+    });
+    await retainedObservePage.goto(`${baseURL}/classpilot`);
+    await retainedObservePage.getByTestId('select-admin-observe').selectOption(OBSERVED_SESSION_ID);
+    await retainedObservePage.getByTestId('screenshot-observation-denied').waitFor();
+    await waitUntil(() => retainedObserveHarness.sessionRequests.filter((path) => path.endsWith('/all')).length >= 2,
+      'lease denial refreshes the parent list that removes observed A');
+    await settle();
+    await assertObserveEntryPointsUnavailable(retainedObservePage, retainedObserveHarness.commandPosts,
+      [STUDENT_ID], retainedObserveHarness.coverageMutationRequests);
+    assert.deepEqual(retainedObserveHarness.pageErrors, []);
+    await retainedObservePage.close();
+
+    const aggregatePage = await browser.newPage();
+    pages.push(aggregatePage);
+    await aggregatePage.clock.install({ time: fixedTime });
+    const aggregate = aggregateController({ scoped: failure({ status: 404 }) });
+    const aggregateHarness = await configureDashboard(aggregatePage, { aggregate, activeSession: live, allSessions: [live] });
+    await aggregatePage.goto(`${baseURL}/classpilot`);
+    await aggregatePage.getByText('This class session is no longer available', { exact: true }).waitFor();
+    await assertUnknownCounts(aggregatePage);
+    const scopedFailures = aggregate.requests.filter((request) => request.teachingSessionId === OWN_SESSION_ID).length;
+    assert.equal(scopedFailures, 1, 'session404 does not inherit the global Query retry');
+    const unscopedBefore = aggregate.requests.filter((request) => !request.teachingSessionId).length;
+    aggregateHarness.setActiveSession(null);
+    aggregateHarness.setAllSessions([]);
+    await aggregatePage.clock.fastForward(120_000);
+    await lifecycleBurst(aggregatePage);
+    await settle();
+    assert.equal(aggregate.requests.filter((request) => request.teachingSessionId === OWN_SESSION_ID).length, scopedFailures);
+    assert.equal(aggregate.requests.filter((request) => !request.teachingSessionId).length, unscopedBefore,
+      'losing the selected class must not broaden a denied scoped read to the school');
+    assert.equal(aggregateHarness.commandPosts.length, 0);
+    aggregateHarness.setActiveSession(live);
+    aggregateHarness.setAllSessions([live]);
+    aggregate.setScopedResponse(success(rows()));
+    await aggregatePage.getByTestId('students-query-error').getByRole('button', { name: 'Try again' }).click();
+    await aggregatePage.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
+    assert.equal(aggregate.requests.filter((request) => request.teachingSessionId === OWN_SESSION_ID).length, scopedFailures + 1);
+    // The manual event listener owns lifecycle reconciliation; four related
+    // browser events must not create four sequential aggregate requests.
+    await aggregatePage.clock.fastForward(1000);
+    const reconciliationsBefore = aggregate.requests.length;
+    await lifecycleBurst(aggregatePage);
+    await settle();
+    assert.equal(aggregate.requests.length, reconciliationsBefore + 1);
+    assert.deepEqual(aggregateHarness.pageErrors, []);
+    await aggregatePage.close();
+
+    const replacementPage = await browser.newPage();
+    pages.push(replacementPage);
+    await replacementPage.clock.install({ time: fixedTime });
+    let releaseOldRequest;
+    const oldRequestGate = new Promise((resolve) => { releaseOldRequest = resolve; });
+    const replacementRequests = [];
+    const replacement = teachingSession({ id: OBSERVED_SESSION_ID, groupId: OBSERVED_GROUP_ID, teacherId: OTHER_TEACHER_ID });
+    const replacementAggregate = {
+      async fulfill(route, url) {
+        const sessionId = url.searchParams.get('teachingSessionId');
+        replacementRequests.push(sessionId);
+        if (sessionId === OWN_SESSION_ID) {
+          await oldRequestGate;
+          await route.fulfill({ status: 404, json: { code: 'CLASSPILOT_SESSION_UNAVAILABLE' } });
+        } else {
+          await route.fulfill({ json: sessionId ? rows('replacement-session-binding') : [] });
+        }
+      },
+    };
+    const replacementHarness = await configureDashboard(replacementPage, {
+      aggregate: replacementAggregate, activeSession: live, allSessions: [live, replacement],
+    });
+    try {
+      await replacementPage.goto(`${baseURL}/classpilot`);
+      await waitUntil(() => replacementRequests.includes(OWN_SESSION_ID), 'old class aggregate must be pending');
+      await replacementPage.getByTestId('select-admin-observe').selectOption(OBSERVED_SESSION_ID);
+      await replacementPage.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
+      releaseOldRequest();
+      await settle();
+      assert.equal(await replacementPage.getByText('This class session is no longer available', { exact: true }).count(), 0,
+        'a late404 for A cannot deny the currently selected B');
+      await lifecycleBurst(replacementPage);
+      await settle();
+      assert.equal(replacementRequests.filter((id) => id === OWN_SESSION_ID).length, 1,
+        'late completion cannot re-arm the superseded class');
+      assert.equal(await replacementPage.getByTestId(`card-student-${STUDENT_ID}`).count(), 1);
+      assert.deepEqual(replacementHarness.pageErrors, []);
+    } finally {
+      releaseOldRequest();
+      await replacementPage.close();
+    }
+
+    const ineligiblePage = await browser.newPage();
+    pages.push(ineligiblePage);
+    await ineligiblePage.clock.install({ time: fixedTime });
+    const nonLive = { ...teachingSession({ id: OBSERVED_SESSION_ID, groupId: OBSERVED_GROUP_ID, teacherId: OTHER_TEACHER_ID }), sessionMode: 'report_only', scheduledState: 'active' };
+    const ineligibleHarness = await configureDashboard(ineligiblePage, {
+      aggregate: aggregateController({ scoped: success(rows()) }), activeSession: null, allSessions: [nonLive],
+    });
+    await ineligiblePage.goto(`${baseURL}/classpilot`);
+    await ineligiblePage.getByTestId('select-admin-observe').selectOption(OBSERVED_SESSION_ID);
+    await ineligiblePage.getByTestId('screenshot-observation-ineligible').waitFor();
+    await ineligiblePage.clock.fastForward(120_000);
+    await lifecycleBurst(ineligiblePage);
+    await settle();
+    assert.equal(ineligibleHarness.observationLeaseRequests.filter((request) => request.method === 'PUT').length, 0);
+    assert.equal(ineligibleHarness.tileRequests.filter((request) => request.pathname.endsWith('/screenshots')).length, 0);
+    await assertObserveEntryPointsUnavailable(ineligiblePage, ineligibleHarness.commandPosts, [STUDENT_ID], ineligibleHarness.coverageMutationRequests);
+    assert.deepEqual(ineligibleHarness.pageErrors, []);
+  } finally {
+    for (const page of pages) await page.close().catch(() => {});
+    await browser.close();
+    await vite.close();
   }
 });
