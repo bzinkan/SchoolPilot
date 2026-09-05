@@ -4959,13 +4959,13 @@ async function startServer(): Promise<void> {
 
   const app = createApp();
   const server = http.createServer(app);
-  closeUpgradedTransports = createUpgradedTransportShutdown(server);
   // The ALB keeps pooled connections open for its 60 s idle timeout; Node's default
   // keepAliveTimeout is 5 s, so the task could close a socket the ALB was reusing
   // (ELB 502, target_status_code "-", 0-30 ms target time). Keep-alive must outlive
   // the ALB idle timeout and headersTimeout must exceed keepAliveTimeout.
   server.keepAliveTimeout = 65_000;
   server.headersTimeout = 66_000;
+  closeUpgradedTransports = createUpgradedTransportShutdown(server);
   httpServer = server;
 
   // Attach Socket.io for real-time events (GoPilot dismissal, etc.)
