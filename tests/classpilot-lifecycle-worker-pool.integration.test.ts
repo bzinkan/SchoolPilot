@@ -4,6 +4,7 @@ import { once } from "node:events";
 import test from "node:test";
 import { sql } from "drizzle-orm";
 import { WebSocket, WebSocketServer } from "ws";
+import { captureIntervalMetricWindow } from "./helpers/intervalMetricWindow.js";
 
 // Import the built runtime only after selecting the actual worker pool profile.
 process.env.SCHEDULER_ENABLED = "true";
@@ -89,6 +90,10 @@ test("ten bell-time ends drain with two worker clients, scoped frames, and refre
     }
     runtime.snapshotRuntimePerformanceMetrics({ reset: true });
     hotPath.snapshotHeartbeatHotPathMetrics({ reset: true });
+    const metrics = captureIntervalMetricWindow(t, {
+      runtime: () => runtime.snapshotRuntimePerformanceMetrics().counters,
+      hotPath: () => hotPath.snapshotHeartbeatHotPathMetrics().counters,
+    });
     const before = pushes.snapshotClasspilotLifecyclePushes();
     // Scheduler DB finalization releases its own transaction before queue work;
     // this mirrors the ten-session production batch rather than holding ten
@@ -105,10 +110,9 @@ test("ten bell-time ends drain with two worker clients, scoped frames, and refre
     assert.equal(after.failed - before.failed, 0);
     assert.equal(after.deferred - before.deferred, 0);
     assert.equal(after.active + after.waiting, 0);
-    assert.equal(runtime.snapshotRuntimePerformanceMetrics().counters.poolAcquisitionFailure ?? 0, 0);
-    const refresh = hotPath.snapshotHeartbeatHotPathMetrics().counters;
-    assert.ok((refresh.screenshotPolicyRefreshSignals ?? 0) >= 10, "enabled refresh must execute its real tenant read");
-    assert.equal(refresh.screenshotPolicyRefreshFailures ?? 0, 0);
+    assert.equal(metrics.runtimeCounter("poolAcquisitionFailure"), 0);
+    assert.ok(metrics.hotPathCounter("screenshotPolicyRefreshSignals") >= 10, "enabled refresh must execute its real tenant read");
+    assert.equal(metrics.hotPathCounter("screenshotPolicyRefreshFailures"), 0);
     for (const connection of connections) {
       assert.ok(connection.frames.some((frame) => frame.type === "classroom-state"));
       const fab = connection.frames.filter((frame) => frame.type === "fab-state-sync");
