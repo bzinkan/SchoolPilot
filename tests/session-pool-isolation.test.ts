@@ -137,8 +137,17 @@ describe("PostgreSQL session-pool isolation", () => {
       "utf8"
     );
 
-    assert.match(indexSource, /pool\.end\(\),\s*sessionPool\.end\(\)/);
-    assert.match(workerSource, /pool\.end\(\),\s*sessionPool\.end\(\)/);
+    const shutdownSource = readFileSync(resolve(root, "src/services/serviceShutdown.ts"), "utf8");
+    for (const entrypoint of [indexSource, workerSource]) {
+      const namedPools = entrypoint.match(/const shutdownPools: ShutdownPool\[\] = \[([\s\S]*?)\];/)?.[1];
+      assert.ok(namedPools, "both entrypoints must declare the pools owned by their shutdown barrier");
+      assert.match(namedPools, /\{ name: "main", pool \}/);
+      assert.match(namedPools, /\{ name: "session", pool: sessionPool \}/);
+      assert.match(namedPools, /\{ name: "scheduler", pool: schedulerPool \}/);
+      assert.match(namedPools, /\{ name: "scheduler_lock", pool: schedulerLockPool \}/);
+      assert.match(entrypoint, /await drainService\(\{[\s\S]*?pools: shutdownPools,/);
+    }
+    assert.match(shutdownSource, /options\.pools\.map\(async \(\{ name, pool \}\) => \{[\s\S]*?await pool\.end\(\)/);
     assert.match(healthSource, /sessionPool\.(waitingCount|totalCount)/);
     assert.match(dashboardSource, /sessionPool\.(waitingCount|totalCount)/);
   });

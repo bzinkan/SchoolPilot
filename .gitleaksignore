@@ -1,0 +1,5 @@
+# Historical false positives only: RFC 6455 section 1.2 public sample handshake nonce.
+# https://www.rfc-editor.org/rfc/rfc6455#section-1.2
+# Current tests generate random protocol nonces; secret-scanning rules stay enabled.
+0da03e1e8c4b00535236c02cad2a2536682e0912:tests/realtime-producer-shutdown.test.ts:generic-api-key:112
+0da03e1e8c4b00535236c02cad2a2536682e0912:tests/realtime-producer-shutdown.test.ts:generic-api-key:211

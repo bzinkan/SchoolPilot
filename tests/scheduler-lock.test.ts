@@ -6,7 +6,7 @@ process.env.SCHEDULER_LOCK_POOL_MAX = "2";
 
 const { pool } = await import("../dist/db.js");
 const { runWithSchedulerLock } = await import("../dist/services/scheduler.js");
-const { schedulerLockPool, schedulerPool } = await import("../dist/services/schedulerDb.js");
+const { schedulerLockPool, schedulerPool, schedulerPoolsInitialized } = await import("../dist/services/schedulerDb.js");
 
 describe("scheduler advisory locks", () => {
   after(async () => {
@@ -69,5 +69,21 @@ describe("scheduler advisory locks", () => {
 
     releaseFirst();
     assert.deepEqual(await first, { acquired: true, result: "first" });
+  });
+
+  it("keeps draining pool counts visible and rejects late work instead of creating a replacement pool", async () => {
+    const client = await schedulerPool.connect();
+    const ending = schedulerPool.end();
+    try {
+      assert.equal(schedulerPoolsInitialized().query, true);
+      assert.ok(schedulerPool.totalCount >= 1);
+      assert.ok(schedulerPool.totalCount > schedulerPool.idleCount);
+      await assert.rejects(schedulerPool.query("SELECT 1"), /after calling end/);
+    } finally {
+      client.release();
+      await ending;
+    }
+    assert.equal(schedulerPoolsInitialized().query, false);
+    assert.equal(schedulerPool.totalCount, 0);
   });
 });

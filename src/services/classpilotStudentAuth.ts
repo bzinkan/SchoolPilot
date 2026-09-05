@@ -28,6 +28,11 @@ import {
   normalizeStudentSessionRecoveryToken,
 } from "./classpilotStudentSessionAuthority.js";
 import type { ClasspilotManagedDeviceContinuityProof } from "./classpilotManagedDeviceContinuity.js";
+import { safeOperationalErrorCode } from "../util/operationalErrors.js";
+export {
+  studentAuthenticationFailureCause,
+  isDatabaseAuthenticationFailure,
+} from "../util/operationalErrors.js";
 
 export const CLASSPILOT_ENROLLMENT_KEY_HEADER = "x-classpilot-enrollment-key";
 export const CLASSPILOT_MANUAL_AUTH_TTL_SECONDS = 300;
@@ -51,29 +56,6 @@ export type ActiveStudentTokenSessionLookup = (
 type ActiveStudentTokenSessionResolverOptions = {
   maxInFlight?: number;
 };
-
-const POSTGRES_SQLSTATE = /^[0-9A-Z]{5}$/;
-const SAFE_NODE_OPERATIONAL_ERROR_CODES = new Set([
-  "ECONNREFUSED",
-  "ECONNRESET",
-  "EHOSTUNREACH",
-  "ENETUNREACH",
-  "EPIPE",
-  "ETIMEDOUT",
-]);
-
-function safeOperationalErrorCode(error: unknown): string | undefined {
-  for (const candidate of [error, (error as { cause?: unknown } | null)?.cause]) {
-    const code = (candidate as { code?: unknown } | null)?.code;
-    if (
-      typeof code === "string" &&
-      (POSTGRES_SQLSTATE.test(code) || SAFE_NODE_OPERATIONAL_ERROR_CODES.has(code))
-    ) {
-      return code;
-    }
-  }
-  return undefined;
-}
 
 export function studentAuthenticationServiceError(error: unknown): Error {
   const safe = new Error("Student authentication service unavailable") as NodeJS.ErrnoException & {

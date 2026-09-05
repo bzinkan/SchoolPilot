@@ -1,4 +1,4 @@
-import { after, before, describe, it } from "node:test";
+import { after, before, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
@@ -109,6 +109,7 @@ async function sharedRealtimeCommand(args: string[]): Promise<unknown> {
 }
 
 let server: Server | undefined;
+let restoreMetricsClock: (() => void) | undefined;
 let baseUrl = "";
 let schoolId = "";
 let teachingSessionId = "";
@@ -393,6 +394,14 @@ before(async () => {
   server = createServer(createApp());
   await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
   baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+  // Counter assertions span async requests, but a UTC-minute rollover resets
+  // their baseline on the next metric write. Pin Date.now after the database
+  // fixture starts its live class, so authority still sees an active session.
+  // HTTP timers and capture Date timestamps continue to use real time.
+  const metricsNow = Date.now();
+  const clock = mock.method(Date, "now", () => metricsNow);
+  restoreMetricsClock = () => clock.mock.restore();
 });
 
 after(async () => {
@@ -436,6 +445,7 @@ after(async () => {
       schedulerPool.end(),
       schedulerLockPool.end(),
     ]);
+    restoreMetricsClock?.();
   }
 });
 

@@ -552,7 +552,7 @@ describe("ClassPilot tile-read tenant scope", () => {
       teacher
     );
     assert.equal(inaccessible.status, 404);
-    assert.deepEqual(inaccessible.body, { error: "No accessible tiles" });
+    assert.deepEqual(inaccessible.body, { error: "No accessible tiles", code: "CLASSPILOT_NO_ACCESSIBLE_TILES" });
   });
 
   it("fails closed without the selected tenant RLS context", async () => {
@@ -883,7 +883,7 @@ describe("ClassPilot tile-read tenant scope", () => {
       officeStaff
     );
     assert.equal(officeBatchResponse.status, 404);
-    assert.deepEqual(officeBatchResponse.body, { error: "No accessible tiles" });
+    assert.deepEqual(officeBatchResponse.body, { error: "No accessible tiles", code: "CLASSPILOT_NO_ACCESSIBLE_TILES" });
   });
 
   it("fails closed for device-only screenshot detail after a session goes offline", async () => {
@@ -916,7 +916,7 @@ describe("ClassPilot tile-read tenant scope", () => {
           schoolWideUser
         );
         assert.equal(batch.status, 404);
-        assert.deepEqual(batch.body, { error: "No accessible tiles" });
+        assert.deepEqual(batch.body, { error: "No accessible tiles", code: "CLASSPILOT_NO_ACCESSIBLE_TILES" });
       }
     } finally {
       await inSchool(schoolA.id, async () => {

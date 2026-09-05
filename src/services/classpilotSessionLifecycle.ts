@@ -50,12 +50,18 @@ import { syncClasspilotControlStatesToActiveDevices } from "./classpilotControlS
 import { stopActiveClasspilotLiveViewNegotiations } from "./classpilotLiveViewStop.js";
 import { classpilotClassroomStatePushFrame } from "./classpilotControlStateFrame.js";
 import { nudgeClasspilotScreenshotPolicyRefresh } from "./classpilotScreenshotPolicyRefresh.js";
+import {
+  classpilotLifecyclePushes,
+  runClasspilotLifecyclePushPhases,
+  trackClasspilotLifecycleTransport,
+} from "./classpilotLifecyclePushes.js";
 
 export async function publishClasspilotSessionFabStates(options: {
   schoolId: string;
   teachingSessionId: string;
   event: "started" | "ended";
   reason?: TeachingSessionFinalizationReason;
+  signal?: AbortSignal;
 }): Promise<void> {
   // Starts use the frozen roster plus current owner/no-coverage authority.
   // Ends recompute the full state for the former frozen roster so a replacement
@@ -63,23 +69,31 @@ export async function publishClasspilotSessionFabStates(options: {
   // not emitted: legacy consumers translate it to an empty session list and
   // can race after this authoritative snapshot. Staff receive their separate
   // lifecycle event in runClasspilotFinalizationSideEffects.
-  const roster = await getClasspilotSessionStudents(options.teachingSessionId);
-  const frozenStudentIds = [...new Set(roster.map((row) => row.studentId))];
-  const startBindings = options.event === "started"
-    ? await getSessionStudentBindings(options.schoolId, options.teachingSessionId)
-    : [];
-  const studentIds = options.event === "started"
-    ? startBindings.map((binding) => binding.studentId)
-    : frozenStudentIds;
-  await syncClasspilotControlStatesToActiveDevices(options.schoolId, studentIds);
+  if (options.signal?.aborted) return;
+  const studentIds = await runWithTenantContext({ schoolId: options.schoolId }, async () => {
+    const roster = await getClasspilotSessionStudents(options.teachingSessionId);
+    const frozenStudentIds = [...new Set(roster.map((row) => row.studentId))];
+    const startBindings = options.event === "started"
+      ? await getSessionStudentBindings(options.schoolId, options.teachingSessionId)
+      : [];
+    return options.event === "started"
+      ? startBindings.map((binding) => binding.studentId)
+      : frozenStudentIds;
+  });
+  // The roster lease must be released before delivery acquires its own lease.
+  if (!options.signal?.aborted) {
+    await syncClasspilotControlStatesToActiveDevices(options.schoolId, studentIds, options.signal);
+  }
 }
 
 async function publishControlStateRows(
   schoolId: string,
   states: Awaited<ReturnType<typeof getClasspilotStudentControlStates>>,
-  teachingSessionIdOverride?: string
+  teachingSessionIdOverride?: string,
+  signal?: AbortSignal
 ): Promise<void> {
-  if (states.length === 0) return;
+  if (states.length === 0 || signal?.aborted) return;
+  await runWithTenantContext({ schoolId }, async () => {
   const sessions = await getActiveSessionsForStudents(
     schoolId,
     states.map((state) => state.studentId)
@@ -93,9 +107,12 @@ async function publishControlStateRows(
       deviceId: session.deviceId,
     }))
   );
-  await Promise.all(states.map(async (state) => {
+  // A scoped Drizzle instance has one PG client. Parallel transactions here
+  // would interleave BEGIN/COMMIT on that same client.
+  for (const state of states) {
+    if (signal?.aborted) break;
     const studentSession = sessionByStudent.get(state.studentId);
-    if (!studentSession) return;
+    if (!studentSession) continue;
     const realtimeRead = realtimeByStudent.get(state.studentId);
     const realtime = realtimeRead?.status === "hit"
       && classpilotRealtimeFresh(realtimeRead.snapshot)
@@ -191,40 +208,51 @@ async function publishControlStateRows(
         return { target: classroomTarget, message };
       }
     );
+    if (signal?.aborted) break;
     if (delivery.authorized && delivery.value) {
       sendToStudentBindingLocal(delivery.value.target, delivery.value.message, {
         requiredCapability: delivery.value.target.requiredCapability,
         requiredCapabilities: delivery.value.target.requiredCapabilities,
       });
-      await publishWS(delivery.value.target, delivery.value.message);
+      const accepted = await publishWS(delivery.value.target, delivery.value.message);
+      if (process.env.REDIS_URL && !accepted) throw new Error("Classroom clear publication unavailable");
     }
-  }));
+  }
+  });
+  if (signal?.aborted) return;
   const teachingSessionIds = [...new Set(states.flatMap((state) => {
     const teachingSessionId = teachingSessionIdOverride || state.teachingSessionId;
     return teachingSessionId ? [teachingSessionId] : [];
   }))];
-  await Promise.all(teachingSessionIds.map((teachingSessionId) =>
-    nudgeClasspilotScreenshotPolicyRefresh({
+  const refreshFailures: unknown[] = [];
+  // Each nudge owns one fresh lease; a replacement spanning many classes must
+  // not fan out more checkouts than the worker's two-client main pool permits.
+  for (const teachingSessionId of teachingSessionIds) {
+    if (signal?.aborted) break;
+    await nudgeClasspilotScreenshotPolicyRefresh({
       schoolId,
       teachingSessionId,
       studentIds: states
         .filter((state) => (teachingSessionIdOverride || state.teachingSessionId) === teachingSessionId)
         .map((state) => state.studentId),
       reason: "scope_changed",
-    }).catch(() => 0)
-  ));
+      onFailure: (error) => refreshFailures.push(error),
+    }).catch((error) => { refreshFailures.push(error); return 0; });
+  }
+  if (refreshFailures.length) throw new AggregateError(refreshFailures, "Screenshot policy refresh failed");
 }
 
 export async function pushClasspilotSessionControlStates(
   schoolId: string,
   teachingSessionId: string
 ): Promise<void> {
-  await runWithTenantContext({ schoolId }, async () => {
-    await publishClasspilotSessionFabStates({
-      schoolId,
-      teachingSessionId,
-      event: "started",
-    });
+  await classpilotLifecyclePushes.enqueue(async (signal) => {
+    try {
+      await publishClasspilotSessionFabStates({ schoolId, teachingSessionId, event: "started", signal });
+    } catch (error) {
+      console.warn("[ClassPilot] Initial classroom-state push failed:", safeErrorMetadata(error));
+      throw error;
+    }
   });
 }
 
@@ -274,7 +302,6 @@ export async function startManualClasspilotSession(options: {
     runClasspilotFinalizationSideEffects(outcome.replacementFinalization, {
       schoolId: options.schoolId,
       reason: "replacement_start",
-      dbInstance: options.dbInstance,
     });
   }
   void pushClasspilotSessionControlStates(options.schoolId, outcome.session.id).catch((err) => {
@@ -383,7 +410,6 @@ export async function finalizeClasspilotSession(
     runClasspilotFinalizationSideEffects(result, {
       schoolId: options.schoolId,
       reason: options.reason,
-      dbInstance,
     });
   }
   return result;
@@ -394,17 +420,14 @@ export function runClasspilotFinalizationSideEffects(
   options: {
     schoolId: string;
     reason: TeachingSessionFinalizationReason;
-    dbInstance?: typeof db;
   }
 ): void {
   if (result.finalized) {
-    void stopActiveClasspilotLiveViewNegotiations({
+    trackClasspilotLifecycleTransport(stopActiveClasspilotLiveViewNegotiations({
       schoolId: options.schoolId,
       teachingSessionId: result.session.id,
       reason: "session-ended",
-    }).catch((err) => {
-      console.warn("[ClassPilot] Live-view cleanup failed:", safeErrorMetadata(err));
-    });
+    }));
     // Usage is frozen with the coverage rows and derived gap events by the
     // immutable report worker. Keeping that write inside one transaction is
     // what prevents email retries from observing a different raw heartbeat set.
@@ -419,54 +442,35 @@ export function runClasspilotFinalizationSideEffects(
       summaryDisposition: result.summaryDisposition,
     };
     broadcastToTeachersLocal(options.schoolId, endedUpdate);
-    void publishWS({ kind: "staff", schoolId: options.schoolId }, endedUpdate);
-    void runWithTenantContext({ schoolId: options.schoolId }, () =>
-      publishClasspilotSessionFabStates({
-        schoolId: options.schoolId,
-        teachingSessionId: result.session.id,
-        event: "ended",
-        reason: options.reason,
-      })
-    ).catch((err) => {
-      console.warn(
-        "[ClassPilot] Student FAB finalization push failed:",
-        safeErrorMetadata(err)
-      );
-    });
+    trackClasspilotLifecycleTransport(publishWS({ kind: "staff", schoolId: options.schoolId }, endedUpdate));
     for (const conflictId of result.resolvedConflictIds) {
       const update = { type: "scheduled-class-conflict-updated", conflictId };
       broadcastToTeachersLocal(options.schoolId, update);
-      void publishWS({ kind: "staff", schoolId: options.schoolId }, update);
+      trackClasspilotLifecycleTransport(publishWS({ kind: "staff", schoolId: options.schoolId }, update));
     }
-    if (result.clearedControlStates.length > 0) {
-      // The database rows are the reconnect authority. This post-commit push
-      // only makes an already-connected extension clear immediately. Keep the
-      // former session ID in the envelope so its retained event is scoped to
-      // the class that ended; subsequent heartbeat reconciliation sees the
-      // same higher revision with the stored null session.
-      void runWithTenantContext({ schoolId: options.schoolId }, () =>
-        publishControlStateRows(
-          options.schoolId,
-          result.clearedControlStates,
-          result.session.id
-        )
-      ).catch((err) => {
-        console.warn(
-          "[ClassPilot] Final classroom-state clear push failed:",
-          safeErrorMetadata(err)
-        );
-      });
-    }
-    if (result.restoredControlStates.length > 0) {
-      void runWithTenantContext({ schoolId: options.schoolId }, () =>
-        publishControlStateRows(options.schoolId, result.restoredControlStates)
-      ).catch((err) => {
-        console.warn(
-          "[ClassPilot] Restored classroom-state push failed:",
-          safeErrorMetadata(err)
-        );
-      });
-    }
+    void classpilotLifecyclePushes.enqueue(async (signal) => {
+        // The database rows are the reconnect authority. This post-commit push
+        // only makes an already-connected extension clear immediately. Keep the
+        // former session ID in the envelope so its retained event is scoped to
+        // the class that ended; subsequent heartbeat reconciliation sees the
+        // same higher revision with the stored null session.
+      await runClasspilotLifecyclePushPhases(signal, [
+        { phase: "clear", run: () => publishControlStateRows(
+            options.schoolId,
+            result.clearedControlStates,
+            result.session.id,
+            signal
+        ) },
+        { phase: "restore", run: () => publishControlStateRows(options.schoolId, result.restoredControlStates, undefined, signal) },
+        { phase: "fab", run: () => publishClasspilotSessionFabStates({
+          schoolId: options.schoolId,
+          teachingSessionId: result.session.id,
+          event: "ended",
+          reason: options.reason,
+          signal,
+        }) },
+      ]);
+    });
   }
 }
 

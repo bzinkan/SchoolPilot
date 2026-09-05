@@ -85,9 +85,12 @@ function createLazyPool(kind: SchedulerPoolKind): pg.Pool {
       if (property === "end") {
         return async () => {
           if (!existing) return;
+          // Keep the draining instance visible until every leased client has
+          // returned. Deadline diagnostics need its real counts, and late work
+          // must fail against the closing pool instead of creating a new one.
+          await existing.end();
           if (kind === "query") schedulerPoolInstance = null;
           else schedulerLockPoolInstance = null;
-          await existing.end();
         };
       }
       if (

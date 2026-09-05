@@ -68,9 +68,19 @@ import {
   terminalClasspilotCommandAckReceipt,
 } from "../services/classpilotAckReceipt.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
+import { wasTenantPoolAcquisitionFailureReported } from "../util/operationalErrors.js";
+import {
+  reportStudentWebSocketAuthenticationFailure,
+  type StudentWebSocketAuthStage,
+} from "../services/classpilotWebSocketAuthDiagnostics.js";
+import {
+  recordRuntimePerformanceCounter,
+  recordRuntimePerformanceTiming,
+} from "../services/runtimePerformanceMetrics.js";
+import { getRuntimeMetadata } from "../services/runtimeMetadata.js";
+import { WebSocketWorkTracker } from "./websocketWork.js";
 import {
   resolveActiveStudentTokenSession,
-  studentAuthenticationServiceError,
   type ActiveStudentTokenSession,
 } from "../services/classpilotStudentAuth.js";
 import { buildStudentFabState } from "../services/classpilotFab.js";
@@ -152,6 +162,17 @@ const WS_PONG_TIMEOUT_MS = 10_000;  // 10 seconds to respond
 export const CLASSPILOT_PASSIVE_AUTH_TTL_MS = 30_000;
 const MAX_PASSIVE_AUTH_SCHOOLS = 4_096;
 const MAX_PASSIVE_AUTH_INFLIGHT = 4_096;
+const webSocketWork = new WebSocketWorkTracker();
+const stopWebSocketProducers = new Set<() => void>();
+
+export function stopWebSocketWork(): void {
+  webSocketWork.stop();
+  for (const stop of stopWebSocketProducers) stop();
+}
+
+export function drainWebSocketWork(): Promise<void> {
+  return webSocketWork.drain();
+}
 
 /**
  * Redis can deliver an exact-binding envelope after the publishing task has
@@ -163,8 +184,9 @@ export async function deliverClasspilotStudentBindingRedisMessage(
   target: Extract<WsRedisTarget, { kind: "student-binding" }>,
   message: unknown
 ): Promise<boolean> {
+  if (!webSocketWork.canStart()) return false;
   try {
-    return await runWithTenantContext({ schoolId: target.schoolId }, async () => {
+    return await webSocketWork.track(runWithTenantContext({ schoolId: target.schoolId }, async () => {
       const delivery = await withClasspilotStudentControlDeliveryAuthority(
         target,
         () => undefined,
@@ -174,7 +196,7 @@ export async function deliverClasspilotStudentBindingRedisMessage(
         })
       );
       return delivery.authorized && delivery.value;
-    });
+    }));
   } catch (error) {
     console.warn(
       "[Redis] Exact student-binding delivery revalidation failed",
@@ -428,6 +450,7 @@ export function setupWebSocket(
 
   let activity = {
     connected: 0,
+    messagesReceived: 0,
     studentAuthenticated: 0,
     staffAuthenticated: 0,
     passiveAuthorizationCacheHits: 0,
@@ -440,6 +463,7 @@ export function setupWebSocket(
     const snapshot = activity;
     activity = {
       connected: 0,
+      messagesReceived: 0,
       studentAuthenticated: 0,
       staffAuthenticated: 0,
       passiveAuthorizationCacheHits: 0,
@@ -450,6 +474,7 @@ export function setupWebSocket(
     };
     if (
       snapshot.connected === 0 &&
+      snapshot.messagesReceived === 0 &&
       snapshot.studentAuthenticated === 0 &&
       snapshot.staffAuthenticated === 0 &&
       snapshot.passiveAuthorizationLoads === 0
@@ -457,6 +482,7 @@ export function setupWebSocket(
     console.log(JSON.stringify({
       type: "websocket_activity",
       intervalSeconds: 60,
+      runtime: getRuntimeMetadata(),
       ...snapshot,
     }));
   }, 60_000);
@@ -628,14 +654,16 @@ export function setupWebSocket(
       state.dirty = false;
       activeCommandUpdatePublications += 1;
 
-      void publishCommandUpdate(state).catch((error) => {
+      void webSocketWork.track(publishCommandUpdate(state).catch((error) => {
         if (state.retryCount < 3) {
           state.retryCount += 1;
           state.dirty = true;
         }
-        errorMonitor.trackError("websocket_error", error as Error, {
-          operation: "classpilot_command_update",
-        });
+        if (!wasTenantPoolAcquisitionFailureReported(error)) {
+          errorMonitor.trackError("websocket_error", error as Error, {
+            operation: "classpilot_command_update",
+          });
+        }
       }).finally(() => {
         state.inFlight = false;
         activeCommandUpdatePublications -= 1;
@@ -647,11 +675,12 @@ export function setupWebSocket(
           commandUpdateStates.delete(state.key);
         }
         drainCommandUpdates();
-      });
+      }));
     }
   }
 
   const scheduleCommandUpdate = (schoolId: string, commandId: string) => {
+    if (commandUpdateQueueClosed || !webSocketWork.canStart()) return;
     const key = `${schoolId}:${commandId}`;
     const pending = commandUpdateStates.get(key);
     if (pending) {
@@ -674,7 +703,7 @@ export function setupWebSocket(
   };
   registerClasspilotCommandUpdateScheduler(scheduleCommandUpdate);
 
-  wss.once("close", () => {
+  const stopCommandUpdates = () => {
     registerClasspilotCommandUpdateScheduler(null);
     commandUpdateQueueClosed = true;
     commandUpdateQueue.length = 0;
@@ -682,10 +711,16 @@ export function setupWebSocket(
       if (state.timer) clearTimeout(state.timer);
     }
     commandUpdateStates.clear();
+  };
+  stopWebSocketProducers.add(stopCommandUpdates);
+  wss.once("close", () => {
+    stopCommandUpdates();
+    stopWebSocketProducers.delete(stopCommandUpdates);
   });
 
   // --- Redis cross-instance message delivery ---
   const deliverRedisMessage = (target: WsRedisTarget, message: unknown) => {
+    if (!webSocketWork.canStart()) return;
     const msgType = (message as { type?: string })?.type ?? "unknown";
     const sessionId = (message as { sessionId?: unknown })?.sessionId;
     if (
@@ -695,11 +730,11 @@ export function setupWebSocket(
       && sessionId.length > 0
       && sessionId.length <= 128
     ) {
-      void stopActiveClasspilotLiveViewNegotiations({
+      void webSocketWork.track(stopActiveClasspilotLiveViewNegotiations({
         schoolId: target.schoolId,
         teachingSessionId: sessionId,
         reason: "session-ended",
-      });
+      }));
     }
     switch (target.kind) {
       case "staff":
@@ -850,6 +885,10 @@ export function setupWebSocket(
 
   // --- Connection handler ---
   wss.on("connection", (ws) => {
+    if (!webSocketWork.canStart()) {
+      ws.close(1013, "Server shutting down");
+      return;
+    }
     const client = registerWsClient(ws);
     const frameBucket = createClasspilotWsFrameBucket();
     let pendingFrames = 0;
@@ -867,12 +906,12 @@ export function setupWebSocket(
       const owned = [...ownedLiveViewNegotiations.entries()];
       ownedLiveViewNegotiations.clear();
       for (const [negotiationId, authority] of owned) {
-        void stopActiveClasspilotLiveViewNegotiations({
+        void webSocketWork.track(stopActiveClasspilotLiveViewNegotiations({
           schoolId: authority.schoolId,
           requesterUserId: authority.requesterUserId,
           negotiationIds: [negotiationId],
           reason,
-        });
+        }));
       }
     };
     const presenceConnectionId = randomUUID();
@@ -888,7 +927,7 @@ export function setupWebSocket(
           // throw, so keep the socket healthy and let the scheduler fail closed.
           console.warn("[WebSocket] ClassPilot staff presence update failed");
         });
-      return presenceMutation;
+      return webSocketWork.track(presenceMutation);
     };
     const recordStaffPresence = async (schoolId: string, userId: string): Promise<void> => {
       const previous = recordedPresence;
@@ -1021,26 +1060,25 @@ export function setupWebSocket(
         clearTimeout(pongTimer);
         clientPongTimers.delete(ws);
       }
+      if (!webSocketWork.canStart()) return;
       refreshStaffPresence();
       if (!client.authenticated) return;
       if (client.role === "student") {
         if (studentPongRevalidation || !client.schoolId || !client.studentId) return;
-        const pending = validatePassiveAuthorization()
+        const pending = webSocketWork.track(validatePassiveAuthorization()
           .then((active) => {
             if (!active && client.schoolId && client.studentId) {
               closeStudentSocketsLocal(client.schoolId, [client.studentId]);
             }
           })
           .catch((error) => {
-            const safeError = studentAuthenticationServiceError(error);
-            errorMonitor.trackError("database_connectivity", safeError, {
-              job: "studentWebSocketPongRevalidation",
-              errorCode: (safeError as NodeJS.ErrnoException).code,
-            }, { persist: false, priority: "high" });
+            reportStudentWebSocketAuthenticationFailure(
+              error, "passive_revalidation", "studentWebSocketPongRevalidation"
+            );
             client.authenticated = false;
             removeWsClient(ws);
             if (ws.readyState === WebSocket.OPEN) ws.close(1013, "Authentication service unavailable");
-          });
+          }));
         studentPongRevalidation = pending;
         void pending.finally(() => {
           if (studentPongRevalidation === pending) studentPongRevalidation = null;
@@ -1048,7 +1086,7 @@ export function setupWebSocket(
         return;
       }
       if (staffPongRevalidation) return;
-      const pending = validatePassiveAuthorization()
+      const pending = webSocketWork.track(validatePassiveAuthorization()
         .then((authorized) => {
           if (!authorized) {
             client.authenticated = false;
@@ -1058,14 +1096,16 @@ export function setupWebSocket(
           }
         })
         .catch((error) => {
-          errorMonitor.trackError("database_connectivity", error as Error, {
-            job: "staffWebSocketPongRevalidation",
-          }, { persist: false, priority: "high" });
+          if (!wasTenantPoolAcquisitionFailureReported(error)) {
+            errorMonitor.trackError("database_connectivity", error as Error, {
+              job: "staffWebSocketPongRevalidation",
+            }, { persist: false, priority: "high" });
+          }
           client.authenticated = false;
           clearStaffPresence();
           removeWsClient(ws);
           if (ws.readyState === WebSocket.OPEN) ws.close(1013, "Authentication service unavailable");
-        });
+        }));
       staffPongRevalidation = pending;
       void pending.finally(() => {
         if (staffPongRevalidation === pending) staffPongRevalidation = null;
@@ -1073,16 +1113,17 @@ export function setupWebSocket(
     });
 
     const handleMessage = async (data: RawData): Promise<void> => {
+      if (!webSocketWork.canStart()) return;
       let messageType = "unknown";
       try {
         const message = JSON.parse(data.toString());
         messageType = typeof message?.type === "string" ? message.type : "unknown";
+        activity.messagesReceived += 1;
 
-        // Log non-auth, non-heartbeat messages for debugging
-        if (message.type !== "auth" && message.type !== "heartbeat") {
-          console.log(
-            `[WebSocket] Message received: ${message.type} from ${client.role || "unauthenticated"} (authenticated: ${client.authenticated})`
-          );
+        // Successful per-frame traffic is represented by the interval aggregate.
+        // Optional debugging contains no attacker-controlled message type.
+        if (process.env.CLASSPILOT_WS_DEBUG_LOGS === "true") {
+          console.debug("[WebSocket] Message received", { authenticated: client.authenticated });
         }
 
         // --- Auth handling ---
@@ -1091,11 +1132,15 @@ export function setupWebSocket(
           // Email-only WebSocket provisioning is intentionally disabled because
           // it cannot prove the request came from the managed extension deployment.
           if (message.role === "student" && message.deviceId) {
+            const authStartedAt = performance.now();
+            recordRuntimePerformanceCounter("studentWebSocketAuthAttempt");
             if (message.studentToken) {
               let payload: ReturnType<typeof verifyStudentToken>;
               try {
                 payload = verifyStudentToken(message.studentToken);
               } catch (error) {
+                recordRuntimePerformanceCounter("studentWebSocketAuthDenied");
+                recordRuntimePerformanceTiming("studentWebSocketAuthMs", performance.now() - authStartedAt);
                 const msg = error instanceof TokenExpiredError
                   ? "Token expired, please re-register"
                   : error instanceof InvalidTokenError
@@ -1107,13 +1152,17 @@ export function setupWebSocket(
               }
 
               let studentBootstrapAuthenticated = false;
+              let authStage: StudentWebSocketAuthStage = "tenant_checkout";
               try {
                 const schoolId = payload.schoolId;
                 const deviceId = payload.deviceId;
                 const bootstrapAuthorized = await runWithTenantContext({ schoolId }, async () => {
+                  authStage = "session_resolution";
                   const activeSession = await resolveActiveStudentTokenSession(payload);
                   if (!activeSession) return false;
+                  authStage = "entitlement";
                   if (!(await resolveClasspilotEntitlement(schoolId)).entitled) return false;
+                  authStage = "settings_protocol";
                   const schoolSettings = await getSettingsForSchool(schoolId);
                   const protocol = negotiateClasspilotSurfaceProtocol({
                     surface: "websocket_auth",
@@ -1133,6 +1182,7 @@ export function setupWebSocket(
                   // authority still names the same teaching session, so a
                   // concurrent class change can only degrade to background
                   // cadence and cannot widen screenshot authority.
+                  authStage = "observation_hint";
                   const cadenceState = protocol.acceptedCapabilities.includes(
                     "screenshotActiveObservationCadenceV1"
                   )
@@ -1150,6 +1200,7 @@ export function setupWebSocket(
                       })
                     : { status: "unavailable", expiresInSeconds: 0 };
 
+                  authStage = "authority_lock";
                   const authority = await withClasspilotStudentWebSocketBootstrapAuthority(
                     {
                       schoolId,
@@ -1158,6 +1209,7 @@ export function setupWebSocket(
                       deviceId,
                     },
                     async (transactionDb) => {
+                      authStage = "bootstrap_projection";
                       await lockClasspilotSsoPolicyDeliveryAuthority(schoolId, transactionDb);
                       // Read state only after taking the same student-control
                       // lock used by command persistence and session transfer.
@@ -1242,8 +1294,11 @@ export function setupWebSocket(
                       };
                     },
                     (teacherReplies, prepared) => {
-                      if (ws.readyState !== WebSocket.OPEN) {
-                        throw new Error("Student WebSocket closed during authentication");
+                      authStage = "socket_delivery";
+                      if (ws.readyState !== WebSocket.OPEN || !webSocketWork.canStart()) {
+                        throw Object.assign(new Error("Student WebSocket closed during authentication"), {
+                          code: "WS_AUTH_SOCKET_CLOSED",
+                        });
                       }
                       if (prepared.deliveryWithheld) {
                         recordHeartbeatHotPathCounter("lateSignInDeliveryWithheld");
@@ -1260,7 +1315,9 @@ export function setupWebSocket(
                         acceptedCapabilities: protocol.acceptedCapabilities,
                       });
                       if (!authenticated) {
-                        throw new Error("Student WebSocket registration is unavailable");
+                        throw Object.assign(new Error("Student WebSocket registration is unavailable"), {
+                          code: "WS_AUTH_REGISTRATION_UNAVAILABLE",
+                        });
                       }
                       studentBootstrapAuthenticated = true;
 
@@ -1310,34 +1367,35 @@ export function setupWebSocket(
                           fromName: "Teacher",
                         }));
                       }
+                      authStage = "transaction_completion";
                     }
                   );
                   return authority.authorized;
                 });
                 if (!bootstrapAuthorized) {
+                  recordRuntimePerformanceCounter("studentWebSocketAuthDenied");
                   ws.send(JSON.stringify({ type: "auth-error", message: "Student session is no longer active" }));
                   ws.close();
                   return;
                 }
                 activity.studentAuthenticated += 1;
+                recordRuntimePerformanceCounter("studentWebSocketAuthSuccess");
               } catch (error) {
                 if (studentBootstrapAuthenticated) {
                   removeWsClient(ws);
                 }
-                const safeError = studentAuthenticationServiceError(error);
-                console.error("[WebSocket] Student authentication service unavailable", {
-                  errorCode: (safeError as NodeJS.ErrnoException).code ?? "unknown",
-                });
-                errorMonitor.trackError("database_connectivity", safeError, {
-                  job: "studentWebSocketAuth",
-                  messageType: "authentication_service_error",
-                  errorCode: (safeError as NodeJS.ErrnoException).code,
-                }, { persist: false, priority: "high" });
-                ws.send(JSON.stringify({ type: "auth-error", message: "Authentication service unavailable" }));
+                reportStudentWebSocketAuthenticationFailure(error, authStage, "studentWebSocketAuth");
+                if (ws.readyState === WebSocket.OPEN) {
+                  ws.send(JSON.stringify({ type: "auth-error", message: "Authentication service unavailable" }));
+                }
                 ws.close(1013, "Authentication service unavailable");
                 return;
+              } finally {
+                recordRuntimePerformanceTiming("studentWebSocketAuthMs", performance.now() - authStartedAt);
               }
             } else {
+              recordRuntimePerformanceCounter("studentWebSocketAuthDenied");
+              recordRuntimePerformanceTiming("studentWebSocketAuthMs", performance.now() - authStartedAt);
               ws.send(JSON.stringify({ type: "auth-error", message: "Student token required" }));
               ws.close();
               return;
@@ -1438,8 +1496,9 @@ export function setupWebSocket(
               ws.send(JSON.stringify({ type: "auth-success", role }));
               activity.staffAuthenticated += 1;
               if (role === "office_staff") return;
-              void presenceRecorded.then(() =>
-                runWithTenantContext({ schoolId }, async () => {
+              void webSocketWork.track(presenceRecorded.then(() => {
+                if (!webSocketWork.canStart()) return;
+                return runWithTenantContext({ schoolId }, async () => {
                   await assertClasspilotEntitled(schoolId);
                   const started = await startActiveScheduledClassesForTeacher({ schoolId, teacherId: userId });
                   if (started.length > 0) {
@@ -1448,18 +1507,20 @@ export function setupWebSocket(
                       startedSessionIds: started.map((session) => session.id),
                     });
                   }
-                })
-              ).catch((error) => {
+                });
+              }).catch((error) => {
                 console.error(
                   "[WebSocket] Scheduled class pickup on staff login failed:",
                   safeErrorMetadata(error)
                 );
-                errorMonitor.trackError("scheduler_failure", error as Error, {
-                  job: "scheduledClassLoginPickup",
-                  schoolId,
-                  teacherId: userId,
-                });
-              });
+                if (!wasTenantPoolAcquisitionFailureReported(error)) {
+                  errorMonitor.trackError("scheduler_failure", error as Error, {
+                    job: "scheduledClassLoginPickup",
+                    schoolId,
+                    teacherId: userId,
+                  });
+                }
+              }));
             } catch (error) {
               console.error("[WebSocket] Staff auth error:", safeErrorMetadata(error));
               ws.send(JSON.stringify({ type: "auth-error", message: "Authentication failed" }));
@@ -1497,10 +1558,12 @@ export function setupWebSocket(
               return;
             }
           } catch (error) {
-            errorMonitor.trackError("database_connectivity", error as Error, {
-              job: "staffWebSocketMessageRevalidation",
-              messageType,
-            }, { persist: false, priority: "high" });
+            if (!wasTenantPoolAcquisitionFailureReported(error)) {
+              errorMonitor.trackError("database_connectivity", error as Error, {
+                job: "staffWebSocketMessageRevalidation",
+                messageType,
+              }, { persist: false, priority: "high" });
+            }
             client.authenticated = false;
             clearStaffPresence();
             removeWsClient(ws);
@@ -1528,12 +1591,9 @@ export function setupWebSocket(
               return;
             }
           } catch (error) {
-            const safeError = studentAuthenticationServiceError(error);
-            errorMonitor.trackError("database_connectivity", safeError, {
-              job: "studentWebSocketRevalidation",
-              messageType,
-              errorCode: (safeError as NodeJS.ErrnoException).code,
-            }, { persist: false, priority: "high" });
+            reportStudentWebSocketAuthenticationFailure(
+              error, "message_revalidation", "studentWebSocketRevalidation"
+            );
             ws.send(JSON.stringify({
               type: "auth-error",
               message: "Authentication service unavailable",
@@ -1623,10 +1683,12 @@ export function setupWebSocket(
             });
           } catch (error) {
             if (!subscriptionMutationIsCurrent()) return;
-            errorMonitor.trackError("database_connectivity", error as Error, {
-              job: "classpilotSessionSubscription",
-              messageType,
-            }, { persist: false, priority: "high" });
+            if (!wasTenantPoolAcquisitionFailureReported(error)) {
+              errorMonitor.trackError("database_connectivity", error as Error, {
+                job: "classpilotSessionSubscription",
+                messageType,
+              }, { persist: false, priority: "high" });
+            }
             ws.send(JSON.stringify({
               type: "session-subscription-error",
               teachingSessionId: sessionId,
@@ -2317,7 +2379,7 @@ export function setupWebSocket(
         }
       } catch (error) {
         console.error("[WebSocket] Message error:", safeErrorMetadata(error));
-        if (!(error instanceof SyntaxError)) {
+        if (!(error instanceof SyntaxError) && !wasTenantPoolAcquisitionFailureReported(error)) {
           emitWebSocketMetric("WebSocketError");
           errorMonitor.trackError("websocket_error", error, {
             messageType,
@@ -2329,6 +2391,7 @@ export function setupWebSocket(
     };
 
     ws.on("message", (data) => {
+      if (!webSocketWork.canStart()) return;
       if (!consumeClasspilotWsFrame(frameBucket)) {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "rate-limit", code: "WS_FRAME_RATE_EXCEEDED" }));
@@ -2345,9 +2408,9 @@ export function setupWebSocket(
       }
       pendingFrames += 1;
       const processFrame = () => handleMessage(data);
-      frameQueue = frameQueue
+      frameQueue = webSocketWork.track(frameQueue
         .then(processFrame, processFrame)
-        .finally(() => { pendingFrames -= 1; });
+        .finally(() => { pendingFrames -= 1; }));
     });
 
     ws.on("close", () => {
