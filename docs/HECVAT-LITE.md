@@ -92,7 +92,7 @@ The HECVAT Lite is a subset of the full HECVAT created by EDUCAUSE and the REN-I
 | 5.3 | Student data used only for educational purposes? | **Yes** | Privacy Policy Section 4.2 — explicit no-data-mining clause |
 | 5.4 | Student data used for advertising? | **No** | Explicitly prohibited in Privacy Policy Section 4.2 |
 | 5.5 | Student data sold to third parties? | **No** | Explicitly prohibited in Privacy Policy Section 8 |
-| 5.6 | Student data used to train AI/ML models? | **No** | Prohibited per Privacy Policy Section 4.2. AI subprocessor (Anthropic) contractually prohibits training on customer data. |
+| 5.6 | Student data used to train AI/ML models? | **No** | Prohibited per Privacy Policy Section 4.2. ClassPilot uses Gemini API paid-tier processing for URL/title classification; MailPilot and the optional assistant use Anthropic under their respective customer-data terms. |
 | 5.7 | COPPA compliance mechanism? | **Yes** | Relies on school consent exception (34 CFR § 99.31(a)(1)) |
 | 5.8 | Parent right of access to student records? | **Yes** | 45-day response commitment in Privacy Policy Section 10 |
 | 5.9 | Parent right to amend / correct records? | **Yes** | 15 business-day response in Privacy Policy Section 10.2 |

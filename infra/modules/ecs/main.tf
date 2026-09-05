@@ -51,6 +51,9 @@ locals {
     var.anthropic_api_key_parameter_arn != "" ? [
       { name = "ANTHROPIC_API_KEY", valueFrom = var.anthropic_api_key_parameter_arn },
     ] : [],
+    var.gemini_api_key_parameter_arn != "" ? [
+      { name = "GEMINI_API_KEY", valueFrom = var.gemini_api_key_parameter_arn },
+    ] : [],
     var.telegram_bot_token_parameter_arn != "" ? [
       { name = "TELEGRAM_BOT_TOKEN", valueFrom = var.telegram_bot_token_parameter_arn },
     ] : [],

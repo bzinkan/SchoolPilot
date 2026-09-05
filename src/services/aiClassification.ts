@@ -6,6 +6,9 @@ import {
 } from "./runtimePerformanceMetrics.js";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_URL_CLASSIFICATION_MODEL = "gemini-3.5-flash-lite";
+const GEMINI_GENERATE_CONTENT_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_URL_CLASSIFICATION_MODEL}:generateContent`;
 
 let anthropic: Anthropic | null = null;
 if (ANTHROPIC_API_KEY) {
@@ -180,7 +183,83 @@ const KNOWN_UNSAFE: Map<string, "sexual" | "violence" | "drugs" | "self-harm"> =
 ]);
 
 export function isAiAvailable(): boolean {
-  return anthropic !== null;
+  return !!GEMINI_API_KEY;
+}
+
+type GeminiGenerateContentResponse = {
+  candidates?: Array<{
+    content?: {
+      parts?: Array<{ text?: unknown }>;
+    };
+  }>;
+};
+
+/**
+ * Browser URL/title classification deliberately uses Gemini Flash-Lite rather
+ * than the Anthropic client used below for MailPilot and the optional staff
+ * assistant. This keeps the high-volume heartbeat path on the lower-cost
+ * provider without changing email-monitoring behavior.
+ */
+async function classifyUrlWithGemini(
+  url: string,
+  title: string | undefined,
+  signal: AbortSignal,
+): Promise<string | null> {
+  if (!GEMINI_API_KEY) return null;
+
+  const response = await fetch(`${GEMINI_GENERATE_CONTENT_URL}?key=${encodeURIComponent(GEMINI_API_KEY)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal,
+    body: JSON.stringify({
+      contents: [{
+        role: "user",
+        parts: [{ text: `You are a K-12 school web content classifier. Given a URL and page title from a student's Chromebook, classify the content.
+
+Rules:
+- "educational": academic content, research, school tools, learning platforms
+- "non-educational": ONLY clearly distracting social media, gaming, streaming video, shopping, sports, chat, music, or entertainment
+- "unknown": can't determine, mixed-purpose, school/local organization pages, utilities, logins, curriculum vendors you do not recognize, or any ambiguous site
+- When unsure, choose "unknown" rather than "non-educational"
+- safetyAlert: ONLY flag genuinely concerning content (self-harm ideation, graphic violence, explicit sexual content, drug use/purchase). Do NOT flag normal news or health education.
+
+URL: ${url}
+Title: ${title || "Unknown"}` }],
+      }],
+      generationConfig: {
+        candidateCount: 1,
+        maxOutputTokens: 150,
+        temperature: 0,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: "OBJECT",
+          properties: {
+            category: {
+              type: "STRING",
+              enum: ["educational", "non-educational", "unknown"],
+            },
+            safetyAlert: {
+              type: "STRING",
+              enum: ["self-harm", "violence", "sexual", "drugs", "none"],
+            },
+          },
+          required: ["category", "safetyAlert"],
+          propertyOrdering: ["category", "safetyAlert"],
+        },
+        // Classification does not need deep reasoning. Keep the current
+        // Flash-Lite model at its lowest supported thinking level to limit
+        // billable reasoning tokens on unknown browsing domains.
+        thinkingConfig: { thinkingLevel: "MINIMAL" },
+      },
+    }),
+  });
+
+  if (!response.ok) return null;
+  const payload = await response.json() as GeminiGenerateContentResponse;
+  const text = payload.candidates?.[0]?.content?.parts?.find(
+    (part): part is { text: string } => typeof part.text === "string",
+  )?.text;
+  return text?.trim() || null;
 }
 
 function normalizeDomainValue(value?: string | null): string | null {
@@ -514,7 +593,7 @@ export async function classifyUrl(
     return null;
   }
 
-  if (!anthropic || options.useAiFallback === false) {
+  if (!GEMINI_API_KEY || options.useAiFallback === false) {
     return cacheClassification(cacheKey, {
       category: "unknown",
       safetyAlert: null,
@@ -528,31 +607,7 @@ export async function classifyUrl(
   const existingClassification = inFlightUrlClassifications.get(cacheKey);
   if (existingClassification) return existingClassification;
   const classification = (async (): Promise<AiClassification> => {
-    const response = await runBoundedProviderCall((signal) => anthropic!.messages.create({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 150,
-        messages: [
-          {
-            role: "user",
-            content: `You are a K-12 school web content classifier. Given a URL and page title from a student's Chromebook, classify the content. Respond ONLY with valid JSON, no other text:
-{"category":"educational"|"non-educational"|"unknown","safetyAlert":"self-harm"|"violence"|"sexual"|"drugs"|null}
-
-Rules:
-- "educational": academic content, research, school tools, learning platforms
-- "non-educational": ONLY clearly distracting social media, gaming, streaming video, shopping, sports, chat, music, or entertainment
-- "unknown": can't determine, mixed-purpose, school/local organization pages, utilities, logins, curriculum vendors you do not recognize, or any ambiguous site
-- When unsure, choose "unknown" rather than "non-educational"
-- safetyAlert: ONLY flag genuinely concerning content (self-harm ideation, graphic violence, explicit sexual content, drug use/purchase). Do NOT flag normal news or health education.
-
-URL: ${url}
-Title: ${title || "Unknown"}`,
-          },
-        ],
-      }, { signal }));
-
-    if (!response) return unknownUrlClassification(domain);
-
-    const text = response.content[0]?.type === "text" ? response.content[0].text.trim() : null;
+    const text = await runBoundedProviderCall((signal) => classifyUrlWithGemini(url, title, signal));
     if (!text) return unknownUrlClassification(domain);
 
     let parsed: Record<string, unknown>;

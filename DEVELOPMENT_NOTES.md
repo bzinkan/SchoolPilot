@@ -24,7 +24,7 @@ npm install
 4. Configure local env.
 
 - Copy `.env.example` to `.env`.
-- Fill local-only values for database, Redis, session/JWT/device secrets, Google, SendGrid, Stripe, Anthropic, and MailPilot as needed.
+- Fill local-only values for database, Redis, session/JWT/device secrets, Google, Gemini, SendGrid, Stripe, Anthropic, and MailPilot as needed.
 - Do not commit `.env`, real API keys, service-account JSON, Terraform state, or `infra/secrets.auto.tfvars`.
 
 5. Push schema and seed local data when needed.
@@ -123,7 +123,7 @@ npm run mobile:passpilot
 - Never read, paste, summarize, or commit real `.env` values.
 - Never commit `.env`, `.env.local`, Terraform state, `.terraform/`, or `infra/secrets.auto.tfvars`.
 - `.env.production` is listed as tracked in this checkout even though `.gitignore` contains it. Treat it as sensitive and avoid editing it unless deliberately rotating/replacing placeholders.
-- Do not log tokens, session IDs, OAuth refresh tokens, service account JSON, Stripe secrets, SendGrid keys, Anthropic keys, or JWT secrets.
+- Do not log tokens, session IDs, OAuth refresh tokens, service account JSON, Stripe secrets, SendGrid keys, Gemini or Anthropic keys, or JWT secrets.
 - Use Gitleaks and local pattern scans before pushing anything that touched config, docs, infra, auth, or env examples.
 - Preserve CSRF behavior for cookie-authenticated web requests.
 - Preserve bearer-token behavior for native apps and extension/device flows.

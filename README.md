@@ -29,7 +29,7 @@ React 19 + Vite app (schoolpilot-app/)
 Express API — Node.js 22, TypeScript, ESM (src/)
         +--> PostgreSQL (Drizzle ORM, row-level security)
         +--> Redis (cache + cross-instance pub/sub)
-        +--> Stripe, Google APIs, SendGrid, Anthropic
+        +--> Stripe, Google APIs/Gemini, SendGrid, Anthropic
 ```
 
 - **API**: Express with layered middleware — auth (session or JWT), school context, active-school and product-license checks, role guards, CSRF, and rate limiting.

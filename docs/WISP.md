@@ -53,7 +53,8 @@ All third-party service providers handling PII are reviewed annually and must si
 | **AWS (us-east-1)** | Hosting, database, storage | All customer data (SOC 2, ISO 27001, FERPA-aligned) |
 | **SendGrid** | Transactional email | Recipient addresses and configured message content, which can include student identity, activity/safety summaries, page title/domain, or MailPilot sender/subject/snippet fields |
 | **Stripe** | Payment processing | School billing info (PCI-DSS Level 1) |
-| **Anthropic Claude** | AI-assisted classification | ClassPilot URL strings and page titles, which can themselves contain identifying or user-entered values; enabled MailPilot content and authorized staff-assistant inputs are described in the public subprocessor notice |
+| **Google Gemini API** | AI-assisted URL/title classification | ClassPilot URL strings and page titles, which can themselves contain identifying or user-entered values |
+| **Anthropic Claude** | AI-assisted email/assistant workflows | Enabled MailPilot content and authorized staff-assistant inputs are described in the public subprocessor notice |
 | **Google OAuth / Workspace API** | Authentication, roster sync | Email, name, classroom rosters (verified for restricted scopes) |
 | **Sentry** | Application error monitoring when enabled | Allowlisted diagnostics with user, arbitrary context, tags/extras, tokens, names, emails, and full sensitive URLs removed before transmission |
 

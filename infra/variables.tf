@@ -305,6 +305,12 @@ variable "anthropic_api_key_parameter_arn" {
   default     = ""
 }
 
+variable "gemini_api_key_parameter_arn" {
+  description = "Existing SecureString SSM parameter ARN for GEMINI_API_KEY"
+  type        = string
+  default     = ""
+}
+
 variable "telegram_bot_token_parameter_arn" {
   description = "Existing SecureString SSM parameter ARN for TELEGRAM_BOT_TOKEN"
   type        = string

@@ -123,7 +123,7 @@ function buildAiFeatureInventory(rootDir) {
     {
       featureId: "classpilot_url_classification",
       status: aiClassification.includes("classifyUrl") ? "implemented" : "review_required",
-      provider: aiClassification.includes("@anthropic-ai/sdk") ? "Anthropic Claude" : "review_required",
+      provider: aiClassification.includes("classifyUrlWithGemini") ? "Google Gemini Flash-Lite" : "review_required",
       modelSource: "src/services/aiClassification.ts",
       controls: [
         aiClassification.includes("KNOWN_EDUCATIONAL") ? "local_known_educational_short_circuit" : "review_required",
@@ -150,7 +150,7 @@ function buildDataFlows() {
   return [
     {
       flowId: "classpilot_url_classification",
-      provider: "Anthropic",
+      provider: "Google Gemini",
       inputCategories: ["url_string", "page_title"],
       outputCategories: ["classification_category", "safety_alert", "confidence_or_reasoning_when_available"],
       minimizationControls: ["known-domain local rules", "school allowed-domain override", "no generated evidence copies URLs"],
@@ -306,6 +306,11 @@ export function buildAiPrivacyEvidence({
         name: "AI_CHAT_ENABLED",
         valueIncluded: false,
         purpose: "Runtime flag for optional AI chat availability.",
+      },
+      {
+        name: "GEMINI_API_KEY",
+        valueIncluded: false,
+        purpose: "Provider credential for Gemini-backed ClassPilot URL/title classification.",
       },
       {
         name: "ANTHROPIC_API_KEY",

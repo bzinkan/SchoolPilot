@@ -891,7 +891,7 @@ export default function ClassPilotLanding() {
               </h3>
               <p style={{ fontSize: '15px', color: '#475569', lineHeight: 1.7, margin: 0 }}>
                 Three tiers. <strong>Instant (0 seconds):</strong> a curated list of known-unsafe domains (pornography, graphic violence, drug marketplaces)
-                and unsafe search queries are blocked the moment the extension sees them. <strong>Within ~10 seconds:</strong> novel URLs are classified by Claude
+                and unsafe search queries are blocked the moment the extension sees them. <strong>Within ~10 seconds:</strong> novel URLs are classified by Gemini
                 on the next heartbeat cycle. If flagged unsafe, the tab is closed automatically and the teacher and administrator are alerted.
                 <strong> Never-blocked automatically:</strong> non-educational but safe sites (YouTube, news, etc.) are logged and shown to the teacher,
                 but not auto-closed — teachers decide what counts as off-task for their class.
@@ -900,11 +900,11 @@ export default function ClassPilotLanding() {
 
             <div style={{ background: '#fff', padding: '28px', borderRadius: '12px', border: '1px solid #e5e7eb' }}>
               <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#0f172a', marginTop: 0, marginBottom: '12px' }}>
-                What data do you send to third parties (like Anthropic)?
+                What data do you send to third parties (like Google)?
               </h3>
               <p style={{ fontSize: '15px', color: '#475569', lineHeight: 1.7, margin: 0 }}>
                 Only the <strong>URL string and page title</strong>. No student names, no emails, no student IDs, no PII.
-                Anthropic's API terms contractually prohibit training on customer data. See our{' '}
+                ClassPilot uses Google's Gemini API paid tier for this classification. See our{' '}
                 <a href="/ai-transparency" style={{ color: '#b45309' }}>AI Transparency</a> and{' '}
                 <a href="/subprocessors" style={{ color: '#b45309' }}>Subprocessors</a> pages for full details.
               </p>

@@ -75,6 +75,7 @@ alerts_sns_topic_arn = "arn:aws:sns:us-east-1:135775632425:schoolpilot-productio
 # Existing SecureString parameters for optional runtime secrets that must not
 # remain as plaintext ECS task environment values.
 anthropic_api_key_parameter_arn  = "arn:aws:ssm:us-east-1:135775632425:parameter/schoolpilot/production/ANTHROPIC_API_KEY"
+gemini_api_key_parameter_arn     = "arn:aws:ssm:us-east-1:135775632425:parameter/schoolpilot/production/GEMINI_API_KEY"
 telegram_bot_token_parameter_arn = "arn:aws:ssm:us-east-1:135775632425:parameter/schoolpilot/production/TELEGRAM_BOT_TOKEN"
 
 # ClassPilot TURN is part of the reviewed production baseline. Supply the

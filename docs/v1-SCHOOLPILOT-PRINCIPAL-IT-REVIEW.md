@@ -113,7 +113,7 @@ When a teacher ends a class session, an email is delivered to the teacher's scho
 
 ### 2.5 AI Off-Task Classification
 
-Students' active URLs and page titles are classified by an LLM (Anthropic Claude Haiku) into:
+Students' active URLs and page titles are classified by an LLM (Google Gemini Flash-Lite) into:
 - **On task** — relevant to the active assignment / class subject
 - **Borderline** — gray area; logged but not surfaced
 - **Off task** — clearly unrelated (games, social, video)

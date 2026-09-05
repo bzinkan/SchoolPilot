@@ -80,6 +80,10 @@ variable "anthropic_api_key_parameter_arn" {
   type    = string
   default = ""
 }
+variable "gemini_api_key_parameter_arn" {
+  type    = string
+  default = ""
+}
 variable "telegram_bot_token_parameter_arn" {
   type    = string
   default = ""

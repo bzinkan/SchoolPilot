@@ -153,16 +153,21 @@ export default function Subprocessors() {
                 </thead>
                 <tbody className="divide-y divide-slate-200">
                   <tr>
+                    <td className="px-4 py-3 text-slate-700"><strong>Google LLC</strong> (Gemini API)</td>
+                    <td className="px-4 py-3 text-slate-700">ClassPilot URL/title classification for student safety</td>
+                    <td className="px-4 py-3 text-slate-700">URL strings and page titles for ClassPilot classification</td>
+                  </tr>
+                  <tr>
                     <td className="px-4 py-3 text-slate-700"><strong>Anthropic PBC</strong> (Claude API)</td>
-                    <td className="px-4 py-3 text-slate-700">URL content classification for student safety; MailPilot email safety classification when enabled by a school; optional AI assistant when enabled for authorized school staff</td>
-                    <td className="px-4 py-3 text-slate-700">URL strings and page titles for ClassPilot classification. For MailPilot, student Gmail message text may be processed for safety classification when the school has enabled email monitoring. For the optional assistant, staff prompts and authorized, minimized tool results may be processed.</td>
+                    <td className="px-4 py-3 text-slate-700">MailPilot email safety classification when enabled by a school; optional AI assistant when enabled for authorized school staff</td>
+                    <td className="px-4 py-3 text-slate-700">For MailPilot, student Gmail message text may be processed for safety classification when the school has enabled email monitoring. For the optional assistant, staff prompts and authorized, minimized tool results may be processed.</td>
                   </tr>
                 </tbody>
               </table>
             </div>
             <p className="text-slate-600 text-sm mt-2">
-              Schoolpilot uses Anthropic's API for limited safety and assistant workflows. ClassPilot URL
-              classification sends URL strings and page titles. MailPilot email safety classification may
+              Schoolpilot uses Google's Gemini API for ClassPilot URL/title classification and Anthropic's
+              API for limited MailPilot and assistant workflows. MailPilot email safety classification may
               process student Gmail message text only when a school has separately enabled MailPilot.
               The optional AI assistant is disabled by default, limited by school role and product license,
               and designed to avoid model-bound sensitive fields such as attendance reasons and individual

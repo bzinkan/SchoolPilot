@@ -17,7 +17,7 @@ The project is built for schools that want a single account, roster, license, an
 - Realtime: Socket.io for GoPilot dismissal events, raw WebSocket for ClassPilot device/teacher communication, Redis pub/sub for cross-instance delivery.
 - Frontend: React 19, Vite, React Router, TanStack Query, Axios, Radix UI components, Tailwind CSS v4, lucide-react icons.
 - Mobile: Capacitor Android builds for GoPilot and PassPilot.
-- Integrations: Google OAuth, Google Classroom, Google Directory, Gmail/Pub/Sub for MailPilot, SendGrid, Stripe, Anthropic Claude API.
+- Integrations: Google OAuth, Google Classroom, Google Directory, Gemini Flash-Lite, Gmail/Pub/Sub for MailPilot, SendGrid, Stripe, Anthropic Claude API.
 - Infrastructure: Docker Compose for local Postgres/Redis/pgAdmin, Dockerfile for production API image, Terraform modules under `infra/`, GitHub Actions CI/CodeQL/Gitleaks/Trivy.
 
 ## Major User Outcomes

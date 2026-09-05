@@ -355,6 +355,7 @@ module "ecs" {
   # Optional services
   # Existing SecureString parameters managed outside Terraform tfvars.
   anthropic_api_key_parameter_arn  = var.anthropic_api_key_parameter_arn
+  gemini_api_key_parameter_arn     = var.gemini_api_key_parameter_arn
   telegram_bot_token_parameter_arn = var.telegram_bot_token_parameter_arn
   # Terraform provisions the nodes and grants the ECS execution role access to
   # the REST secret, but it deliberately leaves the bootstrap task templates

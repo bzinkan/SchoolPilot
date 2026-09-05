@@ -350,7 +350,8 @@ Copy `.env.example` to `.env`. Required for local dev:
 - `CLASSPILOT_SESSION_REPORT_V2_MODE` controls immutable session-report rollout with `legacy`, `shadow`, or `on`. Missing or malformed values fail closed to `legacy`. `shadow` persists, exposes, and emails the exact v1 contract while computing v2 without writes and emitting identifier-free aggregate mismatch, invariant, and timing metrics. `on` creates v2 rows; every materialization, API/CSV presentation, and email dispatch continues to follow the version stored on its report row, so existing v1 rows never change behavior when the environment changes.
 - `CLASSPILOT_TURN_HOSTS`, `CLASSPILOT_TURN_REST_SECRET`, and optional `CLASSPILOT_STUN_URLS` provide the dark `liveViewIceServersV1` runtime. Client outcome telemetry is accepted only for a still-active exact-bound negotiation and emits identifier-free metrics; deployment and alarm details live in `docs/CLASSPILOT_TURN_OPERATIONS.md`.
 - `SENDGRID_API_KEY` — SendGrid email service (session reports, safety alerts, welcome emails)
-- `ANTHROPIC_API_KEY` — Anthropic Claude API for AI content classification + chat assistant
+- `GEMINI_API_KEY` — Gemini Flash-Lite API for ClassPilot URL/title classification
+- `ANTHROPIC_API_KEY` — Anthropic Claude API for MailPilot email classification + optional chat assistant
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` — Stripe billing
 - `SENTRY_DSN` — (optional, gated off) Sentry error tracking. Leave unset until DPA signed + added to subprocessors. See "Sentry" section below.
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — (optional) developer error alerts via Telegram
@@ -560,7 +561,7 @@ Centralized error tracking in `src/services/errorMonitor.ts`. `trackError(catego
 `src/services/sentry.ts`. **No-op unless `SENTRY_DSN` is set.** Sentry is a third-party subprocessor — do NOT set the DSN in production until (1) Sentry's DPA is signed and (2) Sentry is on the public subprocessors list. Even when enabled, `beforeSend` scrubs PII (emails, JWT/API tokens) and drops request bodies/cookies/headers/user identifiers so student data does not leave the system. The durable `error_logs` table captures everything regardless of whether Sentry is on.
 
 ### AI Content Classification (ClassPilot)
-Claude Haiku classifies student browsing activity on each heartbeat. Uses `ANTHROPIC_API_KEY` (same key as AI chat).
+Gemini Flash-Lite classifies novel student browsing URLs/titles on each heartbeat. Uses `GEMINI_API_KEY`; Anthropic remains limited to MailPilot email review and the optional staff assistant.
 
 - **Service**: `src/services/aiClassification.ts` — `classifyUrl()` with 30-min domain cache
 - **Categories**: `educational`, `non-educational`, `unknown`

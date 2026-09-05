@@ -34,10 +34,11 @@ export default function AITransparency() {
           <section>
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">AI-Powered Content Classification</h2>
             <p className="text-slate-700 leading-relaxed">
-              SchoolPilot uses <strong>Anthropic's Claude API</strong> to support student-safety
-              classification in ClassPilot and, when a school enables MailPilot, email safety
-              classification. These features help schools identify unsafe content while keeping
-              AI use limited to the specific safety workflows the school has enabled.
+              SchoolPilot uses <strong>Google's Gemini API</strong> to support student-safety
+              classification in ClassPilot. When a school separately enables MailPilot, SchoolPilot
+              uses Anthropic's Claude API for email safety classification. These features help schools
+              identify unsafe content while keeping AI use limited to the specific safety workflows the
+              school has enabled.
             </p>
           </section>
 
@@ -45,7 +46,7 @@ export default function AITransparency() {
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">How It Works</h2>
             <p className="text-slate-700 leading-relaxed mb-4">
               When a student visits a website on a monitored Chromebook during a class session, SchoolPilot
-              may send the URL and page title to Anthropic's Claude API for classification. The AI determines
+              may send the URL and page title to Google's Gemini API for classification. The AI determines
               whether the content is:
             </p>
             <ul className="list-disc pl-6 space-y-2 text-slate-700">
@@ -117,10 +118,10 @@ export default function AITransparency() {
           <section>
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">Third-Party AI Provider</h2>
             <p className="text-slate-700 leading-relaxed">
-              Our AI classification workflows are powered by <strong>Anthropic</strong>, the maker of Claude.
-              Anthropic's usage policies and privacy practices can be found at{" "}
-              <a href="https://www.anthropic.com/policies" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
-                anthropic.com/policies
+              ClassPilot website classification is powered by <strong>Google Gemini</strong>. Google’s
+              Gemini API paid-tier data-use terms and privacy practices can be found at{" "}
+              <a href="https://ai.google.dev/gemini-api/terms" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+                Gemini API Terms
               </a>. SchoolPilot uses Anthropic's API. Anthropic's{" "}
               <a href="https://www.anthropic.com/legal/commercial-terms" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
                 Commercial Terms
@@ -129,7 +130,7 @@ export default function AITransparency() {
               <a href="https://privacy.claude.com/en/articles/7996868-is-my-data-used-for-model-training" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
                 Privacy Center
               </a>{" "}
-              explain Anthropic's training-use limits for customer API inputs and outputs.
+              explain the terms for MailPilot email safety classification and the optional staff assistant.
             </p>
           </section>
 

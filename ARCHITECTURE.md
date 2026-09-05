@@ -22,7 +22,7 @@ Express API (src/app.ts, src/index.ts)   |
         +--> PostgreSQL via Drizzle
         +--> Redis cache/pubsub
         +--> Stripe
-        +--> Google APIs
+        +--> Google APIs / Gemini
         +--> SendGrid
         +--> Anthropic
 ```
@@ -181,7 +181,8 @@ Heavy background work should use `schedulerDb` and not the main request pool.
 - Gmail/Pub/Sub: MailPilot email safety monitoring.
 - Stripe: billing, invoice checkout, product licenses.
 - SendGrid: operational emails, session summaries, safety/security alerts.
-- Anthropic: AI chat/tool assistant when configured.
+- Gemini Flash-Lite: ClassPilot URL/title classification.
+- Anthropic: MailPilot email safety classification and AI chat/tool assistant when configured.
 
 ## Deployment And CI
 

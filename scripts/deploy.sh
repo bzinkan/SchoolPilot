@@ -1670,7 +1670,7 @@ runtime_securestring_preflight() {
     const sets = JSON.parse(process.env.PARAMETER_SETS_JSON || "[]");
     if (!Array.isArray(sets) || sets.some((set) => !Array.isArray(set))) process.exit(1);
     const unique = [...new Set(sets.flat())];
-    if (unique.length < 10 || unique.length > 13) process.exit(1);
+    if (unique.length < 10 || unique.length > 14) process.exit(1);
     process.stdout.write(JSON.stringify(unique));
   '); then
     error "The runtime-secret preflight produced an unexpected parameter-name set."
@@ -6176,7 +6176,7 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     }
 
     function migratePlaintextSecrets(container) {
-      const secureStringNames = ["ANTHROPIC_API_KEY", "TELEGRAM_BOT_TOKEN"];
+      const secureStringNames = ["ANTHROPIC_API_KEY", "GEMINI_API_KEY", "TELEGRAM_BOT_TOKEN"];
       const secretsByName = new Map((container.secrets || []).map(item => [item.name, item]));
       const envNames = new Set((container.environment || []).map(item => item.name));
       for (const name of secureStringNames) {
