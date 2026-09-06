@@ -84,6 +84,8 @@ async function testSettings(browser) {
   let patchCount = 0;
   let lastPatch = null;
   let lastCalendarPut = null;
+  let lastCalendarPreview = null;
+  const calendarPreviewToken = 'a'.repeat(64);
   const calendarStates = new Map();
   let latestSettings = {
     dismissalTime: null, schoolTimezone: 'America/New_York', autoStartEnabled: false, pickupZones: [{ id: 'main', name: 'Main loop' }], revision: 3,
@@ -135,9 +137,21 @@ async function testSettings(browser) {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(current) });
       return;
     }
+    if (url.pathname.endsWith('/preview') && url.pathname.startsWith('/api/gopilot/instructional-calendar/') && request.method() === 'POST') {
+      lastCalendarPreview = request.postDataJSON();
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        previewToken: calendarPreviewToken, changedOccurrences: 0, changes: [], blockers: [],
+      }) });
+      return;
+    }
     if (url.pathname.startsWith('/api/gopilot/instructional-calendar/') && request.method() === 'PUT') {
       const month = url.pathname.split('/').at(-1);
       lastCalendarPut = request.postDataJSON();
+      if (lastCalendarPut.previewToken !== calendarPreviewToken || !lastCalendarPreview
+        || JSON.stringify(lastCalendarPut.nonInstructionalDates) !== JSON.stringify(lastCalendarPreview.nonInstructionalDates)) {
+        await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: 'Review a current calendar preview first.' }) });
+        return;
+      }
       const current = calendarStates.get(month);
       const saved = {
         ...current,
@@ -185,10 +199,16 @@ async function testSettings(browser) {
     const editableCalendarDay = page.locator('button[data-testid^="calendar-day-"]:not([disabled])').first();
     await editableCalendarDay.click();
     await page.getByText('Calendar has unsaved changes').waitFor();
-    await page.getByRole('button', { name: 'Save Month' }).click();
+    await page.getByRole('button', { name: 'Preview month changes', exact: true }).click();
+    await page.getByText('Calendar change preview', { exact: true }).waitFor();
+    assert.equal(lastCalendarPut, null, 'Preview must not persist calendar changes');
+    assert.equal(lastCalendarPreview.nonInstructionalDates.length, 1);
+    await page.getByRole('button', { name: 'Save reviewed month', exact: true }).click();
     await page.getByText('Calendar changes saved').waitFor();
     assert.equal(lastCalendarPut.expectedRevision, 0);
     assert.equal(lastCalendarPut.nonInstructionalDates.length, 1);
+    assert.equal(lastCalendarPut.previewToken, calendarPreviewToken);
+    assert.deepEqual(lastCalendarPut.nonInstructionalDates, lastCalendarPreview.nonInstructionalDates);
 
     await page.locator('#gopilot-dismissal-time').fill('15:30');
     page.once('dialog', async (dialog) => {
