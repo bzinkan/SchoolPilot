@@ -11,7 +11,7 @@ try{
     await new Promise(resolve=>setTimeout(resolve,200));
   }
   if(!ready)throw new Error('History browser fixture did not become ready.');
-  const child=spawn(process.env.PYTHON||'python',['scripts/browsing-history-browser.py'],{cwd:root,windowsHide:true,stdio:'inherit'});
+  const child=spawn(process.execPath,['scripts/browsing-history-browser.mjs'],{cwd:root,windowsHide:true,stdio:'inherit'});
   const code=await new Promise((resolve,reject)=>{child.once('error',reject);child.once('exit',resolve);});
   if(code!==0)process.exitCode=typeof code==='number'?code:1;
 }finally{server.kill();}
