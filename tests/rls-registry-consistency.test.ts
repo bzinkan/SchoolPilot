@@ -131,10 +131,14 @@ describe("semantic RLS registry", () => {
     ]);
   });
 
-  it("tests the expansion without preloading the production admission baseline", () => {
+  it("adopts the verified production inventory without changing the generic rollout baseline", () => {
     const expected = registry.inventories.classpilotRoadmapPostExpand.tables;
     assert.deepEqual(terraformDefaultAllowlist(), registry.inventories.schoolPilot270PostExpand.tables);
-    assert.deepEqual(productionAllowlist(), registry.inventories.schoolPilot270PostExpand.tables);
+    const production = productionAllowlist();
+    assert.equal(production.length, 90);
+    assert.equal(new Set(production).size, 90);
+    // Preserve observed runtime CSV order; the registry target has its own immutable order.
+    assert.deepEqual(new Set(production), new Set(expected));
     assert.deepEqual(ciAllowlist(), expected);
     assert.match(terraformMain, /src\/config\/rlsRegistry\.json/);
     assert.match(terraformMain, /check "rls_registry_contract"/);
