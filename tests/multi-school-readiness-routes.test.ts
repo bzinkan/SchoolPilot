@@ -39,6 +39,17 @@ const TAG = `msready${Date.now()}`;
 const schoolAEnrollmentKey = `${TAG}-school-a-setup-key`;
 const schoolBEnrollmentKey = `${TAG}-school-b-setup-key`;
 
+// This suite tests authority/readiness, with SQL now()-relative sessions expected
+// in today's school-local bucket. Keep both real clocks in the middle of that
+// day instead of allowing an arbitrary CI start near midnight to split fixtures.
+function readinessFixtureTimeZone(now: Date): string {
+  const offsetHours = 12 - now.getUTCHours();
+  // IANA Etc/GMT names use the opposite sign from their UTC offset.
+  return offsetHours === 0
+    ? "Etc/GMT"
+    : `Etc/GMT${offsetHours > 0 ? "-" : "+"}${Math.abs(offsetHours)}`;
+}
+
 let schoolA: any;
 let schoolB: any;
 let adminUser: any;
@@ -126,6 +137,7 @@ function authFor(user: any, schoolId: string): Record<string, string> {
 }
 
 before(async () => {
+  const fixtureTimeZone = readinessFixtureTimeZone(new Date());
   originalRedisUrl = process.env.REDIS_URL;
   process.env.REDIS_URL = "";
   mock.timers.enable({ apis: ["setInterval"] });
@@ -173,12 +185,14 @@ before(async () => {
     domain: `${TAG}-a.example.edu`,
     slug: `${TAG}-a`,
     status: "active",
+    schoolTimezone: fixtureTimeZone,
   } as any);
   schoolB = await createSchool({
     name: `${TAG}_B`,
     domain: `${TAG}-b.example.edu`,
     slug: `${TAG}-b`,
     status: "active",
+    schoolTimezone: fixtureTimeZone,
   } as any);
   await createProductLicense({ schoolId: schoolA.id, product: "CLASSPILOT", status: "active" } as any);
   await createProductLicense({ schoolId: schoolB.id, product: "CLASSPILOT", status: "active" } as any);
@@ -377,6 +391,48 @@ after(async () => {
 });
 
 describe("multi-school readiness route hardening", () => {
+  it("keeps relative-time fixtures in coherent SQL and JavaScript date buckets at every UTC hour", async () => {
+    // Includes 00:19 in New York in both summer and winter, plus daytime.
+    const cases = ["2026-09-06", "2026-01-06"].flatMap((date) =>
+      Array.from({ length: 24 }, (_, hour) => {
+        const now = new Date(`${date}T${String(hour).padStart(2, "0")}:19:00.000Z`);
+        return { now, timeZone: readinessFixtureTimeZone(now) };
+      })
+    );
+    const values = sql.join(cases.map(({ now, timeZone }, index) =>
+      sql`(${index}::integer, ${now.toISOString()}::timestamptz, ${timeZone}::text)`
+    ), sql`, `);
+    const result = await db.execute(sql`
+      WITH fixture(id, instant, timezone) AS (VALUES ${values})
+      SELECT id,
+        extract(hour from instant AT TIME ZONE timezone)::integer AS local_hour,
+        (instant AT TIME ZONE timezone)::date::text AS today,
+        ((instant - interval '50 minutes') AT TIME ZONE timezone)::date::text AS aggregate_start,
+        ((instant - interval '30 minutes') AT TIME ZONE timezone)::date::text AS scheduled_start,
+        ((instant - interval '3 hours') AT TIME ZONE timezone)::date::text AS earliest_today,
+        ((instant + interval '10 minutes') AT TIME ZONE timezone)::date::text AS live_deadline,
+        ((instant - interval '49 hours') AT TIME ZONE timezone)::date::text AS prior_start,
+        ((instant - interval '48 hours') AT TIME ZONE timezone)::date::text AS prior_date
+      FROM fixture ORDER BY id
+    `);
+    assert.equal(result.rows.length, cases.length);
+    for (const row of result.rows) {
+      const fixture = cases[Number(row.id)];
+      assert.ok(fixture, "SQL must return a known fixture case");
+      const { now, timeZone } = fixture;
+      const localDate = new Intl.DateTimeFormat("en-CA", {
+        timeZone, year: "numeric", month: "2-digit", day: "2-digit",
+      }).format(now);
+      assert.equal(row.local_hour, 12, `${now.toISOString()} in ${timeZone}`);
+      assert.equal(row.today, localDate, "SQL and JS must use the same school date");
+      for (const field of ["aggregate_start", "scheduled_start", "earliest_today", "live_deadline"]) {
+        assert.equal(row[field], localDate, `${field} must remain in today's fixture bucket`);
+      }
+      assert.equal(row.prior_start, row.prior_date);
+      assert.notEqual(row.prior_date, localDate, "the deliberately prior session must remain prior");
+    }
+  });
+
   it("serves privacy-safe Student Data aggregates and additive cursor roster pages", async () => {
     const foreignStudent = await inSchool(schoolB.id, () => createStudent({
       schoolId: schoolB.id,
@@ -2414,7 +2470,7 @@ describe("multi-school readiness route hardening", () => {
     assert.equal(sessionRes.status, 200);
     const sessionId = sessionRes.body.session.id;
     const busRoute = `${TAG}-BUS-7`;
-    const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: schoolA.schoolTimezone });
 
     const presentBusStudent = await inSchool(schoolA.id, () =>
       createStudent({
