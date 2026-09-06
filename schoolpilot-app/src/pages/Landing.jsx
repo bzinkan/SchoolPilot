@@ -464,7 +464,7 @@ export default function SchoolpilotLanding() {
       {/* AI Transparency one-liner */}
       <section style={{ padding: "20px 24px", background: "#f1f5f9", borderTop: "1px solid #e2e8f0", textAlign: "center" }}>
         <p style={{ fontSize: 14, color: "#64748b", margin: 0 }}>
-          SchoolPilot uses <strong style={{ color: "#475569" }}>Google's Gemini API</strong> for AI-powered content classification to help keep students safe online.{" "}
+          SchoolPilot uses AI-powered content classification to help keep students safe online.{" "}
           <a href="/ai-transparency" style={{ color: "#3b5bdb", textDecoration: "underline" }}>Learn more</a>
         </p>
       </section>

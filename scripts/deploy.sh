@@ -6177,10 +6177,13 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
 
     function migratePlaintextSecrets(container) {
       const secureStringNames = ["ANTHROPIC_API_KEY", "GEMINI_API_KEY", "TELEGRAM_BOT_TOKEN"];
+      const requiredSecretNames = new Set(
+        process.env.ENVIRONMENT === "production" ? ["GEMINI_API_KEY"] : []
+      );
       const secretsByName = new Map((container.secrets || []).map(item => [item.name, item]));
       const envNames = new Set((container.environment || []).map(item => item.name));
       for (const name of secureStringNames) {
-        if (envNames.has(name) || secretsByName.has(name)) {
+        if (requiredSecretNames.has(name) || envNames.has(name) || secretsByName.has(name)) {
           secretsByName.set(name, { name, valueFrom: ssmParameterArn(name) });
         }
       }
