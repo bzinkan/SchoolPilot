@@ -76,7 +76,6 @@ import {
 } from "../../services/storage.js";
 import type { ClasspilotSynchronousAuthorityResult } from
   "../../services/classpilotSynchronousAuthority.js";
-import { sendSafetyAlertEmail } from "../../services/email.js";
 import {
   InvalidTokenError,
   TokenExpiredError,
@@ -112,7 +111,12 @@ import {
   type WsRedisTarget,
 } from "../../realtime/ws-redis.js";
 import { classifyUrl } from "../../services/aiClassification.js";
+import { classpilotSafetyObservation, getClasspilotMonitoringPolicy, requireClasspilotFullMonitoring, resolveClasspilotMonitoringPolicy } from "../../services/classpilotMonitoringPolicy.js";
+import { processClasspilotAfterHoursSafety } from "../../services/classpilotAfterHoursSafety.js";
+import { getSchoolWebsitePolicy, recordSchoolWebsitePolicyAck } from "../../services/classpilotSchoolWebsitePolicy.js";
 import { recordBrowserSafetyTimeline } from "./competitive.js";
+import { classpilotTeacherIntentForUrl, schoolAllowedDomainsForTaskIntent } from "../../services/classpilotTeacherIntent.js";
+import { isSafetyUrlSuppressed } from "../../services/safetyCenter.js";
 import { runWithTenantContext } from "../../middleware/tenantContext.js";
 import { scopedDeviceTargets } from "../../services/classpilotDeviceScope.js";
 import { classPilotStudentDto, classPilotStudentDtos } from "../../util/safeStudent.js";
@@ -208,7 +212,6 @@ import {
 } from "../../services/classpilotStudentSessionLifecycle.js";
 import {
   describeClasspilotSafetyReason,
-  isClasspilotSafetyExempt,
   resolveCurrentClasspilotSafetyAction,
 } from "../../services/classpilotSafetyAction.js";
 import { loadClasspilotSafetyContext } from "../../services/classpilotSafetyContext.js";
@@ -265,7 +268,6 @@ import {
   classpilotScreenshotAvailableEvent,
 } from "../../services/classpilotScreenshotAvailability.js";
 import { classpilotScreenshotFallback } from "../../services/classpilotScreenshotFallback.js";
-import { claimClasspilotSafetyAlert } from "../../services/classpilotSafetyCooldown.js";
 import {
   classpilotLiveViewNegotiationAuthority,
   isClasspilotLiveViewNegotiationActive,
@@ -795,6 +797,8 @@ function safeTileHeartbeat(heartbeat: Heartbeat) {
     isSharing: heartbeat.isSharing,
     cameraActive: heartbeat.cameraActive,
     aiCategory: heartbeat.aiCategory,
+    contentCategory: heartbeat.contentCategory ?? null,
+    teacherIntentSource: heartbeat.teacherIntentSource ?? null,
     safetyAlert: heartbeat.safetyAlert,
     extensionVersion: heartbeat.extensionVersion,
     chromeVersion: heartbeat.chromeVersion,
@@ -1088,6 +1092,31 @@ function realtimeControlAuthority(
     supervisionContextId: state.supervisionContextId,
     revision: state.revision,
   };
+}
+
+/** Called only from the upload authority callback while its transaction locks are held. */
+async function publishLockedScreenshotAvailable(binding: ClassBoundScreenshotBinding, data: ScreenshotData) {
+  const startedAt = Date.now();
+  const orderedKey = `${classpilotRealtimeOrderingKey(binding.schoolId, binding.deviceId)}:${CLASSPILOT_SCREENSHOT_AVAILABLE_ORDERING_NAMESPACE}:session:${binding.teachingSessionId}`;
+  const revision = String(data.timestamp);
+  const message = classpilotScreenshotAvailableEvent({
+    studentId: binding.studentId, capturedAt: data.capturedAt ?? new Date(data.timestamp).toISOString(), timestamp: data.timestamp,
+  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 300);
+  timeout.unref?.();
+  try {
+    const outcome = await publishOrderedWS({
+      kind: "staff-session", schoolId: binding.schoolId, sessionId: binding.teachingSessionId,
+    }, message, { orderedKey, revision, signal: controller.signal });
+    if ((outcome.status === "accepted" || outcome.status === "failed")
+      && recordLocalOrderedDelivery(orderedKey, revision)) {
+      broadcastToStaffSessionLocal(binding.schoolId, binding.teachingSessionId, message);
+    }
+  } finally {
+    clearTimeout(timeout);
+    recordHeartbeatHotPathTiming("screenshotPublicationMs", Date.now() - startedAt);
+  }
 }
 
 async function publishRevisionedRealtimeUpdate(
@@ -1567,10 +1596,14 @@ async function completeStudentDeviceLogin<
             // never rejected as stale.
           })
         : { classroomState: null, withheld: false };
-      const classroomState = loginDelivery.classroomState;
+      const loginMonitoringPolicy = resolveClasspilotMonitoringPolicy(await getHeartbeatTrackingSettingsForSchool(options.schoolId, transactionDb, { lock: true }), {
+        acceptedCapabilities: loginProtocol.acceptedCapabilities,
+      });
+      const classroomState = loginMonitoringPolicy.mode === "full" ? loginDelivery.classroomState : null;
       return {
         success: true as const,
         ...loginProtocol,
+        monitoringPolicy: loginMonitoringPolicy,
         schoolId: options.schoolId,
         studentId: student.id,
         studentSessionId: session.id,
@@ -2544,13 +2577,14 @@ router.get("/extension/login-roster", extensionRosterLimiter, async (req, res, n
 // ============================================================================
 
 // GET /api/classpilot/extension/settings - Extension settings (requires device JWT)
-router.get("/extension/settings", requireDeviceAuth, requireClasspilotEntitlement, async (_req, res, next) => {
+router.get("/extension/settings", requireDeviceAuth, requireClasspilotEntitlement, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId as string;
     const studentId = res.locals.studentId as string;
     const deviceId = res.locals.deviceId as string;
     const studentSessionId = res.locals.studentSessionId as string;
     const schoolSettings = await getSettingsForSchool(schoolId);
+    const schoolWebsitePolicy = await getSchoolWebsitePolicy(schoolId);
     const school = await getSchoolById(schoolId);
     if (!school) {
       return res.status(404).json({ error: "School not found" });
@@ -2567,6 +2601,14 @@ router.get("/extension/settings", requireDeviceAuth, requireClasspilotEntitlemen
       && !classpilotControlStateHasLateSignInOrigin(controlState.desiredState)
       ? controlState.revision
       : 0;
+    const settingsProtocol = negotiateClasspilotSurfaceProtocol({
+      surface: "heartbeat", payload: {
+        clientProtocolVersion: Number(req.query.clientProtocolVersion),
+        capabilities: typeof req.query.capabilities === "string" ? req.query.capabilities.split(",") : [],
+      }, scope: { schoolId, studentId, studentSessionId, deviceId: res.locals.deviceId },
+    });
+    const monitoringSettings = await getHeartbeatTrackingSettingsForSchool(schoolId, undefined, { bypassCache: true });
+    const monitoringPolicy = resolveClasspilotMonitoringPolicy(monitoringSettings, { acceptedCapabilities: settingsProtocol.acceptedCapabilities });
     const settingsFab = {
       ...fab,
       ownershipRevision: settingsControlRevision,
@@ -2589,16 +2631,21 @@ router.get("/extension/settings", requireDeviceAuth, requireClasspilotEntitlemen
       trackingDays: schoolSettings?.trackingDays ?? null,
       schoolTimezone: schoolSettings?.schoolTimezone || school.schoolTimezone || null,
       afterHoursMode: schoolSettings?.afterHoursMode ?? "off",
+      instructionalCalendar: monitoringSettings?.instructionalCalendar ?? {},
+      schedulingDateOverrides: monitoringSettings?.schedulingDateOverrides ?? {},
+      monitoringPolicy,
+      ...settingsProtocol,
+      ...schoolWebsitePolicy,
       sharedChromebookSignInEnabled: !!schoolSettings?.sharedChromebookSignInEnabled,
       sharedChromebookLoginMethod: effectiveSharedChromebookLoginMethod(schoolSettings),
       sharedChromebookPinLoginEnabled: effectiveSharedChromebookLoginMethod(schoolSettings) === "name_pin",
       maxTabsPerStudent: schoolSettings?.maxTabsPerStudent
         ? parseInt(schoolSettings.maxTabsPerStudent, 10)
         : null,
-      fab: settingsFab,
-      messagingEnabled: settingsFab.messagingEnabled,
-      handRaisingEnabled: settingsFab.handRaisingEnabled,
-      handRaised: settingsFab.handRaised,
+      fab: monitoringPolicy.policyMode === "full" ? settingsFab : { ...settingsFab, messagingEnabled: false, handRaisingEnabled: false, handRaised: false },
+      messagingEnabled: monitoringPolicy.policyMode === "full" && settingsFab.messagingEnabled,
+      handRaisingEnabled: monitoringPolicy.policyMode === "full" && settingsFab.handRaisingEnabled,
+      handRaised: monitoringPolicy.policyMode === "full" && settingsFab.handRaised,
     });
   } catch (err) {
     next(err);
@@ -3516,6 +3563,23 @@ router.post("/device/command-acks", requireDeviceAuth, requireClasspilotEntitlem
 });
 
 // POST /api/classpilot/device/live-view/ice-servers - exact-bound short-lived TURN credentials
+router.post("/device/school-policy-acks", requireDeviceAuth, requireClasspilotEntitlement, deviceActionLimiter, async (req, res, next) => {
+  try {
+    const { policyRevision, status, closedTabCount, errorCode } = req.body;
+    if (!Number.isSafeInteger(policyRevision) || policyRevision < 0
+      || !["applied", "failed"].includes(status) || !Number.isSafeInteger(closedTabCount)
+      || closedTabCount < 0 || closedTabCount > 1_000
+      || (errorCode !== undefined && !["POLICY_APPLY_FAILED", "TAB_ENFORCEMENT_FAILED"].includes(errorCode))) {
+      return res.status(400).json({ code: "SCHOOL_WEBSITE_ACK_INVALID" });
+    }
+    const result = await recordSchoolWebsitePolicyAck({
+      schoolId: res.locals.schoolId!, studentId: res.locals.studentId!,
+      studentSessionId: res.locals.studentSessionId!, deviceId: res.locals.deviceId!,
+    }, { policyRevision, status, closedTabCount, errorCode });
+    return res.json({ policyRevision, ...result });
+  } catch (error) { next(error); }
+});
+
 router.post(
   "/device/live-view/ice-servers",
   // TURN credentials are an active capability, not compatibility cleanup.
@@ -3524,6 +3588,7 @@ router.post(
   requireDeviceAuthWithoutTenant,
   requireClasspilotEntitlement,
   deviceActionLimiter,
+  requireClasspilotFullMonitoring,
   async (req, res, next) => {
     setClassPilotNoStore(res);
     try {
@@ -3745,9 +3810,10 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       // Cache only the non-secret tracking projection. Enrollment and other
       // security settings are always read through the uncached full-row helper.
       const trackingSettings = await getHeartbeatTrackingSettingsForSchool(schoolId);
-      if (trackingSettings && !isWithinTrackingWindow(trackingSettings)) {
-        const afterMode = trackingSettings.afterHoursMode || "off";
-        if (afterMode === "off") {
+      const monitoringPolicy = resolveClasspilotMonitoringPolicy(trackingSettings, {
+        acceptedCapabilities: protocol.acceptedCapabilities,
+      });
+      if (monitoringPolicy.mode !== "full") {
           const authority = await refreshStudentSessionAuthorityWithoutTelemetry({
             schoolId,
             studentId,
@@ -3755,9 +3821,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
             studentSessionId,
           });
           if (authority.outcome !== "accepted") return authority;
-          return { outcome: "outside_tracking_window", authority } as const;
-        }
-        // "limited" or "full" mode: continue processing.
+          return { outcome: "outside_tracking_window", authority, monitoringPolicy, trackingSettings } as const;
       }
 
       // The route middleware already performed the canonical uncached
@@ -3923,7 +3987,23 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
         authorityExpiresAtMs:
           heartbeatDbResult.authority.authorityExpiresAt?.getTime() ?? null,
       }, MAX_DEVICE_HEARTBEAT_ENTRIES);
-      return res.status(204).send();
+      const monitoringPolicy = heartbeatDbResult.monitoringPolicy;
+      const observation = monitoringPolicy.mode === "safety_only"
+        ? classpilotSafetyObservation(req.body) : null;
+      if (observation && (!lastAcceptedBindingMatches || now - (lastHb?.acceptedAt ?? 0) >= HEARTBEAT_MIN_INTERVAL_MS)) {
+        void trackHeartbeatClassificationProducer(processClasspilotAfterHoursSafety({
+          schoolId, studentId, studentSessionId, deviceId, ...observation,
+          acceptedCapabilities: protocol.acceptedCapabilities,
+        })).catch(() => { /* No browser data enters diagnostics. */ });
+      }
+      return res.json({
+        ok: true, schoolId, studentId, studentSessionId,
+        exactBinding: { studentId, studentSessionId },
+        ...protocol, monitoringPolicy,
+        trackingSettings: heartbeatDbResult.trackingSettings,
+        screenshotPolicy: { mode: "lease", observed: false, expiresInSeconds: 0, serverTime: new Date().toISOString() },
+        pendingMessages: [],
+      });
     }
     if (heartbeatDbResult.outcome === "inactive_school") {
       return res.status(402).json({ planStatus: "inactive" });
@@ -4091,6 +4171,8 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       isSharing: isScreenSharing || isScreenRecording || false,
       cameraActive: cameraActive || false,
       aiCategory: null,
+      contentCategory: null,
+      teacherIntentSource: null,
       safetyAlert: null,
       extensionVersion: extensionVersion ?? null,
       chromeVersion: chromeVersion ?? null,
@@ -4257,6 +4339,18 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
           return;
         }
 
+        if (classification.safetyAlert) {
+          const suppressed = await runWithTenantContext({ schoolId }, () => isSafetyUrlSuppressed(schoolId, activeTabUrl));
+          if (suppressed) classification = { ...classification, safetyAlert: null };
+        }
+
+        if (classification.category === "non-educational") {
+          classification = { ...classification, teacherIntentSource: classpilotTeacherIntentForUrl(activeTabUrl, {
+            allowedDomains: await schoolAllowedDomainsForTaskIntent(schoolId),
+            flightPath: classroomState?.restrictions?.flightPath,
+          }) };
+        }
+
         // Critical classifications persist immediately. Educational/unknown
         // results retain the same historical fields but share one school-bound
         // transaction in batches of at most 100 rows / 250 ms.
@@ -4265,6 +4359,8 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
           deviceId,
           heartbeatId: heartbeat.id,
           aiCategory: classification.category,
+          contentCategory: classification.contentCategory ?? null,
+          teacherIntentSource: classification.teacherIntentSource ?? null,
           safetyAlert: classification.safetyAlert,
           cacheWrite: completedHeartbeatTileCacheWrite,
         }).catch(() => {});
@@ -4280,12 +4376,16 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
           heartbeatId: heartbeat.id,
           classification: {
             category: classification.category,
+            contentCategory: classification.contentCategory ?? null,
+            teacherIntentSource: classification.teacherIntentSource ?? null,
             safetyAlert: classification.safetyAlert,
           },
         });
         if (realtimeClassification.snapshot) {
           updateDeviceClassification(schoolId, deviceId, {
             category: classification.category,
+            contentCategory: classification.contentCategory ?? null,
+            teacherIntentSource: classification.teacherIntentSource ?? null,
             safetyAlert: classification.safetyAlert,
           });
           await publishRevisionedRealtimeUpdate(realtimeClassification.snapshot, {
@@ -4311,107 +4411,14 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
         });
 
         // Historical classification persistence above remains valid for a
-        // stale result, but no live close, evidence, staff alert, or email may
+        // stale result, but no evidence, staff alert, or email may
         // escape unless this exact heartbeat still owns the active binding.
         if (safetyAction) {
-          // Loaded once per safety hit (never per heartbeat): the school
-          // allow-list decides whether any side effect may run, the auto-close
-          // setting decides whether the tab is closed, and the student's name
-          // lets staff surfaces say who needs attention.
+          // Ordinary allowed-site/Flight Path rules express teaching intent.
+          // Only exact administrator Safety URL approvals suppress safety alerts.
           const safetyContext = await loadClasspilotSafetyContext({ schoolId, studentId });
-          const activeFlightPath = classroomState?.restrictions?.flightPath;
-          const safetyAllowedDomains = [
-            ...safetyContext.allowedDomains,
-            ...(activeFlightPath?.active ? activeFlightPath.allowedDomains ?? [] : []),
-          ];
-          if (isClasspilotSafetyExempt({
-            url: safetyAction.classifiedUrl,
-            classification,
-            allowedDomains: safetyAllowedDomains,
-          })) {
-            console.info("[Safety] Allow-listed domain; no close, alert, case, or email", {
-              schoolId,
-              source: classification.source ?? null,
-            });
-            return;
-          }
-          const { autoBlockUnsafeUrls, studentName } = safetyContext;
+          const { studentName } = safetyContext;
           const safetyReason = describeClasspilotSafetyReason(classification);
-
-          const sendSafetyClose = async (safetyEvidenceRequest?: {
-            requestId: string;
-            tabRef: string;
-            snapshotRevision: number;
-            expiresAt: string;
-          }) => {
-            // Alert-only mode: staff are still notified and the case is
-            // recorded, but the student's tab is left open.
-            if (!autoBlockUnsafeUrls) return;
-            if (!safetyAction.closeTabData) return;
-            const exactBindingEnvelope = safetyAction.exactTabCloseVersion === 2
-              ? await runWithTenantContext({ schoolId }, () =>
-                  revalidateClasspilotSafetyExactBinding({
-                    schoolId,
-                    studentId,
-                    studentSessionId,
-                    deviceId,
-                    expectedControlRevision: controlState?.revision ?? 0,
-                    deliveredControlRevision: classroomState?.revision ?? 0,
-                  })
-                ).then((binding) => binding ? ({
-                  exactBinding: classpilotControlStateExactBinding({
-                    schoolId,
-                    deviceId,
-                    studentId,
-                    studentSessionId,
-                    controlRevision: binding.controlRevision,
-                  }),
-                }) : null)
-              : {};
-            if (exactBindingEnvelope === null) return;
-            const safetyCommandIssuedAt = new Date();
-            const safetyCommandExpiresAt = classpilotCommandExpiresAt(
-              "close-tab",
-              safetyCommandIssuedAt
-            )!;
-            const closeCmd = {
-              type: "remote-control",
-              _msgId: crypto.randomUUID(),
-              studentId,
-              studentSessionId,
-              ...exactBindingEnvelope,
-              deliveryPolicy: classpilotCommandDeliveryPolicy("close-tab"),
-              expiresAt: safetyCommandExpiresAt.toISOString(),
-              command: {
-                type: "close-tab",
-                studentId,
-                studentSessionId,
-                ...exactBindingEnvelope,
-                deliveryPolicy: classpilotCommandDeliveryPolicy("close-tab"),
-                expiresAt: safetyCommandExpiresAt.toISOString(),
-                ...classpilotSchoolPolicyAuthorityEnvelope(schoolId, "ai_safety"),
-                data: {
-                  ...safetyAction.closeTabData,
-                  studentId,
-                  studentSessionId,
-                  ...(safetyEvidenceRequest ? { safetyEvidenceRequest } : {}),
-                },
-              },
-            };
-            sendToDeviceLocal(schoolId, deviceId, closeCmd);
-            void publishWS({ kind: "device", schoolId, deviceId }, closeCmd);
-          };
-
-          // One HMAC-keyed Redis SET NX EX elects the task that emits alerts.
-          // Exact-bound tab closure never depends on a successful alert claim.
-          if (!(await claimClasspilotSafetyAlert({
-            schoolId,
-            deviceId,
-            domain: classification.domain,
-          }))) {
-            await sendSafetyClose();
-            return;
-          }
 
           // The request's original RLS checkout is already released. Rebind
           // the exact school for the timeline and evidence-request transaction.
@@ -4424,7 +4431,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
               url: safetyAction.classifiedUrl,
               title: safetyAction.classifiedTitle,
               classification,
-              actionTaken: autoBlockUnsafeUrls ? "close-tab" : "alert-only",
+              actionTaken: "alert-only",
             }).catch(() => null);
             let captureRequest: {
               requestId: string;
@@ -4432,37 +4439,9 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
               snapshotRevision: number;
               expiresAt: string;
             } | undefined;
-            if (
-              timelineRecord?.caseId
-              && safetyAction.evidenceTarget
-              && protocol.acceptedCapabilities.includes("safetyEvidenceCaptureV1")
-            ) {
-              try {
-                const created = await createClasspilotEvidenceCaptureRequest({
-                  schoolId,
-                  deviceId,
-                  studentId,
-                  studentSessionId,
-                  teachingSessionId: safetyAction.teachingSessionId,
-                  caseId: timelineRecord.caseId,
-                  heartbeatId: heartbeat.id,
-                  tabRef: safetyAction.evidenceTarget.tabRef,
-                  tabSnapshotRevision: safetyAction.evidenceTarget.snapshotRevision,
-                  expectedUrl: safetyAction.classifiedUrl,
-                });
-                captureRequest = {
-                  ...created,
-                  tabRef: safetyAction.evidenceTarget.tabRef,
-                  snapshotRevision: safetyAction.evidenceTarget.snapshotRevision,
-                };
-              } catch {
-                // Fall through to the exact-validated ambient evidence path.
-              }
-            }
-
             // Legacy/capture-unavailable compatibility: attach an ambient
             // image only after exact tuple, URL and freshness validation.
-            if (timelineRecord?.caseId && !captureRequest) {
+            if (timelineRecord?.created && timelineRecord.caseId && !captureRequest) {
               try {
                 const evidenceBinding: ScreenshotBinding = {
                   schoolId,
@@ -4518,7 +4497,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
             }
             return { timelineRecord, captureRequest };
           });
-          await sendSafetyClose(safetyRecord.captureRequest);
+          if (!safetyRecord.timelineRecord?.created) return;
 
           const alert = {
             type: "safety-alert",
@@ -4531,7 +4510,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
             matchedTerm: classification.matchedTerm ?? null,
             source: classification.source ?? null,
             reason: safetyReason,
-            actionTaken: autoBlockUnsafeUrls ? "close-tab" : "alert-only",
+            actionTaken: "alert-only",
             timestamp: new Date().toISOString(),
           };
           const alertSessionId = safetyAction.teachingSessionId;
@@ -4540,33 +4519,6 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
             void publishWS({ kind: "staff-session", schoolId, sessionId: alertSessionId }, alert);
           }
 
-          // Send email to school admins if enabled
-          runWithTenantContext({ schoolId }, async () => {
-            const freshSettings = await getSettingsForSchool(schoolId);
-            if (freshSettings?.aiSafetyEmailsEnabled === false) return [];
-            return addCentralEmailRecipientForSchool(
-              schoolId,
-              await getAdminEmailsBySchool(schoolId)
-            );
-          }).then((recipients) => {
-              if (recipients.length > 0) {
-                void sendSafetyAlertEmail({
-                  recipients,
-                  studentEmail,
-                  studentName,
-                  alertType: classification.safetyAlert!,
-                  url: safetyAction.classifiedUrl,
-                  title: safetyAction.classifiedTitle || "Unknown",
-                  schoolName: school?.name || "Your School",
-                  matchedTerm: classification.matchedTerm ?? null,
-                });
-              }
-          }).catch((err) => {
-            console.error("[Safety] Failed to send alert emails");
-          });
-
-          // AI handles unsafe content in real-time (tab close + safety alert above).
-          // Domains are NOT auto-added to the school blocklist — only admin-entered domains go there.
         }
       });
       void trackHeartbeatClassificationProducer(classificationProducer)
@@ -4850,7 +4802,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
 // ============================================================================
 
 // POST /api/classpilot/device/screenshot - Upload screenshot
-router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspilotEntitlement, deviceScreenshotLimiter, async (req, res, next) => {
+router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspilotEntitlement, deviceScreenshotLimiter, requireClasspilotFullMonitoring, async (req, res, next) => {
   setClassPilotNoStore(res);
   try {
     const {
@@ -5020,6 +4972,8 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
           : { status: "unavailable", expiresInSeconds: 0 }
       );
 
+      const screenshotAuthorityStartedAt = Date.now();
+      recordHeartbeatHotPathCounter("screenshotAuthorityTransactions");
       const strictResult = await runWithTenantContext(
         { schoolId },
         () => withClasspilotScreenshotUploadAuthority({
@@ -5095,7 +5049,9 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
             ...classBinding,
             bindingVersion: classBoundScreenshotBindingVersion(classBinding),
           };
+          const screenshotStoreStartedAt = Date.now();
           const stored = await setClassBoundScreenshot(classBinding, data);
+          recordHeartbeatHotPathTiming("screenshotStoreMs", Date.now() - screenshotStoreStartedAt);
           const screenshotStoreRequired = classpilotScreenshotStoreRequired();
           if (!stored && !screenshotStoreRequired) {
             classpilotScreenshotFallback.setClassBound(classBinding, data);
@@ -5112,6 +5068,18 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
               revisionIssuedAt: current.controlRevisionIssuedAt ?? current.authorityStartedAt,
               capturedAt: capturedAtDate,
             });
+            if (screenshotRealtimeSnapshot) {
+              const observation = cadenceObservationFor(classBinding.teachingSessionId);
+              if (screenshotPolicy.captureCadence?.mode === "background" && observation.status === "unobserved") {
+                recordHeartbeatHotPathCounter("screenshotAvailableBroadcastSkipped");
+              } else {
+                // Storage and publication share the same authority check. A handoff
+                // cannot acquire the student lock between these two operations.
+                await publishLockedScreenshotAvailable(classBinding, data).catch(() => {
+                  recordHeartbeatHotPathCounter("screenshotAvailableBroadcastFailures");
+                });
+              }
+            }
           }
           return {
             outcome,
@@ -5122,6 +5090,7 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
         })
       );
 
+      recordHeartbeatHotPathTiming("screenshotAuthorityMs", Date.now() - screenshotAuthorityStartedAt);
       if (strictResult.status !== "accepted") {
         recordHeartbeatHotPathCounter(
           strictResult.status === "superseded"
@@ -5233,55 +5202,6 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
       }
       recordHeartbeatHotPathCounter("screenshotUploadAccepted");
 
-      screenshotControlAuthority = {
-        teachingSessionId: strictValue.classBinding.teachingSessionId,
-        supervisionContextId: null,
-        revision: strictValue.classBinding.controlRevision,
-      };
-      const strictCaptureCadence = strictValue.screenshotPolicy.mode === "tracking_window_lease"
-        ? strictValue.screenshotPolicy.captureCadence
-        : undefined;
-      // The background cadence is issued for two different facts: nobody is
-      // watching, and we could not find out. Only the first may suppress the
-      // announcement - an indeterminate read has to publish, or a teacher who
-      // just took the class over waits out the aggregate poll for a frame that
-      // is already stored.
-      const strictObservation = cadenceObservationFor(
-        strictValue.classBinding.teachingSessionId
-      );
-      if (screenshotRealtimeSnapshot && screenshotControlAuthority) {
-        if (
-          strictCaptureCadence?.mode === "background"
-          && strictObservation.status === "unobserved"
-        ) {
-          // Nobody holds an observation lease on this student, so the only
-          // consumer of the event is a wall that is not watching. The publish
-          // is a second full transaction on the hottest route we have (an
-          // exclusive per-student advisory lock plus FOR SHARE reads), and the
-          // aggregate poll below is already authoritative for the unobserved
-          // tail. Skipping it cannot regress ordered delivery: revisions are
-          // monotonic capture timestamps, so no unpublished frame can raise a
-          // high-water mark above a later observed publish.
-          recordHeartbeatHotPathCounter("screenshotAvailableBroadcastSkipped");
-        } else {
-          const screenshotAvailable = classpilotScreenshotAvailableEvent({
-            studentId,
-            capturedAt: strictValue.data.capturedAt,
-            timestamp: strictValue.data.timestamp,
-          });
-          void publishRevisionedRealtimeUpdate(
-            screenshotRealtimeSnapshot,
-            screenshotAvailable,
-            screenshotControlAuthority,
-            {
-              orderingNamespace: CLASSPILOT_SCREENSHOT_AVAILABLE_ORDERING_NAMESPACE,
-              orderingRevision: String(strictValue.data.timestamp),
-            }
-          ).catch(() => {
-            recordHeartbeatHotPathCounter("screenshotAvailableBroadcastFailures");
-          });
-        }
-      }
       return res.json({
         ok: true,
         retained: true,
@@ -5388,7 +5308,7 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
 });
 
 // POST /api/classpilot/tiles/screenshots - Get one authorized screenshot cohort
-router.post("/tiles/screenshots", ...tileReadAuth, async (req, res, next) => {
+router.post("/tiles/screenshots", ...tileReadAuth, requireClasspilotFullMonitoring, async (req, res, next) => {
   setClassPilotNoStore(res);
   try {
     const parsed = parseTileStudentIds(req.body);
@@ -5685,7 +5605,7 @@ router.post("/tiles/history", ...tileReadAuth, async (req, res, next) => {
 });
 
 // GET /api/classpilot/device/screenshot/:deviceId - Get screenshot
-router.get("/device/screenshot/:deviceId", ...deviceAdminAuth, async (req, res, next) => {
+router.get("/device/screenshot/:deviceId", ...deviceAdminAuth, requireClasspilotFullMonitoring, async (req, res, next) => {
   try {
     const deviceId = param(req, "deviceId");
     const authorization = await withAuthorizedTileDevice(

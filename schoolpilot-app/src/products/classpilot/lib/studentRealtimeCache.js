@@ -1,4 +1,5 @@
 import { normalizeObservedAtForOrdering } from './studentMonitoringDisplay.js';
+import { contentCategory } from './contentCategories.js';
 
 const REALTIME_FIELDS = Object.freeze([
   'activeTabUrl',
@@ -17,6 +18,7 @@ const REALTIME_FIELDS = Object.freeze([
   'activeFlightPathName',
   'aiClassification',
   'aiCategory',
+  'contentCategory',
   'screenshotHealth',
   'realtimeBinding',
   'realtimeRevision',
@@ -102,6 +104,7 @@ function resetForRealtimeBinding(row, binding) {
     activeFlightPathName: undefined,
     aiClassification: null,
     aiCategory: null,
+    contentCategory: null,
     screenshotHealth: undefined,
     realtimeRevision: null,
     realtimeObservedAt: null,
@@ -290,11 +293,14 @@ function mapStudentUpdate(row, event) {
   if (classification) {
     next.aiClassification = classification;
     next.aiCategory = classification.category ?? next.aiCategory;
+    next.contentCategory = contentCategory(classification.contentCategory);
   } else if (event.classificationPending === true || event.aiClassification === null || event.classification === null) {
     next.aiClassification = null;
     next.aiCategory = null;
+    next.contentCategory = null;
   } else if (Object.prototype.hasOwnProperty.call(event, 'aiCategory')) {
     next.aiCategory = event.aiCategory;
+    next.contentCategory = contentCategory(event.contentCategory);
   }
 
   const revision = finiteRevision(event.revision ?? event.realtimeRevision);
@@ -330,6 +336,7 @@ function mapClassification(row, event) {
     ...row,
     aiClassification: classification,
     aiCategory: classification?.category ?? null,
+    contentCategory: contentCategory(classification?.contentCategory),
     classificationPending: false,
   };
   const revision = finiteRevision(event.revision ?? event.realtimeRevision);

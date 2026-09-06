@@ -68,13 +68,22 @@ $script:FastPreviewCapability = "screenshotActiveObservationCadenceV1"
 $script:StudentGatePresenceCapability = "studentAuthGatePresenceV1"
 $script:LateSignInRestrictionSsoCapability = "lateSignInRestrictionSsoV1"
 $script:RestrictionAuthPassThroughCapability = "restrictionAuthPassThroughV1"
+$script:RoadmapProfileCapabilities = @{
+    "after-hours-safety-only-pilot" = "afterHoursSafetyOnlyV1"
+    "after-hours-safety-only-off" = "afterHoursSafetyOnlyV1"
+    "school-website-block-pilot" = "schoolWebsiteBlockEnforcementV1"
+    "school-website-block-off" = "schoolWebsiteBlockEnforcementV1"
+}
+$script:RoadmapCapabilities = @("afterHoursSafetyOnlyV1", "schoolWebsiteBlockEnforcementV1")
+$script:RoadmapPilotModes = @("after-hours-safety-only-pilot", "school-website-block-pilot")
+$script:RoadmapOffModes = @("after-hours-safety-only-off", "school-website-block-off")
 $script:AdditiveCapabilities = @(
     $script:TrackingWindowCapability,
     $script:FastPreviewCapability,
     $script:StudentGatePresenceCapability,
     $script:LateSignInRestrictionSsoCapability,
     $script:RestrictionAuthPassThroughCapability
-)
+) + @($script:RoadmapCapabilities)
 $script:AllCapabilities = @($script:RepairedCapabilities) + @($script:AdditiveCapabilities) + @(
     "kioskLaunchTicketV1"
 )
@@ -90,6 +99,8 @@ $script:CapabilityFlags = [ordered]@{
     studentAuthGatePresenceV1    = "CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1"
     lateSignInRestrictionSsoV1   = "CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1"
     restrictionAuthPassThroughV1 = "CLASSPILOT_CAP_RESTRICTION_AUTH_PASS_THROUGH_V1"
+    afterHoursSafetyOnlyV1       = "CLASSPILOT_CAP_AFTER_HOURS_SAFETY_ONLY_V1"
+    schoolWebsiteBlockEnforcementV1 = "CLASSPILOT_CAP_SCHOOL_WEBSITE_BLOCK_ENFORCEMENT_V1"
     safetyEvidenceCaptureV1       = "CLASSPILOT_CAP_SAFETY_EVIDENCE_CAPTURE_V1"
     liveViewIceServersV1          = "CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1"
     kioskLaunchTicketV1           = "CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V1"
@@ -411,13 +422,15 @@ function ConvertTo-RuntimeConfiguration {
     $schemaFourModes = @("late-signin-pilot", "late-signin-off")
     $schemaFiveModes = @("fast-preview-pilot", "fast-preview-global-on", "fast-preview-off")
     $schemaSixModes = @("restriction-auth-pilot", "restriction-auth-off")
+    $schemaSevenModes = @($script:RoadmapProfileCapabilities.Keys)
     if (($schemaVersion -eq 1 -and $mode -cnotin $schemaOneModes) -or
         ($schemaVersion -eq 2 -and $mode -cnotin $schemaTwoModes) -or
         ($schemaVersion -eq 3 -and $mode -cnotin $schemaThreeModes) -or
         ($schemaVersion -eq 4 -and $mode -cnotin $schemaFourModes) -or
         ($schemaVersion -eq 5 -and $mode -cnotin $schemaFiveModes) -or
         ($schemaVersion -eq 6 -and $mode -cnotin $schemaSixModes) -or
-        $schemaVersion -notin @(1, 2, 3, 4, 5, 6)) {
+        ($schemaVersion -eq 7 -and $mode -cnotin $schemaSevenModes) -or
+        $schemaVersion -notin @(1, 2, 3, 4, 5, 6, 7)) {
         throw "Runtime profile schemaVersion and mode do not match a reviewed profile contract."
     }
 
@@ -451,7 +464,7 @@ function ConvertTo-RuntimeConfiguration {
     if ($mode -cin @(
         "tracking-window-pilot", "student-gate-pilot", "late-signin-pilot",
         "fast-preview-pilot", "restriction-auth-pilot"
-    )) {
+    ) -or $mode -cin $script:RoadmapPilotModes) {
         $pilotSchoolId = [string]$Profile.pilotSchoolId
         if ($pilotSchoolId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
             throw "The selected pilot profile requires one canonical UUID school ID."
@@ -481,6 +494,9 @@ function ConvertTo-RuntimeConfiguration {
     }
     if ($mode -cin $schemaSixModes -and $Profile.PSObject.Properties.Name -contains "turn") {
         throw "Restriction-auth profiles must preserve existing TURN runtime wiring."
+    }
+    if ($mode -cin $schemaSevenModes -and $Profile.PSObject.Properties.Name -contains "turn") {
+        throw "Roadmap profiles must preserve existing TURN runtime wiring."
     }
     if ($mode -ceq "tracking-window-pilot" -and $Profile.PSObject.Properties.Name -contains "turn") {
         throw "The tracking-window-pilot profile must preserve existing TURN runtime wiring."
@@ -514,8 +530,10 @@ function ConvertTo-RuntimeConfiguration {
         throw "The selected profile requires verified TURN inputs."
     }
 
-    if ($mode -cin @($schemaThreeModes + $schemaFourModes + $schemaFiveModes + $schemaSixModes)) {
-        $selectedCapability = if ($mode -cin $schemaSixModes) {
+    if ($mode -cin @($schemaThreeModes + $schemaFourModes + $schemaFiveModes + $schemaSixModes + $schemaSevenModes)) {
+        $selectedCapability = if ($mode -cin $schemaSevenModes) {
+            $script:RoadmapProfileCapabilities[$mode]
+        } elseif ($mode -cin $schemaSixModes) {
             $script:RestrictionAuthPassThroughCapability
         } elseif ($mode -cin $schemaFiveModes) {
             $script:FastPreviewCapability
@@ -525,11 +543,11 @@ function ConvertTo-RuntimeConfiguration {
         $isPilot = $mode -cin @(
             "student-gate-pilot", "late-signin-pilot", "fast-preview-pilot",
             "restriction-auth-pilot"
-        )
+        ) -or $mode -cin $script:RoadmapPilotModes
         $isOff = $mode -cin @(
             "student-gate-off", "late-signin-off", "fast-preview-off",
             "restriction-auth-off"
-        )
+        ) -or $mode -cin $script:RoadmapOffModes
         return [pscustomobject]@{
             Mode = $mode
             SchoolScopeCount = if ($isPilot) { 1 } else { 0 }
@@ -612,7 +630,7 @@ function Resolve-SourcePreservingRuntimeConfiguration {
         "late-signin-pilot", "late-signin-off",
         "fast-preview-pilot", "fast-preview-global-on", "fast-preview-off",
         "restriction-auth-pilot", "restriction-auth-off"
-    )) {
+    ) -and -not $script:RoadmapProfileCapabilities.ContainsKey([string]$RuntimeIntent.Mode)) {
         throw "The source-preserving runtime intent is unsupported."
     }
 
@@ -664,7 +682,9 @@ function Resolve-SourcePreservingRuntimeConfiguration {
     $isRestrictionAuthIntent = [string]$RuntimeIntent.Mode -cin @(
         "restriction-auth-pilot", "restriction-auth-off"
     )
-    $selectedCapability = if ($isRestrictionAuthIntent) {
+    $selectedCapability = if ($script:RoadmapProfileCapabilities.ContainsKey([string]$RuntimeIntent.Mode)) {
+        $script:RoadmapProfileCapabilities[[string]$RuntimeIntent.Mode]
+    } elseif ($isRestrictionAuthIntent) {
         $script:RestrictionAuthPassThroughCapability
     } elseif ($isFastPreviewIntent) {
         $script:FastPreviewCapability
@@ -673,12 +693,12 @@ function Resolve-SourcePreservingRuntimeConfiguration {
     } else { $script:StudentGatePresenceCapability }
     $gateOn = [string]$RuntimeIntent.Mode -cnotin @(
         "student-gate-off", "late-signin-off", "fast-preview-off", "restriction-auth-off"
-    )
+    ) -and [string]$RuntimeIntent.Mode -cnotin $script:RoadmapOffModes
     $gateEntry = [ordered]@{ mode = if ($gateOn) { "on" } else { "off" } }
     if ([string]$RuntimeIntent.Mode -cin @(
         "student-gate-pilot", "late-signin-pilot", "fast-preview-pilot",
         "restriction-auth-pilot"
-    )) {
+    ) -or [string]$RuntimeIntent.Mode -cin $script:RoadmapPilotModes) {
         $profileSchoolId = [string]$RuntimeIntent.PilotSchoolId
         if ($profileSchoolId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
             throw "School-scoped capability pilot intent has an invalid school scope."
@@ -688,10 +708,10 @@ function Resolve-SourcePreservingRuntimeConfiguration {
     $sourceSelectedMode = if ($sourceRollouts.PSObject.Properties.Name -ccontains $selectedCapability) {
         [string]$sourceRollouts.$selectedCapability.mode
     } else { "off" }
-    if ([string]$RuntimeIntent.Mode -cin @(
+    if (([string]$RuntimeIntent.Mode -cin @(
         "student-gate-pilot", "late-signin-pilot", "fast-preview-pilot",
         "restriction-auth-pilot"
-    ) -and
+    ) -or [string]$RuntimeIntent.Mode -cin $script:RoadmapPilotModes) -and
         $sourceSelectedMode -cne "off") {
         throw "A school-scoped capability pilot must begin from its off profile."
     }
@@ -721,7 +741,7 @@ function Resolve-SourcePreservingRuntimeConfiguration {
         PilotSchoolId = if ([string]$RuntimeIntent.Mode -cin @(
             "student-gate-pilot", "late-signin-pilot", "fast-preview-pilot",
             "restriction-auth-pilot"
-        )) {
+        ) -or [string]$RuntimeIntent.Mode -cin $script:RoadmapPilotModes) {
             [string]$RuntimeIntent.PilotSchoolId
         } else { $null }
     }
@@ -2236,6 +2256,56 @@ function Get-ManagedRuntimeFingerprint {
     return Get-CanonicalJsonSha256 -Value $managed
 }
 
+function Get-RuntimeCapabilityControls {
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()]$Environment)
+    $values = @{}
+    foreach ($entry in @($Environment)) { $values[[string]$entry.name] = [string]$entry.value }
+    $rollouts = if ($values.ContainsKey("CLASSPILOT_CAPABILITY_ROLLOUTS_JSON")) {
+        ConvertFrom-StrictJsonText -Text $values.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON
+    } else { [pscustomobject]@{} }
+    $controls = [ordered]@{}
+    foreach ($capability in $script:AllCapabilities) {
+        $flag = [string]$script:CapabilityFlags[$capability]
+        $entry = if (@($rollouts.PSObject.Properties | ForEach-Object { $_.Name }) -ccontains $capability) {
+            $rollouts.$capability
+        } else { [pscustomobject]@{ mode = "off" } }
+        $control = [ordered]@{
+            flag = if ($values.ContainsKey($flag)) { [string]$values[$flag] } else { "false" }
+            mode = [string]$entry.mode
+            schoolIds = @(if ($entry.PSObject.Properties.Name -contains "schoolIds") {
+                @($entry.schoolIds)
+            })
+        }
+        $controls[$capability] = $control
+    }
+    return $controls
+}
+
+function Assert-RoadmapRuntimeControls {
+    param([Parameter(Mandatory = $true)]$Values, [Parameter(Mandatory = $true)]$Rollouts)
+    foreach ($capability in $script:RoadmapCapabilities) {
+        $flagValue = [string]$Values[[string]$script:CapabilityFlags[$capability]]
+        $entry = $Rollouts.$capability
+        if ($flagValue -cnotin @("true", "false") -or
+            ($flagValue -ceq "false" -and [string]$entry.mode -cne "off")) {
+            throw "Roadmap capabilities require both matching activation controls."
+        }
+        if ($flagValue -ceq "false") { continue }
+        if ([string]$entry.mode -cne "on" -or
+            -not ($entry.PSObject.Properties.Name -contains "schoolIds") -or
+            $entry.schoolIds -isnot [Array] -or @($entry.schoolIds).Count -ne 1 -or
+            [string]$entry.schoolIds[0] -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
+            throw "Roadmap capabilities may be enabled only for one exact school."
+        }
+        if ([string]$Values.CLASSPILOT_PROTOCOL_V3_ENABLED -cne "true" -or
+            [string]$Values.CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1 -cne "true" -or
+            [string]$Rollouts.scopedAuthorityChecksV1.mode -cne "on" -or
+            $Rollouts.scopedAuthorityChecksV1.PSObject.Properties.Name -contains "schoolIds") {
+            throw "Roadmap pilots require the completed global repaired-capability runtime."
+        }
+    }
+}
+
 function Get-RuntimeActivationState {
     param(
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Environment,
@@ -2299,6 +2369,8 @@ function Get-RuntimeActivationState {
             throw "Disabled active rollout entries must not retain school scope."
         }
     }
+
+    Assert-RoadmapRuntimeControls -Values $values -Rollouts $rollouts
 
     if ($protocol -ceq "false") {
         foreach ($capability in $script:AllCapabilities) {
@@ -2591,6 +2663,47 @@ function Assert-AllowedRuntimeTransition {
         [pscustomobject]@{ name = [string]$_.Key; value = [string]$_.Value }
     })
     $target = Get-RuntimeActivationState -Environment $targetEnvironment
+    $sourceControls = Get-RuntimeCapabilityControls -Environment @($sourceContainer[0].environment)
+    $targetControls = Get-RuntimeCapabilityControls -Environment $targetEnvironment
+    $roadmapMode = [string]$TargetRuntimeConfiguration.Mode
+    if ($script:RoadmapProfileCapabilities.ContainsKey($roadmapMode)) {
+        $selectedCapability = [string]$script:RoadmapProfileCapabilities[$roadmapMode]
+        if ([string]$source.Mode -cnotin @("global-on", "tracking-window-pilot", "tracking-window-global-on") -or
+            [string]$source.Mode -cne [string]$target.Mode -or
+            [string]$source.SchoolId -cne [string]$target.SchoolId -or
+            [int]$source.PrefixCount -ne [int]$target.PrefixCount -or
+            ($TargetRuntimeConfiguration.PSObject.Properties.Name -contains "SourceMode" -and
+             [string]$TargetRuntimeConfiguration.SourceMode -cne [string]$source.Mode)) {
+            throw "Roadmap rollout must preserve its exact global repaired-capability source."
+        }
+        foreach ($capability in $script:AllCapabilities) {
+            if ($capability -ceq $selectedCapability) { continue }
+            if ((Get-CanonicalJsonSha256 -Value $sourceControls[$capability]) -cne
+                (Get-CanonicalJsonSha256 -Value $targetControls[$capability])) {
+                throw "Roadmap rollout must preserve every other capability and school scope."
+            }
+        }
+        if ($roadmapMode -cin $script:RoadmapPilotModes) {
+            if ([string]$sourceControls[$selectedCapability].mode -cne "off" -or
+                [string]$targetControls[$selectedCapability].mode -cne "on" -or
+                [string]$targetControls[$selectedCapability].schoolIds[0] -cne
+                    [string]$TargetRuntimeConfiguration.PilotSchoolId) {
+                throw "Roadmap activation must begin with one exact school-scoped pilot from off."
+            }
+        }
+        elseif ([string]$targetControls[$selectedCapability].mode -cne "off") {
+            throw "Roadmap rollback must disable only its selected capability."
+        }
+        return
+    }
+    if ($roadmapMode -cne "off") {
+        foreach ($capability in $script:RoadmapCapabilities) {
+            if ((Get-CanonicalJsonSha256 -Value $sourceControls[$capability]) -cne
+                (Get-CanonicalJsonSha256 -Value $targetControls[$capability])) {
+                throw "Other runtime profiles must preserve roadmap capabilities; disable each with its own off profile first."
+            }
+        }
+    }
     if ([string]$TargetRuntimeConfiguration.Mode -cin @(
         "student-gate-pilot", "student-gate-global-on", "student-gate-off"
     )) {

@@ -11,6 +11,7 @@ export interface PublicClasspilotAiDecision {
   title: string | null;
   domain: string | null;
   category: string | null;
+  contentCategory: string | null;
   safetyAlert: string | null;
   confidence: number | null;
   reasoning: string | null;
@@ -32,6 +33,7 @@ export function toPublicClasspilotAiDecision(
     title: decision.title,
     domain: decision.domain,
     category: decision.category,
+    contentCategory: decision.contentCategory ?? null,
     safetyAlert: decision.safetyAlert,
     confidence: decision.confidence,
     reasoning: decision.reasoning,
@@ -108,6 +110,7 @@ export function toPublicAiDecisionTimelineMetadata(
   return {
     domain: decision.domain,
     category: decision.category,
+    contentCategory: decision.contentCategory ?? null,
     safetyAlert: decision.safetyAlert,
     confidence: decision.confidence,
     matchedRule: decision.matchedRule,
@@ -123,10 +126,11 @@ export function toPublicBrowserSafetyTimelineMetadata(
   const safe = {
     domain: classification?.domain ?? null,
     category: classification?.category ?? null,
+    contentCategory: classification?.contentCategory ?? null,
     safetyAlert: classification?.safetyAlert ?? null,
     confidence: classification?.confidence ?? null,
     matchedRule: classification?.source ?? null,
-    actionTaken: "close-tab",
+    actionTaken: "alert-only",
     teacherIntentSource: classification?.teacherIntentSource ?? null,
   };
   return redactClasspilotInternalIdentifiers(safe) as Record<string, unknown>;
@@ -135,6 +139,7 @@ export function toPublicBrowserSafetyTimelineMetadata(
 const PUBLIC_AI_TIMELINE_METADATA_KEYS = [
   "domain",
   "category",
+  "contentCategory",
   "safetyAlert",
   "confidence",
   "matchedRule",

@@ -13,7 +13,7 @@ export type ClasspilotSafetyContext = {
 
 const FAIL_SAFE_CONTEXT: ClasspilotSafetyContext = {
   allowedDomains: [],
-  autoBlockUnsafeUrls: true,
+  autoBlockUnsafeUrls: false,
   aiSafetyEmailsEnabled: true,
   studentName: null,
 };
@@ -22,7 +22,7 @@ const FAIL_SAFE_CONTEXT: ClasspilotSafetyContext = {
  * Loaded once per AI safety hit, never per heartbeat. Safety hits are rare, so
  * one short tenant-scoped read is acceptable; the heartbeat hot path itself
  * keeps using the cached tracking projection. Any failure degrades to the
- * fail-safe posture (no exemption, auto-close on, no name).
+ * review-first posture (no exemption, no automatic action, no name).
  */
 export async function loadClasspilotSafetyContext(options: {
   schoolId: string;
@@ -40,8 +40,8 @@ export async function loadClasspilotSafetyContext(options: {
         .trim() || null;
       return {
         allowedDomains: Array.isArray(settingsRow?.allowedDomains) ? settingsRow.allowedDomains : [],
-        autoBlockUnsafeUrls: settingsRow?.autoBlockUnsafeUrls !== false,
-        aiSafetyEmailsEnabled: settingsRow?.aiSafetyEmailsEnabled !== false,
+        autoBlockUnsafeUrls: false,
+        aiSafetyEmailsEnabled: true,
         studentName,
       };
     });

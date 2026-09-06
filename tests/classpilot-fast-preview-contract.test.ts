@@ -77,7 +77,28 @@ test("heartbeat, websocket auth, and screenshot upload share cadence policy reso
   assert.match(upload, /retained: true,[\s\S]*screenshotPolicy: strictValue\.screenshotPolicy/);
   // "background" is issued both for "nobody is watching" and for "we could not
   // find out". Only the first may suppress the announcement.
-  assert.match(upload, /strictCaptureCadence\?\.mode === "background"[\s\S]{0,200}status === "unobserved"/);
+  // The runtime publish-gate suite exercises observed, unobserved and failed
+  // observation reads. Keep this wiring guard focused on the shared authority
+  // transaction so a handoff cannot occur between storage and publication.
+  const authorityStart = upload.indexOf("const strictResult = await runWithTenantContext(");
+  const authorityEnd = upload.indexOf('recordHeartbeatHotPathTiming("screenshotAuthorityMs"', authorityStart);
+  assert.ok(authorityStart >= 0 && authorityEnd > authorityStart);
+  const authority = upload.slice(authorityStart, authorityEnd);
+  assert.match(authority, /withClasspilotScreenshotUploadAuthority\([\s\S]*?async \(\{ current, trackingSettings \}\) =>/);
+  assert.match(
+    authority,
+    /const stored = await setClassBoundScreenshot\(classBinding, data\)[\s\S]*?if \(outcome !== "unavailable"\)[\s\S]*?if \(screenshotRealtimeSnapshot\)[\s\S]*?const observation = cadenceObservationFor\(classBinding\.teachingSessionId\)/
+  );
+  assert.match(
+    authority,
+    /if \(screenshotPolicy\.captureCadence\?\.mode === "background" && observation\.status === "unobserved"\) \{\s*recordHeartbeatHotPathCounter\("screenshotAvailableBroadcastSkipped"\);\s*\} else \{[\s\S]*?await publishLockedScreenshotAvailable\(classBinding, data\)/,
+    "only known unobserved background uploads may skip publication; unavailable reads must publish"
+  );
+  assert.doesNotMatch(
+    upload.slice(authorityEnd),
+    /publishLockedScreenshotAvailable\(|withClasspilotScreenshotUploadAuthority\(/,
+    "publication must not reacquire authority after the storage transaction ends"
+  );
   assert.match(websocket, /resolveClasspilotScreenshotPolicy\([\s\S]*acceptedCapabilities: protocol\.acceptedCapabilities/);
 });
 

@@ -25,6 +25,7 @@ const rlsRegistry = JSON.parse(
   inventories: {
     historicalObservedProduction: { count: number; tables: string[] };
     schoolPilot270PostExpand: { count: number; tables: string[] };
+    classpilotRoadmapPostExpand: { count: number; tables: string[] };
   };
 };
 
@@ -71,6 +72,8 @@ describe("one-release RLS table enablement", () => {
       "classpilot_evidence_capture_requests",
       "passpilot_kiosk_devices",
       "passpilot_kiosk_sessions",
+      ...rlsRegistry.inventories.classpilotRoadmapPostExpand.tables.filter(table =>
+        !rlsRegistry.inventories.schoolPilot270PostExpand.tables.includes(table)),
     ]);
     const api = taskDefinition("api");
     const worker = taskDefinition("scheduler-worker");

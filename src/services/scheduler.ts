@@ -43,6 +43,12 @@ import {
   STAFF_IDENTITY_INTEGRITY_SCAN_JOB,
 } from "./staffIdentityMonitoring.js";
 import { schedulerDb, schedulerLockPool, schedulerPool } from "./schedulerDb.js";
+import { dispatchSafetyNotifications } from "./safetyNotifications.js";
+import { runDueRosterIntegrationJobs } from "./rosterIntegrationJobs.js";
+import { runClasspilotMonitoringInterruptionScan } from "./classpilotMonitoringInterruptions.js";
+import { dispatchClasspilotMonitoringDigests } from "./classpilotMonitoringDigests.js";
+import { reconcileScheduledProfileSupervision } from "./classpilotScheduleProfileSupervision.js";
+import { getClasspilotInstructionalDateStatus } from "./classpilotScheduling.js";
 import { schools, productLicenses } from "../schema/core.js";
 import {
   heartbeats,
@@ -236,6 +242,11 @@ export function startScheduler(socketIo: SocketServer | null = null) {
     scheduleLockedJob("expireClasspilotManualStudentSessions", expireClasspilotManualStudentSessions);
     scheduleLockedJob("expireClasspilotEvidenceCaptureRequests", expireClasspilotEvidenceCaptureRequests);
     scheduleLockedJob("reconcileClasspilotScheduledSessions", reconcileClasspilotScheduledSessions);
+    scheduleLockedJob("reconcileScheduledProfileSupervision", async () => { await reconcileScheduledProfileSupervision(); });
+    scheduleLockedJob("dispatchSafetyNotifications", dispatchSafetyNotifications);
+    scheduleLockedJob("runDueRosterIntegrationJobs", async () => { await runDueRosterIntegrationJobs(); });
+    scheduleLockedJob("classpilotMonitoringInterruptions", async () => { await runClasspilotMonitoringInterruptionScan(); });
+    scheduleLockedJob("classpilotMonitoringInterruptionDigests", async () => { await dispatchClasspilotMonitoringDigests(); });
     // Security monitor: run every 5 minutes (every 5th tick) — rule-based breach detection
     if (tickCount % 5 === 0) {
       scheduleLockedJob("runSecurityChecks", async () => {
@@ -260,6 +271,7 @@ export function startScheduler(socketIo: SocketServer | null = null) {
   scheduleLockedJob("expireClasspilotManualStudentSessions", expireClasspilotManualStudentSessions);
   scheduleLockedJob("expireClasspilotEvidenceCaptureRequests", expireClasspilotEvidenceCaptureRequests);
   scheduleLockedJob("reconcileClasspilotScheduledSessions", reconcileClasspilotScheduledSessions);
+  scheduleLockedJob("reconcileScheduledProfileSupervision", async () => { await reconcileScheduledProfileSupervision(); });
   // Run the read-only aggregate scan at worker startup, then at its bounded
   // configured cadence. The scheduler advisory lock and the scanner's local
   // gate prevent overlap across or within worker processes.
@@ -1391,6 +1403,7 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
         currentTimeHHMM,
         scheduledDate: todayDate,
         dbInstance: schedulerDb,
+        includeNonInstructionalCandidates: true,
       })).filter((group) => !frozenGroupIds.has(group.id));
       if (readyGroups.length > 0) {
         console.log(`[ClassPilot] Auto-start: ${readyGroups.length} group(s) ready`);
@@ -1400,7 +1413,7 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
       // authoritative read under the shared school/date transaction lock, so a
       // calendar save racing this tick still has one deterministic winner.
       if (readyGroups.length > 0) {
-        const calendarStatus = await getInstructionalDateStatus(
+        const calendarStatus = await getClasspilotInstructionalDateStatus(
           school.id,
           todayDate,
           schedulerDb
@@ -1513,7 +1526,7 @@ async function purgeMailpilotRetention() {
       const result = await schedulerPool.query(
         `DELETE FROM email_alerts WHERE id IN (
           SELECT id FROM email_alerts
-          WHERE review_status IS NOT NULL AND alerted_at < $1
+          WHERE (review_status IS NOT NULL OR reviewed_at IS NOT NULL) AND alerted_at < $1
           LIMIT 2000
         )`,
         [cutoff]
@@ -1522,6 +1535,21 @@ async function purgeMailpilotRetention() {
       totalAlerts += batchDeleted;
       if (batchDeleted > 0) await new Promise((r) => setTimeout(r, 100));
     } while (batchDeleted >= 2000);
+
+    // Legacy case/timeline summaries duplicated email subjects. Keep minimal
+    // provenance after the independent email-content retention removes its source.
+    await schedulerPool.query(`UPDATE student_timeline_events AS event SET summary=NULL
+      WHERE event.source_type='mailpilot' AND event.summary IS NOT NULL
+        AND event.occurred_at<$1 AND NOT EXISTS (
+          SELECT 1 FROM email_alerts AS alert
+          WHERE alert.school_id=event.school_id AND alert.id=event.source_id)`, [cutoff]);
+    await schedulerPool.query(`UPDATE student_safety_cases AS safety_case SET summary=NULL
+      WHERE safety_case.metadata->>'source'='mailpilot' AND safety_case.summary IS NOT NULL
+        AND safety_case.opened_at<$1 AND NOT EXISTS (
+          SELECT 1 FROM student_timeline_events AS event JOIN email_alerts AS alert
+            ON alert.school_id=event.school_id AND alert.id=event.source_id
+          WHERE event.school_id=safety_case.school_id AND event.case_id=safety_case.id
+            AND event.source_type='mailpilot')`, [cutoff]);
 
     // Scan log is small, single delete is fine
     const scanLogResult = await schedulerPool.query(
@@ -1662,7 +1690,7 @@ export async function purgeClasspilotSafetySpineRetentionForSchool(input: {
           (event.case_id IS NULL AND event.occurred_at < $2)
           OR (
             safety_case.id IS NOT NULL
-            AND safety_case.status <> 'open'
+            AND safety_case.status = 'closed'
             AND COALESCE(safety_case.closed_at, safety_case.opened_at) < $3
           )
           OR (event.case_id IS NOT NULL AND safety_case.id IS NULL AND event.occurred_at < $2)
@@ -1680,8 +1708,11 @@ export async function purgeClasspilotSafetySpineRetentionForSchool(input: {
       from: "student_safety_cases AS safety_case",
       targetId: "safety_case.id",
       where: `safety_case.school_id = $1
-        AND safety_case.status <> 'open'
+        AND safety_case.status = 'closed'
         AND COALESCE(safety_case.closed_at, safety_case.opened_at) < $2
+        AND (safety_case.merged_into IS NULL OR NOT EXISTS (
+          SELECT 1 FROM student_safety_cases AS canonical
+          WHERE canonical.school_id=$1 AND canonical.id=safety_case.merged_into))
         AND NOT EXISTS (SELECT 1 FROM evidence_artifacts AS artifact
           WHERE artifact.school_id = $1 AND artifact.case_id = safety_case.id)`,
     },
@@ -1718,6 +1749,18 @@ export async function purgeClasspilotSafetySpineRetentionForSchool(input: {
   return { aiDecisions, timelineEvents, closedCases, messages, chatDeliveries };
 }
 
+export async function purgeSafetyRawBrowserUrlsForSchool(schoolId: string, cutoff: Date): Promise<void> {
+  // This is source-content retention, independent of the case-spine count/delete switch.
+  await schedulerPool.query(`UPDATE student_safety_alerts SET url_ciphertext=NULL
+    WHERE school_id=$1 AND last_seen_at<$2 AND url_ciphertext IS NOT NULL`, [schoolId, cutoff]);
+  await schedulerPool.query(`UPDATE student_timeline_events SET summary=NULL
+    WHERE school_id=$1 AND source_type='classpilot_ai' AND occurred_at<$2
+      AND summary ~* '^https?://'`, [schoolId, cutoff]);
+  await schedulerPool.query(`UPDATE student_safety_cases SET summary=NULL
+    WHERE school_id=$1 AND metadata->>'source'='browser' AND opened_at<$2
+      AND summary IS NOT NULL`, [schoolId, cutoff]);
+}
+
 async function purgeClasspilotSafetySpineRetention() {
   const mode = retentionPurgeSpineMode();
   const totals: ClasspilotSafetySpineRetentionTotals = {
@@ -1744,6 +1787,10 @@ async function purgeClasspilotSafetySpineRetention() {
         const closedCaseCutoff = new Date(
           now - Math.max(retentionDays, CLOSED_SAFETY_CASE_RETENTION_FLOOR_DAYS) * RETENTION_DAY_MS
         );
+        // Raw URLs expire independently of the case spine and its count/delete rollout.
+        await purgeSafetyRawBrowserUrlsForSchool(school.id, cutoff);
+        await schedulerPool.query(`DELETE FROM classpilot_school_website_deliveries
+          WHERE school_id=$1 AND created_at<$2`, [school.id, new Date(now-30*RETENTION_DAY_MS)]);
         const schoolTotals = await purgeClasspilotSafetySpineRetentionForSchool({
           schoolId: school.id,
           cutoff,

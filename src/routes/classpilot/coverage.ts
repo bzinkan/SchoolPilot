@@ -3,6 +3,7 @@ import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
+import { requireClasspilotFullMonitoring } from "../../services/classpilotMonitoringPolicy.js";
 import {
   assignStudentsToSupervisionContext,
   createCoverageAssignment,
@@ -1187,7 +1188,7 @@ async function resolveCoverageCommandTargets(
   return targets;
 }
 
-router.get("/coverage/unassigned", ...auth, async (req, res, next) => {
+router.get("/coverage/unassigned", ...auth, requireClasspilotFullMonitoring, async (req, res, next) => {
   try {
     if (!requireStaffRole(req, res)) return res.status(403).json({ error: "Staff access required" });
     const schoolId = res.locals.schoolId!;
@@ -1219,7 +1220,7 @@ router.get("/coverage/unassigned", ...auth, async (req, res, next) => {
   }
 });
 
-router.get("/coverage/summary", ...auth, async (req, res, next) => {
+router.get("/coverage/summary", ...auth, requireClasspilotFullMonitoring, async (req, res, next) => {
   try {
     if (!requireStaffRole(req, res)) return res.status(403).json({ error: "Staff access required" });
     const schoolId = res.locals.schoolId!;
@@ -1711,7 +1712,7 @@ router.put("/coverage/supervision-groups/:id/staff", ...auth, async (req, res, n
   }
 });
 
-router.get("/coverage/available-students", ...auth, async (req, res, next) => {
+router.get("/coverage/available-students", ...auth, requireClasspilotFullMonitoring, async (req, res, next) => {
   try {
     if (!requireStaffRole(req, res)) return res.status(403).json({ error: "Staff access required" });
     const schoolId = res.locals.schoolId!;
@@ -1778,7 +1779,7 @@ router.get("/coverage/available-students", ...auth, async (req, res, next) => {
   }
 });
 
-router.get("/coverage/claimed-students", ...auth, async (req, res, next) => {
+router.get("/coverage/claimed-students", ...auth, requireClasspilotFullMonitoring, async (req, res, next) => {
   try {
     if (!requireStaffRole(req, res)) return res.status(403).json({ error: "Staff access required" });
     const schoolId = res.locals.schoolId!;
@@ -2311,7 +2312,7 @@ router.get("/coverage/reroute-targets", ...auth, async (req, res, next) => {
   }
 });
 
-router.get("/coverage/contexts/:id/students", ...auth, async (req, res, next) => {
+router.get("/coverage/contexts/:id/students", ...auth, requireClasspilotFullMonitoring, async (req, res, next) => {
   try {
     if (!requireStaffRole(req, res)) return res.status(403).json({ error: "Staff access required" });
     const schoolId = res.locals.schoolId!;
@@ -2400,7 +2401,7 @@ router.get("/coverage/contexts/:id/history", ...auth, async (req, res, next) => 
   }
 });
 
-router.post("/coverage/contexts/:id/commands", ...auth, async (req, res, next) => {
+router.post("/coverage/contexts/:id/commands", ...auth, requireClasspilotFullMonitoring, async (req, res, next) => {
   try {
     if (!requireStaffRole(req, res)) return res.status(403).json({ error: "Staff access required" });
     const schoolId = res.locals.schoolId!;

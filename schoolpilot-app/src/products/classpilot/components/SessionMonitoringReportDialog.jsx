@@ -23,6 +23,13 @@ import {
 
 const STUDENT_CARD_STYLE = { contentVisibility: 'auto', containIntrinsicSize: '0 260px' };
 
+function CategoryBreakdown({ categories }) {
+  return <section aria-label="Off-task categories" className="rounded-md border p-3">
+    <h4 className="mb-2 text-sm font-medium">Off-task categories</h4>
+    {categories === null ? <p className="text-xs text-muted-foreground">Category breakdown unavailable.</p> : categories.length === 0 ? <p className="text-xs text-muted-foreground">No observed off-task time.</p> : <ul className="space-y-1 text-xs">{categories.map((entry, index) => <li key={`${entry.contentCategory}-${index}`} className="flex justify-between gap-3"><span>{entry.contentCategory || 'Uncategorized'}</span><span>{formatReportDuration(entry.seconds)}</span></li>)}</ul>}
+  </section>;
+}
+
 function pluralize(value, singular, plural = `${singular}s`) {
   return `${value} ${value === 1 ? singular : plural}`;
 }
@@ -124,6 +131,7 @@ const StudentReportCard = memo(function StudentReportCard({ student, reportVersi
           <dd className="font-medium">{offTaskLabel(student.offTaskSeconds, student.offTaskEventCount, reportVersion)}</dd>
         </div>
       </dl>
+      {reportVersion >= 3 && <CategoryBreakdown categories={student.offTaskCategories} />}
 
       <div className="grid gap-3 lg:grid-cols-2">
         <section aria-label={`Top normalized domains for ${student.studentName}`}>
@@ -246,6 +254,7 @@ export default function SessionMonitoringReportDialog({ target, onClose }) {
                 {pluralize(report.totals.complete, 'complete record')} · {pluralize(report.totals.partial, 'partial record')} · {pluralize(report.totals.none, 'record with no telemetry')} · {pluralize(report.totals.unavailable, 'unavailable record')}
                 {report.totals.safetyAlertCount == null ? ' · Safety detail not included in v1' : ` · ${pluralize(report.totals.safetyAlertCount, 'safety alert')}`}
               </p>
+              {report.reportVersion >= 3 && <CategoryBreakdown categories={report.totals.offTaskCategories} />}
               {report.reportVersion >= 2 && (report.totals.safetyAlertCount || 0) > 0 ? (
                 <p className="text-xs text-muted-foreground" role="note">
                   “Automated” means the alert was system-generated; it does not mean a person confirmed it.

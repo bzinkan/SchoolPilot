@@ -256,6 +256,7 @@ export function isStudentUrlOffTask({
   ) {
     return false;
   }
+  if (schoolAllowedDomains.length > 0 && isUrlAllowed(activeTabUrl, schoolAllowedDomains)) return false;
 
   if (student?.aiClassification?.category === 'non-educational') {
     if (student.flightPathActive && student.activeFlightPathName) {

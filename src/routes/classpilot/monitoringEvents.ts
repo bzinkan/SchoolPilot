@@ -7,6 +7,7 @@ import { requireProductLicense } from "../../middleware/requireProductLicense.js
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
 import { requireDeviceAuth } from "../../middleware/requireDeviceAuth.js";
+import { requireClasspilotFullMonitoring } from "../../services/classpilotMonitoringPolicy.js";
 import { logAudit } from "../../services/audit.js";
 import {
   getTeachingSessionByIdAndSchool,
@@ -142,7 +143,7 @@ function parseEventTypes(value: unknown): string[] | undefined {
   return values.length > 0 && values.every((item) => EVENT_TYPES.has(item)) ? values : undefined;
 }
 
-router.post("/device/events", requireDeviceAuth, requireClasspilotEntitlement, deviceEventLimiter, async (req, res, next) => {
+router.post("/device/events", requireDeviceAuth, requireClasspilotEntitlement, deviceEventLimiter, requireClasspilotFullMonitoring, async (req, res, next) => {
   try {
     const values = Array.isArray(req.body?.events) ? req.body.events : null;
     if (!values || values.length < 1 || values.length > 50) {
@@ -275,6 +276,7 @@ router.get("/supervision-contexts/:id/events", ...staffAuth, (req, res, next) =>
 router.put(
   "/teaching-sessions/:id/observation-lease",
   ...staffAuth,
+  requireClasspilotFullMonitoring,
   observationLeaseRenewalLimiter,
   async (req, res, next) => {
   try {

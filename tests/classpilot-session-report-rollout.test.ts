@@ -151,6 +151,7 @@ const studentReport = {
   topDomains: [{ domain: "a.example", seconds: 10, visits: 1 }],
   unclassifiedSeconds: 45,
   offTaskSeconds: 0,
+  offTaskCategories: [],
   offTaskEventCount: 0,
   offTaskEvents: [],
   safetyAlerts: [],

@@ -4,6 +4,7 @@ import { runInNewContext } from "node:vm";
 import { describe, it } from "node:test";
 import ts from "typescript";
 import { type ErrorMonitor } from "../src/services/errorMonitor.js";
+import { resolveClasspilotMonitoringPolicy } from "../src/services/classpilotMonitoringPolicy.js";
 import {
   reportStudentWebSocketAuthenticationFailure,
   type StudentWebSocketAuthStage,
@@ -73,6 +74,9 @@ async function bootstrapScenario(failure?: StudentWebSocketAuthStage | "invalid_
       return { entitled: failure !== "not_entitled" };
     },
     getSettingsForSchool: async () => { fail("settings_protocol"); return {}; },
+    getHeartbeatTrackingSettingsForSchool: async () => { fail("settings_protocol"); return { enableTrackingHours: false }; },
+    resolveClasspilotMonitoringPolicy,
+    getSchoolWebsitePolicy: async () => ({ policyRevision: 0, blockedDomains: [] }),
     negotiateClasspilotSurfaceProtocol: () => ({ acceptedCapabilities: ["screenshotActiveObservationCadenceV1"] }),
     getClasspilotStudentControlState: async () => {
       if (++controlReads === 1) fail("observation_hint");

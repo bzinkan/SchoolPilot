@@ -16,6 +16,7 @@ import { formatDistanceToNow, format, startOfDay, endOfDay } from "date-fns";
 import { calculateURLSessions, formatDuration, isSessionOffTask } from "../../../lib/classpilot-utils";
 import { useToast } from "../../../hooks/use-toast";
 import { deriveStudentMonitoringDisplay, deriveUnavailablePreview, formatAbsoluteObservedAt, lastObservedDomain } from "../lib/studentMonitoringDisplay";
+import StudentBrowsingHistory from "./StudentBrowsingHistory";
 
 function StudentDetailDrawer({
   student,
@@ -32,7 +33,6 @@ function StudentDetailDrawer({
   const monitoringStudentId = student?.studentId;
   const monitoringStudentName = student?.studentName;
   const [historyStartDate, setHistoryStartDate] = useState(new Date());
-  const [historyEndDate, setHistoryEndDate] = useState(new Date());
   // Calculate URL sessions with duration from heartbeats
   const urlSessions = useMemo(() => {
     return calculateURLSessions(urlHistory);
@@ -840,193 +840,11 @@ function StudentDetailDrawer({
               {/* History Tab */}
               <TabsContent value="history" className="flex-1 overflow-hidden m-0">
                 <ScrollArea className="h-full">
-                  <div className="p-6 space-y-4">
-                    {/* Date Range Filter */}
-                    <div className="space-y-2">
-                      <h3 className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
-                        Filter by Date
-                      </h3>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <Popover>
-                          <PopoverTrigger asChild>
-                            <Button variant="outline" size="sm" className="w-[180px] justify-start text-left font-normal" data-testid="button-history-start-date">
-                              <CalendarIcon className="mr-2 h-4 w-4" />
-                              {historyStartDate ? format(historyStartDate, "PPP") : "Start date"}
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-auto p-0">
-                            <Calendar
-                              mode="single"
-                              selected={historyStartDate}
-                              onSelect={setHistoryStartDate}
-                              initialFocus
-                            />
-                          </PopoverContent>
-                        </Popover>
-                        <span className="text-sm text-muted-foreground">to</span>
-                        <Popover>
-                          <PopoverTrigger asChild>
-                            <Button variant="outline" size="sm" className="w-[180px] justify-start text-left font-normal" data-testid="button-history-end-date">
-                              <CalendarIcon className="mr-2 h-4 w-4" />
-                              {historyEndDate ? format(historyEndDate, "PPP") : "End date"}
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-auto p-0">
-                            <Calendar
-                              mode="single"
-                              selected={historyEndDate}
-                              onSelect={setHistoryEndDate}
-                              initialFocus
-                            />
-                          </PopoverContent>
-                        </Popover>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => {
-                            const today = new Date();
-                            setHistoryStartDate(today);
-                            setHistoryEndDate(today);
-                          }}
-                          data-testid="button-today"
-                        >
-                          Today
-                        </Button>
-                      </div>
-                    </div>
-
-                    {/* Activity Timeline */}
-                    <div className="space-y-2">
-                      <h3 className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
-                        Activity Timeline
-                      </h3>
-
-                      {(() => {
-                        // Filter URL history by selected date range
-                        const filteredHistory = urlHistory.filter(hb => {
-                          const timestamp = new Date(hb.timestamp);
-                          const start = historyStartDate ? startOfDay(historyStartDate) : null;
-                          const end = historyEndDate ? endOfDay(historyEndDate) : null;
-
-                          if (start && timestamp < start) return false;
-                          if (end && timestamp > end) return false;
-                          return true;
-                        });
-
-                        if (filteredHistory.length === 0) {
-                          return (
-                            <div className="p-8 text-center border rounded-lg">
-                              <HistoryIcon className="h-12 w-12 mx-auto mb-3 text-muted-foreground opacity-50" />
-                              <p className="text-sm text-muted-foreground font-medium">No activity found</p>
-                              <p className="text-xs text-muted-foreground mt-1">
-                                Try selecting a different date range
-                              </p>
-                            </div>
-                          );
-                        }
-
-                        // Group filtered history into sessions
-                        const historySessions = calculateURLSessions(filteredHistory);
-
-                        // Sort sessions by start time (most recent first)
-                        const sortedSessions = [...historySessions].sort((a, b) =>
-                          b.startTime.getTime() - a.startTime.getTime()
-                        );
-
-                        // For each session, find if any heartbeat had off-task/locked/camera indicators
-                        const sessionsWithIndicators = sortedSessions.map(session => {
-                          const sessionHeartbeats = filteredHistory.filter(hb =>
-                            hb.activeTabUrl === session.url &&
-                            new Date(hb.timestamp) >= session.startTime &&
-                            new Date(hb.timestamp) <= session.endTime
-                          );
-
-                          const hasOffTask = sessionHeartbeats.some(hb => hb.aiCategory === 'non-educational' || hb.cameraActive);
-                          const hasLocked = sessionHeartbeats.some(hb => hb.screenLocked);
-                          const hasCamera = sessionHeartbeats.some(hb => hb.cameraActive);
-
-                          return {
-                            ...session,
-                            hasOffTask,
-                            hasLocked,
-                            hasCamera,
-                          };
-                        });
-
-                        return (
-                          <div className="space-y-1">
-                            {sessionsWithIndicators.map((session, index) => (
-                              <div
-                                key={`${session.url}-${session.startTime.getTime()}-${index}`}
-                                className="p-3 rounded-md bg-muted/30 border-l-4 hover-elevate"
-                                style={{
-                                  borderLeftColor: session.hasOffTask ? '#ef4444' : '#3b82f6'
-                                }}
-                                data-testid={`history-session-${index}`}
-                              >
-                                <div className="flex items-start justify-between gap-2">
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-start gap-2 mb-1 flex-wrap">
-                                      {session.favicon && (
-                                        <img
-                                          src={session.favicon}
-                                          alt=""
-                                          className="w-3 h-3 flex-shrink-0 mt-0.5"
-                                          onError={(e) => {
-                                            e.target.style.display = 'none';
-                                          }}
-                                        />
-                                      )}
-                                      <p className="text-sm font-medium break-words flex-1 min-w-0">
-                                        {session.title}
-                                      </p>
-                                      {session.hasOffTask && (
-                                        <Badge variant="destructive" className="text-xs">
-                                          <AlertTriangle className="h-3 w-3 mr-1" />
-                                          Off-Task
-                                        </Badge>
-                                      )}
-                                      {session.hasLocked && (
-                                        <Badge variant="outline" className="text-xs">
-                                          Waypoint
-                                        </Badge>
-                                      )}
-                                      {session.hasCamera && (
-                                        <Badge variant="outline" className="text-xs">
-                                          <Camera className="h-3 w-3 mr-1" />
-                                          Camera
-                                        </Badge>
-                                      )}
-                                    </div>
-                                    <p className="text-xs font-mono text-muted-foreground truncate mb-1">
-                                      {session.url}
-                                    </p>
-                                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                      <Clock className="h-3 w-3" />
-                                      <span className="font-medium text-primary">
-                                        {formatDuration(session.durationSeconds)}
-                                      </span>
-                                      <span className="opacity-60">•</span>
-                                      <span>
-                                        {format(session.startTime, 'MMM d, h:mm a')} - {format(session.endTime, 'h:mm a')}
-                                      </span>
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                            ))}
-
-                            <div className="pt-2 text-xs text-center text-muted-foreground">
-                              Showing {sessionsWithIndicators.length} session{sessionsWithIndicators.length !== 1 ? 's' : ''}
-                            </div>
-                          </div>
-                        );
-                      })()}
-                    </div>
+                  <div className="p-6">
+                    <StudentBrowsingHistory key={student.studentId} studentId={student.studentId} />
                   </div>
                 </ScrollArea>
               </TabsContent>
-
             </Tabs>
           </div>
         </SheetContent>

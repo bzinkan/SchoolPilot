@@ -73,6 +73,8 @@ import { useClassPilotAuth } from "../../../hooks/useClassPilotAuth";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
 import { EditStudentDialog } from "../components/EditStudentDialog";
 import { AdminClassesTabs } from "../components/ScheduleRouteTabs";
+import AdminScheduling from "./AdminScheduling";
+import RosterIntegrations from "../components/RosterIntegrations";
 
 const ADMIN_CLASSES_KEY = ["classpilot-admin-classes"];
 const TEACHABLE_ROLES = new Set(["teacher", "admin", "school_admin"]);
@@ -181,6 +183,8 @@ function ClassFormDialog({
   const [scheduleEnabled, setScheduleEnabled] = useState(() => initialClass?.scheduleEnabled === true);
   const [blockStartTime, setBlockStartTime] = useState(() => initialClass?.blockStartTime || "");
   const [blockEndTime, setBlockEndTime] = useState(() => initialClass?.blockEndTime || "");
+  const [scheduleRule, setScheduleRule] = useState(() => initialClass?.scheduleRule || { weekdays: [1, 2, 3, 4, 5], startsOn: null, endsOn: null, cycleDay: "all", periodId: null });
+  const schedulingQuery = useQuery({ queryKey: ["classpilot-school-scheduling"], queryFn: () => apiRequest("GET", "/classpilot/admin/scheduling"), enabled: open && scheduleEnabled });
   const [coTeacherIds, setCoTeacherIds] = useState(() => new Set((initialClass?.coTeachers || []).map((teacher) => teacher.id).filter(Boolean)));
   const [teacherPickerOpen, setTeacherPickerOpen] = useState(false);
   const [coTeacherPickerOpen, setCoTeacherPickerOpen] = useState(false);
@@ -218,6 +222,7 @@ function ClassFormDialog({
       scheduleEnabled,
       blockStartTime: scheduleEnabled ? blockStartTime : null,
       blockEndTime: scheduleEnabled ? blockEndTime : null,
+      scheduleRule,
       coTeacherIds: Array.from(coTeacherIds).filter((id) => id !== teacherId),
     });
   };
@@ -408,11 +413,19 @@ function ClassFormDialog({
             <div className="flex flex-col gap-2 rounded-md bg-muted/60 p-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
               <p>Automatic classes pause on dates marked closed in the school calendar.</p>
               <Button type="button" variant="link" size="sm" className="h-auto justify-start p-0" asChild>
-                <Link to="/classpilot/admin?tab=calendar" data-testid="link-school-calendar">
+                <Link to="/classpilot/admin/classes/scheduling" data-testid="link-school-calendar">
                   <CalendarDays className="h-4 w-4" />
                   Manage School Calendar
                 </Link>
               </Button>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-2"><Label htmlFor="class-starts-on">First class date</Label><Input id="class-starts-on" type="date" value={scheduleRule.startsOn || ""} disabled={!scheduleEnabled} onChange={(e) => setScheduleRule((rule) => ({ ...rule, startsOn: e.target.value || null }))} /></div>
+              <div className="space-y-2"><Label htmlFor="class-ends-on">Last class date (included)</Label><Input id="class-ends-on" type="date" value={scheduleRule.endsOn || ""} disabled={!scheduleEnabled} onChange={(e) => setScheduleRule((rule) => ({ ...rule, endsOn: e.target.value || null }))} /></div>
+              <fieldset className="space-y-2 md:col-span-2" disabled={!scheduleEnabled}><legend className="text-sm font-medium">Meeting weekdays</legend><div className="flex flex-wrap gap-4">{[[1, "Mon"], [2, "Tue"], [3, "Wed"], [4, "Thu"], [5, "Fri"], [6, "Sat"], [0, "Sun"]].map(([day, label]) => <label key={day} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={scheduleRule.weekdays.includes(day)} onChange={(e) => setScheduleRule((rule) => ({ ...rule, weekdays: e.target.checked ? [...rule.weekdays, day].sort() : rule.weekdays.filter((value) => value !== day) }))} />{label}</label>)}</div></fieldset>
+              <div className="space-y-2"><Label htmlFor="class-cycle-day">A/B day</Label><select id="class-cycle-day" className="h-10 w-full rounded-md border bg-background px-3 text-sm" value={scheduleRule.cycleDay} disabled={!scheduleEnabled} onChange={(e) => setScheduleRule((rule) => ({ ...rule, cycleDay: e.target.value }))}><option value="all">Every matching weekday</option><option value="A">A days</option><option value="B">B days</option></select></div>
+              <div className="space-y-2"><Label htmlFor="class-period-id">Class time</Label><select id="class-period-id" className="h-10 w-full rounded-md border bg-background px-3 text-sm" value={scheduleRule.periodId || ""} disabled={!scheduleEnabled || schedulingQuery.isLoading} onChange={(e) => setScheduleRule((rule) => ({ ...rule, periodId: e.target.value || null }))}><option value="">Custom fixed times</option>{(schedulingQuery.data?.config?.periods || []).map((period) => <option key={period.id} value={period.id}>{period.name}</option>)}</select></div>
+              {schedulingQuery.error ? <p role="alert" className="text-sm text-destructive md:col-span-2">Bell profiles could not be loaded. {getErrorMessage(schedulingQuery.error)}</p> : null}
             </div>
             <div className={`grid gap-3 md:grid-cols-2 ${scheduleEnabled ? "" : "opacity-50"}`}>
               <div className="grid gap-2">
@@ -421,7 +434,7 @@ function ClassFormDialog({
                   id="block-start"
                   type="time"
                   value={blockStartTime}
-                  disabled={!scheduleEnabled}
+                  disabled={!scheduleEnabled || !!scheduleRule.periodId}
                   onChange={(event) => setBlockStartTime(event.target.value)}
                 />
               </div>
@@ -431,7 +444,7 @@ function ClassFormDialog({
                   id="block-end"
                   type="time"
                   value={blockEndTime}
-                  disabled={!scheduleEnabled}
+                  disabled={!scheduleEnabled || !!scheduleRule.periodId}
                   onChange={(event) => setBlockEndTime(event.target.value)}
                 />
               </div>
@@ -444,7 +457,7 @@ function ClassFormDialog({
           <Button
             type="button"
             onClick={submit}
-            disabled={isSaving || !name.trim() || !teacherId || (scheduleEnabled && (!blockStartTime || !blockEndTime))}
+            disabled={isSaving || !name.trim() || !teacherId || (scheduleEnabled && (!scheduleRule.weekdays.length || (!scheduleRule.periodId && (!blockStartTime || !blockEndTime))))}
             data-testid="button-save-class"
           >
             {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
@@ -1263,7 +1276,8 @@ export default function AdminClasses() {
         </div>
 
         <AdminClassesTabs />
-
+        {location.pathname.endsWith("/scheduling") ? <AdminScheduling /> : <>
+        <RosterIntegrations />
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(360px,0.7fr)]">
           <div className="space-y-6">
             <Card>
@@ -1503,6 +1517,7 @@ export default function AdminClasses() {
             </CardContent>
           </Card>
         </div>
+        </>}
       </div>
 
       <ClassFormDialog

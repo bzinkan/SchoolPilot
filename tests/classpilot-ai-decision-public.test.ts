@@ -48,6 +48,7 @@ describe("ClassPilot public AI decision serialization", () => {
       "actionTaken",
       "category",
       "confidence",
+      "contentCategory",
       "createdAt",
       "domain",
       "id",
@@ -62,6 +63,8 @@ describe("ClassPilot public AI decision serialization", () => {
       "url",
     ]);
     const serialized = JSON.stringify(dto);
+    assert.equal(dto.contentCategory, null);
+    assert.equal(toPublicClasspilotAiDecision(rawDecision({ contentCategory: "Education" })).contentCategory, "Education");
     assert.equal(serialized.includes("deviceId"), false);
     assert.equal(serialized.includes("heartbeatId"), false);
     assert.equal(serialized.includes("schoolId"), false);
@@ -136,6 +139,7 @@ describe("ClassPilot public AI decision serialization", () => {
       "actionTaken",
       "category",
       "confidence",
+      "contentCategory",
       "domain",
       "matchedRule",
       "reviewStatus",
@@ -144,6 +148,7 @@ describe("ClassPilot public AI decision serialization", () => {
     ]);
     assert.equal(JSON.stringify(decisionMetadata).includes("internal"), false);
     assert.equal(JSON.stringify(browserMetadata).includes("must-not-copy"), false);
+    assert.equal(browserMetadata.actionTaken, "alert-only");
     assert.deepEqual(timeline.metadata, {
       ...browserMetadata,
       legacy: { outcome: "closed" },

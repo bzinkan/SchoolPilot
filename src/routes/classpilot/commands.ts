@@ -32,6 +32,7 @@ import {
 import { isClasspilotCapabilityActive } from "../../services/classpilotProtocol.js";
 import { classpilotCurrentPageSignedOutSkipReason } from "../../services/classpilotCurrentPage.js";
 import { classpilotCommandDeliveryPolicy } from "../../services/classpilotCommandDelivery.js";
+import { requireClasspilotFullMonitoring } from "../../services/classpilotMonitoringPolicy.js";
 
 const router = Router();
 
@@ -39,6 +40,7 @@ const auth = [
   authenticate,
   requireSchoolContext,
   requireClasspilotEntitlement,
+  requireClasspilotFullMonitoring,
   requireRole("admin", "school_admin", "office_staff", "teacher"),
 ] as const;
 

@@ -48,6 +48,8 @@ export type HeartbeatClassificationCachePatch = {
   deviceId: string;
   heartbeatId: string;
   aiCategory: string | null;
+  contentCategory?: string | null;
+  teacherIntentSource?: string | null;
   safetyAlert: string | null;
 };
 
@@ -84,6 +86,8 @@ for keyIndex = 1, #KEYS do
     if ok and row and row.id and patches[row.id] then
       local patch = patches[row.id]
       row.aiCategory = patch.aiCategory
+      row.contentCategory = patch.contentCategory
+      row.teacherIntentSource = patch.teacherIntentSource
       row.safetyAlert = patch.safetyAlert
       row.classificationPending = false
       redis.call('LSET', KEYS[keyIndex], rowIndex - 1, cjson.encode(row))
@@ -174,6 +178,8 @@ function decodeHeartbeat(
     isSharing: row.isSharing,
     cameraActive: row.cameraActive,
     aiCategory: row.aiCategory,
+    contentCategory: typeof row.contentCategory === "string" ? row.contentCategory : null,
+    teacherIntentSource: typeof row.teacherIntentSource === "string" ? row.teacherIntentSource : null,
     safetyAlert: row.safetyAlert,
     extensionVersion: row.extensionVersion,
     chromeVersion: row.chromeVersion,
@@ -429,6 +435,8 @@ export function createHeartbeatTileCache(
     if (patches.length === 0) return true;
     const byKey = new Map<string, Record<string, {
       aiCategory: string | null;
+      contentCategory: string | null;
+      teacherIntentSource: string | null;
       safetyAlert: string | null;
     }>>();
     for (const patch of patches) {
@@ -436,6 +444,8 @@ export function createHeartbeatTileCache(
       const entries = byKey.get(key) ?? {};
       entries[patch.heartbeatId] = {
         aiCategory: patch.aiCategory,
+        contentCategory: patch.contentCategory ?? null,
+        teacherIntentSource: patch.teacherIntentSource ?? null,
         safetyAlert: patch.safetyAlert,
       };
       byKey.set(key, entries);

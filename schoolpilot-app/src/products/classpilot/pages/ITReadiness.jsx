@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import MonitoringInterruptionsPanel from "../components/MonitoringInterruptionsPanel";
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowLeft, BookOpenCheck, CheckCircle2, Download, ExternalLink, MonitorCheck, RefreshCw, ShieldAlert, ShieldCheck, TriangleAlert, XCircle } from "lucide-react";
 import { apiRequest } from "../../../lib/queryClient";
@@ -259,6 +260,7 @@ export default function ITReadiness() {
       </header>
 
       <main className="mx-auto max-w-6xl space-y-6 px-6 py-6">
+        <MonitoringInterruptionsPanel />
         <div className="grid gap-3 md:grid-cols-6">
           {[
             ["Pass", summary.pass || 0],

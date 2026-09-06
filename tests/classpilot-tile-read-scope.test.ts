@@ -232,6 +232,9 @@ before(async () => {
     planStatus: "active",
   } as any);
 
+  for (const school of [schoolA, schoolB]) await inSchool(school.id, () =>
+    storage.upsertSettings(school.id, { schoolName: school.name, wsSharedKey: tag, enableTrackingHours: false }));
+
   [teacher, coTeacher, superAdmin, admin, schoolAdmin, officeStaff, parent] = await Promise.all([
     createUser({
       email: `${tag}-teacher@${schoolADomain}`,

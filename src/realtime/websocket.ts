@@ -2,6 +2,8 @@ import { WebSocketServer, WebSocket, type RawData } from "ws";
 import type { Server } from "http";
 import { randomUUID } from "crypto";
 import { safeErrorMetadata } from "../util/safeLogging.js";
+import { getClasspilotMonitoringPolicy, resolveClasspilotMonitoringPolicy, classpilotFullMonitoringDeadline } from "../services/classpilotMonitoringPolicy.js";
+import { getSchoolWebsitePolicy } from "../services/classpilotSchoolWebsitePolicy.js";
 import {
   isClasspilotCapabilityActive,
   negotiateClasspilotSurfaceProtocol,
@@ -44,6 +46,7 @@ import {
 } from "./ws-redis.js";
 import {
   getSettingsForSchool,
+  getHeartbeatTrackingSettingsForSchool,
   getUserById,
   getMembershipByUserAndSchool,
   updateClasspilotCommandSummary,
@@ -1164,6 +1167,9 @@ export function setupWebSocket(
                   if (!(await resolveClasspilotEntitlement(schoolId)).entitled) return false;
                   authStage = "settings_protocol";
                   const schoolSettings = await getSettingsForSchool(schoolId);
+                  const monitoringSettings = await getHeartbeatTrackingSettingsForSchool(schoolId, undefined, { bypassCache: true });
+                  if (resolveClasspilotMonitoringPolicy(monitoringSettings).policyMode !== "full") return false;
+                  const schoolWebsitePolicy = await getSchoolWebsitePolicy(schoolId);
                   const protocol = negotiateClasspilotSurfaceProtocol({
                     surface: "websocket_auth",
                     payload: message,
@@ -1264,7 +1270,7 @@ export function setupWebSocket(
                         studentId: payload.studentId,
                         teachingSessionId: classroomStateRow?.teachingSessionId ?? null,
                         acceptedCapabilities: protocol.acceptedCapabilities,
-                        trackingSettings: schoolSettings,
+                        trackingSettings: monitoringSettings,
                         trackingAuthority: classpilotScreenshotAuthorityForDeliveredControl({
                           projection: screenshotTrackingAuthority,
                           deliveredControlRevision: classroomState?.revision ?? 0,
@@ -1341,6 +1347,7 @@ export function setupWebSocket(
                           controlRevision: prepared.classroomState?.revision ?? 0,
                         }),
                         settings: {
+                          policyRevision: schoolWebsitePolicy.policyRevision,
                           maxTabsPerStudent: schoolSettings?.maxTabsPerStudent
                             ? parseInt(schoolSettings.maxTabsPerStudent, 10) : null,
                           globalBlockedDomains: schoolSettings?.blockedDomains || [],
@@ -1533,6 +1540,13 @@ export function setupWebSocket(
         // Every post-authentication message requires a current persisted role;
         // a cached teacher role must not survive demotion or deactivation.
         if (!client.authenticated) return;
+        if (client.role === "student" && client.schoolId
+          && (await getClasspilotMonitoringPolicy(client.schoolId)).policyMode !== "full") {
+          removeWsClient(ws);
+          client.authenticated = false;
+          ws.close(1008, "Monitoring outside school hours");
+          return;
+        }
         const passiveMessage = message.type === "heartbeat" || message.type === "ping";
         if (
           client.role !== "student" &&
@@ -2086,6 +2100,7 @@ export function setupWebSocket(
         }
 
         const resolveLiveTarget = async () => {
+          if (!client.schoolId || (await getClasspilotMonitoringPolicy(client.schoolId)).policyMode !== "full") return null;
           if (!client.schoolId || !client.userId) return null;
           const studentId = normalizeClasspilotSignalingIdentifier(
             message.studentId || message.toStudentId
@@ -2274,6 +2289,14 @@ export function setupWebSocket(
                 );
                 return { status: "requester_unavailable", studentId: target.studentId } as const;
               }
+              const monitoringExpiresAt = classpilotFullMonitoringDeadline(
+                await getHeartbeatTrackingSettingsForSchool(client.schoolId!, undefined, { bypassCache: true }), Date.now(), negotiation.expiresAt,
+              );
+              if (monitoringExpiresAt <= Date.now()) {
+                forgetOwnedLiveView(negotiation.negotiationId);
+                await releaseClasspilotLiveViewNegotiation({ schoolId: client.schoolId!, studentId: target.studentId }, negotiation.negotiationId);
+                return { status: "monitoring_closed", studentId: target.studentId } as const;
+              }
               const payload = {
                 type: "request-stream",
                 from: "teacher",
@@ -2284,7 +2307,7 @@ export function setupWebSocket(
                 setupExpiresAt: new Date(
                   Date.now() + CLASSPILOT_LIVE_VIEW_SETUP_TTL_MS
                 ).toISOString(),
-                expiresAt: new Date(negotiation.expiresAt).toISOString(),
+                expiresAt: new Date(monitoringExpiresAt).toISOString(),
               };
               const deliveredLocally = sendToDeviceLocal(client.schoolId!, target.deviceId, payload);
               const published = await publishWS(
@@ -2304,7 +2327,7 @@ export function setupWebSocket(
                 studentId: target.studentId,
                 teachingSessionId: target.teachingSessionId,
                 negotiationId: negotiation.negotiationId,
-                expiresAt: negotiation.expiresAt,
+                expiresAt: monitoringExpiresAt,
                 deliveredLocally,
               } as const;
             })

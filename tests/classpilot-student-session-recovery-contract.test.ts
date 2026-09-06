@@ -261,8 +261,9 @@ test("heartbeat authority expires atomically and renews only an accepted manual 
   );
   assert.match(
     route,
-    /afterMode === "off"[\s\S]*?refreshStudentSessionAuthorityWithoutTelemetry[\s\S]*?outside_tracking_window/
+    /monitoringPolicy\.mode !== "full"[\s\S]*?refreshStudentSessionAuthorityWithoutTelemetry[\s\S]*?outside_tracking_window/
   );
+  assert.match(route, /resolveClasspilotMonitoringPolicy\(trackingSettings,[\s\S]*?acceptedCapabilities: protocol\.acceptedCapabilities/);
 });
 
 test("recovery release and legacy sign-out are exact, generic, and do not enumerate bindings", () => {

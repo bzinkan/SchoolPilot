@@ -5,6 +5,14 @@ import {
   ensureClasspilotStudentSessionRecoveryIndexesOnline,
 } from "./classpilotStudentSessionRecoveryIndexes.js";
 import { staffIdentityIntegrityMigration } from "./staffIdentityIntegrityMigration.js";
+import { safetyCenterMigration } from "./safetyCenterMigration.js";
+import { mailpilotSafetyDurabilityMigration } from "./mailpilotSafetyDurabilityMigration.js";
+import { classpilotSchedulingMigration } from "./classpilotSchedulingMigration.js";
+import { rosterIntegrationsMigration } from "./rosterIntegrationsMigration.js";
+import { classpilotSchoolWebsitePolicyMigration } from "./classpilotSchoolWebsitePolicyMigration.js";
+import { classpilotContentCategoriesMigration } from "./classpilotContentCategoriesMigration.js";
+import { classpilotMonitoringInterruptionsMigration } from "./classpilotMonitoringInterruptionsMigration.js";
+import { classpilotScheduleProfileSupervisionMigration } from "./classpilotScheduleProfileSupervisionMigration.js";
 
 export { STAFF_IDENTITY_NORMALIZED_EMAIL_SQL } from "./staffIdentityIntegrityMigration.js";
 
@@ -455,6 +463,14 @@ export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
       await connection.query(SCHOOLS_STAFF_PASSWORD_LOGIN_EXPAND_SQL);
     },
   },
+  safetyCenterMigration,
+  mailpilotSafetyDurabilityMigration,
+  classpilotSchedulingMigration,
+  rosterIntegrationsMigration,
+  classpilotSchoolWebsitePolicyMigration,
+  classpilotContentCategoriesMigration,
+  classpilotMonitoringInterruptionsMigration,
+  classpilotScheduleProfileSupervisionMigration,
   staffIdentityIntegrityMigration,
 ];
 

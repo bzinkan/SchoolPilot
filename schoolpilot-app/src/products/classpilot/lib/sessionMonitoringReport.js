@@ -1,3 +1,5 @@
+import { normalizeCategoryBreakdown } from './contentCategories.js';
+
 const REVIEW_STATUS_LABELS = new Map([
   ['automated', 'Automated'],
   ['unreviewed', 'Automated'],
@@ -207,6 +209,7 @@ function normalizeStudent(studentValue, reportVersion, reportAlerts) {
     ),
     offTaskSeconds,
     offTaskEventCount,
+    offTaskCategories: reportVersion >= 3 ? normalizeCategoryBreakdown(student.offTaskCategories, offTaskSeconds) : null,
     safetyAlerts,
     hasV2Details: reportVersion >= 2
       || unclassifiedSeconds != null
@@ -297,6 +300,7 @@ export function normalizeSessionMonitoringReport(value) {
       unclassifiedSeconds,
       offTaskSeconds,
       offTaskEventCount,
+      offTaskCategories: reportVersion >= 3 ? normalizeCategoryBreakdown(totals.offTaskCategories, offTaskSeconds) : null,
       safetyAlertCount,
     },
     students,

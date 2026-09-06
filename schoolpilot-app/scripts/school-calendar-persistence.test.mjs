@@ -48,7 +48,7 @@ function projection(month, overrides = {}) {
   };
 }
 
-test("school calendar retains drafts and persists only verified school-timezone dates", { timeout: 90_000 }, async () => {
+test("school calendar retains drafts and persists only verified school-timezone dates", { timeout: 90_000 }, async (context) => {
   const vite = await createServer({
     root: APP_ROOT,
     logLevel: "error",
@@ -71,6 +71,7 @@ test("school calendar retains drafts and persists only verified school-timezone 
   let nextPutMode = "success";
   let browser;
   let page;
+  context.signal.addEventListener("abort", () => { void browser?.close().catch(() => {}); }, { once: true });
 
   const handleApiRoute = async (route) => {
     const request = route.request();
@@ -122,10 +123,16 @@ test("school calendar retains drafts and persists only verified school-timezone 
       return;
     }
 
+    const previewMatch = pathname.match(/^\/api\/classpilot\/admin\/instructional-calendar\/(\d{4}-\d{2})\/preview$/);
+    if (previewMatch && request.method() === "POST") {
+      await route.fulfill({ json: { previewToken: "a".repeat(64), changedOccurrences: 2, blockers: [], changes: [] } });
+      return;
+    }
     const updateMatch = pathname.match(/^\/api\/classpilot\/admin\/instructional-calendar\/(\d{4}-\d{2})$/);
     if (updateMatch && request.method() === "PUT") {
       const month = updateMatch[1];
       const body = request.postDataJSON();
+      assert.equal(body.previewToken, "a".repeat(64), "save must carry the reviewed preview token");
       putRequests.push({ month, body });
 
       if (nextPutMode === "fail") {
@@ -432,6 +439,9 @@ test("school calendar retains drafts and persists only verified school-timezone 
     assert.match(page.url(), /month=2099-09/, "canceling month navigation must retain the current month");
 
     nextPutMode = "fail";
+    await page.getByRole("button", { name: "Preview month changes" }).click();
+    await page.getByRole("button", { name: "Save reviewed month" }).waitFor();
+    assert.equal(putRequests.length, 0, "reviewing a draft must not write the calendar");
     await page.getByTestId("button-save-calendar").click({ clickCount: 2 });
     await page.getByTestId("calendar-save-error").waitFor();
     assert.equal(putRequests.length, 1, "double-clicking Save Month must issue one PUT");
@@ -462,6 +472,8 @@ test("school calendar retains drafts and persists only verified school-timezone 
     const september11 = page.getByTestId("calendar-day-2099-09-11");
     await september11.click();
     newerVerificationGet = true;
+    await page.getByRole("button", { name: "Preview month changes" }).click();
+    await page.getByRole("button", { name: "Save reviewed month" }).waitFor();
     await page.getByTestId("button-save-calendar").click();
     await page.getByTestId("calendar-conflict-alert").waitFor();
     assert.equal(await september11.getAttribute("aria-pressed"), "true", "a newer verification revision must preserve the local draft");
@@ -474,6 +486,8 @@ test("school calendar retains drafts and persists only verified school-timezone 
     const september15 = page.getByTestId("calendar-day-2099-09-15");
     await september15.click();
     nextPutMode = "conflict";
+    await page.getByRole("button", { name: "Preview month changes" }).click();
+    await page.getByRole("button", { name: "Save reviewed month" }).waitFor();
     await page.getByTestId("button-save-calendar").click();
     await page.getByTestId("calendar-conflict-alert").waitFor();
     assert.equal(await september15.getAttribute("aria-pressed"), "true", "409 must preserve the local draft");

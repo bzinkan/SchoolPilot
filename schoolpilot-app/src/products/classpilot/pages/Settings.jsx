@@ -1,3 +1,5 @@
+import MonitoringHoursSettings from "../components/MonitoringHoursSettings";
+import { MonitoringDigestSettings } from "../components/MonitoringInterruptionsPanel";
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Navigate, useNavigate } from "react-router-dom";
@@ -112,8 +114,6 @@ const settingsSchema = z.object({
   blockedDomains: z.string(),
   allowedDomains: z.string(),
   ipAllowlist: z.string(),
-  aiSafetyEmailsEnabled: z.boolean().optional(),
-  autoBlockUnsafeUrls: z.boolean().optional(),
   sharedChromebookSignInEnabled: z.boolean().optional(),
   centralEmailRecipientUserId: z.string().optional(),
 });
@@ -191,8 +191,6 @@ export default function Settings() {
       blockedDomains: settings?.blockedDomains?.join(", ") || "",
       allowedDomains: settings?.allowedDomains?.join(", ") || "",
       ipAllowlist: settings?.ipAllowlist?.join(", ") || "",
-      aiSafetyEmailsEnabled: settings?.aiSafetyEmailsEnabled !== false,
-      autoBlockUnsafeUrls: settings?.autoBlockUnsafeUrls !== false,
       sharedChromebookSignInEnabled: settings?.sharedChromebookSignInEnabled === true,
       centralEmailRecipientUserId: settings?.centralEmailRecipientUserId || "none",
     },
@@ -208,8 +206,6 @@ export default function Settings() {
         blockedDomains: settings.blockedDomains?.join(", ") || "",
         allowedDomains: settings.allowedDomains?.join(", ") || "",
         ipAllowlist: settings.ipAllowlist?.join(", ") || "",
-        aiSafetyEmailsEnabled: settings.aiSafetyEmailsEnabled !== false,
-        autoBlockUnsafeUrls: settings.autoBlockUnsafeUrls !== false,
         sharedChromebookSignInEnabled: settings.sharedChromebookSignInEnabled === true,
         centralEmailRecipientUserId: settings.centralEmailRecipientUserId || "none",
       });
@@ -239,8 +235,6 @@ export default function Settings() {
           .split(",")
           .map((ip) => ip.trim())
           .filter(Boolean),
-        aiSafetyEmailsEnabled: data.aiSafetyEmailsEnabled !== false,
-        autoBlockUnsafeUrls: data.autoBlockUnsafeUrls !== false,
         sharedChromebookSignInEnabled: data.sharedChromebookSignInEnabled === true,
         ...(submittedCentralRecipientUserId !== undefined ? {
           centralEmailRecipientUserId: submittedCentralRecipientUserId === "none"
@@ -641,37 +635,11 @@ export default function Settings() {
                 </div>
               </div>
 
-              <div className="flex items-center space-x-3">
-                <input
-                  type="checkbox"
-                  id="aiSafetyEmailsEnabled"
-                  className="h-4 w-4 rounded border-gray-300"
-                  {...form.register("aiSafetyEmailsEnabled")}
-                />
-                <Label htmlFor="aiSafetyEmailsEnabled">
-                  AI Safety Alert Emails
-                </Label>
+              <div className="rounded-md border p-4 text-sm">
+                Student safety alerts are reviewed in the Safety Center. Every new distinct alert notifies the school administrators. AI detections leave tabs open for administrator review.
               </div>
-              <p className="text-xs text-muted-foreground -mt-4 ml-7">
-                Send email notifications to school admins when dangerous content (self-harm, violence, sexual) is detected.
-              </p>
-
-              <div className="flex items-center space-x-3">
-                <input
-                  type="checkbox"
-                  id="autoBlockUnsafeUrls"
-                  data-testid="input-auto-block-unsafe-urls"
-                  className="h-4 w-4 rounded border-gray-300"
-                  {...form.register("autoBlockUnsafeUrls")}
-                />
-                <Label htmlFor="autoBlockUnsafeUrls">
-                  Automatically close unsafe tabs
-                </Label>
-              </div>
-              <p className="text-xs text-muted-foreground -mt-4 ml-7">
-                When off, ClassPilot still alerts teachers and admins about unsafe content but leaves the student's tab open.
-              </p>
-
+              {canManageSchoolSettings && settings && <MonitoringHoursSettings key={JSON.stringify([settings.enableTrackingHours, settings.trackingStartTime, settings.trackingEndTime, settings.trackingDays, settings.schoolTimezone, settings.afterHoursMode])} settings={settings} />}
+              {canManageSchoolSettings && <MonitoringDigestSettings />}
               {canManageSchoolSettings && (
                 <div className="rounded-md border p-4 space-y-3">
                   <div>

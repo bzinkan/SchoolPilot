@@ -1,0 +1,15 @@
+# MailPilot safety delivery
+
+Authenticated Gmail pushes are acknowledged after their history range finishes processing. Failed fetches, unavailable classifications, alert persistence failures and cursor failures return HTTP 503 for Pub/Sub retry. Logs and watch errors use bounded operational codes without provider bodies or message content. Malformed payloads and inactive or disabled mailboxes are acknowledged without processing.
+
+Each flagged Gmail message commits its raw email alert, shared safety alert, case audit events and administrator notification outbox in one transaction. Identity is scoped by school, student and Gmail message ID. A stable SHA256 source key makes a retained shared observation recognizable after its raw email is deleted. Retries search all cases, including closed and reviewed cases, and do not reopen cases, increment observation counts, recreate retained-away email content or generate another notification. Retained legacy partial alerts are repaired from their original classification; legacy reviewed mail is not reopened.
+
+A batch may commit successful messages before another message fails, but its history cursor remains unchanged until every message succeeds. Subsequent retries skip those durable safety observations. Cursor completion checks the current watch identity and expected history cursor; stale completions cannot regress a newer cursor or jump beyond it. Routine watch renewal preserves the outstanding cursor and error. Scan counters describe processing attempts, so retries can increase scanned-message counts.
+
+Safety Center review copies the actual review timestamp and reviewer to the exact source email row in the same transaction, without asserting that the classification was confirmed or dismissed. This review marker survives later case cleanup. The internal source key is omitted from MailPilot HTTP responses. Existing email retention ages remain authoritative; the review marker allows already reviewed mail to qualify for that existing cleanup.
+
+Missing or Gmail-expired history is surfaced as `MAILPILOT_HISTORY_RESYNC_REQUIRED`. The handler does not silently replace that cursor with the latest watch cursor. Recovering an expired Gmail range requires an explicit mailbox backfill or operator decision; this change does not implement a full mailbox backfill. Live Pub/Sub acknowledgement deadlines/retry configuration and a real Gmail pilot still need operational verification.
+
+`tests/mailpilot-notification.test.ts` tests the actual HTTP acknowledgement handler, authentication, retry status, exact decimal cursor comparison and partial-batch retry behavior without Gmail or a database. `tests/mailpilot-safety-durability.integration.test.ts` uses only a local isolated fixture and tests outbox-failure rollback, concurrent/closed-case replay, raw retention, legacy repair, review propagation, tenant/license boundaries and stale cursor completion. Run the database suite serially.
+
+Google documents acknowledgement and retry behavior in its [Gmail push notification guide](https://developers.google.com/workspace/gmail/api/guides/push).

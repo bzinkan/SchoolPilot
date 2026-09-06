@@ -1,4 +1,6 @@
 import db from "../db.js";
+import { getSchoolSchedulingContext, getClasspilotInstructionalDateStatus as getInstructionalDateStatus } from "./classpilotScheduling.js";
+import { resolveClassBaseWindow } from "./classpilotSchedulingRules.js";
 import { safeErrorMetadata } from "../util/safeLogging.js";
 import { broadcastToTeachersLocal } from "../realtime/ws-broadcast.js";
 import { publishWS } from "../realtime/ws-redis.js";
@@ -36,7 +38,6 @@ import {
   getClasspilotSessionStudentRoster,
   getGroupByIdAndSchool,
   getGroupStudents,
-  getInstructionalDateStatus,
   getScheduledClassConflictByIdAndSchool,
   getScheduledClassConflictForSlot,
   getScheduledGroupsReadyToStart,
@@ -203,6 +204,8 @@ export async function getClasspilotGroupsReadyAtEffectiveWindow(options: {
   schoolId: string;
   scheduledDate: string;
   currentTimeHHMM: string;
+  /** Scheduler-only diagnostic candidates; the caller must retain its closed-day gate. */
+  includeNonInstructionalCandidates?: boolean;
   dbInstance?: typeof db;
 }): Promise<Group[]> {
   let baseCandidates: Group[];
@@ -251,6 +254,7 @@ export async function getClasspilotGroupsReadyAtEffectiveWindow(options: {
     if (group) candidatesById.set(group.id, group);
   }));
   const approvedByGroupId = new Map(approvedLegs.map((leg) => [leg.groupId, leg]));
+  const scheduling = await getSchoolSchedulingContext(options.schoolId, options.dbInstance);
   return Array.from(candidatesById.values())
     .filter((group) => {
       if (
@@ -261,8 +265,14 @@ export async function getClasspilotGroupsReadyAtEffectiveWindow(options: {
         || group.scheduleSkippedDate === options.scheduledDate
       ) return false;
       const leg = approvedByGroupId.get(group.id);
-      const start = leg?.effectiveStartTime || group.blockStartTime!;
-      const end = leg?.effectiveEndTime || group.blockEndTime!;
+      const month = options.scheduledDate.slice(0, 7);
+      const calendar = options.includeNonInstructionalCandidates ? { ...scheduling.calendar, [month]: {
+        ...scheduling.calendar[month], nonInstructionalDates: (scheduling.calendar[month]?.nonInstructionalDates ?? []).filter((date) => date !== options.scheduledDate),
+      } } : scheduling.calendar;
+      const base = resolveClassBaseWindow(group, options.scheduledDate, scheduling.config, calendar);
+      if (!base) return false;
+      const start = leg?.effectiveStartTime || base.startTime;
+      const end = leg?.effectiveEndTime || base.endTime;
       return start <= options.currentTimeHHMM && end > options.currentTimeHHMM;
     })
     .sort((left, right) => {
@@ -887,6 +897,11 @@ export async function processScheduledClassAutoStart(options: {
     if (group.scheduleSkippedDate === options.scheduledDate) {
       return { status: "skipped", reason: "skipped" };
     }
+    // Preserve the known calendar reason before the shared base resolver
+    // collapses all non-meeting dates to a null window. The locked create path
+    // repeats this read, so a closure racing the bell still wins atomically.
+    const calendarStatus = await getInstructionalDateStatus(group.schoolId, options.scheduledDate, dbInstance);
+    if (!calendarStatus.instructional) return { status: "skipped", reason: "non_instructional_day" };
     let effectiveWindow: Awaited<ReturnType<typeof getEffectiveClasspilotScheduleWindow>>;
     try {
       effectiveWindow = await getEffectiveClasspilotScheduleWindow({

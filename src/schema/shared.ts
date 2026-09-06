@@ -473,11 +473,20 @@ export const studentSafetyCases = pgTable(
     closedAt: timestamp("closed_at"),
     summary: text("summary"),
     metadata: jsonb("metadata"),
+    revision: integer("revision").notNull().default(0),
+    acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true }),
+    acknowledgedBy: text("acknowledged_by"),
+    assignedTo: text("assigned_to"),
+    resolutionNote: text("resolution_note"),
+    mergedInto: text("merged_into"),
   },
   (table) => [
     index("student_safety_cases_school_status_idx").on(table.schoolId, table.status),
     index("student_safety_cases_student_idx").on(table.studentId),
     index("student_safety_cases_opened_idx").on(table.openedAt),
+    unique("student_safety_cases_school_id_unique").on(table.schoolId, table.id),
+    unique("safety_case_student_parent_idx").on(table.schoolId, table.id, table.studentId),
+    uniqueIndex("safety_one_open_case_idx").on(table.schoolId, table.studentId).where(sql`${table.status} = 'open'`),
   ]
 );
 
@@ -519,6 +528,7 @@ export const classpilotAiDecisions = pgTable(
     title: text("title"),
     domain: text("domain"),
     category: text("category"),
+    contentCategory: text("content_category"),
     safetyAlert: text("safety_alert"),
     confidence: integer("confidence"),
     reasoning: text("reasoning"),

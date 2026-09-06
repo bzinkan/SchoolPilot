@@ -7,6 +7,8 @@ const COUNTER_NAMES = [
   "dailyRollupSchools", "studentWebSocketAuthAttempt", "studentWebSocketAuthSuccess",
   "studentWebSocketAuthDenied", "studentWebSocketAuthServiceFailure", "studentWebSocketAuthSocketClosed",
   "studentWebSocketRevalidationFailure",
+  "safetyAlertsCreated", "safetyObservationsMerged", "safetyExceptionsApplied",
+  "safetyEmailsSent", "safetyFollowupsSent", "safetyEmailFailures", "safetyEmailUnknown",
 ] as const;
 
 export type RuntimePerformanceCounter = typeof COUNTER_NAMES[number];

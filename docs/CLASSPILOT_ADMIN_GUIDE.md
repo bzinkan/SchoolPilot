@@ -81,10 +81,24 @@ Official classes define teacher authority, student membership, and scheduled ses
 1. **Create or import.** Create an official class or import from Google Classroom, then verify its school, name, and source.
 2. **Assign teaching staff.** Set one primary teacher and any appropriate co-teachers. These assignments control who can start and operate the class.
 3. **Build the roster.** Add the exact students who belong in the class. A student can belong to more than one official class.
-4. **Configure the recurring window.** Set the class schedule and school calendar. Review conflicts before enabling automatic start and end.
-5. **Use archive or delete deliberately.** Archive when history must remain available. Delete only when the UI confirms the action is appropriate and irreversible consequences are understood.
+4. **Configure the recurring window.** Set each class’s weekdays, term dates, A days/B days/both, and fixed times or named period. Class Management keeps Classes | Scheduling | Schedule Changes in that order.
+5. **Configure school scheduling.** Open Scheduling for reusable Schedule Profiles, periods, bell profiles, A/B rotation and the school calendar. Create a named profile such as NWEA, select grades/classes, adjust times or skip meetings, and optionally add paired Coverage testing groups. Saving a profile does not activate it: choose Apply, select dates, preview conflicts, then apply. Normal schedules resume outside those dates, and regular rosters stay intact. Editing a saved profile does not rewrite an applied snapshot. Cancel before its first affected start; use Coverage Release or Extend for active testing. A date override changes one date; a new rotation anchor changes the following sequence. Existing occurrences keep their frozen times.
+6. **Use archive or delete deliberately.** Archive when history must remain available. Delete only when the UI confirms the action is appropriate and irreversible consequences are understood.
 
 [Open Classes](/classpilot/admin/classes)
+
+### Review OneRoster and Clever imports
+
+**Who can use this:** Administrator or school administrator
+
+Map external records to the school and review concrete changes before applying them.
+
+1. **Validate and map.** Upload a complete OneRoster 1.1/1.2 bulk ZIP or configure an authorized Clever district connection. Choose the matching school and resolve ambiguous people and classes.
+2. **Review the changes.** Read before-and-after values and the named student and teacher additions/removals. Preserve manual contributions unless you explicitly adopt them. Approve only the current preview.
+3. **Read the result.** Apply the reviewed plan, inspect saved outcomes, and resolve conflicts before retrying. An omitted student is not automatically deactivated.
+4. **Enable Clever deliberately.** Complete the initial reviewed import and district pilot before enabling nightly sync at 2:00 a.m. school time. Empty, incomplete or unusually large-removal snapshots are held for review.
+
+[Open Class Management](/classpilot/admin/classes)
 
 ### Operate one-day schedule changes
 
@@ -108,11 +122,12 @@ Configure eligible pairs and approve dated exceptions without rewriting recurrin
 
 Set school-wide defaults without confusing them with an individual administrator’s teaching tools.
 
-1. **Set core boundaries.** Review school identity, retention, tab limits, allowed domains, blocked domains, and safety notification recipients.
-2. **Configure shared sign-in.** Enable shared Chromebook sign-in only when the school’s device model requires it, then manage setup keys as protected configuration.
-3. **Deploy managed policy.** Copy the generated managed policy to the exact Google Admin application configuration. Rotate a setup key when exposure is suspected.
-4. **Set workflow policy.** Review the schedule-change policy and other school-level controls before teachers depend on them.
-5. **Respect data boundaries.** Use retention and access controls according to school policy. Do not copy student browsing or sign-in details into general-purpose notes.
+1. **Set core boundaries.** Review school identity, retention, tab limits, allowed domains and blocked domains. Every active school administrator receives distinct safety alerts; this is managed through Safety Center.
+2. **Set monitoring hours.** Configure school-local tracking hours and the after-hours choice: Off, Safety only, or Full. Safety only retains actual unsuppressed safety alerts without ordinary browsing history, screenshots or teacher presence; unsupported clients stop after-hours monitoring.
+3. **Configure shared sign-in.** Enable shared Chromebook sign-in only when the school’s device model requires it, then manage setup keys as protected configuration.
+4. **Deploy managed policy.** Copy the generated managed policy to the exact Google Admin application configuration. Rotate a setup key when exposure is suspected.
+5. **Set workflow policy.** Review the schedule-change policy and other school-level controls before teachers depend on them.
+6. **Respect data boundaries.** Use retention and access controls according to school policy. Do not copy student browsing or sign-in details into general-purpose notes.
 
 > **Flight note:** Flight Paths displayed in School Settings belong to the signed-in administrator’s teaching profile; they are not a school-wide library.
 
@@ -185,6 +200,19 @@ Keep operational health, instructional trends, and evidence workflows in their p
 
 [Open Analytics](/classpilot/admin/analytics)
 
+### Review student safety reports
+
+**Who can use this:** Administrator or school administrator
+
+Use Safety Center in the Admin panel, below Coverage and above Database Cleanup.
+
+1. **Open the student report.** Review individual alerts, evidence, explanations, observations and delivery status. Severity provides context; every new distinct concern follows the same administrator email workflow. Repeated observations do not generate repeated initial emails.
+2. **Acknowledge or assess.** Acknowledge receipt to stop the single fifteen-minute follow-up. Mark an alert reviewed when you have assessed it. Assignment and review notes preserve who acted; closing a case requires a resolution note.
+3. **Approve an exact URL.** Stop alerts for this URL approves that precise page across the school. Other queries and fragments remain eligible. Revoke an approval under Approved URLs; this does not replay old emails or override a website block.
+4. **Block a website.** Review the displayed domain before saving a school-wide block. Saved and applied are separate states: disconnected or unsupported Chromebooks remain pending. AI detection itself never closes tabs.
+
+[Open Safety Center](/classpilot/admin/safety)
+
 ### Operate Email Monitoring
 
 **Who can use this:** Administrator; entitlement is granted by a super administrator
@@ -194,7 +222,7 @@ Set up and review the ClassPilot email-safety add-on when the school is entitled
 1. **Confirm entitlement.** A super administrator must grant the add-on to an active ClassPilot school before setup is available.
 2. **Authorize Workspace access.** Follow the setup wizard to add the displayed client ID and read-only Gmail scope in Google Admin domain-wide delegation.
 3. **Verify and enable.** Test with one school mailbox, then enable watches for eligible student addresses.
-4. **Review alerts.** Confirm, dismiss, or escalate alerts according to school policy, preserving the audit trail and limiting access to authorized staff.
+4. **Review alerts.** Enabled email detections also appear in Safety Center and use its administrator notification workflow. Review the student report and preserve the audit trail; an email alert does not provide a browser URL to approve or block.
 
 [Open Email Monitoring](/classpilot/admin/email-monitoring)
 ## Support

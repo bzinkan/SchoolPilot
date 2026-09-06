@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
+import type { WebSocket } from "ws";
 
 // These values must be set before importing any application module: the
 // screenshot upload path resolves its cadence only for a school whose
@@ -15,6 +16,7 @@ process.env.CLASSPILOT_PROTOCOL_V3_ENABLED = "true";
 process.env.CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1 = "true";
 process.env.CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1 = "true";
 process.env.CLASSPILOT_CAP_SCREENSHOT_ACTIVE_OBSERVATION_CADENCE_V1 = "true";
+process.env.CLASSPILOT_CAP_AFTER_HOURS_SAFETY_ONLY_V1 = "true";
 
 // Several application modules own process-lifetime housekeeping intervals.
 // Keep only this worker's intervals non-blocking so the test worker can exit.
@@ -61,6 +63,10 @@ const { resolveClasspilotScreenshotPolicy } = await import(
 const { schedulerPool, schedulerLockPool } = await import(
   "../dist/services/schedulerDb.js"
 );
+const { flushHeartbeatClassificationBatches } = await import("../dist/services/heartbeatClassificationBatcher.js");
+const safety = await import("../dist/services/safetyCenter.js");
+const { SAFETY_CENTER_SQL } = await import("../dist/db/safetyCenterMigration.js");
+const { registerWsClient, authenticateWsClient, removeWsClient } = await import("../dist/realtime/ws-broadcast.js");
 
 const { sql } = drizzle;
 const { devices, groupStudents, groups, studentSessions, students } = schema;
@@ -90,6 +96,17 @@ async function sharedRealtimeCommand(args: string[]): Promise<unknown> {
   }
   if (args[0] === "EVAL") {
     const key = args[3];
+    if (args[1]?.includes('current.aiClassification = classification')) {
+      const encoded = key ? sharedRealtimeRows.get(key) : undefined;
+      if (!key || !encoded) return '';
+      const current = JSON.parse(encoded) as Record<string, unknown>;
+      if (current.state !== 'active' || current.schoolId !== args[4] || current.studentId !== args[5]
+        || current.studentSessionId !== args[6] || current.deviceId !== args[7] || current.heartbeatId !== args[8]) return '';
+      current.aiClassification = JSON.parse(args[10] || 'null');
+      current.classificationPending = false;
+      current.revision = Math.max(Number(args[9]) || 0, Number(current.revision || 0) + 1);
+      const next = JSON.stringify(current); sharedRealtimeRows.set(key, next); return next;
+    }
     const snapshotJson = args[5];
     if (!key || !snapshotJson) throw new Error("Malformed realtime EVAL in test");
     const snapshot = JSON.parse(snapshotJson) as Record<string, unknown>;
@@ -113,6 +130,7 @@ let restoreMetricsClock: (() => void) | undefined;
 let baseUrl = "";
 let schoolId = "";
 let teachingSessionId = "";
+let safetyAdminId = "";
 let observed: StudentFixture;
 let unobserved: StudentFixture;
 let limiterProbe: StudentFixture;
@@ -310,12 +328,14 @@ async function bindClassAuthority(fixture: StudentFixture): Promise<void> {
 }
 
 before(async () => {
+  await pool.query(SAFETY_CENTER_SQL);
   setClasspilotRealtimeStatusCommandForTests(sharedRealtimeCommand);
 
   const school = await storage.createSchool({
     name: tag,
     domain,
     slug: tag,
+    schoolTimezone: "UTC",
     status: "active",
     planStatus: "active",
   } as Parameters<typeof storage.createSchool>[0]);
@@ -342,6 +362,9 @@ before(async () => {
     role: "teacher",
     status: "active",
   } as Parameters<typeof storage.createMembership>[0]));
+  const safetyAdmin = await storage.createUser({ email: `${tag}-admin@${domain}`, firstName: "Synthetic", lastName: "Administrator" });
+  safetyAdminId = safetyAdmin.id;
+  await storage.createMembership({ userId: safetyAdmin.id, schoolId, role: "school_admin", status: "active" });
 
   observed = await createStudentFixture("observed");
   unobserved = await createStudentFixture("unobserved");
@@ -350,16 +373,13 @@ before(async () => {
   thrownProbe = await createStudentFixture("thrown");
 
   const teachingSession = await inSchool(async () => {
-    const [group] = await db
-      .insert(groups)
-      .values({
+    const group = await storage.createGroup({
         schoolId,
         teacherId: teacher.id,
         name: `${tag} class`,
         groupType: "admin_class",
         status: "active",
-      })
-      .returning({ id: groups.id });
+      });
     assert.ok(group?.id);
     await db.insert(groupStudents).values(
       [observed, unobserved, limiterProbe, takeover, thrownProbe].map((fixture) => ({
@@ -419,6 +439,8 @@ after(async () => {
   try {
     await asSystem(async () => {
       const devicePattern = `${tag}-%`;
+      await db.execute(sql`DELETE FROM safety_url_exceptions WHERE school_id = ${schoolId}`);
+      await db.execute(sql`DELETE FROM student_safety_cases WHERE school_id = ${schoolId}`);
       await db.execute(sql`DELETE FROM classpilot_student_control_states WHERE school_id = ${schoolId}`);
       await db.execute(sql`DELETE FROM classpilot_session_students WHERE school_id = ${schoolId}`);
       await db.execute(sql`DELETE FROM classpilot_session_staff WHERE school_id = ${schoolId}`);
@@ -427,7 +449,10 @@ after(async () => {
         DELETE FROM group_students
         WHERE group_id IN (SELECT id FROM groups WHERE school_id = ${schoolId})
       `);
-      await db.execute(sql`DELETE FROM groups WHERE school_id = ${schoolId}`);
+      await db.transaction(async tx => {
+        await tx.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id=${schoolId})`);
+        await tx.execute(sql`DELETE FROM groups WHERE school_id = ${schoolId}`);
+      });
       await db.execute(sql`DELETE FROM student_sessions WHERE device_id LIKE ${devicePattern}`);
       await db.execute(sql`DELETE FROM student_devices WHERE device_id LIKE ${devicePattern}`);
       await db.execute(sql`DELETE FROM devices WHERE school_id = ${schoolId}`);
@@ -435,8 +460,8 @@ after(async () => {
       await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${schoolId}`);
       await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${schoolId}`);
       await db.execute(sql`DELETE FROM settings WHERE school_id = ${schoolId}`);
-      await db.execute(sql`DELETE FROM schools WHERE id = ${schoolId}`);
-      await db.execute(sql`DELETE FROM users WHERE email LIKE ${`${tag}-%`}`);
+      await db.execute(sql`DELETE FROM classpilot_school_schedules WHERE school_id = ${schoolId}`);
+      await db.execute(sql`UPDATE schools SET status='suspended',is_active=false,deleted_at=now() WHERE id = ${schoolId}`);
     });
   } finally {
     await Promise.allSettled([
@@ -453,6 +478,8 @@ describe("ClassPilot screenshot upload realtime publish gate", () => {
   it("publishes the screenshot-available event while the student is observed", async () => {
     const capturedAt = new Date();
     const before = skippedPublishCount();
+    const authorityBefore = snapshotHeartbeatHotPathMetrics().counters.screenshotAuthorityTransactions ?? 0;
+    const publicationBefore = snapshotHeartbeatHotPathMetrics().timings.screenshotPublicationMs?.count ?? 0;
     const response = await uploadScreenshot(observed, capture(observed, capturedAt));
 
     assert.equal(response.status, 200);
@@ -463,6 +490,8 @@ describe("ClassPilot screenshot upload realtime publish gate", () => {
     assert.equal(policy.captureCadence?.mode, "active_view");
     assert.equal(policy.captureCadence?.intervalSeconds, 5);
     assert.equal(skippedPublishCount(), before);
+    assert.equal(snapshotHeartbeatHotPathMetrics().counters.screenshotAuthorityTransactions, authorityBefore + 1);
+    assert.equal(snapshotHeartbeatHotPathMetrics().timings.screenshotPublicationMs?.count, publicationBefore + 1);
 
     const orderedKey = screenshotAvailableKey(observed);
     assert.equal(
@@ -628,5 +657,128 @@ describe("ClassPilot screenshot upload realtime publish gate", () => {
     assert.equal(limited.status, 429);
     assert.equal(limited.body.code, "SCREENSHOT_UPLOAD_RATE_LIMITED");
     assert.equal(limited.body.error, "Too many screenshot uploads, please wait");
+  });
+
+  it("legacy auto-block and email flags produce safety cases for review and admin outbox without closing tabs", async () => {
+    await inSchool(() => storage.upsertSettings(schoolId, { autoBlockUnsafeUrls: true, aiSafetyEmailsEnabled: false,
+      allowedDomains: ["pornhub.com"] }));
+    const delivered: Array<Record<string, unknown>> = [];
+    const socket = {
+      readyState: 1 as const,
+      send: (raw: Parameters<WebSocket["send"]>[0]) => { delivered.push(JSON.parse(String(raw))); },
+    } as WebSocket;
+    registerWsClient(socket);
+    authenticateWsClient(socket, { role: "student", schoolId, studentId: observed.studentId,
+      studentSessionId: observed.studentSessionId, deviceId: observed.deviceId, acceptedCapabilities: ACCEPTED_CAPABILITIES });
+    const unsafeUrl = 'https://pornhub.com/';
+    const heartbeat = async () => {
+      const response = await fetch(`${baseUrl}/api/classpilot/device/heartbeat`, {
+        method: "POST", headers: { authorization: `Bearer ${observed.token}`, "content-type": "application/json" },
+        body: JSON.stringify({ clientProtocolVersion: 3, capabilities: ACCEPTED_CAPABILITIES,
+          activeTabUrl: unsafeUrl, activeTabTitle: "Synthetic known-list safety fixture" }),
+      });
+      assert.equal(response.status, 200);
+      await response.json();
+      await flushHeartbeatClassificationBatches();
+    };
+    try {
+      await heartbeat();
+      await heartbeat();
+      const alerts = await inSchool(() => db.execute(sql`SELECT a.id,a.case_id,a.observation_count,a.reviewed_at FROM student_safety_alerts a
+        WHERE a.school_id=${schoolId} AND a.student_id=${observed.studentId}`));
+      assert.equal(alerts.rows.length, 1);
+      const alert = alerts.rows[0]!;
+      assert.equal(alert.observation_count, 2);
+      assert.equal(alert.reviewed_at, null);
+      const outbox = await inSchool(() => db.execute(sql`SELECT recipient,status FROM safety_notification_outbox
+        WHERE school_id=${schoolId} AND alert_id=${alert.id} AND kind='initial'`));
+      assert.deepEqual(outbox.rows, [{ recipient: `${tag}-admin@${domain}`, status: 'pending' }]);
+      const commands = await inSchool(() => db.execute(sql`SELECT command_type FROM classpilot_commands WHERE school_id=${schoolId}`));
+      assert.equal(commands.rows.length, 0);
+      assert.equal(delivered.some(item => ['close-tab','close-tabs','close-url','block-url'].includes(String(item.type))), false);
+      await inSchool(() => safety.reviewSafetyAlert({ schoolId, alertId: String(alert.id), actorId: safetyAdminId, revision: 0, action: 'suppress' }));
+      await heartbeat();
+      const current = [...sharedRealtimeRows.values()].map(raw => JSON.parse(raw)).find(row => row.studentId === observed.studentId);
+      assert.equal(current.aiClassification.safetyAlert, null);
+      const after = await inSchool(() => db.execute(sql`SELECT observation_count FROM student_safety_alerts WHERE school_id=${schoolId} AND id=${alert.id}`));
+      assert.equal(after.rows[0]?.observation_count, 2);
+    } finally { removeWsClient(socket); }
+  });
+
+  it("withholds pixels, classroom state and ordinary history outside hours, including old clients", async () => {
+    await inSchool(() => storage.upsertSettings(schoolId, {
+      enableTrackingHours: true, schoolTimezone: "UTC", trackingStartTime: "00:00", trackingEndTime: "00:01",
+      trackingDays: new Date().getUTCDay() === 1 ? ["Tuesday"] : ["Monday"], afterHoursMode: "limited",
+    }));
+    const before = snapshotHeartbeatHotPathMetrics().counters.heartbeatRecorded ?? 0;
+    const realtimeBefore = [...sharedRealtimeRows.entries()];
+    for (const capable of [false, true]) {
+      const response = await fetch(`${baseUrl}/api/classpilot/device/heartbeat`, {
+        method: "POST", headers: { authorization: `Bearer ${observed.token}`, "content-type": "application/json" },
+        body: JSON.stringify({ clientProtocolVersion: 3,
+          capabilities: [...ACCEPTED_CAPABILITIES, ...(capable ? ["afterHoursSafetyOnlyV1"] : [])],
+          activeTabUrl: `https://${domain}/lesson`, activeTabTitle: "School lesson",
+          allOpenTabs: [{ url: "https://private.example/never-retain" }], screenLocked: true,
+        }),
+      });
+      assert.equal(response.status, 200);
+      const body = await response.json() as {
+        monitoringPolicy: { mode: string }; classroomState?: unknown;
+        screenshotPolicy: { observed: boolean }; pendingMessages: unknown[];
+      };
+      assert.equal(body.monitoringPolicy.mode, capable ? "safety_only" : "off");
+      assert.equal(body.classroomState, undefined);
+      assert.equal(body.screenshotPolicy.observed, false);
+      assert.deepEqual(body.pendingMessages, []);
+    }
+    assert.equal(snapshotHeartbeatHotPathMetrics().counters.heartbeatRecorded ?? 0, before);
+    assert.deepEqual([...sharedRealtimeRows.entries()], realtimeBefore);
+    const upload = await uploadScreenshot(observed, capture(observed, new Date()));
+    assert.equal(upload.status, 403);
+    assert.equal(upload.body.code, "MONITORING_OUTSIDE_SCHOOL_HOURS");
+  });
+
+  it("an instructional closure keeps capable safety alerts but forbids ordinary telemetry and pixels", async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    await inSchool(() => storage.upsertSettings(schoolId, {
+      enableTrackingHours: true, schoolTimezone: "UTC", trackingStartTime: "00:00", trackingEndTime: "23:59",
+      trackingDays: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"], afterHoursMode: "limited",
+    }));
+    const { emptySchoolSchedulingConfig } = await import("../dist/services/classpilotSchedulingRules.js");
+    const { resolveClasspilotMonitoringPolicy } = await import("../dist/services/classpilotMonitoringPolicy.js");
+    const changeDate = async (instructional: boolean) => inSchool(() => storage.withClasspilotSchedulePostCommitTransaction(async tx => {
+      const config = { ...emptySchoolSchedulingConfig(), dateOverrides: { [today]: { instructional } } };
+      await tx.execute(sql`INSERT INTO classpilot_school_schedules(school_id,config) VALUES(${schoolId},${JSON.stringify(config)}::jsonb)
+        ON CONFLICT(school_id) DO UPDATE SET config=EXCLUDED.config,revision=classpilot_school_schedules.revision+1`);
+      storage.recordClasspilotMonitoringPolicyChange(tx, schoolId);
+    }));
+    await changeDate(true);
+    assert.equal(resolveClasspilotMonitoringPolicy(await inSchool(() => storage.getHeartbeatTrackingSettingsForSchool(schoolId))).mode, "full");
+    await changeDate(false);
+    const before = snapshotHeartbeatHotPathMetrics().counters.heartbeatRecorded ?? 0;
+    const realtimeBefore = [...sharedRealtimeRows.entries()];
+    const response = await fetch(`${baseUrl}/api/classpilot/device/heartbeat`, {
+      method: "POST", headers: { authorization: `Bearer ${unobserved.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ clientProtocolVersion: 3, capabilities: [...ACCEPTED_CAPABILITIES, "afterHoursSafetyOnlyV1"],
+        activeTabUrl: "https://xvideos.com/synthetic-closure", activeTabTitle: "Synthetic closure safety fixture",
+        allOpenTabs: [{ url: "https://private.example/never-retain" }], screenLocked: true }),
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json() as {
+      monitoringPolicy: { mode: string };
+      classroomState?: unknown;
+      screenshotPolicy: { observed: boolean };
+    };
+    assert.equal(body.monitoringPolicy.mode, "safety_only");
+    assert.equal(body.classroomState, undefined);
+    assert.equal(body.screenshotPolicy.observed, false);
+    await flushHeartbeatClassificationBatches();
+    assert.equal(snapshotHeartbeatHotPathMetrics().counters.heartbeatRecorded ?? 0, before);
+    assert.deepEqual([...sharedRealtimeRows.entries()], realtimeBefore);
+    const alerts = await inSchool(() => db.execute(sql`SELECT severity,heartbeat_id FROM student_safety_alerts WHERE school_id=${schoolId} AND student_id=${unobserved.studentId}`));
+    assert.deepEqual(alerts.rows, [{ severity: "medium", heartbeat_id: null }]);
+    const commands = await inSchool(() => db.execute(sql`SELECT id FROM classpilot_commands WHERE school_id=${schoolId}`));
+    assert.equal(commands.rows.length, 0);
+    assert.equal((await uploadScreenshot(unobserved, capture(unobserved, new Date()))).status, 403);
   });
 });

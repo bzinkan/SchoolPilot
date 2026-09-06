@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import MonitoringInterruptionsPanel from "../components/MonitoringInterruptionsPanel";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -984,6 +985,7 @@ export default function Coverage() {
       </header>
 
       <main className="max-w-screen-2xl mx-auto px-6 py-6">
+        <MonitoringInterruptionsPanel />
         <div className="grid gap-4 md:grid-cols-3 mb-6">
           <Card>
             <CardHeader className="pb-2">

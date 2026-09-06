@@ -15,6 +15,8 @@ import { runWithTenantContext } from "../middleware/tenantContext.js";
 import { broadcastToTeachersLocal } from "../realtime/ws-broadcast.js";
 import { publishWS } from "../realtime/ws-redis.js";
 import { sendEmail } from "./email.js";
+import { getClasspilotBaseScheduleWindow } from "./classpilotScheduling.js";
+import type { ClasspilotScheduleRule } from "./classpilotSchedulingRules.js";
 
 export type EffectiveClasspilotScheduleWindow = {
   source: "recurring" | "swap";
@@ -47,7 +49,7 @@ export async function getEffectiveClasspilotScheduleWindow(options: {
   group: Pick<
     Group,
     "id" | "scheduleEnabled" | "blockStartTime" | "blockEndTime"
-  >;
+  > & { scheduleRule?: ClasspilotScheduleRule | null };
   scheduledDate: string;
   timeZone: string;
   dbInstance?: typeof db;
@@ -59,14 +61,16 @@ export async function getEffectiveClasspilotScheduleWindow(options: {
   ) {
     return null;
   }
+  const baseWindow = await getClasspilotBaseScheduleWindow(options);
+  if (!baseWindow) return null;
   const approved = await getApprovedScheduleChangeLegsForSchoolDate({
     schoolId: options.schoolId,
     scheduledDate: options.scheduledDate,
     dbInstance: options.dbInstance,
   });
   const leg = approved.find((candidate) => candidate.groupId === options.group.id);
-  const blockStartTime = leg?.effectiveStartTime ?? options.group.blockStartTime;
-  const blockEndTime = leg?.effectiveEndTime ?? options.group.blockEndTime;
+  const blockStartTime = leg?.effectiveStartTime ?? baseWindow.startTime;
+  const blockEndTime = leg?.effectiveEndTime ?? baseWindow.endTime;
   return {
     source: leg ? "swap" : "recurring",
     swapId: leg?.swapId ?? null,

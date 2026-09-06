@@ -1,4 +1,6 @@
 import { Router } from "express";
+import { validateClassScheduling } from "../../services/classpilotScheduling.js";
+import { normalizeClassScheduleRule } from "../../services/classpilotSchedulingRules.js";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
@@ -152,29 +154,23 @@ async function validateSchedule(options: {
   blockStartTime: unknown;
   blockEndTime: unknown;
   excludeGroupId?: string;
+  scheduleRule?: unknown;
 }) {
+  const rule = await validateClassScheduling({ schoolId: options.schoolId, rule: options.scheduleRule, scheduleEnabled: options.scheduleEnabled });
   if (!options.scheduleEnabled) {
-    return { blockStartTime: null, blockEndTime: null };
+    return { blockStartTime: null, blockEndTime: null, scheduleRule: options.scheduleRule == null ? null : rule.scheduleRule };
   }
-  const blockStartTime = normalizeTime(options.blockStartTime);
-  const blockEndTime = normalizeTime(options.blockEndTime);
+  const blockStartTime = rule.defaultWindow?.startTime ?? normalizeTime(options.blockStartTime);
+  const blockEndTime = rule.defaultWindow?.endTime ?? normalizeTime(options.blockEndTime);
   if (!blockStartTime || !blockEndTime) {
     throw routeError("blockStartTime and blockEndTime are required when scheduling is enabled", 400, "SCHEDULE_TIMES_REQUIRED");
   }
   if (blockStartTime >= blockEndTime) {
     throw routeError("blockStartTime must be before blockEndTime", 400, "SCHEDULE_TIME_ORDER");
   }
-  const overlap = await findOverlappingScheduledAdminClass({
-    schoolId: options.schoolId,
-    teacherId: options.teacherId,
-    blockStartTime,
-    blockEndTime,
-    excludeGroupId: options.excludeGroupId,
-  });
-  if (overlap) {
-    throw routeError(`Schedule overlaps with ${overlap.name}`, 409, "SCHEDULE_OVERLAP");
-  }
-  return { blockStartTime, blockEndTime };
+  // The transaction-bound validator checks dates, weekdays, A/B, profiles and
+  // every assigned teacher. A clock-only precheck would reject disjoint days.
+  return { blockStartTime, blockEndTime, scheduleRule: options.scheduleRule == null ? null : rule.scheduleRule };
 }
 
 async function serializeClass(group: any, schoolId: string) {
@@ -663,6 +659,7 @@ router.post("/classroom/import", ...auth, async (req, res, next) => {
           blockStartTime: existingClass?.blockStartTime,
           blockEndTime: existingClass?.blockEndTime,
           excludeGroupId: existingClass?.id,
+          scheduleRule: existingClass?.scheduleRule,
         });
         if (existingClass) {
           await freezeScheduledOccurrenceIfDue({ group: existingClass });
@@ -688,6 +685,7 @@ router.post("/classroom/import", ...auth, async (req, res, next) => {
             blockStartTime: schedule.blockStartTime,
             blockEndTime: schedule.blockEndTime,
             scheduleSkippedDate: existingClass?.scheduleSkippedDate ?? null,
+            scheduleRule: existingClass?.scheduleRule ?? null,
           },
           primaryTeacherId,
           coTeacherIds,
@@ -785,6 +783,7 @@ router.post("/", ...auth, async (req, res, next) => {
       scheduleEnabled,
       blockStartTime: req.body.blockStartTime,
       blockEndTime: req.body.blockEndTime,
+      scheduleRule: req.body.scheduleRule,
     });
     const { group } = await upsertAdminClassroomClass({
       schoolId,
@@ -801,6 +800,7 @@ router.post("/", ...auth, async (req, res, next) => {
         scheduleEnabled,
         blockStartTime: schedule.blockStartTime,
         blockEndTime: schedule.blockEndTime,
+        scheduleRule: schedule.scheduleRule,
       },
       primaryTeacherId,
       coTeacherIds,
@@ -870,6 +870,7 @@ router.patch("/:id", ...auth, async (req, res, next) => {
       await validateTeachers(submittedPrimaryTeacherId, [], schoolId);
     }
     const scheduleFieldsSubmitted =
+      req.body.scheduleRule !== undefined ||
       req.body.scheduleEnabled !== undefined ||
       req.body.blockStartTime !== undefined ||
       req.body.blockEndTime !== undefined;
@@ -884,12 +885,14 @@ router.patch("/:id", ...auth, async (req, res, next) => {
           blockStartTime: req.body.blockStartTime ?? group.blockStartTime,
           blockEndTime: req.body.blockEndTime ?? group.blockEndTime,
           excludeGroupId: group.id,
+          scheduleRule: req.body.scheduleRule !== undefined ? req.body.scheduleRule : group.scheduleRule,
         })
       : null;
     const recurringScheduleChanged = Boolean(
       scheduleFieldsSubmitted &&
       schedule &&
       (group.scheduleEnabled !== scheduleEnabled ||
+        JSON.stringify(normalizeClassScheduleRule(group.scheduleRule)) !== JSON.stringify(normalizeClassScheduleRule(schedule.scheduleRule)) ||
         group.blockStartTime !== schedule.blockStartTime ||
         group.blockEndTime !== schedule.blockEndTime)
     );
@@ -910,6 +913,7 @@ router.patch("/:id", ...auth, async (req, res, next) => {
       data.scheduleEnabled = scheduleEnabled;
       data.blockStartTime = schedule.blockStartTime;
       data.blockEndTime = schedule.blockEndTime;
+      data.scheduleRule = schedule.scheduleRule;
       if (recurringScheduleChanged) data.scheduleSkippedDate = null;
     }
     const updated = await updateAdminClassWithTeachers({

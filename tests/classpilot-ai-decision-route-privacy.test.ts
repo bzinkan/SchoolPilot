@@ -243,6 +243,7 @@ describe("ClassPilot AI decision route privacy", () => {
         "actionTaken",
         "category",
         "confidence",
+        "contentCategory",
         "createdAt",
         "domain",
         "id",

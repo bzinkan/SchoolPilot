@@ -17,6 +17,10 @@ import {
 import { logAudit } from "../../services/audit.js";
 
 const router = Router();
+const publicAlert = <T extends { safetySourceId?: string | null }>(row:T) => {
+  const { safetySourceId: _safetySourceId, ...visible } = row;
+  return visible;
+};
 
 const auth = [
   authenticate,
@@ -67,7 +71,7 @@ router.get("/alerts", ...auth, requireEmailMonitoringEnabled, async (req, res, n
     const alerts = await Promise.all(rows.map(async (a) => {
       const student = await getStudentById(a.studentId);
       return {
-        ...a,
+        ...publicAlert(a),
         studentName: student ? `${student.firstName || ""} ${student.lastName || ""}`.trim() : null,
       };
     }));
@@ -99,7 +103,7 @@ router.get("/alerts/stats", ...auth, requireEmailMonitoringEnabled, async (_req,
       last7d: d7,
       last30d: d30,
       mailboxesMonitored: watches.filter((w) => w.status === "active").length,
-      mailboxesWithErrors: watches.filter((w) => w.status === "error").length,
+      mailboxesWithErrors: watches.filter((w) => w.status === "error" || Boolean(w.lastError)).length,
     });
   } catch (err) {
     next(err);
@@ -117,7 +121,7 @@ router.get("/alerts/:id", ...auth, requireEmailMonitoringEnabled, async (req, re
     const student = await getStudentById(alert.studentId);
     return res.json({
       alert: {
-        ...alert,
+        ...publicAlert(alert),
         studentName: student ? `${student.firstName || ""} ${student.lastName || ""}`.trim() : null,
         studentGradeLevel: student?.gradeLevel || null,
       },
@@ -167,7 +171,7 @@ router.patch("/alerts/:id/review", ...auth, requireEmailMonitoringEnabled, async
       actorUserId: req.authUser!.id,
       metadata: { reviewStatus, reviewNote, safetyAlert: alert.safetyAlert },
     });
-    return res.json({ alert: updated });
+    return res.json({ alert: updated ? publicAlert(updated) : updated });
   } catch (err) {
     next(err);
   }

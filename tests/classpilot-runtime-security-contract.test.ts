@@ -197,7 +197,9 @@ describe("ClassPilot tracking-window screenshot authority", () => {
     );
     assert.match(authority, /assertClasspilotEntitled[\s\S]*lock: true/);
     assert.match(authority, /lockClasspilotStudentControlAuthorities/);
-    assert.match(authority, /\.from\(settings\)[\s\S]*\.for\("share"\)/);
+    // Calendar-aware reads share the upload transaction through the uncached
+    // reader. Real lock/calendar races are covered by the screenshot gate suite.
+    assert.match(authority, /getHeartbeatTrackingSettingsForSchool\([^;]+lock: true/);
     assert.match(authority, /value: await callback/);
   });
 
@@ -286,20 +288,20 @@ describe("ClassPilot command authority envelopes", () => {
     assert.equal(envelopes.match(/\.\.\.bindingEnvelope/g)?.length, 5);
     assert.match(chat, /studentSessionId: targetBinding\.id/);
     assert.match(chat, /studentSessionId: binding\.id/);
-    assert.match(devices, /classpilotSchoolPolicyAuthorityEnvelope\(schoolId, "ai_safety"\)[\s\S]*studentSessionId/);
+    assert.doesNotMatch(devices, /classpilotSchoolPolicyAuthorityEnvelope\(schoolId, "ai_safety"\)/);
     assert.match(dashboard, /getActiveSessions\(sid\)[\s\S]*studentSessionId: binding\.id/);
     assert.doesNotMatch(dashboard, /publishWS\(\{ kind: "students", schoolId: sid \}, limitMsg\)/);
   });
 
-  it("uses explicit school-policy authority only for approved safety and settings senders", async () => {
-    assert.deepEqual(classpilotSchoolPolicyAuthorityEnvelope("school-1", "ai_safety"), {
-      authority: { kind: "school_policy", schoolId: "school-1", source: "ai_safety" },
+  it("uses explicit school-policy authority for administrator settings and retires AI closure", async () => {
+    assert.deepEqual(classpilotSchoolPolicyAuthorityEnvelope("school-1", "school_settings"), {
+      authority: { kind: "school_policy", schoolId: "school-1", source: "school_settings" },
     });
     const [devices, dashboard] = await Promise.all([
       source("src/routes/classpilot/devices.ts"),
       source("src/routes/classpilot/dashboard.ts"),
     ]);
-    assert.match(devices, /classpilotSchoolPolicyAuthorityEnvelope\(schoolId, "ai_safety"\)/);
+    assert.doesNotMatch(devices, /classpilotSchoolPolicyAuthorityEnvelope\(schoolId, "ai_safety"\)/);
     assert.match(dashboard, /classpilotSchoolPolicyAuthorityEnvelope\(sid, "school_settings"\)/);
     assert.ok(
       devices.indexOf('router.use("/remote"') < devices.indexOf('router.post("/remote/open-tab"'),

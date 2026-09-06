@@ -602,7 +602,7 @@ function StudentTile({
               {effectiveIsOffTask && !isBlockedByFlightPath && (
                 <Badge variant="outline" className="text-xs px-2 py-0.5 bg-red-50 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-400 dark:border-red-800" data-testid={`badge-offtask-${student.studentId}`}>
                   <AlertTriangle className="h-3 w-3 mr-1" />
-                  Off-Task
+                  Off-Task{student.aiClassification?.contentCategory || student.contentCategory ? `: ${student.aiClassification?.contentCategory || student.contentCategory}` : ''}
                   {onAllowDomain && (
                     <button
                       className="ml-1.5 rounded-full p-0.5 enabled:hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-50 dark:enabled:hover:bg-red-800"

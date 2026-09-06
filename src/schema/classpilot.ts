@@ -28,7 +28,7 @@ export const devices = pgTable("devices", {
   lastScreenshotHealth: jsonb("last_screenshot_health"),
   lastSeenAt: timestamp("last_seen_at"),
   registeredAt: timestamp("registered_at").notNull().default(sql`now()`),
-});
+}, (table) => [unique("cp_monitoring_device_parent_unique").on(table.schoolId, table.deviceId)]);
 
 export type Device = typeof devices.$inferSelect;
 export type InsertDevice = typeof devices.$inferInsert;
@@ -82,6 +82,7 @@ export const studentSessions = pgTable(
     uniqueIndex("student_sessions_active_student_unique")
       .on(table.studentId)
       .where(sql`is_active = true`),
+    unique("cp_monitoring_session_parent_unique").on(table.id, table.studentId, table.deviceId),
     uniqueIndex("student_sessions_active_device_unique")
       .on(table.deviceId)
       .where(sql`is_active = true`),
@@ -151,6 +152,8 @@ export const heartbeats = pgTable(
     isSharing: boolean("is_sharing").default(false),
     cameraActive: boolean("camera_active").default(false),
     aiCategory: text("ai_category"),
+    contentCategory: text("content_category"),
+    teacherIntentSource: text("teacher_intent_source"),
     safetyAlert: text("safety_alert"),
     extensionVersion: text("extension_version"),
     chromeVersion: text("chrome_version"),
@@ -288,6 +291,7 @@ export const groups = pgTable(
     blockStartTime: text("block_start_time"), // HH:MM 24h format, e.g. "10:10"
     blockEndTime: text("block_end_time"),     // HH:MM 24h format, e.g. "10:55"
     scheduleSkippedDate: text("schedule_skipped_date"), // YYYY-MM-DD, set when teacher manually ends early
+    scheduleRule: jsonb("schedule_rule").$type<import("../services/classpilotSchedulingRules.js").ClasspilotScheduleRule>(),
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
   },
   (table) => [
@@ -601,6 +605,7 @@ export const teachingSessions = pgTable(
   },
   (table) => [
     index("teaching_sessions_group_id_idx").on(table.groupId),
+    unique("cp_monitoring_class_parent_unique").on(table.schoolId, table.id),
     index("teaching_sessions_teacher_id_idx").on(table.teacherId),
     index("teaching_sessions_session_mode_idx").on(table.sessionMode),
     index("teaching_sessions_scheduled_conflict_idx").on(table.scheduledConflictId),
@@ -812,6 +817,7 @@ export const classpilotSessionStudentReports = pgTable(
     topDomains: jsonb("top_domains").notNull().default(sql`'[]'::jsonb`),
     unclassifiedSeconds: integer("unclassified_seconds").notNull().default(0),
     offTaskSeconds: integer("off_task_seconds").notNull().default(0),
+    offTaskCategories: jsonb("off_task_categories").notNull().default(sql`'[]'::jsonb`),
     offTaskEventCount: integer("off_task_event_count").notNull().default(0),
     offTaskEvents: jsonb("off_task_events").notNull().default(sql`'[]'::jsonb`),
     safetyAlerts: jsonb("safety_alerts").notNull().default(sql`'[]'::jsonb`),
@@ -1606,6 +1612,9 @@ export const classpilotSupervisionContexts = pgTable(
     assignedStaffId: text("assigned_staff_id").notNull(),
     coverageGroupId: text("coverage_group_id"),
     scheduledConflictId: text("scheduled_conflict_id"),
+    scheduleProfileApplicationId: text("schedule_profile_application_id"),
+    scheduleProfileBlockId: text("schedule_profile_block_id"),
+    scheduleProfileDate: text("schedule_profile_date"),
     createdBy: text("created_by").notNull(),
     note: text("note"),
     startsAt: timestamp("starts_at").notNull().default(sql`now()`),
@@ -1619,6 +1628,15 @@ export const classpilotSupervisionContexts = pgTable(
       table.schoolId,
       table.status
     ),
+    unique("cp_monitoring_coverage_parent_unique").on(table.schoolId, table.id),
+    uniqueIndex("cp_supervision_schedule_profile_unique").on(
+      table.schoolId, table.scheduleProfileApplicationId, table.scheduleProfileDate, table.scheduleProfileBlockId,
+    ).where(sql`${table.scheduleProfileApplicationId} IS NOT NULL`),
+    check("cp_supervision_schedule_profile_metadata_check", sql`
+      (${table.scheduleProfileApplicationId} IS NULL AND ${table.scheduleProfileBlockId} IS NULL AND ${table.scheduleProfileDate} IS NULL)
+      OR (${table.scheduleProfileApplicationId} IS NOT NULL AND length(${table.scheduleProfileApplicationId}) BETWEEN 1 AND 128
+        AND ${table.scheduleProfileBlockId} IS NOT NULL AND length(${table.scheduleProfileBlockId}) BETWEEN 1 AND 128
+        AND ${table.scheduleProfileDate} IS NOT NULL AND ${table.scheduleProfileDate} ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$')`),
     index("classpilot_supervision_contexts_staff_idx").on(
       table.schoolId,
       table.assignedStaffId

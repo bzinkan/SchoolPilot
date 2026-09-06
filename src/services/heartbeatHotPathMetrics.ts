@@ -88,6 +88,7 @@ export type HeartbeatHotPathCounter =
   | "tileBatchScreenshotStoreUnavailable"
   | "screenshotAvailableBroadcastFailures"
   | "screenshotAvailableBroadcastSkipped"
+  | "screenshotAuthorityTransactions"
   | "screenshotActiveCadencePolicyIssued"
   | "screenshotBackgroundCadencePolicyIssued"
   | "screenshotCadenceObservationUnavailable"
@@ -124,6 +125,9 @@ export type HeartbeatHotPathTiming =
   | "restrictionFanoutMs"
   | "previewRefreshLatencyMs"
   | "screenshotPolicyRefreshMs"
+  | "screenshotAuthorityMs"
+  | "screenshotStoreMs"
+  | "screenshotPublicationMs"
   | "screenshotCapturedAtBeforeAuthorityLagMs"
   | "classificationImmediateMs"
   | "classificationBatchMs"
@@ -326,6 +330,7 @@ export const HOT_PATH_EMF_COUNTERS: ReadonlyArray<
   ["tileBatchScreenshotStoreUnavailable", "TileBatchScreenshotStoreUnavailable"],
   ["screenshotAvailableBroadcastFailures", "ScreenshotAvailableBroadcastFailures"],
   ["screenshotAvailableBroadcastSkipped", "ScreenshotAvailableBroadcastSkipped"],
+  ["screenshotAuthorityTransactions", "ScreenshotAuthorityTransactions"],
   ["screenshotCadenceObservationUnavailable", "ScreenshotCadenceObservationUnavailable"],
   ["deviceHeartbeatRateLimited", "DeviceHeartbeatRateLimited"],
   ["deviceScreenshotRateLimited", "DeviceScreenshotRateLimited"],

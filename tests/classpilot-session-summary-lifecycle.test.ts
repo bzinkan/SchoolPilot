@@ -766,6 +766,7 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
         product: "CLASSPILOT",
         status: "active",
       } as any);
+      await inSchool(missingSettingsSchool.id, () => storage.upsertSettings(missingSettingsSchool.id, { schoolName: "Calendar failure fixture", wsSharedKey: "test-only", instructionalCalendar: {} }));
       const group = await inSchool(missingSettingsSchool.id, () => storage.createGroup({
         schoolId: missingSettingsSchool.id,
         teacherId: missingSettingsTeacher.id,
@@ -776,6 +777,7 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
         blockStartTime: "09:00",
         blockEndTime: "10:00",
       } as any));
+      await inSchool(missingSettingsSchool.id, () => db.execute(sql`DELETE FROM settings WHERE school_id=${missingSettingsSchool.id}`));
       await assert.rejects(
         inSchool(missingSettingsSchool.id, () => scheduled.processScheduledClassAutoStart({
           group,

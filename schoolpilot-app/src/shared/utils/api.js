@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { Capacitor } from '@capacitor/core';
+import { rememberSafetyLoginReturn } from './safetyLoginReturn.js';
 
 const NATIVE_API_BASE_URL = 'https://school-pilot.net/api';
 const DIRECT_BACKEND_HOST_PATTERNS = [
@@ -242,6 +243,7 @@ api.interceptors.response.use(
       !window.location.pathname.startsWith('/login')
     ) {
       _authRedirectPending = true;
+      if (!isNative) rememberSafetyLoginReturn(`${window.location.pathname}${window.location.search}`);
       window.location.replace('/login');
     }
     return Promise.reject(error);

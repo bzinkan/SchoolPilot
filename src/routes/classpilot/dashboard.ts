@@ -13,6 +13,7 @@ import {
   getTeacherSettings,
   upsertTeacherSettings,
   getSettingsForSchool,
+  getSchoolById,
   upsertSettings,
   getActiveTeachingSessionForSchool,
   getTeachingSessionByIdAndSchool,
@@ -43,6 +44,8 @@ import {
 import { classPilotStudentDto } from "../../util/safeStudent.js";
 import { classpilotSchoolPolicyAuthorityEnvelope } from "../../services/classpilotCommandAuthority.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
+import { getSchoolWebsitePolicy, replaceSchoolBlockedWebsites } from "../../services/classpilotSchoolWebsitePolicy.js";
+import { assertClasspilotMonitoringSettingsUpdate, assertClasspilotMonitoringTimezoneUpdate, changesClasspilotMonitoringSettings } from "../../services/classpilotMonitoringSettings.js";
 
 const router = Router();
 
@@ -70,7 +73,8 @@ function validateClasspilotRuleList(value: unknown, label: string): string[] {
 
 function safeSchoolSettingsResponse(
   schoolSettings: Awaited<ReturnType<typeof getSettingsForSchool>>,
-  canReadSchoolAdminSettings: boolean
+  canReadSchoolAdminSettings: boolean,
+  schoolTimezone: string | null | undefined
 ) {
   return {
     schoolName: schoolSettings?.schoolName || "",
@@ -79,6 +83,12 @@ function safeSchoolSettingsResponse(
     blockedDomains: schoolSettings?.blockedDomains || [],
     maxTabsPerStudent: schoolSettings?.maxTabsPerStudent || null,
     aiSafetyEmailsEnabled: schoolSettings?.aiSafetyEmailsEnabled ?? true,
+    enableTrackingHours: schoolSettings?.enableTrackingHours ?? false,
+    trackingStartTime: schoolSettings?.trackingStartTime ?? "08:00",
+    trackingEndTime: schoolSettings?.trackingEndTime ?? "15:00",
+    trackingDays: schoolSettings?.trackingDays ?? ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+    schoolTimezone: schoolTimezone || "America/New_York",
+    afterHoursMode: schoolSettings?.afterHoursMode ?? "off",
     centralEmailRecipientUserId: canReadSchoolAdminSettings
       ? schoolSettings?.centralEmailRecipientUserId || null
       : null,
@@ -173,7 +183,7 @@ router.get("/settings", ...auth, async (req, res, next) => {
   try {
     const teacherSettings = await getTeacherSettings(req.authUser!.id);
     const schoolId = res.locals.schoolId!;
-    const schoolSettings = await getSettingsForSchool(schoolId);
+    const [schoolSettings, school] = await Promise.all([getSettingsForSchool(schoolId), getSchoolById(schoolId)]);
     const activeSession = await getActiveTeachingSessionForSchool(req.authUser!.id, schoolId);
     const fabToggles = await getEffectiveFabToggles(schoolId, activeSession?.id || null);
     const canReadSchoolAdminSettings = isAdminRole(req, res);
@@ -188,7 +198,8 @@ router.get("/settings", ...auth, async (req, res, next) => {
       activeSessionId: activeSession?.id || null,
       sessionFabRevision: fabToggles.lifecycleRevision,
       // School-wide settings (from settings table)
-      ...safeSchoolSettingsResponse(schoolSettings, canReadSchoolAdminSettings),
+      ...safeSchoolSettingsResponse(schoolSettings, canReadSchoolAdminSettings, school?.schoolTimezone),
+      ...(canReadSchoolAdminSettings ? await getSchoolWebsitePolicy(schoolId) : {}),
       // Teacher's own blocked domains (for MySettings editable field)
       teacherBlockedDomains: (teacherSettings as any)?.blockedDomains || [],
       // School-wide blocked domains (for MySettings read-only display)
@@ -206,6 +217,7 @@ router.post("/settings", ...auth, async (req, res, next) => {
       maxTabsPerStudent, allowedDomains, blockedDomains, defaultFlightPathId,
       schoolName, retentionHours, ipAllowlist, aiSafetyEmailsEnabled, autoBlockUnsafeUrls,
       centralEmailRecipientUserId,
+      enableTrackingHours, trackingStartTime, trackingEndTime, trackingDays, schoolTimezone, afterHoursMode,
       sharedChromebookSignInEnabled, sharedChromebookLoginMethod, sharedChromebookPinLoginEnabled,
     } = req.body;
 
@@ -222,6 +234,8 @@ router.post("/settings", ...auth, async (req, res, next) => {
     const isAdminSettingsRequest = schoolName !== undefined || retentionHours !== undefined
       || ipAllowlist !== undefined || aiSafetyEmailsEnabled !== undefined || autoBlockUnsafeUrls !== undefined
       || centralEmailRecipientUserId !== undefined
+      || enableTrackingHours !== undefined || trackingStartTime !== undefined || trackingEndTime !== undefined
+      || trackingDays !== undefined || schoolTimezone !== undefined || afterHoursMode !== undefined
       || sharedChromebookSignInEnabled !== undefined || sharedChromebookLoginMethod !== undefined
       || sharedChromebookPinLoginEnabled !== undefined;
 
@@ -261,18 +275,53 @@ router.post("/settings", ...auth, async (req, res, next) => {
       }
     }
 
+    const monitoringPatch = { enableTrackingHours, trackingStartTime, trackingEndTime, trackingDays, schoolTimezone, afterHoursMode };
+    if (changesClasspilotMonitoringSettings(monitoringPatch)) {
+      const [current, school] = await Promise.all([getSettingsForSchool(res.locals.schoolId!), getSchoolById(res.locals.schoolId!)]);
+      assertClasspilotMonitoringTimezoneUpdate(school?.schoolTimezone, monitoringPatch);
+      assertClasspilotMonitoringSettingsUpdate({ ...current, schoolTimezone: school?.schoolTimezone || "America/New_York" }, monitoringPatch);
+    }
     const settings = await upsertTeacherSettings(req.authUser!.id, data);
 
     let savedSchoolSettings: Awaited<ReturnType<typeof getSettingsForSchool>> = undefined;
     if (isAdminSettingsRequest) {
       const schoolId = res.locals.schoolId!;
       const schoolData: Record<string, unknown> = {};
+      if (enableTrackingHours !== undefined) {
+        if (typeof enableTrackingHours !== "boolean") return res.status(400).json({ error: "Tracking hours must be a boolean" });
+        schoolData.enableTrackingHours = enableTrackingHours;
+      }
+      for (const [key, value] of Object.entries({ trackingStartTime, trackingEndTime })) {
+        if (value === undefined) continue;
+        if (typeof value !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) {
+          return res.status(400).json({ error: "Tracking times must use HH:mm" });
+        }
+        schoolData[key] = value;
+      }
+      if (trackingDays !== undefined) {
+        const days = new Set(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]);
+        if (!Array.isArray(trackingDays) || trackingDays.length === 0 || trackingDays.some((day) => !days.has(day))) {
+          return res.status(400).json({ error: "Select at least one valid tracking day" });
+        }
+        schoolData.trackingDays = [...new Set(trackingDays)];
+      }
+      if (schoolTimezone !== undefined) {
+        try {
+          if (typeof schoolTimezone !== "string") throw new Error();
+          new Intl.DateTimeFormat("en", { timeZone: schoolTimezone }).format();
+        } catch { return res.status(400).json({ error: "A valid school timezone is required" }); }
+        // Read-only here: do not synchronize the shared settings timezone,
+        // which other products may still use independently.
+      }
+      if (afterHoursMode !== undefined) {
+        if (!["off", "limited", "full"].includes(afterHoursMode)) return res.status(400).json({ error: "Invalid after-hours mode" });
+        schoolData.afterHoursMode = afterHoursMode;
+      }
       if (schoolName !== undefined) schoolData.schoolName = schoolName;
       if (retentionHours !== undefined) {
         schoolData.retentionHours = String(assertClasspilotRetentionHours(retentionHours));
       }
       if (ipAllowlist !== undefined) schoolData.ipAllowlist = ipAllowlist;
-      if (blockedDomains !== undefined) schoolData.blockedDomains = validateClasspilotRuleList(blockedDomains, "Blocked domains");
       if (allowedDomains !== undefined) schoolData.allowedDomains = validateClasspilotRuleList(allowedDomains, "Allowed domains");
       if (maxTabsPerStudent !== undefined) schoolData.maxTabsPerStudent = maxTabsPerStudent || null;
       if (aiSafetyEmailsEnabled !== undefined) schoolData.aiSafetyEmailsEnabled = aiSafetyEmailsEnabled !== false;
@@ -297,19 +346,19 @@ router.post("/settings", ...auth, async (req, res, next) => {
       }
 
       if (Object.keys(schoolData).length > 0) {
-        savedSchoolSettings = await upsertSettings(schoolId, schoolData);
+        savedSchoolSettings = await upsertSettings(schoolId, schoolData, { validateClasspilotMonitoring: true });
       } else {
         savedSchoolSettings = await getSettingsForSchool(schoolId);
       }
 
       // Broadcast updated global blacklist to all connected students
       if (blockedDomains !== undefined) {
-        const blacklistMsg = {
-          type: "update-global-blacklist",
-          blockedDomains: savedSchoolSettings?.blockedDomains || [],
-        };
-        broadcastToStudentsLocal(schoolId, blacklistMsg);
-        void publishWS({ kind: "students", schoolId }, blacklistMsg);
+        await replaceSchoolBlockedWebsites({
+          schoolId, actorId: req.authUser!.id,
+          blockedDomains: validateClasspilotRuleList(blockedDomains, "Blocked domains"),
+          expectedRevision: req.body.policyRevision,
+        });
+        savedSchoolSettings = await getSettingsForSchool(schoolId);
       }
     }
 
@@ -356,7 +405,7 @@ router.post("/settings", ...auth, async (req, res, next) => {
 
     return res.json({
       ...(settings || {}),
-      ...safeSchoolSettingsResponse(savedSchoolSettings, isAdminRole(req, res)),
+      ...safeSchoolSettingsResponse(savedSchoolSettings, isAdminRole(req, res), (await getSchoolById(res.locals.schoolId!))?.schoolTimezone),
     });
   } catch (err) {
     next(err);
