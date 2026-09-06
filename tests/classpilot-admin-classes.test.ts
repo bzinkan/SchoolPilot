@@ -64,6 +64,9 @@ before(async () => {
     product: "CLASSPILOT",
     status: "active",
   } as any);
+  // Recurring overlap validation resolves actual school-calendar dates. A
+  // provisioned school has settings even when every class uses fixed times.
+  await inSchool(school.id, () => db.execute(sql`INSERT INTO settings(school_id,school_name,ws_shared_key,instructional_calendar) VALUES(${school.id},${TAG},'synthetic-test-key','{}'::jsonb)`));
   admin = await createUser({ email: `admin@${TAG}.example.edu`, firstName: "Ada", lastName: "Admin" } as any);
   teacherA = await createUser({ email: `teacher-a@${TAG}.example.edu`, firstName: "Tara", lastName: "Alpha" } as any);
   teacherB = await createUser({ email: `teacher-b@${TAG}.example.edu`, firstName: "Terry", lastName: "Beta" } as any);
@@ -100,6 +103,7 @@ after(async () => {
       await db.execute(sql`DELETE FROM students WHERE school_id = ${school.id}`);
       await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${school.id}`);
       await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${school.id}`);
+      await db.execute(sql`DELETE FROM settings WHERE school_id = ${school.id}`);
       await db.execute(sql`DELETE FROM schools WHERE id = ${school.id}`);
       await db.execute(sql`DELETE FROM users WHERE email LIKE ${`%@${TAG}.example.edu`}`);
     });

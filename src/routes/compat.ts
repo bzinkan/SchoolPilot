@@ -7,6 +7,7 @@ import { requireProductLicense } from "../middleware/requireProductLicense.js";
 import { sanitizeSchool } from "../util/sanitizeSchool.js";
 import { classPilotStudentDto } from "../util/safeStudent.js";
 import { decryptClassPilotPin } from "../services/classpilotPins.js";
+import { requireClasspilotFullMonitoring } from "../services/classpilotMonitoringPolicy.js";
 import {
   getGradesBySchool,
   createGrade,
@@ -1057,7 +1058,7 @@ router.get("/my-classes", ...legacyPassPilotClassAuth, async (req, res, next) =>
 // Students aggregated (ClassPilot)
 // ============================================================================
 
-router.get("/students-aggregated", ...classPilotStaffAuth, async (req, res, next) => {
+router.get("/students-aggregated", ...classPilotStaffAuth, requireClasspilotFullMonitoring, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
     const userId = req.authUser!.id;

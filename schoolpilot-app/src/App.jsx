@@ -268,6 +268,7 @@ function AppRoutes() {
             <Route path="/classpilot/roster" element={<CPRoster />} />
             <Route path="/classpilot/admin" element={<CPAdmin />} />
             <Route path="/classpilot/admin/classes" element={<CPAdminClasses />} />
+            <Route path="/classpilot/admin/classes/scheduling" element={<CPAdminClasses />} />
             <Route path="/classpilot/admin/classes/schedule-changes" element={<CPAdminScheduleChanges />} />
             <Route path="/classpilot/admin/analytics" element={<CPAdminAnalytics />} />
             <Route path="/classpilot/admin/attendance" element={<Navigate to="/classpilot/admin" replace />} />

@@ -43,7 +43,22 @@ test("student login returns classroom state only for the exact active token sess
     /exactBinding: \{[\s\S]*?schoolId: options\.schoolId,[\s\S]*?studentId: student\.id,[\s\S]*?studentSessionId: session\.id,[\s\S]*?deviceId: effectiveDeviceId/
   );
   assert.match(login, /: \{ classroomState: null, withheld: false \};/);
-  assert.match(login, /const classroomState = loginDelivery\.classroomState/);
+  assert.match(
+    login,
+    /const loginMonitoringPolicy = resolveClasspilotMonitoringPolicy\([\s\S]*?acceptedCapabilities: loginProtocol\.acceptedCapabilities/,
+    "login must resolve monitoring permission from the negotiated capabilities"
+  );
+  assert.match(
+    login,
+    /const classroomState = loginMonitoringPolicy\.mode === "full" \? loginDelivery\.classroomState : null;/,
+    "safety-only and off login responses must withhold classroom restrictions"
+  );
+  assert.match(login, /monitoringPolicy: loginMonitoringPolicy/);
+  assert.match(
+    login,
+    /exactBinding: classpilotControlStateExactBinding\(\{[\s\S]*?controlRevision: classroomState\?\.revision \?\? 0/,
+    "withheld classroom state must not expose its hidden control revision"
+  );
   assert.match(login, /classroomState,/);
   assert.match(login, /exactBinding: classpilotControlStateExactBinding\(\{/);
   assert.match(login, /withheldReason: loginDelivery\.withheldReason/);
@@ -124,9 +139,19 @@ test("heartbeat and WebSocket reconciliation carry authoritative explicit-null s
     websocket,
     /classpilotClassroomStatePushFrame\(\{[\s\S]*?type: "classroom-state-sync",[\s\S]*?binding: \{[\s\S]*?schoolId: client\.schoolId!?,[\s\S]*?deviceId: client\.deviceId!?,[\s\S]*?studentId: client\.studentId!?,[\s\S]*?studentSessionId: client\.studentSessionId!?,[\s\S]*?controlRevision: delivered\?\.revision \?\? 0,[\s\S]*?classroomState: delivered/
   );
-  assert.equal(
-    (devices.match(/exactBinding: classpilotControlStateExactBinding\(\{/g) || []).length,
-    4,
-    "login, settings, safety close, and heartbeat must share the canonical V2 binding builder"
+  // Login is checked above. Assert each remaining delivery surface directly:
+  // alert-only safety processing no longer authors a device command envelope.
+  const settingsStart = devices.indexOf('router.get("/extension/settings"');
+  const settingsEnd = devices.indexOf('router.post("/extension/student-login"', settingsStart);
+  assert.ok(settingsStart >= 0 && settingsEnd > settingsStart);
+  const settings = devices.slice(settingsStart, settingsEnd);
+  assert.match(
+    settings,
+    /exactBinding: classpilotControlStateExactBinding\(\{[\s\S]*?schoolId,[\s\S]*?deviceId,[\s\S]*?studentId,[\s\S]*?studentSessionId,[\s\S]*?controlRevision: settingsControlRevision/
+  );
+  assert.match(
+    heartbeat,
+    /exactBinding: classpilotControlStateExactBinding\(\{[\s\S]*?schoolId,[\s\S]*?deviceId,[\s\S]*?studentId,[\s\S]*?studentSessionId,[\s\S]*?controlRevision: prepared\.classroomState\?\.revision \?\? 0/,
+    "heartbeat must bind the delivered revision to the exact authenticated tuple"
   );
 });

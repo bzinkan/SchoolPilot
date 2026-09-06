@@ -1,4 +1,4 @@
-import { eq, and, desc, asc, gt, lt, ilike, or, isNull, isNotNull, inArray, notInArray, getTableColumns, sql, ne, exists, type SQL, type SQLWrapper } from "drizzle-orm";
+import { eq, and, desc, asc, gt, lt, lte, ilike, or, isNull, isNotNull, inArray, notInArray, getTableColumns, sql, ne, exists, type SQL, type SQLWrapper } from "drizzle-orm";
 import { randomInt } from "node:crypto";
 import { safeErrorMetadata } from "../util/safeLogging.js";
 import { isDeepStrictEqual } from "node:util";
@@ -62,6 +62,12 @@ import {
   getStaffAssignmentIntegrityIssues,
 } from "./staffAssignmentLifecycle.js";
 import { lockStaffAssignmentLifecycleSchool } from "./staffAssignmentLifecycleLock.js";
+import { preserveManualRosterMemberships } from "./rosterManualOwnership.js";
+import { assertClasspilotMonitoringSettingsUpdate, assertClasspilotMonitoringTimezoneUpdate, changesClasspilotMonitoringSettings } from "./classpilotMonitoringSettings.js";
+import { classpilotSchoolSchedules } from "../schema/classpilotScheduling.js";
+import type { SchoolSchedulingConfig, SchedulingCalendar } from "./classpilotSchedulingRules.js";
+import { assertAppliedScheduleProfileClassEligibility, assertSchoolSchedulingClassOverlap, getClasspilotBaseScheduleWindow, getClasspilotInstructionalDateStatus, getSchoolSchedulingContext, previewSchoolScheduling, validateClassScheduling } from "./classpilotScheduling.js";
+import { normalizeClassScheduleRule, resolveClassBaseWindow, type ClasspilotScheduleRule } from "./classpilotSchedulingRules.js";
 import {
   assertClasspilotHistoryFallbackPiStatementDiscoverable,
   createClasspilotHistoryFallbackSqlShapeIdentity,
@@ -1143,7 +1149,7 @@ function normalizeStudentEmailFields<T extends Partial<InsertStudent>>(data: T):
   };
 }
 
-async function assertStudentEmailNotUsedByStaff(
+export async function assertStudentEmailNotUsedByStaff(
   schoolId: string,
   emailLc: string,
   dbInstance: typeof db
@@ -10193,15 +10199,19 @@ export async function createHeartbeatAndRefreshPresence(
 export async function updateHeartbeatClassification(
   heartbeatId: string,
   aiCategory: string,
-  safetyAlert: string | null
+  safetyAlert: string | null,
+  contentCategory: string | null = null,
+  teacherIntentSource: string | null = null
 ): Promise<void> {
-  await db.update(heartbeats).set({ aiCategory, safetyAlert }).where(eq(heartbeats.id, heartbeatId));
+  await db.update(heartbeats).set({ aiCategory, safetyAlert, contentCategory, teacherIntentSource }).where(eq(heartbeats.id, heartbeatId));
 }
 
 export type HeartbeatClassificationUpdate = {
   heartbeatId: string;
   aiCategory: string;
   safetyAlert: string | null;
+  contentCategory?: string | null;
+  teacherIntentSource?: string | null;
 };
 
 type HeartbeatClassificationExecutor = {
@@ -10225,17 +10235,23 @@ export async function updateHeartbeatClassifications(
       heartbeat_id: update.heartbeatId,
       ai_category: update.aiCategory,
       safety_alert: update.safetyAlert,
+      content_category: update.contentCategory ?? null,
+      teacher_intent_source: update.teacherIntentSource ?? null,
     }))
   );
   const result = await executor.execute(sql`
     UPDATE heartbeats AS heartbeat
     SET
       ai_category = batch.ai_category,
-      safety_alert = batch.safety_alert
+      safety_alert = batch.safety_alert,
+      content_category = batch.content_category,
+      teacher_intent_source = batch.teacher_intent_source
     FROM jsonb_to_recordset(${payload}::jsonb) AS batch(
       heartbeat_id text,
       ai_category text,
-      safety_alert text
+      safety_alert text,
+      content_category text,
+      teacher_intent_source text
     )
     WHERE heartbeat.id = batch.heartbeat_id
       AND heartbeat.school_id = ${schoolId}
@@ -10391,6 +10407,8 @@ export async function getHeartbeatTileHistoryBatch(
       isSharing: typeof raw.is_sharing === "boolean" ? raw.is_sharing : null,
       cameraActive: typeof raw.camera_active === "boolean" ? raw.camera_active : null,
       aiCategory: typeof raw.ai_category === "string" ? raw.ai_category : null,
+      contentCategory: typeof raw.content_category === "string" ? raw.content_category : null,
+      teacherIntentSource: typeof raw.teacher_intent_source === "string" ? raw.teacher_intent_source : null,
       safetyAlert: typeof raw.safety_alert === "string" ? raw.safety_alert : null,
       extensionVersion: typeof raw.extension_version === "string" ? raw.extension_version : null,
       chromeVersion: typeof raw.chrome_version === "string" ? raw.chrome_version : null,
@@ -12957,10 +12975,10 @@ export async function finalizeTeachingSession(
         windowEnd: endTime,
         timezone: timezoneSnapshot,
         reportVersion,
-        coverageAlgorithmVersion: reportVersion === 2
+        coverageAlgorithmVersion: reportVersion === 3 ? "heartbeat-coverage-v3" : reportVersion === 2
           ? "heartbeat-coverage-v2"
           : "heartbeat-coverage-v1",
-        eventSchemaVersion: reportVersion === 2 ? 2 : 1,
+        eventSchemaVersion: reportVersion >= 2 ? 2 : 1,
         authorizationMarker,
         trackingPolicy: {
           enableTrackingHours: schoolSettings?.enableTrackingHours === true,
@@ -12968,7 +12986,7 @@ export async function finalizeTeachingSession(
           trackingEndTime: schoolSettings?.trackingEndTime || null,
           trackingDays: schoolSettings?.trackingDays || [],
           schoolTimezone: timezoneSnapshot,
-          afterHoursMode: schoolSettings?.afterHoursMode || "off",
+          afterHoursMode: schoolSettings?.afterHoursMode === "limited" ? "off" : schoolSettings?.afterHoursMode || "off",
         },
         settleAt: reportSettleAt,
         nextAttemptAt: reportSettleAt,
@@ -13555,6 +13573,8 @@ export type ClasspilotSessionReportInput = {
     timestamp: Date;
     activeTabUrl: string | null;
     aiCategory: string | null;
+    contentCategory?: string | null;
+    teacherIntentSource?: string | null;
     safetyAlert: string | null;
   }>;
   aiDecisions: Array<{
@@ -13817,6 +13837,7 @@ export type MaterializedClasspilotStudentReport = {
   topActivities: ClasspilotTopActivity[];
   unclassifiedSeconds: number;
   offTaskSeconds: number;
+  offTaskCategories?: Array<{ contentCategory: string | null; seconds: number }>;
   offTaskEventCount: number;
   offTaskEvents: Array<{
     domain: string;
@@ -13952,6 +13973,7 @@ export async function completeClasspilotSessionReport(
         gapIntervals: student.gapIntervals,
         eventCounts: student.eventCounts,
         topDomains: student.topDomains,
+        ...(locked.reportVersion >= 3 ? { offTaskCategories: student.offTaskCategories ?? [] } : {}),
         ...(locked.reportVersion >= 2 ? {
           unclassifiedSeconds: student.unclassifiedSeconds ?? 0,
           offTaskSeconds: student.offTaskSeconds ?? 0,
@@ -15704,6 +15726,7 @@ export async function getScheduledGroupsReadyToStart(
       blockStartTime: groups.blockStartTime,
       blockEndTime: groups.blockEndTime,
       scheduleSkippedDate: groups.scheduleSkippedDate,
+      scheduleRule: groups.scheduleRule,
       createdAt: groups.createdAt,
     })
     .from(groups)
@@ -15713,8 +15736,10 @@ export async function getScheduledGroupsReadyToStart(
         eq(groups.scheduleEnabled, true),
         sql`${groups.blockStartTime} IS NOT NULL`,
         sql`${groups.blockEndTime} IS NOT NULL`,
-        sql`${groups.blockStartTime} <= ${currentTimeHHMM}`,
-        sql`${groups.blockEndTime} > ${currentTimeHHMM}`,
+        or(sql`${groups.scheduleRule}->>'periodId' IS NOT NULL`, and(
+          sql`${groups.blockStartTime} <= ${currentTimeHHMM}`,
+          sql`${groups.blockEndTime} > ${currentTimeHHMM}`
+        )),
         or(
           isNull(groups.scheduleSkippedDate),
           ne(groups.scheduleSkippedDate, todayDate)
@@ -15744,6 +15769,7 @@ export async function getScheduledGroupsReadyToEnd(
       blockStartTime: groups.blockStartTime,
       blockEndTime: groups.blockEndTime,
       scheduleSkippedDate: groups.scheduleSkippedDate,
+      scheduleRule: groups.scheduleRule,
       createdAt: groups.createdAt,
       sessionId: teachingSessions.id,
       sessionMode: teachingSessions.sessionMode,
@@ -15877,6 +15903,7 @@ export async function getAdminClassSummariesBySchool(
       blockStartTime: groups.blockStartTime,
       blockEndTime: groups.blockEndTime,
       scheduleSkippedDate: groups.scheduleSkippedDate,
+      scheduleRule: groups.scheduleRule,
       createdAt: groups.createdAt,
       studentCount: sql<number>`COUNT(DISTINCT ${students.id})::int`,
     })
@@ -16155,6 +16182,7 @@ export async function addGroupTeacher(
       .values({ groupId, teacherId, role })
       .onConflictDoNothing()
       .returning();
+    await preserveManualRosterMemberships(tx, groupId, "teacher", [teacherId]);
     return row!;
   });
 }
@@ -16214,6 +16242,7 @@ export async function replaceGroupTeachers(
         role: "co-teacher",
       })),
     ]);
+    await preserveManualRosterMemberships(tx, groupId, "teacher", [primaryTeacherId, ...uniqueCoTeachers]);
   });
 }
 
@@ -16420,10 +16449,14 @@ async function assertNoLockedRecurringClassScheduleOverlap(options: {
   scheduleEnabled: boolean;
   blockStartTime: string | null;
   blockEndTime: string | null;
+  scheduleRule?: ClasspilotScheduleRule | null;
   teacherIds: string[];
   dbInstance: ScheduleChangeDb;
 }): Promise<void> {
   const teacherIds = Array.from(new Set(options.teacherIds.filter(Boolean)));
+  await assertAppliedScheduleProfileClassEligibility({ schoolId: options.schoolId, groupId: options.excludeGroupId,
+    group: { ...options, scheduleEnabled: options.status === "active" && options.scheduleEnabled },
+    dbInstance: options.dbInstance as unknown as typeof db });
   if (
     options.status !== "active" ||
     !options.scheduleEnabled ||
@@ -16433,35 +16466,9 @@ async function assertNoLockedRecurringClassScheduleOverlap(options: {
   ) {
     return;
   }
-  const conditions: SQL[] = [
-    eq(groups.schoolId, options.schoolId),
-    eq(groups.status, "active"),
-    eq(groups.scheduleEnabled, true),
-    isNotNull(groups.blockStartTime),
-    isNotNull(groups.blockEndTime),
-    sql`${groups.blockStartTime} < ${options.blockEndTime}`,
-    sql`${groups.blockEndTime} > ${options.blockStartTime}`,
-    or(
-      inArray(groups.teacherId, teacherIds),
-      inArray(groupTeachers.teacherId, teacherIds)
-    )!,
-  ];
-  if (options.excludeGroupId) {
-    conditions.push(ne(groups.id, options.excludeGroupId));
-  }
-  const [conflict] = await options.dbInstance
-    .select({ id: groups.id })
-    .from(groups)
-    .leftJoin(groupTeachers, eq(groupTeachers.groupId, groups.id))
-    .where(and(...conditions))
-    .limit(1);
-  if (conflict) {
-    throw schoolIsolationError(
-      "CLASS_SCHEDULE_CONFLICT",
-      "A selected teacher is already assigned to an overlapping scheduled class.",
-      409
-    );
-  }
+  await assertSchoolSchedulingClassOverlap({ schoolId: options.schoolId,
+    excludeGroupId: options.excludeGroupId, group: options, teacherIds,
+    dbInstance: options.dbInstance as unknown as typeof db });
 }
 
 export async function createGroup(
@@ -16510,6 +16517,7 @@ export async function createGroup(
       scheduleEnabled: data.scheduleEnabled ?? false,
       blockStartTime: data.blockStartTime ?? null,
       blockEndTime: data.blockEndTime ?? null,
+      scheduleRule: data.scheduleRule,
       teacherIds: [data.teacherId],
       dbInstance: transactionDb,
     });
@@ -16632,6 +16640,7 @@ export async function updateGroup(
       }
     }
     const scheduleIdentityChanged =
+      (data.scheduleRule !== undefined && !isDeepStrictEqual(normalizeClassScheduleRule(data.scheduleRule), normalizeClassScheduleRule(current.scheduleRule))) ||
       (data.teacherId !== undefined && data.teacherId !== current.teacherId) ||
       (data.scheduleEnabled !== undefined && data.scheduleEnabled !== current.scheduleEnabled) ||
       (data.blockStartTime !== undefined && data.blockStartTime !== current.blockStartTime) ||
@@ -16648,6 +16657,7 @@ export async function updateGroup(
           data.blockStartTime !== undefined ? data.blockStartTime : current.blockStartTime,
         blockEndTime:
           data.blockEndTime !== undefined ? data.blockEndTime : current.blockEndTime,
+        scheduleRule: data.scheduleRule !== undefined ? data.scheduleRule : current.scheduleRule,
         teacherIds: prospectiveTeacherIds,
         dbInstance: transactionDb,
       });
@@ -16662,6 +16672,7 @@ export async function updateGroup(
           blockEndTime:
             data.blockEndTime !== undefined ? data.blockEndTime : current.blockEndTime,
           status: prospectiveStatus,
+          scheduleRule: data.scheduleRule !== undefined ? data.scheduleRule : current.scheduleRule,
         },
         actorId: scheduleChangeActorId,
         dbInstance: transactionDb,
@@ -16765,6 +16776,7 @@ export async function updateAdminClassWithTeachers(options: {
       );
     }
     const scheduleIdentityChanged =
+      (options.data.scheduleRule !== undefined && !isDeepStrictEqual(normalizeClassScheduleRule(options.data.scheduleRule), normalizeClassScheduleRule(current.scheduleRule))) ||
       primaryTeacherId !== current.teacherId ||
       (options.data.scheduleEnabled !== undefined &&
         options.data.scheduleEnabled !== current.scheduleEnabled) ||
@@ -16791,6 +16803,7 @@ export async function updateAdminClassWithTeachers(options: {
           options.data.blockEndTime !== undefined
             ? options.data.blockEndTime
             : current.blockEndTime,
+        scheduleRule: options.data.scheduleRule !== undefined ? options.data.scheduleRule : current.scheduleRule,
         teacherIds: intendedTeacherIds,
         dbInstance: tx as unknown as ScheduleChangeDb,
       });
@@ -16812,6 +16825,7 @@ export async function updateAdminClassWithTeachers(options: {
               ? options.data.blockEndTime
               : current.blockEndTime,
           status: options.data.status ?? current.status,
+          scheduleRule: options.data.scheduleRule !== undefined ? options.data.scheduleRule : current.scheduleRule,
         },
         prospectiveTeacherIds: intendedTeacherIds,
         actorId: options.scheduleChangeActorId,
@@ -16847,6 +16861,7 @@ export async function updateAdminClassWithTeachers(options: {
     if (!group) return undefined;
 
     if (options.primaryTeacherId !== undefined || options.coTeacherIds !== undefined) {
+      await preserveManualRosterMemberships(tx, options.groupId, "teacher", intendedTeacherIds);
       await tx
         .delete(groupTeachers)
         .where(eq(groupTeachers.groupId, options.groupId));
@@ -16899,6 +16914,9 @@ export async function upsertAdminClassroomClass(options: {
   replaceStudentRoster?: boolean;
   requireAdminClass?: boolean;
   scheduleChangeActorId?: string;
+  /** Internal integrations can atomically validate a reviewed plan and persist source ownership. */
+  beforeWrite?: (tx: Parameters<Parameters<typeof db.transaction>[0]>[0], current: Group | undefined) => Promise<void>;
+  afterWrite?: (tx: Parameters<Parameters<typeof db.transaction>[0]>[0], group: Group) => Promise<void>;
 }): Promise<{
   group: Group;
   roster: {
@@ -16955,6 +16973,7 @@ export async function upsertAdminClassroomClass(options: {
         .where(eq(groupTeachers.groupId, lockedGroup.id));
     }
 
+    await options.beforeWrite?.(tx, lockedGroup);
     const primaryTeacherId = options.primaryTeacherId ?? lockedGroup?.teacherId;
     if (!primaryTeacherId) {
       throw schoolIsolationError(
@@ -17014,6 +17033,7 @@ export async function upsertAdminClassroomClass(options: {
     }
     const recurringScheduleIdentityChanged =
       !lockedGroup ||
+      (options.data.scheduleRule !== undefined && !isDeepStrictEqual(normalizeClassScheduleRule(options.data.scheduleRule), normalizeClassScheduleRule(lockedGroup.scheduleRule))) ||
       primaryTeacherId !== lockedGroup.teacherId ||
       options.coTeacherIds !== undefined ||
       (options.data.scheduleEnabled !== undefined &&
@@ -17038,12 +17058,14 @@ export async function upsertAdminClassroomClass(options: {
           options.data.blockEndTime !== undefined
             ? options.data.blockEndTime
             : lockedGroup?.blockEndTime ?? null,
+        scheduleRule: options.data.scheduleRule !== undefined ? options.data.scheduleRule : lockedGroup?.scheduleRule,
         teacherIds: intendedTeacherIds,
         dbInstance: tx as unknown as ScheduleChangeDb,
       });
     }
     if (lockedGroup && options.existingGroupId) {
       const scheduleIdentityChanged =
+        (options.data.scheduleRule !== undefined && !isDeepStrictEqual(normalizeClassScheduleRule(options.data.scheduleRule), normalizeClassScheduleRule(lockedGroup.scheduleRule))) ||
         primaryTeacherId !== lockedGroup.teacherId ||
         (options.data.scheduleEnabled !== undefined &&
           options.data.scheduleEnabled !== lockedGroup.scheduleEnabled) ||
@@ -17069,6 +17091,7 @@ export async function upsertAdminClassroomClass(options: {
                 ? options.data.blockEndTime
                 : lockedGroup.blockEndTime,
             status: options.data.status ?? lockedGroup.status,
+            scheduleRule: options.data.scheduleRule !== undefined ? options.data.scheduleRule : lockedGroup.scheduleRule,
           },
           prospectiveTeacherIds: intendedTeacherIds,
           prospectiveStudentIds: submittedStudentIds ?? existingStudentIds,
@@ -17210,6 +17233,11 @@ export async function upsertAdminClassroomClass(options: {
       };
     }
 
+    if (!options.afterWrite) {
+      if (submittedStudentIds) await preserveManualRosterMemberships(tx, group.id, "student", submittedStudentIds);
+      if (options.primaryTeacherId !== undefined || options.coTeacherIds !== undefined) await preserveManualRosterMemberships(tx, group.id, "teacher", intendedTeacherIds);
+    }
+    await options.afterWrite?.(tx, group);
     return { group, roster };
   });
 }
@@ -17540,6 +17568,7 @@ export async function addGroupStudentsDetailed(
   const uniqueIds = Array.from(new Set(studentIds));
   if (uniqueIds.length === 0) return { added: [], alreadyPresent: [] };
   return withPasspilotGroupMutationLock(groupId, async (tx, lockedGroup) => {
+    await preserveManualRosterMemberships(tx, groupId, "student", uniqueIds);
     const beforeRows = await tx
       .select({ studentId: groupStudents.studentId })
       .from(groupStudents)
@@ -17574,6 +17603,7 @@ export async function addGroupStudents(
   if (studentIds.length === 0) return;
   const values = studentIds.map((studentId) => ({ groupId, studentId }));
   await withPasspilotGroupMutationLock(groupId, async (tx, lockedGroup) => {
+    await preserveManualRosterMemberships(tx, groupId, "student", studentIds);
     const existing = await tx
       .select({ studentId: groupStudents.studentId })
       .from(groupStudents)
@@ -17612,6 +17642,7 @@ export async function setGroupStudents(
   scheduleChangeActorId?: string
 ): Promise<void> {
   await withPasspilotGroupMutationLock(groupId, async (tx, lockedGroup) => {
+    await preserveManualRosterMemberships(tx, groupId, "student", studentIds);
     const existing = await tx
       .select({ studentId: groupStudents.studentId })
       .from(groupStudents)
@@ -22352,16 +22383,14 @@ export async function updateCoverageScopeGroup(options: {
   if (options.description !== undefined) data.description = options.description;
   if (options.active !== undefined) data.active = options.active;
 
-  const [updated] = await db
-    .update(classpilotCoverageScopeGroups)
-    .set(data)
-    .where(
-      and(
-        eq(classpilotCoverageScopeGroups.schoolId, options.schoolId),
-        eq(classpilotCoverageScopeGroups.id, options.groupId)
-      )
-    )
-    .returning();
+  const updated = await db.transaction(async (tx) => {
+    if (!await lockStaffAssignmentLifecycleSchool(tx, options.schoolId)) return undefined;
+    const [row] = await tx.update(classpilotCoverageScopeGroups).set(data).where(and(
+      eq(classpilotCoverageScopeGroups.schoolId, options.schoolId),
+      eq(classpilotCoverageScopeGroups.id, options.groupId),
+    )).returning();
+    return row;
+  });
   if (!updated) return undefined;
   return getCoverageScopeGroupByIdAndSchool(options.schoolId, options.groupId);
 }
@@ -22376,6 +22405,7 @@ export async function replaceCoverageScopeGroupMembers(options: {
   if (!group) return undefined;
 
   await db.transaction(async (tx) => {
+    if (!await lockStaffAssignmentLifecycleSchool(tx, options.schoolId)) throw new Error("School not found");
     await lockActiveSchoolStudentsForOperationalWrite(
       options.schoolId,
       uniqueStudentIds,
@@ -23230,19 +23260,7 @@ export async function withClasspilotScreenshotUploadAuthority<T>(options: {
     );
     // Both reads use the transaction's single pg client; issue them in order.
     const current = await getClasspilotScreenshotAuthorityProjection(options, transactionDb);
-    const [trackingSettings] = await tx
-      .select({
-        enableTrackingHours: settings.enableTrackingHours,
-        trackingStartTime: settings.trackingStartTime,
-        trackingEndTime: settings.trackingEndTime,
-        trackingDays: settings.trackingDays,
-        schoolTimezone: settings.schoolTimezone,
-        afterHoursMode: settings.afterHoursMode,
-      })
-      .from(settings)
-      .where(eq(settings.schoolId, options.schoolId))
-      .limit(1)
-      .for("share");
+    const trackingSettings = await getHeartbeatTrackingSettingsForSchool(options.schoolId, transactionDb, { lock: true });
     // The authenticated tuple disappeared or was replaced after middleware ran.
     // Treat that as an authority transition, not a transient storage condition.
     if (!current) return { status: "superseded" as const, current, trackingSettings };
@@ -23816,9 +23834,9 @@ export async function createSupervisionContextWithStudents(options: {
   studentIds: string[];
   assignedBy: string;
   source?: string;
-}): Promise<ClasspilotSupervisionContext> {
+}, dbInstance: typeof db = db): Promise<ClasspilotSupervisionContext> {
   const uniqueStudentIds = Array.from(new Set(options.studentIds.filter(Boolean)));
-  return db.transaction(async (tx) => {
+  return dbInstance.transaction(async (tx) => {
     const transactionDb = tx as unknown as typeof db;
     const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
       tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
@@ -23937,7 +23955,7 @@ export async function releaseSupervisionStudents(options: {
   contextId: string;
   studentIds?: string[];
   releaseReason?: string;
-}): Promise<ClasspilotSupervisionStudent[]> {
+}, dbInstance: typeof db = db): Promise<ClasspilotSupervisionStudent[]> {
   const conditions: SQL[] = [
     eq(classpilotSupervisionStudents.schoolId, options.schoolId),
     eq(classpilotSupervisionStudents.contextId, options.contextId),
@@ -23947,7 +23965,7 @@ export async function releaseSupervisionStudents(options: {
     conditions.push(inArray(classpilotSupervisionStudents.studentId, options.studentIds));
   }
 
-  return db.transaction(async (tx) => {
+  return dbInstance.transaction(async (tx) => {
     const releasedAt = new Date();
     const releasing = await tx
       .select({ studentId: classpilotSupervisionStudents.studentId })
@@ -24172,7 +24190,7 @@ export async function releaseExpiredClasspilotSupervisionContexts(
   return dbInstance.transaction(async (tx) => {
     const contextConditions: SQL[] = [
       eq(classpilotSupervisionContexts.status, "active"),
-      sql`${classpilotSupervisionContexts.endsAt} <= ${endedAt}`,
+      lte(classpilotSupervisionContexts.endsAt, endedAt),
     ];
     if (options.schoolId) {
       contextConditions.push(eq(classpilotSupervisionContexts.schoolId, options.schoolId));
@@ -25009,7 +25027,10 @@ export type HeartbeatTrackingSettings = Pick<
   | "trackingDays"
   | "schoolTimezone"
   | "afterHoursMode"
->;
+> & {
+  instructionalCalendar?: SchedulingCalendar | null;
+  schedulingDateOverrides?: SchoolSchedulingConfig["dateOverrides"] | null;
+};
 const heartbeatTrackingSettingsCache = new Map<
   string,
   { expiresAt: number; value: HeartbeatTrackingSettings | undefined }
@@ -25022,7 +25043,7 @@ const heartbeatTrackingSettingsGenerations = new Map<string, number>();
 
 function canUseHeartbeatTrackingSettingsCache(
   schoolId: string,
-  dbInstance: typeof db
+  dbInstance: Pick<typeof db, "select">
 ): boolean {
   if (dbInstance !== db) return false;
   if (!rlsGucEnabled()) return true;
@@ -25871,6 +25892,7 @@ async function loadPasspilotMigrationInventory(
           blockStartTime: groups.blockStartTime,
           blockEndTime: groups.blockEndTime,
           scheduleSkippedDate: groups.scheduleSkippedDate,
+          scheduleRule: groups.scheduleRule,
           createdAt: groups.createdAt,
           studentCount: sql<number>`COUNT(DISTINCT ${groupStudents.studentId})::int`,
         })
@@ -26760,6 +26782,7 @@ export async function replaceInstructionalCalendarMonth(
     expectedRevision: number;
     nonInstructionalDates: string[];
     updatedBy: string | null;
+    previewToken?: string;
     now?: Date;
   },
   dbInstance: typeof db = db
@@ -26930,10 +26953,22 @@ export async function replaceInstructionalCalendarMonth(
       ...calendar,
       [month]: savedMonth,
     };
+    const schedulingContext = await getSchoolSchedulingContext(options.schoolId, transactionDb);
+    if (schedulingContext.config.cycleAnchorDate || schedulingContext.config.profiles.length || schedulingContext.config.profileApplications?.some((application) => application.status === "scheduled")) {
+      const preview = await previewSchoolScheduling({ schoolId: options.schoolId, config: schedulingContext.config, calendar: nextCalendar, dbInstance: transactionDb, now });
+      if (preview.previewToken !== options.previewToken) throw instructionalCalendarError("SCHEDULE_PREVIEW_STALE", "Preview the calendar changes again before saving.", 409);
+      if (preview.blockers.length) throw instructionalCalendarError(preview.blockers[0]!.code, preview.blockers[0]!.message, 409);
+      const affected = new Set(preview.changes.map((change) => change.classId));
+      if (preview.changedOccurrences > preview.changes.length) {
+        for (const group of await transactionDb.select({ id: groups.id }).from(groups).where(eq(groups.schoolId, options.schoolId))) affected.add(group.id);
+      }
+      for (const groupId of affected) await supersedePendingScheduleChangesForGroup({ schoolId: options.schoolId, groupId, actorId: options.updatedBy, reason: "instructional_calendar_changed", dbInstance: transactionDb as unknown as ScheduleChangeDb });
+    }
     await tx
       .update(settings)
       .set({ instructionalCalendar: nextCalendar })
       .where(eq(settings.schoolId, options.schoolId));
+    recordClasspilotMonitoringPolicyChange(transactionDb, options.schoolId);
 
     const removedDates = current.nonInstructionalDates.filter(
       (localDate) => !nextSet.has(localDate)
@@ -26955,9 +26990,10 @@ export async function replaceInstructionalCalendarMonth(
 // the short TTL bounds staleness if pub/sub is temporarily unavailable.
 export async function getHeartbeatTrackingSettingsForSchool(
   schoolId: string,
-  dbInstance: typeof db = db
+  dbInstance: Pick<typeof db, "select"> = db,
+  options: { lock?: boolean; bypassCache?: boolean } = {},
 ): Promise<HeartbeatTrackingSettings | undefined> {
-  const cacheAllowed = canUseHeartbeatTrackingSettingsCache(schoolId, dbInstance);
+  const cacheAllowed = !options.lock && !options.bypassCache && canUseHeartbeatTrackingSettingsCache(schoolId, dbInstance);
   if (cacheAllowed) {
     const cached = heartbeatTrackingSettingsCache.get(schoolId);
     if (cached && cached.expiresAt > Date.now()) return cached.value;
@@ -26967,18 +27003,26 @@ export async function getHeartbeatTrackingSettingsForSchool(
   }
 
   const load = async (): Promise<HeartbeatTrackingSettings | undefined> => {
-    const [row] = await dbInstance
+    // Calendar and date-override writers lock the school first. This shared
+    // boundary also protects the absence of an optional scheduling row.
+    if (options.lock) await dbInstance.select({ id: schools.id }).from(schools).where(eq(schools.id, schoolId)).for("share");
+    const query = dbInstance
       .select({
         enableTrackingHours: settings.enableTrackingHours,
         trackingStartTime: settings.trackingStartTime,
         trackingEndTime: settings.trackingEndTime,
         trackingDays: settings.trackingDays,
-        schoolTimezone: settings.schoolTimezone,
+        schoolTimezone: schools.schoolTimezone,
         afterHoursMode: settings.afterHoursMode,
+        instructionalCalendar: settings.instructionalCalendar,
+        schedulingDateOverrides: sql<SchoolSchedulingConfig["dateOverrides"]>`COALESCE(${classpilotSchoolSchedules.config}->'dateOverrides','{}'::jsonb)`,
       })
       .from(settings)
+      .innerJoin(schools, eq(schools.id, settings.schoolId))
+      .leftJoin(classpilotSchoolSchedules, eq(classpilotSchoolSchedules.schoolId, settings.schoolId))
       .where(eq(settings.schoolId, schoolId))
       .limit(1);
+    const [row] = options.lock ? await query.for("share", { of: settings }) : await query;
     return row;
   };
 
@@ -27007,7 +27051,8 @@ export async function getHeartbeatTrackingSettingsForSchool(
 
 export async function upsertSettings(
   schoolId: string,
-  data: Partial<InsertSettings>
+  data: Partial<InsertSettings>,
+  options: { validateClasspilotMonitoring?: boolean } = {}
 ): Promise<Settings> {
   invalidateHeartbeatTrackingSettingsCache(schoolId);
   const settingsData: Partial<InsertSettings> = {
@@ -27045,7 +27090,8 @@ export async function upsertSettings(
     settingsData,
     "centralEmailRecipientUserId"
   );
-  const row = changesCentralRecipient
+  const validateMonitoring = options.validateClasspilotMonitoring === true && changesClasspilotMonitoringSettings(settingsData);
+  const row = changesCentralRecipient || validateMonitoring
     ? await db.transaction(async (tx) => {
         const transactionDb = tx as unknown as typeof db;
         const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
@@ -27053,6 +27099,12 @@ export async function upsertSettings(
           schoolId
         );
         if (!lifecycleLocked) throw new Error("School not found");
+        if (validateMonitoring) {
+          const current = await getSettingsForSchool(schoolId, transactionDb);
+          const school = await getSchoolById(schoolId, transactionDb);
+          assertClasspilotMonitoringTimezoneUpdate(school?.schoolTimezone, settingsData);
+          assertClasspilotMonitoringSettingsUpdate({ ...current, schoolTimezone: school?.schoolTimezone || "America/New_York" }, settingsData);
+        }
         const recipientId = settingsData.centralEmailRecipientUserId;
         if (recipientId) {
           await assertActiveSchoolStaffMembership(
@@ -27502,14 +27554,18 @@ export async function upsertMailpilotWatch(
     .limit(1);
 
   if (existing.length > 0) {
+    if (existing[0]!.schoolId !== data.schoolId || existing[0]!.studentId !== data.studentId) {
+      throw Object.assign(new Error("MailPilot mailbox ownership changed"), { code: "MAILPILOT_WATCH_OWNER_CHANGED", status: 409 });
+    }
     const [updated] = await dbInstance
       .update(mailpilotWatches)
       .set({
-        historyId: data.historyId ?? existing[0]!.historyId,
+        // Renewing Gmail's watch must not skip mail that a failed push still
+        // needs to process. SQL COALESCE also preserves concurrent completions.
+        historyId: sql`coalesce(${mailpilotWatches.historyId}, ${data.historyId ?? null})`,
         expiresAt: data.expiresAt,
         lastRenewedAt: new Date(),
         status: data.status ?? "active",
-        lastError: null,
       })
       .where(eq(mailpilotWatches.id, existing[0]!.id))
       .returning();
@@ -27647,7 +27703,7 @@ export async function listEmailAlertsForSchool(
 
   const conditions = [eq(emailAlerts.schoolId, schoolId)];
   if (options.reviewStatus === "unreviewed") {
-    conditions.push(isNull(emailAlerts.reviewStatus));
+    conditions.push(isNull(emailAlerts.reviewStatus), isNull(emailAlerts.reviewedAt));
   } else if (options.reviewStatus && options.reviewStatus !== "all") {
     conditions.push(eq(emailAlerts.reviewStatus, options.reviewStatus));
   }
@@ -27706,6 +27762,7 @@ export async function getEmailAlertStats(schoolId: string, sinceDate: Date): Pro
       safetyAlert: emailAlerts.safetyAlert,
       severity: emailAlerts.severity,
       reviewStatus: emailAlerts.reviewStatus,
+      reviewedAt: emailAlerts.reviewedAt,
     })
     .from(emailAlerts)
     .where(
@@ -27721,7 +27778,7 @@ export async function getEmailAlertStats(schoolId: string, sinceDate: Date): Pro
   for (const r of rows) {
     if (r.safetyAlert) byCategory[r.safetyAlert] = (byCategory[r.safetyAlert] || 0) + 1;
     bySeverity[r.severity] = (bySeverity[r.severity] || 0) + 1;
-    if (!r.reviewStatus) unreviewed++;
+    if (!r.reviewStatus && !r.reviewedAt) unreviewed++;
   }
   return { total: rows.length, unreviewed, byCategory, bySeverity };
 }
@@ -28079,6 +28136,10 @@ const scheduleChangePostCommitCollectors = new WeakMap<
   object,
   Map<string, Set<string>>
 >();
+const monitoringPolicyPostCommitCollectors = new WeakMap<object, Set<string>>();
+export function recordClasspilotMonitoringPolicyChange(dbInstance: object, schoolId: string): void {
+  monitoringPolicyPostCommitCollectors.get(dbInstance)?.add(schoolId);
+}
 
 function recordScheduleChangePostCommitNotice(
   dbInstance: ScheduleChangeDb,
@@ -28125,18 +28186,23 @@ export async function withClasspilotSchedulePostCommitTransaction<T>(
     const key = rawTx as unknown as object;
     const collector = new Map<string, Set<string>>();
     scheduleChangePostCommitCollectors.set(key, collector);
+    const monitoringSchools = new Set<string>();
+    monitoringPolicyPostCommitCollectors.set(key, monitoringSchools);
     try {
       const value = await operation(tx);
       const notices = [...collector.entries()].map(([schoolId, ids]) => ({
         schoolId,
         changeIds: [...ids].sort(),
       }));
-      return { value, notices };
+      return { value, notices, monitoringSchools: [...monitoringSchools] };
     } finally {
       scheduleChangePostCommitCollectors.delete(key);
+      monitoringPolicyPostCommitCollectors.delete(key);
     }
   });
   dispatchScheduleChangePostCommitNotices(committed.notices);
+  for (const schoolId of committed.monitoringSchools) invalidateHeartbeatTrackingSettingsCache(schoolId);
+  await Promise.allSettled(committed.monitoringSchools.map(schoolId => publishCacheInvalidation({ kind: "cache-invalidation", schoolId, cache: "heartbeat-tracking-settings" })));
   return committed.value;
 }
 
@@ -28644,6 +28710,7 @@ type LockedScheduleChangeGroup = Pick<
   | "scheduleEnabled"
   | "blockStartTime"
   | "blockEndTime"
+  | "scheduleRule"
 >;
 
 async function lockScheduleChangeGroups(
@@ -28664,6 +28731,7 @@ async function lockScheduleChangeGroups(
       scheduleEnabled: groups.scheduleEnabled,
       blockStartTime: groups.blockStartTime,
       blockEndTime: groups.blockEndTime,
+      scheduleRule: groups.scheduleRule,
     })
     .from(groups)
     .where(and(eq(groups.schoolId, schoolId), inArray(groups.id, uniqueIds)))
@@ -29337,16 +29405,16 @@ export async function lockAndLoadEffectiveClasspilotScheduleContext(options: {
         legs.length !== 2 ||
         expectedGroupIds.length !== lockedGroupIds.length ||
         expectedGroupIds.some((id, index) => id !== lockedGroupIds[index]) ||
-        !scheduleChangeSnapshotMatches(groupsById, legs)
+        !await scheduleChangeSnapshotMatches(groupsById, legs, options.dbInstance)
       ) {
         throw new Error("invalid approved schedule-change snapshot");
       }
       await assertScheduleChangePairGroups(
         options.schoolId,
-        lockedGroups as LockedScheduleChangeGroup[],
+        await scheduleChangeGroupsOnDate(lockedGroups, options.scheduledDate, options.dbInstance),
         options.dbInstance
       );
-      const dateStatus = await getInstructionalDateStatus(
+      const dateStatus = await getClasspilotInstructionalDateStatus(
         options.schoolId,
         options.scheduledDate,
         options.dbInstance
@@ -29354,10 +29422,7 @@ export async function lockAndLoadEffectiveClasspilotScheduleContext(options: {
       if (!dateStatus.instructional) {
         throw new Error("approved schedule change is not on an instructional date");
       }
-      const pairGroups: [LockedScheduleChangeGroup, LockedScheduleChangeGroup] = [
-        lockedGroups[0]!,
-        lockedGroups[1]!,
-      ];
+      const pairGroups = await scheduleChangeGroupsOnDate(lockedGroups, options.scheduledDate, options.dbInstance) as [LockedScheduleChangeGroup, LockedScheduleChangeGroup];
       const blockers = await scheduleChangeConflictsForPair({
         schoolId: options.schoolId,
         scheduledDate: options.scheduledDate,
@@ -29559,6 +29624,7 @@ export async function assertNoApprovedFutureScheduleChange(options: {
     blockStartTime: string | null;
     blockEndTime: string | null;
     status: string;
+    scheduleRule?: ClasspilotScheduleRule | null;
   };
   prospectiveTeacherIds?: string[];
   prospectiveStudentIds?: string[];
@@ -29690,6 +29756,7 @@ export async function assertProspectiveApprovedScheduleChangeAssignmentsSafe(opt
     blockStartTime: string | null;
     blockEndTime: string | null;
     status: string;
+    scheduleRule?: ClasspilotScheduleRule | null;
   };
   actorId?: string | null;
   now?: Date;
@@ -29710,6 +29777,7 @@ export async function assertProspectiveApprovedScheduleChangeAssignmentsSafe(opt
       scheduleEnabled: groups.scheduleEnabled,
       startTime: groups.blockStartTime,
       endTime: groups.blockEndTime,
+      scheduleRule: groups.scheduleRule,
     })
     .from(groups)
     .where(and(eq(groups.schoolId, options.schoolId), eq(groups.id, options.groupId)))
@@ -29806,6 +29874,7 @@ export async function assertProspectiveApprovedScheduleChangeAssignmentsSafe(opt
       teacherId: groups.teacherId,
       startTime: groups.blockStartTime,
       endTime: groups.blockEndTime,
+      scheduleRule: groups.scheduleRule,
     })
     .from(groups)
     .where(
@@ -29867,27 +29936,32 @@ export async function assertProspectiveApprovedScheduleChangeAssignmentsSafe(opt
     studentConflicts.set(row.groupId, values);
   }
   const pendingConflictIds = new Set<string>();
+  const scheduling = await getSchoolSchedulingContext(options.schoolId, options.dbInstance as unknown as typeof db);
   for (const scheduledDate of dates) {
     const activeForDate = futureActive.filter((row) => row.scheduledDate === scheduledDate);
     const effectiveByGroup = new Map(activeForDate.map((row) => [row.groupId, row]));
     const targetApproved = effectiveByGroup.get(options.groupId);
+    const targetBase = resolveClassBaseWindow({ id: options.groupId, scheduleEnabled: true, blockStartTime: targetStartTime, blockEndTime: targetEndTime, scheduleRule: options.prospectiveGroup?.scheduleRule !== undefined ? options.prospectiveGroup.scheduleRule : target.scheduleRule }, scheduledDate, scheduling.config, scheduling.calendar);
+    if (!targetBase) continue;
     const targetWindow = targetApproved
       ? {
           startTime: targetApproved.effectiveStartTime,
           endTime: targetApproved.effectiveEndTime,
         }
-      : { startTime: targetStartTime, endTime: targetEndTime };
+      : targetBase;
     for (const other of schoolGroups) {
       if (other.id === options.groupId || !other.startTime || !other.endTime) continue;
       const otherApproved = effectiveByGroup.get(other.id);
       // Only conflicts introduced around an approved exception are guarded.
       if (!targetApproved && !otherApproved) continue;
+      const otherBase = resolveClassBaseWindow({ id: other.id, scheduleEnabled: true, blockStartTime: other.startTime, blockEndTime: other.endTime, scheduleRule: other.scheduleRule }, scheduledDate, scheduling.config, scheduling.calendar);
+      if (!otherBase) continue;
       const otherWindow = otherApproved
         ? {
             startTime: otherApproved.effectiveStartTime,
             endTime: otherApproved.effectiveEndTime,
           }
-        : { startTime: other.startTime, endTime: other.endTime };
+        : otherBase;
       if (!windowsOverlap(targetWindow, otherWindow)) continue;
       const teacherConflict = (teacherConflicts.get(other.id)?.size ?? 0) > 0;
       const studentConflict = (studentConflicts.get(other.id)?.size ?? 0) > 0;
@@ -29970,6 +30044,7 @@ async function scheduleChangeConflictsForPair(options: {
       teacherId: groups.teacherId,
       startTime: groups.blockStartTime,
       endTime: groups.blockEndTime,
+      scheduleRule: groups.scheduleRule,
     })
     .from(groups)
     .where(
@@ -29987,6 +30062,7 @@ async function scheduleChangeConflictsForPair(options: {
     dbInstance: options.dbInstance,
   });
   const approvedByGroup = new Map(approvedLegs.map((leg) => [leg.groupId, leg]));
+  const scheduling = await getSchoolSchedulingContext(options.schoolId, options.dbInstance as unknown as typeof db);
   const scheduledIds = allScheduledGroups.map((group) => group.id);
   const teacherRows = scheduledIds.length
     ? await options.dbInstance
@@ -30049,12 +30125,14 @@ async function scheduleChangeConflictsForPair(options: {
     for (const other of allScheduledGroups) {
       if (pairIds.has(other.id) || !other.startTime || !other.endTime) continue;
       const approved = approvedByGroup.get(other.id);
+      const base = resolveClassBaseWindow({ id: other.id, scheduleEnabled: true, blockStartTime: other.startTime, blockEndTime: other.endTime, scheduleRule: other.scheduleRule }, options.scheduledDate, scheduling.config, scheduling.calendar);
+      if (!base) continue;
       const otherWindow = approved
         ? {
             startTime: approved.effectiveStartTime,
             endTime: approved.effectiveEndTime,
           }
-        : { startTime: other.startTime, endTime: other.endTime };
+        : base;
       if (!windowsOverlap(candidate.destination, otherWindow)) continue;
       const otherStaff = staffByGroup.get(other.id) ?? new Set([other.teacherId]);
       const teacherConflict = [...candidateStaff].some((id) => otherStaff.has(id));
@@ -30129,6 +30207,7 @@ async function validateScheduleChangeForDate(options: {
         scheduleEnabled: groups.scheduleEnabled,
         blockStartTime: groups.blockStartTime,
         blockEndTime: groups.blockEndTime,
+        scheduleRule: groups.scheduleRule,
       })
       .from(groups)
       .where(
@@ -30140,6 +30219,7 @@ async function validateScheduleChangeForDate(options: {
       .orderBy(asc(groups.id));
   }
   try {
+    if (isValidInstructionalCalendarDate(options.scheduledDate)) pairGroups = await scheduleChangeGroupsOnDate(pairGroups, options.scheduledDate, options.dbInstance);
     await assertScheduleChangePairGroups(options.schoolId, pairGroups, options.dbInstance);
   } catch (error) {
     const typed = error as { code?: string; message?: string };
@@ -30165,7 +30245,7 @@ async function validateScheduleChangeForDate(options: {
       message: "Choose a real date in YYYY-MM-DD format.",
     });
   } else {
-    const dateStatus = await getInstructionalDateStatus(
+    const dateStatus = await getClasspilotInstructionalDateStatus(
       options.schoolId,
       options.scheduledDate,
       options.dbInstance
@@ -30753,20 +30833,34 @@ function terminalActionReason(
   return reason;
 }
 
-function scheduleChangeSnapshotMatches(
+async function scheduleChangeGroupsOnDate(
+  rows: LockedScheduleChangeGroup[], date: string, dbInstance: ScheduleChangeDb
+): Promise<LockedScheduleChangeGroup[]> {
+  if (!rows.length) return rows;
+  const context = await getSchoolSchedulingContext(rows[0]!.schoolId, dbInstance as unknown as typeof db);
+  return rows.map((group) => {
+    const window = resolveClassBaseWindow(group, date, context.config, context.calendar);
+    return { ...group, blockStartTime: window?.startTime ?? null, blockEndTime: window?.endTime ?? null };
+  });
+}
+
+async function scheduleChangeSnapshotMatches(
   groupsById: Map<string, LockedScheduleChangeGroup>,
-  legs: ClasspilotScheduleChangeLeg[]
-): boolean {
+  legs: ClasspilotScheduleChangeLeg[],
+  dbInstance: ScheduleChangeDb
+): Promise<boolean> {
+  const context = legs[0] ? await getSchoolSchedulingContext(legs[0].schoolId, dbInstance as unknown as typeof db) : null;
   return legs.every((leg) => {
     const group = groupsById.get(leg.groupId);
+    const window = group && context ? resolveClassBaseWindow(group, leg.scheduledDate, context.config, context.calendar) : null;
     return Boolean(
       group &&
         group.status === "active" &&
         group.groupType === "admin_class" &&
         group.scheduleEnabled &&
         group.teacherId === leg.primaryTeacherIdSnapshot &&
-        group.blockStartTime === leg.originalStartTime &&
-        group.blockEndTime === leg.originalEndTime
+        window?.startTime === leg.originalStartTime &&
+        window?.endTime === leg.originalEndTime
     );
   });
 }
@@ -30954,7 +31048,7 @@ export async function applyClasspilotScheduleChangeAction(options: {
       if (entitlementUnavailable) {
         return terminalizeDrift("superseded", "classpilot_entitlement_unavailable");
       }
-      if (!pair || pair.status !== "active" || !scheduleChangeSnapshotMatches(groupsById, locked.legs)) {
+      if (!pair || pair.status !== "active" || !await scheduleChangeSnapshotMatches(groupsById, locked.legs, transactionDb)) {
         return terminalizeDrift("superseded", "class_configuration_changed");
       }
       const validation = await validateScheduleChangeForDate({
@@ -31019,7 +31113,7 @@ export async function applyClasspilotScheduleChangeAction(options: {
       if (entitlementUnavailable) {
         return terminalizeDrift("superseded", "classpilot_entitlement_unavailable");
       }
-      if (!pair || pair.status !== "active" || !scheduleChangeSnapshotMatches(groupsById, locked.legs)) {
+      if (!pair || pair.status !== "active" || !await scheduleChangeSnapshotMatches(groupsById, locked.legs, transactionDb)) {
         return terminalizeDrift("superseded", "class_configuration_changed");
       }
       const validation = await validateScheduleChangeForDate({

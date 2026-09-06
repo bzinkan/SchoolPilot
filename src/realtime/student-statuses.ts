@@ -20,7 +20,7 @@ export interface DeviceRealtimeStatus {
   allOpenTabs?: Array<{ url: string; title: string; favicon?: string }>;
   extensionVersion?: string;
   chromeVersion?: string;
-  aiClassification?: { category: string; safetyAlert: string | null };
+  aiClassification?: { category: string; contentCategory?: string | null; teacherIntentSource?: string | null; safetyAlert: string | null };
   screenshotHealth?: {
     lastSuccessAt: number;
     lastErrorAt: number;
@@ -107,7 +107,7 @@ function pruneStatuses(now = Date.now()): void {
 export function updateDeviceClassification(
   schoolId: string,
   deviceId: string,
-  classification: { category: string; safetyAlert: string | null }
+  classification: { category: string; contentCategory?: string | null; teacherIntentSource?: string | null; safetyAlert: string | null }
 ): void {
   const schoolMap = statusMap.get(schoolId);
   if (!schoolMap) return;

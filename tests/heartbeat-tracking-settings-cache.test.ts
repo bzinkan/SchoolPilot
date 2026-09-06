@@ -30,6 +30,7 @@ const {
   upsertSettings,
 } = storage;
 const { schools, settings } = schema;
+const { classpilotSchoolSchedules } = await import("../dist/schema/classpilotScheduling.js");
 
 const tag = `heartbeat-settings-${Date.now()}-${randomUUID().slice(0, 8)}`;
 let schoolAId = "";
@@ -51,6 +52,7 @@ before(async () => {
       name: `${tag} B`,
       domain: `${tag}-b.example.edu`,
       slug: `${tag}-b`,
+      schoolTimezone: "America/Chicago",
       status: "active",
       planStatus: "active",
     } as any),
@@ -93,12 +95,13 @@ after(async () => {
     invalidateHeartbeatTrackingSettingsCache(schoolBId);
     await runWithTenantContext({ isSuper: true }, async () => {
       if (schoolAId) {
+        await db.delete(classpilotSchoolSchedules).where(eq(classpilotSchoolSchedules.schoolId, schoolAId));
         await db.delete(settings).where(eq(settings.schoolId, schoolAId));
-        await db.delete(schools).where(eq(schools.id, schoolAId));
+        await db.update(schools).set({ status: "suspended", isActive: false, deletedAt: new Date() }).where(eq(schools.id, schoolAId));
       }
       if (schoolBId) {
         await db.delete(settings).where(eq(settings.schoolId, schoolBId));
-        await db.delete(schools).where(eq(schools.id, schoolBId));
+        await db.update(schools).set({ status: "suspended", isActive: false, deletedAt: new Date() }).where(eq(schools.id, schoolBId));
       }
     });
   } finally {
@@ -107,6 +110,30 @@ after(async () => {
 });
 
 describe("heartbeat tracking settings cache", () => {
+  it("invalidates calendar and makeup-date projections only after committed configuration changes", async () => {
+    await inSchool(schoolAId, async () => {
+      const original = await getHeartbeatTrackingSettingsForSchool(schoolAId);
+      assert.deepEqual(original?.schedulingDateOverrides, {});
+      await storage.withClasspilotSchedulePostCommitTransaction(async tx => {
+        await tx.insert(classpilotSchoolSchedules).values({ schoolId: schoolAId, config: {
+          schemaVersion: 1, yearStart: null, yearEnd: null, cycleAnchorDate: null, cycleAnchorDay: "A", periods: [], profiles: [], defaultProfileId: null, weekdayProfiles: {},
+          dateOverrides: { "2026-09-12": { instructional: true, meetingWeekday: 2 } },
+        } });
+        await tx.update(settings).set({ instructionalCalendar: { "2026-09": { revision: 1, nonInstructionalDates: ["2026-09-08"], updatedAt: new Date().toISOString(), updatedBy: null } } }).where(eq(settings.schoolId, schoolAId));
+        storage.recordClasspilotMonitoringPolicyChange(tx, schoolAId);
+      });
+      const committed = await getHeartbeatTrackingSettingsForSchool(schoolAId);
+      assert.deepEqual(committed?.instructionalCalendar?.["2026-09"]?.nonInstructionalDates, ["2026-09-08"]);
+      assert.deepEqual(committed?.schedulingDateOverrides?.["2026-09-12"], { instructional: true, meetingWeekday: 2 });
+      await assert.rejects(storage.withClasspilotSchedulePostCommitTransaction(async tx => {
+        await tx.delete(classpilotSchoolSchedules).where(eq(classpilotSchoolSchedules.schoolId, schoolAId));
+        storage.recordClasspilotMonitoringPolicyChange(tx, schoolAId);
+        throw new Error("test rollback");
+      }), /test rollback/);
+      assert.equal(await getHeartbeatTrackingSettingsForSchool(schoolAId), committed, "rolled-back writes must not invalidate a committed cache generation");
+    });
+  });
+
   it("caches only the narrow non-secret tracking projection used by heartbeats", async () => {
     const projected = await inSchool(schoolAId, () =>
       getHeartbeatTrackingSettingsForSchool(schoolAId)
@@ -115,6 +142,8 @@ describe("heartbeat tracking settings cache", () => {
     assert.deepEqual(Object.keys(projected).sort(), [
       "afterHoursMode",
       "enableTrackingHours",
+      "instructionalCalendar",
+      "schedulingDateOverrides",
       "schoolTimezone",
       "trackingDays",
       "trackingEndTime",

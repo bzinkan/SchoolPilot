@@ -1,0 +1,147 @@
+import { before, after, test } from "node:test";
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import type { ClasspilotRealtimeStatus } from "../src/services/classpilotRealtimeStatus.js";
+import { CLASSPILOT_MONITORING_INTERRUPTION_SQL } from "../src/db/classpilotMonitoringInterruptionsMigration.js";
+process.env.REDIS_URL = "";
+process.env.SCHEDULER_ENABLED = "true";
+const ids = { school: randomUUID(), otherSchool: randomUUID(), student: randomUUID(), teacher: randomUUID(), otherTeacher: randomUUID(), admin: randomUUID(), group: randomUUID(), teaching: randomUUID(), session: randomUUID(), nextSession: randomUUID() };
+const deviceId = `monitoring-${randomUUID()}`, nextDeviceId = `monitoring-${randomUUID()}`;
+const current = new Date();
+const started = new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth(), current.getUTCDate() + 1, 12));
+let pool: import("pg").Pool;
+let database: typeof import("../src/db.js").default;
+let withTenant: typeof import("../src/middleware/tenantContext.js").runWithTenantContext;
+let service: typeof import("../src/services/classpilotMonitoringInterruptions.js");
+let realtime: typeof import("../src/services/classpilotRealtimeStatus.js");
+let transport: "hit" | "miss" | "unavailable" = "hit";
+let snapshot: ClasspilotRealtimeStatus;
+const at = (seconds: number) => new Date(started.getTime() + seconds * 1000);
+const scoped = <T>(fn: () => Promise<T>) => withTenant({ schoolId: ids.school }, fn);
+const scan = (seconds: number) => service.runClasspilotMonitoringInterruptionScan(at(seconds), { schoolIds: [ids.school] });
+const readIncidents = async () => {
+  const { sql } = await import("drizzle-orm");
+  return scoped(async () => (await database.execute(sql`SELECT * FROM classpilot_monitoring_interruptions WHERE school_id=${ids.school} ORDER BY detected_at`)).rows as Array<Record<string, any>>);
+};
+before(async () => {
+  assert.ok(["localhost", "127.0.0.1", "::1"].includes(new URL(process.env.DATABASE_URL || "").hostname), "Monitoring integration tests require a local database");
+  process.env.DATABASE_URL_PRIVILEGED = process.env.DATABASE_URL;
+  ({ default: database, pool } = await import("../src/db.js"));
+  ({ runWithTenantContext: withTenant } = await import("../src/middleware/tenantContext.js"));
+  service = await import("../src/services/classpilotMonitoringInterruptions.js");
+  realtime = await import("../src/services/classpilotRealtimeStatus.js");
+  await pool.query(CLASSPILOT_MONITORING_INTERRUPTION_SQL);
+  await pool.query("INSERT INTO schools(id,name,school_timezone) VALUES($1,'Monitoring test','UTC'),($2,'Other monitoring test','UTC')", [ids.school, ids.otherSchool]);
+  for (const id of [ids.teacher, ids.otherTeacher, ids.admin]) await pool.query("INSERT INTO users(id,email,first_name,last_name) VALUES($1,$2,'Monitor','Staff')", [id, `${id}@monitoring.example.edu`]);
+  for (const [id, role] of [[ids.teacher, "teacher"], [ids.otherTeacher, "teacher"], [ids.admin, "school_admin"]]) await pool.query("INSERT INTO school_memberships(school_id,user_id,role,status) VALUES($1,$2,$3,'active')", [ids.school, id, role]);
+  await pool.query("INSERT INTO product_licenses(school_id,product,status) VALUES($1,'CLASSPILOT','active')", [ids.school]);
+  const { sql } = await import("drizzle-orm");
+  await scoped(async () => {
+    await database.execute(sql`INSERT INTO settings(school_id,school_name,ws_shared_key,school_timezone,enable_tracking_hours,tracking_start_time,tracking_end_time,tracking_days,after_hours_mode) VALUES(${ids.school},'Monitoring test','test-only','UTC',false,'00:01','23:00','{}'::text[],'off')`);
+    await database.execute(sql`INSERT INTO students(id,school_id,first_name,last_name,status) VALUES(${ids.student},${ids.school},'Test','Student','active')`);
+    for (const value of [deviceId, nextDeviceId]) await database.execute(sql`INSERT INTO devices(school_id,class_id,device_id,device_name) VALUES(${ids.school},${ids.school},${value},'Test Chromebook')`);
+    await database.execute(sql`INSERT INTO student_sessions(id,student_id,device_id,started_at,last_seen_at,auth_kind,is_active) VALUES(${ids.session},${ids.student},${deviceId},${at(-120).toISOString()}::timestamptz,${at(1800).toISOString()}::timestamptz,'managed_profile',true)`);
+    await database.execute(sql`INSERT INTO groups(id,school_id,teacher_id,name,group_type,status) VALUES(${ids.group},${ids.school},${ids.teacher},'Monitored class','admin_class','active')`);
+    await database.execute(sql`INSERT INTO teaching_sessions(id,school_id,group_id,teacher_id,start_time,roster_snapshot_completed_at,class_name_snapshot) VALUES(${ids.teaching},${ids.school},${ids.group},${ids.teacher},${at(-120).toISOString()}::timestamptz,${at(-120).toISOString()}::timestamptz,'Monitored class')`);
+    await database.execute(sql`INSERT INTO classpilot_session_students(school_id,teaching_session_id,group_id,student_id,captured_at) VALUES(${ids.school},${ids.teaching},${ids.group},${ids.student},${at(-120).toISOString()}::timestamptz)`);
+    await database.execute(sql`INSERT INTO classpilot_session_staff(school_id,teaching_session_id,staff_id,role) VALUES(${ids.school},${ids.teaching},${ids.teacher},'primary')`);
+  });
+  snapshot = { schemaVersion: 2, state: "active", schoolId: ids.school, studentId: ids.student, studentSessionId: ids.session, deviceId, heartbeatId: randomUUID(), revision: 1, observedAt: started.getTime(), activeTabUrl: "", activeTabTitle: "", allOpenTabs: [], openTabCount: 0, tabsTruncated: false, activityState: "active", classroomControls: { screenLocked: false, flightPathActive: false, isSharing: false, cameraActive: false }, classificationPending: false };
+  realtime.setClasspilotRealtimeStatusCommandForTests(async (args) => transport === "unavailable" ? undefined : args.slice(1).map(() => transport === "miss" ? null : JSON.stringify(snapshot)));
+});
+after(async () => {
+  realtime?.setClasspilotRealtimeStatusCommandForTests(undefined);
+  if (!pool) return;
+  const { sql } = await import("drizzle-orm");
+  await withTenant({ isSuper: true }, async () => {
+    for (const table of ["classpilot_monitoring_interruption_digests", "classpilot_monitoring_interruptions", "classpilot_monitoring_expectations", "classpilot_monitoring_interruption_settings", "classpilot_school_schedules", "classpilot_session_staff", "classpilot_session_students", "student_attendance"]) await database.execute(sql`DELETE FROM ${sql.identifier(table)} WHERE school_id IN (${ids.school},${ids.otherSchool})`);
+    await database.execute(sql`DELETE FROM teaching_sessions WHERE school_id=${ids.school}`);
+    await database.execute(sql`DELETE FROM groups WHERE school_id=${ids.school}`);
+    await database.execute(sql`DELETE FROM student_sessions WHERE student_id=${ids.student}`);
+    await database.execute(sql`DELETE FROM students WHERE school_id=${ids.school}`);
+    await database.execute(sql`DELETE FROM devices WHERE school_id=${ids.school}`);
+    await database.execute(sql`DELETE FROM settings WHERE school_id=${ids.school}`);
+  });
+  await pool.query("DELETE FROM product_licenses WHERE school_id=$1", [ids.school]);
+  await pool.query("DELETE FROM school_memberships WHERE school_id=$1", [ids.school]);
+  await pool.query("DELETE FROM schools WHERE id IN($1,$2)", [ids.school, ids.otherSchool]);
+  await pool.query("DELETE FROM users WHERE id IN($1,$2,$3)", [ids.teacher, ids.otherTeacher, ids.admin]);
+  const { sessionPool } = await import("../src/db.js");
+  const { schedulerPool, schedulerLockPool } = await import("../src/services/schedulerDb.js");
+  await Promise.all([pool.end(), sessionPool.end(), schedulerPool.end(), schedulerLockPool.end()]);
+});
+test("detects one durable gap beyond Redis expiry, reports uncertainty, and recovers from exact telemetry", async () => {
+  assert.equal((await scan(0)).scannedSchools, 1);
+  assert.equal((await readIncidents()).length, 0);
+  transport = "miss";
+  await scan(61); await scan(480);
+  assert.equal((await readIncidents()).length, 1, "auth lastSeen and cache expiry must neither recover nor duplicate a gap");
+  transport = "unavailable";
+  await scan(500);
+  assert.ok((await readIncidents())[0]!.uncertain_since);
+  transport = "hit"; snapshot = { ...snapshot, observedAt: at(540).getTime() };
+  await scan(540);
+  assert.equal((await readIncidents())[0]!.end_reason, "telemetry_resumed");
+});
+test("teacher visibility follows frozen staff scope and never returns internal binding identifiers", async () => {
+  const own = await scoped(() => service.listMonitoringInterruptions({ schoolId: ids.school, actorId: ids.teacher, isAdmin: false, now: at(540) }));
+  const unrelated = await scoped(() => service.listMonitoringInterruptions({ schoolId: ids.school, actorId: ids.otherTeacher, isAdmin: false, now: at(540) }));
+  assert.equal(own.incidents.length, 1); assert.equal(unrelated.incidents.length, 0);
+  assert.doesNotMatch(JSON.stringify(own), /studentSessionId|deviceId|student_session_id|device_id/);
+  const other = await withTenant({ schoolId: ids.otherSchool }, () => service.listMonitoringInterruptions({ schoolId: ids.otherSchool, actorId: ids.teacher, isAdmin: true, now: at(540) }));
+  assert.equal(other.incidents.length, 0);
+});
+test("a new binding ends the old gap without recovering it from another session", async () => {
+  const { sql } = await import("drizzle-orm");
+  transport = "miss"; await scan(610);
+  await scoped(async () => {
+    await database.execute(sql`UPDATE student_sessions SET is_active=false,ended_at=${at(620).toISOString()}::timestamptz WHERE id=${ids.session}`);
+    await database.execute(sql`INSERT INTO student_sessions(id,student_id,device_id,auth_kind,is_active) VALUES(${ids.nextSession},${ids.student},${nextDeviceId},'managed_profile',true)`);
+  });
+  transport = "hit"; await scan(660);
+  const last = (await readIncidents()).at(-1)!;
+  assert.equal(last.end_reason, "binding_or_scope_changed"); assert.equal(last.recovered_at, null);
+  snapshot = { ...snapshot, deviceId: nextDeviceId, studentSessionId: ids.nextSession, observedAt: at(720).getTime() };
+  await scan(720);
+});
+test("privacy, absence and nonfull monitoring exclude otherwise active bindings", async () => {
+  const { sql } = await import("drizzle-orm");
+  snapshot = { ...snapshot, observedAt: at(730).getTime(), activityState: "off" }; await scan(730);
+  snapshot = { ...snapshot, observedAt: at(780).getTime(), activityState: "active" }; await scan(780);
+  await scoped(() => database.execute(sql`INSERT INTO student_attendance(school_id,student_id,date,status,marked_by) VALUES(${ids.school},${ids.student},${started.toISOString().slice(0, 10)},'absent',${ids.teacher})`));
+  transport = "miss"; await scan(850);
+  const before = (await readIncidents()).length;
+  await scoped(async () => {
+    await database.execute(sql`DELETE FROM student_attendance WHERE school_id=${ids.school}`);
+    await database.execute(sql`UPDATE settings SET enable_tracking_hours=true,tracking_start_time='00:00',tracking_end_time='00:01',after_hours_mode='limited' WHERE school_id=${ids.school}`);
+  });
+  transport = "hit"; snapshot = { ...snapshot, observedAt: at(900).getTime() }; await scan(900);
+  assert.equal((await readIncidents()).length, before);
+});
+test("database rejects cross-school scope or mismatched session/student/device parents", async () => {
+  const { sql } = await import("drizzle-orm");
+  for (const schoolId of [ids.school, ids.otherSchool]) await assert.rejects(withTenant({ schoolId }, () => database.execute(sql`INSERT INTO classpilot_monitoring_expectations(school_id,student_id,student_session_id,device_id,scope_type,scope_id,scope_name,scope_started_at,last_observed_at,last_checked_at,retention_expires_at) VALUES(${schoolId},${ids.student},${ids.nextSession},'wrong-device','teaching_session',${ids.teaching},'Bad',now(),now(),now(),now()+interval '1 day')`)));
+});
+test("digest is default off, opt-in is revisioned, and one reviewed operational digest is sent per admin/day", async () => {
+  const { sql } = await import("drizzle-orm");
+  const { dispatchClasspilotMonitoringDigests } = await import("../src/services/classpilotMonitoringDigests.js");
+  assert.equal((await scoped(() => service.getMonitoringInterruptionSettings(ids.school))).digestEnabled, false);
+  await scoped(() => database.execute(sql`UPDATE settings SET enable_tracking_hours=false,tracking_start_time='00:01',tracking_end_time='23:00',after_hours_mode='off' WHERE school_id=${ids.school}`));
+  await assert.rejects(scoped(() => service.setMonitoringInterruptionSettings(ids.school, ids.teacher, true, 0)));
+  await scoped(() => service.setMonitoringInterruptionSettings(ids.school, ids.admin, true, 0));
+  await assert.rejects(scoped(() => service.setMonitoringInterruptionSettings(ids.school, ids.admin, false, 0)));
+  const messages: Array<{ subject: string; text?: string }> = [];
+  const date = started.toISOString().slice(0, 10);
+  const when = new Date(`${date}T23:30:00.000Z`);
+  const options = { schoolIds: [ids.school], providerConfigured: true, send: async (message: { subject: string; text?: string }) => { messages.push(message); return { status: "sent" as const }; } };
+  const calendar = { [date.slice(0, 7)]: { revision: 1, nonInstructionalDates: [date] } };
+  await scoped(() => database.execute(sql`UPDATE settings SET instructional_calendar=${JSON.stringify(calendar)}::jsonb,tracking_days=ARRAY['Monday']::text[] WHERE school_id=${ids.school}`));
+  await dispatchClasspilotMonitoringDigests(when, options);
+  assert.equal(messages.length, 0, "closed instructional date cannot queue a digest");
+  const { emptySchoolSchedulingConfig } = await import("../src/services/classpilotSchedulingRules.js");
+  const config = { ...emptySchoolSchedulingConfig(), dateOverrides: { [date]: { instructional: true, meetingWeekday: 1 } } };
+  await scoped(() => database.execute(sql`INSERT INTO classpilot_school_schedules(school_id,config) VALUES(${ids.school},${JSON.stringify(config)}::jsonb)`));
+  await dispatchClasspilotMonitoringDigests(when, options); await dispatchClasspilotMonitoringDigests(when, options);
+  assert.equal(messages.length, 1); assert.match(messages[0]!.subject, /monitoring interruptions/i);
+  assert.doesNotMatch(messages[0]!.text!, /Test Student|device_id|student_session_id/);
+});

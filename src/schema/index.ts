@@ -15,3 +15,8 @@ export * from "./classpilot.js";
 
 // Shared tables
 export * from "./shared.js";
+export * from "./safetyCenter.js";
+export * from "./classpilotScheduling.js";
+export * from "./rosterIntegrations.js";
+export * from "./classpilotSchoolWebsitePolicy.js";
+export * from "./classpilotMonitoringInterruptions.js";

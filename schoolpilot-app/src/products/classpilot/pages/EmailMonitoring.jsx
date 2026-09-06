@@ -237,7 +237,7 @@ export default function EmailMonitoring() {
                     <Badge className={SEVERITY_STYLES[a.severity] || SEVERITY_STYLES.low}>{a.severity}</Badge>
                     <span className="font-medium">{CATEGORY_LABELS[a.safetyAlert] || a.safetyAlert || (a.bullying === "true" ? "Bullying" : "Flagged")}</span>
                     <span className="text-xs text-muted-foreground">{a.direction === "outbound" ? "Sent by student" : "Received by student"}</span>
-                    {a.reviewStatus && <Badge variant="outline">{a.reviewStatus}</Badge>}
+                    {(a.reviewStatus || a.reviewedAt) && <Badge variant="outline">{a.reviewStatus || "Reviewed in Safety Center"}</Badge>}
                   </div>
                   <div className="text-sm mt-1 truncate">
                     <span className="font-medium">{a.studentName || a.studentEmail}</span>

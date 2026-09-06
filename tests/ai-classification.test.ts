@@ -6,6 +6,38 @@ import { classifyUrl, matchUnsafeSearchQuery } from "../dist/services/aiClassifi
 
 const noAi = { useAiFallback: false as const };
 
+describe("versioned content labels and expanded alert rules", () => {
+  it("keeps content labels separate from educational classification and preserves them in cache", async () => {
+    const first = await classifyUrl("https://roblox.com/home", "Roblox", noAi);
+    const cached = await classifyUrl("https://roblox.com/home", "Roblox", noAi);
+    assert.equal(first?.contentCategory, "Gaming");
+    assert.equal(cached?.contentCategory, "Gaming");
+    assert.equal((await classifyUrl("https://google.com", "Google", noAi))?.contentCategory, null);
+    assert.equal((await classifyUrl("https://apnews.com", "News", noAi))?.category, "unknown");
+    assert.equal((await classifyUrl("https://apnews.com", "News", noAi))?.contentCategory, "News");
+  });
+  it("records precise supported explanations for reviewed weapons, hate and gambling rules", async () => {
+    for (const [domain, concern] of [["gunbroker.com", "weapons"], ["stormfront.org", "hate"], ["bet365.com", "gambling"]]) {
+      const result = await classifyUrl(`https://${domain}/`, domain, noAi);
+      assert.equal(result?.safetyAlert, concern);
+      assert.equal(result?.source, "known-list");
+      assert.equal(result?.matchedTerm, domain);
+      assert.ok(result?.reasoning?.includes(domain!));
+      assert.ok(result?.rulesetVersion?.startsWith("browser-safety-2026-09-05.2"));
+      assert.equal(result?.confidence, null);
+      assert.equal(result?.modelVersion, null);
+      assert.equal((await classifyUrl(`https://${domain}.school.example`, "Lesson", noAi))?.safetyAlert, null);
+    }
+  });
+  it("keeps weapons safety, history, anti-hate education and gambling recovery benign", () => {
+    for (const query of ["gun safety lesson", "weapons history research", "history of white supremacist recruitment", "how to prevent neo nazi recruitment", "gambling addiction recovery", "casino probability statistics real money", "minecraft build a gun"]) {
+      assert.equal(matchUnsafeSearchQuery(query), null, query);
+    }
+    assert.equal(matchUnsafeSearchQuery("join neo nazi group")?.safetyAlert, "hate");
+    assert.equal(matchUnsafeSearchQuery("online casino real money deposit bonus")?.safetyAlert, "gambling");
+  });
+});
+
 describe("ClassPilot conservative URL classification", () => {
   it("treats known learning portals and ClassLink-style subdomains as educational", async () => {
     assert.equal((await classifyUrl("https://launchpad.classlink.com/home", "LaunchPad"))?.category, "educational");
@@ -70,7 +102,7 @@ describe("ClassPilot conservative URL classification", () => {
 });
 
 describe("ClassPilot unsafe search detection", () => {
-  it("flags help-seeking and explicit self-harm searches on Google", async () => {
+  it("flags explicit self-harm searches without flagging a prevention hotline", async () => {
     const commit = await classifyUrl("https://www.google.com/search?q=how+to+commit+suicide", "Google Search");
     assert.equal(commit?.safetyAlert, "self-harm");
     assert.equal(commit?.category, "non-educational");
@@ -79,8 +111,8 @@ describe("ClassPilot unsafe search detection", () => {
     assert.equal(commit?.domain, "search:commit suicide");
 
     const hotline = await classifyUrl("https://google.com/search?q=suicide%20prevention%20hotline", "Google");
-    assert.equal(hotline?.safetyAlert, "self-harm");
-    assert.equal(hotline?.matchedTerm, "suicide");
+    assert.equal(hotline?.safetyAlert, null);
+    assert.equal(hotline?.source, "known-list");
   });
 
   it("labels self-directed harm as self-harm, not violence", async () => {
@@ -164,8 +196,10 @@ describe("ClassPilot unsafe search lexicon", () => {
     assert.equal(matchUnsafeSearchQuery("how to get a gun license"), null);
     assert.equal(matchUnsafeSearchQuery("weed killer for lawns"), null);
     assert.equal(matchUnsafeSearchQuery(""), null);
-    assert.deepEqual(matchUnsafeSearchQuery("self-harm"), { safetyAlert: "self-harm", label: "self harm" });
-    assert.deepEqual(matchUnsafeSearchQuery("selfharm"), { safetyAlert: "self-harm", label: "self harm" });
+    assert.equal(matchUnsafeSearchQuery("self-harm"), null);
+    assert.equal(matchUnsafeSearchQuery("selfharm"), null);
+    assert.deepEqual(matchUnsafeSearchQuery("how to self-harm"), { safetyAlert: "self-harm", label: "self harm" });
+    assert.deepEqual(matchUnsafeSearchQuery("how to selfharm"), { safetyAlert: "self-harm", label: "self harm" });
     assert.deepEqual(matchUnsafeSearchQuery("how many tylenol to overdose"), { safetyAlert: "self-harm", label: "overdose amount" });
     assert.deepEqual(matchUnsafeSearchQuery("buy vapes near me"), { safetyAlert: "drugs", label: "buy drugs" });
     assert.deepEqual(matchUnsafeSearchQuery("elf bars near me"), { safetyAlert: "drugs", label: "buy vape" });
@@ -177,6 +211,89 @@ describe("ClassPilot unsafe search lexicon", () => {
   it("resolves mixed queries to the most urgent tier", () => {
     assert.equal(matchUnsafeSearchQuery("porn and how to kill myself")?.safetyAlert, "self-harm");
     assert.equal(matchUnsafeSearchQuery("buy weed and porn")?.safetyAlert, "drugs");
+  });
+
+  it("leaves self-harm topics, prevention, education and generic help-seeking unflagged", async () => {
+    for (const query of [
+      "suicide",
+      "suicidal",
+      "suicide prevention hotline",
+      "suicide hotline near me",
+      "suicide prevention resources for a friend",
+      "988 suicide and crisis lifeline",
+      "teen suicide statistics for health class",
+      "suicide prevention health class research",
+      "why do people commit suicide",
+      "how to prevent people committing suicide",
+      "self-harm definition",
+      "self harm education lesson",
+      "self injury statistics health class",
+      "self harm help",
+      "self harm recovery support group",
+      "self harm coping techniques",
+      "how to stop self harming",
+      "I want to stop self harming",
+      "how do I stop cutting myself",
+      "how do I stop wanting to die",
+      "how to resist the urge to hurt myself",
+      "ways to stop cutting my wrists",
+      "how to keep myself from cutting myself",
+      "help for wanting to die",
+      "I do not want to die",
+      "I don't want to die",
+      "lethal dose definition",
+      "what does lethal dose mean",
+      "fatal dose meaning for health class",
+      "adderall dosage as prescribed",
+      "adderall dosage prescribing information",
+    ]) {
+      assert.equal(matchUnsafeSearchQuery(query), null, query);
+      const result = await classifyUrl(`https://google.com/search?q=${encodeURIComponent(query)}`, "Health resources", noAi);
+      assert.equal(result?.safetyAlert, null, query);
+      assert.notEqual(result?.source, "search", query);
+    }
+  });
+
+  it("retains explicit intent and method concerns even beside education or support words", () => {
+    for (const query of [
+      "how to commit suicide",
+      "I will commit suicide tonight",
+      "I am planning suicide",
+      "I am suicidal and need help",
+      "I'm suicidal hotline",
+      "I want to die help",
+      "I am self harming and need help",
+      "how to self harm",
+      "suicide method",
+      "suicide methods research",
+      "self harm methods for research",
+      "research how to kill myself",
+      "help to kill myself",
+      "help with my suicide plan",
+      "suicide prevention hotline but I want to kill myself tonight",
+      "how to stop cutting myself but I want to die tonight",
+      "how to stop cutting myself but how to cut myself",
+      "how to commit suicide and suicide statistics for health class",
+      "how many tylenol to overdose",
+      "how to tie a noose",
+      "lethal dose of sleeping pills",
+      "lethal dose definition but I want to die",
+    ]) {
+      assert.equal(matchUnsafeSearchQuery(query)?.safetyAlert, "self-harm", query);
+    }
+    for (const query of [
+      "I want to kill my teacher research",
+      "school shooting plan for research",
+      "suicide prevention and how to make a bomb",
+    ]) {
+      assert.equal(matchUnsafeSearchQuery(query)?.safetyAlert, "violence", query);
+    }
+    for (const query of [
+      "adderall dosage to get high",
+      "adderall dosage as prescribed and how to snort cocaine",
+    ]) {
+      assert.equal(matchUnsafeSearchQuery(query)?.safetyAlert, "drugs", query);
+    }
   });
 });
 

@@ -88,6 +88,17 @@ describe("immutable ClassPilot report CSV", () => {
     assert.match(csv, /Confirmed/);
     assert.match(csv, /available/);
     assert.doesNotMatch(csv, /internal-device-secret|internal-session-secret|secret=/);
+    const categories = [{ contentCategory: "Gaming", seconds: 15 }, { contentCategory: null, seconds: 5 }];
+    const v3 = classpilotSessionReportDto({ ...report, reportVersion: 3, coverageAlgorithmVersion: "heartbeat-coverage-v3" },
+      [{ ...student, offTaskCategories: categories }]);
+    const v3Student = v3.students[0];
+    assert.ok(v3Student && "offTaskCategories" in v3Student);
+    assert.ok("offTaskCategories" in v3.totals);
+    assert.deepEqual(v3Student.offTaskCategories, categories);
+    assert.deepEqual(v3.totals.offTaskCategories, categories);
+    assert.equal(v3.totals.offTaskCategories?.reduce((sum, row) => sum + row.seconds, 0), v3.totals.offTaskSeconds);
+    assert.match(classpilotSessionReportCsv(v3), /Off-task Content Categories/);
+    assert.doesNotMatch(csv, /Off-task Content Categories/);
   });
 
   it("loads explicit captures through their exact request tuple and heartbeat link", () => {

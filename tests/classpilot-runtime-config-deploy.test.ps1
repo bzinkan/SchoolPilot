@@ -878,6 +878,109 @@ try {
     $script:ClassPilotZipSha256 = $finalLateSignInZipSha256
     $script:ClassPilotExtensionId = $productionClassPilotExtensionId
 
+    $roadmapCases = @(
+        @{ Capability = "afterHoursSafetyOnlyV1"; Prefix = "after-hours-safety-only" },
+        @{ Capability = "schoolWebsiteBlockEnforcementV1"; Prefix = "school-website-block" }
+    )
+    $roadmapSourceRuntime = $restrictionAuthPilotRuntime
+    foreach ($roadmapCase in $roadmapCases) {
+        $capability = [string]$roadmapCase.Capability
+        $prefix = [string]$roadmapCase.Prefix
+        $flag = [string]$script:CapabilityFlags[$capability]
+        Assert-Throws {
+            ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+                schemaVersion = 7; mode = "$prefix-global-on"
+            })
+        } "Roadmap profiles must not admit an unreviewed global activation."
+        Assert-Throws {
+            ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+                schemaVersion = 7; mode = "$prefix-pilot"; pilotSchoolId = "all"
+            })
+        } "Roadmap pilots require one canonical school UUID."
+        Assert-Throws {
+            ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+                schemaVersion = 7; mode = "$prefix-off"; pilotSchoolId = $testSchoolId
+            })
+        } "Roadmap off profiles must not retain school scope."
+        $intent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 7; mode = "$prefix-pilot"; pilotSchoolId = $testSchoolId
+        })
+        $roadmapSource = New-TransitionSourceTask -RuntimeConfiguration $roadmapSourceRuntime
+        $roadmapPilot = Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $intent `
+            -SourceTaskDefinition $roadmapSource -ContainerName "api"
+        Assert-AllowedRuntimeTransition -SourceTaskDefinition $roadmapSource -ContainerName "api" `
+            -TargetRuntimeConfiguration $roadmapPilot
+        $roadmapRollouts = $roadmapPilot.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON | ConvertFrom-Json
+        Assert-Condition ($roadmapPilot.Environment[$flag] -ceq "true" -and
+            $roadmapRollouts.$capability.mode -ceq "on" -and
+            @($roadmapRollouts.$capability.schoolIds).Count -eq 1 -and
+            $roadmapRollouts.$capability.schoolIds[0] -ceq $testSchoolId) `
+            "Roadmap pilots must enable both controls for only the selected school."
+        $sourceControls = Get-RuntimeCapabilityControls -Environment $roadmapSource.containerDefinitions[0].environment
+        $pilotSource = New-TransitionSourceTask -RuntimeConfiguration $roadmapPilot
+        $pilotControls = Get-RuntimeCapabilityControls -Environment $pilotSource.containerDefinitions[0].environment
+        foreach ($other in @($script:AllCapabilities | Where-Object { $_ -cne $capability })) {
+            Assert-Condition ((Get-CanonicalJsonSha256 -Value $sourceControls[$other]) -ceq
+                (Get-CanonicalJsonSha256 -Value $pilotControls[$other])) `
+                "Roadmap pilots must preserve the other $other controls and school scope."
+        }
+        Assert-Throws {
+            Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $intent `
+                -SourceTaskDefinition $pilotSource -ContainerName "api"
+        } "An active roadmap pilot must be disabled before another pilot admission."
+        foreach ($badControl in @("global", "multiple-schools", "flag-only", "rollout-only", "partial")) {
+            $invalidSource = New-TransitionSourceTask -RuntimeConfiguration $roadmapPilot
+            $invalidEnv = $invalidSource.containerDefinitions[0].environment
+            $registryEntry = @($invalidEnv | Where-Object name -CEQ "CLASSPILOT_CAPABILITY_ROLLOUTS_JSON")[0]
+            $invalidRollouts = $registryEntry.value | ConvertFrom-Json
+            if ($badControl -ceq "global") { $invalidRollouts.$capability.PSObject.Properties.Remove("schoolIds") }
+            elseif ($badControl -ceq "multiple-schools") { $invalidRollouts.$capability.schoolIds += "22222222-2222-4222-8222-222222222222" }
+            elseif ($badControl -ceq "flag-only") { $invalidRollouts.$capability = [pscustomobject]@{ mode = "off" } }
+            elseif ($badControl -ceq "rollout-only") { @($invalidEnv | Where-Object name -CEQ $flag)[0].value = "false" }
+            else { $invalidEnv = @($invalidEnv | Where-Object name -CNE $flag) }
+            $registryEntry.value = $invalidRollouts | ConvertTo-Json -Depth 10 -Compress
+            Assert-Throws {
+                Get-RuntimeActivationState -Environment $invalidEnv -AllowBaseline
+            } "Roadmap runtime must reject $badControl controls."
+        }
+        $offIntent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 7; mode = "$prefix-off"
+        })
+        $roadmapOff = Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $offIntent `
+            -SourceTaskDefinition $pilotSource -ContainerName "api"
+        Assert-AllowedRuntimeTransition -SourceTaskDefinition $pilotSource -ContainerName "api" `
+            -TargetRuntimeConfiguration $roadmapOff
+        $offSource = New-TransitionSourceTask -RuntimeConfiguration $roadmapOff
+        $offControls = Get-RuntimeCapabilityControls -Environment $offSource.containerDefinitions[0].environment
+        Assert-Condition ((Get-CanonicalJsonSha256 -Value $sourceControls) -ceq
+            (Get-CanonicalJsonSha256 -Value $offControls)) `
+            "Roadmap off must restore only its selected controls and preserve all other active pilots."
+        Assert-Throws {
+            Assert-AllowedRuntimeTransition -SourceTaskDefinition $pilotSource -ContainerName "api" `
+                -TargetRuntimeConfiguration $trackingGlobalRuntime
+        } "An unrelated tracking profile must not silently disable roadmap capabilities."
+        # Carry the first pilot forward so the second exercises coexistence.
+        $roadmapSourceRuntime = $roadmapPilot
+    }
+    $legacyRoadmapSource = New-TransitionSourceTask -RuntimeConfiguration $globalRuntime
+    $legacyRoadmapEnv = $legacyRoadmapSource.containerDefinitions[0].environment
+    $legacyRoadmapRegistry = @($legacyRoadmapEnv | Where-Object name -CEQ "CLASSPILOT_CAPABILITY_ROLLOUTS_JSON")[0]
+    $legacyRoadmapRollouts = $legacyRoadmapRegistry.value | ConvertFrom-Json
+    foreach ($capability in $script:RoadmapCapabilities) {
+        $legacyRoadmapRollouts.PSObject.Properties.Remove($capability)
+        $legacyRoadmapEnv = @($legacyRoadmapEnv | Where-Object name -CNE $script:CapabilityFlags[$capability])
+    }
+    $legacyRoadmapRegistry.value = $legacyRoadmapRollouts | ConvertTo-Json -Depth 10 -Compress
+    $legacyRoadmapSource.containerDefinitions[0].environment = $legacyRoadmapEnv
+    Assert-Condition ((Get-RuntimeActivationState -Environment $legacyRoadmapEnv -AllowBaseline).Mode -ceq "global-on") `
+        "A pre-roadmap registry with both controls absent must remain recognized as default-off."
+    $legacyRoadmapTarget = Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $intent `
+        -SourceTaskDefinition $legacyRoadmapSource -ContainerName "api"
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $legacyRoadmapSource -ContainerName "api" `
+        -TargetRuntimeConfiguration $legacyRoadmapTarget
+    Assert-Condition ($legacyRoadmapTarget.Environment.CLASSPILOT_CAP_AFTER_HOURS_SAFETY_ONLY_V1 -ceq "false") `
+        "Admitting one roadmap capability from legacy state must materialize the other as explicitly off."
+
     $legacyGlobalSource = New-TransitionSourceTask -RuntimeConfiguration $globalRuntime
     $legacyGlobalEnvironment = @($legacyGlobalSource.containerDefinitions[0].environment)
     $legacyGlobalRolloutEntry = @($legacyGlobalEnvironment | Where-Object name -CEQ "CLASSPILOT_CAPABILITY_ROLLOUTS_JSON")[0]
@@ -2805,6 +2908,58 @@ try {
     }
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
 
+    foreach ($roadmapCase in $roadmapCases) {
+        Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
+        Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $globalRuntime
+        $prefix = [string]$roadmapCase.Prefix
+        $roadmapProfilePath = Join-Path $testRoot "$prefix-profile.json"
+        Write-TestJson -Path $roadmapProfilePath -Value ([pscustomobject]@{
+            schemaVersion = 7; mode = "$prefix-pilot"; pilotSchoolId = $testSchoolId
+        })
+        $roadmapPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
+            -PrivateProfilePath $roadmapProfilePath -EvidenceRoot $evidenceRoot -AppSha $appSha `
+            -ImageDigest $digest -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now
+        $roadmapPlan = Read-RuntimePlan -Path $roadmapPlanResult.PlanPath -ExpectedSha256 $roadmapPlanResult.PlanSha256
+        $roadmapApply = Invoke-RuntimeConfigApply -Plan $roadmapPlan -PlanSha256 $roadmapPlanResult.PlanSha256 `
+            -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0
+        Assert-Condition ($roadmapApply.status -ceq "applied") "Roadmap pilot must pass the guarded mocked plan/apply path."
+        $roadmapApi = $global:RuntimeConfigTestState.TaskResponses[$roadmapApply.candidateApiTaskDefinitionArn].taskDefinition
+        $roadmapWorker = $global:RuntimeConfigTestState.TaskResponses[$roadmapApply.candidateWorkerTaskDefinitionArn].taskDefinition
+        $apiControls = Get-RuntimeCapabilityControls -Environment $roadmapApi.containerDefinitions[0].environment
+        $workerControls = Get-RuntimeCapabilityControls -Environment $roadmapWorker.containerDefinitions[0].environment
+        Assert-Condition ((Get-CanonicalJsonSha256 -Value $apiControls) -ceq
+            (Get-CanonicalJsonSha256 -Value $workerControls)) "Roadmap API and worker controls must be identical."
+        $roadmapOffProfilePath = Join-Path $testRoot "$prefix-off-profile.json"
+        Write-TestJson -Path $roadmapOffProfilePath -Value ([pscustomobject]@{ schemaVersion = 7; mode = "$prefix-off" })
+        $roadmapOffPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
+            -PrivateProfilePath $roadmapOffProfilePath -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+            -ApiTaskDefinitionArn $roadmapApply.candidateApiTaskDefinitionArn `
+            -WorkerTaskDefinitionArn $roadmapApply.candidateWorkerTaskDefinitionArn -Now $now
+        $roadmapOffPlan = Read-RuntimePlan -Path $roadmapOffPlanResult.PlanPath -ExpectedSha256 $roadmapOffPlanResult.PlanSha256
+        $roadmapOffApply = Invoke-RuntimeConfigApply -Plan $roadmapOffPlan -PlanSha256 $roadmapOffPlanResult.PlanSha256 `
+            -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0
+        $roadmapOffApi = $global:RuntimeConfigTestState.TaskResponses[$roadmapOffApply.candidateApiTaskDefinitionArn].taskDefinition
+        $roadmapOffControls = Get-RuntimeCapabilityControls -Environment $roadmapOffApi.containerDefinitions[0].environment
+        Assert-Condition ($roadmapOffApply.status -ceq "applied" -and
+            $roadmapOffControls[[string]$roadmapCase.Capability].flag -ceq "false" -and
+            $roadmapOffControls[[string]$roadmapCase.Capability].mode -ceq "off") `
+            "Roadmap off must disable both controls through the guarded apply path."
+        $roadmapOffRollback = Invoke-RuntimeConfigRollback -Plan $roadmapOffPlan `
+            -PlanSha256 $roadmapOffPlanResult.PlanSha256 -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0
+        Assert-Condition ($roadmapOffRollback.status -ceq "rolled_back" -and
+            $global:RuntimeConfigTestState.ApiCurrentArn -ceq $roadmapApply.candidateApiTaskDefinitionArn -and
+            $global:RuntimeConfigTestState.WorkerCurrentArn -ceq $roadmapApply.candidateWorkerTaskDefinitionArn) `
+            "Rollback of roadmap off must restore the exact pilot API/worker pair."
+        $roadmapRollback = Invoke-RuntimeConfigRollback -Plan $roadmapPlan `
+            -PlanSha256 $roadmapPlanResult.PlanSha256 -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0
+        Assert-Condition ($roadmapRollback.status -ceq "rolled_back" -and
+            $global:RuntimeConfigTestState.ApiCurrentArn -ceq $apiSourceArn -and
+            $global:RuntimeConfigTestState.WorkerCurrentArn -ceq $workerSourceArn) `
+            "Rollback of roadmap admission must restore the exact original API/worker pair."
+        $roadmapPlanText = [IO.File]::ReadAllText($roadmapPlanResult.PlanPath)
+        Assert-Condition (-not $roadmapPlanText.Contains($testSchoolId)) "Roadmap public plan evidence must not expose school IDs."
+    }
+    Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
     Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $globalRuntime
     $global:RuntimeConfigTestState.ApiDesiredCount = 3
     $global:RuntimeConfigTestState.ConvergingApiDescribeReadsRemaining = 1

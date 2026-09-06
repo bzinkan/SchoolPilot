@@ -13,7 +13,9 @@ export function classpilotSessionReportV2Mode(
 }
 
 export function classpilotSessionReportVersionForNewRow(
-  value: string | undefined = process.env.CLASSPILOT_SESSION_REPORT_V2_MODE
-): 1 | 2 {
+  value: string | undefined = process.env.CLASSPILOT_SESSION_REPORT_V2_MODE,
+  categoriesMode: string | undefined = process.env.CLASSPILOT_SESSION_REPORT_V3_MODE
+): 1 | 2 | 3 {
+  if (categoriesMode === "on" && classpilotSessionReportV2Mode(value) === "on") return 3;
   return classpilotSessionReportV2Mode(value) === "on" ? 2 : 1;
 }

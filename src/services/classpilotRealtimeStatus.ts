@@ -92,6 +92,8 @@ export type ClasspilotScreenshotHealth = {
 
 export type ClasspilotRealtimeClassification = {
   category: string;
+  contentCategory?: string | null;
+  teacherIntentSource?: string | null;
   safetyAlert: string | null;
 };
 
@@ -528,6 +530,8 @@ export function classpilotRealtimeStatusFromHeartbeat(
   if (aiCategory || safetyAlert) {
     snapshot.aiClassification = {
       category: aiCategory || "unknown",
+      contentCategory: optionalString(row.contentCategory, 64) ?? null,
+      teacherIntentSource: optionalString(row.teacherIntentSource, 64) ?? null,
       safetyAlert: safetyAlert || null,
     };
   }
@@ -727,6 +731,8 @@ function decodeSnapshot(raw: unknown): ClasspilotRealtimeStatus | undefined {
   if (classification) {
     snapshot.aiClassification = {
       category: classification.category as string,
+      contentCategory: typeof classification.contentCategory === "string" ? classification.contentCategory : null,
+      teacherIntentSource: typeof classification.teacherIntentSource === "string" ? classification.teacherIntentSource : null,
       safetyAlert: classification.safetyAlert as string | null,
     };
   }

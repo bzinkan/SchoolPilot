@@ -205,6 +205,7 @@ export function materializeV2Students(
       ...policyDisabled,
     ];
     const coverage = calculateHeartbeatCoverage({
+      contentCategories: report.reportVersion >= 3,
       windowStart: report.windowStart,
       windowEnd: report.windowEnd,
       authenticatedIntervals,
@@ -217,9 +218,10 @@ export function materializeV2Students(
             timestamp: heartbeat.timestamp,
             url: heartbeat.activeTabUrl,
             category: decision?.category || heartbeat.aiCategory,
+            contentCategory: heartbeat.contentCategory ?? null,
             // A teacher-intent classification is an explicit exemption from
             // off-task arithmetic. It does not suppress a safety alert.
-            teacherIntentExempt: !!decision?.teacherIntentSource,
+            teacherIntentExempt: !!decision?.teacherIntentSource || (report.reportVersion >= 3 && !!heartbeat.teacherIntentSource),
           };
         }),
     });
@@ -307,6 +309,7 @@ export function materializeV2Students(
       topActivities: coverage.topActivities,
       unclassifiedSeconds: coverage.unclassifiedSeconds,
       offTaskSeconds: coverage.offTaskSeconds,
+      offTaskCategories: coverage.offTaskCategories,
       offTaskEventCount: coverage.offTaskEventCount,
       offTaskEvents: coverage.offTaskEvents.map((event) => ({
         ...event,

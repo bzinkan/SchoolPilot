@@ -36,6 +36,14 @@ import { drainService, snapshotShutdownPools, type ShutdownPool } from "./servic
 import { classpilotLifecyclePushes, flushClasspilotLifecyclePushes, snapshotClasspilotLifecyclePushes } from "./services/classpilotLifecyclePushes.js";
 import { drainTenantContextReleases, getTenantContextReleaseSnapshot } from "./middleware/tenantContext.js";
 import { stopRuntimePerformanceMetrics } from "./services/runtimePerformanceMetrics.js";
+import { SAFETY_CENTER_SQL } from "./db/safetyCenterMigration.js";
+import { MAILPILOT_SAFETY_DURABILITY_SQL } from "./db/mailpilotSafetyDurabilityMigration.js";
+import { CLASSPILOT_SCHEDULING_SQL } from "./db/classpilotSchedulingMigration.js";
+import { ROSTER_INTEGRATIONS_SQL } from "./db/rosterIntegrationsMigration.js";
+import { CLASSPILOT_SCHOOL_WEBSITE_POLICY_SQL } from "./db/classpilotSchoolWebsitePolicyMigration.js";
+import { CLASSPILOT_CONTENT_CATEGORIES_SQL } from "./db/classpilotContentCategoriesMigration.js";
+import { CLASSPILOT_MONITORING_INTERRUPTION_SQL } from "./db/classpilotMonitoringInterruptionsMigration.js";
+import { CLASSPILOT_SCHEDULE_PROFILE_SUPERVISION_SQL } from "./db/classpilotScheduleProfileSupervisionMigration.js";
 
 // Initialize Sentry as early as possible. No-op unless SENTRY_DSN is set
 // (gated off until the DPA is signed + subprocessors list updated).
@@ -4446,7 +4454,7 @@ export async function runStartupMigrations(): Promise<void> {
         review_note TEXT
       )
     `);
-    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS email_alerts_gmail_message_unique ON email_alerts (gmail_message_id)`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS email_alerts_school_student_message_unique ON email_alerts (school_id, student_id, gmail_message_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS email_alerts_school_alerted_idx ON email_alerts (school_id, alerted_at DESC)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS email_alerts_student_alerted_idx ON email_alerts (student_id, alerted_at DESC)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS email_alerts_school_review_idx ON email_alerts (school_id, review_status)`);
@@ -4930,6 +4938,15 @@ export async function runStartupMigrations(): Promise<void> {
   } catch (err) {
     console.warn("[migration] passes active-unique migration skipped:", safeErrorMetadata(err));
   }
+  // Nonproduction convergence mirrors the additive production ledger.
+  await pool.query(SAFETY_CENTER_SQL);
+  await pool.query(MAILPILOT_SAFETY_DURABILITY_SQL);
+  await pool.query(CLASSPILOT_SCHEDULING_SQL);
+  await pool.query(ROSTER_INTEGRATIONS_SQL);
+  await pool.query(CLASSPILOT_SCHOOL_WEBSITE_POLICY_SQL);
+  await pool.query(CLASSPILOT_CONTENT_CATEGORIES_SQL);
+  await pool.query(CLASSPILOT_MONITORING_INTERRUPTION_SQL);
+  await pool.query(CLASSPILOT_SCHEDULE_PROFILE_SUPERVISION_SQL);
 }
 
 async function startServer(): Promise<void> {

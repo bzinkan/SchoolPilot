@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   describeClasspilotSafetyReason,
-  isClasspilotSafetyExempt,
   resolveCurrentClasspilotSafetyAction,
 } from "../src/services/classpilotSafetyAction.js";
 import type { AiClassification } from "../src/services/aiClassification.js";
@@ -238,32 +237,6 @@ describe("ClassPilot current-heartbeat safety action boundary", () => {
     }), null);
   });
 
-});
-
-describe("ClassPilot safety allow-list exemption", () => {
-  const listHit = classification({
-    safetyAlert: "sexual",
-    domain: "pornhub.com",
-    matchedTerm: "pornhub.com",
-    source: "known-list",
-  });
-
-  it("exempts an allow-listed domain and its subdomains", () => {
-    assert.equal(isClasspilotSafetyExempt({ url: "https://www.pornhub.com/view", classification: listHit, allowedDomains: ["pornhub.com"] }), true);
-    assert.equal(isClasspilotSafetyExempt({ url: "https://video.pornhub.com/view", classification: listHit, allowedDomains: ["PornHub.com"] }), true);
-  });
-
-  it("never exempts a search-query hit, even on an allow-listed engine", () => {
-    assert.equal(isClasspilotSafetyExempt({ url: unsafeSearchUrl, classification: classification({ source: "search" }), allowedDomains: ["google.com"] }), false);
-    assert.equal(isClasspilotSafetyExempt({ url: unsafeSearchUrl, classification: classification(), allowedDomains: ["google.com"] }), false);
-  });
-
-  it("does not exempt unrelated lists, empty lists, lookalike hosts, or non-web URLs", () => {
-    assert.equal(isClasspilotSafetyExempt({ url: "https://pornhub.com/", classification: listHit, allowedDomains: [] }), false);
-    assert.equal(isClasspilotSafetyExempt({ url: "https://pornhub.com/", classification: listHit, allowedDomains: ["example.org"] }), false);
-    assert.equal(isClasspilotSafetyExempt({ url: "https://notpornhub.com/", classification: listHit, allowedDomains: ["pornhub.com"] }), false);
-    assert.equal(isClasspilotSafetyExempt({ url: "chrome://extensions", classification: listHit, allowedDomains: ["extensions"] }), false);
-  });
 });
 
 describe("ClassPilot safety reason text", () => {

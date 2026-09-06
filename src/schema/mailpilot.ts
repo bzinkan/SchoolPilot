@@ -49,6 +49,7 @@ export const emailAlerts = pgTable(
     studentId: text("student_id").notNull(),
     studentEmail: text("student_email").notNull(),
     gmailMessageId: text("gmail_message_id").notNull(),
+    safetySourceId: text("safety_source_id"),
     gmailThreadId: text("gmail_thread_id"),
     direction: text("direction").notNull(), // inbound | outbound
     sender: text("sender"),
@@ -69,7 +70,7 @@ export const emailAlerts = pgTable(
     reviewNote: text("review_note"),
   },
   (table) => [
-    uniqueIndex("email_alerts_gmail_message_unique").on(table.gmailMessageId),
+    uniqueIndex("email_alerts_school_student_message_unique").on(table.schoolId, table.studentId, table.gmailMessageId),
     index("email_alerts_school_alerted_idx").on(table.schoolId, table.alertedAt),
     index("email_alerts_student_alerted_idx").on(table.studentId, table.alertedAt),
     index("email_alerts_school_review_idx").on(table.schoolId, table.reviewStatus),

@@ -20,6 +20,7 @@ evidence-artifacts/
 
 # Frontend build output
 schoolpilot-app/dist/
+schoolpilot-app/artifacts/
 schoolpilot-app/node_modules/
 schoolpilot-app/NUL
 schoolpilot-app/eslint-*.json

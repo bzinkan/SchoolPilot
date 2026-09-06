@@ -8,6 +8,7 @@ import {
   classifyClasspilotActivity,
   type ClasspilotTopActivity,
 } from "./classpilotActivityAttribution.js";
+import { allocateOffTaskCategorySeconds, normalizeContentCategory, type ContentCategory } from "./classpilotContentCategories.js";
 
 export const HEARTBEAT_COVERAGE_ALGORITHM_VERSION = "heartbeat-coverage-v2";
 export const HEARTBEAT_COVERAGE_ALGORITHM_VERSION_V1 = "heartbeat-coverage-v1";
@@ -24,11 +25,13 @@ export type CoverageHeartbeat = {
   timestamp: Date;
   url?: string | null;
   category?: string | null;
+  contentCategory?: string | null;
   teacherIntentExempt?: boolean;
 };
 
 export type OffTaskEvent = {
   domain: string;
+  contentCategory?: ContentCategory | null;
   category: "non-educational";
   start: Date;
   end: Date;
@@ -197,6 +200,7 @@ export function calculateHeartbeatCoverage(options: {
   authenticatedIntervals: CoverageInterval[];
   excludedIntervals?: CoverageInterval[];
   heartbeats: CoverageHeartbeat[];
+  contentCategories?: boolean;
 }) {
   const auth = options.authenticatedIntervals
     .map((interval) => clip(interval, options.windowStart, options.windowEnd))
@@ -221,10 +225,11 @@ export function calculateHeartbeatCoverage(options: {
       firstObservedAt: null as Date | null,
       lastObservedAt: null as Date | null,
       gaps: [] as MonitoringGap[],
-      topDomains: [] as Array<{ domain: string; seconds: number; visits: number }>,
+      topDomains: [] as Array<{ domain: string; seconds: number; visits: number; contentCategory?: ContentCategory | null }>,
       topActivities: [] as ClasspilotTopActivity[],
       unclassifiedSeconds: 0,
       offTaskSeconds: 0,
+      offTaskCategories: [],
       offTaskEventCount: 0,
       offTaskEvents: [] as OffTaskEvent[],
     };
@@ -299,7 +304,7 @@ export function calculateHeartbeatCoverage(options: {
   const observedSeconds = Math.max(0, eligibleSeconds - gapSeconds);
   const coveragePercent = Math.max(0, Math.min(100, Math.round((observedSeconds / eligibleSeconds) * 100)));
   const attributionLimitMs = HEARTBEAT_ATTRIBUTION_LIMIT_SECONDS * 1000;
-  const domains = new Map<string, { milliseconds: number; visits: number }>();
+  const domains = new Map<string, { milliseconds: number; visits: number; contentCategory: ContentCategory | null }>();
   const activities = new Map<string, {
     kind: ClasspilotTopActivity["kind"];
     domain: string;
@@ -308,6 +313,7 @@ export function calculateHeartbeatCoverage(options: {
   }>();
   const offTaskSegments: Array<{
     domain: string;
+    contentCategory?: ContentCategory | null;
     category: "non-educational";
     start: Date;
     end: Date;
@@ -330,8 +336,10 @@ export function calculateHeartbeatCoverage(options: {
       const domain = normalizedHeartbeatDomain(heartbeat.url);
       const activity = classifyClasspilotActivity(heartbeat.url);
       const category = normalizedHeartbeatCategory(heartbeat.category);
+      const contentCategory = normalizeContentCategory(heartbeat.contentCategory);
       if (domain) {
-        const value = domains.get(domain) || { milliseconds: 0, visits: 0 };
+        const value = domains.get(domain) || { milliseconds: 0, visits: 0, contentCategory };
+        if (value.contentCategory !== contentCategory) value.contentCategory = null;
         value.milliseconds += endMs - startMs;
         if (domain !== previousDomain) value.visits += 1;
         domains.set(domain, value);
@@ -359,6 +367,7 @@ export function calculateHeartbeatCoverage(options: {
       if (domain && category === "non-educational" && heartbeat.teacherIntentExempt !== true) {
         offTaskSegments.push({
           domain,
+          ...(options.contentCategories ? { contentCategory } : {}),
           category,
           start: new Date(startMs),
           end: new Date(endMs),
@@ -373,9 +382,12 @@ export function calculateHeartbeatCoverage(options: {
     if (previous
       && previous.domain === segment.domain
       && previous.category === segment.category
+      && (!options.contentCategories || previous.contentCategory === segment.contentCategory)
       && segment.start.getTime() - previous.end.getTime() <= 30_000) {
       previous.end = new Date(Math.max(previous.end.getTime(), segment.end.getTime()));
-      previous.seconds = Math.round((previous.end.getTime() - previous.start.getTime()) / 1000);
+      previous.seconds = options.contentCategories
+        ? previous.seconds + Math.round((segment.end.getTime() - segment.start.getTime()) / 1000)
+        : Math.round((previous.end.getTime() - previous.start.getTime()) / 1000);
       continue;
     }
     offTaskEvents.push({
@@ -416,6 +428,7 @@ export function calculateHeartbeatCoverage(options: {
       .slice(0, 10)
       .map(([domain, value]) => ({
         domain,
+        ...(options.contentCategories ? { contentCategory: value.contentCategory } : {}),
         seconds: Math.round(value.milliseconds / 1000),
         visits: value.visits,
       })),
@@ -432,6 +445,9 @@ export function calculateHeartbeatCoverage(options: {
       })),
     unclassifiedSeconds,
     offTaskSeconds,
+    offTaskCategories: options.contentCategories ? allocateOffTaskCategorySeconds(offTaskSegments.map((segment) => ({
+      contentCategory: segment.contentCategory, milliseconds: segment.end.getTime() - segment.start.getTime(),
+    })), offTaskSeconds) : [],
     offTaskEventCount: offTaskEvents.length,
     offTaskEvents,
   };

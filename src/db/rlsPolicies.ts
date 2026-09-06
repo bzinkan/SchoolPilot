@@ -24,6 +24,7 @@ const historicalInventory: RlsRegistryInventory =
   rlsRegistry.inventories.historicalObservedProduction;
 const postExpandInventory: RlsRegistryInventory =
   rlsRegistry.inventories.schoolPilot270PostExpand;
+const currentInventory: RlsRegistryInventory = rlsRegistry.inventories.classpilotRoadmapPostExpand;
 
 /** Exact audit snapshot; never rewrite this list to describe a future rollout. */
 export const RLS_HISTORICAL_OBSERVED_PRODUCTION_TABLES: readonly string[] =
@@ -32,6 +33,7 @@ export const RLS_HISTORICAL_OBSERVED_PRODUCTION_TABLES: readonly string[] =
 /** Expected inventory once every SchoolPilot 2.7.0 additive table is admitted. */
 export const RLS_POST_EXPAND_PRODUCTION_TABLES: readonly string[] =
   Object.freeze([...postExpandInventory.tables]);
+export const RLS_CURRENT_PRODUCTION_TABLES: readonly string[] = Object.freeze([...currentInventory.tables]);
 
 export const RLS_REVIEWED_ENABLEMENT_REQUESTS: Readonly<Record<string, readonly string[]>> =
   Object.freeze(
@@ -72,7 +74,7 @@ export function isReviewedRlsEnforcementRequest(tables: readonly string[]): bool
 
 /** Fail fast if the machine-readable registry loses its semantic invariants. */
 export function assertRlsRegistryIntegrity(): void {
-  const inventories = [historicalInventory, postExpandInventory];
+  const inventories = [historicalInventory, postExpandInventory, currentInventory];
   for (const inventory of inventories) {
     if (inventory.count !== inventory.tables.length) {
       throw new Error(
@@ -93,6 +95,9 @@ export function assertRlsRegistryIntegrity(): void {
 
   const historical = new Set(historicalInventory.tables);
   const postExpand = new Set(postExpandInventory.tables);
+  if ([...postExpand].some(table => !currentInventory.tables.includes(table))) {
+    throw new Error("RLS current inventory must retain every previously admitted table");
+  }
   if ([...historical].some((table) => !postExpand.has(table))) {
     throw new Error("RLS post-expand inventory must retain every historical production table");
   }
@@ -103,7 +108,7 @@ export function assertRlsRegistryIntegrity(): void {
   }
 
   for (const request of Object.values(RLS_REVIEWED_ENABLEMENT_REQUESTS)) {
-    if (request.length === 0 || request.some((table) => !postExpand.has(table))) {
+    if (request.length === 0 || request.some((table) => !currentInventory.tables.includes(table))) {
       throw new Error("RLS reviewed enablement request is empty or outside the post-expand inventory");
     }
   }

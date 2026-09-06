@@ -8,6 +8,7 @@ const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const testsRoot = join(root, "tests");
 
 const RLS_SERIAL = new Set([
+  "classpilot-roadmap-rls.test.ts",
   "audit-writes.test.ts",
   "classpilot-lifecycle-worker-pool.integration.test.ts",
   "classpilot-fab-parent-rls.integration.test.ts",
@@ -23,6 +24,18 @@ const RLS_SERIAL = new Set([
 ]);
 
 const DB_SERIAL = new Set([
+  "classpilot-schedule-profile-validation.integration.test.ts",
+  "classpilot-schedule-profile-supervision.integration.test.ts",
+  "classpilot-schedule-profiles.integration.test.ts",
+  "safety-notification-bundling.integration.test.ts",
+  "safety-report-pagination.integration.test.ts",
+  "mailpilot-safety-durability.integration.test.ts",
+  "classpilot-scheduling.integration.test.ts",
+  "classpilot-monitoring-interruptions.integration.test.ts",
+  "safety-center-migration.integration.test.ts",
+  "safety-center.integration.test.ts",
+  "roster-integrations.integration.test.ts",
+  "classpilot-browsing-history.integration.test.ts",
   "authenticate-operational-failure.test.ts",
   "auth-membership-lifecycle.test.ts",
   "classpilot-2-7-1-command-frame.test.ts",
@@ -43,6 +56,7 @@ const DB_SERIAL = new Set([
   "classpilot-schedule-changes.test.ts",
   "classpilot-school-status-auth.test.ts",
   "classpilot-screenshot-publish-gate.test.ts",
+  "classpilot-school-website-policy.integration.test.ts",
   "classpilot-sso-policy.test.ts",
   "classpilot-session-report-rollout.test.ts",
   "classpilot-session-summary-lifecycle.test.ts",

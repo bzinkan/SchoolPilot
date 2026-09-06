@@ -50,6 +50,7 @@ import {
   localDateStartUtc,
 } from "../util/schoolTime.js";
 import { parseClasspilotRetentionDays } from "../util/classpilotRetention.js";
+import { mergeHistoryWindows, subtractHistoryWindows, type HistoryWindow } from "./classpilotBrowsingHistoryModel.js";
 import {
   CLASSPILOT_ACTIVITY_KINDS,
   type ClasspilotActivityKind,
@@ -675,6 +676,40 @@ function retainedSessionAuthoritySql(authority: StudentDataAuthorityWindow): SQL
       )
     )
   )`;
+}
+
+/** Historical URL authority shares Student Data's frozen staff, roster and retained-report rules. */
+export async function getClasspilotStudentHistoryAuthority(options:{schoolId:string;actorId:string;studentId:string;now:Date;retentionCutoff:Date;dbInstance?:typeof db}):Promise<{windows:HistoryWindow[];sessions:Array<{id:string;start:Date;end:Date;timeZone:string|null;final:boolean}>;hasSupervision:boolean}>{
+  const database=options.dbInstance||db;
+  const sessions=await database.execute<{id:string;start:Date;end:Date;aggregate_start:Date;aggregate_end:Date;time_zone:string|null;is_final:boolean}>(sql`
+    SELECT session.id,
+      GREATEST(session.start_time AT TIME ZONE 'UTC',frozen_roster.captured_at,staff.captured_at) AS start,
+      LEAST(COALESCE(report.window_end,'infinity'::timestamptz),COALESCE(session.end_time AT TIME ZONE 'UTC','infinity'::timestamptz),COALESCE(session.scheduled_end_at,'infinity'::timestamptz),(session.start_time AT TIME ZONE 'UTC')+interval '12 hours',${options.now.toISOString()}::timestamptz) AS end,
+      COALESCE(report.window_start,session.start_time AT TIME ZONE 'UTC') AS aggregate_start,
+      LEAST(COALESCE(report.window_end,'infinity'::timestamptz),COALESCE(session.end_time AT TIME ZONE 'UTC','infinity'::timestamptz),COALESCE(session.scheduled_end_at,'infinity'::timestamptz),(session.start_time AT TIME ZONE 'UTC')+interval '12 hours') AS aggregate_end,
+      COALESCE(report.timezone,session.timezone_snapshot) AS time_zone,
+      (session.end_time IS NOT NULL AND (report.id IS NULL OR report.state='ready')) AS is_final
+    FROM ${classpilotSessionStaff} AS staff
+    INNER JOIN ${teachingSessions} AS session ON session.school_id=${options.schoolId} AND session.id=staff.teaching_session_id AND ${reportableSessionModeSql("teacher")}
+    INNER JOIN ${classpilotSessionStudents} AS frozen_roster ON frozen_roster.school_id=${options.schoolId} AND frozen_roster.teaching_session_id=session.id AND frozen_roster.group_id=session.group_id AND frozen_roster.student_id=${options.studentId}
+    INNER JOIN ${groups} AS class_group ON class_group.school_id=${options.schoolId} AND class_group.id=session.group_id AND class_group.group_type='admin_class'
+    LEFT JOIN ${classpilotSessionReports} AS report ON report.school_id=${options.schoolId} AND report.teaching_session_id=session.id
+    WHERE staff.school_id=${options.schoolId} AND staff.staff_id=${options.actorId} AND session.roster_snapshot_completed_at IS NOT NULL AND ${retainedSessionAuthoritySql(options)}
+    ORDER BY session.start_time DESC,session.id LIMIT 5001
+  `);
+  const supervision=await database.execute<{assigned_staff_id:string;start:Date;end:Date}>(sql`
+    SELECT context.assigned_staff_id,GREATEST(member.assigned_at,context.starts_at) AT TIME ZONE 'UTC' AS start,
+      LEAST(COALESCE(member.released_at,'infinity'::timestamp),COALESCE(context.ended_at,'infinity'::timestamp),context.ends_at,${options.now.toISOString()}::timestamp) AT TIME ZONE 'UTC' AS end
+    FROM ${classpilotSupervisionStudents} AS member INNER JOIN ${classpilotSupervisionContexts} AS context ON context.school_id=${options.schoolId} AND context.id=member.context_id
+    WHERE member.school_id=${options.schoolId} AND member.student_id=${options.studentId}
+      AND member.assigned_at<${options.now.toISOString()}::timestamp AND context.ends_at>=${options.retentionCutoff.toISOString()}::timestamp
+    ORDER BY member.assigned_at DESC LIMIT 5001
+  `);
+  if(sessions.rows.length>5000||supervision.rows.length>5000)throw new ClasspilotStudentDataUnavailableError();
+  const coverage=supervision.rows.map(row=>({start:new Date(row.start),end:new Date(row.end)}));
+  const ownCoverage=supervision.rows.filter(row=>row.assigned_staff_id===options.actorId).map(row=>({start:new Date(row.start),end:new Date(row.end)}));
+  const classWindows=sessions.rows.map(row=>({start:new Date(row.start),end:new Date(row.end)}));
+  return {windows:mergeHistoryWindows([...subtractHistoryWindows(classWindows,coverage),...ownCoverage]),sessions:sessions.rows.map(row=>({id:row.id,start:new Date(row.aggregate_start),end:new Date(row.aggregate_end),timeZone:row.time_zone,final:row.is_final})),hasSupervision:ownCoverage.length>0};
 }
 
 function retainedSessionAuthorityTableSql(authority: StudentDataAuthorityWindow): SQL {

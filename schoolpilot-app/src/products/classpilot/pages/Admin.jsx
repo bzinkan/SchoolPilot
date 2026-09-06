@@ -308,6 +308,12 @@ function AdminPanel({ currentUser, schoolTimezone }) {
     }),
   });
 
+  const { data: safetyCount } = useQuery({
+    queryKey: ["classpilot-safety-center", "count"],
+    queryFn: ({ signal }) => apiRequest("GET", "/classpilot/safety-center/count", undefined, { signal }),
+    refetchInterval: 60000,
+  });
+
   const { data: _settings } = useQuery({
     queryKey: ["/api/settings"],
     queryFn: () => apiRequest("GET", "/settings"),
@@ -1194,6 +1200,17 @@ function AdminPanel({ currentUser, schoolTimezone }) {
           >
             Open Coverage
           </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><ShieldAlert className="h-5 w-5" />Safety Center</CardTitle>
+          <CardDescription>Review student safety alerts, approve exact URLs, and block websites.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center gap-3">
+          <Button data-testid="button-open-safety-center" onClick={() => requestRouteChange("/classpilot/admin/safety")}>Open Safety Center</Button>
+          <span className="text-sm text-muted-foreground">{safetyCount ? `${safetyCount.count} unreviewed alert${safetyCount.count === 1 ? "" : "s"}` : "Alert count unavailable"}</span>
         </CardContent>
       </Card>
 

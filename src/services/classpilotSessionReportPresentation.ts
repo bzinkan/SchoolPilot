@@ -3,6 +3,22 @@ import type {
   ClasspilotSessionStudentReport,
 } from "../schema/classpilot.js";
 import { formulaSafeCsvCell } from "../util/classpilotEventCursor.js";
+import { normalizeContentCategory } from "./classpilotContentCategories.js";
+
+function storedCategoryTotals(reports: readonly ClasspilotSessionStudentReport[]) {
+  const totals = new Map<string | null, number>();
+  for (const student of reports) {
+    for (const entry of Array.isArray(student.offTaskCategories) ? student.offTaskCategories : []) {
+      if (!entry || typeof entry !== "object") continue;
+      const row = entry as Record<string, unknown>;
+      if (!Number.isSafeInteger(row.seconds) || Number(row.seconds) < 0) continue;
+      const category = normalizeContentCategory(row.contentCategory);
+      totals.set(category, (totals.get(category) ?? 0) + Number(row.seconds));
+    }
+  }
+  return [...totals].map(([contentCategory, seconds]) => ({ contentCategory, seconds }))
+    .sort((a, b) => b.seconds - a.seconds || String(a.contentCategory).localeCompare(String(b.contentCategory)));
+}
 
 /**
  * The single public projection for immutable session report v1/v2 data. Both
@@ -95,6 +111,7 @@ export function classpilotSessionReportDto(
       offTaskSeconds: report.totalOffTaskSeconds,
       offTaskEventCount: report.totalOffTaskEventCount,
       safetyAlertCount: report.totalSafetyAlertCount,
+      ...(report.reportVersion >= 3 ? { offTaskCategories: storedCategoryTotals(studentReports) } : {}),
     },
     students: studentReports.map((student) => ({
       studentId: student.studentId,
@@ -124,6 +141,7 @@ export function classpilotSessionReportDto(
       topDomains: student.topDomains,
       unclassifiedSeconds: student.unclassifiedSeconds,
       offTaskSeconds: student.offTaskSeconds,
+      ...(report.reportVersion >= 3 ? { offTaskCategories: storedCategoryTotals([student]) } : {}),
       offTaskEventCount: student.offTaskEventCount,
       offTaskEvents: student.offTaskEvents,
       safetyAlerts: student.safetyAlerts,
@@ -237,6 +255,14 @@ export function classpilotSessionReportCsv(
     report.totals.safetyAlertCount ?? "",
   ]);
 
+  if (reportVersion >= 3) {
+    header.push("Off-task Content Categories", "Total Off-task Content Categories");
+    rows.forEach((row, index) => {
+      const student = sourceStudents[index];
+      row.push(json(student && "offTaskCategories" in student ? student.offTaskCategories : []),
+        json("offTaskCategories" in report.totals ? report.totals.offTaskCategories : []));
+    });
+  }
   return `\uFEFF${[header, ...rows]
     .map((row) => row.map(formulaSafeCsvCell).join(","))
     .join("\r\n")}`;

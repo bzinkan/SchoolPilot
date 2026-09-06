@@ -312,9 +312,20 @@ test("mixed-version delivery and every unauthenticated fallback hide deferred re
     devices,
     /trackingAuthority: classpilotScreenshotAuthorityForDeliveredControl\([\s\S]*deliveredControlRevision: classroomState\?\.revision \?\? 0/,
   );
-  assert.match(
+  // Safety findings now enter administrator review without authoring a device
+  // command. The runtime publish-gate suite verifies that legacy auto-close
+  // settings cannot restore the retired path.
+  const safetyEffects = section(
     devices,
-    /revalidateClasspilotSafetyExactBinding\([\s\S]*expectedControlRevision: controlState\?\.revision \?\? 0,[\s\S]*deliveredControlRevision: classroomState\?\.revision \?\? 0/,
+    "const safetyAction = resolveCurrentClasspilotSafetyAction({",
+    "// --- Deliver any missed messages",
+  );
+  assert.match(safetyEffects, /realtimeMutation: realtimeClassification,[\s\S]*?schoolId,[\s\S]*?studentId,[\s\S]*?studentSessionId,[\s\S]*?deviceId,[\s\S]*?heartbeatId: heartbeat\.id/);
+  assert.match(safetyEffects, /if \(safetyAction\)[\s\S]*?recordBrowserSafetyTimeline\(\{[\s\S]*?actionTaken: "alert-only"/);
+  assert.doesNotMatch(
+    safetyEffects,
+    /classpilotControlStateExactBinding\(|revalidateClasspilotSafetyExactBinding\(|executeClasspilotCommand\(|type: "remote-control"|command: "close-tab"|authPassThrough:|controlRevision:/,
+    "alert-only safety processing must not reveal a deferred revision or send a control command"
   );
   assert.match(
     source("../src/services/storage.ts"),
@@ -357,7 +368,7 @@ test("student login withholds the SSO pass-through envelope that heartbeat still
   const loginDelivery = section(
     login,
     "const loginDelivery = controlState",
-    "const classroomState = loginDelivery.classroomState",
+    "const loginMonitoringPolicy = resolveClasspilotMonitoringPolicy",
   );
 
   // 2026-09-04 sign-in lockout. The extension adopts the classroom restriction

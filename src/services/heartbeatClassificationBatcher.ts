@@ -277,7 +277,9 @@ const defaultBatcher = new HeartbeatClassificationBatcher({
       updateHeartbeatClassification(
         entry.heartbeatId,
         entry.aiCategory,
-        entry.safetyAlert
+        entry.safetyAlert,
+        entry.contentCategory ?? null,
+        entry.teacherIntentSource ?? null
       )
     );
   },

@@ -14,6 +14,8 @@ import {
   type InstructionalCalendarMonthState,
 } from "../../services/storage.js";
 import { localDateInTimeZone } from "../../util/schoolTime.js";
+import { getSchoolSchedulingContext, previewSchoolScheduling } from "../../services/classpilotScheduling.js";
+import { isSchedulingDate, dateWeekday } from "../../services/classpilotSchedulingRules.js";
 
 const router = Router();
 const auth = [
@@ -69,6 +71,16 @@ router.get("/", ...auth, async (req, res, next) => {
   }
 });
 
+router.post("/:month/preview", ...auth, async (req, res, next) => {
+  try {
+    const month = requestedMonth(req.params.month);
+    const dates = req.body.nonInstructionalDates;
+    if (!Array.isArray(dates) || dates.length > 31 || new Set(dates).size !== dates.length || dates.some((date) => !isSchedulingDate(date) || !date.startsWith(`${month}-`) || [0, 6].includes(dateWeekday(date)))) throw routeError("INVALID_NON_INSTRUCTIONAL_DATES", "Choose unique weekdays in this month.");
+    const scheduling = await getSchoolSchedulingContext(res.locals.schoolId!);
+    res.json(await previewSchoolScheduling({ schoolId: res.locals.schoolId!, config: scheduling.config, calendar: { ...scheduling.calendar, [month]: { ...scheduling.calendar[month], nonInstructionalDates: [...dates].sort() } } }));
+  } catch (error) { next(error); }
+});
+
 router.put("/:month", ...auth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
@@ -87,6 +99,7 @@ router.put("/:month", ...auth, async (req, res, next) => {
       expectedRevision,
       nonInstructionalDates,
       updatedBy: req.authUser?.id ?? null,
+      previewToken: req.body.previewToken,
     });
     const current = dto(result.current, result.schoolTimezone, result.schoolLocalToday);
     res.setHeader("Cache-Control", "no-store");

@@ -63,6 +63,8 @@ import {
   selectRequestSchoolRole,
 } from "../../services/schoolAuthorization.js";
 import { getStaffAssignmentIntegrityIssues } from "../../services/staffAssignmentLifecycle.js";
+import { recordSafetyAlert } from "../../services/safetyCenter.js";
+import { describeClasspilotSafetyReason } from "../../services/classpilotSafetyAction.js";
 
 const router = Router();
 
@@ -357,9 +359,8 @@ function issue(status: "pass" | "warn" | "fail", category: string, title: string
 
 async function buildReadinessPayload(req: any, res: any) {
   const schoolId = res.locals.schoolId!;
-  const [school, settings, rosterConnector, students, dbDevices, courses, watches, recentImports, cases, staffDomainMismatches, classOwnershipIntegrity] = await Promise.all([
+  const [school, rosterConnector, students, dbDevices, courses, watches, recentImports, cases, staffDomainMismatches, classOwnershipIntegrity] = await Promise.all([
     getSchoolById(schoolId),
-    getSettingsForSchool(schoolId),
     getGoogleRosterConnector(schoolId),
     getStudentsBySchool(schoolId),
     getDevicesBySchool(schoolId),
@@ -447,7 +448,7 @@ async function buildReadinessPayload(req: any, res: any) {
     ...(school?.mailpilotEntitled
       ? [issue(school.classpilotEmailMonitoring ? (watches.filter((w) => w.status === "active").length > 0 ? "pass" : "warn") : "warn", "MailPilot", "Gmail safety monitoring", school.classpilotEmailMonitoring ? `${watches.filter((w) => w.status === "active").length} active Gmail watch(es).` : "MailPilot setup is pending.", "/classpilot/admin/email-monitoring")]
       : []),
-    issue(settings?.aiSafetyEmailsEnabled !== false ? "pass" : "warn", "Safety", "AI safety email alerts", settings?.aiSafetyEmailsEnabled !== false ? "Safety emails are enabled." : "Safety emails are disabled.", "/classpilot/settings"),
+    issue(process.env.SENDGRID_API_KEY ? "pass" : "fail", "Safety", "Safety notification email provider", process.env.SENDGRID_API_KEY ? "Email provider configured. New distinct safety alerts notify active school administrators; review delivery status in Safety Center." : "Email provider is not configured. Safety reports remain available, but administrator email delivery cannot complete.", "/classpilot/admin/safety"),
   ];
 
   const counts = issues.reduce((acc, item) => {
@@ -951,20 +952,29 @@ export async function recordBrowserSafetyTimeline(options: {
   url: string;
   title?: string;
   classification: any;
-  /** "alert-only" when the school has turned off automatic tab closing. */
+  /** Retained for caller compatibility; AI safety processing is always review-first. */
   actionTaken?: "close-tab" | "alert-only";
 }) {
   const safetyAlert = options.classification?.safetyAlert;
   if (!safetyAlert) return null;
-  const actionTaken = options.actionTaken ?? "close-tab";
-  const safetyCase = await getOrCreateSafetyCaseForStudent({
+  const actionTaken = "alert-only";
+  const { classpilotBrowserSafetySeverity } = await import("../../services/classpilotBrowserSafetySeverity.js");
+  const severity = classpilotBrowserSafetySeverity(options.classification);
+  const recorded = await recordSafetyAlert({
     schoolId: options.schoolId,
     studentId: options.studentId,
-    title: `ClassPilot safety alert: ${safetyAlert}`,
-    severity: "high",
-    summary: options.url,
-    metadata: { source: "browser", safetyAlert },
+    sourceType: "browser", sourceId: options.heartbeatId, heartbeatId: options.heartbeatId,
+    url: options.url, title: options.title, safetyAlert,
+    severity,
+    classificationSource: options.classification?.source,
+    matchedTerm: options.classification?.matchedTerm,
+    reason: options.classification?.reasoning ?? describeClasspilotSafetyReason(options.classification),
+    confidence: options.classification?.confidence ?? null,
+    rulesetVersion: options.classification?.rulesetVersion,
+    modelVersion: options.classification?.modelVersion,
   });
+  if (recorded.suppressed) return null;
+  if (!recorded.created) return {caseId:recorded.caseId,decisionId:null,created:false};
   const decision = await createClasspilotAiDecision({
     schoolId: options.schoolId,
     studentId: options.studentId,
@@ -974,8 +984,9 @@ export async function recordBrowserSafetyTimeline(options: {
     title: options.title || null,
     domain: options.classification?.domain || null,
     category: options.classification?.category || null,
+    contentCategory: options.classification?.contentCategory || null,
     safetyAlert,
-    confidence: options.classification?.confidence || null,
+    confidence: options.classification?.confidence ?? null,
     reasoning: options.classification?.reasoning || null,
     matchedRule: options.classification?.source || null,
     actionTaken,
@@ -986,16 +997,16 @@ export async function recordBrowserSafetyTimeline(options: {
   await createStudentTimelineEvent({
     schoolId: options.schoolId,
     studentId: options.studentId,
-    caseId: safetyCase.id,
+    caseId: recorded.caseId,
     eventType: "browser_safety_alert",
     sourceType: "classpilot_ai",
     sourceId: decision.id,
     title: `Browser safety alert: ${safetyAlert}`,
-    summary: options.url,
-    severity: "high",
+    summary: describeClasspilotSafetyReason(options.classification),
+    severity,
     metadata: toPublicBrowserSafetyTimelineMetadata(options.classification),
   });
-  return { caseId: safetyCase.id, decisionId: decision.id };
+  return { caseId: recorded.caseId, decisionId: decision.id, created:true };
 }
 
 export default router;

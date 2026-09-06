@@ -56,6 +56,7 @@ export function AdminSettingsTabs() {
 export function AdminClassesTabs({ canManageClasses = true }) {
   const items = [
     canManageClasses ? { label: "Classes", path: "/classpilot/admin/classes", icon: GraduationCap, end: true } : null,
+    canManageClasses ? { label: "Scheduling", path: "/classpilot/admin/classes/scheduling", icon: CalendarClock, end: true } : null,
     { label: "Schedule Changes", path: "/classpilot/admin/classes/schedule-changes", icon: CalendarClock },
   ].filter(Boolean);
   return (

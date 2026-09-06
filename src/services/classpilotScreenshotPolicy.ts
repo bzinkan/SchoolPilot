@@ -2,7 +2,7 @@ import {
   classpilotObservationStatus,
   type ClasspilotObservationStatus,
 } from "./classpilotObservationLease.js";
-import { isWithinTrackingWindow } from "./schoolHours.js";
+import { resolveClasspilotMonitoringPolicy } from "./classpilotMonitoringPolicy.js";
 import type {
   ClasspilotScreenshotAuthorityClaim,
   ClasspilotScreenshotAuthorityProjection,
@@ -105,6 +105,11 @@ export async function resolveClasspilotScreenshotPolicy(options: {
 }): Promise<ClasspilotScreenshotPolicy> {
   const now = options.now ?? Date.now();
   const serverTime = new Date(now).toISOString();
+  if (options.trackingSettings && resolveClasspilotMonitoringPolicy(options.trackingSettings, {
+    now: new Date(now),
+  }).policyMode !== "full") {
+    return { mode: "lease", observed: false, expiresInSeconds: 0, serverTime };
+  }
   if (options.acceptedCapabilities.includes("screenshotTrackingWindowLeaseV1")) {
     const policy = resolveClasspilotScreenshotTrackingWindowPolicy({
       trackingSettings: options.trackingSettings,
@@ -199,8 +204,7 @@ function trackingWindowCaptureAllowed(
   settings: HeartbeatTrackingSettings,
   at: Date
 ): boolean {
-  return isWithinTrackingWindow(settings, at)
-    || (settings.afterHoursMode ?? "off") !== "off";
+  return resolveClasspilotMonitoringPolicy(settings, { now: at }).policyMode === "full";
 }
 
 function trackingWindowLeaseEnd(
@@ -208,7 +212,7 @@ function trackingWindowLeaseEnd(
   now: number,
   maximumEnd: number
 ): number {
-  if ((settings.afterHoursMode ?? "off") !== "off") return maximumEnd;
+  if (settings.afterHoursMode === "full") return maximumEnd;
   if (trackingWindowCaptureAllowed(settings, new Date(maximumEnd))) return maximumEnd;
 
   // The rolling lease is at most 90 seconds, so a small binary search finds the

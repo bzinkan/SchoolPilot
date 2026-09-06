@@ -1,4 +1,4 @@
-import { domainMatches, type AiClassification } from "./aiClassification.js";
+import type { AiClassification } from "./aiClassification.js";
 import type {
   ClasspilotRealtimeMutationResult,
   ClasspilotRealtimeStatus,
@@ -10,6 +10,9 @@ const SAFETY_ALERT_LABELS: Record<NonNullable<AiClassification["safetyAlert"]>, 
   violence: "Violence",
   sexual: "Sexual content",
   drugs: "Drugs",
+  weapons: "Weapons",
+  hate: "Hate",
+  gambling: "Gambling",
 };
 
 function isSearchClassification(
@@ -17,33 +20,6 @@ function isSearchClassification(
 ): boolean {
   return classification.source === "search"
     || String(classification.domain || "").startsWith("search:");
-}
-
-/**
- * School Allowed Domains (plus an active Flight Path's allowed domains) exempt
- * a page from every AI safety side effect. Search-query hits are never exempt:
- * an allow-list entry describes a site, not what a student types into it.
- */
-export function isClasspilotSafetyExempt(options: {
-  url: string;
-  classification: Pick<AiClassification, "domain" | "source">;
-  allowedDomains: readonly string[];
-}): boolean {
-  if (isSearchClassification(options.classification)) return false;
-  if (!options.allowedDomains.length) return false;
-  let hostname: string;
-  try {
-    const parsed = new URL(options.url);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
-    hostname = parsed.hostname.toLowerCase().replace(/^www\./, "");
-  } catch {
-    return false;
-  }
-  if (!hostname) return false;
-  for (const entry of options.allowedDomains) {
-    if (domainMatches(hostname, entry)) return true;
-  }
-  return false;
 }
 
 /**

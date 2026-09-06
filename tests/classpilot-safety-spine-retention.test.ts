@@ -8,6 +8,7 @@ const { pool } = await import("../dist/db.js");
 const { schedulerLockPool, schedulerPool } = await import("../dist/services/schedulerDb.js");
 const {
   purgeClasspilotSafetySpineRetentionForSchool,
+  purgeSafetyRawBrowserUrlsForSchool,
   retentionPurgeSpineMode,
 } = await import("../dist/services/scheduler.js");
 const { default: errorMonitor } = await import("../dist/services/errorMonitor.js");
@@ -34,6 +35,7 @@ const rows = {
   aiNewA: randomUUID(),
   aiOldB: randomUUID(),
   openOldCase: randomUUID(),
+  mergedRedirect: randomUUID(),
   closedOldCase: randomUUID(),
   recentClosedCase: randomUUID(),
   evidenceCitedCase: randomUUID(),
@@ -210,6 +212,8 @@ describe("ClassPilot safety spine retention purge", () => {
     await insertCase({ id: rows.openOldCase, schoolId: schoolA, studentId: studentA, status: "open", openedDaysAgo: 200, closedDaysAgo: null });
     await insertEvent({ id: rows.openCaseEventOld, schoolId: schoolA, studentId: studentA, caseId: rows.openOldCase, occurredDaysAgo: 150 });
     await insertEvent({ id: rows.openCaseEventNew, schoolId: schoolA, studentId: studentA, caseId: rows.openOldCase, occurredDaysAgo: 3 });
+    await insertCase({ id: rows.mergedRedirect, schoolId: schoolA, studentId: studentA, status: "closed", openedDaysAgo: 200, closedDaysAgo: 150 });
+    await schedulerPool.query("UPDATE student_safety_cases SET merged_into=$1 WHERE id=$2", [rows.openOldCase, rows.mergedRedirect]);
 
     // Closed 120 days ago: case and every row purge, including a recent row.
     await insertCase({ id: rows.closedOldCase, schoolId: schoolA, studentId: studentA, status: "closed", openedDaysAgo: 200, closedDaysAgo: 120 });
@@ -314,7 +318,7 @@ describe("ClassPilot safety spine retention purge", () => {
     assert.deepEqual(await idsIn("classpilot_ai_decisions", schoolA), new Set([rows.aiNewA]));
     assert.deepEqual(
       await idsIn("student_safety_cases", schoolA),
-      new Set([rows.openOldCase, rows.recentClosedCase, rows.evidenceCitedCase])
+      new Set([rows.openOldCase, rows.mergedRedirect, rows.recentClosedCase, rows.evidenceCitedCase])
     );
     assert.deepEqual(
       await idsIn("student_timeline_events", schoolA),
@@ -348,5 +352,24 @@ describe("ClassPilot safety spine retention purge", () => {
       messages: 0,
       chatDeliveries: 0,
     });
+  });
+
+  it("expires raw URLs even in open cases while preserving provenance, notes and another school", async () => {
+    const rawUrl = "https://example.test/search?q=private-fixture";
+    await schedulerPool.query("UPDATE student_safety_cases SET summary=$1,metadata='{\"source\":\"browser\"}' WHERE id=ANY($2::text[])", [rawUrl, [rows.openOldCase, rows.closedOldCaseB]]);
+    await schedulerPool.query("UPDATE student_timeline_events SET summary=$1,source_type='classpilot_ai' WHERE id=$2", [rawUrl, rows.openCaseEventOld]);
+    await schedulerPool.query("UPDATE student_timeline_events SET summary='Administrator assessment' WHERE id=$1", [rows.openCaseEventNew]);
+    const alertId = randomUUID();
+    await schedulerPool.query(`INSERT INTO student_safety_alerts
+      (id,school_id,student_id,case_id,fingerprint,url_ciphertext,source_type,source_id,concern,severity,first_seen_at,last_seen_at)
+      VALUES($1::text,$2,$3,$4,$1::text,'encrypted-fixture','browser','fixture','weapons','medium',$5,$5)`,
+      [alertId,schoolA,studentA,rows.openOldCase,daysAgo(150)]);
+    await purgeSafetyRawBrowserUrlsForSchool(schoolA,cutoff);
+    assert.equal((await schedulerPool.query("SELECT summary FROM student_safety_cases WHERE id=$1", [rows.openOldCase])).rows[0].summary, null);
+    assert.equal((await schedulerPool.query("SELECT summary FROM student_safety_cases WHERE id=$1", [rows.closedOldCaseB])).rows[0].summary, rawUrl);
+    assert.equal((await schedulerPool.query("SELECT summary FROM student_timeline_events WHERE id=$1", [rows.openCaseEventOld])).rows[0].summary, null);
+    assert.equal((await schedulerPool.query("SELECT summary FROM student_timeline_events WHERE id=$1", [rows.openCaseEventNew])).rows[0].summary, "Administrator assessment");
+    const alert = (await schedulerPool.query("SELECT url_ciphertext,concern,observation_count FROM student_safety_alerts WHERE id=$1", [alertId])).rows[0];
+    assert.deepEqual(alert,{url_ciphertext:null,concern:"weapons",observation_count:1});
   });
 });

@@ -640,6 +640,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
         product: "CLASSPILOT",
         status: "active",
       });
+      await inSchool(emptySchool.id, () => upsertSettings(emptySchool.id, { schoolName: "Empty fixture", wsSharedKey: "test-only", enableTrackingHours: false }));
       await createMembership({
         userId: emptyAdmin.id,
         schoolId: emptySchool.id,
@@ -688,6 +689,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
         await db.execute(sql`DELETE FROM groups WHERE school_id = ${emptySchool.id}`);
         await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${emptySchool.id}`);
         await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${emptySchool.id}`);
+        await db.execute(sql`DELETE FROM settings WHERE school_id = ${emptySchool.id}`);
         await db.execute(sql`DELETE FROM schools WHERE id = ${emptySchool.id}`);
         await db.execute(sql`DELETE FROM users WHERE id IN (${emptyAdmin.id}, ${emptyTeacher.id})`);
       });
@@ -719,6 +721,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
         product: "CLASSPILOT",
         status: "active",
       });
+      await inSchool(fallbackSchool.id, () => upsertSettings(fallbackSchool.id, { schoolName: "Fallback fixture", wsSharedKey: "test-only", enableTrackingHours: false }));
       await createMembership({
         userId: fallbackAdmin.id,
         schoolId: fallbackSchool.id,
@@ -891,6 +894,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
         await db.execute(sql`DELETE FROM students WHERE school_id = ${fallbackSchool.id}`);
         await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${fallbackSchool.id}`);
         await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${fallbackSchool.id}`);
+        await db.execute(sql`DELETE FROM settings WHERE school_id = ${fallbackSchool.id}`);
         await db.execute(sql`DELETE FROM schools WHERE id = ${fallbackSchool.id}`);
         await db.execute(sql`DELETE FROM users WHERE id IN (${fallbackAdmin.id}, ${fallbackTeacher.id})`);
       });
@@ -1485,13 +1489,15 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       status: "active",
       scheduleEnabled: true,
       blockStartTime: "00:00",
-      blockEndTime: "00:00",
+      blockEndTime: "00:01",
+      scheduleRule: { weekdays: [1, 2, 3, 4, 5], startsOn: null, endsOn: localDateInTimeZone(new Date(Date.now() - 86400_000), school.schoolTimezone), cycleDay: "all", periodId: null },
     } as any));
     const scheduledClosedStart = await requestJson("POST", "/sessions/start", {
       groupId: scheduledClosedGroup.id,
       acknowledgeOverlap: true,
     }, authFor(startingTeacher, school.id));
-    assert.equal(scheduledClosedStart.status, 403);
+    assert.equal(scheduledClosedStart.status, 409);
+    assert.equal(scheduledClosedStart.body.code, "SCHEDULE_WINDOW_UNAVAILABLE");
 
     const ownGroupA = await inSchool(school.id, () => createGroup({
       schoolId: school.id,

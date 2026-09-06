@@ -80,7 +80,7 @@ test("every safety spine statement is tenant-scoped, case-aware, and batched", a
   assert.match(section, /LEFT JOIN student_safety_cases AS safety_case/);
   assert.match(section, /event\.case_id IS NULL AND event\.occurred_at < \$2/);
   assert.match(section, /event\.case_id IS NOT NULL AND safety_case\.id IS NULL AND event\.occurred_at < \$2/);
-  assert.match(section, /status <> 'open'/);
+  assert.match(section, /status = 'closed'/);
   assert.equal(
     (section.match(/COALESCE\(safety_case\.closed_at, safety_case\.opened_at\) < \$\d/g) ?? []).length,
     2,

@@ -22,6 +22,7 @@ const validRoutes = new Set([
   "/classpilot/my-settings/schedule-changes",
   "/classpilot/admin",
   "/classpilot/admin/analytics",
+  "/classpilot/admin/safety",
   "/classpilot/admin/classes",
   "/classpilot/admin/classes/schedule-changes",
   "/classpilot/admin/email-monitoring",
@@ -82,9 +83,11 @@ test("generated Markdown exports exactly match the canonical in-app source", asy
     readFile(path.join(docsRoot, "CLASSPILOT_TEACHER_GUIDE.md"), "utf8"),
     readFile(path.join(docsRoot, "CLASSPILOT_ADMIN_GUIDE.md"), "utf8"),
   ]);
-  assert.equal(index, guideIndexMarkdown);
-  assert.equal(teacher, teacherGuideMarkdown);
-  assert.equal(admin, adminGuideMarkdown);
+  // Git may check generated Markdown out as CRLF on Windows. Preserve exact
+  // content equality while allowing that platform-only line-ending conversion.
+  assert.equal(index.replace(/\r\n/g, "\n"), guideIndexMarkdown);
+  assert.equal(teacher.replace(/\r\n/g, "\n"), teacherGuideMarkdown);
+  assert.equal(admin.replace(/\r\n/g, "\n"), adminGuideMarkdown);
 });
 
 test("router source fail-closes admin settings and exposes both lazy guide routes", async () => {

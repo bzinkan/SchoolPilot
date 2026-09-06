@@ -259,6 +259,7 @@ function LoadedSchoolCalendar({ initialProjection, queryKey, onDirtyChange, onMo
   const [baseline, setBaseline] = useState(initialProjection);
   const [draft, setDraft] = useState(() => new Set(initialProjection.nonInstructionalDates));
   const [saveError, setSaveError] = useState("");
+  const [schedulePreview, setSchedulePreview] = useState(null);
   const [unverifiedProjection, setUnverifiedProjection] = useState(null);
   const [conflictProjection, setConflictProjection] = useState(null);
   const [pendingMonth, setPendingMonth] = useState(null);
@@ -268,8 +269,12 @@ function LoadedSchoolCalendar({ initialProjection, queryKey, onDirtyChange, onMo
   const [rangeAction, setRangeAction] = useState("close");
   const [rangeError, setRangeError] = useState("");
   const saveInFlightRef = useRef(false);
+  const previewInFlightRef = useRef(false);
 
   const sortedDraft = useMemo(() => [...draft].sort(), [draft]);
+  const draftIdentity = JSON.stringify([baseline.month, baseline.revision, sortedDraft]);
+  const draftIdentityRef = useRef(draftIdentity);
+  draftIdentityRef.current = draftIdentity;
   const dirty = !sameDates(sortedDraft, baseline.nonInstructionalDates);
   const timeZone = baseline.schoolTimezone;
   const firstEditableDate = baseline.schoolLocalToday > `${baseline.month}-01`
@@ -294,12 +299,14 @@ function LoadedSchoolCalendar({ initialProjection, queryKey, onDirtyChange, onMo
   }, [dirty]);
 
   const clearTransientSaveState = () => {
+    setSchedulePreview(null);
     setSaveError("");
     setConflictProjection(null);
     setUnverifiedProjection(null);
   };
 
   const adoptProjection = (projection) => {
+    setSchedulePreview(null);
     queryClient.setQueryData(queryKey, projection);
     setBaseline(projection);
     setDraft(new Set(projection.nonInstructionalDates));
@@ -315,7 +322,7 @@ function LoadedSchoolCalendar({ initialProjection, queryKey, onDirtyChange, onMo
         const response = await apiRequest(
           "PUT",
           `${apiBasePath}/${baseline.month}`,
-          { expectedRevision, nonInstructionalDates: dates },
+          { expectedRevision, nonInstructionalDates: dates, previewToken: schedulePreview?.previewToken },
         );
         saved = normalizeProjection(response, baseline.month);
         if (!saved) throw new Error("The server returned an invalid saved calendar.");
@@ -381,6 +388,13 @@ function LoadedSchoolCalendar({ initialProjection, queryKey, onDirtyChange, onMo
     },
   });
 
+  const previewMutation = useMutation({
+    mutationFn: ({ month, dates }) => apiRequest("POST", `${apiBasePath}/${month}/preview`, { nonInstructionalDates: dates }),
+    onSuccess: (result, variables) => { if (variables.identity === draftIdentityRef.current) { setSchedulePreview(result); setSaveError(""); } },
+    onError: (error) => setSaveError(getErrorMessage(error)),
+    onSettled: () => { previewInFlightRef.current = false; },
+  });
+
   const toggleDate = (dateKey) => {
     if (
       saveMutation.isPending
@@ -398,7 +412,13 @@ function LoadedSchoolCalendar({ initialProjection, queryKey, onDirtyChange, onMo
   };
 
   const handleSave = () => {
-    if (!dirty || saveInFlightRef.current || saveMutation.isPending) return;
+    if (!dirty || saveInFlightRef.current || previewInFlightRef.current || saveMutation.isPending) return;
+    if (!unverifiedProjection && !schedulePreview) {
+      previewInFlightRef.current = true;
+      previewMutation.mutate({ month: baseline.month, dates: sortedDraft, identity: draftIdentity });
+      return;
+    }
+    if (!unverifiedProjection && schedulePreview?.blockers?.length) return;
     saveInFlightRef.current = true;
     setSaveError("");
     setConflictProjection(null);
@@ -651,14 +671,18 @@ function LoadedSchoolCalendar({ initialProjection, queryKey, onDirtyChange, onMo
             <Button type="button" variant="outline" onClick={handleDiscard} disabled={saveMutation.isPending} data-testid="button-discard-calendar">
               Discard
             </Button>
-            <Button type="button" onClick={handleSave} disabled={saveMutation.isPending} data-testid="button-save-calendar">
+            <Button type="button" onClick={handleSave} disabled={saveMutation.isPending || previewMutation.isPending || (!unverifiedProjection && !!schedulePreview?.blockers?.length)} data-testid="button-save-calendar">
               {saveMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              {saveMutation.isPending ? "Checking…" : unverifiedProjection ? "Verify saved state" : "Save Month"}
+              {saveMutation.isPending ? "Checking…" : previewMutation.isPending ? "Previewing…" : unverifiedProjection ? "Verify saved state" : schedulePreview ? "Save reviewed month" : "Preview month changes"}
             </Button>
           </div>
         </div>
       ) : null}
 
+      {schedulePreview ? <Card><CardHeader><CardTitle>Calendar change preview</CardTitle><CardDescription>{schedulePreview.changedOccurrences} future class occurrences change. A/B advances only on instructional dates; explicit date overrides and frozen class sessions are preserved.</CardDescription></CardHeader><CardContent className="space-y-2">
+        {schedulePreview.blockers.map((blocker, index) => <p key={index} role="alert" className="text-sm text-destructive">{blocker.date ? `${blocker.date}: ` : ""}{blocker.message}</p>)}
+        <div className="max-h-64 overflow-auto">{schedulePreview.changes.map((change) => <p key={`${change.classId}:${change.date}`} className="border-t py-2 text-sm">{change.date} · {change.className}: {change.before ? `${change.before.startTime}–${change.before.endTime}` : "No class"} → {change.after ? `${change.after.startTime}–${change.after.endTime}` : "No class"}</p>)}</div>
+      </CardContent></Card> : null}
       <Dialog open={rangeOpen} onOpenChange={setRangeOpen}>
         <DialogContent data-testid="dialog-calendar-range">
           <DialogHeader>

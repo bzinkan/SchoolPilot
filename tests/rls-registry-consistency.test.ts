@@ -24,6 +24,7 @@ type Registry = {
   inventories: {
     historicalObservedProduction: RegistryInventory;
     schoolPilot270PostExpand: RegistryInventory;
+    classpilotRoadmapPostExpand: RegistryInventory;
   };
   reviewedEnablementRequests: Record<string, string[]>;
   semanticExceptions: {
@@ -130,10 +131,10 @@ describe("semantic RLS registry", () => {
     ]);
   });
 
-  it("keeps Terraform, production, and CI on the exact post-expand sequence", () => {
-    const expected = registry.inventories.schoolPilot270PostExpand.tables;
-    assert.deepEqual(terraformDefaultAllowlist(), expected);
-    assert.deepEqual(productionAllowlist(), expected);
+  it("tests the expansion without preloading the production admission baseline", () => {
+    const expected = registry.inventories.classpilotRoadmapPostExpand.tables;
+    assert.deepEqual(terraformDefaultAllowlist(), registry.inventories.schoolPilot270PostExpand.tables);
+    assert.deepEqual(productionAllowlist(), registry.inventories.schoolPilot270PostExpand.tables);
     assert.deepEqual(ciAllowlist(), expected);
     assert.match(terraformMain, /src\/config\/rlsRegistry\.json/);
     assert.match(terraformMain, /check "rls_registry_contract"/);
