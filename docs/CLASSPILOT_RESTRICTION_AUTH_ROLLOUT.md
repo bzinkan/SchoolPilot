@@ -134,13 +134,14 @@ Prerequisites, enforced when the plan is built and re-checked at Apply:
    clients are unchanged; the policy endpoint reports
    `operatorGateActive: false` and `extensionReadiness.status:
    "rollout_disabled"`.
-2. Confirm recently active managed devices report the raw and accepted
-   `restrictionPortalFirstV1` capability. `extensionReadiness` counts
+2. Confirm recently active managed devices report the raw
+   `restrictionPortalFirstV1` capability. Accepted capability and ready counts
+   remain zero while the school rollout is off; they are verified after
+   enabling the controlled-school rollout below. `extensionReadiness` counts
    `rawCapableBindings`, `acceptedCapableBindings`, and `readyBindings` over
    the five-minute observation window; the Admin Panel → Student Portal
-   card surfaces this as the Chromebook evidence step
-   (`N of N recent bindings reported and negotiated the required
-   capability`).
+   card surfaces this as the Chromebook evidence step. Its Server rollout
+   step continues to show that school rollout is off until step 3 succeeds.
 3. Plan, hash, and apply `restriction-auth-pilot` for exactly one school:
 
    ```text
@@ -164,7 +165,9 @@ Prerequisites, enforced when the plan is built and re-checked at Apply:
    block-list conflicts, and Save. This PATCH is the policy revision bump
    that mints the even fence `2N` described above; a save performed before
    this point only produces another off tombstone.
-5. Verify convergence. `extensionReadiness.status` moves from
+5. Verify both raw and accepted `restrictionPortalFirstV1` support on the
+   controlled Chromebooks after the rollout is enabled. Verify convergence:
+   `extensionReadiness.status` moves from
    `no_recent_bindings` (off-hours, no binding in the window) through
    `partial` to `ready`, and recently active exact bindings report
    `appliedAuthPolicyRevision` equal to the new fence. On a managed
