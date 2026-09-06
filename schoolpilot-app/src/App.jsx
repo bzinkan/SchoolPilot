@@ -8,6 +8,7 @@ import { NativeProvider, useNative } from './contexts/NativeContext';
 import { SocketProvider } from './contexts/SocketContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import Spinner from './shared/components/Spinner';
+import { AuthenticatedLoginRedirect, SafetySignInRedirect } from './shared/components/SafetyLoginRedirect';
 import { hasGoPilotRole, hasMembershipRole } from './shared/utils/schoolRoles';
 import { Toaster } from './components/ui/toaster';
 import './products/classpilot/calendarHistoryGuard';
@@ -217,8 +218,9 @@ function AppRoutes() {
     <Suspense fallback={<PageLoader />}>
       <Routes>
         {/* Login & OAuth callback — always accessible */}
-        <Route path="/login" element={user ? <Navigate to={defaultDest} replace /> : <Login />} />
+        <Route path="/login" element={user ? <AuthenticatedLoginRedirect defaultDest={defaultDest} canResumeSafety={!isNative && hasClassPilot && canManageClassPilotSchool} /> : <Login />} />
         <Route path="/auth/callback" element={<AuthCallback />} />
+        {!isNative && !user && <Route path="/classpilot/admin/safety" element={<SafetySignInRedirect />} />}
 
         {/* Web-only routes (landing pages, legal, super admin) */}
         {!isNative && (
