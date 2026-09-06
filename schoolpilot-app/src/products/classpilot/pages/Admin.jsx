@@ -42,8 +42,9 @@ import {
 } from "../calendarHistoryGuard";
 import SchoolCalendarMonth from "../components/SchoolCalendarMonth";
 import StaffAccessTransitionDialog from "../../../shared/components/StaffAccessTransitionDialog";
+import { StudentSsoPolicyCard } from "../components/StudentSsoPolicyCard";
 
-const ADMIN_TAB_VALUES = new Set(["staff", "calendar", "audit"]);
+const ADMIN_TAB_VALUES = new Set(["staff", "student-portal", "calendar", "audit"]);
 const MONTH_PATTERN = /^(\d{4})-(0[1-9]|1[0-2])$/;
 
 function currentMonthInTimeZone(timeZone) {
@@ -134,8 +135,8 @@ function workspaceImportIssueText(issue) {
 
 export default function Admin() {
   const navigate = useNavigate();
-  const { currentUser, school, isLoading } = useClassPilotAuth();
-  const isAdmin = currentUser?.isSuperAdmin || currentUser?.role === "admin" || currentUser?.role === "school_admin";
+  const { currentUser, school, isLoading, isAdmin: isSchoolAdmin } = useClassPilotAuth();
+  const canManageStudentPortal = isSchoolAdmin || currentUser?.isSuperAdmin === true;
 
   if (isLoading) {
     return (
@@ -145,7 +146,7 @@ export default function Admin() {
     );
   }
 
-  if (!isAdmin) {
+  if (!canManageStudentPortal) {
     return (
       <div className="container mx-auto max-w-3xl p-6">
         <Card>
@@ -164,10 +165,10 @@ export default function Admin() {
     );
   }
 
-  return <AdminPanel currentUser={currentUser} schoolTimezone={school?.timezone || "America/New_York"} />;
+  return <AdminPanel currentUser={currentUser} schoolTimezone={school?.timezone || "America/New_York"} canManageStudentPortal={canManageStudentPortal} />;
 }
 
-function AdminPanel({ currentUser, schoolTimezone }) {
+function AdminPanel({ currentUser, schoolTimezone, canManageStudentPortal }) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { toast } = useToast();
@@ -809,7 +810,7 @@ function AdminPanel({ currentUser, schoolTimezone }) {
             <p className="text-muted-foreground">
               {currentUser?.schoolName && <span className="font-medium">{currentUser.schoolName}</span>}
               {currentUser?.schoolName && ' \u2022 '}
-              Manage staff, schedules, and school operations
+              Manage staff, the student portal, schedules, and school operations
             </p>
           </div>
         </div>
@@ -856,6 +857,10 @@ function AdminPanel({ currentUser, schoolTimezone }) {
           <TabsTrigger value="staff" className="flex items-center gap-2">
             <Users className="h-4 w-4" />
             Staff & Settings
+          </TabsTrigger>
+          <TabsTrigger value="student-portal" className="flex items-center gap-2" data-testid="tab-student-portal">
+            <Key className="h-4 w-4" />
+            Student Portal
           </TabsTrigger>
           <TabsTrigger value="calendar" className="flex items-center gap-2" data-testid="tab-school-calendar">
             <CalendarDays className="h-4 w-4" />
@@ -1248,6 +1253,10 @@ function AdminPanel({ currentUser, schoolTimezone }) {
           </Button>
         </CardContent>
       </Card>
+        </TabsContent>
+
+        <TabsContent value="student-portal" className="space-y-4">
+          <StudentSsoPolicyCard canManage={canManageStudentPortal} />
         </TabsContent>
 
         <TabsContent value="calendar" className="space-y-4">

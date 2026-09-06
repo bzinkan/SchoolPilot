@@ -111,10 +111,11 @@ A Waypoint holds students on one destination site; a Flight Path confines browsi
 
 1. **Choose the restriction.** Use a Waypoint to hold students on one destination site (the whole site is allowed) or apply a Flight Path for a bounded set of learning destinations.
 2. **Account for signed-out students.** A saved destination can wait for eligible signed-out students. A Current Page Waypoint cannot resolve a signed-out student’s page, so those students are skipped and counted.
-3. **Allow school-approved sign-in.** If the destination redirects to an approved provider such as Clever or Google Accounts, the student can complete sign-in without escaping the restriction. ClassPilot shows Signing in and returns to the assigned destination afterward.
-4. **Remove the right control.** Unlock removes a Waypoint screen lock without silently deleting an active Flight Path. Remove Flight Path is a separate action.
+3. **Start from the Student Portal.** When the school enables the Student Portal, students signing into ClassPilot with an active restriction start at the school’s selected portal, such as Clever. They choose a teacher-approved destination there. Finishing provider sign-in does not automatically open a learning site, and other sites remain blocked.
+4. **Allow school-approved sign-in.** If a chosen destination needs an approved provider such as Clever or Google Accounts, the student can complete that sign-in while the Waypoint or Flight Path remains active. An identity-provider callback does not trigger an automatic jump to a learning site.
+5. **Remove the right control.** Unlock removes a Waypoint screen lock without silently deleting an active Flight Path. Remove Flight Path is a separate action.
 
-> **Check before continuing:** An identity-provider page is temporary authentication, not proof that the student reached the assigned learning destination.
+> **Check before continuing:** The portal remains available while the restriction is active. An identity-provider page is for sign-in, not proof that the student reached the assigned learning destination.
 
 [Open Dashboard](/classpilot)
 

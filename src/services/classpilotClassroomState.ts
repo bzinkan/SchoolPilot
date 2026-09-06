@@ -69,11 +69,11 @@ export type ClasspilotClassroomStateSnapshot = {
   scheduledEndAt: string | null;
   hardExpiresAt: string;
   /**
-   * Server-derived delivery metadata. This marker is intentionally absent
-   * from ordinary live classroom state. It is emitted only when durable
-   * deferred-origin state is released to an exact capable binding.
+   * Server-derived delivery metadata. Deferred origin is separate from the
+   * login-only portal request; ordinary live updates never request portal
+   * entry. Both are released only to an exact capable binding.
    */
-  deliveryContext?: { lateSignInRestrictionSso: true };
+  deliveryContext?: { lateSignInRestrictionSso?: true; portalFirstOnLogin?: true };
   /**
    * School-authoritative, exact-binding authentication exception for a
    * Waypoint or Flight Path. This is intentionally separate from the legacy
@@ -455,6 +455,8 @@ export function serializeClasspilotStudentControlStateForDelivery(options: {
     policyRevision: number;
     policy: ClasspilotSsoPolicy;
   };
+  /** Only the exact authenticated login-response transaction may set this. */
+  portalFirstOnLogin?: true;
   now?: Date;
 }): {
   classroomState: ClasspilotClassroomStateSnapshot | null;
@@ -511,6 +513,7 @@ export function serializeClasspilotStudentControlStateForDelivery(options: {
     };
   }
   const restrictionAuthCapabilityRequired = !!auth
+    && authRelevantRestriction
     && classpilotRestrictionAuthCapabilityRequired({
       desiredState: options.state.desiredState,
       gateActive: auth.gateActive,
@@ -532,6 +535,13 @@ export function serializeClasspilotStudentControlStateForDelivery(options: {
     deliveredState = {
       ...deliveredState,
       authPassThrough: authEnvelope!,
+      ...(options.portalFirstOnLogin === true
+        && options.acceptedCapabilities.includes("restrictionPortalFirstV1") ? {
+          deliveryContext: {
+            ...deliveredState.deliveryContext,
+            portalFirstOnLogin: true as const,
+          },
+        } : {}),
     };
     recordHeartbeatHotPathCounter("restrictionAuthCapableDelivery");
   }

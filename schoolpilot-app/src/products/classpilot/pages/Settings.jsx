@@ -25,7 +25,6 @@ import { ArrowLeft, Download, Shield, Clock, AlertCircle, Layers, Plus, Pencil, 
 import { ThemeToggle } from "../../../components/ThemeToggle";
 import { useClassPilotAuth } from "../../../hooks/useClassPilotAuth";
 import { ScheduleChangePolicyCard } from "../components/ScheduleChangePolicyCard";
-import { StudentSsoPolicyCard } from "../components/StudentSsoPolicyCard";
 import { AdminSettingsTabs } from "../components/ScheduleRouteTabs";
 
 // Helper function to normalize domain names
@@ -951,7 +950,19 @@ export default function Settings() {
           </CardContent>
         </Card>
 
-        <StudentSsoPolicyCard canManage={canManageSchoolSettings} />
+        {canManageSchoolSettings && (
+          <Card id="student-sign-in-during-waypoints">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base"><KeyRound className="h-5 w-5" /> Student Portal & Sign-In</CardTitle>
+              <CardDescription>Configure Clever and other approved sign-in providers in the Admin Panel’s Student Portal tab.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button variant="outline" onClick={() => navigate("/classpilot/admin?tab=student-portal")}>
+                Open Student Portal configuration
+              </Button>
+            </CardContent>
+          </Card>
+        )}
 
         <ScheduleChangePolicyCard
           schoolId={currentUser?.schoolId}

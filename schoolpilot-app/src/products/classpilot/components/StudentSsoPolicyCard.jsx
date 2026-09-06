@@ -46,7 +46,7 @@ function clonePolicy(policy) {
   };
 }
 
-function policyError(error, fallback = "Student sign-in policy could not be loaded.") {
+function policyError(error, fallback = "Student Portal configuration could not be loaded.") {
   const issues = error?.response?.data?.issues;
   if (Array.isArray(issues) && issues[0]?.message) return issues[0].message;
   return error?.response?.data?.error || error?.message || fallback;
@@ -77,16 +77,16 @@ function ReadinessStrip({ response }) {
   const policyDetail = response.policyValid === false
     ? "Stored policy is invalid and is being treated as off. Save to repair it."
     : response.policy?.enabled
-      ? `Policy revision ${response.revision} enables temporary sign-in.`
+      ? `Saved revision ${response.revision} allows Student Portal sign-in.`
       : `Policy revision ${response.revision} is saved but turned off.`;
   const gateActive = response.operatorGateActive === true;
-  let deviceDetail = "No current student binding has checked in during the five-minute evidence window.";
+  let deviceDetail = "No active student sign-ins have checked in during the last five minutes.";
   let deviceState = "neutral";
   if (recent > 0 && ready === recent) {
-    deviceDetail = `${ready} of ${recent} recent bindings reported and negotiated the required capability.`;
+    deviceDetail = `All ${ready} recent student sign-ins have compatible Student Portal support.`;
     deviceState = "ready";
   } else if (recent > 0) {
-    deviceDetail = `${ready} of ${recent} recent bindings are ready; ${observed} supplied capability evidence.`;
+    deviceDetail = `${ready} of ${recent} recent student sign-ins have compatible Student Portal support; ${observed} have reported support information.`;
     deviceState = "warning";
   }
 
@@ -102,8 +102,8 @@ function ReadinessStrip({ response }) {
         label="Server rollout"
         state={gateActive ? "ready" : "warning"}
         detail={gateActive
-          ? "The exact-school operator gate is on."
-          : "The operator gate is off; this policy remains operationally inert."}
+          ? "Student Portal rollout is active for this school."
+          : "School rollout is off. Settings are saved, but Student Portal behavior is not active yet."}
         icon={ShieldCheck}
       />
       <ReadinessStep
@@ -291,10 +291,10 @@ function PolicyEditor({ response, refetch }) {
       setConflict(null);
       setServerError("");
       toast({
-        title: "Student sign-in policy saved",
+        title: "Student Portal configuration saved",
         description: saved.operatorGateActive
-          ? "The server rollout is active; Chromebook readiness is reported separately."
-          : "The policy is saved and remains inactive until the school rollout gate is enabled.",
+          ? "School rollout is active. Chromebook support is checked separately."
+          : "Settings are saved. Student Portal behavior remains inactive until school rollout is enabled.",
       });
     },
     onError: (error) => {
@@ -351,10 +351,10 @@ function PolicyEditor({ response, refetch }) {
       <div className="flex flex-col gap-4 rounded-xl border-2 border-slate-800 bg-slate-950 p-4 text-white sm:flex-row sm:items-center sm:justify-between dark:border-slate-600">
         <div>
           <Label htmlFor="waypoint-student-sign-in" className="text-sm font-semibold text-white">
-            Allow approved sign-in during Waypoints and Flight Paths
+            Enable the Student Portal during Waypoints and Flight Paths
           </Label>
           <p id="waypoint-student-sign-in-description" className="mt-1 max-w-2xl text-sm text-slate-300">
-            Students may temporarily visit only the identity-provider hosts below. Reaching a provider never counts as reaching the assigned destination.
+            After ClassPilot sign-in, students start at the selected portal. Approved provider hosts remain available for authentication and portal launch; learning sites stay limited to the teacher’s approved destinations.
           </p>
         </div>
         <Switch
@@ -368,9 +368,9 @@ function PolicyEditor({ response, refetch }) {
 
       <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_230px] sm:items-end">
         <div>
-          <Label htmlFor="sso-default-provider" className="font-semibold">First stop for a signed-out student</Label>
+          <Label htmlFor="sso-default-provider" className="font-semibold">First portal after ClassPilot sign-in</Label>
           <p className="mt-1 text-sm text-muted-foreground">
-            Cold or deferred restrictions open this provider before the teacher’s destination.
+            Choose Clever to open it first while a Waypoint or Flight Path is active. Completing provider sign-in does not automatically open a learning site; the student chooses an approved destination.
           </p>
         </div>
         <Select
@@ -445,7 +445,7 @@ function PolicyEditor({ response, refetch }) {
 
       <div className="flex flex-col gap-3 border-t pt-5 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-xs text-muted-foreground">
-          Evidence reflects exact active student bindings observed in the last {response.extensionReadiness?.observationWindowSeconds || 300} seconds—not every device in the fleet.
+          Readiness covers active student sign-ins seen in the last {response.extensionReadiness?.observationWindowSeconds || 300} seconds—not every device in the fleet.
         </p>
         <div className="flex flex-wrap gap-2">
           <Button type="button" variant="outline" size="sm" asChild>
@@ -458,7 +458,7 @@ function PolicyEditor({ response, refetch }) {
             data-testid="button-save-sso-policy"
           >
             {mutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-            Save sign-in policy
+            Save Student Portal configuration
           </Button>
         </div>
       </div>
@@ -483,25 +483,25 @@ export function StudentSsoPolicyCard({ canManage }) {
 
   return (
     <Card
-      id="student-sign-in-during-waypoints"
+      id="student-portal"
       role="region"
-      aria-labelledby="student-sign-in-during-waypoints-title"
+      aria-labelledby="student-portal-title"
       className="overflow-hidden border-slate-300 dark:border-slate-700"
       data-testid="card-student-sso-policy"
     >
       <CardHeader className="relative overflow-hidden border-b border-slate-700 bg-slate-900 text-white">
         <div className="absolute inset-y-0 right-0 w-36 -skew-x-12 bg-amber-400/10" aria-hidden="true" />
-        <CardTitle id="student-sign-in-during-waypoints-title" className="relative flex items-center gap-2 text-base">
-          <KeyRound className="h-5 w-5 text-amber-300" /> Student Sign-In During Waypoints
+        <CardTitle id="student-portal-title" className="relative flex items-center gap-2 text-base">
+          <KeyRound className="h-5 w-5 text-amber-300" /> Student Portal & Sign-In
         </CardTitle>
         <CardDescription className="relative max-w-2xl text-slate-300">
-          Give restricted students a narrow, school-approved route through Clever, Google, or another identity provider—without opening general browsing.
+          Set up the student’s starting point after ClassPilot sign-in. Students can launch the teacher-approved sites for their active Waypoint or Flight Path.
         </CardDescription>
       </CardHeader>
       <CardContent className="pt-6">
         {settingsQuery.isLoading ? (
           <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading student sign-in policy…
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading Student Portal configuration…
           </div>
         ) : settingsQuery.error ? (
           <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive" role="alert">

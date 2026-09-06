@@ -50,7 +50,9 @@ const patchSchema = z.object({
   policy: z.unknown(),
 }).strict();
 
-const REQUIRED_CAPABILITY = "restrictionAuthPassThroughV1" as const;
+// Portal entry requires the repaired login handoff as well as ordinary SSO
+// pass-through. Negotiation keeps this companion under the same school gate.
+const REQUIRED_CAPABILITY = "restrictionPortalFirstV1" as const;
 
 type ClasspilotSsoExtensionReadiness = {
   capability: typeof REQUIRED_CAPABILITY;
