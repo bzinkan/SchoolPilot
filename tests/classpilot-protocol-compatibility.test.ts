@@ -81,7 +81,9 @@ function allV3CapabilitiesEnabled(): NodeJS.ProcessEnv {
 }
 
 function globalOn271Environment(): NodeJS.ProcessEnv {
-  const rollouts = Object.fromEntries(CLASSPILOT_PROTOCOL_V3_CAPABILITIES.map(
+  const rollouts = Object.fromEntries(CLASSPILOT_PROTOCOL_V3_CAPABILITIES.filter(
+    (capability) => capability !== "restrictionPortalFirstV1"
+  ).map(
     (capability) => [
       capability,
       { mode: capability === "kioskLaunchTicketV1" ? "off" : "on" },

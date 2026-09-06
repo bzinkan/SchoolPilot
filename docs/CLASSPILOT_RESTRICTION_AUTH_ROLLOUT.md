@@ -29,6 +29,41 @@ transactional data store.
 
 ## Policy-edit convergence
 
+### Portal-first login compatibility
+
+Student Portal is configured in **Admin Panel → Student Portal**. A client
+advertising `restrictionPortalFirstV1` must also negotiate
+`restrictionAuthPassThroughV1` and `scopedAuthorityChecksV1`. The portal marker
+is a companion of the existing school authentication rollout: it uses that
+parent's flag and school selection, with no separate rollout entry to enable.
+
+For an active Waypoint or Flight Path at a full-monitoring student login, the
+locked login response includes `deliveryContext.portalFirstOnLogin: true` and
+the configured authentication policy only for a negotiated portal client.
+That client stages the snapshot until its authentication commit completes,
+then validates and applies the exact student/session binding before opening
+the portal. Older clients retain the envelope-free login response that avoids
+the restricted-sign-in regression. A heartbeat, reconnect, policy save, or
+ordinary live teacher command never creates a fresh portal-entry request.
+
+The student chooses an application from the portal. Completing an identity
+provider round trip does not navigate away from the portal, and the bounded
+authentication-attempt timer does not remove portal access. The destination
+must still satisfy the current Waypoint or Flight Path; authenticating through
+Clever does not approve all applications in Clever. School and teacher blocks
+and attention remain authoritative. Waypoint authentication completion uses
+the same domain boundary as subsequent page navigation.
+
+The independent `lateSignInRestrictionSsoV1` rollout still controls authoring
+and delivery of restrictions assigned while students are signed out. A portal
+policy does not silently enable that rollout. Test both an ordinary retained
+restriction and a deferred assignment with its existing gate enabled before
+claiming support for both operational flows.
+
+Portal readiness counts the new `restrictionPortalFirstV1` negotiation, not
+only older authentication pass-through. A ready count is protocol evidence,
+not proof of a successful real Clever/IXL login on managed Chromebooks.
+
 An administrator PATCH commits the new policy revision before SchoolPilot
 starts best-effort exact-binding fan-out. This is deliberately asynchronous:
 SchoolPilot does not claim instantaneous revocation at the instant the settings
@@ -100,10 +135,10 @@ Prerequisites, enforced when the plan is built and re-checked at Apply:
    `operatorGateActive: false` and `extensionReadiness.status:
    "rollout_disabled"`.
 2. Confirm recently active managed devices report the raw and accepted
-   `restrictionAuthPassThroughV1` capability. `extensionReadiness` counts
+   `restrictionPortalFirstV1` capability. `extensionReadiness` counts
    `rawCapableBindings`, `acceptedCapableBindings`, and `readyBindings` over
-   the five-minute observation window; the Settings → Student Sign-In During
-   Waypoints card surfaces this as the Chromebook evidence step
+   the five-minute observation window; the Admin Panel → Student Portal
+   card surfaces this as the Chromebook evidence step
    (`N of N recent bindings reported and negotiated the required
    capability`).
 3. Plan, hash, and apply `restriction-auth-pilot` for exactly one school:
@@ -123,9 +158,9 @@ Prerequisites, enforced when the plan is built and re-checked at Apply:
    `CLASSPILOT_CAPABILITY_ROLLOUTS_JSON` entry
    `"restrictionAuthPassThroughV1":{"mode":"on","schoolIds":["<uuid>"]}` with
    every other entry unchanged from the prior task definitions.
-4. With the gate on, open Settings → Student Sign-In During Waypoints for
-   the pilot school. The Server rollout step must read "The exact-school
-   operator gate is on." Enable the policy, choose the provider, resolve any
+4. With the gate on, open Admin Panel → Student Portal for
+   the pilot school. The Server rollout step must read "Student Portal rollout
+   is active for this school." Enable the policy, choose the provider, resolve any
    block-list conflicts, and Save. This PATCH is the policy revision bump
    that mints the even fence `2N` described above; a save performed before
    this point only produces another off tombstone.
@@ -134,8 +169,9 @@ Prerequisites, enforced when the plan is built and re-checked at Apply:
    `partial` to `ready`, and recently active exact bindings report
    `appliedAuthPolicyRevision` equal to the new fence. On a managed
    Chromebook under a Waypoint, confirm a Clever or Google sign-in round trip
-   (provider start, any Google Accounts handoff, callback) lands on the
-   learning destination while unrelated hosts stay blocked, and that
+   (provider start, any Google Accounts handoff, callback) leaves the portal
+   available for the student to launch an allowed learning destination while
+   unrelated applications and hosts stay blocked, and that
    attention, school blocks, and teacher blocks still win over pass-through.
 6. Rollback is capability-first. Plan and Apply `restriction-auth-off` with
    the post-pilot API and worker task-definition ARNs as

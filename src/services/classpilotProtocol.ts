@@ -18,6 +18,7 @@ export const CLASSPILOT_PROTOCOL_V3_CAPABILITIES = [
   "studentAuthGatePresenceV1",
   "lateSignInRestrictionSsoV1",
   "restrictionAuthPassThroughV1",
+  "restrictionPortalFirstV1",
   "afterHoursSafetyOnlyV1",
   "schoolWebsiteBlockEnforcementV1",
 ] as const;
@@ -42,6 +43,8 @@ const CAPABILITY_FLAGS: Record<ClasspilotProtocolCapability, string> = {
   studentAuthGatePresenceV1: "CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1",
   lateSignInRestrictionSsoV1: "CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1",
   restrictionAuthPassThroughV1: "CLASSPILOT_CAP_RESTRICTION_AUTH_PASS_THROUGH_V1",
+  // A compatible login-delivery refinement of the same school SSO rollout.
+  restrictionPortalFirstV1: "CLASSPILOT_CAP_RESTRICTION_AUTH_PASS_THROUGH_V1",
   afterHoursSafetyOnlyV1: "CLASSPILOT_CAP_AFTER_HOURS_SAFETY_ONLY_V1",
   schoolWebsiteBlockEnforcementV1: "CLASSPILOT_CAP_SCHOOL_WEBSITE_BLOCK_ENFORCEMENT_V1",
 };
@@ -60,6 +63,7 @@ const SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES = new Set<ClasspilotProtocolCapabi
   "studentAuthGatePresenceV1",
   "lateSignInRestrictionSsoV1",
   "restrictionAuthPassThroughV1",
+  "restrictionPortalFirstV1",
   "afterHoursSafetyOnlyV1",
   "schoolWebsiteBlockEnforcementV1",
 ]);
@@ -113,7 +117,11 @@ function parseCapabilityRollouts(source: string | undefined): ParsedRollouts {
       cachedRollouts = failClosed;
       return failClosed;
     }
-    const supported = new Set<string>(CLASSPILOT_PROTOCOL_V3_CAPABILITIES);
+    // Companion negotiation is controlled by the parent rollout. Reject an
+    // independent entry rather than silently ignoring a purported off switch.
+    const supported = new Set<string>(CLASSPILOT_PROTOCOL_V3_CAPABILITIES.filter(
+      (capability) => capability !== "restrictionPortalFirstV1"
+    ));
     const rollouts: Partial<Record<ClasspilotProtocolCapability, CapabilityRollout>> = {};
     for (const [name, value] of Object.entries(raw)) {
       if (!supported.has(name) || !value || typeof value !== "object" || Array.isArray(value)) {
@@ -185,7 +193,8 @@ export function assertClasspilotCapabilityRolloutsEnv(env: NodeJS.ProcessEnv = p
   // entry is off for every school. Surface that so it is not mistaken for a
   // flag that quietly stopped working.
   const omitted = CLASSPILOT_PROTOCOL_V3_CAPABILITIES.filter(
-    (capability) => enabled(env[CAPABILITY_FLAGS[capability]]) && !parsed.rollouts[capability]
+    (capability) => capability !== "restrictionPortalFirstV1"
+      && enabled(env[CAPABILITY_FLAGS[capability]]) && !parsed.rollouts[capability]
   );
   if (omitted.length > 0) {
     console.warn(
@@ -210,6 +219,9 @@ export function classpilotCapabilityRolloutMode(
   capability: ClasspilotProtocolCapability,
   env: NodeJS.ProcessEnv = process.env
 ): ClasspilotCapabilityRolloutMode {
+  if (capability === "restrictionPortalFirstV1") {
+    return classpilotCapabilityRolloutMode("restrictionAuthPassThroughV1", env);
+  }
   const parsed = parseCapabilityRollouts(env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON);
   if (!parsed.configured) {
     return enabled(env[CAPABILITY_FLAGS[capability]]) ? "on" : "off";
@@ -223,6 +235,9 @@ export function isClasspilotCapabilityActive(
   scope: ClasspilotProtocolScope,
   env: NodeJS.ProcessEnv = process.env
 ): boolean {
+  if (capability === "restrictionPortalFirstV1") {
+    return isClasspilotCapabilityActive("restrictionAuthPassThroughV1", scope, env);
+  }
   if (!enabled(env.CLASSPILOT_PROTOCOL_V3_ENABLED)) return false;
   if (!enabled(env[CAPABILITY_FLAGS[capability]])) return false;
 
@@ -277,6 +292,9 @@ export function negotiateClasspilotProtocol(options: {
     advertised.has("screenshotTrackingWindowLeaseV1")
     && serverEnabled.has("screenshotTrackingWindowLeaseV1")
     && repairedScopedAuthorityAccepted;
+  const restrictionAuthAccepted = repairedScopedAuthorityAccepted
+    && advertised.has("restrictionAuthPassThroughV1")
+    && serverEnabled.has("restrictionAuthPassThroughV1");
   return {
     serverProtocolVersion: CLASSPILOT_SERVER_PROTOCOL_VERSION,
     acceptedCapabilities: CLASSPILOT_PROTOCOL_V3_CAPABILITIES.filter(
@@ -291,6 +309,7 @@ export function negotiateClasspilotProtocol(options: {
           capability !== "screenshotActiveObservationCadenceV1"
           || trackingWindowLeaseAccepted
         )
+        && (capability !== "restrictionPortalFirstV1" || restrictionAuthAccepted)
     ),
   };
 }

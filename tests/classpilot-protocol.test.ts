@@ -28,6 +28,7 @@ const REPAIRED_CLIENT_DEPENDENT_CAPABILITIES = [
   "studentAuthGatePresenceV1",
   "lateSignInRestrictionSsoV1",
   "restrictionAuthPassThroughV1",
+  "restrictionPortalFirstV1",
 ] as const;
 
 test("protocol v3 activates only the advertised and server-enabled intersection", () => {
@@ -87,6 +88,49 @@ test("all scoped-authority-dependent capabilities require the repaired scoping m
     "scopedAuthorityChecksV1",
     ...REPAIRED_CLIENT_DEPENDENT_CAPABILITIES,
   ]);
+});
+
+test("portal-first negotiation inherits the exact auth rollout and requires both parent capabilities", () => {
+  const capabilities = ["scopedAuthorityChecksV1", "restrictionAuthPassThroughV1", "restrictionPortalFirstV1"];
+  const env = {
+    CLASSPILOT_PROTOCOL_V3_ENABLED: "true",
+    CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1: "true",
+    CLASSPILOT_CAP_RESTRICTION_AUTH_PASS_THROUGH_V1: "true",
+    CLASSPILOT_CAPABILITY_ROLLOUTS_JSON: JSON.stringify({
+      scopedAuthorityChecksV1: { mode: "on", schoolIds: ["school-a"] },
+      restrictionAuthPassThroughV1: { mode: "canary", schoolIds: ["school-a"], canaryPercent: 100 },
+    }),
+  };
+  const negotiate = (advertised = capabilities, schoolId = "school-a", override = {}) =>
+    negotiateClasspilotProtocol({ clientProtocolVersion: 3, advertisedCapabilities: advertised,
+      scope: { schoolId }, env: { ...env, ...override } }).acceptedCapabilities;
+
+  assert.deepEqual(negotiate(), capabilities, "the companion needs no independent rollout entry");
+  assert.equal(classpilotCapabilityRolloutMode("restrictionPortalFirstV1", env), "canary");
+  assert.deepEqual(negotiate(capabilities.slice(0, 2)), capabilities.slice(0, 2), "old clients keep their accepted shape");
+  assert.deepEqual(negotiate([capabilities[0]!, capabilities[2]!]), [capabilities[0]]);
+  assert.deepEqual(negotiate(capabilities.slice(1)), []);
+  assert.deepEqual(negotiate(capabilities, "school-b"), []);
+  assert.deepEqual(negotiate(capabilities, "school-a", {
+    CLASSPILOT_CAP_RESTRICTION_AUTH_PASS_THROUGH_V1: "false",
+  }), [capabilities[0]]);
+  assert.deepEqual(negotiate(capabilities, "school-a", {
+    CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1: "false",
+  }), []);
+  assert.deepEqual(negotiate(capabilities, "school-a", {
+    CLASSPILOT_CAPABILITY_ROLLOUTS_JSON: JSON.stringify({
+      scopedAuthorityChecksV1: { mode: "on" }, restrictionAuthPassThroughV1: { mode: "on" },
+      restrictionPortalFirstV1: { mode: "off" },
+    }),
+  }), [], "an independent companion registry entry is invalid, never silently ignored");
+  for (const schoolId of ["school-a", "school-b", "school-c"]) {
+    const canaryEnv = { ...env, CLASSPILOT_CAPABILITY_ROLLOUTS_JSON: JSON.stringify({
+      restrictionAuthPassThroughV1: { mode: "canary", canaryPercent: 50 },
+    }) };
+    assert.equal(isClasspilotCapabilityActive("restrictionPortalFirstV1", { schoolId }, canaryEnv),
+      isClasspilotCapabilityActive("restrictionAuthPassThroughV1", { schoolId }, canaryEnv),
+      "the companion shares the parent's canary bucket, not a separately hashed bucket");
+  }
 });
 
 test("active screenshot cadence requires the negotiated tracking-window lease", () => {

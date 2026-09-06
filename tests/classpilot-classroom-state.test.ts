@@ -571,6 +571,77 @@ describe("ClassPilot full classroom state", () => {
     );
   });
 
+  it("marks only an explicit capable login with an authorized portal envelope", () => {
+    const now = new Date("2026-08-13T12:00:00.000Z");
+    const exactBinding = { schoolId: "school-1", studentId: "student-1", studentSessionId: "session-1", deviceId: "device-1" };
+    const acceptedCapabilities = ["restrictionAuthPassThroughV1", "restrictionPortalFirstV1"];
+    const authPassThrough = { gateActive: true, policyRevision: 7, policy: enabledSsoPolicy };
+    for (const restriction of [
+      { screenLock: { active: true, url: "https://www.ixl.com/math" } },
+      { flightPath: { active: true, allowedDomains: ["ixl.com", "nwea.org"] } },
+    ]) {
+      const state = controlState({ desiredState: { restrictions: normalizeClasspilotRestrictions(restriction) } });
+      const base = { state, gateActive: false, acceptedCapabilities, exactBinding, authPassThrough, now };
+      const login = serializeClasspilotStudentControlStateForDelivery({ ...base, portalFirstOnLogin: true });
+      assert.equal(login.withheld, false, "normal login is independent of deferred-authoring rollout");
+      assert.deepEqual(login.classroomState?.deliveryContext, { portalFirstOnLogin: true });
+      assert.equal(login.classroomState?.authPassThrough?.profiles[0]?.startUrl, enabledSsoPolicy.profiles[0]!.startUrl);
+      assert.equal(login.classroomState?.revision, state.revision);
+      assert.equal(login.classroomState?.authPassThroughPolicyRevision, 14);
+      assert.equal(readClasspilotLateSignInDeliveryProvenance(state.desiredState), null,
+        "a login projection never changes durable deferred provenance");
+
+      assert.equal(serializeClasspilotStudentControlStateForDelivery(base).classroomState?.deliveryContext, undefined,
+        "ordinary heartbeat, WebSocket delivery, and live apply do not request a portal launch");
+      assert.equal(serializeClasspilotStudentControlStateForDelivery({ ...base, portalFirstOnLogin: true,
+        acceptedCapabilities: ["restrictionAuthPassThroughV1"] }).classroomState?.deliveryContext, undefined,
+        "old clients never receive the new launch marker");
+      for (const auth of [
+        { ...authPassThrough, gateActive: false },
+        { ...authPassThrough, policy: { ...enabledSsoPolicy, enabled: false } },
+      ]) {
+        const disabled = serializeClasspilotStudentControlStateForDelivery({ ...base, portalFirstOnLogin: true, authPassThrough: auth });
+        assert.equal(disabled.classroomState?.authPassThrough, undefined);
+        assert.equal(disabled.classroomState?.deliveryContext, undefined);
+        assert.equal(disabled.classroomState?.authPassThroughPolicyRevision, auth.gateActive ? 14 : 15);
+      }
+      for (const binding of [null, { ...exactBinding, schoolId: "foreign-school" }, { ...exactBinding, studentId: "foreign-student" }]) {
+        assert.equal(serializeClasspilotStudentControlStateForDelivery({ ...base, portalFirstOnLogin: true,
+          exactBinding: binding }).classroomState, null, "mismatched authority cannot deliver the restriction or portal");
+      }
+      const expired = serializeClasspilotStudentControlStateForDelivery({ ...base, portalFirstOnLogin: true,
+        now: new Date("2026-08-13T13:00:00.000Z") });
+      assert.equal(expired.classroomState?.deliveryContext, undefined);
+      assert.equal(expired.classroomState?.authPassThrough, undefined);
+    }
+  });
+
+  it("portal-first login preserves the separate authority gate for deferred restrictions", () => {
+    const now = new Date("2026-08-13T12:00:00.000Z");
+    for (const restriction of [
+      { screenLock: { active: true, url: "https://www.ixl.com/math" } },
+      { flightPath: { active: true, allowedDomains: ["ixl.com"] } },
+    ]) {
+      const state = controlState({ desiredState: withClasspilotLateSignInOrigin({
+        desiredState: { restrictions: normalizeClasspilotRestrictions(restriction) }, commandId: "deferred-command", createdAt: now,
+      }) });
+      const base = { state, gateActive: true, portalFirstOnLogin: true as const,
+        acceptedCapabilities: ["restrictionAuthPassThroughV1", "restrictionPortalFirstV1", "lateSignInRestrictionSsoV1"],
+        exactBinding: { schoolId: "school-1", studentId: "student-1", studentSessionId: "session-1", deviceId: "device-1" },
+        authPassThrough: { gateActive: true, policyRevision: 7, policy: enabledSsoPolicy }, now };
+      assert.deepEqual(serializeClasspilotStudentControlStateForDelivery(base).classroomState?.deliveryContext,
+        { lateSignInRestrictionSso: true, portalFirstOnLogin: true });
+      for (const options of [
+        { ...base, gateActive: false },
+        { ...base, acceptedCapabilities: ["restrictionAuthPassThroughV1", "restrictionPortalFirstV1"] },
+      ]) {
+        assert.deepEqual(serializeClasspilotStudentControlStateForDelivery(options), {
+          classroomState: null, withheld: true, withheldReason: "late_sign_in_capability_required",
+        }, "the new companion cannot unlock deliberately withheld offline state");
+      }
+    }
+  });
+
   it("requires both legacy and auth pass-through capabilities for a deferred destination", () => {
     const now = new Date("2026-08-13T12:00:00.000Z");
     const state = controlState({

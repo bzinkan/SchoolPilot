@@ -103,7 +103,7 @@ def exercise_admin(browser, screenshot_dir, entitled):
     expect(page.get_by_role("heading", name="Launch, govern, and support the whole ClassPilot program.")).to_be_visible()
     expect(page.get_by_role("link", name="Admin Guide")).to_have_attribute("aria-current", "page")
     expect(page.locator("#topic-student-sign-in-policy summary")).to_be_focused()
-    expect(page.get_by_text("restrictionAuthPassThroughV1", exact=False)).to_be_visible()
+    expect(page.get_by_text("restrictionPortalFirstV1", exact=False)).to_be_visible()
     assert_no_retired_copy(page)
     if entitled:
         expect(page.get_by_role("heading", name="Operate Email Monitoring")).to_be_visible()

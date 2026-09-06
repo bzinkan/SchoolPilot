@@ -21,6 +21,7 @@ const validRoutes = new Set([
   "/classpilot/my-settings",
   "/classpilot/my-settings/schedule-changes",
   "/classpilot/admin",
+  "/classpilot/admin?tab=student-portal",
   "/classpilot/admin/analytics",
   "/classpilot/admin/safety",
   "/classpilot/admin/classes",
@@ -65,8 +66,10 @@ test("administrator guide covers entitlement and restricted sign-in policy witho
   const emailTopic = adminGuideTopics.find((topic) => topic.id === "email-monitoring");
   assert.equal(emailTopic?.entitlement, "mailpilot");
   const signInTopic = adminGuideTopics.find((topic) => topic.id === "student-sign-in-policy");
-  assert.match(contentText([signInTopic]), /restrictionAuthPassThroughV1/);
-  assert.match(contentText([signInTopic]), /five-minute attempt/);
+  assert.equal(signInTopic?.route, "/classpilot/admin?tab=student-portal");
+  assert.match(contentText([signInTopic]), /does not automatically send them to a learning site/);
+  assert.match(contentText([signInTopic]), /restrictionPortalFirstV1/);
+  assert.match(contentText([signInTopic]), /Approved provider hosts remain available/);
   const workspaceTopic = adminGuideTopics.find((topic) => topic.id === "google-workspace-policies");
   assert.equal(workspaceTopic?.phase, "Policies");
   assert.equal(workspaceTopic?.steps?.length, 8, "Google Workspace policy topic must keep the eight checklist steps");

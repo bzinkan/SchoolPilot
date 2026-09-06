@@ -358,7 +358,7 @@ test("registration responses return the exact accepted-capability negotiation us
   assert.match(login, /return \{[\s\S]*\.\.\.loginProtocol,[\s\S]*classroomState/);
 });
 
-test("student login withholds the SSO pass-through envelope that heartbeat still delivers", () => {
+test("student login keeps legacy SSO omission and only stages portal authority for negotiated clients", () => {
   const devices = source("../src/routes/classpilot/devices.ts");
   const login = section(
     devices,
@@ -371,34 +371,26 @@ test("student login withholds the SSO pass-through envelope that heartbeat still
     "const loginMonitoringPolicy = resolveClasspilotMonitoringPolicy",
   );
 
-  // 2026-09-04 sign-in lockout. The extension adopts the classroom restriction
-  // carried by the student-login response inside its own authentication commit
-  // window, where hasStudentAuth() is still false. The full-authority binding
-  // check that guards the pass-through envelope cannot resolve a control
-  // revision there, so it throws and the extension rejects the sign-in it had
-  // just completed and releases the session. Every login body carrying the
-  // envelope was released; every login body without it was not. The envelope
-  // must therefore be withheld at login and delivered moments later by
-  // heartbeat and WebSocket, after the commit window closes.
+  // Older clients adopt state inside the authentication commit window, where
+  // hasStudentAuth() is false. Preserve their omission to prevent the 2.8.4
+  // sign-in lockout. Only the new negotiated capability promises to stage the
+  // complete login snapshot until exact authentication has committed.
   assert.match(
     loginDelivery,
     /serializeClasspilotStudentControlStateForDelivery\(\{/,
     "login still serializes control state for delivery",
   );
-  assert.doesNotMatch(
+  assert.match(
     loginDelivery,
-    /authPassThrough:/,
-    "the login serializer must not be handed a pass-through envelope option",
+    /\.\.\.\(loginProtocol\.acceptedCapabilities\.includes\("restrictionPortalFirstV1"\) \? \{\s*portalFirstOnLogin: true as const,\s*authPassThrough: \{[\s\S]*?policyRevision: loginSsoPolicy\.revision,\s*policy: loginSsoPolicy\.policy,[\s\S]*?\} : \{\}\)/,
+    "the entire login envelope option is conditional on accepted staging capability, with an empty legacy branch",
   );
-  assert.doesNotMatch(
-    login,
-    /authPassThrough:/,
-    "no login surface may build a pass-through envelope for the login body",
-  );
+  assert.equal(login.match(/authPassThrough: \{/g)?.length, 1,
+    "no other login path can bypass the conditional envelope option");
   assert.doesNotMatch(
     login,
     /authPassThroughPolicyRevision/,
-    "withholding the envelope must also withhold its ordering revision",
+    "login must not independently attach an ordering revision outside the conditional serializer option",
   );
 
   const withheldRationale = loginDelivery
@@ -407,23 +399,17 @@ test("student login withholds the SSO pass-through envelope that heartbeat still
     .join("\n");
   assert.match(
     withheldRationale,
-    /authPassThrough/,
-    "a comment must name the withheld envelope so the omission is not read as an oversight",
+    /[Oo]lder clients[\s\S]*envelope omission/,
+    "keep the compatibility omission rationale at its delivery boundary",
   );
   assert.match(
     withheldRationale,
-    /hasStudentAuth\(\)/,
-    "the comment must record that the extension's commit window has no student auth yet",
-  );
-  assert.match(
-    withheldRationale,
-    /[Hh]eartbeat[\s\S]*WebSocket/,
-    "the comment must record which surfaces deliver the envelope instead",
+    /authentication commit completes/,
+    "the new capability must document why staged login can safely receive authority",
   );
 
   // The SSO policy is still read under the shared delivery lock, so a
-  // concurrent policy PATCH stays serialized against this login even though
-  // the login body no longer carries the policy forward.
+  // concurrent policy PATCH stays serialized against this login projection.
   assert.match(
     login,
     /await lockClasspilotSsoPolicyDeliveryAuthority\(\s*options\.schoolId,\s*transactionDb\s*\)/,
@@ -465,9 +451,11 @@ test("student login withholds the SSO pass-through envelope that heartbeat still
   assert.match(finalHeartbeat, /getClasspilotSsoPolicyForSchool\(schoolId, transactionDb\)/);
   assert.equal(
     devices.match(/authPassThrough: \{/g)?.length,
-    1,
-    "only the locked heartbeat re-materialization may build a pass-through envelope in this file",
+    2,
+    "only negotiated login and locked heartbeat re-materialization build an envelope in this file",
   );
+  assert.doesNotMatch(heartbeatSerializer, /portalFirstOnLogin/,
+    "ordinary heartbeat delivery must not create a new login navigation request");
 });
 
 test("deferred command frames and WebSocket auth revalidate exact binding authority", () => {

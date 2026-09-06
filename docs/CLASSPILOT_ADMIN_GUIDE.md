@@ -154,22 +154,23 @@ Apply the standard Chrome and sign-in policies that force-install ClassPilot and
 
 [Open IT Readiness](/classpilot/admin/it-readiness)
 
-### Allow student sign-in during restrictions
+### Configure the Student Portal & Sign-In
 
 **Who can use this:** Administrator or school administrator
 
-Configure the exact identity providers students may use while a Waypoint or Flight Path remains authoritative.
+Choose the portal students open after ClassPilot sign-in while their Waypoint or Flight Path remains active.
 
-1. **Open Student Sign-In During Waypoints.** Enable the policy only after reviewing extension readiness. Choose the provider that a cold restricted session should open first.
-2. **Configure providers.** Use the built-in Google or Clever profile, enter the district Clever launch address when required, or add a bounded custom provider for the school’s identity system.
-3. **Approve exact hosts.** Prefer exact hostnames. Allow subdomains only when the provider genuinely requires them. Lookalikes, wildcards, public suffixes, local addresses, and unsafe URLs are rejected.
-4. **Resolve policy conflicts.** Attention, school blocks, and teacher blocks remain higher priority than sign-in pass-through. Resolve warnings when an approved provider is also blocked.
-5. **Verify the full round trip.** Test provider start, any Google Accounts handoff, callback, and the final learning destination. A provider visit alone is not completion.
-6. **Roll out by capability.** Keep the operator capability off until the extension is deployed. Enable only after recently active devices report the raw and accepted restrictionAuthPassThroughV1 capability.
+1. **Open Admin Panel → Student Portal.** Review rollout and Chromebook readiness, then enable the Student Portal for active Waypoints and Flight Paths. Only school administrators can configure it.
+2. **Choose Clever as the first portal.** Select Clever under First portal after ClassPilot sign-in to start restricted students there. They then choose a teacher-approved learning destination from the portal; completing provider sign-in does not automatically send them to a learning site.
+3. **Configure providers.** Use the built-in Google or Clever profile, enter the district Clever launch address when required, or add a bounded custom provider for the school’s identity system.
+4. **Approve exact hosts.** Prefer exact hostnames. Allow subdomains only when the provider genuinely requires them. Lookalikes, wildcards, public suffixes, local addresses, and unsafe URLs are rejected.
+5. **Resolve policy conflicts.** Attention, school blocks, and teacher blocks remain higher priority than sign-in pass-through. Resolve warnings when an approved provider is also blocked.
+6. **Verify the student flow.** Test ClassPilot sign-in, Clever, any Google Accounts handoff, and the return to the portal. Confirm the student stays there until choosing a teacher-approved destination, and that an unapproved site remains blocked. A provider visit alone is not completion.
+7. **Roll out by capability.** Keep the rollout gate off until the compatible extension is deployed. Enable only after recently active Chromebooks report the required Student Portal capability (restrictionPortalFirstV1). The Chromebook evidence count shows current reported and accepted support, not a guarantee for every device.
 
-> **Check before continuing:** The policy authorizes only configured identity-provider hosts for a five-minute attempt. It never creates general web access and never overrides a school or teacher block.
+> **Check before continuing:** Approved provider hosts remain available for authentication and portal launch while the restriction is active. Learning sites remain teacher-restricted, and a school or teacher block still wins.
 
-[Open Student Sign-In policy](/classpilot/settings)
+[Open Student Portal configuration](/classpilot/admin?tab=student-portal)
 ## Operations
 
 

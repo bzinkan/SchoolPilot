@@ -430,9 +430,9 @@ describe("ClassPilot administrator SSO policy", { concurrency: false }, () => {
     assert.equal(admin.body.revision, 0);
     assert.equal(admin.body.rolloutActive, false);
     assert.equal(admin.body.operatorGateActive, false);
-    assert.equal(admin.body.requiredCapability, "restrictionAuthPassThroughV1");
+    assert.equal(admin.body.requiredCapability, "restrictionPortalFirstV1");
     assert.deepEqual(admin.body.extensionReadiness, {
-      capability: "restrictionAuthPassThroughV1",
+      capability: "restrictionPortalFirstV1",
       observationWindowSeconds: 300,
       recentlyActiveBindings: 0,
       observedBindings: 0,

@@ -1545,15 +1545,14 @@ async function completeStudentDeviceLogin<
         options.schoolId,
         transactionDb
       );
-      const [controlState] = await Promise.all([
+      const [controlState, loginSsoPolicy] = await Promise.all([
         getClasspilotStudentControlState(
           options.schoolId,
           student.id,
           transactionDb
         ),
-        // Still read under the delivery lock so a concurrent policy PATCH is
-        // serialized against this login, even though the login response itself
-        // no longer carries a pass-through envelope (see below).
+        // Freeze portal authority against concurrent policy edits in the same
+        // exact-binding response transaction as the restriction snapshot.
         getClasspilotSsoPolicyForSchool(options.schoolId, transactionDb),
       ]);
       const loginProtocol = negotiateClasspilotSurfaceProtocol({
@@ -1581,19 +1580,20 @@ async function completeStudentDeviceLogin<
               studentSessionId: session.id,
               deviceId: effectiveDeviceId,
             },
-            // The login response deliberately carries NO authPassThrough
-            // envelope. The extension adopts a login snapshot inside its auth
-            // commit window, where hasStudentAuth() is false, so the
-            // full-authority binding check that guards the envelope cannot
-            // resolve a control revision and throws STUDENT_BINDING_MISMATCH.
-            // That rejects the sign-in itself and releases the session, which
-            // stranded students on the sign-in screen whenever a Flight Path or
-            // a URL Waypoint was stored (2026-09-04 incident). Heartbeat and
-            // WebSocket deliver the same state WITH the envelope moments later,
-            // after the commit completes, where the identical check passes.
-            // Omitting the envelope also omits its ordering revision, which
-            // keeps the client policy fence clean so that later delivery is
-            // never rejected as stale.
+            // Only clients that explicitly stage login snapshots until their
+            // authentication commit completes receive portal authority here.
+            // Older clients retain the 2.8.4 envelope omission: applying an
+            // auth envelope inside their commit rejects the successful login.
+            ...(loginProtocol.acceptedCapabilities.includes("restrictionPortalFirstV1") ? {
+              portalFirstOnLogin: true as const,
+              authPassThrough: {
+                gateActive: isClasspilotCapabilityActive(
+                  "restrictionAuthPassThroughV1", { schoolId: options.schoolId }
+                ),
+                policyRevision: loginSsoPolicy.revision,
+                policy: loginSsoPolicy.policy,
+              },
+            } : {}),
           })
         : { classroomState: null, withheld: false };
       const loginMonitoringPolicy = resolveClasspilotMonitoringPolicy(await getHeartbeatTrackingSettingsForSchool(options.schoolId, transactionDb, { lock: true }), {
