@@ -417,7 +417,9 @@ describe("multi-school readiness route hardening", () => {
     `);
     assert.equal(result.rows.length, cases.length);
     for (const row of result.rows) {
-      const { now, timeZone } = cases[Number(row.id)];
+      const fixture = cases[Number(row.id)];
+      assert.ok(fixture, "SQL must return a known fixture case");
+      const { now, timeZone } = fixture;
       const localDate = new Intl.DateTimeFormat("en-CA", {
         timeZone, year: "numeric", month: "2-digit", day: "2-digit",
       }).format(now);
