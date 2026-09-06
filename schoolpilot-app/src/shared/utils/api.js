@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { Capacitor } from '@capacitor/core';
-import { rememberSafetyLoginReturn } from './safetyLoginReturn';
+import { rememberSafetyLoginReturn } from './safetyLoginReturn.js';
 
 const NATIVE_API_BASE_URL = 'https://school-pilot.net/api';
 const DIRECT_BACKEND_HOST_PATTERNS = [
