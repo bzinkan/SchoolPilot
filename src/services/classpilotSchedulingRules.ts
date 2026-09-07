@@ -153,11 +153,16 @@ export function resolveSchoolScheduleDay(date: string, config: SchoolSchedulingC
   };
 }
 export type SchedulingGroup = { id?: string; scheduleEnabled: boolean; blockStartTime: string | null; blockEndTime: string | null; scheduleRule?: ClasspilotScheduleRule | null };
+export function classScheduleRuleMatchesDate(rule: ClasspilotScheduleRule, date: string, day: ReturnType<typeof resolveSchoolScheduleDay>): boolean {
+  return day.instructional && rule.weekdays.includes(day.meetingWeekday)
+    && (!rule.startsOn || date >= rule.startsOn) && (!rule.endsOn || date <= rule.endsOn)
+    && (rule.cycleDay === "all" || rule.cycleDay === day.cycleDay);
+}
 export function resolveClassBaseWindow(group: SchedulingGroup, date: string, config: SchoolSchedulingConfig, calendar: SchedulingCalendar, resolvedDay?: ReturnType<typeof resolveSchoolScheduleDay>): BellWindow | null {
   if (!group.scheduleEnabled) return null;
   const rule = normalizeClassScheduleRule(group.scheduleRule);
   const day = resolvedDay ?? resolveSchoolScheduleDay(date, config, calendar);
-  if (!day.instructional || !rule.weekdays.includes(day.meetingWeekday) || (rule.startsOn && date < rule.startsOn) || (rule.endsOn && date > rule.endsOn) || (rule.cycleDay !== "all" && rule.cycleDay !== day.cycleDay)) return null;
+  if (!classScheduleRuleMatchesDate(rule, date, day)) return null;
   let baseline: BellWindow | null;
   if (rule.periodId) {
     const window = config.profiles.find((p) => p.id === day.profileId)?.periods[rule.periodId];

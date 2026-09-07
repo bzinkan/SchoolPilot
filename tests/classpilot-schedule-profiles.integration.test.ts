@@ -1,9 +1,13 @@
 import { before, after, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import type { PoolClient } from "pg";
+import express from "express";
 import { CLASSPILOT_SCHEDULING_SQL } from "../src/db/classpilotSchedulingMigration.js";
 import { CLASSPILOT_SCHEDULE_PROFILE_SUPERVISION_SQL } from "../src/db/classpilotScheduleProfileSupervisionMigration.js";
-import { datePlusDays, dateWeekday, defaultClassScheduleRule, resolveClassBaseWindow } from "../src/services/classpilotSchedulingRules.js";
+import { datePlusDays, dateWeekday, defaultClassScheduleRule, emptySchoolSchedulingConfig, resolveClassBaseWindow } from "../src/services/classpilotSchedulingRules.js";
 import type { ScheduleProfileApplication, ScheduleProfileDefinition } from "../src/services/classpilotScheduleProfileModel.js";
 import { localDateInTimeZone, localDateTimeUtc } from "../src/util/schoolTime.js";
 
@@ -12,6 +16,8 @@ const { pool, sessionPool, default: database } = await import("../src/db.js");
 const { runWithTenantContext } = await import("../src/middleware/tenantContext.js");
 const service = await import("../src/services/classpilotScheduleProfiles.js");
 const scheduling = await import("../src/services/classpilotScheduling.js");
+const regularSchedule = await import("../src/services/classpilotRegularSchedule.js");
+const { getEffectiveClasspilotScheduleWindow } = await import("../src/services/classpilotScheduleChanges.js");
 const schoolIds: string[] = [], userIds: string[] = [];
 const scoped = <T>(schoolId: string, fn: () => Promise<T>) => runWithTenantContext({ schoolId }, fn);
 let date = datePlusDays(localDateInTimeZone(new Date(), "America/New_York"), 14);
@@ -23,17 +29,34 @@ before(async () => {
 });
 after(async () => {
   try {
-    for (const table of ["classpilot_supervision_students", "classpilot_supervision_contexts", "classpilot_coverage_scope_group_members", "classpilot_coverage_assignments", "classpilot_coverage_scope_groups", "classpilot_school_schedules", "classpilot_schedule_changes", "teaching_sessions", "audit_logs"]) await pool.query("DELETE FROM " + table + " WHERE school_id=ANY($1::text[])", [schoolIds]);
-    await pool.query("DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id=ANY($1::text[]))", [schoolIds]);
-    await pool.query("DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id=ANY($1::text[]))", [schoolIds]);
-    for (const table of ["groups", "students", "settings", "school_memberships", "product_licenses"]) await pool.query("DELETE FROM " + table + " WHERE school_id=ANY($1::text[])", [schoolIds]);
-    await pool.query("DELETE FROM users WHERE id=ANY($1::text[])", [userIds]);
-    await pool.query("DELETE FROM schools WHERE id=ANY($1::text[])", [schoolIds]);
+    // Child deletion and parent deletion must commit together for the deferred
+    // exactly-two-legs constraint, just like swap creation below.
+    await fixtureTransaction(async (client) => {
+      for (const table of ["classpilot_supervision_students", "classpilot_supervision_contexts", "classpilot_coverage_scope_group_members", "classpilot_coverage_assignments", "classpilot_coverage_scope_groups", "classpilot_school_schedules", "classpilot_schedule_change_legs", "classpilot_schedule_changes", "classpilot_schedule_change_pairs", "teaching_sessions", "audit_logs"]) await client.query("DELETE FROM " + table + " WHERE school_id=ANY($1::text[])", [schoolIds]);
+      await client.query("DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id=ANY($1::text[]))", [schoolIds]);
+      await client.query("DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id=ANY($1::text[]))", [schoolIds]);
+      for (const table of ["groups", "students", "settings", "school_memberships", "product_licenses"]) await client.query("DELETE FROM " + table + " WHERE school_id=ANY($1::text[])", [schoolIds]);
+      await client.query("DELETE FROM users WHERE id=ANY($1::text[])", [userIds]);
+      await client.query("DELETE FROM schools WHERE id=ANY($1::text[])", [schoolIds]);
+    });
   } finally {
     const { schedulerPool, schedulerLockPool } = await import("../src/services/schedulerDb.js");
     await Promise.all([pool.end(), sessionPool.end(), schedulerPool.end(), schedulerLockPool.end()]);
   }
 });
+async function fixtureTransaction(operation: (client: PoolClient) => Promise<void>) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await operation(client);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
 async function fixture(role = "admin") {
   const schoolId = randomUUID(), adminId = randomUUID(), teacherId = randomUUID(), specialistId = randomUUID();
   const classId = randomUUID(), nextClassId = randomUUID(), studentId = randomUUID(), scopeId = randomUUID();
@@ -62,6 +85,107 @@ async function save(data: Awaited<ReturnType<typeof fixture>>, definition = data
 function request(data: Awaited<ReturnType<typeof fixture>>, saved: Awaited<ReturnType<typeof save>>) {
   return { schoolId: data.schoolId, actorId: data.adminId, revision: saved.revision, profileId: saved.profile.id, profileRevision: saved.profile.revision, dates: [date] };
 }
+test("regular reference reads are school-scoped, preserve every stored schedule, and ignore applied/swap/frozen/skip-day state", async () => {
+  const data = await fixture(), other = await fixture();
+  const saved = await save(data), input = request(data, saved);
+  const preview = await scoped(data.schoolId, () => service.previewScheduleProfile(input));
+  const applied = await scoped(data.schoolId, () => service.applyScheduleProfile({ ...input, previewToken: preview.previewToken }));
+  await pool.query("UPDATE groups SET schedule_skipped_date=$1 WHERE id=$2", [date, data.classId]);
+  await pool.query("UPDATE groups SET status='archived' WHERE id=$1", [data.nextClassId]);
+  await pool.query("INSERT INTO teaching_sessions(group_id,school_id,teacher_id,scheduled_date,scheduled_timezone,scheduled_start_at,scheduled_end_at,scheduled_state) VALUES($1,$2,$3,$4,'America/New_York',$5,$6,'active')", [data.classId, data.schoolId, data.teacherId, date, localDateTimeUtc(date, "12:00", "America/New_York").toISOString(), localDateTimeUtc(date, "12:50", "America/New_York").toISOString()]);
+  const before = await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
+  const result = await scoped(data.schoolId, () => regularSchedule.getClasspilotRegularSchedule({ schoolId: data.schoolId, referenceDate: date }));
+  assert.equal(result.revision, applied.revision);
+  assert.deepEqual(result.classes, [{ classId: data.classId, status: "meets", window: { startTime: "09:00", endTime: "09:50" } }]);
+  assert.deepEqual(await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId)), before);
+  assert.equal((await pool.query("SELECT schedule_skipped_date FROM groups WHERE id=$1", [data.classId])).rows[0].schedule_skipped_date, date);
+  assert.equal((await pool.query("SELECT scheduled_start_at FROM teaching_sessions WHERE group_id=$1", [data.classId])).rows[0].scheduled_start_at.toISOString(), localDateTimeUtc(date, "12:00", "America/New_York").toISOString());
+  // Give the other school a real approved swap, independently of the first
+  // school's applied profile, so its effective schedule is demonstrably different.
+  const pairId = randomUUID(), swapId = randomUUID();
+  const [firstGroupId, secondGroupId] = [other.classId, other.nextClassId].sort();
+  await fixtureTransaction(async (client) => {
+    await client.query("INSERT INTO classpilot_schedule_change_pairs(id,school_id,first_group_id,second_group_id,created_by) VALUES($1,$2,$3,$4,$5)", [pairId, other.schoolId, firstGroupId, secondGroupId, other.adminId]);
+    await client.query("INSERT INTO classpilot_schedule_changes(id,school_id,pair_id,scheduled_date,timezone_snapshot,status,reason,requested_by_user_id,requested_by_role,requires_admin_approval,reservation_active,approved_by_user_id,approved_at) VALUES($1,$2,$3,$4,'America/New_York','approved','Regular reference fixture',$5,'admin',false,true,$5,now())", [swapId, other.schoolId, pairId, date, other.adminId]);
+    await client.query(`INSERT INTO classpilot_schedule_change_legs(school_id,schedule_change_id,scheduled_date,leg_order,group_id,primary_teacher_id_snapshot,class_name_snapshot,original_start_time,original_end_time,effective_start_time,effective_end_time,reservation_active)
+      VALUES($1,$2,$3,1,$4,$6,'Grade 5 Math','09:00','09:50','10:00','10:50',true),
+            ($1,$2,$3,2,$5,$6,'Grade 5 Reading','10:00','10:50','09:00','09:50',true)`, [other.schoolId, swapId, date, other.classId, other.nextClassId, other.teacherId]);
+  });
+  const effectiveWindow = () => scoped(other.schoolId, () => getEffectiveClasspilotScheduleWindow({
+    schoolId: other.schoolId, scheduledDate: date, timeZone: "America/New_York",
+    group: { id: other.classId, scheduleEnabled: true, blockStartTime: "09:00", blockEndTime: "09:50", scheduleRule: defaultClassScheduleRule() },
+  }));
+  const swapped = await effectiveWindow();
+  assert.equal(swapped?.source, "swap");
+  assert.equal(swapped?.swapId, swapId);
+  assert.deepEqual([swapped?.blockStartTime, swapped?.blockEndTime], ["10:00", "10:50"]);
+  const otherResult = await scoped(other.schoolId, () => regularSchedule.getClasspilotRegularSchedule({ schoolId: other.schoolId, referenceDate: date }));
+  assert.deepEqual(otherResult.classes.map(row => row.classId).sort(), [other.classId, other.nextClassId].sort());
+  assert.deepEqual(otherResult.classes.find(row => row.classId === other.classId)?.window, { startTime: "09:00", endTime: "09:50" });
+  assert.deepEqual(otherResult.classes.find(row => row.classId === other.nextClassId)?.window, { startTime: "10:00", endTime: "10:50" });
+  assert.deepEqual(await effectiveWindow(), swapped);
+});
+
+test("regular reference excludes unrelated profile snapshots before validation and preserves stored JSON", async () => {
+  const data = await fixture();
+  const config = {
+    ...emptySchoolSchedulingConfig(),
+    scheduleProfiles: [{ name: "Malformed unused profile" }],
+    profileApplications: [{ testingWindows: [{ studentIds: [data.studentId], coverageGroupId: data.scopeId }] }],
+  };
+  await pool.query("INSERT INTO classpilot_school_schedules(school_id,revision,config) VALUES($1,7,$2::jsonb)", [data.schoolId, JSON.stringify(config)]);
+  const stored = async () => (await pool.query("SELECT revision,config,updated_at FROM classpilot_school_schedules WHERE school_id=$1", [data.schoolId])).rows[0];
+  const before = await stored();
+  const result = await scoped(data.schoolId, () => regularSchedule.getClasspilotRegularSchedule({ schoolId: data.schoolId, referenceDate: date }));
+  assert.equal(result.revision, 7);
+  assert.deepEqual(result.classes, [
+    { classId: data.classId, status: "meets", window: { startTime: "09:00", endTime: "09:50" } },
+    { classId: data.nextClassId, status: "meets", window: { startTime: "10:00", endTime: "10:50" } },
+  ].sort((a, b) => a.classId.localeCompare(b.classId)));
+  assert.equal(JSON.stringify(result).includes(data.studentId), false);
+  assert.deepEqual(await stored(), before);
+});
+
+test("regular reference route enforces admin entitlement and active school selection without disclosing extra fields", async () => {
+  const data = await fixture(), other = await fixture();
+  const { default: router } = await import("../src/routes/classpilot/scheduleProfiles.js");
+  const { signUserToken } = await import("../src/services/jwt.js");
+  const app = express();
+  app.use("/api/classpilot/admin/schedule-profiles", router);
+  app.use(((error, _req, res, _next) => {
+    const known = error as Error & { status?: number; code?: string };
+    res.status(known.status ?? 500).json({ error: known.message, code: known.code });
+  }) satisfies express.ErrorRequestHandler);
+  const server = createServer(app);
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/classpilot/admin/schedule-profiles/regular-schedule`;
+  const headers = (userId: string, schoolId = data.schoolId) => ({ authorization: `Bearer ${signUserToken({ userId, email: `${userId}@example.test`, isSuperAdmin: false })}`, "x-school-id": schoolId });
+  try {
+    assert.equal((await fetch(`${base}?referenceDate=${date}`)).status, 401);
+    assert.equal((await fetch(`${base}?referenceDate=${date}`, { headers: headers(data.teacherId) })).status, 403);
+    assert.equal((await fetch(`${base}?referenceDate=${date}`, { headers: headers(data.adminId, other.schoolId) })).status, 403);
+    const response = await fetch(`${base}?referenceDate=${date}&schoolId=${other.schoolId}`, { headers: headers(data.adminId) });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    const body = await response.json() as Awaited<ReturnType<typeof regularSchedule.getClasspilotRegularSchedule>>;
+    assert.deepEqual(body.classes.map(row => row.classId).sort(), [data.classId, data.nextClassId].sort());
+    assert.deepEqual(Object.keys(body).sort(), ["classes", "day", "referenceDate", "revision", "schoolTimezone"]);
+    assert.ok(body.classes.every(row => Object.keys(row).sort().join(",") === "classId,status,window"));
+    assert.doesNotMatch(JSON.stringify(body), /studentIds|deviceId|teacherId|scheduleProfiles|profileApplications|teachingSessionId/);
+    for (const query of ["", "?referenceDate=2026-02-30", `?referenceDate=${date}&referenceDate=${date}`, `?referenceDate[value]=${date}`]) {
+      const invalid = await fetch(base + query, { headers: headers(data.adminId) });
+      assert.equal(invalid.status, 400);
+      const failure = await invalid.json() as { code: string };
+      assert.equal(failure.code, "INVALID_REFERENCE_DATE");
+    }
+    await pool.query("UPDATE schools SET is_active=false WHERE id=$1", [data.schoolId]);
+    assert.equal((await fetch(`${base}?referenceDate=${date}`, { headers: headers(data.adminId) })).status, 403);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
+
 test("saving and renaming a profile never changes live schedules; applying snapshots only selected dates and keeps rosters", async () => {
   const data = await fixture("school_admin"); const saved = await save(data);
   const get = () => scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
@@ -78,6 +202,32 @@ test("saving and renaming a profile never changes live schedules; applying snaps
   assert.equal(resolveClassBaseWindow(group, date, context.config, context.calendar)?.startTime, "11:00");
   assert.equal((await pool.query("SELECT count(*)::int n FROM group_students WHERE student_id=$1", [data.studentId])).rows[0].n, 2);
 });
+test("a loaded profile preserves Keep as no rule so later regular edits apply while custom clocks stay fixed", async () => {
+  const data = await fixture();
+  const draft = await save(data, { ...data.definition, classRules: [] });
+  const loaded = await scoped(data.schoolId, () => service.getScheduleProfiles(data.schoolId));
+  const profile = loaded.profiles.find(row => row.id === draft.profile.id)!;
+  assert.deepEqual(profile.definition.classRules, []);
+  const custom = await scoped(data.schoolId, () => service.saveScheduleProfile({ schoolId: data.schoolId, actorId: data.adminId,
+    revision: loaded.revision, id: profile.id, profileRevision: profile.revision,
+    definition: { ...profile.definition, classRules: [{ classId: data.nextClassId, action: "time", startTime: "11:00", endTime: "11:50" }] } }));
+  await pool.query("UPDATE groups SET block_start_time='08:30',block_end_time='09:20' WHERE id=$1", [data.classId]);
+  await pool.query("UPDATE groups SET block_start_time='10:15',block_end_time='11:05' WHERE id=$1", [data.nextClassId]);
+  const input = request(data, custom);
+  const preview = await scoped(data.schoolId, () => service.previewScheduleProfile(input));
+  assert.deepEqual(preview.blockers, []);
+  assert.deepEqual(preview.changes, [{ date, classId: data.nextClassId, className: "Grade 5 Reading",
+    before: { startTime: "10:15", endTime: "11:05" }, after: { startTime: "11:00", endTime: "11:50" } }]);
+  const applied = await scoped(data.schoolId, () => service.applyScheduleProfile({ ...input, previewToken: preview.previewToken }));
+  assert.deepEqual(Object.keys(applied.application.classWindows[date]!), [data.nextClassId]);
+  const context = await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
+  const kept = { id: data.classId, scheduleEnabled: true, blockStartTime: "08:30", blockEndTime: "09:20", scheduleRule: defaultClassScheduleRule() };
+  const changed = { ...kept, id: data.nextClassId, blockStartTime: "10:15", blockEndTime: "11:05" };
+  assert.deepEqual(resolveClassBaseWindow(kept, date, context.config, context.calendar), { startTime: "08:30", endTime: "09:20" });
+  assert.deepEqual(resolveClassBaseWindow(changed, date, context.config, context.calendar), { startTime: "11:00", endTime: "11:50" });
+  assert.deepEqual(resolveClassBaseWindow(changed, datePlusDays(date, 7), context.config, context.calendar), { startTime: "10:15", endTime: "11:05" });
+});
+
 test("customize this use leaves its reusable profile unchanged and cancel restores future regular times", async () => {
   const data = await fixture(); const saved = await save(data); const input = { ...request(data, saved), definition: { ...data.definition, classRules: [{ classId: data.classId, action: "skip" as const }] } };
   const preview = await scoped(data.schoolId, () => service.previewScheduleProfile(input));
