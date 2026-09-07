@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 import express from "express";
 import { CLASSPILOT_SCHEDULING_SQL } from "../src/db/classpilotSchedulingMigration.js";
 import { CLASSPILOT_SCHEDULE_PROFILE_SUPERVISION_SQL } from "../src/db/classpilotScheduleProfileSupervisionMigration.js";
-import { datePlusDays, dateWeekday, defaultClassScheduleRule, resolveClassBaseWindow } from "../src/services/classpilotSchedulingRules.js";
+import { datePlusDays, dateWeekday, defaultClassScheduleRule, emptySchoolSchedulingConfig, resolveClassBaseWindow } from "../src/services/classpilotSchedulingRules.js";
 import type { ScheduleProfileApplication, ScheduleProfileDefinition } from "../src/services/classpilotScheduleProfileModel.js";
 import { localDateInTimeZone, localDateTimeUtc } from "../src/util/schoolTime.js";
 
@@ -104,6 +104,26 @@ test("regular reference reads are school-scoped, preserve every stored schedule,
   assert.deepEqual(otherResult.classes.find(row => row.classId === other.classId)?.window, { startTime: "09:00", endTime: "09:50" });
   assert.deepEqual(otherResult.classes.find(row => row.classId === other.nextClassId)?.window, { startTime: "10:00", endTime: "10:50" });
   assert.deepEqual(await effectiveWindow(), swapped);
+});
+
+test("regular reference excludes unrelated profile snapshots before validation and preserves stored JSON", async () => {
+  const data = await fixture();
+  const config = {
+    ...emptySchoolSchedulingConfig(),
+    scheduleProfiles: [{ name: "Malformed unused profile" }],
+    profileApplications: [{ testingWindows: [{ studentIds: [data.studentId], coverageGroupId: data.scopeId }] }],
+  };
+  await pool.query("INSERT INTO classpilot_school_schedules(school_id,revision,config) VALUES($1,7,$2::jsonb)", [data.schoolId, JSON.stringify(config)]);
+  const stored = async () => (await pool.query("SELECT revision,config,updated_at FROM classpilot_school_schedules WHERE school_id=$1", [data.schoolId])).rows[0];
+  const before = await stored();
+  const result = await scoped(data.schoolId, () => regularSchedule.getClasspilotRegularSchedule({ schoolId: data.schoolId, referenceDate: date }));
+  assert.equal(result.revision, 7);
+  assert.deepEqual(result.classes, [
+    { classId: data.classId, status: "meets", window: { startTime: "09:00", endTime: "09:50" } },
+    { classId: data.nextClassId, status: "meets", window: { startTime: "10:00", endTime: "10:50" } },
+  ].sort((a, b) => a.classId.localeCompare(b.classId)));
+  assert.equal(JSON.stringify(result).includes(data.studentId), false);
+  assert.deepEqual(await stored(), before);
 });
 
 test("regular reference route enforces admin entitlement and active school selection without disclosing extra fields", async () => {

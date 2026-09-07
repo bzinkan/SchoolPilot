@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { groups } from "../schema/classpilot.js";
 import { classpilotSchoolSchedules } from "../schema/classpilotScheduling.js";
 import { schools } from "../schema/core.js";
@@ -83,7 +83,11 @@ export async function getClasspilotRegularSchedule(options: {
   return database.transaction(async (tx) => {
     const [schoolRows, scheduleRows, calendarRows, classRows] = await Promise.all([
       tx.select({ timezone: schools.schoolTimezone }).from(schools).where(eq(schools.id, options.schoolId)).limit(1),
-      tx.select({ config: classpilotSchoolSchedules.config, revision: classpilotSchoolSchedules.revision })
+      tx.select({
+        // Profile snapshots include testing rosters and are unrelated to regular rules.
+        config: sql<unknown>`${classpilotSchoolSchedules.config} - 'scheduleProfiles' - 'profileApplications'`,
+        revision: classpilotSchoolSchedules.revision,
+      })
         .from(classpilotSchoolSchedules).where(eq(classpilotSchoolSchedules.schoolId, options.schoolId)).limit(1),
       tx.select({ calendar: settings.instructionalCalendar }).from(settings).where(eq(settings.schoolId, options.schoolId)).limit(1),
       tx.select({ id: groups.id, scheduleEnabled: groups.scheduleEnabled, blockStartTime: groups.blockStartTime,
