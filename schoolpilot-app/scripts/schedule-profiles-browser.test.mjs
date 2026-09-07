@@ -33,7 +33,7 @@ test('Schedule Profiles saves drafts, reviews exact dates and temporary testing,
       if (url.pathname.endsWith('/admin/scheduling/preview')) { advancedPreviews.push(request.postDataJSON()); return route.fulfill({ json: { revision: catalog.revision, previewToken: 'advanced-preview', schoolTimezone: catalog.schoolTimezone, fromDate: catalog.schoolLocalToday, changedOccurrences: 0, blockers: [], changes: [], days: [] } }); }
       if (url.pathname.endsWith('/admin/scheduling')) {
         if (request.method() === 'PUT') { advancedSaves.push(request.postDataJSON()); config = request.postDataJSON().config; catalog.revision++; }
-        return route.fulfill({ json: { revision: catalog.revision, config, schoolLocalToday: catalog.schoolLocalToday } });
+        return route.fulfill({ json: { revision: catalog.revision, config, schoolTimezone: catalog.schoolTimezone, schoolLocalToday: catalog.schoolLocalToday } });
       }
       if (url.pathname.endsWith('/schedule-profiles/preview')) {
         const body = request.postDataJSON(); previews.push(body);
@@ -169,11 +169,15 @@ test('Schedule Profiles saves drafts, reviews exact dates and temporary testing,
     await page.screenshot({ path: path.join(artifactDir, 'application-mobile.png') });
     assert.equal(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth), true);
     page.once('dialog', prompt => prompt.accept()); await dialog.getByRole('button', { name: 'Cancel', exact: true }).click(); await dialog.waitFor({ state: 'hidden' });
+    await page.getByRole('tab', { name: 'Bells & rotation', exact: true }).click();
     await page.getByLabel('School year ends', { exact: true }).fill('2027-06-29');
-    await page.getByText('Save or discard the advanced schedule or calendar draft before changing profiles or their applications.', { exact: true }).waitFor(); assert.equal(await page.getByRole('button', { name: 'Create Schedule Profile', exact: true }).isDisabled(), true);
+    await page.getByRole('tab', { name: 'Schedule profiles', exact: true }).click();
+    await page.getByText('Save or discard the bell, rotation, date-override or calendar draft before changing profiles or their applications.', { exact: true }).waitFor(); assert.equal(await page.getByRole('button', { name: 'Create Schedule Profile', exact: true }).isDisabled(), true);
+    await page.getByRole('tab', { name: 'Bells & rotation', exact: true }).click();
     await page.getByRole('button', { name: 'Preview changes', exact: true }).click(); await page.getByRole('button', { name: 'Save reviewed schedule', exact: true }).waitFor();
     assert.deepEqual(advancedPreviews[0].config.scheduleProfiles, catalog.profiles); assert.deepEqual(advancedPreviews[0].config.profileApplications, catalog.applications);
     await page.getByRole('button', { name: 'Save reviewed schedule', exact: true }).click();
+    await page.getByRole('tab', { name: 'Schedule profiles', exact: true }).click();
     await page.waitForFunction(() => !document.querySelector('[data-testid="schedule-profiles"] button')?.disabled);
     assert.deepEqual(advancedSaves[0].config.scheduleProfiles, catalog.profiles); assert.deepEqual(advancedSaves[0].config.profileApplications, catalog.applications);
     assert.deepEqual(errors, []);
