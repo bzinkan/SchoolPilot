@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
+import type { PoolClient } from "pg";
 import express from "express";
 import { CLASSPILOT_SCHEDULING_SQL } from "../src/db/classpilotSchedulingMigration.js";
 import { CLASSPILOT_SCHEDULE_PROFILE_SUPERVISION_SQL } from "../src/db/classpilotScheduleProfileSupervisionMigration.js";
@@ -28,17 +29,34 @@ before(async () => {
 });
 after(async () => {
   try {
-    for (const table of ["classpilot_supervision_students", "classpilot_supervision_contexts", "classpilot_coverage_scope_group_members", "classpilot_coverage_assignments", "classpilot_coverage_scope_groups", "classpilot_school_schedules", "classpilot_schedule_change_legs", "classpilot_schedule_changes", "classpilot_schedule_change_pairs", "teaching_sessions", "audit_logs"]) await pool.query("DELETE FROM " + table + " WHERE school_id=ANY($1::text[])", [schoolIds]);
-    await pool.query("DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id=ANY($1::text[]))", [schoolIds]);
-    await pool.query("DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id=ANY($1::text[]))", [schoolIds]);
-    for (const table of ["groups", "students", "settings", "school_memberships", "product_licenses"]) await pool.query("DELETE FROM " + table + " WHERE school_id=ANY($1::text[])", [schoolIds]);
-    await pool.query("DELETE FROM users WHERE id=ANY($1::text[])", [userIds]);
-    await pool.query("DELETE FROM schools WHERE id=ANY($1::text[])", [schoolIds]);
+    // Child deletion and parent deletion must commit together for the deferred
+    // exactly-two-legs constraint, just like swap creation below.
+    await fixtureTransaction(async (client) => {
+      for (const table of ["classpilot_supervision_students", "classpilot_supervision_contexts", "classpilot_coverage_scope_group_members", "classpilot_coverage_assignments", "classpilot_coverage_scope_groups", "classpilot_school_schedules", "classpilot_schedule_change_legs", "classpilot_schedule_changes", "classpilot_schedule_change_pairs", "teaching_sessions", "audit_logs"]) await client.query("DELETE FROM " + table + " WHERE school_id=ANY($1::text[])", [schoolIds]);
+      await client.query("DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id=ANY($1::text[]))", [schoolIds]);
+      await client.query("DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id=ANY($1::text[]))", [schoolIds]);
+      for (const table of ["groups", "students", "settings", "school_memberships", "product_licenses"]) await client.query("DELETE FROM " + table + " WHERE school_id=ANY($1::text[])", [schoolIds]);
+      await client.query("DELETE FROM users WHERE id=ANY($1::text[])", [userIds]);
+      await client.query("DELETE FROM schools WHERE id=ANY($1::text[])", [schoolIds]);
+    });
   } finally {
     const { schedulerPool, schedulerLockPool } = await import("../src/services/schedulerDb.js");
     await Promise.all([pool.end(), sessionPool.end(), schedulerPool.end(), schedulerLockPool.end()]);
   }
 });
+async function fixtureTransaction(operation: (client: PoolClient) => Promise<void>) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await operation(client);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
 async function fixture(role = "admin") {
   const schoolId = randomUUID(), adminId = randomUUID(), teacherId = randomUUID(), specialistId = randomUUID();
   const classId = randomUUID(), nextClassId = randomUUID(), studentId = randomUUID(), scopeId = randomUUID();
@@ -86,11 +104,13 @@ test("regular reference reads are school-scoped, preserve every stored schedule,
   // school's applied profile, so its effective schedule is demonstrably different.
   const pairId = randomUUID(), swapId = randomUUID();
   const [firstGroupId, secondGroupId] = [other.classId, other.nextClassId].sort();
-  await pool.query("INSERT INTO classpilot_schedule_change_pairs(id,school_id,first_group_id,second_group_id,created_by) VALUES($1,$2,$3,$4,$5)", [pairId, other.schoolId, firstGroupId, secondGroupId, other.adminId]);
-  await pool.query("INSERT INTO classpilot_schedule_changes(id,school_id,pair_id,scheduled_date,timezone_snapshot,status,reason,requested_by_user_id,requested_by_role,requires_admin_approval,reservation_active,approved_by_user_id,approved_at) VALUES($1,$2,$3,$4,'America/New_York','approved','Regular reference fixture',$5,'admin',false,true,$5,now())", [swapId, other.schoolId, pairId, date, other.adminId]);
-  await pool.query(`INSERT INTO classpilot_schedule_change_legs(school_id,schedule_change_id,scheduled_date,leg_order,group_id,primary_teacher_id_snapshot,class_name_snapshot,original_start_time,original_end_time,effective_start_time,effective_end_time,reservation_active)
-    VALUES($1,$2,$3,1,$4,$6,'Grade 5 Math','09:00','09:50','10:00','10:50',true),
-          ($1,$2,$3,2,$5,$6,'Grade 5 Reading','10:00','10:50','09:00','09:50',true)`, [other.schoolId, swapId, date, other.classId, other.nextClassId, other.teacherId]);
+  await fixtureTransaction(async (client) => {
+    await client.query("INSERT INTO classpilot_schedule_change_pairs(id,school_id,first_group_id,second_group_id,created_by) VALUES($1,$2,$3,$4,$5)", [pairId, other.schoolId, firstGroupId, secondGroupId, other.adminId]);
+    await client.query("INSERT INTO classpilot_schedule_changes(id,school_id,pair_id,scheduled_date,timezone_snapshot,status,reason,requested_by_user_id,requested_by_role,requires_admin_approval,reservation_active,approved_by_user_id,approved_at) VALUES($1,$2,$3,$4,'America/New_York','approved','Regular reference fixture',$5,'admin',false,true,$5,now())", [swapId, other.schoolId, pairId, date, other.adminId]);
+    await client.query(`INSERT INTO classpilot_schedule_change_legs(school_id,schedule_change_id,scheduled_date,leg_order,group_id,primary_teacher_id_snapshot,class_name_snapshot,original_start_time,original_end_time,effective_start_time,effective_end_time,reservation_active)
+      VALUES($1,$2,$3,1,$4,$6,'Grade 5 Math','09:00','09:50','10:00','10:50',true),
+            ($1,$2,$3,2,$5,$6,'Grade 5 Reading','10:00','10:50','09:00','09:50',true)`, [other.schoolId, swapId, date, other.classId, other.nextClassId, other.teacherId]);
+  });
   const effectiveWindow = () => scoped(other.schoolId, () => getEffectiveClasspilotScheduleWindow({
     schoolId: other.schoolId, scheduledDate: date, timeZone: "America/New_York",
     group: { id: other.classId, scheduleEnabled: true, blockStartTime: "09:00", blockEndTime: "09:50", scheduleRule: defaultClassScheduleRule() },
