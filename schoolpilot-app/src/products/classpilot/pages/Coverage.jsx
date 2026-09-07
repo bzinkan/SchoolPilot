@@ -104,6 +104,14 @@ function normalizeScopeValue(value) {
   return String(value || "").trim();
 }
 
+function rosterGradeKey(value) {
+  const compact = normalizeScopeValue(value).toLowerCase().replace(/^grade\s*/, "").replace(/[\s-]+/g, "");
+  if (["pk", "prek", "prekindergarten", "prekindergarden"].includes(compact)) return "pk";
+  if (["k", "kg", "kindergarten", "kindergarden"].includes(compact)) return "k";
+  const numeric = compact.replace(/(st|nd|rd|th)$/, "");
+  return /^\d+$/.test(numeric) ? String(Number(numeric)) : compact;
+}
+
 function gradeSortValue(grade) {
   const normalized = normalizeScopeValue(grade);
   const numeric = Number.parseInt(normalized, 10);
@@ -366,6 +374,11 @@ export default function Coverage() {
     }),
     [groupsQuery.data]
   );
+  const scopeGroupClassChoices = useMemo(
+    () => classManagementGroups.filter((group) => scopeGroupStudentGradeFilter === ALL_FILTER
+      || rosterGradeKey(group.gradeLevel) === rosterGradeKey(scopeGroupStudentGradeFilter)),
+    [classManagementGroups, scopeGroupStudentGradeFilter]
+  );
   const filteredScopeGroupStaff = useMemo(() => {
     return (staffQuery.data || []).filter((staff) => {
       const searchText = [
@@ -403,6 +416,13 @@ export default function Coverage() {
     () => paginate(filteredScopeGroupStudents, scopeGroupStudentPage),
     [filteredScopeGroupStudents, scopeGroupStudentPage]
   );
+  const scopeGroupStudentsLoading = adminStudentsQuery.isPending || adminStudentsQuery.isFetching
+    || (scopeGroupStudentClassFilter !== ALL_FILTER && (scopeGroupClassStudentsQuery.isPending || scopeGroupClassStudentsQuery.isFetching));
+  const scopeGroupStudentsError = adminStudentsQuery.isError
+    || (scopeGroupStudentClassFilter !== ALL_FILTER && scopeGroupClassStudentsQuery.isError);
+  const scopeGroupStudentsUnavailable = scopeGroupStudentsLoading || scopeGroupStudentsError;
+  const selectedScopeGroupStudentIds = useMemo(() => new Set(scopeGroupForm.studentIds), [scopeGroupForm.studentIds]);
+  const selectedMatchingStudentCount = filteredScopeGroupStudents.filter((student) => selectedScopeGroupStudentIds.has(student.id)).length;
   const filteredPickerStudents = useMemo(() => {
     const q = studentPickerSearch.trim().toLowerCase();
     if (!q) return adminStudents;
@@ -803,6 +823,18 @@ export default function Coverage() {
       const selected = new Set(prev.studentIds);
       if (selected.has(studentId)) selected.delete(studentId);
       else selected.add(studentId);
+      return { ...prev, studentIds: Array.from(selected) };
+    });
+  };
+
+  const selectMatchingScopeGroupStudents = (include) => {
+    if (scopeGroupStudentsUnavailable) return;
+    setScopeGroupForm((prev) => {
+      const selected = new Set(prev.studentIds);
+      for (const student of filteredScopeGroupStudents) {
+        if (include) selected.add(student.id);
+        else selected.delete(student.id);
+      }
       return { ...prev, studentIds: Array.from(selected) };
     });
   };
@@ -1618,21 +1650,21 @@ export default function Coverage() {
       </Dialog>
 
       <Dialog open={scopeGroupOpen} onOpenChange={setScopeGroupOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-2xl flex-col overflow-hidden">
+          <DialogHeader className="shrink-0 pr-6">
             <DialogTitle>{scopeGroupForm.id ? "Edit Supervision Group" : "Create Supervision Group"}</DialogTitle>
             <DialogDescription>Supervision Groups do not change class rosters.</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          <div data-testid="supervision-group-editor-body" className="min-h-0 space-y-4 overflow-y-auto overscroll-contain p-1">
             <div className="grid gap-2">
-              <Label>Name</Label>
-              <Input value={scopeGroupForm.name} onChange={(e) => setScopeGroupForm((f) => ({ ...f, name: e.target.value }))} placeholder="State testing - 8th grade" />
+              <Label htmlFor="supervision-group-name">Name</Label>
+              <Input id="supervision-group-name" value={scopeGroupForm.name} onChange={(e) => setScopeGroupForm((f) => ({ ...f, name: e.target.value }))} placeholder="State testing - 8th grade" />
             </div>
             <div className="grid gap-2">
-              <Label>Description</Label>
-              <Textarea value={scopeGroupForm.description} onChange={(e) => setScopeGroupForm((f) => ({ ...f, description: e.target.value }))} placeholder="Optional note for admins" />
+              <Label htmlFor="supervision-group-description">Description</Label>
+              <Textarea id="supervision-group-description" value={scopeGroupForm.description} onChange={(e) => setScopeGroupForm((f) => ({ ...f, description: e.target.value }))} placeholder="Optional note for admins" />
             </div>
-            <div className="space-y-2">
+            <div role="group" aria-label="Group staff" className="space-y-2">
               <div className="flex items-center justify-between gap-3">
                 <Label>Staff</Label>
                 <Badge variant="secondary">{scopeGroupForm.staffIds.length} selected</Badge>
@@ -1655,14 +1687,14 @@ export default function Coverage() {
                 ) : pagedScopeGroupStaff.items.map((staff) => (
                   <label key={staff.userId} className="flex cursor-pointer items-center gap-3 border-t first:border-t-0 px-4 py-2 text-sm">
                     <Checkbox checked={scopeGroupForm.staffIds.includes(staff.userId)} onCheckedChange={() => toggleScopeGroupStaff(staff.userId)} />
-                    <span className="flex-1">
+                    <span className="min-w-0 flex-1 break-words">
                       <span className="block font-medium">{displayName(staff)}</span>
                       <span className="block text-xs text-muted-foreground">{[staff.user?.email || staff.email, staff.role || "Staff"].filter(Boolean).join(" - ")}</span>
                     </span>
                   </label>
                 ))}
                 {filteredScopeGroupStaff.length > 0 && (
-                  <div className="flex items-center justify-between gap-3 border-t px-3 py-2 text-xs text-muted-foreground">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-t px-3 py-2 text-xs text-muted-foreground">
                     <span>
                       Showing {(pagedScopeGroupStaff.currentPage - 1) * PICKER_PAGE_SIZE + 1}-{Math.min(pagedScopeGroupStaff.currentPage * PICKER_PAGE_SIZE, filteredScopeGroupStaff.length)} of {filteredScopeGroupStaff.length}
                     </span>
@@ -1690,22 +1722,26 @@ export default function Coverage() {
                 )}
               </div>
             </div>
-            <div className="space-y-2">
+            <div role="group" aria-label="Group students" className="space-y-2">
               <div className="flex items-center justify-between gap-3">
                 <Label>Students</Label>
                 <Badge variant="secondary">{scopeGroupForm.studentIds.length} selected</Badge>
               </div>
               <div className="grid gap-2 md:grid-cols-2">
                 <div className="grid gap-1">
-                  <Label className="text-xs text-muted-foreground">Roster grade</Label>
+                  <Label htmlFor="supervision-group-grade" className="text-xs text-muted-foreground">Roster grade</Label>
                   <Select
                     value={scopeGroupStudentGradeFilter}
                     onValueChange={(value) => {
                       setScopeGroupStudentGradeFilter(value);
+                      const selectedClass = classManagementGroups.find((group) => group.id === scopeGroupStudentClassFilter);
+                      if (value !== ALL_FILTER && selectedClass && rosterGradeKey(selectedClass.gradeLevel) !== rosterGradeKey(value)) {
+                        setScopeGroupStudentClassFilter(ALL_FILTER);
+                      }
                       setScopeGroupStudentPage(1);
                     }}
                   >
-                    <SelectTrigger><SelectValue placeholder="All grades" /></SelectTrigger>
+                    <SelectTrigger id="supervision-group-grade"><SelectValue placeholder="All grades" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value={ALL_FILTER}>All grades</SelectItem>
                       {rosterGrades.map((grade) => (
@@ -1715,7 +1751,7 @@ export default function Coverage() {
                   </Select>
                 </div>
                 <div className="grid gap-1">
-                  <Label className="text-xs text-muted-foreground">Class Management class</Label>
+                  <Label htmlFor="supervision-group-class" className="text-xs text-muted-foreground">Class Management class</Label>
                   <Select
                     value={scopeGroupStudentClassFilter}
                     onValueChange={(value) => {
@@ -1723,10 +1759,10 @@ export default function Coverage() {
                       setScopeGroupStudentPage(1);
                     }}
                   >
-                    <SelectTrigger><SelectValue placeholder="All classes" /></SelectTrigger>
+                    <SelectTrigger id="supervision-group-class" className="min-w-0 [&>span]:truncate"><SelectValue placeholder="All classes" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value={ALL_FILTER}>All classes</SelectItem>
-                      {classManagementGroups.map((group) => (
+                      {scopeGroupClassChoices.map((group) => (
                         <SelectItem key={group.id} value={group.id}>
                           {[group.name, group.gradeLevel ? `Grade ${group.gradeLevel}` : null].filter(Boolean).join(" - ")}
                         </SelectItem>
@@ -1735,6 +1771,7 @@ export default function Coverage() {
                   </Select>
                 </div>
               </div>
+              <p className="text-xs text-muted-foreground">The class list follows the selected roster grade. Changing filters keeps your student selections.</p>
               <div className="relative">
                 <Search className="h-4 w-4 absolute left-3 top-3 text-muted-foreground" />
                 <Input
@@ -1747,22 +1784,40 @@ export default function Coverage() {
                   }}
                 />
               </div>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="outline" size="sm" disabled={scopeGroupStudentsUnavailable || filteredScopeGroupStudents.length === 0 || selectedMatchingStudentCount === filteredScopeGroupStudents.length} onClick={() => selectMatchingScopeGroupStudents(true)}>
+                  {scopeGroupStudentsUnavailable ? 'Select all matching students' : `Select all ${filteredScopeGroupStudents.length} matching students`}
+                </Button>
+                <Button type="button" variant="ghost" size="sm" disabled={scopeGroupStudentsUnavailable || selectedMatchingStudentCount === 0} onClick={() => selectMatchingScopeGroupStudents(false)}>
+                  Clear matching students
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">Selection applies to all matching students across every page. Students selected outside these filters stay selected.</p>
+              {!scopeGroupStudentsUnavailable && <p role="status" className="text-xs text-muted-foreground">{selectedMatchingStudentCount} of {filteredScopeGroupStudents.length} matching students selected · {scopeGroupForm.studentIds.length} total selected</p>}
               <div className="rounded-md border overflow-hidden">
-                {scopeGroupClassStudentsQuery.isFetching && scopeGroupStudentClassFilter !== ALL_FILTER ? (
-                  <div className="px-4 py-8 text-center text-sm text-muted-foreground">Loading class roster...</div>
+                {scopeGroupStudentsLoading ? (
+                  <div role="status" className="px-4 py-8 text-center text-sm text-muted-foreground">Loading student roster...</div>
+                ) : scopeGroupStudentsError ? (
+                  <div role="alert" className="space-y-2 px-4 py-6 text-center text-sm">
+                    <p>Could not load the student roster. Your selections are preserved.</p>
+                    <Button type="button" variant="outline" size="sm" onClick={() => {
+                      if (adminStudentsQuery.isError) adminStudentsQuery.refetch();
+                      if (scopeGroupStudentClassFilter !== ALL_FILTER && scopeGroupClassStudentsQuery.isError) scopeGroupClassStudentsQuery.refetch();
+                    }}>Retry student roster</Button>
+                  </div>
                 ) : filteredScopeGroupStudents.length === 0 ? (
                   <div className="px-4 py-8 text-center text-sm text-muted-foreground">No students match these filters</div>
                 ) : pagedScopeGroupStudents.items.map((student) => (
                   <label key={student.id} className="flex cursor-pointer items-center gap-3 border-t first:border-t-0 px-4 py-2 text-sm">
-                    <Checkbox checked={scopeGroupForm.studentIds.includes(student.id)} onCheckedChange={() => toggleScopeGroupStudent(student.id)} />
-                    <span className="flex-1">
+                    <Checkbox checked={selectedScopeGroupStudentIds.has(student.id)} onCheckedChange={() => toggleScopeGroupStudent(student.id)} />
+                    <span className="min-w-0 flex-1 break-words">
                       <span className="block font-medium">{student.studentName}</span>
                       <span className="block text-xs text-muted-foreground">{student.studentEmail || "No email"} - Grade {student.gradeLevel || "None"}</span>
                     </span>
                   </label>
                 ))}
-                {!scopeGroupClassStudentsQuery.isFetching && filteredScopeGroupStudents.length > 0 && (
-                  <div className="flex items-center justify-between gap-3 border-t px-3 py-2 text-xs text-muted-foreground">
+                {!scopeGroupStudentsUnavailable && filteredScopeGroupStudents.length > 0 && (
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-t px-3 py-2 text-xs text-muted-foreground">
                     <span>
                       Showing {(pagedScopeGroupStudents.currentPage - 1) * PICKER_PAGE_SIZE + 1}-{Math.min(pagedScopeGroupStudents.currentPage * PICKER_PAGE_SIZE, filteredScopeGroupStudents.length)} of {filteredScopeGroupStudents.length}
                     </span>
@@ -1797,7 +1852,7 @@ export default function Coverage() {
               </label>
             )}
           </div>
-          <DialogFooter>
+          <DialogFooter className="shrink-0 gap-2 border-t pt-4">
             <Button variant="outline" onClick={() => setScopeGroupOpen(false)}>Cancel</Button>
             <Button onClick={submitScopeGroup} disabled={saveScopeGroupMutation.isPending || !scopeGroupForm.name.trim()}>
               Save
