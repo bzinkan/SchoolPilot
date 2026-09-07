@@ -4,7 +4,9 @@ School administrators manage schedules in **Class Management → Scheduling**, t
 
 ## Reusable Schedule Profiles
 
-Choose **Create Schedule Profile**, give it a name such as NWEA, Assembly or Two-Hour Delay, and select participating grades or individual classes. For each selected class, keep its normal schedule, set custom start/end times, or choose **Does not meet**. Custom times work for existing fixed-time classes as well as period-based classes. Saving the profile does not change the calendar.
+Choose **Create Schedule Profile**, give it a name such as NWEA, Assembly or Two-Hour Delay, and choose a reference date. **Load regular schedule** selects the classes meeting that day with no time overrides; **Start blank** lets you select participating grades or classes manually. For each selected class, keep its normal schedule, set custom start/end times, or choose **Does not meet**. Custom times start from the reference date's resolved fixed or period-based window. Changing the reference date preserves selections and adjustments. Saving the profile does not change the calendar.
+
+Unchanged classes follow their regular schedule on each application date. An explicit custom time remains the chosen clock time, even if the reference day or regular bells later change. The reference date is editor state only; it is not saved in the profile or automatically added to application dates.
 
 For MAP testing with an intervention specialist or another teacher, first create the required **Supervision Groups** and staff pairings in Coverage. Add optional testing blocks to the profile, choosing each group's paired staff member and its start/end times. Regular class rosters stay intact. Separate blocks can give each grade or group its own time and proctor.
 
@@ -24,6 +26,8 @@ At the scheduled testing time, the worker activates ordinary Coverage supervisio
 The applications list shows pending, active, ended, failed and missed testing-block outcomes. Activation runs on the scheduler cadence with bounded work per tick, so it is not an exact-to-the-second start. Review failures in Scheduling and manage live groups in Coverage. Schedule Profiles do not generate safety alerts or administrator email notifications.
 
 Limits are 30 saved profiles, 100 retained applications and 2,000 testing windows per school. They are explicit validation limits; saved applications are not silently discarded when a limit is reached.
+
+The administrator-only `GET /api/classpilot/admin/schedule-profiles/regular-schedule?referenceDate=YYYY-MM-DD` endpoint returns a read-only projection of current regular settings, including date/day/bell metadata and class windows or nonmeeting/unavailable statuses. Calendar exceptions remain effective, while applied profiles, swaps and recorded sessions are excluded. It uses the authenticated school context, returns no roster/device data, and does not create settings or modify scheduling state. The response includes all active classes; whole-day loading enforces the existing 500-individual-class limit without truncation. Deploy this additive API before its frontend editor; it needs no database migration.
 
 ## Set up the school calendar and bells
 

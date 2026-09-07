@@ -38,11 +38,17 @@ The month calendar stores shared school closures. An explicit ClassPilot instruc
 
 ## Apply a special schedule or testing day
 
-1. In **Schedule profiles**, choose **Create Schedule Profile** and name the plan, such as NWEA or Two-Hour Delay.
-2. Select participating grades or classes. For each class, keep its normal schedule, enter custom times, or choose **Does not meet**.
+1. In **Schedule profiles**, choose **Create Schedule Profile** and name the plan, such as NWEA or Two-Hour Delay. Choose an instructional **Reference date** and select **Load regular schedule** to begin with the classes that meet that day. **Start blank** lets you choose the participating grades and classes yourself.
+2. Review the **Regular schedule** column and adjust the selection. Use **Clear selection** to remove the imported classes and their rules before choosing a smaller group. Meeting classes initially use **Keep existing schedule**. Choose **Custom time** to start from that class's resolved time for the reference date, then edit it; choose **Does not meet** to skip the class on the dates where the profile is applied. Returning to **Keep existing schedule** removes that class's custom-time or skip rule.
 3. For supervised testing, first create the student groups and staff pairings in **Coverage**. Add testing blocks to the profile, selecting each group, its assigned staff member and its times. Student class rosters remain intact.
 4. Save the profile. Then choose **Apply**, select up to 31 instructional dates, and optionally use **Customize this use** for a variation that belongs only to this application.
 5. Choose **Preview application**. Resolve overlaps, approved swaps, unavailable staff pairings and monitoring-hours issues. Choose **Apply reviewed dates** when the preview is clear.
+
+The reference date supplies a comparison of the regular school day. It accounts for the school calendar, that day's weekday and A/B rules, class term dates, and the applicable bell timetable. It excludes applied schedule profiles and approved one-day swaps. A class that does not meet, has scheduling turned off, or has an unresolved time or period is shown with its status instead of a guessed time. Choose another instructional date if the reference date is closed. For more than 500 meeting classes, start blank and choose a smaller selection.
+
+Loading the regular schedule does not save a profile or change a live schedule. The reference date is not stored in the profile or its application, and keeping every class unchanged saves a profile without custom-time rules. **Keep existing schedule** uses the class's eligible regular schedule on each eventual application date; it does not freeze the reference date's times. Loading a different comparison date after editing preserves your class selection and custom rules.
+
+Editing and duplicating a saved profile offer the same regular-day comparison. When you customize an application, its first selected date supplies the initial reference. The application preview remains the final check of the actual selected dates, including interactions with other applied plans and approved swaps.
 
 For example, an NWEA plan can skip or move the regular meetings that overlap a 9:00–10:00 testing block and assign the testing group to its paired intervention specialist. The preview checks staff and student obligations. Simply adding a testing block does not automatically cancel conflicting classes.
 

@@ -13,11 +13,12 @@ test("Scheduling sections preserve drafts, protect profile actions, and save onl
     import { createRoot } from 'react-dom/client';
     import { MemoryRouter } from 'react-router-dom';
     import { QueryClientProvider } from '@tanstack/react-query';
+    import { AuthProvider } from '/src/contexts/AuthContext.jsx';
     import { queryClient } from '/src/lib/queryClient.js';
     import Scheduling from '/src/products/classpilot/pages/AdminScheduling.jsx';
     import { AdminClassesTabs } from '/src/products/classpilot/components/ScheduleRouteTabs.jsx';
     import '/src/index.css';
-    createRoot(document.getElementById('root')).render(React.createElement(QueryClientProvider,{client:queryClient},React.createElement(MemoryRouter,{initialEntries:['/classpilot/admin/classes/scheduling']},React.createElement('main',{className:'mx-auto max-w-6xl space-y-6 p-6'},React.createElement(AdminClassesTabs),React.createElement(Scheduling)))));
+    createRoot(document.getElementById('root')).render(React.createElement(QueryClientProvider,{client:queryClient},React.createElement(AuthProvider,null,React.createElement(MemoryRouter,{initialEntries:['/classpilot/admin/classes/scheduling']},React.createElement('main',{className:'mx-auto max-w-6xl space-y-6 p-6'},React.createElement(AdminClassesTabs),React.createElement(Scheduling))))));
   `;
   const vite = await createServer({ root, logLevel: "error", server: { host: "127.0.0.1", port: 0 }, plugins: [{ name: "scheduling-browser-test",
     configureServer(server) { server.middlewares.use(async (req, res, next) => {
@@ -41,6 +42,7 @@ test("Scheduling sections preserve drafts, protect profile actions, and save onl
     page.on("pageerror", (error) => errors.push(error.message));
     await page.route("**/api/**", async (route) => {
       const request = route.request(), url = new URL(request.url());
+      if (url.pathname.endsWith('/auth/me')) return route.fulfill({ json: { user: { id: 'admin', role: 'school_admin' }, activeSchoolId: 'school', memberships: [{ id: 'membership', schoolId: 'school', role: 'school_admin' }], licenses: { classPilot: true } } });
       if (url.pathname.endsWith("/csrf")) return route.fulfill({ json: { csrfToken: "fixture-csrf" } });
       if (url.pathname.endsWith("/schedule-profiles")) return route.fulfill({ json: { revision, schoolTimezone: "America/New_York", schoolLocalToday: "2026-09-01", profiles: emptyFixture ? [] : [{ id: "early", revision: 1, definition: { name: "Early release", grades: [], classIds: ["class"], classRules: [], testingBlocks: [] } }], applications: [], classes: [], staff: [], supervisionGroups: [], testingStatuses: [] } });
       const calendarProjection = (month) => ({ month, schoolTimezone: "America/New_York", schoolLocalToday: "2026-09-01", ...calendarState });

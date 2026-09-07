@@ -4,12 +4,17 @@ import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { getScheduleProfiles, saveScheduleProfile, previewScheduleProfile, applyScheduleProfile, cancelScheduleProfileApplication } from "../../services/classpilotScheduleProfiles.js";
+import { getClasspilotRegularSchedule } from "../../services/classpilotRegularSchedule.js";
 import { logAudit } from "../../services/audit.js";
 import { broadcastClasspilotScheduleChangeUpdate } from "../../services/classpilotScheduleChanges.js";
 
 const router = Router();
 router.use(authenticate, requireSchoolContext, requireClasspilotEntitlement, requireRole("admin", "school_admin"));
 router.use((_req, res, next) => { res.setHeader("Cache-Control", "no-store"); next(); });
+router.get("/regular-schedule", async (req, res, next) => {
+  try { res.json(await getClasspilotRegularSchedule({ schoolId: res.locals.schoolId!, referenceDate: req.query.referenceDate })); }
+  catch (error) { next(error); }
+});
 router.get("/", async (_req, res, next) => {
   try { res.json(await getScheduleProfiles(res.locals.schoolId!)); } catch (error) { next(error); }
 });
