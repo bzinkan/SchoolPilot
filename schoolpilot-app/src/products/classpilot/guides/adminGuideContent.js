@@ -185,7 +185,7 @@ export const adminGuideTopics = [
     phase: "Operations",
     title: "Administer Coverage",
     summary: "Define who can temporarily supervise students and preserve clear ownership through claim and release.",
-    keywords: ["coverage", "permission", "supervision group", "assignment", "claim", "release", "reroute", "history"],
+    keywords: ["coverage", "permission", "supervision group", "assignment", "claim", "release", "reroute", "history", "delete", "remove"],
     role: "Administrator or school administrator",
     route: "/classpilot/coverage",
     routeLabel: "Open Coverage",
@@ -194,6 +194,7 @@ export const adminGuideTopics = [
       { title: "Assign exact students", body: "Create the assignment with its intended staff, students, and time boundary. Do not use missing targets as a broader fallback." },
       { title: "Watch ownership transitions", body: "Claim, reroute, and release operations update who controls the student. Wait for the new context before sending actions." },
       { title: "Review controls and history", body: "Coverage exposes a bounded control set. Use history to confirm who claimed, acted, and released an assignment." },
+      { title: "Remove unused setup", body: "In Supervision Groups, choose Delete group and review the confirmation to remove a group and its group-specific permissions. In Staff Permissions, Remove permissions removes the displayed permissions for that staff member, including disabled entries. These actions preserve staff and student accounts, regular class rosters and supervision history. Resolve any saved-profile, upcoming-testing or active-supervision dependency shown in the message before deleting. Disable keeps a permission entry available for later use." },
     ],
   },
   {
