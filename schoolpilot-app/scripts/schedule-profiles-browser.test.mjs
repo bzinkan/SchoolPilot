@@ -217,7 +217,9 @@ test('Workspace keyboard navigation and current staff choices preserve independe
     const evidence = path.resolve(root, '../soc2-evidence/schedule-workspace/browser'); await mkdir(evidence, { recursive: true });
     for (const theme of ['light', 'dark']) for (const [device, viewport] of Object.entries({ desktop: { width: 1365, height: 950 }, mobile: { width: 390, height: 844 } })) {
       await page.setViewportSize(viewport); await page.evaluate(value => document.documentElement.classList.toggle('dark', value === 'dark'), theme);
-      assert.ok(await picker.evaluate(el => { const box = el.getBoundingClientRect(); return box.right <= innerWidth && box.left >= 0 && box.top >= 0 && box.bottom <= innerHeight; }), 'The picker stays inside the viewport');
+      await page.waitForFunction(() => { const box = document.querySelector('[role="dialog"]')?.getBoundingClientRect(); return box && box.left >= 0 && box.right <= innerWidth && box.top >= 0 && box.bottom <= innerHeight; }, undefined, { timeout: 2500 });
+      const bounds = await picker.evaluate(el => { const box = el.getBoundingClientRect(); return { right: box.right, left: box.left, top: box.top, bottom: box.bottom, width: innerWidth, height: innerHeight, maxHeight: getComputedStyle(el).maxHeight }; });
+      assert.ok(bounds.right <= bounds.width && bounds.left >= 0 && bounds.top >= 0 && bounds.bottom <= bounds.height, `The picker stays inside the viewport: ${device}/${theme} ${JSON.stringify(bounds)}`);
       await page.screenshot({ path: path.join(evidence, `bulk-${device}-${theme}.png`) });
     }
     await picker.getByRole('button', { name: 'Add 1 testing block', exact: true }).click();
