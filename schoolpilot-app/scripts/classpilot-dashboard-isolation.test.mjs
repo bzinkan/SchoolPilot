@@ -667,11 +667,14 @@ test('a re-keyed screenshot cohort carries classmates forward but never a change
     new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
     'utf8',
   );
-  assert.match(
-    dashboard,
-    /placeholderData: \(previousData, previousQuery\) => screenshotCohortPlaceholderData\([\s\S]{0,220}deniedStudentIds: screenshotPlaceholderDeniedIds/,
-    'the cohort carry-forward must run the same revocation fence as its query function',
+  const placeholderSource = dashboard.slice(
+    dashboard.indexOf('placeholderData: (previousData, previousQuery)'),
+    dashboard.indexOf('refetchInterval: request.refetchInterval'),
   );
+  assert.ok(placeholderSource.includes('deniedStudentIds: screenshotPlaceholderDeniedIds')
+    && placeholderSource.includes('screenshotCohortPlaceholderData(previousData, previousQuery, request, privacy)')
+    && /buildScreenshotCohortPlaceholderData\([\s\S]*TILE_BATCH_QUERY_ROOTS\.screenshots, screenshotTileBatchContextKey[\s\S]*request,[\s\S]*privacy/.test(placeholderSource),
+  'both observer and same-context cache carry-forward must use the exact revocation filter');
   assert.match(
     dashboard,
     /queryClient\.setQueryData\(request\.queryKey, \(previous\) => \(/,

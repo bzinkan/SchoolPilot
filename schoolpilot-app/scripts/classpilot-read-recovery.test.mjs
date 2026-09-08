@@ -7,7 +7,10 @@ import {
   createCoalescedClasspilotRefresh,
   deniedTileStudentIds,
   isClasspilotSessionUnavailable,
+  isCurrentScreenshotRead,
+  isStudentScreenshotReadEligible,
   recordTileReadDenial,
+  retireChangedTileReadDenials,
   tileReadAuthorityMap,
   tileRequestWithoutDeniedStudents,
 } from '../src/products/classpilot/lib/classpilotReadRecovery.js';
@@ -15,6 +18,41 @@ import {
 const liveSession = { id: 'class-a', sessionMode: 'live', endTime: null, rosterSnapshotCompletedAt: '2026-09-04T12:00:00Z' };
 const student = (id, binding = 'binding-a') => ({ studentId: id, realtimeBinding: binding, isLoggedIn: true, classroomState: { revision: 1 } });
 const request = { kind: 'screenshots', body: { studentIds: ['a', 'b'], teachingSessionId: 'class-a' } };
+
+test('screenshot eligibility excludes explicit privacy states, not missing or stale telemetry', () => {
+  for (const row of [{}, student('a'), { ...student('a'), status: 'offline', lastSeenAt: null },
+    { ...student('a'), monitoringState: 'signal_lost' }, { loginState: 'unknown' }]) {
+    assert.equal(isStudentScreenshotReadEligible(row), true);
+  }
+  for (const fields of [{ isLoggedIn: false }, { loginState: 'not_logged_in' },
+    { _realtimeSignedOut: true }, { activityState: 'delegated' }, { _realtimeSuppressed: true }]) {
+    assert.equal(isStudentScreenshotReadEligible({ ...student('a'), ...fields }), false);
+  }
+  assert.equal(isStudentScreenshotReadEligible(student('a'), true), false);
+});
+
+test('a preview response cannot survive eligibility or context changes, including away and back', () => {
+  const read = { enabled: true, fenceKey: 'class-a:eligible', fenceGeneration: 1 };
+  assert.equal(isCurrentScreenshotRead(read, { ...read }), true);
+  assert.equal(isCurrentScreenshotRead(read, { ...read, enabled: false }), false);
+  assert.equal(isCurrentScreenshotRead(read, { ...read, fenceKey: 'class-a:signed-out' }), false);
+  assert.equal(isCurrentScreenshotRead(read, { ...read, fenceGeneration: 3 }), false);
+  assert.equal(isCurrentScreenshotRead(read, null), false);
+});
+
+test('confirmed sign-out retires a completed preview denial before same-binding re-login', () => {
+  const denials = new Set();
+  const loggedIn = tileReadAuthorityMap('class-a', [student('a'), student('b')]);
+  recordTileReadDenial(denials, 'screenshots', loggedIn, ['a', 'b']);
+  recordTileReadDenial(denials, 'history', loggedIn, ['a']);
+  assert.equal(retireChangedTileReadDenials(denials, 'screenshots', loggedIn, loggedIn), false);
+  const loggedOut = tileReadAuthorityMap('class-a', [
+    { ...student('a'), isLoggedIn: false, loginState: 'not_logged_in' }, student('b'),
+  ]);
+  assert.equal(retireChangedTileReadDenials(denials, 'screenshots', loggedIn, loggedOut), true);
+  assert.deepEqual([...deniedTileStudentIds(denials, 'screenshots', loggedIn)], ['b']);
+  assert.deepEqual([...deniedTileStudentIds(denials, 'history', loggedIn)], ['a']);
+});
 
 test('scheduled active metadata is not observation authority; missing readiness fails private', () => {
   assert.equal(classpilotObservationSessionEligible(liveSession), true);
