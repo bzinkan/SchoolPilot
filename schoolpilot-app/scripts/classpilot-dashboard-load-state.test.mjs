@@ -2312,7 +2312,18 @@ test('terminal read denials stop clock and lifecycle replay and recover only aft
       await settle();
       assert.equal(replacementRequests.filter((id) => id === OWN_SESSION_ID).length, 1,
         'late completion cannot re-arm the superseded class');
-      assert.equal(await replacementPage.getByTestId(`card-student-${STUDENT_ID}`).count(), 1);
+      const replacementState = await replacementPage.evaluate((studentId) => ({
+        cards: document.querySelectorAll(`[data-testid="card-student-${studentId}"]`).length,
+        skeletons: document.querySelectorAll(`[data-testid="student-tile-skeleton-${studentId}"]`).length,
+        selectedSession: document.querySelector('[data-testid="select-admin-observe"]')?.value,
+        selection: document.querySelector('[data-testid="badge-selection-count"]')?.textContent,
+        unavailable: document.querySelector('[data-testid="students-query-error"]')?.textContent,
+      }), STUDENT_ID);
+      assert.equal(replacementState.cards, 1, JSON.stringify({
+        ...replacementState, pageErrors: replacementHarness.pageErrors,
+        recentAggregateSessions: replacementRequests.slice(-3),
+        recentTileSessions: replacementHarness.tileRequests.slice(-3).map((request) => request.body?.teachingSessionId),
+      }));
       assert.deepEqual(replacementHarness.pageErrors, []);
     } finally {
       releaseOldRequest();
@@ -2344,6 +2355,9 @@ test('terminal read denials stop clock and lifecycle replay and recover only aft
 });
 
 test('live preview eligibility follows sign-in without replaying denied or superseded authority', { timeout: 180_000 }, async () => {
+  const trace = (message) => {
+    if (process.env.CLASSPILOT_BROWSER_TRACE === '1') process.stderr.write(`[preview eligibility] ${message}\n`);
+  };
   const vite = await createServer({ root: APP_ROOT, logLevel: 'error', server: { host: '127.0.0.1', port: 0 } });
   await vite.listen();
   const baseURL = `http://127.0.0.1:${vite.httpServer.address().port}`;
@@ -2366,6 +2380,7 @@ test('live preview eligibility follows sign-in without replaying denied or super
   const newPage = async () => {
     const page = await browser.newPage();
     pages.push(page);
+    page.on('pageerror', (error) => trace(`page error: ${error.message}`));
     await page.clock.install({ time: fixedTime });
     return page;
   };
@@ -2374,6 +2389,7 @@ test('live preview eligibility follows sign-in without replaying denied or super
     // The production report began with a frozen roster of 23 signed-out rows.
     // History is still authorized; only live screenshot requests should wait.
     const signInPage = await newPage();
+    trace('signed-out roster and new logins');
     const roster = Array.from({ length: 23 }, (_, index) => signedOut({
       studentId: `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
       studentName: `Sign-in Student ${index + 1}`,
@@ -2431,6 +2447,7 @@ test('live preview eligibility follows sign-in without replaying denied or super
     // Missing telemetry is not the same as an explicit sign-out. Suppression
     // remains private, but stale and unknown students retain reconciliation.
     const uncertainPage = await newPage();
+    trace('unknown/stale eligibility');
     const staleAt = new Date(fixedTime.getTime() - 120_000).toISOString();
     const uncertainRows = [
       student({ loginState: undefined, isLoggedIn: undefined, realtimeBinding: null, realtimeRevision: null, lastSeenAt: null, realtimeObservedAt: null }),
@@ -2452,21 +2469,31 @@ test('live preview eligibility follows sign-in without replaying denied or super
     // A logout can beat the aggregate snapshot. One screenshot404 may request
     // a fresh aggregate, but it must never clear or replay its denied authority.
     const logoutPage = await newPage();
+    trace('recorded404, logout, and same-binding return');
     let releaseLogout;
     const logoutGate = new Promise((resolve) => { releaseLogout = resolve; });
     pendingReleases.push(releaseLogout);
-    let logoutCanRead = false;
+    let logoutCanRead = true;
     const logoutAggregate = aggregateController({ scoped: success([student({ classroomState: { revision: 1 }, lastSeenAt: fixedTime.toISOString(), realtimeObservedAt: fixedTime.toISOString() })]) });
     const logoutHarness = await configureDashboard(logoutPage, {
       aggregate: logoutAggregate, activeSession: live, allSessions: [live],
       screenshotTiles: async () => {
+        if (logoutCanRead) return { tiles: [{ studentId: STUDENT_ID, screenshot: null }] };
         await logoutGate;
-        return logoutCanRead ? { tiles: [{ studentId: STUDENT_ID, screenshot: null }] }
-          : { status: 404, body: { code: 'CLASSPILOT_NO_ACCESSIBLE_TILES' } };
+        return { status: 404, body: { code: 'CLASSPILOT_NO_ACCESSIBLE_TILES' } };
       },
     });
     await logoutPage.goto(`${baseURL}/classpilot`);
-    await waitUntil(() => screenshots(logoutHarness).length === 1, 'hold the first screenshot read across the logout');
+    await waitUntil(() => screenshots(logoutHarness).length > 0, 'establish a successful initial scoped screenshot read');
+    await logoutHarness.authenticateWebSocket();
+    await logoutPage.waitForLoadState('networkidle');
+    const screenshotsBeforeLogout = screenshots(logoutHarness).length;
+    logoutCanRead = false;
+    await logoutHarness.sendWebSocketMessage({ type: 'screenshot-available', schoolId: SCHOOL_ID, teachingSessionId: OWN_SESSION_ID, studentId: STUDENT_ID, capturedAt: fixedTime.toISOString() });
+    await logoutPage.clock.runFor(500);
+    await waitUntil(() => screenshots(logoutHarness).length === screenshotsBeforeLogout + 1, 'hold exactly one new screenshot read across the logout');
+    assert.deepEqual(screenshots(logoutHarness).at(-1).body.studentIds, [STUDENT_ID]);
+    assert.equal(screenshots(logoutHarness).at(-1).body.teachingSessionId, OWN_SESSION_ID);
     const beforeLogoutCheck = scopedRequests(logoutAggregate).length;
     logoutAggregate.setScopedResponse(success([signedOut({ realtimeBinding: 'binding-a', realtimeRevision: 2 })]));
     releaseLogout();
@@ -2477,10 +2504,8 @@ test('live preview eligibility follows sign-in without replaying denied or super
     await logoutPage.clock.fastForward(65_000);
     await logoutPage.evaluate(() => window.dispatchEvent(new Event('focus')));
     await settle();
-    assert.equal(screenshots(logoutHarness).length, 1, 'learning the sign-out must stop live requests rather than replay the404');
+    assert.equal(screenshots(logoutHarness).length, screenshotsBeforeLogout + 1, 'learning the sign-out must stop live requests rather than replay the404');
     assert.equal(logoutAggregate.requests.some((request) => request.teachingSessionId && request.teachingSessionId !== OWN_SESSION_ID), false);
-    await logoutHarness.authenticateWebSocket();
-    await settle();
     const returnedAt = await logoutPage.evaluate(() => Date.now());
     logoutCanRead = true;
     logoutAggregate.setScopedResponse(success([student({
@@ -2492,24 +2517,32 @@ test('live preview eligibility follows sign-in without replaying denied or super
       studentId: STUDENT_ID, realtimeBinding: 'binding-a', revision: 3, observedAtMs: returnedAt,
     });
     await logoutPage.clock.runFor(500);
-    await waitUntil(() => screenshots(logoutHarness).length > 1, 'a confirmed intervening sign-out permits a new same-binding login after an already-recorded404');
+    await waitUntil(() => screenshots(logoutHarness).length > screenshotsBeforeLogout + 1, 'a confirmed intervening sign-out permits a new same-binding login after an already-recorded404');
     await assertNoWarning(logoutPage);
     assert.deepEqual(logoutHarness.pageErrors, []);
     await logoutPage.close();
 
     const deniedPage = await newPage();
+    trace('unchanged denial remains latched');
+    let denyEstablishedRead = false;
     const deniedAggregate = aggregateController({ scoped: success([student({ lastSeenAt: fixedTime.toISOString(), realtimeObservedAt: fixedTime.toISOString() })]) });
     const deniedHarness = await configureDashboard(deniedPage, {
       aggregate: deniedAggregate, activeSession: live, allSessions: [live],
-      screenshotTiles: { status: 404, body: { code: 'CLASSPILOT_NO_ACCESSIBLE_TILES' } },
+      screenshotTiles: () => denyEstablishedRead
+        ? { status: 404, body: { code: 'CLASSPILOT_NO_ACCESSIBLE_TILES' } }
+        : { tiles: [{ studentId: STUDENT_ID, screenshot: null }] },
     });
     await deniedPage.goto(`${baseURL}/classpilot`);
-    await deniedPage.getByTestId('tile-read-denied').waitFor();
-    await waitUntil(() => scopedRequests(deniedAggregate).length === 2, 'the denial must reconcile once even when the aggregate authority is unchanged');
+    await waitUntil(() => screenshots(deniedHarness).length > 0, 'establish the unchanged-authority screenshot read before denial');
     await deniedHarness.authenticateWebSocket();
-    // Socket authentication has its own existing reconciliation. Settle that
-    // independent lifecycle read before counting retries from screenshot events.
-    await waitUntil(() => scopedRequests(deniedAggregate).length === 3, 'socket authentication retains its normal aggregate reconciliation');
+    await deniedPage.waitForLoadState('networkidle');
+    const screenshotsBeforeDenial = screenshots(deniedHarness).length;
+    const aggregateBeforeDenial = scopedRequests(deniedAggregate).length;
+    denyEstablishedRead = true;
+    await deniedHarness.sendWebSocketMessage({ type: 'screenshot-available', schoolId: SCHOOL_ID, teachingSessionId: OWN_SESSION_ID, studentId: STUDENT_ID, capturedAt: fixedTime.toISOString() });
+    await deniedPage.clock.runFor(500);
+    await deniedPage.getByTestId('tile-read-denied').waitFor();
+    await waitUntil(() => scopedRequests(deniedAggregate).length === aggregateBeforeDenial + 1, 'the denial must reconcile once even when the aggregate authority is unchanged');
     await settle();
     const deniedRequestsBeforeEvents = scopedRequests(deniedAggregate).length;
     for (let index = 0; index < 3; index += 1) {
@@ -2518,18 +2551,19 @@ test('live preview eligibility follows sign-in without replaying denied or super
     await deniedPage.clock.runFor(1000);
     await settle();
     assert.equal(scopedRequests(deniedAggregate).length, deniedRequestsBeforeEvents, 'unchanged denied events cannot repeat the aggregate recovery attempt');
-    assert.equal(screenshots(deniedHarness).length, 1, 'successful aggregate reconciliation does not re-arm a genuine screenshot404');
+    assert.equal(screenshots(deniedHarness).length, screenshotsBeforeDenial + 1, 'successful aggregate reconciliation does not re-arm a genuine screenshot404');
     assert.equal(await deniedPage.getByTestId('tile-read-denied').count(), 1);
     await deniedPage.clock.fastForward(65_000);
     await deniedPage.evaluate(() => { window.dispatchEvent(new Event('focus')); window.dispatchEvent(new Event('online')); });
     await settle();
-    assert.equal(screenshots(deniedHarness).length, 1, 'polls and lifecycle events still cannot replay unchanged denied authority');
+    assert.equal(screenshots(deniedHarness).length, screenshotsBeforeDenial + 1, 'polls and lifecycle events still cannot replay unchanged denied authority');
     assert.deepEqual(deniedHarness.pageErrors, []);
     await deniedPage.close();
 
     // A new login replaces the request cohort. Its unchanged classmate keeps
     // the exact prior image, and the old cohort's eventual404 cannot deny them.
     const joinedPage = await newPage();
+    trace('classmate placeholder across eligible-cohort replacement');
     let releasePriorCohort;
     let releaseJoinedCohort;
     const priorCohortGate = new Promise((resolve) => { releasePriorCohort = resolve; });
@@ -2559,21 +2593,25 @@ test('live preview eligibility follows sign-in without replaying denied or super
     });
     await joinedPage.goto(`${baseURL}/classpilot`);
     await joinedPage.getByTestId(`screenshot-${STUDENT_ID}`).waitFor();
+    trace('initial classmate image rendered');
     await joinedHarness.authenticateWebSocket();
     await settle();
     await joinedPage.clock.fastForward(31_000);
     await waitUntil(() => priorCohortCalls === 2, 'the previous cohort reconciliation must be held in flight');
+    trace('old cohort request held');
     const joinedAt = await joinedPage.evaluate(() => Date.now());
     joinedRows[1] = student({ studentId: SIGNED_OUT_STUDENT_ID, studentName: 'Joining Student', realtimeBinding: 'joining-binding', realtimeRevision: 2, lastSeenAt: new Date(joinedAt).toISOString(), realtimeObservedAt: new Date(joinedAt).toISOString() });
     joinedAggregate.setScopedResponse(success([...joinedRows]));
     await joinedHarness.sendWebSocketMessage({ type: 'student-update', eventVersion: 2, schoolId: SCHOOL_ID, teachingSessionId: OWN_SESSION_ID, studentId: SIGNED_OUT_STUDENT_ID, realtimeBinding: 'joining-binding', revision: 2, observedAtMs: joinedAt });
     await joinedPage.clock.runFor(500);
     await waitUntil(() => screenshots(joinedHarness).some((request) => request.body.studentIds.length === 2), 'the new login must create its eligible replacement cohort');
+    trace('replacement cohort request held');
     assert.equal(await joinedPage.getByTestId(`screenshot-${STUDENT_ID}`).count(), 1,
       `unchanged classmate must retain its preview during eligible-cohort replacement; skeletons: ${await joinedPage.getByTestId(`student-tile-skeleton-${STUDENT_ID}`).count()}, connected: ${await joinedPage.getByTestId('text-online-count').innerText()}`);
     assert.equal(await joinedPage.getByTestId(`screenshot-${STUDENT_ID}`).getAttribute('src'), TINY_SCREENSHOT_DATA_URL,
       'a classmate with unchanged authority retains its decoded frame while the replacement cohort is pending');
     releaseJoinedCohort();
+    trace('replacement cohort response released');
     await joinedPage.waitForFunction(({ id, source }) => document.querySelector(`[data-testid="screenshot-${id}"]`)?.getAttribute('src') === source,
       { id: STUDENT_ID, source: UPDATED_SCREENSHOT_DATA_URL });
     const readsBeforePriorCohort = joinedAggregate.requests.length;
@@ -2584,15 +2622,18 @@ test('live preview eligibility follows sign-in without replaying denied or super
     assert.equal(await joinedPage.getByTestId(`screenshot-${STUDENT_ID}`).getAttribute('src'), UPDATED_SCREENSHOT_DATA_URL);
     assert.deepEqual(joinedHarness.pageErrors, []);
     await joinedPage.close();
+    trace('classmate placeholder case complete');
 
     // A→signed-out→A may reuse the opaque binding and cohort key. Neither an
     // old targeted success nor404 may revive pixels/denials after that cycle.
     for (const oldResult of ['success', 'denial']) {
+      trace(`late targeted ${oldResult} across same-binding sign-out/login`);
       const bindingPage = await newPage();
       let releaseOldTargeted;
       const oldTargetedGate = new Promise((resolve) => { releaseOldTargeted = resolve; });
       pendingReleases.push(releaseOldTargeted);
       let screenshotCalls = 0;
+      let delayedCaptureAt = fixedTime.toISOString();
       const bindingRows = (loggedIn, revision) => [student({
         status: loggedIn ? 'online' : 'offline', isLoggedIn: loggedIn,
         loginState: loggedIn ? 'logged_in' : 'not_logged_in',
@@ -2611,7 +2652,7 @@ test('live preview eligibility follows sign-in without replaying denied or super
           }
           return { tiles: [{ studentId: STUDENT_ID, bindingVersion: 'v2:same-binding-eligibility', screenshot: {
             screenshot: call === 2 ? VIEWER_SCREENSHOT_DATA_URL : call >= 3 ? UPDATED_SCREENSHOT_DATA_URL : TINY_SCREENSHOT_DATA_URL,
-            timestamp: new Date(fixedTime.getTime() - 1000 + call * 100).toISOString(),
+            timestamp: call === 2 ? delayedCaptureAt : new Date(fixedTime.getTime() - 1000 + call * 100).toISOString(),
             bindingVersion: 'v2:same-binding-eligibility',
           } }] };
         },
@@ -2633,6 +2674,9 @@ test('live preview eligibility follows sign-in without replaying denied or super
       await bindingPage.waitForFunction(({ id, source }) => document.querySelector(`[data-testid="screenshot-${id}"]`)?.getAttribute('src') === source,
         { id: STUDENT_ID, source: UPDATED_SCREENSHOT_DATA_URL });
       const readsBeforeOldTargeted = bindingAggregate.requests.length;
+      // Make the late image look newer by capture time. Only the old request's
+      // revoked eligibility generation may reject it, not timestamp ordering.
+      delayedCaptureAt = new Date(await bindingPage.evaluate(() => Date.now())).toISOString();
       releaseOldTargeted();
       await settle();
       await bindingPage.clock.runFor(500);
@@ -2642,11 +2686,13 @@ test('live preview eligibility follows sign-in without replaying denied or super
       await assertNoWarning(bindingPage);
       assert.deepEqual(bindingHarness.pageErrors, []);
       await bindingPage.close();
+      trace(`late targeted ${oldResult} case complete`);
     }
 
     // Completing A's old screenshot request after Observe selects B must not
     // deny B, refresh either superseded authority, or broaden to school scope.
     const navigationPage = await newPage();
+    trace('old class response after navigation');
     const replacement = teachingSession({ id: OBSERVED_SESSION_ID, groupId: OBSERVED_GROUP_ID, teacherId: OTHER_TEACHER_ID });
     let releaseOldScreenshot;
     const oldScreenshotGate = new Promise((resolve) => { releaseOldScreenshot = resolve; });

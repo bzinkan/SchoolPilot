@@ -3170,8 +3170,30 @@ export default function Dashboard() {
     });
     return () => cancelAnimationFrame(frame);
   }, [targetedScreenshotFenceKey]);
+  // Stable callbacks let QueryObserver retain its selected placeholder while
+  // the replacement request is pending. Recreate them on every cohort or
+  // privacy change so revoked rows can never survive in that placeholder.
+  const screenshotPlaceholderFunctions = useMemo(() => screenshotTileRequests.map((request) => (
+    (previousData, previousQuery) => {
+      const privacy = {
+        deniedStudentIds: screenshotPlaceholderDeniedIds,
+        removeLegacy: legacyScreenshotReadsRevoked,
+      };
+      return screenshotCohortPlaceholderData(previousData, previousQuery, request, privacy)
+        // A new useQueries observer has no previousData. Carry only exact
+        // unchanged tuples from cached cohorts in this same viewing context.
+        || buildScreenshotCohortPlaceholderData(
+          queryClient.getQueryCache().findAll({
+            queryKey: [TILE_BATCH_QUERY_ROOTS.screenshots, screenshotTileBatchContextKey],
+            exact: false,
+          }),
+          request,
+          privacy,
+        );
+    }
+  )), [screenshotTileRequests, screenshotPlaceholderDeniedIds, legacyScreenshotReadsRevoked, screenshotTileBatchContextKey]);
   const screenshotTileQueries = useQueries({
-    queries: screenshotTileRequests.map((request) => ({
+    queries: screenshotTileRequests.map((request, index) => ({
       queryKey: request.queryKey,
       queryFn: async ({ signal }) => {
         const response = removeStudentsFromTileBatchData(
@@ -3191,24 +3213,7 @@ export default function Dashboard() {
       // changed binding can never show a frame from its previous authority.
       // The placeholder is observer-local and never enters the cache, so the
       // targeted merge and the privacy scrub/purges still act on real rows.
-      placeholderData: (previousData, previousQuery) => {
-        const privacy = {
-          deniedStudentIds: screenshotPlaceholderDeniedIds,
-          removeLegacy: legacyScreenshotReadsRevoked,
-        };
-        return screenshotCohortPlaceholderData(previousData, previousQuery, request, privacy)
-          // useQueries can create a new observer when eligibility re-keys a
-          // cohort, leaving previousData absent. The same exact-tuple filter
-          // can carry unaffected classmates from this context's cached rows.
-          || buildScreenshotCohortPlaceholderData(
-            queryClient.getQueryCache().findAll({
-              queryKey: [TILE_BATCH_QUERY_ROOTS.screenshots, screenshotTileBatchContextKey],
-              exact: false,
-            }),
-            request,
-            privacy,
-          );
-      },
+      placeholderData: screenshotPlaceholderFunctions[index],
       refetchInterval: request.refetchInterval,
       refetchIntervalInBackground: false,
       // Eligibility can return to a recently cached key without a binding
