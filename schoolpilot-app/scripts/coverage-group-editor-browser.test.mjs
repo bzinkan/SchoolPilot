@@ -14,18 +14,21 @@ const students = [
 ];
 const staff = Array.from({ length: 12 }, (_, index) => ({ userId: `staff-${index + 1}`, displayName: index === 11 ? 'Mr Fixture' : `Staff ${index + 1}`, email: `staff-${index + 1}@fixture.example`, role: 'teacher' }));
 
-async function fixture(context) {
+async function fixture(context, options = {}) {
   const entry = `
     import React from 'react';
     import {createRoot} from 'react-dom/client';
     import {MemoryRouter} from 'react-router-dom';
     import {QueryClientProvider} from '@tanstack/react-query';
-    import {AuthProvider} from '/src/contexts/AuthContext.jsx';
+    import {AuthProvider,useAuth} from '/src/contexts/AuthContext.jsx';
     import {queryClient} from '/src/lib/queryClient.js';
     import Coverage from '/src/products/classpilot/pages/Coverage.jsx';
+    import {Toaster} from '/src/components/ui/toaster.jsx';
     import '/src/index.css';
     queryClient.setDefaultOptions({queries:{retry:false,refetchOnWindowFocus:false}});
-    createRoot(document.getElementById('root')).render(React.createElement(QueryClientProvider,{client:queryClient},React.createElement(AuthProvider,null,React.createElement(MemoryRouter,null,React.createElement(Coverage)))));
+    window.__coverageTestClient = queryClient;
+    function SchoolSwitchBridge() { const {switchSchool} = useAuth(); React.useEffect(() => { window.__switchCoverageSchool = switchSchool; }, [switchSchool]); return null; }
+    createRoot(document.getElementById('root')).render(React.createElement(QueryClientProvider,{client:queryClient},React.createElement(AuthProvider,null,React.createElement(MemoryRouter,null,React.createElement(React.Fragment,null,React.createElement(SchoolSwitchBridge),React.createElement(Coverage),React.createElement(Toaster))))));
   `;
   const vite = await createServer({ root, logLevel: 'error', server: { host: '127.0.0.1', port: 0 }, plugins: [{
     name: 'coverage-group-editor-browser-fixture',
@@ -45,12 +48,16 @@ async function fixture(context) {
   browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1365, height: 768 } });
   page.setDefaultTimeout(10_000);
-  const state = { groups: [], writes: [], errors: [], membershipMode: 'success', membershipReads: 0, releaseMembership: null };
+  page.setDefaultNavigationTimeout(30_000);
+  const state = { groups: structuredClone(options.groups || []), otherGroups: structuredClone(options.otherGroups || []), assignments: structuredClone(options.assignments || []), otherAssignments: [], writes: [], deletes: [], reads: [], errors: [], membershipMode: 'success', membershipReads: 0, releaseMembership: null, deleteGroupMode: 'success', deletePermissionMode: 'success', releaseDeletion: null, activeSchoolId: 'school' };
+  context.after(() => state.releaseDeletion?.());
   page.on('pageerror', error => state.errors.push(error.message));
   await page.route('**/api/**', async route => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
-    if (pathname.endsWith('/auth/me')) return route.fulfill({ json: { user: { id: 'admin', email: 'admin@fixture.example' }, activeSchoolId: 'school', memberships: [{ id: 'membership', schoolId: 'school', role: 'school_admin' }], licenses: { classPilot: true } } });
+    const schoolId = request.headers()['x-school-id'] || state.activeSchoolId;
+    if (request.method() === 'GET') state.reads.push({ pathname, schoolId });
+    if (pathname.endsWith('/auth/me')) { state.activeSchoolId = schoolId; return route.fulfill({ json: { user: { id: 'admin', email: 'admin@fixture.example' }, activeSchoolId: schoolId, memberships: [{ id: 'membership', schoolId: 'school', role: options.role || 'school_admin' }, { id: 'other-membership', schoolId: 'other-school', role: options.role || 'school_admin' }], licenses: { classPilot: true } } }); }
     if (pathname.endsWith('/csrf')) return route.fulfill({ json: { csrfToken: 'fixture-csrf' } });
     if (pathname.endsWith('/admin/users') || pathname.endsWith('/coverage/setup/staff')) return route.fulfill({ json: { users: staff } });
     if (pathname.endsWith('/admin/teacher-students') || pathname.endsWith('/coverage/setup/students')) return route.fulfill({ json: { students } });
@@ -66,7 +73,30 @@ async function fixture(context) {
       if (state.membershipMode === 'error') return route.fulfill({ status: 503, json: { error: 'Class roster is temporarily unavailable.' } });
       return route.fulfill({ json: { students: students.filter(student => [...gradeFiveIds.slice(0, 12), 'g6-1'].includes(student.id)) } });
     }
-    if (pathname.endsWith('/coverage/supervision-groups') && request.method() === 'GET') return route.fulfill({ json: { groups: state.groups } });
+    if (pathname.endsWith('/coverage/supervision-groups') && request.method() === 'GET') return route.fulfill({ json: { groups: schoolId === 'school' ? state.groups : state.otherGroups } });
+    if (pathname.endsWith('/coverage/assignments') && request.method() === 'GET') return route.fulfill({ json: { assignments: schoolId === 'school' ? state.assignments : state.otherAssignments } });
+    if (pathname.includes('/coverage/supervision-groups/') && request.method() === 'DELETE') {
+      const id = decodeURIComponent(pathname.split('/').at(-1));
+      state.deletes.push({ method: request.method(), pathname, schoolId, body: request.postData() ? request.postDataJSON() : null });
+      if (state.deleteGroupMode === 'pending') await new Promise(resolve => { state.releaseDeletion = resolve; state.pendingDeletionStarted?.(); });
+      if (state.deleteGroupMode === 'blocked') return route.fulfill({ status: 409, json: { code: 'COVERAGE_DELETE_IN_USE', error: 'This group is used by a saved schedule profile. Remove that testing block from the profile before deleting the group.' } });
+      if (state.deleteGroupMode === 'error') return route.fulfill({ status: 503, json: { error: 'The group could not be deleted. Try again when the connection is restored.' } });
+      const groupKey = schoolId === 'school' ? 'groups' : 'otherGroups';
+      const assignmentKey = schoolId === 'school' ? 'assignments' : 'otherAssignments';
+      state[groupKey] = state[groupKey].filter(group => group.id !== id);
+      state[assignmentKey] = state[assignmentKey].filter(assignment => !(assignment.scopeType === 'coverage_group' && assignment.scopeValue === id));
+      return route.fulfill({ json: { deleted: true, groupId: id, deletedAssignments: 1, deletedMembers: 2 } });
+    }
+    if (pathname.includes('/coverage/assignments/staff/') && request.method() === 'DELETE') {
+      const staffId = decodeURIComponent(pathname.split('/').at(-1)), body = request.postDataJSON();
+      state.deletes.push({ method: request.method(), pathname, schoolId, body });
+      if (state.deletePermissionMode === 'pending') await new Promise(resolve => { state.releaseDeletion = resolve; state.pendingDeletionStarted?.(); });
+      if (state.deletePermissionMode === 'blocked') return route.fulfill({ status: 409, json: { code: 'COVERAGE_DELETE_STALE', error: 'These staff permissions changed. Close this dialog, review the current permissions and try again.' } });
+      if (state.deletePermissionMode === 'error') return route.fulfill({ status: 503, json: { error: 'Staff permissions could not be removed. Try again.' } });
+      const assignmentKey = schoolId === 'school' ? 'assignments' : 'otherAssignments';
+      state[assignmentKey] = state[assignmentKey].filter(assignment => !(assignment.staffId === staffId && body.assignmentIds.includes(assignment.id)));
+      return route.fulfill({ json: { deleted: true, staffId, deletedAssignments: body.assignmentIds.length } });
+    }
     if (pathname.includes('/coverage/supervision-groups') && request.method() !== 'GET') {
       const body = request.postDataJSON();
       state.writes.push({ method: request.method(), pathname, body });
@@ -82,15 +112,17 @@ async function fixture(context) {
       }
       return route.fulfill({ json: { group: state.groups[0] } });
     }
-    if (pathname.endsWith('/coverage/capabilities')) return route.fulfill({ json: { canManageSupervisionSetup: true } });
+    if (pathname.endsWith('/coverage/capabilities')) return route.fulfill({ json: { canManageSupervisionSetup: options.canManageSupervisionSetup ?? true } });
     if (pathname.endsWith('/coverage/summary')) return route.fulfill({ json: { claimedStudentCount: 0 } });
     return route.fulfill({ json: {} });
   });
   await page.goto(`http://127.0.0.1:${vite.httpServer.address().port}/__coverage-group-test`);
-  await page.getByRole('tab', { name: 'Supervision Groups', exact: true }).click();
-  await page.getByRole('button', { name: 'New Group', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Create Supervision Group', exact: true });
-  await dialog.waitFor();
+  if (options.openCreate !== false) {
+    await page.getByRole('tab', { name: 'Supervision Groups', exact: true }).click();
+    await page.getByRole('button', { name: 'New Group', exact: true }).click();
+    await dialog.waitFor();
+  } else await page.waitForLoadState('networkidle');
   return { page, state, dialog };
 }
 
@@ -285,4 +317,164 @@ test('new and edit group dialogs keep roster pagination and footer reachable at 
   await edit.getByRole('button', { name: 'Cancel', exact: true }).click();
   assert.equal(state.writes.length, 1, 'Opening and canceling edit does not save changes');
   assert.deepEqual(state.errors, []);
+});
+
+const deletionGroup = (id, name) => ({ id, name, description: 'Synthetic supervision setup', active: true, studentCount: 2, students: [{ studentId: 'g5-1' }, { studentId: 'g5-2' }], staff: [{ id: 'staff-1' }], updatedAt: '2026-09-08T12:00:00.000Z' });
+
+test('group deletion confirms the exact version, cancels without writes, retains blockers for retry and refreshes setup after success', { timeout: 90_000 }, async context => {
+  const target = deletionGroup('delete-group', 'Testing Group to Delete');
+  const survivor = deletionGroup('retained-group', 'Retained Library Group');
+  const assignments = [{ id: 'linked-assignment', staffId: 'staff-1', staff: { displayName: 'Linked Group Staff' }, scopeType: 'coverage_group', scopeValue: target.id, scopeLabel: target.name, permissions: { claim: true }, active: true }];
+  const { page, state } = await fixture(context, { openCreate: false, groups: [target, survivor], assignments });
+  await page.getByRole('tab', { name: 'Supervision Groups', exact: true }).click();
+  const opener = page.getByRole('button', { name: `Delete group ${target.name}`, exact: true });
+  const confirm = page.getByRole('alertdialog', { name: 'Delete supervision group?', exact: true });
+  const artifactDir = path.resolve(root, '..', 'soc2-evidence', 'validation', 'supervision-setup-deletion', 'browser');
+  await mkdir(artifactDir, { recursive: true });
+  for (const [size, viewport] of [['desktop', { width: 1365, height: 768 }], ['mobile', { width: 390, height: 667 }]]) {
+    await page.setViewportSize(viewport);
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), theme === 'dark');
+      await opener.focus(); await page.keyboard.press('Enter'); await confirm.waitFor();
+      await confirm.getByText(target.name, { exact: false }).first().waitFor();
+      const cancel = confirm.getByRole('button', { name: 'Cancel', exact: true });
+      assert.equal(await cancel.evaluate(element => element === document.activeElement), true, 'The non-destructive action receives initial focus');
+      const bounds = await confirm.boundingBox();
+      assert(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= viewport.width + 1 && bounds.y + bounds.height <= viewport.height + 1);
+      assert.equal(await confirm.evaluate(element => element.scrollWidth <= element.clientWidth), true);
+      await page.keyboard.press('Tab');
+      assert.equal(await confirm.getByRole('button', { name: 'Delete group', exact: true }).evaluate(element => element === document.activeElement && element.matches(':focus-visible')), true);
+      await page.keyboard.press('Tab'); assert.equal(await cancel.evaluate(element => element === document.activeElement), true, 'Keyboard focus remains inside the confirmation');
+      await page.screenshot({ path: path.join(artifactDir, `delete-group-${size}-${theme}.png`), animations: 'disabled' });
+      await page.keyboard.press('Enter'); await confirm.waitFor({ state: 'hidden' });
+      assert.equal(await opener.evaluate(element => element === document.activeElement), true, 'Cancel restores focus to the original group');
+    }
+  }
+  assert.deepEqual(state.deletes, []); assert.deepEqual(state.writes, []);
+  await page.setViewportSize({ width: 1365, height: 768 });
+  state.deleteGroupMode = 'blocked';
+  await opener.click(); await confirm.getByRole('button', { name: 'Delete group', exact: true }).click();
+  await confirm.getByRole('alert').filter({ hasText: 'Remove that testing block from the profile before deleting the group.' }).waitFor();
+  assert.equal(await confirm.isVisible(), true); assert.equal(state.groups.length, 2);
+  assert.deepEqual(state.deletes[0], { method: 'DELETE', pathname: '/api/coverage/supervision-groups/delete-group', schoolId: 'school', body: { updatedAt: target.updatedAt } });
+  state.deleteGroupMode = 'error';
+  await confirm.getByRole('button', { name: 'Retry deletion', exact: true }).click();
+  await confirm.getByRole('alert').filter({ hasText: 'Try again when the connection is restored.' }).waitFor();
+  assert.equal(await confirm.isVisible(), true); assert.equal(state.groups.length, 2);
+  const readsBefore = state.reads.length;
+  await page.evaluate(() => {
+    window.__coverageTestClient.setQueryData(['classpilot-schedule-profiles', 'school'], { profiles: [{ id: 'fixture-profile' }] });
+    window.__coverageTestClient.setQueryData(['classpilot-school-scheduling', 'school'], { revision: 7 });
+  });
+  state.deleteGroupMode = 'pending';
+  const started = new Promise(resolve => { state.pendingDeletionStarted = resolve; });
+  await confirm.getByRole('button', { name: 'Retry deletion', exact: true }).click(); await started;
+  assert.equal(await confirm.getByRole('button', { name: 'Cancel', exact: true }).isDisabled(), true);
+  assert.equal(await confirm.getByRole('button').evaluateAll(buttons => buttons.every(button => button.disabled)), true, 'Pending deletion prevents repeat submission and dismissal');
+  await page.keyboard.press('Escape'); assert.equal(await confirm.isVisible(), true);
+  assert.equal(await page.getByRole('button', { name: 'New Group', exact: true, includeHidden: true }).isDisabled(), true);
+  state.deleteGroupMode = 'success'; state.releaseDeletion(); state.releaseDeletion = null;
+  await confirm.waitFor({ state: 'hidden' }); await opener.waitFor({ state: 'hidden' });
+  await page.getByText(survivor.name, { exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Remove permissions for Linked Group Staff', exact: true }).count(), 0);
+  assert.deepEqual(state.groups.map(group => group.id), ['retained-group']);
+  assert.deepEqual(state.assignments, []);
+  const refreshed = state.reads.slice(readsBefore).map(read => read.pathname);
+  assert(refreshed.includes('/api/coverage/supervision-groups') && refreshed.includes('/api/coverage/assignments') && refreshed.includes('/api/coverage/capabilities'));
+  assert.deepEqual(await page.evaluate(() => ['classpilot-schedule-profiles', 'classpilot-school-scheduling'].map(key => window.__coverageTestClient.getQueryState([key, 'school'])?.isInvalidated)), [true, true]);
+  assert.equal(await page.getByRole('tab', { name: 'Supervision Groups', exact: true }).evaluate(element => element === document.activeElement), true);
+  assert.equal(state.deletes.length, 3); assert.deepEqual(state.writes, []); assert.deepEqual(state.errors, []);
+});
+
+test('removing an orphaned staff permission package sends active and inactive IDs atomically and preserves supervision groups', { timeout: 60_000 }, async context => {
+  const group = deletionGroup('preserved-group', 'Preserved Testing Group');
+  const orphanAssignments = [
+    { id: 'orphan-inactive-claim', staffId: 'orphan-staff', staff: null, scopeType: 'grade', scopeValue: '5', scopeLabel: 'Grade 5', permissions: { claim: true }, active: false },
+    { id: 'orphan-inactive-setup', staffId: 'orphan-staff', staff: null, scopeType: 'setup', scopeLabel: 'School setup', permissions: { setup: true }, active: false },
+  ];
+  const remaining = { id: 'remaining-permission', staffId: 'staff-2', staff: { displayName: 'Remaining Staff' }, scopeType: 'grade', scopeValue: '6', scopeLabel: 'Grade 6', permissions: { claim: true }, active: true };
+  const mixedAssignments = [true, false].map((active, index) => ({ id: `mixed-${index}`, staffId: 'staff-3', staff: { displayName: 'Mixed Staff' }, scopeType: 'grade', scopeValue: String(index + 3), permissions: { claim: true }, active }));
+  const { page, state } = await fixture(context, { openCreate: false, groups: [group], assignments: [...orphanAssignments, remaining, ...mixedAssignments] });
+  await page.getByRole('tab', { name: 'Supervision Groups', exact: true }).click();
+  const opener = page.getByRole('button', { name: 'Remove permissions for Unavailable staff member (orphan-staff)', exact: true });
+  const confirm = page.getByRole('alertdialog', { name: 'Remove staff permissions?', exact: true });
+  assert.equal(await opener.isEnabled(), true, 'Inactive and orphaned packages remain removable without selecting the staff member from the active picker');
+  const artifactDir = path.resolve(root, '..', 'soc2-evidence', 'validation', 'supervision-setup-deletion', 'browser');
+  await mkdir(artifactDir, { recursive: true });
+  for (const [size, viewport] of [['desktop', { width: 1365, height: 768 }], ['mobile', { width: 390, height: 667 }]]) {
+    await page.setViewportSize(viewport);
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), theme === 'dark');
+      await opener.focus(); await page.keyboard.press('Enter'); await confirm.waitFor();
+      assert.equal(await confirm.getByRole('button', { name: 'Cancel', exact: true }).evaluate(element => element === document.activeElement), true);
+      await page.keyboard.press('Tab');
+      assert.equal(await confirm.getByRole('button', { name: 'Remove permissions', exact: true }).evaluate(element => element === document.activeElement && element.matches(':focus-visible')), true);
+      const bounds = await confirm.boundingBox();
+      assert(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= viewport.width + 1 && bounds.y + bounds.height <= viewport.height + 1);
+      assert.equal(await confirm.evaluate(element => element.scrollWidth <= element.clientWidth), true);
+      await page.screenshot({ path: path.join(artifactDir, `remove-permissions-${size}-${theme}.png`), animations: 'disabled' });
+      await page.keyboard.press('Escape'); await confirm.waitFor({ state: 'hidden' });
+      assert.equal(await opener.evaluate(element => element === document.activeElement), true);
+    }
+  }
+  assert.deepEqual(state.deletes, []);
+  await page.setViewportSize({ width: 1365, height: 768 });
+  state.deletePermissionMode = 'error';
+  await opener.click(); await confirm.getByRole('button', { name: 'Remove permissions', exact: true }).click();
+  await confirm.getByRole('alert').filter({ hasText: 'Staff permissions could not be removed. Try again.' }).waitFor();
+  assert.equal(await confirm.isVisible(), true); assert.equal(state.assignments.length, 5);
+  assert.deepEqual(state.deletes[0].body.assignmentIds.slice().sort(), orphanAssignments.map(assignment => assignment.id).sort());
+  assert.equal(state.deletes[0].schoolId, 'school');
+  state.deletePermissionMode = 'success';
+  await confirm.getByRole('button', { name: 'Retry removal', exact: true }).click();
+  await confirm.waitFor({ state: 'hidden' }); await opener.waitFor({ state: 'hidden' });
+  await page.getByRole('button', { name: 'Remove permissions for Remaining Staff', exact: true }).waitFor();
+  await page.getByText(group.name, { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Remove permissions for Mixed Staff', exact: true }).click();
+  await confirm.getByRole('button', { name: 'Remove permissions', exact: true }).click();
+  await confirm.waitFor({ state: 'hidden' });
+  assert.deepEqual(state.deletes.at(-1).body.assignmentIds.slice().sort(), mixedAssignments.map(assignment => assignment.id).sort(), 'A mixed package sends both active and inactive rows in one request');
+  assert.deepEqual(state.assignments.map(assignment => assignment.id), [remaining.id]);
+  assert.deepEqual(state.groups, [group], 'Removing permissions must not delete groups, student membership or saved group staff');
+  assert.equal(state.deletes.length, 3);
+  assert.equal(state.deletes.slice(0, 2).every(request => request.pathname === '/api/coverage/assignments/staff/orphan-staff'), true, 'Each attempt is one exact package deletion, not multiple row writes');
+  assert.deepEqual(state.writes, []); assert.deepEqual(state.errors, []);
+});
+
+test('switching school during deletion ignores the prior-school completion and never changes the new school setup', { timeout: 60_000 }, async context => {
+  const oldGroup = deletionGroup('prior-group', 'Prior School Group');
+  const otherGroup = deletionGroup('other-group', 'Other School Group');
+  const { page, state } = await fixture(context, { openCreate: false, groups: [oldGroup], otherGroups: [otherGroup] });
+  await page.getByRole('tab', { name: 'Supervision Groups', exact: true }).click();
+  await page.getByRole('button', { name: `Delete group ${oldGroup.name}`, exact: true }).click();
+  const confirm = page.getByRole('alertdialog', { name: 'Delete supervision group?', exact: true });
+  state.deleteGroupMode = 'pending';
+  const started = new Promise(resolve => { state.pendingDeletionStarted = resolve; });
+  await confirm.getByRole('button', { name: 'Delete group', exact: true }).click(); await started;
+  assert.equal(state.deletes[0].schoolId, 'school');
+  await page.evaluate(() => window.__switchCoverageSchool('other-school'));
+  await confirm.waitFor({ state: 'hidden' });
+  await page.getByText(otherGroup.name, { exact: true }).waitFor();
+  await page.waitForLoadState('networkidle');
+  const readsBeforeCompletion = state.reads.filter(read => read.schoolId === 'other-school' && read.pathname.includes('/coverage/')).length;
+  state.deleteGroupMode = 'success'; state.releaseDeletion(); state.releaseDeletion = null;
+  await page.waitForLoadState('networkidle');
+  assert.deepEqual(state.otherGroups, [otherGroup]);
+  assert.equal(await page.getByRole('button', { name: `Delete group ${otherGroup.name}`, exact: true }).isEnabled(), true);
+  assert.equal(await page.getByRole('alertdialog').count(), 0);
+  assert.equal(state.reads.filter(read => read.schoolId === 'other-school' && read.pathname.includes('/coverage/')).length, readsBeforeCompletion, 'A late prior-school result cannot invalidate or refetch the new school cache');
+  assert.equal(await page.getByText(/group deleted|permissions removed/i).count(), 0, 'A prior-school completion must not display a misleading success notice in the new school');
+  assert.deepEqual(state.errors, []);
+});
+
+test('deletion controls are administrator-only even when a teacher has delegated supervision setup', { timeout: 60_000 }, async context => {
+  const group = deletionGroup('delegated-group', 'Delegated Setup Group');
+  const { page, state } = await fixture(context, { openCreate: false, role: 'teacher', canManageSupervisionSetup: true, groups: [group] });
+  await page.getByRole('tab', { name: 'Supervision Groups', exact: true }).click();
+  await page.getByText(group.name, { exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'New Group', exact: true }).isEnabled(), true);
+  assert.equal(await page.getByRole('button', { name: /^Delete group / }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: /^Remove permissions for / }).count(), 0);
+  assert.equal(state.reads.some(read => read.pathname === '/api/coverage/assignments'), false);
+  assert.deepEqual(state.deletes, []); assert.deepEqual(state.writes, []); assert.deepEqual(state.errors, []);
 });

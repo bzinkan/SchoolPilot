@@ -62,6 +62,7 @@ import {
   getStaffAssignmentIntegrityIssues,
 } from "./staffAssignmentLifecycle.js";
 import { lockStaffAssignmentLifecycleSchool } from "./staffAssignmentLifecycleLock.js";
+import { CoverageDeletionError, touchCoverageGroups, assertCoverageAssignmentReview, type CoverageAssignmentReview } from "./classpilotCoverageDeletion.js";
 import { preserveManualRosterMemberships } from "./rosterManualOwnership.js";
 import { assertClasspilotMonitoringSettingsUpdate, assertClasspilotMonitoringTimezoneUpdate, changesClasspilotMonitoringSettings } from "./classpilotMonitoringSettings.js";
 import { classpilotSchoolSchedules } from "../schema/classpilotScheduling.js";
@@ -22339,9 +22340,12 @@ export async function getCoverageScopeGroupByIdAndSchool(
 export async function createCoverageScopeGroup(options: {
   group: InsertClasspilotCoverageScopeGroup;
   studentIds: string[];
+  coverageSetupReview?: CoverageAssignmentReview;
 }): Promise<CoverageScopeGroupWithMembers> {
   const uniqueStudentIds = Array.from(new Set(options.studentIds.filter(Boolean)));
   const created = await db.transaction(async (tx) => {
+    if (!await lockStaffAssignmentLifecycleSchool(tx, options.group.schoolId)) throw new Error("School not found");
+    await assertCoverageAssignmentReview(tx, options.group.schoolId, options.coverageSetupReview, "setup");
     await lockActiveSchoolStudentsForOperationalWrite(
       options.group.schoolId,
       uniqueStudentIds,
@@ -22375,6 +22379,7 @@ export async function updateCoverageScopeGroup(options: {
   name?: string;
   description?: string | null;
   active?: boolean;
+  coverageSetupReview?: CoverageAssignmentReview;
 }): Promise<CoverageScopeGroupWithMembers | undefined> {
   const data: Partial<InsertClasspilotCoverageScopeGroup> & { updatedAt: Date } = {
     updatedAt: new Date(),
@@ -22385,7 +22390,8 @@ export async function updateCoverageScopeGroup(options: {
 
   const updated = await db.transaction(async (tx) => {
     if (!await lockStaffAssignmentLifecycleSchool(tx, options.schoolId)) return undefined;
-    const [row] = await tx.update(classpilotCoverageScopeGroups).set(data).where(and(
+    await assertCoverageAssignmentReview(tx, options.schoolId, options.coverageSetupReview, "setup");
+    const [row] = await tx.update(classpilotCoverageScopeGroups).set({ ...data, updatedAt: sql`greatest(date_trunc('milliseconds', clock_timestamp()), ${classpilotCoverageScopeGroups.updatedAt} + interval '1 millisecond')` }).where(and(
       eq(classpilotCoverageScopeGroups.schoolId, options.schoolId),
       eq(classpilotCoverageScopeGroups.id, options.groupId),
     )).returning();
@@ -22399,6 +22405,7 @@ export async function replaceCoverageScopeGroupMembers(options: {
   schoolId: string;
   groupId: string;
   studentIds: string[];
+  coverageSetupReview?: CoverageAssignmentReview;
 }): Promise<CoverageScopeGroupWithMembers | undefined> {
   const uniqueStudentIds = Array.from(new Set(options.studentIds.filter(Boolean)));
   const group = await getCoverageScopeGroupByIdAndSchool(options.schoolId, options.groupId);
@@ -22406,6 +22413,8 @@ export async function replaceCoverageScopeGroupMembers(options: {
 
   await db.transaction(async (tx) => {
     if (!await lockStaffAssignmentLifecycleSchool(tx, options.schoolId)) throw new Error("School not found");
+    await assertCoverageAssignmentReview(tx, options.schoolId, options.coverageSetupReview, "setup");
+    await assertCoverageScopeGroupExists(tx, options.schoolId, options.groupId);
     await lockActiveSchoolStudentsForOperationalWrite(
       options.schoolId,
       uniqueStudentIds,
@@ -22428,15 +22437,7 @@ export async function replaceCoverageScopeGroupMembers(options: {
         }))
       );
     }
-    await tx
-      .update(classpilotCoverageScopeGroups)
-      .set({ updatedAt: new Date() })
-      .where(
-        and(
-          eq(classpilotCoverageScopeGroups.schoolId, options.schoolId),
-          eq(classpilotCoverageScopeGroups.id, options.groupId)
-        )
-      );
+    await touchCoverageGroups(tx, options.schoolId, [options.groupId]);
   });
 
   return getCoverageScopeGroupByIdAndSchool(options.schoolId, options.groupId);
@@ -22553,6 +22554,7 @@ export async function replaceCoverageScopeGroupStaff(options: {
   groupId: string;
   staffIds: string[];
   createdBy: string;
+  coverageSetupReview?: CoverageAssignmentReview;
 }): Promise<ClasspilotCoverageAssignment[]> {
   const staffIds = Array.from(new Set(options.staffIds.map(String).filter(Boolean)));
   await db.transaction(async (tx) => {
@@ -22561,6 +22563,8 @@ export async function replaceCoverageScopeGroupStaff(options: {
       options.schoolId
     );
     if (!lifecycleLocked) throw new Error("School not found");
+    await assertCoverageAssignmentReview(tx, options.schoolId, options.coverageSetupReview, "setup");
+    await assertCoverageScopeGroupExists(tx, options.schoolId, options.groupId);
     for (const staffId of staffIds) {
       await assertActiveSchoolStaffMembership(
         staffId,
@@ -22627,6 +22631,7 @@ export async function replaceCoverageScopeGroupStaff(options: {
         }))
       );
     }
+    await touchCoverageGroups(tx, options.schoolId, [options.groupId]);
   });
 
   return getActiveCoverageAssignmentsForScopeGroup(options.schoolId, options.groupId);
@@ -22659,6 +22664,11 @@ export async function getActiveCoverageAssignmentsForStaff(
     .orderBy(classpilotCoverageAssignments.scopeType, classpilotCoverageAssignments.createdAt);
 }
 
+async function assertCoverageScopeGroupExists(tx: Parameters<Parameters<typeof db.transaction>[0]>[0], schoolId: string, groupId: string | null | undefined) {
+  const [group] = groupId ? await tx.select({ id: classpilotCoverageScopeGroups.id }).from(classpilotCoverageScopeGroups).where(and(eq(classpilotCoverageScopeGroups.schoolId, schoolId), eq(classpilotCoverageScopeGroups.id, groupId))).limit(1) : [];
+  if (!group) throw new CoverageDeletionError("Supervision group not found. Reload the groups.", "NOT_FOUND", 404);
+}
+
 export async function createCoverageAssignment(
   data: InsertClasspilotCoverageAssignment
 ): Promise<ClasspilotCoverageAssignment> {
@@ -22668,6 +22678,7 @@ export async function createCoverageAssignment(
       data.schoolId
     );
     if (!lifecycleLocked) throw new Error("School not found");
+    if (data.scopeType === "coverage_group") await assertCoverageScopeGroupExists(tx, data.schoolId, data.scopeValue);
     if (data.active !== false) {
       await assertActiveSchoolStaffMembership(
         data.staffId,
@@ -22679,6 +22690,7 @@ export async function createCoverageAssignment(
       .insert(classpilotCoverageAssignments)
       .values(data)
       .returning();
+    if (row?.scopeType === "coverage_group") await touchCoverageGroups(tx, data.schoolId, [row.scopeValue ?? ""]);
     return row!;
   });
 }
@@ -22707,6 +22719,7 @@ export async function updateCoverageAssignmentActive(
       .for("update");
     if (!existing) return undefined;
     if (active) {
+      if (existing.scopeType === "coverage_group") await assertCoverageScopeGroupExists(tx, schoolId, existing.scopeValue);
       await assertActiveSchoolStaffMembership(
         existing.staffId,
         schoolId,
@@ -22723,6 +22736,7 @@ export async function updateCoverageAssignmentActive(
         )
       )
       .returning();
+    if (row?.scopeType === "coverage_group") await touchCoverageGroups(tx, schoolId, [row.scopeValue ?? ""]);
     return row;
   });
 }
@@ -22752,6 +22766,11 @@ export async function updateCoverageAssignment(
     if (!existing) return undefined;
     const nextActive = data.active ?? existing.active;
     const nextStaffId = data.staffId ?? existing.staffId;
+    const nextScopeType = data.scopeType ?? existing.scopeType;
+    const nextScopeValue = data.scopeValue === undefined ? existing.scopeValue : data.scopeValue;
+    if (nextScopeType === "coverage_group" && (nextActive || nextScopeType !== existing.scopeType || nextScopeValue !== existing.scopeValue)) {
+      await assertCoverageScopeGroupExists(tx, schoolId, nextScopeValue);
+    }
     if (nextActive) {
       await assertActiveSchoolStaffMembership(
         nextStaffId,
@@ -22769,6 +22788,7 @@ export async function updateCoverageAssignment(
         )
       )
       .returning();
+    await touchCoverageGroups(tx, schoolId, [existing, row].filter((assignment) => assignment?.scopeType === "coverage_group").map((assignment) => assignment?.scopeValue ?? ""));
     return row;
   });
 }
@@ -23513,6 +23533,7 @@ export async function claimScheduledCoverageStudents(options: {
   studentIds: string[];
   endsAt: Date;
   note?: string | null;
+  coverageAssignmentReview?: CoverageAssignmentReview;
 }, dbInstance: typeof db = db): Promise<{
   context: ClasspilotSupervisionContext;
   assignments: ClasspilotSupervisionStudent[];
@@ -23525,6 +23546,7 @@ export async function claimScheduledCoverageStudents(options: {
       options.schoolId
     );
     if (!lifecycleLocked) throw new Error("School not found");
+    await assertCoverageAssignmentReview(tx, options.schoolId, options.coverageAssignmentReview);
     await assertActiveSchoolStaffMembership(
       options.assignedStaffId,
       options.schoolId,
@@ -23834,6 +23856,7 @@ export async function createSupervisionContextWithStudents(options: {
   studentIds: string[];
   assignedBy: string;
   source?: string;
+  coverageAssignmentReview?: CoverageAssignmentReview;
 }, dbInstance: typeof db = db): Promise<ClasspilotSupervisionContext> {
   const uniqueStudentIds = Array.from(new Set(options.studentIds.filter(Boolean)));
   return dbInstance.transaction(async (tx) => {
@@ -23843,7 +23866,9 @@ export async function createSupervisionContextWithStudents(options: {
       options.context.schoolId
     );
     if (!lifecycleLocked) throw new Error("School not found");
+    await assertCoverageAssignmentReview(tx, options.context.schoolId, options.coverageAssignmentReview);
     if (options.context.status !== "ended") {
+      if (options.context.coverageGroupId) await assertCoverageScopeGroupExists(tx, options.context.schoolId, options.context.coverageGroupId);
       await assertActiveSchoolStaffMembership(
         options.context.assignedStaffId,
         options.context.schoolId,
@@ -24027,6 +24052,7 @@ export async function extendSupervisionContext(options: {
   assignedStaffId?: string;
   coverageGroupId?: string | null;
   scheduledConflictId?: string | null;
+  coverageAssignmentReview?: CoverageAssignmentReview;
 }): Promise<ClasspilotSupervisionContext | undefined> {
   const data: Partial<InsertClasspilotSupervisionContext> & { updatedAt: Date } = {
     updatedAt: new Date(),
@@ -24044,16 +24070,20 @@ export async function extendSupervisionContext(options: {
       options.schoolId
     );
     if (!lifecycleLocked) return undefined;
+    await assertCoverageAssignmentReview(tx, options.schoolId, options.coverageAssignmentReview);
     const [currentContext] = await tx
-      .select({ assignedStaffId: classpilotSupervisionContexts.assignedStaffId })
+      .select({ assignedStaffId: classpilotSupervisionContexts.assignedStaffId, coverageGroupId: classpilotSupervisionContexts.coverageGroupId })
       .from(classpilotSupervisionContexts)
       .where(and(
         eq(classpilotSupervisionContexts.schoolId, options.schoolId),
         eq(classpilotSupervisionContexts.id, options.contextId),
-        eq(classpilotSupervisionContexts.status, "active")
+        eq(classpilotSupervisionContexts.status, "active"),
+        gt(classpilotSupervisionContexts.endsAt, new Date())
       ))
       .limit(1);
     if (!currentContext) return undefined;
+    const groupId = options.coverageGroupId === undefined ? currentContext.coverageGroupId : options.coverageGroupId;
+    if (groupId) await assertCoverageScopeGroupExists(tx, options.schoolId, groupId);
     await assertActiveSchoolStaffMembership(
       options.assignedStaffId || currentContext.assignedStaffId,
       options.schoolId,

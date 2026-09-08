@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import MonitoringInterruptionsPanel from "../components/MonitoringInterruptionsPanel";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
@@ -19,6 +19,7 @@ import {
   Users,
   X,
   Unlock,
+  Trash2,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
@@ -26,6 +27,7 @@ import { Button } from "../../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
 import { Checkbox } from "../../../components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../../../components/ui/dialog";
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from "../../../components/ui/alert-dialog";
 import { Input } from "../../../components/ui/input";
 import { Label } from "../../../components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../components/ui/select";
@@ -171,6 +173,17 @@ export default function Coverage() {
   const { toast } = useToast();
   const { currentUser } = useClassPilotAuth();
   const isAdmin = currentUser?.isSuperAdmin || currentUser?.role === "admin" || currentUser?.role === "school_admin";
+  const schoolId = currentUser?.schoolId;
+  const setupScope = useMemo(() => ({ schoolId, actorId: currentUser?.id, isAdmin }), [schoolId, currentUser?.id, isAdmin]);
+  const committedSetupScope = useRef(setupScope);
+  const deletionOpener = useRef(null);
+  const setupHeading = useRef(null);
+  const [setupDeletion, setSetupDeletion] = useState(null);
+  const [setupDeletionNotice, setSetupDeletionNotice] = useState(null);
+  useLayoutEffect(() => {
+    committedSetupScope.current = setupScope;
+    return () => { committedSetupScope.current = null; };
+  }, [setupScope]);
 
   const [selectedUnassignedIds, setSelectedUnassignedIds] = useState(new Set());
   const [selectedCoverageIds, setSelectedCoverageIds] = useState(new Set());
@@ -253,9 +266,9 @@ export default function Coverage() {
   });
 
   const capabilitiesQuery = useQuery({
-    queryKey: ["/api/coverage/capabilities"],
-    queryFn: () => apiRequest("GET", "/coverage/capabilities"),
-    enabled: !!currentUser,
+    queryKey: ["/api/coverage/capabilities", schoolId],
+    queryFn: ({ signal }) => apiRequest("GET", "/coverage/capabilities", undefined, { signal, headers: { "X-School-Id": schoolId } }),
+    enabled: !!currentUser && !!schoolId,
   });
   const canManageSupervisionSetup = isAdmin || !!capabilitiesQuery.data?.canManageSupervisionSetup;
   const canDelegateSetup = isAdmin;
@@ -276,17 +289,17 @@ export default function Coverage() {
   });
 
   const assignmentsQuery = useQuery({
-    queryKey: ["/api/coverage/assignments"],
-    queryFn: () => apiRequest("GET", "/coverage/assignments"),
+    queryKey: ["/api/coverage/assignments", schoolId],
+    queryFn: ({ signal }) => apiRequest("GET", "/coverage/assignments", undefined, { signal, headers: { "X-School-Id": schoolId } }),
     select: (data) => data?.assignments || [],
-    enabled: isAdmin,
+    enabled: isAdmin && !!schoolId,
   });
 
   const scopeGroupsQuery = useQuery({
-    queryKey: ["/api/coverage/supervision-groups"],
-    queryFn: () => apiRequest("GET", "/coverage/supervision-groups"),
+    queryKey: ["/api/coverage/supervision-groups", schoolId],
+    queryFn: ({ signal }) => apiRequest("GET", "/coverage/supervision-groups", undefined, { signal, headers: { "X-School-Id": schoolId } }),
     select: (data) => data?.groups || [],
-    enabled: canManageSupervisionSetup,
+    enabled: canManageSupervisionSetup && !!schoolId,
   });
 
   const adminStudentsQuery = useQuery({
@@ -545,6 +558,12 @@ export default function Coverage() {
       queryClient.invalidateQueries({ queryKey: ["/api/coverage/contexts", historyContextId, "history"] });
     }
   };
+  const refreshCoverage = () => {
+    invalidateCoverage();
+    for (const queryKey of [["/api/coverage/assignments"], ["/api/coverage/capabilities"], ["/api/coverage/summary"], ["classpilot-schedule-profiles"], ["classpilot-school-scheduling"]]) {
+      void queryClient.invalidateQueries({ queryKey });
+    }
+  };
 
   const createContextMutation = useMutation({
     mutationFn: (payload) => apiRequest("POST", "/coverage/contexts", payload),
@@ -683,6 +702,75 @@ export default function Coverage() {
     },
     onError: (error) => toast({ variant: "destructive", title: "Could not save supervision group", description: error.message }),
   });
+
+  const deleteSetupMutation = useMutation({
+    retry: false,
+    mutationFn: (target) => {
+      if (committedSetupScope.current !== target.scope || !target.scope.isAdmin || !target.scope.schoolId) {
+        throw new Error("The active school changed. Reopen this item before removing it.");
+      }
+      const path = target.kind === "group"
+        ? `/coverage/supervision-groups/${encodeURIComponent(target.id)}`
+        : `/coverage/assignments/staff/${encodeURIComponent(target.id)}`;
+      return apiRequest("DELETE", path, target.kind === "permissions" ? { assignmentIds: target.assignmentIds } : { updatedAt: target.updatedAt }, {
+        headers: { "X-School-Id": target.scope.schoolId },
+      });
+    },
+    onSuccess: async (_result, target) => {
+      // School-keyed caches may safely refresh after a switch; old confirmations may not.
+      if (target.kind === "group") {
+        queryClient.setQueryData(["/api/coverage/supervision-groups", target.scope.schoolId], (current) => current ? { ...current, groups: (current.groups || []).filter((group) => group.id !== target.id) } : current);
+      } else {
+        const removedIds = new Set(target.assignmentIds);
+        queryClient.setQueryData(["/api/coverage/assignments", target.scope.schoolId], (current) => current ? { ...current, assignments: (current.assignments || []).filter((assignment) => !removedIds.has(assignment.id)) } : current);
+      }
+      const originalSchoolRefreshes = await Promise.allSettled([
+        ["/api/coverage/assignments", target.scope.schoolId], ["/api/coverage/supervision-groups", target.scope.schoolId],
+        ["/api/coverage/capabilities", target.scope.schoolId], ["classpilot-schedule-profiles", target.scope.schoolId],
+      ].map((queryKey) => queryClient.invalidateQueries({ queryKey }, { throwOnError: true })));
+      // Ignore UI/global-cache side effects after switching away, even when returning to A.
+      if (committedSetupScope.current !== target.scope) return;
+      const refreshes = await Promise.allSettled([
+        ["/api/coverage/assignments"], ["/api/coverage/supervision-groups"], ["/api/coverage/capabilities"],
+        ["/api/coverage/summary"], ["/api/coverage/contexts"], ["/api/coverage/unassigned"],
+        ["/api/coverage/available-students"], ["/api/coverage/claimed-students"],
+        ["classpilot-schedule-profiles"], ["classpilot-school-scheduling"],
+      ].map((queryKey) => queryClient.invalidateQueries({ queryKey }, { throwOnError: true })));
+      if (committedSetupScope.current !== target.scope) return;
+      const message = target.kind === "group" ? `Supervision group “${target.name}” deleted.` : `Supervision permissions for ${target.name} removed.`;
+      setSetupDeletionNotice({ scope: target.scope, message: `${message}${[...originalSchoolRefreshes, ...refreshes].some((result) => result.status === "rejected") ? " Some lists could not refresh. Use Refresh to reload them." : ""}` });
+      setSetupDeletion(null);
+    },
+    onError: (error, target) => {
+      if (committedSetupScope.current !== target.scope) return;
+      setSetupDeletion((current) => current?.scope === target.scope && current.id === target.id && current.kind === target.kind
+        ? { ...current, error: error.response?.data?.error || error.message || "This item could not be removed. Try again.", errorCode: error.response?.data?.code, dependencies: error.response?.data?.dependencies || [] } : current);
+      if (error.response?.status === 409) {
+        void queryClient.invalidateQueries({ queryKey: ["/api/coverage/assignments", target.scope.schoolId] });
+        void queryClient.invalidateQueries({ queryKey: ["/api/coverage/supervision-groups", target.scope.schoolId] });
+      }
+    },
+  });
+  const setupDeletionBusy = deleteSetupMutation.isPending && deleteSetupMutation.variables?.scope === setupScope;
+  const setupWriteBusy = setupDeletionBusy || saveAssignmentMutation.isPending || deactivateAssignmentMutation.isPending || saveScopeGroupMutation.isPending;
+  const visibleSetupDeletion = isAdmin && setupDeletion?.scope === setupScope ? setupDeletion : null;
+  const permissionPackageName = (permissionPackage) => {
+    const staff = permissionPackage.staff || staffQuery.data?.find((person) => person.userId === permissionPackage.staffId);
+    return staff?.displayName || staff?.email || staff?.user?.displayName || staff?.user?.email || "Unavailable staff member";
+  };
+  const openSetupDeletion = (target, event) => {
+    if (!isAdmin || !schoolId || setupWriteBusy) return;
+    deletionOpener.current = { element: event.currentTarget, scope: setupScope };
+    deleteSetupMutation.reset();
+    setSetupDeletionNotice(null);
+    setSetupDeletion({ ...target, scope: setupScope, error: "" });
+  };
+  const closeSetupDeletion = () => { if (!setupDeletionBusy) setSetupDeletion(null); };
+  const confirmSetupDeletion = () => {
+    if (!visibleSetupDeletion || setupWriteBusy) return;
+    setSetupDeletion((current) => ({ ...current, error: "" }));
+    deleteSetupMutation.mutate(visibleSetupDeletion);
+  };
 
   const toggleUnassignedStudent = (id) => {
     setSelectedUnassignedIds((prev) => {
@@ -999,17 +1087,17 @@ export default function Coverage() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="border-b bg-card">
-        <div className="max-w-screen-2xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
+        <div className="max-w-screen-2xl mx-auto px-6 py-4 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex min-w-0 flex-1 items-center gap-3">
             <Button variant="ghost" size="icon" onClick={() => navigate("/classpilot")}>
               <ArrowLeft className="h-4 w-4" />
             </Button>
-            <div>
+            <div className="min-w-0">
               <h1 className="text-xl font-semibold">Supervision</h1>
               <p className="text-sm text-muted-foreground">Pick up online students and manage flexible supervision groups</p>
             </div>
           </div>
-          <Button variant="outline" onClick={invalidateCoverage}>
+          <Button variant="outline" onClick={refreshCoverage}>
             <RefreshCw className="h-4 w-4 mr-2" />
             Refresh
           </Button>
@@ -1040,11 +1128,11 @@ export default function Coverage() {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList>
+          <TabsList className="h-auto max-w-full flex-wrap justify-start gap-1">
             <TabsTrigger value="console">Claimed</TabsTrigger>
             <TabsTrigger value="unassigned">Available</TabsTrigger>
             <TabsTrigger value="contexts">Active Supervision</TabsTrigger>
-            {canManageSupervisionSetup && <TabsTrigger value="settings">Supervision Groups</TabsTrigger>}
+            {canManageSupervisionSetup && <TabsTrigger ref={setupHeading} value="settings">Supervision Groups</TabsTrigger>}
           </TabsList>
 
           <TabsContent value="console" className="space-y-4 mt-4">
@@ -1307,15 +1395,17 @@ export default function Coverage() {
 
           {canManageSupervisionSetup && (
             <TabsContent value="settings" className="space-y-4 mt-4">
+              {setupDeletionNotice?.scope === setupScope && <p role="status" className="rounded-md border bg-muted/30 p-3 text-sm">{setupDeletionNotice.message}</p>}
+              {(assignmentsQuery.isError || scopeGroupsQuery.isError) && <p role="alert" className="rounded-md border p-3 text-sm text-destructive">Some supervision setup could not load. Use Refresh before deleting groups or permissions.</p>}
               <div className={isAdmin ? "grid gap-4 xl:grid-cols-[1.2fr_1fr]" : "grid gap-4"}>
                 {isAdmin && (
-                  <Card>
-                    <CardHeader className="flex flex-row items-start justify-between gap-4">
-                      <div>
+                  <Card className="min-w-0">
+                    <CardHeader className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:flex-wrap">
+                      <div className="min-w-0 flex-1">
                         <CardTitle className="text-base">Staff Permissions</CardTitle>
                         <CardDescription>Give staff pickup access or setup access within selected scopes.</CardDescription>
                       </div>
-                      <Button onClick={() => openAssignmentDialog()}>
+                      <Button disabled={setupWriteBusy} onClick={() => openAssignmentDialog()}>
                         <UserCheck className="h-4 w-4 mr-2" />
                         Give Staff Access
                       </Button>
@@ -1325,24 +1415,24 @@ export default function Coverage() {
                         {permissionPackages.length === 0 ? (
                           <div className="px-4 py-10 text-center text-sm text-muted-foreground">No staff permissions yet</div>
                         ) : permissionPackages.map((permissionPackage) => (
-                          <div key={permissionPackage.staffId} className="grid gap-3 border-t first:border-t-0 px-4 py-3 text-sm md:grid-cols-[1.1fr_1.5fr_120px_170px] md:items-center">
-                            <div>
-                              <p className="font-medium">{permissionPackage.staff?.displayName || staffQuery.data?.find((s) => s.userId === permissionPackage.staffId)?.user?.email || permissionPackage.staffId}</p>
-                              <p className="text-xs text-muted-foreground">{permissionPackage.staff?.email || `${permissionPackage.assignments.length} permission${permissionPackage.assignments.length === 1 ? "" : "s"}`}</p>
+                          <div key={permissionPackage.staffId} data-testid={`staff-permissions-${permissionPackage.staffId}`} className="grid min-w-0 gap-3 border-t first:border-t-0 px-4 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto]">
+                            <div className="min-w-0">
+                              <p className="break-words font-medium">{permissionPackageName(permissionPackage)}</p>
+                              <p className="break-all text-xs text-muted-foreground">{permissionPackage.staff?.email || (permissionPackageName(permissionPackage) === "Unavailable staff member" ? permissionPackage.staffId : `${permissionPackage.assignments.length} permission${permissionPackage.assignments.length === 1 ? "" : "s"}`)}</p>
                             </div>
-                            <div className="flex flex-wrap gap-2">
+                            <Badge className="w-fit self-start" variant={permissionPackage.active ? "default" : "outline"}>{permissionPackage.active ? "Active" : "Disabled"}</Badge>
+                            <div className="flex min-w-0 flex-wrap gap-2 sm:col-span-2">
                               {permissionPackage.claim && <Badge variant="outline">Claim + Manage</Badge>}
                               {permissionPackage.setup && <Badge variant="outline">Setup</Badge>}
                               {permissionPackage.scopeLabels.slice(0, 5).map((label) => (
-                                <Badge variant="secondary" key={label}>{label}</Badge>
+                                <Badge className="max-w-full whitespace-normal break-words text-left" variant="secondary" key={label}>{label}</Badge>
                               ))}
                               {permissionPackage.scopeLabels.length > 5 && (
                                 <Badge variant="secondary">+{permissionPackage.scopeLabels.length - 5} more</Badge>
                               )}
                             </div>
-                            <Badge variant={permissionPackage.active ? "default" : "outline"}>{permissionPackage.active ? "Active" : "Disabled"}</Badge>
-                            <div className="flex justify-start gap-2 md:justify-end">
-                              <Button variant="outline" size="sm" onClick={() => openAssignmentDialog(permissionPackage)}>
+                            <div className="flex flex-wrap justify-start gap-2 sm:col-span-2">
+                              <Button variant="outline" size="sm" disabled={setupWriteBusy} onClick={() => openAssignmentDialog(permissionPackage)}>
                                 Edit
                               </Button>
                               <Button
@@ -1351,9 +1441,12 @@ export default function Coverage() {
                                 onClick={() => permissionPackage.assignments.forEach((assignment) => {
                                   if (!assignmentHasSetup(assignment) || canDelegateSetup) deactivateAssignmentMutation.mutate(assignment.id);
                                 })}
-                                disabled={!permissionPackage.active || deactivateAssignmentMutation.isPending}
+                                disabled={!permissionPackage.active || setupWriteBusy}
                               >
                                 Disable
+                              </Button>
+                              <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" disabled={setupWriteBusy || !schoolId || assignmentsQuery.isFetching || assignmentsQuery.isError} aria-label={`Remove permissions for ${permissionPackageName(permissionPackage)}${permissionPackageName(permissionPackage) === "Unavailable staff member" ? ` (${permissionPackage.staffId})` : ""}`} onClick={(event) => openSetupDeletion({ kind: "permissions", id: permissionPackage.staffId, name: permissionPackageName(permissionPackage), assignmentIds: [...new Set(permissionPackage.assignments.map((assignment) => assignment.id))].sort(), scopeLabels: [...permissionPackage.scopeLabels] }, event)}>
+                                <Trash2 className="mr-2 h-3.5 w-3.5 shrink-0" />Remove permissions
                               </Button>
                             </div>
                           </div>
@@ -1363,13 +1456,13 @@ export default function Coverage() {
                   </Card>
                 )}
 
-                <Card>
-                  <CardHeader className="flex flex-row items-start justify-between gap-4">
-                    <div>
+                <Card className="min-w-0">
+                  <CardHeader className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:flex-wrap">
+                    <div className="min-w-0 flex-1">
                       <CardTitle className="text-base">Supervision Groups</CardTitle>
                       <CardDescription>Reusable groups for testing, library, office, makeup work, and events.</CardDescription>
                     </div>
-                    <Button variant="outline" onClick={() => openScopeGroupDialog()}>
+                    <Button variant="outline" disabled={setupWriteBusy} onClick={() => openScopeGroupDialog()}>
                       <Plus className="h-4 w-4 mr-2" />
                       New Group
                     </Button>
@@ -1383,17 +1476,19 @@ export default function Coverage() {
                       {filteredScopeGroups.length === 0 ? (
                         <div className="px-4 py-10 text-center text-sm text-muted-foreground">No supervision groups</div>
                       ) : filteredScopeGroups.map((group) => (
-                        <div key={group.id} className="flex items-center justify-between gap-3 border-t first:border-t-0 px-4 py-3 text-sm">
-                          <div>
-                            <p className="font-medium">{group.name}</p>
-                            <p className="text-xs text-muted-foreground">
+                        <div key={group.id} data-testid={`supervision-group-${group.id}`} className="flex min-w-0 flex-col items-start justify-between gap-3 border-t first:border-t-0 px-4 py-3 text-sm">
+                          <div className="min-w-0">
+                            <p className="break-words font-medium">{group.name}</p>
+                            <p className="break-words text-xs text-muted-foreground">
                               {group.studentCount} student{group.studentCount === 1 ? "" : "s"} · {(group.staff || []).length} staff{(group.staff || []).length === 1 ? "" : ""}{group.description ? ` - ${group.description}` : ""}
                             </p>
                           </div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex max-w-full flex-wrap items-center gap-2">
                             <Badge variant={group.active ? "secondary" : "outline"}>{group.active ? "Active" : "Disabled"}</Badge>
-                            <Button variant="outline" size="sm" onClick={() => openScopeGroupDialog(group)}>Edit</Button>
+                            <Button variant="outline" size="sm" disabled={setupWriteBusy} onClick={() => openScopeGroupDialog(group)}>Edit</Button>
+                            {isAdmin && <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" disabled={setupWriteBusy || !schoolId || !group.updatedAt || scopeGroupsQuery.isFetching || scopeGroupsQuery.isError} aria-label={`Delete group ${group.name}`} onClick={(event) => openSetupDeletion({ kind: "group", id: group.id, name: group.name, updatedAt: group.updatedAt, studentCount: group.studentCount, staffCount: group.staff?.length || 0 }, event)}><Trash2 className="mr-2 h-3.5 w-3.5 shrink-0" />Delete group</Button>}
                           </div>
+                          {isAdmin && !group.updatedAt && <p className="text-xs text-muted-foreground">Refresh groups before deleting this group.</p>}
                         </div>
                       ))}
                     </div>
@@ -1404,6 +1499,40 @@ export default function Coverage() {
           )}
         </Tabs>
       </main>
+
+      <AlertDialog open={!!visibleSetupDeletion} onOpenChange={(open) => { if (!open) closeSetupDeletion(); }}>
+        <AlertDialogContent className="max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-lg overflow-y-auto" onEscapeKeyDown={(event) => { if (setupDeletionBusy) event.preventDefault(); }} onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          if (deletionOpener.current?.scope !== setupScope || committedSetupScope.current !== setupScope) return;
+          const target = deletionOpener.current.element;
+          (target?.isConnected ? target : setupHeading.current)?.focus();
+        }}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{visibleSetupDeletion?.kind === "group" ? "Delete supervision group?" : "Remove staff permissions?"}</AlertDialogTitle>
+            <AlertDialogDescription className="break-words">
+              {visibleSetupDeletion?.kind === "group"
+                ? `Delete “${visibleSetupDeletion.name}” and its student/staff links and permissions that apply only to this group. Student and staff accounts, regular class rosters, unrelated permissions and supervision history remain.`
+                : `Remove all ${visibleSetupDeletion?.assignmentIds.length || 0} displayed supervision permission${visibleSetupDeletion?.assignmentIds.length === 1 ? "" : "s"} for ${visibleSetupDeletion?.name || "this staff member"}, including disabled permissions. Their staff account, regular class assignments and supervision history remain.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {visibleSetupDeletion?.kind === "permissions" && <div className="space-y-2 text-sm">
+            {visibleSetupDeletion.name === "Unavailable staff member" && <p className="break-all text-xs text-muted-foreground">Staff record: {visibleSetupDeletion.id}</p>}
+            {visibleSetupDeletion.scopeLabels.length > 0 && <><p className="font-medium">Permission scopes being removed</p><ul tabIndex={0} aria-label="Permission scopes being removed" className="max-h-40 list-disc space-y-1 overflow-y-auto rounded pl-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{visibleSetupDeletion.scopeLabels.map((label) => <li className="break-words" key={label}>{label}</li>)}</ul></>}
+          </div>}
+          <p className="text-sm text-muted-foreground">Resolve active supervision and saved or scheduled testing dependencies before removing this setup. The server checks for changes again when you confirm.</p>
+          {visibleSetupDeletion?.error && <div className="space-y-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">
+            <p role="alert" className="break-words text-destructive">{visibleSetupDeletion.error}</p>
+            {visibleSetupDeletion.errorCode === "COVERAGE_DELETE_STALE" && <p>Cancel and reopen this item to review the updated setup before trying again.</p>}
+            {visibleSetupDeletion.dependencies?.length > 0 && <ul tabIndex={0} aria-label="Dependencies preventing removal" className="max-h-40 list-disc space-y-1 overflow-y-auto rounded pl-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{visibleSetupDeletion.dependencies.map((item, index) => <li key={`${item.kind}:${item.id}:${index}`} className="break-words">{item.kind === "profile" ? "Profile" : item.kind === "application" ? "Scheduled application" : "Active supervision"}: {item.name}{item.date ? ` · ${item.date}` : ""}</li>)}</ul>}
+          </div>}
+          <AlertDialogFooter className="gap-2">
+            <AlertDialogCancel disabled={setupDeletionBusy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" disabled={setupDeletionBusy} onClick={(event) => { event.preventDefault(); confirmSetupDeletion(); }}>
+              {setupDeletionBusy ? "Removing…" : visibleSetupDeletion?.kind === "group" ? visibleSetupDeletion.error ? "Retry deletion" : "Delete group" : visibleSetupDeletion?.error ? "Retry removal" : "Remove permissions"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={contextOpen} onOpenChange={setContextOpen}>
         <DialogContent>

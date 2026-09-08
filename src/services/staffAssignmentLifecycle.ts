@@ -43,6 +43,7 @@ import {
   publishCacheInvalidation,
 } from "../realtime/cacheInvalidation.js";
 import { lockStaffAssignmentLifecycleSchool } from "./staffAssignmentLifecycleLock.js";
+import { touchCoverageGroups } from "./classpilotCoverageDeletion.js";
 
 type LifecycleDb = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -1366,8 +1367,9 @@ async function applyTransitionDecision(options: {
             eq(classpilotCoverageAssignments.active, true)
           )
         )
-        .returning({ id: classpilotCoverageAssignments.id });
+        .returning({ id: classpilotCoverageAssignments.id, scopeType: classpilotCoverageAssignments.scopeType, scopeValue: classpilotCoverageAssignments.scopeValue });
       if (!updated) throw lifecycleError(409, "STAFF_ASSIGNMENT_IMPACT_STALE", "Staff assignments changed; review them again.");
+      if (updated.scopeType === "coverage_group") await touchCoverageGroups(dbInstance, options.schoolId, [updated.scopeValue ?? ""]);
     } else {
       const [updated] = await dbInstance
         .update(classpilotCoverageAssignments)
@@ -1380,8 +1382,9 @@ async function applyTransitionDecision(options: {
             eq(classpilotCoverageAssignments.active, true)
           )
         )
-        .returning({ id: classpilotCoverageAssignments.id });
+        .returning({ id: classpilotCoverageAssignments.id, scopeType: classpilotCoverageAssignments.scopeType, scopeValue: classpilotCoverageAssignments.scopeValue });
       if (!updated) throw lifecycleError(409, "STAFF_ASSIGNMENT_IMPACT_STALE", "Staff assignments changed; review them again.");
+      if (updated.scopeType === "coverage_group") await touchCoverageGroups(dbInstance, options.schoolId, [updated.scopeValue ?? ""]);
     }
   } else if (assignment.assignmentType === "teacher_student_assignment") {
     const [removed] = await dbInstance
