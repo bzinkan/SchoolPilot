@@ -27,23 +27,28 @@ export async function drainTenantContextReleases(): Promise<void> {
   }
 }
 
-function releaseTenantClient(client: PoolClient): Promise<void> {
-  const release = (async () => {
-    let resetError: Error | undefined;
-    try {
-      await client.query("SELECT set_config('app.school_id', '', false), set_config('app.is_super', 'off', false)");
-    } catch (error) {
-      // A failed RESET must discard the connection rather than return a
-      // possibly still-scoped session to the shared pool.
-      resetError = error instanceof Error ? error : new Error("Tenant context reset failed");
-    } finally {
-      client.release(resetError);
-    }
-  })();
+function trackTenantRelease(release: Promise<void>): Promise<void> {
   pendingTenantReleases.add(release);
   const remove = () => { pendingTenantReleases.delete(release); };
   void release.then(remove, remove);
   return release;
+}
+
+async function resetAndReleaseTenantClient(client: PoolClient): Promise<void> {
+  let resetError: Error | undefined;
+  try {
+    await client.query("SELECT set_config('app.school_id', '', false), set_config('app.is_super', 'off', false)");
+  } catch (error) {
+    // A failed RESET must discard the connection rather than return a
+    // possibly still-scoped session to the shared pool.
+    resetError = error instanceof Error ? error : new Error("Tenant context reset failed");
+  } finally {
+    client.release(resetError);
+  }
+}
+
+function releaseTenantClient(client: PoolClient): Promise<void> {
+  return trackTenantRelease(resetAndReleaseTenantClient(client));
 }
 
 async function acquireTenantClient() {
@@ -87,35 +92,64 @@ export const bindTenantContext: RequestHandler = async (req, res, next) => {
   // touch tenant tables (they'd be denied by default); run on the global pool.
   if (!schoolId && !isSuper) return next();
 
-  let client;
-  try {
-    client = await acquireTenantClient();
-  } catch (err) {
-    return next(err);
-  }
+  let responseEnded = false;
+  const isResponseEnded = () => responseEnded || res.destroyed || res.closed || res.writableEnded;
+  if (isResponseEnded()) return;
 
+  let client: PoolClient | undefined;
+  let finishInitialization!: () => void;
+  const initializationSettled = new Promise<void>((resolve) => { finishInitialization = resolve; });
   let releasePromise: Promise<void> | null = null;
   const release = (): Promise<void> => {
     if (releasePromise) return releasePromise;
-    releasePromise = releaseTenantClient(client!);
+    // Track cleanup immediately, even when the response closes while queued.
+    // SET must finish before RESET/release can return this client to another tenant.
+    releasePromise = trackTenantRelease((async () => {
+      await initializationSettled;
+      if (client) await resetAndReleaseTenantClient(client);
+    })());
+    const removeListeners = () => {
+      res.off("finish", onResponseEnded);
+      res.off("close", onResponseEnded);
+    };
+    void releasePromise.then(removeListeners, removeListeners);
     return releasePromise;
   };
-  res.locals.releaseTenantContext = release;
-  res.on("finish", () => { void release(); });
-  res.on("close", () => { void release(); });
+  const onResponseEnded = () => {
+    responseEnded = true;
+    void release();
+  };
+  // A queued checkout can outlive the HTTP response. Observe completion before
+  // acquiring, and keep ownership of any client that arrives after disconnect.
+  res.once("finish", onResponseEnded);
+  res.once("close", onResponseEnded);
 
+  let initializationFailed = false;
+  let initializationError: unknown;
   try {
+    client = await acquireTenantClient();
     // set_config(name, value, is_local=false) = session-level SET, but safely
     // parameterized (SET ... = $1 is not allowed in Postgres).
-    await client.query(
-      "SELECT set_config('app.is_super', $1, false), set_config('app.school_id', $2, false)",
-      [isSuper ? "on" : "off", schoolId ?? ""]
-    );
+    if (!isResponseEnded()) {
+      await client.query(
+        "SELECT set_config('app.is_super', $1, false), set_config('app.school_id', $2, false)",
+        [isSuper ? "on" : "off", schoolId ?? ""]
+      );
+    }
   } catch (err) {
-    await release();
-    return next(err);
+    initializationFailed = true;
+    initializationError = err;
+  } finally {
+    finishInitialization();
   }
 
+  if (initializationFailed || !client || isResponseEnded()) {
+    await release();
+    if (initializationFailed && !isResponseEnded()) return next(initializationError);
+    return;
+  }
+
+  res.locals.releaseTenantContext = release;
   const store = {
     client,
     db: drizzle(client, { schema }),
