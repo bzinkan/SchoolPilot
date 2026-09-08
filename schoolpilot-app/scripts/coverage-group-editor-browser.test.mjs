@@ -27,7 +27,7 @@ async function fixture(context, options = {}) {
     import '/src/index.css';
     queryClient.setDefaultOptions({queries:{retry:false,refetchOnWindowFocus:false}});
     window.__coverageTestClient = queryClient;
-    function SchoolSwitchBridge() { const {switchSchool} = useAuth(); React.useEffect(() => { window.__switchCoverageSchool = switchSchool; }, [switchSchool]); return null; }
+    function SchoolSwitchBridge() { const {switchSchool,refetchUser} = useAuth(); React.useEffect(() => { window.__switchCoverageSchool = switchSchool; window.__refreshCoverageAuth = refetchUser; }, [switchSchool,refetchUser]); return null; }
     createRoot(document.getElementById('root')).render(React.createElement(QueryClientProvider,{client:queryClient},React.createElement(AuthProvider,null,React.createElement(MemoryRouter,null,React.createElement(React.Fragment,null,React.createElement(SchoolSwitchBridge),React.createElement(Coverage),React.createElement(Toaster))))));
   `;
   const vite = await createServer({ root, logLevel: 'error', server: { host: '127.0.0.1', port: 0 }, plugins: [{
@@ -49,15 +49,35 @@ async function fixture(context, options = {}) {
   const page = await browser.newPage({ viewport: { width: 1365, height: 768 } });
   page.setDefaultTimeout(10_000);
   page.setDefaultNavigationTimeout(30_000);
-  const state = { groups: structuredClone(options.groups || []), otherGroups: structuredClone(options.otherGroups || []), assignments: structuredClone(options.assignments || []), otherAssignments: [], writes: [], deletes: [], reads: [], errors: [], membershipMode: 'success', membershipReads: 0, releaseMembership: null, deleteGroupMode: 'success', deletePermissionMode: 'success', releaseDeletion: null, activeSchoolId: 'school' };
-  context.after(() => state.releaseDeletion?.());
+  const state = { groups: structuredClone(options.groups || []), otherGroups: structuredClone(options.otherGroups || []), assignments: structuredClone(options.assignments || []), otherAssignments: [], writes: [], deletes: [], reads: [], errors: [], membershipMode: 'success', membershipReads: 0, releaseMembership: null, deleteGroupMode: 'success', deletePermissionMode: 'success', releaseDeletion: null, activeSchoolId: 'school', role: options.role || 'school_admin', canManageSupervisionSetup: options.canManageSupervisionSetup ?? true, groupsMode: options.groupsMode || 'success', assignmentsMode: options.assignmentsMode || 'success', releaseGroups: null, releaseAssignments: null };
+  const groupsReadStarted = new Promise(resolve => { state.groupsReadStarted = resolve; });
+  const assignmentsReadStarted = new Promise(resolve => { state.assignmentsReadStarted = resolve; });
+  state.failGroupStudents = false;
+  state.failAssignmentIds = new Set();
+  state.holdAssignmentIds = new Set();
+  context.after(() => { state.releaseDeletion?.(); state.releaseGroups?.(); state.releaseAssignments?.(); state.releaseAssignmentWrite?.(); });
+  const staffPayload = id => ({ id, ...staff.find(person => person.userId === id) });
+  const syncGroupStaff = (schoolId, groupId) => {
+    const group = (schoolId === 'school' ? state.groups : state.otherGroups).find(item => item.id === groupId);
+    if (!group) return;
+    const assignments = schoolId === 'school' ? state.assignments : state.otherAssignments;
+    group.staff = [...new Set(assignments.filter(assignment => assignment.scopeType === 'coverage_group' && assignment.scopeValue === groupId && assignment.active !== false && (assignment.permissions?.claim || assignment.permissions?.observe)).map(assignment => assignment.staffId))].map(staffPayload);
+  };
+  const replaceGroupStaff = (schoolId, group, staffIds) => {
+    const assignmentKey = schoolId === 'school' ? 'assignments' : 'otherAssignments';
+    for (const assignment of state[assignmentKey].filter(item => item.scopeType === 'coverage_group' && item.scopeValue === group.id)) assignment.active = staffIds.includes(assignment.staffId);
+    for (const staffId of staffIds) {
+      if (!state[assignmentKey].some(item => item.scopeType === 'coverage_group' && item.scopeValue === group.id && item.staffId === staffId)) state[assignmentKey].push({ id: `group-${group.id}-${staffId}`, staffId, staff: staffPayload(staffId), scopeType: 'coverage_group', scopeValue: group.id, scopeLabel: `Supervision Group: ${group.name}`, active: true, permissions: { claim: true } });
+    }
+    syncGroupStaff(schoolId, group.id);
+  };
   page.on('pageerror', error => state.errors.push(error.message));
   await page.route('**/api/**', async route => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
     const schoolId = request.headers()['x-school-id'] || state.activeSchoolId;
     if (request.method() === 'GET') state.reads.push({ pathname, schoolId });
-    if (pathname.endsWith('/auth/me')) { state.activeSchoolId = schoolId; return route.fulfill({ json: { user: { id: 'admin', email: 'admin@fixture.example' }, activeSchoolId: schoolId, memberships: [{ id: 'membership', schoolId: 'school', role: options.role || 'school_admin' }, { id: 'other-membership', schoolId: 'other-school', role: options.role || 'school_admin' }], licenses: { classPilot: true } } }); }
+    if (pathname.endsWith('/auth/me')) { state.activeSchoolId = schoolId; return route.fulfill({ json: { user: { id: 'admin', email: 'admin@fixture.example' }, activeSchoolId: schoolId, memberships: [{ id: 'membership', schoolId: 'school', role: state.role }, { id: 'other-membership', schoolId: 'other-school', role: state.role }], licenses: { classPilot: true } } }); }
     if (pathname.endsWith('/csrf')) return route.fulfill({ json: { csrfToken: 'fixture-csrf' } });
     if (pathname.endsWith('/admin/users') || pathname.endsWith('/coverage/setup/staff')) return route.fulfill({ json: { users: staff } });
     if (pathname.endsWith('/admin/teacher-students') || pathname.endsWith('/coverage/setup/students')) return route.fulfill({ json: { students } });
@@ -73,8 +93,16 @@ async function fixture(context, options = {}) {
       if (state.membershipMode === 'error') return route.fulfill({ status: 503, json: { error: 'Class roster is temporarily unavailable.' } });
       return route.fulfill({ json: { students: students.filter(student => [...gradeFiveIds.slice(0, 12), 'g6-1'].includes(student.id)) } });
     }
-    if (pathname.endsWith('/coverage/supervision-groups') && request.method() === 'GET') return route.fulfill({ json: { groups: schoolId === 'school' ? state.groups : state.otherGroups } });
-    if (pathname.endsWith('/coverage/assignments') && request.method() === 'GET') return route.fulfill({ json: { assignments: schoolId === 'school' ? state.assignments : state.otherAssignments } });
+    if (pathname.endsWith('/coverage/supervision-groups') && request.method() === 'GET') {
+      if (state.groupsMode === 'pending') await new Promise(resolve => { state.releaseGroups = resolve; state.groupsReadStarted?.(); });
+      if (state.groupsMode === 'error') return route.fulfill({ status: 503, json: { error: 'Supervision groups are temporarily unavailable.' } });
+      return route.fulfill({ json: { groups: schoolId === 'school' ? state.groups : state.otherGroups } });
+    }
+    if (pathname.endsWith('/coverage/assignments') && request.method() === 'GET') {
+      if (state.assignmentsMode === 'pending') await new Promise(resolve => { state.releaseAssignments = resolve; state.assignmentsReadStarted?.(); });
+      if (state.assignmentsMode === 'error') return route.fulfill({ status: 503, json: { error: 'Staff access is temporarily unavailable.' } });
+      return route.fulfill({ json: { assignments: schoolId === 'school' ? state.assignments : state.otherAssignments } });
+    }
     if (pathname.includes('/coverage/supervision-groups/') && request.method() === 'DELETE') {
       const id = decodeURIComponent(pathname.split('/').at(-1));
       state.deletes.push({ method: request.method(), pathname, schoolId, body: request.postData() ? request.postDataJSON() : null });
@@ -94,25 +122,48 @@ async function fixture(context, options = {}) {
       if (state.deletePermissionMode === 'blocked') return route.fulfill({ status: 409, json: { code: 'COVERAGE_DELETE_STALE', error: 'These staff permissions changed. Close this dialog, review the current permissions and try again.' } });
       if (state.deletePermissionMode === 'error') return route.fulfill({ status: 503, json: { error: 'Staff permissions could not be removed. Try again.' } });
       const assignmentKey = schoolId === 'school' ? 'assignments' : 'otherAssignments';
+      const affectedGroups = state[assignmentKey].filter(assignment => body.assignmentIds.includes(assignment.id) && assignment.scopeType === 'coverage_group').map(assignment => assignment.scopeValue);
       state[assignmentKey] = state[assignmentKey].filter(assignment => !(assignment.staffId === staffId && body.assignmentIds.includes(assignment.id)));
+      for (const groupId of affectedGroups) syncGroupStaff(schoolId, groupId);
       return route.fulfill({ json: { deleted: true, staffId, deletedAssignments: body.assignmentIds.length } });
+    }
+    if (pathname.includes('/coverage/assignments') && ['POST', 'PATCH'].includes(request.method())) {
+      const body = request.postDataJSON(), assignmentKey = schoolId === 'school' ? 'assignments' : 'otherAssignments';
+      state.writes.push({ method: request.method(), pathname, body });
+      const assignmentId = pathname.split('/').at(-1);
+      if (state.holdAssignmentIds.has(assignmentId)) await new Promise(resolve => { state.releaseAssignmentWrite = resolve; state.assignmentWriteStarted?.(); });
+      if (state.failAssignmentIds.has(assignmentId)) return route.fulfill({ status: 503, json: { error: 'A staff permission could not be saved.' } });
+      const existing = request.method() === 'PATCH' ? state[assignmentKey].find(assignment => assignment.id === pathname.split('/').at(-1)) : null;
+      const previousGroupId = existing?.scopeType === 'coverage_group' ? existing.scopeValue : null;
+      const assignment = { ...existing, ...body, id: existing?.id || `permission-${state.writes.length}`, active: body.active ?? existing?.active ?? true };
+      assignment.staff = staffPayload(assignment.staffId);
+      assignment.scopeLabel = assignment.scopeType === 'coverage_group' ? `Supervision Group: ${(schoolId === 'school' ? state.groups : state.otherGroups).find(group => group.id === assignment.scopeValue)?.name || assignment.scopeValue}` : assignment.scopeValue || 'Schoolwide';
+      if (existing) Object.assign(existing, assignment); else state[assignmentKey].push(assignment);
+      for (const groupId of [previousGroupId, assignment.scopeType === 'coverage_group' ? assignment.scopeValue : null].filter(Boolean)) syncGroupStaff(schoolId, groupId);
+      return route.fulfill({ json: { assignment } });
     }
     if (pathname.includes('/coverage/supervision-groups') && request.method() !== 'GET') {
       const body = request.postDataJSON();
       state.writes.push({ method: request.method(), pathname, body });
+      const groupKey = schoolId === 'school' ? 'groups' : 'otherGroups';
+      let group = state[groupKey].find(item => item.id === pathname.split('/')[4]);
       if (request.method() === 'POST') {
-        state.groups = [{ id: 'testing', ...body, students: body.studentIds.map(studentId => ({ studentId })), staff: body.staffIds.map(id => ({ id })), studentCount: body.studentIds.length }];
+        group = { id: 'testing', ...body, active: true, students: body.studentIds.map(studentId => ({ studentId })), staff: [], studentCount: body.studentIds.length, updatedAt: '2026-09-08T12:00:00.001Z' };
+        state[groupKey].push(group);
+        replaceGroupStaff(schoolId, group, body.staffIds);
       } else if (request.method() === 'PATCH') {
-        state.groups[0] = { ...state.groups[0], ...body };
+        Object.assign(group, body);
+        for (const assignment of (schoolId === 'school' ? state.assignments : state.otherAssignments).filter(item => item.scopeType === 'coverage_group' && item.scopeValue === group.id)) assignment.scopeLabel = `Supervision Group: ${group.name}`;
       } else if (pathname.endsWith('/students')) {
-        state.groups[0].students = body.studentIds.map(studentId => ({ studentId }));
-        state.groups[0].studentCount = body.studentIds.length;
+        if (state.failGroupStudents) return route.fulfill({ status: 503, json: { error: 'Student membership could not be saved.' } });
+        group.students = body.studentIds.map(studentId => ({ studentId }));
+        group.studentCount = body.studentIds.length;
       } else if (pathname.endsWith('/staff')) {
-        state.groups[0].staff = body.staffIds.map(id => ({ id }));
+        replaceGroupStaff(schoolId, group, body.staffIds);
       }
-      return route.fulfill({ json: { group: state.groups[0] } });
+      return route.fulfill({ json: { group } });
     }
-    if (pathname.endsWith('/coverage/capabilities')) return route.fulfill({ json: { canManageSupervisionSetup: options.canManageSupervisionSetup ?? true } });
+    if (pathname.endsWith('/coverage/capabilities')) return route.fulfill({ json: { canManageSupervisionSetup: state.canManageSupervisionSetup } });
     if (pathname.endsWith('/coverage/summary')) return route.fulfill({ json: { claimedStudentCount: 0 } });
     return route.fulfill({ json: {} });
   });
@@ -122,6 +173,9 @@ async function fixture(context, options = {}) {
     await page.getByRole('tab', { name: 'Supervision Groups', exact: true }).click();
     await page.getByRole('button', { name: 'New Group', exact: true }).click();
     await dialog.waitFor();
+  } else if (options.groupsMode === 'pending' || options.assignmentsMode === 'pending') {
+    if (options.groupsMode === 'pending') await groupsReadStarted;
+    if (options.assignmentsMode === 'pending') await assignmentsReadStarted;
   } else await page.waitForLoadState('networkidle');
   return { page, state, dialog };
 }
@@ -376,13 +430,15 @@ test('group deletion confirms the exact version, cancels without writes, retains
   state.deleteGroupMode = 'success'; state.releaseDeletion(); state.releaseDeletion = null;
   await confirm.waitFor({ state: 'hidden' }); await opener.waitFor({ state: 'hidden' });
   await page.getByText(survivor.name, { exact: true }).waitFor();
-  assert.equal(await page.getByRole('button', { name: 'Remove permissions for Linked Group Staff', exact: true }).count(), 0);
   assert.deepEqual(state.groups.map(group => group.id), ['retained-group']);
   assert.deepEqual(state.assignments, []);
   const refreshed = state.reads.slice(readsBefore).map(read => read.pathname);
   assert(refreshed.includes('/api/coverage/supervision-groups') && refreshed.includes('/api/coverage/assignments') && refreshed.includes('/api/coverage/capabilities'));
   assert.deepEqual(await page.evaluate(() => ['classpilot-schedule-profiles', 'classpilot-school-scheduling'].map(key => window.__coverageTestClient.getQueryState([key, 'school'])?.isInvalidated)), [true, true]);
   assert.equal(await page.getByRole('tab', { name: 'Supervision Groups', exact: true }).evaluate(element => element === document.activeElement), true);
+  await page.getByRole('tab', { name: 'Staff access', exact: true }).click();
+  await page.getByRole('tabpanel', { name: 'Staff access', exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Remove permissions for Linked Group Staff', exact: true }).count(), 0, 'The linked permission is absent after opening its own tab');
   assert.equal(state.deletes.length, 3); assert.deepEqual(state.writes, []); assert.deepEqual(state.errors, []);
 });
 
@@ -395,7 +451,7 @@ test('removing an orphaned staff permission package sends active and inactive ID
   const remaining = { id: 'remaining-permission', staffId: 'staff-2', staff: { displayName: 'Remaining Staff' }, scopeType: 'grade', scopeValue: '6', scopeLabel: 'Grade 6', permissions: { claim: true }, active: true };
   const mixedAssignments = [true, false].map((active, index) => ({ id: `mixed-${index}`, staffId: 'staff-3', staff: { displayName: 'Mixed Staff' }, scopeType: 'grade', scopeValue: String(index + 3), permissions: { claim: true }, active }));
   const { page, state } = await fixture(context, { openCreate: false, groups: [group], assignments: [...orphanAssignments, remaining, ...mixedAssignments] });
-  await page.getByRole('tab', { name: 'Supervision Groups', exact: true }).click();
+  await page.getByRole('tab', { name: 'Staff access', exact: true }).click();
   const opener = page.getByRole('button', { name: 'Remove permissions for Unavailable staff member (orphan-staff)', exact: true });
   const confirm = page.getByRole('alertdialog', { name: 'Remove staff permissions?', exact: true });
   assert.equal(await opener.isEnabled(), true, 'Inactive and orphaned packages remain removable without selecting the staff member from the active picker');
@@ -428,14 +484,16 @@ test('removing an orphaned staff permission package sends active and inactive ID
   state.deletePermissionMode = 'success';
   await confirm.getByRole('button', { name: 'Retry removal', exact: true }).click();
   await confirm.waitFor({ state: 'hidden' }); await opener.waitFor({ state: 'hidden' });
+  assert.equal(await page.getByRole('tab', { name: 'Staff access', exact: true }).evaluate(element => element === document.activeElement), true, 'Permission removal returns focus to Staff access');
   await page.getByRole('button', { name: 'Remove permissions for Remaining Staff', exact: true }).waitFor();
-  await page.getByText(group.name, { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Remove permissions for Mixed Staff', exact: true }).click();
   await confirm.getByRole('button', { name: 'Remove permissions', exact: true }).click();
   await confirm.waitFor({ state: 'hidden' });
   assert.deepEqual(state.deletes.at(-1).body.assignmentIds.slice().sort(), mixedAssignments.map(assignment => assignment.id).sort(), 'A mixed package sends both active and inactive rows in one request');
   assert.deepEqual(state.assignments.map(assignment => assignment.id), [remaining.id]);
   assert.deepEqual(state.groups, [group], 'Removing permissions must not delete groups, student membership or saved group staff');
+  await page.getByRole('tab', { name: 'Supervision Groups', exact: true }).click();
+  await page.getByText(group.name, { exact: true }).waitFor();
   assert.equal(state.deletes.length, 3);
   assert.equal(state.deletes.slice(0, 2).every(request => request.pathname === '/api/coverage/assignments/staff/orphan-staff'), true, 'Each attempt is one exact package deletion, not multiple row writes');
   assert.deepEqual(state.writes, []); assert.deepEqual(state.errors, []);
@@ -473,8 +531,246 @@ test('deletion controls are administrator-only even when a teacher has delegated
   await page.getByRole('tab', { name: 'Supervision Groups', exact: true }).click();
   await page.getByText(group.name, { exact: true }).waitFor();
   assert.equal(await page.getByRole('button', { name: 'New Group', exact: true }).isEnabled(), true);
+  assert.equal(await page.getByRole('tab', { name: 'Staff access', exact: true }).count(), 0);
   assert.equal(await page.getByRole('button', { name: /^Delete group / }).count(), 0);
   assert.equal(await page.getByRole('button', { name: /^Remove permissions for / }).count(), 0);
   assert.equal(state.reads.some(read => read.pathname === '/api/coverage/assignments'), false);
   assert.deepEqual(state.deletes, []); assert.deepEqual(state.writes, []); assert.deepEqual(state.errors, []);
+});
+
+test('setup tabs show assigned names, preserve group search, and remain accessible in both themes and viewport sizes', { timeout: 90_000 }, async context => {
+  const named = { ...deletionGroup('named', 'Reading Room Testing'), description: 'Morning assessment group', staff: [
+    { id: 'named-staff', displayName: 'Dr. Alexandra Morgan-James' },
+    { id: 'named-staff', displayName: 'Dr. Alexandra Morgan-James' },
+    { id: 'email-staff', displayName: 'email-staff', email: 'long.supervision.staff.label@fixture.example' },
+    { id: 'unavailable-staff', displayName: 'unavailable-staff' },
+  ] };
+  const unstaffed = { ...deletionGroup('unstaffed', 'Library Practice'), staff: [] };
+  const oneStaff = { ...deletionGroup('single', 'Math Testing'), active: false, staff: [{ id: 'single-staff', displayName: 'Ms. Single' }] };
+  const assignment = { id: 'permission', staffId: 'staff-1', staff: { displayName: 'Staff 1' }, scopeType: 'grade', scopeValue: '5', scopeLabel: 'Roster Grade: 5', permissions: { claim: true }, active: true };
+  const { page, state } = await fixture(context, { openCreate: false, groups: [named, unstaffed, oneStaff], assignments: [assignment] });
+  const groupsTab = page.getByRole('tab', { name: 'Supervision Groups', exact: true });
+  const accessTab = page.getByRole('tab', { name: 'Staff access', exact: true });
+  assert.equal(await page.getByRole('tab', { name: 'Claimed', exact: true }).getAttribute('aria-selected'), 'true', 'The existing landing tab remains Claimed');
+  await groupsTab.click();
+  const groupsPanel = page.getByRole('tabpanel', { name: 'Supervision Groups', exact: true });
+  const search = groupsPanel.getByRole('textbox', { name: 'Search supervision groups', exact: true });
+  const names = await groupsPanel.getByTestId('supervision-group-named').locator('p').filter({ hasText: /^Assigned staff:/ }).innerText();
+  assert.equal(names.match(/Dr\. Alexandra Morgan-James/g)?.length, 1, 'Duplicate records for one staff ID are displayed once');
+  assert(names.includes('long.supervision.staff.label@fixture.example'), 'Email replaces missing or ID-only names');
+  assert(names.includes('Unavailable staff member'));
+  assert(!names.includes('unavailable-staff'), 'Missing names do not expose an internal staff ID');
+  await groupsPanel.getByTestId('supervision-group-unstaffed').getByText('Assigned staff: No staff assigned', { exact: true }).waitFor();
+  await groupsPanel.getByTestId('supervision-group-single').getByText('Assigned staff: Ms. Single', { exact: true }).waitFor();
+  await groupsPanel.getByTestId('supervision-group-single').getByText('Disabled', { exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Give Staff Access', exact: true }).count(), 0, 'Permission controls are absent from the group tab');
+
+  await search.fill('Morning assessment');
+  assert.equal(await groupsPanel.locator('[data-testid^="supervision-group-"]').count(), 1, 'Existing description search still filters groups');
+  await groupsTab.focus(); await page.keyboard.press('ArrowRight');
+  await page.getByRole('tabpanel', { name: 'Staff access', exact: true }).waitFor();
+  assert.equal(await accessTab.evaluate(element => element === document.activeElement && element.matches(':focus-visible')), true);
+  assert.equal(await page.getByRole('button', { name: 'New Group', exact: true }).count(), 0, 'The inactive group panel is excluded from accessible navigation');
+  assert.equal(await page.getByRole('textbox', { name: 'Search supervision groups', exact: true }).count(), 0);
+  await page.keyboard.press('ArrowLeft');
+  await groupsPanel.waitFor();
+  assert.equal(await search.inputValue(), 'Morning assessment', 'Switching tabs retains the group filter');
+  await search.fill('');
+
+  const artifactDir = path.resolve(root, '..', 'soc2-evidence', 'validation', 'supervision-setup-tabs', 'browser');
+  await mkdir(artifactDir, { recursive: true });
+  for (const [size, viewport] of [['desktop', { width: 1365, height: 768 }], ['mobile', { width: 390, height: 667 }]]) {
+    await page.setViewportSize(viewport);
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), theme === 'dark');
+      for (const [label, tab] of [['groups', groupsTab], ['staff-access', accessTab]]) {
+        await tab.click();
+        const panel = page.getByRole('tabpanel', { name: label === 'groups' ? 'Supervision Groups' : 'Staff access', exact: true });
+        await panel.waitFor();
+        assert.equal(await page.getByRole('tabpanel').count(), 1, `${label}/${size}/${theme}: only the selected panel is accessible`);
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, `${label}/${size}/${theme}: page has no horizontal overflow`);
+        assert.equal(await panel.evaluate(element => element.scrollWidth <= element.clientWidth), true, `${label}/${size}/${theme}: rows and actions stay inside the panel`);
+        await page.screenshot({ path: path.join(artifactDir, `${label}-${size}-${theme}.png`), fullPage: true, animations: 'disabled' });
+      }
+    }
+  }
+  assert.deepEqual(state.writes, []); assert.deepEqual(state.deletes, []); assert.deepEqual(state.errors, []);
+});
+
+test('group edits and staff access changes refresh the other tab and keep group membership intact', { timeout: 90_000 }, async context => {
+  const group = { ...deletionGroup('paired', 'Paired Testing'), staff: [{ id: 'staff-1', displayName: 'Staff 1' }] };
+  const assignments = [{ id: 'paired-staff-1', staffId: 'staff-1', staff: { displayName: 'Staff 1' }, scopeType: 'coverage_group', scopeValue: group.id, scopeLabel: `Supervision Group: ${group.name}`, permissions: { claim: true }, active: true }];
+  const { page, state } = await fixture(context, { openCreate: false, groups: [group], assignments });
+  const groupsTab = page.getByRole('tab', { name: 'Supervision Groups', exact: true });
+  const accessTab = page.getByRole('tab', { name: 'Staff access', exact: true });
+  const groupRow = page.getByTestId('supervision-group-paired');
+  await groupsTab.click();
+  await groupRow.getByRole('button', { name: 'Edit', exact: true }).click();
+  const groupEditor = page.getByRole('dialog', { name: 'Edit Supervision Group', exact: true });
+  await groupEditor.getByPlaceholder('Search staff by name, email, or role').fill('Staff 2');
+  await groupEditor.getByRole('checkbox', { name: /Staff 2/ }).check();
+  await groupEditor.getByRole('button', { name: 'Save', exact: true }).click();
+  await groupEditor.waitFor({ state: 'hidden' });
+  await groupRow.getByText('Assigned staff: Staff 1, Staff 2', { exact: true }).waitFor();
+  await accessTab.click();
+  const staffTwo = page.getByTestId('staff-permissions-staff-2');
+  await staffTwo.getByText(`Supervision Group: ${group.name}`, { exact: true }).waitFor();
+  await staffTwo.getByRole('button', { name: 'Edit', exact: true }).click();
+  const accessEditor = page.getByRole('dialog', { name: 'Edit Staff Access', exact: true });
+  await accessEditor.getByRole('checkbox', { name: 'Active permission', exact: true }).uncheck();
+  await accessEditor.getByRole('button', { name: 'Save', exact: true }).click();
+  await accessEditor.waitFor({ state: 'hidden' });
+  await staffTwo.getByText('Disabled', { exact: true }).waitFor();
+  await groupsTab.click();
+  await groupRow.getByText('Assigned staff: Staff 1', { exact: true }).waitFor();
+  await accessTab.click();
+  await page.getByTestId('staff-permissions-staff-1').getByRole('button', { name: 'Disable', exact: true }).click();
+  await page.getByTestId('staff-permissions-staff-1').getByText('Disabled', { exact: true }).waitFor();
+  await groupsTab.click();
+  await groupRow.getByText('Assigned staff: No staff assigned', { exact: true }).waitFor();
+  await accessTab.click();
+  await staffTwo.getByRole('button', { name: 'Edit', exact: true }).click();
+  await accessEditor.getByRole('checkbox', { name: 'Active permission', exact: true }).check();
+  await accessEditor.getByRole('button', { name: 'Save', exact: true }).click();
+  await accessEditor.waitFor({ state: 'hidden' });
+  await groupsTab.click();
+  await groupRow.getByText('Assigned staff: Staff 2', { exact: true }).waitFor();
+  await accessTab.click();
+  await staffTwo.getByRole('button', { name: 'Remove permissions for Staff 2', exact: true }).click();
+  const confirm = page.getByRole('alertdialog', { name: 'Remove staff permissions?', exact: true });
+  await confirm.getByRole('button', { name: 'Remove permissions', exact: true }).click();
+  await confirm.waitFor({ state: 'hidden' });
+  await page.getByRole('tabpanel', { name: 'Staff access', exact: true }).getByRole('status').filter({ hasText: 'Supervision permissions for Staff 2 removed.' }).waitFor();
+  await groupsTab.click();
+  await groupRow.getByText('Assigned staff: No staff assigned', { exact: true }).waitFor();
+  await groupRow.getByText('2 students', { exact: true }).waitFor();
+  assert.equal(await page.getByText('Supervision permissions for Staff 2 removed.', { exact: true }).count(), 0, 'A permission removal notice belongs to Staff access');
+  assert.deepEqual(state.groups[0].students, group.students);
+  assert.deepEqual(state.writes.map(write => write.method), ['PATCH', 'PUT', 'PUT', 'PATCH', 'PATCH', 'PATCH']);
+  assert.equal(state.deletes.length, 1); assert.deepEqual(state.errors, []);
+});
+
+test('setup loading and errors stay in the relevant tab and Refresh recovers without hiding cached rows', { timeout: 90_000 }, async context => {
+  const group = deletionGroup('loadable', 'Loadable Testing');
+  const assignment = { id: 'loadable-access', staffId: 'staff-1', staff: { displayName: 'Staff 1' }, scopeType: 'grade', scopeValue: '5', permissions: { claim: true }, active: true };
+  const { page, state } = await fixture(context, { openCreate: false, groups: [group], assignments: [assignment], groupsMode: 'pending', assignmentsMode: 'pending' });
+  const groupsTab = page.getByRole('tab', { name: 'Supervision Groups', exact: true });
+  const accessTab = page.getByRole('tab', { name: 'Staff access', exact: true });
+  const groupsPanel = page.getByRole('tabpanel', { name: 'Supervision Groups', exact: true });
+  const accessPanel = page.getByRole('tabpanel', { name: 'Staff access', exact: true });
+  await groupsTab.click();
+  await groupsPanel.getByText('Loading supervision groups…', { exact: true }).waitFor();
+  assert.equal(await groupsPanel.getByText('No supervision groups', { exact: true }).count(), 0);
+  await accessTab.click();
+  await accessPanel.getByText('Loading staff access…', { exact: true }).waitFor();
+  assert.equal(await accessPanel.getByText('No staff permissions yet', { exact: true }).count(), 0);
+  state.groupsMode = 'error'; state.releaseGroups(); state.releaseGroups = null;
+  state.assignmentsMode = 'error'; state.releaseAssignments(); state.releaseAssignments = null;
+  await accessPanel.getByRole('alert').filter({ hasText: 'Staff access could not load.' }).waitFor();
+  assert.equal(await accessPanel.getByText(/Supervision groups could not load/).count(), 0);
+  await groupsTab.click();
+  await groupsPanel.getByRole('alert').filter({ hasText: 'Supervision groups could not load.' }).waitFor();
+  assert.equal(await groupsPanel.getByText('No supervision groups', { exact: true }).count(), 0);
+  state.groupsMode = 'success';
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await groupsPanel.getByText(group.name, { exact: true }).waitFor();
+  assert.equal(await groupsPanel.getByRole('alert').count(), 0, 'A staff access failure does not replace the groups view');
+  await accessTab.click();
+  await accessPanel.getByRole('alert').filter({ hasText: 'Staff access could not load.' }).waitFor();
+  state.assignmentsMode = 'success';
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await accessPanel.getByTestId('staff-permissions-staff-1').waitFor();
+  state.assignmentsMode = 'error';
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await accessPanel.getByRole('alert').filter({ hasText: 'Staff access could not load.' }).waitFor();
+  assert.equal(await accessPanel.getByTestId('staff-permissions-staff-1').isVisible(), true, 'Previously loaded access remains visible on refetch failure');
+  assert.equal(await accessPanel.getByRole('button', { name: 'Remove permissions for Staff 1', exact: true }).isDisabled(), true);
+  state.groupsMode = 'error';
+  await groupsTab.click();
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await groupsPanel.getByRole('alert').filter({ hasText: 'Supervision groups could not load.' }).waitFor();
+  assert.equal(await groupsPanel.getByText(group.name, { exact: true }).isVisible(), true);
+  assert.equal(await groupsPanel.getByRole('button', { name: `Delete group ${group.name}`, exact: true }).isDisabled(), true);
+  assert.deepEqual(state.writes, []); assert.deepEqual(state.deletes, []); assert.deepEqual(state.errors, []);
+});
+
+test('losing administrator or setup access selects an available tab without exposing staff controls', { timeout: 60_000 }, async context => {
+  const group = deletionGroup('role-fallback', 'Delegated Testing');
+  const { page, state } = await fixture(context, { openCreate: false, groups: [group] });
+  await page.getByRole('tab', { name: 'Staff access', exact: true }).click();
+  await page.getByRole('button', { name: 'Give Staff Access', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Give Staff Access', exact: true }).waitFor();
+  state.role = 'teacher';
+  await page.evaluate(() => window.__refreshCoverageAuth());
+  await page.getByRole('tabpanel', { name: 'Supervision Groups', exact: true }).waitFor();
+  assert.equal(await page.getByRole('dialog').count(), 0, 'Revoking administration closes an open staff access editor');
+  assert.equal(await page.getByRole('tab', { name: 'Supervision Groups', exact: true }).getAttribute('aria-selected'), 'true');
+  assert.equal(await page.getByRole('tab', { name: 'Staff access', exact: true }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: 'Give Staff Access', exact: true }).count(), 0);
+  await page.getByRole('button', { name: 'New Group', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Create Supervision Group', exact: true }).getByPlaceholder('State testing - 8th grade').fill('Draft retained until access changes');
+  state.canManageSupervisionSetup = false;
+  await page.evaluate(() => window.__coverageTestClient.invalidateQueries({ queryKey: ['/api/coverage/capabilities', 'school'] }));
+  await page.getByRole('tabpanel', { name: 'Claimed', exact: true }).waitFor();
+  assert.equal(await page.getByRole('tab', { name: 'Claimed', exact: true }).getAttribute('aria-selected'), 'true');
+  assert.equal(await page.getByRole('tab', { name: 'Supervision Groups', exact: true }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: 'New Group', exact: true }).count(), 0);
+  assert.equal(await page.getByRole('dialog').count(), 0, 'Revoking setup closes an open group editor');
+  assert.deepEqual(state.writes, []); assert.deepEqual(state.deletes, []); assert.deepEqual(state.errors, []);
+});
+
+test('partial setup saves retain drafts and refresh both views only after outstanding permission writes settle', { timeout: 90_000 }, async context => {
+  const group = { ...deletionGroup('partial', 'Original Testing Name'), staff: [{ id: 'staff-1', displayName: 'Staff 1' }] };
+  const assignments = [
+    { id: 'partial-group', staffId: 'staff-1', staff: { displayName: 'Staff 1' }, scopeType: 'coverage_group', scopeValue: group.id, scopeLabel: `Supervision Group: ${group.name}`, permissions: { claim: true }, active: true },
+    { id: 'partial-grade', staffId: 'staff-1', staff: { displayName: 'Staff 1' }, scopeType: 'grade', scopeValue: '5', scopeLabel: 'Grade 5', permissions: { claim: true }, active: true },
+  ];
+  const { page, state } = await fixture(context, { openCreate: false, groups: [group], assignments });
+  const groupsTab = page.getByRole('tab', { name: 'Supervision Groups', exact: true });
+  const accessTab = page.getByRole('tab', { name: 'Staff access', exact: true });
+  await groupsTab.click();
+  await page.getByTestId('supervision-group-partial').getByRole('button', { name: 'Edit', exact: true }).click();
+  const groupEditor = page.getByRole('dialog', { name: 'Edit Supervision Group', exact: true });
+  await groupEditor.getByPlaceholder('State testing - 8th grade').fill('Partially Updated Testing');
+  state.failGroupStudents = true;
+  const beforeGroupSave = state.reads.length;
+  await groupEditor.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.getByText('Could not save supervision group', { exact: true }).waitFor();
+  assert.equal(await groupEditor.isVisible(), true, 'A partial group save retains the editor');
+  assert.equal(await groupEditor.getByPlaceholder('State testing - 8th grade').inputValue(), 'Partially Updated Testing');
+  await groupEditor.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByTestId('supervision-group-partial').getByText('Partially Updated Testing', { exact: true }).waitFor();
+  await accessTab.click();
+  const packageRow = page.getByTestId('staff-permissions-staff-1');
+  await packageRow.getByText('Supervision Group: Partially Updated Testing', { exact: true }).waitFor();
+  const groupSaveReads = state.reads.slice(beforeGroupSave).map(read => read.pathname);
+  assert(groupSaveReads.includes('/api/coverage/supervision-groups') && groupSaveReads.includes('/api/coverage/assignments'));
+  assert.deepEqual(state.groups[0].students, group.students);
+
+  await packageRow.getByRole('button', { name: 'Edit', exact: true }).click();
+  const accessEditor = page.getByRole('dialog', { name: 'Edit Staff Access', exact: true });
+  await accessEditor.getByRole('checkbox', { name: 'Active permission', exact: true }).uncheck();
+  state.failAssignmentIds.add('partial-grade');
+  state.holdAssignmentIds.add('partial-group');
+  const writeStarted = new Promise(resolve => { state.assignmentWriteStarted = resolve; });
+  const beforePermissionSave = state.reads.length;
+  await accessEditor.getByRole('button', { name: 'Save', exact: true }).click();
+  await writeStarted;
+  await accessEditor.getByRole('button', { name: 'Save', exact: true, disabled: true }).waitFor();
+  assert.equal(await accessEditor.getByRole('button', { name: 'Save', exact: true }).isDisabled(), true, 'A failed sibling write does not make the still-running save retryable');
+  assert.equal(state.reads.slice(beforePermissionSave).some(read => ['/api/coverage/supervision-groups', '/api/coverage/assignments'].includes(read.pathname)), false, 'Lists are not refreshed before the last write finishes');
+  state.releaseAssignmentWrite(); state.releaseAssignmentWrite = null;
+  await page.getByText('Could not save assignment', { exact: true }).waitFor();
+  assert.equal(await accessEditor.isVisible(), true);
+  assert.equal(await accessEditor.getByRole('checkbox', { name: 'Active permission', exact: true }).isChecked(), false, 'The unfinished permission draft remains intact');
+  await accessEditor.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await groupsTab.click();
+  await page.getByTestId('supervision-group-partial').getByText('Assigned staff: No staff assigned', { exact: true }).waitFor();
+  await accessTab.click();
+  await packageRow.getByText('Active', { exact: true }).waitFor();
+  assert.equal(state.assignments.find(assignment => assignment.id === 'partial-grade').active, true);
+  assert.equal(state.assignments.find(assignment => assignment.id === 'partial-group').active, false);
+  const permissionSaveReads = state.reads.slice(beforePermissionSave).map(read => read.pathname);
+  assert(permissionSaveReads.includes('/api/coverage/supervision-groups') && permissionSaveReads.includes('/api/coverage/assignments'));
+  assert.deepEqual(state.deletes, []); assert.deepEqual(state.errors, []);
 });
