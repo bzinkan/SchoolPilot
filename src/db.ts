@@ -12,6 +12,9 @@ import {
   prewarmDatabasePool,
 } from "./config/databasePools.js";
 import { safeErrorMetadata } from "./util/safeLogging.js";
+import { ApiPoolReadiness, API_POOL_READINESS_CONFIG } from "./services/apiPoolReadiness.js";
+import { getRuntimeMetadata } from "./services/runtimeMetadata.js";
+import { recordRuntimePerformanceCounter } from "./services/runtimePerformanceMetrics.js";
 
 // SOC 2 / SC-7: enforce TLS verify-full to AWS RDS using the bundled CA chain.
 // The Docker image ships /app/rds-ca.pem from AWS' truststore so we can verify
@@ -69,6 +72,67 @@ const sessionPool = new pg.Pool({
   ssl: buildPgSslConfig(url),
   allowExitOnIdle: process.env.NODE_ENV !== "production",
 });
+
+export const apiPoolReadiness = new ApiPoolReadiness({
+  readPool: () => ({
+    total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount, max: poolLimits.main,
+  }),
+  async probeDatabase() {
+    // Use the existing session pool's two-connection ceiling, never a new
+    // connection budget or a tenant query. pg bounds checkout at 5s and its
+    // pool.query releases/discards the client on this 2s query timeout.
+    const probe = { text: "SELECT 1", query_timeout: 2_000 };
+    await sessionPool.query(probe);
+    return true;
+  },
+  onTransition(transition) {
+    recordRuntimePerformanceCounter(transition.state === "pool_stalled"
+      ? "apiPoolReadinessStalled" : transition.state === "ready"
+        ? "apiPoolReadinessRecovered" : "apiPoolReadinessProbeDeferred");
+    console.log(JSON.stringify({
+      event: "api_pool_readiness_transition", ...getRuntimeMetadata(), ...transition,
+    }));
+    // Acquisition failures already emit non-persisted database_connectivity
+    // alerts. This transition supplies recovery context without duplicate alerts.
+  },
+});
+
+let readinessTimer: NodeJS.Timeout | undefined;
+const recordMainPoolProgress = () => apiPoolReadiness.recordProgress();
+
+/** API entrypoint only, after startup and prewarming, before accepting traffic. */
+export function startApiPoolReadiness(): void {
+  if (readinessTimer || poolLimits.role !== "api") return;
+  apiPoolReadiness.start();
+  if (!apiPoolReadiness.status().ready) return;
+  for (const event of ["acquire", "release", "remove"] as const) {
+    pool.on(event, recordMainPoolProgress);
+  }
+  readinessTimer = setInterval(() => {
+    void apiPoolReadiness.sample().catch(() => {
+      // Never log raw database errors, SQL or request context from this path.
+      console.error(JSON.stringify({ event: "api_pool_readiness_sample_failed", ...getRuntimeMetadata() }));
+    });
+  }, API_POOL_READINESS_CONFIG.sampleIntervalMs);
+  readinessTimer.unref();
+  console.log(JSON.stringify({
+    event: "api_pool_readiness_started", contractVersion: 1, path: "/readyz",
+    ...API_POOL_READINESS_CONFIG, ...getRuntimeMetadata(),
+  }));
+}
+
+export function stopApiPoolReadiness(): void {
+  if (readinessTimer) clearInterval(readinessTimer);
+  readinessTimer = undefined;
+  apiPoolReadiness.stop();
+  for (const event of ["acquire", "release", "remove"] as const) {
+    pool.off(event, recordMainPoolProgress);
+  }
+}
+
+export async function drainApiPoolReadiness(): Promise<void> {
+  await apiPoolReadiness.drain();
+}
 
 export async function prewarmMainPool(): Promise<number> {
   await prewarmDatabasePool(pool, poolMinimums.main);

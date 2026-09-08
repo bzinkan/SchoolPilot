@@ -314,7 +314,7 @@ module "alb" {
   public_subnet_ids               = module.vpc.public_subnet_ids
   enable_https                    = local.has_domain
   certificate_arn                 = local.has_domain ? module.dns[0].certificate_arn : ""
-  health_check_path               = "/livez"
+  health_check_path               = var.api_alb_health_check_path
   enable_http_ingress             = false
   allowed_ingress_cidr_blocks     = []
   allowed_ingress_prefix_list_ids = [data.aws_ec2_managed_prefix_list.cloudfront_origin_facing.id]

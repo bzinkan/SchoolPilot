@@ -545,7 +545,7 @@ Centralized error tracking in `src/services/errorMonitor.ts`. `trackError(catego
 
 **Stats + metrics:** `errorMonitor.getStats()` exposes captured, persisted, persistFailed, dropped, alertAttempted, alertDelivered, alertFailed, and cooldownSuppressed counters by total/category/fingerprint. Fingerprint samples are bounded to 5 sanitized entries each and active fingerprints are capped/evicted by quiet low-priority entries first. The monitor emits CloudWatch Embedded Metric Format JSON to stdout every 60 seconds with namespace `SchoolPilot/Monitoring` and dimensions `Environment`, `Service`, and `InstanceId`; EMF output never includes message text, stack, path, user id, school id, or context. When `REDIS_URL` is configured, monitor alert thresholds and cooldown election are shared across ECS tasks under `${REDIS_PREFIX}:monitor:*`; if Redis is missing/unhealthy, aggregation degrades to the local Phase 2 behavior without blocking boot.
 
-**Health endpoints:** `/livez` is the lightweight liveness endpoint used by ECS container health and the ALB target group; keep it session-free and DB-free. CloudFront intentionally does not expose a separate `/livez` behavior. Public `/health` is cheap external uptime (`{"status":"ok"}`) for Route53/synthetic checks. Detailed operational health is available only with `HEALTH_TOKEN` via `x-health-token` or `?token=...`; that detailed response includes `recentErrors`, `checks.alerting`, and `checks.monitoring` with monitor stats/runtime metadata plus `checks.monitoring.aggregation` (`mode: "redis" | "local"`). If alerting is the only degraded check, detailed `/health` still returns HTTP 200 with JSON status `degraded`; core subsystem failures return 503.
+**Health endpoints:** `/livez` is lightweight ECS container liveness; keep it session-free and DB-free. The ALB initially uses `/livez`; activate the separate cached `/readyz` response only through `docs/API_POOL_READINESS_OPERATIONS.md` after the candidate backend and every task's readiness startup marker are verified. `/readyz` performs no request-time DB query. Do not expose either endpoint through a dedicated CloudFront behavior. Public `/health` is cheap external uptime (`{"status":"ok"}`) for Route53/synthetic checks. Detailed operational health is available only with `HEALTH_TOKEN` via `x-health-token` or `?token=...`; that detailed response includes `recentErrors`, `checks.alerting`, and `checks.monitoring` with monitor stats/runtime metadata plus `checks.monitoring.aggregation` (`mode: "redis" | "local"`). If alerting is the only degraded check, detailed `/health` still returns HTTP 200 with JSON status `degraded`; core subsystem failures return 503.
 
 **Super Admin Monitoring panel:** `/super-admin/monitoring` is the read-only operations view for the monitor. APIs live under `/api/super-admin/monitoring/*` and require super-admin auth plus the existing RLS super-admin bypass. The Schools page may show only a compact status chip/link, not a large monitoring dashboard section. Phase 4A intentionally has no schema changes, no mute/acknowledge controls, and no durable incident workflow; live fingerprint history comes from in-process/Redis aggregation, while recent events come from existing sanitized `error_logs`. The panel must never show raw query strings, request bodies, tokens, emails, IPs, student names, device ids, unrestricted context, or raw security-event details.
 
@@ -777,8 +777,10 @@ User → CloudFront (E1TPPJOD7C2CXR) → routes by path:
   /* (default)        → S3 (schoolpilot-production-frontend)
 ```
 
-The ALB target group and ECS container health checks use `/livez` directly. Do
-not add a CloudFront `/livez` behavior; public synthetic checks should use
+ECS container health checks always use `/livez` directly. The ALB target group
+uses the observed `api_alb_health_check_path` baseline: `/livez` before guarded
+readiness activation and `/readyz` after verified activation and baseline adoption.
+Do not add CloudFront `/livez` or `/readyz` behaviors; public synthetic checks should use
 `/health`.
 
 ### Component Details
@@ -786,7 +788,7 @@ not add a CloudFront `/livez` behavior; public synthetic checks should use
 | Component | Name / ARN | Notes |
 |-----------|-----------|-------|
 | **CloudFront** | Distribution `E1TPPJOD7C2CXR` | Two origins: `alb-api` (HTTPS-only ALB origin) and `s3-frontend` (S3); WAF attached |
-| **ALB** | `schoolpilot-production-alb` (`schoolpilot-production-alb-1532292365.us-east-1.elb.amazonaws.com`) | HTTPS listener forwards to ECS target group; target health path `/livez`; inbound HTTPS access is restricted to the AWS CloudFront origin-facing managed prefix list |
+| **ALB** | `schoolpilot-production-alb` (`schoolpilot-production-alb-1532292365.us-east-1.elb.amazonaws.com`) | HTTPS listener forwards to ECS target group; target health path follows the separately verified readiness activation baseline; inbound HTTPS access is restricted to the AWS CloudFront origin-facing managed prefix list |
 | **ECS Cluster** | `schoolpilot-production-cluster` | Fargate launch type |
 | **ECS API Service** | `schoolpilot-production-api` | ClassPilot 2.7 capacity sizing: ordinary minimum 1 task, weekday 05:45–16:00 America/New_York school-day floor 3 (held all school day because the ALB sticky session pins each device to the task it first reached), autoscaling maximum 6; each API task uses main=16 and session=2 connections, so three API tasks plus the 16-connection worker ceiling hold 70 and six total 124. The selected launch-safe revision uses 512 CPU / 2048 MiB and the ALB target group. Re-enabling eight tasks requires a separately reviewed RDS Proxy or database-capacity decision. The cost rollout stages tasks from private to public subnets with a public IPv4 only after the baseline gate. |
 | **ECS Worker Service** | `schoolpilot-production-scheduler-worker` | Launch sizing: 1 desired singleton scheduler worker at 256 CPU / 512 MiB, staged to the same public-task egress posture as the API; no ALB target registration. |

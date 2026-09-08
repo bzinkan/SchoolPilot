@@ -10,7 +10,10 @@ import { createUpgradedTransportShutdown } from "./realtime/websocketShutdown.js
 import { startScheduler, stopScheduler, drainSchedulerJobs, snapshotSchedulerJobs } from "./services/scheduler.js";
 import { startHealthMonitor, stopHealthMonitor, drainHealthMonitor } from "./services/healthMonitor.js";
 import errorMonitor from "./services/errorMonitor.js";
-import { pool, prewarmMainPool, sessionPool } from "./db.js";
+import {
+  pool, prewarmMainPool, sessionPool, startApiPoolReadiness,
+  stopApiPoolReadiness, drainApiPoolReadiness,
+} from "./db.js";
 import { schedulerLockPool, schedulerPool } from "./services/schedulerDb.js";
 import {
   legacyMigrationsOnly,
@@ -117,11 +120,14 @@ async function drainApiService(): Promise<boolean> {
   const result = await drainService({
     timeoutMs: 14_500, // Leave time to report before the process's 15s hard stop.
     onPhase(phase) { shutdownPhase = phase; },
-    stopIntake() { stopScheduler(); stopHealthMonitor(); stopWebSocketWork(); stopSocketIoWork(); },
+    stopIntake() {
+      stopApiPoolReadiness();
+      stopScheduler(); stopHealthMonitor(); stopWebSocketWork(); stopSocketIoWork();
+    },
     async drainProducers() {
       await Promise.all([
         closeRealtimeServers(),
-        drainSchedulerJobs(), drainHealthMonitor(),
+        drainSchedulerJobs(), drainHealthMonitor(), drainApiPoolReadiness(),
       ]);
       await Promise.all([drainWebSocketWork(), drainSocketIoWork()]);
     },
@@ -5006,6 +5012,7 @@ async function startServer(): Promise<void> {
   startHealthMonitor(wss);
 
   server.listen(PORT, () => {
+    startApiPoolReadiness();
     console.log(`SchoolPilot API running on http://localhost:${PORT}`);
     console.log(`Health check: http://localhost:${PORT}/health`);
     console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
