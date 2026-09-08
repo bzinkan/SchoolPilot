@@ -6,7 +6,7 @@ import helmet from "helmet";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import cookieParser from "cookie-parser";
-import { sessionPool } from "./db.js";
+import { sessionPool, apiPoolReadiness } from "./db.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { requestId } from "./middleware/requestId.js";
 import { sessionIdleTimeout } from "./middleware/sessionIdleTimeout.js";
@@ -161,10 +161,18 @@ export function createApp() {
 
   app.use(cookieParser());
 
-  // Liveness check for ALB/ECS. Keep this intentionally small and bounded so
+  // Container liveness. Keep this intentionally small and bounded so
   // container replacement does not depend on web sessions or rich probes.
   app.get("/livez", async (_req, res) => {
     res.status(200).json({ status: "ok" });
+  });
+
+  // ALB readiness is a cached, task-local decision: no sessions, queries or
+  // sensitive diagnostics. The route itself never starts a database probe.
+  app.get("/readyz", (_req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    const { ready } = apiPoolReadiness.status();
+    res.status(ready ? 200 : 503).json({ status: ready ? "ok" : "unavailable" });
   });
 
   // Public health stays cheap for external uptime checks. Detailed operational

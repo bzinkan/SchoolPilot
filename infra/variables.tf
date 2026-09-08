@@ -108,6 +108,17 @@ variable "redis_replica_count" {
 
 # --- ECS / Fargate ---
 
+variable "api_alb_health_check_path" {
+  description = "Observed ALB health path; adopt /readyz only after guarded readiness activation on a verified backend release"
+  type        = string
+  default     = "/livez"
+
+  validation {
+    condition     = contains(["/livez", "/readyz"], var.api_alb_health_check_path)
+    error_message = "The API ALB health path must be /livez or the separately activated /readyz."
+  }
+}
+
 variable "ecs_desired_count" {
   description = "Number of Fargate tasks"
   type        = number

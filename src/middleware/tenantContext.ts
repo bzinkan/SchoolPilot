@@ -1,7 +1,7 @@
 import type { RequestHandler } from "express";
 import type { PoolClient } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { pool } from "../db.js";
+import { pool, apiPoolReadiness } from "../db.js";
 import { tenantALS, rlsGucEnabled, type TenantStore } from "../db/tenantContext.js";
 import * as schema from "../schema/index.js";
 import {
@@ -60,6 +60,7 @@ async function acquireTenantClient() {
     recordRuntimePerformanceTiming("poolAcquisitionMs", performance.now() - startedAt);
     return client;
   } catch (error) {
+    apiPoolReadiness.recordAcquisitionFailure();
     recordRuntimePerformanceCounter("poolAcquisitionFailure");
     recordRuntimePerformanceTiming("poolAcquisitionMs", performance.now() - startedAt);
     markTenantPoolAcquisitionFailureReported(error);
