@@ -181,11 +181,12 @@ Choose the portal students open after ClassPilot sign-in while their Waypoint or
 
 Define who can temporarily supervise students and preserve clear ownership through claim and release.
 
-1. **Set permissions and groups.** Choose the staff and supervision groups that may receive coverage assignments.
-2. **Assign exact students.** Create the assignment with its intended staff, students, and time boundary. Do not use missing targets as a broader fallback.
-3. **Watch ownership transitions.** Claim, reroute, and release operations update who controls the student. Wait for the new context before sending actions.
-4. **Review controls and history.** Coverage exposes a bounded control set. Use history to confirm who claimed, acted, and released an assignment.
-5. **Remove unused setup.** In Supervision Groups, choose Delete group and review the confirmation to remove a group and its group-specific permissions. In Staff Permissions, Remove permissions removes the displayed permissions for that staff member, including disabled entries. These actions preserve staff and student accounts, regular class rosters and supervision history. Resolve any saved-profile, upcoming-testing or active-supervision dependency shown in the message before deleting. Disable keeps a permission entry available for later use.
+1. **Prepare Supervision Groups.** Coverage opens on Claimed. Open Supervision Groups to create or edit a reusable supervision group and select its students and assigned staff. Selecting staff automatically grants Claim + Manage for that group; no separate Give Staff Access step is needed. Saving a group does not start supervision or change regular class rosters.
+2. **Review Staff access.** Use the administrator-only Staff access tab to review each staff member's permissions. Give Staff Access and Edit can grant Claim + Manage across selected groups, classes, grades, students or the whole school, or delegate Setup access to manage groups within the chosen scopes. Removing staff from one group changes only that group's access; broader grants can still allow access to those students.
+3. **Assign exact students.** Create the assignment with its intended staff, students, and time boundary. Do not use missing targets as a broader fallback.
+4. **Watch ownership transitions.** Claim, reroute, and release operations update who controls the student. Wait for the new context before sending actions.
+5. **Review controls and history.** Coverage exposes a bounded control set. Use history to confirm who claimed, acted, and released an assignment.
+6. **Remove unused setup.** In Supervision Groups, choose Delete group and review the confirmation to remove a group and its group-specific permissions. In Staff access, Disable retains permission entries for later use; Remove permissions removes the displayed permissions for that staff member, including disabled entries, without deleting supervision groups. These actions preserve staff and student accounts, regular class rosters and supervision history. Resolve any saved-profile, upcoming-testing or active-supervision dependency shown in the message before deleting.
 
 [Open Coverage](/classpilot/coverage)
 
