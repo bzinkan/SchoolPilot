@@ -3023,7 +3023,11 @@ export default function Dashboard() {
   const historyTileReadsEnabled = studentView !== 'available'
     && observationReadsAllowed
     && !tileGlobalAuthorizationDenied;
-  const targetedScreenshotFenceKey = `${screenshotTileBindingTransitionKey}\n${eligibleScreenshotStudentBindingsKey}\n${JSON.stringify([...screenshotReadAuthorities])}\n${studentView}\n${observationLeaseStatus}\n${tileGlobalAuthorizationDenied}`;
+  // Exact-bound previews may load while the observation check is pending.
+  // Its successful completion must not discard that first authorized response
+  // without changing the query key. Revocation still changes enabled state and
+  // the generation; rendering retains the existing exact/legacy lease guards.
+  const targetedScreenshotFenceKey = `${screenshotTileBindingTransitionKey}\n${eligibleScreenshotStudentBindingsKey}\n${JSON.stringify([...screenshotReadAuthorities])}\n${studentView}\n${screenshotTileReadsEnabled}\n${tileGlobalAuthorizationDenied}`;
   if (targetedScreenshotFenceGenerationRef.current.key !== targetedScreenshotFenceKey) {
     targetedScreenshotFenceGenerationRef.current = {
       key: targetedScreenshotFenceKey,

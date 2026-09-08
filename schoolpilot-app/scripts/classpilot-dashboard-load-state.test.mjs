@@ -169,6 +169,39 @@ async function waitUntil(predicate, message, timeoutMs = 7_500) {
   assert.fail(message);
 }
 
+async function assertInitialPreview(page, harness, responsePhases = [], timeout = 30_000) {
+  try {
+    await page.getByTestId(`screenshot-${STUDENT_ID}`).waitFor({ timeout });
+  } catch (error) {
+    let diagnosticTimer;
+    const ui = await Promise.race([
+      page.evaluate((studentId) => {
+        const read = (id) => document.querySelector(`[data-testid="${id}"]`);
+        const card = read(`card-student-${studentId}`);
+        return {
+          card: Boolean(card), cardText: card?.textContent?.slice(0, 700),
+          skeleton: Boolean(read(`student-tile-skeleton-${studentId}`)),
+          unavailableStatus: read(`text-unavailable-status-${studentId}`)?.textContent,
+          selectedClass: read('select-admin-observe')?.value,
+          selection: read('badge-selection-count')?.textContent,
+          connected: read('text-online-count')?.textContent, signedOut: read('text-offline-count')?.textContent,
+          warnings: [...document.querySelectorAll('[data-testid="tile-read-denied"], [data-testid^="screenshot-observation-"]')].slice(0, 5).map((node) => ({ id: node.dataset.testid, text: node.textContent?.slice(0, 300) })),
+          images: [...document.images].filter((node) => node.dataset.testid === `screenshot-${studentId}` || card?.contains(node)).slice(0, 6).map((node) => ({
+            id: node.dataset.testid, src: node.getAttribute('src')?.slice(0, 160), complete: node.complete,
+            width: node.naturalWidth, height: node.naturalHeight, display: getComputedStyle(node).display, visibility: getComputedStyle(node).visibility,
+          })),
+        };
+      }, STUDENT_ID).catch((failure) => ({ evaluationError: failure.message.slice(0, 300) })),
+      new Promise((resolve) => { diagnosticTimer = setTimeout(() => resolve({ evaluationTimedOut: true }), 2000); }),
+    ]).finally(() => clearTimeout(diagnosticTimer));
+    assert.fail(`Initial preview did not render: ${JSON.stringify({
+      error: error.message.split('\n')[0], ui,
+      screenshotRequests: harness.tileRequests.filter((request) => request.pathname.endsWith('/screenshots')).slice(-8).map(({ body }) => ({ teachingSessionId: body.teachingSessionId, count: body.studentIds?.length, studentIds: body.studentIds?.slice(0, 4) })),
+      responsePhases: responsePhases.slice(-8), pageErrors: harness.pageErrors.slice(-5).map((message) => message.slice(0, 500)),
+    })}`);
+  }
+}
+
 async function configureDashboard(page, {
   aggregate,
   userRole = "admin",
@@ -2571,6 +2604,7 @@ test('live preview eligibility follows sign-in without replaying denied or super
     pendingReleases.push(releasePriorCohort, releaseJoinedCohort);
     let cohortPhase = 'startup';
     let heldPriorCohortRequests = 0;
+    const joinedResponsePhases = [];
     const joinedRows = [
       student({ lastSeenAt: fixedTime.toISOString(), realtimeObservedAt: fixedTime.toISOString() }),
       signedOut({ studentId: SIGNED_OUT_STUDENT_ID, studentName: 'Joining Student' }),
@@ -2580,12 +2614,16 @@ test('live preview eligibility follows sign-in without replaying denied or super
       aggregate: joinedAggregate, activeSession: live, allSessions: [live],
       screenshotTiles: async (body) => {
         const joined = body.studentIds.includes(SIGNED_OUT_STUDENT_ID);
+        const reply = { phase: cohortPhase, targets: body.studentIds.length, joined, result: 'pending' };
+        joinedResponsePhases.push(reply);
         if (joined) await joinedCohortGate;
         else if (cohortPhase === 'hold-prior') {
           heldPriorCohortRequests += 1;
           await priorCohortGate;
+          reply.result = '404';
           return { status: 404, body: { code: 'CLASSPILOT_NO_ACCESSIBLE_TILES' } };
         }
+        reply.result = '200:image';
         return { tiles: [{ studentId: STUDENT_ID, bindingVersion: 'v2:unchanged-classmate', screenshot: {
           screenshot: joined ? UPDATED_SCREENSHOT_DATA_URL : TINY_SCREENSHOT_DATA_URL,
           timestamp: new Date(fixedTime.getTime() - (joined ? 500 : 1000)).toISOString(),
@@ -2594,7 +2632,7 @@ test('live preview eligibility follows sign-in without replaying denied or super
       },
     });
     await joinedPage.goto(`${baseURL}/classpilot`);
-    await joinedPage.getByTestId(`screenshot-${STUDENT_ID}`).waitFor();
+    await assertInitialPreview(joinedPage, joinedHarness, joinedResponsePhases);
     trace('initial classmate image rendered');
     await joinedHarness.authenticateWebSocket();
     // Startup can legitimately issue more than one read while the observation
@@ -2648,6 +2686,7 @@ test('live preview eligibility follows sign-in without replaying denied or super
       let heldTargetedRequests = 0;
       let restoredScreenshotRequests = 0;
       let delayedCaptureAt = fixedTime.toISOString();
+      const bindingResponsePhases = [];
       const bindingRows = (loggedIn, revision) => [student({
         status: loggedIn ? 'online' : 'offline', isLoggedIn: loggedIn,
         loginState: loggedIn ? 'logged_in' : 'not_logged_in',
@@ -2660,12 +2699,18 @@ test('live preview eligibility follows sign-in without replaying denied or super
         aggregate: bindingAggregate, activeSession: live, allSessions: [live],
         screenshotTiles: async () => {
           const requestPhase = screenshotPhase;
+          const reply = { phase: requestPhase, result: 'pending' };
+          bindingResponsePhases.push(reply);
           if (requestPhase === 'hold-targeted') {
             heldTargetedRequests += 1;
             await oldTargetedGate;
-            if (oldResult === 'denial') return { status: 404, body: { code: 'CLASSPILOT_NO_ACCESSIBLE_TILES' } };
+            if (oldResult === 'denial') {
+              reply.result = '404';
+              return { status: 404, body: { code: 'CLASSPILOT_NO_ACCESSIBLE_TILES' } };
+            }
           }
           if (requestPhase === 'restored') restoredScreenshotRequests += 1;
+          reply.result = '200:image';
           return { tiles: [{ studentId: STUDENT_ID, bindingVersion: 'v2:same-binding-eligibility', screenshot: {
             screenshot: requestPhase === 'hold-targeted' ? VIEWER_SCREENSHOT_DATA_URL : requestPhase === 'restored' ? UPDATED_SCREENSHOT_DATA_URL : TINY_SCREENSHOT_DATA_URL,
             timestamp: requestPhase === 'hold-targeted' ? delayedCaptureAt : new Date(fixedTime.getTime() - (requestPhase === 'restored' ? 500 : 1000)).toISOString(),
@@ -2674,7 +2719,7 @@ test('live preview eligibility follows sign-in without replaying denied or super
         },
       });
       await bindingPage.goto(`${baseURL}/classpilot`);
-      await bindingPage.getByTestId(`screenshot-${STUDENT_ID}`).waitFor();
+      await assertInitialPreview(bindingPage, bindingHarness, bindingResponsePhases);
       await bindingHarness.authenticateWebSocket();
       await bindingPage.waitForLoadState('networkidle');
       assert.equal(await bindingPage.getByTestId(`screenshot-${STUDENT_ID}`).getAttribute('src'), TINY_SCREENSHOT_DATA_URL);
@@ -2750,6 +2795,72 @@ test('live preview eligibility follows sign-in without replaying denied or super
   } finally {
     for (const release of pendingReleases) release();
     for (const page of pages) await page.close().catch(() => {});
+    await browser.close();
+    await vite.close();
+  }
+});
+
+test('a pending observation acknowledgement preserves the first exact-bound preview response', { timeout: 45_000 }, async () => {
+  const vite = await createServer({ root: APP_ROOT, logLevel: 'error', server: { host: '127.0.0.1', port: 0 } });
+  await vite.listen();
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage();
+  const fixedTime = new Date('2026-09-08T12:40:00Z');
+  let releaseObservation;
+  let releaseScreenshot;
+  const observationGate = new Promise((resolve) => { releaseObservation = resolve; });
+  const screenshotGate = new Promise((resolve) => { releaseScreenshot = resolve; });
+  const responsePhases = [];
+  let observationStarted = false;
+  try {
+    await page.clock.install({ time: fixedTime });
+    const live = teachingSession();
+    const harness = await configureDashboard(page, {
+      aggregate: aggregateController({ scoped: success([student({ lastSeenAt: fixedTime.toISOString(), realtimeObservedAt: fixedTime.toISOString() })]) }),
+      activeSession: live, allSessions: [live],
+      observationLeaseResponse: async (method) => {
+        if (method === 'PUT') {
+          observationStarted = true;
+          await observationGate;
+        }
+        return { renewAfterSeconds: 30 };
+      },
+      screenshotTiles: async () => {
+        const reply = { phase: 'began-before-observation-acknowledgement', result: 'pending' };
+        responsePhases.push(reply);
+        await screenshotGate;
+        reply.result = '200:exact-image';
+        return { tiles: [{ studentId: STUDENT_ID, bindingVersion: 'v2:pending-observation-first-image', screenshot: {
+          screenshot: TINY_SCREENSHOT_DATA_URL,
+          timestamp: new Date(fixedTime.getTime() - 1000).toISOString(),
+          bindingVersion: 'v2:pending-observation-first-image',
+        } }] };
+      },
+    });
+    const screenshots = () => harness.tileRequests.filter((request) => request.pathname.endsWith('/screenshots'));
+    const histories = () => harness.tileRequests.filter((request) => request.pathname.endsWith('/history'));
+    await page.goto(`http://127.0.0.1:${vite.httpServer.address().port}/classpilot`);
+    await waitUntil(() => observationStarted && screenshots().length > 0, 'exact-bound screenshot reads must begin while the observation PUT is still pending');
+    assert.equal(screenshots().length, 1);
+    assert.equal(histories().length, 0, 'the pending observation state must not yet enable history polling');
+    assert.deepEqual(screenshots()[0].body.studentIds, [STUDENT_ID]);
+    assert.equal(screenshots()[0].body.teachingSessionId, OWN_SESSION_ID);
+    releaseObservation();
+    // History polling is enabled only after the successful PUT has changed
+    // the rendered observation state. This proves the required ordering,
+    // rather than sleeping and assuming the acknowledgement was applied.
+    await waitUntil(() => histories().length > 0, 'the observation acknowledgement must be committed before the screenshot response is released');
+    assert.equal(screenshots().length, 1, 'the observation effect must join the already-pending exact-bound read');
+    releaseScreenshot();
+    await assertInitialPreview(page, harness, responsePhases, 7_500);
+    assert.equal(await page.getByTestId(`screenshot-${STUDENT_ID}`).getAttribute('src'), TINY_SCREENSHOT_DATA_URL);
+    assert.equal(screenshots().length, 1, 'the first response must paint without waiting for a periodic or replacement request');
+    assert.equal(await page.getByTestId('tile-read-denied').count(), 0);
+    assert.deepEqual(harness.pageErrors, []);
+  } finally {
+    releaseObservation();
+    releaseScreenshot();
+    await page.close().catch(() => {});
     await browser.close();
     await vite.close();
   }
