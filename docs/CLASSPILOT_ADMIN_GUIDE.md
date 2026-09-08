@@ -185,6 +185,7 @@ Define who can temporarily supervise students and preserve clear ownership throu
 2. **Assign exact students.** Create the assignment with its intended staff, students, and time boundary. Do not use missing targets as a broader fallback.
 3. **Watch ownership transitions.** Claim, reroute, and release operations update who controls the student. Wait for the new context before sending actions.
 4. **Review controls and history.** Coverage exposes a bounded control set. Use history to confirm who claimed, acted, and released an assignment.
+5. **Remove unused setup.** In Supervision Groups, choose Delete group and review the confirmation to remove a group and its group-specific permissions. In Staff Permissions, Remove permissions removes the displayed permissions for that staff member, including disabled entries. These actions preserve staff and student accounts, regular class rosters and supervision history. Resolve any saved-profile, upcoming-testing or active-supervision dependency shown in the message before deleting. Disable keeps a permission entry available for later use.
 
 [Open Coverage](/classpilot/coverage)
 
