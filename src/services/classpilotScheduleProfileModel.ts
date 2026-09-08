@@ -1,5 +1,9 @@
 /** Reusable plans and immutable, school-local dated snapshots. No live roster reads. */
 export type ScheduleProfileWindow = { startTime: string; endTime: string };
+/** Half-open school-local windows: a meeting ending at the next start does not overlap. */
+export function scheduleProfileWindowsOverlap(a: ScheduleProfileWindow, b: ScheduleProfileWindow): boolean {
+  return a.startTime < b.endTime && b.startTime < a.endTime;
+}
 export type ScheduleProfileDefinition = {
   name: string;
   grades: string[];
