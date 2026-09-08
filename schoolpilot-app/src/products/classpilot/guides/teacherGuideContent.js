@@ -61,10 +61,11 @@ export const teacherGuideTopics = [
     route: "/classpilot",
     routeLabel: "Open Dashboard",
     steps: [
-      { title: "Use the counters", body: "Online and Idle students have current heartbeat coverage. Signed-out students have no active ClassPilot student session. Signal Lost means a signed-in browser has stopped reporting; the cause is not assumed." },
+      { title: "Use the counters", body: "Online and Idle students have current heartbeat coverage. Signed-out students have no active ClassPilot student session and show Waiting for ClassPilot sign-in. They stay in the roster, and preview requests resume automatically when they sign in. Signal Lost means a signed-in browser has stopped reporting; the cause is not assumed." },
       { title: "Treat previews as passive evidence", body: "A screen preview is an authorized still image with its own age. It does not determine whether a student is connected and it never replaces heartbeat status." },
       { title: "Recognize transitions", body: "Signing in means an approved identity-provider flow is active. Updating preview means a new control revision is waiting for its matching still image. Neither label means the student is stale." },
       { title: "Wait for exact authority", body: "When a student changes device or session, ClassPilot clears prior-session details before showing the new binding." },
+      { title: "Check an access warning", body: "Students waiting to sign in do not trigger a live-preview access warning. If a preview or history access warning remains, use Refresh class to check the current class access again. That action does not sign students in." },
     ],
     warning: "Do not interpret a recent preview as proof that commands are currently available. Use the connection label and command outcome.",
   },

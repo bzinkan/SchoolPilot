@@ -838,6 +838,11 @@ function StudentTile({
                   Never observed
                 </span>
               )}
+              {effectiveMonitoringDisplay.kind === 'signed_out' && (
+                <span className="mt-2 block text-[11px] text-muted-foreground">
+                  Waiting for ClassPilot sign-in
+                </span>
+              )}
             </div>
           </div>
         ) : effectiveScreenshotObservationStatus === 'pending' ? (

@@ -37,6 +37,23 @@ export function tileReadAuthorityMap(contextKey, students) {
   ]));
 }
 
+// Absence of telemetry is not absence of authentication. Keep unknown and
+// reconnecting rows eligible; only explicit current privacy state excludes them.
+export function isStudentScreenshotReadEligible(student, monitoringSuppressed = false) {
+  return !monitoringSuppressed
+    && student?.loginState !== 'not_logged_in'
+    && student?.isLoggedIn !== false
+    && student?._realtimeSignedOut !== true
+    && student?.activityState !== 'delegated'
+    && student?._realtimeSuppressed !== true;
+}
+
+export function isCurrentScreenshotRead(snapshot, current) {
+  return Boolean(snapshot?.enabled && current?.enabled
+    && snapshot.fenceKey === current.fenceKey
+    && snapshot.fenceGeneration === current.fenceGeneration);
+}
+
 export function deniedTileStudentIds(denials, kind, authorities) {
   const denied = new Set();
   for (const [studentId, authority] of authorities) {
@@ -61,6 +78,16 @@ export function recordTileReadDenial(denials, kind, authorities, studentIds) {
 
 export function clearTileReadDenials(denials, kind, authorities) {
   for (const authority of authorities.values()) denials.delete(`${kind}:${authority}`);
+}
+
+export function retireChangedTileReadDenials(denials, kind, previous, current) {
+  let changed = false;
+  for (const [studentId, authority] of previous) {
+    if (current.has(studentId) && current.get(studentId) !== authority) {
+      changed = denials.delete(`${kind}:${authority}`) || changed;
+    }
+  }
+  return changed;
 }
 
 export function tileRequestWithoutDeniedStudents(request, denials, authorities) {

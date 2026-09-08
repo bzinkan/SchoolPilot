@@ -63,10 +63,11 @@ Use the class controls deliberately so monitoring and student controls follow th
 
 Connection freshness, previews, and sign-in state are separate signals.
 
-1. **Use the counters.** Online and Idle students have current heartbeat coverage. Signed-out students have no active ClassPilot student session. Signal Lost means a signed-in browser has stopped reporting; the cause is not assumed.
+1. **Use the counters.** Online and Idle students have current heartbeat coverage. Signed-out students have no active ClassPilot student session and show Waiting for ClassPilot sign-in. They stay in the roster, and preview requests resume automatically when they sign in. Signal Lost means a signed-in browser has stopped reporting; the cause is not assumed.
 2. **Treat previews as passive evidence.** A screen preview is an authorized still image with its own age. It does not determine whether a student is connected and it never replaces heartbeat status.
 3. **Recognize transitions.** Signing in means an approved identity-provider flow is active. Updating preview means a new control revision is waiting for its matching still image. Neither label means the student is stale.
 4. **Wait for exact authority.** When a student changes device or session, ClassPilot clears prior-session details before showing the new binding.
+5. **Check an access warning.** Students waiting to sign in do not trigger a live-preview access warning. If a preview or history access warning remains, use Refresh class to check the current class access again. That action does not sign students in.
 
 > **Check before continuing:** Do not interpret a recent preview as proof that commands are currently available. Use the connection label and command outcome.
 

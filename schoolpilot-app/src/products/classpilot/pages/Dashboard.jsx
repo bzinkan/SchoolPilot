@@ -38,6 +38,7 @@ import {
   assertTileScreenshotStoreAvailable,
   TILE_BATCH_QUERY_ROOTS,
   TILE_SCREENSHOT_CACHE_GC_MS,
+  buildScreenshotCohortPlaceholderData,
   changedTileBindingStudentIds,
   createTileBatchRequests,
   fetchTileBatch,
@@ -138,7 +139,10 @@ import {
   createCoalescedClasspilotRefresh,
   deniedTileStudentIds,
   isClasspilotSessionUnavailable,
+  isCurrentScreenshotRead,
+  isStudentScreenshotReadEligible,
   recordTileReadDenial,
+  retireChangedTileReadDenials,
   tileReadAuthorityMap,
   tileRequestWithoutDeniedStudents,
   unavailableClassCapabilities,
@@ -593,6 +597,8 @@ export default function Dashboard() {
   const classReadContextRef = useRef(null);
   const historyReadRetryContextRef = useRef(null);
   const checkedReadRetryRef = useRef(null);
+  const screenshotDenialRefreshRef = useRef(null);
+  const previousScreenshotReadAuthoritiesRef = useRef(null);
   const coalescedRefreshRef = useRef(createCoalescedClasspilotRefresh());
   const [, setReadDenialVersion] = useState(0);
   const [tileReadDenials, setTileReadDenials] = useState(() => new Set());
@@ -2773,6 +2779,21 @@ export default function Dashboard() {
       }))
       .sort((left, right) => left.studentId.localeCompare(right.studentId)),
   );
+  // Keep roster/binding privacy tracking above complete. Only outbound live
+  // preview work uses this subset; historical reads keep their own authority.
+  const eligibleScreenshotStudentBindingsKey = JSON.stringify(
+    screenshotTileQueryStudents
+      .filter((student) => isStudentScreenshotReadEligible(student, isStudentMonitoringSuppressed(student)))
+      .map((student) => ({
+        studentId: student.studentId,
+        realtimeBinding: student.realtimeBinding || '',
+        classroomStateRevision: normalizedTileControlRevision(student),
+      }))
+      .sort((left, right) => left.studentId.localeCompare(right.studentId)),
+  );
+  const eligibleScreenshotStudentIds = useMemo(() => new Set(
+    JSON.parse(eligibleScreenshotStudentBindingsKey).map((student) => student.studentId),
+  ), [eligibleScreenshotStudentBindingsKey]);
   const historyTileStudentBindingsKey = JSON.stringify(
     historyTileQueryStudents
       .map((student) => ({
@@ -2825,6 +2846,20 @@ export default function Dashboard() {
   const screenshotReadAuthorities = useMemo(() => tileReadAuthorityMap(
     `${screenshotTileBatchContextKey}:${sessionReadAuthorityKey}`, screenshotTileQueryStudents,
   ), [screenshotTileBatchContextKey, sessionReadAuthorityKey, screenshotTileQueryStudents]);
+  const screenshotReadAuthorityContextKey = `${screenshotTileBatchContextKey}:${sessionReadAuthorityKey}`;
+  useLayoutEffect(() => {
+    const previous = previousScreenshotReadAuthoritiesRef.current;
+    previousScreenshotReadAuthoritiesRef.current = {
+      contextKey: screenshotReadAuthorityContextKey, authorities: screenshotReadAuthorities,
+    };
+    // Once a current row changes authority, its former denial is obsolete.
+    // Retiring it also permits a later same-binding login after a confirmed
+    // sign-out. View changes alone never clear an unchanged denial.
+    if (previous?.contextKey === screenshotReadAuthorityContextKey
+      && retireChangedTileReadDenials(
+        tileReadDenialsRef.current, 'screenshots', previous.authorities, screenshotReadAuthorities,
+      )) setTileReadDenials(new Set(tileReadDenialsRef.current));
+  }, [screenshotReadAuthorities, screenshotReadAuthorityContextKey]);
   const historyReadAuthorities = useMemo(() => tileReadAuthorityMap(
     `${historyTileBatchContextKey}:${studentView === 'class' ? sessionReadAuthorityKey : ''}`,
     historyTileQueryStudents,
@@ -2839,6 +2874,8 @@ export default function Dashboard() {
   const deniedHistoryReadIds = useMemo(() => deniedTileStudentIds(
     tileReadDenials, 'history', historyReadAuthorities,
   ), [historyReadAuthorities, tileReadDenials]);
+  const visibleScreenshotReadDenied = [...deniedScreenshotReadIds]
+    .some((studentId) => eligibleScreenshotStudentIds.has(studentId));
   const screenshotPlaceholderDeniedIds = useMemo(() => new Set([
     ...locallyRevokedTileStudentIds, ...deniedScreenshotReadIds,
   ]), [deniedScreenshotReadIds, locallyRevokedTileStudentIds]);
@@ -2849,21 +2886,42 @@ export default function Dashboard() {
     setTargetedScreenshotFailureByStudent(new Map());
     setTileReadDenials(new Set(tileReadDenialsRef.current));
   };
+  screenshotDenialRefreshRef.current = (snapshot) => {
+    // This only reconciles authentication truth. It must never call the
+    // checked-retry path, which intentionally clears terminal child denials.
+    void coalescedRefreshRef.current(`preview-denial:${snapshot.sessionAuthorityKey}`, async () => {
+      if (!isCurrentScreenshotRead(snapshot, targetedScreenshotContextRef.current)
+        || classReadContextRef.current?.authorityKey !== snapshot.sessionAuthorityKey
+        || classReadContextRef.current?.view !== 'class') return;
+      await refetchStudents();
+    }).catch(() => {});
+  };
   const fetchAuthorizedTileBatch = useCallback(async (request, authorities, signal) => {
+    const screenshotSnapshot = request.kind === 'screenshots' ? targetedScreenshotContextRef.current : null;
+    const screenshotReadCurrent = () => request.kind !== 'screenshots' || (
+      isCurrentScreenshotRead(screenshotSnapshot, targetedScreenshotContextRef.current)
+      && request.body.studentIds.every((id) => authorities.get(id) === screenshotSnapshot.authorities.get(id))
+    );
+    if (!screenshotReadCurrent()) throw new DOMException('Preview context changed', 'AbortError');
     const allowed = tileRequestWithoutDeniedStudents(request, tileReadDenialsRef.current, authorities);
     if (allowed.body.studentIds.length === 0) return { tiles: [] };
     try {
       const response = await fetchTileBatch(allowed, apiRequest, signal);
+      if (!screenshotReadCurrent()) throw new DOMException('Preview context changed', 'AbortError');
       // A simultaneous targeted request may have denied a row while this
       // reconciliation was pending. Its result cannot restore that row.
       return removeStudentsFromTileBatchData(response, deniedTileStudentIds(
         tileReadDenialsRef.current, request.kind, authorities,
       ));
     } catch (error) {
-      if (!signal?.aborted && tileBatchFailureScope(error) === 'cohort'
+      if (!screenshotReadCurrent()) throw new DOMException('Preview context changed', 'AbortError');
+      if (!signal?.aborted && screenshotReadCurrent() && tileBatchFailureScope(error) === 'cohort'
         && recordTileReadDenial(
           tileReadDenialsRef.current, request.kind, authorities, allowed.body.studentIds,
-        )) setTileReadDenials(new Set(tileReadDenialsRef.current));
+        )) {
+        setTileReadDenials(new Set(tileReadDenialsRef.current));
+        if (screenshotSnapshot) screenshotDenialRefreshRef.current?.(screenshotSnapshot);
+      }
       throw error;
     }
   }, []);
@@ -2936,10 +2994,10 @@ export default function Dashboard() {
   ]);
   const classScreenshotTileRequests = useMemo(
     () => createTileBatchRequests(
-      JSON.parse(screenshotTileStudentBindingsKey),
+      JSON.parse(eligibleScreenshotStudentBindingsKey),
       screenshotTileBatchContext,
     ).filter((request) => request.kind === 'screenshots'),
-    [screenshotTileBatchContext, screenshotTileStudentBindingsKey],
+    [eligibleScreenshotStudentBindingsKey, screenshotTileBatchContext],
   );
   const screenshotTileRequests = studentView === 'class'
     && !['denied', 'ineligible', 'paused_unobserved'].includes(observationLeaseStatus)
@@ -2965,7 +3023,11 @@ export default function Dashboard() {
   const historyTileReadsEnabled = studentView !== 'available'
     && observationReadsAllowed
     && !tileGlobalAuthorizationDenied;
-  const targetedScreenshotFenceKey = `${screenshotTileBindingTransitionKey}\n${studentView}\n${observationLeaseStatus}\n${tileGlobalAuthorizationDenied}`;
+  // Exact-bound previews may load while the observation check is pending.
+  // Its successful completion must not discard that first authorized response
+  // without changing the query key. Revocation still changes enabled state and
+  // the generation; rendering retains the existing exact/legacy lease guards.
+  const targetedScreenshotFenceKey = `${screenshotTileBindingTransitionKey}\n${eligibleScreenshotStudentBindingsKey}\n${JSON.stringify([...screenshotReadAuthorities])}\n${studentView}\n${screenshotTileReadsEnabled}\n${tileGlobalAuthorizationDenied}`;
   if (targetedScreenshotFenceGenerationRef.current.key !== targetedScreenshotFenceKey) {
     targetedScreenshotFenceGenerationRef.current = {
       key: targetedScreenshotFenceKey,
@@ -2978,6 +3040,7 @@ export default function Dashboard() {
     enabled: screenshotTileReadsEnabled
       && !['denied', 'ineligible', 'paused_unobserved'].includes(observationLeaseStatus),
     teachingSessionId: effectiveSessionId,
+    sessionAuthorityKey: sessionReadAuthorityKey,
     requests: classScreenshotTileRequests,
     authorities: screenshotReadAuthorities,
     locallyRevokedStudentIds: locallyRevokedTileStudentIds,
@@ -3060,12 +3123,16 @@ export default function Dashboard() {
         } else if (failureScope === 'cohort') {
           if (recordTileReadDenial(
             tileReadDenialsRef.current, 'screenshots', snapshot.authorities, requestedIds,
-          )) setTileReadDenials(new Set(tileReadDenialsRef.current));
+          )) {
+            setTileReadDenials(new Set(tileReadDenialsRef.current));
+            screenshotDenialRefreshRef.current?.(snapshot);
+          }
           // Same denial rule as the hard-denied purge effect below: scrub the
           // rejected rows, never replay the request that was just denied.
           await purgeStudentScreenshotTileCaches(queryClient, requestedIds, {
             refetch: false,
           });
+          if (!isCurrentScreenshotRead(snapshot, targetedScreenshotContextRef.current)) return;
           const failedAt = Date.now();
           setTargetedScreenshotFailureByStudent((current) => {
             const next = new Map(current);
@@ -3107,8 +3174,30 @@ export default function Dashboard() {
     });
     return () => cancelAnimationFrame(frame);
   }, [targetedScreenshotFenceKey]);
+  // Stable callbacks let QueryObserver retain its selected placeholder while
+  // the replacement request is pending. Recreate them on every cohort or
+  // privacy change so revoked rows can never survive in that placeholder.
+  const screenshotPlaceholderFunctions = useMemo(() => screenshotTileRequests.map((request) => (
+    (previousData, previousQuery) => {
+      const privacy = {
+        deniedStudentIds: screenshotPlaceholderDeniedIds,
+        removeLegacy: legacyScreenshotReadsRevoked,
+      };
+      return screenshotCohortPlaceholderData(previousData, previousQuery, request, privacy)
+        // A new useQueries observer has no previousData. Carry only exact
+        // unchanged tuples from cached cohorts in this same viewing context.
+        || buildScreenshotCohortPlaceholderData(
+          queryClient.getQueryCache().findAll({
+            queryKey: [TILE_BATCH_QUERY_ROOTS.screenshots, screenshotTileBatchContextKey],
+            exact: false,
+          }),
+          request,
+          privacy,
+        );
+    }
+  )), [screenshotTileRequests, screenshotPlaceholderDeniedIds, legacyScreenshotReadsRevoked, screenshotTileBatchContextKey]);
   const screenshotTileQueries = useQueries({
-    queries: screenshotTileRequests.map((request) => ({
+    queries: screenshotTileRequests.map((request, index) => ({
       queryKey: request.queryKey,
       queryFn: async ({ signal }) => {
         const response = removeStudentsFromTileBatchData(
@@ -3128,17 +3217,12 @@ export default function Dashboard() {
       // changed binding can never show a frame from its previous authority.
       // The placeholder is observer-local and never enters the cache, so the
       // targeted merge and the privacy scrub/purges still act on real rows.
-      placeholderData: (previousData, previousQuery) => screenshotCohortPlaceholderData(
-        previousData,
-        previousQuery,
-        request,
-        {
-          deniedStudentIds: screenshotPlaceholderDeniedIds,
-          removeLegacy: legacyScreenshotReadsRevoked,
-        },
-      ),
+      placeholderData: screenshotPlaceholderFunctions[index],
       refetchInterval: request.refetchInterval,
       refetchIntervalInBackground: false,
+      // Eligibility can return to a recently cached key without a binding
+      // change. Revalidate that new observer rather than trusting cached nulls.
+      refetchOnMount: 'always',
       refetchOnWindowFocus: 'always',
       refetchOnReconnect: 'always',
       retry: false,
@@ -5613,7 +5697,7 @@ export default function Dashboard() {
 
         {(studentView === 'class'
           ? !terminalSessionError && observationLeaseStatus !== 'denied'
-            && (deniedScreenshotReadIds.size > 0 || deniedHistoryReadIds.size > 0)
+            && (visibleScreenshotReadDenied || deniedHistoryReadIds.size > 0)
           : studentView === 'claimed' && deniedHistoryReadIds.size > 0) ? (
           <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-4 py-3 text-sm" role="status" data-testid="tile-read-denied">
             <span>{studentView === 'claimed'
