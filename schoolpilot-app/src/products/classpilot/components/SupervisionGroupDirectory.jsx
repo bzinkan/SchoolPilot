@@ -54,12 +54,13 @@ export default function SupervisionGroupDirectory({
   const [page, setPage] = useState(1);
   const [categoriesOpen, setCategoriesOpen] = useState(false);
   useEffect(() => {
+    if (search === filters.search) return undefined;
     const timer = setTimeout(() => {
       setFilters((current) => ({ ...current, search }));
       setPage(1);
     }, 300);
     return () => clearTimeout(timer);
-  }, [search]);
+  }, [search, filters.search]);
   const query = useQuery({
     queryKey: [
       "/api/coverage/supervision-groups/browse",
@@ -79,6 +80,19 @@ export default function SupervisionGroupDirectory({
     retry: false,
   });
   const current = !query.isPlaceholderData && filters.search === search;
+  // Keep later refreshes on the page the server retained after a deletion.
+  // Ignore old filter/search data and responses that are still refreshing.
+  const resolvedPage = query.data?.page;
+  if (
+    current &&
+    !query.isFetching &&
+    !query.isError &&
+    Number.isSafeInteger(resolvedPage) &&
+    resolvedPage > 0 &&
+    resolvedPage !== page
+  ) {
+    setPage(resolvedPage);
+  }
   const groups = current ? query.data?.groups || [] : [];
   const facets = query.data?.facets || {
     categories: [],

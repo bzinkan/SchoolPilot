@@ -854,6 +854,9 @@ test('group directory pages server results and combines category, grade, assigne
   await panel.getByRole('button', { name: 'Next groups', exact: true }).click();
   await panel.getByRole('button', { name: 'Next groups', exact: true }).click();
   await panel.getByText('Showing 51–52 of 52 groups', { exact: true }).waitFor();
+  // Clear applies search immediately. Its former 300ms debounce must not reset later pagination.
+  await page.waitForTimeout(350);
+  await panel.getByText('Showing 51–52 of 52 groups', { exact: true }).waitFor();
   for (const [name, showing] of [['Room 52', 'Showing 51–51 of 51 groups'], ['Room 51', 'Showing 26–50 of 50 groups']]) {
     await panel.getByRole('button', { name: `Delete group ${name}`, exact: true }).click();
     const confirm = page.getByRole('alertdialog', { name: 'Delete supervision group?', exact: true });
@@ -862,6 +865,10 @@ test('group directory pages server results and combines category, grade, assigne
     await panel.getByText(showing, { exact: true }).waitFor();
   }
   assert.equal(await panel.getByLabel('Filter group status', { exact: true }).inputValue(), 'all', 'Deleting the final row on a page preserves filters while returning to a populated page');
+  state.groups.push(deletionGroup('later-51', 'Later Room 51'), deletionGroup('later-52', 'Later Room 52'));
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await panel.getByText('Showing 26–50 of 52 groups', { exact: true }).waitFor();
+  assert.equal(new URLSearchParams(state.reads.filter(read => read.pathname.endsWith('/browse')).at(-1).search).get('page'), '2', 'New matching groups do not restore the page removed by the earlier deletion');
   state.groups.splice(25);
   await page.getByRole('button', { name: 'Refresh', exact: true }).click();
   await panel.getByText('Showing 1–25 of 25 groups', { exact: true }).waitFor();

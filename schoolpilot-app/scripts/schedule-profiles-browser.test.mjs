@@ -217,8 +217,8 @@ test('Workspace keyboard navigation and current staff choices preserve independe
     const evidence = path.resolve(root, '../soc2-evidence/schedule-workspace/browser'); await mkdir(evidence, { recursive: true });
     for (const theme of ['light', 'dark']) for (const [device, viewport] of Object.entries({ desktop: { width: 1365, height: 950 }, mobile: { width: 390, height: 844 } })) {
       await page.setViewportSize(viewport); await page.evaluate(value => document.documentElement.classList.toggle('dark', value === 'dark'), theme);
-      await page.screenshot({ path: path.join(evidence, `bulk-${device}-${theme}.png`), fullPage: true });
-      assert.ok(await picker.evaluate(el => el.getBoundingClientRect().right <= innerWidth), 'The picker stays inside the viewport');
+      assert.ok(await picker.evaluate(el => { const box = el.getBoundingClientRect(); return box.right <= innerWidth && box.left >= 0 && box.top >= 0 && box.bottom <= innerHeight; }), 'The picker stays inside the viewport');
+      await page.screenshot({ path: path.join(evidence, `bulk-${device}-${theme}.png`) });
     }
     await picker.getByRole('button', { name: 'Add 1 testing block', exact: true }).click();
     await page.waitForFunction(() => document.activeElement?.textContent === 'Add testing groups');

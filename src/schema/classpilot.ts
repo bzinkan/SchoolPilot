@@ -1559,7 +1559,9 @@ export const classpilotCoverageGroupCategories = pgTable("classpilot_coverage_gr
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   check("classpilot_coverage_group_categories_name_check", sql`length(btrim(${table.name})) BETWEEN 1 AND 80`),
-  uniqueIndex("classpilot_coverage_categories_school_id_unique").on(table.schoolId, table.id),
+  // Composite foreign keys need this key during CREATE TABLE, before db:push
+  // creates secondary indexes on a fresh database.
+  unique("classpilot_coverage_categories_school_id_unique").on(table.schoolId, table.id),
   uniqueIndex("classpilot_coverage_categories_name_unique").on(table.schoolId, sql`lower(btrim(${table.name}))`),
 ]);
 

@@ -10,6 +10,12 @@ CREATE TABLE IF NOT EXISTS classpilot_coverage_group_categories (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS classpilot_coverage_categories_school_id_unique ON classpilot_coverage_group_categories(school_id,id);
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='classpilot_coverage_categories_school_id_unique' AND conrelid='classpilot_coverage_group_categories'::regclass) THEN
+    ALTER TABLE classpilot_coverage_group_categories ADD CONSTRAINT classpilot_coverage_categories_school_id_unique
+      UNIQUE USING INDEX classpilot_coverage_categories_school_id_unique;
+  END IF;
+END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS classpilot_coverage_categories_name_unique ON classpilot_coverage_group_categories(school_id,lower(btrim(name)));
 ALTER TABLE classpilot_coverage_scope_groups ADD COLUMN IF NOT EXISTS category_id VARCHAR;
 DO $$ BEGIN
