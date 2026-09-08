@@ -5,6 +5,7 @@ import { requireClasspilotEntitlement } from "../../middleware/requireClasspilot
 import { requireRole } from "../../middleware/requireRole.js";
 import { getScheduleProfiles, saveScheduleProfile, previewScheduleProfile, applyScheduleProfile, cancelScheduleProfileApplication } from "../../services/classpilotScheduleProfiles.js";
 import { getClasspilotRegularSchedule } from "../../services/classpilotRegularSchedule.js";
+import { getScheduleDraftReview } from "../../services/classpilotScheduleDraftReview.js";
 import { logAudit } from "../../services/audit.js";
 import { broadcastClasspilotScheduleChangeUpdate } from "../../services/classpilotScheduleChanges.js";
 
@@ -13,6 +14,10 @@ router.use(authenticate, requireSchoolContext, requireClasspilotEntitlement, req
 router.use((_req, res, next) => { res.setHeader("Cache-Control", "no-store"); next(); });
 router.get("/regular-schedule", async (req, res, next) => {
   try { res.json(await getClasspilotRegularSchedule({ schoolId: res.locals.schoolId!, referenceDate: req.query.referenceDate })); }
+  catch (error) { next(error); }
+});
+router.post("/draft-review", async (req, res, next) => {
+  try { res.json(await getScheduleDraftReview({ schoolId: res.locals.schoolId!, referenceDate: req.body.referenceDate, definition: req.body.definition })); }
   catch (error) { next(error); }
 });
 router.get("/", async (_req, res, next) => {

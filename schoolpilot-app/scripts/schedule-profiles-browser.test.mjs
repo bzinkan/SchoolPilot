@@ -17,6 +17,107 @@ async function createProfileFixture(context) {
   return { root, vite, browser, page, url: `http://127.0.0.1:${vite.httpServer.address().port}/__schedule-profiles` };
 }
 
+function draftReviewFixture(catalog, definition, referenceDate, regularClasses = null) {
+  const classes = catalog.classes.map(row => {
+    const selected = definition.classIds.includes(row.id) || definition.grades.includes(String(row.gradeLevel));
+    const rule = selected ? definition.classRules.find(rule => rule.classId === row.id) : null;
+    const regular = regularClasses?.find(item => item.classId === row.id);
+    const regularWindow = regular ? regular.window : row.blockStartTime && row.blockEndTime ? { startTime: row.blockStartTime, endTime: row.blockEndTime } : null;
+    return { classId: row.id, name: row.name, gradeLevel: row.gradeLevel || null, staff: row.staff || [], selected, status: regular?.status || (row.scheduleEnabled ? 'meets' : 'schedule_off'), regularWindow, proposedWindow: rule?.action === 'skip' ? null : rule?.action === 'time' ? { startTime: rule.startTime, endTime: rule.endTime } : regularWindow, action: rule?.action || 'keep' };
+  });
+  const testingBlocks = definition.testingBlocks.map(block => {
+    const group = catalog.supervisionGroups.find(row => row.id === block.coverageGroupId);
+    return { blockId: block.id, name: block.name, coverageGroupId: block.coverageGroupId, groupName: group?.name || '', assignedStaffId: block.assignedStaffId, staffName: catalog.staff.find(row => row.id === block.assignedStaffId)?.name || '', startTime: block.startTime, endTime: block.endTime, status: 'ready', studentCount: group?.studentIds.length || 0, classParticipation: group?.classParticipation || [] };
+  });
+  return { referenceDate, revision: catalog.revision, schoolTimezone: catalog.schoolTimezone, day: { instructional: true, meetingWeekday: 2, cycleDay: 'A', bellProfile: { id: 'regular', name: 'Regular' }, overridden: false }, complete: true, classes, testingBlocks, issues: [], counts: { conflicts: 0, overlaps: 0, incomplete: 0 }, requestFingerprint: JSON.stringify({ referenceDate, definition }) };
+}
+
+async function closeSavedReview(dialog) {
+  await dialog.getByText('Profile saved — not applied', { exact: true }).waitFor();
+  await dialog.getByRole('button', { name: 'Close schedule', exact: true }).click();
+  await dialog.waitFor({ state: 'hidden' });
+}
+
+async function createDraftReviewFixture(context) {
+  const fixture = await createProfileFixture(context);
+  const { page } = fixture;
+  const catalog = { revision: 1, schoolTimezone: 'America/New_York', schoolLocalToday: '2026-09-08', profiles: [], applications: [], testingStatuses: [],
+    staff: [{ id: 'zinkan', name: 'Ms. Zinkan' }, { id: 'burba', name: 'Ms. Burba' }, { id: 'vatter', name: 'Mr. Vatter' }, { id: 'art-teacher', name: 'Art Teacher' }],
+    classes: [
+      { id: 'math', name: 'Zinkan Math', gradeLevel: '3', teacherName: 'Ms. Zinkan', staff: [{ id: 'zinkan', name: 'Ms. Zinkan' }] },
+      { id: 'reading', name: 'Burba Reading', gradeLevel: '3', teacherName: 'Ms. Burba', staff: [{ id: 'burba', name: 'Ms. Burba' }] },
+      { id: 'science', name: 'Vatter Science', gradeLevel: '4', teacherName: 'Mr. Vatter', staff: [{ id: 'vatter', name: 'Mr. Vatter' }] },
+      { id: 'art', name: 'Art Studio', gradeLevel: '4', teacherName: 'Art Teacher', staff: [{ id: 'art-teacher', name: 'Art Teacher' }] },
+    ].map(row => ({ ...row, scheduleEnabled: true, blockStartTime: '09:00', blockEndTime: '10:00' })),
+    supervisionGroups: [
+      { id: 'zinkan-group', name: 'Mixed MAP group', staffIds: ['zinkan'], studentIds: ['synthetic-a', 'synthetic-b'], classParticipation: [{ classId: 'math', count: 2, total: 20 }, { classId: 'art', count: 2, total: 24 }] },
+      { id: 'burba-group', name: 'Reading MAP group', staffIds: ['burba'], studentIds: ['synthetic-c', 'synthetic-d'], classParticipation: [{ classId: 'reading', count: 2, total: 18 }] },
+      { id: 'vatter-group', name: 'Science MAP group', staffIds: ['vatter'], studentIds: ['synthetic-e', 'synthetic-f'], classParticipation: [{ classId: 'science', count: 2, total: 22 }] },
+    ],
+  };
+  const reviews = [], saves = [], previews = [], applies = [], errors = [];
+  const control = { reviewResponse: null, saveTransform: definition => definition, staleCatalog: false, failCatalogRefresh: false, catalogReadFailures: 0, failSavedReview: false };
+  const project = body => {
+    const result = draftReviewFixture(catalog, body.definition, body.referenceDate);
+    const overlaps = (a, b) => a && b && a.startTime < b.endTime && b.startTime < a.endTime;
+    for (const block of result.testingBlocks) {
+      if (!block.name.trim() || !block.coverageGroupId || !block.assignedStaffId || !block.startTime || !block.endTime || block.startTime >= block.endTime) {
+        block.status = 'incomplete';
+        result.issues.push({ id: `incomplete-${block.blockId}`, kind: 'incomplete', code: 'SCHEDULE_DRAFT_BLOCK_INCOMPLETE', message: 'Finish the testing block name, group, assigned staff and times.', classIds: [], blockIds: [block.blockId], staffIds: [] });
+        continue;
+      }
+      for (const row of result.classes) {
+        if (!overlaps(row.proposedWindow, block)) continue;
+        if (row.staff.some(staff => staff.id === block.assignedStaffId)) result.issues.push({ id: `conflict-${row.classId}-${block.blockId}`, kind: 'conflict', code: 'SCHEDULE_PROFILE_PROCTOR_CLASS_CONFLICT', message: `${block.staffName} is assigned to ${row.name} during ${block.name}.`, classIds: [row.classId], blockIds: [block.blockId], staffIds: [block.assignedStaffId] });
+        else if (block.classParticipation.some(part => part.classId === row.classId)) result.issues.push({ id: `overlap-${row.classId}-${block.blockId}`, kind: 'overlap', code: 'SCHEDULE_DRAFT_TESTING_CLASS_OVERLAP', message: `${block.name} overlaps ${row.name} for part of the class; the other students keep their regular class.`, classIds: [row.classId], blockIds: [block.blockId], staffIds: [block.assignedStaffId, ...row.staff.map(staff => staff.id)] });
+      }
+    }
+    for (const row of result.classes) if (row.action === 'time' && (!row.proposedWindow.startTime || !row.proposedWindow.endTime || row.proposedWindow.startTime >= row.proposedWindow.endTime)) result.issues.push({ id: `incomplete-${row.classId}`, kind: 'incomplete', code: 'SCHEDULE_DRAFT_CLASS_INCOMPLETE', message: 'Finish this class time with an end after its start.', classIds: [row.classId], blockIds: [], staffIds: [] });
+    result.counts = { conflicts: result.issues.filter(issue => issue.kind === 'conflict').length, overlaps: result.issues.filter(issue => issue.kind === 'overlap').length, incomplete: result.issues.filter(issue => issue.kind === 'incomplete').length };
+    result.complete = !result.counts.incomplete;
+    return result;
+  };
+  page.on('pageerror', error => errors.push(error.message));
+  await page.route('**/api/**', async route => {
+    const request = route.request(), url = new URL(request.url());
+    if (url.pathname.endsWith('/auth/me')) return route.fulfill({ json: { user: { id: 'admin', role: 'school_admin' }, activeSchoolId: 'school', memberships: [{ id: 'membership', schoolId: 'school', role: 'school_admin' }], licenses: { classPilot: true } } });
+    if (url.pathname.endsWith('/csrf')) return route.fulfill({ json: { csrfToken: 'fixture-token' } });
+    if (url.pathname.endsWith('/instructional-calendar')) return route.fulfill({ json: { month: url.searchParams.get('month'), schoolTimezone: catalog.schoolTimezone, schoolLocalToday: catalog.schoolLocalToday, nonInstructionalDates: [], revision: 1, updatedAt: null } });
+    if (url.pathname.endsWith('/admin/scheduling')) return route.fulfill({ json: { revision: catalog.revision, schoolTimezone: catalog.schoolTimezone, schoolLocalToday: catalog.schoolLocalToday, config: { schemaVersion: 1, yearStart: null, yearEnd: null, cycleAnchorDate: null, cycleAnchorDay: 'A', periods: [], profiles: [], defaultProfileId: null, weekdayProfiles: {}, dateOverrides: {}, scheduleProfiles: catalog.profiles, profileApplications: [] } } });
+    if (url.pathname.endsWith('/schedule-profiles/regular-schedule')) return route.fulfill({ json: { referenceDate: url.searchParams.get('referenceDate'), revision: catalog.revision, schoolTimezone: catalog.schoolTimezone, day: { instructional: true, meetingWeekday: 2, cycleDay: 'A', bellProfile: null, overridden: false }, classes: catalog.classes.map(row => ({ classId: row.id, status: 'meets', window: { startTime: row.blockStartTime, endTime: row.blockEndTime } })) } });
+    if (url.pathname.endsWith('/schedule-profiles/draft-review')) {
+      const body = request.postDataJSON(); reviews.push(body);
+      if (control.failSavedReview && saves.length) return route.fulfill({ status: 503, json: { error: 'Saved schedule review is temporarily unavailable.' } });
+      const custom = await control.reviewResponse?.(body, project(body));
+      return route.fulfill(custom || { json: project(body) });
+    }
+    if (url.pathname.endsWith('/schedule-profiles/preview')) { const body = request.postDataJSON(); previews.push(body); return route.fulfill({ json: { previewToken: `actual-date-${previews.length}`, schoolTimezone: catalog.schoolTimezone, affectedClasses: 1, blockers: [], changes: [], testingWindows: [] } }); }
+    if (url.pathname.endsWith('/schedule-profiles/apply')) { applies.push(request.postDataJSON()); return route.fulfill({ json: { revision: ++catalog.revision, application: { id: 'applied', dates: applies.at(-1).dates } } }); }
+    if (url.pathname.endsWith('/schedule-profiles')) {
+      if (request.method() === 'POST') {
+        const body = request.postDataJSON(); saves.push(body);
+        const profile = { id: body.id || 'saved-review-profile', revision: saves.length + 6, definition: control.saveTransform(structuredClone(body.definition)), updatedAt: '2026-09-08T13:00:00Z' };
+        catalog.revision += 3;
+        if (!control.staleCatalog) catalog.profiles = [profile];
+        control.savedProfile = profile;
+        return route.fulfill({ json: { revision: catalog.revision, profile } });
+      }
+      if (control.failCatalogRefresh && saves.length) { control.catalogReadFailures++; return route.fulfill({ status: 503, json: { error: 'The profile list is temporarily unavailable.' } }); }
+      return route.fulfill({ json: catalog });
+    }
+    return route.fulfill({ status: 404, json: { error: `Unexpected fixture request ${url.pathname}` } });
+  });
+  await page.goto(fixture.url); await page.waitForLoadState('networkidle');
+  return { ...fixture, catalog, reviews, saves, previews, applies, errors, control };
+}
+
+async function addTestingBlock(dialog, index, teacher) {
+  await dialog.getByRole('button', { name: 'Add testing block', exact: true }).click();
+  await dialog.getByLabel(`Testing block ${index} name`, { exact: true }).fill(`${teacher[0].toUpperCase()}${teacher.slice(1)} MAP`);
+  await dialog.getByLabel(`Testing block ${index} Coverage group`, { exact: true }).selectOption(`${teacher}-group`);
+  await dialog.getByLabel(`Testing block ${index} assigned staff`, { exact: true }).selectOption(teacher);
+}
+
 test('Schedule Profiles saves drafts, reviews exact dates and temporary testing, and protects unsaved changes', { timeout: 90_000 }, async context => {
   const { root, vite, browser, page, url: fixtureUrl } = await createProfileFixture(context);
   const errors = [], saves = [], previews = [], applies = [], cancellations = [], advancedPreviews = [], advancedSaves = [];
@@ -36,6 +137,7 @@ test('Schedule Profiles saves drafts, reviews exact dates and temporary testing,
       if (url.pathname.endsWith('/csrf')) return route.fulfill({ json: { csrfToken: 'fixture-token' } });
       if (url.pathname.endsWith('/instructional-calendar')) return route.fulfill({ json: { month: url.searchParams.get('month'), schoolTimezone: catalog.schoolTimezone, schoolLocalToday: catalog.schoolLocalToday, nonInstructionalDates: [], revision: 1, updatedAt: null } });
       if (url.pathname.endsWith('/schedule-profiles/regular-schedule')) return route.fulfill({ json: { referenceDate: url.searchParams.get('referenceDate'), revision: catalog.revision, schoolTimezone: catalog.schoolTimezone, day: { instructional: true, meetingWeekday: 2, cycleDay: 'A', bellProfile: { id: 'regular', name: 'Regular' }, overridden: false }, classes: catalog.classes.map(row => ({ classId: row.id, status: 'meets', window: { startTime: row.blockStartTime, endTime: row.blockEndTime } })) } });
+      if (url.pathname.endsWith('/schedule-profiles/draft-review')) { const body = request.postDataJSON(); return route.fulfill({ json: draftReviewFixture(catalog, body.definition, body.referenceDate) }); }
       if (url.pathname.endsWith('/admin/scheduling/preview')) { advancedPreviews.push(request.postDataJSON()); return route.fulfill({ json: { revision: catalog.revision, previewToken: 'advanced-preview', schoolTimezone: catalog.schoolTimezone, fromDate: catalog.schoolLocalToday, changedOccurrences: 0, blockers: [], changes: [], days: [] } }); }
       if (url.pathname.endsWith('/admin/scheduling')) {
         if (request.method() === 'PUT') { advancedSaves.push(request.postDataJSON()); config = request.postDataJSON().config; catalog.revision++; }
@@ -94,7 +196,7 @@ test('Schedule Profiles saves drafts, reviews exact dates and temporary testing,
     assert.deepEqual(await dialog.getByLabel('Testing block 1 assigned staff', { exact: true }).locator('option').allTextContents(), ['Choose group staff', 'Ms. Rivera', 'Mr. Lane']);
     await dialog.getByLabel('Testing block 1 assigned staff', { exact: true }).selectOption('rivera');
     await dialog.getByRole('button', { name: 'Save profile', exact: true }).click();
-    await dialog.waitFor({ state: 'hidden' });
+    await closeSavedReview(dialog);
     assert.equal(saves.length, 1); assert.equal(applies.length, 0);
     assert.deepEqual(saves[0].definition.grades, ['3']); assert.deepEqual(saves[0].definition.classIds, ['science']);
     assert.deepEqual(saves[0].definition.classRules, [{ classId: 'math', action: 'time', startTime: '08:15', endTime: '09:00' }, { classId: 'reading', action: 'skip' }]);
@@ -102,9 +204,9 @@ test('Schedule Profiles saves drafts, reviews exact dates and temporary testing,
 
     await page.getByRole('button', { name: 'Duplicate MAP morning', exact: true }).click();
     dialog = page.getByRole('dialog'); await dialog.getByLabel('Profile name', { exact: true }).fill('Early release');
-    await dialog.getByRole('button', { name: 'Save profile', exact: true }).click(); await dialog.waitFor({ state: 'hidden' });
+    await dialog.getByRole('button', { name: 'Save profile', exact: true }).click(); await closeSavedReview(dialog);
     assert.equal(saves[1].id, undefined); assert.equal(saves[1].definition.name, 'Early release');
-    await page.getByRole('button', { name: 'Apply MAP morning', exact: true }).click(); dialog = page.getByRole('dialog');
+    await page.getByRole('button', { name: 'Choose dates & apply MAP morning', exact: true }).click(); dialog = page.getByRole('dialog');
     await dialog.getByLabel('Range starts', { exact: true }).fill('2026-09-09'); await dialog.getByLabel('Range ends', { exact: true }).fill('2026-10-15');
     await dialog.getByRole('button', { name: 'Add date range', exact: true }).click(); await dialog.getByText('Choose no more than 31 dates per application.', { exact: true }).waitFor();
     await dialog.getByLabel('Range ends', { exact: true }).fill('2026-09-10'); await dialog.getByRole('button', { name: 'Add date range', exact: true }).click();
@@ -153,7 +255,7 @@ test('Schedule Profiles saves drafts, reviews exact dates and temporary testing,
     await page.getByRole('button', { name: 'Edit MAP morning', exact: true }).click(); dialog = page.getByRole('dialog');
     await dialog.getByLabel('Profile name', { exact: true }).fill('MAP revised');
     page.once('dialog', prompt => prompt.dismiss()); await dialog.getByRole('button', { name: 'Cancel', exact: true }).click(); assert.equal(await dialog.isVisible(), true);
-    await dialog.getByRole('button', { name: 'Save profile', exact: true }).click(); await dialog.waitFor({ state: 'hidden' });
+    await dialog.getByRole('button', { name: 'Save profile', exact: true }).click(); await closeSavedReview(dialog);
     assert.equal(saves[2].id, 'profile-1'); assert.equal(saves[2].profileRevision, 1); assert.equal(catalog.applications[0].profileName, 'MAP morning');
     page.once('dialog', prompt => prompt.accept()); await page.getByRole('button', { name: 'Cancel application MAP morning', exact: true }).click();
     await page.getByRole('region', { name: 'Schedule profile applications' }).getByText('Cancelled', { exact: true }).first().waitFor(); assert.equal(cancellations.length, 1);
@@ -162,16 +264,16 @@ test('Schedule Profiles saves drafts, reviews exact dates and temporary testing,
     await page.getByRole('button', { name: 'Refresh status', exact: true }).click(); await page.getByText('Completed', { exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Cancel application Previous testing day', exact: true }).count(), 0);
 
-    await page.getByRole('button', { name: 'Apply MAP revised', exact: true }).click(); dialog = page.getByRole('dialog');
+    await page.getByRole('button', { name: 'Choose dates & apply MAP revised', exact: true }).click(); dialog = page.getByRole('dialog');
     await dialog.getByRole('button', { name: 'Preview application', exact: true }).click(); await dialog.getByRole('button', { name: 'Apply reviewed dates', exact: true }).waitFor(); staleApply = true;
     await dialog.getByRole('button', { name: 'Apply reviewed dates', exact: true }).click(); await dialog.getByRole('alert').filter({ hasText: 'Reopen this profile' }).waitFor();
     assert.equal(await dialog.isVisible(), true); assert.equal(await dialog.getByRole('button', { name: 'Apply reviewed dates', exact: true }).count(), 0); await dialog.getByRole('button', { name: 'Cancel', exact: true }).click(); await dialog.waitFor({ state: 'hidden' });
-    await page.getByRole('button', { name: 'Apply MAP revised', exact: true }).click(); dialog = page.getByRole('dialog');
+    await page.getByRole('button', { name: 'Choose dates & apply MAP revised', exact: true }).click(); dialog = page.getByRole('dialog');
     await dialog.getByRole('checkbox', { name: 'Customize this use', exact: true }).check(); await dialog.getByLabel('Name for new profile', { exact: true }).fill('MAP afternoon');
-    await dialog.getByRole('button', { name: 'Save as new profile', exact: true }).click(); await dialog.waitFor({ state: 'hidden' }); assert.equal(saves.at(-1).id, undefined); assert.equal(saves.at(-1).definition.name, 'MAP afternoon');
+    await dialog.getByRole('button', { name: 'Save as new profile', exact: true }).click(); await closeSavedReview(dialog); assert.equal(saves.at(-1).id, undefined); assert.equal(saves.at(-1).definition.name, 'MAP afternoon');
     await page.setViewportSize({ width: 390, height: 844 }); await page.screenshot({ path: path.join(artifactDir, 'profiles-mobile.png'), fullPage: true, animations: 'disabled' });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
-    await page.getByRole('button', { name: 'Apply MAP afternoon', exact: true }).click(); dialog = page.getByRole('dialog');
+    await page.getByRole('button', { name: 'Choose dates & apply MAP afternoon', exact: true }).click(); dialog = page.getByRole('dialog');
     await dialog.getByRole('checkbox', { name: 'Customize this use', exact: true }).check();
     await page.screenshot({ path: path.join(artifactDir, 'application-mobile.png'), animations: 'disabled' });
     assert.equal(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth), true);
@@ -220,7 +322,7 @@ test('Regular-day profile comparison loads eligible classes without freezing tim
     page.on('dialog', prompt => prompt.accept());
     await page.route('**/api/**', async route => {
       const request = route.request(), url = new URL(request.url());
-      if (request.method() !== 'GET') mutations.push({ path: url.pathname, body: request.postDataJSON() });
+      if (request.method() !== 'GET' && !url.pathname.endsWith('/schedule-profiles/draft-review')) mutations.push({ path: url.pathname, body: request.postDataJSON() });
       if (url.pathname.endsWith('/auth/me')) return route.fulfill({ json: { user: { id: 'admin', role: 'school_admin' }, activeSchoolId: 'school', memberships: [{ id: 'membership', schoolId: 'school', role: 'school_admin' }], licenses: { classPilot: true } } });
       if (url.pathname.endsWith('/csrf')) return route.fulfill({ json: { csrfToken: 'fixture-token' } });
       if (url.pathname.endsWith('/instructional-calendar')) return route.fulfill({ json: { month: url.searchParams.get('month'), schoolTimezone: catalog.schoolTimezone, schoolLocalToday: catalog.schoolLocalToday, nonInstructionalDates: [], revision: 1, updatedAt: null } });
@@ -231,6 +333,7 @@ test('Regular-day profile comparison loads eligible classes without freezing tim
         if (date === '2026-09-10') await new Promise(resolve => { releaseOld = resolve; });
         return route.fulfill({ json: projection(date) });
       }
+      if (url.pathname.endsWith('/schedule-profiles/draft-review')) { const body = request.postDataJSON(); return route.fulfill({ json: draftReviewFixture(catalog, body.definition, body.referenceDate, projection(body.referenceDate).classes) }); }
       if (url.pathname.endsWith('/schedule-profiles')) {
         if (request.method() === 'POST') {
           const body = request.postDataJSON(); saves.push(body);
@@ -323,7 +426,7 @@ test('Regular-day profile comparison loads eligible classes without freezing tim
     assert.equal(await dialog.getByLabel('Fixed Math profile start').count(), 0, 'Clearing the selection also removes its overrides');
     await dialog.getByLabel('Include Fixed Math', { exact: true }).check(); await scienceSelection.check();
     assert.equal(mutations.length, 0, 'Selection and rule changes remain local until Save profile');
-    await dialog.getByRole('button', { name: 'Save profile', exact: true }).click(); await dialog.waitFor({ state: 'hidden' });
+    await dialog.getByRole('button', { name: 'Save profile', exact: true }).click(); await closeSavedReview(dialog);
     assert.deepEqual(saves[0].definition.classIds.slice().sort(), ['math', 'science']);
     assert.deepEqual(saves[0].definition.classRules, [], 'Keeping every class saves no frozen time or skip overrides');
     assert.equal(JSON.stringify(saves[0]).includes('referenceDate'), false);
@@ -350,14 +453,14 @@ test('Regular-day profile comparison loads eligible classes without freezing tim
     assert.match(await row('Fixed Math').innerText(), /11:15–12:00/); assert.doesNotMatch(await row('Fixed Math').innerText(), /13:15–14:00/);
     assert.equal(await dialog.getByLabel('Fixed Math profile start').inputValue(), '08:00');
     assert.equal(mutations.length, 1, 'Refreshing and racing reference dates must not write a profile');
-    await dialog.getByRole('button', { name: 'Save profile', exact: true }).click(); await dialog.waitFor({ state: 'hidden' });
+    await dialog.getByRole('button', { name: 'Save profile', exact: true }).click(); await closeSavedReview(dialog);
     assert.deepEqual(saves[1].definition.classIds.slice().sort(), ['math', 'reading']);
     assert.deepEqual(saves[1].definition.classRules, [{ classId: 'math', action: 'time', startTime: '08:00', endTime: '08:30' }]);
     assert.equal(JSON.stringify(saves[1]).includes('referenceDate'), false);
     await page.getByRole('button', { name: 'Duplicate Whole day', exact: true }).click();
     await dialog.getByRole('columnheader', { name: 'Regular schedule', exact: true }).waitFor();
     assert.equal(await dialog.getByLabel('Fixed Math profile start').inputValue(), '08:00'); await cancel();
-    await page.getByRole('button', { name: 'Apply Whole day', exact: true }).click();
+    await page.getByRole('button', { name: 'Choose dates & apply Whole day', exact: true }).click();
     await dialog.getByRole('button', { name: 'Remove application date 2026-09-08', exact: true }).click();
     await dialog.getByLabel('Add an individual date', { exact: true }).fill('2026-09-11'); await dialog.getByRole('button', { name: 'Add selected date', exact: true }).click();
     await dialog.getByRole('checkbox', { name: 'Customize this use', exact: true }).check();
@@ -391,4 +494,227 @@ test('Regular-day profile comparison loads eligible classes without freezing tim
     assert.equal(reads.includes('2026-09-10') && reads.includes('2026-09-11') && largeCatalog, true);
     assert.deepEqual(errors, []);
   } finally { releaseOld?.(); await browser?.close(); await vite.close(); }
+});
+
+test('Draft review keeps conflicts advisory, shows the whole day and partial groups, and preserves editing context', { timeout: 120_000 }, async context => {
+  const { root, vite, browser, page, reviews, saves, previews, applies, errors } = await createDraftReviewFixture(context);
+  const dialog = page.getByRole('dialog');
+  const check = dialog.getByRole('region', { name: 'Draft schedule check', exact: true });
+  const review = dialog.getByRole('region', { name: 'Draft schedule review', exact: true });
+  const reviewRow = name => review.getByRole('row').filter({ has: page.getByText(name, { exact: true }) });
+  const capture = async (label, region) => {
+    const directory = path.resolve(root, '..', 'soc2-evidence', 'validation', 'schedule-profile-draft-review', 'browser');
+    await mkdir(directory, { recursive: true });
+    for (const [size, viewport] of [['desktop', { width: 1365, height: 950 }], ['mobile', { width: 390, height: 844 }]]) {
+      await page.setViewportSize(viewport);
+      for (const theme of ['light', 'dark']) {
+        await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), theme === 'dark');
+        await region.scrollIntoViewIfNeeded();
+        assert.equal(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth), true, 'Review content must fit the dialog at every viewport');
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+        await page.screenshot({ path: path.join(directory, `${label}-${size}-${theme}.png`), animations: 'disabled' });
+        if (label === 'saved-review') {
+          await review.getByRole('region', { name: 'Proposed day timetable', exact: true }).scrollIntoViewIfNeeded();
+          await page.screenshot({ path: path.join(directory, `saved-timetable-${size}-${theme}.png`), animations: 'disabled' });
+        }
+      }
+    }
+    await page.evaluate(() => document.documentElement.classList.remove('dark')); await page.setViewportSize({ width: 1365, height: 950 });
+  };
+  try {
+    await page.getByRole('button', { name: 'Create Schedule Profile', exact: true }).click();
+    await dialog.getByLabel('Profile name', { exact: true }).fill('Testing review');
+    await dialog.getByRole('button', { name: 'Start blank', exact: true }).click();
+    for (const name of ['Zinkan Math', 'Burba Reading', 'Vatter Science']) await dialog.getByLabel(`Include ${name}`, { exact: true }).check();
+    for (const [index, teacher] of ['zinkan', 'burba', 'vatter'].entries()) await addTestingBlock(dialog, index + 1, teacher);
+    await check.getByText('3 conflicts need attention', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('alertdialog').count(), 0, 'Advisory conflicts must never interrupt typing with another modal');
+    assert.equal(await dialog.getByRole('button', { name: 'Save profile', exact: true }).isEnabled(), true, 'Complete drafts remain saveable while conflicts remain');
+    await dialog.getByText(/other students keep their regular class/).first().waitFor();
+    await dialog.getByRole('combobox', { name: 'View grade', exact: true }).selectOption('3');
+    await dialog.getByLabel('Find a class or teacher', { exact: true }).fill('Zinkan');
+    await dialog.getByLabel('Reference date', { exact: true }).fill('2026-09-09');
+    await page.waitForResponse(response => response.url().endsWith('/schedule-profiles/draft-review') && response.request().postDataJSON().referenceDate === '2026-09-09');
+    await dialog.getByRole('button', { name: 'Review draft schedule', exact: true }).click();
+    await review.waitFor();
+    assert.equal(await review.getByRole('combobox', { name: 'Review grade', exact: true }).inputValue(), '3', 'The first review starts from the editor grade');
+    await review.getByRole('combobox', { name: 'Review grade', exact: true }).selectOption('all');
+    for (const name of ['Zinkan Math', 'Burba Reading', 'Vatter Science', 'Art Studio']) await reviewRow(name).first().waitFor();
+    assert.equal(saves.length, 0); assert.equal(previews.length, 0); assert.equal(applies.length, 0);
+    await review.getByRole('combobox', { name: 'Review grade', exact: true }).selectOption('4');
+    await review.getByRole('combobox', { name: 'Review class', exact: true }).selectOption('art');
+    await reviewRow('Art Studio').waitFor(); await reviewRow('Zinkan MAP').waitFor();
+    assert.equal(await reviewRow('Burba MAP').count(), 0, 'Class filtering excludes unrelated groups');
+    assert.equal(await reviewRow('Vatter MAP').count(), 0);
+    assert.match(await reviewRow('Zinkan MAP').innerText(), /2.*24|2 of 24/, 'A partial Coverage group remains visible for its participating class');
+    await review.getByRole('combobox', { name: 'Review grade', exact: true }).selectOption('all');
+    await review.getByRole('combobox', { name: 'Review class', exact: true }).selectOption('all');
+    await review.getByRole('combobox', { name: 'Schedule view', exact: true }).selectOption('teachers');
+    await review.getByRole('combobox', { name: 'Review teacher', exact: true }).selectOption('zinkan');
+    await review.getByText('Zinkan MAP', { exact: true }).first().waitFor();
+    await review.getByRole('combobox', { name: 'Review grade', exact: true }).selectOption('4');
+    await review.getByRole('combobox', { name: 'Review class', exact: true }).selectOption('art');
+    await reviewRow('Zinkan MAP').waitFor();
+    assert.equal(await reviewRow('Art Studio').count(), 0, 'The selected proctor need not teach the participating regular class');
+    await dialog.getByRole('button', { name: 'Back to editing', exact: true }).click();
+    assert.equal(await dialog.getByLabel('Profile name', { exact: true }).inputValue(), 'Testing review');
+    assert.equal(await dialog.getByLabel('Reference date', { exact: true }).inputValue(), '2026-09-09');
+    assert.equal(await dialog.getByRole('combobox', { name: 'View grade', exact: true }).inputValue(), '3');
+    assert.equal(await dialog.getByLabel('Find a class or teacher', { exact: true }).inputValue(), 'Zinkan');
+    await dialog.getByRole('button', { name: 'Review draft schedule', exact: true }).click();
+    assert.equal(await review.getByRole('combobox', { name: 'Schedule view', exact: true }).inputValue(), 'teachers');
+    assert.equal(await review.getByRole('combobox', { name: 'Review teacher', exact: true }).inputValue(), 'zinkan');
+    assert.equal(await review.getByRole('combobox', { name: 'Review grade', exact: true }).inputValue(), '4');
+    assert.equal(await review.getByRole('combobox', { name: 'Review class', exact: true }).inputValue(), 'art');
+    await review.getByRole('combobox', { name: 'Schedule view', exact: true }).selectOption('classes');
+    await review.getByRole('combobox', { name: 'Review grade', exact: true }).selectOption('all');
+    await review.getByRole('button', { name: 'Edit affected class Zinkan Math', exact: true }).first().click();
+    await dialog.getByLabel('Zinkan Math schedule action', { exact: true }).waitFor();
+    assert.equal(await dialog.locator('[data-class-editor-id="math"]').evaluate(element => element.contains(document.activeElement)), true);
+    await dialog.getByLabel('Zinkan Math schedule action', { exact: true }).selectOption('time');
+    await dialog.getByLabel('Zinkan Math profile end', { exact: true }).fill('11:15');
+    await dialog.getByLabel('Zinkan Math profile start', { exact: true }).fill('10:15');
+    await check.getByText('2 conflicts need attention', { exact: true }).waitFor();
+    await dialog.getByRole('button', { name: 'Review draft schedule', exact: true }).click();
+    await review.getByRole('button', { name: 'Edit affected class Burba Reading', exact: true }).first().click();
+    assert.equal(await dialog.locator('[data-class-editor-id="reading"]').evaluate(element => element.contains(document.activeElement)), true);
+    await dialog.getByLabel('Burba Reading schedule action', { exact: true }).selectOption('skip');
+    await check.getByText(/1 conflict.*need/).waitFor();
+    await dialog.getByRole('button', { name: 'Review draft schedule', exact: true }).click();
+    await review.getByRole('combobox', { name: 'Review grade', exact: true }).selectOption('4');
+    await review.getByLabel('Show conflicts only', { exact: true }).check();
+    await reviewRow('Vatter Science').waitFor();
+    assert.equal(await reviewRow('Art Studio').count(), 0, 'Allowed overlap must not be presented as a blocking conflict');
+    await review.getByRole('button', { name: 'Edit testing block Vatter MAP', exact: true }).first().click();
+    assert.equal(await dialog.getByLabel('Testing block 3 name', { exact: true }).evaluate(element => element === document.activeElement), true);
+    assert.equal(await dialog.getByLabel('Zinkan Math profile start', { exact: true }).inputValue(), '10:15');
+    assert.equal(await dialog.getByLabel('Burba Reading schedule action', { exact: true }).inputValue(), 'skip');
+    await capture('editor-notices', check);
+    await dialog.getByRole('button', { name: 'Save profile', exact: true }).click();
+    await dialog.getByRole('heading', { name: 'Schedule for Testing review', exact: true }).waitFor();
+    await dialog.getByText('Profile saved — not applied', { exact: true }).waitFor();
+    assert.equal(saves.length, 1); assert.equal(previews.length, 0); assert.equal(applies.length, 0);
+    assert.equal(saves[0].definition.classRules.some(rule => rule.classId === 'science'), false, 'Saving a conflict must preserve Keep without inventing a fix');
+    await check.getByText(/1 conflict.*need/).waitFor();
+    await capture('saved-review', review);
+    await closeSavedReview(dialog);
+    assert.equal(await page.getByRole('button', { name: 'Apply Testing review', exact: true }).count(), 0);
+    await page.getByRole('button', { name: 'View schedule for Testing review', exact: true }).click();
+    await dialog.getByRole('heading', { name: 'Schedule for Testing review', exact: true }).waitFor();
+    assert.equal(await dialog.getByRole('button', { name: 'Save profile', exact: true }).count(), 0);
+    await dialog.getByRole('button', { name: 'Close schedule', exact: true }).click();
+    assert.equal(saves.length, 1); assert.ok(reviews.length > 3); assert.deepEqual(errors, []);
+  } catch (error) { context.diagnostic(await dialog.ariaSnapshot()); throw error; }
+  finally { await browser.close(); await vite.close(); }
+});
+
+test('Draft review discards stale date and definition responses and keeps incomplete or failed checks honest', { timeout: 90_000 }, async context => {
+  const { vite, browser, page, catalog, control, reviews, saves, errors } = await createDraftReviewFixture(context);
+  const dialog = page.getByRole('dialog');
+  const check = dialog.getByRole('region', { name: 'Draft schedule check', exact: true });
+  const pending = [];
+  try {
+    await page.getByRole('button', { name: 'Create Schedule Profile', exact: true }).click();
+    await dialog.getByLabel('Profile name', { exact: true }).fill('Draft checks');
+    await dialog.getByRole('button', { name: 'Start blank', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Add testing block', exact: true }).click();
+    await check.getByText('Draft review is incomplete.', { exact: true }).waitFor();
+    assert.equal(await check.getByText('No blocking conflicts on this reference date.', { exact: true }).count(), 0);
+    await dialog.getByRole('button', { name: 'Save profile', exact: true }).click();
+    await dialog.getByRole('alert').filter({ hasText: 'Each testing block needs a name' }).waitFor(); assert.equal(saves.length, 0);
+    await dialog.getByLabel('Testing block 1 name', { exact: true }).fill('Zinkan MAP');
+    await dialog.getByLabel('Testing block 1 Coverage group', { exact: true }).selectOption('zinkan-group');
+    await dialog.getByLabel('Testing block 1 assigned staff', { exact: true }).selectOption('zinkan');
+    await check.getByText(/1 conflict.*need/).waitFor();
+    control.reviewResponse = async (body, result) => {
+      if (body.referenceDate === '2026-09-10' || body.definition.name === 'Delayed definition') {
+        await new Promise(resolve => pending.push(resolve));
+        result.issues = [{ id: 'stale', kind: 'conflict', code: 'SCHEDULE_PROFILE_PROCTOR_CLASS_CONFLICT', message: 'Stale response must never be displayed.', classIds: ['math'], blockIds: [], staffIds: ['zinkan'] }];
+        result.counts = { conflicts: 99, overlaps: 0, incomplete: 0 };
+      }
+      if (body.referenceDate === '2026-09-12') return { status: 503, json: { error: 'Draft comparison is temporarily unavailable.' } };
+      return { json: result };
+    };
+    let sent = page.waitForRequest(request => request.url().endsWith('/draft-review') && request.postDataJSON().referenceDate === '2026-09-10');
+    await dialog.getByLabel('Reference date', { exact: true }).fill('2026-09-10'); await sent;
+    await check.getByText('Checking draft schedule…', { exact: true }).waitFor();
+    assert.equal(await check.getByText(/1 conflict.*need/).count(), 0, 'Old advisory findings must disappear while the current date is pending');
+    let loaded = page.waitForResponse(response => response.url().endsWith('/draft-review') && response.request().postDataJSON().referenceDate === '2026-09-11');
+    await dialog.getByLabel('Reference date', { exact: true }).fill('2026-09-11'); await loaded;
+    pending.splice(0).forEach(resolve => resolve()); await page.waitForLoadState('networkidle');
+    await check.getByText(/1 conflict.*need/).waitFor();
+    assert.equal(await check.getByText('Stale response must never be displayed.', { exact: true }).count(), 0);
+    sent = page.waitForRequest(request => request.url().endsWith('/draft-review') && request.postDataJSON().definition.name === 'Delayed definition');
+    await dialog.getByLabel('Profile name', { exact: true }).fill('Delayed definition'); await sent;
+    loaded = page.waitForResponse(response => response.url().endsWith('/draft-review') && response.request().postDataJSON().definition.name === 'Current definition');
+    await dialog.getByLabel('Profile name', { exact: true }).fill('Current definition'); await loaded;
+    pending.splice(0).forEach(resolve => resolve()); await page.waitForLoadState('networkidle');
+    assert.equal(await check.getByText('Stale response must never be displayed.', { exact: true }).count(), 0);
+    await dialog.getByLabel('Reference date', { exact: true }).fill('2026-09-12');
+    await check.getByText('Could not review this draft schedule.', { exact: true }).waitFor();
+    assert.equal(await check.getByText(/No blocking conflicts|1 conflict.*need/).count(), 0, 'A failed review cannot retain a reassuring or stale result');
+    assert.equal(await dialog.getByRole('button', { name: 'Save profile', exact: true }).isEnabled(), true);
+    control.reviewResponse = null;
+    await check.getByRole('button', { name: 'Retry draft review', exact: true }).click(); await check.getByText(/1 conflict.*need/).waitFor();
+    assert.equal(await dialog.getByLabel('Profile name', { exact: true }).inputValue(), 'Current definition');
+    assert.equal(await dialog.getByLabel('Reference date', { exact: true }).inputValue(), '2026-09-12');
+    const reviewsBeforeRefresh = reviews.length, unchangedRevision = catalog.revision;
+    catalog.classes[0].blockStartTime = '11:00'; catalog.classes[0].blockEndTime = '12:00';
+    loaded = page.waitForResponse(response => response.url().endsWith('/draft-review') && response.request().postDataJSON().referenceDate === '2026-09-12');
+    await dialog.getByRole('button', { name: 'Refresh regular schedule', exact: true }).click(); await loaded;
+    await check.getByText('No blocking conflicts on this reference date.', { exact: true }).waitFor();
+    assert.equal(catalog.revision, unchangedRevision);
+    assert.ok(reviews.length > reviewsBeforeRefresh, 'Refreshing regular clocks must refresh advisory findings even without a scheduling revision change');
+    assert.equal(saves.length, 0); assert.ok(reviews.length > 4); assert.deepEqual(errors, []);
+  } finally { pending.splice(0).forEach(resolve => resolve()); await browser.close(); await vite.close(); }
+});
+
+test('Saving opens the exact returned profile even if catalog refresh or saved review fails, while apply still requires new dated preview', { timeout: 90_000 }, async context => {
+  const { vite, browser, page, catalog, control, reviews, saves, previews, applies, errors } = await createDraftReviewFixture(context);
+  const dialog = page.getByRole('dialog');
+  try {
+    await page.getByRole('button', { name: 'Create Schedule Profile', exact: true }).click();
+    await dialog.getByLabel('Profile name', { exact: true }).fill('Before server normalization');
+    await dialog.getByRole('button', { name: 'Load regular schedule', exact: true }).click();
+    control.staleCatalog = true; control.failCatalogRefresh = true; control.failSavedReview = true;
+    control.saveTransform = definition => ({ ...definition, name: 'Server-confirmed testing', classRules: [{ classId: 'math', action: 'time', startTime: '10:20', endTime: '11:20' }] });
+    await dialog.getByRole('button', { name: 'Save profile', exact: true }).click();
+    await dialog.getByRole('heading', { name: 'Schedule for Server-confirmed testing', exact: true }).waitFor();
+    await dialog.getByText('Profile saved — not applied', { exact: true }).waitFor();
+    const review = dialog.getByRole('region', { name: 'Draft schedule review', exact: true });
+    const check = dialog.getByRole('region', { name: 'Draft schedule check', exact: true });
+    await check.getByText('Saved schedule review is temporarily unavailable.', { exact: true }).waitFor();
+    assert.ok(control.catalogReadFailures > 0, 'The saved profile remains reviewable after an actual catalog refresh failure');
+    assert.equal(saves.length, 1); assert.equal(catalog.profiles.length, 0, 'The saved view must not depend on finding the new profile in a stale catalog');
+    assert.deepEqual(reviews.at(-1).definition, control.savedProfile.definition, 'Automatic review must use the exact returned definition');
+    assert.equal(await dialog.getByRole('button', { name: 'Save profile', exact: true }).count(), 0, 'A failed advisory check must never imply the save failed');
+    control.failSavedReview = false;
+    await check.getByRole('button', { name: 'Retry draft review', exact: true }).click();
+    await review.getByText('10:20–11:20', { exact: true }).first().waitFor();
+    assert.equal(saves.length, 1);
+    await dialog.getByRole('button', { name: /Choose dates & apply/ }).click();
+    await dialog.getByRole('button', { name: 'Preview application', exact: true }).waitFor();
+    assert.equal(await dialog.getByRole('button', { name: 'Apply reviewed dates', exact: true }).count(), 0, 'A reference-day review never authorizes an application');
+    await dialog.getByRole('button', { name: 'Preview application', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Apply reviewed dates', exact: true }).waitFor();
+    assert.equal(previews[0].profileId, control.savedProfile.id); assert.equal(previews[0].profileRevision, control.savedProfile.revision); assert.equal(previews[0].revision, catalog.revision);
+    await dialog.getByRole('button', { name: 'Review draft schedule', exact: true }).click();
+    await dialog.getByLabel('Reference date', { exact: true }).fill('2026-09-11');
+    await review.getByRole('combobox', { name: 'Review grade', exact: true }).selectOption('4');
+    assert.equal(await dialog.getByRole('region', { name: 'Profile application preview', exact: true }).count(), 0, 'Actual-date approval must not be visually conflated with the advisory day');
+    assert.equal(await dialog.getByRole('button', { name: 'Apply reviewed dates', exact: true }).count(), 0);
+    await dialog.getByRole('button', { name: 'Back to editing', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Apply reviewed dates', exact: true }).waitFor();
+    assert.equal(previews.length, 1, 'Reference-date and view filters do not change an already reviewed application');
+    await dialog.getByLabel('Add an individual date', { exact: true }).fill('2026-09-09'); await dialog.getByRole('button', { name: 'Add selected date', exact: true }).click();
+    assert.equal(await dialog.getByRole('button', { name: 'Apply reviewed dates', exact: true }).count(), 0);
+    await dialog.getByRole('button', { name: 'Preview application', exact: true }).click(); await dialog.getByRole('button', { name: 'Apply reviewed dates', exact: true }).waitFor();
+    await dialog.getByRole('checkbox', { name: 'Customize this use', exact: true }).check();
+    assert.equal(await dialog.getByRole('button', { name: 'Apply reviewed dates', exact: true }).count(), 0);
+    await dialog.getByLabel('Zinkan Math profile start', { exact: true }).fill('10:25');
+    await dialog.getByRole('button', { name: 'Preview application', exact: true }).click(); await dialog.getByRole('button', { name: 'Apply reviewed dates', exact: true }).waitFor();
+    assert.equal(previews.at(-1).definition.classRules[0].startTime, '10:25');
+    assert.deepEqual(previews.at(-1).dates, ['2026-09-08', '2026-09-09']);
+    assert.equal(applies.length, 0); assert.equal(saves.length, 1); assert.deepEqual(errors, []);
+  } finally { await browser.close(); await vite.close(); }
 });

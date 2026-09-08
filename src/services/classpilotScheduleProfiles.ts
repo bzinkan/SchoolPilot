@@ -8,7 +8,7 @@ import { classpilotSchoolSchedules } from "../schema/classpilotScheduling.js";
 import { getSchoolSchedulingContext, previewSchoolScheduling } from "./classpilotScheduling.js";
 import { validateScheduleProfileTestingWindows } from "./classpilotScheduleProfileValidation.js";
 import { normalizeSchoolSchedulingConfig, resolveClassBaseWindow, resolveSchoolScheduleDay, schedulingError, isSchedulingDate, datePlusDays, type SchoolSchedulingConfig, type BellWindow } from "./classpilotSchedulingRules.js";
-import { normalizeScheduleProfileDefinition, type ScheduleProfileDefinition, type SavedScheduleProfile, type ScheduleProfileApplication, type ScheduleProfileTestingWindow } from "./classpilotScheduleProfileModel.js";
+import { normalizeScheduleProfileDefinition, scheduleProfileWindowsOverlap, type ScheduleProfileDefinition, type SavedScheduleProfile, type ScheduleProfileApplication, type ScheduleProfileTestingWindow } from "./classpilotScheduleProfileModel.js";
 import { getStaffBySchool, withClasspilotSchedulePostCommitTransaction, supersedePendingScheduleChangesForGroup } from "./storage.js";
 import { lockStaffAssignmentLifecycleSchool } from "./staffAssignmentLifecycleLock.js";
 import { assertClasspilotEntitled } from "./classpilotEntitlement.js";
@@ -25,7 +25,6 @@ function stable(value: unknown): string {
   return JSON.stringify(value) ?? "null";
 }
 const digest = (value: unknown) => createHash("sha256").update(stable(value)).digest("hex");
-function overlaps(a: BellWindow, b: BellWindow) { return a.startTime < b.endTime && b.startTime < a.endTime; }
 function scopeIncludes(definition: ScheduleProfileDefinition, row: { id: string; gradeLevel: string | null }) {
   return definition.classIds.includes(row.id) || (!!row.gradeLevel && definition.grades.includes(row.gradeLevel));
 }
@@ -174,7 +173,7 @@ async function buildPreview(options: ProfileRequest, database: Database = db) {
   blockers.push(...scheduling.blockers);
   const otherTesting = (data.context.config.profileApplications ?? []).filter((a) => a.status === "scheduled").flatMap((a) => a.testingWindows);
   for (const [index, window] of testingWindows.entries()) {
-    const overlapping = [...otherTesting, ...testingWindows.slice(0, index)].filter((w) => w.date === window.date && overlaps(w, window));
+    const overlapping = [...otherTesting, ...testingWindows.slice(0, index)].filter((w) => w.date === window.date && scheduleProfileWindowsOverlap(w, window));
     if (overlapping.some((w) => w.assignedStaffId === window.assignedStaffId || w.studentIds.some((id) => window.studentIds.includes(id)))) block(window.name + ": a staff member or student is assigned to overlapping testing blocks.", window.date);
     const start = localDateTimeUtc(window.date, window.startTime, data.schoolTimezone), end = localDateTimeUtc(window.date, window.endTime, data.schoolTimezone);
     for (const context of data.activeContexts) if (context.startsAt < end && context.endsAt > start) {

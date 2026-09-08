@@ -17,6 +17,7 @@ const { runWithTenantContext } = await import("../src/middleware/tenantContext.j
 const service = await import("../src/services/classpilotScheduleProfiles.js");
 const scheduling = await import("../src/services/classpilotScheduling.js");
 const regularSchedule = await import("../src/services/classpilotRegularSchedule.js");
+const draftReview = await import("../src/services/classpilotScheduleDraftReview.js");
 const { getEffectiveClasspilotScheduleWindow } = await import("../src/services/classpilotScheduleChanges.js");
 const schoolIds: string[] = [], userIds: string[] = [];
 const scoped = <T>(schoolId: string, fn: () => Promise<T>) => runWithTenantContext({ schoolId }, fn);
@@ -97,6 +98,8 @@ test("regular reference reads are school-scoped, preserve every stored schedule,
   const result = await scoped(data.schoolId, () => regularSchedule.getClasspilotRegularSchedule({ schoolId: data.schoolId, referenceDate: date }));
   assert.equal(result.revision, applied.revision);
   assert.deepEqual(result.classes, [{ classId: data.classId, status: "meets", window: { startTime: "09:00", endTime: "09:50" } }]);
+  const reviewed = await scoped(data.schoolId, () => draftReview.getScheduleDraftReview({ schoolId: data.schoolId, referenceDate: date, definition: { ...data.definition, classRules: [] } }));
+  assert.deepEqual(reviewed.classes.map((row) => ({ classId: row.classId, window: row.proposedWindow })), [{ classId: data.classId, window: { startTime: "09:00", endTime: "09:50" } }]);
   assert.deepEqual(await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId)), before);
   assert.equal((await pool.query("SELECT schedule_skipped_date FROM groups WHERE id=$1", [data.classId])).rows[0].schedule_skipped_date, date);
   assert.equal((await pool.query("SELECT scheduled_start_at FROM teaching_sessions WHERE group_id=$1", [data.classId])).rows[0].scheduled_start_at.toISOString(), localDateTimeUtc(date, "12:00", "America/New_York").toISOString());
@@ -123,6 +126,8 @@ test("regular reference reads are school-scoped, preserve every stored schedule,
   assert.deepEqual(otherResult.classes.map(row => row.classId).sort(), [other.classId, other.nextClassId].sort());
   assert.deepEqual(otherResult.classes.find(row => row.classId === other.classId)?.window, { startTime: "09:00", endTime: "09:50" });
   assert.deepEqual(otherResult.classes.find(row => row.classId === other.nextClassId)?.window, { startTime: "10:00", endTime: "10:50" });
+  const swappedReview = await scoped(other.schoolId, () => draftReview.getScheduleDraftReview({ schoolId: other.schoolId, referenceDate: date, definition: { ...other.definition, classRules: [] } }));
+  assert.deepEqual(swappedReview.classes.find(row => row.classId === other.classId)?.proposedWindow, { startTime: "09:00", endTime: "09:50" });
   assert.deepEqual(await effectiveWindow(), swapped);
 });
 
@@ -183,6 +188,79 @@ test("regular reference route enforces admin entitlement and active school selec
   } finally {
     server.closeAllConnections();
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
+
+test("draft review resolves scoped roster counts without mutation and keeps valid feedback beside incomplete blocks", async () => {
+  const data = await fixture(), other = await fixture();
+  const definition = { ...data.definition, classRules: [], testingBlocks: [{ id: "map", name: "MAP", coverageGroupId: data.scopeId, assignedStaffId: data.specialistId, startTime: "09:00", endTime: "10:45" },
+    { id: "unfinished", name: "", coverageGroupId: "", assignedStaffId: "", startTime: "", endTime: "" }] };
+  const snapshot = async () => {
+    const rows: Record<string, unknown> = {};
+    for (const table of ["classpilot_school_schedules", "groups", "students", "settings", "classpilot_coverage_scope_groups", "classpilot_coverage_assignments", "classpilot_coverage_scope_group_members", "classpilot_supervision_contexts", "teaching_sessions", "audit_logs"]) {
+      rows[table] = (await pool.query(`SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb) AS rows FROM ${table} t WHERE school_id=$1`, [data.schoolId])).rows[0].rows;
+    }
+    return rows;
+  };
+  const before = await snapshot();
+  const first = await scoped(data.schoolId, () => draftReview.getScheduleDraftReview({ schoolId: data.schoolId, referenceDate: date, definition }));
+  const second = await scoped(data.schoolId, () => draftReview.getScheduleDraftReview({ schoolId: data.schoolId, referenceDate: date, definition }));
+  assert.deepEqual(first, second); assert.deepEqual(await snapshot(), before);
+  assert.equal(first.revision, 0); assert.equal(first.complete, false); assert.equal(first.counts.incomplete, 1);
+  assert.equal(first.counts.overlaps, 2);
+  assert.deepEqual(first.testingBlocks.find((row) => row.blockId === "map")?.classParticipation.sort((a, b) => a.classId.localeCompare(b.classId)), [data.classId, data.nextClassId].sort().map(classId => ({ classId, count: 1, total: 1 })));
+  assert.doesNotMatch(JSON.stringify(first), /studentIds|deviceId|teachingSessionId/);
+  for (const id of [data.studentId, other.studentId, other.classId, other.scopeId]) assert.equal(JSON.stringify(first).includes(id), false);
+  const foreign = await scoped(data.schoolId, () => draftReview.getScheduleDraftReview({ schoolId: data.schoolId, referenceDate: date, definition: { ...definition, testingBlocks: [{ ...definition.testingBlocks[0]!, coverageGroupId: other.scopeId, assignedStaffId: other.specialistId }] } }));
+  assert.equal(foreign.complete, false); assert.equal(foreign.testingBlocks[0]?.groupName, null); assert.equal(foreign.testingBlocks[0]?.staffName, null); assert.equal(foreign.testingBlocks[0]?.studentCount, 0);
+});
+
+test("conflicting complete profiles save, while review and authoritative application retain their separate checks", async () => {
+  const data = await fixture();
+  const definition: ScheduleProfileDefinition = { ...data.definition, classRules: [{ classId: data.classId, action: "time", startTime: "09:30", endTime: "10:30" }] };
+  const saved = await save(data, definition);
+  const review = await scoped(data.schoolId, () => draftReview.getScheduleDraftReview({ schoolId: data.schoolId, referenceDate: date, definition: saved.profile.definition }));
+  assert.equal(review.revision, saved.revision); assert.equal(review.complete, true);
+  assert.ok(review.issues.some((issue) => issue.code === "CLASS_SCHEDULE_CONFLICT"));
+  const preview = await scoped(data.schoolId, () => service.previewScheduleProfile(request(data, saved)));
+  assert.ok(preview.blockers.some((issue) => issue.code === "CLASS_SCHEDULE_CONFLICT"));
+  await assert.rejects(scoped(data.schoolId, () => service.applyScheduleProfile({ ...request(data, saved), previewToken: preview.previewToken })), { code: "CLASS_SCHEDULE_CONFLICT" });
+  const fixed = { ...definition, classRules: [{ classId: data.classId, action: "time" as const, startTime: "09:00", endTime: "10:00" }] };
+  const clean = await scoped(data.schoolId, () => draftReview.getScheduleDraftReview({ schoolId: data.schoolId, referenceDate: date, definition: fixed }));
+  assert.equal(clean.counts.conflicts, 0);
+  await assert.rejects(scoped(data.schoolId, () => service.saveScheduleProfile({ schoolId: data.schoolId, actorId: data.adminId, revision: saved.revision,
+    definition: { ...fixed, testingBlocks: [{ id: "unfinished", name: "MAP", coverageGroupId: "", assignedStaffId: "", startTime: "", endTime: "" }] } })), { code: "INVALID_SCHEDULE_PROFILE" });
+});
+
+test("draft review route is administrator-only, school-bound and strict about request structure", async () => {
+  const data = await fixture(), other = await fixture();
+  const { default: router } = await import("../src/routes/classpilot/scheduleProfiles.js");
+  const { signUserToken } = await import("../src/services/jwt.js");
+  const app = express(); app.use(express.json()); app.use("/api/classpilot/admin/schedule-profiles", router);
+  app.use(((error, _req, res, _next) => {
+    const known = error as Error & { status?: number; code?: string };
+    res.status(known.status ?? 500).json({ error: known.message, code: known.code });
+  }) satisfies express.ErrorRequestHandler);
+  const server = createServer(app);
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/classpilot/admin/schedule-profiles/draft-review`;
+  const requestBody = { referenceDate: date, definition: data.definition };
+  const post = (body: unknown, userId?: string, schoolId = data.schoolId) => fetch(url, { method: "POST", headers: { "content-type": "application/json", ...(userId ? { authorization: `Bearer ${signUserToken({ userId, email: `${userId}@example.test`, isSuperAdmin: false })}`, "x-school-id": schoolId } : {}) }, body: JSON.stringify(body) });
+  try {
+    assert.equal((await post(requestBody)).status, 401);
+    assert.equal((await post(requestBody, data.teacherId)).status, 403);
+    assert.equal((await post(requestBody, data.adminId, other.schoolId)).status, 403);
+    const response = await post({ ...requestBody, schoolId: other.schoolId }, data.adminId);
+    assert.equal(response.status, 200); assert.equal(response.headers.get("cache-control"), "no-store");
+    const body = await response.json() as Awaited<ReturnType<typeof draftReview.getScheduleDraftReview>>;
+    assert.deepEqual(body.classes.map((row) => row.classId).sort(), [data.classId, data.nextClassId].sort());
+    assert.match(body.requestFingerprint, /^[a-f0-9]{64}$/);
+    for (const referenceDate of [null, [date], "2026-02-30", "2026-9-01"]) assert.equal((await post({ ...requestBody, referenceDate }, data.adminId)).status, 400);
+    for (const definition of [null, { ...data.definition, schoolId: other.schoolId }, { ...data.definition, testingBlocks: "invalid" }, { ...data.definition, classIds: ["constructor"] }]) assert.equal((await post({ ...requestBody, definition }, data.adminId)).status, 400);
+    await pool.query("UPDATE schools SET is_active=false WHERE id=$1", [data.schoolId]);
+    assert.equal((await post(requestBody, data.adminId)).status, 403);
+  } finally {
+    server.closeAllConnections(); await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   }
 });
 

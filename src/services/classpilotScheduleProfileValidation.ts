@@ -32,6 +32,11 @@ function stable(value: unknown): string {
 }
 const fingerprint = (value: unknown) => createHash("sha256").update(stable(value)).digest("hex");
 
+/** Testing a whole class is allowed; other pupils remain a proctor obligation. */
+export function testingRosterHasOtherClassStudents(classStudents: string[], testingStudents: ReadonlySet<string>): boolean {
+  return classStudents.some((id) => !testingStudents.has(id));
+}
+
 /** Exact transition probes also catch an overnight tracking window's daytime gap. */
 export function scheduleProfileWindowHasFullMonitoring(window: Pick<ScheduleProfileTestingWindow, "date" | "startTime" | "endTime">, tracking: HeartbeatTrackingSettings | undefined): boolean {
   if (!tracking) return false;
@@ -72,7 +77,7 @@ export function evaluateScheduleProfileTestingWindows(testingWindows: SchedulePr
     const targets = new Set(window.studentIds);
     const conflicts = (name: string, students: string[], complete: boolean) => {
       if (!complete) block("SCHEDULE_PROFILE_FROZEN_ROSTER_UNAVAILABLE", `${window.name}: ${name} has an incomplete frozen roster. Resolve that class session before assigning its teacher.`, window.date);
-      else if (students.some((id) => !targets.has(id))) block("SCHEDULE_PROFILE_PROCTOR_CLASS_CONFLICT", `${window.name}: the assigned staff member also teaches ${name} during this block. Include that entire class in testing, adjust the class, or choose another proctor.`, window.date);
+      else if (testingRosterHasOtherClassStudents(students, targets)) block("SCHEDULE_PROFILE_PROCTOR_CLASS_CONFLICT", `${window.name}: the assigned staff member also teaches ${name} during this block. Include that entire class in testing, adjust the class, or choose another proctor.`, window.date);
     };
     for (const session of facts.sessions) {
       if (!session.staffIds.includes(window.assignedStaffId) || session.scheduledState === "skipped") continue;

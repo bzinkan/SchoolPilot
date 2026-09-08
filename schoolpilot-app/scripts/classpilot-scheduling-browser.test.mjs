@@ -78,7 +78,7 @@ test("Scheduling sections preserve drafts, protect profile actions, and save onl
     const bellsTab = page.getByRole("tab", { name: "Bells & rotation", exact: true });
     const calendarTab = page.getByRole("tab", { name: "Calendar & exceptions", exact: true });
     const createProfile = page.getByRole("button", { name: "Create Schedule Profile", exact: true });
-    const applyProfile = page.getByRole("button", { name: "Apply Early release", exact: true });
+    const applyProfile = page.getByRole("button", { name: "Choose dates & apply Early release", exact: true });
     const previewButton = page.getByRole("button", { name: "Preview changes", exact: true });
     const saveButton = page.getByRole("button", { name: "Save reviewed schedule", exact: true });
     const classesShortcut = page.getByRole("link", { name: "assign periods to classes", exact: true });

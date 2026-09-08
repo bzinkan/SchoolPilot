@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarDays, Copy, Plus } from 'lucide-react';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -7,6 +7,8 @@ import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
+import ScheduleProfileDraftReview, { DraftReviewIssues, DraftReviewStatus } from './ScheduleProfileDraftReview';
+import { useScheduleProfileDraftReview } from './useScheduleProfileDraftReview';
 
 const API = '/classpilot/admin/schedule-profiles';
 const KEY = ['classpilot-schedule-profiles'];
@@ -75,11 +77,11 @@ function isReferenceDate(value) {
   return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
-function RegularScheduleReference({ date, onDateChange, query, schedule, timezone, setup }) {
+function RegularScheduleReference({ date, onDateChange, onRefresh, query, schedule, timezone, setup }) {
   const validDate = isReferenceDate(date);
   return <section aria-label="Regular schedule reference" className="space-y-3 rounded-lg border bg-muted/30 p-4">
     <div className="space-y-1"><h4 className="font-semibold">{setup ? 'Start from regular schedule' : 'Compare with the regular schedule'}</h4><p className="max-w-2xl text-sm text-muted-foreground">Use a reference day to build this profile. Choose application dates separately after saving.</p></div>
-    <div className="flex flex-wrap items-end gap-3"><label className="w-full space-y-1 text-sm font-medium sm:w-56"><span>Reference date</span><input type="date" className={inputClass} value={date} onChange={event => onDateChange(event.target.value)} /></label><Button variant="outline" size="sm" disabled={!validDate || query.isFetching} onClick={() => query.refetch()}>{query.isError ? 'Retry regular schedule' : 'Refresh regular schedule'}</Button></div>
+    <div className="flex flex-wrap items-end gap-3"><label className="w-full space-y-1 text-sm font-medium sm:w-56"><span>Reference date</span><input type="date" className={inputClass} value={date} onChange={event => onDateChange(event.target.value)} /></label><Button variant="outline" size="sm" disabled={!validDate || query.isFetching} onClick={onRefresh}>{query.isError ? 'Retry regular schedule' : 'Refresh regular schedule'}</Button></div>
     {!validDate && <p className="text-sm text-muted-foreground">Choose a valid reference date to see regular class times.</p>}
     {validDate && query.isFetching && <p role="status" className="text-sm">Loading regular schedule…</p>}
     {validDate && query.isError && !query.isFetching && <p role="alert" className="text-sm text-destructive">Could not load the regular schedule. {errorMessage(query.error)}</p>}
@@ -92,10 +94,18 @@ function RegularScheduleReference({ date, onDateChange, query, schedule, timezon
   </section>;
 }
 
-function DefinitionEditor({ definition, onChange, catalog, disabled, regularSchedule, referenceLoading }) {
+function DefinitionEditor({ definition, onChange, catalog, disabled, regularSchedule, referenceLoading, filters, onFiltersChange, draftReview }) {
   const classes = catalog.classes || EMPTY, groups = catalog.supervisionGroups || EMPTY, staff = catalog.staff || EMPTY;
-  const [viewGrade, setViewGrade] = useState('all');
-  const [search, setSearch] = useState('');
+  const { viewGrade, search } = filters;
+  const issuesByTarget = useMemo(() => {
+    const result = new Map();
+    for (const issue of draftReview?.issues || EMPTY) {
+      for (const target of [...(issue.classIds || EMPTY).map(id => `class:${id}`), ...(issue.blockIds || EMPTY).map(id => `block:${id}`)]) {
+        result.set(target, [...(result.get(target) || EMPTY), issue]);
+      }
+    }
+    return result;
+  }, [draftReview]);
   const grades = useMemo(() => {
     const choices = new Map();
     for (const grade of [...classes.map(row => String(row.gradeLevel ?? '')).filter(Boolean), ...definition.grades]) {
@@ -123,14 +133,14 @@ function DefinitionEditor({ definition, onChange, catalog, disabled, regularSche
       <div className="flex flex-wrap items-center gap-3"><Button size="sm" variant="outline" onClick={() => updateScope({ grades: grades.filter(grade => /^[1-8]$/.test(grade.key)).flatMap(grade => grade.values) })}>Select grades 1–8</Button><Button size="sm" variant="ghost" onClick={() => updateScope({ grades: [], classIds: [] })}>Clear selection</Button>
         {grades.map(grade => <label key={grade.key} className="flex items-center gap-2 text-sm"><input type="checkbox" ref={element => { if (element) element.indeterminate = grade.values.some(value => definition.grades.includes(value)) && !grade.values.every(value => definition.grades.includes(value)); }} checked={grade.values.every(value => definition.grades.includes(value))} onChange={event => updateScope({ grades: event.target.checked ? [...new Set([...definition.grades, ...grade.values])] : definition.grades.filter(value => gradeKey(value) !== grade.key) })} />{gradeName(grade.key)}</label>)}
       </div>
-      <div className="grid gap-2 pt-2 sm:grid-cols-2"><label className="space-y-1 text-sm"><span>View grade</span><select className={inputClass} value={viewGrade} onChange={event => setViewGrade(event.target.value)}><option value="all">All grades</option>{grades.map(grade => <option key={grade.key} value={grade.key}>{gradeName(grade.key)}</option>)}</select></label><label className="space-y-1 text-sm"><span>Find a class or teacher</span><input className={inputClass} value={search} onChange={event => setSearch(event.target.value)} /></label></div>
+      <div className="grid gap-2 pt-2 sm:grid-cols-2"><label className="space-y-1 text-sm"><span>View grade</span><select className={inputClass} value={viewGrade} onChange={event => onFiltersChange({ ...filters, viewGrade: event.target.value })}><option value="all">All grades</option>{grades.map(grade => <option key={grade.key} value={grade.key}>{gradeName(grade.key)}</option>)}</select></label><label className="space-y-1 text-sm"><span>Find a class or teacher</span><input className={inputClass} value={search} onChange={event => onFiltersChange({ ...filters, search: event.target.value })} /></label></div>
       <p className="text-xs text-muted-foreground sm:hidden">Scroll the timetable sideways to see profile adjustments.</p>
       <div role="region" aria-label="Class schedule comparison" tabIndex={0} className="max-h-80 min-w-0 max-w-full overflow-auto rounded-md border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"><table className="w-full min-w-[580px] text-left text-sm"><thead className="sticky top-0 bg-muted"><tr><th className="p-3">Class / teacher</th><th className="p-3">Regular schedule</th><th className="p-3">This profile</th></tr></thead><tbody>
         {visible.map(row => {
           const included = selectedClass(definition, row), byGrade = definition.grades.includes(String(row.gradeLevel)), rule = rules.get(row.id);
           const regular = regularClasses.get(row.id), window = regular?.status === 'meets' ? regular.window : null;
           const regularText = window ? timeText(window) : regular?.status === 'not_scheduled' ? 'Does not meet on this reference date' : regular?.status === 'schedule_off' ? 'Schedule off' : referenceLoading ? 'Loading…' : 'Regular time unavailable';
-          return <tr key={row.id} className="border-t">
+          return <tr key={row.id} className="border-t" data-class-editor-id={row.id} tabIndex={-1}>
             <td className="p-3 align-top"><label className="flex items-start gap-2"><input type="checkbox" aria-label={`Include ${row.name}`} checked={included} disabled={byGrade} onChange={event => updateScope({ classIds: event.target.checked ? [...definition.classIds, row.id] : definition.classIds.filter(id => id !== row.id) })} /><span><span className="block font-medium">{row.name}</span><span className="text-xs text-muted-foreground">{gradeName(String(row.gradeLevel || 'unassigned'))}{row.teacherName ? ` · ${row.teacherName}` : ''}{byGrade ? ' · included by grade' : ''}</span></span></label></td>
             <td className="p-3 align-top text-muted-foreground">{regularText}{regular?.status === 'unavailable' && <p className="mt-1 text-xs text-destructive">{regular.message || 'Resolve this class’s period mapping in Bells & rotation.'}</p>}</td>
             <td className="space-y-2 p-3"><select className={inputClass} aria-label={`${row.name} schedule action`} disabled={!included} value={rule?.action || 'keep'} onChange={event => {
@@ -139,18 +149,19 @@ function DefinitionEditor({ definition, onChange, catalog, disabled, regularSche
               else if (window) changeRule(row.id, { action: 'time', ...window });
             }}><option value="keep">Keep existing schedule</option><option value="time" disabled={!window && rule?.action !== 'time'}>Custom time</option><option value="skip">Does not meet</option></select>
               {rule?.action === 'time' ? <div className="flex gap-2"><input aria-label={`${row.name} profile start`} className={inputClass} type="time" value={rule.startTime} onChange={event => changeRule(row.id, { ...rule, startTime: event.target.value })} /><input aria-label={`${row.name} profile end`} className={inputClass} type="time" value={rule.endTime} onChange={event => changeRule(row.id, { ...rule, endTime: event.target.value })} /></div> : included && !window && !referenceLoading && <p className="text-xs text-muted-foreground">Choose a reference date with an available regular meeting to start custom times.</p>}
+              <DraftReviewIssues compact issues={issuesByTarget.get(`class:${row.id}`)} review={draftReview} />
             </td>
           </tr>;
         })}
       </tbody></table>{visible.length === 0 && <p className="p-4 text-sm text-muted-foreground">No classes match this view.</p>}</div>
     </fieldset>
     <section className="space-y-3" aria-label="Testing blocks"><div><h4 className="text-sm font-semibold">Testing blocks <span className="font-normal text-muted-foreground">· optional</span></h4><p className="text-xs text-muted-foreground">Use an existing Coverage group and its assigned staff for a testing window. Student class rosters stay in place.</p></div>
-      {definition.testingBlocks.map((block, index) => { const group = groups.find(row => row.id === block.coverageGroupId); return <div key={block.id} className="space-y-3 rounded-md border p-3"><div className="flex items-center justify-between"><p className="text-sm font-medium">Testing block {index + 1}</p><Button size="sm" variant="ghost" aria-label={`Remove testing block ${index + 1}`} onClick={() => onChange({ ...definition, testingBlocks: definition.testingBlocks.filter(row => row.id !== block.id) })}>Remove</Button></div><div className="grid gap-3 sm:grid-cols-2">
+      {definition.testingBlocks.map((block, index) => { const group = groups.find(row => row.id === block.coverageGroupId); return <div key={block.id} data-block-editor-id={block.id} tabIndex={-1} className="space-y-3 rounded-md border p-3"><div className="flex items-center justify-between"><p className="text-sm font-medium">Testing block {index + 1}</p><Button size="sm" variant="ghost" aria-label={`Remove testing block ${index + 1}`} onClick={() => onChange({ ...definition, testingBlocks: definition.testingBlocks.filter(row => row.id !== block.id) })}>Remove</Button></div><div className="grid gap-3 sm:grid-cols-2">
         <label className="space-y-1 text-sm"><span>Block name</span><input aria-label={`Testing block ${index + 1} name`} className={inputClass} maxLength={80} value={block.name} onChange={event => changeBlock(block.id, { name: event.target.value })} /></label>
         <label className="space-y-1 text-sm"><span>Coverage group</span><select aria-label={`Testing block ${index + 1} Coverage group`} className={inputClass} value={block.coverageGroupId} onChange={event => changeBlock(block.id, { coverageGroupId: event.target.value, assignedStaffId: '' })}><option value="">Choose a group</option>{groups.map(row => <option key={row.id} value={row.id}>{row.name} · {row.studentIds?.length || 0} students</option>)}</select></label>
         <label className="space-y-1 text-sm"><span>Assigned staff</span><select aria-label={`Testing block ${index + 1} assigned staff`} className={inputClass} value={block.assignedStaffId} onChange={event => changeBlock(block.id, { assignedStaffId: event.target.value })}><option value="">Choose group staff</option>{(group?.staffIds || EMPTY).filter(id => staffNames.has(id)).map(id => <option key={id} value={id}>{staffNames.get(id)}</option>)}</select></label>
         <div className="grid grid-cols-2 gap-2"><label className="space-y-1 text-sm"><span>Start</span><input aria-label={`Testing block ${index + 1} start`} className={inputClass} type="time" value={block.startTime} onChange={event => changeBlock(block.id, { startTime: event.target.value })} /></label><label className="space-y-1 text-sm"><span>End</span><input aria-label={`Testing block ${index + 1} end`} className={inputClass} type="time" value={block.endTime} onChange={event => changeBlock(block.id, { endTime: event.target.value })} /></label></div>
-      </div>{group && !group.staffIds?.length && <p className="text-xs text-destructive">Assign staff to this group in Coverage before using it for testing.</p>}</div>; })}
+      </div>{group && !group.staffIds?.length && <p className="text-xs text-destructive">Assign staff to this group in Coverage before using it for testing.</p>}<DraftReviewIssues compact issues={issuesByTarget.get(`block:${block.id}`)} review={draftReview} /></div>; })}
       <Button variant="outline" size="sm" disabled={!groups.length || definition.testingBlocks.length >= 30} onClick={() => onChange({ ...definition, testingBlocks: [...definition.testingBlocks, { id: crypto.randomUUID(), name: 'Testing', coverageGroupId: '', assignedStaffId: '', startTime: '09:00', endTime: '10:00' }] })}><Plus className="mr-2 h-4 w-4" />Add testing block</Button>{!groups.length && <p className="text-xs text-muted-foreground">Set up a group and its staff in Coverage to add testing blocks.</p>}
     </section>
   </fieldset>;
@@ -160,7 +171,7 @@ function Preview({ preview, catalog }) {
   const [page, setPage] = useState(0);
   const changes = preview.changes || EMPTY;
   const count = typeof preview.affectedClasses === 'number' ? preview.affectedClasses : preview.affectedClasses?.length ?? new Set(changes.map(row => row.classId)).size;
-  return <section aria-label="Profile application preview" className="space-y-3 rounded-lg border p-4">
+  return <section aria-label="Profile application preview" tabIndex={-1} className="space-y-3 rounded-lg border p-4">
     <h4 className="font-semibold">Review this application</h4><p className="text-sm text-muted-foreground">{count} affected classes · Times use {preview.schoolTimezone || catalog.schoolTimezone}.</p>
     {(preview.blockers || EMPTY).map((blocker, index) => <p key={index} role="alert" className="text-sm text-destructive">{blocker.date ? `${blocker.date}: ` : ''}{blocker.message}</p>)}
     {changes.length > 0 ? <><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr><th className="p-2">Date / class</th><th className="p-2">Before</th><th className="p-2">After</th></tr></thead><tbody>{changes.slice(page * 50, (page + 1) * 50).map((change, index) => <tr className="border-t" key={`${change.date}-${change.classId}-${index}`}><td className="p-2">{change.date}<span className="block font-medium">{change.className}</span></td><td className="p-2">{timeText(change.before)}</td><td className="p-2">{timeText(change.after)}</td></tr>)}</tbody></table></div>{changes.length > 50 && <div className="flex items-center gap-3"><Button size="sm" variant="outline" disabled={!page} onClick={() => setPage(value => value - 1)}>Previous changes</Button><span className="text-xs">{page * 50 + 1}–{Math.min(changes.length, (page + 1) * 50)} of {changes.length}</span><Button size="sm" variant="outline" disabled={(page + 1) * 50 >= changes.length} onClick={() => setPage(value => value + 1)}>Next changes</Button></div>}</> : <p className="text-sm">No ordinary class times change.</p>}
@@ -171,7 +182,7 @@ function Preview({ preview, catalog }) {
 export default function ScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange }) {
   const client = useQueryClient();
   const { activeSchoolId } = useAuth();
-  const query = useQuery({ queryKey: KEY, queryFn: ({ signal }) => apiRequest('GET', API, undefined, { signal }), refetchInterval: current => current.state.data?.testingStatuses?.some(row => ['pending', 'active', 'releasing'].includes(row.status)) ? 30_000 : false });
+  const query = useQuery({ queryKey: [...KEY, activeSchoolId], queryFn: ({ signal }) => apiRequest('GET', API, undefined, { signal }), refetchInterval: current => current.state.data?.testingStatuses?.some(row => ['pending', 'active', 'releasing'].includes(row.status)) ? 30_000 : false });
   const [session, setSession] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -181,17 +192,25 @@ export default function ScheduleProfiles({ blockedByAdvancedDraft = false, onBus
   const [rangeStart, setRangeStart] = useState('');
   const [rangeEnd, setRangeEnd] = useState('');
   const [newName, setNewName] = useState('');
+  const bodyRef = useRef(null);
+  const editorScroll = useRef(0);
+  const openerRef = useRef(null);
+  const reviewOpenerRef = useRef(null);
   const data = query.data;
   const showEditor = Boolean(session && (session.mode === 'edit' || session.customize));
+  const showingSchedule = session?.view === 'schedule';
+  const sessionId = session?.id, sessionMode = session?.mode, focusTarget = session?.focusTarget, returnToEditor = session?.returnToEditor;
   const referenceDate = session?.referenceDate || '';
   const regularQuery = useQuery({
     queryKey: [...KEY, 'regular-schedule', activeSchoolId, referenceDate],
     queryFn: ({ signal }) => apiRequest('GET', `${API}/regular-schedule`, undefined, { signal, params: { referenceDate } }),
-    enabled: showEditor && isReferenceDate(referenceDate),
+    enabled: Boolean(session) && (showEditor || showingSchedule) && isReferenceDate(referenceDate),
     retry: false,
   });
   // A date change or refresh must not seed an adjustment from older comparison data.
   const regularSchedule = !regularQuery.isFetching && !regularQuery.isError && regularQuery.data?.referenceDate === referenceDate ? regularQuery.data : null;
+  const draftReview = useScheduleProfileDraftReview({ enabled: Boolean(session && !session.setup && isReferenceDate(referenceDate)), schoolId: activeSchoolId, sessionId: session?.id, referenceDate, definition: session?.definition, revision: data?.revision });
+  const refreshReference = () => { void regularQuery.refetch(); draftReview.retry(); };
   const meetingClasses = regularSchedule?.classes.filter(row => row.status === 'meets') || EMPTY;
   const unavailableClasses = regularSchedule?.classes.filter(row => row.status === 'unavailable') || EMPTY;
   const catalogIds = new Set((data?.classes || EMPTY).map(row => row.id));
@@ -199,8 +218,29 @@ export default function ScheduleProfiles({ blockedByAdvancedDraft = false, onBus
     : meetingClasses.length > 500 ? 'This day has more than 500 classes. Choose Start blank and select a smaller set of grades or classes.'
       : meetingClasses.some(row => !catalogIds.has(row.classId)) ? 'The class list changed. Close this draft and refresh profiles before loading the whole day.' : '';
   const testingStatuses = useMemo(() => new Map((data?.testingStatuses || EMPTY).map(row => [`${row.applicationId}:${row.date}:${row.blockId}`, row])), [data?.testingStatuses]);
-  const dirty = Boolean(session && (JSON.stringify(session.definition) !== session.original || session.customize || session.dates.join(',') !== session.initialDates || preview));
-  useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
+  const dirty = Boolean(session && session.mode !== 'view' && (JSON.stringify(session.definition) !== session.original || session.customize || session.dates.join(',') !== session.initialDates || preview));
+  useEffect(() => { onBusyChange?.(busy || dirty); }, [busy, dirty, onBusyChange]);
+  useEffect(() => {
+    if (!sessionId || !bodyRef.current) return;
+    if (focusTarget?.applicationPreview) {
+      const element = bodyRef.current.querySelector('[aria-label="Profile application preview"]');
+      element?.focus(); element?.scrollIntoView({ block: 'start' });
+    } else if (focusTarget) {
+      const selector = focusTarget.classId ? '[data-class-editor-id]' : '[data-block-editor-id]';
+      const row = [...bodyRef.current.querySelectorAll(selector)].find(element => element.getAttribute(focusTarget.classId ? 'data-class-editor-id' : 'data-block-editor-id') === (focusTarget.classId || focusTarget.blockId));
+      const control = focusTarget.classId ? row?.querySelector('select:not(:disabled)') || row?.querySelector('input:not(:disabled)') : row?.querySelector('input:not(:disabled), select:not(:disabled)');
+      (control || row)?.focus();
+      (control || row)?.scrollIntoView({ block: 'center', inline: 'nearest' });
+    } else if (showingSchedule) {
+      bodyRef.current.scrollTop = 0;
+      bodyRef.current.querySelector('[data-review-heading]')?.focus({ preventScroll: true });
+    } else if (returnToEditor) {
+      bodyRef.current.scrollTop = editorScroll.current;
+      (reviewOpenerRef.current?.isConnected ? reviewOpenerRef.current : bodyRef.current.closest('[role="dialog"]')?.querySelector('[data-review-draft-button]'))?.focus({ preventScroll: true });
+    } else {
+      bodyRef.current.querySelector('input:not([type="checkbox"]), select')?.focus();
+    }
+  }, [sessionId, sessionMode, showingSchedule, focusTarget, returnToEditor]);
   useEffect(() => {
     if (!dirty) return undefined;
     const handler = event => { event.preventDefault(); event.returnValue = ''; };
@@ -214,11 +254,38 @@ export default function ScheduleProfiles({ blockedByAdvancedDraft = false, onBus
     const definition = profile ? copy(profile.definition) : blankDefinition();
     if (duplicate) definition.name = copyName(definition.name, ' (copy)');
     const dates = mode === 'apply' && data.schoolLocalToday ? [data.schoolLocalToday] : [];
-    setSession({ mode, profile: duplicate ? null : profile, definition, original: JSON.stringify(definition), revision: data.revision, dates, initialDates: dates.join(','), customize: false, setup: mode === 'edit' && !profile, referenceDate: data.schoolLocalToday });
+    openerRef.current = document.activeElement;
+    editorScroll.current = 0;
+    setSession({ id: crypto.randomUUID(), mode, view: mode === 'view' ? 'schedule' : 'editor', profile: duplicate ? null : profile, definition, original: JSON.stringify(definition), revision: data.revision, dates, initialDates: dates.join(','), customize: false, setup: mode === 'edit' && !profile, referenceDate: data.schoolLocalToday, editorFilters: { viewGrade: 'all', search: '' }, reviewInitialized: mode === 'view', reviewFilters: { view: 'classes', grade: 'all', classId: 'all', teacher: 'all', conflictsOnly: false } });
     setNewName(copyName(definition.name, ' (custom)')); setOneDate(''); setRangeStart(''); setRangeEnd(''); setPreview(null); setError(''); setNotice('');
   };
   const close = () => { if (!busy && (!dirty || window.confirm('Discard these unsaved profile or application changes?'))) { setSession(null); setPreview(null); setError(''); } };
   const edit = change => { setSession(current => ({ ...current, ...change })); setPreview(null); setError(''); };
+  const showDraftSchedule = () => {
+    editorScroll.current = bodyRef.current?.scrollTop || 0;
+    reviewOpenerRef.current = document.activeElement;
+    setSession(current => ({ ...current, view: 'schedule', focusTarget: null, returnToEditor: false, reviewInitialized: true,
+      reviewFilters: current.reviewInitialized ? current.reviewFilters : { ...current.reviewFilters, grade: current.editorFilters.viewGrade } }));
+  };
+  const backToEditor = () => setSession(current => ({ ...current, view: 'editor', focusTarget: null, returnToEditor: true }));
+  const editIssue = target => {
+    setSession(current => {
+      const row = target.classId && data.classes.find(item => item.id === target.classId);
+      const filters = current.editorFilters;
+      const editorFilters = row ? {
+        viewGrade: filters.viewGrade === 'all' || gradeKey(String(row.gradeLevel || '')) === filters.viewGrade ? filters.viewGrade : 'all',
+        search: `${row.name} ${row.teacherName || ''}`.toLowerCase().includes(filters.search.trim().toLowerCase()) ? filters.search : '',
+      } : filters;
+      return { ...current, mode: current.mode === 'view' ? 'edit' : current.mode, customize: current.mode === 'apply' ? true : current.customize, view: 'editor', setup: false,
+        editorFilters, focusTarget: target, returnToEditor: false };
+    });
+  };
+  const editSaved = () => setSession(current => ({ ...current, mode: 'edit', view: 'editor', savedNotice: false, focusTarget: null }));
+  const chooseDates = () => {
+    const dates = data.schoolLocalToday ? [data.schoolLocalToday] : [];
+    setSession(current => ({ ...current, mode: 'apply', view: 'editor', dates, initialDates: dates.join(','), customize: false, focusTarget: null, savedNotice: false }));
+    setOneDate(''); setRangeStart(''); setRangeEnd(''); setPreview(null); setError('');
+  };
   const loadRegularSchedule = () => {
     if (!regularSchedule || loadProblem || !meetingClasses.length) return;
     edit({ setup: false, definition: { ...session.definition, grades: [], classIds: meetingClasses.map(row => row.classId), classRules: [] } });
@@ -227,8 +294,15 @@ export default function ScheduleProfiles({ blockedByAdvancedDraft = false, onBus
   const saveProfile = (asNew = false) => execute(async () => {
     const definition = { ...session.definition, name: (asNew ? newName : session.definition.name).trim() };
     const problem = validateDefinition(definition); if (problem) throw new Error(problem);
-    await apiRequest('POST', API, { revision: session.revision, ...(!asNew && session.profile ? { id: session.profile.id, profileRevision: session.profile.revision } : {}), definition });
-    await refresh(true); setSession(null); setPreview(null); setNotice(asNew ? 'Saved a new profile. Choose Apply when you are ready to select its dates.' : 'Profile saved. Apply it to dates when you are ready. Existing applications keep their saved settings.');
+    const result = await apiRequest('POST', API, { revision: session.revision, ...(!asNew && session.profile ? { id: session.profile.id, profileRevision: session.profile.revision } : {}), definition });
+    // The save result is the exact normalized version to review, even if catalog refresh fails.
+    client.setQueryData([...KEY, activeSchoolId], current => current ? { ...current, revision: result.revision, profiles: [...current.profiles.filter(profile => profile.id !== result.profile.id), result.profile] } : current);
+    setSession(current => ({ ...current, mode: 'view', view: 'schedule', profile: copy(result.profile), definition: copy(result.profile.definition), original: JSON.stringify(result.profile.definition), revision: result.revision,
+      dates: [], initialDates: '', customize: false, setup: false, savedNotice: true, focusTarget: null, returnToEditor: false, reviewInitialized: true,
+      reviewFilters: current.reviewInitialized ? current.reviewFilters : { ...current.reviewFilters, grade: current.editorFilters.viewGrade } }));
+    setPreview(null);
+    setNotice('Profile saved. Existing applications keep their saved settings.');
+    try { await refresh(true); } catch { setNotice('Profile saved. The profile list could not refresh; reopen it before making another change.'); }
   });
   const addDates = values => {
     const dates = [...new Set([...session.dates, ...values])].sort();
@@ -240,6 +314,7 @@ export default function ScheduleProfiles({ blockedByAdvancedDraft = false, onBus
     const problem = validateDefinition(session.definition); if (problem) throw new Error(problem);
     const payload = { revision: session.revision, profileId: session.profile.id, profileRevision: session.profile.revision, dates: session.dates, ...(session.customize ? { definition: session.definition } : {}) };
     const result = await apiRequest('POST', `${API}/preview`, payload); setPreview({ ...result, payload });
+    setSession(current => ({ ...current, view: 'editor', focusTarget: { applicationPreview: true }, returnToEditor: false }));
   });
   const apply = () => execute(async () => {
     await apiRequest('POST', `${API}/apply`, { ...preview.payload, previewToken: preview.previewToken });
@@ -251,8 +326,8 @@ export default function ScheduleProfiles({ blockedByAdvancedDraft = false, onBus
   };
   return <Card data-testid="schedule-profiles"><CardHeader><div className="flex flex-wrap items-start justify-between gap-3"><div className="max-w-xl space-y-1.5"><CardTitle className="text-xl">Schedule profiles</CardTitle><CardDescription>Build a plan for an early release, testing day or delay. Apply it to selected dates while keeping regular class rosters in place.</CardDescription></div><Button disabled={!data || busy || blockedByAdvancedDraft} onClick={() => open('edit')}><Plus className="mr-2 h-4 w-4" />Create Schedule Profile</Button></div></CardHeader><CardContent className="space-y-5">
     <ol aria-label="Schedule profile workflow" className="grid gap-4 rounded-md bg-muted/40 p-4 text-sm sm:grid-cols-3">
-      <li><p className="font-medium">1. Save a profile</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Start with a regular day, adjust classes and add optional testing blocks.</p></li>
-      <li><p className="font-medium">2. Choose dates</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Use Apply on a saved profile. Customize that use if needed.</p></li>
+      <li><p className="font-medium">1. Build, review & save</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Adjust classes and testing blocks, review the proposed day, and save work in progress.</p></li>
+      <li><p className="font-medium">2. Choose dates</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Choose dates & apply opens date selection. Customize that use if needed.</p></li>
       <li><p className="font-medium">3. Preview & apply</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Review affected classes and resolve conflicts before applying.</p></li>
     </ol>
     {query.isLoading && <p role="status" className="text-sm">Loading schedule profiles…</p>}
@@ -260,31 +335,40 @@ export default function ScheduleProfiles({ blockedByAdvancedDraft = false, onBus
     {blockedByAdvancedDraft && <p className="text-sm text-amber-700 dark:text-amber-300">Save or discard the bell, rotation, date-override or calendar draft before changing profiles or their applications.</p>}
     {notice && <p role="status" className="text-sm text-green-700 dark:text-green-400">{notice}</p>}
     {!session && error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-    {data && <><p className="text-xs text-muted-foreground">School timezone: {data.schoolTimezone}. Saving a profile does not activate it or change an existing application.</p>{data.profiles?.length > 0 && <div className="grid gap-3 lg:grid-cols-2">{(data.profiles || EMPTY).map(profile => <article key={profile.id} className="space-y-3 rounded-lg border p-4"><h3 className="font-semibold">{profile.definition.name}</h3><p className="text-xs text-muted-foreground">{profile.definition.grades.length ? profile.definition.grades.map(gradeName).join(', ') : 'Individual selection'} · {profile.definition.classIds.length} individual classes · {profile.definition.testingBlocks.length} testing blocks</p><div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" aria-label={`Edit ${profile.definition.name}`} disabled={busy || blockedByAdvancedDraft} onClick={() => open('edit', profile)}>Edit</Button><Button size="sm" variant="outline" aria-label={`Duplicate ${profile.definition.name}`} disabled={busy || blockedByAdvancedDraft} onClick={() => open('edit', profile, true)}><Copy className="mr-2 h-3.5 w-3.5" />Duplicate</Button><Button size="sm" aria-label={`Apply ${profile.definition.name}`} disabled={busy || blockedByAdvancedDraft} onClick={() => open('apply', profile)}><CalendarDays className="mr-2 h-3.5 w-3.5" />Apply</Button></div></article>)}</div>}{!data.profiles?.length && <p className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">No profiles yet. Create your first special-day plan, then apply it to the dates you need.</p>}
+    {data && <><p className="text-xs text-muted-foreground">School timezone: {data.schoolTimezone}. Saving a profile does not activate it or change an existing application.</p>{data.profiles?.length > 0 && <div className="grid gap-3 lg:grid-cols-2">{(data.profiles || EMPTY).map(profile => <article key={profile.id} className="space-y-3 rounded-lg border p-4"><h3 className="font-semibold">{profile.definition.name}</h3><p className="text-xs text-muted-foreground">{profile.definition.grades.length ? profile.definition.grades.map(gradeName).join(', ') : 'Individual selection'} · {profile.definition.classIds.length} individual classes · {profile.definition.testingBlocks.length} testing blocks</p><div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" aria-label={`View schedule for ${profile.definition.name}`} disabled={busy} onClick={() => open('view', profile)}>View schedule</Button><Button size="sm" variant="outline" aria-label={`Edit ${profile.definition.name}`} disabled={busy || blockedByAdvancedDraft} onClick={() => open('edit', profile)}>Edit</Button><Button size="sm" variant="outline" aria-label={`Duplicate ${profile.definition.name}`} disabled={busy || blockedByAdvancedDraft} onClick={() => open('edit', profile, true)}><Copy className="mr-2 h-3.5 w-3.5" />Duplicate</Button><Button size="sm" aria-label={`Choose dates & apply ${profile.definition.name}`} disabled={busy || blockedByAdvancedDraft} onClick={() => open('apply', profile)}><CalendarDays className="mr-2 h-3.5 w-3.5" />Choose dates & apply</Button></div></article>)}</div>}{!data.profiles?.length && <p className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">No profiles yet. Create your first special-day plan, then apply it to the dates you need.</p>}
       {(data.applications || EMPTY).length > 0 && <section className="space-y-3" aria-label="Schedule profile applications"><div className="flex items-center justify-between gap-2"><h3 className="text-sm font-semibold">Applied schedules</h3><Button size="sm" variant="ghost" disabled={busy || query.isFetching} onClick={() => query.refetch()}>Refresh status</Button></div><p className="text-xs text-muted-foreground">Cancel before the first affected class or testing window starts. After it starts, use Release or Extend in Coverage to manage testing supervision.</p>{data.applications.map(application => <div key={application.id} className="space-y-2 rounded-md border p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div className="flex flex-wrap items-center gap-2"><span className="text-sm font-medium">{application.profileName}</span><Badge variant="secondary">{applicationStatus(application, data.schoolLocalToday)}</Badge></div>{['active', 'applied', 'scheduled'].includes(application.status) && applicationStatus(application, data.schoolLocalToday) !== 'Completed' && <Button size="sm" variant="outline" disabled={busy || blockedByAdvancedDraft} onClick={() => cancel(application)}>Cancel application<span className="sr-only"> {application.profileName}</span></Button>}</div><p className="text-xs text-muted-foreground">{application.dates.join(' · ')}</p>{(application.testingWindows || EMPTY).map((window, index) => {
         const status = testingStatuses.get(`${application.id}:${window.date}:${window.blockId}`);
         return <div key={`${window.date}-${window.blockId}-${index}`} className="rounded bg-muted p-2 text-xs"><p>{window.date} · {window.name} · {window.startTime}–{window.endTime} · <span className="font-medium">{testingStatusLabels[status?.status] || 'Status unavailable'}</span></p>{['failed', 'missed'].includes(status?.status) && <><p className="mt-1 text-destructive">{testingStatusReasons[status.code] || testingStatusReasons.ACTIVATION_FAILED}</p><p className="mt-1 text-muted-foreground">Use Coverage to manage any testing still needed today. Failed or missed windows do not restart automatically.</p></>}</div>;
       })}</div>)}</section>}
     </>}
-    <Dialog open={Boolean(session)} onOpenChange={value => { if (!value) close(); }}><DialogContent className="flex max-h-[92dvh] w-[calc(100%-1.5rem)] max-w-5xl flex-col overflow-hidden"><DialogHeader className="shrink-0 pr-5"><DialogTitle>{session?.mode === 'apply' ? `Apply ${session.definition.name}` : session?.profile ? 'Edit Schedule Profile' : 'Create Schedule Profile'}</DialogTitle><DialogDescription>{session?.mode === 'apply' ? `Choose up to 31 dates. Preview checks class and testing conflicts in ${data?.schoolTimezone || 'the school timezone'}.` : 'Save a reusable draft. Its dates are chosen separately when you apply it.'}</DialogDescription></DialogHeader>
-      {session && data && <><div className="min-h-0 overflow-y-auto pr-1"><fieldset disabled={busy} className="min-w-0 space-y-5">
-        {session.mode === 'apply' && <><div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><label className="block space-y-1 text-sm"><span>Add an individual date</span><input type="date" className={inputClass} min={data.schoolLocalToday} value={oneDate} onChange={event => setOneDate(event.target.value)} /></label><Button variant="outline" size="sm" disabled={!oneDate} onClick={() => addDates([oneDate])}>Add selected date</Button></div><div className="space-y-2"><div className="grid grid-cols-2 gap-2"><label className="space-y-1 text-sm"><span>Range starts</span><input type="date" className={inputClass} min={data.schoolLocalToday} value={rangeStart} onChange={event => setRangeStart(event.target.value)} /></label><label className="space-y-1 text-sm"><span>Range ends</span><input type="date" className={inputClass} min={rangeStart || data.schoolLocalToday} value={rangeEnd} onChange={event => setRangeEnd(event.target.value)} /></label></div><Button variant="outline" size="sm" disabled={!rangeStart || !rangeEnd} onClick={() => { try { addDates(dateRange(rangeStart, rangeEnd)); } catch (failure) { setError(failure.message); } }}>Add date range</Button></div></div>
+    <Dialog open={Boolean(session)} onOpenChange={value => { if (!value) close(); }}><DialogContent onCloseAutoFocus={event => { event.preventDefault(); if (openerRef.current?.isConnected) openerRef.current.focus(); }} className="flex max-h-[92dvh] w-[calc(100%-1.5rem)] max-w-5xl flex-col overflow-hidden"><DialogHeader className="shrink-0 pr-5"><DialogTitle>{session?.mode === 'view' ? `Schedule for ${session.definition.name}` : showingSchedule ? 'Review draft schedule' : session?.mode === 'apply' ? `Apply ${session.definition.name}` : session?.profile ? 'Edit Schedule Profile' : 'Create Schedule Profile'}</DialogTitle><DialogDescription>{session?.mode === 'view' ? 'Review this saved profile using a reference day. Choose dates separately before applying it.' : session?.mode === 'apply' ? `Choose up to 31 dates. Preview checks class and testing conflicts in ${data?.schoolTimezone || 'the school timezone'}.` : 'Save a reusable draft. Its dates are chosen separately when you apply it.'}</DialogDescription></DialogHeader>
+      {session && data && <><div ref={bodyRef} data-testid="schedule-profile-dialog-body" className="min-h-0 overflow-y-auto pr-1"><fieldset disabled={busy} className="min-w-0 space-y-5">
+        {session.mode === 'view' && <div className="rounded-lg border bg-primary/5 p-3 text-sm"><p role="status" className="font-semibold">{session.savedNotice ? 'Profile saved — not applied' : 'Saved profile — reference-day view'}</p><p className="mt-1 text-muted-foreground">Saving does not activate these changes. Existing applications keep their saved settings.</p>{blockedByAdvancedDraft && <p className="mt-2 text-amber-800 dark:text-amber-300">Save or discard the bell, rotation, date-override or calendar draft before editing or applying this profile. This review uses saved school settings.</p>}</div>}
+        {session.mode === 'apply' && <div hidden={showingSchedule} inert={showingSchedule || undefined} className="space-y-5"><div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><label className="block space-y-1 text-sm"><span>Add an individual date</span><input type="date" className={inputClass} min={data.schoolLocalToday} value={oneDate} onChange={event => setOneDate(event.target.value)} /></label><Button variant="outline" size="sm" disabled={!oneDate} onClick={() => addDates([oneDate])}>Add selected date</Button></div><div className="space-y-2"><div className="grid grid-cols-2 gap-2"><label className="space-y-1 text-sm"><span>Range starts</span><input type="date" className={inputClass} min={data.schoolLocalToday} value={rangeStart} onChange={event => setRangeStart(event.target.value)} /></label><label className="space-y-1 text-sm"><span>Range ends</span><input type="date" className={inputClass} min={rangeStart || data.schoolLocalToday} value={rangeEnd} onChange={event => setRangeEnd(event.target.value)} /></label></div><Button variant="outline" size="sm" disabled={!rangeStart || !rangeEnd} onClick={() => { try { addDates(dateRange(rangeStart, rangeEnd)); } catch (failure) { setError(failure.message); } }}>Add date range</Button></div></div>
           <div className="space-y-2"><p className="text-sm font-medium">Selected dates ({session.dates.length}/31)</p><div className="flex flex-wrap gap-2">{session.dates.map(date => <button key={date} type="button" className="rounded-full border bg-muted px-3 py-1 text-xs" aria-label={`Remove application date ${date}`} onClick={() => edit({ dates: session.dates.filter(value => value !== date) })}>{date} ×</button>)}</div><p className="text-xs text-muted-foreground">Date ranges include weekends. The preview identifies dates that cannot be applied.</p></div>
           <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={session.customize} onChange={event => { if (!event.target.checked && JSON.stringify(session.definition) !== session.original && !window.confirm('Discard the changes made for this use?')) return; edit({ customize: event.target.checked, definition: copy(session.profile.definition), referenceDate: session.dates[0] || data.schoolLocalToday }); }} />Customize this use</label><p className="text-xs text-muted-foreground">Changes here belong to this application. The saved profile stays unchanged.</p>
-        </>}
-        {showEditor && <>
-          <label className="block space-y-1 text-sm font-medium"><span>Profile name</span><input className={inputClass} maxLength={80} value={session.definition.name} onChange={event => edit({ definition: { ...session.definition, name: event.target.value } })} /></label>
-          <RegularScheduleReference date={referenceDate} onDateChange={value => setSession(current => ({ ...current, referenceDate: value }))} query={regularQuery} schedule={regularSchedule} timezone={data.schoolTimezone} setup={session.setup} />
+        </div>}
+        {showEditor && <label hidden={showingSchedule} inert={showingSchedule || undefined} className={`${showingSchedule ? 'hidden' : 'block'} space-y-1 text-sm font-medium`}><span>Profile name</span><input className={inputClass} maxLength={80} value={session.definition.name} onChange={event => edit({ definition: { ...session.definition, name: event.target.value } })} /></label>}
+        {(showEditor || showingSchedule) && <RegularScheduleReference date={referenceDate} onDateChange={value => setSession(current => ({ ...current, referenceDate: value }))} onRefresh={refreshReference} query={regularQuery} schedule={regularSchedule} timezone={data.schoolTimezone} setup={session.setup} />}
+        {!session.setup && <DraftReviewStatus review={{ ...draftReview, retry: refreshReference }} validDate={isReferenceDate(referenceDate)} saved={session.mode === 'view' && session.savedNotice} />}
+        {showEditor && <div hidden={showingSchedule} inert={showingSchedule || undefined} className="space-y-5">
           {session.setup ? <div className="space-y-3">
             <p className="text-sm text-muted-foreground">{regularSchedule && meetingClasses.length > 0 ? `${meetingClasses.length} classes meet on this day. ` : ''}Load the whole day, then adjust or remove classes. Unchanged classes keep following their regular schedule.</p>
             {loadProblem && <p role="alert" className="text-sm text-destructive">{loadProblem}</p>}
             <div className="flex flex-wrap gap-2"><Button disabled={!regularSchedule || !meetingClasses.length || Boolean(loadProblem)} onClick={loadRegularSchedule}>Load regular schedule</Button><Button variant="outline" onClick={() => edit({ setup: false })}>Start blank</Button></div>
-          </div> : <DefinitionEditor definition={session.definition} onChange={definition => edit({ definition })} catalog={data} disabled={busy} regularSchedule={regularSchedule} referenceLoading={regularQuery.isFetching} />}
-        </>}
-        {session.mode === 'apply' && session.customize && <div className="flex flex-wrap items-end gap-2 rounded-md bg-muted p-3"><label className="min-w-48 flex-1 space-y-1 text-sm"><span>Name for new profile</span><input className={inputClass} maxLength={80} value={newName} onChange={event => setNewName(event.target.value)} /></label><Button variant="outline" onClick={() => saveProfile(true)}>Save as new profile</Button><p className="w-full text-xs text-muted-foreground">Saves these settings as a separate draft. Select its dates from the profile list afterward.</p></div>}
+          </div> : <DefinitionEditor definition={session.definition} onChange={definition => edit({ definition })} catalog={data} disabled={busy} regularSchedule={regularSchedule} referenceLoading={regularQuery.isFetching} filters={session.editorFilters} onFiltersChange={editorFilters => setSession(current => ({ ...current, editorFilters }))} draftReview={draftReview.data} />}
+          {session.mode === 'apply' && session.customize && <div className="flex flex-wrap items-end gap-2 rounded-md bg-muted p-3"><label className="min-w-48 flex-1 space-y-1 text-sm"><span>Name for new profile</span><input className={inputClass} maxLength={80} value={newName} onChange={event => setNewName(event.target.value)} /></label><Button variant="outline" onClick={() => saveProfile(true)}>Save as new profile</Button><p className="w-full text-xs text-muted-foreground">Saves these settings as a separate draft. Select its dates separately afterward.</p></div>}
+        </div>}
+        {showingSchedule && <ScheduleProfileDraftReview review={draftReview} filters={session.reviewFilters} onFiltersChange={reviewFilters => setSession(current => ({ ...current, reviewFilters }))} onEditIssue={blockedByAdvancedDraft ? undefined : editIssue} />}
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-        {preview && <Preview key={preview.previewToken} preview={preview} catalog={data} />}
-      </fieldset></div><fieldset disabled={busy} className="flex shrink-0 flex-wrap justify-end gap-2 border-t bg-background pt-3"><Button variant="outline" onClick={close}>Cancel</Button>{session.mode === 'edit' ? <Button disabled={session.setup} onClick={() => saveProfile()}>{busy ? 'Saving…' : 'Save profile'}</Button> : <><Button variant="outline" onClick={review}>{busy ? 'Working…' : 'Preview application'}</Button>{preview && <Button disabled={!preview.previewToken || (preview.blockers || EMPTY).length > 0 || blockedByAdvancedDraft} onClick={apply}>Apply reviewed dates</Button>}</>}</fieldset></>}
+        {preview && <div hidden={showingSchedule} inert={showingSchedule || undefined}><Preview key={preview.previewToken} preview={preview} catalog={data} /></div>}
+      </fieldset></div><fieldset disabled={busy} className="flex shrink-0 flex-wrap justify-end gap-2 border-t bg-background pt-3">
+        <Button variant="outline" onClick={close}>{session.mode === 'view' ? 'Close schedule' : 'Cancel'}</Button>
+        {session.mode === 'view' ? <><Button variant="outline" disabled={blockedByAdvancedDraft} onClick={editSaved}>Edit profile</Button><Button disabled={blockedByAdvancedDraft} onClick={chooseDates}>Choose dates & apply</Button></> : <>
+          {showingSchedule ? <Button variant="outline" onClick={backToEditor}>Back to editing</Button> : <Button data-review-draft-button variant="outline" disabled={session.setup} onClick={showDraftSchedule}>Review draft schedule</Button>}
+          {session.mode === 'edit' ? <Button disabled={session.setup || blockedByAdvancedDraft} onClick={() => saveProfile()}>{busy ? 'Saving…' : 'Save profile'}</Button> : <><Button variant="outline" onClick={review}>{busy ? 'Working…' : 'Preview application'}</Button>{preview && !showingSchedule && <Button disabled={!preview.previewToken || (preview.blockers || EMPTY).length > 0 || blockedByAdvancedDraft} onClick={apply}>Apply reviewed dates</Button>}</>}
+        </>}
+      </fieldset></>}
     </DialogContent></Dialog>
   </CardContent></Card>;
 }
